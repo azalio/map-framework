@@ -1,0 +1,8 @@
+# Include all template files
+recursive-include src/mapify_cli/templates *.md
+include README.md
+include LICENSE
+include pyproject.toml
+include pytest.ini
+include Makefile
+include requirements*.txt
