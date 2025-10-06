@@ -1,0 +1,73 @@
+{
+  "mcp_servers": {
+    "claude-reviewer": {
+      "enabled": true,
+      "description": "Professional AI code review",
+      "config": {
+        "auto_review": true,
+        "focus_areas": ["security", "performance", "testing"],
+        "severity_threshold": "medium"
+      }
+    },
+    "sequential-thinking": {
+      "enabled": true,
+      "description": "Chain-of-thought reasoning",
+      "config": {
+        "max_thoughts": 10,
+        "branch_exploration": true,
+        "hypothesis_verification": true
+      }
+    },
+    "byterover-mcp": {
+      "enabled": true,
+      "description": "Knowledge management system",
+      "config": {
+        "auto_store": true,
+        "retrieval_limit": 5,
+        "conflict_resolution": "manual"
+      }
+    },
+    "codex-bridge": {
+      "enabled": true,
+      "description": "AI code generation",
+      "config": {
+        "format": "json",
+        "timeout": 60,
+        "batch_size": 5
+      }
+    },
+    "context7": {
+      "enabled": true,
+      "description": "Up-to-date library documentation",
+      "config": {
+        "tokens": 5000,
+        "auto_resolve": true,
+        "cache_duration": 3600
+      }
+    },
+    "deepwiki": {
+      "enabled": true,
+      "description": "GitHub repository intelligence",
+      "config": {
+        "auto_structure": true,
+        "max_depth": 3,
+        "cache_repos": true
+      }
+    }
+  },
+  "agent_mcp_mappings": {
+    "task-decomposer": ["byterover-mcp", "sequential-thinking", "deepwiki", "context7"],
+    "actor": ["byterover-mcp", "codex-bridge", "context7", "deepwiki"],
+    "monitor": ["claude-reviewer", "byterover-mcp", "sequential-thinking", "context7", "deepwiki"],
+    "predictor": ["byterover-mcp", "codex-bridge", "deepwiki", "context7"],
+    "evaluator": ["sequential-thinking", "claude-reviewer", "byterover-mcp", "context7", "deepwiki"],
+    "orchestrator": ["byterover-mcp", "sequential-thinking", "claude-reviewer", "context7", "deepwiki"]
+  },
+  "workflow_settings": {
+    "always_retrieve_knowledge": true,
+    "store_successful_patterns": true,
+    "use_professional_review": true,
+    "enable_sequential_thinking": true,
+    "knowledge_cache_ttl": 3600
+  }
+}

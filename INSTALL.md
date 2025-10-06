@@ -1,0 +1,293 @@
+# 🚀 MAP Framework Installation Guide
+
+The MAP Framework can be installed in any project to provide powerful AI-driven development capabilities using the Modular Agentic Planner architecture.
+
+## Prerequisites
+
+- Python 3.11 or higher
+- Git (optional, for repository initialization)
+- Claude Code CLI or another supported AI assistant
+
+## Quick Install
+
+### Option 1: Using UV Tool (Recommended)
+
+Install the `mapify` CLI tool globally and use it to set up projects:
+
+```bash
+# Install mapify CLI
+uv tool install mapify-cli --from git+https://github.com/azalio/map-framework.git
+
+# Create a new project with MAP Framework
+mapify init my-project
+
+# Or initialize in current directory
+mapify init .
+```
+
+### Option 2: Direct UV Execution
+
+Run without installing:
+
+```bash
+# One-time usage
+uvx --from git+https://github.com/azalio/map-framework.git mapify init my-project
+```
+
+## Installation Options
+
+### Basic Installation
+
+```bash
+mapify init my-project
+```
+
+This will:
+
+- ✅ Create project directory
+- ✅ Install 6 MAP agents
+- ✅ Add 4 slash commands
+- ✅ Configure essential MCP servers
+- ✅ Initialize git repository
+
+### Custom AI Assistant
+
+```bash
+# For Claude Code (default)
+mapify init my-project --ai claude
+
+# For Cursor
+mapify init my-project --ai cursor
+
+# For Windsurf
+mapify init my-project --ai windsurf
+
+# For any AI assistant
+mapify init my-project --ai generic
+```
+
+### MCP Server Configuration
+
+Choose which MCP servers to enable:
+
+```bash
+# All available MCP servers
+mapify init my-project --mcp all
+
+# Essential servers only (byterover, claude-reviewer, sequential-thinking)
+mapify init my-project --mcp essential
+
+# Documentation servers (context7, deepwiki)
+mapify init my-project --mcp docs
+
+# Specific servers
+mapify init my-project --mcp "byterover,context7,deepwiki"
+
+# No MCP servers
+mapify init my-project --mcp none
+```
+
+### Current Directory Installation
+
+```bash
+# Initialize in current directory
+mapify init .
+
+# Or use --here flag
+mapify init --here
+
+# Force overwrite existing files
+mapify init --here --force
+```
+
+### Advanced Options
+
+```bash
+# Skip git initialization
+mapify init my-project --no-git
+
+# Combine options
+mapify init my-project --ai claude --mcp all --no-git
+```
+
+## Manual Installation
+
+If you prefer manual setup:
+
+1. **Download the latest release:**
+
+   ```bash
+   wget https://github.com/azalio/map-framework/releases/latest/download/map-kit-template-claude.zip
+   ```
+
+2. **Extract to your project:**
+
+   ```bash
+   unzip map-kit-template-claude.zip -d your-project/
+   cd your-project
+   ```
+
+3. **The structure will be:**
+
+   ```
+   your-project/
+   ├── .claude/
+   │   ├── agents/
+   │   │   ├── task-decomposer.md
+   │   │   ├── actor.md
+   │   │   ├── monitor.md
+   │   │   ├── predictor.md
+   │   │   ├── evaluator.md
+   │   │   └── orchestrator.md
+   │   ├── commands/
+   │   │   ├── map-feature.md
+   │   │   ├── map-debug.md
+   │   │   ├── map-refactor.md
+   │   │   └── map-review.md
+   │   └── mcp_config.json
+   ```
+
+## Verify Installation
+
+Check that everything is installed correctly:
+
+```bash
+mapify check
+```
+
+Output should show:
+
+```
+Check Available Tools
+● Git version control       (available)
+● Claude Code CLI          (available)
+
+✅ All tools are installed! MAP Framework is ready to use.
+```
+
+## Using MAP Framework
+
+After installation, you can use MAP commands in Claude Code:
+
+### Slash Commands
+
+```bash
+# Implement a new feature
+/map-feature Add user authentication with JWT tokens
+
+# Debug an issue
+/map-debug Fix API timeout on large file uploads
+
+# Refactor code
+/map-refactor Convert callbacks to async/await
+
+# Review changes
+/map-review
+```
+
+### Direct Agent Usage
+
+```bash
+# Use the orchestrator directly
+claude "Use the orchestrator agent to implement a caching layer"
+
+# Use specific agents
+claude "Use task-decomposer to break down: Add payment processing"
+claude "Use monitor agent to review the recent changes"
+```
+
+## MCP Server Setup
+
+If you selected MCP servers during installation, ensure they're configured:
+
+### Byterover (Knowledge Management)
+
+- Stores successful patterns and solutions
+- Retrieves relevant past implementations
+- Builds institutional knowledge over time
+
+### Claude-Reviewer (Professional Review)
+
+- Automated security and quality analysis
+- Historical review tracking
+- Focused review on specific areas
+
+### Sequential-Thinking (Chain-of-Thought)
+
+- Complex problem decomposition
+- Iterative refinement of solutions
+- Edge case discovery
+
+### Context7 (Library Documentation)
+
+- Current API references for any library
+- Version-specific documentation
+- Migration guides
+
+### Deepwiki (GitHub Intelligence)
+
+- Read documentation from any GitHub repo
+- Analyze architectural patterns
+- Learn from production implementations
+
+## Updating MAP Framework
+
+To update to the latest version:
+
+```bash
+# Reinstall mapify with latest version
+uv tool upgrade mapify-cli
+
+# Update agents in existing project
+mapify init . --force
+```
+
+## Troubleshooting
+
+### Issue: Command not found
+
+```bash
+# Ensure UV is installed
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Reinstall mapify
+uv tool install mapify-cli --from git+https://github.com/azalio/map-framework.git
+```
+
+### Issue: Claude Code not detected
+
+```bash
+# Check Claude installation
+which claude
+
+# If using local installation after migrate-installer
+ls ~/.claude/local/claude
+```
+
+### Issue: MCP servers not working
+
+Check that MCP servers are properly configured in your Claude Code settings. The configuration file is at `.claude/mcp_config.json`.
+
+## Uninstalling
+
+To remove MAP Framework:
+
+```bash
+# Remove from project
+rm -rf .claude/agents/
+rm -rf .claude/commands/
+rm .claude/mcp_config.json
+
+# Uninstall mapify CLI
+uv tool uninstall mapify-cli
+```
+
+## Support
+
+- GitHub Issues: <https://github.com/azalio/map-framework/issues>
+- Documentation: <https://github.com/azalio/map-framework>
+- Community: Discussions on GitHub
+
+## License
+
+MIT License - See LICENSE file for details

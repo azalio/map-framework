@@ -1,0 +1,1 @@
+"""Tests for MAP Framework CLI tool."""

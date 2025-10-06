@@ -1,0 +1,14 @@
+# Test dependencies for MAP Framework CLI
+pytest>=7.0.0
+pytest-cov>=4.0.0
+pytest-mock>=3.10.0
+pytest-watch>=4.2.0
+
+# Code quality tools
+black>=23.0.0
+ruff>=0.1.0
+mypy>=1.0.0
+
+# Type stubs
+types-requests
+types-setuptools
