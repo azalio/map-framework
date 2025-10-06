@@ -29,13 +29,10 @@ __version__ = "1.0.0"
 import os
 import subprocess
 import sys
-import zipfile
-import tempfile
 import shutil
 import json
 from pathlib import Path
-from typing import Optional, Tuple, List, Dict, Any
-from enum import Enum
+from typing import Optional, List, Dict, Any
 
 import typer
 import httpx
@@ -49,7 +46,6 @@ except ImportError:
 
 from rich.console import Console
 from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.text import Text
 from rich.live import Live
 from rich.align import Align
@@ -117,7 +113,7 @@ class StepTracker:
     """Track and render hierarchical steps as a tree"""
     def __init__(self, title: str):
         self.title = title
-        self.steps = []  # list of dicts: {key, label, status, detail}
+        self.steps: List[Dict[str, Any]] = []  # list of dicts: {key, label, status, detail}
         self._refresh_cb = None
 
     def attach_refresh(self, cb):
@@ -226,7 +222,7 @@ def get_key():
     return key
 
 
-def select_with_arrows(options: dict, prompt_text: str = "Select an option", default_key: str = None) -> str:
+def select_with_arrows(options: dict, prompt_text: str = "Select an option", default_key: Optional[str] = None) -> str:
     """Interactive selection using arrow keys"""
     option_keys = list(options.keys())
     if default_key and default_key in option_keys:
@@ -288,7 +284,7 @@ def select_multiple_with_arrows(options: dict, prompt_text: str = "Select option
     """Interactive multiple selection using arrow keys and space"""
     option_keys = list(options.keys())
     selected_index = 0
-    selected_items = set()
+    selected_items: set[str] = set()
 
     def create_selection_panel():
         """Create the selection panel with checkboxes"""
@@ -411,7 +407,7 @@ def get_templates_dir() -> Path:
     try:
         # Python 3.11+ with importlib.resources.files
         if hasattr(importlib.resources, 'files'):
-            return importlib.resources.files('mapify_cli') / 'templates'
+            return Path(str(importlib.resources.files('mapify_cli') / 'templates'))
     except Exception:
         pass
 
@@ -604,7 +600,7 @@ Return strictly valid JSON with validation results and specific issues.
 
 def create_predictor_content(mcp_servers: List[str]) -> str:
     """Create predictor agent content"""
-    return f"""---
+    return """---
 name: predictor
 description: Predicts consequences and dependency impact of changes (MAP)
 tools: Read, Grep, Glob, Bash
@@ -630,7 +626,7 @@ Return JSON with predicted state, affected components, breaking changes, and ris
 
 def create_evaluator_content(mcp_servers: List[str]) -> str:
     """Create evaluator agent content"""
-    return f"""---
+    return """---
 name: evaluator
 description: Evaluates solution quality and completeness (MAP)
 tools: Read, Bash, Grep
@@ -658,7 +654,7 @@ Return JSON with scores, strengths, weaknesses, and recommendation (proceed|impr
 
 def create_orchestrator_content(mcp_servers: List[str]) -> str:
     """Create orchestrator agent content"""
-    return f"""---
+    return """---
 name: orchestrator
 description: Manages the MAP workflow with Claude Code subagents
 tools: Read, Write, Bash
@@ -757,7 +753,7 @@ Provide detailed analysis of code quality, potential impacts, and quality scores
 
 def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
     """Create MCP configuration file"""
-    config = {
+    config: Dict[str, Any] = {
         "mcp_servers": {},
         "agent_mcp_mappings": {
             "task-decomposer": [],
@@ -973,7 +969,7 @@ def init_git_repo(project_path: Path, quiet: bool = False) -> bool:
         os.chdir(original_cwd)
 
 
-def is_git_repo(path: Path = None) -> bool:
+def is_git_repo(path: Optional[Path] = None) -> bool:
     """Check if the specified path is inside a git repository"""
     if path is None:
         path = Path.cwd()
@@ -1053,9 +1049,9 @@ The filename becomes the command name (without the `.md` extension).
 
 @app.command()
 def init(
-    project_name: str = typer.Argument(None, help="Name for your new project directory (use '.' for current directory)"),
-    ai_assistant: str = typer.Option(None, "--ai", help="AI assistant to use: claude, cursor, windsurf, generic"),
-    mcp: str = typer.Option(None, "--mcp", help="MCP servers to enable: all, essential, docs, none, or comma-separated list"),
+    project_name: Optional[str] = typer.Argument(None, help="Name for your new project directory (use '.' for current directory)"),
+    ai_assistant: Optional[str] = typer.Option(None, "--ai", help="AI assistant to use: claude, cursor, windsurf, generic"),
+    mcp: Optional[str] = typer.Option(None, "--mcp", help="MCP servers to enable: all, essential, docs, none, or comma-separated list"),
     no_git: bool = typer.Option(False, "--no-git", help="Skip git repository initialization"),
     here: bool = typer.Option(False, "--here", help="Initialize project in the current directory"),
     force: bool = typer.Option(False, "--force", help="Force merge/overwrite when using --here"),

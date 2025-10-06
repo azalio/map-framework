@@ -3,10 +3,8 @@
 
 import json
 import os
-import shutil
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 from unittest import mock
 
@@ -17,7 +15,6 @@ from typer.testing import CliRunner
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from mapify_cli import (
-    __version__,
     app,
     create_agent_files,
     create_command_files,
@@ -28,7 +25,6 @@ from mapify_cli import (
     init_git_repo,
     is_command,
     is_git_repo,
-    select_multiple_with_arrows,
 )
 
 runner = CliRunner()
