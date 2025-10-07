@@ -105,10 +105,11 @@ The MAP framework now **actively leverages MCP (Model Context Protocol) servers*
    - Retrieves relevant past implementations
    - Builds institutional knowledge over time
 
-4. **codex-bridge** - AI code generation
+4. **codex-bridge** - AI code generation (⚠️ Requires 10-minute timeout)
    - Advanced algorithm implementation
    - Multi-language support
    - Batch processing capabilities
+   - **Note**: Operations may take up to 10 minutes for complex tasks
 
 5. **context7** - Up-to-date library documentation
    - Current API references for any library
@@ -252,7 +253,7 @@ claude --agents '{"orchestrator": {"prompt": "$(cat .claude/agents/orchestrator.
 The MCP enhancement:
 
 - **Byterover** retrieves proven caching patterns from past implementations
-- **Codex-bridge** generates optimized cache invalidation logic
+- **Codex-bridge** generates optimized cache invalidation logic (10-min timeout for complex analysis)
 - **Claude-reviewer** provides security analysis for cache poisoning risks
 - **Byterover** stores the validated solution for future reuse
 
@@ -288,7 +289,7 @@ claude --agents '{"orchestrator": {"prompt": "$(cat .claude/agents/orchestrator.
 The MCP enhancement:
 
 - **Byterover** finds successful ORM → SQL migration patterns
-- **Codex-bridge** generates optimized SQL queries
+- **Codex-bridge** generates optimized SQL queries (allows up to 10 minutes for complex migrations)
 - **Sequential-thinking** plans the migration strategy
 - **Claude-reviewer** validates performance improvements
 
@@ -566,6 +567,25 @@ claude config add-mcp sequential-thinking
 claude config add-mcp byterover-mcp
 claude config add-mcp codex-bridge
 ```
+
+#### Important: Codex-Bridge Timeout Configuration
+
+**CRITICAL**: The codex-bridge MCP server requires a **10-minute timeout** for complex operations. The MAP framework automatically configures this in the MCP config, but when using codex-bridge directly:
+
+```python
+# Always specify timeout=600 (10 minutes) for complex operations
+result = mcp__codex-bridge__consult_codex(
+    query="your complex query",
+    directory=".",
+    timeout=600  # 10 minutes in seconds
+)
+```
+
+This extended timeout is necessary for:
+- Complex algorithm generation
+- Large-scale code analysis
+- Multi-file dependency tracing
+- Thorough impact prediction
 
 ### Modifying Agent Prompts
 
