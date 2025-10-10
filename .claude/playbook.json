@@ -1,0 +1,78 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "project": "map-framework",
+    "description": "ACE-style comprehensive playbook for MAP Framework development",
+    "created_at": "2025-10-10T00:00:00Z",
+    "last_updated": "2025-10-10T00:00:00Z",
+    "total_bullets": 0,
+    "sections_count": 9
+  },
+  "sections": {
+    "ARCHITECTURE_PATTERNS": {
+      "description": "Proven architectural decisions and design patterns for system structure",
+      "bullets": []
+    },
+    "IMPLEMENTATION_PATTERNS": {
+      "description": "Code patterns and idioms for common development tasks",
+      "bullets": []
+    },
+    "SECURITY_PATTERNS": {
+      "description": "Security best practices, authentication, authorization, and vulnerability prevention",
+      "bullets": []
+    },
+    "PERFORMANCE_PATTERNS": {
+      "description": "Optimization techniques, caching strategies, and performance anti-patterns to avoid",
+      "bullets": []
+    },
+    "ERROR_PATTERNS": {
+      "description": "Common errors, their root causes, and proven solutions",
+      "bullets": []
+    },
+    "TESTING_STRATEGIES": {
+      "description": "Test patterns, mocking approaches, and coverage strategies",
+      "bullets": []
+    },
+    "CODE_QUALITY_RULES": {
+      "description": "Style guides, naming conventions, and maintainability principles",
+      "bullets": []
+    },
+    "TOOL_USAGE": {
+      "description": "Proper usage of libraries, frameworks, APIs, and development tools",
+      "bullets": []
+    },
+    "DEBUGGING_TECHNIQUES": {
+      "description": "Troubleshooting workflows, diagnostic approaches, and debugging tools",
+      "bullets": []
+    }
+  },
+  "bullet_schema": {
+    "description": "Schema for each bullet in the playbook",
+    "example": {
+      "id": "impl-0001",
+      "content": "Detailed pattern description with context and rationale (minimum 100 characters)",
+      "code_example": "```python\n# Code demonstrating the pattern\nimport jwt\ntoken = jwt.decode(token, secret, algorithms=['HS256'], verify=True)\n```",
+      "helpful_count": 0,
+      "harmful_count": 0,
+      "created_at": "2025-10-10T00:00:00Z",
+      "last_used_at": "2025-10-10T00:00:00Z",
+      "related_bullets": ["sec-0012", "sec-0034"],
+      "tags": ["python", "jwt", "authentication"],
+      "deprecated": false,
+      "deprecation_reason": null
+    }
+  },
+  "usage_instructions": {
+    "for_actor": "Load relevant bullets via PlaybookManager.get_relevant_bullets(query). Use patterns in implementation. Track used bullet_ids in output.",
+    "for_reflector": "Analyze which bullets were helpful/harmful. Suggest new bullets for missing patterns. Tag bullets based on effectiveness.",
+    "for_curator": "Apply delta operations from Reflector insights. Add new bullets, update counters, deprecate harmful patterns. Run deduplication.",
+    "for_orchestrator": "Load playbook before Actor invocation. Pass relevant bullets as context. Trigger Reflector+Curator after each subtask completion."
+  },
+  "maintenance": {
+    "deduplication_threshold": 0.9,
+    "deprecation_threshold": 3,
+    "sync_to_byterover_threshold": 5,
+    "max_bullets_per_section": 100,
+    "cleanup_schedule": "Monthly review of deprecated bullets with harmful_count >= deprecation_threshold"
+  }
+}

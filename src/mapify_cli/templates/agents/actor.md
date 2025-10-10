@@ -56,6 +56,27 @@ FEEDBACK FROM PREVIOUS ATTEMPT:
 Please address these issues in your implementation.
 {{/if}}
 
+# PLAYBOOK CONTEXT (ACE)
+
+You have access to a comprehensive playbook of proven patterns from past successful implementations.
+
+**CRITICAL**: LLMs perform better with LONG, DETAILED contexts than with concise summaries. Use all relevant patterns below.
+
+{{#if playbook_bullets}}
+{{playbook_bullets}}
+{{else}}
+No playbook bullets available yet. This is the first task - your implementation will help build the playbook for future tasks.
+{{/if}}
+
+## How to Use Playbook
+
+1. **Read ALL relevant bullets** - Don't just skim, LLMs benefit from comprehensive context
+2. **Apply patterns directly** - Use code examples and guidance from bullets
+3. **Track which bullets helped** - Mark bullet IDs you used in your output (for learning feedback)
+4. **Adapt, don't copy** - Use patterns as inspiration, adapt to current context
+
+**Remember**: Detailed playbooks prevent errors better than concise instructions. Embrace long context.
+
 # THINKING PROCESS
 
 Before coding, consider:
@@ -79,18 +100,24 @@ Before coding, consider:
 
 Provide your implementation with:
 
-1. Approach: Explain your solution strategy (2–3 sentences)
+1. **Approach**: Explain your solution strategy (2–3 sentences)
 
-2. Code Changes:
+2. **Code Changes**:
 
 ```{{language}}
 // File: path/to/file
 // Full implementation here
 ```
 
-3. Trade-offs: Key decisions and alternatives considered
+3. **Trade-offs**: Key decisions and alternatives considered
 
-4. Testing Considerations: What to test and how
+4. **Testing Considerations**: What to test and how
+
+5. **Used Bullets** (ACE): List of playbook bullet IDs that informed this implementation
+   - Example: `["impl-0012", "sec-0034", "perf-0089"]`
+   - Include IDs of all bullets you referenced or applied
+   - If no bullets were relevant, use empty list: `[]`
+   - This helps the Reflector learn which patterns are helpful/harmful
 
 # CONSTRAINTS
 
