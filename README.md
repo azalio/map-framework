@@ -1,6 +1,6 @@
 # MAP Framework for Claude Code CLI
 
-A production-ready implementation of the **Modular Agentic Planner (MAP)** framework, inspired by prefrontal cortex functions, designed specifically for Claude Code CLI. This framework orchestrates 6 specialized AI agents to deliver high-quality software development with built-in validation and quality gates.
+A production-ready implementation of the **Modular Agentic Planner (MAP)** framework, inspired by prefrontal cortex functions, designed specifically for Claude Code CLI. This framework orchestrates 8 specialized AI agents to deliver high-quality software development with built-in validation and quality gates.
 
 ## 🧠 What is MAP?
 
@@ -15,7 +15,16 @@ This implementation supercharges the original MAP framework with **MCP (Model Co
 - **Deep Reasoning**: Chain-of-thought problem solving with sequential-thinking
 - **Code Generation**: Advanced algorithm implementation with codex-bridge
 
-The combination of MAP's cognitive architecture + MCP's specialized tools creates an AI development system that continuously improves with use.
+### 🎓 Enhanced with ACE (Agentic Context Engineering)
+
+This implementation also integrates **ACE (Agentic Context Engineering)** based on [arXiv:2510.04618v1](https://arxiv.org/abs/2510.04618v1), providing:
+
+- **Continuous Learning**: Reflector agent extracts lessons from successes and failures
+- **Knowledge Playbook**: Curator agent maintains structured, evolving knowledge base
+- **Semantic Search**: Find relevant patterns by meaning, not just keywords
+- **Delta Updates**: Incremental playbook updates prevent context collapse
+
+The combination of MAP's cognitive architecture + MCP's specialized tools + ACE's learning system creates an AI that improves with every task.
 
 ## 🚀 Quick Start
 
@@ -56,7 +65,7 @@ claude
 
 ## 🏗️ Architecture
 
-The MAP framework consists of 6 specialized agents, each with a specific role:
+The MAP framework consists of 8 specialized agents, each with a specific role:
 
 ```bash
 ┌─────────────────────────────────────────────────────┐
@@ -80,6 +89,11 @@ The MAP framework consists of 6 specialized agents, each with a specific role:
      │  ┌──────────▼──────────────────┐       │
      │  │  PREDICTOR → EVALUATOR      │       │
      │  │  (Impact → Quality Score)   │       │
+     │  └──────────┬──────────────────┘       │
+     │             │                           │
+     │  ┌──────────▼──────────────────┐       │
+     │  │  REFLECTOR → CURATOR        │       │
+     │  │  (Learn → Update Playbook)  │       │
      │  └─────────────────────────────┘       │
      └─────────────────────────────────────────┘
 ```
@@ -132,6 +146,8 @@ The MAP framework now **actively leverages MCP (Model Context Protocol) servers*
 | **Monitor** | claude-reviewer, byterover, sequential-thinking, context7, deepwiki | Professional review, validate library usage |
 | **Predictor** | byterover, codex-bridge, deepwiki, context7 | Analyze impacts, check compatibility |
 | **Evaluator** | sequential-thinking, claude-reviewer, byterover, context7, deepwiki | Compare to industry standards |
+| **Reflector** | sequential-thinking, byterover, context7, deepwiki | Root cause analysis, verify correct approaches |
+| **Curator** | byterover, context7, deepwiki | Check for duplicate patterns, verify API usage |
 | **Orchestrator** | byterover, sequential-thinking, claude-reviewer, context7, deepwiki | Documentation-driven workflow |
 
 ### Benefits of MCP Integration
@@ -141,6 +157,38 @@ The MAP framework now **actively leverages MCP (Model Context Protocol) servers*
 - **🔄 Continuous Learning**: Each workflow improves future performance
 - **⚡ Faster Development**: Reuse proven patterns and solutions
 - **📊 Quality Metrics**: Track review history and quality trends
+
+### ACE Playbook Integration
+
+The MAP framework now includes an **ACE-style knowledge playbook** that:
+
+- **Learns from every task**: Reflector extracts patterns, Curator updates playbook
+- **Semantic search**: Finds relevant patterns by meaning using sentence-transformers
+- **Quality tracking**: Helpful/harmful counters validate patterns over time
+- **Delta updates**: Incremental changes prevent context collapse
+
+#### Semantic Search (Optional)
+
+Install semantic search for meaning-based pattern retrieval:
+
+```bash
+pip install -r requirements-semantic.txt
+```
+
+**Benefits:**
+- 🎯 Search by meaning, not keywords
+- 🧠 Understands synonyms: "JWT signature" ≈ "token verification"
+- ⚡ Auto-deduplication of similar patterns (90% similarity threshold)
+- 💾 Embedding cache for fast retrieval
+
+**Technical Details:**
+- Model: `all-MiniLM-L6-v2` (80MB, 384 dimensions)
+- Speed: ~3000 sentences/second on CPU
+- Cache: `.claude/embeddings_cache/embeddings.pkl`
+
+If not installed, playbook falls back to keyword matching automatically.
+
+See [SEMANTIC_SEARCH_SETUP.md](SEMANTIC_SEARCH_SETUP.md) for setup details and troubleshooting.
 
 ## 🤖 Agent Descriptions
 
@@ -222,6 +270,32 @@ Manages the entire MAP workflow.
 
 **Output:** Status updates and workflow management
 
+### 7. **Reflector** (`reflector`)
+
+Extracts structured lessons from successes and failures.
+
+**Capabilities:**
+
+- Performs root cause analysis using chain-of-thought reasoning
+- Identifies patterns from both successful and failed implementations
+- Creates actionable insights with code examples
+- Tags existing playbook bullets as helpful or harmful
+
+**Output:** JSON with root cause analysis, correct approaches, and playbook updates
+
+### 8. **Curator** (`curator`)
+
+Manages evolving knowledge playbook with incremental updates.
+
+**Capabilities:**
+
+- Applies delta operations (ADD, UPDATE, DEPRECATE) to playbook
+- Prevents duplicate patterns with semantic deduplication
+- Maintains quality scores for each pattern
+- Syncs high-quality patterns to byterover MCP
+
+**Output:** JSON with delta operations applied to playbook
+
 ## 📚 Usage Guide
 
 ### Basic Workflow
@@ -235,6 +309,8 @@ The typical MAP workflow follows this pattern:
    - **Monitor** validates (loop if invalid)
    - **Predictor** analyzes impact
    - **Evaluator** scores quality
+   - **Reflector** extracts lessons learned
+   - **Curator** updates knowledge playbook
    - **Orchestrator** decides to proceed or iterate
 
 ### MCP-Enhanced Workflows
@@ -440,6 +516,21 @@ For complex features, work incrementally:
 /map-feature integrate frontend with backend and add tests
 ```
 
+#### Inspecting the Playbook
+
+Check what MAP has learned:
+
+```bash
+# View playbook statistics
+python -m mapify_cli.playbook_manager stats
+
+# Search for relevant patterns
+python -m mapify_cli.playbook_manager search "JWT authentication"
+
+# View high-quality patterns ready for sync
+python -m mapify_cli.playbook_manager sync
+```
+
 ## 🎯 Best Practices
 
 ### 1. **Clear Requirements**
@@ -521,6 +612,19 @@ Multiple subtasks modifying same file
 ```
 
 **Solution:** TaskDecomposer should sequence dependent tasks. Use orchestrator to reorder if needed.
+
+### Issue: Semantic Search Not Working
+
+```
+Warning: sentence-transformers not installed
+```
+
+**Solution:** Install semantic search dependencies:
+```bash
+pip install -r requirements-semantic.txt
+```
+
+See [SEMANTIC_SEARCH_SETUP.md](SEMANTIC_SEARCH_SETUP.md) for detailed troubleshooting.
 
 ## 📊 Performance Tips
 
@@ -618,12 +722,14 @@ These can be injected when calling agents.
 - **Monitor approval rate:** >80% first-try approval
 - **Evaluator scores:** Average >7.0/10
 - **Iteration count:** <3 per subtask
+- **Playbook growth:** Steady increase in high-quality patterns
 
 ### Productivity Metrics
 
 - **Subtask completion:** 90%+ without escalation
 - **Time to feature:** 40-60% faster than manual
 - **Bug rate:** 70% reduction with Monitor validation
+- **Pattern reuse:** Increasing retrieval of existing solutions
 
 ## 🤝 Contributing
 
@@ -641,6 +747,7 @@ MIT License - See LICENSE file for details.
 ## 🔗 References
 
 - [MAP Paper - Nature Communications](https://github.com/Shanka123/MAP)
+- [ACE Paper - arXiv:2510.04618v1](https://arxiv.org/abs/2510.04618v1)
 - [Claude Code Documentation](https://docs.anthropic.com/en/docs/claude-code)
 - [Original Prefrontal Cortex Research](https://nature.com/articles/s41467-024-54941-4)
 
@@ -651,6 +758,7 @@ MIT License - See LICENSE file for details.
 3. **Learn Patterns:** Study successful workflows and adapt
 4. **Track Metrics:** Monitor quality scores and iteration counts
 5. **Iterate on Prompts:** Refine agent prompts based on results
+6. **Use the Playbook:** Let ACE learn and reuse successful patterns
 
 ---
 
