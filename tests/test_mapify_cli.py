@@ -237,7 +237,7 @@ class TestInitCommand:
 
         # Mock user input for MCP server selection
         mock_select.side_effect = ["claude", "custom"]  # AI choice, then MCP choice
-        mock_select_multiple.return_value = ["byterover", "claude-reviewer"]
+        mock_select_multiple.return_value = ["cipher", "claude-reviewer"]
 
         result = runner.invoke(app, ["init", ".", "--no-git"])
 
@@ -248,7 +248,7 @@ class TestInitCommand:
         assert config_file.exists()
 
         config = json.loads(config_file.read_text())
-        assert "byterover" in config["mcp_servers"]
+        assert "cipher" in config["mcp_servers"]
         assert "claude-reviewer" in config["mcp_servers"]
 
 
@@ -283,7 +283,7 @@ class TestCheckCommand:
 
         # Initialize with MCP servers
         with mock.patch("mapify_cli.select_multiple_with_arrows") as mock_select:
-            mock_select.return_value = ["byterover"]
+            mock_select.return_value = ["cipher"]
             runner.invoke(app, ["init", ".", "--no-git"])
 
         # Check
@@ -356,7 +356,7 @@ class TestAgentCreation:
 
     def test_create_agent_files(self, tmp_path):
         """Test creating agent files."""
-        create_agent_files(tmp_path, ["byterover", "claude-reviewer"])
+        create_agent_files(tmp_path, ["cipher", "claude-reviewer"])
 
         agents_dir = tmp_path / ".claude" / "agents"
         assert agents_dir.exists()
@@ -368,15 +368,16 @@ class TestAgentCreation:
             "monitor.md",
             "predictor.md",
             "evaluator.md",
-            "orchestrator.md"
+            "orchestrator.md",
+            "documentation-reviewer.md"
         ]
 
         for agent in expected_agents:
             assert (agents_dir / agent).exists()
 
     def test_create_agent_files_with_templates(self, tmp_path):
-        """Test creating agent files from templates."""
-        # Create mock templates directory
+        """Test creating agent files - always generates MAP agents."""
+        # Create mock templates directory (though we don't use it anymore)
         templates_dir = tmp_path / "templates" / "agents"
         templates_dir.mkdir(parents=True)
 
@@ -387,8 +388,20 @@ class TestAgentCreation:
         with mock.patch("mapify_cli.get_templates_dir", return_value=tmp_path / "templates"):
             create_agent_files(tmp_path, [])
 
-            # Check template was copied
-            assert (tmp_path / ".claude" / "agents" / "test-agent.md").exists()
+            # Check that MAP agents are generated (not template copied)
+            agents_dir = tmp_path / ".claude" / "agents"
+            expected_agents = [
+                "task-decomposer.md",
+                "actor.md",
+                "monitor.md",
+                "predictor.md",
+                "evaluator.md",
+                "orchestrator.md",
+                "documentation-reviewer.md"
+            ]
+
+            for agent in expected_agents:
+                assert (agents_dir / agent).exists()
 
 
 class TestCommandCreation:

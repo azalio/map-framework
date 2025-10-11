@@ -145,10 +145,11 @@ The MAP framework now **actively leverages MCP (Model Context Protocol) servers*
 | **Actor** | byterover, codex-bridge, context7, deepwiki | Retrieve patterns, generate code, use correct APIs |
 | **Monitor** | claude-reviewer, byterover, sequential-thinking, context7, deepwiki | Professional review, validate library usage |
 | **Predictor** | byterover, codex-bridge, deepwiki, context7 | Analyze impacts, check compatibility |
-| **Evaluator** | sequential-thinking, claude-reviewer, byterover, context7, deepwiki | Compare to industry standards |
-| **Reflector** | sequential-thinking, byterover, context7, deepwiki | Root cause analysis, verify correct approaches |
-| **Curator** | byterover, context7, deepwiki | Check for duplicate patterns, verify API usage |
-| **Orchestrator** | byterover, sequential-thinking, claude-reviewer, context7, deepwiki | Documentation-driven workflow |
+| **Evaluator** | sequential-thinking, claude-reviewer, cipher, context7, deepwiki | Compare to industry standards |
+| **Reflector** | sequential-thinking, cipher, context7, deepwiki | Root cause analysis, verify correct approaches |
+| **Curator** | cipher, context7, deepwiki | Check for duplicate patterns, verify API usage |
+| **Orchestrator** | cipher, sequential-thinking, claude-reviewer, context7, deepwiki | Documentation-driven workflow |
+| **DocumentationReviewer** | cipher, context7, deepwiki | Verify external dependencies, check CRDs, validate integrations |
 
 ### Benefits of MCP Integration
 
@@ -295,6 +296,20 @@ Manages evolving knowledge playbook with incremental updates.
 - Syncs high-quality patterns to byterover MCP
 
 **Output:** JSON with delta operations applied to playbook
+
+### 9. **DocumentationReviewer** (`documentation-reviewer`)
+
+Reviews technical documentation for completeness, external dependencies, and integration requirements.
+
+**Capabilities:**
+
+- Automatically fetches and verifies all external URLs mentioned in documentation
+- Detects CRDs (Custom Resource Definitions) and installation requirements
+- Identifies integration adapters and configuration needs
+- Validates consistency between architecture documents and implementation specs
+- Checks for missing external dependencies before implementation
+
+**Output:** JSON with external dependencies checked, missing requirements, and validation score
 
 ## 📚 Usage Guide
 

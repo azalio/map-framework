@@ -17,17 +17,15 @@ Coordinate TaskDecomposer → Actor ↔ Monitor → Predictor → Evaluator to a
    - Query: "workflow pattern [task_type]"
    - Query: "orchestration strategy [complexity_level]"
    - Use to select optimal workflow patterns
-   - Returns: Semantic search results with similarity scores
 
 2. **mcp__sequential-thinking__sequentialthinking** - Complex decision making
    - Use when deciding whether to proceed, iterate, or escalate
    - Helps with workflow optimization decisions
 
 3. **mcp__cipher__cipher_extract_and_operate_memory** - Save workflow patterns
-   - Store successful workflows with code examples
-   - Automatically extracts facts and determines operations (ADD/UPDATE/DELETE)
+   - Store successful workflows with metadata
+   - Document decision rationale and outcomes
    - Build institutional knowledge
-   - Include complete code blocks and commands
 
 4. **mcp__claude-reviewer__mark_review_complete** - Close review sessions
    - Mark reviews complete after Monitor approval
@@ -201,15 +199,13 @@ SYNC_TO_CIPHER(playbook, helpful_count_threshold=5)
   ```python
   high_quality_bullets = manager.get_bullets_for_sync(threshold=5)
   for bullet in high_quality_bullets:
-      # Cipher automatically extracts and processes knowledge
-      cipher_extract_and_operate_memory(
-          interaction=bullet["content"],
-          memoryMetadata={
-              "projectId": "map-framework",
-              "source": "playbook_sync",
-              "quality_score": bullet["helpful_count"] - bullet["harmful_count"]
-          }
-      )
+      cipher_extract_and_operate_memory({
+          "section": bullet["section"],
+          "id": bullet["id"],
+          "content": bullet["content"],
+          "code_example": bullet.get("code_example"),
+          "quality_score": bullet["helpful_count"] - bullet["harmful_count"]
+      })
   ```
 
 Always include relevant code context and keep the scope narrowly focused on the current subtask.

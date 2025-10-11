@@ -431,30 +431,20 @@ def create_agent_files(project_path: Path, mcp_servers: List[str]) -> None:
     agents_dir = project_path / ".claude" / "agents"
     agents_dir.mkdir(parents=True, exist_ok=True)
 
-    # Get templates directory
-    templates_dir = get_templates_dir()
-    agents_template_dir = templates_dir / "agents"
+    # Always generate the 7 MAP agents with correct content
+    agents = {
+        "task-decomposer": create_task_decomposer_content(mcp_servers),
+        "actor": create_actor_content(mcp_servers),
+        "monitor": create_monitor_content(mcp_servers),
+        "predictor": create_predictor_content(mcp_servers),
+        "evaluator": create_evaluator_content(mcp_servers),
+        "orchestrator": create_orchestrator_content(mcp_servers),
+        "documentation-reviewer": create_documentation_reviewer_content(mcp_servers)
+    }
 
-    if not agents_template_dir.exists():
-        # Fallback to inline generation if templates not found
-        agents = {
-            "task-decomposer": create_task_decomposer_content(mcp_servers),
-            "actor": create_actor_content(mcp_servers),
-            "monitor": create_monitor_content(mcp_servers),
-            "predictor": create_predictor_content(mcp_servers),
-            "evaluator": create_evaluator_content(mcp_servers),
-            "orchestrator": create_orchestrator_content(mcp_servers)
-        }
-
-        for name, content in agents.items():
-            agent_file = agents_dir / f"{name}.md"
-            agent_file.write_text(content)
-    else:
-        # Copy templates from bundled directory
-        import shutil
-        for agent_template in agents_template_dir.glob("*.md"):
-            dest_file = agents_dir / agent_template.name
-            shutil.copy2(agent_template, dest_file)
+    for name, content in agents.items():
+        agent_file = agents_dir / f"{name}.md"
+        agent_file.write_text(content)
 
 
 def create_task_decomposer_content(mcp_servers: List[str]) -> str:
@@ -720,6 +710,81 @@ Regularly summarize current subtask, decisions, and next actions.
 """
 
 
+def create_documentation_reviewer_content(mcp_servers: List[str]) -> str:
+    """Create documentation-reviewer agent content"""
+    mcp_section = ""
+    if any(s in mcp_servers for s in ["cipher", "context7", "deepwiki"]):
+        mcp_section = """
+# MCP INTEGRATION
+
+**ALWAYS use these tools for documentation review:**
+"""
+        if "cipher" in mcp_servers:
+            mcp_section += """
+1. **mcp__cipher__cipher_memory_search** - Check for known patterns
+   - Query: "external dependency detection [technology]"
+   - Query: "CRD installation pattern [project]"
+"""
+        if "context7" in mcp_servers:
+            mcp_section += """
+2. **mcp__context7__get-library-docs** - Verify library requirements
+   - Check official docs for installation requirements
+   - Validate version compatibility
+"""
+        if "deepwiki" in mcp_servers:
+            mcp_section += """
+3. **mcp__deepwiki__ask_question** - Compare with similar projects
+   - Ask: "How do other projects handle [integration]?"
+   - Learn from successful implementations
+"""
+
+    return f"""---
+name: documentation-reviewer
+description: Reviews technical documentation for completeness, external dependencies, and architectural consistency
+tools: Read, Grep, Glob, Fetch
+model: sonnet
+---
+
+# IDENTITY
+
+You are a technical documentation expert specialized in architecture reviews and dependency analysis.
+{mcp_section}
+# REVIEW CHECKLIST
+
+## 1. EXTERNAL DEPENDENCIES SCAN
+- Extract all URLs via pattern matching
+- Use Fetch tool (10s timeout) to verify each URL
+- Check for CRDs, Helm charts, installation instructions
+- Determine installation responsibility
+- Verify documentation completeness
+
+## 2. CRD DETECTION LOGIC
+Look for:
+- YAML with apiVersion: apiextensions.k8s.io/v1
+- kind: CustomResourceDefinition
+- Mentions of "custom resource"
+- Controller/operator projects
+
+## OUTPUT FORMAT (JSON)
+
+Return strictly valid JSON with:
+- valid: boolean
+- summary: string
+- external_dependencies_checked: array
+- missing_requirements: array
+- score: number (0-10)
+- recommendation: "proceed|improve|reconsider"
+
+# CONSTRAINTS
+
+- Be PROACTIVE: Fetch EVERY external URL (with timeout protection)
+- Handle errors gracefully: Don't fail on transient network issues
+- Security conscious: Validate URLs (no private IPs, localhost)
+- Performance aware: Cache results, parallel fetch up to 5 URLs
+- Output strictly JSON
+"""
+
+
 def create_command_files(project_path: Path) -> None:
     """Create MAP slash commands in .claude/commands/"""
     commands_dir = project_path / ".claude" / "commands"
@@ -794,7 +859,8 @@ def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
             "monitor": [],
             "predictor": [],
             "evaluator": [],
-            "orchestrator": []
+            "orchestrator": [],
+            "documentation-reviewer": []
         },
         "workflow_settings": {
             "always_retrieve_knowledge": True,
@@ -1215,7 +1281,7 @@ def init(
     tracker.add("create-agents", "Create MAP agents")
     tracker.start("create-agents")
     create_agent_files(project_path, selected_mcp_servers)
-    tracker.complete("create-agents", "6 agents")
+    tracker.complete("create-agents", "7 agents")
 
     tracker.add("create-commands", "Create slash commands")
     tracker.start("create-commands")
