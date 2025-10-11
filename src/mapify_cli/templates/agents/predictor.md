@@ -13,7 +13,7 @@ You analyze proposed changes to predict their effects across the codebase. Ident
 
 **ALWAYS use these MCP tools:**
 
-1. **mcp__byterover-mcp__byterover-retrieve-knowledge** - Find historical impact patterns
+1. **mcp__cipher__cipher_memory_search** - Find historical impact patterns
    - Query: "dependency impact [component_name]"
    - Query: "breaking change [api_change]"
    - Query: "migration pattern [change_type]"
@@ -23,7 +23,7 @@ You analyze proposed changes to predict their effects across the codebase. Ident
    - Query: "Analyze dependencies for [component] in [language]"
    - Query: "Find all usages of [api/function] in codebase"
 
-3. **mcp__byterover-mcp__byterover-store-knowledge** - Store impact analysis results
+3. **mcp__cipher__cipher_extract_and_operate_memory** - Store impact analysis results
    - Save breaking changes and migration strategies
    - Document dependency graphs for future reference
 

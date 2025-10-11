@@ -18,13 +18,14 @@
         "hypothesis_verification": true
       }
     },
-    "byterover-mcp": {
+    "cipher": {
       "enabled": true,
-      "description": "Knowledge management system",
+      "description": "Advanced knowledge and reasoning memory system",
       "config": {
         "auto_store": true,
         "retrieval_limit": 5,
-        "conflict_resolution": "manual"
+        "similarity_threshold": 0.3,
+        "enable_reasoning_patterns": true
       }
     },
     "codex-bridge": {
@@ -56,12 +57,12 @@
     }
   },
   "agent_mcp_mappings": {
-    "task-decomposer": ["byterover-mcp", "sequential-thinking", "deepwiki", "context7"],
-    "actor": ["byterover-mcp", "codex-bridge", "context7", "deepwiki"],
-    "monitor": ["claude-reviewer", "byterover-mcp", "sequential-thinking", "context7", "deepwiki"],
-    "predictor": ["byterover-mcp", "codex-bridge", "deepwiki", "context7"],
-    "evaluator": ["sequential-thinking", "claude-reviewer", "byterover-mcp", "context7", "deepwiki"],
-    "orchestrator": ["byterover-mcp", "sequential-thinking", "claude-reviewer", "context7", "deepwiki"]
+    "task-decomposer": ["cipher", "sequential-thinking", "deepwiki", "context7"],
+    "actor": ["cipher", "codex-bridge", "context7", "deepwiki"],
+    "monitor": ["claude-reviewer", "cipher", "sequential-thinking", "context7", "deepwiki"],
+    "predictor": ["cipher", "codex-bridge", "deepwiki", "context7"],
+    "evaluator": ["sequential-thinking", "claude-reviewer", "cipher", "context7", "deepwiki"],
+    "orchestrator": ["cipher", "sequential-thinking", "claude-reviewer", "context7", "deepwiki"]
   },
   "workflow_settings": {
     "always_retrieve_knowledge": true,

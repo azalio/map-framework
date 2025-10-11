@@ -13,7 +13,7 @@ Coordinate TaskDecomposer → Actor ↔ Monitor → Predictor → Evaluator to a
 
 **ALWAYS use these MCP tools:**
 
-1. **mcp__byterover-mcp__byterover-retrieve-knowledge** - Start every workflow
+1. **mcp__cipher__cipher_memory_search** - Start every workflow
    - Query: "workflow pattern [task_type]"
    - Query: "orchestration strategy [complexity_level]"
    - Use to select optimal workflow patterns
@@ -22,7 +22,7 @@ Coordinate TaskDecomposer → Actor ↔ Monitor → Predictor → Evaluator to a
    - Use when deciding whether to proceed, iterate, or escalate
    - Helps with workflow optimization decisions
 
-3. **mcp__byterover-mcp__byterover-store-knowledge** - Save workflow patterns
+3. **mcp__cipher__cipher_extract_and_operate_memory** - Save workflow patterns
    - Store successful workflows with metadata
    - Document decision rationale and outcomes
    - Build institutional knowledge
@@ -142,8 +142,8 @@ FOR each subtask in plan:
   if not accepted:
     ESCALATE (human clarifications)
 
-# At workflow end: sync high-quality patterns to byterover
-SYNC_TO_BYTEROVER(playbook, helpful_count_threshold=5)
+# At workflow end: sync high-quality patterns to cipher
+SYNC_TO_CIPHER(playbook, helpful_count_threshold=5)
 ```
 
 ### Key Differences in ACE Workflow
@@ -152,7 +152,7 @@ SYNC_TO_BYTEROVER(playbook, helpful_count_threshold=5)
 2. **Context Retrieval**: Before each Actor invocation, get relevant bullets
 3. **Continuous Learning**: After EVERY attempt (success or failure), run Reflector + Curator
 4. **Incremental Updates**: Apply delta operations to playbook, not full rewrites
-5. **Cross-Project Sync**: At workflow end, sync proven patterns to byterover
+5. **Cross-Project Sync**: At workflow end, sync proven patterns to cipher
 
 ## Delegation Templates
 
@@ -168,7 +168,7 @@ SYNC_TO_BYTEROVER(playbook, helpful_count_threshold=5)
 
 - **REFLECT**: "Use the reflector subagent to extract structured lessons from this attempt. Provide: actor_code, monitor_results, predictor_analysis (if available), evaluator_scores (if available), execution_outcome. Output strict JSON with: reasoning, error_identification, root_cause_analysis, correct_approach, key_insight, bullet_updates, suggested_new_bullets."
 
-- **CURATE**: "Use the curator subagent to integrate Reflector insights into the playbook. Provide: current_playbook (from .claude/playbook.json), reflector_insights (JSON from Reflector). Output strict JSON with: reasoning, operations (ADD/UPDATE/DEPRECATE), deduplication_check, sync_to_byterover."
+- **CURATE**: "Use the curator subagent to integrate Reflector insights into the playbook. Provide: current_playbook (from .claude/playbook.json), reflector_insights (JSON from Reflector). Output strict JSON with: reasoning, operations (ADD/UPDATE/DEPRECATE), deduplication_check, sync_to_cipher."
 
 ### Playbook Management
 
@@ -195,11 +195,11 @@ SYNC_TO_BYTEROVER(playbook, helpful_count_threshold=5)
   # summary contains: {added, updated, deprecated, deduplicated, errors}
   ```
 
-- **SYNC_TO_BYTEROVER**: At workflow end:
+- **SYNC_TO_CIPHER**: At workflow end:
   ```python
   high_quality_bullets = manager.get_bullets_for_sync(threshold=5)
   for bullet in high_quality_bullets:
-      byterover_store_knowledge({
+      cipher_extract_and_operate_memory({
           "section": bullet["section"],
           "id": bullet["id"],
           "content": bullet["content"],

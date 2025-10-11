@@ -83,14 +83,14 @@ AI_CHOICES = {
 
 MCP_SERVER_CHOICES = {
     "all": "All available MCP servers",
-    "essential": "Essential (byterover, claude-reviewer, sequential-thinking)",
+    "essential": "Essential (cipher, claude-reviewer, sequential-thinking)",
     "docs": "Documentation (context7, deepwiki)",
     "custom": "Select individually",
     "none": "Skip MCP setup"
 }
 
 INDIVIDUAL_MCP_SERVERS = {
-    "byterover": "Knowledge management system",
+    "cipher": "Knowledge management system",
     "claude-reviewer": "Professional code review",
     "sequential-thinking": "Chain-of-thought reasoning",
     "codex-bridge": "AI code generation",
@@ -460,15 +460,15 @@ def create_agent_files(project_path: Path, mcp_servers: List[str]) -> None:
 def create_task_decomposer_content(mcp_servers: List[str]) -> str:
     """Create task-decomposer agent content"""
     mcp_section = ""
-    if any(s in mcp_servers for s in ["byterover", "sequential-thinking", "deepwiki", "context7"]):
+    if any(s in mcp_servers for s in ["cipher", "sequential-thinking", "deepwiki", "context7"]):
         mcp_section = """
 ## MCP Integration
 
 **ALWAYS use these MCP tools:**
 """
-        if "byterover" in mcp_servers:
+        if "cipher" in mcp_servers:
             mcp_section += """
-1. **mcp__byterover-mcp__byterover-retrieve-knowledge** - Search for similar features/patterns
+1. **mcp__cipher__cipher_memory_search** - Search for similar features/patterns
    - Query: "feature implementation [feature_name]"
    - Query: "task decomposition [similar_goal]"
 """
@@ -515,15 +515,15 @@ Return a valid JSON document with subtasks, dependencies, and acceptance criteri
 def create_actor_content(mcp_servers: List[str]) -> str:
     """Create actor agent content"""
     mcp_section = ""
-    if any(s in mcp_servers for s in ["byterover", "codex-bridge", "context7", "deepwiki"]):
+    if any(s in mcp_servers for s in ["cipher", "codex-bridge", "context7", "deepwiki"]):
         mcp_section = """
 # MCP INTEGRATION
 
 **ALWAYS use these MCP tools:**
 """
-        if "byterover" in mcp_servers:
+        if "cipher" in mcp_servers:
             mcp_section += """
-1. **mcp__byterover-mcp__byterover-retrieve-knowledge** - Search for code patterns
+1. **mcp__cipher__cipher_memory_search** - Search for code patterns
    - Query: "implementation pattern [feature_type]"
    - Store successful implementations after validation
 """
@@ -603,15 +603,15 @@ Return strictly valid JSON with validation results and specific issues.
 def create_predictor_content(mcp_servers: List[str]) -> str:
     """Create predictor agent content"""
     mcp_section = ""
-    if any(s in mcp_servers for s in ["byterover", "codex-bridge", "deepwiki", "context7"]):
+    if any(s in mcp_servers for s in ["cipher", "codex-bridge", "deepwiki", "context7"]):
         mcp_section = """
 ## MCP Integration
 
 **ALWAYS use these MCP tools:**
 """
-        if "byterover" in mcp_servers:
+        if "cipher" in mcp_servers:
             mcp_section += """
-1. **mcp__byterover-mcp__byterover-retrieve-knowledge** - Find similar impact patterns
+1. **mcp__cipher__cipher_memory_search** - Find similar impact patterns
    - Query: "impact analysis [change_type]"
    - Learn from past breaking changes
 """
@@ -825,7 +825,7 @@ def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
                 "hypothesis_verification": True
             }
         },
-        "byterover": {
+        "cipher": {
             "enabled": True,
             "description": "Knowledge management system",
             "config": {
@@ -869,9 +869,9 @@ def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
             config["mcp_servers"][server] = server_configs[server]
 
     # Update agent mappings based on selected servers
-    if "byterover" in mcp_servers:
+    if "cipher" in mcp_servers:
         for agent in config["agent_mcp_mappings"]:
-            config["agent_mcp_mappings"][agent].append("byterover")
+            config["agent_mcp_mappings"][agent].append("cipher")
 
     if "sequential-thinking" in mcp_servers:
         for agent in ["task-decomposer", "monitor", "evaluator", "orchestrator"]:
@@ -1186,7 +1186,7 @@ def init(
     if mcp == "all":
         selected_mcp_servers = list(INDIVIDUAL_MCP_SERVERS.keys())
     elif mcp == "essential":
-        selected_mcp_servers = ["byterover", "claude-reviewer", "sequential-thinking"]
+        selected_mcp_servers = ["cipher", "claude-reviewer", "sequential-thinking"]
     elif mcp == "docs":
         selected_mcp_servers = ["context7", "deepwiki"]
     elif mcp == "none":
@@ -1201,7 +1201,7 @@ def init(
         if mcp_choice == "all":
             selected_mcp_servers = list(INDIVIDUAL_MCP_SERVERS.keys())
         elif mcp_choice == "essential":
-            selected_mcp_servers = ["byterover", "claude-reviewer", "sequential-thinking"]
+            selected_mcp_servers = ["cipher", "claude-reviewer", "sequential-thinking"]
         elif mcp_choice == "docs":
             selected_mcp_servers = ["context7", "deepwiki"]
         elif mcp_choice == "custom":

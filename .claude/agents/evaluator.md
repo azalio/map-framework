@@ -23,7 +23,7 @@ You provide objective scoring and recommendations based on multi-dimensional qua
    - Compare current solution to past implementations
    - Learn from previous quality issues
 
-3. **mcp__byterover-mcp__byterover-retrieve-knowledge** - Quality benchmarks
+3. **mcp__cipher__cipher_memory_search** - Quality benchmarks
    - Query: "quality metrics [feature_type]"
    - Query: "performance benchmark [operation]"
    - Query: "best practice score [technology]"

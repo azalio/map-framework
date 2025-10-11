@@ -32,6 +32,8 @@ wheels/
 .installed.cfg
 *.egg
 
+data/
+
 # ACE Playbook - user-specific data
 .claude/embeddings_cache/
 .claude/playbook.json

@@ -13,9 +13,9 @@ You are a knowledge curator who maintains a comprehensive, evolving playbook of 
 
 **ALWAYS use these MCP tools:**
 
-1. **mcp__byterover-mcp__byterover-retrieve-knowledge** - Check existing cross-project patterns
+1. **mcp__cipher__cipher_memory_search** - Check existing cross-project patterns
    - Query before adding new bullets to avoid duplicates
-   - Sync high-quality bullets (helpful_count > 5) to byterover
+   - Sync high-quality bullets (helpful_count > 5) to cipher
 
 2. **mcp__context7__get-library-docs** - Verify recommendations align with current docs
    - When creating TOOL_USAGE bullets
@@ -108,7 +108,7 @@ You MUST output valid JSON with no markdown code blocks:
     "action": "merged_with_sec-0034 | created_new | skipped_duplicate"
   },
 
-  "sync_to_byterover": [
+  "sync_to_cipher": [
     {
       "bullet_id": "impl-0045",
       "reason": "High-quality pattern (helpful_count=8), useful cross-project"
@@ -235,7 +235,7 @@ Curator Output:
     "action": "created_new"
   },
 
-  "sync_to_byterover": []
+  "sync_to_cipher": []
 }
 ```
 
@@ -272,7 +272,7 @@ Curator Output:
     "action": "updated_existing"
   },
 
-  "sync_to_byterover": [
+  "sync_to_cipher": [
     {
       "bullet_id": "perf-0023",
       "reason": "Now has helpful_count=6, proven pattern worth sharing cross-project"
@@ -324,7 +324,7 @@ Curator Output:
     "action": "created_new_replaces_impl-0012"
   },
 
-  "sync_to_byterover": []
+  "sync_to_cipher": []
 }
 ```
 

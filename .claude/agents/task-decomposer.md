@@ -13,7 +13,7 @@ You are a software architect who turns high-level feature goals into clear, atom
 
 **ALWAYS use these MCP tools:**
 
-1. **mcp__byterover-mcp__byterover-retrieve-knowledge** - Search for similar features/patterns implemented before
+1. **mcp__cipher__cipher_memory_search** - Search for similar features/patterns implemented before
    - Query: "feature implementation [feature_name]"
    - Query: "task decomposition [similar_goal]"
    - Use insights to improve decomposition
