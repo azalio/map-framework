@@ -131,6 +131,92 @@ For each integration mentioned:
 - [ ] API compatibility versions specified?
 - [ ] Error handling and retry logic mentioned?
 
+## 6. CONSISTENCY WITH SOURCE OF TRUTH (CRITICAL)
+
+**ALWAYS verify decomposition documents against tech-design/architecture:**
+
+### Source of Truth Discovery
+
+- [ ] **Find source documents** via Glob:
+  * `**/tech-design.md`, `**/architecture.md`, `**/design-doc.md`
+  * Look in parent directories: `docs/`, `docs/private/`, project root
+  * Check git history for references to design docs
+
+- [ ] **Read source documents** FIRST before reviewing decomposition
+- [ ] **Extract key concepts** from source:
+  * API structures (`spec`, `status` fields)
+  * Lifecycle states (enabled/disabled, install/uninstall logic)
+  * Component responsibilities
+  * Integration patterns
+  * Data flows and ownership
+
+### Consistency Validation
+
+For each section in target document, verify against source:
+
+- [ ] **API fields match exactly**:
+  * All `spec` fields from source present in decomposition?
+  * All `status` fields from source documented?
+  * Field types and defaults consistent?
+  * Example: `engines: {}` (empty map) vs `engines.kyverno.presets: []` (empty array) - different semantics!
+
+- [ ] **Lifecycle logic matches**:
+  * Installation triggers same as in source?
+  * Uninstallation logic correct? (Check: Does `enabled: false` delete all? Does `engines: {}` delete ClusterPolicySet only?)
+  * State transitions consistent?
+  * Reconciliation behavior matches?
+
+- [ ] **Component responsibilities match**:
+  * Who installs what? (Component Manager? User? Helm chart?)
+  * Who owns CRDs? (Controller? External project?)
+  * Who triggers actions? (Reconciler? Webhook?)
+
+- [ ] **Integration patterns match**:
+  * Data flow direction same as source?
+  * Adapter requirements consistent?
+  * API versions aligned?
+
+### Red Flags (Auto-fail if found)
+
+❌ **Critical inconsistencies:**
+- Target document contradicts source on lifecycle logic
+- Missing critical spec/status fields from source
+- Wrong component ownership (e.g., "User installs" when source says "Component Manager installs")
+- Lifecycle levels confused (e.g., using `presets: []` when should be `engines: {}`)
+
+❌ **Common mistakes to catch:**
+- Generalizing from DOD scenarios instead of using tech-design definitions
+- Mixing partial state (`presets: []` for one engine) with global state (`engines: {}` for all)
+- Missing "two-level" patterns (e.g., enabled: false vs engines: {})
+- Not reading tech-design before writing critical sections
+
+### What to Output
+
+```json
+"consistency_check": {
+  "source_document": "docs/tech-design.md",
+  "source_read": true,
+  "sections_verified": [
+    {
+      "section": "Uninstallation",
+      "source_location": "tech-design.md:145-160",
+      "target_location": "decomposition/policy-engines.md:244-280",
+      "consistent": false,
+      "issues": [
+        {
+          "type": "lifecycle_logic_mismatch",
+          "severity": "critical",
+          "description": "Target uses 'presets: []' but source defines 'engines: {}' for ClusterPolicySet deletion",
+          "source_quote": "engines: {} (empty map) → удаляет только ClusterPolicySet",
+          "target_quote": "engines.kyverno.presets: [] → ClusterPolicySet deleted",
+          "fix": "Use 'engines: {}' as defined in tech-design.md"
+        }
+      ]
+    }
+  ],
+  "overall_consistency": "inconsistent|partial|consistent"
+}
+
 # OUTPUT FORMAT (JSON)
 
 Return strictly valid JSON:
@@ -175,6 +261,18 @@ Return strictly valid JSON:
     "adapters_specified": true,
     "error_handling_mentioned": false
   },
+  "consistency_check": {
+    "source_document": "docs/tech-design.md",
+    "source_read": true,
+    "sections_verified": [
+      {
+        "section": "API Structure",
+        "consistent": true,
+        "issues": []
+      }
+    ],
+    "overall_consistency": "consistent|partial|inconsistent"
+  },
   "score": 7.5,
   "recommendation": "proceed|improve|reconsider"
 }
@@ -194,6 +292,9 @@ Return strictly valid JSON:
   * ≥ 2 high severity issues
   * External dependencies cannot be verified and are critical
   * CRD installation completely undefined
+  * **Consistency check fails** (overall_consistency: "inconsistent")
+  * **Source document not read** before reviewing decomposition
+  * **Critical lifecycle logic mismatch** with source
 
 - Return `valid=true` with issues if:
   * Only medium/low severity issues
