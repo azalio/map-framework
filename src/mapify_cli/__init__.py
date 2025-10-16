@@ -1022,7 +1022,10 @@ def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
             "predictor": [],
             "evaluator": [],
             "orchestrator": [],
-            "documentation-reviewer": []
+            "reflector": [],
+            "curator": [],
+            "documentation-reviewer": [],
+            "test-generator": []
         },
         "workflow_settings": {
             "always_retrieve_knowledge": True,
@@ -1102,7 +1105,7 @@ def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
             config["agent_mcp_mappings"][agent].append("cipher")
 
     if "sequential-thinking" in mcp_servers:
-        for agent in ["task-decomposer", "monitor", "evaluator", "orchestrator"]:
+        for agent in ["task-decomposer", "monitor", "evaluator", "orchestrator", "reflector"]:
             if agent in config["agent_mcp_mappings"]:
                 config["agent_mcp_mappings"][agent].append("sequential-thinking")
 
@@ -1112,7 +1115,7 @@ def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
                 config["agent_mcp_mappings"][agent].append("claude-reviewer")
 
     if "codex-bridge" in mcp_servers:
-        for agent in ["actor", "predictor"]:
+        for agent in ["actor", "predictor", "test-generator"]:
             if agent in config["agent_mcp_mappings"]:
                 config["agent_mcp_mappings"][agent].append("codex-bridge")
 
