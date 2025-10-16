@@ -354,13 +354,43 @@ These template variables are used by Orchestrator for context injection.
 See .claude/agents/README.md for details.
 ```
 
-#### 🔄 Auto-Store Knowledge (Planned)
+#### 🔄 Auto-Store Knowledge (Active)
 
 **PostToolUse hook** that automatically saves successful patterns to cipher MCP after modifications.
 
-#### 🧠 Context Enrichment (Planned)
+**How it works:**
+- Triggers after successful Edit/Write on code files (.py, .js, .go, etc.)
+- Extracts pattern with file path, language, and content
+- Stores in cipher automatically - no manual calls needed!
+
+#### 🧠 Context Enrichment (Active)
 
 **UserPromptSubmit hook** that enriches user prompts with relevant patterns from cipher before processing.
+
+**How it works:**
+- Extracts keywords from your prompt (implement, fix, refactor, etc.)
+- Searches cipher for top 3 relevant patterns
+- Enriches prompt with found knowledge before Claude processes it
+- Automatic knowledge reuse without manual searches
+
+#### 📊 Session Initialization (Active)
+
+**SessionStart hook** that loads ACE playbook bullets at the beginning of every session.
+
+**What it does:**
+- Searches cipher for high-quality patterns (top 10)
+- Creates `.claude/sessions/current_context.txt` with project info
+- Lists available agents and MCP servers
+- Provides welcome message with available commands
+
+#### 📈 Metrics Tracking (Active)
+
+**SubagentStop hook** that tracks MAP agent performance metrics.
+
+**What it tracks:**
+- Execution time, success rate, quality scores
+- Stores in `.claude/metrics/agent_metrics.jsonl`
+- Saves to cipher for long-term trend analysis
 
 ### Configuration
 

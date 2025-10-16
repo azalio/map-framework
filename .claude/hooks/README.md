@@ -52,28 +52,34 @@ See .claude/agents/README.md for details.
 # Or use Claude Code UI to approve the blocked operation
 ```
 
-### 2. `auto-store-knowledge.sh` (P1 - Planned)
+### 2. `auto-store-knowledge.sh` (P1 - Important)
 
 **Type**: PostToolUse (Edit/Write)
 **Purpose**: Automatically store successful patterns in cipher MCP after file modifications
-**Status**: 🔄 Planned
+**Status**: ✅ Active
 
-**Will trigger after:**
-- Successful code changes
-- Documentation updates
-- Configuration modifications
+**Triggers after:**
+- Successful code changes (.py, .js, .go, .rs, etc.)
+- Documentation updates (.md)
+- Script implementations (.sh, .bash)
 
 **What it does:**
-- Analyzes the change type and context
-- Extracts pattern from modification
+- Analyzes the change type and context (language, file path)
+- Creates structured interaction text with code and metadata
 - Calls `mcp__cipher__cipher_extract_and_operate_memory` automatically
+- Stores in cipher with metadata: `{"source":"auto-store-hook","environment":"dev"}`
 - No manual knowledge storage needed!
 
-### 3. `enrich-context.sh` (P1 - Planned)
+**Example output:**
+```
+✅ Pattern auto-stored in cipher: src/mapify_cli/__init__.py
+```
+
+### 3. `enrich-context.sh` (P1 - Important)
 
 **Type**: UserPromptSubmit
 **Purpose**: Enrich user prompts with relevant patterns from cipher before processing
-**Status**: 🔄 Planned
+**Status**: ✅ Active
 
 **How it works:**
 ```bash
@@ -87,22 +93,80 @@ Enriched prompt: "implement JWT authentication
 Orchestrator processes enriched prompt
 ```
 
+**How it works:**
+- Extracts keywords from user prompt (implement, fix, refactor, etc.)
+- Searches cipher for top 3 relevant patterns (similarity ≥ 0.4)
+- Enriches prompt with found knowledge
+- Returns enriched prompt to Claude Code
+
 **Benefits:**
 - Automatic knowledge reuse
 - Consistent patterns across features
 - No need to manually search cipher
+- Context-aware suggestions
 
-### 4. `session-init.sh` (P2 - Future)
+### 4. `session-init.sh` (P2 - Nice-to-have)
 
 **Type**: SessionStart
 **Purpose**: Load ACE playbook bullets at session start
-**Status**: 🔮 Future
+**Status**: ✅ Active
 
-### 5. `track-metrics.sh` (P2 - Future)
+**Triggers:**
+- At the beginning of every Claude Code session
+- Automatically detects MAP Framework projects
+
+**What it does:**
+- Searches cipher for high-quality patterns (top 10, similarity ≥ 0.5)
+- Creates session context file: `.claude/sessions/current_context.txt`
+- Lists available MAP agents and MCP servers
+- Loads playbook bullets from previous sessions
+- Logs session start to `.claude/sessions/session.log`
+
+**Example output:**
+```
+✅ MAP Framework session initialized
+
+Session ID: abc-123
+Available commands:
+  /map-feature - Implement new features
+  /map-debug - Debug issues
+  /map-refactor - Refactor code
+  /map-review - Review changes
+
+Context loaded: 10 playbook patterns
+Session context: .claude/sessions/current_context.txt
+```
+
+### 5. `track-metrics.sh` (P2 - Nice-to-have)
 
 **Type**: SubagentStop
 **Purpose**: Track MAP agent performance metrics
-**Status**: 🔮 Future
+**Status**: ✅ Active
+
+**Triggers:**
+- After each MAP agent completes execution
+- Monitors: actor, monitor, predictor, evaluator, orchestrator, task-decomposer, reflector, curator
+
+**What it tracks:**
+- Execution time (seconds)
+- Success/failure status
+- Quality scores (extracted from agent output)
+- Success rate (% successful over total runs)
+
+**Output files:**
+- `.claude/metrics/agent_metrics.jsonl` - JSON Lines format for analysis
+- `.claude/metrics/summary.txt` - Human-readable summary
+
+**Example output:**
+```
+📊 Metrics tracked: actor
+- Execution: 42s
+- Success: true
+- Quality: 8.5
+- Success rate: 85.7% (12/14 runs)
+```
+
+**Stores in cipher** for long-term analysis and trend identification.
 
 ## 📝 Configuration
 
