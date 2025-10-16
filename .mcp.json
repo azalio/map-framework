@@ -1,0 +1,43 @@
+{
+  "$schema": "https://cdn.jsdelivr.net/npm/@anthropic-ai/claude-code@latest/schemas/mcp.schema.json",
+  "description": "MCP servers configuration for MAP Framework",
+  "mcpServers": {
+    "cipher": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-memory"],
+      "description": "Knowledge and reasoning memory for ACE learning system",
+      "required": true
+    },
+    "claude-reviewer": {
+      "command": "npx",
+      "args": ["-y", "@anthropic-ai/claude-reviewer"],
+      "description": "Professional code review with security analysis",
+      "required": true
+    },
+    "sequential-thinking": {
+      "command": "npx",
+      "args": ["-y", "@anthropic-ai/sequential-thinking"],
+      "description": "Chain-of-thought reasoning for complex problems",
+      "required": true
+    },
+    "codex-bridge": {
+      "command": "npx",
+      "args": ["-y", "@anthropic-ai/codex-bridge"],
+      "description": "AI code generation (requires 10-minute timeout)",
+      "required": false,
+      "timeout": 600000
+    },
+    "context7": {
+      "command": "npx",
+      "args": ["-y", "@context7/mcp-server"],
+      "description": "Up-to-date library documentation",
+      "required": false
+    },
+    "deepwiki": {
+      "command": "npx",
+      "args": ["-y", "@deepwiki/mcp-server"],
+      "description": "GitHub repository analysis",
+      "required": false
+    }
+  }
+}

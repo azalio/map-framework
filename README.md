@@ -32,7 +32,18 @@ claude --agents '{"orchestrator": {"prompt": "$(cat .claude/agents/orchestrator.
 
 ## 📦 Installation
 
-### Option 1: Via mapify CLI (Recommended)
+### Option 1: Via Claude Code Plugin Marketplace (Easiest)
+
+```bash
+# In Claude Code:
+/plugin marketplace add https://raw.githubusercontent.com/azalio/map-framework/main/.claude-plugin/marketplace.json
+/plugin install map-framework
+
+# Then initialize in your project:
+mapify init
+```
+
+### Option 2: Via mapify CLI (Recommended)
 
 ```bash
 # Install UV if not already installed
@@ -46,7 +57,7 @@ cd your-project
 mapify init
 ```
 
-### Option 2: Clone Repository
+### Option 3: Clone Repository
 
 ```bash
 git clone https://github.com/azalio/map-framework.git
@@ -56,7 +67,7 @@ cd map-framework
 claude
 ```
 
-### Option 3: Copy Agents to Existing Project
+### Option 4: Copy Agents to Existing Project
 
 ```bash
 # Copy agents
@@ -504,6 +515,40 @@ Available template variables:
 - **Iteration count:** <3 per subtask
 - **Playbook growth:** increasing high-quality patterns
 
+## 🔌 Plugin Marketplace
+
+MAP Framework is available as a Claude Code plugin for easy installation and distribution.
+
+### Install via Plugin Marketplace
+
+```bash
+# Add MAP Framework marketplace
+/plugin marketplace add https://raw.githubusercontent.com/azalio/map-framework/main/.claude-plugin/marketplace.json
+
+# Install the plugin
+/plugin install map-framework
+
+# Initialize in your project
+mapify init
+```
+
+### Plugin Features
+
+- **One-command installation** — no manual file copying
+- **Automatic updates** — get latest agents and hooks via marketplace
+- **Team distribution** — share MAP configuration via `.claude/settings.json`
+- **Version management** — control which MAP version to use
+
+### For Plugin Developers
+
+To create extensions for MAP Framework:
+
+1. Create a plugin with MAP-compatible agents/skills
+2. Reference MAP as a dependency in your `plugin.json`
+3. Submit to MAP marketplace or create your own
+
+See [.claude-plugin/PLUGIN.md](.claude-plugin/PLUGIN.md) for plugin documentation.
+
 ## 🤝 Contributing
 
 Improvements welcome:
@@ -511,6 +556,7 @@ Improvements welcome:
 - New specialized agents
 - CI/CD integrations
 - Success story examples
+- Plugin extensions for MAP Framework
 
 ## 📄 License
 

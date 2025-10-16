@@ -1,0 +1,70 @@
+{
+  "name": "MAP Framework Official Marketplace",
+  "version": "1.0.0",
+  "description": "Official marketplace for MAP Framework and related plugins",
+  "author": "azalio",
+  "repository": "https://github.com/azalio/map-framework",
+  "homepage": "https://github.com/azalio/map-framework",
+  "plugins": [
+    {
+      "id": "map-framework",
+      "name": "MAP Framework",
+      "version": "1.0.0",
+      "description": "Modular Agentic Planner - Cognitive architecture for AI agents inspired by prefrontal cortex functions. Orchestrates 9 specialized agents for development with automatic quality validation.",
+      "author": "azalio",
+      "license": "MIT",
+      "source": "github:azalio/map-framework",
+      "homepage": "https://github.com/azalio/map-framework",
+      "repository": "https://github.com/azalio/map-framework",
+      "keywords": [
+        "MAP",
+        "ACE",
+        "cognitive-architecture",
+        "planning",
+        "agents",
+        "workflow",
+        "code-review",
+        "quality"
+      ],
+      "categories": [
+        "workflow",
+        "agents",
+        "development"
+      ],
+      "features": [
+        "9 specialized agents (TaskDecomposer, Actor, Monitor, Predictor, Evaluator, Reflector, Curator, Orchestrator, DocumentationReviewer)",
+        "ACE learning system with persistent knowledge base",
+        "5 Claude Code hooks for automation",
+        "4 slash commands (/map-feature, /map-debug, /map-refactor, /map-review)",
+        "Professional code review integration",
+        "Cost optimization (40-60% savings)"
+      ],
+      "requirements": {
+        "claude_code": ">=1.0.0",
+        "mcp_servers": [
+          "cipher",
+          "claude-reviewer",
+          "sequential-thinking"
+        ]
+      },
+      "installation": {
+        "command": "mapify init",
+        "note": "Requires mapify CLI: uv tool install --from git+https://github.com/azalio/map-framework.git mapify-cli"
+      },
+      "documentation": {
+        "readme": "https://github.com/azalio/map-framework/blob/main/README.md",
+        "installation": "https://github.com/azalio/map-framework#installation",
+        "hooks": "https://github.com/azalio/map-framework/blob/main/.claude/hooks/README.md"
+      },
+      "research": {
+        "map_paper": "https://github.com/Shanka123/MAP",
+        "ace_paper": "https://arxiv.org/abs/2510.04618v1"
+      }
+    }
+  ],
+  "metadata": {
+    "created": "2025-10-16",
+    "updated": "2025-10-16",
+    "total_plugins": 1
+  }
+}

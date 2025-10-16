@@ -1,0 +1,88 @@
+{
+  "name": "map-framework",
+  "version": "1.0.0",
+  "description": "Modular Agentic Planner (MAP) - Cognitive architecture for AI agents with 9 specialized agents, ACE learning system, and professional code review integration",
+  "author": "azalio",
+  "license": "MIT",
+  "repository": "https://github.com/azalio/map-framework",
+  "homepage": "https://github.com/azalio/map-framework",
+  "keywords": [
+    "MAP",
+    "ACE",
+    "cognitive-architecture",
+    "planning",
+    "agents",
+    "workflow",
+    "code-review",
+    "quality",
+    "learning"
+  ],
+  "categories": [
+    "workflow",
+    "agents",
+    "development"
+  ],
+  "requirements": {
+    "claude_code_version": ">=1.0.0",
+    "mcp_servers": [
+      "cipher",
+      "claude-reviewer",
+      "sequential-thinking"
+    ],
+    "recommended_mcp_servers": [
+      "codex-bridge",
+      "context7",
+      "deepwiki"
+    ]
+  },
+  "features": [
+    "9 specialized MAP agents (TaskDecomposer, Actor, Monitor, Predictor, Evaluator, Reflector, Curator, Orchestrator, DocumentationReviewer)",
+    "ACE (Agentic Context Engineering) learning system with persistent knowledge base",
+    "5 Claude Code hooks for automation (validate-agent-templates, auto-store-knowledge, enrich-context, session-init, track-metrics)",
+    "4 slash commands (/map-feature, /map-debug, /map-refactor, /map-review)",
+    "Professional code review with claude-reviewer MCP",
+    "Chain-of-thought reasoning with sequential-thinking MCP",
+    "Semantic pattern search with embeddings cache",
+    "Cost optimization with per-agent model selection (haiku/sonnet/opus)"
+  ],
+  "installation": {
+    "type": "git",
+    "steps": [
+      "Clone repository or install via plugin marketplace",
+      "Run 'mapify init' to initialize project with MAP agents",
+      "Configure MCP servers in .claude/mcp_config.json",
+      "Start using /map-* commands in Claude Code"
+    ]
+  },
+  "documentation": {
+    "readme": "README.md",
+    "hooks": ".claude/hooks/README.md",
+    "agents": ".claude/agents/README.md"
+  },
+  "included_components": {
+    "agents": [
+      "task-decomposer",
+      "actor",
+      "monitor",
+      "predictor",
+      "evaluator",
+      "orchestrator",
+      "reflector",
+      "curator",
+      "documentation-reviewer"
+    ],
+    "commands": [
+      "map-feature",
+      "map-debug",
+      "map-refactor",
+      "map-review"
+    ],
+    "hooks": [
+      "validate-agent-templates",
+      "auto-store-knowledge",
+      "enrich-context",
+      "session-init",
+      "track-metrics"
+    ]
+  }
+}
