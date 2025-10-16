@@ -71,7 +71,7 @@
   "maintenance": {
     "deduplication_threshold": 0.9,
     "deprecation_threshold": 3,
-    "sync_to_byterover_threshold": 5,
+    "sync_to_cipher_threshold": 5,
     "max_bullets_per_section": 100,
     "cleanup_schedule": "Monthly review of deprecated bullets with harmful_count >= deprecation_threshold"
   }

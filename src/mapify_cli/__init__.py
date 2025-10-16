@@ -431,7 +431,7 @@ def create_agent_files(project_path: Path, mcp_servers: List[str]) -> None:
     agents_dir = project_path / ".claude" / "agents"
     agents_dir.mkdir(parents=True, exist_ok=True)
 
-    # Always generate the 7 MAP agents with correct content
+    # Always generate the 9 MAP agents with correct content
     agents = {
         "task-decomposer": create_task_decomposer_content(mcp_servers),
         "actor": create_actor_content(mcp_servers),
@@ -1288,7 +1288,7 @@ def init(
         mapify init my-project
         mapify init my-project --ai claude
         mapify init my-project --mcp all
-        mapify init my-project --mcp "byterover,context7"
+        mapify init my-project --mcp "cipher,context7"
         mapify init . --ai claude
         mapify init --here
     """
@@ -1400,7 +1400,7 @@ def init(
     tracker.add("create-agents", "Create MAP agents")
     tracker.start("create-agents")
     create_agent_files(project_path, selected_mcp_servers)
-    tracker.complete("create-agents", "7 agents")
+    tracker.complete("create-agents", "9 agents")
 
     tracker.add("create-commands", "Create slash commands")
     tracker.start("create-commands")

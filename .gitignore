@@ -1,12 +1,12 @@
 
-.clinerules/byterover-rules.md
-.kilocode/rules/byterover-rules.md
-.roo/rules/byterover-rules.md
-.windsurf/rules/byterover-rules.md
-.cursor/rules/byterover-rules.mdc
-.kiro/steering/byterover-rules.md
-.qoder/rules/byterover-rules.md
-.augment/rules/byterover-rules.md
+.clinerules/cipher-rules.md
+.kilocode/rules/cipher-rules.md
+.roo/rules/cipher-rules.md
+.windsurf/rules/cipher-rules.md
+.cursor/rules/cipher-rules.mdc
+.kiro/steering/cipher-rules.md
+.qoder/rules/cipher-rules.md
+.augment/rules/cipher-rules.md
 .reviews
 .coverage
 
@@ -33,6 +33,7 @@ wheels/
 *.egg
 
 data/
+htmlcov/
 
 # ACE Playbook - user-specific data
 .claude/embeddings_cache/

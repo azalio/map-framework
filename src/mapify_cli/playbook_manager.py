@@ -414,7 +414,7 @@ class PlaybookManager:
         return len(matches) / len(query_words)
 
     def get_bullets_for_sync(self, threshold: int = 5) -> List[Dict]:
-        """Get high-quality bullets for syncing to byterover."""
+        """Get high-quality bullets for syncing to cipher."""
         sync_bullets = []
 
         for section_name, section in self.playbook["sections"].items():
@@ -492,7 +492,7 @@ if __name__ == "__main__":
 
         elif command == "sync":
             bullets = manager.get_bullets_for_sync(threshold=5)
-            print(f"Found {len(bullets)} bullets ready for byterover sync:")
+            print(f"Found {len(bullets)} bullets ready for cipher sync:")
             for b in bullets:
                 print(f"  - [{b['id']}] {b['content'][:80]}...")
 

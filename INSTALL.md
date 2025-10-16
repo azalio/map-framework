@@ -45,7 +45,7 @@ mapify init my-project
 This will:
 
 - ✅ Create project directory
-- ✅ Install 8 MAP agents (including ACE Reflector & Curator)
+- ✅ Install 9 MAP agents (including ACE Reflector & Curator)
 - ✅ Add 4 slash commands
 - ✅ Configure essential MCP servers
 - ✅ Initialize git repository
@@ -75,14 +75,14 @@ Choose which MCP servers to enable:
 # All available MCP servers
 mapify init my-project --mcp all
 
-# Essential servers only (byterover, claude-reviewer, sequential-thinking)
+# Essential servers only (cipher, claude-reviewer, sequential-thinking)
 mapify init my-project --mcp essential
 
 # Documentation servers (context7, deepwiki)
 mapify init my-project --mcp docs
 
 # Specific servers
-mapify init my-project --mcp "byterover,context7,deepwiki"
+mapify init my-project --mcp "cipher,context7,deepwiki"
 
 # No MCP servers
 mapify init my-project --mcp none
@@ -221,7 +221,7 @@ The playbook is stored in `.claude/playbook.json` and grows as you use MAP comma
 
 If you selected MCP servers during installation, ensure they're configured:
 
-### Byterover (Knowledge Management)
+### Cipher (Knowledge Management)
 
 - Stores successful patterns and solutions
 - Retrieves relevant past implementations
