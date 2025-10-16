@@ -1,0 +1,76 @@
+{
+  "$schema": "https://cdn.jsdelivr.net/npm/@anthropic-ai/claude-code@latest/schemas/settings.schema.json",
+  "description": "Claude Code hooks configuration for MAP Framework - All phases active",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "description": "Validate agent template integrity before modifications (Phase 1 - P0)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/validate-agent-templates.sh",
+            "timeout": 5,
+            "description": "Prevents accidental removal of {{template}} variables from agents"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "description": "Auto-store successful patterns in cipher (Phase 2 - P1)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/auto-store-knowledge.sh",
+            "timeout": 10,
+            "description": "Automatically saves knowledge after successful code modifications"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "*",
+        "description": "Enrich user prompts with cipher knowledge (Phase 2 - P1)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/enrich-context.sh",
+            "timeout": 5,
+            "description": "Searches cipher for relevant patterns and enriches user input"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "description": "Load ACE playbook at session startup (Phase 3 - P2)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/session-init.sh",
+            "timeout": 10,
+            "description": "Initializes session context with playbook bullets and project info"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "actor|monitor|predictor|evaluator|orchestrator|task-decomposer|reflector|curator",
+        "description": "Track MAP agent performance metrics (Phase 3 - P2)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/track-metrics.sh",
+            "timeout": 5,
+            "description": "Collects execution time, success rate, and quality scores"
+          }
+        ]
+      }
+    ]
+  }
+}

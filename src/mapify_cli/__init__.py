@@ -961,6 +961,45 @@ Provide detailed analysis of code quality, potential impacts, and quality scores
             shutil.copy2(command_template, dest_file)
 
 
+def install_hooks(project_path: Path, with_hooks: bool = True) -> None:
+    """Install Claude Code hooks in .claude/hooks/"""
+    if not with_hooks:
+        return
+
+    hooks_dir = project_path / ".claude" / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+
+    # Get templates directory
+    templates_dir = get_templates_dir()
+    hooks_template_dir = templates_dir / "hooks"
+
+    if not hooks_template_dir.exists():
+        # Hooks templates not found, skip installation
+        return
+
+    # Copy all hook scripts
+    import shutil
+    import stat
+
+    for hook_file in hooks_template_dir.glob("*.sh"):
+        dest_file = hooks_dir / hook_file.name
+        shutil.copy2(hook_file, dest_file)
+        # Make executable
+        dest_file.chmod(dest_file.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+
+    # Copy README.md
+    readme_src = hooks_template_dir / "README.md"
+    if readme_src.exists():
+        readme_dest = hooks_dir / "README.md"
+        shutil.copy2(readme_src, readme_dest)
+
+    # Copy settings.hooks.json to .claude/
+    settings_hooks_src = templates_dir / "settings.hooks.json"
+    if settings_hooks_src.exists():
+        settings_hooks_dest = project_path / ".claude" / "settings.hooks.json"
+        shutil.copy2(settings_hooks_src, settings_hooks_dest)
+
+
 def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
     """Create MCP configuration file"""
     config: Dict[str, Any] = {
@@ -1265,6 +1304,7 @@ def init(
     no_git: bool = typer.Option(False, "--no-git", help="Skip git repository initialization"),
     here: bool = typer.Option(False, "--here", help="Initialize project in the current directory"),
     force: bool = typer.Option(False, "--force", help="Force merge/overwrite when using --here"),
+    with_hooks: bool = typer.Option(True, "--with-hooks/--no-hooks", help="Install Claude Code hooks (default: yes)"),
 ):
     """
     Initialize a new MAP Framework project.
@@ -1386,6 +1426,13 @@ def init(
     tracker.start("create-commands")
     create_command_files(project_path)
     tracker.complete("create-commands", "4 commands")
+
+    # Install Claude Code hooks
+    if with_hooks:
+        tracker.add("install-hooks", "Install Claude Code hooks")
+        tracker.start("install-hooks")
+        install_hooks(project_path, with_hooks=True)
+        tracker.complete("install-hooks", "5 hooks installed")
 
     if selected_mcp_servers:
         tracker.add("mcp-config", "Configure MCP servers")
