@@ -369,6 +369,38 @@ edit .claude/agents/monitor.md
 # - All inputs must be sanitized
 ```
 
+⚠️ **CRITICAL: Do NOT remove template variables!**
+
+Agent prompts use **Handlebars syntax** (`{{variable}}`, `{{#if condition}}`) for dynamic context injection by Orchestrator:
+
+```markdown
+# ❌ NEVER REMOVE:
+{{language}}              # Orchestrator injects project language
+{{project_name}}          # Orchestrator injects project name
+{{#if playbook_bullets}}  # ACE learning system (Curator → Actor)
+{{#if feedback}}          # Monitor → Actor retry loops
+{{subtask_description}}   # TaskDecomposer output
+```
+
+**Why they're critical:**
+- Not comments or examples — functional template substitution
+- Orchestrator fills these at runtime with project context
+- Removing them breaks multi-language support, ACE learning, feedback loops
+- Git pre-commit hook validates their presence
+
+**Safe to modify:**
+- Add new instructions or examples
+- Adjust MCP tool usage guidance
+- Update output format specifications
+- Add domain-specific requirements
+
+**Unsafe to modify:**
+- Any `{{template}}` variables
+- Any `{{#if}}...{{/if}}` blocks
+- Playbook bullets section
+- Feedback section
+- Context section
+
 ### Prompt Variables
 
 Available template variables:
@@ -376,6 +408,10 @@ Available template variables:
 - `{{language}}`
 - `{{framework}}`
 - `{{standards_url}}`
+- `{{playbook_bullets}}`
+- `{{feedback}}`
+- `{{subtask_description}}`
+- `{{allowed_scope}}`
 
 ## 📊 Success Metrics
 
