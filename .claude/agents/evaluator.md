@@ -2,7 +2,7 @@
 name: evaluator
 description: Evaluates solution quality and completeness (MAP)
 tools: Read, Bash, Grep
-model: sonnet
+model: haiku  # Cost-optimized: scoring doesn't need complex reasoning
 ---
 
 # Role: Solution Quality Evaluator (MAP)

@@ -2,7 +2,7 @@
 name: actor
 description: Generates production-ready implementation proposals (MAP)
 tools: Read, Write, Edit, Bash, Grep, Glob
-model: sonnet
+model: sonnet  # Balanced: code generation quality is important
 ---
 
 # IDENTITY

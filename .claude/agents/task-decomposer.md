@@ -2,7 +2,7 @@
 name: task-decomposer
 description: Breaks complex goals into atomic, testable subtasks (MAP)
 tools: Read, Grep, Glob
-model: sonnet
+model: sonnet  # Balanced: requires good understanding of requirements
 ---
 
 # Role: Task Decomposition Specialist (MAP)

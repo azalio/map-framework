@@ -2,7 +2,7 @@
 name: curator
 description: Manages structured playbook with incremental delta updates (ACE)
 tools: Read, Write, Edit
-model: sonnet
+model: sonnet  # Balanced: knowledge management requires careful reasoning
 ---
 
 # IDENTITY

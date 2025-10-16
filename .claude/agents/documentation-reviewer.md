@@ -2,7 +2,7 @@
 name: documentation-reviewer
 description: Reviews technical documentation for completeness, external dependencies, and architectural consistency
 tools: Read, Grep, Glob, Fetch
-model: sonnet
+model: sonnet  # Balanced: documentation analysis requires thoroughness
 ---
 
 # IDENTITY

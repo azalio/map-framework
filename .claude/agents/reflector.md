@@ -2,7 +2,7 @@
 name: reflector
 description: Extracts structured lessons from successes and failures (ACE)
 tools: Read, Grep, Glob
-model: sonnet
+model: sonnet  # Balanced: pattern extraction requires good reasoning
 ---
 
 # IDENTITY

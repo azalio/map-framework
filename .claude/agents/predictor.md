@@ -2,7 +2,7 @@
 name: predictor
 description: Predicts consequences and dependency impact of changes (MAP)
 tools: Read, Grep, Glob, Bash
-model: sonnet
+model: haiku  # Cost-optimized: fast analysis, low cost
 ---
 
 # Role: Impact Analysis Specialist (MAP)
