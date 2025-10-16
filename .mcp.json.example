@@ -1,44 +1,105 @@
 {
   "$schema": "https://cdn.jsdelivr.net/npm/@anthropic-ai/claude-code@latest/schemas/mcp.schema.json",
   "description": "MCP servers configuration for MAP Framework - EXAMPLE FILE",
-  "note": "Copy this to .mcp.json and adjust commands for your environment. This is only needed if you want project-specific MCP configuration that differs from your global ~/.claude.json settings.",
+  "_comment": "This is an EXAMPLE configuration. Copy to .mcp.json and adjust for your environment. Most users should rely on their global ~/.claude.json configuration instead.",
+  "_warning": "Project-specific .mcp.json overrides global ~/.claude.json settings. Only use if you need project-specific MCP configuration.",
+
   "mcpServers": {
     "cipher": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-memory"],
-      "description": "Knowledge and reasoning memory for ACE learning system",
-      "required": true
+      "_comment": "Byterover Cipher - Memory-powered AI agent framework with dual memory layer",
+      "_install": "npm install -g @byterover/cipher",
+      "_required_for": "ACE learning system, knowledge management, reasoning memory",
+      "_docs": "https://docs.byterover.dev/cipher/overview",
+      "type": "stdio",
+      "command": "cipher",
+      "args": ["--mode", "mcp"],
+      "env": {
+        "MCP_SERVER_MODE": "aggregator",
+        "OPENAI_API_KEY": "${OPENAI_API_KEY}",
+        "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY}"
+      }
     },
+
     "claude-reviewer": {
+      "_comment": "Code review MCP server - provides professional code review with security analysis",
+      "_note": "This example uses a community server. You may need to adjust the command for your setup.",
+      "_alternatives": [
+        "Custom fork: /path/to/your/mcp-claude-reviewer/mcp-wrapper.sh",
+        "Community server: npx -y @vibesnipe/code-review-mcp"
+      ],
+      "_required_for": "Professional code review integration, MAP /map-review command",
+      "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@anthropic-ai/claude-reviewer"],
-      "description": "Professional code review with security analysis",
-      "required": true
+      "args": ["-y", "@vibesnipe/code-review-mcp"],
+      "env": {
+        "OPENAI_API_KEY": "${OPENAI_API_KEY}"
+      }
     },
+
     "sequential-thinking": {
+      "_comment": "Anthropic's Sequential Thinking - Provides structured chain-of-thought reasoning",
+      "_install": "Automatically installed via npx",
+      "_required_for": "Complex problem solving, multi-step reasoning in MAP agents",
+      "_docs": "https://github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking",
+      "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@anthropic-ai/sequential-thinking"],
-      "description": "Chain-of-thought reasoning for complex problems",
-      "required": true
+      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
     },
+
     "codex-bridge": {
-      "command": "npx",
-      "args": ["-y", "@anthropic-ai/codex-bridge"],
-      "description": "AI code generation (requires 10-minute timeout)",
-      "required": false,
+      "_comment": "Codex Bridge - Connects AI assistants with OpenAI's Codex via official CLI",
+      "_install": "npm install -g @openai/codex-cli && codex (authenticate first)",
+      "_required_for": "AI code generation (optional but recommended)",
+      "_docs": "https://github.com/elyin/codex-bridge",
+      "_note": "Requires 10-minute timeout and Codex CLI authentication",
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["codex-bridge"],
+      "env": {
+        "CODEX_TIMEOUT": "600"
+      },
       "timeout": 600000
     },
+
     "context7": {
+      "_comment": "Context7 by Upstash - Up-to-date, version-specific library documentation",
+      "_install": "Automatically installed via npx",
+      "_required_for": "Library documentation lookup (optional but recommended)",
+      "_docs": "https://github.com/upstash/context7",
+      "_usage": "Add 'use context7' to your prompts",
+      "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@context7/mcp-server"],
-      "description": "Up-to-date library documentation",
-      "required": false
+      "args": ["-y", "@upstash/context7-mcp"]
     },
+
     "deepwiki": {
-      "command": "npx",
-      "args": ["-y", "@deepwiki/mcp-server"],
-      "description": "GitHub repository analysis",
-      "required": false
+      "_comment": "DeepWiki - Official remote MCP server for GitHub repository analysis",
+      "_install": "No installation needed - remote SSE server",
+      "_required_for": "GitHub repository documentation and analysis (optional)",
+      "_docs": "https://docs.devin.ai/work-with-devin/deepwiki-mcp",
+      "_note": "Free, no authentication required",
+      "type": "sse",
+      "url": "https://mcp.deepwiki.com/sse"
+    }
+  },
+
+  "_installation_notes": {
+    "global_vs_local": "Most users should configure MCP servers in ~/.claude.json globally. Only use project-specific .mcp.json if you need different configurations per project.",
+    "environment_variables": "Environment variables like ${OPENAI_API_KEY} are expanded from your shell environment or .env file.",
+    "required_servers": [
+      "cipher - Essential for MAP ACE learning system",
+      "claude-reviewer - Essential for code review features",
+      "sequential-thinking - Essential for complex reasoning"
+    ],
+    "optional_servers": [
+      "codex-bridge - Recommended for enhanced AI code generation",
+      "context7 - Recommended for library documentation",
+      "deepwiki - Recommended for GitHub repository analysis"
+    ],
+    "alternative_installations": {
+      "cipher": "Can also use Docker or build from source - see https://github.com/campfirein/cipher",
+      "codex-bridge": "Alternative: Configure with CODEX_SKIP_GIT_CHECK=true if not in a git repo",
+      "deepwiki": "Alternative transport: https://mcp.deepwiki.com/mcp (Streamable HTTP)"
     }
   }
 }
