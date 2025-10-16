@@ -6,7 +6,7 @@ The MAP Framework can be installed in any project to provide powerful AI-driven 
 
 - Python 3.11 or higher
 - Git (optional, for repository initialization)
-- Claude Code CLI or another supported AI assistant
+- Claude Code CLI
 
 ## Quick Install
 
@@ -51,21 +51,7 @@ This will:
 - ✅ Initialize git repository
 - ✅ Create ACE playbook structure
 
-### Custom AI Assistant
-
-```bash
-# For Claude Code (default)
-mapify init my-project --ai claude
-
-# For Cursor
-mapify init my-project --ai cursor
-
-# For Windsurf
-mapify init my-project --ai windsurf
-
-# For any AI assistant
-mapify init my-project --ai generic
-```
+**Note:** MAP Framework is designed for Claude Code. All generated agents and commands are optimized for the Claude Code CLI.
 
 ### MCP Server Configuration
 
@@ -108,7 +94,7 @@ mapify init --here --force
 mapify init my-project --no-git
 
 # Combine options
-mapify init my-project --ai claude --mcp all --no-git
+mapify init my-project --mcp all --no-git
 ```
 
 ## Manual Installation

@@ -74,13 +74,6 @@ def create_ssl_context():
 ssl_context = create_ssl_context()
 
 # Constants
-AI_CHOICES = {
-    "claude": "Claude Code",
-    "cursor": "Cursor",
-    "windsurf": "Windsurf",
-    "generic": "Generic (any AI agent)"
-}
-
 MCP_SERVER_CHOICES = {
     "all": "All available MCP servers",
     "essential": "Essential (cipher, claude-reviewer, sequential-thinking)",
@@ -1268,7 +1261,6 @@ The filename becomes the command name (without the `.md` extension).
 @app.command()
 def init(
     project_name: Optional[str] = typer.Argument(None, help="Name for your new project directory (use '.' for current directory)"),
-    ai_assistant: Optional[str] = typer.Option(None, "--ai", help="AI assistant to use: claude, cursor, windsurf, generic"),
     mcp: Optional[str] = typer.Option(None, "--mcp", help="MCP servers to enable: all, essential, docs, none, or comma-separated list"),
     no_git: bool = typer.Option(False, "--no-git", help="Skip git repository initialization"),
     here: bool = typer.Option(False, "--here", help="Initialize project in the current directory"),
@@ -1279,17 +1271,15 @@ def init(
 
     This command will:
     1. Check that required tools are installed
-    2. Let you choose your AI assistant
-    3. Configure MCP servers
-    4. Create MAP agents and commands
-    5. Initialize a git repository (optional)
+    2. Configure MCP servers
+    3. Create MAP agents and commands
+    4. Initialize a git repository (optional)
 
     Examples:
         mapify init my-project
-        mapify init my-project --ai claude
         mapify init my-project --mcp all
         mapify init my-project --mcp "cipher,context7"
-        mapify init . --ai claude
+        mapify init .
         mapify init --here
     """
     # Show banner
@@ -1347,19 +1337,9 @@ def init(
     else:
         tracker.complete("check-tools", "minimal")
 
-    # Select AI assistant
+    # Use Claude Code (the only supported AI assistant)
     tracker.add("ai-select", "Select AI assistant")
-    tracker.start("ai-select")
-
-    if ai_assistant:
-        if ai_assistant not in AI_CHOICES:
-            tracker.error("ai-select", f"invalid: {ai_assistant}")
-            console.print(f"[red]Error:[/red] Invalid AI assistant '{ai_assistant}'")
-            raise typer.Exit(1)
-        selected_ai = ai_assistant
-    else:
-        selected_ai = select_with_arrows(AI_CHOICES, "Choose your AI assistant:", "claude")
-
+    selected_ai = "claude"
     tracker.complete("ai-select", selected_ai)
 
     # Select MCP servers

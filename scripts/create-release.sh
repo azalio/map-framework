@@ -51,7 +51,7 @@ if [ -f "README.md" ]; then
 fi
 
 # Create template structure for different AI assistants
-ASSISTANTS=("claude" "cursor" "windsurf" "generic")
+ASSISTANTS=("claude")
 
 for AI in "${ASSISTANTS[@]}"; do
     echo -e "${YELLOW}Creating package for: $AI${NC}"

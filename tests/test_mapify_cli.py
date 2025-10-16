@@ -179,7 +179,6 @@ class TestInitCommand:
         os.chdir(tmp_path)
 
         # Mock the interactive selections
-        mock_select.return_value = "claude"  # AI assistant choice
         mock_select_multiple.return_value = []  # No MCP servers
 
         result = runner.invoke(app, ["init", ".", "--no-git"])
@@ -191,6 +190,146 @@ class TestInitCommand:
 
     @mock.patch("mapify_cli.select_with_arrows")
     @mock.patch("mapify_cli.select_multiple_with_arrows")
+    def test_init_always_uses_claude(self, mock_select_multiple, mock_select, tmp_path):
+        """Test that Claude is always selected by default without prompting.
+
+        Verifies that:
+        - No AI selection prompt appears (select_with_arrows not called for AI)
+        - selected_ai is hardcoded to 'claude'
+        - Only MCP selection occurs
+        """
+        # Arrange
+        os.chdir(tmp_path)
+        mock_select.return_value = "essential"  # MCP choice
+        mock_select_multiple.return_value = []
+
+        # Act
+        result = runner.invoke(app, ["init", ".", "--no-git"])
+
+        # Assert
+        assert result.exit_code == 0
+        # select_with_arrows should be called exactly once (for MCP, not AI)
+        assert mock_select.call_count == 1
+        # Verify the call was for MCP configuration
+        call_args = mock_select.call_args
+        assert "MCP" in call_args[0][1]  # Second argument is the prompt text
+        # Verify output mentions Claude
+        assert "claude" in result.stdout.lower()
+
+    def test_init_ai_flag_not_accepted(self, tmp_path):
+        """Test that passing --ai flag results in a clear error.
+
+        Verifies that:
+        - Typer rejects --ai flag with "no such option: --ai"
+        - Command fails with non-zero exit code
+        """
+        # Arrange
+        os.chdir(tmp_path)
+
+        # Act
+        result = runner.invoke(app, ["init", ".", "--ai", "cursor", "--no-git"])
+
+        # Assert
+        assert result.exit_code != 0
+        # Typer should reject the unknown option
+        assert "no such option" in result.stdout.lower() or "unrecognized" in result.stdout.lower()
+
+    @mock.patch("mapify_cli.select_with_arrows")
+    @mock.patch("mapify_cli.select_multiple_with_arrows")
+    def test_init_mcp_selection_only(self, mock_select_multiple, mock_select, tmp_path):
+        """Test that select_with_arrows is called exactly once (for MCP, not AI).
+
+        Verifies that:
+        - select_with_arrows is called exactly once
+        - The call is for MCP server selection
+        - No AI selection prompt occurs
+        """
+        # Arrange
+        os.chdir(tmp_path)
+        mock_select.return_value = "custom"
+        mock_select_multiple.return_value = ["cipher", "context7"]
+
+        # Act
+        result = runner.invoke(app, ["init", ".", "--no-git"])
+
+        # Assert
+        assert result.exit_code == 0
+        # Verify select_with_arrows called exactly once for MCP
+        assert mock_select.call_count == 1
+        call_args = mock_select.call_args[0]
+        # First argument should be MCP_SERVER_CHOICES
+        assert "all" in call_args[0]
+        assert "essential" in call_args[0]
+        # Verify select_multiple_with_arrows was also called (for custom selection)
+        assert mock_select_multiple.call_count == 1
+
+    @mock.patch("mapify_cli.StepTracker")
+    @mock.patch("mapify_cli.select_with_arrows")
+    @mock.patch("mapify_cli.select_multiple_with_arrows")
+    def test_init_tracker_shows_claude(self, mock_select_multiple, mock_select, mock_tracker_class, tmp_path):
+        """Test that tracker.complete() is called with 'ai-select' and 'claude'.
+
+        Verifies that:
+        - StepTracker.complete() is called for 'ai-select' step
+        - The detail passed shows 'claude' as selected AI
+        """
+        # Arrange
+        os.chdir(tmp_path)
+        mock_select.return_value = "none"
+        mock_select_multiple.return_value = []
+
+        # Create a mock tracker instance
+        mock_tracker = mock.Mock()
+        mock_tracker_class.return_value = mock_tracker
+
+        # Act
+        result = runner.invoke(app, ["init", ".", "--no-git"])
+
+        # Assert
+        assert result.exit_code == 0
+        # Verify tracker.complete was called with ai-select and claude
+        complete_calls = [call for call in mock_tracker.complete.call_args_list]
+        ai_select_call = None
+        for call in complete_calls:
+            if len(call[0]) >= 1 and call[0][0] == "ai-select":
+                ai_select_call = call
+                break
+
+        assert ai_select_call is not None, "tracker.complete should be called with 'ai-select'"
+        # Verify the detail contains 'claude'
+        assert len(ai_select_call[0]) >= 2
+        assert ai_select_call[0][1] == "claude"
+
+    def test_init_claude_with_essential_mcp(self, tmp_path):
+        """Test that Claude is used even with --mcp essential (no interactive selection).
+
+        Verifies that:
+        - With --mcp essential, no prompts appear
+        - selected_ai is still 'claude'
+        - Essential MCP servers are configured
+        """
+        # Arrange
+        os.chdir(tmp_path)
+
+        # Act
+        result = runner.invoke(app, ["init", ".", "--mcp", "essential", "--no-git"])
+
+        # Assert
+        assert result.exit_code == 0
+        # Verify MCP config was created with essential servers
+        config_file = tmp_path / ".claude" / "mcp_config.json"
+        assert config_file.exists()
+
+        config = json.loads(config_file.read_text())
+        assert "cipher" in config["mcp_servers"]
+        assert "claude-reviewer" in config["mcp_servers"]
+        assert "sequential-thinking" in config["mcp_servers"]
+
+        # Verify output shows claude (not a different AI)
+        assert "claude" in result.stdout.lower() or "Project ready" in result.stdout
+
+    @mock.patch("mapify_cli.select_with_arrows")
+    @mock.patch("mapify_cli.select_multiple_with_arrows")
     def test_init_with_directory(self, mock_select_multiple, mock_select, tmp_path):
         """Test initialization with specific directory."""
         os.chdir(tmp_path)
@@ -198,7 +337,6 @@ class TestInitCommand:
         # Don't create the directory beforehand - init will create it
 
         # Mock the interactive selections
-        mock_select.return_value = "claude"
         mock_select_multiple.return_value = []
 
         result = runner.invoke(app, ["init", "my_project", "--no-git"])
@@ -215,7 +353,6 @@ class TestInitCommand:
         os.chdir(tmp_path)
 
         # Mock the interactive selections
-        mock_select.return_value = "claude"
         mock_select_multiple.return_value = []
         mock_confirm.return_value = True  # Confirm to continue when directory not empty
 
@@ -236,7 +373,7 @@ class TestInitCommand:
         os.chdir(tmp_path)
 
         # Mock user input for MCP server selection
-        mock_select.side_effect = ["claude", "custom"]  # AI choice, then MCP choice
+        mock_select.return_value = "custom"  # MCP choice only
         mock_select_multiple.return_value = ["cipher", "claude-reviewer"]
 
         result = runner.invoke(app, ["init", ".", "--no-git"])
