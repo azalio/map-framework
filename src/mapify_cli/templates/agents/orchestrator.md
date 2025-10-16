@@ -2,7 +2,7 @@
 name: orchestrator
 description: Manages the MAP workflow with Claude Code subagents
 tools: Read, Write, Bash
-model: sonnet
+model: opus  # Critical workflow decisions require best reasoning
 ---
 
 # Role: Development Workflow Orchestrator (MAP)

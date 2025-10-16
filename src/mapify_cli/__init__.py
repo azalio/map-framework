@@ -424,20 +424,31 @@ def create_agent_files(project_path: Path, mcp_servers: List[str]) -> None:
     agents_dir = project_path / ".claude" / "agents"
     agents_dir.mkdir(parents=True, exist_ok=True)
 
-    # Always generate the 9 MAP agents with correct content
-    agents = {
-        "task-decomposer": create_task_decomposer_content(mcp_servers),
-        "actor": create_actor_content(mcp_servers),
-        "monitor": create_monitor_content(mcp_servers),
-        "predictor": create_predictor_content(mcp_servers),
-        "evaluator": create_evaluator_content(mcp_servers),
-        "orchestrator": create_orchestrator_content(mcp_servers),
-        "documentation-reviewer": create_documentation_reviewer_content(mcp_servers)
-    }
+    # Get templates directory
+    templates_dir = get_templates_dir()
+    agents_template_dir = templates_dir / "agents"
 
-    for name, content in agents.items():
-        agent_file = agents_dir / f"{name}.md"
-        agent_file.write_text(content)
+    if agents_template_dir.exists():
+        # Copy original agent files from templates (preserves template variables!)
+        import shutil
+        for agent_template in agents_template_dir.glob("*.md"):
+            dest_file = agents_dir / agent_template.name
+            shutil.copy2(agent_template, dest_file)
+    else:
+        # Fallback: generate simplified versions if templates not found
+        agents = {
+            "task-decomposer": create_task_decomposer_content(mcp_servers),
+            "actor": create_actor_content(mcp_servers),
+            "monitor": create_monitor_content(mcp_servers),
+            "predictor": create_predictor_content(mcp_servers),
+            "evaluator": create_evaluator_content(mcp_servers),
+            "orchestrator": create_orchestrator_content(mcp_servers),
+            "documentation-reviewer": create_documentation_reviewer_content(mcp_servers)
+        }
+
+        for name, content in agents.items():
+            agent_file = agents_dir / f"{name}.md"
+            agent_file.write_text(content)
 
 
 def create_task_decomposer_content(mcp_servers: List[str]) -> str:
