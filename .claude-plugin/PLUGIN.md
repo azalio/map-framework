@@ -74,6 +74,8 @@ uv tool install --from git+https://github.com/azalio/map-framework.git mapify-cl
 # Initialize in your project
 cd your-project
 mapify init
+
+# Note: Copy .mcp.json.example to .mcp.json and adjust for your setup if needed
 ```
 
 ### Option 3: Manual Installation

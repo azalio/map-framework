@@ -1,6 +1,7 @@
 {
   "$schema": "https://cdn.jsdelivr.net/npm/@anthropic-ai/claude-code@latest/schemas/mcp.schema.json",
-  "description": "MCP servers configuration for MAP Framework",
+  "description": "MCP servers configuration for MAP Framework - EXAMPLE FILE",
+  "note": "Copy this to .mcp.json and adjust commands for your environment. This is only needed if you want project-specific MCP configuration that differs from your global ~/.claude.json settings.",
   "mcpServers": {
     "cipher": {
       "command": "npx",
