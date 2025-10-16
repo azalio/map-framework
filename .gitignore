@@ -43,3 +43,4 @@ htmlcov/
 
 # Research papers (optional, can commit if needed as docs)
 *.pdf
+coverage.json
