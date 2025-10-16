@@ -324,6 +324,60 @@ claude --model opus --agents '{"actor": {"prompt": "$(cat .claude/agents/actor.m
 
 **Savings: 30% vs all-sonnet, 86% vs all-opus**
 
+## 🔗 Claude Code Hooks Integration
+
+MAP Framework integrates with [Claude Code hooks](https://docs.claude.com/en/docs/claude-code/hooks) for automated validation and workflow protection.
+
+### Available Hooks
+
+#### 🛡️ Agent Template Validation (Active)
+
+**PreToolUse hook** that prevents accidental removal of critical Handlebars template variables from agent files.
+
+**Protects against:**
+- Removing `{{language}}`, `{{project_name}}`, `{{framework}}` (breaks Orchestrator context injection)
+- Removing `{{#if playbook_bullets}}` (breaks ACE learning system)
+- Removing `{{#if feedback}}` (breaks Monitor→Actor retry loops)
+- Massive deletions (>500 lines)
+
+**Example:**
+```bash
+# Claude Code will block this operation:
+❌ BLOCKED: Agent file is missing critical template variables!
+
+File: .claude/agents/actor.md
+Missing templates:
+  - {{language}}
+  - {{#if playbook_bullets}}
+
+These template variables are used by Orchestrator for context injection.
+See .claude/agents/README.md for details.
+```
+
+#### 🔄 Auto-Store Knowledge (Planned)
+
+**PostToolUse hook** that automatically saves successful patterns to cipher MCP after modifications.
+
+#### 🧠 Context Enrichment (Planned)
+
+**UserPromptSubmit hook** that enriches user prompts with relevant patterns from cipher before processing.
+
+### Configuration
+
+Hooks are configured in `.claude/settings.hooks.json` and automatically loaded by Claude Code.
+
+**To disable hooks** (not recommended):
+```json
+// .claude/settings.local.json
+{
+  "hooks": {
+    "PreToolUse": []
+  }
+}
+```
+
+**See:** [`.claude/hooks/README.md`](.claude/hooks/README.md) for detailed documentation.
+
 ## 🛠️ Troubleshooting
 
 ### Agent Not Found

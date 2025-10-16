@@ -1,0 +1,20 @@
+{
+  "$schema": "https://cdn.jsdelivr.net/npm/@anthropic-ai/claude-code@latest/schemas/settings.schema.json",
+  "description": "Claude Code hooks configuration for MAP Framework",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "description": "Validate agent template integrity before modifications",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/validate-agent-templates.sh",
+            "timeout": 5,
+            "description": "Prevents accidental removal of {{template}} variables from agents"
+          }
+        ]
+      }
+    ]
+  }
+}
