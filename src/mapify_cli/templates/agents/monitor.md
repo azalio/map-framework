@@ -3,6 +3,9 @@ name: monitor
 description: Reviews code for correctness, standards, security, and testability (MAP)
 tools: Read, Grep, Bash, Glob
 model: sonnet  # Balanced: quality validation requires good reasoning
+version: 2.0.0
+last_updated: 2025-10-17
+changelog: .claude/agents/CHANGELOG.md
 ---
 
 # IDENTITY

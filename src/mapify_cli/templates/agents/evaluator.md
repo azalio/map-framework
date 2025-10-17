@@ -3,6 +3,9 @@ name: evaluator
 description: Evaluates solution quality and completeness (MAP)
 tools: Read, Bash, Grep
 model: haiku  # Cost-optimized: scoring doesn't need complex reasoning
+version: 2.0.0
+last_updated: 2025-10-17
+changelog: .claude/agents/CHANGELOG.md
 ---
 
 # IDENTITY

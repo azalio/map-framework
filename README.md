@@ -552,6 +552,44 @@ To create extensions for MAP Framework:
 
 See [.claude-plugin/PLUGIN.md](.claude-plugin/PLUGIN.md) for plugin documentation.
 
+## 🛠️ Template Maintenance
+
+### Template Linter
+
+Validate agent template consistency:
+
+```bash
+python scripts/lint-agent-templates.py
+```
+
+The linter checks:
+- YAML frontmatter completeness (version, last_updated, changelog)
+- Required sections (mcp_integration, context, examples)
+- Template variable syntax ({{variable}})
+- XML tag matching (<section></section>)
+- MCP tool description consistency
+
+### MCP Patterns Reference
+
+See [.claude/agents/MCP-PATTERNS.md](.claude/agents/MCP-PATTERNS.md) for:
+- Common MCP tool usage patterns
+- Decision frameworks for tool selection
+- Agent-specific MCP integration guidelines
+- Best practices and anti-patterns
+
+### Template Versioning
+
+All agent templates include version metadata:
+```yaml
+---
+version: 2.0.0
+last_updated: 2025-10-17
+changelog: .claude/agents/CHANGELOG.md
+---
+```
+
+See [.claude/agents/CHANGELOG.md](.claude/agents/CHANGELOG.md) for version history.
+
 ## 🤝 Contributing
 
 Improvements welcome:

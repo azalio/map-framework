@@ -3,6 +3,9 @@ name: documentation-reviewer
 description: Reviews technical documentation for completeness, external dependencies, and architectural consistency
 tools: Read, Grep, Glob, Fetch
 model: sonnet  # Balanced: documentation analysis requires thoroughness
+version: 2.0.0
+last_updated: 2025-10-17
+changelog: .claude/agents/CHANGELOG.md
 ---
 
 # IDENTITY

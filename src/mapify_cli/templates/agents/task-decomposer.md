@@ -3,6 +3,9 @@ name: task-decomposer
 description: Breaks complex goals into atomic, testable subtasks (MAP)
 tools: Read, Grep, Glob
 model: sonnet  # Balanced: requires good understanding of requirements
+version: 2.0.0
+last_updated: 2025-10-17
+changelog: .claude/agents/CHANGELOG.md
 ---
 
 # IDENTITY
