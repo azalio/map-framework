@@ -436,13 +436,16 @@ def create_agent_files(project_path: Path, mcp_servers: List[str]) -> None:
             shutil.copy2(agent_template, dest_file)
     else:
         # Fallback: generate simplified versions if templates not found
+        # NOTE: orchestrator removed (moved to slash commands in production architecture)
         agents = {
             "task-decomposer": create_task_decomposer_content(mcp_servers),
             "actor": create_actor_content(mcp_servers),
             "monitor": create_monitor_content(mcp_servers),
             "predictor": create_predictor_content(mcp_servers),
             "evaluator": create_evaluator_content(mcp_servers),
-            "orchestrator": create_orchestrator_content(mcp_servers),
+            "reflector": create_reflector_content(mcp_servers),
+            "curator": create_curator_content(mcp_servers),
+            "test-generator": create_test_generator_content(mcp_servers),
             "documentation-reviewer": create_documentation_reviewer_content(mcp_servers)
         }
 
