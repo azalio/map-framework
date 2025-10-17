@@ -417,6 +417,51 @@ class TestAgentCreation:
         actor_content = (agents_dir / "actor.md").read_text()
         assert "actor" in actor_content.lower()
 
+    @mock.patch("mapify_cli.get_templates_dir")
+    def test_create_agent_files_fallback(self, mock_get_templates, tmp_path):
+        """Test creating agent files when templates are missing (uses fallback generators).
+
+        Verifies that:
+        - Fallback generators create valid agent content
+        - All 9 agents are created successfully
+        - Content includes required sections (IDENTITY, ROLE)
+        - MCP integration sections are included when MCP servers specified
+        """
+        # Mock templates directory that doesn't have agent templates
+        mock_templates_path = tmp_path / "mock_templates"
+        mock_templates_path.mkdir(parents=True, exist_ok=True)
+        mock_get_templates.return_value = mock_templates_path
+
+        # Call create_agent_files with cipher MCP server
+        create_agent_files(tmp_path, ["cipher"])
+
+        agents_dir = tmp_path / ".claude" / "agents"
+        assert agents_dir.exists()
+
+        # Verify all 9 agents were created using fallback generators
+        expected_agents = [
+            "task-decomposer.md", "actor.md", "monitor.md",
+            "predictor.md", "evaluator.md", "reflector.md",
+            "curator.md", "test-generator.md", "documentation-reviewer.md"
+        ]
+
+        for agent_file in expected_agents:
+            agent_path = agents_dir / agent_file
+            assert agent_path.exists(), f"Agent {agent_file} not created"
+
+            # Verify content has required sections
+            content = agent_path.read_text()
+            assert "---" in content, f"Agent {agent_file} missing YAML frontmatter"
+            assert "name:" in content, f"Agent {agent_file} missing name field"
+            # Check for role/identity sections (various formats)
+            has_core_section = any(marker in content for marker in ["IDENTITY", "ROLE", "Role:", "# Role"])
+            assert has_core_section, f"Agent {agent_file} missing core sections"
+
+            # Verify MCP integration for cipher-enabled agents
+            if any(name in agent_file for name in ["reflector", "curator", "test-generator"]):
+                assert "cipher" in content.lower() or "mcp" in content.lower(), \
+                    f"Agent {agent_file} missing MCP integration section"
+
 
 class TestCommandCreation:
     """Test command file creation."""

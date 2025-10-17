@@ -758,38 +758,152 @@ Return JSON with scores, strengths, weaknesses, and recommendation (proceed|impr
 """
 
 
-def create_orchestrator_content(mcp_servers: List[str]) -> str:
-    """Create orchestrator agent content"""
-    return """---
-name: orchestrator
-description: Manages the MAP workflow with Claude Code subagents
-tools: Read, Write, Bash
+def create_reflector_content(mcp_servers: List[str]) -> str:
+    """Create reflector agent content"""
+    mcp_section = ""
+    if "cipher" in mcp_servers:
+        mcp_section = """
+# MCP INTEGRATION
+
+**ALWAYS use cipher for knowledge management:**
+
+1. **mcp__cipher__cipher_memory_search** - Check existing patterns
+   - Query: "lesson learned [topic]"
+   - Avoid duplicating existing knowledge
+"""
+
+    return f"""---
+name: reflector
+description: Extracts structured lessons from execution attempts (ACE)
+tools: Read, Grep, Glob
 model: sonnet
 ---
 
-# Role: Development Workflow Orchestrator (MAP)
+# IDENTITY
 
-Coordinate TaskDecomposer → Actor ↔ Monitor → Predictor → Evaluator to achieve the stated goal efficiently with high quality.
+You are a reflection specialist who analyzes execution attempts to extract structured, actionable lessons learned.
+{mcp_section}
+# ROLE
 
-## Orchestration Pattern
+Analyze Actor implementations and Monitor feedback to identify:
+- What worked well (success patterns)
+- What failed and why (failure patterns)
+- Reusable insights for future implementations
+- Anti-patterns to avoid
 
-```
-DECOMPOSE(goal)
-FOR each subtask in plan:
-  REPEAT up to N iterations:
-    solution = IMPLEMENT(subtask)
-    review = VALIDATE(solution)
-    if !review.valid: feedback→Actor; CONTINUE
-    impact = PREDICT(solution)
-    eval = EVALUATE(solution, impact)
-    if eval.recommendation == "proceed": ACCEPT and APPLY changes; BREAK
-    else: feedback→Actor; CONTINUE
-  if not accepted: ESCALATE (human clarifications)
-```
+## Output Format (JSON)
 
-## Status Output
+Return JSON with:
+- key_insight: Main lesson learned
+- success_patterns: What worked well
+- failure_patterns: What went wrong
+- suggested_new_bullets: Playbook entries to add
+- confidence: How reliable this insight is
+"""
 
-Regularly summarize current subtask, decisions, and next actions.
+
+def create_curator_content(mcp_servers: List[str]) -> str:
+    """Create curator agent content"""
+    mcp_section = ""
+    if "cipher" in mcp_servers:
+        mcp_section = """
+# MCP INTEGRATION
+
+**Use cipher for deduplication:**
+
+1. **mcp__cipher__cipher_memory_search** - Check for duplicate patterns
+   - Prevents adding redundant playbook entries
+"""
+
+    return f"""---
+name: curator
+description: Manages structured playbook with incremental updates (ACE)
+tools: Read, Write, Edit
+model: sonnet
+---
+
+# IDENTITY
+
+You are a knowledge curator who maintains the ACE playbook by integrating Reflector insights.
+{mcp_section}
+# ROLE
+
+Integrate Reflector insights into playbook using delta operations:
+- ADD: New pattern bullets
+- UPDATE: Increment helpful/harmful counters
+- DEPRECATE: Remove harmful patterns
+
+## Quality Gates
+
+- Content length ≥ 100 characters
+- Code examples for technical patterns
+- Deduplication via semantic similarity
+- Technology-specific (not generic advice)
+
+## Output Format (JSON)
+
+Return JSON with:
+- reasoning: Why these operations improve playbook
+- operations: Array of ADD/UPDATE/DEPRECATE operations
+- deduplication_check: What duplicates were found
+"""
+
+
+def create_test_generator_content(mcp_servers: List[str]) -> str:
+    """Create test-generator agent content"""
+    mcp_section = ""
+    if any(s in mcp_servers for s in ["cipher", "context7"]):
+        mcp_section = """
+# MCP INTEGRATION
+
+**Use these tools for test generation:**
+"""
+        if "cipher" in mcp_servers:
+            mcp_section += """
+1. **mcp__cipher__cipher_memory_search** - Find similar test patterns
+   - Query: "test pattern [feature_type]"
+"""
+        if "context7" in mcp_servers:
+            mcp_section += """
+2. **mcp__context7__get-library-docs** - Verify testing framework usage
+   - Ensure correct test syntax for language/framework
+"""
+
+    return f"""---
+name: test-generator
+description: Generates comprehensive test suites for Actor output
+tools: Read, Write, Edit, Bash, Grep, Glob
+model: sonnet
+---
+
+# IDENTITY
+
+You are a test automation specialist who creates comprehensive, maintainable test suites.
+{mcp_section}
+# ROLE
+
+Generate tests for Actor implementations covering:
+- Unit tests (individual functions)
+- Integration tests (component interactions)
+- Edge cases and error handling
+- Security-critical paths (100% coverage required)
+
+## Test Strategy
+
+1. **AAA Pattern**: Arrange, Act, Assert
+2. **Coverage Targets**:
+   - Critical code: 100%
+   - High priority: 90%
+   - Medium priority: 80%
+3. **Edge Cases**: Empty inputs, null values, boundaries
+
+## Output Format (JSON)
+
+Return JSON with:
+- approach: Test strategy for this code
+- test_files: Array of {{file_path, content, test_type}}
+- coverage_analysis: Expected coverage percentage
+- testing_notes: Special considerations
 """
 
 
@@ -975,10 +1089,14 @@ Provide detailed analysis of code quality, potential impacts, and quality scores
             shutil.copy2(command_template, dest_file)
 
 
-def install_hooks(project_path: Path, with_hooks: bool = True) -> None:
-    """Install Claude Code hooks in .claude/hooks/"""
+def install_hooks(project_path: Path, with_hooks: bool = True) -> int:
+    """Install Claude Code hooks in .claude/hooks/
+
+    Returns:
+        Number of hook scripts installed
+    """
     if not with_hooks:
-        return
+        return 0
 
     hooks_dir = project_path / ".claude" / "hooks"
     hooks_dir.mkdir(parents=True, exist_ok=True)
@@ -989,17 +1107,19 @@ def install_hooks(project_path: Path, with_hooks: bool = True) -> None:
 
     if not hooks_template_dir.exists():
         # Hooks templates not found, skip installation
-        return
+        return 0
 
     # Copy all hook scripts
     import shutil
     import stat
 
+    hooks_count = 0
     for hook_file in hooks_template_dir.glob("*.sh"):
         dest_file = hooks_dir / hook_file.name
         shutil.copy2(hook_file, dest_file)
         # Make executable
         dest_file.chmod(dest_file.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+        hooks_count += 1
 
     # Copy README.md
     readme_src = hooks_template_dir / "README.md"
@@ -1012,6 +1132,8 @@ def install_hooks(project_path: Path, with_hooks: bool = True) -> None:
     if settings_hooks_src.exists():
         settings_hooks_dest = project_path / ".claude" / "settings.hooks.json"
         shutil.copy2(settings_hooks_src, settings_hooks_dest)
+
+    return hooks_count
 
 
 def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
@@ -1448,8 +1570,9 @@ def init(
     if with_hooks:
         tracker.add("install-hooks", "Install Claude Code hooks")
         tracker.start("install-hooks")
-        install_hooks(project_path, with_hooks=True)
-        tracker.complete("install-hooks", "5 hooks installed")
+        hooks_count = install_hooks(project_path, with_hooks=True)
+        hooks_word = "hook" if hooks_count == 1 else "hooks"
+        tracker.complete("install-hooks", f"{hooks_count} {hooks_word} installed")
 
     if selected_mcp_servers:
         tracker.add("mcp-config", "Configure MCP servers")

@@ -41,6 +41,9 @@ htmlcov/
 .claude/mcp_config.json
 .claude/commands/
 
+# Agent template backups
+src/mapify_cli/templates/agents.backup/
+
 # Research papers (optional, can commit if needed as docs)
 *.pdf
 coverage.json
