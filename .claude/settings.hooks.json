@@ -60,7 +60,7 @@
     ],
     "SubagentStop": [
       {
-        "matcher": "actor|monitor|predictor|evaluator|orchestrator|task-decomposer|reflector|curator|documentation-reviewer|test-generator",
+        "matcher": "actor|monitor|predictor|evaluator|orchestrator|task-decomposer|reflector|curator",
         "description": "Track MAP agent performance metrics (Phase 3 - P2)",
         "hooks": [
           {
