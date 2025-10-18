@@ -398,6 +398,30 @@ if __name__ == "__main__":
         sys.exit(1)
 
     command = sys.argv[1]
+
+    # Handle --help and -h flags
+    if command in ["--help", "-h", "help"]:
+        print("Usage:")
+        print("  python -m mapify_cli.recitation_manager create <task_id> <goal> <subtasks_json>")
+        print("  python -m mapify_cli.recitation_manager update <subtask_id> <status> [error]")
+        print("  python -m mapify_cli.recitation_manager get-context")
+        print("  python -m mapify_cli.recitation_manager stats")
+        print("  python -m mapify_cli.recitation_manager clear")
+        print("\nExamples:")
+        print("  # Create plan")
+        print('  python -m mapify_cli.recitation_manager create feat_auth "Add JWT auth" \'[{"id":1,"description":"Create model",...}]\'')
+        print("\n  # Update status")
+        print("  python -m mapify_cli.recitation_manager update 1 in_progress")
+        print('  python -m mapify_cli.recitation_manager update 1 in_progress "Missing import"')
+        print("  python -m mapify_cli.recitation_manager update 1 completed")
+        print("\n  # Get context for Actor")
+        print("  python -m mapify_cli.recitation_manager get-context")
+        print("\n  # Get statistics")
+        print("  python -m mapify_cli.recitation_manager stats")
+        print("\n  # Clear plan")
+        print("  python -m mapify_cli.recitation_manager clear")
+        sys.exit(0)
+
     manager = RecitationManager(Path.cwd())
 
     if command == "create":
