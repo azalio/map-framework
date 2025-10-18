@@ -394,6 +394,25 @@ def check_mcp_server(server: str) -> bool:
     return True
 
 
+def is_debug_enabled(debug_flag: Optional[bool] = None) -> bool:
+    """
+    Check if debug mode is enabled via CLI flag or environment variable.
+
+    Args:
+        debug_flag: CLI --debug flag value (None, True, or False)
+
+    Returns:
+        True if debug logging should be enabled
+    """
+    # CLI flag takes precedence over environment variable
+    if debug_flag is not None:
+        return debug_flag
+
+    # Check MAP_DEBUG environment variable
+    env_debug = os.environ.get('MAP_DEBUG', '').lower()
+    return env_debug in ('true', '1', 'yes', 'on')
+
+
 def get_templates_dir() -> Path:
     """Get the path to bundled templates directory."""
     import importlib.resources
@@ -1444,6 +1463,7 @@ def init(
     here: bool = typer.Option(False, "--here", help="Initialize project in the current directory"),
     force: bool = typer.Option(False, "--force", help="Force merge/overwrite when using --here"),
     with_hooks: bool = typer.Option(True, "--with-hooks/--no-hooks", help="Install Claude Code hooks (default: yes)"),
+    debug: bool = typer.Option(False, "--debug", help="Enable debug logging (creates .map/logs/workflow_*.log)"),
 ):
     """
     Initialize a new MAP Framework project.
@@ -1460,9 +1480,19 @@ def init(
         mapify init my-project --mcp "cipher,context7"
         mapify init .
         mapify init --here
+        mapify init --debug  # Enable workflow logging
     """
     # Show banner
     show_banner()
+
+    # Initialize workflow logger if debug mode is enabled
+    workflow_logger = None
+    if is_debug_enabled(debug):
+        from mapify_cli.workflow_logger import MapWorkflowLogger
+        workflow_logger = MapWorkflowLogger(Path.cwd(), enabled=True)
+        log_file = workflow_logger.start_session(task_id=f"mapify_init_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+        console.print(f"[dim]Debug logging enabled: {log_file}[/dim]")
+        workflow_logger.log_event("command_start", f"mapify init {project_name or '.'}", metadata={"debug": debug, "mcp": mcp})
 
     # Handle '.' as shorthand for current directory
     if project_name == ".":
@@ -1625,8 +1655,17 @@ def init(
 
 
 @app.command()
-def check():
+def check(
+    debug: bool = typer.Option(False, "--debug", help="Enable debug logging")
+):
     """Check that all required tools are installed."""
+    # Initialize workflow logger if debug mode is enabled
+    if is_debug_enabled(debug):
+        from mapify_cli.workflow_logger import MapWorkflowLogger
+        workflow_logger = MapWorkflowLogger(Path.cwd(), enabled=True)
+        log_file = workflow_logger.start_session(task_id=f"mapify_check_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+        console.print(f"[dim]Debug logging enabled: {log_file}[/dim]")
+        workflow_logger.log_event("command_start", "mapify check", metadata={"debug": debug})
     show_banner()
     console.print("[bold]Checking for installed tools...[/bold]\n")
 

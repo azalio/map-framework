@@ -12,7 +12,10 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from mapify_cli.workflow_logger import MapWorkflowLogger
 
 
 @dataclass
@@ -50,11 +53,12 @@ class RecitationManager:
     4. Highlight current focus
     """
 
-    def __init__(self, project_root: Path):
+    def __init__(self, project_root: Path, logger: Optional['MapWorkflowLogger'] = None):
         self.project_root = Path(project_root)
         self.map_dir = self.project_root / ".map"
         self.plan_file = self.map_dir / "current_plan.md"
         self.plan_json = self.map_dir / "current_plan.json"
+        self.logger = logger  # Optional logger for workflow tracking
 
         # Create .map directory if it doesn't exist
         self.map_dir.mkdir(exist_ok=True)
@@ -93,6 +97,18 @@ class RecitationManager:
         self._save_plan(plan)
         self._generate_markdown(plan)
 
+        # Log plan creation
+        if self.logger:
+            self.logger.log_event(
+                event_type="recitation_plan_created",
+                message=f"Created task plan: {task_id}",
+                metadata={
+                    "task_id": task_id,
+                    "goal": goal,
+                    "total_subtasks": len(plan_subtasks)
+                }
+            )
+
         return plan
 
     def update_subtask_status(
@@ -129,6 +145,19 @@ class RecitationManager:
         self._save_plan(plan)
         self._generate_markdown(plan)
 
+        # Log status update
+        if self.logger:
+            self.logger.log_event(
+                event_type="recitation_subtask_updated",
+                message=f"Subtask {subtask_id} updated to {status}",
+                metadata={
+                    "subtask_id": subtask_id,
+                    "status": status,
+                    "error": error,
+                    "iterations": subtask.iterations if subtask else None
+                }
+            )
+
         return plan
 
     def get_current_context(self) -> str:
@@ -144,7 +173,21 @@ class RecitationManager:
         if not self.plan_file.exists():
             return ""
 
-        return self.plan_file.read_text()
+        context = self.plan_file.read_text()
+
+        # Log context retrieval
+        if self.logger:
+            plan = self._load_plan()
+            self.logger.log_event(
+                event_type="recitation_context_retrieved",
+                message="Retrieved current plan context for Actor",
+                metadata={
+                    "current_subtask": plan.current_subtask_id if plan else None,
+                    "context_length": len(context)
+                }
+            )
+
+        return context
 
     def get_plan(self) -> Optional[TaskPlan]:
         """Get the current plan object"""
