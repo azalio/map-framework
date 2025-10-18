@@ -54,6 +54,28 @@ Each subtask must be:
 )
 ```
 
+## Step 2.5: Create Recitation Plan (Context Engineering)
+
+**IMPORTANT:** Create a task plan to keep goals fresh in context (Recitation pattern).
+
+After receiving TaskDecomposer output, create the plan using Bash:
+
+```bash
+# Save subtasks to temporary variable
+SUBTASKS_JSON='[TaskDecomposer output JSON array]'
+TASK_ID="feat_$(date +%s)"
+
+# Create recitation plan
+python -m mapify_cli.recitation_manager create "$TASK_ID" "$ARGUMENTS" "$SUBTASKS_JSON"
+```
+
+This creates `.map/current_plan.md` which will be updated before each subtask to maintain focus.
+
+**Example:**
+```bash
+python -m mapify_cli.recitation_manager create feat_1760783000 "Add user authentication" '[{"id":1,"description":"Create User model",...}]'
+```
+
 ## Step 3: For Each Subtask - Implementation Loop
 
 For each subtask from task-decomposer output:
@@ -62,7 +84,26 @@ For each subtask from task-decomposer output:
 
 Search `.claude/playbook.json` for relevant patterns related to the current subtask (use grep/read).
 
+### 3.1.5 Update Recitation Plan (BEFORE Actor)
+
+**Mark subtask as in_progress and get fresh context:**
+
+```bash
+# Update plan status (subtask_id from TaskDecomposer)
+python -m mapify_cli.recitation_manager update <subtask_id> in_progress
+
+# Get current plan for Actor context (RECITATION PATTERN)
+PLAN_CONTEXT=$(python -m mapify_cli.recitation_manager get-context)
+# This markdown shows progress and current focus
+```
+
+The `PLAN_CONTEXT` will be included in the Actor prompt below.
+
 ### 3.2 Call Actor to Implement
+
+**IMPORTANT:** Include plan context from step 3.1.5 in Actor prompt to maintain focus.
+
+The Actor agent template (`.claude/agents/actor.md`) already has a `{{plan_context}}` template variable in the `<recitation_plan>` section. You just need to pass it:
 
 ```
 Task(
@@ -74,7 +115,12 @@ Task(
 **Acceptance Criteria:** [criteria]
 
 **Relevant Playbook Context:**
-[Include 5-10 relevant bullets from playbook]
+[Include 3-5 relevant bullets from playbook]
+
+**Plan Context (for recitation):**
+```
+[Insert output from: python -m mapify_cli.recitation_manager get-context]
+```
 
 Output JSON with:
 - approach: string (implementation strategy)
@@ -86,6 +132,8 @@ Output JSON with:
 Provide FULL file content for each change, not diffs."
 )
 ```
+
+**Note:** The Actor template will automatically format the plan_context in its `<recitation_plan>` section.
 
 ### 3.3 Call Monitor to Validate
 
@@ -116,8 +164,14 @@ Output JSON with:
 ### 3.4 Decision Point
 
 **If monitor.valid === false:**
+- **Record error in plan (Recitation):**
+  ```bash
+  # Update with error message for retry
+  python -m mapify_cli.recitation_manager update <subtask_id> in_progress "Monitor feedback: [error details]"
+  # Plan will show: "⚠️ Retry attempt 2 - review previous errors"
+  ```
 - Provide monitor feedback to actor
-- Go back to step 3.2
+- Go back to step 3.1.5 (Actor will see updated plan with error info)
 - Max 3-5 iterations, then escalate to user
 
 **If monitor.valid === true:**
@@ -188,6 +242,12 @@ Output JSON with:
 **If evaluator.recommendation === 'proceed':**
 - ACCEPT the solution
 - Apply code changes (use Write/Edit tools)
+- **Mark subtask as completed (Recitation):**
+  ```bash
+  python -m mapify_cli.recitation_manager update <subtask_id> completed
+  # Plan will show: "✓ Subtask N completed"
+  # Next subtask will see this progress
+  ```
 - Continue to step 3.8
 
 ### 3.8 Call Reflector to Extract Lessons
@@ -252,14 +312,34 @@ Repeat steps 3.1-3.10 for each remaining subtask.
 
 After all subtasks completed:
 
-1. **Run tests** (if applicable)
-2. **Create commit** with descriptive message
-3. **Summarize results**:
+1. **Get final statistics from Recitation:**
+   ```bash
+   python -m mapify_cli.recitation_manager stats
+   # Shows: total_subtasks, completed, total_iterations, etc.
+   ```
+
+2. **Run tests** (if applicable)
+
+3. **Create commit** with descriptive message
+
+4. **Summarize results**:
    - Features implemented
    - Files changed
    - New playbook bullets added
    - Overall quality score
-4. **Store workflow pattern in cipher** for future reuse
+   - **Include recitation stats** (from step 1):
+     - Total subtasks
+     - Iterations needed
+     - Average iterations per subtask
+     - Success rate
+
+5. **Store workflow pattern in cipher** for future reuse
+
+6. **Clean up recitation plan:**
+   ```bash
+   python -m mapify_cli.recitation_manager clear
+   # Removes .map/current_plan.md and .map/current_plan.json
+   ```
 
 ## MCP Tools Available
 

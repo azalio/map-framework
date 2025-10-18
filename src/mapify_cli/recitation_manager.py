@@ -328,75 +328,111 @@ class RecitationManager:
         }
 
 
-# Example usage
+# CLI interface
 if __name__ == "__main__":
-    # Example: Create a plan from TaskDecomposer output
+    import sys
+
+    if len(sys.argv) < 2:
+        print("Usage:")
+        print("  python -m mapify_cli.recitation_manager create <task_id> <goal> <subtasks_json>")
+        print("  python -m mapify_cli.recitation_manager update <subtask_id> <status> [error]")
+        print("  python -m mapify_cli.recitation_manager get-context")
+        print("  python -m mapify_cli.recitation_manager stats")
+        print("  python -m mapify_cli.recitation_manager clear")
+        print("\nExamples:")
+        print("  # Create plan")
+        print('  python -m mapify_cli.recitation_manager create feat_auth "Add JWT auth" \'[{"id":1,"description":"Create model",...}]\'')
+        print("\n  # Update status")
+        print("  python -m mapify_cli.recitation_manager update 1 in_progress")
+        print('  python -m mapify_cli.recitation_manager update 1 in_progress "Missing import"')
+        print("  python -m mapify_cli.recitation_manager update 1 completed")
+        print("\n  # Get context for Actor")
+        print("  python -m mapify_cli.recitation_manager get-context")
+        print("\n  # Get statistics")
+        print("  python -m mapify_cli.recitation_manager stats")
+        print("\n  # Clear plan")
+        print("  python -m mapify_cli.recitation_manager clear")
+        sys.exit(1)
+
+    command = sys.argv[1]
     manager = RecitationManager(Path.cwd())
 
-    example_subtasks = [
-        {
-            'id': 1,
-            'description': 'Create User model with password hashing',
-            'acceptance_criteria': 'Model validates email, hashes password with bcrypt',
-            'estimated_complexity': 'low',
-            'depends_on': []
-        },
-        {
-            'id': 2,
-            'description': 'Implement login endpoint',
-            'acceptance_criteria': 'POST /auth/login returns JWT token',
-            'estimated_complexity': 'medium',
-            'depends_on': [1]
-        },
-        {
-            'id': 3,
-            'description': 'Add JWT token generation',
-            'acceptance_criteria': 'Tokens expire after 1h, use HS256',
-            'estimated_complexity': 'low',
-            'depends_on': [2]
-        },
-        {
-            'id': 4,
-            'description': 'Implement token validation middleware',
-            'acceptance_criteria': 'Middleware checks token on protected routes',
-            'estimated_complexity': 'medium',
-            'depends_on': [3]
-        },
-        {
-            'id': 5,
-            'description': 'Add refresh token mechanism',
-            'acceptance_criteria': 'POST /auth/refresh returns new access token',
-            'estimated_complexity': 'high',
-            'depends_on': [4]
-        }
-    ]
+    if command == "create":
+        if len(sys.argv) < 5:
+            print("Error: create requires <task_id> <goal> <subtasks_json>")
+            sys.exit(1)
 
-    # Create plan
-    plan = manager.create_plan(
-        task_id='feat_auth',
-        goal='Implement JWT-based authentication with email/password',
-        subtasks=example_subtasks
-    )
+        task_id = sys.argv[2]
+        goal = sys.argv[3]
+        subtasks_json = sys.argv[4]
 
-    print("Created plan:", manager.plan_file)
-    print("\nPlan markdown:\n")
-    print(manager.get_current_context())
+        try:
+            subtasks = json.loads(subtasks_json)
+            plan = manager.create_plan(task_id, goal, subtasks)
+            print(json.dumps({
+                "status": "success",
+                "message": "Plan created",
+                "plan_file": str(manager.plan_file),
+                "subtasks_count": len(plan.subtasks)
+            }, indent=2))
+        except json.JSONDecodeError as e:
+            print(json.dumps({
+                "status": "error",
+                "message": f"Invalid JSON: {e}"
+            }, indent=2))
+            sys.exit(1)
 
-    # Simulate progress
-    print("\n\n--- Starting subtask 1 ---")
-    manager.update_subtask_status(1, 'in_progress')
+    elif command == "update":
+        if len(sys.argv) < 4:
+            print("Error: update requires <subtask_id> <status> [error]")
+            sys.exit(1)
 
-    print("\n\n--- Completing subtask 1 ---")
-    manager.update_subtask_status(1, 'completed')
+        subtask_id = int(sys.argv[2])
+        status = sys.argv[3]
+        error = sys.argv[4] if len(sys.argv) > 4 else None
 
-    print("\n\n--- Starting subtask 2 ---")
-    manager.update_subtask_status(2, 'in_progress')
+        try:
+            plan = manager.update_subtask_status(subtask_id, status, error)
+            print(json.dumps({
+                "status": "success",
+                "message": f"Subtask {subtask_id} updated to {status}",
+                "current_subtask": plan.current_subtask_id,
+                "updated_at": plan.updated_at
+            }, indent=2))
+        except Exception as e:
+            print(json.dumps({
+                "status": "error",
+                "message": str(e)
+            }, indent=2))
+            sys.exit(1)
 
-    print("\n\n--- Failing subtask 2 (first attempt) ---")
-    manager.update_subtask_status(2, 'in_progress', error='Missing import for JWT library')
+    elif command == "get-context":
+        context = manager.get_current_context()
+        if context:
+            print(context)
+        else:
+            print("# No active plan\n\nNo recitation plan is currently active.")
+            sys.exit(1)
 
-    print("\n\nCurrent plan:\n")
-    print(manager.get_current_context())
+    elif command == "stats":
+        stats = manager.get_statistics()
+        if stats:
+            print(json.dumps(stats, indent=2))
+        else:
+            print(json.dumps({
+                "status": "error",
+                "message": "No active plan"
+            }, indent=2))
+            sys.exit(1)
 
-    print("\n\nStatistics:")
-    print(json.dumps(manager.get_statistics(), indent=2))
+    elif command == "clear":
+        manager.clear_plan()
+        print(json.dumps({
+            "status": "success",
+            "message": "Plan cleared"
+        }, indent=2))
+
+    else:
+        print(f"Error: Unknown command '{command}'")
+        print("Run without arguments to see usage")
+        sys.exit(1)

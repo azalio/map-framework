@@ -3,8 +3,8 @@ name: actor
 description: Generates production-ready implementation proposals (MAP)
 tools: Read, Write, Edit, Bash, Grep, Glob
 model: sonnet  # Balanced: code generation quality is important
-version: 2.0.0
-last_updated: 2025-10-17
+version: 2.1.0
+last_updated: 2025-10-18
 changelog: .claude/agents/CHANGELOG.md
 ---
 
@@ -120,6 +120,33 @@ BEFORE implementing, ask yourself:
 {{/if}}
 
 </task>
+
+
+<recitation_plan>
+
+## Current Task Plan (Recitation Pattern)
+
+{{#if plan_context}}
+
+This plan keeps the overall goal and progress "fresh" in your context window, helping you maintain focus on long multi-step workflows.
+
+{{plan_context}}
+
+**How to Use This Plan**:
+- **Check progress**: See what's completed (✓), what's next (→), what's pending (☐)
+- **Stay focused**: Your current subtask is marked with (CURRENT)
+- **Learn from errors**: If this is a retry, review "Last error" to avoid repeating mistakes
+- **Track dependencies**: Ensure prerequisite subtasks are completed
+
+{{/if}}
+
+{{#unless plan_context}}
+
+**Note**: No recitation plan available for this task. This is either a standalone task or the orchestrator hasn't initialized the plan yet.
+
+{{/unless}}
+
+</recitation_plan>
 
 
 <playbook_context>
