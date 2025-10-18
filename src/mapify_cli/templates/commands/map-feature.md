@@ -4,6 +4,8 @@ description: Implement new feature using full MAP workflow
 
 # MAP Feature Implementation Workflow
 
+**CRITICAL INSTRUCTION:** This is an **automated sequential workflow**. You MUST execute ALL steps from start to finish without stopping. After calling each subagent, IMMEDIATELY proceed to the next step in the workflow. DO NOT wait for user input between steps - this is a fully autonomous multi-agent orchestration.
+
 Implement the following feature using the MAP (Modular Agentic Planner) framework with ACE (Adaptive Contextual Engine) learning:
 
 **Feature Request:** $ARGUMENTS
@@ -25,6 +27,8 @@ You will orchestrate the MAP workflow by sequentially calling subagents using th
    10. REFLECT → reflector (extract lessons)
    11. CURATE → curator (update playbook)
 ```
+
+**⚠️ IMPORTANT:** After each Task() call completes, immediately proceed to the next step. The workflow is SEQUENTIAL and AUTOMATED - do not stop after Actor, Monitor, Predictor, or Evaluator. Each step builds on the previous one. Continue until all subtasks are completed and reflected in the playbook.
 
 ## Step 1: Load Playbook Context
 
