@@ -196,8 +196,13 @@ def get_key():
     if key == readchar.key.DOWN or key == readchar.key.CTRL_N:
         return 'down'
 
-    # Enter/Return
-    if key == readchar.key.ENTER:
+    # Enter/Return - support multiple variants for cross-platform compatibility
+    if key == readchar.key.ENTER or key == '\r' or key == '\n':
+        return 'enter'
+    # Also check for readchar.key.CR (carriage return) if it exists
+    if hasattr(readchar.key, 'CR') and key == readchar.key.CR:
+        return 'enter'
+    if hasattr(readchar.key, 'LF') and key == readchar.key.LF:
         return 'enter'
 
     # Space for toggle
