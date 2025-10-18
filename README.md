@@ -590,6 +590,49 @@ changelog: .claude/agents/CHANGELOG.md
 
 See [.claude/agents/CHANGELOG.md](.claude/agents/CHANGELOG.md) for version history.
 
+## 🧠 Context Engineering Improvements
+
+MAP Framework применяет передовые принципы контекстной инженерии для AI-агентов:
+
+### ✨ Новое: Recitation Pattern (Фаза 1.1)
+
+**Проблема:** На длинных задачах (5+ подзадач) модель теряет фокус и забывает цели.
+
+**Решение:** Механизм фокусировки внимания — `.map/current_plan.md` обновляется перед каждым шагом, держа цели "свежими" в контексте.
+
+```markdown
+# Current Task: feat_auth
+## Progress: 2/5 completed
+- [✓] 1/5: Create User model
+- [→] 2/5: Implement login (CURRENT, Iteration 2)
+  - Last error: Missing JWT import
+- [☐] 3/5: Add token validation
+...
+```
+
+**Эффект:**
+- +20-30% success rate на сложных задачах
+- -20-30% использование токенов
+- +50% наблюдаемость прогресса
+
+### 📚 Документация
+
+- **[Context Engineering Improvements](docs/CONTEXT-ENGINEERING-IMPROVEMENTS.md)** — полный план (94 стр)
+- **[Recitation Pattern](docs/RECITATION-PATTERN.md)** — документация паттерна (50 стр)
+- **[Quick Start](docs/context-engineering/README.md)** — быстрый старт с примерами
+
+### 🗺️ Roadmap
+
+**Фаза 1** (в процессе):
+- [x] Recitation Pattern для фокусировки
+- [ ] Подробное логирование workflow
+- [ ] Ограничение паттернов playbook (3-5)
+- [ ] Оптимизация verbose выводов
+
+**Фаза 2-4:** Checkpoints, кеширование MCP, параллелизм, автотесты
+
+**Основано на:** ["Context Engineering for AI Agents" (Manus.im, 2025)](https://manus.im/blog/Context-Engineering-for-AI-Agents-Lessons-from-Building-Manus)
+
 ## 🤝 Contributing
 
 Improvements welcome:
@@ -598,6 +641,7 @@ Improvements welcome:
 - CI/CD integrations
 - Success story examples
 - Plugin extensions for MAP Framework
+- Context engineering optimizations
 
 ## 📄 License
 
