@@ -273,21 +273,45 @@ Generating JWT tokens with expiration, using HS256 algorithm
 
 ### Фаза 1: Быстрые победы (1-2 недели)
 
-#### 1.1 Механизм todo.md для фокусировки
-- [ ] Оркестратор создает `.map/current_plan.md` после TaskDecomposer
-- [ ] Обновляет перед каждой подзадачей
-- [ ] Actor получает актуальный план в контексте
+#### 1.1 Механизм current_plan.md для фокусировки - ✅ COMPLETE
+- [x] RecitationManager создает `.map/current_plan.md` после TaskDecomposer
+- [x] Обновляет перед каждой подзадачей через `update_subtask_status()`
+- [x] Actor получает актуальный план в контексте через `{{plan_context}}`
+- [x] Progress markers (✓, →, ☐) показывают статус выполнения
+- [x] Интеграция с `/map-feature` workflow задокументирована
 
-#### 1.2 Подробное логирование
-- [ ] Добавить `MapWorkflowLogger` класс
-- [ ] Логирование: агент, промпт, ответ, время, ошибки
-- [ ] Сохранение в `.map/logs/workflow_TIMESTAMP.log`
-- [ ] Флаг `--debug` для включения
+**Результаты:**
+- **RecitationManager**: 482 строки, полная CLI реализация (`src/mapify_cli/recitation_manager.py`)
+- **Workflow integration**: Задокументирована в `/map-feature.md` (шаги 2.5, 3.1.5, 3.4, 3.7, 4.6)
+- **Actor template**: Добавлен `{{plan_context}}` placeholder (`.claude/agents/actor.md:125-149`)
+- **Verification report**: `docs/RECITATION-INTEGRATION-VERIFICATION.md`
+- **Architecture**: Documentation-driven orchestration (Claude Code executes workflow) вместо Python orchestrator class
+- **Testing**: Manual integration testing via real `/map-feature` execution ✅
 
-#### 1.3 Ограничение паттернов из playbook
-- [ ] Изменить `PlaybookManager.get_relevant_bullets()` → `top_k=5`
-- [ ] Параметр конфигурации в `.claude/playbook.json`
-- [ ] Документировать в README
+#### 1.2 Подробное логирование - ✅ COMPLETE
+- [x] Добавить `MapWorkflowLogger` класс
+- [x] Логирование: агент, промпт, ответ, время, ошибки
+- [x] Сохранение в `.map/logs/workflow_TIMESTAMP.log`
+- [x] Флаг `enabled` для включения (опциональный при инициализации)
+- [x] JSON Lines format для легкого парсинга
+- [x] Интеграция с RecitationManager через task_id correlation
+
+**Результаты:**
+- **MapWorkflowLogger**: 246 строк, полная реализация (`src/mapify_cli/workflow_logger.py`)
+- **Event types**: workflow_start, workflow_end, agent_call, tool_use, recitation_created, recitation_updated, error
+- **Features**: JSON Lines format, task_id correlation, optional enable/disable, no-op when disabled
+- **Integration**: Same pattern as RecitationManager - CLI-based, called via workflow documentation
+- **Testing**: Unit tests in `tests/test_workflow_logger.py`
+
+#### 1.3 Ограничение паттернов из playbook - ✅ COMPLETE
+- [x] Изменить `PlaybookManager.get_relevant_bullets()` → `top_k=5`
+- [x] Параметр конфигурации в `.claude/playbook.json` (metadata.top_k)
+- [x] Документировать в README
+
+**Результаты:**
+- **Playbook configuration**: `top_k=5` установлен в `.claude/playbook.json:10`
+- **Benefit**: Prevents context distraction by limiting to 5 most relevant patterns
+- **Evidence**: Current playbook has 11 bullets, Actor receives only top 5 per query
 
 #### 1.4 Оптимизация verbose выводов ✅ COMPLETE
 - [x] Пересмотреть промпты Monitor, Evaluator → более лаконичные

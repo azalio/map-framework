@@ -51,3 +51,4 @@ coverage.json
 # Claude Code hooks runtime files
 .claude/sessions/
 .claude/metrics/
+.map/
