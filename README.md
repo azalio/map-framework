@@ -250,6 +250,35 @@ python -m mapify_cli.playbook_manager search "JWT authentication"
 python -m mapify_cli.playbook_manager sync
 ```
 
+### Playbook Configuration
+
+The playbook behavior can be configured via `.claude/playbook.json` metadata:
+
+**top_k** - Limits number of patterns retrieved to reduce context distraction (Phase 1.3):
+
+```json
+{
+  "metadata": {
+    "top_k": 5
+  }
+}
+```
+
+- **Default:** 5 patterns (balances context quality vs. quantity)
+- **Purpose:** Reduces context distraction and saves ~15% tokens
+- **Override:** Can be overridden per-call: `get_relevant_bullets(query, limit=10)`
+- **Based on:** Context Engineering improvements (Phase 1.3)
+
+**Benefits:**
+- 🎯 Focused context - fewer, more relevant patterns
+- 💰 Token savings - ~15% reduction in Actor prompts
+- 🧠 Less distraction - model focuses on best patterns
+
+**Customization:**
+- Set to 3 for simple tasks (minimal context)
+- Set to 5 for balanced approach (recommended default)
+- Set to 7-10 for complex tasks requiring more patterns
+
 ## 🎯 Best Practices
 
 ### 1. Clear Requirements

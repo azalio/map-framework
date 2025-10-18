@@ -58,7 +58,13 @@ class PlaybookManager:
             return playbook
 
         with open(self.playbook_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
+            playbook = json.load(f)
+
+        # Ensure top_k exists with default value for backward compatibility
+        if "top_k" not in playbook.get("metadata", {}):
+            playbook.setdefault("metadata", {})["top_k"] = 5
+
+        return playbook
 
     def _create_empty_playbook(self) -> Dict:
         """Create empty playbook structure."""
@@ -69,7 +75,9 @@ class PlaybookManager:
                 "created_at": datetime.utcnow().isoformat() + "Z",
                 "last_updated": datetime.utcnow().isoformat() + "Z",
                 "total_bullets": 0,
-                "sections_count": 9
+                "sections_count": 9,
+                # Phase 1.3: Limit playbook patterns to reduce context distraction and save ~15% tokens
+                "top_k": 5
             },
             "sections": {
                 "ARCHITECTURE_PATTERNS": {
@@ -329,7 +337,7 @@ class PlaybookManager:
     def get_relevant_bullets(
         self,
         query: str,
-        limit: int = 10,
+        limit: Optional[int] = None,
         min_quality_score: int = 0,
         similarity_threshold: float = 0.3
     ) -> List[Dict]:
@@ -340,13 +348,17 @@ class PlaybookManager:
 
         Args:
             query: Task description or keywords
-            limit: Maximum bullets to return
+            limit: Maximum bullets to return (defaults to playbook metadata top_k)
             min_quality_score: Minimum (helpful - harmful) score
             similarity_threshold: Minimum semantic similarity (0-1, only for semantic search)
 
         Returns:
             List of bullets sorted by relevance and quality score
         """
+        # Use playbook top_k as default if limit not specified
+        if limit is None:
+            limit = self.playbook["metadata"]["top_k"]
+
         # Collect non-deprecated bullets with quality filtering
         all_bullets = []
         for section in self.playbook["sections"].values():
