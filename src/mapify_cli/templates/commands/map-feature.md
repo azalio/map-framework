@@ -175,13 +175,17 @@ Output JSON with:
   # Plan will show: "⚠️ Retry attempt 2 - review previous errors"
   ```
 - Provide monitor feedback to actor
-- Go back to step 3.1.5 (Actor will see updated plan with error info)
+- Go back to step 3.1.5 (Actor implements fixes)
+- **⚠️ CRITICAL:** After Actor applies fixes, IMMEDIATELY call Monitor again (step 3.3) to validate the corrections
+- **DO NOT skip Monitor validation** - you cannot proceed to Predictor/Evaluator without Monitor approval
 - Max 3-5 iterations, then escalate to user
 
 **If monitor.valid === true:**
 - Continue to step 3.5
 
 ### 3.5 Call Predictor to Analyze Impact
+
+**⚠️ PREREQUISITE:** You can ONLY reach this step if Monitor returned `valid: true` and `verdict: "approved"`. If you just applied Actor fixes after Monitor feedback, you MUST call Monitor again (step 3.3) before proceeding to Predictor.
 
 ```
 Task(
