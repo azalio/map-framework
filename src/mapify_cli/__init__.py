@@ -1186,6 +1186,8 @@ def configure_global_permissions() -> None:
             "Bash(wc *)",
             "Bash(grep *)",
             "Bash(find *)",
+            "Bash(sort *)",
+            "Bash(uniq *)",
             "Bash(jq *)",
             "Bash(which *)",
             "Bash(echo *)",
