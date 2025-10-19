@@ -1160,6 +1160,74 @@ def install_hooks(project_path: Path, with_hooks: bool = True) -> int:
     return hooks_count
 
 
+def configure_global_permissions() -> None:
+    """Configure global Claude Code permissions for read-only commands"""
+    claude_dir = Path.home() / ".claude"
+    settings_file = claude_dir / "settings.json"
+
+    # Create .claude directory if it doesn't exist
+    claude_dir.mkdir(exist_ok=True)
+
+    # Default permissions for read-only commands
+    default_permissions = {
+        "allow": [
+            "Bash(git status*)",
+            "Bash(git log*)",
+            "Bash(git diff*)",
+            "Bash(git show*)",
+            "Bash(git check-ignore*)",
+            "Bash(git branch --show-current*)",
+            "Bash(git branch -a*)",
+            "Bash(git ls-files*)",
+            "Bash(ls *)",
+            "Bash(cat *)",
+            "Bash(head *)",
+            "Bash(tail *)",
+            "Bash(wc *)",
+            "Bash(grep *)",
+            "Bash(find *)",
+            "Bash(which *)",
+            "Bash(echo *)",
+            "Bash(pwd*)",
+            "Bash(whoami*)",
+            "Bash(python* -m mapify_cli.recitation_manager*)",
+            "Bash(ruby -c *)",
+            "Read(//Users/**)",
+            "Read(//private/tmp/**)",
+            "Glob(**)"
+        ],
+        "deny": []
+    }
+
+    # Read existing settings or create new
+    if settings_file.exists():
+        try:
+            with open(settings_file, 'r') as f:
+                settings = json.load(f)
+        except json.JSONDecodeError:
+            console.print("[yellow]Warning:[/yellow] Corrupted settings.json, will recreate")
+            settings = {}
+    else:
+        settings = {}
+
+    # Merge permissions (preserve user's custom permissions)
+    if "permissions" not in settings:
+        settings["permissions"] = default_permissions
+    else:
+        # Add new permissions if they don't exist
+        existing_allow = set(settings["permissions"].get("allow", []))
+        for perm in default_permissions["allow"]:
+            if perm not in existing_allow:
+                settings["permissions"].setdefault("allow", []).append(perm)
+
+    # Write back
+    with open(settings_file, 'w') as f:
+        json.dump(settings, f, indent=2)
+
+    console.print(f"[green]✓[/green] Configured global permissions in {settings_file}")
+    console.print(f"[dim]  Added {len(default_permissions['allow'])} read-only command patterns[/dim]")
+
+
 def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
     """Create MCP configuration file"""
     config: Dict[str, Any] = {
@@ -1629,6 +1697,10 @@ def init(
 
     tracker.add("finalize", "Finalize")
     tracker.complete("finalize", "project ready")
+
+    # Configure global permissions for read-only commands
+    console.print()  # Add spacing
+    configure_global_permissions()
 
     # Show final tree
     with Live(tracker.render(), console=console, transient=True) as live:
