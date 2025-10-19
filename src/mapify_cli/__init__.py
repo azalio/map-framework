@@ -1192,6 +1192,8 @@ def configure_global_permissions() -> None:
             "Bash(whoami*)",
             "Bash(python* -m mapify_cli.recitation_manager*)",
             "Bash(ruby -c *)",
+            "Bash(chmod +x *.sh)",
+            "Bash(chmod +x */*.sh)",
             "Read(//Users/**)",
             "Read(//private/tmp/**)",
             "Glob(**)"
