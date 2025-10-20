@@ -21,6 +21,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Inserted recitation section between `<task>` and `<playbook_context>` for optimal attention placement
   - No breaking changes - gracefully handles missing plan_context
 
+### Optimized
+- **Monitor Template** (v2.0.0 → v2.1.0): Verbose output optimization for ~10% token savings (Phase 1.4)
+  - Compressed MCP Integration section: 112 → 92 lines (20 saved)
+  - Streamlined Documentation Consistency: 77 → 62 lines (15 saved)
+  - Consolidated Example 3 (Documentation Inconsistency): 52 → 27 lines (25 saved)
+  - Reduced Example 1 commentary: 63 → 55 lines (8 saved)
+  - **Total reduction**: 1006 → 909 lines (-97 / 9.6%)
+  - **Critical preservations**: Security Checklist, Severity Guidelines, Decision Rules, JSON Format (all intact)
+  - **Validation**: Self-reviewed valid=true, scored 9.7/10 by Evaluator
+
+- **Evaluator Template** (v2.0.0 → v2.1.0): Balanced optimization with teaching quality preservation (Phase 1.4)
+  - Compressed Examples 2-6: Summaries with key features highlighted
+  - Streamlined scoring guidelines and dimension explanations
+  - **Partial rollback decision**: Restored Example 1 full code (52 lines) to maintain teaching quality
+  - **Total reduction**: 934 → 844 lines (-90 / 9.6%)
+  - **Final metrics**: 214% over-delivery (balanced vs aggressive 238%)
+  - **Critical preservations**: 6-Dimensional Scoring Model, Weighted Calculation, Decision Tree, JSON Format (all intact)
+  - **Validation**: Scored Monitor optimization 9.7/10
+
+- **Playbook Growth**: +8 new patterns learned during Phase 1.4 implementation (3 → 11 total bullets)
+  - impl-0001: Multi-Agent Workflow Documentation
+  - impl-0002: Inter-Subtask Learning Propagation
+  - impl-0003: Executable Specification for Code Transformations
+  - impl-0004: Bounded Optimization Specifications
+  - qual-0001: Analysis Document Completeness (WHAT/WHERE/HOW/WHY)
+  - qual-0002: Template Purpose Classification (teaching vs validation)
+  - test-0001: Iterative Refinement Based on Monitor Feedback
+  - test-0002: Iteration Count as Learning Effectiveness Metric
+  - test-0003: Over-Delivery Pattern Recognition
+  - arch-0001: Workflow-Scoped Learning Context Architecture
+  - arch-0002: Analysis-Implementation Pipeline Pattern
+
 ## [2.0.0] - 2025-10-17
 
 ### Added

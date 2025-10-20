@@ -4,8 +4,8 @@
     "project": "map-framework",
     "description": "ACE-style comprehensive playbook for MAP Framework development",
     "created_at": "2025-10-10T00:00:00Z",
-    "last_updated": "2025-10-18T18:00:00.000000Z",
-    "total_bullets": 11,
+    "last_updated": "2025-10-20T10:00:56.751832Z",
+    "total_bullets": 13,
     "sections_count": 9,
     "top_k": 5
   },
@@ -16,26 +16,52 @@
         {
           "id": "arch-0001",
           "content": "Workflow-Scoped Learning Context Architecture: Maintain two distinct knowledge layers: (1) Workflow Context = temporary, session-specific lessons accumulated during single workflow execution (e.g., 'this analysis type needs implementation plans'). Cleared after workflow completes. (2) Global Playbook = permanent, reusable patterns extracted by Reflector from high-quality workflow lessons. Workflow context enables rapid within-session learning without polluting permanent playbook with ephemeral details. Reflector promotes workflow lessons to playbook only if proven across multiple workflows (helpful_count threshold).",
-          "code_example": "```python\n# ✅ Two-Layer Knowledge Architecture\nclass WorkflowContext:\n    \"\"\"Temporary learning context for single workflow execution\"\"\"\n    def __init__(self):\n        self.lessons = []  # Session-specific, cleared after workflow\n        self.iteration_metrics = {}\n    \n    def add_lesson(self, lesson: str, subtask_id: str):\n        \"\"\"Accumulate lessons during workflow\"\"\"\n        self.lessons.append({\n            \"content\": lesson,\n            \"source_subtask\": subtask_id,\n            \"timestamp\": datetime.now()\n        })\n    \n    def clear(self):\n        \"\"\"Clear after workflow completion\"\"\"\n        self.lessons.clear()\n        self.iteration_metrics.clear()\n\nclass Orchestrator:\n    def __init__(self, playbook_manager):\n        self.playbook = playbook_manager  # Global, persistent\n        self.workflow_context = None  # Created per workflow\n    \n    def execute_workflow(self, workflow):\n        # Create temporary workflow context\n        self.workflow_context = WorkflowContext()\n        \n        for subtask in workflow.subtasks:\n            # Actor gets BOTH global playbook + workflow context\n            context = {\n                \"playbook_patterns\": self.playbook.get_relevant_bullets(subtask.query),\n                \"workflow_lessons\": self.workflow_context.lessons\n            }\n            result = actor.execute(subtask, context)\n        \n        # After workflow: Reflector extracts high-value lessons for playbook\n        reflector_insights = reflector.analyze(self.workflow_context)\n        curator.integrate(reflector_insights, self.playbook)\n        \n        # Clear temporary context\n        self.workflow_context.clear()\n```",
+          "code_example": "```python\n# \u2705 Two-Layer Knowledge Architecture\nclass WorkflowContext:\n    \"\"\"Temporary learning context for single workflow execution\"\"\"\n    def __init__(self):\n        self.lessons = []  # Session-specific, cleared after workflow\n        self.iteration_metrics = {}\n    \n    def add_lesson(self, lesson: str, subtask_id: str):\n        \"\"\"Accumulate lessons during workflow\"\"\"\n        self.lessons.append({\n            \"content\": lesson,\n            \"source_subtask\": subtask_id,\n            \"timestamp\": datetime.now()\n        })\n    \n    def clear(self):\n        \"\"\"Clear after workflow completion\"\"\"\n        self.lessons.clear()\n        self.iteration_metrics.clear()\n\nclass Orchestrator:\n    def __init__(self, playbook_manager):\n        self.playbook = playbook_manager  # Global, persistent\n        self.workflow_context = None  # Created per workflow\n    \n    def execute_workflow(self, workflow):\n        # Create temporary workflow context\n        self.workflow_context = WorkflowContext()\n        \n        for subtask in workflow.subtasks:\n            # Actor gets BOTH global playbook + workflow context\n            context = {\n                \"playbook_patterns\": self.playbook.get_relevant_bullets(subtask.query),\n                \"workflow_lessons\": self.workflow_context.lessons\n            }\n            result = actor.execute(subtask, context)\n        \n        # After workflow: Reflector extracts high-value lessons for playbook\n        reflector_insights = reflector.analyze(self.workflow_context)\n        curator.integrate(reflector_insights, self.playbook)\n        \n        # Clear temporary context\n        self.workflow_context.clear()\n```",
           "helpful_count": 0,
           "harmful_count": 0,
           "created_at": "2025-10-18T15:42:00.000000Z",
           "last_used_at": "2025-10-18T15:42:00.000000Z",
-          "related_bullets": ["impl-0002", "test-0002"],
-          "tags": ["architecture", "knowledge-management", "workflow", "playbook", "context", "map-framework", "python", "learning"],
+          "related_bullets": [
+            "impl-0002",
+            "test-0002"
+          ],
+          "tags": [
+            "architecture",
+            "knowledge-management",
+            "workflow",
+            "playbook",
+            "context",
+            "map-framework",
+            "python",
+            "learning"
+          ],
           "deprecated": false,
           "deprecation_reason": null
         },
         {
           "id": "arch-0002",
-          "content": "Analysis-Implementation Pipeline Pattern: For multi-subtask workflows requiring code changes, separate analysis (Subtask N) from implementation (Subtask N+1) with explicit handoff via executable specification. Analyst subtask produces detailed specification (file paths, line ranges, verbatim current/new text). Implementer subtask mechanically applies specification without interpretation. This pipeline reduces cognitive load - analyst focuses on 'what/why', implementer focuses on 'how/execute'. Pattern proven: Subtask 1 analysis (2 iterations to refine spec) → Subtask 3 implementation (1 iteration following spec). Total workflow iterations reduced vs monolithic approach where single agent both analyzes and implements.",
-          "code_example": "```python\n# ✅ Analysis-Implementation Pipeline\nclass WorkflowOrchestrator:\n    def execute_transformation_workflow(self, target_code):\n        # Subtask 1: Analyst produces executable spec\n        analysis_task = Subtask(\n            role=\"analyst\",\n            goal=\"Analyze code and produce executable transformation spec\",\n            output_schema=ExecutableSpecSchema  # Enforces structure\n        )\n        spec = self.execute_with_refinement(analysis_task)\n        # Refinement happens here (2 iterations to get spec right)\n        \n        # Subtask 2: Implementer mechanically applies spec\n        implementation_task = Subtask(\n            role=\"implementer\",\n            goal=\"Apply transformations from spec, no interpretation\",\n            context={\"spec\": spec},  # Handoff\n            instructions=\"Follow spec exactly: replace lines X-Y with provided text\"\n        )\n        result = self.execute_with_refinement(implementation_task)\n        # Single iteration - spec is unambiguous\n        \n        return result\n\n# Schema enforces executable spec structure\nclass ExecutableSpecSchema:\n    file_path: str  # Absolute path\n    line_range: tuple[int, int]  # Exact lines\n    current_text: str  # Verbatim from file\n    new_text: str  # Exact replacement\n    rationale: str  # Why this change\n```",
+          "content": "Analysis-Implementation Pipeline Pattern: For multi-subtask workflows requiring code changes, separate analysis (Subtask N) from implementation (Subtask N+1) with explicit handoff via executable specification. Analyst subtask produces detailed specification (file paths, line ranges, verbatim current/new text). Implementer subtask mechanically applies specification without interpretation. This pipeline reduces cognitive load - analyst focuses on 'what/why', implementer focuses on 'how/execute'. Pattern proven: Subtask 1 analysis (2 iterations to refine spec) \u2192 Subtask 3 implementation (1 iteration following spec). Total workflow iterations reduced vs monolithic approach where single agent both analyzes and implements.",
+          "code_example": "```python\n# \u2705 Analysis-Implementation Pipeline\nclass WorkflowOrchestrator:\n    def execute_transformation_workflow(self, target_code):\n        # Subtask 1: Analyst produces executable spec\n        analysis_task = Subtask(\n            role=\"analyst\",\n            goal=\"Analyze code and produce executable transformation spec\",\n            output_schema=ExecutableSpecSchema  # Enforces structure\n        )\n        spec = self.execute_with_refinement(analysis_task)\n        # Refinement happens here (2 iterations to get spec right)\n        \n        # Subtask 2: Implementer mechanically applies spec\n        implementation_task = Subtask(\n            role=\"implementer\",\n            goal=\"Apply transformations from spec, no interpretation\",\n            context={\"spec\": spec},  # Handoff\n            instructions=\"Follow spec exactly: replace lines X-Y with provided text\"\n        )\n        result = self.execute_with_refinement(implementation_task)\n        # Single iteration - spec is unambiguous\n        \n        return result\n\n# Schema enforces executable spec structure\nclass ExecutableSpecSchema:\n    file_path: str  # Absolute path\n    line_range: tuple[int, int]  # Exact lines\n    current_text: str  # Verbatim from file\n    new_text: str  # Exact replacement\n    rationale: str  # Why this change\n```",
           "helpful_count": 1,
           "harmful_count": 0,
           "created_at": "2025-10-18T16:05:00.000000Z",
           "last_used_at": "2025-10-18T18:00:00.000000Z",
-          "related_bullets": ["impl-0003", "impl-0002", "arch-0001"],
-          "tags": ["architecture", "workflow", "separation-of-concerns", "pipeline", "multi-agent", "map-framework", "python", "analyst", "implementer"],
+          "related_bullets": [
+            "impl-0003",
+            "impl-0002",
+            "arch-0001"
+          ],
+          "tags": [
+            "architecture",
+            "workflow",
+            "separation-of-concerns",
+            "pipeline",
+            "multi-agent",
+            "map-framework",
+            "python",
+            "analyst",
+            "implementer"
+          ],
           "deprecated": false,
           "deprecation_reason": null
         }
@@ -47,7 +73,7 @@
         {
           "id": "impl-0001",
           "content": "Multi-Agent Workflow Documentation: When documenting analysis findings in multi-agent systems, always include detailed implementation plans with concrete before/after examples, not just abstract findings. Monitors/Evaluators need actionable plans to verify completion. Structure: (1) Current state with file paths and line numbers, (2) Proposed changes with specific code modifications, (3) Verification criteria. This prevents 'findings without fixes' anti-pattern common in AI-assisted workflows.",
-          "code_example": "```python\n# ❌ INSUFFICIENT - Just findings\nanalysis = {\n    \"findings\": [\"Workflow logging incomplete\"],\n    \"recommendation\": \"Add logging\"\n}\n\n# ✅ ACTIONABLE - Implementation plan\nanalysis = {\n    \"findings\": [\"Workflow logging incomplete in orchestrator.py:45-67\"],\n    \"implementation_plan\": {\n        \"before\": \"# No logging in execute_subtask()\\nresult = actor.execute(task)\",\n        \"after\": \"logger.info(f'Executing subtask {task.id}')\\nresult = actor.execute(task)\\nlogger.info(f'Completed subtask {task.id}')\",\n        \"files\": [\"src/orchestrator.py\"],\n        \"verification\": \"Check logs contain 'Executing subtask' and 'Completed subtask' entries\"\n    }\n}\n```",
+          "code_example": "```python\n# \u274c INSUFFICIENT - Just findings\nanalysis = {\n    \"findings\": [\"Workflow logging incomplete\"],\n    \"recommendation\": \"Add logging\"\n}\n\n# \u2705 ACTIONABLE - Implementation plan\nanalysis = {\n    \"findings\": [\"Workflow logging incomplete in orchestrator.py:45-67\"],\n    \"implementation_plan\": {\n        \"before\": \"# No logging in execute_subtask()\\nresult = actor.execute(task)\",\n        \"after\": \"logger.info(f'Executing subtask {task.id}')\\nresult = actor.execute(task)\\nlogger.info(f'Completed subtask {task.id}')\",\n        \"files\": [\"src/orchestrator.py\"],\n        \"verification\": \"Check logs contain 'Executing subtask' and 'Completed subtask' entries\"\n    }\n}\n```",
           "helpful_count": 0,
           "harmful_count": 0,
           "created_at": "2025-10-18T12:26:06.880415Z",
@@ -67,39 +93,98 @@
         {
           "id": "impl-0002",
           "content": "Inter-Subtask Learning Propagation: When workflow executes similar sequential subtasks (e.g., Subtask 1 analysis, Subtask 2 analysis), extract Monitor feedback from first subtask as preventive checklist for subsequent subtasks. This reduces iteration count by preemptively addressing common gaps. Extract task-type-specific lessons (e.g., 'analysis must include implementation plan'), not implementation-specific fixes (e.g., 'add logging to orchestrator.py line 45'). Pattern proven: Subtask 1 required 2 iterations to pass Monitor, Subtask 2 required only 1 iteration when checklist applied.",
-          "code_example": "```python\n# ❌ WITHOUT Learning Propagation\ndef execute_sequential_subtasks(subtasks):\n    for subtask in subtasks:\n        result = actor.execute(subtask)  # Each subtask repeats same mistakes\n        feedback = monitor.evaluate(result)\n        # No cross-subtask learning\n\n# ✅ WITH Learning Propagation\ndef execute_sequential_subtasks(subtasks):\n    workflow_lessons = []  # Accumulate lessons\n    \n    for i, subtask in enumerate(subtasks):\n        # Apply lessons from previous similar subtasks\n        if workflow_lessons:\n            subtask.context['preventive_checklist'] = workflow_lessons\n        \n        result = actor.execute(subtask)\n        feedback = monitor.evaluate(result)\n        \n        # Extract reusable lessons (not implementation-specific)\n        if feedback.gaps:\n            lesson = extract_pattern(feedback.gaps)  # e.g., 'include implementation plan'\n            workflow_lessons.append(lesson)\n```",
+          "code_example": "```python\n# \u274c WITHOUT Learning Propagation\ndef execute_sequential_subtasks(subtasks):\n    for subtask in subtasks:\n        result = actor.execute(subtask)  # Each subtask repeats same mistakes\n        feedback = monitor.evaluate(result)\n        # No cross-subtask learning\n\n# \u2705 WITH Learning Propagation\ndef execute_sequential_subtasks(subtasks):\n    workflow_lessons = []  # Accumulate lessons\n    \n    for i, subtask in enumerate(subtasks):\n        # Apply lessons from previous similar subtasks\n        if workflow_lessons:\n            subtask.context['preventive_checklist'] = workflow_lessons\n        \n        result = actor.execute(subtask)\n        feedback = monitor.evaluate(result)\n        \n        # Extract reusable lessons (not implementation-specific)\n        if feedback.gaps:\n            lesson = extract_pattern(feedback.gaps)  # e.g., 'include implementation plan'\n            workflow_lessons.append(lesson)\n```",
           "helpful_count": 0,
           "harmful_count": 0,
           "created_at": "2025-10-18T15:42:00.000000Z",
           "last_used_at": "2025-10-18T15:42:00.000000Z",
-          "related_bullets": ["test-0001", "impl-0001"],
-          "tags": ["multi-agent", "workflow", "learning", "iteration-reduction", "map-framework", "python", "feedback-propagation"],
+          "related_bullets": [
+            "test-0001",
+            "impl-0001"
+          ],
+          "tags": [
+            "multi-agent",
+            "workflow",
+            "learning",
+            "iteration-reduction",
+            "map-framework",
+            "python",
+            "feedback-propagation"
+          ],
           "deprecated": false,
           "deprecation_reason": null
         },
         {
           "id": "impl-0003",
-          "content": "Executable Specification for Code Transformations: When analyzing code requiring mechanical transformations (refactoring, optimization, style fixes), provide executable specifications with exact line ranges and verbatim current/optimized text. Structure: (1) File path + exact line range (e.g., lines 45-67), (2) Current text verbatim from those lines, (3) Optimized text showing exact replacement, (4) Transformation rule applied. This eliminates interpretation ambiguity between analyst and implementer. Vague analysis ('improve error handling') causes iteration loops. Detailed specification enables single-iteration implementation. Proven: Subtask 1 with detailed spec → Subtask 3 implemented in 1 iteration.",
-          "code_example": "```python\n# ❌ VAGUE - Causes iterations\nanalysis = {\n    \"finding\": \"Error handling in parser.py needs improvement\",\n    \"recommendation\": \"Add try-catch blocks\"\n}\n\n# ✅ EXECUTABLE SPECIFICATION - Single iteration\nanalysis = {\n    \"file\": \"/absolute/path/parser.py\",\n    \"line_range\": \"45-52\",\n    \"current_text\": \"\"\"def parse_config(file_path):\n    data = json.load(open(file_path))\n    return Config(data)\"\"\",\n    \"optimized_text\": \"\"\"def parse_config(file_path):\n    try:\n        with open(file_path) as f:\n            data = json.load(f)\n        return Config(data)\n    except (FileNotFoundError, json.JSONDecodeError) as e:\n        logger.error(f'Config parse failed: {e}')\n        raise ConfigError(f'Invalid config {file_path}') from e\"\"\",\n    \"transformation_rule\": \"Add context manager for file handling + explicit exception handling with logging\"\n}\n```",
+          "content": "Executable Specification for Code Transformations: When analyzing code requiring mechanical transformations (refactoring, optimization, style fixes), provide executable specifications with exact line ranges and verbatim current/optimized text. Structure: (1) File path + exact line range (e.g., lines 45-67), (2) Current text verbatim from those lines, (3) Optimized text showing exact replacement, (4) Transformation rule applied. This eliminates interpretation ambiguity between analyst and implementer. Vague analysis ('improve error handling') causes iteration loops. Detailed specification enables single-iteration implementation. Proven: Subtask 1 with detailed spec \u2192 Subtask 3 implemented in 1 iteration.",
+          "code_example": "```python\n# \u274c VAGUE - Causes iterations\nanalysis = {\n    \"finding\": \"Error handling in parser.py needs improvement\",\n    \"recommendation\": \"Add try-catch blocks\"\n}\n\n# \u2705 EXECUTABLE SPECIFICATION - Single iteration\nanalysis = {\n    \"file\": \"/absolute/path/parser.py\",\n    \"line_range\": \"45-52\",\n    \"current_text\": \"\"\"def parse_config(file_path):\n    data = json.load(open(file_path))\n    return Config(data)\"\"\",\n    \"optimized_text\": \"\"\"def parse_config(file_path):\n    try:\n        with open(file_path) as f:\n            data = json.load(f)\n        return Config(data)\n    except (FileNotFoundError, json.JSONDecodeError) as e:\n        logger.error(f'Config parse failed: {e}')\n        raise ConfigError(f'Invalid config {file_path}') from e\"\"\",\n    \"transformation_rule\": \"Add context manager for file handling + explicit exception handling with logging\"\n}\n```",
           "helpful_count": 1,
           "harmful_count": 0,
           "created_at": "2025-10-18T16:05:00.000000Z",
           "last_used_at": "2025-10-18T18:00:00.000000Z",
-          "related_bullets": ["impl-0001", "qual-0001"],
-          "tags": ["transformation", "specification", "refactoring", "analysis", "implementation-plan", "map-framework", "python", "code-quality"],
+          "related_bullets": [
+            "impl-0001",
+            "qual-0001"
+          ],
+          "tags": [
+            "transformation",
+            "specification",
+            "refactoring",
+            "analysis",
+            "implementation-plan",
+            "map-framework",
+            "python",
+            "code-quality"
+          ],
           "deprecated": false,
           "deprecation_reason": null
         },
         {
           "id": "impl-0004",
           "content": "Bounded Optimization Specifications: When specifying optimization targets (e.g., token compression), define BOTH target floor (minimum acceptable) AND ceiling (maximum safe compression). Structure: (1) Target floor with rationale (e.g., '50% compression' based on efficiency goals), (2) Ceiling as % over target (e.g., '100-150% over target' = safe zone, '>200% over' = danger zone where over-optimization risks quality). Distinguish template purposes: teaching templates (require concrete code examples) need stricter ceilings (~150%) to preserve pedagogical value, validation templates (allow summaries) permit looser ceilings (~200%) for efficiency. Safe optimization zone: 100-150% over target. Danger zone: >200% where compression compromises content value.",
-          "code_example": "```python\n# ❌ UNBOUNDED - Risks over-optimization\noptimization_spec = {\n    \"target\": \"Reduce tokens by 50%\",\n    \"approach\": \"Remove unnecessary verbosity\"\n}\n# Result: Unconstrained optimization may remove critical details\n\n# ✅ BOUNDED - Safe optimization corridor\noptimization_spec = {\n    \"target_floor\": \"50% token reduction (efficiency goal)\",\n    \"ceiling\": \"150% over target = 75% max reduction\",\n    \"safe_zone\": \"50-75% reduction acceptable\",\n    \"danger_zone\": \">75% reduction risks content loss\",\n    \"template_purpose\": \"teaching\",  # vs 'validation'\n    \"purpose_constraints\": {\n        \"teaching\": \"Preserve concrete code examples, max 150% ceiling\",\n        \"validation\": \"Summaries acceptable, max 200% ceiling\"\n    },\n    \"rationale\": \"Teaching templates need pedagogical completeness, validation templates optimize for efficiency\"\n}\n\n# Evidence-based thresholds from workflow:\n# - Monitor template 135% praised (validation purpose, within safe zone)\n# - Evaluator template 238% concerns (teaching purpose, exceeded safe ceiling)\n```",
+          "code_example": "```python\n# \u274c UNBOUNDED - Risks over-optimization\noptimization_spec = {\n    \"target\": \"Reduce tokens by 50%\",\n    \"approach\": \"Remove unnecessary verbosity\"\n}\n# Result: Unconstrained optimization may remove critical details\n\n# \u2705 BOUNDED - Safe optimization corridor\noptimization_spec = {\n    \"target_floor\": \"50% token reduction (efficiency goal)\",\n    \"ceiling\": \"150% over target = 75% max reduction\",\n    \"safe_zone\": \"50-75% reduction acceptable\",\n    \"danger_zone\": \">75% reduction risks content loss\",\n    \"template_purpose\": \"teaching\",  # vs 'validation'\n    \"purpose_constraints\": {\n        \"teaching\": \"Preserve concrete code examples, max 150% ceiling\",\n        \"validation\": \"Summaries acceptable, max 200% ceiling\"\n    },\n    \"rationale\": \"Teaching templates need pedagogical completeness, validation templates optimize for efficiency\"\n}\n\n# Evidence-based thresholds from workflow:\n# - Monitor template 135% praised (validation purpose, within safe zone)\n# - Evaluator template 238% concerns (teaching purpose, exceeded safe ceiling)\n```",
           "helpful_count": 0,
           "harmful_count": 0,
           "created_at": "2025-10-18T18:00:00.000000Z",
           "last_used_at": "2025-10-18T18:00:00.000000Z",
-          "related_bullets": ["impl-0003", "qual-0001"],
-          "tags": ["optimization", "specification", "bounded", "compression", "template", "map-framework", "python", "quality-gate"],
+          "related_bullets": [
+            "impl-0003",
+            "qual-0001"
+          ],
+          "tags": [
+            "optimization",
+            "specification",
+            "bounded",
+            "compression",
+            "template",
+            "map-framework",
+            "python",
+            "quality-gate"
+          ],
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "impl-0005",
+          "content": "File Synchronization with Cryptographic Verification: When verifying file equivalence across directories (template sync, config propagation, backup validation), always use SHA256 or stronger cryptographic hashes. Hash-based verification provides mathematical certainty superior to manual diff inspection (error-prone), timestamp comparison (git resets timestamps), or file size checks (can coincidentally match). Generate hash manifests for both source and target directories, then compare manifests. This approach is automation-friendly, scriptable, and provides binary identical/different decisions. Always perform complete discovery before modification: identify missing files, divergent files, AND orphaned artifacts in a single pass, then apply fixes as an atomic batch.",
+          "code_example": "```bash\n# \u274c INCORRECT - manual diff (error-prone, doesn't scale)\nfor f in *.md; do diff source/$f target/$f; done\n\n# \u274c INCORRECT - timestamp comparison (unreliable with git)\nfind source/ -newer target/\n\n# \u2705 CORRECT - SHA256 hash comparison\n(cd source && shasum -a 256 *.md) | sort > source_hashes.txt\n(cd target && shasum -a 256 *.md) | sort > target_hashes.txt\ndiff source_hashes.txt target_hashes.txt\n\n# \u2705 CORRECT - Complete discovery\ncomm -23 <(cd source && ls | sort) <(cd target && ls | sort)  # Missing\ncomm -13 <(cd source && ls | sort) <(cd target && ls | sort)  # Orphaned\n\n# Apply fixes, then re-verify with hashes\ncp source/missing.md target/\n(cd target && shasum -a 256 *.md) | diff source_hashes.txt -\n```",
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-20T10:00:56.751820Z",
+          "last_used_at": "2025-10-20T10:00:56.751828Z",
+          "related_bullets": [
+            "impl-0003"
+          ],
+          "tags": [
+            "file-sync",
+            "cryptographic-hash",
+            "sha256",
+            "verification",
+            "template",
+            "devops",
+            "bash",
+            "infrastructure"
+          ],
           "deprecated": false,
           "deprecation_reason": null
         }
@@ -122,8 +207,8 @@
       "bullets": [
         {
           "id": "test-0001",
-          "content": "Iterative Refinement Based on Monitor Feedback: Treat Monitor/Evaluator feedback as acceptance criteria for test-driven development in multi-agent workflows. When Monitor identifies gaps (e.g., 'implementation plan missing'), treat this as a failing test. Refine Actor output iteratively until Monitor feedback shows all criteria met. This creates a feedback loop: Actor implements → Monitor evaluates → Actor refines → repeat until quality gates pass. Prevents shipping incomplete work in autonomous systems.",
-          "code_example": "```python\n# ✅ Monitor-Driven Refinement Loop\ndef execute_with_refinement(task, max_iterations=3):\n    for iteration in range(max_iterations):\n        # Actor executes\n        result = actor.execute(task)\n        \n        # Monitor evaluates (like pytest)\n        feedback = monitor.evaluate(result)\n        \n        if feedback.all_criteria_met:\n            return result  # Test passed\n        \n        # Refine based on feedback (like fixing failing test)\n        task.context.append({\n            \"iteration\": iteration,\n            \"gaps\": feedback.missing_criteria,\n            \"instruction\": \"Address these gaps: \" + feedback.gaps\n        })\n    \n    raise QualityGateError(f\"Failed to meet criteria after {max_iterations} iterations\")\n```",
+          "content": "Iterative Refinement Based on Monitor Feedback: Treat Monitor/Evaluator feedback as acceptance criteria for test-driven development in multi-agent workflows. When Monitor identifies gaps (e.g., 'implementation plan missing'), treat this as a failing test. Refine Actor output iteratively until Monitor feedback shows all criteria met. This creates a feedback loop: Actor implements \u2192 Monitor evaluates \u2192 Actor refines \u2192 repeat until quality gates pass. Prevents shipping incomplete work in autonomous systems.",
+          "code_example": "```python\n# \u2705 Monitor-Driven Refinement Loop\ndef execute_with_refinement(task, max_iterations=3):\n    for iteration in range(max_iterations):\n        # Actor executes\n        result = actor.execute(task)\n        \n        # Monitor evaluates (like pytest)\n        feedback = monitor.evaluate(result)\n        \n        if feedback.all_criteria_met:\n            return result  # Test passed\n        \n        # Refine based on feedback (like fixing failing test)\n        task.context.append({\n            \"iteration\": iteration,\n            \"gaps\": feedback.missing_criteria,\n            \"instruction\": \"Address these gaps: \" + feedback.gaps\n        })\n    \n    raise QualityGateError(f\"Failed to meet criteria after {max_iterations} iterations\")\n```",
           "helpful_count": 0,
           "harmful_count": 0,
           "created_at": "2025-10-18T12:26:06.880415Z",
@@ -143,27 +228,77 @@
         },
         {
           "id": "test-0002",
-          "content": "Iteration Count as Learning Effectiveness Metric: Track iterations required per subtask to quantitatively validate learning mechanisms and specification quality. Expected pattern: First subtask establishes baseline iteration count, subsequent similar subtasks should require ≤1 iteration if learning is effective. Calculate learning efficiency: (first_subtask_iterations - current_subtask_iterations) / first_subtask_iterations. Example: Subtask 1 = 2 iterations baseline, Subtask 2 = 1 iteration → 50% efficiency gain. If later subtasks don't show improvement, learning mechanism is broken. Additionally, single-iteration completion indicates clear specification quality, while multi-iteration indicates specification ambiguity - use rejection reasons to identify missing details in specs.",
-          "code_example": "```python\n# ✅ Iteration Tracking for Learning Validation\nclass WorkflowMetrics:\n    def __init__(self):\n        self.subtask_iterations = {}  # {subtask_id: iteration_count}\n    \n    def track_iteration(self, subtask_id, iteration_num):\n        self.subtask_iterations[subtask_id] = iteration_num\n    \n    def calculate_learning_efficiency(self, baseline_subtask, current_subtask):\n        baseline_iters = self.subtask_iterations[baseline_subtask]\n        current_iters = self.subtask_iterations[current_subtask]\n        \n        efficiency = (baseline_iters - current_iters) / baseline_iters\n        \n        if efficiency < 0:\n            raise LearningRegressionError(\n                f\"Learning failed: {current_subtask} required MORE iterations \"\n                f\"({current_iters}) than baseline ({baseline_iters})\"\n            )\n        \n        return efficiency  # 0.5 = 50% improvement\n\n# Usage in orchestrator\nmetrics = WorkflowMetrics()\nfor subtask in workflow.subtasks:\n    iterations = execute_with_refinement(subtask)\n    metrics.track_iteration(subtask.id, iterations)\n    \n    if subtask.id > 0:  # Not first subtask\n        efficiency = metrics.calculate_learning_efficiency(\n            baseline_subtask=workflow.subtasks[0].id,\n            current_subtask=subtask.id\n        )\n        logger.info(f\"Learning efficiency: {efficiency:.1%}\")\n```",
+          "content": "Iteration Count as Learning Effectiveness Metric: Track iterations required per subtask to quantitatively validate learning mechanisms and specification quality. Expected pattern: First subtask establishes baseline iteration count, subsequent similar subtasks should require \u22641 iteration if learning is effective. Calculate learning efficiency: (first_subtask_iterations - current_subtask_iterations) / first_subtask_iterations. Example: Subtask 1 = 2 iterations baseline, Subtask 2 = 1 iteration \u2192 50% efficiency gain. If later subtasks don't show improvement, learning mechanism is broken. Additionally, single-iteration completion indicates clear specification quality, while multi-iteration indicates specification ambiguity - use rejection reasons to identify missing details in specs.",
+          "code_example": "```python\n# \u2705 Iteration Tracking for Learning Validation\nclass WorkflowMetrics:\n    def __init__(self):\n        self.subtask_iterations = {}  # {subtask_id: iteration_count}\n    \n    def track_iteration(self, subtask_id, iteration_num):\n        self.subtask_iterations[subtask_id] = iteration_num\n    \n    def calculate_learning_efficiency(self, baseline_subtask, current_subtask):\n        baseline_iters = self.subtask_iterations[baseline_subtask]\n        current_iters = self.subtask_iterations[current_subtask]\n        \n        efficiency = (baseline_iters - current_iters) / baseline_iters\n        \n        if efficiency < 0:\n            raise LearningRegressionError(\n                f\"Learning failed: {current_subtask} required MORE iterations \"\n                f\"({current_iters}) than baseline ({baseline_iters})\"\n            )\n        \n        return efficiency  # 0.5 = 50% improvement\n\n# Usage in orchestrator\nmetrics = WorkflowMetrics()\nfor subtask in workflow.subtasks:\n    iterations = execute_with_refinement(subtask)\n    metrics.track_iteration(subtask.id, iterations)\n    \n    if subtask.id > 0:  # Not first subtask\n        efficiency = metrics.calculate_learning_efficiency(\n            baseline_subtask=workflow.subtasks[0].id,\n            current_subtask=subtask.id\n        )\n        logger.info(f\"Learning efficiency: {efficiency:.1%}\")\n```",
           "helpful_count": 0,
           "harmful_count": 0,
           "created_at": "2025-10-18T15:42:00.000000Z",
           "last_used_at": "2025-10-18T15:42:00.000000Z",
-          "related_bullets": ["test-0001", "impl-0002"],
-          "tags": ["testing", "metrics", "learning", "iteration", "quantitative", "map-framework", "python", "validation"],
+          "related_bullets": [
+            "test-0001",
+            "impl-0002"
+          ],
+          "tags": [
+            "testing",
+            "metrics",
+            "learning",
+            "iteration",
+            "quantitative",
+            "map-framework",
+            "python",
+            "validation"
+          ],
           "deprecated": false,
           "deprecation_reason": null
         },
         {
           "id": "test-0003",
-          "content": "Over-Delivery Pattern Recognition: Track optimization over-delivery percentage as quality signal to identify safe vs harmful optimization zones. Calculate: actual_reduction / target_reduction * 100. Establish evidence-based thresholds: (1) 100-150% over target = optimal zone (praised in workflow), (2) 150-200% over = caution zone (review needed), (3) >200% over = danger zone (quality concerns raised). Use over-delivery metric to calibrate optimization aggressiveness: praised optimizations establish safe upper bound, concerning optimizations establish danger threshold. Pattern enables quantitative optimization validation: 'Monitor 135% praised' + 'Evaluator 238% concerns' → safe threshold between 135-238%, likely ~150-180% depending on template purpose (validation vs teaching).",
-          "code_example": "```python\n# ✅ Over-Delivery Tracking and Threshold Validation\nclass OptimizationMetrics:\n    # Evidence-based thresholds from workflow analysis\n    THRESHOLDS = {\n        \"optimal_zone\": (1.0, 1.5),  # 100-150% over target\n        \"caution_zone\": (1.5, 2.0),  # 150-200% over target  \n        \"danger_zone\": (2.0, float('inf'))  # >200% over target\n    }\n    \n    @staticmethod\n    def calculate_over_delivery(target: float, actual: float) -> float:\n        \"\"\"Returns over-delivery ratio (e.g., 1.35 = 135% of target)\"\"\"\n        return actual / target\n    \n    @staticmethod\n    def assess_quality(over_delivery: float, template_purpose: str) -> dict:\n        \"\"\"Assess optimization quality based on over-delivery\"\"\"\n        if over_delivery < 1.0:\n            return {\"zone\": \"under_target\", \"action\": \"increase_optimization\"}\n        elif over_delivery <= 1.5:\n            return {\"zone\": \"optimal\", \"action\": \"approved\", \n                    \"evidence\": \"Monitor 135% praised\"}\n        elif over_delivery <= 2.0:\n            return {\"zone\": \"caution\", \"action\": \"review_required\",\n                    \"risk\": \"approaching_danger_threshold\"}\n        else:\n            return {\"zone\": \"danger\", \"action\": \"reject\",\n                    \"evidence\": \"Evaluator 238% raised concerns\"}\n\n# Usage in optimization workflow:\ntarget_reduction = 0.50  # 50% target\nactual_reduction = 0.67  # 67% achieved\nover_delivery = OptimizationMetrics.calculate_over_delivery(\n    target_reduction, actual_reduction\n)  # Returns 1.34 (134%)\n\nassessment = OptimizationMetrics.assess_quality(over_delivery, \"validation\")\nprint(f\"Zone: {assessment['zone']}, Action: {assessment['action']}\")\n# Output: Zone: optimal, Action: approved\n```",
+          "content": "Over-Delivery Pattern Recognition: Track optimization over-delivery percentage as quality signal to identify safe vs harmful optimization zones. Calculate: actual_reduction / target_reduction * 100. Establish evidence-based thresholds: (1) 100-150% over target = optimal zone (praised in workflow), (2) 150-200% over = caution zone (review needed), (3) >200% over = danger zone (quality concerns raised). Use over-delivery metric to calibrate optimization aggressiveness: praised optimizations establish safe upper bound, concerning optimizations establish danger threshold. Pattern enables quantitative optimization validation: 'Monitor 135% praised' + 'Evaluator 238% concerns' \u2192 safe threshold between 135-238%, likely ~150-180% depending on template purpose (validation vs teaching).",
+          "code_example": "```python\n# \u2705 Over-Delivery Tracking and Threshold Validation\nclass OptimizationMetrics:\n    # Evidence-based thresholds from workflow analysis\n    THRESHOLDS = {\n        \"optimal_zone\": (1.0, 1.5),  # 100-150% over target\n        \"caution_zone\": (1.5, 2.0),  # 150-200% over target  \n        \"danger_zone\": (2.0, float('inf'))  # >200% over target\n    }\n    \n    @staticmethod\n    def calculate_over_delivery(target: float, actual: float) -> float:\n        \"\"\"Returns over-delivery ratio (e.g., 1.35 = 135% of target)\"\"\"\n        return actual / target\n    \n    @staticmethod\n    def assess_quality(over_delivery: float, template_purpose: str) -> dict:\n        \"\"\"Assess optimization quality based on over-delivery\"\"\"\n        if over_delivery < 1.0:\n            return {\"zone\": \"under_target\", \"action\": \"increase_optimization\"}\n        elif over_delivery <= 1.5:\n            return {\"zone\": \"optimal\", \"action\": \"approved\", \n                    \"evidence\": \"Monitor 135% praised\"}\n        elif over_delivery <= 2.0:\n            return {\"zone\": \"caution\", \"action\": \"review_required\",\n                    \"risk\": \"approaching_danger_threshold\"}\n        else:\n            return {\"zone\": \"danger\", \"action\": \"reject\",\n                    \"evidence\": \"Evaluator 238% raised concerns\"}\n\n# Usage in optimization workflow:\ntarget_reduction = 0.50  # 50% target\nactual_reduction = 0.67  # 67% achieved\nover_delivery = OptimizationMetrics.calculate_over_delivery(\n    target_reduction, actual_reduction\n)  # Returns 1.34 (134%)\n\nassessment = OptimizationMetrics.assess_quality(over_delivery, \"validation\")\nprint(f\"Zone: {assessment['zone']}, Action: {assessment['action']}\")\n# Output: Zone: optimal, Action: approved\n```",
           "helpful_count": 0,
           "harmful_count": 0,
           "created_at": "2025-10-18T18:00:00.000000Z",
           "last_used_at": "2025-10-18T18:00:00.000000Z",
-          "related_bullets": ["test-0002", "impl-0004"],
-          "tags": ["testing", "optimization", "metrics", "over-delivery", "quality-signal", "thresholds", "quantitative", "map-framework", "python"],
+          "related_bullets": [
+            "test-0002",
+            "impl-0004"
+          ],
+          "tags": [
+            "testing",
+            "optimization",
+            "metrics",
+            "over-delivery",
+            "quality-signal",
+            "thresholds",
+            "quantitative",
+            "map-framework",
+            "python"
+          ],
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "test-0004",
+          "content": "Template Directory Cleanup Verification Pattern: When maintaining template directories that should contain only canonical content, proactively scan for and remove artifact files created by editors, backup tools, or interrupted operations. Common patterns to clean: .backup, .old, .tmp, .swp, ~ (tilde backups). Perform cleanup as a separate step from content synchronization (separation of concerns). Verify artifacts are truly disposable before removal - check they match disposable patterns and aren't user-created content files. Clean directories before hash-based verification to prevent polluted checksums requiring re-verification. Always verify cleanup succeeded using pattern matching.",
+          "code_example": "```bash\n# \u274c INCORRECT - delete without verification\nrm -f src/templates/**/*.backup\n\n# \u2705 CORRECT - verify artifacts before removal\nfind src/templates -type f \\( \\\n  -name '*.backup' -o \\\n  -name '*.old' -o \\\n  -name '*.tmp' -o \\\n  -name '*.swp' -o \\\n  -name '*~' \\) -delete\n\n# Verify cleanup succeeded\nfind src/templates -type f | grep -E '\\.(backup|old|tmp|swp)|~$' || echo \"Clean\"\n```",
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-20T10:00:56.751830Z",
+          "last_used_at": "2025-10-20T10:00:56.751831Z",
+          "related_bullets": [
+            "test-0001"
+          ],
+          "tags": [
+            "cleanup",
+            "verification",
+            "template",
+            "artifacts",
+            "testing",
+            "devops",
+            "bash",
+            "find",
+            "pattern-matching"
+          ],
           "deprecated": false,
           "deprecation_reason": null
         }
@@ -175,7 +310,7 @@
         {
           "id": "qual-0001",
           "content": "Analysis Document Completeness: Every analysis document must answer 4 critical questions: (1) WHAT changed (specific files, functions, lines), (2) WHERE to find it (absolute file paths, not relative), (3) HOW to implement (code examples showing before/after), (4) WHY this approach (rationale, trade-offs). Missing any question creates incomplete handoffs between agents. Use this checklist before finalizing any analysis or findings document in multi-agent workflows.",
-          "code_example": "```python\n# ✅ COMPLETE Analysis Structure\nanalysis_doc = {\n    \"what\": \"Added workflow state persistence to prevent re-execution on restart\",\n    \"where\": {\n        \"files\": [\"/absolute/path/to/orchestrator.py\", \"/absolute/path/to/state_manager.py\"],\n        \"functions\": [\"orchestrator.save_state()\", \"state_manager.load_checkpoint()\"]\n    },\n    \"how\": {\n        \"before\": \"# State lost on restart\\nself.current_subtask = None\",\n        \"after\": \"# Persist state\\nself.state_manager.save_checkpoint(self.current_subtask)\\nself.current_subtask = self.state_manager.load_checkpoint() or None\"\n    },\n    \"why\": \"Prevents wasted computation by resuming from last checkpoint. Trade-off: 50ms overhead per save vs hours of re-execution.\"\n}\n```",
+          "code_example": "```python\n# \u2705 COMPLETE Analysis Structure\nanalysis_doc = {\n    \"what\": \"Added workflow state persistence to prevent re-execution on restart\",\n    \"where\": {\n        \"files\": [\"/absolute/path/to/orchestrator.py\", \"/absolute/path/to/state_manager.py\"],\n        \"functions\": [\"orchestrator.save_state()\", \"state_manager.load_checkpoint()\"]\n    },\n    \"how\": {\n        \"before\": \"# State lost on restart\\nself.current_subtask = None\",\n        \"after\": \"# Persist state\\nself.state_manager.save_checkpoint(self.current_subtask)\\nself.current_subtask = self.state_manager.load_checkpoint() or None\"\n    },\n    \"why\": \"Prevents wasted computation by resuming from last checkpoint. Trade-off: 50ms overhead per save vs hours of re-execution.\"\n}\n```",
           "helpful_count": 0,
           "harmful_count": 0,
           "created_at": "2025-10-18T12:26:06.880415Z",
@@ -194,14 +329,28 @@
         },
         {
           "id": "qual-0002",
-          "content": "Template Purpose Classification: Distinguish template types by purpose when setting optimization targets. Teaching templates (e.g., Evaluator with scoring patterns) require concrete code examples and detailed explanations - apply stricter compression ceiling (≤150% over target) to preserve pedagogical value. Validation templates (e.g., Monitor with pass/fail criteria) can use summaries and abbreviated context - permit looser ceiling (≤200% over target) for efficiency. Purpose determines acceptable compression trade-offs: teaching prioritizes completeness (student learning), validation prioritizes speed (binary decisions). Evidence: Monitor template at 135% over target received praise for efficiency, Evaluator template at 238% over target raised concerns about over-compression - different purposes, different quality thresholds.",
+          "content": "Template Purpose Classification: Distinguish template types by purpose when setting optimization targets. Teaching templates (e.g., Evaluator with scoring patterns) require concrete code examples and detailed explanations - apply stricter compression ceiling (\u2264150% over target) to preserve pedagogical value. Validation templates (e.g., Monitor with pass/fail criteria) can use summaries and abbreviated context - permit looser ceiling (\u2264200% over target) for efficiency. Purpose determines acceptable compression trade-offs: teaching prioritizes completeness (student learning), validation prioritizes speed (binary decisions). Evidence: Monitor template at 135% over target received praise for efficiency, Evaluator template at 238% over target raised concerns about over-compression - different purposes, different quality thresholds.",
           "code_example": "```python\n# Template purpose classification system\nclass TemplatePurpose(Enum):\n    TEACHING = \"teaching\"  # Evaluator, detailed patterns\n    VALIDATION = \"validation\"  # Monitor, pass/fail checks\n\nclass OptimizationPolicy:\n    POLICIES = {\n        TemplatePurpose.TEACHING: {\n            \"max_ceiling\": 1.5,  # 150% over target\n            \"preserve\": [\"code_examples\", \"rationale\", \"context\"],\n            \"allow_summaries\": False,\n            \"priority\": \"pedagogical_completeness\"\n        },\n        TemplatePurpose.VALIDATION: {\n            \"max_ceiling\": 2.0,  # 200% over target\n            \"preserve\": [\"criteria\", \"thresholds\"],\n            \"allow_summaries\": True,\n            \"priority\": \"decision_speed\"\n        }\n    }\n    \n    @staticmethod\n    def get_ceiling(purpose: TemplatePurpose, target_reduction: float):\n        policy = OptimizationPolicy.POLICIES[purpose]\n        return target_reduction * policy[\"max_ceiling\"]\n\n# Usage:\n# Teaching template (Evaluator)\neval_ceiling = OptimizationPolicy.get_ceiling(TemplatePurpose.TEACHING, 0.5)\n# Result: 0.75 max reduction (50% * 150%)\n\n# Validation template (Monitor)  \nmonitor_ceiling = OptimizationPolicy.get_ceiling(TemplatePurpose.VALIDATION, 0.5)\n# Result: 1.0 max reduction (50% * 200%)\n```",
           "helpful_count": 0,
           "harmful_count": 0,
           "created_at": "2025-10-18T18:00:00.000000Z",
           "last_used_at": "2025-10-18T18:00:00.000000Z",
-          "related_bullets": ["impl-0004", "qual-0001"],
-          "tags": ["template", "optimization", "classification", "purpose", "teaching", "validation", "evaluator", "monitor", "map-framework", "python"],
+          "related_bullets": [
+            "impl-0004",
+            "qual-0001"
+          ],
+          "tags": [
+            "template",
+            "optimization",
+            "classification",
+            "purpose",
+            "teaching",
+            "validation",
+            "evaluator",
+            "monitor",
+            "map-framework",
+            "python"
+          ],
           "deprecated": false,
           "deprecation_reason": null
         }
