@@ -455,7 +455,14 @@ def create_agent_files(project_path: Path, mcp_servers: List[str]) -> None:
     if agents_template_dir.exists():
         # Copy original agent files from templates (preserves template variables!)
         import shutil
+
+        # Files to exclude from agent directory (documentation, not agents)
+        exclude_files = {"README.md", "CHANGELOG.md", "MCP-PATTERNS.md"}
+
         for agent_template in agents_template_dir.glob("*.md"):
+            # Skip documentation files - they're not agents
+            if agent_template.name in exclude_files:
+                continue
             dest_file = agents_dir / agent_template.name
             shutil.copy2(agent_template, dest_file)
     else:
@@ -1171,40 +1178,39 @@ def configure_global_permissions() -> None:
     # Default permissions for read-only commands
     default_permissions = {
         "allow": [
-            "Bash(git status*)",
-            "Bash(git log*)",
-            "Bash(git diff*)",
-            "Bash(git show*)",
-            "Bash(git check-ignore*)",
-            "Bash(git branch --show-current*)",
-            "Bash(git branch -a*)",
-            "Bash(git ls-files*)",
-            "Bash(ls *)",
-            "Bash(cat *)",
-            "Bash(head *)",
-            "Bash(tail *)",
-            "Bash(wc *)",
-            "Bash(grep *)",
-            "Bash(find *)",
-            "Bash(sort *)",
-            "Bash(uniq *)",
-            "Bash(jq *)",
-            "Bash(which *)",
-            "Bash(echo *)",
-            "Bash(pwd*)",
-            "Bash(whoami*)",
-            "Bash(python* -m mapify_cli.recitation_manager*)",
-            "Bash(ruby -c *)",
-            "Bash(go fmt /tmp/*)",
-            "Bash(gofmt -l *)",
-            "Bash(gofmt -d *)",
-            "Bash(go vet *)",
-            "Bash(go build*)",
-            "Bash(go test -c*)",
-            "Bash(go mod download*)",
-            "Bash(go mod tidy*)",
-            "Bash(chmod +x *.sh)",
-            "Bash(chmod +x */*.sh)",
+            "Bash(git status:*)",
+            "Bash(git log:*)",
+            "Bash(git diff:*)",
+            "Bash(git show:*)",
+            "Bash(git check-ignore:*)",
+            "Bash(git branch --show-current:*)",
+            "Bash(git branch -a:*)",
+            "Bash(git ls-files:*)",
+            "Bash(ls :*)",
+            "Bash(cat :*)",
+            "Bash(head :*)",
+            "Bash(tail :*)",
+            "Bash(wc :*)",
+            "Bash(grep :*)",
+            "Bash(find :*)",
+            "Bash(sort :*)",
+            "Bash(uniq :*)",
+            "Bash(jq :*)",
+            "Bash(which :*)",
+            "Bash(echo :*)",
+            "Bash(pwd:*)",
+            "Bash(whoami:*)",
+            "Bash(python:* -m mapify_cli.recitation_manager:*)",
+            "Bash(ruby -c :*)",
+            "Bash(go fmt /tmp/:*)",
+            "Bash(gofmt -l :*)",
+            "Bash(gofmt -d :*)",
+            "Bash(go vet :*)",
+            "Bash(go build:*)",
+            "Bash(go test -c:*)",
+            "Bash(go mod download:*)",
+            "Bash(go mod tidy:*)",
+            "Bash(chmod +x:*)",
             "Read(//Users/**)",
             "Read(//private/tmp/**)",
             "Glob(**)"
