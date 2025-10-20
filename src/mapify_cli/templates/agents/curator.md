@@ -1,10 +1,9 @@
 ---
 name: curator
 description: Manages structured playbook with incremental delta updates (ACE)
-tools: Read, Write, Edit
 model: sonnet  # Balanced: knowledge management requires careful reasoning
-version: 2.0.0
-last_updated: 2025-10-17
+version: 2.2.0
+last_updated: 2025-10-19
 changelog: .claude/agents/CHANGELOG.md
 ---
 

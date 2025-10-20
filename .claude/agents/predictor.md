@@ -1,10 +1,9 @@
 ---
 name: predictor
 description: Predicts consequences and dependency impact of changes (MAP)
-tools: Read, Grep, Glob, Bash
 model: haiku  # Cost-optimized: fast analysis, low cost
-version: 2.0.0
-last_updated: 2025-10-17
+version: 2.2.0
+last_updated: 2025-10-19
 changelog: .claude/agents/CHANGELOG.md
 ---
 

@@ -1,10 +1,9 @@
 ---
 name: reflector
 description: Extracts structured lessons from successes and failures (ACE)
-tools: Read, Grep, Glob
 model: sonnet  # Balanced: pattern extraction requires good reasoning
-version: 2.0.0
-last_updated: 2025-10-17
+version: 2.2.0
+last_updated: 2025-10-19
 changelog: .claude/agents/CHANGELOG.md
 ---
 

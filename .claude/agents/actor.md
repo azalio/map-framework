@@ -1,10 +1,9 @@
 ---
 name: actor
 description: Generates production-ready implementation proposals (MAP)
-tools: Read, Write, Edit, Bash, Grep, Glob
 model: sonnet  # Balanced: code generation quality is important
-version: 2.1.0
-last_updated: 2025-10-18
+version: 2.2.0
+last_updated: 2025-10-19
 changelog: .claude/agents/CHANGELOG.md
 ---
 

@@ -1,10 +1,9 @@
 ---
 name: test-generator
 description: Generates comprehensive test suites for Actor output
-tools: Read, Write, Edit, Bash, Grep, Glob
 model: sonnet  # Balanced: test quality is important
-version: 2.0.0
-last_updated: 2025-10-17
+version: 2.2.0
+last_updated: 2025-10-19
 changelog: .claude/agents/CHANGELOG.md
 ---
 
