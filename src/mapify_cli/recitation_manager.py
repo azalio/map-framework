@@ -63,7 +63,7 @@ class RecitationManager:
         # Create .map directory if it doesn't exist
         self.map_dir.mkdir(exist_ok=True)
 
-    def create_plan(self, task_id: str, goal: str, subtasks: List[dict]) -> TaskPlan:
+    def create_plan(self, task_id: str, goal: str, subtasks: List[dict], force: bool = False) -> TaskPlan:
         """
         Create a new task plan from TaskDecomposer output.
 
@@ -71,10 +71,20 @@ class RecitationManager:
             task_id: Unique identifier for the task
             goal: Overall goal description
             subtasks: List of subtask dictionaries from TaskDecomposer
+            force: If True, overwrite existing plan. If False (default), raise ValueError if plan exists.
 
         Returns:
             TaskPlan object
+
+        Raises:
+            ValueError: If a plan already exists and force=False
         """
+        # Check for existing plan
+        if self.plan_json.exists() and not force:
+            raise ValueError(
+                "A plan already exists. Use 'clear' to remove it first, or use --force to overwrite."
+            )
+
         plan_subtasks = [
             Subtask(
                 id=st['id'],
@@ -105,7 +115,8 @@ class RecitationManager:
                 metadata={
                     "task_id": task_id,
                     "goal": goal,
-                    "total_subtasks": len(plan_subtasks)
+                    "total_subtasks": len(plan_subtasks),
+                    "forced": force
                 }
             )
 
@@ -127,8 +138,18 @@ class RecitationManager:
 
         Returns:
             Updated TaskPlan
+
+        Raises:
+            ValueError: If no active plan exists
         """
         plan = self._load_plan()
+
+        # Check if plan exists
+        if plan is None:
+            raise ValueError(
+                "No active plan exists. Create a plan first using: "
+                "'python -m mapify_cli.recitation_manager create <task_id> <goal> <subtasks_json>'"
+            )
 
         for subtask in plan.subtasks:
             if subtask.id == subtask_id:
@@ -375,9 +396,14 @@ class RecitationManager:
 if __name__ == "__main__":
     import sys
 
+    # Detect --force flag before parsing positional arguments
+    force_flag = '--force' in sys.argv
+    if force_flag:
+        sys.argv.remove('--force')
+
     if len(sys.argv) < 2:
         print("Usage:")
-        print("  python -m mapify_cli.recitation_manager create <task_id> <goal> <subtasks_json>")
+        print("  python -m mapify_cli.recitation_manager create <task_id> <goal> <subtasks_json> [--force]")
         print("  python -m mapify_cli.recitation_manager update <subtask_id> <status> [error]")
         print("  python -m mapify_cli.recitation_manager get-context")
         print("  python -m mapify_cli.recitation_manager stats")
@@ -385,6 +411,8 @@ if __name__ == "__main__":
         print("\nExamples:")
         print("  # Create plan")
         print('  python -m mapify_cli.recitation_manager create feat_auth "Add JWT auth" \'[{"id":1,"description":"Create model",...}]\'')
+        print("  # Create plan (overwrite existing)")
+        print('  python -m mapify_cli.recitation_manager create feat_auth "Add JWT auth" \'[{"id":1,...}]\' --force')
         print("\n  # Update status")
         print("  python -m mapify_cli.recitation_manager update 1 in_progress")
         print('  python -m mapify_cli.recitation_manager update 1 in_progress "Missing import"')
@@ -402,14 +430,18 @@ if __name__ == "__main__":
     # Handle --help and -h flags
     if command in ["--help", "-h", "help"]:
         print("Usage:")
-        print("  python -m mapify_cli.recitation_manager create <task_id> <goal> <subtasks_json>")
+        print("  python -m mapify_cli.recitation_manager create <task_id> <goal> <subtasks_json> [--force]")
         print("  python -m mapify_cli.recitation_manager update <subtask_id> <status> [error]")
         print("  python -m mapify_cli.recitation_manager get-context")
         print("  python -m mapify_cli.recitation_manager stats")
         print("  python -m mapify_cli.recitation_manager clear")
+        print("\nOptions:")
+        print("  --force    Overwrite existing plan when using 'create' command")
         print("\nExamples:")
         print("  # Create plan")
         print('  python -m mapify_cli.recitation_manager create feat_auth "Add JWT auth" \'[{"id":1,"description":"Create model",...}]\'')
+        print("  # Create plan (overwrite existing)")
+        print('  python -m mapify_cli.recitation_manager create feat_auth "Add JWT auth" \'[{"id":1,...}]\' --force')
         print("\n  # Update status")
         print("  python -m mapify_cli.recitation_manager update 1 in_progress")
         print('  python -m mapify_cli.recitation_manager update 1 in_progress "Missing import"')
@@ -435,13 +467,19 @@ if __name__ == "__main__":
 
         try:
             subtasks = json.loads(subtasks_json)
-            plan = manager.create_plan(task_id, goal, subtasks)
+            plan = manager.create_plan(task_id, goal, subtasks, force=force_flag)
             print(json.dumps({
                 "status": "success",
                 "message": "Plan created",
                 "plan_file": str(manager.plan_file),
                 "subtasks_count": len(plan.subtasks)
             }, indent=2))
+        except ValueError as e:
+            print(json.dumps({
+                "status": "error",
+                "message": str(e)
+            }, indent=2))
+            sys.exit(1)
         except json.JSONDecodeError as e:
             print(json.dumps({
                 "status": "error",

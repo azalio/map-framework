@@ -4,8 +4,8 @@
     "project": "map-framework",
     "description": "ACE-style comprehensive playbook for MAP Framework development",
     "created_at": "2025-10-10T00:00:00Z",
-    "last_updated": "2025-10-20T10:00:56.751832Z",
-    "total_bullets": 13,
+    "last_updated": "2025-10-20T14:40:00.000000Z",
+    "total_bullets": 21,
     "sections_count": 9,
     "top_k": 5
   },
@@ -62,6 +62,19 @@
             "analyst",
             "implementer"
           ],
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "arch-0003",
+          "content": "Intentional Breaking Changes for Safety: Accept intentional breaking changes when they prevent data loss or critical user errors, even if they disrupt existing workflows. Pattern: when bug allows silent data destruction (e.g., plan overwrite without warning), introduce explicit safety mechanism (e.g., --force flag requirement) that breaks backward compatibility at CLI/API level. Trade-off: short-term friction (users must update scripts) vs long-term safety (prevents accidental data loss). Maintain API-level compatibility by making safety parameter optional (force=False default), only breaking CLI behavior. Document breaking changes prominently with migration guide. Pattern proven: silent plan overwrite bug → require --force flag prevented data loss at cost of script updates.",
+          "code_example": "```python\n# ❌ UNSAFE - silent overwrites cause data loss\ndef create_plan(self, task_id: str, goal: str, subtasks: List[dict]):\n    # Silently overwrites existing plan - data loss risk\n    plan = TaskPlan(task_id=task_id, goal=goal, subtasks=subtasks)\n    self._save_plan(plan)\n    return plan\n\n# ✅ SAFE - intentional breaking change with force flag\ndef create_plan(self, task_id: str, goal: str, subtasks: List[dict], force: bool = False) -> TaskPlan:\n    \"\"\"Create new plan. Breaking change: now requires force=True to overwrite existing plan.\n    \n    Args:\n        force: If True, overwrite existing plan. If False (default), raise error if plan exists.\n    \n    Raises:\n        ValueError: If plan exists and force=False (BREAKING CHANGE)\n    \n    Migration guide:\n        Old: create_plan(id, goal, subtasks)  # Silent overwrite\n        New: create_plan(id, goal, subtasks, force=True)  # Explicit overwrite\n    \"\"\"\n    # Breaking change: validate before overwrite\n    if self.plan_json.exists() and not force:\n        raise ValueError(\n            \"A plan already exists. Use 'clear' to remove it first, or use --force to overwrite. \"\n            \"This is a breaking change introduced in v2.0 to prevent data loss.\"\n        )\n    \n    plan = TaskPlan(task_id=task_id, goal=goal, subtasks=subtasks)\n    self._save_plan(plan)\n    return plan\n\n# API maintains compatibility (force=False default)\n# CLI breaks intentionally (requires --force flag for overwrite)\n```",
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-20T14:45:00.000000Z",
+          "last_used_at": "2025-10-20T14:45:00.000000Z",
+          "related_bullets": ["impl-0008", "test-0008"],
+          "tags": ["breaking-changes", "safety", "data-loss-prevention", "api-design", "force-flag", "python", "backward-compatibility"],
           "deprecated": false,
           "deprecation_reason": null
         }
@@ -187,6 +200,45 @@
           ],
           "deprecated": false,
           "deprecation_reason": null
+        },
+        {
+          "id": "impl-0006",
+          "content": "Behavior Matrix Documentation: When documenting system behavior across multiple states, create markdown tables showing State × Operation → Outcome. This format provides business stakeholder visibility (non-technical readable) while serving as specification for technical implementation. Rows = system states (e.g., 'No plan exists', 'Incomplete plan exists'), Columns = operations (GET, POST, DELETE), Cells = outcomes (status codes, state transitions). Include separate column for 'Expected Behavior' when investigating bugs (highlights discrepancies). Pattern scales: 3 states × 4 operations = 12 cell matrix vs 12 separate text descriptions. Use tables in PRs, API docs, and requirements specifications.",
+          "code_example": "```markdown\n<!-- ❌ POOR - prose description (hard to scan) -->\nWhen no plan exists, GET returns 404 and POST creates new plan. When incomplete plan exists, GET returns the plan and POST replaces it. When complete plan exists, GET returns it and POST returns 409 conflict.\n\n<!-- ✅ GOOD - behavior matrix table -->\n## Plan API Behavior Matrix\n\n| System State | GET /plans/{user_id} | POST /plans/{user_id} | DELETE /plans/{user_id} | Expected Behavior |\n|--------------|----------------------|------------------------|-------------------------|-------------------|\n| No plan exists | 404 Not Found | 201 Created (new plan) | 404 Not Found | ✅ Correct |\n| Incomplete plan exists | 200 OK (incomplete plan) | 201 Created (replaces old) | 204 No Content | ✅ Correct |\n| Complete plan exists | 200 OK (complete plan) | 409 Conflict | 204 No Content | ⚠️ BUG: POST should return 409, returns 201 |\n| Multiple plans exist (invalid) | 500 Internal Error | 500 Internal Error | 500 Internal Error | ⚠️ BUG: Should prevent this state |\n\n**Notes:**\n- Incomplete plan: `complete` field = `false`\n- Complete plan: `complete` field = `true`  \n- Multiple plans state should be prevented by unique constraint (bug #1235)\n```",
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-20T13:45:00.000000Z",
+          "last_used_at": "2025-10-20T13:45:00.000000Z",
+          "related_bullets": ["impl-0001", "qual-0001"],
+          "tags": ["documentation", "behavior-matrix", "api", "specification", "markdown", "table", "stakeholder", "testing"],
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "impl-0007",
+          "content": "Ambiguity Resolution Documentation: When technical terms have multiple meanings in your domain (e.g., 'plan' = data structure vs 'plan' = user's travel itinerary), explicitly document all definitions at the start of specifications. Use glossary format: Term → Definition + Context. This prevents miscommunication between business stakeholders (domain meaning) and engineers (technical meaning). Pattern proven: without glossary, 'plan is incomplete' has 2 interpretations (missing data fields vs user hasn't finalized travel). Include glossary in API docs, requirements, and exploratory test reports. Update glossary when discovering new ambiguous terms during investigation.",
+          "code_example": "```markdown\n<!-- ❌ POOR - assumes shared understanding -->\n## Plan API Testing Results\nThe plan endpoint has issues when plan is incomplete.\n<!-- Ambiguous: incomplete data structure or incomplete user intent? -->\n\n<!-- ✅ GOOD - explicit glossary -->\n## Glossary\n\n**Plan (data structure)**: JSON object in database with fields `user_id`, `destination`, `dates`, `complete` (boolean). Technical representation.\n\n**Plan (user intent)**: User's travel itinerary from business perspective. Considered \"incomplete\" if user hasn't finalized decisions (complete=false), \"complete\" if ready to book (complete=true).\n\n**Incomplete plan**: Ambiguous term. In this document:\n- **Technical meaning**: Plan object where `complete` field = `false`\n- **Business meaning**: User hasn't finished planning their trip\n- **They align**: Technical flag tracks business state\n\n## Testing Results\nThe plan endpoint (POST /plans/{user_id}) has unexpected behavior when an incomplete plan (complete=false) already exists...\n<!-- Now unambiguous which meaning -->\n```",
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-20T13:45:00.000000Z",
+          "last_used_at": "2025-10-20T13:45:00.000000Z",
+          "related_bullets": ["qual-0001", "impl-0001"],
+          "tags": ["documentation", "glossary", "ambiguity", "terminology", "communication", "api", "specification", "domain-language"],
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "impl-0008",
+          "content": "Multi-Layered Defensive Programming: Implement validation at multiple defensive layers to prevent invalid states and provide actionable error messages. Layer 1: Input validation (check parameters before processing). Layer 2: State validation (verify preconditions like 'plan exists' before accessing properties). Layer 3: Clear error messages (include recovery instructions, not just failure description). Pattern proven: adding null check before plan.subtasks prevents AttributeError crash, replacing with ValueError('No active plan exists. Create plan first...') guides users to resolution. Each layer serves different purpose: input catches malformed data, state catches workflow violations, messages enable self-service recovery. Apply to APIs, CLIs, and internal functions.",
+          "code_example": "```python\n# ❌ POOR - single layer, crashes with cryptic error\ndef update_subtask(self, subtask_id: int, status: str):\n    plan = self._load_plan()  # May return None\n    for subtask in plan.subtasks:  # ❌ AttributeError: 'NoneType' object has no attribute 'subtasks'\n        if subtask.id == subtask_id:\n            subtask.status = status\n\n# ✅ GOOD - multi-layered defensive programming\ndef update_subtask(self, subtask_id: int, status: str, error: Optional[str] = None):\n    # Layer 1: Input validation\n    if not isinstance(subtask_id, int) or subtask_id < 1:\n        raise ValueError(f\"Invalid subtask_id: {subtask_id}. Must be positive integer.\")\n    if status not in ['pending', 'in_progress', 'completed', 'failed']:\n        raise ValueError(f\"Invalid status: {status}. Must be one of: pending, in_progress, completed, failed.\")\n    \n    # Layer 2: State validation\n    plan = self._load_plan()\n    if plan is None:\n        raise ValueError(\n            \"No active plan exists. Create a plan first using: \"\n            \"'python -m mapify_cli.recitation_manager create <task_id> <goal> <subtasks_json>'\"\n        )\n    \n    # Layer 3: Business logic with clear error messages\n    for subtask in plan.subtasks:\n        if subtask.id == subtask_id:\n            subtask.status = status\n            if error:\n                subtask.error = error\n            return\n    \n    raise ValueError(\n        f\"Subtask {subtask_id} not found in plan. \"\n        f\"Valid subtask IDs: {[s.id for s in plan.subtasks]}\"\n    )\n```",
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-20T14:45:00.000000Z",
+          "last_used_at": "2025-10-20T14:45:00.000000Z",
+          "related_bullets": ["arch-0003", "test-0008"],
+          "tags": ["defensive-programming", "validation", "error-handling", "python", "api", "cli", "user-experience"],
+          "deprecated": false,
+          "deprecation_reason": null
         }
       ]
     },
@@ -299,6 +351,58 @@
             "find",
             "pattern-matching"
           ],
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "test-0005",
+          "content": "Exploratory Testing Documentation Pattern: For behavioral investigation tasks, deliver both executable tests AND structured markdown documentation to serve dual audiences (technical + business). Executable tests (pytest) provide automated regression prevention and technical proof. Markdown documentation (behavior matrices) provides business stakeholder visibility and decision-making context. Organize tests by system state (e.g., 'incomplete plan', 'no plan', 'multiple plans') not by API commands - this mirrors user mental models and business scenarios. State-based organization scales better than command-based (N states vs M*N command-state combinations). Pattern proven in exploratory API testing workflows.",
+          "code_example": "```python\n# ❌ POOR - organized by API commands (doesn't scale)\ndef test_get_plan():\n    pass\n\ndef test_create_plan():\n    pass\n\ndef test_delete_plan():\n    pass\n\n# ✅ GOOD - organized by system states\ndef test_behavior_with_no_plan_exists():\n    \"\"\"When user has no plan, GET returns empty, CREATE succeeds\"\"\"\n    api.delete_all_plans(user_id)\n    assert api.get_plan(user_id) == None\n    assert api.create_plan(user_id, data).success == True\n\ndef test_behavior_with_incomplete_plan_exists():\n    \"\"\"When incomplete plan exists, GET returns it, CREATE replaces\"\"\"\n    api.create_plan(user_id, {\"partial\": True})\n    existing = api.get_plan(user_id)\n    assert existing.complete == False\n    new_plan = api.create_plan(user_id, {\"complete\": True})\n    assert api.get_plan(user_id).id == new_plan.id  # Replaced\n\ndef test_behavior_with_complete_plan_exists():\n    \"\"\"When complete plan exists, GET returns it, CREATE fails with conflict\"\"\"\n    api.create_plan(user_id, {\"complete\": True})\n    with pytest.raises(ConflictError):\n        api.create_plan(user_id, {\"other\": True})\n```",
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-20T13:45:00.000000Z",
+          "last_used_at": "2025-10-20T13:45:00.000000Z",
+          "related_bullets": ["test-0001", "impl-0001"],
+          "tags": ["testing", "exploratory", "pytest", "documentation", "behavior", "state-based", "python", "regression"],
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "test-0006",
+          "content": "Pytest Fixture Composition Pattern: Build complex test scenarios from simple reusable fixtures using composition not monolithic fixtures. Create atomic fixtures for basic states (user, empty_plan, incomplete_plan, complete_plan), then compose them in test functions. This enables combinatorial testing (N fixtures → 2^N scenarios) without fixture explosion. Use pytest's dependency injection to automatically set up state chains. Pattern reduces fixture maintenance burden: change atomic fixture once, all compositions inherit the fix. Prefer function-scoped fixtures for test isolation unless explicit state sharing needed.",
+          "code_example": "```python\n# ❌ POOR - monolithic fixtures (doesn't compose)\n@pytest.fixture\ndef user_with_incomplete_plan():\n    user = create_user()\n    plan = create_plan(user.id, complete=False)\n    return user, plan\n\n@pytest.fixture\ndef user_with_complete_plan():\n    user = create_user()\n    plan = create_plan(user.id, complete=True)\n    return user, plan\n\n# ✅ GOOD - composable atomic fixtures\n@pytest.fixture\ndef user():\n    \"\"\"Atomic fixture: user with no plans\"\"\"\n    u = create_user()\n    yield u\n    cleanup_user(u.id)\n\n@pytest.fixture\ndef incomplete_plan(user):\n    \"\"\"Atomic fixture: incomplete plan (depends on user)\"\"\"\n    plan = create_plan(user.id, complete=False)\n    yield plan\n    cleanup_plan(plan.id)\n\n@pytest.fixture\ndef complete_plan(user):\n    \"\"\"Atomic fixture: complete plan (depends on user)\"\"\"\n    plan = create_plan(user.id, complete=True)\n    yield plan\n    cleanup_plan(plan.id)\n\n# Tests compose fixtures as needed\ndef test_scenario_with_incomplete_plan(user, incomplete_plan):\n    \"\"\"Pytest injects user + incomplete_plan automatically\"\"\"\n    assert get_plan(user.id).id == incomplete_plan.id\n\ndef test_scenario_with_complete_plan(user, complete_plan):\n    \"\"\"Different composition, same atomic fixtures\"\"\"\n    assert get_plan(user.id).complete == True\n```",
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-20T13:45:00.000000Z",
+          "last_used_at": "2025-10-20T13:45:00.000000Z",
+          "related_bullets": ["test-0001"],
+          "tags": ["pytest", "fixtures", "composition", "testing", "python", "reusable", "atomic", "dependency-injection"],
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "test-0007",
+          "content": "Bug Documentation as Tests: When discovering bugs during exploratory testing, document them as tests using pytest.raises or pytest.mark.xfail to keep bugs visible and reproducible until fixed. This creates executable bug tracker: failing test documents expected behavior, pytest.raises documents known broken behavior. Once bug is fixed, convert pytest.raises to assertion. Pattern prevents bug amnesia (verbal reports forgotten) and provides regression test automatically. Use descriptive test names as bug titles. Include bug ID in test docstring if using issue tracker. Prefer pytest.raises over pytest.mark.xfail when failure mode is known (specific exception type).",
+          "code_example": "```python\n# ❌ POOR - bug reported verbally/Slack, forgotten\n# \"Hey, DELETE fails when plan has nested objects\"\n\n# ✅ GOOD - bug documented as test\ndef test_delete_plan_with_nested_objects_raises_500():\n    \"\"\"\n    BUG: DELETE /plans/{id} returns 500 when plan has nested objects.\n    Expected: 204 No Content (cascade delete)\n    Actual: 500 Internal Server Error\n    Issue: #1234\n    \"\"\"\n    plan = create_plan(user_id, {\"nested\": {\"data\": True}})\n    \n    # Document known broken behavior\n    with pytest.raises(InternalServerError):\n        api.delete_plan(plan.id)\n    \n    # After bug fix, replace with:\n    # response = api.delete_plan(plan.id)\n    # assert response.status_code == 204\n\n# Alternative: use xfail for less specific failure\n@pytest.mark.xfail(reason=\"Bug #1234: DELETE fails with nested objects\")\ndef test_delete_plan_with_nested_objects():\n    plan = create_plan(user_id, {\"nested\": {\"data\": True}})\n    response = api.delete_plan(plan.id)\n    assert response.status_code == 204\n```",
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-20T13:45:00.000000Z",
+          "last_used_at": "2025-10-20T13:45:00.000000Z",
+          "related_bullets": ["test-0001", "test-0004"],
+          "tags": ["pytest", "bug-tracking", "testing", "documentation", "pytest.raises", "xfail", "regression", "python"],
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "test-0008",
+          "content": "Comprehensive Edge Case Testing with State-Based Organization: When fixing bugs or adding defensive features, write comprehensive test suites covering ALL edge cases organized by system state, not by operations. Structure: Group tests by preconditions (e.g., 'no plan exists', 'incomplete plan', 'complete plan', 'multiple plans'), then test all operations within each state. This ensures complete coverage matrix: N states × M operations = comprehensive test suite. Pattern proven: 28 tests organized by state caught 2 bugs (update crash, silent overwrite) and validated all fixes. State-based organization mirrors user mental models better than operation-based grouping. Include tests for: (1) Expected behavior, (2) Known bugs (with pytest.raises), (3) Force/safety flags, (4) Error messages content.",
+          "code_example": "```python\n# ❌ POOR - operation-based organization (incomplete coverage)\nclass TestCreatePlan:\n    def test_create_plan(self):  # Only happy path\n        plan = manager.create_plan('feat1', 'goal', subtasks)\n        assert plan.task_id == 'feat1'\n\nclass TestUpdatePlan:\n    def test_update_plan(self):  # Missing edge cases\n        manager.update_subtask_status(1, 'completed')\n\n# ✅ GOOD - state-based organization (comprehensive)\nclass TestBehaviorWithNoPlanExists:\n    \"\"\"Test all operations when no plan exists (precondition: empty state)\"\"\"\n    \n    def test_get_context_returns_no_plan_message(self, manager):\n        result = manager.get_context()\n        assert \"No active plan\" in result\n    \n    def test_update_raises_clear_error(self, manager):\n        with pytest.raises(ValueError, match=\"No active plan exists. Create a plan first\"):\n            manager.update_subtask_status(1, 'completed')\n    \n    def test_create_succeeds(self, manager, sample_subtasks):\n        plan = manager.create_plan('feat1', 'goal', sample_subtasks)\n        assert plan.task_id == 'feat1'\n\nclass TestBehaviorWithIncompletePlanExists:\n    \"\"\"Test all operations when incomplete plan exists\"\"\"\n    \n    def test_get_context_shows_progress(self, manager_with_plan):\n        result = manager_with_plan.get_context()\n        assert \"0/2 subtasks completed\" in result\n    \n    def test_update_works_correctly(self, manager_with_plan):\n        manager_with_plan.update_subtask_status(1, 'completed')\n        plan = manager_with_plan._load_plan()\n        assert plan.subtasks[0].status == 'completed'\n    \n    def test_create_without_force_raises_error(self, manager_with_plan, sample_subtasks):\n        with pytest.raises(ValueError, match=\"A plan already exists.*--force\"):\n            manager_with_plan.create_plan('feat2', 'new', sample_subtasks)\n    \n    def test_create_with_force_overwrites(self, manager_with_plan, sample_subtasks):\n        new_plan = manager_with_plan.create_plan('feat2', 'new', sample_subtasks, force=True)\n        assert new_plan.task_id == 'feat2'\n\nclass TestForceFlagBehavior:\n    \"\"\"Test force flag specifically (safety mechanism)\"\"\"\n    \n    def test_force_prevents_accidental_overwrite(self, manager_with_plan):\n        # Validates the intentional breaking change\n        with pytest.raises(ValueError):\n            manager_with_plan.create_plan('new', 'goal', [])\n```",
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-20T14:45:00.000000Z",
+          "last_used_at": "2025-10-20T14:45:00.000000Z",
+          "related_bullets": ["test-0005", "test-0006", "impl-0008"],
+          "tags": ["testing", "pytest", "edge-cases", "state-based", "comprehensive", "defensive", "python", "coverage"],
           "deprecated": false,
           "deprecation_reason": null
         }
