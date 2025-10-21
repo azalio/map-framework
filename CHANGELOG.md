@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added - Phase 1 Context Engineering Complete ✅
 
 #### Phase 1.1: Recitation Pattern (RecitationManager)
-- **RecitationManager** (`src/mapify_cli/recitation_manager.py`, 482 lines): CLI-based workflow plan management
+- **RecitationManager** (`src/mapify_cli/recitation_manager.py`, 543 lines): CLI-based workflow plan management
   - Implements "Recitation" pattern from context engineering research
   - Creates `.map/current_plan.md` with visual progress markers (✓, →, ☐, ✗)
   - Tracks subtask status and error history for retry awareness
@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Benefits**: Prevents focus drift on long workflows, +20-30% success rate on complex tasks
 
 #### Phase 1.2: Workflow Logging (MapWorkflowLogger)
-- **MapWorkflowLogger** (`src/mapify_cli/workflow_logger.py`, 246 lines): Optional JSON Lines workflow logging
+- **MapWorkflowLogger** (`src/mapify_cli/workflow_logger.py`, 411 lines): Optional JSON Lines workflow logging
   - Tracks workflow events: workflow_start/end, agent_call, tool_use, recitation_created/updated, error
   - JSON Lines format for easy parsing and analysis
   - Task ID correlation across events for debugging
