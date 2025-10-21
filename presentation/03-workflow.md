@@ -5,15 +5,26 @@
 MAP Framework использует **строго последовательную 6-агентную оркестрацию** для каждой подзадачи (subtask).
 
 **Обязательная последовательность:**
-```
-1. Actor          → Реализация решения
-2. Monitor        → Валидация качества
-   IF invalid: feedback to Actor (max 3-5 iterations)
-3. Predictor      → Анализ влияния изменений
-4. Evaluator      → Оценка качества
-   IF not approved: feedback to Actor
-5. Reflector      → Извлечение уроков (MANDATORY)
-6. Curator        → Обновление playbook (MANDATORY)
+
+```mermaid
+flowchart TD
+    Start([Начало Subtask]) --> Actor[1. Actor<br/>Реализация решения]
+    Actor --> Monitor[2. Monitor<br/>Валидация качества]
+
+    Monitor -->|Valid| Predictor[3. Predictor<br/>Анализ влияния изменений]
+    Monitor -->|Invalid<br/>max 3-5 iterations| Actor
+
+    Predictor --> Evaluator[4. Evaluator<br/>Оценка качества]
+
+    Evaluator -->|Approved| Reflector[5. Reflector<br/>Извлечение уроков<br/><b>MANDATORY</b>]
+    Evaluator -->|Not Approved| Actor
+
+    Reflector --> Curator[6. Curator<br/>Обновление playbook<br/><b>MANDATORY</b>]
+
+    Curator --> End([Subtask Complete])
+
+    style Reflector fill:#ff9999
+    style Curator fill:#ff9999
 ```
 
 **Источник:** `.claude/commands/map-*.md` (4 workflow команды)
