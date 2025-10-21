@@ -75,16 +75,16 @@ MAP предоставляет **4 специализированных workflow
 После вызова Reflector или Curator, orchestrator **ПРОВЕРЯЕТ** использование MCP tools:
 
 **Reflector Output должен показывать:**
+
 - Ссылки на вызов `cipher_memory_search` (tool logs, JSON, или narrative text с результатами поиска)
 - Подтверждение, что результаты поиска учтены в reasoning (формулировка может варьироваться)
 
 **Curator Output должен показывать:**
+
 - Reasoning о deduplication через `cipher_memory_search`
 - Массив `sync_to_cipher` **только когда** bullets достигли helpful_count ≥ 5 (может отсутствовать или быть пустым)
 
 **Если отсутствует:** Агент пропустил обязательные MCP calls → исследовать причину (skip tools, mis-report, template updates).
-
-**Источник:** `docs/MAP_WORKFLOW_RULES.md` lines 71-83
 
 ## Dual Memory System
 
@@ -110,24 +110,13 @@ MAP использует **ДВЕ системы хранения знаний**
 - Curator проверяет cipher на дубликаты ПЕРЕД добавлением bullets
 - Curator синхронизирует high-quality bullets (helpful_count >= 5) обратно в cipher
 
-**Последствия пропуска агентов:**
-
-- ✅ Playbook обновляется (orchestrator вручную)
-- ❌ Cipher НИКОГДА не обновляется (MCP tools не вызываются)
-- ❌ Knowledge не дедуплицируется
-- ❌ Будущие workflows не получают уроки
-
-**Результат:** "Работа в цикле, переучивание одних и тех же уроков каждый раз"
-
-**Источник:** `docs/MAP_WORKFLOW_RULES.md` lines 103-126
-
 ## Recitation Pattern — Context Engineering
 
 **Проблема:** На длинных задачах (8+ subtasks, 50K+ tokens) модель "теряет нить" и забывает исходную цель.
 
 **Решение:** **Recitation Pattern** — держит общую цель и прогресс "свежими" в context window.
 
-### RecitationManager (543 строки кода)
+### RecitationManager
 
 **Файлы:**
 
@@ -182,7 +171,7 @@ MAP использует **ДВЕ системы хранения знаний**
 
 **Flow:**
 
-```
+```bash
 Actor → Monitor (iteration 1)
   IF invalid: Actor → Monitor (iteration 2)
     IF invalid: Actor → Monitor (iteration 3)
@@ -191,8 +180,6 @@ Actor → Monitor (iteration 1)
 ```
 
 **Гейт:** "You can ONLY reach this step if Monitor returned valid: true"
-
-**Источник:** `.claude/commands/map-feature.md` lines 22, 181, 179-188
 
 ## MCP Integration в Workflow
 
@@ -204,8 +191,6 @@ MAP использует **6 core MCP tools** для расширения воз
 4. **`context7 (resolve-library-id + get-library-docs)`** — актуальная документация библиотек
 5. **`deepwiki (read_wiki_structure + ask_question)`** — обучение на GitHub репозиториях
 6. **`claude-reviewer (request_review)`** — профессиональный code review
-
-**Источник:** `.claude/commands/map-feature.md` lines 394-403
 
 ## Self-Check Verification
 
@@ -221,11 +206,13 @@ MAP использует **6 core MCP tools** для расширения воз
 - Если "Сделал сам" на вопросы 1-2 → нарушение workflow, переделать subtask
 - Если "Нет" на вопросы 3-4 → агенты не следовали шаблонам, исследовать причину
 
-**Источник:** `docs/MAP_WORKFLOW_RULES.md` lines 87-101
-
 ## Workflow Logger — Observability
 
-**MapWorkflowLogger** (411 строк кода) — детальное логирование выполнения MAP workflows.
+**MapWorkflowLogger** (411 строк) — детальное логирование выполнения MAP workflows.
+
+**Активация:** Логирование **опционально**, включается только при:
+- CLI флаг: `--debug` (например, `mapify init --debug`)
+- Переменная окружения: `MAP_DEBUG=true`
 
 **Захватываемые события (7 типов):**
 
@@ -251,8 +238,6 @@ MAP использует **6 core MCP tools** для расширения воз
 - Post-mortem debugging: какой агент вызывался? какие prompts отправлялись?
 - Workflow replay: сохранить успешные логи как test fixtures
 - Event correlation: task_id связывает events с `.map/current_plan.json`
-
-**Источник:** `CONTEXT-ENGINEERING-IMPROVEMENTS.md` Phase 1.2 (lines 291-307)
 
 ## Context Engineering Optimizations
 
