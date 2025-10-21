@@ -22,12 +22,7 @@ flowchart TD
     Reflector --> Curator[6. Curator<br/>Обновление playbook<br/><b>MANDATORY</b>]
 
     Curator --> End([Subtask Complete])
-
-    style Reflector fill:#ff9999
-    style Curator fill:#ff9999
 ```
-
-**Источник:** `.claude/commands/map-*.md` (4 workflow команды)
 
 ## Slash-команды Orchestrator
 
@@ -45,27 +40,29 @@ MAP предоставляет **4 специализированных workflow
 ### Правило 1: Обязательный вызов Reflector
 
 **ЗАПРЕЩЕНО:**
+
 - ❌ "Проанализировать успех вручную" и написать уроки
 - ❌ "Пропустить Reflector для простых задач"
 - ❌ "Вручную создать playbook bullets"
 
 **ОБЯЗАТЕЛЬНО:**
+
 - ✅ Вызвать `Task(subagent_type="reflector", ...)`
 - ✅ Верифицировать использование `cipher_memory_search` в output
 - ✅ Позволить Reflector извлечь паттерны из agent outputs
 
-**Почему:** Шаблон Reflector содержит инструкции по поиску в cipher. При ручной работе `cipher_memory_search` НИКОГДА не вызывается → дублируется knowledge.
-
-**Источник:** `docs/MAP_WORKFLOW_RULES.md` lines 33-62
+**Почему:** Шаблон Reflector содержит инструкции по поиску в cipher. При ручной работе `cipher_memory_search` не вызывается → дублируется knowledge.
 
 ### Правило 2: Обязательный вызов Curator
 
 **ЗАПРЕЩЕНО:**
+
 - ❌ "Применить Reflector insights к playbook самостоятельно"
 - ❌ "Вручную редактировать `.claude/playbook.json`"
 - ❌ "Пропустить обновление playbook для мелких изменений"
 
 **ОБЯЗАТЕЛЬНО:**
+
 - ✅ Вызвать `Task(subagent_type="curator", ...)`
 - ✅ Верифицировать использование `cipher_memory_search` для дедупликации
 - ✅ Применить delta операции Curator (ADD/UPDATE/DEPRECATE)
@@ -73,27 +70,19 @@ MAP предоставляет **4 специализированных workflow
 
 **Почему:** Шаблон Curator содержит инструкции по проверке cipher на дубликаты ПЕРЕД добавлением bullets И по синхронизации high-quality bullets (helpful_count >= 5) обратно в cipher.
 
-**Источник:** `docs/MAP_WORKFLOW_RULES.md` lines 64-85, `.claude/commands/map-feature.md` lines 309-355
-
 ### Правило 3: Верификация MCP Tool Usage
 
 После вызова Reflector или Curator, orchestrator **ПРОВЕРЯЕТ** использование MCP tools:
 
 **Reflector Output должен показывать:**
-```
-Perfect! I found highly relevant existing knowledge. The cipher search revealed...
-```
+- Ссылки на вызов `cipher_memory_search` (tool logs, JSON, или narrative text с результатами поиска)
+- Подтверждение, что результаты поиска учтены в reasoning (формулировка может варьироваться)
 
 **Curator Output должен показывать:**
-```json
-{
-  "sync_to_cipher": [
-    {"bullet_id": "impl-0008", "content": "...", "helpful_count": 5}
-  ]
-}
-```
+- Reasoning о deduplication через `cipher_memory_search`
+- Массив `sync_to_cipher` **только когда** bullets достигли helpful_count ≥ 5 (может отсутствовать или быть пустым)
 
-**Если отсутствует:** Агент НЕ следовал инструкциям своего шаблона → критический сбой workflow.
+**Если отсутствует:** Агент пропустил обязательные MCP calls → исследовать причину (skip tools, mis-report, template updates).
 
 **Источник:** `docs/MAP_WORKFLOW_RULES.md` lines 71-83
 
@@ -102,23 +91,27 @@ Perfect! I found highly relevant existing knowledge. The cipher search revealed.
 MAP использует **ДВЕ системы хранения знаний**:
 
 ### 1. Playbook (Проектная Memory)
+
 - **Локация:** `.claude/playbook.json`
 - **Назначение:** Структурированные, категоризованные паттерны для ЭТОГО проекта
 - **Формат:** Bullets с примерами кода, тегами, helpful/harmful counts
 - **Scope:** Один проект
 
 ### 2. Cipher (Кросс-проектная Memory)
+
 - **Локация:** MCP tool (внешняя семантическая БД)
 - **Назначение:** Общее knowledge для ВСЕХ проектов
 - **Формат:** Semantic embeddings для similarity search
 - **Scope:** Все проекты, использующие cipher
 
 **Интеграция:**
+
 - Reflector ищет в cipher похожие паттерны ПЕРЕД анализом
 - Curator проверяет cipher на дубликаты ПЕРЕД добавлением bullets
 - Curator синхронизирует high-quality bullets (helpful_count >= 5) обратно в cipher
 
 **Последствия пропуска агентов:**
+
 - ✅ Playbook обновляется (orchestrator вручную)
 - ❌ Cipher НИКОГДА не обновляется (MCP tools не вызываются)
 - ❌ Knowledge не дедуплицируется
@@ -137,32 +130,41 @@ MAP использует **ДВЕ системы хранения знаний**
 ### RecitationManager (543 строки кода)
 
 **Файлы:**
+
 - `.map/current_plan.md` — human-readable progress tracker
 - `.map/current_plan.json` — machine-readable state
 
 **Жизненный цикл:**
+
 1. **Step 2.5:** **Orchestrator** после TaskDecomposer создаёт plan
+
    ```bash
    python -m mapify_cli.recitation_manager create "$TASK_ID" "$ARGUMENTS" "$SUBTASKS_JSON"
    ```
+
 2. **Step 3.1.5:** **Orchestrator** перед КАЖДЫМ Actor invocation обновляет статус
+
    ```bash
    python -m mapify_cli.recitation_manager update <subtask_id> in_progress
    PLAN_CONTEXT=$(python -m mapify_cli.recitation_manager get-context)
    ```
+
 3. **Actor Template:** Получает `{{plan_context}}` через Handlebars variable в секции `<recitation_plan>`
 4. **После завершения:** Cleanup удаляет `.map/` директорию
+
    ```bash
    python -m mapify_cli.recitation_manager clear
    ```
 
 **Progress Markers:**
+
 - `[✓]` = completed
 - `[→]` = in_progress (текущая задача)
 - `[☐]` = pending
 - `[✗]` = failed
 
 **Интеграция с ошибками:**
+
 - При Monitor rejection: план обновляется с номером retry attempt
 - Дисплей: "⚠️ Retry attempt 2 - review previous errors"
 - Реализует паттерны `qual-0001` (WHAT/WHERE/HOW/WHY) и `arch-0005` (three-failure threshold)
@@ -172,12 +174,14 @@ MAP использует **ДВЕ системы хранения знаний**
 ## Actor-Monitor Retry Loop
 
 **Механизм:**
+
 - Monitor валидирует Actor output на качество, безопасность, корректность
 - **IF invalid:** feedback → Actor (повторная реализация)
 - **Лимит:** максимум 3-5 итераций
 - **Эскалация:** Если 3 провала → escalate to user
 
 **Flow:**
+
 ```
 Actor → Monitor (iteration 1)
   IF invalid: Actor → Monitor (iteration 2)
@@ -213,6 +217,7 @@ MAP использует **6 core MCP tools** для расширения воз
 4. ❓ Показал ли Curator output операции `sync_to_cipher`?
 
 **Нарушения:**
+
 - Если "Сделал сам" на вопросы 1-2 → нарушение workflow, переделать subtask
 - Если "Нет" на вопросы 3-4 → агенты не следовали шаблонам, исследовать причину
 
@@ -223,6 +228,7 @@ MAP использует **6 core MCP tools** для расширения воз
 **MapWorkflowLogger** (411 строк кода) — детальное логирование выполнения MAP workflows.
 
 **Захватываемые события (7 типов):**
+
 1. `workflow_start` — инициализация
 2. `workflow_end` — завершение/провал
 3. `agent_call` — каждый agent invocation
@@ -234,12 +240,14 @@ MAP использует **6 core MCP tools** для расширения воз
 **Формат:** JSON Lines (`.map/logs/workflow_TIMESTAMP.log`)
 
 **Структура каждой строки:**
+
 - `timestamp` (ISO 8601)
 - `event_type` (из списка выше)
 - `task_id` (корреляция с RecitationManager)
 - `data` (event-specific payload)
 
 **Использование:**
+
 - Post-mortem debugging: какой агент вызывался? какие prompts отправлялись?
 - Workflow replay: сохранить успешные логи как test fixtures
 - Event correlation: task_id связывает events с `.map/current_plan.json`
@@ -260,11 +268,13 @@ MAP использует **6 core MCP tools** для расширения воз
 ### Template Optimization (Phase 1.4)
 
 **Результаты оптимизации:**
+
 - Monitor: 1006 → 909 строк (-97 lines, -9.6%)
 - Evaluator: 934 → 844 строки (-90 lines, -9.6%)
 - **Суммарная экономия:** 187 строк кода шаблонов
 
 **Побочный эффект:**
+
 - Оптимизация workflow сгенерировала 8 новых playbook паттернов
 - Рост: 3 bullets → 11 bullets → 25 bullets (current)
 
@@ -281,28 +291,33 @@ MAP использует **6 core MCP tools** для расширения воз
 ## 4-Phase Roadmap
 
 **Phase 1: Quick Wins** (✅ COMPLETE)
+
 - Recitation pattern (RecitationManager)
 - Workflow logging (MapWorkflowLogger)
 - Top-k playbook filtering
 - Template optimization
 
 **Phase 2: Medium Complexity**
+
 - Checkpoints для длинных workflows
 - Caching для повторных вызовов
 - Varied playbook bullet formulations
 - Keyword search в playbook
 
 **Phase 3: Complex Features**
+
 - Parallelization (Actor/Predictor одновременно)
 - Automated tests для workflow logic
 - Temperature tuning per agent type
 - Profiling для token usage
 
 **Phase 4: Optional Integration**
+
 - LangChain adapters
 - Document loaders
 
 **Целевые метрики:**
+
 - Monitor approval rate: 90-95% (from ~80%)
 - Iteration count: ~2 per subtask (from ~3, -30% retries)
 - Cost: -10-15% tokens
@@ -313,6 +328,7 @@ MAP использует **6 core MCP tools** для расширения воз
 ## Exception: Non-MAP Tasks
 
 Эти правила **ТОЛЬКО** применяются при использовании MAP framework команд:
+
 - `/map-feature`
 - `/map-debug`
 - `/map-refactor`
