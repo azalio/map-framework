@@ -208,9 +208,10 @@ MAP использует **6 core MCP tools** для расширения воз
 
 ## Workflow Logger — Observability
 
-**MapWorkflowLogger** (411 строк) — детальное логирование выполнения MAP workflows.
+**MapWorkflowLogger** — детальное логирование выполнения MAP workflows.
 
 **Активация:** Логирование **опционально**, включается только при:
+
 - CLI флаг: `--debug` (например, `mapify init --debug`)
 - Переменная окружения: `MAP_DEBUG=true`
 
@@ -246,69 +247,12 @@ MAP использует **6 core MCP tools** для расширения воз
 - **Конфигурация:** `.claude/playbook.json` → `metadata.top_k = 5`
 - **Механизм:** При каждом subtask Actor получает только 5 наиболее релевантных bullets
 - **Benefit:** С 25 bullets в базе, top-5 фильтрация предотвращает context distraction
-- **Реализация:** Phase 1.3 complete
-
-**Источник:** `CONTEXT-ENGINEERING-IMPROVEMENTS.md` Phase 1.3, `.claude/playbook.json` line 10
-
-### Template Optimization (Phase 1.4)
-
-**Результаты оптимизации:**
-
-- Monitor: 1006 → 909 строк (-97 lines, -9.6%)
-- Evaluator: 934 → 844 строки (-90 lines, -9.6%)
-- **Суммарная экономия:** 187 строк кода шаблонов
-
-**Побочный эффект:**
-
-- Оптимизация workflow сгенерировала 8 новых playbook паттернов
-- Рост: 3 bullets → 11 bullets → 25 bullets (current)
-
-**Источник:** `CONTEXT-ENGINEERING-IMPROVEMENTS.md` lines 319-326
 
 ### Принципы Context Engineering
 
 1. **Append-Only Context** — НИКОГДА не редактируй предыдущие сообщения в истории (preserves KV-cache efficiency)
 2. **External Storage as Context Extension** — `.map/current_plan.md` как внешняя память
 3. **Focusing Attention ("Маяк" pattern)** — держит цели "свежими" в recent tokens через recitation
-
-**Источник:** `CONTEXT-ENGINEERING-IMPROVEMENTS.md` lines 23-89
-
-## 4-Phase Roadmap
-
-**Phase 1: Quick Wins** (✅ COMPLETE)
-
-- Recitation pattern (RecitationManager)
-- Workflow logging (MapWorkflowLogger)
-- Top-k playbook filtering
-- Template optimization
-
-**Phase 2: Medium Complexity**
-
-- Checkpoints для длинных workflows
-- Caching для повторных вызовов
-- Varied playbook bullet formulations
-- Keyword search в playbook
-
-**Phase 3: Complex Features**
-
-- Parallelization (Actor/Predictor одновременно)
-- Automated tests для workflow logic
-- Temperature tuning per agent type
-- Profiling для token usage
-
-**Phase 4: Optional Integration**
-
-- LangChain adapters
-- Document loaders
-
-**Целевые метрики:**
-
-- Monitor approval rate: 90-95% (from ~80%)
-- Iteration count: ~2 per subtask (from ~3, -30% retries)
-- Cost: -10-15% tokens
-- Time: -30-40% на длинных задачах
-
-**Источник:** `CONTEXT-ENGINEERING-IMPROVEMENTS.md` lines 249-397
 
 ## Exception: Non-MAP Tasks
 
@@ -320,9 +264,3 @@ MAP использует **6 core MCP tools** для расширения воз
 - `/map-review`
 
 Для обычных задач (bug fixes, documentation, простые изменения) можно работать напрямую без полной agent chain.
-
-**Источник:** `docs/MAP_WORKFLOW_RULES.md` lines 204-211
-
----
-
-*Все факты проверены против кодовой базы — verification: docs/knowledge_base/verified_facts_workflow.txt*
