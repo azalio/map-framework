@@ -442,11 +442,9 @@ class TestEdgeCases:
         """Test updating a subtask that doesn't exist"""
         manager.create_plan('test', 'Test', sample_subtasks)
 
-        # Should not raise error, but also shouldn't update anything
-        plan = manager.update_subtask_status(999, 'completed')
-
-        # No subtask should be completed
-        assert all(st.status == 'pending' for st in plan.subtasks)
+        # Should raise an error when subtask ID is not found
+        with pytest.raises(ValueError, match="Subtask with id 999"):
+            manager.update_subtask_status(999, 'completed')
 
     def test_long_error_message(self, manager, sample_subtasks):
         """Test that long error messages are truncated in markdown"""

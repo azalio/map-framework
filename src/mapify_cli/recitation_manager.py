@@ -151,15 +151,23 @@ class RecitationManager:
                 "'python -m mapify_cli.recitation_manager create <task_id> <goal> <subtasks_json>'"
             )
 
-        for subtask in plan.subtasks:
-            if subtask.id == subtask_id:
-                subtask.status = status
-                if status == 'in_progress':
-                    plan.current_subtask_id = subtask_id
-                    subtask.iterations += 1
-                if error:
-                    subtask.errors.append(error)
-                break
+        # Find the target subtask up front so we can validate and log reliably
+        target_subtask = next(
+            (subtask for subtask in plan.subtasks if subtask.id == subtask_id),
+            None
+        )
+
+        if target_subtask is None:
+            raise ValueError(
+                f"Subtask with id {subtask_id} was not found in the current plan"
+            )
+
+        target_subtask.status = status
+        if status == 'in_progress':
+            plan.current_subtask_id = subtask_id
+            target_subtask.iterations += 1
+        if error:
+            target_subtask.errors.append(error)
 
         plan.updated_at = datetime.now().isoformat()
 
@@ -175,7 +183,7 @@ class RecitationManager:
                     "subtask_id": subtask_id,
                     "status": status,
                     "error": error,
-                    "iterations": subtask.iterations if subtask else None
+                    "iterations": target_subtask.iterations
                 }
             )
 
