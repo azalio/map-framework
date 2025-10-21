@@ -66,23 +66,17 @@ Manual updates skip BOTH of these critical steps.
 
 ### Rule 3: Verify MCP Tool Usage
 
-After calling Reflector or Curator, CHECK their output contains:
+After calling Reflector or Curator, CHECK their output for evidence that MCP tools were used correctly.
 
 **Reflector Output Should Show:**
-```
-Perfect! I found highly relevant existing knowledge. The cipher search revealed...
-```
+- References to the `cipher_memory_search` call (tool logs, JSON, or narrative text describing the search results).
+- Confirmation that the search results informed the reflector's reasoning. Exact phrasing may vary across template versions.
 
 **Curator Output Should Show:**
-```json
-{
-  "sync_to_cipher": [
-    {"bullet_id": "impl-0008", "content": "...", "helpful_count": 5}
-  ]
-}
-```
+- Reasoning about deduplication using `cipher_memory_search`.
+- A `sync_to_cipher` array **only when** bullets crossed the helpful_count ≥ 5 threshold. When no bullets qualify, the array may be absent or empty.
 
-**If missing:** The agent DID NOT follow its template instructions. This is a critical workflow failure.
+**If missing:** Investigate whether the agent skipped required MCP calls, mis-reported tool usage, or if template updates changed the expected structure.
 
 ## Self-Check Questions for Orchestrator
 
@@ -90,8 +84,8 @@ Before completing any MAP workflow subtask, orchestrator must verify:
 
 1. ❓ Did I call `Task(subagent_type="reflector", ...)` or did I extract lessons myself?
 2. ❓ Did I call `Task(subagent_type="curator", ...)` or did I update playbook myself?
-3. ❓ Did Reflector's output show it searched cipher?
-4. ❓ Did Curator's output show `sync_to_cipher` operations?
+3. ❓ Did Reflector's output confirm it searched cipher?
+4. ❓ When bullets qualified, did Curator's output include `sync_to_cipher` operations?
 
 **If you answered "I did it myself" to questions 1-2:** You violated MAP workflow rules. Redo the subtask correctly.
 
@@ -145,7 +139,7 @@ Update `.claude/commands/map-feature.md` with:
 
 **Verification Checklist:**
 - [ ] Did Curator output show cipher_memory_search for deduplication?
-- [ ] Did Curator output show sync_to_cipher operations?
+- [ ] If any bullets crossed helpful_count ≥ 5, did Curator output show sync_to_cipher operations?
 ```
 
 **Step 3.10 (Apply Operations):**
@@ -182,19 +176,13 @@ Call Reflector with test data:
 Task(subagent_type="reflector", ...)
 ```
 
-Check output contains:
-```
-Perfect! I found highly relevant existing knowledge. The cipher search revealed...
-```
+Check output contains evidence that `cipher_memory_search` ran (tool logs or narrative referencing the search results).
 
 ### Test 2: Verify Curator Syncs to Cipher
 
-After Curator runs, check output has:
-```json
-{
-  "sync_to_cipher": [...]
-}
-```
+After Curator runs, check output:
+- Shows `cipher_memory_search` reasoning for deduplication.
+- Includes a `sync_to_cipher` array when bullets crossed helpful_count ≥ 5 (it's valid for this to be missing/empty otherwise).
 
 Then verify orchestrator calls:
 ```
