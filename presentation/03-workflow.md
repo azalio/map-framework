@@ -130,11 +130,11 @@ MAP использует **ДВЕ системы хранения знаний**
 - `.map/current_plan.json` — machine-readable state
 
 **Жизненный цикл:**
-1. **Step 2.5:** После TaskDecomposer создаёт plan
+1. **Step 2.5:** **Orchestrator** после TaskDecomposer создаёт plan
    ```bash
    python -m mapify_cli.recitation_manager create "$TASK_ID" "$ARGUMENTS" "$SUBTASKS_JSON"
    ```
-2. **Step 3.1.5:** Перед КАЖДЫМ Actor invocation обновляет статус
+2. **Step 3.1.5:** **Orchestrator** перед КАЖДЫМ Actor invocation обновляет статус
    ```bash
    python -m mapify_cli.recitation_manager update <subtask_id> in_progress
    PLAN_CONTEXT=$(python -m mapify_cli.recitation_manager get-context)
