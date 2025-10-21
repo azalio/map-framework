@@ -1,0 +1,501 @@
+# ПРОВЕРЕННЫЕ ФАКТЫ ИЗ ОСНОВНОЙ ДОКУМЕНТАЦИИ MAP FRAMEWORK
+
+Дата анализа: 2025-10-20
+Источники: README.md, INSTALL.md, CHANGELOG.md
+
+================================================================================
+## 1. ОПРЕДЕЛЕНИЕ MAP (What is MAP?)
+================================================================================
+
+### Полное название
+Modular Agentic Planner (MAP)
+
+### Описание
+"Implementation of Modular Agentic Planner (MAP) — a cognitive architecture for AI agents inspired by prefrontal cortex functions. Orchestrates 8 specialized agents for development with automatic quality validation."
+(Источник: README.md, строка 3)
+
+### Научная база
+- **Базовая работа**: Nature Communications research (2025) — 74% improvement in planning tasks
+  (Источник: README.md, строка 5)
+  GitHub: https://github.com/Shanka123/MAP
+
+- **Улучшения**: ACE (Agentic Context Engineering) — continuous learning from experience
+  (Источник: README.md, строка 6)
+  arXiv: https://arxiv.org/abs/2510.04618v1
+
+### Целевое окружение
+"MAP Framework is designed for Claude Code. All generated agents and commands are optimized for the Claude Code CLI."
+(Источник: INSTALL.md, строка 54)
+
+================================================================================
+## 2. КЛЮЧЕВЫЕ ВОЗМОЖНОСТИ (Key Capabilities)
+================================================================================
+
+### 2.1 Система из 8 Специализированных Агентов
+
+1. **TaskDecomposer** — breaks goals into atomic subtasks
+2. **Actor** — generates code and solutions
+3. **Monitor** — validates quality, security, correctness
+4. **Predictor** — analyzes change impact across codebase
+5. **Evaluator** — scores solution quality (functionality, security, testability)
+6. **Reflector** — extracts lessons from successes and failures
+7. **Curator** — manages knowledge base (playbook)
+8. **DocumentationReviewer** — checks documentation completeness and correctness
+
+**Orchestrator** — workflow coordination logic implemented in slash commands (.claude/commands/map-*.md), not a separate agent template
+
+(Источник: README.md, строки 126-135)
+
+### 2.2 Интеграция с MCP Серверами
+
+| MCP Server          | Назначение                                          |
+|---------------------|-----------------------------------------------------|
+| cipher              | Knowledge base — stores successful patterns         |
+| claude-reviewer     | Professional code review with security analysis     |
+| sequential-thinking | Chain-of-thought reasoning for complex problems     |
+| codex-bridge        | Code generation (требует 10-minute timeout)         |
+| context7            | Up-to-date library documentation                    |
+| deepwiki            | GitHub repository analysis                          |
+
+(Источник: README.md, строки 140-147)
+
+**Преимущества MCP интеграции:**
+- 🧠 Persistent Knowledge — solutions are saved and reused
+- 🔍 Professional Review — automatic security and quality analysis
+- 🔄 Continuous Learning — each workflow improves future ones
+- ⚡ Faster Development — reuse proven patterns
+
+(Источник: README.md, строки 167-171)
+
+### 2.3 ACE Playbook - Система Обучения
+
+**Компоненты:**
+- **Reflector** extracts patterns from each task
+- **Curator** updates knowledge base incrementally
+- **Semantic search** finds relevant patterns by meaning
+- **Quality tracking** monitors pattern effectiveness
+
+(Источник: README.md, строки 211-216)
+
+**9 категорий паттернов:**
+- ARCHITECTURE_PATTERNS
+- IMPLEMENTATION_PATTERNS
+- SECURITY_PATTERNS
+- PERFORMANCE_PATTERNS
+- ERROR_PATTERNS
+- TESTING_STRATEGIES
+- CODE_QUALITY_RULES
+- TOOL_USAGE
+- DEBUGGING_TECHNIQUES
+
+(Источник: INSTALL.md, строки 247-255)
+
+**Хранение:** `.claude/playbook.json`
+(Источник: INSTALL.md, строка 204)
+
+### 2.4 Slash Commands для Claude Code
+
+Доступные команды:
+```bash
+/map-feature  # Feature development
+/map-debug    # Debugging
+/map-refactor # Refactoring
+/map-review   # Code review
+```
+
+(Источник: README.md, строки 13-24)
+
+### 2.5 Semantic Search (Опционально)
+
+**Модель:** `all-MiniLM-L6-v2`
+- Размер: 80MB, 384 dimensions
+- Скорость: ~3000 sentences/second on CPU
+- Первый запуск: скачивает ~500MB model
+
+**Возможности:**
+- 🎯 Search by meaning: "JWT signature" ≈ "token verification"
+- 🧠 Auto-deduplication of similar patterns (>90% similarity)
+- ⚡ Embedding cache for fast retrieval
+- Кэш: `.claude/embeddings_cache/`
+
+**Fallback:** Falls back to keyword matching if not installed
+
+(Источник: README.md, строки 218-237; INSTALL.md, строки 261-279)
+
+### 2.6 Claude Code Hooks Integration
+
+**Активные hooks:**
+
+1. **PreToolUse** - Agent Template Validation
+   - Prevents accidental removal of critical Handlebars template variables
+   - Protects: `{{language}}`, `{{project_name}}`, `{{framework}}`, `{{#if playbook_bullets}}`
+
+2. **PostToolUse** - Auto-Store Knowledge
+   - Automatically saves successful patterns to cipher MCP after modifications
+   - Triggers after Edit/Write on code files
+
+3. **UserPromptSubmit** - Context Enrichment
+   - Enriches user prompts with relevant patterns from cipher
+   - Searches cipher for top 3 relevant patterns
+
+4. **SessionStart** - Session Initialization
+   - Loads ACE playbook bullets at session start
+   - Creates `.claude/sessions/current_context.txt`
+
+5. **SubagentStop** - Metrics Tracking
+   - Tracks MAP agent performance metrics
+   - Stores in `.claude/metrics/agent_metrics.jsonl`
+
+(Источник: README.md, строки 370-452)
+
+### 2.7 Cost Optimization
+
+**Оптимизированная модельная стратегия:**
+- Predictor, Evaluator: haiku (fast analysis)
+- Actor, Monitor, TaskDecomposer, Reflector, Curator: sonnet (quality-critical)
+- Orchestrator: opus (critical workflow decisions)
+
+**Экономия:**
+- 40-60% cost reduction vs using sonnet everywhere
+- 30% vs all-sonnet, 86% vs all-opus
+
+(Источник: README.md, строки 310-368)
+
+### 2.8 Context Engineering Improvements
+
+#### Recitation Pattern (Phase 1.1)
+
+**Проблема:** "На длинных задачах (5+ подзадач) модель теряет фокус и забывает цели."
+
+**Решение:** "Механизм фокусировки внимания — `.map/current_plan.md` обновляется перед каждым шагом, держа цели 'свежими' в контексте."
+
+**Эффект:**
+- +20-30% success rate на сложных задачах
+- -20-30% использование токенов
+- +50% наблюдаемость прогресса
+
+(Источник: README.md, строки 624-646)
+
+================================================================================
+## 3. ИСТОРИЯ ВЕРСИЙ (Version History)
+================================================================================
+
+### Текущая версия: 2.2.0 (2025-10-18)
+
+**[2.2.0] - 2025-10-18: Phase 1 Context Engineering Complete ✅**
+
+Основные изменения:
+
+1. **RecitationManager** (543 lines)
+   - CLI-based workflow plan management
+   - Creates `.map/current_plan.md` with visual progress markers (✓, →, ☐, ✗)
+   - Tracks subtask status and error history
+   - +20-30% success rate on complex tasks
+
+2. **MapWorkflowLogger** (411 lines)
+   - Optional JSON Lines workflow logging
+   - Tracks workflow events: workflow_start/end, agent_call, tool_use, etc.
+   - Logs: `.map/logs/workflow_<TASK_ID>.log`
+
+3. **Playbook Top-K Configuration**
+   - `top_k=5` in `.claude/playbook.json`
+   - Limits pattern retrieval to top 5 most relevant
+   - ~50% context reduction, improved focus
+
+4. **Template Optimization**
+   - Monitor: 1006 → 909 lines (-9.6%)
+   - Evaluator: 934 → 844 lines (-9.6%)
+   - Total savings: 187 lines (~750 tokens per call)
+
+5. **Playbook Growth**
+   - 3 → 11 bullets (+267% growth)
+   - Added 8 new patterns across categories
+
+(Источник: CHANGELOG.md, строки 10-82)
+
+**[2.1.0] - 2025-10-18: Agent Templates**
+
+- Actor v2.1.0: Added Recitation Pattern integration (`{{plan_context}}`)
+- Monitor v2.1.0: Optimized for 9.6% token reduction
+- Evaluator v2.1.0: Optimized for 9.6% token reduction with teaching quality preservation
+
+(Источник: CHANGELOG.md, строки 167-177)
+
+**[2.0.0] - 2025-10-17: Agent Templates Overhaul**
+
+- Comprehensive MCP integration framework
+- XML-style semantic structure for better LLM parsing
+- Template size: 2,232 → 9,269 lines (+258% for comprehensive guidance)
+- Removed orchestrator as subagent (moved to slash commands)
+
+(Источник: CHANGELOG.md, строки 180-191)
+
+### Performance Metrics - Phase 1
+
+| Метрика              | До      | После        | Улучшение                    |
+|----------------------|---------|--------------|------------------------------|
+| Token Efficiency     | Baseline| 9.6% reduction| -187 lines (Monitor + Evaluator)|
+| Playbook Patterns    | 3       | 11           | +267% growth                 |
+| Context Focus        | No recitation | Active | Progress markers + error history|
+| Observability        | No logging | JSON Lines logs | Optional .map/logs/    |
+| Pattern Retrieval    | Unlimited | Top-5 limit | 50% context reduction       |
+| Infrastructure       | Baseline | +954 lines   | RecitationManager (543) + MapWorkflowLogger (411)|
+
+(Источник: CHANGELOG.md, строки 119-128)
+
+================================================================================
+## 4. ОСНОВНЫЕ КОНЦЕПЦИИ (Core Concepts)
+================================================================================
+
+### 4.1 Архитектура
+
+**Workflow:**
+```
+┌──────────────────────────────────────────┐
+│          ORCHESTRATOR                    │
+│    (coordinates entire workflow)         │
+└───────────────┬──────────────────────────┘
+                │
+    ┌───────────▼────────────┐
+    │   TASK DECOMPOSER      │
+    │   (breaks into tasks)   │
+    └───────────┬────────────┘
+                │
+    ┌───────────▼─────────────────────┐
+    │   For each subtask:             │
+    │                                  │
+    │  ┌──────────────────────┐       │
+    │  │  ACTOR ←→ MONITOR    │       │
+    │  │  (code ←→ validate)  │       │
+    │  └──────────┬───────────┘       │
+    │             │                    │
+    │  ┌──────────▼───────────┐       │
+    │  │ PREDICTOR→EVALUATOR  │       │
+    │  │ (impact → quality)   │       │
+    │  └──────────┬───────────┘       │
+    │             │                    │
+    │  ┌──────────▼───────────┐       │
+    │  │ REFLECTOR → CURATOR  │       │
+    │  │ (learn → knowledge)  │       │
+    │  └──────────────────────┘       │
+    └──────────────────────────────────┘
+```
+
+(Источник: README.md, строки 93-122)
+
+**Архитектурный паттерн:**
+"Documentation-driven orchestration pattern"
+- Claude Code executes `/map-feature` workflow steps
+- RecitationManager and MapWorkflowLogger called via CLI at specific workflow points
+- No Python orchestrator class (human-in-the-loop design)
+
+(Источник: CHANGELOG.md, строки 73-76)
+
+### 4.2 Template System
+
+**Handlebars template variables:**
+- `{{language}}` - Orchestrator injects project language
+- `{{project_name}}` - Orchestrator injects project name
+- `{{#if playbook_bullets}}` - ACE learning system (Curator → Actor)
+- `{{#if feedback}}` - Monitor → Actor retry loops
+- `{{subtask_description}}` - TaskDecomposer output
+- `{{framework}}`, `{{standards_url}}`, `{{allowed_scope}}`
+
+**Критично:** "Removing them breaks multi-language support, ACE learning, feedback loops"
+
+(Источник: README.md, строки 498-541)
+
+### 4.3 Success Metrics
+
+Целевые метрики качества работы:
+- **Monitor approval rate:** >80% first try
+- **Evaluator scores:** average >7.0/10
+- **Iteration count:** <3 per subtask
+- **Playbook growth:** increasing high-quality patterns
+
+(Источник: README.md, строки 544-548)
+
+### 4.4 Best Practices
+
+**1. Clear Requirements**
+✅ Good: "Implement registration with email validation, password strength check (8+ chars, 1 number), send confirmation"
+❌ Bad: "Add registration"
+
+**2. Incremental Approach**
+Break large features into phases:
+- Phase 1: Core functionality
+- Phase 2: Edge cases and error handling
+- Phase 3: Optimization
+
+**3. Provide Context**
+Always specify:
+- Technology stack
+- Existing patterns
+- Constraints
+- Performance requirements
+
+(Источник: README.md, строки 282-308)
+
+================================================================================
+## 5. УСТАНОВКА (Installation)
+================================================================================
+
+### Требования (Prerequisites)
+
+- Python 3.11 or higher
+- Git (optional, for repository initialization)
+- Claude Code CLI
+
+(Источник: INSTALL.md, строки 5-9; README.md, строки 84-87)
+
+### Способы установки
+
+**Option 1: Via UV Tool (Recommended)**
+```bash
+uv tool install mapify-cli --from git+https://github.com/azalio/map-framework.git
+mapify init my-project
+```
+
+**Option 2: Direct UV Execution**
+```bash
+uvx --from git+https://github.com/azalio/map-framework.git mapify init my-project
+```
+
+**Option 3: Clone Repository**
+```bash
+git clone https://github.com/azalio/map-framework.git
+cd map-framework
+claude
+```
+
+**Option 4: Copy Agents to Existing Project**
+```bash
+cp -r /path/to/map-framework/.claude/agents your-project/.claude/
+cp -r /path/to/map-framework/.claude/commands your-project/.claude/
+```
+
+(Источник: README.md, строки 33-81; INSTALL.md, строки 13-98)
+
+### Что устанавливается
+
+Basic installation создаёт:
+- ✅ Project directory
+- ✅ 8 MAP agents (including ACE Reflector & Curator)
+- ✅ 4 slash commands
+- ✅ Essential MCP servers configuration
+- ✅ Git repository initialization
+- ✅ ACE playbook structure
+
+(Источник: INSTALL.md, строки 42-52)
+
+### Структура файлов
+
+```
+your-project/
+├── .claude/
+│   ├── agents/
+│   │   ├── task-decomposer.md
+│   │   ├── actor.md
+│   │   ├── monitor.md
+│   │   ├── predictor.md
+│   │   ├── evaluator.md
+│   │   ├── reflector.md               # ACE: Extracts lessons
+│   │   ├── curator.md                 # ACE: Manages playbook
+│   │   └── documentation-reviewer.md
+│   ├── commands/                       # Orchestrator logic here
+│   │   ├── map-feature.md
+│   │   ├── map-debug.md
+│   │   ├── map-refactor.md
+│   │   └── map-review.md
+│   ├── mcp_config.json
+│   └── playbook.json                   # ACE: Knowledge base
+```
+
+(Источник: INSTALL.md, строки 117-137)
+
+### Проверка установки
+
+```bash
+mapify check
+```
+
+Expected output:
+```
+Check Available Tools
+● Git version control       (available)
+● Claude Code CLI          (available)
+
+✅ All tools are installed! MAP Framework is ready to use.
+```
+
+(Источник: INSTALL.md, строки 141-156)
+
+================================================================================
+## 6. ССЫЛКИ И ИСТОЧНИКИ (References)
+================================================================================
+
+**Научные работы:**
+- MAP Paper - Nature Communications: https://github.com/Shanka123/MAP
+- ACE Paper - arXiv:2510.04618v1: https://arxiv.org/abs/2510.04618v1
+- Context Engineering for AI Agents (Manus.im, 2025): https://manus.im/blog/Context-Engineering-for-AI-Agents-Lessons-from-Building-Manus
+
+**Документация:**
+- Claude Code Documentation: https://docs.anthropic.com/en/docs/claude-code
+
+**Репозиторий:**
+- GitHub: https://github.com/azalio/map-framework
+- Issues: https://github.com/azalio/map-framework/issues
+
+**Лицензия:**
+MIT License
+
+(Источник: README.md, строки 687-696; README.md, строка 675)
+
+================================================================================
+## 7. ДОПОЛНИТЕЛЬНАЯ ИНФОРМАЦИЯ
+================================================================================
+
+### Versioning Strategy
+
+**Version Format:** MAJOR.MINOR.PATCH
+
+- **MAJOR**: Breaking changes (incompatible API/workflow changes)
+- **MINOR**: New features (backward compatible additions like Phase 1)
+- **PATCH**: Bug fixes and minor improvements
+
+**Current Version**: 2.2.0 (Phase 1 Context Engineering Complete)
+
+(Источник: CHANGELOG.md, строки 199-206)
+
+### Phase 2 Roadmap (Запланировано)
+
+**Priority 1: Checkpoints (Phase 2.1)** - HIGH IMPACT
+- MapStateManager for workflow resumption
+- Timeline: 2-3 weeks
+
+**Priority 2: MCP Caching (Phase 2.2)** - MEDIUM-HIGH IMPACT
+- MCPCacheManager for context7/deepwiki
+- Latency reduction: 50-80%
+- Timeline: 1-2 weeks
+
+**Priority 3: Keyword+Semantic Search (Phase 2.4)** - MEDIUM IMPACT
+- Enhanced PlaybookManager retrieval
+- Timeline: 1-2 weeks
+
+**Priority 4: Playbook Variation (Phase 2.3)** - LOW-MEDIUM IMPACT
+- Pattern reformulation to reduce few-shot bias
+- Timeline: 2-3 weeks
+
+**Total Phase 2 Timeline**: ~10 weeks (2.5 months)
+
+(Источник: CHANGELOG.md, строки 143-164)
+
+### Ключевое утверждение
+
+"MAP is not just automation — it's systematic quality improvement through structured validation and iterative approach."
+
+(Источник: README.md, строка 699)
+
+================================================================================
+КОНЕЦ ДОКУМЕНТА
+================================================================================
