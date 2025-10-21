@@ -4,8 +4,8 @@
     "project": "map-framework",
     "description": "ACE-style comprehensive playbook for MAP Framework development",
     "created_at": "2025-10-10T00:00:00Z",
-    "last_updated": "2025-10-20T23:37:01.153742Z",
-    "total_bullets": 25,
+    "last_updated": "2025-10-21T15:36:06.017204Z",
+    "total_bullets": 36,
     "sections_count": 9,
     "top_k": 5
   },
@@ -137,6 +137,56 @@
             "map-framework",
             "python",
             "error-handling"
+          ],
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "arch-0006",
+          "content": "Iteration Threshold with Orchestrator Intervention: Implement maximum 2 iterations for Actor-Monitor feedback loops per subtask. After 2nd iteration failure, Orchestrator MUST intervene directly with full failure context instead of delegating back to Actor. This prevents infinite misinterpretation cycles where Actor repeatedly misunderstands Monitor feedback. Two iterations allow: (1st) initial attempt, (2nd) correction based on feedback. If 2nd fails, problem is systematic (ambiguous feedback, impossible requirement) requiring Orchestrator analysis. Pattern proven: subtask 2 format failure (iter 1) → arithmetic failure (iter 2) → Orchestrator direct fix succeeded immediately. Distinguishes from arch-0005 (same error 3x threshold) - this limits TOTAL iterations regardless of error type.",
+          "code_example": "```python\n# ✅ Two-Iteration Circuit Breaker with Orchestrator Intervention\nclass SubtaskExecutor:\n    MAX_ITERATIONS = 2  # Hard limit per subtask\n    \n    def execute_with_monitoring(self, subtask):\n        \"\"\"Execute subtask with max 2 Actor iterations, then Orchestrator intervention\"\"\"\n        \n        for iteration in range(1, self.MAX_ITERATIONS + 1):\n            logger.info(f\"Subtask {subtask.id} iteration {iteration}/{self.MAX_ITERATIONS}\")\n            \n            result = actor.execute(subtask)\n            feedback = monitor.evaluate(result)\n            \n            if feedback.passed:\n                logger.info(f\"Subtask {subtask.id} passed on iteration {iteration}\")\n                return result\n            \n            # Add feedback to context for next iteration\n            subtask.add_feedback({\n                \"iteration\": iteration,\n                \"monitor_feedback\": feedback.message,\n                \"gaps\": feedback.gaps\n            })\n            \n            if iteration == self.MAX_ITERATIONS:\n                # Reached iteration limit - Orchestrator intervenes\n                logger.warning(\n                    f\"Subtask {subtask.id} failed after {self.MAX_ITERATIONS} iterations. \"\n                    f\"Orchestrator intervening directly.\"\n                )\n                return self._orchestrator_intervention(subtask, feedback)\n        \n        raise MaxIterationsError(f\"Subtask {subtask.id} exceeded {self.MAX_ITERATIONS} iterations\")\n    \n    def _orchestrator_intervention(self, subtask, last_feedback):\n        \"\"\"Orchestrator fixes issue directly with full context\"\"\"\n        # Orchestrator has full workflow context + all iteration history\n        intervention_context = {\n            \"subtask\": subtask,\n            \"iteration_history\": subtask.feedback_history,\n            \"last_monitor_feedback\": last_feedback,\n            \"workflow_context\": self.workflow.get_accumulated_lessons()\n        }\n        \n        # Orchestrator applies fix directly (not via Actor)\n        fixed_result = orchestrator.apply_direct_fix(intervention_context)\n        \n        # Verify fix with Monitor\n        verification = monitor.evaluate(fixed_result)\n        if not verification.passed:\n            raise OrchestrationError(\n                f\"Orchestrator intervention failed for {subtask.id}. \"\n                f\"Manual review required.\"\n            )\n        \n        return fixed_result\n```",
+          "tags": [
+            "orchestrator",
+            "iteration-limit",
+            "intervention",
+            "circuit-breaker",
+            "actor",
+            "monitor",
+            "feedback-loop",
+            "map-framework",
+            "python"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-21T10:08:01.014430Z",
+          "related_bullets": [
+            "arch-0005",
+            "impl-0002",
+            "test-0001"
+          ]
+        },
+        {
+          "id": "arch-0007",
+          "content": "Comprehensive Validation Pattern for Multi-Agent Workflows: When implementing validation agents (Monitor, Reviewer, Checker), use comprehensive validation with batched feedback instead of sequential validation with early exit. Run ALL independent validation checks in one pass (duplicates, schema, structure, logic), accumulate ALL issues, report them together. This prevents iteration explosion - with N independent issues, comprehensive validation requires 1 Actor-Validator cycle vs sequential validation requiring N cycles. Only use early exit when errors are truly dependent (syntax errors prevent semantic checks). Pattern proven: 4 duplicate issues fixed in 1 iteration with comprehensive validation vs 4 iterations with sequential validation.",
+          "code_example": "```python\n# ❌ SEQUENTIAL VALIDATION - iteration explosion\ndef validate_sequential(output):\n    # Check duplicates first\n    duplicates = find_duplicates(output)\n    if duplicates:\n        return ValidationError(f\"Found duplicates: {duplicates}\")\n    \n    # Never reaches other checks if duplicates exist\n    schema_errors = validate_schema(output)\n    if schema_errors:\n        return ValidationError(f\"Schema errors: {schema_errors}\")\n    \n    return ValidationSuccess()\n# Result: 4 independent issues = 4 Actor-Monitor cycles\n\n# ✅ COMPREHENSIVE VALIDATION - batched feedback\ndef validate_comprehensive(output):\n    issues = []  # Accumulate ALL issues\n    \n    # Run ALL independent checks\n    duplicates = find_duplicates(output)\n    if duplicates:\n        issues.append(f\"Duplicates: {duplicates}\")\n    \n    schema_errors = validate_schema(output)\n    if schema_errors:\n        issues.append(f\"Schema errors: {schema_errors}\")\n    \n    structure_errors = validate_structure(output)\n    if structure_errors:\n        issues.append(f\"Structure errors: {structure_errors}\")\n    \n    logic_errors = validate_logic(output)\n    if logic_errors:\n        issues.append(f\"Logic errors: {logic_errors}\")\n    \n    # Report ALL issues together\n    if issues:\n        return ValidationError(\"\\n\".join(issues))\n    \n    return ValidationSuccess()\n# Result: 4 independent issues = 1 Actor-Monitor cycle\n```",
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-21T09:04:13.347892Z",
+          "last_used_at": "2025-10-21T09:04:13.348115Z",
+          "related_bullets": [
+            "arch-0006",
+            "impl-0009"
+          ],
+          "tags": [
+            "validation",
+            "comprehensive",
+            "batched-feedback",
+            "iteration-explosion",
+            "multi-agent",
+            "monitor",
+            "architecture",
+            "python",
+            "map-framework"
           ],
           "deprecated": false,
           "deprecation_reason": null
@@ -342,10 +392,10 @@
           "id": "impl-0009",
           "content": "Fact Extraction Bash Verification Protocol: When agents extract facts from documentation about codebases (README, wikis, specs), ALWAYS verify EVERY claim using bash commands before recording to memory or playbook. Documentation can be outdated, but codebase is ground truth. Required verifications: (1) File existence claims: ls, find, test -f. (2) Directory structure claims: tree, ls -R. (3) Code pattern claims: grep, rg with pattern. (4) Quantity claims: wc -l, find | wc. Template must encode verification as MANDATORY step, not optional suggestion. Pattern prevents documentation rot where extracted 'facts' diverge from reality.",
           "code_example": "```bash\n# ❌ INCORRECT - extract from docs without verification\necho \"Project has 15 agent templates\" >> facts.txt\n# Risk: Documentation may be stale\n\n# ✅ CORRECT - verify every claim with bash\n# Claim: \"Project has agent templates in src/templates/\"\ntest -d src/templates && echo \"✅ Directory exists\" || echo \"❌ FAILED\"\nls src/templates/*.md | wc -l  # Actual count: 12 (not 15!)\n\n# Claim: \"All templates use YAML frontmatter\"\ngrep -L '^---' src/templates/*.md  # Find templates WITHOUT frontmatter\n# Result: 3 templates lack frontmatter (claim FALSE)\n\n# ONLY record verified facts:\necho \"Project has $(ls src/templates/*.md | wc -l) agent templates\" >> facts.txt\necho \"9/12 templates use YAML frontmatter (3 missing)\" >> facts.txt\n```",
-          "helpful_count": 0,
+          "helpful_count": 4,
           "harmful_count": 0,
           "created_at": "2025-10-20T23:37:01.153726Z",
-          "last_used_at": "2025-10-20T23:37:01.153732Z",
+          "last_used_at": "2025-10-21T15:36:06.017156Z",
           "related_bullets": [
             "impl-0005",
             "test-0004"
@@ -385,6 +435,153 @@
             "map-framework",
             "code-quality"
           ],
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "impl-0011",
+          "content": "Reference-Before-Implementation Pattern: When creating new artifacts that extend existing series (e.g., verified_facts_workflow.txt extending verified_facts_core.txt), ALWAYS extract format patterns from existing artifacts FIRST before implementation. Use grep to identify structural elements (heading formats, bullet prefixes, delimiter patterns) and replicate exactly. This prevents format inconsistency causing Monitor rejections due to style mismatches. Pattern: grep '## ' to extract heading style, grep '\\*\\*Fact:\\*\\*' to extract fact prefix format. Single upfront extraction (5 minutes) prevents multiple Monitor rejection cycles (hours).",
+          "code_example": "```bash\n# ❌ INCORRECT - implement new artifact without checking existing format\necho \"# New Verified Facts\\nFact: Pattern A exists\" > new_file.txt\n# Risk: Format mismatch → Monitor rejection\n\n# ✅ CORRECT - extract format from existing artifact first\n# Step 1: Identify structural elements\ngrep '^## ' existing_verified_facts.txt  # Heading format: '## Section Name'\ngrep '\\*\\*Fact:' existing_verified_facts.txt  # Fact prefix: '**Fact:**'\ngrep '^###' existing_verified_facts.txt  # Subsection format: '### Subsection'\n\n# Step 2: Document format patterns\necho \"Format rules:\n- Headings: ## for sections, ### for subsections\n- Facts: **Fact:** prefix, numbered facts NOT used\n- Delimiters: blank line between facts\"\n\n# Step 3: Implement new artifact following extracted format\ncat > new_verified_facts.txt << 'EOF'\n## New Section Name\n\n**Fact:** Pattern A exists in src/templates/\n\n**Fact:** Pattern B uses YAML frontmatter\nEOF\n\n# Verification: compare format consistency\ndiff <(head -5 existing_verified_facts.txt) <(head -5 new_verified_facts.txt)\n```",
+          "tags": [
+            "format-extraction",
+            "consistency",
+            "grep",
+            "bash",
+            "documentation",
+            "monitor",
+            "map-framework",
+            "artifact-creation"
+          ],
+          "helpful_count": 2,
+          "harmful_count": 0,
+          "created_at": "2025-10-21T10:08:01.014406Z",
+          "related_bullets": [
+            "impl-0009",
+            "test-0004"
+          ],
+          "last_used_at": "2025-10-21T14:46:01.752274Z"
+        },
+        {
+          "id": "impl-0012",
+          "content": "Verification Completeness After Fixes: When fixing issues reported by validation agents, ALWAYS verify that ALL instances are fixed, not just the first few. Use quantitative verification (count before/after) and exhaustive search (grep, find) to ensure completeness. Example: if Monitor reports '4 duplicate pairs', after removal verify with 'grep -c duplicate' or count operation that 0 remain, not just that 2 specific IDs were removed. Incomplete fixes cause repeated iterations for the same issue category. Pattern proven: quantitative verification (55 facts counted with grep -c) prevents claiming incorrect numbers (56) in deliverables.",
+          "code_example": "```bash\n# ❌ INCORRECT - fix first few instances, assume done\ngrep 'duplicate_id_001' facts.txt  # Found, remove it\ngrep 'duplicate_id_002' facts.txt  # Found, remove it\n# Assumption: fixed all duplicates (WRONG - 2 more remain)\n\n# ✅ CORRECT - quantitative verification of complete fix\n# Before fix: count duplicates\nbefore_count=$(grep -c 'duplicate_pattern' facts.txt)\necho \"Before: $before_count duplicates found\"\n\n# Apply fix to ALL instances\nsed -i '/duplicate_pattern/d' facts.txt\n\n# After fix: verify 0 remain\nafter_count=$(grep -c 'duplicate_pattern' facts.txt)\necho \"After: $after_count duplicates remain\"\n\nif [ \"$after_count\" -ne 0 ]; then\n    echo \"❌ INCOMPLETE FIX: $after_count duplicates still present\"\n    exit 1\nfi\n\necho \"✅ COMPLETE FIX: all duplicates removed (verified)\"\n```",
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-21T09:04:13.348159Z",
+          "last_used_at": "2025-10-21T09:04:13.348163Z",
+          "related_bullets": [
+            "impl-0009",
+            "test-0009"
+          ],
+          "tags": [
+            "verification",
+            "completeness",
+            "quantitative",
+            "bash",
+            "grep",
+            "validation",
+            "fix-verification",
+            "exhaustive-search",
+            "map-framework"
+          ],
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "impl-0013",
+          "content": "Source Material Boundary Validation: When tasks specify source material constraints (e.g., 'Use ONLY verified_facts.txt', 'Implement using library X'), treat these as SCOPE constraints (must use specific sources) not QUALITY constraints (any accurate source). Before implementation: 1) Parse constraint type explicitly, 2) Create allowed/forbidden source lists, 3) Read allowed sources to build working set, 4) Implement ONLY from working set, 5) Validate each fact/component's provenance. Default to strictest interpretation when ambiguous - if unsure whether 'verified facts' means quality or scope, treat as scope (specific file boundary). This prevents using correct-looking but out-of-scope material.",
+          "code_example": "```markdown\n# Task: Create docs using ONLY verified_facts.txt\n\n# ❌ INCORRECT - Quality constraint interpretation\n\"I'll use accurate metrics from CHANGELOG.md since they're verified\"\n→ Uses out-of-scope CHANGELOG.md\n\n# ✅ CORRECT - Scope constraint interpretation\n## Step 1: Parse constraint type\n\"ONLY verified_facts.txt\" → Scope constraint (specific file)\n\n## Step 2: Create source boundary\nAllowed: [verified_facts.txt]\nForbidden: [CHANGELOG.md, docs/, memory]\n\n## Step 3: Build working set\nRead verified_facts.txt → Extract all facts → Working set\n\n## Step 4: Validate provenance\nFor each claim:\n  Source file = ?\n  In allowed list? YES → USE, NO → REJECT\n```",
+          "helpful_count": 3,
+          "harmful_count": 0,
+          "created_at": "2025-10-21T09:45:10.125668Z",
+          "last_used_at": "2025-10-21T15:36:06.017184Z",
+          "related_bullets": [
+            "impl-0011",
+            "impl-0009"
+          ],
+          "tags": [
+            "source-validation",
+            "scope-constraint",
+            "boundary-validation",
+            "content-generation",
+            "provenance",
+            "markdown",
+            "documentation"
+          ],
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "impl-0014",
+          "content": "Constraint Type Classification: Before implementing content generation or configuration tasks, explicitly classify each requirement as Quality constraint (satisfied by any compliant approach) vs Scope constraint (satisfied only by specific allowed components/sources). Quality: 'code must be readable', 'facts must be accurate'. Scope: 'use library X', 'source from file Y'. When encountering ambiguous phrasing like 'verified facts' (could mean quality 'facts that are verified' or scope 'facts from verified_facts.txt'), default to scope interpretation (stricter boundary). Document classification in implementation notes: 'Requirement X classified as scope constraint - allowed sources: [A, B], forbidden: [C, D]'.",
+          "code_example": "```python\n# Requirement: \"Use ONLY verified database connections\"\n\n# ❌ INCORRECT - Assumes quality constraint\nconn = create_any_valid_connection()  # Any working connection\n\n# ✅ CORRECT - Classifies as scope constraint\n# Step 1: Parse constraint\n# \"ONLY verified database connections\" → Scope or Quality?\n# Has \"ONLY\" keyword → Likely scope (exclusive boundary)\n\n# Step 2: Document classification\n# Constraint type: SCOPE\n# Allowed sources: verified_connections.yaml\n\n# Step 3: Implement with boundary validation\nimport yaml\nwith open('verified_connections.yaml') as f:\n    allowed_conns = yaml.safe_load(f)\nif connection_name in allowed_conns:\n    conn = create_connection(allowed_conns[connection_name])\nelse:\n    raise ValueError(f\"{connection_name} not in verified sources\")\n```",
+          "helpful_count": 2,
+          "harmful_count": 0,
+          "created_at": "2025-10-21T09:45:10.125685Z",
+          "last_used_at": "2025-10-21T15:36:06.017190Z",
+          "related_bullets": [
+            "impl-0011"
+          ],
+          "tags": [
+            "constraint-classification",
+            "scope-vs-quality",
+            "requirement-parsing",
+            "boundary-validation",
+            "python"
+          ],
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "impl-0015",
+          "content": "SCOPE Compliance Priority Rule: When SCOPE constraints limit documentation completeness (relevant accurate content exists in forbidden sources), ALWAYS prioritize Compliance > Completeness > Accuracy hierarchy. Accept reduced scope documentation rather than violating source boundaries. SCOPE constraint 'Use ONLY file X' means exclusive boundary - content from file Y is invalid even if factually superior. If completeness is critical to task success, explicitly request scope expansion ('Can I also use file Y?') BEFORE implementation. Never self-authorize scope expansion to 'improve quality'. Pattern prevents Monitor rejection loops where Actor uses correct-but-forbidden sources.",
+          "code_example": "```python\n# Task: Create presentation using ONLY verified_facts.txt\n# Challenge: verified_facts.txt has 12 agent templates, but codebase has 13\n\n# ❌ INCORRECT - Prioritize completeness/accuracy over compliance\ndef create_presentation():\n    # \"verified_facts.txt is outdated, I'll check actual code for accuracy\"\n    actual_count = len(glob('src/templates/agents/*.md'))  # 13\n    slide_content = f\"System has {actual_count} agent templates\"  # SCOPE VIOLATION\n    # Rationale: \"More accurate\"\n    # Problem: Violates 'ONLY verified_facts.txt' constraint\n\n# ✅ CORRECT - Prioritize compliance over completeness\ndef create_presentation_scope_aware():\n    # Step 1: Read designated source ONLY\n    facts = read_file('verified_facts.txt')\n    template_count = extract_fact(facts, 'agent templates')  # \"12 templates\"\n    \n    # Step 2: Accept reduced scope\n    slide_content = f\"System has {template_count} agent templates\"  # From source\n    # Known limitation: Source may be outdated (actual: 13)\n    # Decision: Compliance > Accuracy for SCOPE constraints\n    \n    # Step 3: Request scope expansion if completeness critical\n    if task_requires_completeness:\n        raise ScopeExpansionRequest(\n            \"verified_facts.txt shows 12 templates but codebase has 13. \"\n            \"Can I verify against codebase to ensure completeness?\"\n        )\n    \n    return slide_content\n\n# Priority Hierarchy for SCOPE Constraints:\n# 1. Compliance (use only allowed sources) ← HIGHEST\n# 2. Completeness (include all relevant info) ← MEDIUM  \n# 3. Accuracy (match ground truth) ← LOWEST\n# If conflict, sacrifice lower priority to preserve higher\n```",
+          "related_bullets": [
+            "impl-0014",
+            "test-0010",
+            "impl-0013"
+          ],
+          "tags": [
+            "scope-constraints",
+            "compliance",
+            "validation",
+            "map-framework",
+            "monitor",
+            "constraints"
+          ],
+          "helpful_count": 1,
+          "harmful_count": 0,
+          "created_at": "2025-10-21T14:46:01.752285Z",
+          "last_used_at": "2025-10-21T15:36:06.017192Z",
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "impl-0016",
+          "content": "Procedural Pattern Enforcement: Transform constraint-type patterns (SCOPE, SECURITY, VALIDATION) from declarative guidance ('follow SCOPE rules') to executable procedures with numbered pre-flight checklists, copy-pasteable verification commands, and economic incentives (violation detection cheaper than violation fixing). Gap between pattern awareness (knowledge-retrieval mode) and pattern execution (execution-discipline mode) causes violations even when pattern is in context. Procedural enforcement bridges gap: Actor claims to 'apply impl-0015' but violates SCOPE (iteration 1) → Checklist with verification commands forces execution (iteration 2 succeeds). Apply to patterns with compliance requirements, not creative/judgment tasks.",
+          "code_example": "```python\n# ❌ DECLARATIVE PATTERN - Awareness only, execution optional\npattern_impl_0015 = {\n    \"title\": \"SCOPE Compliance Priority Rule\",\n    \"content\": \"When SCOPE constraints exist, prioritize Compliance > Completeness > Accuracy.\",\n    \"guidance\": \"Follow the hierarchy when making decisions.\"\n}\n# Result: Actor 'understands' pattern but violates SCOPE in practice\n\n# ✅ PROCEDURAL PATTERN - Executable enforcement\npattern_impl_0015_procedural = {\n    \"title\": \"SCOPE Compliance Priority Rule\",\n    \n    # Pre-flight checklist (MANDATORY)\n    \"checklist\": [\n        \"[ ] Step 1: Identify SCOPE constraint keywords ('ONLY', 'MUST use', 'from file X')\",\n        \"[ ] Step 2: Extract allowed sources list (e.g., ['verified_facts.txt'])\",\n        \"[ ] Step 3: Extract forbidden sources list (e.g., ['CHANGELOG.md', 'memory', 'code'])\",\n        \"[ ] Step 4: Read ONLY allowed sources, build working set\",\n        \"[ ] Step 5: For each fact/component, validate: source in allowed_list?\",\n        \"[ ] Step 6: BEFORE finalizing, run verification command below\"\n    ],\n    \n    # Copy-pasteable verification command\n    \"verification\": '''\n# Verify no forbidden sources used\ngrep -i 'CHANGELOG\\|memory\\|actual count' output.txt && echo \"❌ SCOPE VIOLATION\" || echo \"✅ COMPLIANT\"\n''',\n    \n    # Economic incentive (detection << fixing)\n    \"cost_analysis\": {\n        \"violation_detection\": \"5 seconds (grep command)\",\n        \"violation_fixing\": \"15 minutes (Monitor rejection → rework iteration)\",\n        \"roi\": \"180x time savings by running verification upfront\"\n    },\n    \n    # Guidance (declarative part still present but secondary)\n    \"principle\": \"Compliance > Completeness > Accuracy hierarchy\"\n}\n\n# Pattern application enforcement:\n# 1. Checklist creates explicit steps (can't skip accidentally)\n# 2. Verification command provides instant feedback (cheap detection)\n# 3. Economic incentive creates rational motivation (5s prevents 15min rework)\n# Result: Execution discipline, not just awareness\n```",
+          "related_bullets": [
+            "impl-0015",
+            "impl-0014",
+            "impl-0013",
+            "test-0010"
+          ],
+          "tags": [
+            "meta-pattern",
+            "procedural-enforcement",
+            "checklist",
+            "verification",
+            "execution-discipline",
+            "constraint-compliance",
+            "scope",
+            "map-framework",
+            "pattern-design",
+            "python"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-21T15:36:06.017196Z",
+          "last_used_at": "2025-10-21T15:36:06.017197Z",
           "deprecated": false,
           "deprecation_reason": null
         }
@@ -601,6 +798,55 @@
           ],
           "deprecated": false,
           "deprecation_reason": null
+        },
+        {
+          "id": "test-0009",
+          "content": "Command-Based Arithmetic Verification: NEVER trust mental arithmetic for numeric claims in documentation or analysis. ALWAYS verify counts, percentages, and calculations with shell commands (grep -c, wc -l, bc) BEFORE recording claims. Include verification commands inline for reproducibility and audit trails. Pattern prevents embarrassing arithmetic errors in deliverables (claiming 56 facts when actual is 55, claiming 90.3% when actual is 88.7%). Commands provide proof and enable automated validation. Mental arithmetic error rate: ~15% for multi-step calculations. Shell verification error rate: ~0% (deterministic).",
+          "code_example": "```bash\n# ❌ INCORRECT - mental arithmetic (error-prone)\necho \"File has 56 facts (90.3% of 62 total)\" >> report.txt\n# Risk: Arithmetic errors slip into deliverables\n\n# ✅ CORRECT - verify with shell commands\n# Count facts\nfact_count=$(grep -c '\\*\\*Fact:' verified_facts_workflow.txt)\necho \"Facts: $fact_count\"  # Output: 55 (NOT 56!)\n\n# Count total lines for context\ntotal_lines=$(wc -l < verified_facts_workflow.txt)\necho \"Total lines: $total_lines\"  # Output: 588\n\n# Calculate percentage with bc (floating point)\npercentage=$(echo \"scale=1; $fact_count / 62 * 100\" | bc)\necho \"Percentage: $percentage%\"  # Output: 88.7% (NOT 90.3%!)\n\n# Record VERIFIED claims with proof\ncat >> report.txt << EOF\n**Verified Metrics:**\n- Facts: $fact_count (verified: grep -c '\\*\\*Fact:' verified_facts_workflow.txt)\n- Total lines: $total_lines (verified: wc -l)\n- Percentage: $percentage% (verified: echo \"scale=1; $fact_count/62*100\" | bc)\nEOF\n\n# Audit trail: anyone can re-run commands to verify\n```",
+          "tags": [
+            "arithmetic",
+            "verification",
+            "bash",
+            "grep",
+            "bc",
+            "wc",
+            "accuracy",
+            "documentation",
+            "audit",
+            "testing"
+          ],
+          "helpful_count": 1,
+          "harmful_count": 0,
+          "created_at": "2025-10-21T10:08:01.014424Z",
+          "related_bullets": [
+            "impl-0009",
+            "test-0004"
+          ],
+          "last_used_at": "2025-10-21T09:01:00.000000Z"
+        },
+        {
+          "id": "test-0010",
+          "content": "SCOPE-Aware Validation Pattern: When validating outputs from tasks with explicit source constraints (e.g., 'Use ONLY verified_facts.txt'), validation MUST check compliance against the designated source file, NOT against implementation code or external references. Validation target = constraint target. For SCOPE constraints, validate boundary compliance FIRST (is content from allowed source?), factual accuracy SECOND (is content correct per that source?). Pattern: Task says 'Use ONLY file X' → Validator reads file X → Checks output matches file X, regardless of whether file X matches code/reality. This separates constraint compliance from content accuracy.",
+          "code_example": "```python\n# Task: Create presentation using ONLY verified_facts.txt\n# Slide claims: \"System has 5 MCP tools\" (from verified_facts.txt line 42)\n\n# ❌ INCORRECT - Validate against code\ndef validate_slide(slide_content):\n    # Check actual codebase\n    actual_tools = count_mcp_tools_in_code()  # Returns 3\n    if \"5 MCP tools\" in slide_content and actual_tools != 5:\n        return ValidationError(\"Slide claims 5 tools but code has 3\")\n# Problem: Validates factual accuracy, ignores SCOPE constraint\n\n# ✅ CORRECT - Validate against designated source\ndef validate_slide_scope_aware(slide_content, designated_source):\n    # Step 1: SCOPE validation (boundary compliance)\n    source_content = read_file(designated_source)  # verified_facts.txt\n    source_claims = extract_claims(source_content)  # \"5 MCP tools\" at line 42\n    \n    for claim in extract_claims(slide_content):\n        if claim not in source_claims:\n            return ValidationError(\n                f\"Claim '{claim}' not found in designated source {designated_source}. \"\n                f\"SCOPE constraint violated.\"\n            )\n    \n    # Step 2: Factual validation (optional, separate concern)\n    # Only validate if task requires code accuracy, not just source compliance\n    if task.requires_code_accuracy:\n        actual_tools = count_mcp_tools_in_code()\n        # Report discrepancy but don't fail SCOPE validation\n        if actual_tools != 5:\n            warnings.append(f\"Source file claims 5 tools but code has {actual_tools}\")\n    \n    return ValidationSuccess()\n\n# Key: SCOPE constraint compliance (does slide match source?) is PRIMARY\n#      Factual accuracy (does source match code?) is SECONDARY\n```",
+          "helpful_count": 1,
+          "harmful_count": 0,
+          "created_at": "2025-10-21T11:18:48.871189Z",
+          "last_used_at": "2025-10-21T14:46:01.752282Z",
+          "related_bullets": [
+            "impl-0013",
+            "impl-0014"
+          ],
+          "tags": [
+            "validation",
+            "scope-constraint",
+            "boundary-compliance",
+            "monitor",
+            "testing",
+            "source-verification",
+            "python"
+          ],
+          "deprecated": false,
+          "deprecation_reason": null
         }
       ]
     },
@@ -658,7 +904,31 @@
     },
     "TOOL_USAGE": {
       "description": "Proper usage of libraries, frameworks, APIs, and development tools",
-      "bullets": []
+      "bullets": [
+        {
+          "id": "tool-0001",
+          "content": "Proactive Tool Limit Handling for Large Content: Check content size BEFORE choosing Write tool strategy to prevent parameter limit errors. For content >500 lines or >50KB, ALWAYS use temp file + mv approach instead of Write tool directly. Write tool has parameter size limits (~32KB in some environments) causing silent truncation or rejection. Pattern: (1) Write content to /tmp/ via Python/bash heredoc, (2) Verify written content completeness (line count), (3) Move to final destination with mv. This bypasses tool parameter limits by using file I/O directly. Threshold proven: 588-line file succeeded with temp approach after Write tool would have hit limits.",
+          "code_example": "```python\n# ❌ RISKY - Write tool for large content (may hit limits)\ncontent = generate_large_content()  # 588 lines, 35KB\nwrite_tool(path='/final/path.txt', content=content)\n# Risk: Tool parameter limit → truncated file or rejection\n\n# ✅ SAFE - temp file + mv for large content\nimport tempfile\nimport subprocess\nimport os\n\ndef write_large_content_safely(content: str, final_path: str):\n    \"\"\"Write large content using temp file to bypass tool limits\"\"\"\n    \n    # Check if content exceeds safe threshold\n    line_count = content.count('\\n')\n    size_kb = len(content.encode('utf-8')) / 1024\n    \n    if line_count < 500 and size_kb < 50:\n        # Safe to use Write tool directly\n        write_tool(path=final_path, content=content)\n        return\n    \n    # Exceeds threshold - use temp file approach\n    logger.info(\n        f\"Large content detected ({line_count} lines, {size_kb:.1f}KB). \"\n        f\"Using temp file approach.\"\n    )\n    \n    # Step 1: Write to temp file\n    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as tmp:\n        tmp.write(content)\n        tmp_path = tmp.name\n    \n    # Step 2: Verify completeness\n    with open(tmp_path) as f:\n        written_lines = sum(1 for _ in f)\n    \n    expected_lines = content.count('\\n') + 1\n    if written_lines != expected_lines:\n        raise ValueError(\n            f\"Content truncation detected: wrote {written_lines} lines, \"\n            f\"expected {expected_lines}\"\n        )\n    \n    # Step 3: Move to final destination\n    os.makedirs(os.path.dirname(final_path), exist_ok=True)\n    subprocess.run(['mv', tmp_path, final_path], check=True)\n    \n    logger.info(f\"Successfully wrote {line_count} lines to {final_path}\")\n\n# Usage:\ncontent = generate_verified_facts_workflow()  # 588 lines\nwrite_large_content_safely(content, 'docs/knowledge_base/verified_facts_workflow.txt')\n```",
+          "tags": [
+            "write-tool",
+            "file-limits",
+            "temp-file",
+            "large-content",
+            "python",
+            "bash",
+            "workaround",
+            "tool-usage",
+            "map-framework"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-21T10:08:01.014433Z",
+          "related_bullets": [
+            "impl-0010",
+            "impl-0005"
+          ]
+        }
+      ]
     },
     "DEBUGGING_TECHNIQUES": {
       "description": "Troubleshooting workflows, diagnostic approaches, and debugging tools",

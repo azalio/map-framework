@@ -1,0 +1,23 @@
+{
+  "reasoning": "Subtask 6 required 1 iteration but revealed critical Monitor validation methodology issue. Monitor flagged MCP tool counts as incorrect (e.g., 'Actor shows 5 tools but code has 3 servers'), validating slide against actual agent template code (.claude/agents/*.md) instead of designated source file (verified_facts_agents.txt). Root cause: Monitor didn't recognize SCOPE constraint type. Task specified 'используя ТОЛЬКО verified_facts_agents.txt' - a SCOPE constraint requiring validation against that specific file, NOT against implementation code. The slide was 100% correct per its source (verified_facts_agents.txt lists 5 MCP tool functions for Actor), but Monitor applied wrong validation target. This is similar to Subtask 5 issue but inverted: Subtask 5 - Actor used wrong source (CHANGELOG instead of verified_facts_core.txt), Subtask 6 - Monitor validated against wrong target (code instead of verified_facts_agents.txt). Both stem from insufficient SCOPE constraint awareness. Actor correctly defended implementation by demonstrating 1:1 correspondence with source file.",
+
+  "key_insight": "When validating content generation tasks with SCOPE constraints (e.g., 'use ONLY file X'), validation agents (Monitor, Reviewer) must check compliance against the designated source file, NOT against implementation code or other sources. Validate the constraint boundary, not the technical accuracy of facts. SCOPE validation ≠ factual validation.",
+
+  "bullet_updates": [
+    {
+      "bullet_id": "impl-0013",
+      "tag": "helpful",
+      "reason": "Source Material Boundary Validation pattern successfully applied by Actor to defend slide correctness when Monitor used wrong validation target. Enabled 1:1 source correspondence demonstration."
+    }
+  ],
+
+  "suggested_new_bullets": [
+    {
+      "section": "TESTING_STRATEGIES",
+      "content": "SCOPE-Aware Validation Pattern: When validating outputs from tasks with explicit source constraints (e.g., 'Use ONLY verified_facts.txt'), validation MUST check compliance against the designated source file, NOT against implementation code or external references. Validation target = constraint target. For SCOPE constraints, validate boundary compliance FIRST (is content from allowed source?), factual accuracy SECOND (is content correct per that source?). Pattern: Task says 'Use ONLY file X' → Validator reads file X → Checks output matches file X, regardless of whether file X matches code/reality. This separates constraint compliance from content accuracy.",
+      "code_example": "```python\n# Task: Create presentation using ONLY verified_facts.txt\n# Slide claims: \"System has 5 MCP tools\" (from verified_facts.txt line 42)\n\n# ❌ INCORRECT - Validate against code\ndef validate_slide(slide_content):\n    # Check actual codebase\n    actual_tools = count_mcp_tools_in_code()  # Returns 3\n    if \"5 MCP tools\" in slide_content and actual_tools != 5:\n        return ValidationError(\"Slide claims 5 tools but code has 3\")\n# Problem: Validates factual accuracy, ignores SCOPE constraint\n\n# ✅ CORRECT - Validate against designated source\ndef validate_slide_scope_aware(slide_content, designated_source):\n    # Step 1: SCOPE validation (boundary compliance)\n    source_content = read_file(designated_source)  # verified_facts.txt\n    source_claims = extract_claims(source_content)  # \"5 MCP tools\" at line 42\n    \n    for claim in extract_claims(slide_content):\n        if claim not in source_claims:\n            return ValidationError(\n                f\"Claim '{claim}' not found in designated source {designated_source}. \"\n                f\"SCOPE constraint violated.\"\n            )\n    \n    # Step 2: Factual validation (optional, separate concern)\n    # Only validate if task requires code accuracy, not just source compliance\n    if task.requires_code_accuracy:\n        actual_tools = count_mcp_tools_in_code()\n        # Report discrepancy but don't fail SCOPE validation\n        if actual_tools != 5:\n            warnings.append(f\"Source file claims 5 tools but code has {actual_tools}\")\n    \n    return ValidationSuccess()\n\n# Key: SCOPE constraint compliance (does slide match source?) is PRIMARY\n#      Factual accuracy (does source match code?) is SECONDARY\n```",
+      "related_to": ["impl-0013", "impl-0014"],
+      "tags": ["validation", "scope-constraint", "boundary-compliance", "monitor", "testing", "source-verification", "python"]
+    }
+  ]
+}

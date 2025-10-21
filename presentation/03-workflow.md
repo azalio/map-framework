@@ -1,0 +1,316 @@
+# Рабочий Процесс MAP Framework
+
+## Обзор Workflow
+
+MAP Framework использует **строго последовательную 6-агентную оркестрацию** для каждой подзадачи (subtask).
+
+**Обязательная последовательность:**
+```
+1. Actor          → Реализация решения
+2. Monitor        → Валидация качества
+   IF invalid: feedback to Actor (max 3-5 iterations)
+3. Predictor      → Анализ влияния изменений
+4. Evaluator      → Оценка качества
+   IF not approved: feedback to Actor
+5. Reflector      → Извлечение уроков (MANDATORY)
+6. Curator        → Обновление playbook (MANDATORY)
+```
+
+**Источник:** `.claude/commands/map-*.md` (4 workflow команды)
+
+## Slash-команды Orchestrator
+
+MAP предоставляет **4 специализированных workflow команды** для различных сценариев:
+
+1. **`/map-feature`** — реализация новых функций
+2. **`/map-debug`** — отладка проблем
+3. **`/map-refactor`** — рефакторинг кода
+4. **`/map-review`** — review документации
+
+**Orchestrator** — НЕ отдельный агент-шаблон, а логика координации, реализованная в этих slash-командах.
+
+## Критические Правила Enforcement
+
+### Правило 1: Обязательный вызов Reflector
+
+**ЗАПРЕЩЕНО:**
+- ❌ "Проанализировать успех вручную" и написать уроки
+- ❌ "Пропустить Reflector для простых задач"
+- ❌ "Вручную создать playbook bullets"
+
+**ОБЯЗАТЕЛЬНО:**
+- ✅ Вызвать `Task(subagent_type="reflector", ...)`
+- ✅ Верифицировать использование `cipher_memory_search` в output
+- ✅ Позволить Reflector извлечь паттерны из agent outputs
+
+**Почему:** Шаблон Reflector содержит инструкции по поиску в cipher. При ручной работе `cipher_memory_search` НИКОГДА не вызывается → дублируется knowledge.
+
+**Источник:** `docs/MAP_WORKFLOW_RULES.md` lines 33-62
+
+### Правило 2: Обязательный вызов Curator
+
+**ЗАПРЕЩЕНО:**
+- ❌ "Применить Reflector insights к playbook самостоятельно"
+- ❌ "Вручную редактировать `.claude/playbook.json`"
+- ❌ "Пропустить обновление playbook для мелких изменений"
+
+**ОБЯЗАТЕЛЬНО:**
+- ✅ Вызвать `Task(subagent_type="curator", ...)`
+- ✅ Верифицировать использование `cipher_memory_search` для дедупликации
+- ✅ Применить delta операции Curator (ADD/UPDATE/DEPRECATE)
+- ✅ Вызвать `cipher_extract_and_operate_memory` если есть `sync_to_cipher` записи
+
+**Почему:** Шаблон Curator содержит инструкции по проверке cipher на дубликаты ПЕРЕД добавлением bullets И по синхронизации high-quality bullets (helpful_count >= 5) обратно в cipher.
+
+**Источник:** `docs/MAP_WORKFLOW_RULES.md` lines 64-85, `.claude/commands/map-feature.md` lines 309-355
+
+### Правило 3: Верификация MCP Tool Usage
+
+После вызова Reflector или Curator, orchestrator **ПРОВЕРЯЕТ** использование MCP tools:
+
+**Reflector Output должен показывать:**
+```
+Perfect! I found highly relevant existing knowledge. The cipher search revealed...
+```
+
+**Curator Output должен показывать:**
+```json
+{
+  "sync_to_cipher": [
+    {"bullet_id": "impl-0008", "content": "...", "helpful_count": 5}
+  ]
+}
+```
+
+**Если отсутствует:** Агент НЕ следовал инструкциям своего шаблона → критический сбой workflow.
+
+**Источник:** `docs/MAP_WORKFLOW_RULES.md` lines 71-83
+
+## Dual Memory System
+
+MAP использует **ДВЕ системы хранения знаний**:
+
+### 1. Playbook (Проектная Memory)
+- **Локация:** `.claude/playbook.json`
+- **Назначение:** Структурированные, категоризованные паттерны для ЭТОГО проекта
+- **Формат:** Bullets с примерами кода, тегами, helpful/harmful counts
+- **Scope:** Один проект
+
+### 2. Cipher (Кросс-проектная Memory)
+- **Локация:** MCP tool (внешняя семантическая БД)
+- **Назначение:** Общее knowledge для ВСЕХ проектов
+- **Формат:** Semantic embeddings для similarity search
+- **Scope:** Все проекты, использующие cipher
+
+**Интеграция:**
+- Reflector ищет в cipher похожие паттерны ПЕРЕД анализом
+- Curator проверяет cipher на дубликаты ПЕРЕД добавлением bullets
+- Curator синхронизирует high-quality bullets (helpful_count >= 5) обратно в cipher
+
+**Последствия пропуска агентов:**
+- ✅ Playbook обновляется (orchestrator вручную)
+- ❌ Cipher НИКОГДА не обновляется (MCP tools не вызываются)
+- ❌ Knowledge не дедуплицируется
+- ❌ Будущие workflows не получают уроки
+
+**Результат:** "Работа в цикле, переучивание одних и тех же уроков каждый раз"
+
+**Источник:** `docs/MAP_WORKFLOW_RULES.md` lines 103-126
+
+## Recitation Pattern — Context Engineering
+
+**Проблема:** На длинных задачах (8+ subtasks, 50K+ tokens) модель "теряет нить" и забывает исходную цель.
+
+**Решение:** **Recitation Pattern** — держит общую цель и прогресс "свежими" в context window.
+
+### RecitationManager (543 строки кода)
+
+**Файлы:**
+- `.map/current_plan.md` — human-readable progress tracker
+- `.map/current_plan.json` — machine-readable state
+
+**Жизненный цикл:**
+1. **Step 2.5:** После TaskDecomposer создаёт plan
+   ```bash
+   python -m mapify_cli.recitation_manager create "$TASK_ID" "$ARGUMENTS" "$SUBTASKS_JSON"
+   ```
+2. **Step 3.1.5:** Перед КАЖДЫМ Actor invocation обновляет статус
+   ```bash
+   python -m mapify_cli.recitation_manager update <subtask_id> in_progress
+   PLAN_CONTEXT=$(python -m mapify_cli.recitation_manager get-context)
+   ```
+3. **Actor Template:** Получает `{{plan_context}}` через Handlebars variable в секции `<recitation_plan>`
+4. **После завершения:** Cleanup удаляет `.map/` директорию
+   ```bash
+   python -m mapify_cli.recitation_manager clear
+   ```
+
+**Progress Markers:**
+- `[✓]` = completed
+- `[→]` = in_progress (текущая задача)
+- `[☐]` = pending
+- `[✗]` = failed
+
+**Интеграция с ошибками:**
+- При Monitor rejection: план обновляется с номером retry attempt
+- Дисплей: "⚠️ Retry attempt 2 - review previous errors"
+- Реализует паттерны `qual-0001` (WHAT/WHERE/HOW/WHY) и `arch-0005` (three-failure threshold)
+
+**Источник:** `CONTEXT-ENGINEERING-IMPROVEMENTS.md` Phase 1.1 (lines 276-289), `.claude/commands/map-feature.md` lines 61-103
+
+## Actor-Monitor Retry Loop
+
+**Механизм:**
+- Monitor валидирует Actor output на качество, безопасность, корректность
+- **IF invalid:** feedback → Actor (повторная реализация)
+- **Лимит:** максимум 3-5 итераций
+- **Эскалация:** Если 3 провала → escalate to user
+
+**Flow:**
+```
+Actor → Monitor (iteration 1)
+  IF invalid: Actor → Monitor (iteration 2)
+    IF invalid: Actor → Monitor (iteration 3)
+      IF invalid: ESCALATE TO USER
+  IF valid: → Predictor
+```
+
+**Гейт:** "You can ONLY reach this step if Monitor returned valid: true"
+
+**Источник:** `.claude/commands/map-feature.md` lines 22, 181, 179-188
+
+## MCP Integration в Workflow
+
+MAP использует **6 core MCP tools** для расширения возможностей workflow:
+
+1. **`cipher_memory_search`** — поиск похожих паттернов в семантической базе
+2. **`cipher_extract_and_operate_memory`** — сохранение успешных паттернов
+3. **`sequential-thinking`** — сложные цепочки рассуждений
+4. **`context7 (resolve-library-id + get-library-docs)`** — актуальная документация библиотек
+5. **`deepwiki (read_wiki_structure + ask_question)`** — обучение на GitHub репозиториях
+6. **`claude-reviewer (request_review)`** — профессиональный code review
+
+**Источник:** `.claude/commands/map-feature.md` lines 394-403
+
+## Self-Check Verification
+
+Перед завершением любого MAP workflow subtask orchestrator **ОБЯЗАН** проверить 4 вопроса:
+
+1. ❓ Вызвал ли я `Task(subagent_type="reflector", ...)` или извлекал уроки сам?
+2. ❓ Вызвал ли я `Task(subagent_type="curator", ...)` или обновлял playbook сам?
+3. ❓ Показал ли Reflector output, что он искал в cipher?
+4. ❓ Показал ли Curator output операции `sync_to_cipher`?
+
+**Нарушения:**
+- Если "Сделал сам" на вопросы 1-2 → нарушение workflow, переделать subtask
+- Если "Нет" на вопросы 3-4 → агенты не следовали шаблонам, исследовать причину
+
+**Источник:** `docs/MAP_WORKFLOW_RULES.md` lines 87-101
+
+## Workflow Logger — Observability
+
+**MapWorkflowLogger** (411 строк кода) — детальное логирование выполнения MAP workflows.
+
+**Захватываемые события (7 типов):**
+1. `workflow_start` — инициализация
+2. `workflow_end` — завершение/провал
+3. `agent_call` — каждый agent invocation
+4. `tool_use` — MCP tool calls
+5. `recitation_created` — создание plan
+6. `recitation_updated` — изменения статуса plan
+7. `error` — сбои workflow
+
+**Формат:** JSON Lines (`.map/logs/workflow_TIMESTAMP.log`)
+
+**Структура каждой строки:**
+- `timestamp` (ISO 8601)
+- `event_type` (из списка выше)
+- `task_id` (корреляция с RecitationManager)
+- `data` (event-specific payload)
+
+**Использование:**
+- Post-mortem debugging: какой агент вызывался? какие prompts отправлялись?
+- Workflow replay: сохранить успешные логи как test fixtures
+- Event correlation: task_id связывает events с `.map/current_plan.json`
+
+**Источник:** `CONTEXT-ENGINEERING-IMPROVEMENTS.md` Phase 1.2 (lines 291-307)
+
+## Context Engineering Optimizations
+
+### Top-K Playbook Filtering
+
+- **Конфигурация:** `.claude/playbook.json` → `metadata.top_k = 5`
+- **Механизм:** При каждом subtask Actor получает только 5 наиболее релевантных bullets
+- **Benefit:** С 25 bullets в базе, top-5 фильтрация предотвращает context distraction
+- **Реализация:** Phase 1.3 complete
+
+**Источник:** `CONTEXT-ENGINEERING-IMPROVEMENTS.md` Phase 1.3, `.claude/playbook.json` line 10
+
+### Template Optimization (Phase 1.4)
+
+**Результаты оптимизации:**
+- Monitor: 1006 → 909 строк (-97 lines, -9.6%)
+- Evaluator: 934 → 844 строки (-90 lines, -9.6%)
+- **Суммарная экономия:** 187 строк кода шаблонов
+
+**Побочный эффект:**
+- Оптимизация workflow сгенерировала 8 новых playbook паттернов
+- Рост: 3 bullets → 11 bullets → 25 bullets (current)
+
+**Источник:** `CONTEXT-ENGINEERING-IMPROVEMENTS.md` lines 319-326
+
+### Принципы Context Engineering
+
+1. **Append-Only Context** — НИКОГДА не редактируй предыдущие сообщения в истории (preserves KV-cache efficiency)
+2. **External Storage as Context Extension** — `.map/current_plan.md` как внешняя память
+3. **Focusing Attention ("Маяк" pattern)** — держит цели "свежими" в recent tokens через recitation
+
+**Источник:** `CONTEXT-ENGINEERING-IMPROVEMENTS.md` lines 23-89
+
+## 4-Phase Roadmap
+
+**Phase 1: Quick Wins** (✅ COMPLETE)
+- Recitation pattern (RecitationManager)
+- Workflow logging (MapWorkflowLogger)
+- Top-k playbook filtering
+- Template optimization
+
+**Phase 2: Medium Complexity**
+- Checkpoints для длинных workflows
+- Caching для повторных вызовов
+- Varied playbook bullet formulations
+- Keyword search в playbook
+
+**Phase 3: Complex Features**
+- Parallelization (Actor/Predictor одновременно)
+- Automated tests для workflow logic
+- Temperature tuning per agent type
+- Profiling для token usage
+
+**Phase 4: Optional Integration**
+- LangChain adapters
+- Document loaders
+
+**Целевые метрики:**
+- Monitor approval rate: 90-95% (from ~80%)
+- Iteration count: ~2 per subtask (from ~3, -30% retries)
+- Cost: -10-15% tokens
+- Time: -30-40% на длинных задачах
+
+**Источник:** `CONTEXT-ENGINEERING-IMPROVEMENTS.md` lines 249-397
+
+## Exception: Non-MAP Tasks
+
+Эти правила **ТОЛЬКО** применяются при использовании MAP framework команд:
+- `/map-feature`
+- `/map-debug`
+- `/map-refactor`
+- `/map-review`
+
+Для обычных задач (bug fixes, documentation, простые изменения) можно работать напрямую без полной agent chain.
+
+**Источник:** `docs/MAP_WORKFLOW_RULES.md` lines 204-211
+
+---
+
+*Все факты проверены против кодовой базы — verification: docs/knowledge_base/verified_facts_workflow.txt*
