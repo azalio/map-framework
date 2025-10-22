@@ -24,8 +24,10 @@
       "config": {
         "auto_store": true,
         "retrieval_limit": 5,
-        "similarity_threshold": 0.3,
-        "enable_reasoning_patterns": true
+        "similarity_threshold": 0.85,
+        "enable_reasoning_patterns": true,
+        "use_llm_decisions": false,
+        "confidence_threshold": 0.7
       }
     },
     "codex-bridge": {
