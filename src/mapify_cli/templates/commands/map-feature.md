@@ -6,6 +6,28 @@ description: Implement new feature using full MAP workflow
 
 **CRITICAL INSTRUCTION:** This is an **automated sequential workflow**. You MUST execute ALL steps from start to finish without stopping. After calling each subagent, IMMEDIATELY proceed to the next step in the workflow. DO NOT wait for user input between steps - this is a fully autonomous multi-agent orchestration.
 
+**🚨 ABSOLUTELY FORBIDDEN 🚨**
+
+You are **STRICTLY PROHIBITED** from:
+
+❌ **"Optimizing" the workflow due to token limits** - Token constraints are NOT a valid reason to skip agents
+❌ **"Combining steps to save time"** - Each agent MUST be called individually
+❌ **"Doing Reflector/Curator work manually"** - This breaks cipher integration
+❌ **"Creating a comprehensive document instead"** - This is NOT the MAP workflow
+❌ **"Skipping reflection for simple tasks"** - EVERY subtask requires Reflector + Curator
+❌ **Any variation of "I'll optimize by..."** - NO OPTIMIZATION ALLOWED
+
+**IF YOU VIOLATE THESE RULES:**
+- cipher_memory_search won't be called → duplicate knowledge
+- cipher_extract_and_operate_memory won't be called → knowledge won't be shared
+- The ENTIRE PURPOSE of MAP Framework will be defeated
+
+**YOU MUST:**
+✅ Call EVERY agent in sequence for EVERY subtask
+✅ Verify each agent used required MCP tools (check output)
+✅ Complete the FULL workflow even if it takes 100K+ tokens
+✅ Ask user to continue if you hit token limit, but NEVER skip agents
+
 Implement the following feature using the MAP (Modular Agentic Planner) framework with ACE (Adaptive Contextual Engine) learning:
 
 **Feature Request:** $ARGUMENTS
@@ -260,6 +282,17 @@ Output JSON with:
 
 ### 3.8 Call Reflector to Extract Lessons
 
+**⚠️ CRITICAL:** The Reflector agent template (`.claude/agents/reflector.md`) contains MANDATORY instructions to use MCP tools. You MUST verify the Reflector actually uses these tools by checking its output:
+
+**REQUIRED MCP Tools:**
+1. **BEFORE analysis**: `cipher_memory_search` - Check for similar past patterns
+2. **FOR complex failures**: `sequential-thinking` - Deep root cause analysis
+
+**Verification Checklist:**
+- [ ] Did Reflector output show `cipher_memory_search` was called?
+- [ ] Did Reflector check for duplicate patterns before suggesting new bullets?
+- [ ] If no cipher search visible in output, the agent DID NOT follow its instructions
+
 ```
 Task(
   subagent_type="reflector",
@@ -271,6 +304,12 @@ Task(
 **Predictor Analysis:** [paste predictor output]
 **Evaluator Scores:** [paste evaluator output]
 **Execution Outcome:** success
+
+**MANDATORY FIRST STEP (per agent template):**
+Before extracting patterns, you MUST:
+1. Call cipher_memory_search to check if similar patterns already exist
+2. Only suggest new bullets if pattern is genuinely novel
+3. Reference existing cipher patterns in your analysis
 
 Analyze:
 - What worked well?
@@ -289,6 +328,17 @@ Output JSON with:
 
 ### 3.9 Call Curator to Update Playbook
 
+**⚠️ CRITICAL:** The Curator agent template (`.claude/agents/curator.md`) contains MANDATORY instructions to use MCP tools for deduplication and knowledge sharing.
+
+**REQUIRED MCP Tools:**
+1. **BEFORE creating ADD operations**: `cipher_memory_search` - Check for cross-project duplicates
+2. **AFTER playbook update**: `cipher_extract_and_operate_memory` - Sync high-quality bullets (helpful_count >= 5)
+
+**Verification Checklist:**
+- [ ] Did Curator output show `cipher_memory_search` was called before adding bullets?
+- [ ] Did Curator output show `sync_to_cipher` operations for high-quality bullets?
+- [ ] If no cipher operations visible, the agent DID NOT follow its instructions
+
 ```
 Task(
   subagent_type="curator",
@@ -298,19 +348,33 @@ Task(
 **Current Playbook:** [read from .claude/playbook.json]
 **Reflector Insights:** [paste reflector JSON]
 
+**MANDATORY STEPS (per agent template):**
+1. BEFORE creating ADD operations: cipher_memory_search to check duplicates
+2. Create delta operations (ADD/UPDATE/DEPRECATE)
+3. AFTER applying operations: IF any bullet has helpful_count >= 5, MUST call cipher_extract_and_operate_memory to sync to cross-project knowledge base
+
 Output JSON with:
 - operations: array of {operation: 'ADD'|'UPDATE'|'DEPRECATE', section, bullet_id, content, reason}
 - deduplication_check: array of {new_bullet, similar_existing_bullets, action}
-- sync_to_cipher: boolean (true if any bullets have helpful_count >= 5)"
+- sync_to_cipher: array of {bullet_id, content, helpful_count} (REQUIRED if helpful_count >= 5)"
 )
 ```
 
 ### 3.10 Apply Curator Operations
 
+**⚠️ CRITICAL ENFORCEMENT:**
+
 - Read `.claude/playbook.json`
 - Apply curator operations (ADD/UPDATE/DEPRECATE bullets)
 - Write updated playbook back to `.claude/playbook.json`
-- If sync_to_cipher is true, call cipher MCP tool to store high-quality patterns
+- **MANDATORY**: If Curator output contains `sync_to_cipher` array with ANY entries, you MUST call:
+  ```
+  mcp__cipher__cipher_extract_and_operate_memory(
+    interaction: [bullet content],
+    memoryMetadata: {"projectId": "map-framework", "source": "curator"}
+  )
+  ```
+- **DO NOT skip cipher sync** - high-quality patterns (helpful_count >= 5) MUST be shared across projects
 
 ### 3.11 Move to Next Subtask
 
