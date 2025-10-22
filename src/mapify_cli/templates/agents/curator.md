@@ -146,6 +146,16 @@ Result: Current, accurate recommendation.
 
 **Why**: High-quality patterns should be available across all projects. This builds institutional knowledge beyond single playbook.
 
+**CRITICAL**: When calling cipher_extract_and_operate_memory, always include these options:
+```javascript
+options: {
+  useLLMDecisions: false,        // Use similarity-based logic (predictable)
+  similarityThreshold: 0.85,     // Only 85%+ similar memories trigger UPDATE
+  confidenceThreshold: 0.7       // Minimum confidence required
+}
+```
+This prevents cipher from aggressively UPDATE-ing unrelated memories.
+
 <critical>
 
 **ALWAYS**:

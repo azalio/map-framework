@@ -175,6 +175,11 @@ mcp__cipher__cipher_extract_and_operate_memory({
   memoryMetadata: {
     projectId: "project-123",
     domain: "security"
+  },
+  options: {
+    useLLMDecisions: false,        // Use predictable similarity-based logic
+    similarityThreshold: 0.85,     // Only 85%+ similar memories trigger UPDATE
+    confidenceThreshold: 0.7       // Minimum confidence for operations
   }
 })
 ```
