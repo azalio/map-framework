@@ -25,10 +25,18 @@ Implementation of **Modular Agentic Planner (MAP)** — a cognitive architecture
 
 ### Command Line Usage
 
+MAP Framework works exclusively through slash commands in Claude Code:
+
 ```bash
-claude --agents '{"orchestrator": {"prompt": "$(cat .claude/agents/orchestrator.md)"}}' \
-  --print "implement user authentication with JWT tokens"
+# Start Claude Code in your project directory
+cd your-project
+claude
+
+# Use slash commands inside Claude Code
+/map-feature implement user authentication with JWT tokens
 ```
+
+**Note:** Direct `claude --agents` syntax is not applicable to MAP Framework, as the orchestration logic is implemented in slash command prompts (`.claude/commands/map-*.md`), not as a separate agent file.
 
 ## 📦 Installation
 
@@ -84,8 +92,9 @@ cp -r /path/to/map-framework/.claude/commands your-project/.claude/
 
 ```
 ┌──────────────────────────────────────────┐
-│          ORCHESTRATOR                    │
-│    (coordinates entire workflow)         │
+│       SLASH COMMANDS                     │
+│   /map-feature /map-debug /map-refactor │
+│   (orchestrate workflow via prompts)    │
 └───────────────┬──────────────────────────┘
                 │
     ┌───────────▼────────────┐
@@ -124,7 +133,7 @@ cp -r /path/to/map-framework/.claude/commands your-project/.claude/
 7. **Curator** — manages knowledge base (playbook)
 8. **DocumentationReviewer** — checks documentation completeness and correctness
 
-**Orchestrator** — workflow coordination logic implemented in slash commands (.claude/commands/map-*.md), not a separate agent template
+**Note:** The orchestration logic is implemented in slash command prompts (`.claude/commands/map-*.md`), not as a separate agent file. When you run `/map-feature`, the command prompt coordinates the workflow by calling agents sequentially via the Task tool.
 
 ## 🔌 MCP Integration
 
@@ -141,20 +150,48 @@ MAP uses MCP (Model Context Protocol) servers for enhanced capabilities:
 
 ### MCP Configuration
 
-MCP servers are configured in `.claude/mcp_config.json`. Example:
+MCP servers are configured differently depending on the usage context:
 
+**For project-specific configuration** (`.claude/mcp_config.json`):
 ```json
 {
-  "mcpServers": {
+  "mcp_servers": {
     "cipher": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-memory"]
+      "enabled": true,
+      "description": "Knowledge management system",
+      "config": {
+        "auto_store": true,
+        "retrieval_limit": 5,
+        "similarity_threshold": 0.85
+      }
     }
   }
 }
 ```
 
-**Note:** MCP server availability depends on your Claude Code installation. Some servers may be built-in, others require separate installation. Check Claude Code documentation for current information.
+**For global configuration** (`mcp_config.json` in project root):
+```json
+{
+  "mcp_servers": {
+    "cipher": {
+      "enabled": true,
+      "description": "Advanced knowledge and reasoning memory system",
+      "config": {
+        "auto_store": true,
+        "retrieval_limit": 5
+      }
+    }
+  }
+}
+```
+
+**Note:**
+- The repository includes example configurations in both `.claude/mcp_config.json` and `mcp_config.json`
+- MCP server availability depends on your Claude Code installation
+- Some servers (cipher, claude-reviewer, sequential-thinking) are commonly available
+- Others may require separate installation via Claude Code
+- The configuration format shown above is specific to this MAP Framework implementation
+- Check Claude Code documentation for system-level MCP server installation
 
 ### Benefits
 
@@ -315,14 +352,12 @@ MAP Framework supports intelligent model selection per agent to balance capabili
 | **Reflector** | sonnet | Pattern extraction needs reasoning | ➡️ |
 | **Curator** | sonnet | Knowledge management requires care | ➡️ |
 | **DocumentationReviewer** | sonnet | Documentation analysis needs thoroughness | ➡️ |
-| **TestGenerator** | sonnet | Test quality is important | ➡️ |
-| **Orchestrator** | opus | Critical workflow decisions | ⬆️ |
 
 ### Cost Savings
 
 Using this optimized distribution provides:
 - **40-60% cost reduction** vs using sonnet everywhere
-- **Maintains quality** for critical tasks (orchestrator uses opus)
+- **Maintains quality** for critical tasks (sonnet for actor/monitor/reflector)
 - **Fast execution** for analysis tasks (haiku for predictor/evaluator)
 - **Balanced performance** for code generation (sonnet for actor/monitor)
 
@@ -331,9 +366,9 @@ Using this optimized distribution provides:
 Agents automatically use their configured model when invoked via slash commands:
 
 ```bash
-# Slash commands use agent-specific models automatically
-/map-feature implement authentication  # Uses opus orchestrator → sonnet actors
-/map-debug fix login bug              # Uses opus orchestrator → sonnet actors
+# Slash commands coordinate workflow and call agents with specific models
+/map-feature implement authentication  # Calls: sonnet (actor/monitor) → haiku (predictor/evaluator)
+/map-debug fix login bug              # Calls: sonnet (actor/monitor) → haiku (predictor/evaluator)
 ```
 
 To override model for specific agent:
@@ -350,15 +385,15 @@ claude --model opus --agents '{"actor": {"prompt": "$(cat .claude/agents/actor.m
 
 **Scenario:** Implement a feature with 5 subtasks
 
-| Approach | Orchestrator | TaskDecomposer | Actor (5x) | Monitor (5x) | Predictor (5x) | Evaluator (5x) | Total Cost* |
-|----------|--------------|----------------|------------|--------------|----------------|----------------|-------------|
-| All Opus | opus | opus | opus | opus | opus | opus | ~$2.50 |
-| All Sonnet | sonnet | sonnet | sonnet | sonnet | sonnet | sonnet | ~$0.50 |
-| **Optimized** | **opus** | **sonnet** | **sonnet** | **sonnet** | **haiku** | **haiku** | **~$0.35** |
+| Approach | TaskDecomposer | Actor (5x) | Monitor (5x) | Predictor (5x) | Evaluator (5x) | Reflector (5x) | Curator (5x) | Total Cost* |
+|----------|----------------|------------|--------------|----------------|----------------|----------------|--------------|-------------|
+| All Opus | opus | opus | opus | opus | opus | opus | opus | ~$3.00 |
+| All Sonnet | sonnet | sonnet | sonnet | sonnet | sonnet | sonnet | sonnet | ~$0.60 |
+| **Optimized** | **sonnet** | **sonnet** | **sonnet** | **haiku** | **haiku** | **sonnet** | **sonnet** | **~$0.40** |
 
 *Approximate costs based on typical token usage
 
-**Savings: 30% vs all-sonnet, 86% vs all-opus**
+**Savings: 33% vs all-sonnet, 87% vs all-opus**
 
 ## 🔗 Claude Code Hooks Integration
 
@@ -446,13 +481,24 @@ Hooks are configured in `.claude/settings.hooks.json` and automatically loaded b
 
 ## 🛠️ Troubleshooting
 
+### Command Not Found
+
+```
+Error: Slash command not recognized
+```
+
+**Solution:**
+- Ensure you're in a directory with `.claude/commands/` containing `map-*.md` files
+- Use `/map-feature`, `/map-debug`, `/map-refactor`, or `/map-review`
+- Run `/help` to see available commands
+
 ### Agent Not Found
 
 ```
-Error: Agent 'orchestrator' not found
+Error: Agent file not found
 ```
 
-**Solution:** Ensure you're in a directory with `.claude/agents/`
+**Solution:** Ensure your project has `.claude/agents/` directory with all 8 agent files (task-decomposer.md, actor.md, monitor.md, etc.)
 
 ### Semantic Search Warning
 
