@@ -41,6 +41,9 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 # Install mapify
 uv tool install --from git+https://github.com/azalio/map-framework.git mapify-cli
 
+# Verify installation and PATH setup
+# Run `mapify --version` to confirm. If command not found, see [INSTALL.md](INSTALL.md) for PATH setup.
+
 # Initialize in your project
 cd your-project
 mapify init
