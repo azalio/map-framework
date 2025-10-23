@@ -16,7 +16,6 @@ Mapify CLI - Setup tool for MAP Framework projects
 Usage:
     uvx mapify init <project-name>
     uvx mapify init .
-    uvx mapify init --here
 
 Or install globally:
     uv tool install mapify-cli --from git+https://github.com/azalio/map-framework.git
@@ -1552,8 +1551,7 @@ def init(
     project_name: Optional[str] = typer.Argument(None, help="Name for your new project directory (use '.' for current directory)"),
     mcp: Optional[str] = typer.Option(None, "--mcp", help="MCP servers to enable: all, essential, docs, none, or comma-separated list"),
     no_git: bool = typer.Option(False, "--no-git", help="Skip git repository initialization"),
-    here: bool = typer.Option(False, "--here", help="Initialize project in the current directory"),
-    force: bool = typer.Option(False, "--force", help="Force merge/overwrite when using --here"),
+    force: bool = typer.Option(False, "--force", help="Force merge/overwrite when using '.' in non-empty directory"),
     with_hooks: bool = typer.Option(True, "--with-hooks/--no-hooks", help="Install Claude Code hooks (default: yes)"),
     debug: bool = typer.Option(False, "--debug", help="Enable debug logging (creates .map/logs/workflow_*.log)"),
 ):
@@ -1571,7 +1569,7 @@ def init(
         mapify init my-project --mcp all
         mapify init my-project --mcp "cipher,context7"
         mapify init .
-        mapify init --here
+        mapify init . --force  # Force init in non-empty current directory
         mapify init --debug  # Enable workflow logging
     """
     # Show banner
@@ -1587,21 +1585,18 @@ def init(
         workflow_logger.log_event("command_start", f"mapify init {project_name or '.'}", metadata={"debug": debug, "mcp": mcp})
 
     # Handle '.' as shorthand for current directory
-    if project_name == ".":
-        here = True
+    use_current_dir = (project_name == ".")
+
+    if use_current_dir:
         project_name = None
 
     # Validate arguments
-    if here and project_name:
-        console.print("[red]Error:[/red] Cannot specify both project name and --here flag")
-        raise typer.Exit(1)
-
-    if not here and not project_name:
-        console.print("[red]Error:[/red] Must specify either a project name, use '.' for current directory, or use --here flag")
+    if not use_current_dir and not project_name:
+        console.print("[red]Error:[/red] Must specify either a project name or use '.' for current directory")
         raise typer.Exit(1)
 
     # Determine project directory
-    if here:
+    if use_current_dir:
         project_name = Path.cwd().name
         project_path = Path.cwd()
 
@@ -1730,7 +1725,7 @@ def init(
 
     # Next steps
     steps_lines = []
-    if not here:
+    if not use_current_dir:
         steps_lines.append(f"1. Go to the project folder: [cyan]cd {project_name}[/cyan]")
         step_num = 2
     else:

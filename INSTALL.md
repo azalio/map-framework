@@ -180,11 +180,8 @@ mapify init my-project --mcp none
 # Initialize in current directory
 mapify init .
 
-# Or use --here flag
-mapify init --here
-
-# Force overwrite existing files
-mapify init --here --force
+# Force overwrite existing files in current directory
+mapify init . --force
 ```
 
 ### Advanced Options

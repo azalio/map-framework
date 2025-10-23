@@ -97,7 +97,6 @@
 **Commands Verified:**
 - mapify init <project>
 - mapify init .
-- mapify init --here
 
 [✓ VERIFIED]
 **Fact:** Python 3.11+ required
