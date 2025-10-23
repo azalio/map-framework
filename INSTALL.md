@@ -25,6 +25,106 @@ mapify init my-project
 mapify init .
 ```
 
+<details>
+<summary><b>⚠️ Important: PATH Configuration</b></summary>
+
+After installation, you may need to add UV's bin directory to your PATH.
+
+#### Verify Installation
+
+Check if `mapify` is accessible:
+
+```bash
+which mapify
+```
+
+**Expected output:** `/Users/your-username/.local/bin/mapify` (macOS/Linux) or `C:\Users\your-username\.local\bin\mapify` (Windows)
+
+If the command is not found, you need to add `~/.local/bin` to your PATH.
+
+#### Quick Fix: Automatic PATH Setup
+
+UV provides a helper command to automatically configure your shell:
+
+```bash
+uv tool update-shell
+```
+
+This will update your shell configuration file (`.zshrc`, `.bashrc`, etc.) automatically.
+
+#### Manual PATH Setup
+
+If you prefer manual configuration, add the following to your shell configuration file:
+
+**For Zsh (macOS default, Linux):**
+
+```bash
+# Add to ~/.zshrc
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+**For Bash (Linux, older macOS):**
+
+```bash
+# Add to ~/.bashrc or ~/.bash_profile
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+**For Fish:**
+
+```fish
+# Add to ~/.config/fish/config.fish
+set -gx PATH $HOME/.local/bin $PATH
+```
+
+**For Windows (PowerShell):**
+
+```powershell
+# Run in PowerShell as Administrator
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+$newPath = "$env:USERPROFILE\.local\bin"
+if ($userPath -notlike "*$newPath*") {
+    [Environment]::SetEnvironmentVariable("Path", "$userPath;$newPath", "User")
+    Write-Host "Added $newPath to user PATH"
+} else {
+    Write-Host "$newPath already in PATH"
+}
+```
+
+#### Apply Changes
+
+After editing your shell configuration file, apply the changes:
+
+```bash
+# For Zsh
+source ~/.zshrc
+
+# For Bash
+source ~/.bashrc
+
+# Or simply open a new terminal window
+```
+
+#### Verify PATH Configuration
+
+Confirm `mapify` is now accessible:
+
+```bash
+mapify --version
+```
+
+**Expected output:**
+```
+mapify-cli version x.x.x
+```
+
+**Troubleshooting:**
+- If `which mapify` shows the path but `mapify` doesn't work, check file permissions: `ls -la ~/.local/bin/mapify`
+- If using a custom shell or environment, ensure `UV_TOOL_BIN_DIR` is not set to a different location
+- For Docker/CI environments, consider setting `UV_TOOL_BIN_DIR=/usr/local/bin` for system-wide access
+
+</details>
+
 ### Option 2: Direct UV Execution
 
 Run without installing:
@@ -299,12 +399,62 @@ mapify init . --force
 
 ### Issue: Command not found
 
+If you get `zsh: command not found: mapify` or `bash: mapify: command not found`, this is usually a PATH configuration issue.
+
+**Diagnosis:**
+
+```bash
+# Check if mapify binary exists
+ls ~/.local/bin/mapify
+
+# Check if ~/.local/bin is in your PATH
+echo $PATH | grep ".local/bin"
+```
+
+**Solution 1: Add UV bin directory to PATH** (Recommended)
+
+See the [PATH Configuration section](#important-path-configuration) above for detailed shell-specific instructions, or use UV's automatic setup:
+
+```bash
+uv tool update-shell
+```
+
+Then open a new terminal or run:
+```bash
+source ~/.zshrc  # or ~/.bashrc for Bash
+```
+
+**Solution 2: Use full path as workaround**
+
+```bash
+~/.local/bin/mapify --version
+```
+
+**Solution 3: Check custom UV_TOOL_BIN_DIR**
+
+If you've set a custom `UV_TOOL_BIN_DIR`, check that location instead:
+
+```bash
+echo $UV_TOOL_BIN_DIR
+ls $UV_TOOL_BIN_DIR/mapify
+```
+
+**Solution 4: Reinstall mapify**
+
+If the binary doesn't exist, reinstall:
+
 ```bash
 # Ensure UV is installed
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Reinstall mapify
 uv tool install mapify-cli --from git+https://github.com/azalio/map-framework.git
+```
+
+**Verify the fix:**
+
+```bash
+mapify --version
 ```
 
 ### Issue: Claude Code not detected
