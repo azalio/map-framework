@@ -57,15 +57,7 @@ Intelligent model selection per agent:
 
 ## Installation
 
-### Option 1: Via Plugin Marketplace (Recommended)
-
-```bash
-# In Claude Code:
-/plugin marketplace add https://raw.githubusercontent.com/azalio/map-framework/main/.claude-plugin/marketplace.json
-/plugin install map-framework
-```
-
-### Option 2: Via mapify CLI
+### Option 1: Via mapify CLI
 
 ```bash
 # Install mapify
@@ -78,7 +70,7 @@ mapify init
 # Note: Copy .mcp.json.example to .mcp.json and adjust for your setup if needed
 ```
 
-### Option 3: Manual Installation
+### Option 2: Manual Installation
 
 ```bash
 # Clone repository

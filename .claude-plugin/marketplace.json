@@ -1,7 +1,7 @@
 {
   "name": "MAP Framework Official Marketplace",
   "version": "1.0.0",
-  "description": "Official marketplace for MAP Framework and related plugins",
+  "description": "⚠️ DEPRECATED: Plugin marketplace installation is no longer supported. Please use 'mapify init' for installation. See https://github.com/azalio/map-framework#installation for current setup instructions.",
   "author": "azalio",
   "repository": "https://github.com/azalio/map-framework",
   "homepage": "https://github.com/azalio/map-framework",

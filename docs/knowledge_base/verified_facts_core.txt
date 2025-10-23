@@ -104,11 +104,10 @@
 **Verification:** INSTALL.md line 7 and README.md Prerequisites
 
 [✓ VERIFIED]
-**Fact:** 4 installation options documented:
-1. Plugin Marketplace (README line 35-44)
-2. mapify CLI (README line 46-61, INSTALL.md)
-3. Clone Repository (README line 63-71)
-4. Copy Agents (README line 73-81)
+**Fact:** 3 installation options documented:
+1. mapify CLI (README line 46-61, INSTALL.md)
+2. Clone Repository (README line 63-71)
+3. Copy Agents (README line 73-81)
 
 ## ACE PLAYBOOK
 
@@ -244,11 +243,11 @@
 
 ## PLUGIN MARKETPLACE
 
-[⚠ DOC-ONLY]
-**Fact:** MAP Framework available as Claude Code plugin
-**Verification:** README.md lines 550-582 document plugin installation
-**But:** No verification possible against live marketplace (external service)
-**Installation Command:** /plugin marketplace add https://raw.githubusercontent.com/azalio/map-framework/main/.claude-plugin/marketplace.json
+[✗ DEPRECATED]
+**Status:** Plugin Marketplace installation method REMOVED as of 2025-10-23
+**Reason:** Plugin marketplace is no longer supported as an installation option
+**Previous Documentation:** README.md previously documented plugin installation (lines 550-582)
+**Current Installation Options:** mapify CLI, Clone Repository, Copy Agents (3 options total)
 
 ## RESEARCH FOUNDATION
 
@@ -291,9 +290,8 @@
 **Doc-Only Features (Not in Repo):**
 1. .claude/mcp_config.json (user creates, not in repo)
 2. .claude/settings.hooks.json (not in repo)
-3. Plugin marketplace availability (external service, unverifiable)
-4. Semantic search cache location (user-created during runtime)
-5. 4 documented hooks without implementation (PostToolUse, UserPromptSubmit, SessionStart, SubagentStop)
+3. Semantic search cache location (user-created during runtime)
+4. 4 documented hooks without implementation (PostToolUse, UserPromptSubmit, SessionStart, SubagentStop)
 
 **Verification Methodology:**
 - Used bash commands to count files, check existence, grep content
