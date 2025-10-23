@@ -5,6 +5,13 @@ Implementation of **Modular Agentic Planner (MAP)** — a cognitive architecture
 > **Based on:** [Nature Communications research (2025)](https://github.com/Shanka123/MAP) — 74% improvement in planning tasks
 > **Enhanced with:** [ACE (Agentic Context Engineering)](https://arxiv.org/abs/2510.04618v1) — continuous learning from experience
 
+## 📖 Documentation Structure
+
+- **README** (this file) - Quick start and overview
+- **[INSTALL.md](INSTALL.md)** - Complete installation guide with PATH setup and troubleshooting
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** - Technical deep dive, customization, and MCP integration
+- **[USAGE.md](USAGE.md)** - Practical examples, best practices, and cost optimization
+
 ## 🚀 Quick Start
 
 ### Inside Claude Code (Recommended)
@@ -40,8 +47,6 @@ claude
 
 ## 📦 Installation
 
-### Option 1: Via mapify CLI (Recommended)
-
 ```bash
 # Install UV if not already installed
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -49,36 +54,15 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 # Install mapify
 uv tool install --from git+https://github.com/azalio/map-framework.git mapify-cli
 
-# Verify installation and PATH setup
-# Run `mapify --version` to confirm. If command not found, see [INSTALL.md](INSTALL.md) for PATH setup.
+# Verify installation. If not found, see INSTALL.md for PATH setup
+mapify --version
 
 # Initialize in your project
 cd your-project
 mapify init
-
-# Note: The repository includes .mcp.json.example with sample MCP server configurations.
-# Copy and adjust it if you need project-specific MCP settings.
 ```
 
-### Option 2: Clone Repository
-
-```bash
-git clone https://github.com/azalio/map-framework.git
-cd map-framework
-
-# Start Claude Code in this directory
-claude
-```
-
-### Option 3: Copy Agents to Existing Project
-
-```bash
-# Copy agents
-cp -r /path/to/map-framework/.claude/agents your-project/.claude/
-cp -r /path/to/map-framework/.claude/commands your-project/.claude/
-
-# Configure MCP servers (see MCP Integration section)
-```
+**Other installation methods** (clone repository, manual copy): See [INSTALL.md](INSTALL.md)
 
 ## Requirements
 
@@ -88,396 +72,99 @@ cp -r /path/to/map-framework/.claude/commands your-project/.claude/
 
 ## 🏗️ Architecture
 
-8 specialized agents working together:
+MAP Framework orchestrates 8 specialized agents through slash commands:
 
-```
-┌──────────────────────────────────────────┐
-│       SLASH COMMANDS                     │
-│   /map-feature /map-debug /map-refactor │
-│   (orchestrate workflow via prompts)    │
-└───────────────┬──────────────────────────┘
-                │
-    ┌───────────▼────────────┐
-    │   TASK DECOMPOSER      │
-    │   (breaks into tasks)   │
-    └───────────┬────────────┘
-                │
-    ┌───────────▼─────────────────────┐
-    │   For each subtask:             │
-    │                                  │
-    │  ┌──────────────────────┐       │
-    │  │  ACTOR ←→ MONITOR    │       │
-    │  │  (code ←→ validate)  │       │
-    │  └──────────┬───────────┘       │
-    │             │                    │
-    │  ┌──────────▼───────────┐       │
-    │  │ PREDICTOR→EVALUATOR  │       │
-    │  │ (impact → quality)   │       │
-    │  └──────────┬───────────┘       │
-    │             │                    │
-    │  ┌──────────▼───────────┐       │
-    │  │ REFLECTOR → CURATOR  │       │
-    │  │ (learn → knowledge)  │       │
-    │  └──────────────────────┘       │
-    └──────────────────────────────────┘
-```
+- **TaskDecomposer** breaks goals into subtasks
+- **Actor** generates code, **Monitor** validates quality
+- **Predictor** analyzes impact, **Evaluator** scores solutions
+- **Reflector/Curator** enable continuous learning via ACE playbook
 
-### Agents
+The orchestration logic lives in `.claude/commands/map-*.md` prompts, coordinating agents via the Task tool.
 
-1. **TaskDecomposer** — breaks goals into atomic subtasks
-2. **Actor** — generates code and solutions
-3. **Monitor** — validates quality, security, correctness
-4. **Predictor** — analyzes change impact across codebase
-5. **Evaluator** — scores solution quality (functionality, security, testability)
-6. **Reflector** — extracts lessons from successes and failures
-7. **Curator** — manages knowledge base (playbook)
-8. **DocumentationReviewer** — checks documentation completeness and correctness
-
-**Note:** The orchestration logic is implemented in slash command prompts (`.claude/commands/map-*.md`), not as a separate agent file. When you run `/map-feature`, the command prompt coordinates the workflow by calling agents sequentially via the Task tool.
+**See [ARCHITECTURE.md](ARCHITECTURE.md) for:**
+- Detailed agent specifications and responsibilities
+- MCP integration architecture and tool usage patterns
+- Agent coordination protocol and workflow stages
+- Template customization guide with examples
+- Hooks integration (automated validation, knowledge storage, context enrichment)
+- Context engineering principles and optimizations
 
 ## 🔌 MCP Integration
 
 MAP uses MCP (Model Context Protocol) servers for enhanced capabilities:
 
-| MCP Server | Purpose |
-|------------|---------|
-| **cipher** | Knowledge base — stores successful patterns and solutions |
-| **claude-reviewer** | Professional code review with security analysis |
-| **sequential-thinking** | Chain-of-thought reasoning for complex problems |
-| **codex-bridge** | Code generation (⚠️ requires 10-minute timeout) |
-| **context7** | Up-to-date library documentation |
-| **deepwiki** | GitHub repository analysis |
+- **cipher** - Knowledge base for storing and retrieving successful patterns
+- **claude-reviewer** - Professional code review with security analysis
+- **context7** - Up-to-date library documentation
+- **sequential-thinking** - Chain-of-thought reasoning for complex problems
+- **codex-bridge** - AI code generation (requires extended timeout)
+- **deepwiki** - GitHub repository intelligence
 
-### MCP Configuration
+Configuration files: `.claude/mcp_config.json` and `mcp_config.json`
 
-MCP servers are configured differently depending on the usage context:
-
-**For project-specific configuration** (`.claude/mcp_config.json`):
-```json
-{
-  "mcp_servers": {
-    "cipher": {
-      "enabled": true,
-      "description": "Knowledge management system",
-      "config": {
-        "auto_store": true,
-        "retrieval_limit": 5,
-        "similarity_threshold": 0.85
-      }
-    }
-  }
-}
-```
-
-**For global configuration** (`mcp_config.json` in project root):
-```json
-{
-  "mcp_servers": {
-    "cipher": {
-      "enabled": true,
-      "description": "Advanced knowledge and reasoning memory system",
-      "config": {
-        "auto_store": true,
-        "retrieval_limit": 5
-      }
-    }
-  }
-}
-```
-
-**Note:**
-- The repository includes example configurations in both `.claude/mcp_config.json` and `mcp_config.json`
-- MCP server availability depends on your Claude Code installation
-- Some servers (cipher, claude-reviewer, sequential-thinking) are commonly available
-- Others may require separate installation via Claude Code
-- The configuration format shown above is specific to this MAP Framework implementation
-- Check Claude Code documentation for system-level MCP server installation
-
-### Benefits
-
-- 🧠 **Persistent Knowledge** — solutions are saved and reused
-- 🔍 **Professional Review** — automatic security and quality analysis
-- 🔄 **Continuous Learning** — each workflow improves future ones
-- ⚡ **Faster Development** — reuse proven patterns
+**See [ARCHITECTURE.md](ARCHITECTURE.md#mcp-integration) for complete setup and usage patterns**
 
 ## 📚 Usage Examples
 
-### Feature Development
-
 ```bash
-/map-feature implement user profile page with avatar upload.
-Include validation, error handling, and tests.
-```
+# Feature development
+/map-feature implement user profile page with avatar upload
 
-### Bug Fixing
-
-```bash
+# Bug fixing
 /map-debug debug why payment processing fails for amounts over $1000
+
+# Refactoring
+/map-refactor refactor OrderService to use dependency injection
 ```
 
-### Refactoring
-
-```bash
-/map-refactor refactor OrderService to use dependency injection.
-Maintain all existing functionality.
-```
-
-### Library Integration
-
-```bash
-/map-feature integrate Stripe payment processing.
-Use context7 to get latest Stripe docs.
-```
-
-### Learning from Open Source
-
-```bash
-/map-feature implement rate limiter.
-Study express-rate-limit via deepwiki, then create optimized version.
-```
+**See [USAGE.md](USAGE.md) for:**
+- Comprehensive usage examples with detailed scenarios
+- Best practices for optimal results
+- Cost optimization strategies (40-60% savings)
+- Playbook management commands
 
 ## 🎓 ACE Playbook
 
-Built-in learning system based on ACE:
+Built-in learning system that improves with each task:
 
-- **Reflector** extracts patterns from each task
-- **Curator** updates knowledge base incrementally
-- **Semantic search** finds relevant patterns by meaning
-- **Quality tracking** monitors pattern effectiveness
-
-### Semantic Search (Optional)
-
-For meaning-based search instead of keywords:
-
-```bash
-pip install -r requirements-semantic.txt
-```
-
-**Benefits:**
-- 🎯 Search by meaning: "JWT signature" ≈ "token verification"
-- 🧠 Auto-deduplication of similar patterns (>90% similarity)
-- ⚡ Embedding cache for fast retrieval
-
-**Technical details:**
-- Model: `all-MiniLM-L6-v2` (80MB, ~500MB on first download)
-- Speed: ~3000 sentences/sec on CPU
-- Cache: `.claude/embeddings_cache/`
-
-Falls back to keyword matching if not installed.
-
-Details in [SEMANTIC_SEARCH_SETUP.md](SEMANTIC_SEARCH_SETUP.md)
+- **Reflector** extracts patterns from successes and failures
+- **Curator** maintains structured knowledge base with quality tracking
+- **Semantic search** (optional) finds patterns by meaning, not keywords
+- Automatically grows high-quality pattern library
 
 ### Playbook Commands
 
 ```bash
-# Statistics
+# View statistics
 python -m mapify_cli.playbook_manager stats
 
 # Search patterns
 python -m mapify_cli.playbook_manager search "JWT authentication"
 
-# High-quality patterns
+# View high-quality patterns
 python -m mapify_cli.playbook_manager sync
 ```
 
-### Playbook Configuration
+**Optional semantic search**: `pip install -r requirements-semantic.txt` for meaning-based matching. Details in [SEMANTIC_SEARCH_SETUP.md](SEMANTIC_SEARCH_SETUP.md) and [ARCHITECTURE.md](ARCHITECTURE.md#semantic-search).
 
-The playbook behavior can be configured via `.claude/playbook.json` metadata:
-
-**top_k** - Limits number of patterns retrieved to reduce context distraction (Phase 1.3):
-
-```json
-{
-  "metadata": {
-    "top_k": 5
-  }
-}
-```
-
-- **Default:** 5 patterns (balances context quality vs. quantity)
-- **Purpose:** Reduces context distraction and saves ~15% tokens
-- **Override:** Can be overridden per-call: `get_relevant_bullets(query, limit=10)`
-- **Based on:** Context Engineering improvements (Phase 1.3)
-
-**Benefits:**
-- 🎯 Focused context - fewer, more relevant patterns
-- 💰 Token savings - ~15% reduction in Actor prompts
-- 🧠 Less distraction - model focuses on best patterns
-
-**Customization:**
-- Set to 3 for simple tasks (minimal context)
-- Set to 5 for balanced approach (recommended default)
-- Set to 7-10 for complex tasks requiring more patterns
-
-## 🎯 Best Practices
-
-### 1. Clear Requirements
-
-```bash
-# Good ✅
-"Implement registration with email validation, password strength check (8+ chars, 1 number), send confirmation"
-
-# Bad ❌
-"Add registration"
-```
-
-### 2. Incremental Approach
-
-Break large features into phases:
-- Phase 1: Core functionality
-- Phase 2: Edge cases and error handling
-- Phase 3: Optimization
-
-### 3. Provide Context
-
-Always specify:
-- Technology stack
-- Existing patterns
-- Constraints
-- Performance requirements
+**Playbook configuration**: See [ARCHITECTURE.md](ARCHITECTURE.md#playbook-configuration) for top_k settings and optimization.
 
 ## 💰 Cost Optimization
 
-MAP Framework supports intelligent model selection per agent to balance capability and cost:
+MAP Framework uses intelligent model selection per agent:
 
-### Model Distribution Strategy
+- **Predictor & Evaluator** use **haiku** (fast analysis) → ⬇️⬇️⬇️ cost
+- **Actor, Monitor, Reflector, Curator** use **sonnet** (quality-critical) → balanced cost
 
-| Agent | Model | Reason | Cost Impact |
-|-------|-------|--------|-------------|
-| **Predictor** | haiku | Fast analysis, simple dependency tracking | ⬇️⬇️⬇️ |
-| **Evaluator** | haiku | Scoring doesn't need complex reasoning | ⬇️⬇️⬇️ |
-| **Actor** | sonnet | Code generation quality is critical | ➡️ |
-| **Monitor** | sonnet | Quality validation requires thoroughness | ➡️ |
-| **TaskDecomposer** | sonnet | Requires good understanding of requirements | ➡️ |
-| **Reflector** | sonnet | Pattern extraction needs reasoning | ➡️ |
-| **Curator** | sonnet | Knowledge management requires care | ➡️ |
-| **DocumentationReviewer** | sonnet | Documentation analysis needs thoroughness | ➡️ |
+**Result:** 40-60% cost reduction vs all-sonnet while maintaining code quality.
 
-### Cost Savings
+**See [USAGE.md](USAGE.md#cost-optimization) for detailed cost breakdown and model override strategies**
 
-Using this optimized distribution provides:
-- **40-60% cost reduction** vs using sonnet everywhere
-- **Maintains quality** for critical tasks (sonnet for actor/monitor/reflector)
-- **Fast execution** for analysis tasks (haiku for predictor/evaluator)
-- **Balanced performance** for code generation (sonnet for actor/monitor)
+## 🔗 Hooks Integration
 
-### How It Works
+MAP integrates with Claude Code hooks for automated validation, knowledge storage, and context enrichment. Active hooks protect template variables, auto-store successful patterns, enrich prompts with relevant knowledge, and track performance metrics.
 
-Agents automatically use their configured model when invoked via slash commands:
-
-```bash
-# Slash commands coordinate workflow and call agents with specific models
-/map-feature implement authentication  # Calls: sonnet (actor/monitor) → haiku (predictor/evaluator)
-/map-debug fix login bug              # Calls: sonnet (actor/monitor) → haiku (predictor/evaluator)
-```
-
-To override model for specific agent:
-
-```bash
-# Use haiku for quick prototype
-claude --model haiku --agents '{"actor": {"prompt": "$(cat .claude/agents/actor.md)"}}'
-
-# Use opus for critical refactoring
-claude --model opus --agents '{"actor": {"prompt": "$(cat .claude/agents/actor.md)"}}'
-```
-
-### Cost Comparison Example
-
-**Scenario:** Implement a feature with 5 subtasks
-
-| Approach | TaskDecomposer | Actor (5x) | Monitor (5x) | Predictor (5x) | Evaluator (5x) | Reflector (5x) | Curator (5x) | Total Cost* |
-|----------|----------------|------------|--------------|----------------|----------------|----------------|--------------|-------------|
-| All Opus | opus | opus | opus | opus | opus | opus | opus | ~$3.00 |
-| All Sonnet | sonnet | sonnet | sonnet | sonnet | sonnet | sonnet | sonnet | ~$0.60 |
-| **Optimized** | **sonnet** | **sonnet** | **sonnet** | **haiku** | **haiku** | **sonnet** | **sonnet** | **~$0.40** |
-
-*Approximate costs based on typical token usage
-
-**Savings: 33% vs all-sonnet, 87% vs all-opus**
-
-## 🔗 Claude Code Hooks Integration
-
-MAP Framework integrates with [Claude Code hooks](https://docs.claude.com/en/docs/claude-code/hooks) for automated validation and workflow protection.
-
-### Available Hooks
-
-#### 🛡️ Agent Template Validation (Active)
-
-**PreToolUse hook** that prevents accidental removal of critical Handlebars template variables from agent files.
-
-**Protects against:**
-- Removing `{{language}}`, `{{project_name}}`, `{{framework}}` (breaks Orchestrator context injection)
-- Removing `{{#if playbook_bullets}}` (breaks ACE learning system)
-- Removing `{{#if feedback}}` (breaks Monitor→Actor retry loops)
-- Massive deletions (>500 lines)
-
-**Example:**
-```bash
-# Claude Code will block this operation:
-❌ BLOCKED: Agent file is missing critical template variables!
-
-File: .claude/agents/actor.md
-Missing templates:
-  - {{language}}
-  - {{#if playbook_bullets}}
-
-These template variables are used by Orchestrator for context injection.
-See .claude/agents/README.md for details.
-```
-
-#### 🔄 Auto-Store Knowledge (Active)
-
-**PostToolUse hook** that automatically saves successful patterns to cipher MCP after modifications.
-
-**How it works:**
-- Triggers after successful Edit/Write on code files (.py, .js, .go, etc.)
-- Extracts pattern with file path, language, and content
-- Stores in cipher automatically - no manual calls needed!
-
-#### 🧠 Context Enrichment (Active)
-
-**UserPromptSubmit hook** that enriches user prompts with relevant patterns from cipher before processing.
-
-**How it works:**
-- Extracts keywords from your prompt (implement, fix, refactor, etc.)
-- Searches cipher for top 3 relevant patterns
-- Enriches prompt with found knowledge before Claude processes it
-- Automatic knowledge reuse without manual searches
-
-#### 📊 Session Initialization (Active)
-
-**SessionStart hook** that loads ACE playbook bullets at the beginning of every session.
-
-**What it does:**
-- Searches cipher for high-quality patterns (top 10)
-- Creates `.claude/sessions/current_context.txt` with project info
-- Lists available agents and MCP servers
-- Provides welcome message with available commands
-
-#### 📈 Metrics Tracking (Active)
-
-**SubagentStop hook** that tracks MAP agent performance metrics.
-
-**What it tracks:**
-- Execution time, success rate, quality scores
-- Stores in `.claude/metrics/agent_metrics.jsonl`
-- Saves to cipher for long-term trend analysis
-
-### Configuration
-
-Hooks are configured in `.claude/settings.hooks.json` and automatically loaded by Claude Code.
-
-**To disable hooks** (not recommended):
-```json
-// .claude/settings.local.json
-{
-  "hooks": {
-    "PreToolUse": []
-  }
-}
-```
-
-**See:** [`.claude/hooks/README.md`](.claude/hooks/README.md) for detailed documentation.
+**See [ARCHITECTURE.md](ARCHITECTURE.md#hooks-integration) and [.claude/hooks/README.md](.claude/hooks/README.md) for configuration**
 
 ## 🛠️ Troubleshooting
 
@@ -498,7 +185,7 @@ Error: Slash command not recognized
 Error: Agent file not found
 ```
 
-**Solution:** Ensure your project has `.claude/agents/` directory with all 8 agent files (task-decomposer.md, actor.md, monitor.md, etc.)
+**Solution:** Ensure `.claude/agents/` directory contains all 8 agent files (task-decomposer.md, actor.md, monitor.md, predictor.md, evaluator.md, reflector.md, curator.md, documentation-reviewer.md)
 
 ### Semantic Search Warning
 
@@ -506,12 +193,8 @@ Error: Agent file not found
 Warning: sentence-transformers not installed
 ```
 
-**Solution:**
-```bash
-pip install -r requirements-semantic.txt
-```
-
-See [SEMANTIC_SEARCH_SETUP.md](SEMANTIC_SEARCH_SETUP.md) for detailed troubleshooting.
+**Solution:** `pip install -r requirements-semantic.txt`
+See [SEMANTIC_SEARCH_SETUP.md](SEMANTIC_SEARCH_SETUP.md) for detailed troubleshooting
 
 ### Infinite Loops
 
@@ -519,65 +202,20 @@ See [SEMANTIC_SEARCH_SETUP.md](SEMANTIC_SEARCH_SETUP.md) for detailed troublesho
 Actor-Monitor loop exceeding iterations
 ```
 
-**Solution:** Orchestrator is limited to 3-5 iterations. Clarify requirements or add constraints.
+**Solution:** Orchestrator limits iterations to 3-5. Clarify requirements or add constraints.
+
+**More troubleshooting**: See [INSTALL.md](INSTALL.md#troubleshooting) for PATH issues, MCP configuration, and installation problems
 
 ## 🔧 Customization
 
-### Modifying Agents
+Agent prompts in `.claude/agents/*.md` use Handlebars template syntax for dynamic context injection. You can safely modify instructions, examples, and validation criteria, but **MUST NOT remove template variables** like `{{language}}`, `{{#if playbook_bullets}}`, or `{{feedback}}` — these are critical for orchestration and ACE learning.
 
-Edit files in `.claude/agents/`:
-
-```bash
-# Example: make monitor stricter
-edit .claude/agents/monitor.md
-# Add:
-# - OWASP Top 10 compliance required
-# - All inputs must be sanitized
-```
-
-⚠️ **CRITICAL: Do NOT remove template variables!**
-
-Agent prompts use **Handlebars syntax** (`{{variable}}`, `{{#if condition}}`) for dynamic context injection by Orchestrator:
-
-```markdown
-# ❌ NEVER REMOVE:
-{{language}}              # Orchestrator injects project language
-{{project_name}}          # Orchestrator injects project name
-{{#if playbook_bullets}}  # ACE learning system (Curator → Actor)
-{{#if feedback}}          # Monitor → Actor retry loops
-{{subtask_description}}   # TaskDecomposer output
-```
-
-**Why they're critical:**
-- Not comments or examples — functional template substitution
-- Orchestrator fills these at runtime with project context
-- Removing them breaks multi-language support, ACE learning, feedback loops
-- Git pre-commit hook validates their presence
-
-**Safe to modify:**
-- Add new instructions or examples
-- Adjust MCP tool usage guidance
-- Update output format specifications
-- Add domain-specific requirements
-
-**Unsafe to modify:**
-- Any `{{template}}` variables
-- Any `{{#if}}...{{/if}}` blocks
-- Playbook bullets section
-- Feedback section
-- Context section
-
-### Prompt Variables
-
-Available template variables:
-- `{{project_name}}`
-- `{{language}}`
-- `{{framework}}`
-- `{{standards_url}}`
-- `{{playbook_bullets}}`
-- `{{feedback}}`
-- `{{subtask_description}}`
-- `{{allowed_scope}}`
+**See [ARCHITECTURE.md](ARCHITECTURE.md#customization-guide) for:**
+- Safe vs unsafe modifications with examples
+- Template variable reference
+- Model selection per agent
+- Adding custom agents
+- Template validation and git hooks
 
 ## 📊 Success Metrics
 
@@ -585,99 +223,6 @@ Available template variables:
 - **Evaluator scores:** average >7.0/10
 - **Iteration count:** <3 per subtask
 - **Playbook growth:** increasing high-quality patterns
-
-## 🛠️ Template Maintenance
-
-### Template Linter
-
-Validate agent template consistency:
-
-```bash
-python scripts/lint-agent-templates.py
-```
-
-The linter checks:
-- YAML frontmatter completeness (version, last_updated, changelog)
-- Required sections (mcp_integration, context, examples)
-- Template variable syntax ({{variable}})
-- XML tag matching (<section></section>)
-- MCP tool description consistency
-
-### MCP Patterns Reference
-
-See [.claude/agents/MCP-PATTERNS.md](.claude/agents/MCP-PATTERNS.md) for:
-- Common MCP tool usage patterns
-- Decision frameworks for tool selection
-- Agent-specific MCP integration guidelines
-- Best practices and anti-patterns
-
-### Template Versioning
-
-All agent templates include version metadata:
-```yaml
----
-version: 2.0.0
-last_updated: 2025-10-17
-changelog: .claude/agents/CHANGELOG.md
----
-```
-
-See [.claude/agents/CHANGELOG.md](.claude/agents/CHANGELOG.md) for version history.
-
-## 🧠 Context Engineering Improvements
-
-MAP Framework применяет передовые принципы контекстной инженерии для AI-агентов:
-
-### ✨ Новое: Recitation Pattern (Фаза 1.1)
-
-**Проблема:** На длинных задачах (5+ подзадач) модель теряет фокус и забывает цели.
-
-**Решение:** Механизм фокусировки внимания — `.map/current_plan.md` обновляется перед каждым шагом, держа цели "свежими" в контексте.
-
-```markdown
-# Current Task: feat_auth
-## Progress: 2/5 completed
-- [✓] 1/5: Create User model
-- [→] 2/5: Implement login (CURRENT, Iteration 2)
-  - Last error: Missing JWT import
-- [☐] 3/5: Add token validation
-...
-```
-
-**Эффект:**
-- +20-30% success rate на сложных задачах
-- -20-30% использование токенов
-- +50% наблюдаемость прогресса
-
-### 📚 Документация
-
-- **[Context Engineering Improvements](docs/CONTEXT-ENGINEERING-IMPROVEMENTS.md)** — полный план
-- **[Phase 1 Completion Summary](docs/PHASE-1-COMPLETION-SUMMARY.md)** — результаты Phase 1 (метрики, архитектура, troubleshooting)
-- **[Recitation Integration Verification](docs/RECITATION-INTEGRATION-VERIFICATION.md)** — детальная верификация интеграции
-
-### 🗺️ Roadmap
-
-**Фаза 1 ✅ ЗАВЕРШЕНА** (2025-10-18):
-- [x] **RecitationManager** (482 lines): Recitation Pattern для фокусировки
-- [x] **MapWorkflowLogger** (246 lines): Подробное логирование workflow
-- [x] **Playbook top_k=5**: Ограничение паттернов playbook
-- [x] **Template Optimization**: Оптимизация verbose выводов (-9.6% токенов)
-
-**Результаты Phase 1:**
-- 9.6% reduction in token usage (Monitor, Evaluator templates)
-- 267% playbook growth (3 → 11 patterns)
-- 728 lines of new infrastructure
-- Documentation-driven orchestration architecture
-
-**Фаза 2** (приоритеты):
-1. Checkpoints (high impact) — workflow resumption
-2. MCP caching (medium-high) — latency reduction
-3. Keyword+semantic search (medium) — retrieval accuracy
-4. Playbook variation (low-medium) — few-shot bias reduction
-
-**Фаза 3-4:** Параллелизм, автотесты, температура по агентам
-
-**Основано на:** ["Context Engineering for AI Agents" (Manus.im, 2025)](https://manus.im/blog/Context-Engineering-for-AI-Agents-Lessons-from-Building-Manus)
 
 ## 🤝 Contributing
 
@@ -687,11 +232,10 @@ Improvements welcome:
 - CI/CD integrations
 - Success story examples
 - Plugin extensions for MAP Framework
-- Context engineering optimizations
 
 ## 📄 License
 
-MIT License — see LICENSE file for details.
+MIT License — see LICENSE file for details
 
 ## 🔗 References
 
@@ -701,4 +245,4 @@ MIT License — see LICENSE file for details.
 
 ---
 
-**MAP is not just automation — it's systematic quality improvement through structured validation and iterative approach.**
+**MAP is not just automation — it's systematic quality improvement through structured validation and iterative refinement.**

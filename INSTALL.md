@@ -16,7 +16,7 @@ Install the `mapify` CLI tool globally and use it to set up projects:
 
 ```bash
 # Install mapify CLI
-uv tool install mapify-cli --from git+https://github.com/azalio/map-framework.git
+uv tool install --from git+https://github.com/azalio/map-framework.git mapify-cli
 
 # Create a new project with MAP Framework
 mapify init my-project
@@ -222,14 +222,13 @@ If you prefer manual setup:
    │   │   ├── monitor.md
    │   │   ├── predictor.md
    │   │   ├── evaluator.md
-   │   │   ├── orchestrator.md
    │   │   ├── reflector.md          # ACE: Extracts lessons
    │   │   └── curator.md            # ACE: Manages playbook
    │   ├── commands/
-   │   │   ├── map-feature.md
-   │   │   ├── map-debug.md
-   │   │   ├── map-refactor.md
-   │   │   └── map-review.md
+   │   │   ├── map-feature.md        # Main workflow entry point
+   │   │   ├── map-debug.md          # Debug workflow entry point
+   │   │   ├── map-refactor.md       # Refactor workflow entry point
+   │   │   └── map-review.md         # Review workflow entry point
    │   ├── mcp_config.json
    │   └── playbook.json              # ACE: Knowledge base
    ```
@@ -272,16 +271,16 @@ After installation, you can use MAP commands in Claude Code:
 /map-review
 ```
 
-### Direct Agent Usage
+### Workflow Architecture
 
-```bash
-# Use the orchestrator directly
-claude "Use the orchestrator agent to implement a caching layer"
+MAP Framework uses **slash commands** as entry points that coordinate specialized agents in the main Claude Code context:
 
-# Use specific agents
-claude "Use task-decomposer to break down: Add payment processing"
-claude "Use monitor agent to review the recent changes"
-```
+- **`/map-feature`** - Orchestrates task-decomposer → actor → monitor → predictor → evaluator → reflector → curator
+- **`/map-debug`** - Orchestrates diagnostic and fix workflows with agent coordination
+- **`/map-refactor`** - Orchestrates refactoring workflows with impact analysis
+- **`/map-review`** - Comprehensive review with MAP analysis
+
+**Note:** Agents are invoked automatically by slash commands. Direct agent invocation is not the recommended approach—use the slash commands above for proper workflow orchestration.
 
 ### Learning System (ACE Playbook)
 
@@ -445,7 +444,7 @@ If the binary doesn't exist, reinstall:
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Reinstall mapify
-uv tool install mapify-cli --from git+https://github.com/azalio/map-framework.git
+uv tool install --from git+https://github.com/azalio/map-framework.git mapify-cli
 ```
 
 **Verify the fix:**
