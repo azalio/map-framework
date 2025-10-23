@@ -48,7 +48,7 @@
   "installation": {
     "type": "git",
     "steps": [
-      "Clone repository or install via plugin marketplace",
+      "Clone repository from GitHub or copy MAP framework files to your project",
       "Run 'mapify init' to initialize project with MAP agents",
       "Configure MCP servers in .claude/mcp_config.json",
       "Start using /map-* commands in Claude Code"
