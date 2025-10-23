@@ -1560,7 +1560,7 @@ def init(
 
     This command will:
     1. Check that required tools are installed
-    2. Configure MCP servers
+    2. Create MCP configuration files
     3. Create MAP agents and commands
     4. Initialize a git repository (optional)
 
@@ -1639,7 +1639,7 @@ def init(
     tracker.complete("ai-select", selected_ai)
 
     # Select MCP servers
-    tracker.add("mcp-select", "Configure MCP servers")
+    tracker.add("mcp-select", "Select MCP servers")
     tracker.start("mcp-select")
 
     selected_mcp_servers = []
@@ -1692,10 +1692,10 @@ def init(
         tracker.complete("install-hooks", f"{hooks_count} {hooks_word} installed")
 
     if selected_mcp_servers:
-        tracker.add("mcp-config", "Configure MCP servers")
+        tracker.add("mcp-config", "Create MCP config file")
         tracker.start("mcp-config")
         create_mcp_config(project_path, selected_mcp_servers)
-        tracker.complete("mcp-config", f"{len(selected_mcp_servers)} configured")
+        tracker.complete("mcp-config", f"{len(selected_mcp_servers)} servers")
 
     # Initialize git
     if not no_git and git_available:
