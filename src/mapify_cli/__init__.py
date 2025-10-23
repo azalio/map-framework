@@ -18,7 +18,7 @@ Usage:
     uvx mapify init .
 
 Or install globally:
-    uv tool install mapify-cli --from git+https://github.com/azalio/map-framework.git
+    uv tool install --from git+https://github.com/azalio/map-framework.git mapify-cli
     mapify init <project-name>
     mapify check
 """
