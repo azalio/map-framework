@@ -363,10 +363,10 @@ class PlaybookManager:
         all_bullets = []
         for section in self.playbook["sections"].values():
             for bullet in section["bullets"]:
-                if bullet["deprecated"]:
+                if bullet.get("deprecated", False):
                     continue
 
-                quality_score = bullet["helpful_count"] - bullet["harmful_count"]
+                quality_score = bullet.get("helpful_count", 0) - bullet.get("harmful_count", 0)
 
                 if quality_score < min_quality_score:
                     continue
@@ -431,10 +431,10 @@ class PlaybookManager:
 
         for section_name, section in self.playbook["sections"].items():
             for bullet in section["bullets"]:
-                if bullet["deprecated"]:
+                if bullet.get("deprecated", False):
                     continue
 
-                quality_score = bullet["helpful_count"] - bullet["harmful_count"]
+                quality_score = bullet.get("helpful_count", 0) - bullet.get("harmful_count", 0)
 
                 if quality_score >= threshold:
                     sync_bullets.append({
