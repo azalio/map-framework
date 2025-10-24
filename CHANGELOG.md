@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - CLI Tool Development Improvements
+
+#### Enhanced MAP Agents for CLI Development
+- **Monitor Agent** (v2.3.0): Added comprehensive CLI Tool Validation section (### 6)
+  - Manual execution test checklist
+  - Output stream validation (stdout/stderr separation)
+  - Library version compatibility checks
+  - Integration testing requirements
+  - Common CLI issues and solutions with examples
+  - **Benefits**: Catches stdout pollution, version incompatibility, CliRunner vs real CLI mismatches
+
+- **Predictor Agent** (v2.3.0): Added CLI Tool Specific Risks section
+  - HIGH risk: Library parameter availability in minimum version
+  - HIGH risk: Diagnostic messages printing to stdout instead of stderr
+  - HIGH risk: CLI output format changes breaking user scripts
+  - MEDIUM risk: Environment variable and error message location changes
+  - Real-world example from mapify CLI subcommands implementation
+  - **Benefits**: Proactively identifies CLI-specific risks before implementation
+
+- **Reflector Agent** (v2.3.0): Added CLI Tool Pattern Recognition
+  - New pattern type: `CLI_TOOL_PATTERNS` section
+  - Recognition signals: output pollution, version incompatibility, stream handling
+  - CLI Reflection Template: what test missed, manual verification needed
+  - Pattern extraction for reusable CLI lessons
+  - **Benefits**: Systematically captures CLI development lessons
+
+#### Playbook Schema Enhancement
+- **CLI_TOOL_PATTERNS Section**: New playbook section for CLI development patterns
+  - 10 playbook sections (was 9)
+  - Captures lessons about output streams, version compatibility, testing methodology
+  - Enables pattern reuse across CLI implementations
+  - **Benefits**: Institutional memory for CLI development
+
+#### Documentation
+- **CLI Testing Guide** (`docs/CLI_TESTING_GUIDE.md`): Comprehensive 400+ line guide
+  - Output stream management (stdout for output, stderr for diagnostics)
+  - Version compatibility patterns and detection
+  - Integration testing workflows (CliRunner vs subprocess)
+  - Common pitfalls with real-world examples
+  - Best practices checklist and testing workflow
+  - **Benefits**: Single source of truth for CLI testing best practices
+
+### Changed
+- **playbook_manager.py**: Updated sections_count from 9 to 10
+
+### Context
+These improvements were extracted from lessons learned during implementation of mapify CLI subcommands (PR #6), where we discovered:
+1. SemanticSearchEngine printed to stdout, polluting JSON output
+2. `CliRunner(mix_stderr=False)` parameter unavailable in CI's older Click version
+3. Tests passed with CliRunner but real CLI had issues
+4. Manual testing required to catch output pollution
+
+These patterns are now captured in MAP framework to prevent similar issues in future CLI development.
+
 ## [2.2.0] - 2025-10-18
 
 ### Added - Phase 1 Context Engineering Complete ✅

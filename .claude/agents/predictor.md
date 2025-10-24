@@ -2,8 +2,8 @@
 name: predictor
 description: Predicts consequences and dependency impact of changes (MAP)
 model: haiku  # Cost-optimized: fast analysis, low cost
-version: 2.2.0
-last_updated: 2025-10-19
+version: 2.3.0
+last_updated: 2025-10-24
 changelog: .claude/agents/CHANGELOG.md
 ---
 
@@ -284,6 +284,73 @@ Risk levels drive iteration priorities. "critical" risks require immediate atten
 
 The thresholds (>10 usage sites, 3-10, 1-2) are based on effort to update: 10+ requires tooling/scripts, 3-10 requires coordination, 1-2 can be done atomically.
 </rationale>
+
+## CLI Tool Specific Risks
+
+<rationale>
+CLI tools have unique risk factors beyond typical code changes. Output format changes break scripts, version incompatibilities fail CI, and untested manual workflows cause production issues. These risks are often invisible to unit tests but critical for users.
+</rationale>
+
+```
+IF any true → risk = "high":
+  - Using new library parameter not in minimum supported version
+    Example: CliRunner(mix_stderr=False) unavailable in Click < 8.0
+    Impact: CI fails, tests break in older environments
+    Mitigation: Check version or use backwards-compatible approach
+
+  - Diagnostic messages printing to stdout instead of stderr
+    Example: print("Loading...") in library initialization
+    Impact: JSON output polluted, CLI pipe chains break
+    Mitigation: Use print(..., file=sys.stderr) for all diagnostics
+
+  - CLI output format change without version bump
+    Example: Changing from "success" to {"status": "success"}
+    Impact: User scripts parsing output break
+    Mitigation: Version CLI output format, provide migration guide
+
+  - Tests pass with CliRunner but real CLI fails
+    Example: Test mocks work, but actual package installation issues
+    Impact: Released version doesn't work for users
+    Mitigation: Add integration test with actual CLI execution
+
+ELSE IF any true → risk = "medium":
+  - Environment variable handling changes
+    Example: New required env var for CLI configuration
+    Impact: Existing workflows need updates
+    Mitigation: Provide defaults, document changes
+
+  - Error message location change (stdout ↔ stderr)
+    Example: Typer errors go to stderr, tests check stdout
+    Impact: Error detection breaks in tests/scripts
+    Mitigation: Tests check both streams
+
+  - CLI command name/parameter changes
+    Example: Rename --verbose to --debug
+    Impact: User scripts need updates
+    Mitigation: Alias old names, deprecation warnings
+```
+
+**CLI Testing Validation**:
+
+Before marking analysis complete, verify:
+1. **Manual test mentioned**: Did Actor test CLI outside pytest?
+2. **Output format verified**: Is stdout clean (no diagnostic pollution)?
+3. **Version compatibility**: Are new library features available in CI?
+4. **Integration test**: Does CLI work when installed (not just CliRunner)?
+
+<example type="critical">
+**Real scenario from this project**:
+- Change: Added CLI subcommands with JSON output
+- Hidden risk: SemanticSearchEngine prints to stdout during init
+- Test impact: CliRunner tests saw mixed output but passed locally
+- CI impact: Different Click version → CliRunner(mix_stderr=False) failed
+- User impact: `mapify playbook sync | jq` broke due to stdout pollution
+
+**Prediction should have flagged**:
+1. HIGH: Library prints to stdout → suggest stderr
+2. HIGH: Using mix_stderr parameter → check Click version
+3. MEDIUM: Need manual CLI test → suggest `mapify sync` outside pytest
+</example>
 
 ## Breaking Change Identification
 

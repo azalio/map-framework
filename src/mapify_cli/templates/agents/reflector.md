@@ -2,8 +2,8 @@
 name: reflector
 description: Extracts structured lessons from successes and failures (ACE)
 model: sonnet  # Balanced: pattern extraction requires good reasoning
-version: 2.2.0
-last_updated: 2025-10-19
+version: 2.3.0
+last_updated: 2025-10-24
 changelog: .claude/agents/CHANGELOG.md
 ---
 
@@ -259,7 +259,51 @@ ELSE IF error involves framework/library misuse:
   → section = "TOOL_USAGE"
   → Reference current documentation
   → Show correct API usage pattern
+
+ELSE IF error involves CLI tool development:
+  → section = "CLI_TOOL_PATTERNS"
+  → Focus on: output streams, version compatibility, testing methodology
+  → Include manual testing validation steps
+  → Show both test code and actual CLI usage examples
 ```
+
+**CLI Tool Pattern Recognition**:
+
+```
+Recognize CLI-specific issues by these signals:
+
+Output Pollution:
+  - Symptom: JSON parsing fails, jq breaks, pipe chains fail
+  - Root cause: Diagnostic messages mixed with stdout
+  - Pattern: "Always use stderr for diagnostic output"
+  - Code example: print(..., file=sys.stderr)
+
+Version Incompatibility:
+  - Symptom: Tests pass locally, CI fails with "unexpected keyword argument"
+  - Root cause: New library feature not in minimum version
+  - Pattern: "Check library version compatibility or use fallback"
+  - Validation: Test with minimum supported version
+
+CliRunner ≠ Real CLI:
+  - Symptom: Tests pass, but installed CLI fails or behaves differently
+  - Root cause: CliRunner mocking differs from actual execution
+  - Pattern: "Always add integration test with real CLI execution"
+  - Validation: mapify command (not just runner.invoke())
+
+Stream Handling:
+  - Symptom: Error messages not captured in tests
+  - Root cause: Typer sends errors to stderr, tests check stdout
+  - Pattern: "Check both stdout and stderr for error detection"
+  - Code example: output = result.stdout + getattr(result, 'stderr', '')
+```
+
+**CLI Reflection Template**:
+
+When extracting CLI-related lessons:
+1. **What test missed**: What passed in CliRunner but failed in real usage?
+2. **Manual verification**: What manual CLI test would have caught it?
+3. **Version check**: What library version assumption was wrong?
+4. **Output validation**: How to verify stdout is clean?
 
 ### Step 3: Determine Bullet Update Strategy
 
