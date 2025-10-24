@@ -196,8 +196,8 @@ Perfect! I found highly relevant existing knowledge. The cipher search revealed.
 **Output:** Line 91: ### 3.1.5 Update Recitation Plan (BEFORE Actor)
 **Commands:**
 ```bash
-python -m mapify_cli.recitation_manager update <subtask_id> in_progress
-PLAN_CONTEXT=$(python -m mapify_cli.recitation_manager get-context)
+mapify recitation update <subtask_id> in_progress
+PLAN_CONTEXT=$(mapify recitation get-context)
 ```
 **Integration:** PLAN_CONTEXT injected into Actor prompt via {{plan_context}} variable
 **Documentation:** Lines 91-103 document update process
@@ -279,7 +279,7 @@ END OF VERIFIED FACTS - MAP WORKFLOW
 **Fact:** After TaskDecomposer returns subtasks, orchestrator creates recitation plan (step 2.5)
 **Verification:** grep -n "Step 2.5.*Recitation" .claude/commands/map-feature.md
 **Output:** Line 61: ## Step 2.5: Create Recitation Plan (Context Engineering)
-**Command:** python -m mapify_cli.recitation_manager create "$TASK_ID" "$ARGUMENTS" "$SUBTASKS_JSON"
+**Command:** mapify recitation create "$TASK_ID" "$ARGUMENTS" "$SUBTASKS_JSON"
 **Creates:** .map/current_plan.md with task overview and subtask list
 **Documentation:** Lines 65-82 document creation process
 
@@ -295,23 +295,23 @@ END OF VERIFIED FACTS - MAP WORKFLOW
 [✓ VERIFIED]
 **Fact:** When Monitor rejects Actor output, orchestrator updates plan with error message
 **Verification:** map-feature.md lines 172-177
-**Command:** python -m mapify_cli.recitation_manager update <subtask_id> in_progress "Monitor feedback: [error details]"
+**Command:** mapify recitation update <subtask_id> in_progress "Monitor feedback: [error details]"
 **Display:** Plan shows "⚠️ Retry attempt 2 - review previous errors"
 **Implementation:** Implements arch-0005 error learning pattern
 
 [✓ VERIFIED]
 **Fact:** When Evaluator approves solution, orchestrator marks subtask completed
 **Verification:** map-feature.md lines 253-258
-**Command:** python -m mapify_cli.recitation_manager update <subtask_id> completed
+**Command:** mapify recitation update <subtask_id> completed
 **Display:** Plan shows "✓ Subtask N completed", next subtask sees progress
 
 [✓ VERIFIED]
 **Fact:** After all subtasks complete, orchestrator gets statistics and cleans up
 **Verification:** map-feature.md lines 365-392
 **Process:**
-1. Get statistics: python -m mapify_cli.recitation_manager stats
+1. Get statistics: mapify recitation stats
 2. Include in final summary (total iterations, success rate)
-3. Clean up: python -m mapify_cli.recitation_manager clear
+3. Clean up: mapify recitation clear
 **Cleanup:** Removes .map/current_plan.md and .map/current_plan.json
 
 [✓ VERIFIED]

@@ -56,17 +56,17 @@ Phase 1 of the MAP Framework Context Engineering improvements is **complete**. A
 **CLI Interface:**
 ```bash
 # After TaskDecomposer produces subtasks
-python -m mapify_cli.recitation_manager create "<task_id>" "<goal>" '<subtasks_json>'
+mapify recitation create "<task_id>" "<goal>" '<subtasks_json>'
 
 # Before each Actor invocation
-python -m mapify_cli.recitation_manager update <subtask_id> in_progress
-PLAN_CONTEXT=$(python -m mapify_cli.recitation_manager get-context)
+mapify recitation update <subtask_id> in_progress
+PLAN_CONTEXT=$(mapify recitation get-context)
 
 # After Evaluator approval
-python -m mapify_cli.recitation_manager update <subtask_id> completed
+mapify recitation update <subtask_id> completed
 
 # After workflow completion
-python -m mapify_cli.recitation_manager clear
+mapify recitation clear
 ```
 
 **Workflow Documentation:** `/map-feature.md` (lines 62-78, 88-98, 338-342)
@@ -249,7 +249,7 @@ grep '"event_type": "error"' .map/logs/workflow_feat_auth_123.log
 **Symptom:** Actor shows "No recitation plan available"
 
 **Solutions:**
-1. Verify plan exists: `python -m mapify_cli.recitation_manager get-context`
+1. Verify plan exists: `mapify recitation get-context`
 2. Pass to Actor via Task tool prompt
 3. Don't clear plan until workflow completes
 
@@ -275,7 +275,7 @@ grep '"event_type": "error"' .map/logs/workflow_feat_auth_123.log
 **Symptom:** All subtasks show [☐] pending
 
 **Solutions:**
-1. Call update after each subtask: `python -m mapify_cli.recitation_manager update <id> completed`
+1. Call update after each subtask: `mapify recitation update <id> completed`
 2. Verify subtask ID exists
 3. Check `.map/current_plan.json` for corruption
 
@@ -395,12 +395,12 @@ echo ".map/" >> .gitignore
 
 ```bash
 # Test RecitationManager
-python -m mapify_cli.recitation_manager create "test_migration" "Test goal" '[{"id": 1, "description": "Test subtask"}]'
+mapify recitation create "test_migration" "Test goal" '[{"id": 1, "description": "Test subtask"}]'
 
 # Should output: ✅ Created recitation plan
 
 # Clean up test
-python -m mapify_cli.recitation_manager clear
+mapify recitation clear
 ```
 
 ### Breaking Changes

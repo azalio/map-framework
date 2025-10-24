@@ -28,7 +28,7 @@ SUBTASKS_JSON='[TaskDecomposer output JSON array]'
 TASK_ID="feat_$(date +%s)"
 
 # Create recitation plan
-python -m mapify_cli.recitation_manager create "$TASK_ID" "$GOAL" "$SUBTASKS_JSON"
+mapify recitation create "$TASK_ID" "$GOAL" "$SUBTASKS_JSON"
 ```
 
 **Verification:** ✅
@@ -51,10 +51,10 @@ python -m mapify_cli.recitation_manager create "$TASK_ID" "$GOAL" "$SUBTASKS_JSO
 ### 3.1.5 Update Recitation Plan (BEFORE Actor)
 # Mark subtask as in_progress and get fresh context:
 
-python -m mapify_cli.recitation_manager update <subtask_id> in_progress
+mapify recitation update <subtask_id> in_progress
 
 # Get current plan for Actor context (RECITATION PATTERN)
-PLAN_CONTEXT=$(python -m mapify_cli.recitation_manager get-context)
+PLAN_CONTEXT=$(mapify recitation get-context)
 ```
 
 **Verification:** ✅
@@ -79,7 +79,7 @@ PLAN_CONTEXT=$(python -m mapify_cli.recitation_manager get-context)
 
 **Step 1:** Get context in workflow
 ```bash
-PLAN_CONTEXT=$(python -m mapify_cli.recitation_manager get-context)
+PLAN_CONTEXT=$(mapify recitation get-context)
 ```
 
 **Step 2:** Pass to Actor via Task tool (from /map-feature.md:106-136)
@@ -91,7 +91,7 @@ Task(
 
 **Plan Context (for recitation):**
 ```
-[Insert output from: python -m mapify_cli.recitation_manager get-context]
+[Insert output from: mapify recitation get-context]
 ```
 
   ..."
@@ -146,19 +146,19 @@ This plan keeps the overall goal and progress "fresh" in your context window.
 
 **Before Actor (mark in_progress):**
 ```bash
-python -m mapify_cli.recitation_manager update <subtask_id> in_progress
+mapify recitation update <subtask_id> in_progress
 # Updates .map/current_plan.md with → marker
 ```
 
 **After Evaluator approval (mark completed):**
 ```bash
-python -m mapify_cli.recitation_manager update <subtask_id> completed
+mapify recitation update <subtask_id> completed
 # Updates .map/current_plan.md with ✓ marker
 ```
 
 **On Monitor failure (record error):**
 ```bash
-python -m mapify_cli.recitation_manager update <subtask_id> in_progress "Monitor feedback: [error details]"
+mapify recitation update <subtask_id> in_progress "Monitor feedback: [error details]"
 # Keeps → marker but adds error note
 # Shows "⚠️ Retry attempt N" on next iteration
 ```
@@ -194,7 +194,7 @@ RecitationManager._generate_markdown(): `recitation_manager.py:258-353`
 # After all subtasks completed:
 
 # 6. Clean up recitation plan:
-python -m mapify_cli.recitation_manager clear
+mapify recitation clear
 # Removes .map/current_plan.md and .map/current_plan.json
 ```
 
@@ -219,14 +219,14 @@ This is a **human-in-the-loop orchestration pattern**:
 2. Claude Code reads workflow documentation from `/map-feature.md`
 3. Claude executes each step sequentially:
    - Calls TaskDecomposer via Task tool
-   - Runs `python -m mapify_cli.recitation_manager create ...`
+   - Runs `mapify recitation create ...`
    - For each subtask:
-     - Runs `python -m mapify_cli.recitation_manager update ... in_progress`
-     - Gets context: `python -m mapify_cli.recitation_manager get-context`
+     - Runs `mapify recitation update ... in_progress`
+     - Gets context: `mapify recitation get-context`
      - Calls Actor via Task tool with plan_context
      - Calls Monitor, Predictor, Evaluator
-     - Runs `python -m mapify_cli.recitation_manager update ... completed`
-   - Runs `python -m mapify_cli.recitation_manager clear`
+     - Runs `mapify recitation update ... completed`
+   - Runs `mapify recitation clear`
 
 **Is this a valid "orchestrator"?** YES - it orchestrates the workflow by coordinating multiple agents and tools in the correct sequence.
 
@@ -312,11 +312,11 @@ class MapOrchestrator:
 **Steps:**
 1. ✅ Invoked `/map-feature "continue context engineering improvements"`
 2. ✅ TaskDecomposer produced 8 subtasks
-3. ✅ Created plan: `python -m mapify_cli.recitation_manager create ...`
+3. ✅ Created plan: `mapify recitation create ...`
 4. ✅ Verified `.map/current_plan.md` created with all 8 subtasks marked [☐]
-5. ✅ Updated subtask 1: `python -m mapify_cli.recitation_manager update 1 in_progress`
+5. ✅ Updated subtask 1: `mapify recitation update 1 in_progress`
 6. ✅ Verified `.map/current_plan.md` shows subtask 1 with [→] marker
-7. ✅ Got context: `python -m mapify_cli.recitation_manager get-context`
+7. ✅ Got context: `mapify recitation get-context`
 8. ✅ Verified context includes current subtask highlighted and progress summary
 9. ✅ Called Actor with plan_context in prompt
 10. ✅ Monitor provided feedback, updated plan with error message

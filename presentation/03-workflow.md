@@ -128,21 +128,21 @@ MAP использует **ДВЕ системы хранения знаний**
 1. **Step 2.5:** **Orchestrator** после TaskDecomposer создаёт plan
 
    ```bash
-   python -m mapify_cli.recitation_manager create "$TASK_ID" "$ARGUMENTS" "$SUBTASKS_JSON"
+   mapify recitation create "$TASK_ID" "$ARGUMENTS" "$SUBTASKS_JSON"
    ```
 
 2. **Step 3.1.5:** **Orchestrator** перед КАЖДЫМ Actor invocation обновляет статус
 
    ```bash
-   python -m mapify_cli.recitation_manager update <subtask_id> in_progress
-   PLAN_CONTEXT=$(python -m mapify_cli.recitation_manager get-context)
+   mapify recitation update <subtask_id> in_progress
+   PLAN_CONTEXT=$(mapify recitation get-context)
    ```
 
 3. **Actor Template:** Получает `{{plan_context}}` через Handlebars variable в секции `<recitation_plan>`
 4. **После завершения:** Cleanup удаляет `.map/` директорию
 
    ```bash
-   python -m mapify_cli.recitation_manager clear
+   mapify recitation clear
    ```
 
 **Progress Markers:**
