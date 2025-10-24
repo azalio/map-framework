@@ -251,3 +251,151 @@ class TestTopKEdgeCases:
         # None should be deprecated
         for bullet in results:
             assert not bullet.get("deprecated", False)
+
+
+class TestMissingFieldHandling:
+    """Test handling of bullets with missing optional fields"""
+
+    def test_get_relevant_bullets_with_missing_deprecated_field(self, temp_playbook):
+        """Should handle bullets without 'deprecated' field"""
+        # Create playbook with bullet missing 'deprecated' field
+        playbook_data = {
+            "metadata": {"project": "test", "top_k": 5},
+            "sections": {
+                "IMPLEMENTATION_PATTERNS": {
+                    "bullets": [
+                        {
+                            "id": "impl-0001",
+                            "content": "Pattern without deprecated field",
+                            "helpful_count": 1,
+                            "harmful_count": 0
+                            # Note: no 'deprecated' field
+                        }
+                    ]
+                }
+            }
+        }
+        temp_playbook.write_text(json.dumps(playbook_data))
+
+        manager = PlaybookManager(playbook_path=str(temp_playbook), use_semantic_search=False)
+        results = manager.get_relevant_bullets("pattern")
+
+        # Should not crash and should return the bullet
+        assert len(results) == 1
+        assert results[0]["id"] == "impl-0001"
+
+    def test_get_relevant_bullets_with_missing_count_fields(self, temp_playbook):
+        """Should handle bullets without helpful_count/harmful_count fields"""
+        playbook_data = {
+            "metadata": {"project": "test", "top_k": 5},
+            "sections": {
+                "IMPLEMENTATION_PATTERNS": {
+                    "bullets": [
+                        {
+                            "id": "impl-0001",
+                            "content": "Pattern without count fields",
+                            "deprecated": False
+                            # Note: no helpful_count or harmful_count
+                        }
+                    ]
+                }
+            }
+        }
+        temp_playbook.write_text(json.dumps(playbook_data))
+
+        manager = PlaybookManager(playbook_path=str(temp_playbook), use_semantic_search=False)
+        results = manager.get_relevant_bullets("pattern")
+
+        # Should not crash and should treat missing counts as 0
+        assert len(results) == 1
+        assert results[0]["quality_score"] == 0  # 0 - 0
+
+    def test_get_bullets_for_sync_with_missing_deprecated_field(self, temp_playbook):
+        """Should handle bullets without 'deprecated' field in sync"""
+        playbook_data = {
+            "metadata": {"project": "test", "top_k": 5},
+            "sections": {
+                "IMPLEMENTATION_PATTERNS": {
+                    "bullets": [
+                        {
+                            "id": "impl-0001",
+                            "content": "High quality pattern",
+                            "helpful_count": 10,
+                            "harmful_count": 0
+                            # Note: no 'deprecated' field
+                        }
+                    ]
+                }
+            }
+        }
+        temp_playbook.write_text(json.dumps(playbook_data))
+
+        manager = PlaybookManager(playbook_path=str(temp_playbook), use_semantic_search=False)
+        results = manager.get_bullets_for_sync(threshold=5)
+
+        # Should not crash and should return high-quality bullet
+        assert len(results) == 1
+        assert results[0]["id"] == "impl-0001"
+
+    def test_get_bullets_for_sync_with_missing_count_fields(self, temp_playbook):
+        """Should handle bullets without count fields in sync"""
+        playbook_data = {
+            "metadata": {"project": "test", "top_k": 5},
+            "sections": {
+                "IMPLEMENTATION_PATTERNS": {
+                    "bullets": [
+                        {
+                            "id": "impl-0001",
+                            "content": "Pattern without counts",
+                            "deprecated": False
+                            # Note: no helpful_count or harmful_count
+                        }
+                    ]
+                }
+            }
+        }
+        temp_playbook.write_text(json.dumps(playbook_data))
+
+        manager = PlaybookManager(playbook_path=str(temp_playbook), use_semantic_search=False)
+        results = manager.get_bullets_for_sync(threshold=5)
+
+        # Should not crash, but won't return bullet (quality_score = 0 < 5)
+        assert len(results) == 0
+
+    def test_mixed_bullets_some_missing_fields(self, temp_playbook):
+        """Should handle mix of complete and incomplete bullets"""
+        playbook_data = {
+            "metadata": {"project": "test", "top_k": 5},
+            "sections": {
+                "IMPLEMENTATION_PATTERNS": {
+                    "bullets": [
+                        {
+                            "id": "impl-0001",
+                            "content": "Complete bullet",
+                            "deprecated": False,
+                            "helpful_count": 5,
+                            "harmful_count": 1
+                        },
+                        {
+                            "id": "impl-0002",
+                            "content": "Missing deprecated",
+                            "helpful_count": 3,
+                            "harmful_count": 0
+                        },
+                        {
+                            "id": "impl-0003",
+                            "content": "Missing counts",
+                            "deprecated": False
+                        }
+                    ]
+                }
+            }
+        }
+        temp_playbook.write_text(json.dumps(playbook_data))
+
+        manager = PlaybookManager(playbook_path=str(temp_playbook), use_semantic_search=False)
+        results = manager.get_relevant_bullets("bullet")
+
+        # Should handle all three bullets without crashing
+        assert len(results) == 3
+        assert {r["id"] for r in results} == {"impl-0001", "impl-0002", "impl-0003"}

@@ -136,13 +136,13 @@ Built-in learning system that improves with each task:
 
 ```bash
 # View statistics
-python -m mapify_cli.playbook_manager stats
+mapify playbook stats
 
 # Search patterns
-python -m mapify_cli.playbook_manager search "JWT authentication"
+mapify playbook search "JWT authentication"
 
 # View high-quality patterns
-python -m mapify_cli.playbook_manager sync
+mapify playbook sync
 ```
 
 **Optional semantic search**: `pip install -r requirements-semantic.txt` for meaning-based matching. Details in [SEMANTIC_SEARCH_SETUP.md](SEMANTIC_SEARCH_SETUP.md) and [ARCHITECTURE.md](ARCHITECTURE.md#semantic-search).

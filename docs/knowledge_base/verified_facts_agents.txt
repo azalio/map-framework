@@ -614,22 +614,22 @@ changelog: .claude/agents/CHANGELOG.md
 **Recitation Manager Integration:**
 ```bash
 # Create plan at workflow start
-python -m mapify_cli.recitation_manager create <task_id> "<feature>" "<subtasks_json>"
+mapify recitation create <task_id> "<feature>" "<subtasks_json>"
 
 # Update before each Actor invocation
-python -m mapify_cli.recitation_manager update <subtask_id> in_progress
+mapify recitation update <subtask_id> in_progress
 
 # Get context for Actor prompt
-PLAN_CONTEXT=$(python -m mapify_cli.recitation_manager get-context)
+PLAN_CONTEXT=$(mapify recitation get-context)
 
 # Mark completed after Evaluator approval
-python -m mapify_cli.recitation_manager update <subtask_id> completed
+mapify recitation update <subtask_id> completed
 
 # Get final statistics
-python -m mapify_cli.recitation_manager stats
+mapify recitation stats
 
 # Cleanup at end
-python -m mapify_cli.recitation_manager clear
+mapify recitation clear
 ```
 
 **Purpose:** Keeps overall goal and progress "fresh" in context window, helping Actor maintain focus on long multi-step workflows (+20-30% success rate)

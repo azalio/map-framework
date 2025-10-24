@@ -150,7 +150,7 @@ if [ -n "$CHECKPOINTS" ]; then
     START_SUBTASK=$(echo "$RESUME_DATA" | jq -r '.next_subtask_id')
 
     # Restore RecitationManager state
-    python -m mapify_cli.recitation_manager restore "$TASK_ID" "$(echo "$RESUME_DATA" | jq -c '.recitation_plan')"
+    mapify recitation restore "$TASK_ID" "$(echo "$RESUME_DATA" | jq -c '.recitation_plan')"
 
     echo "Resuming from subtask $START_SUBTASK"
   fi

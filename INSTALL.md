@@ -288,13 +288,13 @@ MAP automatically learns from your work through the ACE (Agentic Context Enginee
 
 ```bash
 # View playbook statistics
-python -m mapify_cli.playbook_manager stats
+mapify playbook stats
 
 # Search for relevant patterns
-python -m mapify_cli.playbook_manager search "JWT authentication"
+mapify playbook search "JWT authentication"
 
 # View high-quality patterns ready for sync
-python -m mapify_cli.playbook_manager sync
+mapify playbook sync
 ```
 
 The playbook is stored in `.claude/playbook.json` and grows as you use MAP commands.

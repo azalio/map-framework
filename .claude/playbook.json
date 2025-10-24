@@ -4,8 +4,8 @@
     "project": "map-framework",
     "description": "ACE-style comprehensive playbook for MAP Framework development",
     "created_at": "2025-10-10T00:00:00Z",
-    "last_updated": "2025-10-23T15:34:43.387377Z",
-    "total_bullets": 44,
+    "last_updated": "2025-10-24T11:29:15.385627+00:00",
+    "total_bullets": 53,
     "sections_count": 11,
     "top_k": 5,
     "version": 3
@@ -675,6 +675,57 @@
           ],
           "deprecated": false,
           "deprecation_reason": null
+        },
+        {
+          "id": "impl-0046",
+          "content": "UV tool CLI isolation: Install Python CLI tools via UV tool entry points (pyproject.toml [project.scripts]) rather than direct module imports. Prevents ModuleNotFoundError when using 'uv tool install'.",
+          "code_example": "",
+          "helpful_count": 8,
+          "harmful_count": 0,
+          "created_at": "2025-10-24T13:29:43.892087Z",
+          "last_used_at": "2025-10-24T13:29:43.892094Z",
+          "related_bullets": [],
+          "tags": [
+            "uv",
+            "cli",
+            "python"
+          ],
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "impl-0047",
+          "content": "Lazy imports in CLI commands: Use function-level imports to reduce startup time. Pattern: 'def main(): from package import module; module.run()'.",
+          "code_example": "",
+          "helpful_count": 7,
+          "harmful_count": 0,
+          "created_at": "2025-10-24T13:29:43.892102Z",
+          "last_used_at": "2025-10-24T13:29:43.892103Z",
+          "related_bullets": [],
+          "tags": [
+            "uv",
+            "cli",
+            "python"
+          ],
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "impl-0048",
+          "content": "Backward compatibility during CLI migration: Maintain old import paths as shims with deprecation warnings. Document migration in CHANGELOG.",
+          "code_example": "",
+          "helpful_count": 8,
+          "harmful_count": 0,
+          "created_at": "2025-10-24T13:29:43.892105Z",
+          "last_used_at": "2025-10-24T13:29:43.892105Z",
+          "related_bullets": [],
+          "tags": [
+            "uv",
+            "cli",
+            "python"
+          ],
+          "deprecated": false,
+          "deprecation_reason": null
         }
       ]
     },
@@ -938,6 +989,23 @@
           ],
           "deprecated": false,
           "deprecation_reason": null
+        },
+        {
+          "id": "test-0015",
+          "content": "CLI migration testing: Test matrix (editable install, UV tool install, package install). Use subprocess.run() to verify CLI works as installed.",
+          "code_example": "",
+          "helpful_count": 7,
+          "harmful_count": 0,
+          "created_at": "2025-10-24T13:29:43.892107Z",
+          "last_used_at": "2025-10-24T13:29:43.892108Z",
+          "related_bullets": [],
+          "tags": [
+            "uv",
+            "cli",
+            "python"
+          ],
+          "deprecated": false,
+          "deprecation_reason": null
         }
       ]
     },
@@ -1043,12 +1111,41 @@
           ],
           "deprecated": false,
           "deprecation_reason": null
+        },
+        {
+          "id": "tool-0013",
+          "content": "Bulk Text Replacement: sed vs Edit Tool Trade-offs: For 50+ identical replacements across multiple files, use sed with git verification rather than individual Edit tool calls. Pattern: (1) Run sed with backup: 'sed -i.bak s/old/new/g files', (2) Use git diff for sampling verification, (3) Create descriptive commit with counts. Benefits: 10x faster than Edit calls, atomic operation, easy rollback. Limitations: sed can't handle context-aware changes. Decision criteria: Use sed when replacement is purely textual (command syntax, import paths), use Edit when replacement requires code understanding (refactoring logic, updating arguments). ALWAYS verify with git diff before committing sed changes.",
+          "tags": [
+            "tools",
+            "automation",
+            "refactoring"
+          ],
+          "helpful_count": 1,
+          "last_used": "2025-10-24T11:00:00Z"
         }
       ]
     },
     "DEBUGGING_TECHNIQUES": {
       "description": "Troubleshooting workflows, diagnostic approaches, and debugging tools",
-      "bullets": []
+      "bullets": [
+        {
+          "id": "debug-0009",
+          "content": "Debugging UV tool installation failures: (1) 'uv tool list', (2) 'uv tool dir', (3) check PATH, (4) 'which command', (5) 'uv tool install --force', (6) verify pyproject.toml entry points.",
+          "code_example": "",
+          "helpful_count": 9,
+          "harmful_count": 0,
+          "created_at": "2025-10-24T13:29:43.892099Z",
+          "last_used_at": "2025-10-24T13:29:43.892100Z",
+          "related_bullets": [],
+          "tags": [
+            "uv",
+            "cli",
+            "python"
+          ],
+          "deprecated": false,
+          "deprecation_reason": null
+        }
+      ]
     },
     "DOCUMENTATION_PATTERNS": {
       "description": "Best practices for maintaining clear, accurate, and maintainable documentation",
@@ -1118,6 +1215,28 @@
           ],
           "deprecated": false,
           "deprecation_reason": null
+        },
+        {
+          "id": "doc-0003",
+          "content": "Multi-Tier Prioritization for Large-Scale Documentation Refactoring: When updating 80+ references across 12+ files after API/CLI changes, use 4-tier priority strategy: Tier 1 (Critical) - user-facing help text and primary docs that users encounter first; Tier 2 (High) - internal technical documentation used by developers; Tier 3 (Medium) - knowledge base and presentations; Tier 4 (Low) - historical documents (add deprecation notes only, preserve original syntax). Update tiers sequentially with verification between tiers. This prevents inconsistent user experience while preserving historical context. Commit message should include tier breakdown with reference counts for traceability (e.g., 'Tier 1: 30 refs, Tier 2: 40 refs').",
+          "tags": [
+            "documentation",
+            "refactoring",
+            "prioritization"
+          ],
+          "helpful_count": 1,
+          "last_used": "2025-10-24T11:00:00Z"
+        },
+        {
+          "id": "doc-0004",
+          "content": "Historical Documentation Preservation During API Migration: When updating CLI commands or API syntax across documentation, preserve historical examples in specific contexts: (1) .reviews/ directories - leave unchanged as historical records of past code review discussions, (2) Playbook pattern examples - keep old syntax to show command evolution over time, (3) CHANGELOG.md - never update (historical document by definition), (4) Archived/deprecated docs - add deprecation notice at top pointing to current docs instead of bulk updating. This prevents confusion about 'what was the command syntax when this was written' during debugging or archaeology. Use --exclude-dir flags in sed/grep to automatically skip these directories.",
+          "tags": [
+            "documentation",
+            "migration",
+            "preservation"
+          ],
+          "helpful_count": 1,
+          "last_used": "2025-10-24T11:00:00Z"
         }
       ]
     },

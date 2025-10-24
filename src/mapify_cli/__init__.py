@@ -355,6 +355,13 @@ app = typer.Typer(
     cls=BannerGroup,
 )
 
+# Create subcommand groups
+recitation_app = typer.Typer(name="recitation", help="Manage task execution plans (recitation pattern)")
+playbook_app = typer.Typer(name="playbook", help="Manage and search playbook patterns")
+
+app.add_typer(recitation_app, name="recitation")
+app.add_typer(playbook_app, name="playbook")
+
 
 def show_banner():
     """Display the ASCII art banner."""
@@ -1807,6 +1814,118 @@ def upgrade():
 
     console.print("[yellow]Upgrade feature coming soon![/yellow]")
     console.print("For now, run: [cyan]mapify init . --force[/cyan] to update agents")
+
+
+# Recitation commands
+
+@recitation_app.command("create")
+def recitation_create(
+    task_id: str,
+    goal: str,
+    subtasks_json: str,
+    force: bool = typer.Option(False, "--force", help="Overwrite existing plan")
+):
+    """Create a new task execution plan"""
+    from mapify_cli.recitation_manager import RecitationManager
+    manager = RecitationManager(Path.cwd())
+    try:
+        subtasks = json.loads(subtasks_json)
+        plan = manager.create_plan(task_id, goal, subtasks, force=force)
+        result = {"status": "success", "message": "Plan created", "plan_file": str(manager.plan_file), "subtasks_count": len(plan.subtasks)}
+        console.print_json(data=result)
+    except (ValueError, json.JSONDecodeError) as e:
+        console.print_json(data={"status": "error", "message": str(e)})
+        raise typer.Exit(1)
+
+@recitation_app.command("update")
+def recitation_update(
+    subtask_id: int,
+    status: str,
+    error: Optional[str] = typer.Argument(None)
+):
+    """Update subtask status"""
+    from mapify_cli.recitation_manager import RecitationManager
+    manager = RecitationManager(Path.cwd())
+    try:
+        plan = manager.update_subtask_status(subtask_id, status, error)
+        result = {"status": "success", "message": f"Subtask {subtask_id} updated to {status}", "current_subtask": plan.current_subtask_id, "updated_at": plan.updated_at}
+        console.print_json(data=result)
+    except Exception as e:
+        console.print_json(data={"status": "error", "message": str(e)})
+        raise typer.Exit(1)
+
+@recitation_app.command("get-context")
+def recitation_get_context():
+    """Get current plan context as markdown"""
+    from mapify_cli.recitation_manager import RecitationManager
+    manager = RecitationManager(Path.cwd())
+    context = manager.get_current_context()
+    if context:
+        console.print(context)
+    else:
+        console.print("# No active plan\n\nNo recitation plan is currently active.")
+        raise typer.Exit(1)
+
+@recitation_app.command("stats")
+def recitation_stats():
+    """Show plan statistics"""
+    from mapify_cli.recitation_manager import RecitationManager
+    manager = RecitationManager(Path.cwd())
+    stats = manager.get_statistics()
+    if stats:
+        console.print_json(data=stats)
+    else:
+        console.print_json(data={"status": "error", "message": "No active plan"})
+        raise typer.Exit(1)
+
+@recitation_app.command("clear")
+def recitation_clear():
+    """Clear active plan"""
+    from mapify_cli.recitation_manager import RecitationManager
+    manager = RecitationManager(Path.cwd())
+    manager.clear_plan()
+    console.print_json(data={"status": "success", "message": "Plan cleared"})
+
+# Playbook commands
+
+@playbook_app.command("stats")
+def playbook_stats():
+    """Show playbook statistics"""
+    playbook_path = Path.cwd() / ".claude" / "playbook.json"
+    if not playbook_path.exists():
+        console.print_json(data={"error": "Playbook not found"})
+        raise typer.Exit(1)
+    playbook = json.loads(playbook_path.read_text())
+    total = sum(len(section["bullets"]) for section in playbook.get("sections", {}).values())
+    stats = {"total_bullets": total, "sections": len(playbook.get("sections", {})), "metadata": playbook.get("metadata", {})}
+    console.print_json(data=stats)
+
+@playbook_app.command("search")
+def playbook_search(query: str, top_k: int = typer.Option(5, help="Number of results")):
+    """Search playbook for relevant patterns"""
+    from mapify_cli.playbook_manager import PlaybookManager
+    playbook_path = Path.cwd() / ".claude" / "playbook.json"
+    if not playbook_path.exists():
+        console.print("No patterns found (playbook not initialized)")
+        return
+    manager = PlaybookManager(playbook_path)
+    results = manager.get_relevant_bullets(query, limit=top_k)
+    if not results:
+        console.print("No patterns found matching your query")
+    else:
+        console.print_json(data={"query": query, "count": len(results), "results": [{"id": b.get("id"), "content": b.get("content")[:100] + "..."} for b in results]})
+
+@playbook_app.command("sync")
+def playbook_sync(threshold: int = typer.Option(5, help="Minimum helpful count")):
+    """Show high-quality patterns ready for cross-project sync"""
+    from mapify_cli.playbook_manager import PlaybookManager
+    playbook_path = Path.cwd() / ".claude" / "playbook.json"
+    if not playbook_path.exists():
+        console.print_json(data={"status": "error", "message": "Playbook not found"})
+        raise typer.Exit(1)
+    manager = PlaybookManager(playbook_path)
+    patterns = manager.get_bullets_for_sync(threshold=threshold)
+    console.print_json(data={"threshold": threshold, "count": len(patterns), "patterns": [{"id": p.get("id"), "helpful_count": p.get("helpful_count")} for p in patterns]})
 
 
 def main():

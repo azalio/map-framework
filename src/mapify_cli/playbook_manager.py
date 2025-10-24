@@ -9,6 +9,7 @@ Based on research: Agentic Context Engineering (ACE) - arXiv:2510.04618v1
 
 import json
 import hashlib
+import sys
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from pathlib import Path
@@ -44,10 +45,10 @@ class PlaybookManager:
         if use_semantic_search and SEMANTIC_SEARCH_AVAILABLE:
             try:
                 self.semantic_engine = SemanticSearchEngine()
-                print("✓ Semantic search enabled")
+                print("✓ Semantic search enabled", file=sys.stderr)
             except Exception as e:
-                print(f"Warning: Could not initialize semantic search: {e}")
-                print("  Falling back to keyword matching")
+                print(f"Warning: Could not initialize semantic search: {e}", file=sys.stderr)
+                print("  Falling back to keyword matching", file=sys.stderr)
 
     def _load_playbook(self) -> Dict:
         """Load playbook from disk or create empty one."""
@@ -363,10 +364,10 @@ class PlaybookManager:
         all_bullets = []
         for section in self.playbook["sections"].values():
             for bullet in section["bullets"]:
-                if bullet["deprecated"]:
+                if bullet.get("deprecated", False):
                     continue
 
-                quality_score = bullet["helpful_count"] - bullet["harmful_count"]
+                quality_score = bullet.get("helpful_count", 0) - bullet.get("harmful_count", 0)
 
                 if quality_score < min_quality_score:
                     continue
@@ -431,10 +432,10 @@ class PlaybookManager:
 
         for section_name, section in self.playbook["sections"].items():
             for bullet in section["bullets"]:
-                if bullet["deprecated"]:
+                if bullet.get("deprecated", False):
                     continue
 
-                quality_score = bullet["helpful_count"] - bullet["harmful_count"]
+                quality_score = bullet.get("helpful_count", 0) - bullet.get("harmful_count", 0)
 
                 if quality_score >= threshold:
                     sync_bullets.append({

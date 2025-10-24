@@ -52,3 +52,6 @@ coverage.json
 .claude/sessions/
 .claude/metrics/
 .map/
+
+# Temporary verification files
+mapify_cli_verification_*.json

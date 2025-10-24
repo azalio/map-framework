@@ -26,7 +26,7 @@ A feature can be "closed" in **two different ways**:
    - Statistics show: `completed == total_subtasks`
    - User should manually call `clear` command to cleanup
 
-2. **Explicitly Cleared**: User runs `python -m mapify_cli.recitation_manager clear`
+2. **Explicitly Cleared**: User runs `mapify recitation clear`
    - Plan files are deleted
    - `get_plan()` returns `None`
    - System is ready for next feature
@@ -80,7 +80,7 @@ A feature can be "closed" in **two different ways**:
 
 **Example output:**
 ```bash
-$ python -m mapify_cli.recitation_manager get-context
+$ mapify recitation get-context
 # Current Task: feat_test
 
 ## Overall Goal
@@ -98,7 +98,7 @@ Test incomplete plan
 **Bug**: Calling `update` when no plan exists raises Python exception:
 
 ```bash
-$ python -m mapify_cli.recitation_manager update 1 completed
+$ mapify recitation update 1 completed
 {
   "status": "error",
   "message": "'NoneType' object has no attribute 'subtasks'"
@@ -123,11 +123,11 @@ def update_subtask_status(self, subtask_id: int, status: str, error: Optional[st
 **Example:**
 ```bash
 # Create first plan
-$ python -m mapify_cli.recitation_manager create feat_old "Old" '[{"id":1,...}]'
-$ python -m mapify_cli.recitation_manager update 1 in_progress
+$ mapify recitation create feat_old "Old" '[{"id":1,...}]'
+$ mapify recitation update 1 in_progress
 
 # Create second plan - NO WARNING
-$ python -m mapify_cli.recitation_manager create feat_new "New" '[{"id":1,...}]'
+$ mapify recitation create feat_new "New" '[{"id":1,...}]'
 # Old plan and all progress is lost
 ```
 
@@ -204,7 +204,7 @@ Update documentation to specify:
 
 ### 4. Add Plan Status Check
 
-Add new command: `python -m mapify_cli.recitation_manager status`
+Add new command: `mapify recitation status`
 
 Returns:
 ```json
@@ -224,38 +224,38 @@ Returns:
 **1. Create Plan**
 ```bash
 # Create new plan (fails if plan already exists)
-python -m mapify_cli.recitation_manager create feat_auth "Add JWT auth" '[{"id":1,"description":"Create model","acceptance_criteria":"Model tests pass"}]'
+mapify recitation create feat_auth "Add JWT auth" '[{"id":1,"description":"Create model","acceptance_criteria":"Model tests pass"}]'
 
 # Force overwrite existing plan (use with caution)
-python -m mapify_cli.recitation_manager create feat_new "New feature" '[...]' --force
+mapify recitation create feat_new "New feature" '[...]' --force
 ```
 
 **2. Work on Subtasks**
 ```bash
 # Mark subtask as in progress
-python -m mapify_cli.recitation_manager update 1 in_progress
+mapify recitation update 1 in_progress
 
 # Get current context
-python -m mapify_cli.recitation_manager get-context
+mapify recitation get-context
 
 # Mark subtask as completed
-python -m mapify_cli.recitation_manager update 1 completed
+mapify recitation update 1 completed
 
 # Mark subtask as failed (with error message)
-python -m mapify_cli.recitation_manager update 1 failed "Import error: missing jwt module"
+mapify recitation update 1 failed "Import error: missing jwt module"
 ```
 
 **3. Check Progress**
 ```bash
 # Get statistics
-python -m mapify_cli.recitation_manager stats
+mapify recitation stats
 # Returns: {"total_subtasks": 3, "completed": 2, "in_progress": 1, ...}
 ```
 
 **4. Close Feature (Clean Up)**
 ```bash
 # After all subtasks complete, clear the plan
-python -m mapify_cli.recitation_manager clear
+mapify recitation clear
 ```
 
 ### Breaking Changes (v2.0)
@@ -265,11 +265,11 @@ python -m mapify_cli.recitation_manager clear
 **Migration Guide**:
 ```bash
 # Old behavior (v1.x) - silent overwrite
-python -m mapify_cli.recitation_manager create feat_id "Goal" '[...]'  # Overwrote silently
+mapify recitation create feat_id "Goal" '[...]'  # Overwrote silently
 
 # New behavior (v2.0) - explicit safety
-python -m mapify_cli.recitation_manager create feat_id "Goal" '[...]'        # ❌ Raises error if plan exists
-python -m mapify_cli.recitation_manager create feat_id "Goal" '[...]' --force  # ✅ Explicit overwrite
+mapify recitation create feat_id "Goal" '[...]'        # ❌ Raises error if plan exists
+mapify recitation create feat_id "Goal" '[...]' --force  # ✅ Explicit overwrite
 ```
 
 **Rationale**: Prevents accidental data loss from silent plan overwrites.

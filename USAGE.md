@@ -65,13 +65,13 @@ The playbook manager CLI provides tools to analyze and manage learned patterns:
 
 ```bash
 # Statistics
-python -m mapify_cli.playbook_manager stats
+mapify playbook stats
 
 # Search patterns
-python -m mapify_cli.playbook_manager search "JWT authentication"
+mapify playbook search "JWT authentication"
 
 # High-quality patterns
-python -m mapify_cli.playbook_manager sync
+mapify playbook sync
 ```
 
 **Note:** These commands help you:

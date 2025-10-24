@@ -92,14 +92,14 @@ SUBTASKS_JSON='[TaskDecomposer output JSON array]'
 TASK_ID="feat_$(date +%s)"
 
 # Create recitation plan
-python -m mapify_cli.recitation_manager create "$TASK_ID" "$ARGUMENTS" "$SUBTASKS_JSON"
+mapify recitation create "$TASK_ID" "$ARGUMENTS" "$SUBTASKS_JSON"
 ```
 
 This creates `.map/current_plan.md` which will be updated before each subtask to maintain focus.
 
 **Example:**
 ```bash
-python -m mapify_cli.recitation_manager create feat_1760783000 "Add user authentication" '[{"id":1,"description":"Create User model",...}]'
+mapify recitation create feat_1760783000 "Add user authentication" '[{"id":1,"description":"Create User model",...}]'
 ```
 
 ## Step 3: For Each Subtask - Implementation Loop
@@ -116,10 +116,10 @@ Search `.claude/playbook.json` for relevant patterns related to the current subt
 
 ```bash
 # Update plan status (subtask_id from TaskDecomposer)
-python -m mapify_cli.recitation_manager update <subtask_id> in_progress
+mapify recitation update <subtask_id> in_progress
 
 # Get current plan for Actor context (RECITATION PATTERN)
-PLAN_CONTEXT=$(python -m mapify_cli.recitation_manager get-context)
+PLAN_CONTEXT=$(mapify recitation get-context)
 # This markdown shows progress and current focus
 ```
 
@@ -145,7 +145,7 @@ Task(
 
 **Plan Context (for recitation):**
 ```
-[Insert output from: python -m mapify_cli.recitation_manager get-context]
+[Insert output from: mapify recitation get-context]
 ```
 
 Output JSON with:
@@ -193,7 +193,7 @@ Output JSON with:
 - **Record error in plan (Recitation):**
   ```bash
   # Update with error message for retry
-  python -m mapify_cli.recitation_manager update <subtask_id> in_progress "Monitor feedback: [error details]"
+  mapify recitation update <subtask_id> in_progress "Monitor feedback: [error details]"
   # Plan will show: "⚠️ Retry attempt 2 - review previous errors"
   ```
 - Provide monitor feedback to actor
@@ -274,7 +274,7 @@ Output JSON with:
 - Apply code changes (use Write/Edit tools)
 - **Mark subtask as completed (Recitation):**
   ```bash
-  python -m mapify_cli.recitation_manager update <subtask_id> completed
+  mapify recitation update <subtask_id> completed
   # Plan will show: "✓ Subtask N completed"
   # Next subtask will see this progress
   ```
@@ -386,7 +386,7 @@ After all subtasks completed:
 
 1. **Get final statistics from Recitation:**
    ```bash
-   python -m mapify_cli.recitation_manager stats
+   mapify recitation stats
    # Shows: total_subtasks, completed, total_iterations, etc.
    ```
 
@@ -409,7 +409,7 @@ After all subtasks completed:
 
 6. **Clean up recitation plan:**
    ```bash
-   python -m mapify_cli.recitation_manager clear
+   mapify recitation clear
    # Removes .map/current_plan.md and .map/current_plan.json
    ```
 
