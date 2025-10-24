@@ -76,7 +76,7 @@ class PlaybookManager:
                 "created_at": datetime.utcnow().isoformat() + "Z",
                 "last_updated": datetime.utcnow().isoformat() + "Z",
                 "total_bullets": 0,
-                "sections_count": 9,
+                "sections_count": 10,
                 # Phase 1.3: Limit playbook patterns to reduce context distraction and save ~15% tokens
                 "top_k": 5
             },
@@ -115,6 +115,10 @@ class PlaybookManager:
                 },
                 "DEBUGGING_TECHNIQUES": {
                     "description": "Troubleshooting workflows",
+                    "bullets": []
+                },
+                "CLI_TOOL_PATTERNS": {
+                    "description": "Patterns for building reliable CLI tools",
                     "bullets": []
                 }
             }

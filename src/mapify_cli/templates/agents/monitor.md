@@ -2,8 +2,8 @@
 name: monitor
 description: Reviews code for correctness, standards, security, and testability (MAP)
 model: sonnet  # Balanced: quality validation requires good reasoning
-version: 2.2.0
-last_updated: 2025-10-19
+version: 2.3.0
+last_updated: 2025-10-24
 changelog: .claude/agents/CHANGELOG.md
 ---
 
@@ -371,7 +371,76 @@ def process_payment(payment_api):
 ```
 </example>
 
-### 6. MAINTAINABILITY
+### 6. CLI TOOL VALIDATION
+
+<rationale>
+CLI tools have unique validation requirements beyond unit tests. CliRunner behavior differs from actual CLI execution, and version compatibility issues with Click/Typer can cause CI failures. Manual testing catches stdout/stderr pollution, version incompatibilities, and real-world usage issues that mocks miss.
+</rationale>
+
+**CLI Tool Checklist** (when reviewing CLI commands):
+
+- [ ] **Manual Execution Test**
+  - Command runs outside test environment (via `python -m` or installed tool)?
+  - Raw output inspected (not just parsed JSON)?
+  - Output format matches specification (clean JSON, no mixed messages)?
+  - Command works in isolated environment (fresh virtualenv/uv tool)?
+
+- [ ] **Output Stream Validation**
+  - Stdout contains ONLY intended output (JSON, formatted text)?
+  - Diagnostic messages use stderr (print(..., file=sys.stderr))?
+  - No mixed stdout/stderr pollution?
+  - Logging configured properly (not printing to stdout)?
+
+- [ ] **Library Version Compatibility**
+  - New parameters/features available in minimum supported version?
+  - CI uses same library versions as local development?
+  - Backwards-compatible approach used if version varies?
+  - Version constraints documented in pyproject.toml?
+
+- [ ] **Integration Testing**
+  - Command installed via package manager (pip/uv)?
+  - Tests pass with CliRunner AND actual CLI execution?
+  - Tests handle both mixed and separated stderr/stdout?
+  - Environment variables handled correctly?
+
+<example type="bad">
+```python
+# Test only with CliRunner, command may behave differently
+def test_sync():
+    result = runner.invoke(app, ["sync"])
+    data = json.loads(result.stdout)  # May fail if stderr mixed
+```
+</example>
+
+<example type="good">
+```python
+# Test extracts JSON from output (handles mixed streams)
+def test_sync():
+    result = runner.invoke(app, ["sync"])
+    json_start = result.stdout.find('{')
+    data = json.loads(result.stdout[json_start:])  # Robust
+```
+</example>
+
+**Common CLI Issues**:
+
+1. **Stdout Pollution**: Diagnostic messages from imports/libraries print to stdout
+   - **Solution**: Use `print(..., file=sys.stderr)` for all diagnostic output
+   - **Check**: Run command and pipe through `jq` to verify clean JSON
+
+2. **Version Incompatibility**: Using new library features not in CI
+   - **Solution**: Check minimum version or use backwards-compatible approach
+   - **Example**: `CliRunner(mix_stderr=False)` not available in older Click
+
+3. **CliRunner ≠ Real CLI**: Tests pass but actual command fails
+   - **Solution**: Add integration test with actual CLI execution
+   - **Validation**: `uv tool install --editable . && mapify command`
+
+4. **Error Messages in Wrong Stream**: Click/Typer errors go to stderr
+   - **Solution**: Tests should check both stdout and stderr for errors
+   - **Pattern**: `output = result.stdout + getattr(result, 'stderr', '')`
+
+### 7. MAINTAINABILITY
 
 **Maintainability Review**:
 - [ ] **Complexity**
@@ -389,7 +458,7 @@ def process_payment(payment_api):
   - Architecture docs reflect new patterns?
   - Breaking changes documented?
 
-### 7. EXTERNAL DEPENDENCIES (Documentation Review)
+### 8. EXTERNAL DEPENDENCIES (Documentation Review)
 
 <critical>
 When reviewing documentation (tech-design, decomposition, architecture docs), ALWAYS validate external dependencies. Missing CRDs or adapters cause production failures.
@@ -419,7 +488,7 @@ When reviewing documentation (tech-design, decomposition, architecture docs), AL
 ```
 </example>
 
-### 8. DOCUMENTATION CONSISTENCY (CRITICAL)
+### 9. DOCUMENTATION CONSISTENCY (CRITICAL)
 
 <critical>
 Documentation inconsistencies cause incorrect implementations. ALWAYS verify documentation against source of truth. This is a CRITICAL review category.
