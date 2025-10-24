@@ -27,7 +27,7 @@ from mapify_cli import (
     is_git_repo,
 )
 
-runner = CliRunner()
+runner = CliRunner(mix_stderr=False)
 
 
 class TestSSLContext:
@@ -202,8 +202,8 @@ class TestInitCommand:
         # Assert
         assert result.exit_code != 0
         # Typer should reject the unknown option
-        # Check both stdout and output for compatibility across Typer versions
-        output_text = getattr(result, 'output', result.stdout)
+        # Check both stdout and stderr for error message (Typer sends errors to stderr)
+        output_text = result.stdout + (result.stderr if hasattr(result, 'stderr') and result.stderr else '')
         assert "no such option" in output_text.lower() or "unrecognized" in output_text.lower()
 
     @mock.patch("mapify_cli.select_with_arrows")
@@ -929,7 +929,7 @@ class TestPlaybookSubcommands:
             "sections": {
                 "IMPLEMENTATION_PATTERNS": {
                     "bullets": [
-                        {"id": "impl-0001", "content": "Test pattern", "helpful_count": 5}
+                        {"id": "impl-0001", "content": "Test pattern", "helpful_count": 5, "harmful_count": 0, "deprecated": False}
                     ]
                 }
             }
@@ -938,11 +938,15 @@ class TestPlaybookSubcommands:
 
         result = runner.invoke(app, ["playbook", "sync"])
 
-        # Sync might succeed or show "coming soon" message
-        assert result.exit_code in [0, 1]
-        if result.exit_code == 0:
-            # Check if it's implemented or placeholder
-            assert "sync" in result.stdout.lower() or "coming soon" in result.stdout.lower()
+        # Sync command is implemented and returns JSON
+        assert result.exit_code == 0
+        # Should return JSON with threshold, count, and patterns
+        data = json.loads(result.stdout)
+        assert "threshold" in data
+        assert "count" in data
+        assert "patterns" in data
+        # Should find the high-quality pattern (helpful_count=5 >= threshold=5)
+        assert data["count"] >= 1
 
     def test_playbook_sync_not_found(self, tmp_path):
         """Test sync when playbook doesn't exist."""

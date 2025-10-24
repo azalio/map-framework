@@ -28,6 +28,7 @@ if 'HUGGING_FACE_HUB_TOKEN' in os.environ:
 import json
 import hashlib
 import pickle
+import sys
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 import numpy as np
@@ -38,7 +39,7 @@ try:
     SEMANTIC_SEARCH_AVAILABLE = True
 except ImportError:
     SEMANTIC_SEARCH_AVAILABLE = False
-    print("Warning: sentence-transformers not installed. Run: pip install -r requirements-semantic.txt")
+    print("Warning: sentence-transformers not installed. Run: pip install -r requirements-semantic.txt", file=sys.stderr)
 
 
 class SemanticSearchEngine:
@@ -75,9 +76,9 @@ class SemanticSearchEngine:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
         # Load model (downloads ~80MB on first use)
-        print(f"Loading sentence-transformers model: {model_name}...")
+        print(f"Loading sentence-transformers model: {model_name}...", file=sys.stderr)
         self.model = SentenceTransformer(model_name)
-        print("✓ Model loaded successfully")
+        print("✓ Model loaded successfully", file=sys.stderr)
 
         # Cache for embeddings
         self._embedding_cache: Dict[str, np.ndarray] = {}
@@ -90,9 +91,9 @@ class SemanticSearchEngine:
             try:
                 with open(cache_file, 'rb') as f:
                     self._embedding_cache = pickle.load(f)
-                print(f"✓ Loaded {len(self._embedding_cache)} cached embeddings")
+                print(f"✓ Loaded {len(self._embedding_cache)} cached embeddings", file=sys.stderr)
             except Exception as e:
-                print(f"Warning: Could not load cache: {e}")
+                print(f"Warning: Could not load cache: {e}", file=sys.stderr)
                 self._embedding_cache = {}
 
     def _save_cache(self) -> None:
@@ -102,7 +103,7 @@ class SemanticSearchEngine:
             with open(cache_file, 'wb') as f:
                 pickle.dump(self._embedding_cache, f)
         except Exception as e:
-            print(f"Warning: Could not save cache: {e}")
+            print(f"Warning: Could not save cache: {e}", file=sys.stderr)
 
     def _get_cache_key(self, text: str) -> str:
         """Generate cache key for text."""
