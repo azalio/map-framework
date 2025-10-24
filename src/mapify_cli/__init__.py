@@ -1904,15 +1904,26 @@ def playbook_stats():
 def playbook_search(query: str, top_k: int = typer.Option(5, help="Number of results")):
     """Search playbook for relevant patterns"""
     from mapify_cli.playbook_manager import PlaybookManager
-    manager = PlaybookManager(Path.cwd() / ".claude" / "playbook.json")
-    results = manager.get_relevant_bullets(query, top_k=top_k)
-    console.print_json(data={"query": query, "count": len(results), "results": [{"id": b.get("id"), "content": b.get("content")[:100] + "..."} for b in results]})
+    playbook_path = Path.cwd() / ".claude" / "playbook.json"
+    if not playbook_path.exists():
+        console.print("No patterns found (playbook not initialized)")
+        return
+    manager = PlaybookManager(playbook_path)
+    results = manager.get_relevant_bullets(query, limit=top_k)
+    if not results:
+        console.print("No patterns found matching your query")
+    else:
+        console.print_json(data={"query": query, "count": len(results), "results": [{"id": b.get("id"), "content": b.get("content")[:100] + "..."} for b in results]})
 
 @playbook_app.command("sync")
 def playbook_sync(threshold: int = typer.Option(5, help="Minimum helpful count")):
     """Show high-quality patterns ready for cross-project sync"""
     from mapify_cli.playbook_manager import PlaybookManager
-    manager = PlaybookManager(Path.cwd() / ".claude" / "playbook.json")
+    playbook_path = Path.cwd() / ".claude" / "playbook.json"
+    if not playbook_path.exists():
+        console.print_json(data={"status": "error", "message": "Playbook not found"})
+        raise typer.Exit(1)
+    manager = PlaybookManager(playbook_path)
     patterns = manager.get_bullets_for_sync(threshold=threshold)
     console.print_json(data={"threshold": threshold, "count": len(patterns), "patterns": [{"id": p.get("id"), "helpful_count": p.get("helpful_count")} for p in patterns]})
 
