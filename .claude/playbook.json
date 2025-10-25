@@ -4,8 +4,8 @@
     "project": "map-framework",
     "description": "ACE-style comprehensive playbook for MAP Framework development",
     "created_at": "2025-10-10T00:00:00Z",
-    "last_updated": "2025-10-25T18:45:00.541231+00:00",
-    "total_bullets": 64,
+    "last_updated": "2025-10-25T19:32:35.864754+00:00",
+    "total_bullets": 70,
     "sections_count": 11,
     "top_k": 5,
     "version": 3
@@ -1482,6 +1482,164 @@
           ],
           "helpful_count": 1,
           "last_used": "2025-10-24T11:00:00Z"
+        },
+        {
+          "id": "doc-0005",
+          "content": "Executable Documentation with Binary Verification: For multi-stage workflows (releases, deployments, migrations), structure documentation as executable runbooks with copy-pasteable command sequences and binary success criteria. Each section must have: (1) Exact commands (no placeholders, use example values), (2) Expected Results checkboxes with measurable criteria (100% test pass, no errors, specific file exists), (3) Time-aware verification for async operations (sleep commands before checking distributed state like PyPI indexing). Structure enables both learning (detailed explanations) and execution (appendix runbook with consolidated commands). Pattern proven: 350-line RELEASING.md with 18 checkboxes across 5 sections achieved 9.1/10 quality score. Users can execute workflow mechanically by following checkboxes without interpretation.",
+          "code_example": "```markdown\n## Pre-Release Checklist\n\n### 1. Code Quality Checks\n\n```bash\n# Run full CI/CD test suite locally\npytest tests/ --cov=src/mapify_cli --cov-report=term-missing\n\n# Run linters\nblack src/ tests/ --check\nruff check src/ tests/\n```\n\n**Expected Results**:\n- \u2705 All tests pass (100% success rate)\n- \u2705 No linting errors\n- \u2705 Type checking passes\n\n### 2. Time-Aware Verification (Async Systems)\n\n```bash\n# Wait for PyPI to process upload (2-5 min indexing delay)\nsleep 120\n\n# Verify package indexed\ncurl -f https://pypi.org/project/mapify-cli/1.0.1/ || echo \"\u274c Not indexed yet\"\npip index versions mapify-cli | grep 1.0.1\n```\n\n## Appendix: Release Workflow Reference\n\n```bash\n# Complete command sequence (copy-paste execution mode)\ngit checkout main && git pull origin main\npytest tests/ --cov\n./scripts/bump-version.sh patch\ngit push origin main && git push origin v1.0.1\ngh release create v1.0.1 --title \"v1.0.1\" --notes \"$(sed -n '/## \\\\[1.0.1\\\\]/,/## \\\\[/p' CHANGELOG.md | head -n -1)\"\ngh run watch\nsleep 120 && pip index versions mapify-cli | grep 1.0.1\n```\n```",
+          "tags": [
+            "documentation",
+            "runbooks",
+            "workflows",
+            "executable",
+            "verification",
+            "binary-criteria",
+            "releases",
+            "bash",
+            "markdown"
+          ],
+          "related_bullets": [
+            "arch-0004",
+            "impl-0010",
+            "doc-0002"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T19:32:35.864754+00:00",
+          "last_used_at": "2025-10-25T19:32:35.864754+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "doc-0006",
+          "content": "Single Source of Truth with Explicit Derivation: In documentation with multiple artifact types (CHANGELOG, git tags, release notes), declare ONE canonical source and document explicit commands for deriving all other artifacts. This prevents content drift where artifacts diverge over time. Pattern: CHANGELOG.md as single source of truth \u2192 git tag annotation extracted via sed, GitHub release notes extracted via sed, version strings extracted via grep. Derivation commands must be copy-pasteable and deterministic (no manual text editing). Monitor caught drift where command extracted from wrong source - explicit derivation commands make errors detectable. Document derivation commands adjacent to artifact usage so maintainers see how to regenerate consistently.",
+          "code_example": "```markdown\n## Single Source of Truth: CHANGELOG.md\n\n**All release artifacts derive from CHANGELOG.md using these commands:**\n\n### Derive Git Tag Annotation\n\n```bash\n# Extract version section from CHANGELOG\nVERSION=\"1.0.1\"\nsed -n \"/## \\\\[$VERSION\\\\]/,/## \\\\[/p\" CHANGELOG.md | head -n -1 > tag-message.txt\n\n# Create annotated tag with CHANGELOG excerpt\ngit tag -a \"v$VERSION\" -F tag-message.txt\n```\n\n### Derive GitHub Release Notes\n\n```bash\n# Same extraction pattern ensures consistency\ngh release create v1.0.1 \\\n  --title \"MAP Framework v1.0.1\" \\\n  --notes \"$(sed -n '/## \\\\[1.0.1\\\\]/,/## \\\\[/p' CHANGELOG.md | head -n -1)\"\n```\n\n### Derive Version Strings\n\n```bash\n# Extract version from CHANGELOG header\ngrep -m 1 \"## \\\\[\" CHANGELOG.md | sed 's/.*\\\\[\\\\(.*\\\\)\\\\].*/\\\\1/'\n\n# Verify matches pyproject.toml\ngrep 'version = ' pyproject.toml | sed 's/.*\"\\\\(.*\\\\)\".*/\\\\1/'\n```\n\n**Why This Works:**\n- \u274c Manual copy-paste \u2192 content drift (typos, omissions)\n- \u2705 Explicit derivation \u2192 deterministic consistency\n- \u2705 Commands documented \u2192 maintainers regenerate correctly\n- \u2705 Drift detection \u2192 Monitor catches wrong source usage\n```",
+          "tags": [
+            "documentation",
+            "single-source-of-truth",
+            "derivation",
+            "consistency",
+            "changelog",
+            "releases",
+            "bash",
+            "sed",
+            "grep"
+          ],
+          "related_bullets": [
+            "doc-0004",
+            "impl-0018"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T19:32:35.864754+00:00",
+          "last_used_at": "2025-10-25T19:32:35.864754+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "doc-0007",
+          "content": "Checklist-Troubleshooting Symmetry: Structure troubleshooting sections to mirror pre-flight checklists with 1:1 mapping. For each pre-flight checkpoint (e.g., 'Git Repository State', 'PyPI OIDC Setup'), create corresponding troubleshooting subsection addressing failures at that checkpoint. This symmetry reduces cognitive load - users map error symptoms to relevant troubleshooting section without searching. Pattern: 5 pre-release sections (Code Quality, Documentation, Dependencies, Git State, PyPI Setup) \u2192 4 troubleshooting categories by component (Version Validation, Git State, CI/CD, PyPI OIDC). Include debug checklist mirroring pre-flight checkbox structure. Users follow same mental model for success path and failure recovery.",
+          "code_example": "```markdown\n## Pre-Release Checklist\n\n### 4. Git Repository State\n\n```bash\n# Verify on main branch\ngit branch --show-current\n# Expected: main\n\n# Verify working directory is clean\ngit status\n# Expected: \"nothing to commit, working tree clean\"\n```\n\n**Requirements**:\n- \u2705 On `main` branch\n- \u2705 Working directory is clean (no uncommitted changes)\n- \u2705 Local branch is up to date with origin/main\n\n---\n\n## Troubleshooting\n\n### Git State Issues (mirrors section 4 above)\n\n#### Issue: \"Git working directory is not clean\"\n\n```bash\n# Check what's changed (same verification command)\ngit status\n\n# Fix: Commit changes\ngit add .\ngit commit -m \"chore: prepare for release\"\n```\n\n#### Issue: \"Not on main branch\"\n\n```bash\n# Check current branch (same verification command)\ngit branch --show-current\n\n# Fix: Switch to main\ngit checkout main\ngit pull origin main\n```\n\n### Debug Checklist (mirrors pre-flight structure)\n\n2. **Git State** (maps to Pre-Release Checklist #4):\n   - [ ] On `main` branch\n   - [ ] Working directory clean\n   - [ ] Tag pushed to origin\n```",
+          "tags": [
+            "documentation",
+            "troubleshooting",
+            "checklists",
+            "symmetry",
+            "user-experience",
+            "debugging",
+            "workflows",
+            "releases"
+          ],
+          "related_bullets": [
+            "arch-0004",
+            "impl-0010",
+            "doc-0005"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T19:32:35.864754+00:00",
+          "last_used_at": "2025-10-25T19:32:35.864754+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "doc-0008",
+          "content": "Testable Documentation with Programmatic Verification: Design documentation examples with binary success criteria that can be programmatically verified via bash commands. Structure: (1) Command example, (2) Expected output/result with exact values (not 'success' - specify '100% test pass', 'exit code 0', 'file exists at /path'), (3) Verification command to check actual matches expected. This enables documentation CI/CD - automated verification prevents documentation rot where examples break as code evolves. Use grep/test commands for verification: 'pytest --cov && echo $? # Expected: 0', 'curl -f URL || echo FAILED'. Pattern proven: 18 checkboxes in RELEASING.md with measurable criteria (100% test pass, no errors, specific URLs) are programmatically verifiable.",
+          "code_example": "```markdown\n## Code Quality Checks\n\n### Example: Run Test Suite\n\n```bash\n# Command with inline verification\npytest tests/ --cov=src/mapify_cli --cov-report=term-missing\necho \"Exit code: $?\"  # Verification point\n```\n\n**Expected Results** (programmatically verifiable):\n- \u2705 All tests pass (100% success rate) \u2192 Verify: `pytest --tb=no -q && echo PASS || echo FAIL`\n- \u2705 Coverage > 80% \u2192 Verify: `pytest --cov --cov-report=term | grep TOTAL | awk '{print $4}' | grep -E '^(8[0-9]|9[0-9]|100)%$'`\n- \u2705 Exit code 0 \u2192 Verify: `pytest; echo $?` equals `0`\n\n### Example: Package Verification (Async Systems)\n\n```bash\n# Time-aware verification for distributed systems\nsleep 120  # Wait for PyPI indexing\ncurl -f https://pypi.org/project/mapify-cli/1.0.1/ && echo \"\u2705 VERIFIED\" || echo \"\u274c FAILED\"\npip index versions mapify-cli | grep -q 1.0.1 && echo \"\u2705 INDEXED\" || echo \"\u274c NOT FOUND\"\n```\n\n**Expected Results**:\n- \u2705 HTTP 200 response \u2192 Verify: `curl -f URL` (exit 0)\n- \u2705 Version 1.0.1 appears in index \u2192 Verify: `pip index versions PKG | grep -q VERSION`\n\n## Documentation CI/CD Pipeline\n\n```yaml\n# .github/workflows/docs-verification.yml\n- name: Verify documentation examples\n  run: |\n    # Extract and execute verification commands from docs\n    grep -A 5 \"Expected Results\" RELEASING.md | grep \"Verify:\" | while read cmd; do\n      eval \"$cmd\" || exit 1\n    done\n```\n```",
+          "tags": [
+            "documentation",
+            "testing",
+            "verification",
+            "ci-cd",
+            "binary-criteria",
+            "automation",
+            "bash",
+            "programmatic"
+          ],
+          "related_bullets": [
+            "doc-0005",
+            "impl-0027",
+            "test-0002"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T19:32:35.864754+00:00",
+          "last_used_at": "2025-10-25T19:32:35.864754+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "doc-0009",
+          "content": "Consequence Documentation for Rollback Procedures: When documenting rollback/recovery procedures for distributed systems, explicitly document blast radius with concrete consequences using \u2705/\u274c markers. Structure: (1) Rollback command, (2) What DOES revert (\u2705 markers), (3) What DOES NOT revert (\u274c markers with persistence explanation), (4) Impact on dependent systems. This prevents dangerous assumptions during incident response - operators understand exactly what rollback achieves vs what requires manual cleanup. Pattern: PyPI package yank documented with 3 explicit consequences ('pip install PKG will skip' \u2705, 'pip install PKG==VER still works' \u2705, 'Package files remain available' \u2705). Non-reversible operations (database migrations, external API state) require consequence documentation to prevent data loss from incorrect rollback assumptions.",
+          "code_example": "```markdown\n## Rollback Procedures\n\n### Scenario 2: Package Published to PyPI with Bug\n\n#### Option A: Yank the Release (Recommended)\n\n**Command**:\n```bash\n# Via PyPI web interface (no CLI equivalent)\n# 1. Navigate to https://pypi.org/manage/project/mapify-cli/release/1.0.1/\n# 2. Click \"Options\" \u2192 \"Yank release\"\n# 3. Provide reason: \"Critical bug in config parser\"\n```\n\n**Consequences** (blast radius documentation):\n\n\u2705 **What DOES Change:**\n- `pip install mapify-cli` will skip v1.0.1 (resolves to latest non-yanked)\n- PyPI UI shows \"Yanked\" label on release page\n- Release marked as unsuitable for new installations\n\n\u2705 **What PERSISTS (Does NOT revert):**\n- `pip install mapify-cli==1.0.1` still works (explicit version bypasses yank)\n- Package files remain downloadable (tar.gz, wheel)\n- Existing installations are NOT affected (no force-uninstall)\n- Git tag v1.0.1 still exists (PyPI yank != git rollback)\n\n\u274c **What Requires Manual Cleanup:**\n- Documentation referencing v1.0.1 (update to v1.0.2)\n- CI/CD pipelines pinned to v1.0.1 (update pins)\n- User support tickets (proactive communication)\n\n**Dependent System Impact**:\n- Downstream projects with `mapify-cli>=1.0.0` \u2192 Will skip 1.0.1, use 1.0.2\n- Downstream projects with `mapify-cli==1.0.1` \u2192 Still broken, require manual update\n- Docker images with `pip install mapify-cli==1.0.1` \u2192 Still build, contain bug\n```",
+          "tags": [
+            "documentation",
+            "rollback",
+            "incident-response",
+            "distributed-systems",
+            "blast-radius",
+            "consequences",
+            "pypi",
+            "releases",
+            "recovery"
+          ],
+          "related_bullets": [
+            "doc-0005",
+            "impl-0008"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T19:32:35.864754+00:00",
+          "last_used_at": "2025-10-25T19:32:35.864754+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "doc-0010",
+          "content": "Dual-Mode Documentation: Learning vs Execution: For complex workflows (releases, deployments, migrations), provide both learning mode (detailed explanations) and execution mode (consolidated runbook) in single document. Structure: (1) Main sections with detailed explanations, multiple examples, rationale, troubleshooting (learning mode - first-time users), (2) Appendix with consolidated command sequence, no explanations, copy-pasteable (execution mode - repeat operators). Learning mode frontloads cognitive investment (understand workflow), execution mode minimizes friction (run workflow quickly). Pattern proven: RELEASING.md with 8 detailed sections (350 lines) + appendix runbook (32-line command sequence). Separation prevents expert users from scrolling through explanations while preserving learning context for novices. Use clear section headers ('Appendix: Release Workflow Reference') to signal mode switch.",
+          "code_example": "```markdown\n# Release Process Documentation\n\n## 1. Pre-Release Checklist (LEARNING MODE)\n\nBefore starting the release process, verify all requirements are met.\n\n### 1.1 Code Quality Checks\n\n**Why**: Ensures production-ready code quality before tagging release.\n\n**How**:\n```bash\npytest tests/ --cov=src/mapify_cli --cov-report=term-missing\nblack src/ tests/ --check\nruff check src/ tests/\n```\n\n**Expected Results**:\n- \u2705 All tests pass (100% success rate)\n- \u2705 No linting errors\n\n**Troubleshooting**:\n- If tests fail: Fix failing tests before proceeding\n- If linter errors: Run `black src/ tests/` to auto-format\n\n### 1.2 Documentation Review\n\n**Why**: Users rely on accurate installation instructions.\n\n**How**:\n```bash\ngrep -A 20 \"## \\\\[Unreleased\\\\]\" CHANGELOG.md\n```\n\n**Expected Results**:\n- \u2705 CHANGELOG.md has [Unreleased] section with all changes\n\n## 2. Version Bumping (LEARNING MODE)\n\n### Semantic Versioning\n\nMAP Framework follows [Semantic Versioning 2.0.0](https://semver.org/):\n- **MAJOR** (X.0.0): Breaking changes\n- **MINOR** (x.Y.0): New features\n- **PATCH** (x.y.Z): Bug fixes\n\n### Version Bump Script\n\n**Usage**:\n```bash\n./scripts/bump-version.sh patch  # or minor/major\n```\n\n**What it does**:\n1. Validates version format\n2. Updates pyproject.toml\n3. Updates CHANGELOG.md\n4. Creates git commit and tag\n\n---\n\n## Appendix: Release Workflow Reference (EXECUTION MODE)\n\n**Use this for repeat releases - copy-paste command sequence.**\n\n```bash\n# Pre-checks\ngit checkout main && git pull origin main\ngit status  # Must be clean\npytest tests/ --cov && black src/ tests/ --check && ruff check src/ tests/\ngrep -A 20 \"## \\\\[Unreleased\\\\]\" CHANGELOG.md  # Verify changes documented\n\n# Version bump\n./scripts/bump-version.sh patch  # or minor/major\ngit show  # Review commit\n\n# Push and release\ngit push origin main\ngit push origin v1.0.1  # Replace with actual version\ngh release create v1.0.1 \\\n  --title \"MAP Framework v1.0.1\" \\\n  --notes \"$(sed -n '/## \\\\[1.0.1\\\\]/,/## \\\\[/p' CHANGELOG.md | head -n -1)\"\n\n# Monitor and verify\ngh run watch\nsleep 120\npip index versions mapify-cli | grep 1.0.1  # Verify PyPI indexing\n```\n\n**Execution checklist** (binary verification):\n- [ ] All pre-checks passed (no errors)\n- [ ] Git push succeeded (no rejections)\n- [ ] GitHub release created (check URL)\n- [ ] CI/CD workflow passed (gh run watch shows success)\n- [ ] PyPI package indexed (pip index returns 1.0.1)\n```",
+          "tags": [
+            "documentation",
+            "dual-mode",
+            "runbooks",
+            "learning",
+            "execution",
+            "workflows",
+            "releases",
+            "user-experience",
+            "progressive-disclosure"
+          ],
+          "related_bullets": [
+            "doc-0005",
+            "doc-0002",
+            "doc-0007"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T19:32:35.864754+00:00",
+          "last_used_at": "2025-10-25T19:32:35.864754+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
         }
       ]
     },
