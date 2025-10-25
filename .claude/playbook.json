@@ -4,8 +4,8 @@
     "project": "map-framework",
     "description": "ACE-style comprehensive playbook for MAP Framework development",
     "created_at": "2025-10-10T00:00:00Z",
-    "last_updated": "2025-10-25T21:15:57.637760+00:00",
-    "total_bullets": 77,
+    "last_updated": "2025-10-25T21:43:28.723814+00:00",
+    "total_bullets": 74,
     "sections_count": 11,
     "top_k": 5,
     "version": 3
@@ -655,28 +655,6 @@
           "deprecation_reason": null
         },
         {
-          "id": "impl-0018",
-          "content": "Actor Tool Invocation Verification with Git Diff: Actors sometimes describe file changes without invoking Edit/Write tools, claiming completion without executing modifications. Monitor MUST verify actual file state using git diff to detect claimed-but-not-executed changes. Pattern: Actor claims 'Added [1.0.0] section to CHANGELOG.md' \u2192 Monitor runs 'git diff CHANGELOG.md' \u2192 No changes shown \u2192 Reject with 'CRITICAL: Changes NOT applied, git diff shows no modifications'. Git diff validation catches both missing tool invocations AND incorrect tool choices (Write instead of Edit). This enforces tool invocation discipline - descriptions are not substitutes for actual Edit/Write/Bash execution.",
-          "code_example": "```python\n# \u274c ACTOR ANTI-PATTERN - claiming without executing\n# Actor output: \"I added [1.0.0] section to CHANGELOG.md\"\n# (No Edit tool call in Actor's actions, OR used Write claiming 'creation')\n\n# \u2705 MONITOR VALIDATION - git diff verification\nimport subprocess\n\ndef validate_actor_file_changes(actor_output, file_path, expected_change_description):\n    \"\"\"Verify Actor's claimed file changes using git diff.\n\n    Returns:\n        dict: {\"valid\": bool, \"reason\": str, \"diff_output\": str}\n    \"\"\"\n    # Run git diff to check actual changes\n    result = subprocess.run(\n        ['git', 'diff', file_path],\n        capture_output=True,\n        text=True\n    )\n    diff_output = result.stdout\n\n    if not diff_output.strip():\n        return {\n            \"valid\": False,\n            \"reason\": f\"CRITICAL: Changes NOT applied. Actor claimed '{expected_change_description}' but git diff {file_path} shows no modifications. Actor likely described changes without invoking Edit/Write tool, OR used wrong tool (Write for existing file).\",\n            \"diff_output\": \"(empty - no changes detected)\"\n        }\n\n    # Optionally verify specific content in diff\n    # For CHANGELOG: check if [1.0.0] appears in added lines\n    added_lines = [line for line in diff_output.split('\\n') if line.startswith('+')]\n\n    return {\n        \"valid\": True,\n        \"reason\": f\"Changes verified: git diff shows {len(added_lines)} added lines\",\n        \"diff_output\": diff_output\n    }\n\n# Usage in Monitor:\nvalidation = validate_actor_file_changes(\n    actor_output,\n    file_path=\"CHANGELOG.md\",\n    expected_change_description=\"Added [1.0.0] initial release section\"\n)\n\nif not validation[\"valid\"]:\n    raise MonitorRejection(validation[\"reason\"])\n```",
-          "helpful_count": 0,
-          "harmful_count": 0,
-          "created_at": "2025-10-23T12:21:40.807543Z",
-          "last_used_at": "2025-10-25T21:15:57.637754+00:00",
-          "related_bullets": [
-            "impl-0001",
-            "impl-0003"
-          ],
-          "tags": [
-            "map-framework",
-            "actor",
-            "monitor",
-            "validation",
-            "tool-invocation"
-          ],
-          "deprecated": false,
-          "deprecation_reason": null
-        },
-        {
           "id": "impl-0019",
           "content": "Idempotent Documentation Scripts: All user-facing scripts in documentation that modify environment configuration (PATH, shell configs, Windows registry) MUST include idempotency checks before making changes. Users frequently re-run documentation commands during troubleshooting. Check if change already applied (e.g., PATH already contains target directory, registry key exists with correct value) and skip modification if present. Always use conditional logic: 'if not already configured, then configure'. This prevents duplicate PATH entries, redundant registry keys, and broken shell configurations from repeated execution. Critical for onboarding docs where users may restart installation multiple times.",
           "code_example": "```powershell\n# \u274c NOT IDEMPOTENT - adds duplicate PATH entries\n$newPath = \"C:\\\\Program Files\\\\MyApp\\\\bin\"\n[Environment]::SetEnvironmentVariable(\n    \"PATH\",\n    $env:PATH + \";\" + $newPath,\n    [EnvironmentVariableTarget]::User\n)\n\n# \u2705 IDEMPOTENT - checks before modifying\n$newPath = \"C:\\\\Program Files\\\\MyApp\\\\bin\"\n$currentPath = [Environment]::GetEnvironmentVariable(\"PATH\", [EnvironmentVariableTarget]::User)\n\nif ($currentPath -notlike \"*$newPath*\") {\n    Write-Host \"Adding $newPath to PATH...\"\n    [Environment]::SetEnvironmentVariable(\n        \"PATH\",\n        $currentPath + \";\" + $newPath,\n        [EnvironmentVariableTarget]::User\n    )\n} else {\n    Write-Host \"$newPath already in PATH, skipping\"\n}\n```",
@@ -790,10 +768,10 @@
             "consistency",
             "workflow_call"
           ],
-          "helpful_count": 0,
+          "helpful_count": 1,
           "harmful_count": 0,
           "created_at": "2025-10-25T13:19:45.860329+00:00",
-          "last_used_at": "2025-10-25T13:19:45.860329+00:00",
+          "last_used_at": "2025-10-25T21:43:28.723814+00:00",
           "related_bullets": [],
           "deprecated": false,
           "deprecation_reason": null
@@ -1212,26 +1190,6 @@
           "deprecation_reason": null
         },
         {
-          "id": "test-0001",
-          "content": "Bash Automation Script Testing: Production automation scripts (>200 lines, critical workflows) require automated tests to prevent silent failures and regression. Use bats-core testing framework (Bash Automated Testing System) for structured test suites with TAP output. Test structure: (1) Setup - create temp directories, mock files, (2) Execution - run script function with test inputs, (3) Assertions - verify exit codes, output patterns, file state using [[ conditions ]], (4) Teardown - cleanup temp resources. Pattern proven: bump_version.sh untested script had cross-platform sed bug caught only in production. Adding bats tests with GNU/BSD mocking caught issue in CI before release. Install: brew install bats-core (macOS) or apt install bats (Linux).",
-          "code_example": "```bash\n# test_bump_version.bats - bats test suite\n#!/usr/bin/env bats\n\nsetup() {\n  # Create temporary test directory\n  export TEST_DIR=\"$(mktemp -d)\"\n  cd \"$TEST_DIR\"\n  \n  # Mock project files\n  echo '__version__ = \"1.0.0\"' > __init__.py\n  echo 'version = \"1.0.0\"' > pyproject.toml\n  git init -q\n  git config user.name \"Test\"\n  git config user.email \"test@example.com\"\n}\n\nteardown() {\n  # Cleanup temp directory\n  rm -rf \"$TEST_DIR\"\n}\n\n# Test: Valid semver format accepted\n@test \"bump_version accepts valid semver\" {\n  run bump_version \"1.2.3\"\n  [[ \"$status\" -eq 0 ]]\n  [[ \"$output\" =~ \"\u2705 All gates passed\" ]]\n}\n\n# Test: Invalid semver rejected (leading zero)\n@test \"bump_version rejects leading zeros\" {\n  run bump_version \"01.2.3\"\n  [[ \"$status\" -eq 1 ]]\n  [[ \"$output\" =~ \"\u274c Gate 1 Failed: Invalid semver\" ]]\n}\n\n# Test: Version mismatch detection\n@test \"bump_version detects version inconsistency\" {\n  echo 'version = \"1.5.0\"' > pyproject.toml  # Mismatch with __init__.py\n  run bump_version \"1.2.3\"\n  [[ \"$status\" -eq 1 ]]\n  [[ \"$output\" =~ \"\u274c Gate 3 Failed: Version mismatch\" ]]\n}\n\n# Test: Post-execution verification\n@test \"bump_version creates correct git tag\" {\n  run bump_version \"1.2.3\"\n  TAG=$(git describe --tags --exact-match)\n  [[ \"$TAG\" == \"v1.2.3\" ]]\n}\n\n# Run tests: bats test_bump_version.bats\n# Output:\n#   \u2713 bump_version accepts valid semver\n#   \u2713 bump_version rejects leading zeros\n#   \u2713 bump_version detects version inconsistency\n#   \u2713 bump_version creates correct git tag\n#   4 tests, 0 failures\n```",
-          "tags": [
-            "bash",
-            "testing",
-            "bats",
-            "automation",
-            "ci",
-            "validation"
-          ],
-          "helpful_count": 0,
-          "harmful_count": 0,
-          "created_at": "2025-10-25T18:45:00.541231+00:00",
-          "last_used_at": "2025-10-25T18:45:00.541231+00:00",
-          "related_bullets": [],
-          "deprecated": false,
-          "deprecation_reason": null
-        },
-        {
           "id": "test-0016",
           "content": "Automation Format Validation with Target Tool Patterns: Before committing structured files consumed by automation scripts (CHANGELOG.md, package.json, pyproject.toml), validate format using SAME extraction patterns that automation uses. Pattern: CHANGELOG.md consumed by bump-version.sh using 'sed -n /## \\\\[1.0.0\\\\]/,/## \\\\[/p' \u2192 Before committing, test extraction with identical sed/grep commands \u2192 Verify output matches expectations. This prevents silent automation failures where file parses correctly for humans but breaks automation regex. Predictor role ideal for this validation - simulates automation environment before deployment.",
           "code_example": "```bash\n# CHANGELOG.md automation validation example\n# bump-version.sh uses this pattern to extract release notes:\n# sed -n \"/## \\\\[$VERSION\\\\]/,/## \\\\[/p\" CHANGELOG.md | head -n -1\n\n# \u2705 VALIDATION TEST - run BEFORE committing CHANGELOG.md\nVERSION=\"1.0.0\"\n\n# Test extraction pattern (same command automation uses)\nRELEASE_NOTES=$(sed -n \"/## \\\\[$VERSION\\\\]/,/## \\\\[/p\" CHANGELOG.md | head -n -1)\n\necho \"Extracted release notes:\"\necho \"$RELEASE_NOTES\"\n\n# Validate extraction succeeded\nif [ -z \"$RELEASE_NOTES\" ]; then\n  echo \"\u274c VALIDATION FAILED: sed extraction returned empty (automation will fail)\"\n  echo \"Check CHANGELOG.md format: ## [$VERSION] header must exist\"\n  exit 1\nfi\n\n# Validate format expectations\nif ! echo \"$RELEASE_NOTES\" | grep -q \"## \\\\[$VERSION\\\\]\"; then\n  echo \"\u274c VALIDATION FAILED: version header missing in extraction\"\n  exit 1\nfi\n\necho \"\u2705 VALIDATION PASSED: CHANGELOG.md format compatible with bump-version.sh automation\"\n```",
@@ -1337,31 +1295,6 @@
           ]
         },
         {
-          "id": "tool-0001",
-          "content": "Platform-Specific Path Formatting in Documentation: When showing file paths or directory navigation in documentation examples, always use platform-native conventions in examples for that platform. Windows: use backslashes (C:\\\\Users\\\\username\\\\file.txt) and drive letters. Unix/Linux/macOS: use forward slashes (/Users/username/file.txt) and no drive letters. In cross-platform documentation, show both formats or use platform-agnostic representations ($HOME, %USERPROFILE%). Never show Unix paths in Windows sections or vice versa - this confuses users and causes copy-paste errors. Tools like PowerShell support forward slashes internally but documentation should match user expectations and platform conventions for clarity.",
-          "code_example": "```markdown\n<!-- \u274c BAD - Unix path in Windows docs -->\n## Windows Setup\nNavigate to `/Users/username/.config/myapp` and edit config.json\n<!-- User expects: C:\\\\Users\\\\username\\\\.config\\\\myapp -->\n\n<!-- \u2705 GOOD - platform-native paths -->\n## Windows Setup  \nNavigate to `C:\\\\Users\\\\<username>\\\\.config\\\\myapp` and edit config.json\n\n## macOS Setup\nNavigate to `/Users/<username>/.config/myapp` and edit config.json\n\n## Linux Setup  \nNavigate to `/home/<username>/.config/myapp` or `$HOME/.config/myapp` and edit config.json\n\n<!-- \u2705 ALSO GOOD - platform-agnostic when possible -->\n## All Platforms\nNavigate to your config directory:\n- Windows: `%USERPROFILE%\\\\.config\\\\myapp`  \n- Unix/macOS: `$HOME/.config/myapp`\n```",
-          "helpful_count": 0,
-          "harmful_count": 0,
-          "created_at": "2025-10-23T15:34:43.387375Z",
-          "last_used_at": "2025-10-23T15:34:43.387376Z",
-          "related_bullets": [
-            "doc-0002"
-          ],
-          "tags": [
-            "path-formatting",
-            "documentation",
-            "platform-specific",
-            "windows",
-            "unix",
-            "macos",
-            "linux",
-            "conventions",
-            "user-experience"
-          ],
-          "deprecated": false,
-          "deprecation_reason": null
-        },
-        {
           "id": "tool-0013",
           "content": "Bulk Text Replacement: sed vs Edit Tool Trade-offs: For 50+ identical replacements across multiple files, use sed with git verification rather than individual Edit tool calls. Pattern: (1) Run sed with backup: 'sed -i.bak s/old/new/g files', (2) Use git diff for sampling verification, (3) Create descriptive commit with counts. Benefits: 10x faster than Edit calls, atomic operation, easy rollback. Limitations: sed can't handle context-aware changes. Decision criteria: Use sed when replacement is purely textual (command syntax, import paths), use Edit when replacement requires code understanding (refactoring logic, updating arguments). ALWAYS verify with git diff before committing sed changes.",
           "tags": [
@@ -1396,23 +1329,44 @@
           "deprecation_reason": null
         },
         {
-          "id": "tool-0001",
-          "content": "Cross-Platform Sed Compatibility: GNU sed (Linux) and BSD sed (macOS) have incompatible in-place edit syntax. GNU uses -i with optional backup suffix: sed -i.bak or sed -i ''. BSD requires argument even if empty: sed -i '' or sed -i '.bak'. Use sed --version to detect GNU (prints version) vs BSD (exits with error). When editing files with special regex chars (dots, slashes), escape them: sed 's/example\\.com/new\\.com/g'. Pattern proven: script worked on Linux but failed silently on macOS due to -i syntax mismatch. Always test cross-platform scripts on both GNU and BSD environments.",
-          "code_example": "```bash\n# \u274c INCORRECT - Linux-only syntax fails on macOS\nsed -i 's/old/new/g' config.yaml\n# macOS error: \"sed: 1: 'config.yaml': extra characters at the end of command\"\n\n# \u2705 CORRECT - Cross-platform detection and compatibility\nif sed --version >/dev/null 2>&1; then\n  # GNU sed (Linux)\n  SED_INPLACE=\"sed -i\"\nelse\n  # BSD sed (macOS)\n  SED_INPLACE=\"sed -i ''\"\nfi\n\n# Portable usage with regex escaping\n$SED_INPLACE 's/example\\.com/new\\.com/g' config.yaml\n$SED_INPLACE 's|/old/path|/new/path|g' paths.txt  # Use | delimiter for paths\n\n# Verification after edit\ngrep -q 'new\\.com' config.yaml && echo \"\u2705 Updated\" || echo \"\u274c Failed\"\n```",
+          "id": "tool-0078",
+          "content": "Self-Documenting Workflow Configuration: Embed third-party service setup instructions (OIDC trusted publishing, webhooks, API keys) directly in workflow/script header comments with EXACT project-specific values. Include service URL, required fields (repository owner, workflow name, environment), and step-by-step setup process. This eliminates wiki hunting and prevents configuration drift when onboarding new maintainers. Pattern particularly valuable for one-time setups that are infrequently modified.",
+          "code_example": "```yaml\n# \u274c POOR - external documentation link (breaks when wiki moves)\n# Setup: See https://wiki.example.com/oidc-setup\nname: Publish to TestPyPI\njobs:\n  publish:\n    runs-on: ubuntu-latest\n\n# \u2705 GOOD - embedded setup instructions with project values\n# TestPyPI Trusted Publishing Setup (One-time configuration):\n# 1. Navigate to https://test.pypi.org/manage/account/publishing/\n# 2. Click \"Add a new pending publisher\"\n# 3. Fill in these EXACT values:\n#    - PyPI Project Name: mapify-cli\n#    - Owner: azalio\n#    - Repository name: map-framework\n#    - Workflow name: test-pypi.yml\n#    - Environment name: (leave empty)\n# 4. Save configuration\n# 5. First workflow run will establish trust, subsequent runs auto-authenticate\n\nname: Publish to TestPyPI\non:\n  workflow_dispatch:\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    permissions:\n      id-token: write  # OIDC authentication\n      contents: read\n```",
           "tags": [
-            "bash",
-            "sed",
-            "cross-platform",
-            "gnu",
-            "bsd",
-            "macos",
-            "linux"
+            "github-actions",
+            "oidc",
+            "documentation",
+            "self-documenting",
+            "onboarding"
+          ],
+          "related_bullets": [
+            "tool-0001",
+            "doc-0008"
           ],
           "helpful_count": 0,
           "harmful_count": 0,
-          "created_at": "2025-10-25T18:45:00.541231+00:00",
-          "last_used_at": "2025-10-25T18:45:00.541231+00:00",
+          "created_at": "2025-10-25T21:42:37.952230+00:00",
+          "last_used_at": "2025-10-25T21:42:37.952230+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "tool-0079",
+          "content": "Native Parser for Configuration Extraction: When CI workflows need values from configuration files (pyproject.toml, package.json, Cargo.toml), use language-native parsers instead of grep/sed/awk. Regex-based extraction breaks on edge cases (multiline strings, escaped quotes, comments, nested structures). Python tomllib (stdlib since 3.11) for TOML, jq for JSON, yq for YAML. Parse once, extract multiple fields. Pattern prevents fragile pipelines that break on legitimate config changes.",
+          "code_example": "```yaml\n# \u274c FRAGILE - regex extraction breaks on edge cases\n- name: Extract package metadata\n  run: |\n    PKG_NAME=$(grep '^name = ' pyproject.toml | cut -d'\"' -f2)\n    # Breaks if: name = \"pkg-name\"  # comment\n    # Breaks if: name = \"pkg\\\"name\"  # escaped quote\n    # Breaks if: multiline value\n\n# \u2705 ROBUST - native TOML parser\n- name: Extract package metadata\n  run: |\n    python3 << 'EOF'\n    import tomllib\n    import sys\n\n    with open('pyproject.toml', 'rb') as f:\n        cfg = tomllib.load(f)\n\n    # Extract multiple fields in one parse\n    print(f\"PKG_NAME={cfg['project']['name']}\")\n    print(f\"PKG_VERSION={cfg['project']['version']}\")\n    print(f\"PYTHON_REQUIRES={cfg['project']['requires-python']}\")\n    EOF\n  # Handles all edge cases: escapes, multiline, comments, nested dicts\n\n# Alternative for JSON (package.json)\n- name: Extract from package.json\n  run: |\n    PKG_NAME=$(jq -r '.name' package.json)\n    PKG_VERSION=$(jq -r '.version' package.json)\n\n# Alternative for YAML (using yq)\n- name: Extract from config.yml\n  run: |\n    APP_NAME=$(yq '.app.name' config.yml)\n```",
+          "tags": [
+            "ci-cd",
+            "parsing",
+            "toml",
+            "python",
+            "configuration",
+            "robustness"
+          ],
           "related_bullets": [],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T21:42:37.952230+00:00",
+          "last_used_at": "2025-10-25T21:42:37.952230+00:00",
           "deprecated": false,
           "deprecation_reason": null
         }
@@ -1481,30 +1435,6 @@
             "evidence",
             "technical-writing",
             "map-framework"
-          ],
-          "deprecated": false,
-          "deprecation_reason": null
-        },
-        {
-          "id": "doc-0002",
-          "content": "Progressive Disclosure for Multi-Platform Instructions: When documenting installation or setup across multiple platforms (Windows/macOS/Linux), use progressive disclosure with collapsible sections rather than showing all platforms simultaneously. This reduces cognitive load - users see their platform by default, others collapsed. Use HTML details/summary tags in markdown (widely supported) or platform tabs in documentation frameworks. Structure: (1) Show most common platform first (uncollapsed), (2) Other platforms in collapsed details blocks, (3) Clear labels indicating platform ('Windows', 'macOS', 'Linux'). Pattern prevents scroll fatigue in long installation docs and helps users focus on relevant instructions.",
-          "code_example": "```markdown\n<!-- \u274c BAD - all platforms visible, overwhelming -->\n## Installation\n\n### Windows\n```powershell\nwinget install myapp\n```\n\n### macOS  \n```bash\nbrew install myapp\n```\n\n### Linux\n```bash\napt-get install myapp\n```\n\n<!-- \u2705 GOOD - progressive disclosure with collapsible sections -->\n## Installation\n\n### macOS (Default shown)\n```bash\nbrew install myapp\n```\n\n<details>\n<summary><b>Windows Installation</b></summary>\n\n```powershell\nwinget install myapp\n```\n\n</details>\n\n<details>\n<summary><b>Linux Installation</b></summary>\n\n```bash\napt-get install myapp\n```\n\n</details>\n```",
-          "helpful_count": 0,
-          "harmful_count": 0,
-          "created_at": "2025-10-23T15:34:43.387373Z",
-          "last_used_at": "2025-10-23T15:34:43.387374Z",
-          "related_bullets": [
-            "doc-0001",
-            "doc-0002"
-          ],
-          "tags": [
-            "progressive-disclosure",
-            "documentation",
-            "multi-platform",
-            "markdown",
-            "html",
-            "user-experience",
-            "installation"
           ],
           "deprecated": false,
           "deprecation_reason": null
