@@ -4,8 +4,8 @@
     "project": "map-framework",
     "description": "ACE-style comprehensive playbook for MAP Framework development",
     "created_at": "2025-10-10T00:00:00Z",
-    "last_updated": "2025-10-25T19:32:35.864754+00:00",
-    "total_bullets": 70,
+    "last_updated": "2025-10-25T20:48:15.743795+00:00",
+    "total_bullets": 75,
     "sections_count": 11,
     "top_k": 5,
     "version": 3
@@ -1638,6 +1638,135 @@
           "harmful_count": 0,
           "created_at": "2025-10-25T19:32:35.864754+00:00",
           "last_used_at": "2025-10-25T19:32:35.864754+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "doc-0011",
+          "content": "Temporal Risk Management in Pre-Release Documentation: When documenting unreleased functionality (pre-PyPI packages, pending features, upcoming APIs), use Predictor agent to analyze temporal dependencies and create rollout checklists. Temporal risks include advertising non-existent packages (README says 'pip install' before PyPI publish), referencing unreleased API versions, or documenting features gated behind feature flags. Structure: (1) Identify temporal claims (uses future-tense or version-specific language), (2) Map claims to release blockers (e.g., 'pip install' requires PyPI publish), (3) Create pre-publish checklist with binary verification (e.g., 'curl -f https://pypi.org/project/PKG/ && echo LIVE'). Pattern prevents user frustration from following documentation that references unavailable functionality. Proven: Predictor flagged HIGH risk when README advertised PyPI package before publish workflow completed.",
+          "code_example": "```markdown\n## Temporal Risk Analysis Example\n\n### Documentation Claim (Temporal)\n```markdown\n# README.md (pre-release draft)\n## Installation\n\n```bash\npip install mapify-cli\n```\n```\n\n### Risk Analysis (Predictor Output)\n\n**Temporal Dependency Detected**:\n- Claim: \"pip install mapify-cli\" (present tense, implies currently available)\n- Reality: Package not published to PyPI yet (release workflow not run)\n- Risk Level: HIGH (users will encounter 404 errors)\n\n**Rollout Checklist** (binary verification):\n```bash\n# Pre-publish: Verify package does NOT exist yet\ncurl -f https://pypi.org/project/mapify-cli/ && echo \"\u26a0\ufe0f ALREADY LIVE\" || echo \"\u2705 Not published yet\"\n\n# Post-publish: Verify package is indexed\nsleep 120  # PyPI indexing delay\ncurl -f https://pypi.org/project/mapify-cli/ && echo \"\u2705 LIVE\" || echo \"\u274c NOT INDEXED\"\npip index versions mapify-cli | grep -q 1.0.0 && echo \"\u2705 INSTALLABLE\" || echo \"\u274c NOT FOUND\"\n```\n\n### Mitigation Strategy\n\n**Option A - Version Pin Documentation to Release**:\nOnly add \"pip install\" section AFTER PyPI publish verified.\n\n**Option B - Future-Tense Documentation**:\n```markdown\n## Installation (Available After v1.0.0 Release)\n\nOnce released to PyPI, install via:\n```bash\npip install mapify-cli\n```\n\n*Note: Pre-release installation requires git clone (see Development Setup)*\n```\n```",
+          "tags": [
+            "documentation",
+            "temporal-risk",
+            "pre-release",
+            "predictor",
+            "pypi",
+            "rollout",
+            "verification",
+            "releases"
+          ],
+          "related_bullets": [
+            "doc-0005",
+            "doc-0007"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T20:48:15.743795+00:00",
+          "last_used_at": "2025-10-25T20:48:15.743795+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "doc-0012",
+          "content": "Progressive Complexity Installation Documentation: Structure installation sections using progressive disclosure from simple (recommended path) to advanced (expert configurations), with explicit user segmentation labels. Three complexity tiers: (1) Simple - single command for mainstream use case (pip install, no options), labeled 'Recommended' or 'Quick Start', (2) Intermediate - installation with optional features (pip install PKG[extras], version pinning), labeled 'Common Use Cases', (3) Advanced - development setup, custom builds, security configurations, labeled 'Advanced Setup'. Each tier references next tier for users needing more control. Pattern proven: README with simple\u2192intermediate\u2192advanced progression achieved 9.1/10 Evaluator score with praise for 'progressive complexity design'. Prevents overwhelming novice users while providing expert users path to customization. Use collapsible sections (<details>) or clear tier headers.",
+          "code_example": "```markdown\n## Installation\n\n### Recommended (Simple Tier)\n\nFor most users, install the latest stable release:\n\n```bash\npip install mapify-cli\n```\n\nThat's it! Verify installation: `mapify --version`\n\n*Need more control over versions or want to contribute? See Common Use Cases and Advanced Setup below.*\n\n---\n\n### Common Use Cases (Intermediate Tier)\n\n<details>\n<summary><b>Install Specific Version</b></summary>\n\n**Exact version** (reproducible builds):\n```bash\npip install mapify-cli==1.0.1\n```\n\n**Version range** (patch updates only):\n```bash\npip install \"mapify-cli>=1.0.0,<1.1.0\"\n```\n\nSee [Semantic Versioning Guide](#semver-explanation) for pinning strategies.\n\n</details>\n```",
+          "tags": [
+            "documentation",
+            "progressive-complexity",
+            "installation",
+            "user-segmentation",
+            "markdown",
+            "collapsible-sections",
+            "user-experience",
+            "pip"
+          ],
+          "related_bullets": [
+            "doc-0002",
+            "doc-0010"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T20:48:15.743795+00:00",
+          "last_used_at": "2025-10-25T20:48:15.743795+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "doc-0013",
+          "content": "Cross-Reference Architecture for Documentation Depth: Build documentation as interconnected layers where README (entry point) provides overview with explicit links to specialized documentation (deeper dive), which links to reference documentation (exhaustive detail). Three-tier pattern: (1) README - 80/20 coverage, most common use cases, links to tier 2 for edge cases, (2) Specialized docs - feature-specific guides (RELEASING.md, CONTRIBUTING.md, ARCHITECTURE.md), comprehensive workflows, links to tier 3 for API details, (3) Reference docs - API docs, module docstrings, exhaustive parameter lists. Use explicit cross-reference phrases ('See RELEASING.md for complete workflow', 'For API details, see [module reference]'). Pattern prevents README bloat (information overload) while ensuring users can navigate to depth they need. Proven: Evaluator praised 'excellent cross-referencing strategy' for README linking to RELEASING.md, CONTRIBUTING.md, API reference.",
+          "code_example": "```markdown\n### Tier 1: README.md (Entry Point)\n\n```markdown\n## Quick Start\n\n```bash\npip install mapify-cli\nmapify init\n```\n\n*For complete installation options, see [INSTALL.md](docs/INSTALL.md).*\n\n## Architecture\n\nMAP uses 6 core agents: Actor, Monitor, Evaluator...\n\n*For architectural deep dive, see [ARCHITECTURE.md](docs/ARCHITECTURE.md).*\n```\n```",
+          "tags": [
+            "documentation",
+            "cross-reference",
+            "architecture",
+            "three-tier",
+            "readme",
+            "specialized-docs",
+            "api-reference",
+            "navigation",
+            "information-architecture"
+          ],
+          "related_bullets": [
+            "doc-0006",
+            "doc-0010"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T20:48:15.743795+00:00",
+          "last_used_at": "2025-10-25T20:48:15.743795+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "doc-0014",
+          "content": "Version Management Documentation with Dynamic References: Use placeholder patterns and dynamic sources for version references in user-facing documentation to minimize maintenance burden during version bumps. Four strategies: (1) Generic 'latest' references for non-critical contexts ('pip install PKG' without version), (2) Placeholder variables for version-specific examples ({{VERSION}} in templates, sed-replaceable during releases), (3) Dynamic badges linking to PyPI/GitHub APIs for current version display, (4) '--version command' references instead of hardcoded version strings. Reserve exact version pins (PKG==1.0.1) for reproducibility-critical contexts (Docker, CI/CD, security advisories). Pattern proven: Evaluator praised 'future-proof examples' and 'comprehensive version management' for README avoiding hardcoded versions. Dynamic references reduce documentation drift where version strings become stale after releases.",
+          "code_example": "```markdown\n### Strategy 1: Generic 'Latest' (Self-Updating)\n\n```bash\npip install mapify-cli  # \u2705 Always latest\n```\n\n### Strategy 3: Dynamic Badges (API-Driven)\n\n[![PyPI version](https://badge.fury.io/py/mapify-cli.svg)](https://pypi.org/project/mapify-cli/)\n\n### Strategy 4: Command References (Runtime)\n\nCheck version:\n```bash\nmapify --version  # \u2705 Returns current version\n```\n```",
+          "tags": [
+            "documentation",
+            "version-management",
+            "dynamic-references",
+            "placeholders",
+            "badges",
+            "pip",
+            "maintenance",
+            "automation",
+            "releases"
+          ],
+          "related_bullets": [
+            "doc-0006",
+            "doc-0005"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T20:48:15.743795+00:00",
+          "last_used_at": "2025-10-25T20:48:15.743795+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "doc-0015",
+          "content": "Semantic Versioning Education in User Documentation: Include educational context explaining semantic versioning (semver) implications when documenting version pinning strategies. Users often pin versions incorrectly (too restrictive or too permissive) without understanding trade-offs. Provide decision matrix: (1) Exact pin (PKG==1.0.1) - maximum reproducibility, no updates including security patches, use for Docker/CI, (2) Patch range (PKG~=1.0.1 or >=1.0.1,<1.1.0) - security updates allowed, breaking changes blocked, use for applications, (3) Minor range (PKG>=1.0.0,<2.0.0) - new features allowed, major version breakage blocked, use for libraries, (4) Unpinned (PKG) - always latest, automatic updates, use for local development. Link to semver.org for specification details. Pattern proven: Monitor caught MEDIUM gap (missing semver explanation), fix adding decision matrix improved understanding and reduced support questions.",
+          "code_example": "```markdown\n## Semantic Versioning Guide\n\nVersion format: MAJOR.MINOR.PATCH (e.g., 1.4.2)\n\n| Strategy | Syntax | Updates | Use Case |\n|----------|--------|---------|----------|\n| **Exact** | `==1.0.1` | None | Docker, CI |\n| **Patch** | `~=1.0.1` | 1.0.x only | Production |\n| **Minor** | `>=1.0,<2.0` | 1.x.x | Libraries |\n| **Unpinned** | (none) | Latest | Dev |\n\n**Security Advisory Example**:\n- Exact pin (`==1.0.0`): \u274c Vulnerable until manual update\n- Patch range (`~=1.0.0`): \u2705 Auto-updates to 1.0.1 (patched)\n```",
+          "tags": [
+            "documentation",
+            "semantic-versioning",
+            "semver",
+            "education",
+            "version-pinning",
+            "pip",
+            "dependencies",
+            "security",
+            "user-education",
+            "decision-matrix"
+          ],
+          "related_bullets": [
+            "doc-0012",
+            "doc-0014"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T20:48:15.743795+00:00",
+          "last_used_at": "2025-10-25T20:48:15.743795+00:00",
           "deprecated": false,
           "deprecation_reason": null
         }
