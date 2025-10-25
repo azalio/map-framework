@@ -1,7 +1,7 @@
 # MAP Framework Prompt Improvement - FINAL STATUS
 
 ## Date: 2025-10-17
-## Source Analysis: sonnet-4.5.md (2752 lines), opus-4.1-thinking.md (1306 lines)
+## Source Analysis: research/sonnet-4.5.md (2752 lines), research/opus-4.1-thinking.md (1306 lines)
 
 ---
 
@@ -282,8 +282,8 @@
 
 ### Created Files
 
-1. **prompt-improvement-analysis.md** (289 lines)
-   - Analysis of sonnet-4.5.md and opus-4.1-thinking.md
+1. **research/prompt-improvement-analysis.md** (289 lines)
+   - Analysis of research/sonnet-4.5.md and research/opus-4.1-thinking.md
    - 16 patterns extracted and documented
    - Application guidelines for MAP agents
 
@@ -359,7 +359,7 @@
 - JSON output formats validated
 
 ✅ **Documentation complete**:
-- prompt-improvement-analysis.md (methodology)
+- research/prompt-improvement-analysis.md (methodology)
 - IMPROVEMENT-STATUS.md (metrics)
 - MAP-WORKFLOW-REFERENCE.md (orchestration guide)
 

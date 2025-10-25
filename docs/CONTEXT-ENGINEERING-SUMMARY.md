@@ -2,14 +2,14 @@
 
 **Дата:** 2025-10-18
 **Статус:** Фаза 1.1 завершена, продолжение следует
-**Основано на:** context-engenering.pdf + статья "Context Engineering for AI Agents with LangChain"
+**Основано на:** research/context-engenering.pdf + статья "Context Engineering for AI Agents with LangChain"
 
 ---
 
 ## 📖 Выполненный анализ
 
 ### Источники
-1. **PDF-отчет "context-engenering.pdf"** (14 страниц)
+1. **PDF-отчет "research/context-engenering.pdf"** (14 страниц)
    - Детальные рекомендации для MAP Framework
    - Основан на статье "Context Engineering for AI Agents: Lessons from Building Manus"
    - Анализ текущего состояния MAP и области улучшений
@@ -342,4 +342,4 @@ MAP Framework получает проверенные паттерны конт�
 **Автор:** MAP Framework Team
 **Дата:** 2025-10-18
 **Версия:** 1.0.0
-**Основано на:** context-engenering.pdf + "Context Engineering for AI Agents with LangChain"
+**Основано на:** research/context-engenering.pdf + "Context Engineering for AI Agents with LangChain"

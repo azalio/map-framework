@@ -284,7 +284,7 @@ _Updated: 2025-10-18 14:30:22_
    - Внешняя память
    - Few-shot bias
 
-2. **PDF:** `context-engenering.pdf`
+2. **PDF:** `../research/context-engenering.pdf`
    - Адаптация для MAP Framework
    - Детальные рекомендации
    - Примеры реализации
