@@ -4,8 +4,8 @@
     "project": "map-framework",
     "description": "ACE-style comprehensive playbook for MAP Framework development",
     "created_at": "2025-10-10T00:00:00Z",
-    "last_updated": "2025-10-25T20:48:15.743795+00:00",
-    "total_bullets": 75,
+    "last_updated": "2025-10-25T21:15:57.637760+00:00",
+    "total_bullets": 77,
     "sections_count": 11,
     "top_k": 5,
     "version": 3
@@ -634,12 +634,12 @@
         },
         {
           "id": "impl-0018",
-          "content": "Actor Tool Invocation Verification: Actors in MAP workflows sometimes describe intended file changes without actually invoking Edit/Write tools, claiming task completion without executing modifications. Monitor agents MUST verify actual file state by reading files and checking for expected changes, not trusting Actor's completion claims. Pattern: Actor says 'updated file X with Y' \u2192 Monitor reads file X \u2192 verifies Y exists in content. Prevents claimed-vs-actual discrepancies that propagate through workflow.",
-          "code_example": "```python\n# \u274c INSUFFICIENT - Monitor trusts Actor claim\ndef monitor_validate(actor_output):\n    if actor_output.claimed_changes:\n        return ValidationSuccess(\"Actor reported changes\")\n    # Never verifies actual file state!\n\n# \u2705 CORRECT - Monitor verifies actual state\ndef monitor_validate(actor_output, filesystem):\n    claimed_file = actor_output.claimed_changes.file_path\n    expected_content = actor_output.claimed_changes.expected\n    \n    # Read actual file state\n    actual_content = filesystem.read(claimed_file)\n    \n    # Verify expected changes exist\n    if expected_content not in actual_content:\n        return ValidationError(\n            f\"Actor claimed modification to {claimed_file}, \"\n            f\"but expected content '{expected_content}' not found. \"\n            f\"Actor likely described changes without invoking Edit/Write tool.\"\n        )\n    \n    return ValidationSuccess(\"Verified actual file state matches claims\")\n```",
+          "content": "Actor Tool Invocation Verification with Git Diff: Actors sometimes describe file changes without invoking Edit/Write tools, claiming completion without executing modifications. Monitor MUST verify actual file state using git diff to detect claimed-but-not-executed changes. Pattern: Actor claims 'Added [1.0.0] section to CHANGELOG.md' \u2192 Monitor runs 'git diff CHANGELOG.md' \u2192 No changes shown \u2192 Reject with 'CRITICAL: Changes NOT applied, git diff shows no modifications'. Git diff validation catches both missing tool invocations AND incorrect tool choices (Write instead of Edit). This enforces tool invocation discipline - descriptions are not substitutes for actual Edit/Write/Bash execution.",
+          "code_example": "```python\n# \u274c ACTOR ANTI-PATTERN - claiming without executing\n# Actor output: \"I added [1.0.0] section to CHANGELOG.md\"\n# (No Edit tool call in Actor's actions, OR used Write claiming 'creation')\n\n# \u2705 MONITOR VALIDATION - git diff verification\nimport subprocess\n\ndef validate_actor_file_changes(actor_output, file_path, expected_change_description):\n    \"\"\"Verify Actor's claimed file changes using git diff.\n\n    Returns:\n        dict: {\"valid\": bool, \"reason\": str, \"diff_output\": str}\n    \"\"\"\n    # Run git diff to check actual changes\n    result = subprocess.run(\n        ['git', 'diff', file_path],\n        capture_output=True,\n        text=True\n    )\n    diff_output = result.stdout\n\n    if not diff_output.strip():\n        return {\n            \"valid\": False,\n            \"reason\": f\"CRITICAL: Changes NOT applied. Actor claimed '{expected_change_description}' but git diff {file_path} shows no modifications. Actor likely described changes without invoking Edit/Write tool, OR used wrong tool (Write for existing file).\",\n            \"diff_output\": \"(empty - no changes detected)\"\n        }\n\n    # Optionally verify specific content in diff\n    # For CHANGELOG: check if [1.0.0] appears in added lines\n    added_lines = [line for line in diff_output.split('\\n') if line.startswith('+')]\n\n    return {\n        \"valid\": True,\n        \"reason\": f\"Changes verified: git diff shows {len(added_lines)} added lines\",\n        \"diff_output\": diff_output\n    }\n\n# Usage in Monitor:\nvalidation = validate_actor_file_changes(\n    actor_output,\n    file_path=\"CHANGELOG.md\",\n    expected_change_description=\"Added [1.0.0] initial release section\"\n)\n\nif not validation[\"valid\"]:\n    raise MonitorRejection(validation[\"reason\"])\n```",
           "helpful_count": 1,
           "harmful_count": 0,
           "created_at": "2025-10-23T09:20:52.064779+00:00",
-          "last_used_at": "2025-10-23T12:28:06.239973Z",
+          "last_used_at": "2025-10-25T21:15:57.637624+00:00",
           "related_bullets": [
             "impl-0001",
             "impl-0003"
@@ -656,12 +656,12 @@
         },
         {
           "id": "impl-0018",
-          "content": "Actor Tool Invocation Verification: Actors sometimes describe file changes without invoking Edit/Write tools, claiming completion without executing modifications. Monitor MUST verify actual file state against Actor's claims by reading files and checking for expected changes. Pattern: Actor claims 'Removed section X' \u2192 Monitor reads file \u2192 Section still exists \u2192 Reject with 'Changes NOT applied'. This enforces tool invocation discipline - descriptions are not substitutes for actual Edit/Write/Bash execution.",
-          "code_example": "```python\n# \u274c ACTOR ANTI-PATTERN - claiming without executing\n# Actor output: \"I removed the deprecated section from README.md\"\n# (No Edit tool call in Actor's actions)\n\n# \u2705 MONITOR VALIDATION - verify actual state\ndef validate_actor_changes(actor_output, file_path, expected_removal):\n    actual_content = read_file(file_path)\n    \n    if expected_removal in actual_content:\n        return {\n            \"valid\": False,\n            \"reason\": f\"Changes NOT applied, '{expected_removal}' still exists\"\n        }\n    \n    return {\"valid\": True, \"reason\": \"Changes verified in actual file\"}\n\n# \u2705 ACTOR CORRECT PATTERN - execute then verify\nEdit(file_path=\"README.md\", old_string=\"## Deprecated\\n...\", new_string=\"\")\n# Actor explicitly invoked Edit tool\n```",
+          "content": "Actor Tool Invocation Verification with Git Diff: Actors sometimes describe file changes without invoking Edit/Write tools, claiming completion without executing modifications. Monitor MUST verify actual file state using git diff to detect claimed-but-not-executed changes. Pattern: Actor claims 'Added [1.0.0] section to CHANGELOG.md' \u2192 Monitor runs 'git diff CHANGELOG.md' \u2192 No changes shown \u2192 Reject with 'CRITICAL: Changes NOT applied, git diff shows no modifications'. Git diff validation catches both missing tool invocations AND incorrect tool choices (Write instead of Edit). This enforces tool invocation discipline - descriptions are not substitutes for actual Edit/Write/Bash execution.",
+          "code_example": "```python\n# \u274c ACTOR ANTI-PATTERN - claiming without executing\n# Actor output: \"I added [1.0.0] section to CHANGELOG.md\"\n# (No Edit tool call in Actor's actions, OR used Write claiming 'creation')\n\n# \u2705 MONITOR VALIDATION - git diff verification\nimport subprocess\n\ndef validate_actor_file_changes(actor_output, file_path, expected_change_description):\n    \"\"\"Verify Actor's claimed file changes using git diff.\n\n    Returns:\n        dict: {\"valid\": bool, \"reason\": str, \"diff_output\": str}\n    \"\"\"\n    # Run git diff to check actual changes\n    result = subprocess.run(\n        ['git', 'diff', file_path],\n        capture_output=True,\n        text=True\n    )\n    diff_output = result.stdout\n\n    if not diff_output.strip():\n        return {\n            \"valid\": False,\n            \"reason\": f\"CRITICAL: Changes NOT applied. Actor claimed '{expected_change_description}' but git diff {file_path} shows no modifications. Actor likely described changes without invoking Edit/Write tool, OR used wrong tool (Write for existing file).\",\n            \"diff_output\": \"(empty - no changes detected)\"\n        }\n\n    # Optionally verify specific content in diff\n    # For CHANGELOG: check if [1.0.0] appears in added lines\n    added_lines = [line for line in diff_output.split('\\n') if line.startswith('+')]\n\n    return {\n        \"valid\": True,\n        \"reason\": f\"Changes verified: git diff shows {len(added_lines)} added lines\",\n        \"diff_output\": diff_output\n    }\n\n# Usage in Monitor:\nvalidation = validate_actor_file_changes(\n    actor_output,\n    file_path=\"CHANGELOG.md\",\n    expected_change_description=\"Added [1.0.0] initial release section\"\n)\n\nif not validation[\"valid\"]:\n    raise MonitorRejection(validation[\"reason\"])\n```",
           "helpful_count": 0,
           "harmful_count": 0,
           "created_at": "2025-10-23T12:21:40.807543Z",
-          "last_used_at": "2025-10-23T12:21:40.807544Z",
+          "last_used_at": "2025-10-25T21:15:57.637754+00:00",
           "related_bullets": [
             "impl-0001",
             "impl-0003"
@@ -859,6 +859,29 @@
           "harmful_count": 0,
           "created_at": "2025-10-25T18:45:00.541231+00:00",
           "last_used_at": "2025-10-25T18:45:00.541231+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "impl-0049",
+          "content": "Task Description Verb Precision for Tool Selection: When describing file operation subtasks, use precise action verbs (create/update/edit) and explicit file existence state to prevent Actor tool selection failures. Ambiguous verbs like 'add' cause Edit vs Write confusion - 'add entry to CHANGELOG.md' is ambiguous (create new file? modify existing?). Pattern: Ambiguous 'Add CHANGELOG.md entry' \u2192 Actor chose Write (creation) instead of Edit (modification) \u2192 Monitor detected no actual changes to existing file \u2192 Critical failure requiring rework. Use explicit verbs: 'Create new file X' (Write tool), 'Update existing file X with Y' (Edit tool), 'Modify section Z in file X' (Edit tool). This prevents tool selection errors that propagate through workflow.",
+          "code_example": "```markdown\n# \u274c AMBIGUOUS - causes tool selection failure\nSubtask 5: Add CHANGELOG.md initial release entry\n\u2192 Actor interprets as 'create file' \u2192 uses Write tool\n\u2192 File already exists \u2192 Write overwrites OR Actor claims creation without actual modification\n\u2192 Monitor detects: git diff shows no changes \u2192 CRITICAL failure\n\n# \u2705 PRECISE - explicit action and file state\nSubtask 5: Update CHANGELOG.md (existing file) by adding [1.0.0] initial release entry under [Unreleased] section\n\u2192 Actor knows: file exists, needs Edit tool, target section specified\n\u2192 Uses Edit tool with old_string/new_string\n\u2192 Monitor verifies: git diff shows [1.0.0] section added \u2192 SUCCESS\n\n# Verb disambiguation guide:\n- \"Create X\" \u2192 Write tool (new file)\n- \"Update X with Y\" \u2192 Edit tool (modify existing)\n- \"Add entry to X\" \u2192 AMBIGUOUS (needs file state)\n- \"Add [1.0.0] section to CHANGELOG.md (existing)\" \u2192 Edit tool (explicit state)\n```",
+          "tags": [
+            "task-description",
+            "tool-selection",
+            "actor",
+            "write-edit-confusion",
+            "map-framework",
+            "precision"
+          ],
+          "related_bullets": [
+            "impl-0010",
+            "impl-0018"
+          ],
+          "helpful_count": 1,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T21:15:57.637760+00:00",
+          "last_used_at": "2025-10-25T21:15:57.637760+00:00",
           "deprecated": false,
           "deprecation_reason": null
         }
@@ -1205,6 +1228,31 @@
           "created_at": "2025-10-25T18:45:00.541231+00:00",
           "last_used_at": "2025-10-25T18:45:00.541231+00:00",
           "related_bullets": [],
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "test-0016",
+          "content": "Automation Format Validation with Target Tool Patterns: Before committing structured files consumed by automation scripts (CHANGELOG.md, package.json, pyproject.toml), validate format using SAME extraction patterns that automation uses. Pattern: CHANGELOG.md consumed by bump-version.sh using 'sed -n /## \\\\[1.0.0\\\\]/,/## \\\\[/p' \u2192 Before committing, test extraction with identical sed/grep commands \u2192 Verify output matches expectations. This prevents silent automation failures where file parses correctly for humans but breaks automation regex. Predictor role ideal for this validation - simulates automation environment before deployment.",
+          "code_example": "```bash\n# CHANGELOG.md automation validation example\n# bump-version.sh uses this pattern to extract release notes:\n# sed -n \"/## \\\\[$VERSION\\\\]/,/## \\\\[/p\" CHANGELOG.md | head -n -1\n\n# \u2705 VALIDATION TEST - run BEFORE committing CHANGELOG.md\nVERSION=\"1.0.0\"\n\n# Test extraction pattern (same command automation uses)\nRELEASE_NOTES=$(sed -n \"/## \\\\[$VERSION\\\\]/,/## \\\\[/p\" CHANGELOG.md | head -n -1)\n\necho \"Extracted release notes:\"\necho \"$RELEASE_NOTES\"\n\n# Validate extraction succeeded\nif [ -z \"$RELEASE_NOTES\" ]; then\n  echo \"\u274c VALIDATION FAILED: sed extraction returned empty (automation will fail)\"\n  echo \"Check CHANGELOG.md format: ## [$VERSION] header must exist\"\n  exit 1\nfi\n\n# Validate format expectations\nif ! echo \"$RELEASE_NOTES\" | grep -q \"## \\\\[$VERSION\\\\]\"; then\n  echo \"\u274c VALIDATION FAILED: version header missing in extraction\"\n  exit 1\nfi\n\necho \"\u2705 VALIDATION PASSED: CHANGELOG.md format compatible with bump-version.sh automation\"\n```",
+          "tags": [
+            "automation",
+            "validation",
+            "changelog",
+            "sed",
+            "grep",
+            "predictor",
+            "map-framework",
+            "ci-cd"
+          ],
+          "related_bullets": [
+            "impl-0027",
+            "test-0002"
+          ],
+          "helpful_count": 1,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T21:15:57.637760+00:00",
+          "last_used_at": "2025-10-25T21:15:57.637760+00:00",
           "deprecated": false,
           "deprecation_reason": null
         }
