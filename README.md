@@ -8,9 +8,9 @@ Implementation of **Modular Agentic Planner (MAP)** — a cognitive architecture
 ## 📖 Documentation Structure
 
 - **README** (this file) - Quick start and overview
-- **[INSTALL.md](INSTALL.md)** - Complete installation guide with PATH setup and troubleshooting
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** - Technical deep dive, customization, and MCP integration
-- **[USAGE.md](USAGE.md)** - Practical examples, best practices, and cost optimization
+- **[INSTALL.md](docs/INSTALL.md)** - Complete installation guide with PATH setup and troubleshooting
+- **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** - Technical deep dive, customization, and MCP integration
+- **[USAGE.md](docs/USAGE.md)** - Practical examples, best practices, and cost optimization
 
 ## 🚀 Quick Start
 
@@ -62,7 +62,7 @@ cd your-project
 mapify init
 ```
 
-**Other installation methods** (clone repository, manual copy): See [INSTALL.md](INSTALL.md)
+**Other installation methods** (clone repository, manual copy): See [INSTALL.md](docs/INSTALL.md)
 
 ## Requirements
 
@@ -81,7 +81,7 @@ MAP Framework orchestrates 8 specialized agents through slash commands:
 
 The orchestration logic lives in `.claude/commands/map-*.md` prompts, coordinating agents via the Task tool.
 
-**See [ARCHITECTURE.md](ARCHITECTURE.md) for:**
+**See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for:**
 - Detailed agent specifications and responsibilities
 - MCP integration architecture and tool usage patterns
 - Agent coordination protocol and workflow stages
@@ -102,7 +102,7 @@ MAP uses MCP (Model Context Protocol) servers for enhanced capabilities:
 
 Configuration files: `.claude/mcp_config.json` and `mcp_config.json`
 
-**See [ARCHITECTURE.md](ARCHITECTURE.md#mcp-integration) for complete setup and usage patterns**
+**See [ARCHITECTURE.md](docs/ARCHITECTURE.md#mcp-integration) for complete setup and usage patterns**
 
 ## 📚 Usage Examples
 
@@ -117,7 +117,7 @@ Configuration files: `.claude/mcp_config.json` and `mcp_config.json`
 /map-refactor refactor OrderService to use dependency injection
 ```
 
-**See [USAGE.md](USAGE.md) for:**
+**See [USAGE.md](docs/USAGE.md) for:**
 - Comprehensive usage examples with detailed scenarios
 - Best practices for optimal results
 - Cost optimization strategies (40-60% savings)
@@ -145,9 +145,9 @@ mapify playbook search "JWT authentication"
 mapify playbook sync
 ```
 
-**Optional semantic search**: `pip install -r requirements-semantic.txt` for meaning-based matching. Details in [SEMANTIC_SEARCH_SETUP.md](SEMANTIC_SEARCH_SETUP.md) and [ARCHITECTURE.md](ARCHITECTURE.md#semantic-search).
+**Optional semantic search**: `pip install -r requirements-semantic.txt` for meaning-based matching. Details in [SEMANTIC_SEARCH_SETUP.md](docs/SEMANTIC_SEARCH_SETUP.md) and [ARCHITECTURE.md](docs/ARCHITECTURE.md#semantic-search).
 
-**Playbook configuration**: See [ARCHITECTURE.md](ARCHITECTURE.md#playbook-configuration) for top_k settings and optimization.
+**Playbook configuration**: See [ARCHITECTURE.md](docs/ARCHITECTURE.md#playbook-configuration) for top_k settings and optimization.
 
 ## 💰 Cost Optimization
 
@@ -158,13 +158,13 @@ MAP Framework uses intelligent model selection per agent:
 
 **Result:** 40-60% cost reduction vs all-sonnet while maintaining code quality.
 
-**See [USAGE.md](USAGE.md#cost-optimization) for detailed cost breakdown and model override strategies**
+**See [USAGE.md](docs/USAGE.md#cost-optimization) for detailed cost breakdown and model override strategies**
 
 ## 🔗 Hooks Integration
 
 MAP integrates with Claude Code hooks for automated validation, knowledge storage, and context enrichment. Active hooks protect template variables, auto-store successful patterns, enrich prompts with relevant knowledge, and track performance metrics.
 
-**See [ARCHITECTURE.md](ARCHITECTURE.md#hooks-integration) and [.claude/hooks/README.md](.claude/hooks/README.md) for configuration**
+**See [ARCHITECTURE.md](docs/ARCHITECTURE.md#hooks-integration) and [.claude/hooks/README.md](.claude/hooks/README.md) for configuration**
 
 ## 🛠️ Troubleshooting
 
@@ -194,7 +194,7 @@ Warning: sentence-transformers not installed
 ```
 
 **Solution:** `pip install -r requirements-semantic.txt`
-See [SEMANTIC_SEARCH_SETUP.md](SEMANTIC_SEARCH_SETUP.md) for detailed troubleshooting
+See [SEMANTIC_SEARCH_SETUP.md](docs/SEMANTIC_SEARCH_SETUP.md) for detailed troubleshooting
 
 ### Infinite Loops
 
@@ -204,13 +204,13 @@ Actor-Monitor loop exceeding iterations
 
 **Solution:** Orchestrator limits iterations to 3-5. Clarify requirements or add constraints.
 
-**More troubleshooting**: See [INSTALL.md](INSTALL.md#troubleshooting) for PATH issues, MCP configuration, and installation problems
+**More troubleshooting**: See [INSTALL.md](docs/INSTALL.md#troubleshooting) for PATH issues, MCP configuration, and installation problems
 
 ## 🔧 Customization
 
 Agent prompts in `.claude/agents/*.md` use Handlebars template syntax for dynamic context injection. You can safely modify instructions, examples, and validation criteria, but **MUST NOT remove template variables** like `{{language}}`, `{{#if playbook_bullets}}`, or `{{feedback}}` — these are critical for orchestration and ACE learning.
 
-**See [ARCHITECTURE.md](ARCHITECTURE.md#customization-guide) for:**
+**See [ARCHITECTURE.md](docs/ARCHITECTURE.md#customization-guide) for:**
 - Safe vs unsafe modifications with examples
 - Template variable reference
 - Model selection per agent

@@ -1,12 +1,12 @@
 # MAP Framework: Улучшения на основе контекстной инженерии
 
-> **Источник:** Анализ статьи "Context Engineering for AI Agents with LangChain" и отчета context-engenering.pdf
+> **Источник:** Анализ статьи "Context Engineering for AI Agents with LangChain" и отчета research/context-engenering.pdf
 > **Дата:** 2025-10-18
 > **Статус:** Планирование и реализация
 
 ## 📖 Введение
 
-Данный документ содержит комплексный план улучшений MAP Framework на основе принципов контекстной инженерии, описанных в статье "Context Engineering for AI Agents: Lessons from Building Manus" и адаптированных для MAP Framework в отчете context-engenering.pdf.
+Данный документ содержит комплексный план улучшений MAP Framework на основе принципов контекстной инженерии, описанных в статье "Context Engineering for AI Agents: Lessons from Building Manus" и адаптированных для MAP Framework в отчете research/context-engenering.pdf.
 
 MAP Framework уже реализует многие передовые практики:
 - ✅ Модульная архитектура с 9 специализированными агентами
@@ -424,7 +424,7 @@ Generating JWT tokens with expiration, using HS256 algorithm
    - Memory и Tool abstractions
    - Document Loaders
 
-4. **Отчет context-engenering.pdf**
+4. **Отчет research/context-engenering.pdf**
    - Детальные рекомендации для MAP
    - Сводные таблицы принципов
    - Примеры реализации
