@@ -4,8 +4,8 @@
     "project": "map-framework",
     "description": "ACE-style comprehensive playbook for MAP Framework development",
     "created_at": "2025-10-10T00:00:00Z",
-    "last_updated": "2025-10-25T13:32:16.485309+00:00",
-    "total_bullets": 56,
+    "last_updated": "2025-10-25T18:45:00.541231+00:00",
+    "total_bullets": 64,
     "sections_count": 11,
     "top_k": 5,
     "version": 3
@@ -776,12 +776,143 @@
           ],
           "deprecated": false,
           "deprecation_reason": null
+        },
+        {
+          "id": "impl-0025",
+          "content": "Deploy-What-You-Test Pattern (workflow_call): Use GitHub Actions workflow_call trigger to reuse CI workflow in release workflow, ensuring the exact artifacts that passed tests are published. CI workflow uploads build artifacts, release workflow downloads them via actions/download-artifact with matching run_id. Prevents drift between tested code and deployed code. Alternative approaches (re-running tests in release workflow or rebuilding artifacts) waste time and risk inconsistency.",
+          "code_example": "```yaml\n# \u274c INCORRECT - rebuild in release (drift risk)\nname: Release\non:\n  workflow_dispatch:\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: python -m build  # Rebuilt - may differ from CI!\n      - uses: pypa/gh-action-pypi-publish@release/v1\n\n# \u2705 CORRECT - reuse CI artifacts (deploy-what-you-test)\n# ci.yml (reusable)\nname: CI\non:\n  workflow_call:  # Can be called by other workflows\n  pull_request:\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: python -m build\n      - run: pytest\n      - uses: actions/upload-artifact@v4\n        with:\n          name: dist\n          path: dist/\n\n# release.yml\nname: Release\non:\n  workflow_dispatch:\njobs:\n  ci:\n    uses: ./.github/workflows/ci.yml  # Reuse CI workflow\n  publish:\n    needs: ci\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/download-artifact@v4\n        with:\n          name: dist\n          path: dist/\n          run-id: ${{ needs.ci.outputs.run_id }}  # Same artifacts\n      - uses: pypa/gh-action-pypi-publish@release/v1\n```",
+          "tags": [
+            "ci-cd",
+            "github-actions",
+            "workflow-reuse",
+            "artifacts",
+            "deploy-what-you-test",
+            "consistency",
+            "workflow_call"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T13:19:45.860329+00:00",
+          "last_used_at": "2025-10-25T13:19:45.860329+00:00",
+          "related_bullets": [],
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "impl-0026",
+          "content": "Multi-Gate Release Validation: Add validation gates before irreversible operations (PyPI publish, Docker push, Git tag). Validate: 1) Tag format matches semver (v*.*.* pattern), 2) Tag version matches package metadata (__version__, pyproject.toml), 3) Artifacts exist and have expected format (.whl, .tar.gz), 4) Package quality checks pass (no syntax errors, imports work). Each gate should fail-fast with clear error message explaining what's wrong and how to fix. Prevents publishing broken releases that can't be deleted from PyPI.",
+          "code_example": "```yaml\n# \u274c INCORRECT - no validation, publishes broken releases\nname: Release\non:\n  push:\n    tags: ['v*']\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: python -m build\n      - uses: pypa/gh-action-pypi-publish@release/v1  # No checks!\n\n# \u2705 CORRECT - multi-gate validation\nname: Release\non:\n  push:\n    tags: ['v*']\njobs:\n  validate:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      \n      # Gate 1: Tag format validation\n      - name: Validate tag format\n        run: |\n          if ! [[ \"${{ github.ref_name }}\" =~ ^v[0-9]+\\.[0-9]+\\.[0-9]+$ ]]; then\n            echo \"Error: Tag must match semver (vX.Y.Z), got: ${{ github.ref_name }}\"\n            exit 1\n          fi\n      \n      # Gate 2: Version consistency\n      - name: Validate version matches tag\n        run: |\n          TAG_VERSION=\"${GITHUB_REF_NAME#v}\"  # Strip 'v' prefix\n          PKG_VERSION=$(python -c \"import tomli; print(tomli.load(open('pyproject.toml', 'rb'))['project']['version'])\")\n          if [[ \"$TAG_VERSION\" != \"$PKG_VERSION\" ]]; then\n            echo \"Error: Tag version ($TAG_VERSION) != package version ($PKG_VERSION)\"\n            exit 1\n          fi\n      \n      # Gate 3: Artifact validation\n      - run: python -m build\n      - name: Validate artifacts exist\n        run: |\n          if ! ls dist/*.whl dist/*.tar.gz 1> /dev/null 2>&1; then\n            echo \"Error: Expected .whl and .tar.gz in dist/\"\n            exit 1\n          fi\n      \n      # Gate 4: Quality checks\n      - run: pip install dist/*.whl\n      - run: python -c \"import map_framework\"  # Import test\n      \n  publish:\n    needs: validate  # Only run if all gates pass\n    runs-on: ubuntu-latest\n    steps:\n      - uses: pypa/gh-action-pypi-publish@release/v1\n```",
+          "tags": [
+            "ci-cd",
+            "release-management",
+            "validation",
+            "gates",
+            "semver",
+            "quality-assurance",
+            "fail-fast",
+            "github-actions"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T13:19:45.860329+00:00",
+          "last_used_at": "2025-10-25T13:19:45.860329+00:00",
+          "related_bullets": [],
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "impl-0027",
+          "content": "Semver Regex Validation (Spec-Compliant): When validating semantic version format (vX.Y.Z), use Semver 2.0.0 spec-compliant regex that prohibits leading zeros in version components. Pattern: ^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$. The (0|[1-9][0-9]*) construct matches either '0' alone OR non-zero digit followed by any digits, rejecting v01.2.3 or v1.02.3 (spec violations). Simpler patterns like ^v[0-9]+\\.[0-9]+\\.[0-9]+$ accept invalid versions with leading zeros. Pattern proven: GitHub tag v0.01.0 passed simple regex but violated spec, causing package registry rejection. Use spec-compliant regex for validation gates before publishing.",
+          "code_example": "```bash\n# \u274c INCORRECT - accepts leading zeros (spec violation)\nSIMPLE_SEMVER='^v[0-9]+\\.[0-9]+\\.[0-9]+$'\necho \"v01.2.3\" | grep -qE \"$SIMPLE_SEMVER\" && echo \"Valid\"  # Wrongly accepts!\n\n# \u2705 CORRECT - Semver 2.0.0 spec-compliant (rejects leading zeros)\nSPEC_SEMVER='^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$'\n\n# Validation function\nvalidate_semver() {\n  local tag=\"$1\"\n  if [[ ! \"$tag\" =~ $SPEC_SEMVER ]]; then\n    echo \"\u274c Invalid semver: $tag\"\n    echo \"Must match vX.Y.Z with no leading zeros (e.g., v1.2.3, v0.1.0)\"\n    echo \"Violations: v01.2.3 (leading zero), v1.02.3 (leading zero)\"\n    return 1\n  fi\n  echo \"\u2705 Valid semver: $tag\"\n  return 0\n}\n\n# Test cases\nvalidate_semver \"v1.2.3\"    # \u2705 Valid\nvalidate_semver \"v0.1.0\"    # \u2705 Valid (0 without leading digit OK)\nvalidate_semver \"v01.2.3\"   # \u274c Invalid (leading zero)\nvalidate_semver \"v1.02.3\"   # \u274c Invalid (leading zero in minor)\n```",
+          "tags": [
+            "semver",
+            "validation",
+            "regex",
+            "versioning",
+            "bash"
+          ],
+          "related_bullets": [
+            "impl-0049"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T18:45:00.541231+00:00",
+          "last_used_at": "2025-10-25T18:45:00.541231+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "impl-0028",
+          "content": "Multi-Gate Validation for Automation Scripts: Before automation scripts modify state (git operations, file edits, package publishing), implement 5 validation gates: (1) Input Format - validate arguments match expected patterns before parsing, (2) Preconditions - check required files/tools exist before processing, (3) Business Logic - verify data meets domain rules (version consistency, no conflicts), (4) Pre-Execution - dry-run or preview changes before applying, (5) Post-Execution - verify expected state reached after modification. Each gate fails fast with actionable error message. Prevents cascading failures where invalid input causes partial state changes that are hard to rollback. Pattern proven: bump_version.sh script prevented broken release by catching version mismatch in gate 3 before git tag creation.",
+          "code_example": "```bash\n# \u274c INCORRECT - No validation, modifies state blindly\nbump_version.sh() {\n  NEW_VERSION=\"$1\"\n  sed -i \"s/__version__ = .*/__version__ = '$NEW_VERSION'/\" src/__init__.py\n  git commit -am \"Bump version to $NEW_VERSION\"\n  git tag \"v$NEW_VERSION\"\n  git push --tags\n}\n# Risk: Invalid version format, inconsistent files, broken release\n\n# \u2705 CORRECT - 5-gate validation before state changes\nbump_version.sh() {\n  NEW_VERSION=\"$1\"\n  \n  # Gate 1: Input Format Validation\n  if [[ ! \"$NEW_VERSION\" =~ ^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$ ]]; then\n    echo \"\u274c Gate 1 Failed: Invalid semver format '$NEW_VERSION'\"\n    exit 1\n  fi\n  \n  # Gate 2: Preconditions Check\n  if [[ ! -f \"src/__init__.py\" ]] || [[ ! -f \"pyproject.toml\" ]]; then\n    echo \"\u274c Gate 2 Failed: Required files missing\"\n    exit 1\n  fi\n  \n  # Gate 3: Business Logic Validation\n  PYPROJECT_VERSION=$(grep -oP 'version = \"\\K[^\"]+' pyproject.toml)\n  if [[ \"$NEW_VERSION\" != \"$PYPROJECT_VERSION\" ]]; then\n    echo \"\u274c Gate 3 Failed: Version mismatch (input: $NEW_VERSION, pyproject: $PYPROJECT_VERSION)\"\n    exit 1\n  fi\n  \n  # Gate 4: Pre-Execution Preview\n  echo \"Preview changes:\"\n  echo \"  - Update src/__init__.py: __version__ = '$NEW_VERSION'\"\n  echo \"  - Create git tag: v$NEW_VERSION\"\n  read -p \"Proceed? (y/N) \" -n 1 -r\n  [[ ! $REPLY =~ ^[Yy]$ ]] && exit 0\n  \n  # Apply changes\n  sed -i \"s/__version__ = .*/__version__ = '$NEW_VERSION'/\" src/__init__.py\n  git commit -am \"Bump version to $NEW_VERSION\"\n  git tag \"v$NEW_VERSION\"\n  \n  # Gate 5: Post-Execution Verification\n  ACTUAL_TAG=$(git describe --tags --exact-match 2>/dev/null)\n  if [[ \"$ACTUAL_TAG\" != \"v$NEW_VERSION\" ]]; then\n    echo \"\u274c Gate 5 Failed: Tag creation failed (expected: v$NEW_VERSION, actual: $ACTUAL_TAG)\"\n    exit 1\n  fi\n  \n  echo \"\u2705 All gates passed. Version bumped to $NEW_VERSION\"\n}\n```",
+          "tags": [
+            "validation",
+            "automation",
+            "bash",
+            "state-changes",
+            "error-prevention"
+          ],
+          "related_bullets": [
+            "impl-0049"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T18:45:00.541231+00:00",
+          "last_used_at": "2025-10-25T18:45:00.541231+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
         }
       ]
     },
     "SECURITY_PATTERNS": {
       "description": "Security best practices, authentication, authorization, and vulnerability prevention",
-      "bullets": []
+      "bullets": [
+        {
+          "id": "sec-0001",
+          "content": "PyPI OIDC Trusted Publishing: Use GitHub's OIDC provider to authenticate to PyPI instead of long-lived API tokens stored in secrets. Configure trusted publisher in PyPI web UI with repository details, then use pypa/gh-action-pypi-publish action with id-token: write permission. OIDC tokens are short-lived (minutes), scoped to specific workflow, and automatically rotated. Eliminates token leakage risk and secret management overhead. Requires one-time PyPI configuration: project name, repository owner, workflow filename.",
+          "code_example": "```yaml\n# \u274c INSECURE - long-lived token in GitHub secrets\nname: Publish\non: [push]\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: pypa/gh-action-pypi-publish@release/v1\n        with:\n          password: ${{ secrets.PYPI_API_TOKEN }}  # Leakage risk, manual rotation\n\n# \u2705 SECURE - OIDC trusted publishing (no secrets)\nname: Publish\non:\n  push:\n    tags: ['v*']\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    permissions:\n      id-token: write  # Required for OIDC\n      contents: read   # Minimal permissions\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-python@v5\n      - run: python -m build\n      - uses: pypa/gh-action-pypi-publish@release/v1\n        # No password/token needed - OIDC automatic\n        # PyPI trusts workflow via OIDC provider\n```",
+          "tags": [
+            "security",
+            "ci-cd",
+            "github-actions",
+            "pypi",
+            "oidc",
+            "authentication",
+            "secrets-management",
+            "token-rotation"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T13:19:45.860329+00:00",
+          "last_used_at": "2025-10-25T13:19:45.860329+00:00",
+          "related_bullets": [],
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "sec-0002",
+          "content": "GitHub Actions Least-Privilege Permissions: Explicitly set minimal permissions per workflow using top-level permissions key. Never use default permissions (read-write on all scopes). For OIDC publishing: id-token: write + contents: read only. Set permissions at job level for granular control. Default permissions grant unnecessary access that attackers can exploit via compromised dependencies or workflow injection.",
+          "code_example": "```yaml\n# \u274c INSECURE - uses default permissions (read-write on all scopes)\nname: Publish\non: [push]\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    # Default: contents:write, issues:write, pull-requests:write, etc.\n    steps:\n      - uses: pypa/gh-action-pypi-publish@release/v1\n\n# \u2705 SECURE - explicit minimal permissions\nname: Publish\non: [push]\npermissions:  # Top-level: deny all by default\n  contents: read\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    permissions:  # Job-level: grant only what's needed\n      id-token: write   # For OIDC\n      contents: read    # For checkout\n    steps:\n      - uses: actions/checkout@v4\n      - uses: pypa/gh-action-pypi-publish@release/v1\n```",
+          "tags": [
+            "security",
+            "ci-cd",
+            "github-actions",
+            "least-privilege",
+            "permissions",
+            "access-control",
+            "oidc"
+          ],
+          "related_bullets": [
+            "sec-0001"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T13:19:45.860329+00:00",
+          "last_used_at": "2025-10-25T13:19:45.860329+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        }
+      ]
     },
     "PERFORMANCE_PATTERNS": {
       "description": "Optimization techniques, caching strategies, and performance anti-patterns to avoid",
@@ -1056,6 +1187,26 @@
           ],
           "deprecated": false,
           "deprecation_reason": null
+        },
+        {
+          "id": "test-0001",
+          "content": "Bash Automation Script Testing: Production automation scripts (>200 lines, critical workflows) require automated tests to prevent silent failures and regression. Use bats-core testing framework (Bash Automated Testing System) for structured test suites with TAP output. Test structure: (1) Setup - create temp directories, mock files, (2) Execution - run script function with test inputs, (3) Assertions - verify exit codes, output patterns, file state using [[ conditions ]], (4) Teardown - cleanup temp resources. Pattern proven: bump_version.sh untested script had cross-platform sed bug caught only in production. Adding bats tests with GNU/BSD mocking caught issue in CI before release. Install: brew install bats-core (macOS) or apt install bats (Linux).",
+          "code_example": "```bash\n# test_bump_version.bats - bats test suite\n#!/usr/bin/env bats\n\nsetup() {\n  # Create temporary test directory\n  export TEST_DIR=\"$(mktemp -d)\"\n  cd \"$TEST_DIR\"\n  \n  # Mock project files\n  echo '__version__ = \"1.0.0\"' > __init__.py\n  echo 'version = \"1.0.0\"' > pyproject.toml\n  git init -q\n  git config user.name \"Test\"\n  git config user.email \"test@example.com\"\n}\n\nteardown() {\n  # Cleanup temp directory\n  rm -rf \"$TEST_DIR\"\n}\n\n# Test: Valid semver format accepted\n@test \"bump_version accepts valid semver\" {\n  run bump_version \"1.2.3\"\n  [[ \"$status\" -eq 0 ]]\n  [[ \"$output\" =~ \"\u2705 All gates passed\" ]]\n}\n\n# Test: Invalid semver rejected (leading zero)\n@test \"bump_version rejects leading zeros\" {\n  run bump_version \"01.2.3\"\n  [[ \"$status\" -eq 1 ]]\n  [[ \"$output\" =~ \"\u274c Gate 1 Failed: Invalid semver\" ]]\n}\n\n# Test: Version mismatch detection\n@test \"bump_version detects version inconsistency\" {\n  echo 'version = \"1.5.0\"' > pyproject.toml  # Mismatch with __init__.py\n  run bump_version \"1.2.3\"\n  [[ \"$status\" -eq 1 ]]\n  [[ \"$output\" =~ \"\u274c Gate 3 Failed: Version mismatch\" ]]\n}\n\n# Test: Post-execution verification\n@test \"bump_version creates correct git tag\" {\n  run bump_version \"1.2.3\"\n  TAG=$(git describe --tags --exact-match)\n  [[ \"$TAG\" == \"v1.2.3\" ]]\n}\n\n# Run tests: bats test_bump_version.bats\n# Output:\n#   \u2713 bump_version accepts valid semver\n#   \u2713 bump_version rejects leading zeros\n#   \u2713 bump_version detects version inconsistency\n#   \u2713 bump_version creates correct git tag\n#   4 tests, 0 failures\n```",
+          "tags": [
+            "bash",
+            "testing",
+            "bats",
+            "automation",
+            "ci",
+            "validation"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T18:45:00.541231+00:00",
+          "last_used_at": "2025-10-25T18:45:00.541231+00:00",
+          "related_bullets": [],
+          "deprecated": false,
+          "deprecation_reason": null
         }
       ]
     },
@@ -1193,6 +1344,27 @@
             "bash",
             "git-mv"
           ],
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "tool-0001",
+          "content": "Cross-Platform Sed Compatibility: GNU sed (Linux) and BSD sed (macOS) have incompatible in-place edit syntax. GNU uses -i with optional backup suffix: sed -i.bak or sed -i ''. BSD requires argument even if empty: sed -i '' or sed -i '.bak'. Use sed --version to detect GNU (prints version) vs BSD (exits with error). When editing files with special regex chars (dots, slashes), escape them: sed 's/example\\.com/new\\.com/g'. Pattern proven: script worked on Linux but failed silently on macOS due to -i syntax mismatch. Always test cross-platform scripts on both GNU and BSD environments.",
+          "code_example": "```bash\n# \u274c INCORRECT - Linux-only syntax fails on macOS\nsed -i 's/old/new/g' config.yaml\n# macOS error: \"sed: 1: 'config.yaml': extra characters at the end of command\"\n\n# \u2705 CORRECT - Cross-platform detection and compatibility\nif sed --version >/dev/null 2>&1; then\n  # GNU sed (Linux)\n  SED_INPLACE=\"sed -i\"\nelse\n  # BSD sed (macOS)\n  SED_INPLACE=\"sed -i ''\"\nfi\n\n# Portable usage with regex escaping\n$SED_INPLACE 's/example\\.com/new\\.com/g' config.yaml\n$SED_INPLACE 's|/old/path|/new/path|g' paths.txt  # Use | delimiter for paths\n\n# Verification after edit\ngrep -q 'new\\.com' config.yaml && echo \"\u2705 Updated\" || echo \"\u274c Failed\"\n```",
+          "tags": [
+            "bash",
+            "sed",
+            "cross-platform",
+            "gnu",
+            "bsd",
+            "macos",
+            "linux"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T18:45:00.541231+00:00",
+          "last_used_at": "2025-10-25T18:45:00.541231+00:00",
+          "related_bullets": [],
           "deprecated": false,
           "deprecation_reason": null
         }

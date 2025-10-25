@@ -5,6 +5,7 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main]
+  workflow_call:
 
 jobs:
   test:
@@ -73,3 +74,4 @@ jobs:
       with:
         name: dist-${{ github.run_id }}
         path: dist/
+        retention-days: 7
