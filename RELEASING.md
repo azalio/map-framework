@@ -218,9 +218,17 @@ After pushing the tag, create a GitHub release to make it official and notify us
 
 ```bash
 # Example: Create release from tag with CHANGELOG excerpt
+# Note: Uses awk (BSD/GNU compatible) instead of sed for better portability
 gh release create v1.0.1 \
   --title "MAP Framework v1.0.1" \
-  --notes "$(sed -n '/## \\[1.0.1\\]/,/## \\[/p' CHANGELOG.md | head -n -1)"
+  --notes "$(awk '/## \[1.0.1\]/,/## \[/' CHANGELOG.md | sed '$d')"
+
+# Alternative: Via file (if command substitution has issues)
+awk '/## \[1.0.1\]/,/## \[/' CHANGELOG.md | sed '$d' > /tmp/release-notes.md
+gh release create v1.0.1 \
+  --title "MAP Framework v1.0.1" \
+  --notes-file /tmp/release-notes.md
+rm /tmp/release-notes.md
 ```
 
 ---
@@ -397,7 +405,7 @@ git push origin v1.0.1
 # 4. Create GitHub release
 gh release create v1.0.1 \
   --title "MAP Framework v1.0.1" \
-  --notes "$(sed -n '/## \\[1.0.1\\]/,/## \\[/p' CHANGELOG.md | head -n -1)"
+  --notes "$(awk '/## \[1.0.1\]/,/## \[/' CHANGELOG.md | sed '$d')"
 
 # 5. Monitor CI/CD
 gh run watch

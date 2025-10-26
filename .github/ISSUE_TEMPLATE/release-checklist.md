@@ -124,7 +124,8 @@ assignees: ''
 
 - [ ] Extract CHANGELOG excerpt for release notes:
   ```bash
-  sed -n '/## \\[{{VERSION}}\\]/,/## \\[/p' CHANGELOG.md | head -n -1
+  # BSD/macOS compatible (uses awk instead of sed, sed '$d' instead of head -n -1)
+  awk '/## \[{{VERSION}}\]/,/## \[/' CHANGELOG.md | sed '$d'
   ```
 - [ ] Review release notes content
 - [ ] Add any additional context (migration notes, breaking changes, etc.)
@@ -135,7 +136,7 @@ assignees: ''
   ```bash
   gh release create v{{VERSION}} \
     --title "MAP Framework v{{VERSION}}" \
-    --notes "$(sed -n '/## \\[{{VERSION}}\\]/,/## \\[/p' CHANGELOG.md | head -n -1)"
+    --notes "$(awk '/## \[{{VERSION}}\]/,/## \[/' CHANGELOG.md | sed '$d')"
   ```
 - [ ] Verify release created: `gh release view v{{VERSION}}`
 - [ ] Release appears on GitHub releases page: https://github.com/azalio/map-framework/releases
