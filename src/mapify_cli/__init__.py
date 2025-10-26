@@ -378,10 +378,20 @@ def show_banner():
     console.print()
 
 
+def version_callback(value: bool):
+    """Callback to show version and exit."""
+    if value:
+        console.print(f"mapify-cli version {__version__}")
+        raise typer.Exit()
+
+
 @app.callback()
-def callback(ctx: typer.Context):
+def callback(
+    ctx: typer.Context,
+    version: Optional[bool] = typer.Option(None, "--version", callback=version_callback, is_eager=True, help="Show version and exit")
+):
     """Show banner when no subcommand is provided."""
-    if ctx.invoked_subcommand is None and "--help" not in sys.argv and "-h" not in sys.argv:
+    if ctx.invoked_subcommand is None and "--help" not in sys.argv and "-h" not in sys.argv and not version:
         show_banner()
         console.print(Align.center("[dim]Run 'mapify --help' for usage information[/dim]"))
         console.print()
