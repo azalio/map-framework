@@ -4,9 +4,9 @@
     "project": "map-framework",
     "description": "ACE-style comprehensive playbook for MAP Framework development",
     "created_at": "2025-10-10T00:00:00Z",
-    "last_updated": "2025-10-25T21:43:28.723814+00:00",
-    "total_bullets": 74,
-    "sections_count": 11,
+    "last_updated": "2025-10-26T08:08:24.353122+00:00",
+    "total_bullets": 77,
+    "sections_count": 12,
     "top_k": 5,
     "version": 3
   },
@@ -862,6 +862,26 @@
           "last_used_at": "2025-10-25T21:15:57.637760+00:00",
           "deprecated": false,
           "deprecation_reason": null
+        },
+        {
+          "id": "impl-0048",
+          "content": "Multi-File Consistency with Cross-Reference Comments: When validation logic (regex patterns, version formats, constraints) exists in multiple files (CI workflow + local script + docs), prevent drift with explicit cross-reference comments linking to source of truth. Format: '# CRITICAL: Must match regex in path/to/file.ext:line_number for consistency'. Prevents bugs where CI validates differently than local script, causing 'works locally, fails in CI' frustration. Update comments when moving logic. Choose single source of truth (usually newest/most comprehensive), reference it from all others.",
+          "code_example": "```yaml\n# .github/workflows/ci.yml\n- name: Validate version format\n  run: |\n    # IMPORTANT: Must match regex in scripts/bump-version.sh:139 for consistency\n    semver_pattern = r'^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$'\n    if not re.match(semver_pattern, version):\n        sys.exit(1)\n```\n\n```bash\n# scripts/bump-version.sh:139\nvalidate_semver() {\n    # NOTE: CI workflow validates with identical regex (.github/workflows/ci.yml:43)\n    if [[ ! \"$version\" =~ ^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$ ]]; then\n        die \"Invalid version format: $version\"\n    fi\n}\n```",
+          "tags": [
+            "consistency",
+            "validation",
+            "synchronization",
+            "multi-file",
+            "cross-reference",
+            "documentation"
+          ],
+          "related_bullets": [],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-26T08:08:24.353122+00:00",
+          "last_used_at": "2025-10-26T08:08:24.353122+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
         }
       ]
     },
@@ -921,7 +941,27 @@
     },
     "ERROR_PATTERNS": {
       "description": "Common errors, their root causes, and proven solutions",
-      "bullets": []
+      "bullets": [
+        {
+          "id": "err-0001",
+          "content": "Educational Error Messages with Contrast Examples: When validation fails, provide educational context with 5+ valid examples AND 5+ invalid examples with explanations. Developers learn by contrast - showing BOTH what works (\u2705) and what fails (\u274c) with reasons builds mental models faster than rejection alone. Include: (1) What input was invalid, (2) Expected format specification, (3) Valid examples (\u2705), (4) Invalid examples with specific reasons (\u274c leading zero, \u274c missing component), (5) Actionable fix (which file to update, what format to use). Pattern prevents repeated trial-and-error.",
+          "code_example": "```python\n# \u274c BAD - rejection without guidance\nif not valid:\n    print(\"Invalid version format\")\n    sys.exit(1)\n\n# \u2705 GOOD - educational with contrast examples\nif not re.match(semver_pattern, version):\n    print(f\"\\n\u274c ERROR: Invalid version format: {version}\")\n    print(\"\\nExpected format: X.Y.Z (Semantic Versioning 2.0.0)\")\n    print(\"\\nValid examples:\")\n    print(\"  \u2705 0.1.0\")\n    print(\"  \u2705 1.0.0\")\n    print(\"  \u2705 2.10.15\")\n    print(\"\\nInvalid examples:\")\n    print(\"  \u274c 01.0.0  (leading zero in major)\")\n    print(\"  \u274c v1.0.0  (version prefix not allowed)\")\n    print(\"  \u274c 1.0     (incomplete, missing patch)\")\n    print(\"  \u274c 1.0.0-alpha (pre-release not supported)\")\n    print(\"  \u274c 1.0.0.0 (too many components)\")\n    print(\"\\nFix: Update version in pyproject.toml to valid semver\")\n    sys.exit(1)\n```",
+          "tags": [
+            "error-handling",
+            "user-experience",
+            "validation",
+            "education",
+            "feedback"
+          ],
+          "related_bullets": [],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-26T08:08:24.353122+00:00",
+          "last_used_at": "2025-10-26T08:08:24.353122+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        }
+      ]
     },
     "TESTING_STRATEGIES": {
       "description": "Test patterns, mocking approaches, and coverage strategies",
@@ -1777,6 +1817,31 @@
             "documentation",
             "map-framework"
           ],
+          "deprecated": false,
+          "deprecation_reason": null
+        }
+      ]
+    },
+    "CI_CD_PATTERNS": {
+      "description": "Patterns for continuous integration and deployment workflows",
+      "bullets": [
+        {
+          "id": "ci-cd-0001",
+          "content": "Fail-Fast Validation Jobs with Dependency Blocking: Create dedicated lightweight validation jobs (version format, syntax checks, required files) that run before expensive operations (test matrix, builds, deployments). Use needs: [validate-job] to block downstream jobs until validation passes. 8-second validation failure is better than 5-minute test matrix failure consuming 4x runner minutes (ubuntu + macos, python 3.11 + 3.12). Place validation jobs at workflow start, make all other jobs depend on them. Prevents wasted CI resources and faster feedback on trivial errors.",
+          "code_example": "```yaml\n# .github/workflows/ci.yml\njobs:\n  validate-version:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - name: Validate semver format\n        run: |\n          python3 -c \"import tomllib, re, sys; ...\"\n        # 8 seconds, fails fast on invalid version\n\n  test:\n    needs: validate-version  # \u2705 Blocked until validation passes\n    strategy:\n      matrix:\n        os: [ubuntu-latest, macos-latest]\n        python-version: [\"3.11\", \"3.12\"]\n    # 5+ minutes, only runs if validation succeeded\n\n  build:\n    needs: validate-version  # \u2705 Parallel with test, both blocked\n    runs-on: ubuntu-latest\n    # 3+ minutes, only runs if validation succeeded\n```",
+          "tags": [
+            "ci-cd",
+            "github-actions",
+            "fail-fast",
+            "optimization",
+            "validation",
+            "job-dependencies"
+          ],
+          "related_bullets": [],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-26T08:08:24.353122+00:00",
+          "last_used_at": "2025-10-26T08:08:24.353122+00:00",
           "deprecated": false,
           "deprecation_reason": null
         }
