@@ -88,8 +88,9 @@ jobs:
     - name: Update version for TestPyPI
       run: |
         # Temporarily modify pyproject.toml for TestPyPI upload
-        sed -i.bak 's/^version = ".*"/version = "${{ steps.get_version.outputs.TEST_VERSION }}"/' pyproject.toml
-        echo "Updated pyproject.toml version to ${{ steps.get_version.outputs.TEST_VERSION }}"
+        TEST_VERSION="${{ steps.get_version.outputs.TEST_VERSION }}"
+        sed -i.bak "s/^version = \".*\"/version = \"${TEST_VERSION}\"/" pyproject.toml
+        echo "Updated pyproject.toml version to ${TEST_VERSION}"
         grep '^version = ' pyproject.toml
 
     - name: Install build dependencies
