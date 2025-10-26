@@ -1,6 +1,11 @@
 # MAP Framework Release Process
 
+<!-- IMPORTANT: When updating this file, also update .github/ISSUE_TEMPLATE/release-checklist.md -->
+<!-- The release checklist template references sections from this document -->
+
 This document describes the complete release process for the MAP Framework, from preparation to verification and troubleshooting.
+
+**Quick Start**: Use the [Release Checklist Template](.github/ISSUE_TEMPLATE/release-checklist.md) to create a trackable GitHub issue for each release.
 
 ## Table of Contents
 

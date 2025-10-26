@@ -4,8 +4,8 @@
     "project": "map-framework",
     "description": "ACE-style comprehensive playbook for MAP Framework development",
     "created_at": "2025-10-10T00:00:00Z",
-    "last_updated": "2025-10-26T08:08:24.353122+00:00",
-    "total_bullets": 77,
+    "last_updated": "2025-10-26T08:53:59.231237+00:00",
+    "total_bullets": 81,
     "sections_count": 12,
     "top_k": 5,
     "version": 3
@@ -1737,8 +1737,8 @@
         },
         {
           "id": "doc-0014",
-          "content": "Version Management Documentation with Dynamic References: Use placeholder patterns and dynamic sources for version references in user-facing documentation to minimize maintenance burden during version bumps. Four strategies: (1) Generic 'latest' references for non-critical contexts ('pip install PKG' without version), (2) Placeholder variables for version-specific examples ({{VERSION}} in templates, sed-replaceable during releases), (3) Dynamic badges linking to PyPI/GitHub APIs for current version display, (4) '--version command' references instead of hardcoded version strings. Reserve exact version pins (PKG==1.0.1) for reproducibility-critical contexts (Docker, CI/CD, security advisories). Pattern proven: Evaluator praised 'future-proof examples' and 'comprehensive version management' for README avoiding hardcoded versions. Dynamic references reduce documentation drift where version strings become stale after releases.",
-          "code_example": "```markdown\n### Strategy 1: Generic 'Latest' (Self-Updating)\n\n```bash\npip install mapify-cli  # \u2705 Always latest\n```\n\n### Strategy 3: Dynamic Badges (API-Driven)\n\n[![PyPI version](https://badge.fury.io/py/mapify-cli.svg)](https://pypi.org/project/mapify-cli/)\n\n### Strategy 4: Command References (Runtime)\n\nCheck version:\n```bash\nmapify --version  # \u2705 Returns current version\n```\n```",
+          "content": "Version Management Documentation with Dynamic References: Use placeholder patterns and dynamic sources for version references in user-facing documentation to minimize maintenance burden during version bumps. Five strategies: (1) Generic 'latest' references for non-critical contexts ('pip install PKG' without version), (2) Fail-loud placeholder variables for version-specific examples ({{VERSION}} in templates - MUST use {{DOUBLE_BRACE}} syntax, not [BRACKETS] or ALLCAPS, because double-braces break grep if incomplete and follow templating conventions), (3) Placeholder verification instructions (find-replace checklist + 'grep returns 0 results' validation), (4) Dynamic badges linking to PyPI/GitHub APIs for current version display, (5) '--version command' references instead of hardcoded version strings. Reserve exact version pins (PKG==1.0.1) for reproducibility-critical contexts (Docker, CI/CD, security advisories). Pattern proven: Evaluator praised 'future-proof examples' for README avoiding hardcoded versions. Fail-loud placeholders reduce substitution errors where {{VERSION}} remains in published docs.",
+          "code_example": "```markdown\n### Strategy 2: Fail-Loud Placeholders (Template Mode)\n\n## Before Starting Release\nReplace all version placeholders:\n1. Find-replace: {{VERSION}} \u2192 1.2.3 (double-brace syntax)\n2. Verify complete: `grep '{{VERSION}}' docs/` \u2192 0 results\n3. If grep finds matches \u2192 substitution incomplete (FAIL LOUD)\n\n### Installation (Template Example)\n\n```bash\npip install mapify-cli=={{VERSION}}  # \u2705 Breaks grep if incomplete\n```\n\n\u274c BAD - Silent failure:\n```bash\npip install mapify-cli==[VERSION]  # Completes grep check even if [VERSION] remains\npip install mapify-cli==VERSION     # grep 'VERSION' finds many false positives\n```\n\n### Strategy 3: Placeholder Verification\n\n```bash\n# Verification checklist\n- [ ] Replace {{VERSION}} with actual version (e.g., 1.2.3)\n- [ ] Run: grep '{{VERSION}}' docs/ release-checklist.md\n- [ ] Expected: 0 results (no matches)\n- [ ] If matches found: substitution incomplete, DO NOT PROCEED\n```\n\n### Strategy 4: Dynamic Badges (API-Driven)\n\n[![PyPI version](https://badge.fury.io/py/mapify-cli.svg)](https://pypi.org/project/mapify-cli/)]\n\n### Strategy 5: Command References (Runtime)\n\n```bash\nmapify --version  # \u2705 Returns current version\n```\n```",
           "tags": [
             "documentation",
             "version-management",
@@ -1757,7 +1757,7 @@
           "helpful_count": 0,
           "harmful_count": 0,
           "created_at": "2025-10-25T20:48:15.743795+00:00",
-          "last_used_at": "2025-10-25T20:48:15.743795+00:00",
+          "last_used_at": "2025-10-26T08:53:59.231237+00:00",
           "deprecated": false,
           "deprecation_reason": null
         },
@@ -1785,6 +1785,114 @@
           "harmful_count": 0,
           "created_at": "2025-10-25T20:48:15.743795+00:00",
           "last_used_at": "2025-10-25T20:48:15.743795+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "doc-0016",
+          "content": "Risk-Responsive Documentation Design: For high-stakes procedural documentation (releases, deployments, disaster recovery, incident response), apply Predictor-driven risk mitigation when estimated risk score \u22655.0/10 (MEDIUM or HIGH). Systematically apply layered defenses targeting specific Predictor-identified failure modes: fail-loud placeholders (prevent incomplete substitution), time estimates (combat completion anxiety), emoji markers (highlight irreversible operations), sync comments (prevent multi-file drift). Each mitigation addresses distinct cognitive or process failure. Pattern proven: Subtask 8 release checklist applied 5 mitigations, reduced Predictor risk from 5.2/10 (MEDIUM) to ~3.5/10 (LOW), estimated quality improvement 8.1\u21929.0/10. Applicable beyond software releases: database migrations requiring rollback plans, production deployments with verification gates, security incident response procedures. Risk-responsive design transforms documentation from passive reference to active safety system.",
+          "code_example": "```markdown\n<!-- \u274c BASELINE - no risk mitigations (Predictor 5.2/10 risk) -->\n# Release Checklist\n\n## Pre-Release\n- [ ] Run tests\n- [ ] Update CHANGELOG\n- [ ] Bump version in files\n- [ ] Push tag\n- [ ] Create release\n\n<!-- \u2705 RISK-RESPONSIVE - 5 mitigations applied (Predictor ~3.5/10 risk) -->\n# Release Checklist v{{VERSION}}\n\n## Before Starting (~5 min)\n\u26a0\ufe0f CRITICAL: Replace all {{VERSION}} placeholders:\n1. Find-replace: {{VERSION}} \u2192 1.2.3\n2. Verify: `grep '{{VERSION}}' release-checklist.md` \u2192 0 results\n3. If grep finds matches \u2192 STOP, substitution incomplete\n\n## Phase 1: Pre-Release (~30-45 min)\n- [ ] Run test suite: `pytest --cov` (expected: 100% pass)\n- [ ] Update CHANGELOG.md with release notes\n- [ ] Bump version: `./scripts/bump-version.sh patch`\n- [ ] \u26a0\ufe0f IRREVERSIBLE: Push tag v{{VERSION}} to origin\n\n## Phase 2: Release Creation (~15-20 min)\n- [ ] \u26a0\ufe0f PRODUCTION: Create GitHub release (triggers CI/CD)\n- [ ] Monitor workflow: `gh run watch`\n\n<!-- Sync requirement -->\n<!-- SYNC: When updating this file, also update docs/RELEASING.md -->\n\nTotal time: ~60-90 minutes\n\nMitigations applied:\n1. {{VERSION}} fail-loud placeholder (prevents incomplete substitution)\n2. Time estimates per phase (combats completion anxiety)\n3. \u26a0\ufe0f emoji markers for irreversible ops (5-10% of items)\n4. Expected results (binary verification)\n5. Sync comments (prevents doc drift)\n```",
+          "tags": [
+            "documentation",
+            "risk-mitigation",
+            "predictor",
+            "checklists",
+            "high-stakes",
+            "cognitive-load",
+            "safety",
+            "releases",
+            "deployments"
+          ],
+          "related_bullets": [
+            "doc-0005",
+            "doc-0010",
+            "doc-0014"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-26T08:53:59.231237+00:00",
+          "last_used_at": "2025-10-26T08:53:59.231237+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "doc-0017",
+          "content": "Dual-Channel Critical Operation Markers: In long procedural checklists (50+ items, 6+ phases), use dual-channel markers for high-consequence operations: emoji \u26a0\ufe0f visual marker + textual severity label (CRITICAL/IRREVERSIBLE/DESTRUCTIVE/PRODUCTION). Limit to 5-10% of total items to preserve signal strength. Dual-channel design works because: (1) Emoji provides rapid visual scanning (pre-attentive processing), (2) Textual label provides semantic precision (what type of consequence), (3) Redundant encoding survives degraded viewing conditions (terminal without emoji support, printed documentation). Reserve markers for operations with irreversible consequences (git push tags, production deployments, database drops, API key rotation) or high-impact failures (OIDC setup errors block release, incorrect version breaks semver). Overuse dilutes signal (checkbox fatigue). Pattern proven: Subtask 8 release checklist marked 3 of 30 items (~10%) with \u26a0\ufe0f IRREVERSIBLE, Evaluator scored 8.1/10. Applicable to: disaster recovery procedures, production deployment checklists, incident response runbooks, privilege escalation workflows.",
+          "code_example": "```markdown\n<!-- \u274c NO MARKERS - all items equal weight (cognitive overload) -->\n## Release Process\n- [ ] Run tests\n- [ ] Update docs\n- [ ] Push tag to origin (triggers release workflow)\n- [ ] Create GitHub release\n- [ ] Monitor CI/CD\n- [ ] Verify PyPI upload\n\n<!-- \u2705 DUAL-CHANNEL MARKERS - 2 of 6 items marked (33%, bit high but acceptable) -->\n## Release Process\n- [ ] Run tests: `pytest --cov`\n- [ ] Update docs: verify CHANGELOG.md\n- [ ] \u26a0\ufe0f IRREVERSIBLE: Push tag v1.2.3 to origin\n  - Once pushed, tag triggers automated release workflow\n  - Cannot unpublish from PyPI after upload\n  - Verify version is correct BEFORE pushing\n- [ ] \u26a0\ufe0f PRODUCTION: Create GitHub release\n  - Triggers CI/CD pipeline to build and publish to PyPI\n  - Visible to all users immediately\n- [ ] Monitor workflow: `gh run watch`\n- [ ] Verify upload: `pip index versions mapify-cli | grep 1.2.3`\n```",
+          "tags": [
+            "documentation",
+            "checklists",
+            "cognitive-load",
+            "emoji",
+            "markers",
+            "critical-operations",
+            "dual-channel",
+            "user-experience",
+            "releases",
+            "incident-response"
+          ],
+          "related_bullets": [
+            "doc-0005",
+            "doc-0016"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-26T08:53:59.231237+00:00",
+          "last_used_at": "2025-10-26T08:53:59.231237+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "doc-0018",
+          "content": "Time Estimates for Checkbox Fatigue: For procedural checklists exceeding 30 items or 6 distinct phases, add time estimates per phase (~MIN-MAX min format) and total workflow time. Time estimates combat three cognitive failures: (1) Unknown completion anxiety (users unsure if checklist takes 10 min or 2 hours, hesitate to start), (2) Unrealistic scheduling (users allocate insufficient time, get interrupted mid-workflow, lose context), (3) Progress tracking failure (no milestones, unknown if on pace). Format: phase header with time range (~30-45 min), total at document top (~60-90 min). Use ranges not point estimates to account for variability (first-time vs repeat execution, system differences). Estimate conservatively (80th percentile completion time, not median). Pattern proven: Subtask 8 release checklist added time estimates, Evaluator noted 'realistic time budgeting' as quality signal. Applicable to: installation procedures, deployment checklists, troubleshooting workflows, data migration runbooks. Avoid for non-linear workflows (exploratory debugging, research tasks) where time estimates create false precision.",
+          "code_example": "```markdown\n<!-- \u274c NO TIME ESTIMATES - unknown completion anxiety -->\n# Database Migration Checklist\n\n## Pre-Migration Validation\n- [ ] Backup production database\n- [ ] Verify backup integrity\n- [ ] Test migration on staging\n\n## Migration Execution\n- [ ] Enable maintenance mode\n- [ ] Run migration script\n- [ ] Verify data integrity\n\n<!-- \u2705 TIME ESTIMATES - clear expectations -->\n# Database Migration Checklist\n\n**Total estimated time: ~90-120 minutes** (first-time: 120-150 min)\n\n## Phase 1: Pre-Migration Validation (~30-40 min)\n- [ ] Backup production database: `pg_dump` (~15-20 min for 10GB DB)\n- [ ] Verify backup integrity: `pg_restore --list` (~2-3 min)\n- [ ] Test migration on staging: `./migrate.sh staging` (~10-15 min)\n\n## Phase 2: Migration Execution (~40-60 min)\n- [ ] Enable maintenance mode: `./maintenance.sh on` (~1 min)\n- [ ] Run migration script: `./migrate.sh production` (~30-45 min)\n- [ ] Verify data integrity: `./verify-migration.sh` (~5-10 min)\n```",
+          "tags": [
+            "documentation",
+            "checklists",
+            "time-estimates",
+            "cognitive-load",
+            "completion-anxiety",
+            "scheduling",
+            "user-experience",
+            "migrations",
+            "deployments"
+          ],
+          "related_bullets": [
+            "doc-0010",
+            "doc-0016",
+            "doc-0017"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-26T08:53:59.231237+00:00",
+          "last_used_at": "2025-10-26T08:53:59.231237+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "doc-0019",
+          "content": "Multi-File Documentation Sync Comments: For multi-file consistency requirements (release checklist \u2194 release guide, API reference \u2194 implementation, schema docs \u2194 migration guide), add bidirectional HTML sync comments at top of BOTH files. Format: <!-- SYNC: When updating this file, also update path/to/other.md [reason] -->. Sync comments transform documentation drift from invisible accident to intentional choice by: (1) Making drift visible in git diff (comment appears in context), (2) Catchable in code review (reviewer sees sync reminder), (3) Explicit rationale (why files must stay synchronized). Without sync comments, multi-file consistency relies on author memory (fails after 2+ weeks) or institutional knowledge (lost when authors leave). Comments are HTML (invisible in rendered markdown), version-controlled (tracked in git history), bidirectional (both files reference each other to catch partial updates). Pattern proven: Subtask 8 added sync comments between RELEASING.md \u2194 release-checklist.md, reduced Predictor risk score. Applicable to: API reference \u2194 SDK implementation docs, database schema \u2194 migration guides, CLI help text \u2194 user manual, disaster recovery procedure \u2194 runbook checklist.",
+          "code_example": "```markdown\n<!-- File: docs/RELEASING.md -->\n<!-- SYNC: When updating this file, also update .github/release-checklist.md\n     Reason: Checklist is executable version of this guide. Version numbers,\n     commands, and verification steps must match exactly. -->\n\n# Release Process Guide\n\n## Pre-Release Validation\n\n1. **Test Suite**: Run full test suite locally:\n   ```bash\n   pytest tests/ --cov=src/mapify_cli --cov-report=term-missing\n   ```\n   Expected: 100% test pass rate, coverage \u226585%.\n\n<!-- File: .github/release-checklist.md -->\n<!-- SYNC: When updating this file, also update docs/RELEASING.md\n     Reason: This checklist is executable version of release guide.\n     Version numbers, commands, and verification steps must match exactly. -->\n\n# Release Checklist v{{VERSION}}\n\n## Phase 1: Pre-Release (~30-45 min)\n\n- [ ] Run test suite:\n  ```bash\n  pytest tests/ --cov=src/mapify_cli --cov-report=term-missing\n  ```\n  Expected: \u2705 100% pass, coverage \u226585%\n```",
+          "tags": [
+            "documentation",
+            "multi-file",
+            "consistency",
+            "sync",
+            "html-comments",
+            "drift-prevention",
+            "code-review",
+            "git",
+            "maintenance"
+          ],
+          "related_bullets": [
+            "doc-0003",
+            "doc-0004",
+            "doc-0016"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-26T08:53:59.231237+00:00",
+          "last_used_at": "2025-10-26T08:53:59.231237+00:00",
           "deprecated": false,
           "deprecation_reason": null
         }
