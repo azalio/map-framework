@@ -47,14 +47,16 @@ claude
 
 ## 📦 Installation
 
+### Stable Release (Recommended)
+
 ```bash
-# Install UV if not already installed
-curl -LsSf https://astral.sh/uv/install.sh | sh
+# Using pip
+pip install mapify-cli
 
-# Install mapify
-uv tool install --from git+https://github.com/azalio/map-framework.git mapify-cli
+# OR using UV (recommended for isolated tools)
+uv tool install mapify-cli
 
-# Verify installation. If not found, see INSTALL.md for PATH setup
+# Verify installation
 mapify --version
 
 # Initialize in your project
@@ -62,7 +64,37 @@ cd your-project
 mapify init
 ```
 
-**Other installation methods** (clone repository, manual copy): See [INSTALL.md](docs/INSTALL.md)
+**Version Pinning:**
+```bash
+# Install specific version
+pip install mapify-cli==1.0.0
+
+# Install with version constraints (semantic versioning: MAJOR.MINOR.PATCH)
+pip install "mapify-cli>=1.0.0,<2.0.0"  # Allow 1.x versions, exclude 2.0.0+
+```
+
+**Version Information:**
+- Check installed version: `mapify --version`
+- [PyPI releases](https://pypi.org/project/mapify-cli/) - Available versions and package details
+- [GitHub releases](https://github.com/azalio/map-framework/releases) - Changelog and release notes
+
+### Development Installation
+
+For contributors or testing bleeding-edge features:
+
+```bash
+# Install from git repository
+uv tool install --from git+https://github.com/azalio/map-framework.git mapify-cli
+
+# OR clone and install locally
+git clone https://github.com/azalio/map-framework.git
+cd map-framework
+pip install -e .
+```
+
+**Other installation methods** (manual copy, troubleshooting): See [INSTALL.md](docs/INSTALL.md)
+
+**For maintainers**: Release process documented in [RELEASING.md](RELEASING.md)
 
 ## Requirements
 

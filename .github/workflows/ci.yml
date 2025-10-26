@@ -5,9 +5,65 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main]
+  workflow_call:
 
 jobs:
+  validate-version:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Validate version format
+      run: |
+        python3 << 'EOF'
+        import tomllib
+        import re
+        import sys
+
+        # Read version from pyproject.toml
+        with open("pyproject.toml", "rb") as f:
+            data = tomllib.load(f)
+
+        version = data.get("project", {}).get("version")
+
+        if not version:
+            print("❌ ERROR: Could not find version in pyproject.toml")
+            sys.exit(1)
+
+        print(f"Found version: {version}")
+
+        # Validate semver format
+        # IMPORTANT: Must match regex in validate_semver() in scripts/bump-version.sh for consistency
+        # Semver 2.0.0 spec: version numbers MUST NOT contain leading zeroes
+        semver_pattern = r'^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+
+        if not re.match(semver_pattern, version):
+            print(f"\n❌ ERROR: Invalid version format: {version}")
+            print("\nExpected format: X.Y.Z (Semantic Versioning 2.0.0)")
+            print("\nValid examples:")
+            print("  ✅ 0.1.0")
+            print("  ✅ 1.0.0")
+            print("  ✅ 2.10.15")
+            print("  ✅ 10.0.1")
+            print("\nInvalid examples:")
+            print("  ❌ 01.0.0  (leading zero in major)")
+            print("  ❌ 1.02.0  (leading zero in minor)")
+            print("  ❌ 1.0.03  (leading zero in patch)")
+            print("  ❌ v1.0.0  (version prefix)")
+            print("  ❌ 1.0     (incomplete version)")
+            print("\nFix: Update version in pyproject.toml to valid semver format")
+            sys.exit(1)
+
+        print(f"✅ Version format valid: {version}")
+        EOF
+
   test:
+    needs: validate-version
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -45,6 +101,7 @@ jobs:
         fail_ci_if_error: false
 
   build:
+    needs: validate-version
     runs-on: ubuntu-latest
 
     steps:
@@ -73,3 +130,4 @@ jobs:
       with:
         name: dist-${{ github.run_id }}
         path: dist/
+        retention-days: 7

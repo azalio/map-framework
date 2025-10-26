@@ -1,0 +1,91 @@
+name: Release to PyPI
+
+# OIDC Trusted Publishing Setup for PyPI:
+# 1. Go to https://pypi.org/manage/account/publishing/
+# 2. Add a new "pending publisher" with:
+#    - PyPI Project Name: mapify-cli
+#    - Owner: azalio (your GitHub username/org)
+#    - Repository name: map-framework
+#    - Workflow name: release.yml
+#    - Environment name: (leave empty or use 'release' if you add one)
+# 3. Once configured, this workflow will authenticate automatically via OIDC
+# 4. No API tokens needed - GitHub Actions gets temporary credentials from PyPI
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+# Minimal permissions for OIDC trusted publishing
+permissions:
+  id-token: write  # Required for PyPI OIDC authentication
+  contents: read   # Required for checkout in called ci.yml workflow
+
+jobs:
+  # First run all CI checks (tests, linters, build)
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  # Then publish to PyPI using trusted publishing
+  publish:
+    needs: ci
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Extract version from tag
+      id: get_version
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/v}
+        if [ -z "$VERSION" ]; then
+          echo "Error: VERSION is empty"
+          exit 1
+        fi
+        if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+          echo "Error: VERSION '$VERSION' does not match semver pattern (X.Y.Z)"
+          exit 1
+        fi
+        echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+        echo "Publishing version: $VERSION"
+
+    - name: Verify tag matches pyproject.toml version
+      run: |
+        PYPROJECT_VERSION=$(grep '^version = ' pyproject.toml | cut -d'"' -f2)
+        TAG_VERSION="${{ steps.get_version.outputs.VERSION }}"
+        if [ "$PYPROJECT_VERSION" != "$TAG_VERSION" ]; then
+          echo "Error: Tag version ($TAG_VERSION) doesn't match pyproject.toml ($PYPROJECT_VERSION)"
+          echo "Please update pyproject.toml to version $TAG_VERSION before creating the release tag"
+          exit 1
+        fi
+        echo "✓ Version validation passed: tag and pyproject.toml both at $TAG_VERSION"
+
+    - name: Download build artifacts from CI
+      uses: actions/download-artifact@v4
+      with:
+        name: dist-${{ github.run_id }}
+        path: dist/
+
+    - name: Verify downloaded artifacts
+      run: |
+        ls -la dist/
+        WHEEL_COUNT=$(ls dist/*.whl 2>/dev/null | wc -l | tr -d ' ')
+        SDIST_COUNT=$(ls dist/*.tar.gz 2>/dev/null | wc -l | tr -d ' ')
+        if [ "$WHEEL_COUNT" -eq 0 ] || [ "$SDIST_COUNT" -eq 0 ]; then
+          echo "Error: Expected .whl and .tar.gz files not found in dist/"
+          echo "Found: $WHEEL_COUNT wheel(s), $SDIST_COUNT source distribution(s)"
+          exit 1
+        fi
+        echo "✓ Found expected package files: $WHEEL_COUNT wheel(s), $SDIST_COUNT sdist(s)"
+
+    - name: Verify package quality before publishing
+      run: |
+        pip install twine
+        twine check dist/*
+        echo "✓ Package validation passed"
+
+    - name: Publish to PyPI using OIDC
+      uses: pypa/gh-action-pypi-publish@v1.13.0
+      with:
+        skip-existing: true

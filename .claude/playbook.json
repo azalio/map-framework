@@ -4,9 +4,9 @@
     "project": "map-framework",
     "description": "ACE-style comprehensive playbook for MAP Framework development",
     "created_at": "2025-10-10T00:00:00Z",
-    "last_updated": "2025-10-25T13:32:16.485309+00:00",
-    "total_bullets": 56,
-    "sections_count": 11,
+    "last_updated": "2025-10-26T08:53:59.231237+00:00",
+    "total_bullets": 81,
+    "sections_count": 12,
     "top_k": 5,
     "version": 3
   },
@@ -634,34 +634,12 @@
         },
         {
           "id": "impl-0018",
-          "content": "Actor Tool Invocation Verification: Actors in MAP workflows sometimes describe intended file changes without actually invoking Edit/Write tools, claiming task completion without executing modifications. Monitor agents MUST verify actual file state by reading files and checking for expected changes, not trusting Actor's completion claims. Pattern: Actor says 'updated file X with Y' \u2192 Monitor reads file X \u2192 verifies Y exists in content. Prevents claimed-vs-actual discrepancies that propagate through workflow.",
-          "code_example": "```python\n# \u274c INSUFFICIENT - Monitor trusts Actor claim\ndef monitor_validate(actor_output):\n    if actor_output.claimed_changes:\n        return ValidationSuccess(\"Actor reported changes\")\n    # Never verifies actual file state!\n\n# \u2705 CORRECT - Monitor verifies actual state\ndef monitor_validate(actor_output, filesystem):\n    claimed_file = actor_output.claimed_changes.file_path\n    expected_content = actor_output.claimed_changes.expected\n    \n    # Read actual file state\n    actual_content = filesystem.read(claimed_file)\n    \n    # Verify expected changes exist\n    if expected_content not in actual_content:\n        return ValidationError(\n            f\"Actor claimed modification to {claimed_file}, \"\n            f\"but expected content '{expected_content}' not found. \"\n            f\"Actor likely described changes without invoking Edit/Write tool.\"\n        )\n    \n    return ValidationSuccess(\"Verified actual file state matches claims\")\n```",
+          "content": "Actor Tool Invocation Verification with Git Diff: Actors sometimes describe file changes without invoking Edit/Write tools, claiming completion without executing modifications. Monitor MUST verify actual file state using git diff to detect claimed-but-not-executed changes. Pattern: Actor claims 'Added [1.0.0] section to CHANGELOG.md' \u2192 Monitor runs 'git diff CHANGELOG.md' \u2192 No changes shown \u2192 Reject with 'CRITICAL: Changes NOT applied, git diff shows no modifications'. Git diff validation catches both missing tool invocations AND incorrect tool choices (Write instead of Edit). This enforces tool invocation discipline - descriptions are not substitutes for actual Edit/Write/Bash execution.",
+          "code_example": "```python\n# \u274c ACTOR ANTI-PATTERN - claiming without executing\n# Actor output: \"I added [1.0.0] section to CHANGELOG.md\"\n# (No Edit tool call in Actor's actions, OR used Write claiming 'creation')\n\n# \u2705 MONITOR VALIDATION - git diff verification\nimport subprocess\n\ndef validate_actor_file_changes(actor_output, file_path, expected_change_description):\n    \"\"\"Verify Actor's claimed file changes using git diff.\n\n    Returns:\n        dict: {\"valid\": bool, \"reason\": str, \"diff_output\": str}\n    \"\"\"\n    # Run git diff to check actual changes\n    result = subprocess.run(\n        ['git', 'diff', file_path],\n        capture_output=True,\n        text=True\n    )\n    diff_output = result.stdout\n\n    if not diff_output.strip():\n        return {\n            \"valid\": False,\n            \"reason\": f\"CRITICAL: Changes NOT applied. Actor claimed '{expected_change_description}' but git diff {file_path} shows no modifications. Actor likely described changes without invoking Edit/Write tool, OR used wrong tool (Write for existing file).\",\n            \"diff_output\": \"(empty - no changes detected)\"\n        }\n\n    # Optionally verify specific content in diff\n    # For CHANGELOG: check if [1.0.0] appears in added lines\n    added_lines = [line for line in diff_output.split('\\n') if line.startswith('+')]\n\n    return {\n        \"valid\": True,\n        \"reason\": f\"Changes verified: git diff shows {len(added_lines)} added lines\",\n        \"diff_output\": diff_output\n    }\n\n# Usage in Monitor:\nvalidation = validate_actor_file_changes(\n    actor_output,\n    file_path=\"CHANGELOG.md\",\n    expected_change_description=\"Added [1.0.0] initial release section\"\n)\n\nif not validation[\"valid\"]:\n    raise MonitorRejection(validation[\"reason\"])\n```",
           "helpful_count": 1,
           "harmful_count": 0,
           "created_at": "2025-10-23T09:20:52.064779+00:00",
-          "last_used_at": "2025-10-23T12:28:06.239973Z",
-          "related_bullets": [
-            "impl-0001",
-            "impl-0003"
-          ],
-          "tags": [
-            "map-framework",
-            "actor",
-            "monitor",
-            "validation",
-            "tool-invocation"
-          ],
-          "deprecated": false,
-          "deprecation_reason": null
-        },
-        {
-          "id": "impl-0018",
-          "content": "Actor Tool Invocation Verification: Actors sometimes describe file changes without invoking Edit/Write tools, claiming completion without executing modifications. Monitor MUST verify actual file state against Actor's claims by reading files and checking for expected changes. Pattern: Actor claims 'Removed section X' \u2192 Monitor reads file \u2192 Section still exists \u2192 Reject with 'Changes NOT applied'. This enforces tool invocation discipline - descriptions are not substitutes for actual Edit/Write/Bash execution.",
-          "code_example": "```python\n# \u274c ACTOR ANTI-PATTERN - claiming without executing\n# Actor output: \"I removed the deprecated section from README.md\"\n# (No Edit tool call in Actor's actions)\n\n# \u2705 MONITOR VALIDATION - verify actual state\ndef validate_actor_changes(actor_output, file_path, expected_removal):\n    actual_content = read_file(file_path)\n    \n    if expected_removal in actual_content:\n        return {\n            \"valid\": False,\n            \"reason\": f\"Changes NOT applied, '{expected_removal}' still exists\"\n        }\n    \n    return {\"valid\": True, \"reason\": \"Changes verified in actual file\"}\n\n# \u2705 ACTOR CORRECT PATTERN - execute then verify\nEdit(file_path=\"README.md\", old_string=\"## Deprecated\\n...\", new_string=\"\")\n# Actor explicitly invoked Edit tool\n```",
-          "helpful_count": 0,
-          "harmful_count": 0,
-          "created_at": "2025-10-23T12:21:40.807543Z",
-          "last_used_at": "2025-10-23T12:21:40.807544Z",
+          "last_used_at": "2025-10-25T21:15:57.637624+00:00",
           "related_bullets": [
             "impl-0001",
             "impl-0003"
@@ -776,12 +754,186 @@
           ],
           "deprecated": false,
           "deprecation_reason": null
+        },
+        {
+          "id": "impl-0025",
+          "content": "Deploy-What-You-Test Pattern (workflow_call): Use GitHub Actions workflow_call trigger to reuse CI workflow in release workflow, ensuring the exact artifacts that passed tests are published. CI workflow uploads build artifacts, release workflow downloads them via actions/download-artifact with matching run_id. Prevents drift between tested code and deployed code. Alternative approaches (re-running tests in release workflow or rebuilding artifacts) waste time and risk inconsistency.",
+          "code_example": "```yaml\n# \u274c INCORRECT - rebuild in release (drift risk)\nname: Release\non:\n  workflow_dispatch:\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: python -m build  # Rebuilt - may differ from CI!\n      - uses: pypa/gh-action-pypi-publish@release/v1\n\n# \u2705 CORRECT - reuse CI artifacts (deploy-what-you-test)\n# ci.yml (reusable)\nname: CI\non:\n  workflow_call:  # Can be called by other workflows\n  pull_request:\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: python -m build\n      - run: pytest\n      - uses: actions/upload-artifact@v4\n        with:\n          name: dist\n          path: dist/\n\n# release.yml\nname: Release\non:\n  workflow_dispatch:\njobs:\n  ci:\n    uses: ./.github/workflows/ci.yml  # Reuse CI workflow\n  publish:\n    needs: ci\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/download-artifact@v4\n        with:\n          name: dist\n          path: dist/\n          run-id: ${{ needs.ci.outputs.run_id }}  # Same artifacts\n      - uses: pypa/gh-action-pypi-publish@release/v1\n```",
+          "tags": [
+            "ci-cd",
+            "github-actions",
+            "workflow-reuse",
+            "artifacts",
+            "deploy-what-you-test",
+            "consistency",
+            "workflow_call"
+          ],
+          "helpful_count": 1,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T13:19:45.860329+00:00",
+          "last_used_at": "2025-10-25T21:43:28.723814+00:00",
+          "related_bullets": [],
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "impl-0026",
+          "content": "Multi-Gate Release Validation: Add validation gates before irreversible operations (PyPI publish, Docker push, Git tag). Validate: 1) Tag format matches semver (v*.*.* pattern), 2) Tag version matches package metadata (__version__, pyproject.toml), 3) Artifacts exist and have expected format (.whl, .tar.gz), 4) Package quality checks pass (no syntax errors, imports work). Each gate should fail-fast with clear error message explaining what's wrong and how to fix. Prevents publishing broken releases that can't be deleted from PyPI.",
+          "code_example": "```yaml\n# \u274c INCORRECT - no validation, publishes broken releases\nname: Release\non:\n  push:\n    tags: ['v*']\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: python -m build\n      - uses: pypa/gh-action-pypi-publish@release/v1  # No checks!\n\n# \u2705 CORRECT - multi-gate validation\nname: Release\non:\n  push:\n    tags: ['v*']\njobs:\n  validate:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      \n      # Gate 1: Tag format validation\n      - name: Validate tag format\n        run: |\n          if ! [[ \"${{ github.ref_name }}\" =~ ^v[0-9]+\\.[0-9]+\\.[0-9]+$ ]]; then\n            echo \"Error: Tag must match semver (vX.Y.Z), got: ${{ github.ref_name }}\"\n            exit 1\n          fi\n      \n      # Gate 2: Version consistency\n      - name: Validate version matches tag\n        run: |\n          TAG_VERSION=\"${GITHUB_REF_NAME#v}\"  # Strip 'v' prefix\n          PKG_VERSION=$(python -c \"import tomli; print(tomli.load(open('pyproject.toml', 'rb'))['project']['version'])\")\n          if [[ \"$TAG_VERSION\" != \"$PKG_VERSION\" ]]; then\n            echo \"Error: Tag version ($TAG_VERSION) != package version ($PKG_VERSION)\"\n            exit 1\n          fi\n      \n      # Gate 3: Artifact validation\n      - run: python -m build\n      - name: Validate artifacts exist\n        run: |\n          if ! ls dist/*.whl dist/*.tar.gz 1> /dev/null 2>&1; then\n            echo \"Error: Expected .whl and .tar.gz in dist/\"\n            exit 1\n          fi\n      \n      # Gate 4: Quality checks\n      - run: pip install dist/*.whl\n      - run: python -c \"import map_framework\"  # Import test\n      \n  publish:\n    needs: validate  # Only run if all gates pass\n    runs-on: ubuntu-latest\n    steps:\n      - uses: pypa/gh-action-pypi-publish@release/v1\n```",
+          "tags": [
+            "ci-cd",
+            "release-management",
+            "validation",
+            "gates",
+            "semver",
+            "quality-assurance",
+            "fail-fast",
+            "github-actions"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T13:19:45.860329+00:00",
+          "last_used_at": "2025-10-25T13:19:45.860329+00:00",
+          "related_bullets": [],
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "impl-0027",
+          "content": "Semver Regex Validation (Spec-Compliant): When validating semantic version format (vX.Y.Z), use Semver 2.0.0 spec-compliant regex that prohibits leading zeros in version components. Pattern: ^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$. The (0|[1-9][0-9]*) construct matches either '0' alone OR non-zero digit followed by any digits, rejecting v01.2.3 or v1.02.3 (spec violations). Simpler patterns like ^v[0-9]+\\.[0-9]+\\.[0-9]+$ accept invalid versions with leading zeros. Pattern proven: GitHub tag v0.01.0 passed simple regex but violated spec, causing package registry rejection. Use spec-compliant regex for validation gates before publishing.",
+          "code_example": "```bash\n# \u274c INCORRECT - accepts leading zeros (spec violation)\nSIMPLE_SEMVER='^v[0-9]+\\.[0-9]+\\.[0-9]+$'\necho \"v01.2.3\" | grep -qE \"$SIMPLE_SEMVER\" && echo \"Valid\"  # Wrongly accepts!\n\n# \u2705 CORRECT - Semver 2.0.0 spec-compliant (rejects leading zeros)\nSPEC_SEMVER='^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$'\n\n# Validation function\nvalidate_semver() {\n  local tag=\"$1\"\n  if [[ ! \"$tag\" =~ $SPEC_SEMVER ]]; then\n    echo \"\u274c Invalid semver: $tag\"\n    echo \"Must match vX.Y.Z with no leading zeros (e.g., v1.2.3, v0.1.0)\"\n    echo \"Violations: v01.2.3 (leading zero), v1.02.3 (leading zero)\"\n    return 1\n  fi\n  echo \"\u2705 Valid semver: $tag\"\n  return 0\n}\n\n# Test cases\nvalidate_semver \"v1.2.3\"    # \u2705 Valid\nvalidate_semver \"v0.1.0\"    # \u2705 Valid (0 without leading digit OK)\nvalidate_semver \"v01.2.3\"   # \u274c Invalid (leading zero)\nvalidate_semver \"v1.02.3\"   # \u274c Invalid (leading zero in minor)\n```",
+          "tags": [
+            "semver",
+            "validation",
+            "regex",
+            "versioning",
+            "bash"
+          ],
+          "related_bullets": [
+            "impl-0049"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T18:45:00.541231+00:00",
+          "last_used_at": "2025-10-25T18:45:00.541231+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "impl-0028",
+          "content": "Multi-Gate Validation for Automation Scripts: Before automation scripts modify state (git operations, file edits, package publishing), implement 5 validation gates: (1) Input Format - validate arguments match expected patterns before parsing, (2) Preconditions - check required files/tools exist before processing, (3) Business Logic - verify data meets domain rules (version consistency, no conflicts), (4) Pre-Execution - dry-run or preview changes before applying, (5) Post-Execution - verify expected state reached after modification. Each gate fails fast with actionable error message. Prevents cascading failures where invalid input causes partial state changes that are hard to rollback. Pattern proven: bump_version.sh script prevented broken release by catching version mismatch in gate 3 before git tag creation.",
+          "code_example": "```bash\n# \u274c INCORRECT - No validation, modifies state blindly\nbump_version.sh() {\n  NEW_VERSION=\"$1\"\n  sed -i \"s/__version__ = .*/__version__ = '$NEW_VERSION'/\" src/__init__.py\n  git commit -am \"Bump version to $NEW_VERSION\"\n  git tag \"v$NEW_VERSION\"\n  git push --tags\n}\n# Risk: Invalid version format, inconsistent files, broken release\n\n# \u2705 CORRECT - 5-gate validation before state changes\nbump_version.sh() {\n  NEW_VERSION=\"$1\"\n  \n  # Gate 1: Input Format Validation\n  if [[ ! \"$NEW_VERSION\" =~ ^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$ ]]; then\n    echo \"\u274c Gate 1 Failed: Invalid semver format '$NEW_VERSION'\"\n    exit 1\n  fi\n  \n  # Gate 2: Preconditions Check\n  if [[ ! -f \"src/__init__.py\" ]] || [[ ! -f \"pyproject.toml\" ]]; then\n    echo \"\u274c Gate 2 Failed: Required files missing\"\n    exit 1\n  fi\n  \n  # Gate 3: Business Logic Validation\n  PYPROJECT_VERSION=$(grep -oP 'version = \"\\K[^\"]+' pyproject.toml)\n  if [[ \"$NEW_VERSION\" != \"$PYPROJECT_VERSION\" ]]; then\n    echo \"\u274c Gate 3 Failed: Version mismatch (input: $NEW_VERSION, pyproject: $PYPROJECT_VERSION)\"\n    exit 1\n  fi\n  \n  # Gate 4: Pre-Execution Preview\n  echo \"Preview changes:\"\n  echo \"  - Update src/__init__.py: __version__ = '$NEW_VERSION'\"\n  echo \"  - Create git tag: v$NEW_VERSION\"\n  read -p \"Proceed? (y/N) \" -n 1 -r\n  [[ ! $REPLY =~ ^[Yy]$ ]] && exit 0\n  \n  # Apply changes\n  sed -i \"s/__version__ = .*/__version__ = '$NEW_VERSION'/\" src/__init__.py\n  git commit -am \"Bump version to $NEW_VERSION\"\n  git tag \"v$NEW_VERSION\"\n  \n  # Gate 5: Post-Execution Verification\n  ACTUAL_TAG=$(git describe --tags --exact-match 2>/dev/null)\n  if [[ \"$ACTUAL_TAG\" != \"v$NEW_VERSION\" ]]; then\n    echo \"\u274c Gate 5 Failed: Tag creation failed (expected: v$NEW_VERSION, actual: $ACTUAL_TAG)\"\n    exit 1\n  fi\n  \n  echo \"\u2705 All gates passed. Version bumped to $NEW_VERSION\"\n}\n```",
+          "tags": [
+            "validation",
+            "automation",
+            "bash",
+            "state-changes",
+            "error-prevention"
+          ],
+          "related_bullets": [
+            "impl-0049"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T18:45:00.541231+00:00",
+          "last_used_at": "2025-10-25T18:45:00.541231+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "impl-0049",
+          "content": "Task Description Verb Precision for Tool Selection: When describing file operation subtasks, use precise action verbs (create/update/edit) and explicit file existence state to prevent Actor tool selection failures. Ambiguous verbs like 'add' cause Edit vs Write confusion - 'add entry to CHANGELOG.md' is ambiguous (create new file? modify existing?). Pattern: Ambiguous 'Add CHANGELOG.md entry' \u2192 Actor chose Write (creation) instead of Edit (modification) \u2192 Monitor detected no actual changes to existing file \u2192 Critical failure requiring rework. Use explicit verbs: 'Create new file X' (Write tool), 'Update existing file X with Y' (Edit tool), 'Modify section Z in file X' (Edit tool). This prevents tool selection errors that propagate through workflow.",
+          "code_example": "```markdown\n# \u274c AMBIGUOUS - causes tool selection failure\nSubtask 5: Add CHANGELOG.md initial release entry\n\u2192 Actor interprets as 'create file' \u2192 uses Write tool\n\u2192 File already exists \u2192 Write overwrites OR Actor claims creation without actual modification\n\u2192 Monitor detects: git diff shows no changes \u2192 CRITICAL failure\n\n# \u2705 PRECISE - explicit action and file state\nSubtask 5: Update CHANGELOG.md (existing file) by adding [1.0.0] initial release entry under [Unreleased] section\n\u2192 Actor knows: file exists, needs Edit tool, target section specified\n\u2192 Uses Edit tool with old_string/new_string\n\u2192 Monitor verifies: git diff shows [1.0.0] section added \u2192 SUCCESS\n\n# Verb disambiguation guide:\n- \"Create X\" \u2192 Write tool (new file)\n- \"Update X with Y\" \u2192 Edit tool (modify existing)\n- \"Add entry to X\" \u2192 AMBIGUOUS (needs file state)\n- \"Add [1.0.0] section to CHANGELOG.md (existing)\" \u2192 Edit tool (explicit state)\n```",
+          "tags": [
+            "task-description",
+            "tool-selection",
+            "actor",
+            "write-edit-confusion",
+            "map-framework",
+            "precision"
+          ],
+          "related_bullets": [
+            "impl-0010",
+            "impl-0018"
+          ],
+          "helpful_count": 1,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T21:15:57.637760+00:00",
+          "last_used_at": "2025-10-25T21:15:57.637760+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "impl-0048",
+          "content": "Multi-File Consistency with Cross-Reference Comments: When validation logic (regex patterns, version formats, constraints) exists in multiple files (CI workflow + local script + docs), prevent drift with explicit cross-reference comments linking to source of truth. Format: '# CRITICAL: Must match regex in path/to/file.ext:line_number for consistency'. Prevents bugs where CI validates differently than local script, causing 'works locally, fails in CI' frustration. Update comments when moving logic. Choose single source of truth (usually newest/most comprehensive), reference it from all others.",
+          "code_example": "```yaml\n# .github/workflows/ci.yml\n- name: Validate version format\n  run: |\n    # IMPORTANT: Must match regex in scripts/bump-version.sh:139 for consistency\n    semver_pattern = r'^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$'\n    if not re.match(semver_pattern, version):\n        sys.exit(1)\n```\n\n```bash\n# scripts/bump-version.sh:139\nvalidate_semver() {\n    # NOTE: CI workflow validates with identical regex (.github/workflows/ci.yml:43)\n    if [[ ! \"$version\" =~ ^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$ ]]; then\n        die \"Invalid version format: $version\"\n    fi\n}\n```",
+          "tags": [
+            "consistency",
+            "validation",
+            "synchronization",
+            "multi-file",
+            "cross-reference",
+            "documentation"
+          ],
+          "related_bullets": [],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-26T08:08:24.353122+00:00",
+          "last_used_at": "2025-10-26T08:08:24.353122+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
         }
       ]
     },
     "SECURITY_PATTERNS": {
       "description": "Security best practices, authentication, authorization, and vulnerability prevention",
-      "bullets": []
+      "bullets": [
+        {
+          "id": "sec-0001",
+          "content": "PyPI OIDC Trusted Publishing: Use GitHub's OIDC provider to authenticate to PyPI instead of long-lived API tokens stored in secrets. Configure trusted publisher in PyPI web UI with repository details, then use pypa/gh-action-pypi-publish action with id-token: write permission. OIDC tokens are short-lived (minutes), scoped to specific workflow, and automatically rotated. Eliminates token leakage risk and secret management overhead. Requires one-time PyPI configuration: project name, repository owner, workflow filename.",
+          "code_example": "```yaml\n# \u274c INSECURE - long-lived token in GitHub secrets\nname: Publish\non: [push]\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: pypa/gh-action-pypi-publish@release/v1\n        with:\n          password: ${{ secrets.PYPI_API_TOKEN }}  # Leakage risk, manual rotation\n\n# \u2705 SECURE - OIDC trusted publishing (no secrets)\nname: Publish\non:\n  push:\n    tags: ['v*']\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    permissions:\n      id-token: write  # Required for OIDC\n      contents: read   # Minimal permissions\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-python@v5\n      - run: python -m build\n      - uses: pypa/gh-action-pypi-publish@release/v1\n        # No password/token needed - OIDC automatic\n        # PyPI trusts workflow via OIDC provider\n```",
+          "tags": [
+            "security",
+            "ci-cd",
+            "github-actions",
+            "pypi",
+            "oidc",
+            "authentication",
+            "secrets-management",
+            "token-rotation"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T13:19:45.860329+00:00",
+          "last_used_at": "2025-10-25T13:19:45.860329+00:00",
+          "related_bullets": [],
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "sec-0002",
+          "content": "GitHub Actions Least-Privilege Permissions: Explicitly set minimal permissions per workflow using top-level permissions key. Never use default permissions (read-write on all scopes). For OIDC publishing: id-token: write + contents: read only. Set permissions at job level for granular control. Default permissions grant unnecessary access that attackers can exploit via compromised dependencies or workflow injection.",
+          "code_example": "```yaml\n# \u274c INSECURE - uses default permissions (read-write on all scopes)\nname: Publish\non: [push]\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    # Default: contents:write, issues:write, pull-requests:write, etc.\n    steps:\n      - uses: pypa/gh-action-pypi-publish@release/v1\n\n# \u2705 SECURE - explicit minimal permissions\nname: Publish\non: [push]\npermissions:  # Top-level: deny all by default\n  contents: read\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    permissions:  # Job-level: grant only what's needed\n      id-token: write   # For OIDC\n      contents: read    # For checkout\n    steps:\n      - uses: actions/checkout@v4\n      - uses: pypa/gh-action-pypi-publish@release/v1\n```",
+          "tags": [
+            "security",
+            "ci-cd",
+            "github-actions",
+            "least-privilege",
+            "permissions",
+            "access-control",
+            "oidc"
+          ],
+          "related_bullets": [
+            "sec-0001"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T13:19:45.860329+00:00",
+          "last_used_at": "2025-10-25T13:19:45.860329+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        }
+      ]
     },
     "PERFORMANCE_PATTERNS": {
       "description": "Optimization techniques, caching strategies, and performance anti-patterns to avoid",
@@ -789,7 +941,27 @@
     },
     "ERROR_PATTERNS": {
       "description": "Common errors, their root causes, and proven solutions",
-      "bullets": []
+      "bullets": [
+        {
+          "id": "err-0001",
+          "content": "Educational Error Messages with Contrast Examples: When validation fails, provide educational context with 5+ valid examples AND 5+ invalid examples with explanations. Developers learn by contrast - showing BOTH what works (\u2705) and what fails (\u274c) with reasons builds mental models faster than rejection alone. Include: (1) What input was invalid, (2) Expected format specification, (3) Valid examples (\u2705), (4) Invalid examples with specific reasons (\u274c leading zero, \u274c missing component), (5) Actionable fix (which file to update, what format to use). Pattern prevents repeated trial-and-error.",
+          "code_example": "```python\n# \u274c BAD - rejection without guidance\nif not valid:\n    print(\"Invalid version format\")\n    sys.exit(1)\n\n# \u2705 GOOD - educational with contrast examples\nif not re.match(semver_pattern, version):\n    print(f\"\\n\u274c ERROR: Invalid version format: {version}\")\n    print(\"\\nExpected format: X.Y.Z (Semantic Versioning 2.0.0)\")\n    print(\"\\nValid examples:\")\n    print(\"  \u2705 0.1.0\")\n    print(\"  \u2705 1.0.0\")\n    print(\"  \u2705 2.10.15\")\n    print(\"\\nInvalid examples:\")\n    print(\"  \u274c 01.0.0  (leading zero in major)\")\n    print(\"  \u274c v1.0.0  (version prefix not allowed)\")\n    print(\"  \u274c 1.0     (incomplete, missing patch)\")\n    print(\"  \u274c 1.0.0-alpha (pre-release not supported)\")\n    print(\"  \u274c 1.0.0.0 (too many components)\")\n    print(\"\\nFix: Update version in pyproject.toml to valid semver\")\n    sys.exit(1)\n```",
+          "tags": [
+            "error-handling",
+            "user-experience",
+            "validation",
+            "education",
+            "feedback"
+          ],
+          "related_bullets": [],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-26T08:08:24.353122+00:00",
+          "last_used_at": "2025-10-26T08:08:24.353122+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        }
+      ]
     },
     "TESTING_STRATEGIES": {
       "description": "Test patterns, mocking approaches, and coverage strategies",
@@ -1056,6 +1228,31 @@
           ],
           "deprecated": false,
           "deprecation_reason": null
+        },
+        {
+          "id": "test-0016",
+          "content": "Automation Format Validation with Target Tool Patterns: Before committing structured files consumed by automation scripts (CHANGELOG.md, package.json, pyproject.toml), validate format using SAME extraction patterns that automation uses. Pattern: CHANGELOG.md consumed by bump-version.sh using 'sed -n /## \\\\[1.0.0\\\\]/,/## \\\\[/p' \u2192 Before committing, test extraction with identical sed/grep commands \u2192 Verify output matches expectations. This prevents silent automation failures where file parses correctly for humans but breaks automation regex. Predictor role ideal for this validation - simulates automation environment before deployment.",
+          "code_example": "```bash\n# CHANGELOG.md automation validation example\n# bump-version.sh uses this pattern to extract release notes:\n# sed -n \"/## \\\\[$VERSION\\\\]/,/## \\\\[/p\" CHANGELOG.md | head -n -1\n\n# \u2705 VALIDATION TEST - run BEFORE committing CHANGELOG.md\nVERSION=\"1.0.0\"\n\n# Test extraction pattern (same command automation uses)\nRELEASE_NOTES=$(sed -n \"/## \\\\[$VERSION\\\\]/,/## \\\\[/p\" CHANGELOG.md | head -n -1)\n\necho \"Extracted release notes:\"\necho \"$RELEASE_NOTES\"\n\n# Validate extraction succeeded\nif [ -z \"$RELEASE_NOTES\" ]; then\n  echo \"\u274c VALIDATION FAILED: sed extraction returned empty (automation will fail)\"\n  echo \"Check CHANGELOG.md format: ## [$VERSION] header must exist\"\n  exit 1\nfi\n\n# Validate format expectations\nif ! echo \"$RELEASE_NOTES\" | grep -q \"## \\\\[$VERSION\\\\]\"; then\n  echo \"\u274c VALIDATION FAILED: version header missing in extraction\"\n  exit 1\nfi\n\necho \"\u2705 VALIDATION PASSED: CHANGELOG.md format compatible with bump-version.sh automation\"\n```",
+          "tags": [
+            "automation",
+            "validation",
+            "changelog",
+            "sed",
+            "grep",
+            "predictor",
+            "map-framework",
+            "ci-cd"
+          ],
+          "related_bullets": [
+            "impl-0027",
+            "test-0002"
+          ],
+          "helpful_count": 1,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T21:15:57.637760+00:00",
+          "last_used_at": "2025-10-25T21:15:57.637760+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
         }
       ]
     },
@@ -1138,31 +1335,6 @@
           ]
         },
         {
-          "id": "tool-0001",
-          "content": "Platform-Specific Path Formatting in Documentation: When showing file paths or directory navigation in documentation examples, always use platform-native conventions in examples for that platform. Windows: use backslashes (C:\\\\Users\\\\username\\\\file.txt) and drive letters. Unix/Linux/macOS: use forward slashes (/Users/username/file.txt) and no drive letters. In cross-platform documentation, show both formats or use platform-agnostic representations ($HOME, %USERPROFILE%). Never show Unix paths in Windows sections or vice versa - this confuses users and causes copy-paste errors. Tools like PowerShell support forward slashes internally but documentation should match user expectations and platform conventions for clarity.",
-          "code_example": "```markdown\n<!-- \u274c BAD - Unix path in Windows docs -->\n## Windows Setup\nNavigate to `/Users/username/.config/myapp` and edit config.json\n<!-- User expects: C:\\\\Users\\\\username\\\\.config\\\\myapp -->\n\n<!-- \u2705 GOOD - platform-native paths -->\n## Windows Setup  \nNavigate to `C:\\\\Users\\\\<username>\\\\.config\\\\myapp` and edit config.json\n\n## macOS Setup\nNavigate to `/Users/<username>/.config/myapp` and edit config.json\n\n## Linux Setup  \nNavigate to `/home/<username>/.config/myapp` or `$HOME/.config/myapp` and edit config.json\n\n<!-- \u2705 ALSO GOOD - platform-agnostic when possible -->\n## All Platforms\nNavigate to your config directory:\n- Windows: `%USERPROFILE%\\\\.config\\\\myapp`  \n- Unix/macOS: `$HOME/.config/myapp`\n```",
-          "helpful_count": 0,
-          "harmful_count": 0,
-          "created_at": "2025-10-23T15:34:43.387375Z",
-          "last_used_at": "2025-10-23T15:34:43.387376Z",
-          "related_bullets": [
-            "doc-0002"
-          ],
-          "tags": [
-            "path-formatting",
-            "documentation",
-            "platform-specific",
-            "windows",
-            "unix",
-            "macos",
-            "linux",
-            "conventions",
-            "user-experience"
-          ],
-          "deprecated": false,
-          "deprecation_reason": null
-        },
-        {
           "id": "tool-0013",
           "content": "Bulk Text Replacement: sed vs Edit Tool Trade-offs: For 50+ identical replacements across multiple files, use sed with git verification rather than individual Edit tool calls. Pattern: (1) Run sed with backup: 'sed -i.bak s/old/new/g files', (2) Use git diff for sampling verification, (3) Create descriptive commit with counts. Benefits: 10x faster than Edit calls, atomic operation, easy rollback. Limitations: sed can't handle context-aware changes. Decision criteria: Use sed when replacement is purely textual (command syntax, import paths), use Edit when replacement requires code understanding (refactoring logic, updating arguments). ALWAYS verify with git diff before committing sed changes.",
           "tags": [
@@ -1193,6 +1365,48 @@
             "bash",
             "git-mv"
           ],
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "tool-0078",
+          "content": "Self-Documenting Workflow Configuration: Embed third-party service setup instructions (OIDC trusted publishing, webhooks, API keys) directly in workflow/script header comments with EXACT project-specific values. Include service URL, required fields (repository owner, workflow name, environment), and step-by-step setup process. This eliminates wiki hunting and prevents configuration drift when onboarding new maintainers. Pattern particularly valuable for one-time setups that are infrequently modified.",
+          "code_example": "```yaml\n# \u274c POOR - external documentation link (breaks when wiki moves)\n# Setup: See https://wiki.example.com/oidc-setup\nname: Publish to TestPyPI\njobs:\n  publish:\n    runs-on: ubuntu-latest\n\n# \u2705 GOOD - embedded setup instructions with project values\n# TestPyPI Trusted Publishing Setup (One-time configuration):\n# 1. Navigate to https://test.pypi.org/manage/account/publishing/\n# 2. Click \"Add a new pending publisher\"\n# 3. Fill in these EXACT values:\n#    - PyPI Project Name: mapify-cli\n#    - Owner: azalio\n#    - Repository name: map-framework\n#    - Workflow name: test-pypi.yml\n#    - Environment name: (leave empty)\n# 4. Save configuration\n# 5. First workflow run will establish trust, subsequent runs auto-authenticate\n\nname: Publish to TestPyPI\non:\n  workflow_dispatch:\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    permissions:\n      id-token: write  # OIDC authentication\n      contents: read\n```",
+          "tags": [
+            "github-actions",
+            "oidc",
+            "documentation",
+            "self-documenting",
+            "onboarding"
+          ],
+          "related_bullets": [
+            "tool-0001",
+            "doc-0008"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T21:42:37.952230+00:00",
+          "last_used_at": "2025-10-25T21:42:37.952230+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "tool-0079",
+          "content": "Native Parser for Configuration Extraction: When CI workflows need values from configuration files (pyproject.toml, package.json, Cargo.toml), use language-native parsers instead of grep/sed/awk. Regex-based extraction breaks on edge cases (multiline strings, escaped quotes, comments, nested structures). Python tomllib (stdlib since 3.11) for TOML, jq for JSON, yq for YAML. Parse once, extract multiple fields. Pattern prevents fragile pipelines that break on legitimate config changes.",
+          "code_example": "```yaml\n# \u274c FRAGILE - regex extraction breaks on edge cases\n- name: Extract package metadata\n  run: |\n    PKG_NAME=$(grep '^name = ' pyproject.toml | cut -d'\"' -f2)\n    # Breaks if: name = \"pkg-name\"  # comment\n    # Breaks if: name = \"pkg\\\"name\"  # escaped quote\n    # Breaks if: multiline value\n\n# \u2705 ROBUST - native TOML parser\n- name: Extract package metadata\n  run: |\n    python3 << 'EOF'\n    import tomllib\n    import sys\n\n    with open('pyproject.toml', 'rb') as f:\n        cfg = tomllib.load(f)\n\n    # Extract multiple fields in one parse\n    print(f\"PKG_NAME={cfg['project']['name']}\")\n    print(f\"PKG_VERSION={cfg['project']['version']}\")\n    print(f\"PYTHON_REQUIRES={cfg['project']['requires-python']}\")\n    EOF\n  # Handles all edge cases: escapes, multiline, comments, nested dicts\n\n# Alternative for JSON (package.json)\n- name: Extract from package.json\n  run: |\n    PKG_NAME=$(jq -r '.name' package.json)\n    PKG_VERSION=$(jq -r '.version' package.json)\n\n# Alternative for YAML (using yq)\n- name: Extract from config.yml\n  run: |\n    APP_NAME=$(yq '.app.name' config.yml)\n```",
+          "tags": [
+            "ci-cd",
+            "parsing",
+            "toml",
+            "python",
+            "configuration",
+            "robustness"
+          ],
+          "related_bullets": [],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T21:42:37.952230+00:00",
+          "last_used_at": "2025-10-25T21:42:37.952230+00:00",
           "deprecated": false,
           "deprecation_reason": null
         }
@@ -1266,30 +1480,6 @@
           "deprecation_reason": null
         },
         {
-          "id": "doc-0002",
-          "content": "Progressive Disclosure for Multi-Platform Instructions: When documenting installation or setup across multiple platforms (Windows/macOS/Linux), use progressive disclosure with collapsible sections rather than showing all platforms simultaneously. This reduces cognitive load - users see their platform by default, others collapsed. Use HTML details/summary tags in markdown (widely supported) or platform tabs in documentation frameworks. Structure: (1) Show most common platform first (uncollapsed), (2) Other platforms in collapsed details blocks, (3) Clear labels indicating platform ('Windows', 'macOS', 'Linux'). Pattern prevents scroll fatigue in long installation docs and helps users focus on relevant instructions.",
-          "code_example": "```markdown\n<!-- \u274c BAD - all platforms visible, overwhelming -->\n## Installation\n\n### Windows\n```powershell\nwinget install myapp\n```\n\n### macOS  \n```bash\nbrew install myapp\n```\n\n### Linux\n```bash\napt-get install myapp\n```\n\n<!-- \u2705 GOOD - progressive disclosure with collapsible sections -->\n## Installation\n\n### macOS (Default shown)\n```bash\nbrew install myapp\n```\n\n<details>\n<summary><b>Windows Installation</b></summary>\n\n```powershell\nwinget install myapp\n```\n\n</details>\n\n<details>\n<summary><b>Linux Installation</b></summary>\n\n```bash\napt-get install myapp\n```\n\n</details>\n```",
-          "helpful_count": 0,
-          "harmful_count": 0,
-          "created_at": "2025-10-23T15:34:43.387373Z",
-          "last_used_at": "2025-10-23T15:34:43.387374Z",
-          "related_bullets": [
-            "doc-0001",
-            "doc-0002"
-          ],
-          "tags": [
-            "progressive-disclosure",
-            "documentation",
-            "multi-platform",
-            "markdown",
-            "html",
-            "user-experience",
-            "installation"
-          ],
-          "deprecated": false,
-          "deprecation_reason": null
-        },
-        {
           "id": "doc-0003",
           "content": "Multi-Tier Prioritization for Large-Scale Documentation Refactoring: When updating 80+ references across 12+ files after API/CLI changes, use 4-tier priority strategy: Tier 1 (Critical) - user-facing help text and primary docs that users encounter first; Tier 2 (High) - internal technical documentation used by developers; Tier 3 (Medium) - knowledge base and presentations; Tier 4 (Low) - historical documents (add deprecation notes only, preserve original syntax). Update tiers sequentially with verification between tiers. This prevents inconsistent user experience while preserving historical context. Commit message should include tier breakdown with reference counts for traceability (e.g., 'Tier 1: 30 refs, Tier 2: 40 refs').",
           "tags": [
@@ -1310,6 +1500,401 @@
           ],
           "helpful_count": 1,
           "last_used": "2025-10-24T11:00:00Z"
+        },
+        {
+          "id": "doc-0005",
+          "content": "Executable Documentation with Binary Verification: For multi-stage workflows (releases, deployments, migrations), structure documentation as executable runbooks with copy-pasteable command sequences and binary success criteria. Each section must have: (1) Exact commands (no placeholders, use example values), (2) Expected Results checkboxes with measurable criteria (100% test pass, no errors, specific file exists), (3) Time-aware verification for async operations (sleep commands before checking distributed state like PyPI indexing). Structure enables both learning (detailed explanations) and execution (appendix runbook with consolidated commands). Pattern proven: 350-line RELEASING.md with 18 checkboxes across 5 sections achieved 9.1/10 quality score. Users can execute workflow mechanically by following checkboxes without interpretation.",
+          "code_example": "```markdown\n## Pre-Release Checklist\n\n### 1. Code Quality Checks\n\n```bash\n# Run full CI/CD test suite locally\npytest tests/ --cov=src/mapify_cli --cov-report=term-missing\n\n# Run linters\nblack src/ tests/ --check\nruff check src/ tests/\n```\n\n**Expected Results**:\n- \u2705 All tests pass (100% success rate)\n- \u2705 No linting errors\n- \u2705 Type checking passes\n\n### 2. Time-Aware Verification (Async Systems)\n\n```bash\n# Wait for PyPI to process upload (2-5 min indexing delay)\nsleep 120\n\n# Verify package indexed\ncurl -f https://pypi.org/project/mapify-cli/1.0.1/ || echo \"\u274c Not indexed yet\"\npip index versions mapify-cli | grep 1.0.1\n```\n\n## Appendix: Release Workflow Reference\n\n```bash\n# Complete command sequence (copy-paste execution mode)\ngit checkout main && git pull origin main\npytest tests/ --cov\n./scripts/bump-version.sh patch\ngit push origin main && git push origin v1.0.1\ngh release create v1.0.1 --title \"v1.0.1\" --notes \"$(sed -n '/## \\\\[1.0.1\\\\]/,/## \\\\[/p' CHANGELOG.md | head -n -1)\"\ngh run watch\nsleep 120 && pip index versions mapify-cli | grep 1.0.1\n```\n```",
+          "tags": [
+            "documentation",
+            "runbooks",
+            "workflows",
+            "executable",
+            "verification",
+            "binary-criteria",
+            "releases",
+            "bash",
+            "markdown"
+          ],
+          "related_bullets": [
+            "arch-0004",
+            "impl-0010",
+            "doc-0002"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T19:32:35.864754+00:00",
+          "last_used_at": "2025-10-25T19:32:35.864754+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "doc-0006",
+          "content": "Single Source of Truth with Explicit Derivation: In documentation with multiple artifact types (CHANGELOG, git tags, release notes), declare ONE canonical source and document explicit commands for deriving all other artifacts. This prevents content drift where artifacts diverge over time. Pattern: CHANGELOG.md as single source of truth \u2192 git tag annotation extracted via sed, GitHub release notes extracted via sed, version strings extracted via grep. Derivation commands must be copy-pasteable and deterministic (no manual text editing). Monitor caught drift where command extracted from wrong source - explicit derivation commands make errors detectable. Document derivation commands adjacent to artifact usage so maintainers see how to regenerate consistently.",
+          "code_example": "```markdown\n## Single Source of Truth: CHANGELOG.md\n\n**All release artifacts derive from CHANGELOG.md using these commands:**\n\n### Derive Git Tag Annotation\n\n```bash\n# Extract version section from CHANGELOG\nVERSION=\"1.0.1\"\nsed -n \"/## \\\\[$VERSION\\\\]/,/## \\\\[/p\" CHANGELOG.md | head -n -1 > tag-message.txt\n\n# Create annotated tag with CHANGELOG excerpt\ngit tag -a \"v$VERSION\" -F tag-message.txt\n```\n\n### Derive GitHub Release Notes\n\n```bash\n# Same extraction pattern ensures consistency\ngh release create v1.0.1 \\\n  --title \"MAP Framework v1.0.1\" \\\n  --notes \"$(sed -n '/## \\\\[1.0.1\\\\]/,/## \\\\[/p' CHANGELOG.md | head -n -1)\"\n```\n\n### Derive Version Strings\n\n```bash\n# Extract version from CHANGELOG header\ngrep -m 1 \"## \\\\[\" CHANGELOG.md | sed 's/.*\\\\[\\\\(.*\\\\)\\\\].*/\\\\1/'\n\n# Verify matches pyproject.toml\ngrep 'version = ' pyproject.toml | sed 's/.*\"\\\\(.*\\\\)\".*/\\\\1/'\n```\n\n**Why This Works:**\n- \u274c Manual copy-paste \u2192 content drift (typos, omissions)\n- \u2705 Explicit derivation \u2192 deterministic consistency\n- \u2705 Commands documented \u2192 maintainers regenerate correctly\n- \u2705 Drift detection \u2192 Monitor catches wrong source usage\n```",
+          "tags": [
+            "documentation",
+            "single-source-of-truth",
+            "derivation",
+            "consistency",
+            "changelog",
+            "releases",
+            "bash",
+            "sed",
+            "grep"
+          ],
+          "related_bullets": [
+            "doc-0004",
+            "impl-0018"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T19:32:35.864754+00:00",
+          "last_used_at": "2025-10-25T19:32:35.864754+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "doc-0007",
+          "content": "Checklist-Troubleshooting Symmetry: Structure troubleshooting sections to mirror pre-flight checklists with 1:1 mapping. For each pre-flight checkpoint (e.g., 'Git Repository State', 'PyPI OIDC Setup'), create corresponding troubleshooting subsection addressing failures at that checkpoint. This symmetry reduces cognitive load - users map error symptoms to relevant troubleshooting section without searching. Pattern: 5 pre-release sections (Code Quality, Documentation, Dependencies, Git State, PyPI Setup) \u2192 4 troubleshooting categories by component (Version Validation, Git State, CI/CD, PyPI OIDC). Include debug checklist mirroring pre-flight checkbox structure. Users follow same mental model for success path and failure recovery.",
+          "code_example": "```markdown\n## Pre-Release Checklist\n\n### 4. Git Repository State\n\n```bash\n# Verify on main branch\ngit branch --show-current\n# Expected: main\n\n# Verify working directory is clean\ngit status\n# Expected: \"nothing to commit, working tree clean\"\n```\n\n**Requirements**:\n- \u2705 On `main` branch\n- \u2705 Working directory is clean (no uncommitted changes)\n- \u2705 Local branch is up to date with origin/main\n\n---\n\n## Troubleshooting\n\n### Git State Issues (mirrors section 4 above)\n\n#### Issue: \"Git working directory is not clean\"\n\n```bash\n# Check what's changed (same verification command)\ngit status\n\n# Fix: Commit changes\ngit add .\ngit commit -m \"chore: prepare for release\"\n```\n\n#### Issue: \"Not on main branch\"\n\n```bash\n# Check current branch (same verification command)\ngit branch --show-current\n\n# Fix: Switch to main\ngit checkout main\ngit pull origin main\n```\n\n### Debug Checklist (mirrors pre-flight structure)\n\n2. **Git State** (maps to Pre-Release Checklist #4):\n   - [ ] On `main` branch\n   - [ ] Working directory clean\n   - [ ] Tag pushed to origin\n```",
+          "tags": [
+            "documentation",
+            "troubleshooting",
+            "checklists",
+            "symmetry",
+            "user-experience",
+            "debugging",
+            "workflows",
+            "releases"
+          ],
+          "related_bullets": [
+            "arch-0004",
+            "impl-0010",
+            "doc-0005"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T19:32:35.864754+00:00",
+          "last_used_at": "2025-10-25T19:32:35.864754+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "doc-0008",
+          "content": "Testable Documentation with Programmatic Verification: Design documentation examples with binary success criteria that can be programmatically verified via bash commands. Structure: (1) Command example, (2) Expected output/result with exact values (not 'success' - specify '100% test pass', 'exit code 0', 'file exists at /path'), (3) Verification command to check actual matches expected. This enables documentation CI/CD - automated verification prevents documentation rot where examples break as code evolves. Use grep/test commands for verification: 'pytest --cov && echo $? # Expected: 0', 'curl -f URL || echo FAILED'. Pattern proven: 18 checkboxes in RELEASING.md with measurable criteria (100% test pass, no errors, specific URLs) are programmatically verifiable.",
+          "code_example": "```markdown\n## Code Quality Checks\n\n### Example: Run Test Suite\n\n```bash\n# Command with inline verification\npytest tests/ --cov=src/mapify_cli --cov-report=term-missing\necho \"Exit code: $?\"  # Verification point\n```\n\n**Expected Results** (programmatically verifiable):\n- \u2705 All tests pass (100% success rate) \u2192 Verify: `pytest --tb=no -q && echo PASS || echo FAIL`\n- \u2705 Coverage > 80% \u2192 Verify: `pytest --cov --cov-report=term | grep TOTAL | awk '{print $4}' | grep -E '^(8[0-9]|9[0-9]|100)%$'`\n- \u2705 Exit code 0 \u2192 Verify: `pytest; echo $?` equals `0`\n\n### Example: Package Verification (Async Systems)\n\n```bash\n# Time-aware verification for distributed systems\nsleep 120  # Wait for PyPI indexing\ncurl -f https://pypi.org/project/mapify-cli/1.0.1/ && echo \"\u2705 VERIFIED\" || echo \"\u274c FAILED\"\npip index versions mapify-cli | grep -q 1.0.1 && echo \"\u2705 INDEXED\" || echo \"\u274c NOT FOUND\"\n```\n\n**Expected Results**:\n- \u2705 HTTP 200 response \u2192 Verify: `curl -f URL` (exit 0)\n- \u2705 Version 1.0.1 appears in index \u2192 Verify: `pip index versions PKG | grep -q VERSION`\n\n## Documentation CI/CD Pipeline\n\n```yaml\n# .github/workflows/docs-verification.yml\n- name: Verify documentation examples\n  run: |\n    # Extract and execute verification commands from docs\n    grep -A 5 \"Expected Results\" RELEASING.md | grep \"Verify:\" | while read cmd; do\n      eval \"$cmd\" || exit 1\n    done\n```\n```",
+          "tags": [
+            "documentation",
+            "testing",
+            "verification",
+            "ci-cd",
+            "binary-criteria",
+            "automation",
+            "bash",
+            "programmatic"
+          ],
+          "related_bullets": [
+            "doc-0005",
+            "impl-0027",
+            "test-0002"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T19:32:35.864754+00:00",
+          "last_used_at": "2025-10-25T19:32:35.864754+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "doc-0009",
+          "content": "Consequence Documentation for Rollback Procedures: When documenting rollback/recovery procedures for distributed systems, explicitly document blast radius with concrete consequences using \u2705/\u274c markers. Structure: (1) Rollback command, (2) What DOES revert (\u2705 markers), (3) What DOES NOT revert (\u274c markers with persistence explanation), (4) Impact on dependent systems. This prevents dangerous assumptions during incident response - operators understand exactly what rollback achieves vs what requires manual cleanup. Pattern: PyPI package yank documented with 3 explicit consequences ('pip install PKG will skip' \u2705, 'pip install PKG==VER still works' \u2705, 'Package files remain available' \u2705). Non-reversible operations (database migrations, external API state) require consequence documentation to prevent data loss from incorrect rollback assumptions.",
+          "code_example": "```markdown\n## Rollback Procedures\n\n### Scenario 2: Package Published to PyPI with Bug\n\n#### Option A: Yank the Release (Recommended)\n\n**Command**:\n```bash\n# Via PyPI web interface (no CLI equivalent)\n# 1. Navigate to https://pypi.org/manage/project/mapify-cli/release/1.0.1/\n# 2. Click \"Options\" \u2192 \"Yank release\"\n# 3. Provide reason: \"Critical bug in config parser\"\n```\n\n**Consequences** (blast radius documentation):\n\n\u2705 **What DOES Change:**\n- `pip install mapify-cli` will skip v1.0.1 (resolves to latest non-yanked)\n- PyPI UI shows \"Yanked\" label on release page\n- Release marked as unsuitable for new installations\n\n\u2705 **What PERSISTS (Does NOT revert):**\n- `pip install mapify-cli==1.0.1` still works (explicit version bypasses yank)\n- Package files remain downloadable (tar.gz, wheel)\n- Existing installations are NOT affected (no force-uninstall)\n- Git tag v1.0.1 still exists (PyPI yank != git rollback)\n\n\u274c **What Requires Manual Cleanup:**\n- Documentation referencing v1.0.1 (update to v1.0.2)\n- CI/CD pipelines pinned to v1.0.1 (update pins)\n- User support tickets (proactive communication)\n\n**Dependent System Impact**:\n- Downstream projects with `mapify-cli>=1.0.0` \u2192 Will skip 1.0.1, use 1.0.2\n- Downstream projects with `mapify-cli==1.0.1` \u2192 Still broken, require manual update\n- Docker images with `pip install mapify-cli==1.0.1` \u2192 Still build, contain bug\n```",
+          "tags": [
+            "documentation",
+            "rollback",
+            "incident-response",
+            "distributed-systems",
+            "blast-radius",
+            "consequences",
+            "pypi",
+            "releases",
+            "recovery"
+          ],
+          "related_bullets": [
+            "doc-0005",
+            "impl-0008"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T19:32:35.864754+00:00",
+          "last_used_at": "2025-10-25T19:32:35.864754+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "doc-0010",
+          "content": "Dual-Mode Documentation: Learning vs Execution: For complex workflows (releases, deployments, migrations), provide both learning mode (detailed explanations) and execution mode (consolidated runbook) in single document. Structure: (1) Main sections with detailed explanations, multiple examples, rationale, troubleshooting (learning mode - first-time users), (2) Appendix with consolidated command sequence, no explanations, copy-pasteable (execution mode - repeat operators). Learning mode frontloads cognitive investment (understand workflow), execution mode minimizes friction (run workflow quickly). Pattern proven: RELEASING.md with 8 detailed sections (350 lines) + appendix runbook (32-line command sequence). Separation prevents expert users from scrolling through explanations while preserving learning context for novices. Use clear section headers ('Appendix: Release Workflow Reference') to signal mode switch.",
+          "code_example": "```markdown\n# Release Process Documentation\n\n## 1. Pre-Release Checklist (LEARNING MODE)\n\nBefore starting the release process, verify all requirements are met.\n\n### 1.1 Code Quality Checks\n\n**Why**: Ensures production-ready code quality before tagging release.\n\n**How**:\n```bash\npytest tests/ --cov=src/mapify_cli --cov-report=term-missing\nblack src/ tests/ --check\nruff check src/ tests/\n```\n\n**Expected Results**:\n- \u2705 All tests pass (100% success rate)\n- \u2705 No linting errors\n\n**Troubleshooting**:\n- If tests fail: Fix failing tests before proceeding\n- If linter errors: Run `black src/ tests/` to auto-format\n\n### 1.2 Documentation Review\n\n**Why**: Users rely on accurate installation instructions.\n\n**How**:\n```bash\ngrep -A 20 \"## \\\\[Unreleased\\\\]\" CHANGELOG.md\n```\n\n**Expected Results**:\n- \u2705 CHANGELOG.md has [Unreleased] section with all changes\n\n## 2. Version Bumping (LEARNING MODE)\n\n### Semantic Versioning\n\nMAP Framework follows [Semantic Versioning 2.0.0](https://semver.org/):\n- **MAJOR** (X.0.0): Breaking changes\n- **MINOR** (x.Y.0): New features\n- **PATCH** (x.y.Z): Bug fixes\n\n### Version Bump Script\n\n**Usage**:\n```bash\n./scripts/bump-version.sh patch  # or minor/major\n```\n\n**What it does**:\n1. Validates version format\n2. Updates pyproject.toml\n3. Updates CHANGELOG.md\n4. Creates git commit and tag\n\n---\n\n## Appendix: Release Workflow Reference (EXECUTION MODE)\n\n**Use this for repeat releases - copy-paste command sequence.**\n\n```bash\n# Pre-checks\ngit checkout main && git pull origin main\ngit status  # Must be clean\npytest tests/ --cov && black src/ tests/ --check && ruff check src/ tests/\ngrep -A 20 \"## \\\\[Unreleased\\\\]\" CHANGELOG.md  # Verify changes documented\n\n# Version bump\n./scripts/bump-version.sh patch  # or minor/major\ngit show  # Review commit\n\n# Push and release\ngit push origin main\ngit push origin v1.0.1  # Replace with actual version\ngh release create v1.0.1 \\\n  --title \"MAP Framework v1.0.1\" \\\n  --notes \"$(sed -n '/## \\\\[1.0.1\\\\]/,/## \\\\[/p' CHANGELOG.md | head -n -1)\"\n\n# Monitor and verify\ngh run watch\nsleep 120\npip index versions mapify-cli | grep 1.0.1  # Verify PyPI indexing\n```\n\n**Execution checklist** (binary verification):\n- [ ] All pre-checks passed (no errors)\n- [ ] Git push succeeded (no rejections)\n- [ ] GitHub release created (check URL)\n- [ ] CI/CD workflow passed (gh run watch shows success)\n- [ ] PyPI package indexed (pip index returns 1.0.1)\n```",
+          "tags": [
+            "documentation",
+            "dual-mode",
+            "runbooks",
+            "learning",
+            "execution",
+            "workflows",
+            "releases",
+            "user-experience",
+            "progressive-disclosure"
+          ],
+          "related_bullets": [
+            "doc-0005",
+            "doc-0002",
+            "doc-0007"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T19:32:35.864754+00:00",
+          "last_used_at": "2025-10-25T19:32:35.864754+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "doc-0011",
+          "content": "Temporal Risk Management in Pre-Release Documentation: When documenting unreleased functionality (pre-PyPI packages, pending features, upcoming APIs), use Predictor agent to analyze temporal dependencies and create rollout checklists. Temporal risks include advertising non-existent packages (README says 'pip install' before PyPI publish), referencing unreleased API versions, or documenting features gated behind feature flags. Structure: (1) Identify temporal claims (uses future-tense or version-specific language), (2) Map claims to release blockers (e.g., 'pip install' requires PyPI publish), (3) Create pre-publish checklist with binary verification (e.g., 'curl -f https://pypi.org/project/PKG/ && echo LIVE'). Pattern prevents user frustration from following documentation that references unavailable functionality. Proven: Predictor flagged HIGH risk when README advertised PyPI package before publish workflow completed.",
+          "code_example": "```markdown\n## Temporal Risk Analysis Example\n\n### Documentation Claim (Temporal)\n```markdown\n# README.md (pre-release draft)\n## Installation\n\n```bash\npip install mapify-cli\n```\n```\n\n### Risk Analysis (Predictor Output)\n\n**Temporal Dependency Detected**:\n- Claim: \"pip install mapify-cli\" (present tense, implies currently available)\n- Reality: Package not published to PyPI yet (release workflow not run)\n- Risk Level: HIGH (users will encounter 404 errors)\n\n**Rollout Checklist** (binary verification):\n```bash\n# Pre-publish: Verify package does NOT exist yet\ncurl -f https://pypi.org/project/mapify-cli/ && echo \"\u26a0\ufe0f ALREADY LIVE\" || echo \"\u2705 Not published yet\"\n\n# Post-publish: Verify package is indexed\nsleep 120  # PyPI indexing delay\ncurl -f https://pypi.org/project/mapify-cli/ && echo \"\u2705 LIVE\" || echo \"\u274c NOT INDEXED\"\npip index versions mapify-cli | grep -q 1.0.0 && echo \"\u2705 INSTALLABLE\" || echo \"\u274c NOT FOUND\"\n```\n\n### Mitigation Strategy\n\n**Option A - Version Pin Documentation to Release**:\nOnly add \"pip install\" section AFTER PyPI publish verified.\n\n**Option B - Future-Tense Documentation**:\n```markdown\n## Installation (Available After v1.0.0 Release)\n\nOnce released to PyPI, install via:\n```bash\npip install mapify-cli\n```\n\n*Note: Pre-release installation requires git clone (see Development Setup)*\n```\n```",
+          "tags": [
+            "documentation",
+            "temporal-risk",
+            "pre-release",
+            "predictor",
+            "pypi",
+            "rollout",
+            "verification",
+            "releases"
+          ],
+          "related_bullets": [
+            "doc-0005",
+            "doc-0007"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T20:48:15.743795+00:00",
+          "last_used_at": "2025-10-25T20:48:15.743795+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "doc-0012",
+          "content": "Progressive Complexity Installation Documentation: Structure installation sections using progressive disclosure from simple (recommended path) to advanced (expert configurations), with explicit user segmentation labels. Three complexity tiers: (1) Simple - single command for mainstream use case (pip install, no options), labeled 'Recommended' or 'Quick Start', (2) Intermediate - installation with optional features (pip install PKG[extras], version pinning), labeled 'Common Use Cases', (3) Advanced - development setup, custom builds, security configurations, labeled 'Advanced Setup'. Each tier references next tier for users needing more control. Pattern proven: README with simple\u2192intermediate\u2192advanced progression achieved 9.1/10 Evaluator score with praise for 'progressive complexity design'. Prevents overwhelming novice users while providing expert users path to customization. Use collapsible sections (<details>) or clear tier headers.",
+          "code_example": "```markdown\n## Installation\n\n### Recommended (Simple Tier)\n\nFor most users, install the latest stable release:\n\n```bash\npip install mapify-cli\n```\n\nThat's it! Verify installation: `mapify --version`\n\n*Need more control over versions or want to contribute? See Common Use Cases and Advanced Setup below.*\n\n---\n\n### Common Use Cases (Intermediate Tier)\n\n<details>\n<summary><b>Install Specific Version</b></summary>\n\n**Exact version** (reproducible builds):\n```bash\npip install mapify-cli==1.0.1\n```\n\n**Version range** (patch updates only):\n```bash\npip install \"mapify-cli>=1.0.0,<1.1.0\"\n```\n\nSee [Semantic Versioning Guide](#semver-explanation) for pinning strategies.\n\n</details>\n```",
+          "tags": [
+            "documentation",
+            "progressive-complexity",
+            "installation",
+            "user-segmentation",
+            "markdown",
+            "collapsible-sections",
+            "user-experience",
+            "pip"
+          ],
+          "related_bullets": [
+            "doc-0002",
+            "doc-0010"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T20:48:15.743795+00:00",
+          "last_used_at": "2025-10-25T20:48:15.743795+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "doc-0013",
+          "content": "Cross-Reference Architecture for Documentation Depth: Build documentation as interconnected layers where README (entry point) provides overview with explicit links to specialized documentation (deeper dive), which links to reference documentation (exhaustive detail). Three-tier pattern: (1) README - 80/20 coverage, most common use cases, links to tier 2 for edge cases, (2) Specialized docs - feature-specific guides (RELEASING.md, CONTRIBUTING.md, ARCHITECTURE.md), comprehensive workflows, links to tier 3 for API details, (3) Reference docs - API docs, module docstrings, exhaustive parameter lists. Use explicit cross-reference phrases ('See RELEASING.md for complete workflow', 'For API details, see [module reference]'). Pattern prevents README bloat (information overload) while ensuring users can navigate to depth they need. Proven: Evaluator praised 'excellent cross-referencing strategy' for README linking to RELEASING.md, CONTRIBUTING.md, API reference.",
+          "code_example": "```markdown\n### Tier 1: README.md (Entry Point)\n\n```markdown\n## Quick Start\n\n```bash\npip install mapify-cli\nmapify init\n```\n\n*For complete installation options, see [INSTALL.md](docs/INSTALL.md).*\n\n## Architecture\n\nMAP uses 6 core agents: Actor, Monitor, Evaluator...\n\n*For architectural deep dive, see [ARCHITECTURE.md](docs/ARCHITECTURE.md).*\n```\n```",
+          "tags": [
+            "documentation",
+            "cross-reference",
+            "architecture",
+            "three-tier",
+            "readme",
+            "specialized-docs",
+            "api-reference",
+            "navigation",
+            "information-architecture"
+          ],
+          "related_bullets": [
+            "doc-0006",
+            "doc-0010"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T20:48:15.743795+00:00",
+          "last_used_at": "2025-10-25T20:48:15.743795+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "doc-0014",
+          "content": "Version Management Documentation with Dynamic References: Use placeholder patterns and dynamic sources for version references in user-facing documentation to minimize maintenance burden during version bumps. Five strategies: (1) Generic 'latest' references for non-critical contexts ('pip install PKG' without version), (2) Fail-loud placeholder variables for version-specific examples ({{VERSION}} in templates - MUST use {{DOUBLE_BRACE}} syntax, not [BRACKETS] or ALLCAPS, because double-braces break grep if incomplete and follow templating conventions), (3) Placeholder verification instructions (find-replace checklist + 'grep returns 0 results' validation), (4) Dynamic badges linking to PyPI/GitHub APIs for current version display, (5) '--version command' references instead of hardcoded version strings. Reserve exact version pins (PKG==1.0.1) for reproducibility-critical contexts (Docker, CI/CD, security advisories). Pattern proven: Evaluator praised 'future-proof examples' for README avoiding hardcoded versions. Fail-loud placeholders reduce substitution errors where {{VERSION}} remains in published docs.",
+          "code_example": "```markdown\n### Strategy 2: Fail-Loud Placeholders (Template Mode)\n\n## Before Starting Release\nReplace all version placeholders:\n1. Find-replace: {{VERSION}} \u2192 1.2.3 (double-brace syntax)\n2. Verify complete: `grep '{{VERSION}}' docs/` \u2192 0 results\n3. If grep finds matches \u2192 substitution incomplete (FAIL LOUD)\n\n### Installation (Template Example)\n\n```bash\npip install mapify-cli=={{VERSION}}  # \u2705 Breaks grep if incomplete\n```\n\n\u274c BAD - Silent failure:\n```bash\npip install mapify-cli==[VERSION]  # Completes grep check even if [VERSION] remains\npip install mapify-cli==VERSION     # grep 'VERSION' finds many false positives\n```\n\n### Strategy 3: Placeholder Verification\n\n```bash\n# Verification checklist\n- [ ] Replace {{VERSION}} with actual version (e.g., 1.2.3)\n- [ ] Run: grep '{{VERSION}}' docs/ release-checklist.md\n- [ ] Expected: 0 results (no matches)\n- [ ] If matches found: substitution incomplete, DO NOT PROCEED\n```\n\n### Strategy 4: Dynamic Badges (API-Driven)\n\n[![PyPI version](https://badge.fury.io/py/mapify-cli.svg)](https://pypi.org/project/mapify-cli/)]\n\n### Strategy 5: Command References (Runtime)\n\n```bash\nmapify --version  # \u2705 Returns current version\n```\n```",
+          "tags": [
+            "documentation",
+            "version-management",
+            "dynamic-references",
+            "placeholders",
+            "badges",
+            "pip",
+            "maintenance",
+            "automation",
+            "releases"
+          ],
+          "related_bullets": [
+            "doc-0006",
+            "doc-0005"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T20:48:15.743795+00:00",
+          "last_used_at": "2025-10-26T08:53:59.231237+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "doc-0015",
+          "content": "Semantic Versioning Education in User Documentation: Include educational context explaining semantic versioning (semver) implications when documenting version pinning strategies. Users often pin versions incorrectly (too restrictive or too permissive) without understanding trade-offs. Provide decision matrix: (1) Exact pin (PKG==1.0.1) - maximum reproducibility, no updates including security patches, use for Docker/CI, (2) Patch range (PKG~=1.0.1 or >=1.0.1,<1.1.0) - security updates allowed, breaking changes blocked, use for applications, (3) Minor range (PKG>=1.0.0,<2.0.0) - new features allowed, major version breakage blocked, use for libraries, (4) Unpinned (PKG) - always latest, automatic updates, use for local development. Link to semver.org for specification details. Pattern proven: Monitor caught MEDIUM gap (missing semver explanation), fix adding decision matrix improved understanding and reduced support questions.",
+          "code_example": "```markdown\n## Semantic Versioning Guide\n\nVersion format: MAJOR.MINOR.PATCH (e.g., 1.4.2)\n\n| Strategy | Syntax | Updates | Use Case |\n|----------|--------|---------|----------|\n| **Exact** | `==1.0.1` | None | Docker, CI |\n| **Patch** | `~=1.0.1` | 1.0.x only | Production |\n| **Minor** | `>=1.0,<2.0` | 1.x.x | Libraries |\n| **Unpinned** | (none) | Latest | Dev |\n\n**Security Advisory Example**:\n- Exact pin (`==1.0.0`): \u274c Vulnerable until manual update\n- Patch range (`~=1.0.0`): \u2705 Auto-updates to 1.0.1 (patched)\n```",
+          "tags": [
+            "documentation",
+            "semantic-versioning",
+            "semver",
+            "education",
+            "version-pinning",
+            "pip",
+            "dependencies",
+            "security",
+            "user-education",
+            "decision-matrix"
+          ],
+          "related_bullets": [
+            "doc-0012",
+            "doc-0014"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-25T20:48:15.743795+00:00",
+          "last_used_at": "2025-10-25T20:48:15.743795+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "doc-0016",
+          "content": "Risk-Responsive Documentation Design: For high-stakes procedural documentation (releases, deployments, disaster recovery, incident response), apply Predictor-driven risk mitigation when estimated risk score \u22655.0/10 (MEDIUM or HIGH). Systematically apply layered defenses targeting specific Predictor-identified failure modes: fail-loud placeholders (prevent incomplete substitution), time estimates (combat completion anxiety), emoji markers (highlight irreversible operations), sync comments (prevent multi-file drift). Each mitigation addresses distinct cognitive or process failure. Pattern proven: Subtask 8 release checklist applied 5 mitigations, reduced Predictor risk from 5.2/10 (MEDIUM) to ~3.5/10 (LOW), estimated quality improvement 8.1\u21929.0/10. Applicable beyond software releases: database migrations requiring rollback plans, production deployments with verification gates, security incident response procedures. Risk-responsive design transforms documentation from passive reference to active safety system.",
+          "code_example": "```markdown\n<!-- \u274c BASELINE - no risk mitigations (Predictor 5.2/10 risk) -->\n# Release Checklist\n\n## Pre-Release\n- [ ] Run tests\n- [ ] Update CHANGELOG\n- [ ] Bump version in files\n- [ ] Push tag\n- [ ] Create release\n\n<!-- \u2705 RISK-RESPONSIVE - 5 mitigations applied (Predictor ~3.5/10 risk) -->\n# Release Checklist v{{VERSION}}\n\n## Before Starting (~5 min)\n\u26a0\ufe0f CRITICAL: Replace all {{VERSION}} placeholders:\n1. Find-replace: {{VERSION}} \u2192 1.2.3\n2. Verify: `grep '{{VERSION}}' release-checklist.md` \u2192 0 results\n3. If grep finds matches \u2192 STOP, substitution incomplete\n\n## Phase 1: Pre-Release (~30-45 min)\n- [ ] Run test suite: `pytest --cov` (expected: 100% pass)\n- [ ] Update CHANGELOG.md with release notes\n- [ ] Bump version: `./scripts/bump-version.sh patch`\n- [ ] \u26a0\ufe0f IRREVERSIBLE: Push tag v{{VERSION}} to origin\n\n## Phase 2: Release Creation (~15-20 min)\n- [ ] \u26a0\ufe0f PRODUCTION: Create GitHub release (triggers CI/CD)\n- [ ] Monitor workflow: `gh run watch`\n\n<!-- Sync requirement -->\n<!-- SYNC: When updating this file, also update docs/RELEASING.md -->\n\nTotal time: ~60-90 minutes\n\nMitigations applied:\n1. {{VERSION}} fail-loud placeholder (prevents incomplete substitution)\n2. Time estimates per phase (combats completion anxiety)\n3. \u26a0\ufe0f emoji markers for irreversible ops (5-10% of items)\n4. Expected results (binary verification)\n5. Sync comments (prevents doc drift)\n```",
+          "tags": [
+            "documentation",
+            "risk-mitigation",
+            "predictor",
+            "checklists",
+            "high-stakes",
+            "cognitive-load",
+            "safety",
+            "releases",
+            "deployments"
+          ],
+          "related_bullets": [
+            "doc-0005",
+            "doc-0010",
+            "doc-0014"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-26T08:53:59.231237+00:00",
+          "last_used_at": "2025-10-26T08:53:59.231237+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "doc-0017",
+          "content": "Dual-Channel Critical Operation Markers: In long procedural checklists (50+ items, 6+ phases), use dual-channel markers for high-consequence operations: emoji \u26a0\ufe0f visual marker + textual severity label (CRITICAL/IRREVERSIBLE/DESTRUCTIVE/PRODUCTION). Limit to 5-10% of total items to preserve signal strength. Dual-channel design works because: (1) Emoji provides rapid visual scanning (pre-attentive processing), (2) Textual label provides semantic precision (what type of consequence), (3) Redundant encoding survives degraded viewing conditions (terminal without emoji support, printed documentation). Reserve markers for operations with irreversible consequences (git push tags, production deployments, database drops, API key rotation) or high-impact failures (OIDC setup errors block release, incorrect version breaks semver). Overuse dilutes signal (checkbox fatigue). Pattern proven: Subtask 8 release checklist marked 3 of 30 items (~10%) with \u26a0\ufe0f IRREVERSIBLE, Evaluator scored 8.1/10. Applicable to: disaster recovery procedures, production deployment checklists, incident response runbooks, privilege escalation workflows.",
+          "code_example": "```markdown\n<!-- \u274c NO MARKERS - all items equal weight (cognitive overload) -->\n## Release Process\n- [ ] Run tests\n- [ ] Update docs\n- [ ] Push tag to origin (triggers release workflow)\n- [ ] Create GitHub release\n- [ ] Monitor CI/CD\n- [ ] Verify PyPI upload\n\n<!-- \u2705 DUAL-CHANNEL MARKERS - 2 of 6 items marked (33%, bit high but acceptable) -->\n## Release Process\n- [ ] Run tests: `pytest --cov`\n- [ ] Update docs: verify CHANGELOG.md\n- [ ] \u26a0\ufe0f IRREVERSIBLE: Push tag v1.2.3 to origin\n  - Once pushed, tag triggers automated release workflow\n  - Cannot unpublish from PyPI after upload\n  - Verify version is correct BEFORE pushing\n- [ ] \u26a0\ufe0f PRODUCTION: Create GitHub release\n  - Triggers CI/CD pipeline to build and publish to PyPI\n  - Visible to all users immediately\n- [ ] Monitor workflow: `gh run watch`\n- [ ] Verify upload: `pip index versions mapify-cli | grep 1.2.3`\n```",
+          "tags": [
+            "documentation",
+            "checklists",
+            "cognitive-load",
+            "emoji",
+            "markers",
+            "critical-operations",
+            "dual-channel",
+            "user-experience",
+            "releases",
+            "incident-response"
+          ],
+          "related_bullets": [
+            "doc-0005",
+            "doc-0016"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-26T08:53:59.231237+00:00",
+          "last_used_at": "2025-10-26T08:53:59.231237+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "doc-0018",
+          "content": "Time Estimates for Checkbox Fatigue: For procedural checklists exceeding 30 items or 6 distinct phases, add time estimates per phase (~MIN-MAX min format) and total workflow time. Time estimates combat three cognitive failures: (1) Unknown completion anxiety (users unsure if checklist takes 10 min or 2 hours, hesitate to start), (2) Unrealistic scheduling (users allocate insufficient time, get interrupted mid-workflow, lose context), (3) Progress tracking failure (no milestones, unknown if on pace). Format: phase header with time range (~30-45 min), total at document top (~60-90 min). Use ranges not point estimates to account for variability (first-time vs repeat execution, system differences). Estimate conservatively (80th percentile completion time, not median). Pattern proven: Subtask 8 release checklist added time estimates, Evaluator noted 'realistic time budgeting' as quality signal. Applicable to: installation procedures, deployment checklists, troubleshooting workflows, data migration runbooks. Avoid for non-linear workflows (exploratory debugging, research tasks) where time estimates create false precision.",
+          "code_example": "```markdown\n<!-- \u274c NO TIME ESTIMATES - unknown completion anxiety -->\n# Database Migration Checklist\n\n## Pre-Migration Validation\n- [ ] Backup production database\n- [ ] Verify backup integrity\n- [ ] Test migration on staging\n\n## Migration Execution\n- [ ] Enable maintenance mode\n- [ ] Run migration script\n- [ ] Verify data integrity\n\n<!-- \u2705 TIME ESTIMATES - clear expectations -->\n# Database Migration Checklist\n\n**Total estimated time: ~90-120 minutes** (first-time: 120-150 min)\n\n## Phase 1: Pre-Migration Validation (~30-40 min)\n- [ ] Backup production database: `pg_dump` (~15-20 min for 10GB DB)\n- [ ] Verify backup integrity: `pg_restore --list` (~2-3 min)\n- [ ] Test migration on staging: `./migrate.sh staging` (~10-15 min)\n\n## Phase 2: Migration Execution (~40-60 min)\n- [ ] Enable maintenance mode: `./maintenance.sh on` (~1 min)\n- [ ] Run migration script: `./migrate.sh production` (~30-45 min)\n- [ ] Verify data integrity: `./verify-migration.sh` (~5-10 min)\n```",
+          "tags": [
+            "documentation",
+            "checklists",
+            "time-estimates",
+            "cognitive-load",
+            "completion-anxiety",
+            "scheduling",
+            "user-experience",
+            "migrations",
+            "deployments"
+          ],
+          "related_bullets": [
+            "doc-0010",
+            "doc-0016",
+            "doc-0017"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-26T08:53:59.231237+00:00",
+          "last_used_at": "2025-10-26T08:53:59.231237+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "doc-0019",
+          "content": "Multi-File Documentation Sync Comments: For multi-file consistency requirements (release checklist \u2194 release guide, API reference \u2194 implementation, schema docs \u2194 migration guide), add bidirectional HTML sync comments at top of BOTH files. Format: <!-- SYNC: When updating this file, also update path/to/other.md [reason] -->. Sync comments transform documentation drift from invisible accident to intentional choice by: (1) Making drift visible in git diff (comment appears in context), (2) Catchable in code review (reviewer sees sync reminder), (3) Explicit rationale (why files must stay synchronized). Without sync comments, multi-file consistency relies on author memory (fails after 2+ weeks) or institutional knowledge (lost when authors leave). Comments are HTML (invisible in rendered markdown), version-controlled (tracked in git history), bidirectional (both files reference each other to catch partial updates). Pattern proven: Subtask 8 added sync comments between RELEASING.md \u2194 release-checklist.md, reduced Predictor risk score. Applicable to: API reference \u2194 SDK implementation docs, database schema \u2194 migration guides, CLI help text \u2194 user manual, disaster recovery procedure \u2194 runbook checklist.",
+          "code_example": "```markdown\n<!-- File: docs/RELEASING.md -->\n<!-- SYNC: When updating this file, also update .github/release-checklist.md\n     Reason: Checklist is executable version of this guide. Version numbers,\n     commands, and verification steps must match exactly. -->\n\n# Release Process Guide\n\n## Pre-Release Validation\n\n1. **Test Suite**: Run full test suite locally:\n   ```bash\n   pytest tests/ --cov=src/mapify_cli --cov-report=term-missing\n   ```\n   Expected: 100% test pass rate, coverage \u226585%.\n\n<!-- File: .github/release-checklist.md -->\n<!-- SYNC: When updating this file, also update docs/RELEASING.md\n     Reason: This checklist is executable version of release guide.\n     Version numbers, commands, and verification steps must match exactly. -->\n\n# Release Checklist v{{VERSION}}\n\n## Phase 1: Pre-Release (~30-45 min)\n\n- [ ] Run test suite:\n  ```bash\n  pytest tests/ --cov=src/mapify_cli --cov-report=term-missing\n  ```\n  Expected: \u2705 100% pass, coverage \u226585%\n```",
+          "tags": [
+            "documentation",
+            "multi-file",
+            "consistency",
+            "sync",
+            "html-comments",
+            "drift-prevention",
+            "code-review",
+            "git",
+            "maintenance"
+          ],
+          "related_bullets": [
+            "doc-0003",
+            "doc-0004",
+            "doc-0016"
+          ],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-26T08:53:59.231237+00:00",
+          "last_used_at": "2025-10-26T08:53:59.231237+00:00",
+          "deprecated": false,
+          "deprecation_reason": null
         }
       ]
     },
@@ -1340,6 +1925,31 @@
             "documentation",
             "map-framework"
           ],
+          "deprecated": false,
+          "deprecation_reason": null
+        }
+      ]
+    },
+    "CI_CD_PATTERNS": {
+      "description": "Patterns for continuous integration and deployment workflows",
+      "bullets": [
+        {
+          "id": "ci-cd-0001",
+          "content": "Fail-Fast Validation Jobs with Dependency Blocking: Create dedicated lightweight validation jobs (version format, syntax checks, required files) that run before expensive operations (test matrix, builds, deployments). Use needs: [validate-job] to block downstream jobs until validation passes. 8-second validation failure is better than 5-minute test matrix failure consuming 4x runner minutes (ubuntu + macos, python 3.11 + 3.12). Place validation jobs at workflow start, make all other jobs depend on them. Prevents wasted CI resources and faster feedback on trivial errors.",
+          "code_example": "```yaml\n# .github/workflows/ci.yml\njobs:\n  validate-version:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - name: Validate semver format\n        run: |\n          python3 -c \"import tomllib, re, sys; ...\"\n        # 8 seconds, fails fast on invalid version\n\n  test:\n    needs: validate-version  # \u2705 Blocked until validation passes\n    strategy:\n      matrix:\n        os: [ubuntu-latest, macos-latest]\n        python-version: [\"3.11\", \"3.12\"]\n    # 5+ minutes, only runs if validation succeeded\n\n  build:\n    needs: validate-version  # \u2705 Parallel with test, both blocked\n    runs-on: ubuntu-latest\n    # 3+ minutes, only runs if validation succeeded\n```",
+          "tags": [
+            "ci-cd",
+            "github-actions",
+            "fail-fast",
+            "optimization",
+            "validation",
+            "job-dependencies"
+          ],
+          "related_bullets": [],
+          "helpful_count": 0,
+          "harmful_count": 0,
+          "created_at": "2025-10-26T08:08:24.353122+00:00",
+          "last_used_at": "2025-10-26T08:08:24.353122+00:00",
           "deprecated": false,
           "deprecation_reason": null
         }

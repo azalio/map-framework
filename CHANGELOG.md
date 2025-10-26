@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - PyPI Package Release Automation
+
+#### Release Infrastructure
+- **PyPI Distribution**: MAP Framework now available as `mapify-cli` on PyPI for easy installation via `pip install mapify-cli`
+  - Version pinning support: Install specific versions using `mapify-cli==X.Y.Z` or version constraints (e.g., `~=1.0.0`, `>=1.0.0,<2.0.0`)
+  - **Benefits**: Simple installation without git clone, reproducible builds with version pinning
+
+- **Automated PyPI Publishing** (`.github/workflows/release.yml`): GitHub Actions workflow automatically publishes releases to PyPI using OIDC trusted publishing
+  - Triggers on git tags matching `v*.*.*` pattern (semantic versioning)
+  - Multi-gate validation: tag format verification, version consistency checks, artifact validation with twine
+  - Deploy-what-you-test pattern: reuses CI build artifacts to ensure published package matches tested code
+  - OIDC authentication: no manual API token management required
+  - **Benefits**: Secure automated releases, reduced human error, consistent release process
+
+- **Version Bumping Script** (`scripts/bump-version.sh`): Automated semantic versioning workflow (458 lines)
+  - Updates `pyproject.toml` version field and moves `CHANGELOG.md` [Unreleased] section to versioned section
+  - Creates conventional commit messages and annotated git tags with changelog excerpts
+  - Multi-gate validation: semver format, duplicate tag detection, git working directory cleanliness, CHANGELOG.md structure
+  - Cross-platform compatibility: handles both GNU sed (Linux) and BSD sed (macOS)
+  - **Benefits**: Consistent versioning across files, automated changelog updates, prevents version conflicts
+
+#### Documentation
+- **Release Process Guide** (`RELEASING.md`): Comprehensive 350-line release documentation
+  - Pre-release checklist covering code quality, documentation, dependencies, git state
+  - Version bumping workflow with semantic versioning examples (major/minor/patch)
+  - GitHub release creation commands and verification steps
+  - Rollback procedures including PyPI yanking with blast radius documentation
+  - PyPI OIDC trusted publishing setup instructions
+  - Troubleshooting section for common issues
+  - **Benefits**: Single source of truth for release process, reduced onboarding time for maintainers
+
+- **README.md Installation Updates**: Restructured with PyPI as primary installation method
+  - Progressive complexity design: simple (`pip install mapify-cli`) → intermediate (version pinning) → advanced (development install)
+  - Version management section with links to PyPI package page and GitHub releases
+  - Semantic versioning explanation for version constraint syntax
+  - **Benefits**: Clearer installation path for end users, better segmentation of user types
+
+- **Playbook Enhancements** (`.claude/playbook.json`): Added 11 new release automation patterns (64 → 75 bullets)
+  - Security: PyPI OIDC trusted publishing, GitHub Actions least-privilege permissions
+  - Implementation: Deploy-what-you-test pattern, multi-gate validation, cross-platform sed compatibility
+  - Documentation: Executable documentation, single source of truth derivation, temporal risk management, progressive complexity
+
+### Changed
+
+- **Installation Priority**: README.md now recommends PyPI installation as primary method, with GitHub installation as alternative for development work
+- **Release Process**: Maintainers use automated workflows (`release.yml`) and scripts (`bump-version.sh`) instead of manual version updates
+
 ### Changed - Documentation Structure Reorganization
 
 #### Repository Documentation Organization
