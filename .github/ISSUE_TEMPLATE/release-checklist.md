@@ -20,6 +20,10 @@ assignees: ''
 
 **IMPORTANT**: Replace all `{{VERSION}}` placeholders with the actual version number (e.g., `1.2.3`):
 - Use find-and-replace: `{{VERSION}}` → `1.2.3`
+- This includes placeholders in:
+  - Checklist item text
+  - Command examples (bash/sed commands below)
+  - URLs and file paths
 - Verify replacement: Search for `{{VERSION}}` - should find 0 results
 - Total replacements needed: 17 instances
 

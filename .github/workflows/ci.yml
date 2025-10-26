@@ -38,7 +38,7 @@ jobs:
         print(f"Found version: {version}")
 
         # Validate semver format
-        # IMPORTANT: Must match regex in scripts/bump-version.sh:139 for consistency
+        # IMPORTANT: Must match regex in validate_semver() in scripts/bump-version.sh for consistency
         # Semver 2.0.0 spec: version numbers MUST NOT contain leading zeroes
         semver_pattern = r'^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
 

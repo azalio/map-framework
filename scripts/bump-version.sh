@@ -456,11 +456,13 @@ main() {
     echo "  4. Create git tag v${new_version}"
     echo ""
     read -t 30 -p "Continue? [y/N] " -n 1 -r || true
-    REPLY=${REPLY:-N}
     echo
 
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        warn "Version bump cancelled (no response or declined)"
+    if [[ -z "$REPLY" ]]; then
+        warn "Version bump cancelled (no response: timed out after 30 seconds)"
+        exit 0
+    elif [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        warn "Version bump cancelled (explicitly declined)"
         exit 0
     fi
 
