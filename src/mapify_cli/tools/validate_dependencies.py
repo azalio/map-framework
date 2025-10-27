@@ -362,9 +362,11 @@ class ASCIIGraphRenderer:
         Returns:
             List of task IDs in topological order (or partial order if cycles exist)
         """
-        # Calculate in-degree for each task (how many dependencies each task has)
+        # Calculate "in-degree" for each task (how many dependencies each task has)
         # adjacency[A] = [B] means "A depends on B"
-        # in_degree[A] = number of tasks that A depends on (incoming edges in dependency graph)
+        # in_degree[A] = number of dependencies task A has (outgoing edges from A in dependency graph)
+        # Note: In graph theory terms, these are outgoing edges, but we call it "in-degree"
+        # because it counts incoming dependencies that must be satisfied before A can execute
         in_degree: Dict[int, int] = {
             task_id: len(self.adjacency.get(task_id, []))
             for task_id in self.task_ids

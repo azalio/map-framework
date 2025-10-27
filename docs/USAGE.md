@@ -303,6 +303,7 @@ Summary:
 | `--format` | `-f` | `json`, `text` | `json` | Output format for validation results |
 | `--visualize` | — | — | — | Display ASCII dependency tree |
 | `--no-color` | — | — | — | Disable ANSI colors in visualization |
+| `--strict` | — | — | — | Fail on warnings (e.g., orphaned tasks), not just critical errors |
 | `--help` | `-h` | — | — | Show help message and examples |
 
 ### Validation Best Practices

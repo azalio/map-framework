@@ -1947,7 +1947,7 @@ def validate_graph(
     visualize: bool = typer.Option(False, "--visualize", help="Show ASCII dependency tree"),
     no_color: bool = typer.Option(False, "--no-color", help="Disable colored output"),
     format: str = typer.Option("json", "-f", "--format", help="Output format: json or text"),
-    strict: bool = typer.Option(False, "--strict", help="Fail on warnings (exit code 1), not just critical errors")
+    strict: bool = typer.Option(False, "--strict", help="Fail on warnings (e.g., orphaned tasks), not just critical errors (cycles, forward refs)")
 ):
     """Validate TaskDecomposer dependency graph
 

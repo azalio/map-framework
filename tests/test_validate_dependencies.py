@@ -761,7 +761,7 @@ class TestEdgeCases:
         validator = DependencyValidator(data)
         # This is actually a valid DAG, not a cycle
         # Task 5 has two dependencies (2 and 4), both reachable without cycles
-        assert validator.validate_circular_dependencies() is True  # No cycle!
+        assert validator.validate_circular_dependencies() is True  # Valid DAG - no cycle detected
 
         # To create an actual cycle, we need to introduce a dependency from a descendant back to an ancestor (creates a cycle):
         cyclic_data = {
