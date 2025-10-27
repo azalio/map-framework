@@ -492,6 +492,249 @@ Over-estimation → Paralysis, inefficiency
 Accurate estimation → Smooth delivery
 </rationale>
 
+## Numeric Complexity Scoring Framework
+
+**Purpose**: Provide granular 1-10 complexity scores for better estimation and resource planning. This complements the categorical low/medium/high estimates with precise numeric values.
+
+<rationale>
+Numeric scores enable:
+- **Fine-grained prioritization**: Distinguish between "easy medium" (4) vs "hard medium" (6)
+- **Velocity tracking**: Sum complexity points for sprint planning
+- **Pattern recognition**: Identify which score ranges cause estimation errors
+- **Risk signaling**: Scores 8+ automatically trigger additional review/planning
+
+Categorical alone is too coarse for planning. Numeric alone lacks intuitive understanding. Together, they provide both precision and clarity.
+</rationale>
+
+### Scoring Scale (1-10)
+
+```
+1-3: SIMPLE (Low Complexity)
+  Score 1: Trivial change (typo fix, constant update, single-line change)
+          - Implementation time: < 30 minutes
+          - No dependencies, no testing complexity
+          - Examples: Update error message, change color constant
+
+  Score 2: Simple CRUD operation or straightforward logic
+          - Implementation time: 30 minutes - 1 hour
+          - 0-1 dependencies, basic unit tests sufficient
+          - Examples: Add validation to existing field, simple getter/setter
+
+  Score 3: Standard pattern implementation (well-documented, common)
+          - Implementation time: 1-2 hours
+          - 1-2 dependencies, straightforward testing
+          - Examples: Create basic model, add REST endpoint following existing pattern
+
+4-6: MODERATE (Medium Complexity)
+  Score 4: Business logic with multiple conditions
+          - Implementation time: 2-3 hours
+          - 2-3 dependencies, requires integration tests
+          - Examples: Multi-step validation, state machine transition
+
+  Score 5: Integration between 2-3 components
+          - Implementation time: 3-4 hours
+          - 3-4 dependencies, needs integration + unit tests
+          - Examples: Connect service to API and database, add middleware
+
+  Score 6: Moderately complex algorithm or unfamiliar library integration
+          - Implementation time: 4-6 hours
+          - 4+ dependencies, extensive testing needed
+          - Examples: Implement pagination with filtering, integrate OAuth provider
+
+7-8: COMPLEX (High Complexity)
+  Score 7: Complex algorithm or multi-system integration
+          - Implementation time: 6-8 hours (consider splitting)
+          - Many dependencies, requires architectural decisions
+          - Examples: Real-time sync logic, complex caching strategy
+
+  Score 8: Architectural change affecting multiple layers
+          - Implementation time: 8-12 hours (STRONGLY consider splitting)
+          - System-wide impact, needs design review
+          - Examples: Add multi-tenancy, refactor auth system
+
+9-10: NOVEL (Very High Complexity)
+  Score 9: Novel approach without precedent in codebase
+          - Implementation time: 12-16 hours (MUST split into subtasks)
+          - Requires research, prototyping, multiple iterations
+          - Examples: Custom algorithm design, new architectural pattern
+
+  Score 10: Groundbreaking work with high uncertainty
+           - Implementation time: 16+ hours (MUST decompose further)
+           - Unknown unknowns, needs investigation subtask first
+           - Examples: Build custom consensus algorithm, design new protocol
+
+⚠️ IMPORTANT: Scores 8+ should trigger re-evaluation. Can this be split into smaller subtasks?
+```
+
+### Decision Framework for Scoring
+
+```
+START with base score = 3 (simple pattern implementation)
+
+ADJUST based on factors:
+
+Novelty Factor:
+  +0: Pattern exists in codebase, just applying it
+  +1: Adapting existing pattern to new context
+  +2: Using unfamiliar library/framework
+  +3: Novel algorithm or approach
+  +4: Completely new territory, no precedent
+
+Dependency Factor:
+  +0: No dependencies (0)
+  +1: Single dependency (1)
+  +2: Multiple dependencies (2-3)
+  +3: Many dependencies (4-5)
+  +4: Complex dependency graph (6+)
+
+Scope Factor:
+  +0: Single file, single function (<50 lines)
+  +1: Single file, multiple functions (50-150 lines)
+  +2: Multiple files, single layer (2-3 files)
+  +3: Multiple files, multiple layers (4-5 files)
+  +4: System-wide changes (6+ files, multiple layers)
+
+Risk Factor:
+  +0: Clear requirements, well-understood
+  +1: Minor ambiguity, easily clarified
+  +2: Some unknowns, but manageable
+  +3: Significant uncertainty, needs research
+  +4: Major unknowns, high risk of failure
+
+FINAL SCORE = base + novelty + dependency + scope + risk
+
+THEN APPLY ADJUSTMENTS:
+
+Score Adjustment Rules:
+  IF calculated score > 10:
+    → Cap at 10 (maximum complexity)
+    → MUST decompose into smaller subtasks
+
+  IF calculated score >= 8 AND subtask uses well-documented pattern/library:
+    → Reduce by 1-2 points (established solutions lower complexity)
+    → Still STRONGLY consider splitting
+
+  IF calculated score in 4-7 range AND subtask is trivial configuration:
+    → Reduce by 1-2 points (config files simpler than code)
+    → Example: Adding 1 line to settings.py is not score 5
+
+  IF calculated score < 3 AND subtask has real implementation work:
+    → Increase to 3 minimum (avoid underestimating)
+    → Only scores 1-2 should be truly trivial (typo fixes, constant changes)
+
+  IF calculated score < 1:
+    → This subtask is too trivial
+    → Merge with another related subtask
+
+FINAL CHECKS:
+  IF final score > 8: STRONGLY consider splitting into smaller subtasks
+  IF final score = 9-10: MUST decompose further
+  IF final score < 2: Consider merging with related subtask
+```
+
+### Complexity Rationale Guidance
+
+For each subtask, explain the numeric score by referencing the factors:
+
+**Good rationale example**:
+"Score 6: OAuth integration new to codebase (+2 novelty), depends on user model and session management (+2 dependencies), three files across service and controller layers (+2 scope), well-documented library reduces risk (+0 risk). Base 3 + 6 = 9, reduced to 6 for standard OAuth library pattern. Estimated 4-6 hours."
+
+**Bad rationale example**:
+"Score 6: Seems medium-hard."
+
+<example type="scoring_comparison">
+**Subtask A: "Create User model with basic fields"**
+- Novelty: +0 (standard Django model pattern)
+- Dependencies: +0 (no prerequisites)
+- Scope: +1 (single file, ~100 lines)
+- Risk: +0 (clear requirements)
+- **Score: 3 + 1 = 4** (but round down to 3 as it's a well-known pattern)
+- **Rationale**: "Standard model creation following existing patterns. Single file change with no dependencies. Clear requirements. Estimated 1-2 hours."
+
+**Subtask B: "Implement real-time notification delivery via WebSockets"**
+- Novelty: +2 (Django Channels new to codebase)
+- Dependencies: +3 (needs Redis, consumer setup, authentication, routing)
+- Scope: +3 (4 files: consumer, routing, ASGI config, deployment)
+- Risk: +2 (WebSocket scalability concerns, connection handling complexity)
+- **Score: 3 + 2 + 3 + 3 + 2 = 13 → capped at 10, MUST split**
+- **Rationale**: "High complexity due to unfamiliar technology (Channels), many dependencies (Redis, ASGI, auth integration), multi-layer scope (consumer + infrastructure), and scalability risks. Should be split into: (1) Channels setup, (2) Consumer implementation, (3) Message routing."
+
+**Subtask C: "Fix typo in error message"**
+- Novelty: +0 (trivial change)
+- Dependencies: +0 (none)
+- Scope: +0 (single line)
+- Risk: +0 (zero risk)
+- **Score: 3 + 0 = 3 → too trivial, reduce to 1**
+- **Rationale**: "Trivial text change, no logic impact. Estimated <15 minutes. Should be batched with other trivial fixes."
+</example>
+
+### Test Strategy Field
+
+Each subtask should include a structured test strategy breaking down testing approach by layer:
+
+**test_strategy structure**:
+```json
+{
+  "unit": "Specific unit tests needed (function/method level)",
+  "integration": "Integration tests needed (component interaction level)",
+  "e2e": "End-to-end tests needed (full user flow level)"
+}
+```
+
+**Test Layer Decision Table**:
+
+| Subtask Type | Unit Tests | Integration Tests | E2E Tests |
+|-------------|-----------|------------------|-----------|
+| **Data Model** (database schema, model class) | **REQUIRED**: Field validation, defaults, constraints, methods | **REQUIRED**: Database constraints, FK integrity, migration applies | **N/A** - model layer only |
+| **Service/Business Logic** (pure functions, calculators) | **REQUIRED**: Function logic, edge cases, error handling | **REQUIRED** if calls database/external APIs, **N/A** if pure functions | **N/A** - service layer only |
+| **API Endpoint** (REST/GraphQL) | **REQUIRED**: Request validation, permission checks, response format | **REQUIRED**: Service layer calls, database transactions, error propagation | **REQUIRED**: Full HTTP flow with auth, verify response and DB state |
+| **UI Component** (React/Vue) | **REQUIRED**: Component renders, props, state updates, event handlers | **REQUIRED**: API calls, state management integration | **REQUIRED** if critical user flow, **N/A** for internal components |
+| **WebSocket/Real-time** (consumer, channel) | **REQUIRED**: Connection logic, authentication, message parsing | **REQUIRED**: Channel layer interaction, message delivery, cleanup | **REQUIRED**: Full WebSocket flow from connect to disconnect |
+| **Configuration** (settings, routing, deployment) | **REQUIRED**: Config loads correctly, imports work | **REQUIRED**: Integration with application (routes resolve, services start) | **N/A** or **OPTIONAL** - manual verification in staging |
+| **Documentation** (README, API docs, guides) | **OPTIONAL**: Code examples parse correctly | **N/A** | **N/A** or **MANUAL**: Follow guide to verify accuracy |
+| **Tests** (test suite subtask) | **REQUIRED**: Tests cover all scenarios | **REQUIRED**: Integration tests work | **REQUIRED**: E2E tests work (meta-testing) |
+
+**Decision Rules**:
+- **unit**: ALWAYS required except pure documentation
+- **integration**: REQUIRED when subtask touches 2+ system layers (database + code, API + service, component + external service)
+- **e2e**: REQUIRED for user-facing features (API endpoints, critical UI flows, WebSocket), N/A for internal/infrastructure
+
+**Guidelines**:
+- Be specific about WHAT to test, not just "write tests"
+- Mention edge cases, error conditions, boundary conditions
+- If a layer isn't needed, use "N/A" or "None needed"
+
+**Monitor Integration**: The Monitor agent receives this test_strategy as part of subtask context and validates that Actor's implementation includes the specified tests. If tests are missing or incomplete, Monitor marks the solution as invalid with specific feedback referencing the test_strategy requirements.
+
+<example type="test_strategy">
+**Simple subtask (Create model)**:
+```json
+{
+  "unit": "Test model field validation (required fields, max lengths, valid email format), test default values, test __str__ method",
+  "integration": "Test database constraints (unique email, foreign key integrity)",
+  "e2e": "N/A - model layer only"
+}
+```
+
+**Complex subtask (WebSocket consumer)**:
+```json
+{
+  "unit": "Test authentication logic (valid token, invalid token, missing token), test message parsing, test error handling",
+  "integration": "Test consumer connects to channel layer, test message delivery to correct channel groups, test disconnect cleanup",
+  "e2e": "Test full WebSocket flow: connect → authenticate → receive notification → mark read → disconnect"
+}
+```
+
+**API endpoint subtask**:
+```json
+{
+  "unit": "Test request validation, test permission checks, test response serialization",
+  "integration": "Test endpoint calls service layer correctly, test database transactions, test error propagation",
+  "e2e": "Test full API flow via HTTP client: authenticate → create resource → verify response → verify database state"
+}
+```
+</example>
+
 </decision_frameworks>
 
 <examples>
@@ -540,6 +783,13 @@ Standards: Follow RESTful conventions, include permission checks
       "description": "Define Post model in models.py with fields: title (CharField), content (TextField), author (ForeignKey to User), created_at, updated_at. Include Meta options for ordering.",
       "dependencies": [],
       "estimated_complexity": "low",
+      "complexity_score": 3,
+      "complexity_rationale": "Score 3: Standard Django model pattern (+0 novelty), no dependencies (+0), single file with migration (+1 scope), clear requirements (+0 risk). Base 3 + 1 = 4, rounded to 3 for well-established pattern. Estimated 1-2 hours.",
+      "test_strategy": {
+        "unit": "Test model field validation (title required and max length, content required), test default values for timestamps, test __str__ method returns title",
+        "integration": "Test database constraints (author foreign key integrity, cascade behavior), test migration applies cleanly",
+        "e2e": "N/A - model layer only"
+      },
       "affected_files": ["blog/models.py", "blog/migrations/"],
       "acceptance": [
         "Post model exists with all required fields",
@@ -554,6 +804,13 @@ Standards: Follow RESTful conventions, include permission checks
       "description": "Create PostSerializer in serializers.py using ModelSerializer. Include all Post fields, read-only author field (auto-set from request.user), and nested User representation for author.",
       "dependencies": [1],
       "estimated_complexity": "low",
+      "complexity_score": 2,
+      "complexity_rationale": "Score 2: Standard Django REST serializer pattern (+0 novelty), single dependency on model (+1), single file (~50 lines, +0 scope), clear requirements (+0 risk). Base 3 + 1 = 4, reduced to 2 for simple ModelSerializer usage. Estimated 30-60 minutes.",
+      "test_strategy": {
+        "unit": "Test serialization of Post to JSON, test deserialization validates required fields, test author field is read-only, test nested User serialization structure",
+        "integration": "Test serializer creates valid Post instances in database, test serializer handles missing User relationship gracefully",
+        "e2e": "N/A - serializer layer only"
+      },
       "affected_files": ["blog/serializers.py"],
       "acceptance": [
         "Serializer successfully serializes Post objects to JSON",
@@ -568,6 +825,13 @@ Standards: Follow RESTful conventions, include permission checks
       "description": "Implement PostViewSet in views.py with ModelViewSet. Override perform_create to auto-set author to request.user. Add permission classes: IsAuthenticatedOrReadOnly for list/retrieve, IsOwnerOrReadOnly for update/delete.",
       "dependencies": [2],
       "estimated_complexity": "medium",
+      "complexity_score": 5,
+      "complexity_rationale": "Score 5: Standard ViewSet pattern with custom permissions (+1 novelty for permission logic), depends on serializer (+1), two files (viewset + custom permission class, +2 scope), clear requirements with some permission edge cases (+1 risk). Base 3 + 5 = 8, reduced to 5 for well-documented DRF pattern. Estimated 3-4 hours.",
+      "test_strategy": {
+        "unit": "Test perform_create sets author to request.user, test permission class logic (IsOwnerOrReadOnly for different user scenarios), test queryset filtering",
+        "integration": "Test ViewSet actions call serializer correctly, test database transactions for create/update/delete, test permission checks are enforced at view layer",
+        "e2e": "Test full API flows: unauthenticated list (200), authenticated create (201), owner update (200), non-owner update (403), owner delete (204), non-owner delete (403)"
+      },
       "affected_files": ["blog/views.py", "blog/permissions.py"],
       "acceptance": [
         "GET /posts/ returns list of all posts (no auth required)",
@@ -584,6 +848,13 @@ Standards: Follow RESTful conventions, include permission checks
       "description": "Register PostViewSet with DefaultRouter in urls.py. Configure routes: /api/posts/ (list/create), /api/posts/{id}/ (retrieve/update/delete).",
       "dependencies": [3],
       "estimated_complexity": "low",
+      "complexity_score": 2,
+      "complexity_rationale": "Score 2: Standard Django URL routing pattern (+0 novelty), single dependency on ViewSet (+1), two configuration files (+1 scope), clear requirements (+0 risk). Base 3 + 2 = 5, reduced to 2 for trivial routing configuration. Estimated 30-60 minutes.",
+      "test_strategy": {
+        "unit": "Test URL patterns resolve to correct viewset actions using Django's resolve()",
+        "integration": "Test all endpoint URLs accessible via test client, test CRUD operations through URLs return expected status codes",
+        "e2e": "N/A - URL routing tested via integration layer"
+      },
       "affected_files": ["blog/urls.py", "project/urls.py"],
       "acceptance": [
         "All CRUD endpoints accessible at /api/posts/",
@@ -598,6 +869,13 @@ Standards: Follow RESTful conventions, include permission checks
       "description": "Create test_posts.py with APITestCase covering: model validation, serializer validation, ViewSet CRUD operations, permission checks (author vs non-author), edge cases (empty content, very long title).",
       "dependencies": [3],
       "estimated_complexity": "medium",
+      "complexity_score": 6,
+      "complexity_rationale": "Score 6: Standard testing pattern but comprehensive scope (+1 novelty for coverage requirements), depends on model, serializer, viewset (+2), multiple test files covering all layers (~200 lines, +2 scope), need to cover many edge cases (+1 risk). Base 3 + 6 = 9, reduced to 6 for established testing patterns. Estimated 4-6 hours.",
+      "test_strategy": {
+        "unit": "Test model validation (required fields, max lengths), test serializer validation (required fields, read-only author), test permission class logic (owner vs non-owner scenarios), test field defaults",
+        "integration": "Test ViewSet CRUD operations with database (create persists, update modifies, delete removes), test permission enforcement at view layer, test queryset filtering",
+        "e2e": "Test full API flows via APIClient: unauthenticated list (200), authenticated create (201), owner update (200), non-owner update (403), owner delete (204), verify database state after each operation"
+      },
       "affected_files": ["blog/tests/test_posts.py"],
       "acceptance": [
         "All model validations have corresponding tests",
@@ -613,6 +891,13 @@ Standards: Follow RESTful conventions, include permission checks
       "description": "Add docstrings to PostViewSet actions. Create API documentation in docs/api/posts.md with: endpoint descriptions, request/response examples, permission requirements, error codes.",
       "dependencies": [4],
       "estimated_complexity": "low",
+      "complexity_score": 2,
+      "complexity_rationale": "Score 2: Standard documentation task (+0 novelty), depends on URL routing (+1), two files (code docstrings + markdown doc, +1 scope), clear structure (+0 risk). Base 3 + 2 = 5, reduced to 2 for straightforward documentation. Estimated 1 hour.",
+      "test_strategy": {
+        "unit": "Test docstrings are present on all ViewSet actions (linting/coverage check)",
+        "integration": "N/A - documentation doesn't require integration tests",
+        "e2e": "N/A - documentation verified manually during review"
+      },
       "affected_files": ["blog/views.py", "docs/api/posts.md"],
       "acceptance": [
         "Each ViewSet action has clear docstring",
@@ -684,6 +969,13 @@ Requirements: WebSocket support, persistent notification storage, read/unread tr
       "description": "Define Notification model with fields: recipient (FK to User), notification_type (choices: mention/like/comment), content_type (generic FK), object_id, message (text), read (boolean), created_at. Use Django's ContentType framework for polymorphic references to different event types.",
       "dependencies": [],
       "estimated_complexity": "medium",
+      "complexity_score": 5,
+      "complexity_rationale": "Score 5: Moderate novelty using ContentType framework for polymorphism (+1), no dependencies (+0), single model file with custom manager (~150 lines, +2 scope), generic foreign keys add some complexity (+1 risk). Base 3 + 4 = 7, reduced to 5 for documented Django pattern. Estimated 3-4 hours.",
+      "test_strategy": {
+        "unit": "Test model field validation (recipient required, valid notification_type choices), test default values (read=False), test __str__ method, test custom manager method unread_for_user() with multiple users",
+        "integration": "Test generic foreign key relationships work with Comment/Like/Post models, test database constraints (recipient FK integrity, cascade behavior), test migration applies cleanly",
+        "e2e": "N/A - model layer only"
+      },
       "affected_files": ["notifications/models.py", "notifications/migrations/"],
       "acceptance": [
         "Notification model supports multiple types via choices field",
@@ -699,6 +991,13 @@ Requirements: WebSocket support, persistent notification storage, read/unread tr
       "description": "Add channels, channels_redis to requirements. Configure ASGI application in asgi.py. Add CHANNEL_LAYERS setting pointing to Redis. Update deployment to use Daphne/Uvicorn instead of WSGI server.",
       "dependencies": [],
       "estimated_complexity": "medium",
+      "complexity_score": 6,
+      "complexity_rationale": "Score 6: New infrastructure addition to codebase (+2 novelty for Channels/Redis), no code dependencies but requires Redis infrastructure (+1 for external dependency), multiple files across config/deployment layers (+2 scope), deployment changes add risk (+1 risk of misconfiguration). Base 3 + 6 = 9, reduced to 6 for well-documented setup. Estimated 4-6 hours.",
+      "test_strategy": {
+        "unit": "Test ASGI application imports correctly, test CHANNEL_LAYERS settings structure is valid",
+        "integration": "Test Redis connection via channel layer (send/receive test message), test Django starts with ASGI server without errors, test HTTP requests still work alongside WebSocket routing",
+        "e2e": "Test deployment configuration loads correctly in staging environment, test server restarts cleanly"
+      },
       "affected_files": ["requirements.txt", "project/asgi.py", "project/settings.py", "deployment/config.yml"],
       "acceptance": [
         "channels and channels_redis installed",
@@ -714,6 +1013,13 @@ Requirements: WebSocket support, persistent notification storage, read/unread tr
       "description": "Create WebSocket consumer in consumers.py. Authenticate user from token in query params. Add user to notification channel group on connect. Remove from group on disconnect. Handle incoming 'mark_read' messages.",
       "dependencies": [2],
       "estimated_complexity": "medium",
+      "complexity_score": 7,
+      "complexity_rationale": "Score 7: High novelty for WebSocket consumer pattern new to codebase (+2), depends on Channels setup (+1), two files with async consumer logic (~200 lines, +3 scope for async/await complexity), authentication and connection handling adds risk (+1 risk of security issues). Base 3 + 7 = 10, capped at 7 for complex but documented pattern. Estimated 6-8 hours.",
+      "test_strategy": {
+        "unit": "Test authentication logic (valid token extracts user, invalid token rejects, missing token rejects), test mark_read message parsing, test channel group naming convention",
+        "integration": "Test consumer connects to channel layer successfully, test user added to correct channel group on connect, test user removed from group on disconnect, test mark_read message updates database via service layer",
+        "e2e": "Test full WebSocket flow: connect with valid token → verify in channel group → send mark_read → verify notification updated → disconnect → verify removed from group"
+      },
       "affected_files": ["notifications/consumers.py", "notifications/routing.py"],
       "acceptance": [
         "Consumer authenticates WebSocket connections via token",
@@ -729,6 +1035,13 @@ Requirements: WebSocket support, persistent notification storage, read/unread tr
       "description": "Create routing.py with WebSocket URL patterns. Mount NotificationConsumer at ws/notifications/. Update asgi.py to include WebSocket routing alongside HTTP.",
       "dependencies": [3],
       "estimated_complexity": "low",
+      "complexity_score": 3,
+      "complexity_rationale": "Score 3: Standard Channels routing pattern (+0 novelty), depends on consumer (+1), two configuration files (+1 scope), clear requirements but need to avoid breaking HTTP routing (+1 risk). Base 3 + 3 = 6, reduced to 3 for straightforward configuration. Estimated 1-2 hours.",
+      "test_strategy": {
+        "unit": "Test WebSocket URL patterns resolve to correct consumer using Channels' URLRouter",
+        "integration": "Test WebSocket endpoint accessible via test WebSocket client, test HTTP endpoints still work after ASGI routing changes, test routing handles both ws:// and wss:// protocols",
+        "e2e": "Test connection from browser console using WebSocket API, verify protocol upgrade succeeds"
+      },
       "affected_files": ["notifications/routing.py", "project/asgi.py"],
       "acceptance": [
         "WebSocket endpoint accessible at ws://host/ws/notifications/",
@@ -743,6 +1056,13 @@ Requirements: WebSocket support, persistent notification storage, read/unread tr
       "description": "Implement NotificationService in services.py with method send_notification(recipient, type, related_object, message). Service creates Notification in database and sends real-time message via channel layer to 'notifications_{recipient_id}' group.",
       "dependencies": [1, 3],
       "estimated_complexity": "medium",
+      "complexity_score": 6,
+      "complexity_rationale": "Score 6: Moderate novelty integrating database + channel layer (+1), depends on model and consumer (+2), single service file but dual responsibility (~150 lines, +2 scope), race condition risk with database write + async send (+1 risk). Base 3 + 6 = 9, reduced to 6 for clear separation of concerns. Estimated 4-6 hours.",
+      "test_strategy": {
+        "unit": "Test send_notification creates Notification with correct fields, test message format structure, test idempotency (duplicate calls don't create duplicate notifications), test handles invalid recipient gracefully",
+        "integration": "Test notification persisted to database before channel layer send, test message sent to correct channel group, test offline recipient doesn't cause failures, test generic FK relationships work with different related_object types",
+        "e2e": "Test full flow: trigger send_notification → verify database record → verify WebSocket client receives message → verify message contains all required fields"
+      },
       "affected_files": ["notifications/services.py"],
       "acceptance": [
         "send_notification() creates Notification record in database",
@@ -758,6 +1078,13 @@ Requirements: WebSocket support, persistent notification storage, read/unread tr
       "description": "Add NotificationService calls to existing signals/views: send mention notification when user mentioned in comment, send like notification when post liked, send comment notification when post commented on. Use Django signals where appropriate.",
       "dependencies": [5],
       "estimated_complexity": "medium",
+      "complexity_score": 5,
+      "complexity_rationale": "Score 5: Adapting existing code to call new service (+1 novelty), depends on service (+1), three existing files requiring modification (+2 scope for cross-cutting change), risk of breaking existing features (+1 risk). Base 3 + 5 = 8, reduced to 5 for straightforward service calls. Estimated 3-4 hours.",
+      "test_strategy": {
+        "unit": "Test each signal handler calls NotificationService with correct parameters, test self-notification check logic (user doesn't notify themselves), test mention parsing extracts correct users",
+        "integration": "Test signals trigger on model save/create events, test notification service receives correct event data, test existing comment/like/post functionality still works, test transactions don't break notification sending",
+        "e2e": "Test user flow: create comment with mention → mentioned user receives notification, like post → post author receives notification, comment on post → post author receives notification, verify no notification when user likes own post"
+      },
       "affected_files": ["comments/signals.py", "likes/views.py", "comments/views.py"],
       "acceptance": [
         "Mentioning user in comment triggers notification to mentioned user",
@@ -773,6 +1100,13 @@ Requirements: WebSocket support, persistent notification storage, read/unread tr
       "description": "Create NotificationViewSet with actions: list (unread notifications), mark_as_read (single), mark_all_as_read (bulk). Add pagination (25 per page). Add filtering by type.",
       "dependencies": [1],
       "estimated_complexity": "low",
+      "complexity_score": 4,
+      "complexity_rationale": "Score 4: Standard DRF ViewSet pattern with custom actions (+1 novelty for bulk action), depends on model (+1), three files (viewset + serializer + URLs, +2 scope), clear requirements (+0 risk). Base 3 + 4 = 7, reduced to 4 for well-documented DRF patterns. Estimated 2-3 hours.",
+      "test_strategy": {
+        "unit": "Test serializer structure (includes all notification fields), test viewset filters unread notifications, test queryset filtering by type, test pagination configuration",
+        "integration": "Test list endpoint returns user's notifications only (not other users'), test mark_as_read updates database, test mark_all_as_read updates multiple records, test filtering by type returns correct subset",
+        "e2e": "Test API flows: authenticated list (200 with notifications), filter by type (200 with filtered results), mark single as read (200 and verify updated), mark all as read (200 and verify all updated), unauthenticated access (401)"
+      },
       "affected_files": ["notifications/views.py", "notifications/serializers.py", "notifications/urls.py"],
       "acceptance": [
         "GET /api/notifications/ returns paginated unread notifications",
@@ -788,6 +1122,13 @@ Requirements: WebSocket support, persistent notification storage, read/unread tr
       "description": "Create useNotifications hook in React connecting to WebSocket endpoint. Handle connection, reconnection, message receipt. Create NotificationBell component displaying unread count. Create NotificationList component with mark-read functionality.",
       "dependencies": [4, 7],
       "estimated_complexity": "high",
+      "complexity_score": 8,
+      "complexity_rationale": "Score 8: High novelty for WebSocket client + React integration new to frontend (+3), depends on WebSocket routing and REST API (+2), three components with complex state management (~400 lines, +3 scope), reconnection logic and race conditions add significant risk (+2 risk). Base 3 + 10 = 13, capped at 8 for complex frontend work. Strongly consider splitting into: (1) useNotifications hook, (2) UI components. Estimated 8-12 hours.",
+      "test_strategy": {
+        "unit": "Test useNotifications hook establishes WebSocket connection, test reconnection logic triggers on disconnect, test message parsing updates state correctly, test NotificationBell renders count badge, test NotificationList renders notification items",
+        "integration": "Test hook fetches REST API on mount, test WebSocket messages update UI in real-time, test mark-read calls API and updates local state, test connection cleanup on unmount, test multiple notification types render correctly",
+        "e2e": "Test full user flow: login → WebSocket connects → backend sends notification → appears in UI immediately → click notification → marked read in UI and backend → refresh page → notification still marked read (persistence verified)"
+      },
       "affected_files": ["frontend/src/hooks/useNotifications.js", "frontend/src/components/NotificationBell.jsx", "frontend/src/components/NotificationList.jsx"],
       "acceptance": [
         "WebSocket connection established on user login",
@@ -805,6 +1146,13 @@ Requirements: WebSocket support, persistent notification storage, read/unread tr
       "description": "Create test suite covering: model validation, WebSocket consumer (connect/disconnect/messages), notification service (database + real-time), API endpoints, signal triggers. Use ChannelsTestCase for WebSocket tests.",
       "dependencies": [6, 7],
       "estimated_complexity": "high",
+      "complexity_score": 8,
+      "complexity_rationale": "Score 8: High novelty for WebSocket testing with ChannelsTestCase (+2), depends on triggers and API (+2), five test files covering all layers (~500 lines, +4 scope for comprehensive coverage), async testing and race conditions add risk (+2 risk). Base 3 + 10 = 13, capped at 8 for extensive test requirements. Strongly consider splitting into unit/integration test subtasks. Estimated 8-12 hours.",
+      "test_strategy": {
+        "unit": "Test model validation (all fields, manager methods), test consumer authentication logic, test service create/send logic separately, test viewset actions and filters, test signal handlers in isolation",
+        "integration": "Test consumer connects to channel layer, test service persists then sends, test API endpoints interact with database correctly, test signals trigger service calls, test WebSocket message delivery end-to-end",
+        "e2e": "Test complete flows: user action (like/comment) → signal fires → service persists notification → service sends to channel → WebSocket client receives → notification appears in list API → mark read updates database → WebSocket receives read confirmation"
+      },
       "affected_files": ["notifications/tests/test_models.py", "notifications/tests/test_consumers.py", "notifications/tests/test_services.py", "notifications/tests/test_views.py", "notifications/tests/test_integration.py"],
       "acceptance": [
         "Model tests cover all fields and manager methods",
@@ -821,6 +1169,13 @@ Requirements: WebSocket support, persistent notification storage, read/unread tr
       "description": "Create comprehensive documentation: architecture diagram (components and flow), API documentation, developer guide for adding new notification types, deployment guide (Redis requirements), troubleshooting guide.",
       "dependencies": [8],
       "estimated_complexity": "medium",
+      "complexity_score": 5,
+      "complexity_rationale": "Score 5: Moderate novelty creating architectural documentation for complex system (+1), depends on frontend completion (+1), four comprehensive documentation files (~600 lines total, +3 scope), need to explain complex WebSocket/Redis architecture (+1 risk of incomplete explanation). Base 3 + 6 = 9, reduced to 5 for structured documentation task. Estimated 3-4 hours.",
+      "test_strategy": {
+        "unit": "Verify all code examples in documentation are syntactically correct (can be parsed), verify all referenced files/functions exist",
+        "integration": "N/A - documentation doesn't require integration tests",
+        "e2e": "Manual review: follow developer guide to add new notification type, follow deployment guide on staging server, verify troubleshooting scenarios resolve issues"
+      },
       "affected_files": ["docs/architecture/notifications.md", "docs/api/notifications.md", "docs/guides/adding-notification-types.md", "docs/deployment/notifications.md"],
       "acceptance": [
         "Architecture doc includes diagram of components and data flow",
@@ -908,6 +1263,13 @@ Goal: Add search functionality to blog
       "description": "Add SearchVector field to Post model using Django's postgres search. Create GIN index on search_vector field. Create migration to populate existing records.",
       "dependencies": [],
       "estimated_complexity": "medium",
+      "complexity_score": 5,
+      "complexity_rationale": "Score 5: PostgreSQL full-text search new to codebase (+1 novelty), no dependencies (+0), two files with migration and index creation (+2 scope), index performance considerations add some risk (+1 risk). Base 3 + 4 = 7, reduced to 5 for well-documented Django search pattern. Estimated 3-4 hours.",
+      "test_strategy": {
+        "unit": "Test SearchVectorField added to model, test search_vector updates on save, test GIN index creation syntax is correct",
+        "integration": "Test migration applies cleanly without errors, test search_vector populated for existing records, test GIN index improves query performance (EXPLAIN ANALYZE)",
+        "e2e": "N/A - model and indexing layer only"
+      },
       "affected_files": ["blog/models.py", "blog/migrations/"],
       "acceptance": [
         "Post model has search_vector field (SearchVectorField)",
@@ -922,6 +1284,13 @@ Goal: Add search functionality to blog
       "description": "Add search action to PostViewSet. Accept 'q' query parameter. Use SearchQuery and SearchRank to order results by relevance. Include pagination (20 results/page). Search title and content fields.",
       "dependencies": [1],
       "estimated_complexity": "medium",
+      "complexity_score": 4,
+      "complexity_rationale": "Score 4: Standard DRF custom action pattern (+0 novelty), single dependency on search index (+1), single ViewSet file with ranking logic (~100 lines, +1 scope), edge case handling for empty queries (+1 risk). Base 3 + 3 = 6, reduced to 4 for established DRF patterns. Estimated 2-3 hours.",
+      "test_strategy": {
+        "unit": "Test query parameter validation (required 'q', minimum length), test SearchQuery and SearchRank usage, test pagination configuration (page size 20), test empty query returns 400",
+        "integration": "Test endpoint calls search_vector index correctly, test results ordered by relevance score, test pagination returns correct page boundaries, test no results returns empty array with 200",
+        "e2e": "Test full API flow: authenticated search request → verify results ordered by relevance → verify pagination works → verify empty query rejected → verify special characters handled safely"
+      },
       "affected_files": ["blog/views.py"],
       "acceptance": [
         "GET /api/posts/search/?q=query returns relevant posts",
@@ -937,6 +1306,13 @@ Goal: Add search functionality to blog
       "description": "Create SearchBar component with input field. Implement debounced search (300ms delay). Display loading state during search. Render results in SearchResults component. Handle no results gracefully.",
       "dependencies": [2],
       "estimated_complexity": "medium",
+      "complexity_score": 6,
+      "complexity_rationale": "Score 6: Moderate novelty for debouncing pattern if new to codebase (+1 novelty), depends on search API (+1), three files with custom hook and two components (~250 lines, +3 scope), debouncing timing and race condition handling adds risk (+1 risk). Base 3 + 6 = 9, reduced to 6 for established React patterns with debounce libraries. Estimated 4-6 hours.",
+      "test_strategy": {
+        "unit": "Test SearchBar component renders input field, test useSearch hook debounces correctly (no API call before 300ms), test SearchResults renders result items, test loading state toggles correctly, test Escape key handler clears search",
+        "integration": "Test useSearch hook calls API endpoint with correct query parameter, test API response updates component state, test no results shows empty state message, test error handling displays error message",
+        "e2e": "Test full user flow: type in search box → wait 300ms → verify API called → verify results render → type again before 300ms → verify previous API call cancelled → verify debounce resets → verify new results replace old"
+      },
       "affected_files": ["frontend/src/components/SearchBar.jsx", "frontend/src/components/SearchResults.jsx", "frontend/src/hooks/useSearch.js"],
       "acceptance": [
         "Search input triggers API call after 300ms of no typing",
@@ -952,6 +1328,13 @@ Goal: Add search functionality to blog
       "description": "Create test_search.py covering: search index population, search API endpoint (various queries), relevance ranking, pagination, frontend search hook, debouncing behavior.",
       "dependencies": [2, 3],
       "estimated_complexity": "medium",
+      "complexity_score": 5,
+      "complexity_rationale": "Score 5: Standard testing pattern but comprehensive scope across backend and frontend (+1 novelty for breadth), depends on API and UI (+2), two test files covering multiple layers (~300 lines, +2 scope), need to test timing-sensitive debouncing and ranking algorithms (+1 risk). Base 3 + 6 = 9, reduced to 5 for established testing frameworks. Estimated 3-4 hours.",
+      "test_strategy": {
+        "unit": "Test search index field updates correctly, test API endpoint query validation, test SearchQuery and SearchRank logic in isolation, test debounce hook timing with fake timers, test component render output",
+        "integration": "Test full-text search returns correct posts for various queries, test ranking algorithm orders by relevance, test pagination boundaries, test API endpoint with database, test frontend hook integrates with API correctly",
+        "e2e": "Test complete search flows: simple query returns results, complex query with special characters, empty results handled, debouncing prevents excessive API calls, pagination loads next page, verify database state consistent"
+      },
       "affected_files": ["blog/tests/test_search.py", "frontend/src/components/__tests__/SearchBar.test.jsx"],
       "acceptance": [
         "Backend tests verify correct posts returned for queries",
@@ -967,6 +1350,13 @@ Goal: Add search functionality to blog
       "description": "Add search endpoint documentation to API docs. Explain query syntax. Document ranking algorithm. Add usage examples in README.",
       "dependencies": [2],
       "estimated_complexity": "low",
+      "complexity_score": 2,
+      "complexity_rationale": "Score 2: Standard documentation task (+0 novelty), depends on API implementation (+1), two documentation files (~100 lines total, +1 scope), clear structure to follow (+0 risk). Base 3 + 2 = 5, reduced to 2 for straightforward documentation writing. Estimated 1 hour.",
+      "test_strategy": {
+        "unit": "Test all code examples in documentation are syntactically valid (can be parsed), test all API endpoint paths referenced exist in codebase",
+        "integration": "N/A - documentation doesn't require integration tests",
+        "e2e": "Manual verification: follow documentation examples to perform search, verify query syntax works as documented, verify ranking explanation matches actual behavior"
+      },
       "affected_files": ["docs/api/search.md", "README.md"],
       "acceptance": [
         "API docs include search endpoint description",
@@ -1085,6 +1475,13 @@ Return **ONLY** valid JSON in this exact structure:
       "description": "Detailed description of what to implement, how to implement it, and any specific considerations. Mention specific functions, classes, or patterns to use.",
       "dependencies": [],
       "estimated_complexity": "low|medium|high",
+      "complexity_score": 3,
+      "complexity_rationale": "Explanation of numeric score referencing novelty, dependencies, scope, and risk factors. Example: 'Score 3: Standard pattern (+0 novelty), no dependencies (+0), single file (+1 scope), clear requirements (+0 risk). Base 3 + 1 = 4, rounded to 3 for well-known pattern.'",
+      "test_strategy": {
+        "unit": "Specific unit tests needed (what to test at function/method level)",
+        "integration": "Integration tests needed (what to test for component interactions) or 'N/A'",
+        "e2e": "End-to-end tests needed (what to test for full user flows) or 'N/A'"
+      },
       "affected_files": [
         "path/to/file1.py",
         "path/to/file2.jsx"
@@ -1101,7 +1498,7 @@ Return **ONLY** valid JSON in this exact structure:
 
 ### Field Requirements
 
-**analysis.complexity**: Overall feature complexity (guides planning)
+**analysis.complexity**: Overall feature complexity (guides planning) - categorical: low/medium/high
 **analysis.estimated_hours**: Realistic total effort for all subtasks
 **analysis.risks**: Potential problems, unknowns, or architectural concerns (NEVER empty for medium/high complexity)
 **analysis.dependencies**: External prerequisites (infrastructure, libraries, existing code)
@@ -1110,7 +1507,21 @@ Return **ONLY** valid JSON in this exact structure:
 **subtasks[].title**: Action-oriented (start with verb: Create, Implement, Configure, Write, Document)
 **subtasks[].description**: Detailed implementation approach—not just "what" but "how"
 **subtasks[].dependencies**: Array of subtask IDs that must be completed first ([] if none)
-**subtasks[].estimated_complexity**: Based on novelty + scope + dependencies (see decision framework)
+**subtasks[].estimated_complexity**: Categorical complexity - "low", "medium", or "high" (backward compatibility)
+**subtasks[].complexity_score**: Numeric score 1-10 (see Numeric Complexity Scoring Framework)
+  - 1-3: Simple (low complexity)
+  - 4-6: Moderate (medium complexity)
+  - 7-8: Complex (high complexity)
+  - 9-10: Novel (very high complexity, consider splitting)
+**subtasks[].complexity_rationale**: Explanation of numeric score referencing novelty, dependencies, scope, risk factors
+  - MUST reference the decision framework calculation
+  - MUST explain adjustments from base score
+  - Good: "Score 5: Standard pattern (+0), 3 dependencies (+2), multi-file scope (+2), clear requirements (+0). Base 3 + 4 = 7, rounded to 5."
+  - Bad: "Medium complexity"
+**subtasks[].test_strategy**: Object with three keys:
+  - **unit**: Unit tests needed (function/method level) - REQUIRED for all subtasks
+  - **integration**: Integration tests needed (component interaction) - use "N/A" if not applicable
+  - **e2e**: End-to-end tests needed (full user flow) - use "N/A" if not applicable
 **subtasks[].affected_files**: Precise file paths (NOT "backend", "frontend", "tests")
 **subtasks[].acceptance**: 3-5 specific, testable, measurable criteria
 
@@ -1156,14 +1567,30 @@ Subtasks should be ordered by dependency:
 - [ ] Paths match actual project structure
 
 **Complexity Estimation**:
-- [ ] Estimates based on novelty + dependencies + scope
-- [ ] High complexity subtasks considered for splitting
-- [ ] Total estimated_hours matches subtask complexities
+- [ ] Categorical estimates (low/medium/high) provided for backward compatibility
+- [ ] Numeric complexity_score (1-10) assigned using scoring framework
+- [ ] complexity_rationale explains score calculation (novelty + dependencies + scope + risk)
+- [ ] Scores 8+ considered for splitting into smaller subtasks
+- [ ] Total estimated_hours matches sum of subtask complexity scores
+
+**Test Strategy**:
+- [ ] test_strategy object included for each subtask
+- [ ] Unit tests specified (REQUIRED for all subtasks)
+- [ ] Integration tests specified when subtask integrates multiple components
+- [ ] E2e tests specified when subtask impacts user-facing functionality
+- [ ] "N/A" used appropriately when test layer not applicable
 
 **Output Quality**:
 - [ ] JSON is valid and complete
 - [ ] No placeholder values ("...", "TODO", "TBD")
 - [ ] Dependencies reference valid subtask IDs
 - [ ] Follows ordering constraint (dependencies before dependents)
+
+**Dependency Validation**:
+- [ ] Run dependency validator before workflow execution: `mapify validate graph output.json` (or `python scripts/validate-dependencies.py output.json` for development)
+- [ ] Verify no circular dependencies detected
+- [ ] Verify all subtask IDs referenced in dependencies exist
+- [ ] Review validator warnings for potential dependency issues
+- [ ] See USAGE.md for detailed validation utility documentation
 
 </final_checklist>

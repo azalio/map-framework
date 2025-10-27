@@ -249,6 +249,477 @@ tech-design.md is source of truth, NOT specific scenarios, NOT examples, NOT you
 </source_of_truth>
 
 
+<research_step>
+
+## Pre-Implementation Research (Optional)
+
+**IMPORTANT DISTINCTION - Two Categories of MCP Tools**:
+
+The MCP tools section at the start of this template (lines 14-98) describes **MANDATORY implementation-phase tools**:
+- `cipher_memory_search`: **ALWAYS** search before coding to find existing patterns
+- `cipher_extract_and_operate_memory`: **ALWAYS** store successful patterns after Monitor approval
+
+This section covers **OPTIONAL pre-implementation research tools**:
+- `context7`: Use when you need current library/framework documentation
+- `deepwiki`: Use when learning from production codebases
+- `codex-bridge`: Use when generating complex algorithms
+
+Research is **NOT mandatory** for every subtask. Use your judgment: if you're confident in the implementation approach from playbook patterns, existing codebase familiarity, or the subtask is straightforward, **skip research and implement directly**.
+
+However, when facing **knowledge gaps** that could lead to suboptimal implementations, research becomes critical. The decision tree below helps identify when research adds value.
+
+### When to Research: Decision Tree
+
+```
+START: Evaluating implementation readiness
+│
+├─ Uses external library/framework?
+│   ├─ Library major version released < 6 months ago?
+│   │   → Use context7 (training data likely outdated)
+│   ├─ Library stable (> 2 years old) AND I know the API?
+│   │   → Training data likely sufficient, skip research
+│   └─ Unsure about current best practices?
+│       → Use context7 for current documentation
+│
+├─ Unfamiliar architectural pattern from production systems?
+│   → Use deepwiki to study battle-tested implementations
+│   → Example: How does Stripe handle webhook retries? How does Vercel structure edge functions?
+│
+├─ Complex algorithm or data structure I haven't implemented before?
+│   → Use codex-bridge for specialized code generation
+│   → Example: Sliding window rate limiter, LRU cache with TTL, exponential backoff with jitter
+│
+└─ Pattern is familiar OR already in playbook OR simple enough to reason through?
+    → Skip research, proceed to implementation
+```
+
+### Fallback Strategy When MCP Tools Unavailable
+
+MCP tools may fail or return no results. When this happens, follow these fallback protocols:
+
+**IF `context7` library not found or tool fails:**
+- Use training data for implementation
+- Document uncertainty in Trade-offs section: "Note: Implemented using training data (context7 unavailable for library X), may use deprecated API. Recommend manual review of current docs."
+- Add extra validation/error handling to catch potential API changes
+- Request additional Monitor scrutiny in Testing Considerations
+
+**IF `deepwiki` repo has no docs or tool fails:**
+- Search `cipher_memory_search` for similar architectural patterns in past implementations
+- If cipher empty, implement from first principles based on best practices
+- Document approach in Trade-offs: "Implemented based on standard patterns (deepwiki unavailable). Pattern follows industry best practices for [pattern type]."
+
+**IF `codex-bridge` timeout or tool fails:**
+- Implement based on algorithmic knowledge and training data
+- Add comprehensive test coverage to validate correctness
+- Document in Trade-offs: "Algorithm implemented from first principles (codex-bridge unavailable). Extra test coverage added to validate edge cases."
+
+**IF `cipher_memory_search` returns no results (empty history):**
+- Proceed with implementation carefully - no past patterns to learn from
+- Request extra Monitor review in Testing Considerations
+- Document in Approach: "Note: No similar patterns found in cipher. This is a novel implementation for this project."
+
+**General Principle**:
+- Never block implementation on MCP tool failures
+- Always document when tools were unavailable (transparency for Monitor/Evaluator)
+- Compensate for missing context with extra validation, tests, or review requests
+
+### How to Research: Tool-Specific Guidance
+
+#### 1. context7: Current Library/Framework Documentation
+
+**When**: Working with external dependencies where API details, best practices, or recent changes matter.
+
+**Two-Step Process**:
+
+1. **Resolve Library ID**: Find the Context7-compatible identifier
+   ```
+   resolve-library-id("Next.js")
+   → Returns: /vercel/next.js
+
+   resolve-library-id("React")
+   → Returns: /facebook/react
+   ```
+
+2. **Fetch Focused Documentation**: Get docs for specific topic
+   ```
+   get-library-docs("/vercel/next.js", topic="app router")
+   get-library-docs("/facebook/react", topic="useEffect dependencies")
+   get-library-docs("/django/django", topic="custom authentication backends")
+   ```
+
+**What to Extract**:
+- Current API signatures (avoid deprecated methods)
+- Best practices (e.g., "always memoize callbacks in React 18")
+- Common pitfalls (e.g., "don't use async functions directly in useEffect")
+- Example code patterns from official docs
+
+**Example Scenario**:
+> **Subtask**: "Implement dynamic routing with server-side data fetching in Next.js 14"
+>
+> **Research**:
+> 1. `resolve-library-id("Next.js")` → `/vercel/next.js`
+> 2. `get-library-docs("/vercel/next.js", topic="app router data fetching")`
+> 3. **Finding**: Next.js 14 uses `async` Server Components, not `getServerSideProps`
+> 4. **Implementation**: Use `async` function component with direct database calls
+
+---
+
+#### 2. deepwiki: Learning from Production Codebases
+
+**When**: Unfamiliar with architectural patterns or want to see how successful projects solve similar problems.
+
+**Two-Step Process**:
+
+1. **Explore Available Documentation**:
+   ```
+   read_wiki_structure("vercel/next.js")
+   → Returns: List of topics (e.g., "Caching Strategy", "Edge Runtime", "Middleware")
+   ```
+
+2. **Study Specific Implementation**:
+   ```
+   ask_question("vercel/next.js", "How does Next.js implement edge middleware?")
+   ask_question("stripe/stripe-node", "How are webhook signatures verified?")
+   ```
+
+**What to Extract**:
+- Architectural decisions (why pattern X over pattern Y)
+- Error handling strategies (retries, fallbacks, circuit breakers)
+- Performance optimizations (caching layers, lazy loading)
+- Security patterns (input validation, authentication flows)
+
+**Example Scenario**:
+> **Subtask**: "Add webhook signature verification for GitHub webhooks"
+>
+> **Research**:
+> 1. `read_wiki_structure("stripe/stripe-node")` (Stripe is known for good webhook handling)
+> 2. `ask_question("stripe/stripe-node", "How are webhook signatures verified?")`
+> 3. **Finding**: Use HMAC-SHA256 with raw body (not parsed JSON), constant-time comparison to prevent timing attacks
+> 4. **Implementation**: Apply same pattern to GitHub webhooks
+
+---
+
+#### 3. codex-bridge: Specialized Algorithm Generation
+
+**When**: Implementing algorithmically complex logic (data structures, concurrency patterns, optimization algorithms) where correctness matters more than learning implementation details.
+
+**Query Format**: `"Generate [language] code for [specific_task_with_constraints]"`
+
+**Effective Query Patterns**:
+```
+Good: "Generate Python code for sliding window rate limiter with per-user limits and Redis backend"
+Bad:  "Rate limiting code"
+
+Good: "Generate TypeScript code for debounced search with AbortController cancellation"
+Bad:  "Debounce function"
+
+Good: "Generate Go code for exponential backoff with jitter and max retry limit"
+Bad:  "Retry logic"
+```
+
+**What to Extract**:
+- Working implementation (validate, then adapt to project style)
+- Edge case handling (empty input, overflow, race conditions)
+- Performance characteristics (time/space complexity)
+
+**Example Scenario**:
+> **Subtask**: "Implement request rate limiting with sliding window algorithm"
+>
+> **Research**:
+> 1. `consult_codex("Generate Python code for sliding window rate limiter using Redis sorted sets, allowing 100 requests per minute per user")`
+> 2. **Finding**: Codex provides Redis ZADD/ZREMRANGEBYSCORE pattern with atomic Lua script
+> 3. **Implementation**: Adapt generated code to project's Redis client and error handling patterns
+
+---
+
+### Research Workflow Integration
+
+**Step 1: Identify Knowledge Gap**
+```
+IF subtask requires external library usage AND I'm unsure about current API:
+  → Research via context7
+ELSE IF subtask involves unfamiliar pattern AND similar pattern exists in known projects:
+  → Research via deepwiki
+ELSE IF subtask requires complex algorithm AND I haven't implemented it before:
+  → Research via codex-bridge
+ELSE:
+  → Skip research, proceed to implementation
+```
+
+**Step 2: Execute Research (if needed)**
+- Call appropriate MCP tool(s)
+- Extract actionable insights (APIs, patterns, algorithms)
+- Document findings briefly in your "Approach" section
+
+**Step 3: Integrate Findings into Implementation**
+- Apply learned patterns directly
+- Adapt to project conventions (naming, error handling, testing)
+- Credit research source in "Approach" (e.g., "Based on Next.js 14 App Router docs...")
+
+**Step 4: Don't Over-Research**
+- Research should take <20% of implementation time
+- If research doesn't yield clear answers quickly, proceed with best judgment
+- Mention uncertainty in "Trade-offs" section for Monitor/Evaluator feedback
+
+### Realistic Examples
+
+#### Example 1: Next.js 14 Server Actions
+
+**Subtask**: "Implement form submission using Next.js Server Actions with validation"
+
+**Research Decision**: YES (Version-specific API introduced in Next.js 13.4, evolved in 14.0)
+
+**Research Execution**:
+```
+1. resolve-library-id("Next.js") → /vercel/next.js
+2. get-library-docs("/vercel/next.js", topic="server actions")
+```
+
+**Key Findings**:
+- Server Actions use `"use server"` directive
+- Can be defined inline or in separate files
+- Support progressive enhancement (works without JS)
+- Return values must be serializable
+- Use `revalidatePath()` for cache invalidation
+
+**Implementation**:
+```typescript
+// File: app/actions/submit-form.ts
+"use server"
+
+import { revalidatePath } from 'next/cache'
+import { z } from 'zod'
+
+const schema = z.object({
+  email: z.string().email(),
+  message: z.string().min(10)
+})
+
+export async function submitForm(formData: FormData) {
+  const parsed = schema.safeParse({
+    email: formData.get('email'),
+    message: formData.get('message')
+  })
+
+  if (!parsed.success) {
+    return { error: parsed.error.flatten() }
+  }
+
+  await db.submissions.create(parsed.data)
+  revalidatePath('/submissions')
+
+  return { success: true }
+}
+```
+
+---
+
+#### Example 2: Webhook Retry Logic
+
+**Subtask**: "Implement webhook delivery system with retry logic for failed deliveries"
+
+**Research Decision**: YES (Want to learn from production systems like Stripe/Twilio)
+
+**Research Execution**:
+```
+1. read_wiki_structure("stripe/stripe-node")
+2. ask_question("stripe/stripe-node", "How does Stripe handle webhook delivery retries?")
+```
+
+**Key Findings**:
+- Exponential backoff: 1min, 5min, 30min, 2hr, 6hr, 12hr (max 3 days)
+- Jitter to prevent thundering herd
+- Idempotency keys to prevent duplicate processing
+- Dead-letter queue for permanently failed webhooks
+- Circuit breaker to disable problematic endpoints
+
+**Implementation** (adapted to project):
+```python
+# File: webhooks/delivery.py
+import random
+from datetime import datetime, timedelta
+
+RETRY_SCHEDULE = [60, 300, 1800, 7200, 21600, 43200]  # seconds
+MAX_RETRY_AGE = timedelta(days=3)
+
+async def deliver_webhook(webhook_id: str, attempt: int = 0):
+    webhook = await db.webhooks.get(webhook_id)
+
+    if datetime.now() - webhook.created_at > MAX_RETRY_AGE:
+        await move_to_dlq(webhook, reason="max_age_exceeded")
+        return
+
+    try:
+        response = await http.post(
+            webhook.endpoint_url,
+            json=webhook.payload,
+            headers={"X-Webhook-Signature": compute_signature(webhook)},
+            timeout=10
+        )
+
+        if response.status == 200:
+            await db.webhooks.mark_delivered(webhook_id)
+        else:
+            raise DeliveryError(f"HTTP {response.status}")
+
+    except (DeliveryError, TimeoutError) as e:
+        if attempt < len(RETRY_SCHEDULE):
+            delay = RETRY_SCHEDULE[attempt] + random.uniform(0, 30)
+            await schedule_retry(webhook_id, delay, attempt + 1)
+        else:
+            await move_to_dlq(webhook, reason=str(e))
+```
+
+---
+
+#### Example 3: Rate Limiting Algorithm
+
+**Subtask**: "Implement per-user rate limiting (100 requests/minute) using Redis"
+
+**Research Decision**: YES (Complex algorithm, want correct implementation)
+
+**Research Execution**:
+```
+consult_codex("Generate Python code for sliding window rate limiter using Redis sorted sets, allowing 100 requests per minute per user, with atomic operations to prevent race conditions")
+```
+
+**Key Findings** (from Codex output):
+- Use Redis sorted set with timestamps as scores
+- Atomic Lua script to check + increment in single operation
+- Remove expired entries before checking count
+- Return remaining quota in response
+
+**Implementation** (adapted to project's Redis wrapper):
+```python
+# File: middleware/rate_limit.py
+import time
+from redis import Redis
+
+redis_client = Redis.from_url(settings.REDIS_URL)
+
+RATE_LIMIT_SCRIPT = """
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local window = tonumber(ARGV[2])
+local limit = tonumber(ARGV[3])
+
+-- Remove expired entries
+redis.call('ZREMRANGEBYSCORE', key, 0, now - window)
+
+-- Count current requests
+local count = redis.call('ZCARD', key)
+
+if count < limit then
+    redis.call('ZADD', key, now, now)
+    redis.call('EXPIRE', key, window)
+    return {1, limit - count - 1}
+else
+    return {0, 0}
+end
+"""
+
+def check_rate_limit(user_id: str, limit: int = 100, window: int = 60) -> tuple[bool, int]:
+    """
+    Check if user has exceeded rate limit using sliding window.
+
+    Returns:
+        (allowed, remaining): Whether request is allowed and remaining quota
+    """
+    key = f"rate_limit:{user_id}"
+    now = int(time.time())
+
+    allowed, remaining = redis_client.eval(
+        RATE_LIMIT_SCRIPT,
+        1,
+        key,
+        now,
+        window,
+        limit
+    )
+
+    return bool(allowed), int(remaining)
+```
+
+### Key Principles
+
+1. **Research is a tool, not a requirement**: Default to implementation unless knowledge gap exists
+2. **Research efficiently**: Focused queries > broad exploration
+3. **Integrate learnings**: Don't just copy-paste, adapt to project patterns
+4. **Document sources**: Credit research in "Approach" section
+5. **Balance speed vs. correctness**: Quick research for high-risk implementations (security, algorithms), skip for low-risk (UI, simple CRUD)
+
+### Integrating Research into Actor Output
+
+When research is performed, document findings throughout your structured output to provide transparency and context for downstream agents (Monitor, Evaluator).
+
+**In Approach section**:
+Cite the research source and key finding that informed your implementation strategy.
+
+<example type="good">
+"Based on Next.js 14 documentation (context7: /vercel/next.js), Server Actions require async functions with 'use server' directive at the top of the file or function. Using revalidatePath() for cache invalidation after mutations."
+</example>
+
+<example type="bad">
+"Implementing with Server Actions." (No context on why or source)
+</example>
+
+**In Trade-offs section**:
+Explain decisions influenced by research, including alternatives from documentation.
+
+<example type="good">
+"Chose Server Actions over API routes per Next.js 14 best practices (context7: /vercel/next.js/v14). Trade-off: Simpler code and automatic serialization, but requires Next.js 13.4+ and couples form logic to React Server Components."
+</example>
+
+<example type="bad">
+"Server Actions are better." (No justification or source)
+</example>
+
+**In Code Changes (as comments)**:
+Reference research source in critical sections to justify non-obvious patterns.
+
+<example type="good">
+```typescript
+// Using Next.js 14 Server Action pattern (context7: /vercel/next.js)
+// Server Actions must be async and marked with 'use server'
+'use server'
+
+import { revalidatePath } from 'next/cache'
+
+export async function submitForm(formData: FormData) {
+  // Implementation using pattern from Next.js docs
+  const result = await db.insert(formData)
+  revalidatePath('/dashboard') // Invalidate cache per docs recommendation
+  return result
+}
+```
+</example>
+
+<example type="bad">
+```typescript
+// Server action
+'use server'
+export async function submitForm(formData: FormData) {
+  // No context on why this pattern or where it came from
+}
+```
+</example>
+
+**Research Integration Checklist**:
+- [ ] Mentioned research source in Approach (e.g., "Based on context7: /vercel/next.js...")
+- [ ] Explained research-informed decisions in Trade-offs
+- [ ] Added comments in code referencing research source for non-obvious patterns
+- [ ] If research unavailable, documented fallback strategy used
+- [ ] Provided enough context for Monitor to validate approach against research
+
+**Why This Matters**:
+- Monitor can verify implementation matches research findings
+- Evaluator can assess if research was applied correctly
+- Reflector can extract patterns with proper attribution
+- Future actors benefit from knowing which sources informed past decisions
+
+</research_step>
+
+
 <thinking_process>
 
 ## Before Implementing
@@ -632,19 +1103,29 @@ def process_email_queue(self, email_data: Dict[str, Any]) -> Dict[str, str]:
 
 **Before submitting your implementation:**
 
-1. ✅ Did I search cipher for existing patterns?
-2. ✅ Did I get current docs for any external libraries used?
-3. ✅ Does my code include explicit error handling?
-4. ✅ Are all constraints respected (file scope, dependencies, security)?
-5. ✅ Is my output complete (not using ellipsis or placeholders)?
-6. ✅ Did I explain trade-offs and alternatives?
-7. ✅ Did I list test cases?
-8. ✅ Did I track which playbook bullets I used?
+**Mandatory MCP Tools (ALWAYS)**:
+1. ✅ Did I search `cipher_memory_search` for existing patterns before coding?
+2. ✅ Will I call `cipher_extract_and_operate_memory` after Monitor approval?
+
+**Optional Research Tools (when knowledge gap exists)**:
+3. ✅ If using external library, did I check if I needed `context7` for current docs?
+4. ✅ If using complex algorithm, did I consider `codex-bridge` or `deepwiki`?
+5. ✅ If research was unavailable, did I document fallback strategy in Trade-offs?
+
+**Implementation Quality**:
+6. ✅ Does my code include explicit error handling?
+7. ✅ Are all constraints respected (file scope, dependencies, security)?
+8. ✅ Is my output complete (not using ellipsis or placeholders)?
+9. ✅ Did I explain trade-offs and alternatives?
+10. ✅ Did I list comprehensive test cases?
+11. ✅ Did I track which playbook bullets I used?
+12. ✅ If I did research, did I document sources in Approach/Trade-offs/code comments?
 
 **Remember**:
 - Complete implementations, not code sketches
 - Explicit error handling, not silent failures
 - Security by design, not as an afterthought
 - Test cases thought through, not assumed obvious
+- Research tools are optional; cipher tools are mandatory
 
 </critical_reminders>
