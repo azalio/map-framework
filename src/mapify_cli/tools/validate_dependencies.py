@@ -10,7 +10,7 @@ Validates task decomposition JSON for:
 
 Usage:
     # Via mapify CLI (recommended for pip install users)
-    mapify validate <file> [--visualize] [--no-color] [-f json|text]
+    mapify validate graph <file> [--visualize] [--no-color] [-f json|text] [--strict]
 
     # Via Python script (for development)
     python scripts/validate-dependencies.py decomposer-output.json

@@ -752,9 +752,10 @@ class TestEdgeCases:
                 {"id": 3, "dependencies": [2]},
                 {"id": 4, "dependencies": [3]},
                 # Task 5 depends on 4 and 2
-                # This creates: 1->2->3->4->5, with 5 also depending on 2
-                # This is NOT a cycle! 5 depends on both 2 and 4, which is valid in a DAG
-                # A cycle would be if 2 depended on 5
+                # This creates two paths to node 5: (1->2->3->4->5) and (1->2->5)
+                # Multiple paths to the same node do NOT create a cycle in a DAG
+                # This is valid: 5 depends on both 2 and 4 (diamond dependency pattern)
+                # A cycle would only exist if 2 depended on 5 (closing the loop)
                 {"id": 5, "dependencies": [4, 2]},
             ]
         }
