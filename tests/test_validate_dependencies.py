@@ -437,11 +437,16 @@ class TestASCIIGraphRenderer:
         # Build a map of task positions
         position = {task_id: idx for idx, task_id in enumerate(sorted_order)}
 
-        # Verify dependencies are respected:
-        # Task 2 depends on 1, so 1 must appear after 2 in sorted order
-        # (Note: This topological sort seems to work in reverse - tasks with no dependents first)
-        # Let's just verify all tasks are present and algorithm completes
-        assert all(task_id in position for task_id in [1, 2, 3, 4])
+        # Verify topological order: for each task, all its dependencies appear before it
+        # Task 2 depends on [1], so 1 must appear before 2
+        # Task 3 depends on [1], so 1 must appear before 3
+        # Task 4 depends on [2, 3], so both 2 and 3 must appear before 4
+        for subtask in valid_dag["subtasks"]:
+            task_id = subtask["id"]
+            for dep in subtask.get("dependencies", []):
+                assert position[dep] < position[task_id], (
+                    f"Dependency {dep} should appear before {task_id} in topological order"
+                )
 
     def test_topological_sort_with_cycle(self, cyclic_dependencies):
         """Topological sort handles cycles gracefully"""
@@ -758,7 +763,7 @@ class TestEdgeCases:
         # Task 5 has two dependencies (2 and 4), both reachable without cycles
         assert validator.validate_circular_dependencies() is True  # No cycle!
 
-        # To create an actual cycle, we need a back-edge:
+        # To create an actual cycle, we need to introduce a dependency from a descendant back to an ancestor (creates a cycle):
         cyclic_data = {
             "subtasks": [
                 {"id": 1, "dependencies": []},
