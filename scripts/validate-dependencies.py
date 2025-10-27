@@ -9,9 +9,11 @@ Validates task decomposition JSON for:
 - Self-dependencies (task depends on itself)
 
 Usage:
-    cat decomposer-output.json | python scripts/validate-dependencies.py
+    # Via mapify CLI (recommended for pip install users)
+    mapify validate <file> [--visualize] [--no-color] [-f json|text]
+
+    # Via Python script (for development)
     python scripts/validate-dependencies.py decomposer-output.json
-    python scripts/validate-dependencies.py --help
 
 Exit Codes:
     0: Valid task graph (no issues)
@@ -314,16 +316,20 @@ class ASCIIGraphRenderer:
             for task_id in issue.affected_tasks:
                 self.task_issues[task_id].append(issue)
 
-    def _get_task_color(self, task_id: int) -> str:
+    def _get_task_color(self, task_id: int, use_colors: bool = True) -> str:
         """
         Determine color for task based on validation status.
 
         Args:
             task_id: Task ID to check
+            use_colors: Whether to use ANSI color codes
 
         Returns:
-            ANSI color code
+            ANSI color code or empty string if use_colors=False
         """
+        if not use_colors:
+            return ""
+
         if task_id not in self.task_issues:
             return ANSIColors.GREEN  # Valid task
 
@@ -384,7 +390,8 @@ class ASCIIGraphRenderer:
         return sorted_order
 
     def _render_tree_node(self, task_id: int, prefix: str, is_last: bool,
-                          visited: Set[int], max_depth: int, current_depth: int = 0) -> List[str]:
+                          visited: Set[int], max_depth: int, current_depth: int = 0,
+                          use_colors: bool = True) -> List[str]:
         """
         Recursively render a task node and its dependents.
 
@@ -395,6 +402,7 @@ class ASCIIGraphRenderer:
             visited: Set of already visited tasks (to prevent infinite loops)
             max_depth: Maximum depth to render (prevents deep recursion)
             current_depth: Current recursion depth
+            use_colors: Whether to use ANSI color codes
 
         Returns:
             List of formatted lines for this node and its children
@@ -405,9 +413,13 @@ class ASCIIGraphRenderer:
         visited.add(task_id)
         lines = []
 
+        # Create color mapping
+        gray = ANSIColors.GRAY if use_colors else ""
+        reset = ANSIColors.RESET if use_colors else ""
+
         # Get task info
         title = self.validator.get_task_title(task_id)
-        color = self._get_task_color(task_id)
+        color = self._get_task_color(task_id, use_colors)
 
         # Build node label
         node_label = f"Task {task_id}"
@@ -418,11 +430,11 @@ class ASCIIGraphRenderer:
         deps = self.adjacency.get(task_id, [])
         if deps:
             dep_list = ", ".join(map(str, deps))
-            node_label += f" {ANSIColors.GRAY}(depends on {dep_list}){ANSIColors.RESET}"
+            node_label += f" {gray}(depends on {dep_list}){reset}"
 
         # Format current node
         connector = "└── " if is_last else "├── "
-        lines.append(f"{prefix}{connector}{color}{node_label}{ANSIColors.RESET}")
+        lines.append(f"{prefix}{connector}{color}{node_label}{reset}")
 
         # Prepare prefix for children
         child_prefix = prefix + ("    " if is_last else "│   ")
@@ -435,7 +447,7 @@ class ASCIIGraphRenderer:
             is_last_child = (i == len(dependents) - 1)
             child_lines = self._render_tree_node(
                 dep_task_id, child_prefix, is_last_child,
-                visited, max_depth, current_depth + 1
+                visited, max_depth, current_depth + 1, use_colors
             )
             lines.extend(child_lines)
 
@@ -453,11 +465,14 @@ class ASCIIGraphRenderer:
         Returns:
             Formatted ASCII tree string
         """
-        if not use_colors:
-            # Disable colors by setting all to empty strings
-            for attr in dir(ANSIColors):
-                if not attr.startswith('_'):
-                    setattr(ANSIColors, attr, "")
+        # Create instance-level color mapping to avoid mutating class attributes
+        if use_colors:
+            C = ANSIColors  # Use actual colors
+        else:
+            # Create empty color mapping for no-color mode
+            class NoColors:
+                GREEN = RED = YELLOW = GRAY = BOLD = RESET = ""
+            C = NoColors
 
         lines = []
 
@@ -466,21 +481,21 @@ class ASCIIGraphRenderer:
         critical_count = sum(1 for i in self.issues if i.severity == IssueSeverity.CRITICAL)
         warning_count = sum(1 for i in self.issues if i.severity == IssueSeverity.WARNING)
 
-        status_color = ANSIColors.GREEN if critical_count == 0 else ANSIColors.RED
-        lines.append(f"{ANSIColors.BOLD}Task Dependency Graph{ANSIColors.RESET}")
-        lines.append(f"{ANSIColors.GRAY}{'=' * 60}{ANSIColors.RESET}")
+        status_color = C.GREEN if critical_count == 0 else C.RED
+        lines.append(f"{C.BOLD}Task Dependency Graph{C.RESET}")
+        lines.append(f"{C.GRAY}{'=' * 60}{C.RESET}")
         lines.append(f"Total Tasks: {len(self.task_ids)}")
-        lines.append(f"Issues: {status_color}{total_issues}{ANSIColors.RESET} "
-                    f"({ANSIColors.RED}{critical_count} critical{ANSIColors.RESET}, "
-                    f"{ANSIColors.YELLOW}{warning_count} warnings{ANSIColors.RESET})")
+        lines.append(f"Issues: {status_color}{total_issues}{C.RESET} "
+                    f"({C.RED}{critical_count} critical{C.RESET}, "
+                    f"{C.YELLOW}{warning_count} warnings{C.RESET})")
         lines.append("")
 
         # Legend
-        lines.append(f"{ANSIColors.BOLD}Legend:{ANSIColors.RESET}")
-        lines.append(f"  {ANSIColors.GREEN}●{ANSIColors.RESET} Valid task")
-        lines.append(f"  {ANSIColors.YELLOW}●{ANSIColors.RESET} Task with warnings")
-        lines.append(f"  {ANSIColors.RED}●{ANSIColors.RESET} Task with critical issues")
-        lines.append(f"  {ANSIColors.GRAY}(depends on X){ANSIColors.RESET} Dependency information")
+        lines.append(f"{C.BOLD}Legend:{C.RESET}")
+        lines.append(f"  {C.GREEN}●{C.RESET} Valid task")
+        lines.append(f"  {C.YELLOW}●{C.RESET} Task with warnings")
+        lines.append(f"  {C.RED}●{C.RESET} Task with critical issues")
+        lines.append(f"  {C.GRAY}(depends on X){C.RESET} Dependency information")
         lines.append("")
 
         # Get root nodes and render trees
@@ -492,8 +507,8 @@ class ASCIIGraphRenderer:
             sorted_tasks = self._topological_sort()
             roots = [sorted_tasks[0]] if sorted_tasks else list(self.task_ids)[:1]
 
-        lines.append(f"{ANSIColors.BOLD}Dependency Tree:{ANSIColors.RESET}")
-        lines.append(f"{ANSIColors.GRAY}{'─' * 60}{ANSIColors.RESET}")
+        lines.append(f"{C.BOLD}Dependency Tree:{C.RESET}")
+        lines.append(f"{C.GRAY}{'─' * 60}{C.RESET}")
 
         visited: Set[int] = set()
 
@@ -502,7 +517,7 @@ class ASCIIGraphRenderer:
 
             # Render root and its subtree
             root_lines = self._render_tree_node(
-                root_id, "", is_last_root, visited, max_depth
+                root_id, "", is_last_root, visited, max_depth, use_colors=use_colors
             )
             lines.extend(root_lines)
 
@@ -510,10 +525,10 @@ class ASCIIGraphRenderer:
         unvisited = self.task_ids - visited
         if unvisited:
             lines.append("")
-            lines.append(f"{ANSIColors.YELLOW}Disconnected/Cyclic Tasks:{ANSIColors.RESET}")
+            lines.append(f"{C.YELLOW}Disconnected/Cyclic Tasks:{C.RESET}")
             for task_id in sorted(unvisited):
                 title = self.validator.get_task_title(task_id)
-                color = self._get_task_color(task_id)
+                color = self._get_task_color(task_id, use_colors)
                 node_label = f"Task {task_id}"
                 if title:
                     node_label += f": {title}"
@@ -521,9 +536,9 @@ class ASCIIGraphRenderer:
                 deps = self.adjacency.get(task_id, [])
                 if deps:
                     dep_list = ", ".join(map(str, deps))
-                    node_label += f" {ANSIColors.GRAY}(depends on {dep_list}){ANSIColors.RESET}"
+                    node_label += f" {C.GRAY}(depends on {dep_list}){C.RESET}"
 
-                lines.append(f"  • {color}{node_label}{ANSIColors.RESET}")
+                lines.append(f"  • {color}{node_label}{C.RESET}")
 
         # Apply max_width truncation if specified
         if max_width > 0:

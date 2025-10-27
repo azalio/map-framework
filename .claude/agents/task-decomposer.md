@@ -1587,7 +1587,7 @@ Subtasks should be ordered by dependency:
 - [ ] Follows ordering constraint (dependencies before dependents)
 
 **Dependency Validation**:
-- [ ] Run dependency validator before workflow execution: `python scripts/validate-dependencies.py output.json`
+- [ ] Run dependency validator before workflow execution: `mapify validate graph output.json` (or `python scripts/validate-dependencies.py output.json` for development)
 - [ ] Verify no circular dependencies detected
 - [ ] Verify all subtask IDs referenced in dependencies exist
 - [ ] Review validator warnings for potential dependency issues

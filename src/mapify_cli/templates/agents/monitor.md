@@ -854,9 +854,9 @@ ELSE:
 - Problem solvable from first principles
 
 <example type="bad">
-**Scenario**: Implementing Next.js 14 Server Actions (released 2023, post-training-cutoff)
+**Scenario**: Implementing latest framework features (released after training cutoff, e.g., Next.js 15+ features)
 
-**Actor Output**: No research mentioned. Implementation uses class components (outdated pattern).
+**Actor Output**: No research mentioned. Implementation uses outdated patterns from earlier versions.
 
 **Monitor Feedback**:
 ```json
