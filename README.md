@@ -10,7 +10,7 @@ Implementation of **Modular Agentic Planner (MAP)** — a cognitive architecture
 - **README** (this file) - Quick start and overview
 - **[INSTALL.md](docs/INSTALL.md)** - Complete installation guide with PATH setup and troubleshooting
 - **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** - Technical deep dive, customization, and MCP integration
-- **[USAGE.md](docs/USAGE.md)** - Practical examples, best practices, and cost optimization
+- **[USAGE.md](docs/USAGE.md)** - Practical examples, best practices, cost optimization, and dependency validation
 
 ## 🚀 Quick Start
 
@@ -62,6 +62,12 @@ mapify --version
 # Initialize in your project
 cd your-project
 mapify init
+
+# Available commands
+mapify --help                     # Show all available commands
+mapify validate graph <file>      # Validate task dependency graphs
+mapify playbook search <query>    # Search playbook patterns
+mapify recitation get-context     # Get current task plan
 ```
 
 **Version Pinning:**
@@ -162,6 +168,7 @@ Built-in learning system that improves with each task:
 - **Reflector** extracts patterns from successes and failures
 - **Curator** maintains structured knowledge base with quality tracking
 - **Semantic search** (optional) finds patterns by meaning, not keywords
+- **Dependency validation** ensures valid task graphs before execution
 - Automatically grows high-quality pattern library
 
 ### Playbook Commands
@@ -175,11 +182,16 @@ mapify playbook search "JWT authentication"
 
 # View high-quality patterns
 mapify playbook sync
+
+# Validate task dependencies with visualization
+python scripts/validate-dependencies.py decomposer-output.json --visualize
 ```
 
 **Optional semantic search**: `pip install -r requirements-semantic.txt` for meaning-based matching. Details in [SEMANTIC_SEARCH_SETUP.md](docs/SEMANTIC_SEARCH_SETUP.md) and [ARCHITECTURE.md](docs/ARCHITECTURE.md#semantic-search).
 
 **Playbook configuration**: See [ARCHITECTURE.md](docs/ARCHITECTURE.md#playbook-configuration) for top_k settings and optimization.
+
+**Dependency validation**: See [USAGE.md](docs/USAGE.md#dependency-validation) for comprehensive guide on validating TaskDecomposer output, including cycle detection, visualization, and CI/CD integration.
 
 ## 💰 Cost Optimization
 

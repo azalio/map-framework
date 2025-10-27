@@ -358,9 +358,11 @@ app = typer.Typer(
 # Create subcommand groups
 recitation_app = typer.Typer(name="recitation", help="Manage task execution plans (recitation pattern)")
 playbook_app = typer.Typer(name="playbook", help="Manage and search playbook patterns")
+validate_app = typer.Typer(name="validate", help="Validate task dependency graphs")
 
 app.add_typer(recitation_app, name="recitation")
 app.add_typer(playbook_app, name="playbook")
+app.add_typer(validate_app, name="validate")
 
 
 def show_banner():
@@ -1936,6 +1938,53 @@ def playbook_sync(threshold: int = typer.Option(5, help="Minimum helpful count")
     manager = PlaybookManager(playbook_path)
     patterns = manager.get_bullets_for_sync(threshold=threshold)
     console.print_json(data={"threshold": threshold, "count": len(patterns), "patterns": [{"id": p.get("id"), "helpful_count": p.get("helpful_count")} for p in patterns]})
+
+# Validate commands
+
+@validate_app.command("graph")
+def validate_graph(
+    input_file: Optional[Path] = typer.Argument(None, help="JSON file to validate (or use stdin)"),
+    visualize: bool = typer.Option(False, "--visualize", help="Show ASCII dependency tree"),
+    no_color: bool = typer.Option(False, "--no-color", help="Disable colored output"),
+    format: str = typer.Option("json", "-f", "--format", help="Output format: json or text")
+):
+    """Validate TaskDecomposer dependency graph"""
+    from mapify_cli.tools.validate_dependencies import (
+        load_input, DependencyValidator, ASCIIGraphRenderer, print_report
+    )
+
+    try:
+        # Load input
+        data = load_input(str(input_file) if input_file else None)
+
+        # Validate
+        validator = DependencyValidator(data)
+        is_valid = validator.validate_all()
+        report = validator.get_report()
+
+        # Print report
+        print_report(report, format)
+
+        # Display visualization if requested
+        if visualize:
+            console.print()  # Add blank line separator
+            renderer = ASCIIGraphRenderer(validator)
+            visualization = renderer.render(use_colors=not no_color)
+            console.print(visualization)
+
+        # Exit with appropriate code
+        if not is_valid:
+            raise typer.Exit(1)
+
+    except ValueError as e:
+        # Input validation error
+        error_report = {
+            "valid": False,
+            "error": str(e),
+            "error_type": "input_validation"
+        }
+        console.print_json(data=error_report)
+        raise typer.Exit(2)
 
 
 def main():

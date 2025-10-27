@@ -806,6 +806,117 @@ Monitor is a quality gate, not a perfectionist. The goal is catching serious iss
 </constraints>
 
 
+### 10. RESEARCH QUALITY (When Applicable)
+
+<rationale>
+Actor template (as of Subtask 4) includes optional pre-implementation research using MCP tools (context7, deepwiki, codex-bridge) for unfamiliar libraries, complex algorithms, and production patterns. Research improves implementation quality by providing current documentation and proven patterns. This validation ensures research is performed when needed and properly documented.
+</rationale>
+
+<decision_framework>
+IF subtask involves unfamiliar external library OR complex unfamiliar algorithm OR production architecture pattern:
+  → Check if Actor performed research OR documented why research was skipped
+ELSE:
+  → Research not applicable, skip this validation
+</decision_framework>
+
+**Research Quality Checklist** (when applicable):
+
+- [ ] **Research Appropriateness**
+  - Does subtask require external knowledge (new library, unfamiliar API, complex algorithm)?
+  - If YES: Did Actor perform research OR explain why it was skipped?
+  - If research skipped: Is justification valid ("pattern well-known", "playbook has guidance")?
+
+- [ ] **Research Documentation**
+  - Are research sources cited in Approach section? (e.g., "Based on context7: /vercel/next.js...")
+  - Are research-informed decisions explained in Trade-offs? (e.g., "Chose X over Y per Next.js 14 docs")
+  - If MCP tool failed: Did Actor document fallback? ("context7 unavailable, using training data")
+
+- [ ] **Research Relevance**
+  - Is research actually relevant to the implementation? (not generic background reading)
+  - Does research address specific knowledge gaps? (API signatures, best practices, algorithms)
+  - Are research findings applied in the implementation? (not researched but then ignored)
+
+- [ ] **Research Efficiency**
+  - Is research focused? (specific queries, targeted documentation)
+  - Is research scope appropriate? (< 20% of implementation effort per Actor guidelines)
+  - Did Actor avoid over-research? (didn't read entire library docs for simple feature)
+
+**Research Triggers** (when to expect research):
+- **External libraries**: React, Next.js, Django, FastAPI, Typer, Click, etc. with version-specific APIs
+- **Complex algorithms**: Rate limiting, caching strategies, graph algorithms, encryption
+- **Production patterns**: Webhook handling, retry logic, distributed systems patterns
+- **Unfamiliar tech**: Technologies not in playbook or Actor's training cutoff
+
+**Valid Reasons to Skip Research**:
+- Pattern is well-documented in playbook bullets
+- Implementation uses only language primitives (no external dependencies)
+- Actor has deep expertise in the specific library (e.g., Python stdlib)
+- Problem solvable from first principles
+
+<example type="bad">
+**Scenario**: Implementing Next.js 14 Server Actions (released 2023, post-training-cutoff)
+
+**Actor Output**: No research mentioned. Implementation uses class components (outdated pattern).
+
+**Monitor Feedback**:
+```json
+{
+  "severity": "high",
+  "category": "research",
+  "title": "Missing research for post-cutoff framework feature",
+  "description": "Next.js 14 Server Actions were released after training cutoff. Actor should have used context7 to fetch current docs. Implementation uses outdated class component pattern instead of async server functions.",
+  "suggestion": "Use mcp__context7__resolve-library-id('Next.js') → get-library-docs('/vercel/next.js/v14', topic='server actions') to get current API. Document research in Approach section."
+}
+```
+</example>
+
+<example type="good">
+**Scenario**: Implementing rate limiting algorithm
+
+**Actor Output**:
+```
+### Research Findings
+
+**Tool Used**: codex-bridge
+
+**Query**: "Generate Python code for sliding window rate limiter using Redis sorted sets"
+
+**Key Findings**:
+- Use ZREMRANGEBYSCORE to remove expired entries
+- ZADD to add new requests with timestamp scores
+- ZCOUNT to check current window size
+
+**Application**: Applied sliding window algorithm (codex-bridge) instead of fixed window for better burst handling.
+
+### Approach
+
+Based on research (codex-bridge: sliding window rate limiter), implementing Redis-based rate limiter using sorted sets...
+```
+
+**Monitor Feedback**: ✅ Research appropriately used for complex algorithm. Sources cited. Findings applied.
+</example>
+
+<example type="acceptable_skip">
+**Scenario**: Add logging statement to existing function
+
+**Actor Output**: No research mentioned. Direct implementation.
+
+**Monitor Feedback**: ✅ Research not needed - trivial change using Python stdlib (within training cutoff).
+</example>
+
+<critical>
+**DO NOT block** for missing research if:
+- Subtask doesn't require external knowledge (simple logic, well-known patterns)
+- Actor provided valid skip justification
+- Implementation is correct despite missing research citations
+
+**DO flag** if:
+- Complex/unfamiliar problem with no research AND incorrect implementation
+- Post-cutoff library used without research AND uses outdated patterns
+- Research performed but not cited (can't verify sources or track patterns)
+</critical>
+
+
 <examples>
 
 ## Complete Review Examples

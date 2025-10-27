@@ -704,6 +704,8 @@ Each subtask should include a structured test strategy breaking down testing app
 - Mention edge cases, error conditions, boundary conditions
 - If a layer isn't needed, use "N/A" or "None needed"
 
+**Monitor Integration**: The Monitor agent receives this test_strategy as part of subtask context and validates that Actor's implementation includes the specified tests. If tests are missing or incomplete, Monitor marks the solution as invalid with specific feedback referencing the test_strategy requirements.
+
 <example type="test_strategy">
 **Simple subtask (Create model)**:
 ```json
@@ -1261,6 +1263,13 @@ Goal: Add search functionality to blog
       "description": "Add SearchVector field to Post model using Django's postgres search. Create GIN index on search_vector field. Create migration to populate existing records.",
       "dependencies": [],
       "estimated_complexity": "medium",
+      "complexity_score": 5,
+      "complexity_rationale": "Score 5: PostgreSQL full-text search new to codebase (+1 novelty), no dependencies (+0), two files with migration and index creation (+2 scope), index performance considerations add some risk (+1 risk). Base 3 + 4 = 7, reduced to 5 for well-documented Django search pattern. Estimated 3-4 hours.",
+      "test_strategy": {
+        "unit": "Test SearchVectorField added to model, test search_vector updates on save, test GIN index creation syntax is correct",
+        "integration": "Test migration applies cleanly without errors, test search_vector populated for existing records, test GIN index improves query performance (EXPLAIN ANALYZE)",
+        "e2e": "N/A - model and indexing layer only"
+      },
       "affected_files": ["blog/models.py", "blog/migrations/"],
       "acceptance": [
         "Post model has search_vector field (SearchVectorField)",
@@ -1275,6 +1284,13 @@ Goal: Add search functionality to blog
       "description": "Add search action to PostViewSet. Accept 'q' query parameter. Use SearchQuery and SearchRank to order results by relevance. Include pagination (20 results/page). Search title and content fields.",
       "dependencies": [1],
       "estimated_complexity": "medium",
+      "complexity_score": 4,
+      "complexity_rationale": "Score 4: Standard DRF custom action pattern (+0 novelty), single dependency on search index (+1), single ViewSet file with ranking logic (~100 lines, +1 scope), edge case handling for empty queries (+1 risk). Base 3 + 3 = 6, reduced to 4 for established DRF patterns. Estimated 2-3 hours.",
+      "test_strategy": {
+        "unit": "Test query parameter validation (required 'q', minimum length), test SearchQuery and SearchRank usage, test pagination configuration (page size 20), test empty query returns 400",
+        "integration": "Test endpoint calls search_vector index correctly, test results ordered by relevance score, test pagination returns correct page boundaries, test no results returns empty array with 200",
+        "e2e": "Test full API flow: authenticated search request → verify results ordered by relevance → verify pagination works → verify empty query rejected → verify special characters handled safely"
+      },
       "affected_files": ["blog/views.py"],
       "acceptance": [
         "GET /api/posts/search/?q=query returns relevant posts",
@@ -1290,6 +1306,13 @@ Goal: Add search functionality to blog
       "description": "Create SearchBar component with input field. Implement debounced search (300ms delay). Display loading state during search. Render results in SearchResults component. Handle no results gracefully.",
       "dependencies": [2],
       "estimated_complexity": "medium",
+      "complexity_score": 6,
+      "complexity_rationale": "Score 6: Moderate novelty for debouncing pattern if new to codebase (+1 novelty), depends on search API (+1), three files with custom hook and two components (~250 lines, +3 scope), debouncing timing and race condition handling adds risk (+1 risk). Base 3 + 6 = 9, reduced to 6 for established React patterns with debounce libraries. Estimated 4-6 hours.",
+      "test_strategy": {
+        "unit": "Test SearchBar component renders input field, test useSearch hook debounces correctly (no API call before 300ms), test SearchResults renders result items, test loading state toggles correctly, test Escape key handler clears search",
+        "integration": "Test useSearch hook calls API endpoint with correct query parameter, test API response updates component state, test no results shows empty state message, test error handling displays error message",
+        "e2e": "Test full user flow: type in search box → wait 300ms → verify API called → verify results render → type again before 300ms → verify previous API call cancelled → verify debounce resets → verify new results replace old"
+      },
       "affected_files": ["frontend/src/components/SearchBar.jsx", "frontend/src/components/SearchResults.jsx", "frontend/src/hooks/useSearch.js"],
       "acceptance": [
         "Search input triggers API call after 300ms of no typing",
@@ -1305,6 +1328,13 @@ Goal: Add search functionality to blog
       "description": "Create test_search.py covering: search index population, search API endpoint (various queries), relevance ranking, pagination, frontend search hook, debouncing behavior.",
       "dependencies": [2, 3],
       "estimated_complexity": "medium",
+      "complexity_score": 5,
+      "complexity_rationale": "Score 5: Standard testing pattern but comprehensive scope across backend and frontend (+1 novelty for breadth), depends on API and UI (+2), two test files covering multiple layers (~300 lines, +2 scope), need to test timing-sensitive debouncing and ranking algorithms (+1 risk). Base 3 + 6 = 9, reduced to 5 for established testing frameworks. Estimated 3-4 hours.",
+      "test_strategy": {
+        "unit": "Test search index field updates correctly, test API endpoint query validation, test SearchQuery and SearchRank logic in isolation, test debounce hook timing with fake timers, test component render output",
+        "integration": "Test full-text search returns correct posts for various queries, test ranking algorithm orders by relevance, test pagination boundaries, test API endpoint with database, test frontend hook integrates with API correctly",
+        "e2e": "Test complete search flows: simple query returns results, complex query with special characters, empty results handled, debouncing prevents excessive API calls, pagination loads next page, verify database state consistent"
+      },
       "affected_files": ["blog/tests/test_search.py", "frontend/src/components/__tests__/SearchBar.test.jsx"],
       "acceptance": [
         "Backend tests verify correct posts returned for queries",
@@ -1320,6 +1350,13 @@ Goal: Add search functionality to blog
       "description": "Add search endpoint documentation to API docs. Explain query syntax. Document ranking algorithm. Add usage examples in README.",
       "dependencies": [2],
       "estimated_complexity": "low",
+      "complexity_score": 2,
+      "complexity_rationale": "Score 2: Standard documentation task (+0 novelty), depends on API implementation (+1), two documentation files (~100 lines total, +1 scope), clear structure to follow (+0 risk). Base 3 + 2 = 5, reduced to 2 for straightforward documentation writing. Estimated 1 hour.",
+      "test_strategy": {
+        "unit": "Test all code examples in documentation are syntactically valid (can be parsed), test all API endpoint paths referenced exist in codebase",
+        "integration": "N/A - documentation doesn't require integration tests",
+        "e2e": "Manual verification: follow documentation examples to perform search, verify query syntax works as documented, verify ranking explanation matches actual behavior"
+      },
       "affected_files": ["docs/api/search.md", "README.md"],
       "acceptance": [
         "API docs include search endpoint description",
@@ -1548,5 +1585,12 @@ Subtasks should be ordered by dependency:
 - [ ] No placeholder values ("...", "TODO", "TBD")
 - [ ] Dependencies reference valid subtask IDs
 - [ ] Follows ordering constraint (dependencies before dependents)
+
+**Dependency Validation**:
+- [ ] Run dependency validator before workflow execution: `python scripts/validate-dependencies.py output.json`
+- [ ] Verify no circular dependencies detected
+- [ ] Verify all subtask IDs referenced in dependencies exist
+- [ ] Review validator warnings for potential dependency issues
+- [ ] See USAGE.md for detailed validation utility documentation
 
 </final_checklist>

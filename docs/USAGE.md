@@ -11,6 +11,15 @@ Complete usage examples, best practices, and optimization strategies for the MAP
   - [Library Integration](#library-integration)
   - [Learning from Open Source](#learning-from-open-source)
 - [Playbook Commands](#playbook-commands)
+- [Dependency Validation](#dependency-validation)
+  - [Basic Usage](#basic-usage)
+  - [Visualization Mode](#visualization-mode)
+  - [Exit Codes](#exit-codes)
+  - [Integration with TaskDecomposer](#integration-with-taskdecomposer)
+  - [Sample TaskDecomposer JSON](#sample-taskdecomposer-json)
+  - [Validation Output Examples](#validation-output-examples)
+  - [Command-Line Flags Reference](#command-line-flags-reference)
+  - [Validation Best Practices](#validation-best-practices)
 - [Best Practices](#best-practices)
   - [Clear Requirements](#1-clear-requirements)
   - [Incremental Approach](#2-incremental-approach)
@@ -75,9 +84,230 @@ mapify playbook sync
 ```
 
 **Note:** These commands help you:
+
 - View playbook statistics (total patterns, average quality)
 - Search for specific implementation patterns
 - Sync high-quality patterns between playbook and cipher
+
+## 🔍 Dependency Validation
+
+The dependency validation utility (`scripts/validate-dependencies.py`) ensures TaskDecomposer output has valid dependency graphs before execution. It prevents workflow failures by detecting:
+
+- **Circular dependencies** — Tasks that create impossible execution loops (A → B → C → A)
+- **Forward references** — Dependencies on non-existent tasks
+- **Self-dependencies** — Tasks that depend on themselves
+- **Orphaned tasks** — Isolated tasks with no incoming or outgoing dependencies
+
+### Basic Usage
+
+**Recommended (after `pip install mapify-cli`):**
+
+```bash
+# Validate from file
+mapify validate graph decomposer-output.json
+
+# Output in text format (human-readable)
+mapify validate graph decomposer-output.json -f text
+
+# JSON format (default, for CI/CD)
+mapify validate graph decomposer-output.json -f json
+
+# Validate from stdin
+cat decomposer-output.json | mapify validate graph
+```
+
+**For development (using script directly):**
+
+```bash
+# Validate from stdin
+cat decomposer-output.json | python scripts/validate-dependencies.py
+
+# Validate from file
+python scripts/validate-dependencies.py decomposer-output.json
+
+# Output in text format (human-readable)
+python scripts/validate-dependencies.py -f text decomposer-output.json
+
+# JSON format (default, for CI/CD)
+python scripts/validate-dependencies.py -f json decomposer-output.json
+```
+
+### Visualization Mode
+
+Display ASCII dependency tree to understand task execution order:
+
+**Recommended (mapify CLI):**
+
+```bash
+# Show dependency tree with colors
+mapify validate graph decomposer-output.json --visualize
+
+# Show tree without colors (for logs/CI)
+mapify validate graph decomposer-output.json --visualize --no-color
+```
+
+**For development (direct script):**
+
+```bash
+# Show dependency tree with colors
+python scripts/validate-dependencies.py --visualize decomposer-output.json
+
+# Show tree without colors (for logs/CI)
+python scripts/validate-dependencies.py --visualize --no-color decomposer-output.json
+```
+
+**Example visualization output:**
+
+```
+Task Dependency Tree:
+Task 1: Setup environment
+├─ Task 2: Install dependencies
+│  └─ Task 4: Run tests
+└─ Task 3: Configure database
+   └─ Task 4: Run tests
+```
+
+### Exit Codes
+
+The script uses standard exit codes for automation:
+
+| Exit Code | Meaning | CI/CD Action |
+|-----------|---------|--------------|
+| `0` | Valid graph, no issues | Continue workflow |
+| `1` | Invalid graph, issues found (warnings or critical) | Fail build |
+| `2` | Invalid input (malformed JSON) | Fix input format |
+
+> **Note**: Exit code `0` requires **zero issues** (including warnings). Even orphaned tasks (warnings) will cause exit code `1`. Use `--format text` to see issue severity levels.
+
+**CI/CD Integration Example:**
+
+```bash
+# Pre-execution validation in CI (recommended)
+mapify validate graph plan.json || exit 1
+echo "✓ Task graph validated successfully"
+
+# Alternative: using direct script (for development/testing)
+python scripts/validate-dependencies.py plan.json || exit 1
+echo "✓ Task graph validated successfully"
+```
+
+### Integration with TaskDecomposer
+
+Validate TaskDecomposer output before starting workflow:
+
+```bash
+# Step 1: Decompose task
+/map-feature implement user authentication
+
+# Step 2: Review TaskDecomposer output
+# (orchestrator saves to .claude/decomposer-output.json)
+
+# Step 3: Validate before execution (recommended)
+mapify validate graph .claude/decomposer-output.json
+
+# Alternative (for development): use direct script
+python scripts/validate-dependencies.py .claude/decomposer-output.json
+
+# Step 4: If valid, orchestrator proceeds automatically
+```
+
+**Note:** MAP Framework orchestrators can integrate this validation step to prevent execution of invalid task graphs.
+
+### Sample TaskDecomposer JSON
+
+```json
+{
+  "subtasks": [
+    {
+      "id": 1,
+      "title": "Setup authentication middleware",
+      "description": "Create Express middleware for JWT validation",
+      "dependencies": []
+    },
+    {
+      "id": 2,
+      "title": "Implement login endpoint",
+      "description": "POST /api/login with email/password",
+      "dependencies": [1]
+    },
+    {
+      "id": 3,
+      "title": "Add refresh token logic",
+      "description": "Implement token refresh endpoint",
+      "dependencies": [1, 2]
+    }
+  ]
+}
+```
+
+### Validation Output Examples
+
+**Valid graph (JSON format):**
+
+```json
+{
+  "valid": true,
+  "issues": [],
+  "summary": {
+    "total_tasks": 3,
+    "critical_issues": 0,
+    "warnings": 0
+  }
+}
+```
+
+**Invalid graph with circular dependency (JSON format):**
+
+```json
+{
+  "valid": false,
+  "issues": [
+    {
+      "type": "circular_dependency",
+      "severity": "critical",
+      "affected_tasks": [1, 2, 3],
+      "message": "Circular dependency detected: 1 → 2 → 3 → 1"
+    }
+  ],
+  "summary": {
+    "total_tasks": 3,
+    "critical_issues": 1,
+    "warnings": 0
+  }
+}
+```
+
+**Text format output:**
+
+```
+⚠️  Validation Failed
+
+Issues Found:
+  [CRITICAL] Circular dependency detected: 1 → 2 → 3 → 1
+    Affected tasks: 1, 2, 3
+
+Summary:
+  Total tasks: 3
+  Critical issues: 1
+  Warnings: 0
+```
+
+### Command-Line Flags Reference
+
+| Flag | Short | Values | Default | Description |
+|------|-------|--------|---------|-------------|
+| `--format` | `-f` | `json`, `text` | `json` | Output format for validation results |
+| `--visualize` | — | — | — | Display ASCII dependency tree |
+| `--no-color` | — | — | — | Disable ANSI colors in visualization |
+| `--help` | `-h` | — | — | Show help message and examples |
+
+### Validation Best Practices
+
+1. **Always validate in CI/CD** — Add validation step before task execution
+2. **Use JSON format for automation** — Machine-readable output for scripts
+3. **Use text format for debugging** — Human-readable output for investigation
+4. **Visualize complex graphs** — Use `--visualize` to understand execution order
+5. **Check exit codes** — Use `$?` in shell scripts for automated validation
 
 ## 🎯 Best Practices
 
@@ -94,6 +324,7 @@ Always provide specific, detailed requirements to get the best results.
 ```
 
 **Why it matters:**
+
 - Clear requirements lead to better task decomposition
 - Reduces Actor-Monitor retry cycles
 - Produces more maintainable code
@@ -107,6 +338,7 @@ Break large features into phases to maintain focus and quality:
 - **Phase 3:** Optimization
 
 **Example workflow:**
+
 ```bash
 # Phase 1: Core implementation
 /map-feature implement basic user authentication with login/logout
@@ -123,12 +355,14 @@ Break large features into phases to maintain focus and quality:
 Always specify relevant project context to improve solution quality:
 
 **Include:**
+
 - Technology stack (e.g., "using Express.js with TypeScript")
 - Existing patterns (e.g., "follow the service-repository pattern used in UserService")
 - Constraints (e.g., "must work with PostgreSQL 12+")
 - Performance requirements (e.g., "handle 1000 requests/second")
 
 **Example:**
+
 ```bash
 /map-feature implement product search using Elasticsearch.
 Stack: Node.js + Express + PostgreSQL.
@@ -156,6 +390,7 @@ MAP Framework supports intelligent model selection per agent to balance capabili
 ### Cost Savings
 
 Using this optimized distribution provides:
+
 - **40-60% cost reduction** vs using sonnet everywhere
 - **Maintains quality** for critical tasks (sonnet for actor/monitor/reflector)
 - **Fast execution** for analysis tasks (haiku for predictor/evaluator)
