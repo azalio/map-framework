@@ -362,15 +362,18 @@ class ASCIIGraphRenderer:
         Returns:
             List of task IDs in topological order (or partial order if cycles exist)
         """
-        # Calculate in-degrees (number of dependencies for each task)
-        in_degree: Dict[int, int] = {task_id: 0 for task_id in self.task_ids}
+        # Calculate dependency counts (how many tasks each task depends on)
+        # Note: We count incoming dependencies in the dependency graph
+        # adjacency[A] = [B] means "A depends on B", so B has an outgoing edge to A
+        # We count how many times each task appears as a dependency (outgoing edges)
+        dependency_count: Dict[int, int] = {task_id: 0 for task_id in self.task_ids}
         for task_id, deps in self.adjacency.items():
             for dep_id in deps:
-                if dep_id in in_degree:  # Skip invalid dependencies
-                    in_degree[dep_id] += 1
+                if dep_id in dependency_count:  # Skip invalid dependencies
+                    dependency_count[dep_id] += 1
 
-        # Start with nodes that have no dependencies
-        queue = deque([tid for tid in self.task_ids if in_degree[tid] == 0])
+        # Start with leaf nodes (tasks that no other task depends on)
+        queue = deque([tid for tid in self.task_ids if dependency_count[tid] == 0])
         sorted_order = []
 
         while queue:
@@ -379,12 +382,12 @@ class ASCIIGraphRenderer:
 
             # For each task that depends on current task
             for dependent in self.reverse_adjacency[current]:
-                in_degree[dependent] -= 1
-                if in_degree[dependent] == 0:
+                dependency_count[dependent] -= 1
+                if dependency_count[dependent] == 0:
                     queue.append(dependent)
 
         # Add remaining nodes (those in cycles) in sorted order
-        remaining = sorted([tid for tid in self.task_ids if in_degree[tid] > 0])
+        remaining = sorted([tid for tid in self.task_ids if dependency_count[tid] > 0])
         sorted_order.extend(remaining)
 
         return sorted_order

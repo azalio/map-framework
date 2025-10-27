@@ -169,22 +169,26 @@ Task 1: Setup environment
 
 ### Exit Codes
 
-The script uses standard exit codes for automation:
+The validator uses standard exit codes for automation:
 
 | Exit Code | Meaning | CI/CD Action |
 |-----------|---------|--------------|
-| `0` | Valid graph, no issues | Continue workflow |
-| `1` | Invalid graph, issues found (warnings or critical) | Fail build |
-| `2` | Invalid input (malformed JSON) | Fix input format |
+| `0` | Valid graph (no critical errors) | Continue workflow |
+| `1` | Invalid graph (critical errors found) OR warnings with `--strict` flag | Fail build |
+| `2` | Invalid input (malformed JSON or missing required fields) | Fix input format |
 
-> **Note**: Exit code `0` requires **zero issues** (including warnings). Even orphaned tasks (warnings) will cause exit code `1`. Use `--format text` to see issue severity levels.
+> **Note**: By default, **warnings** (e.g., orphaned tasks) result in exit code `0` and **do not** fail CI/CD builds. Only **critical errors** (circular dependencies, forward references, self-dependencies) cause exit code `1`. To enforce strict validation where warnings also fail the build, use the `--strict` flag. Use `--format text` to see issue severity levels.
 
-**CI/CD Integration Example:**
+**CI/CD Integration Examples:**
 
 ```bash
-# Pre-execution validation in CI (recommended)
+# Default mode: Only critical errors fail the build
 mapify validate graph plan.json || exit 1
-echo "✓ Task graph validated successfully"
+echo "✓ Task graph has no critical errors"
+
+# Strict mode: Warnings also fail the build
+mapify validate graph --strict plan.json || exit 1
+echo "✓ Task graph is perfect (no warnings or errors)"
 
 # Alternative: using direct script (for development/testing)
 python scripts/validate-dependencies.py plan.json || exit 1

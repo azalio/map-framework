@@ -1946,9 +1946,16 @@ def validate_graph(
     input_file: Optional[Path] = typer.Argument(None, help="JSON file to validate (or use stdin)"),
     visualize: bool = typer.Option(False, "--visualize", help="Show ASCII dependency tree"),
     no_color: bool = typer.Option(False, "--no-color", help="Disable colored output"),
-    format: str = typer.Option("json", "-f", "--format", help="Output format: json or text")
+    format: str = typer.Option("json", "-f", "--format", help="Output format: json or text"),
+    strict: bool = typer.Option(False, "--strict", help="Fail on warnings (exit code 1), not just critical errors")
 ):
-    """Validate TaskDecomposer dependency graph"""
+    """Validate TaskDecomposer dependency graph
+
+    Exit codes:
+      0 - Valid graph (no critical errors; warnings allowed unless --strict)
+      1 - Invalid graph (critical errors found, or warnings with --strict)
+      2 - Malformed input (invalid JSON or missing required fields)
+    """
     from mapify_cli.tools.validate_dependencies import (
         load_input, DependencyValidator, ASCIIGraphRenderer, print_report
     )
@@ -1972,12 +1979,20 @@ def validate_graph(
             visualization = renderer.render(use_colors=not no_color)
             console.print(visualization)
 
-        # Exit with appropriate code
-        if not is_valid:
+        # Determine exit code based on issue severity
+        has_critical = report.get("critical_issues", 0) > 0
+        has_warnings = report.get("warnings", 0) > 0
+
+        if has_critical:
+            # Critical errors always fail
             raise typer.Exit(1)
+        elif has_warnings and strict:
+            # Warnings fail only in strict mode
+            raise typer.Exit(1)
+        # Otherwise exit 0 (success)
 
     except ValueError as e:
-        # Input validation error
+        # Input validation error (malformed JSON, missing fields)
         error_report = {
             "valid": False,
             "error": str(e),
