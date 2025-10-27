@@ -307,6 +307,10 @@ Untested code is broken code waiting to happen. Testability indicates design qua
 - [ ] Documentation updated (API docs, README)?
 - [ ] Error handling complete?
 - [ ] Logging added for debugging?
+- [ ] Research performed when appropriate (unfamiliar libraries, complex algorithms)?
+  - IF subtask requires external knowledge (post-cutoff APIs, production patterns): Did Actor use research tools (context7/deepwiki/codex) OR document skip justification?
+  - IF research performed: Are sources cited in output (Approach/Trade-offs sections)?
+  - Research completeness indicates thoroughness and reduces Monitor rejection risk
 - [ ] Deployment considerations addressed?
 
 <example type="score_10">
