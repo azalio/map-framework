@@ -62,16 +62,18 @@ class TestCommandTemplates:
 
         # Check for warning markers
         assert "⚠️" in content or "WARNING" in content, "map-fast.md should contain warning indicators"
-        assert "NOT RECOMMENDED" in content.upper(), "map-fast.md should state NOT RECOMMENDED"
+        assert "throwaway" in content.lower() or "prototype" in content.lower(), "map-fast.md should indicate throwaway/prototype use only"
         assert "NO learning" in content or "no learning" in content, "Should mention no learning"
 
-    def test_map_efficient_contains_recommended_label(self, templates_commands_dir):
-        """Test that map-efficient.md contains RECOMMENDED label."""
+    def test_map_efficient_preserves_learning(self, templates_commands_dir):
+        """Test that map-efficient.md emphasizes learning preservation and batching."""
         map_efficient = templates_commands_dir / "map-efficient.md"
         content = map_efficient.read_text()
 
-        assert "RECOMMENDED" in content.upper(), "map-efficient.md should state RECOMMENDED"
-        assert "⭐" in content or "recommended" in content.lower(), "Should have recommendation indicator"
+        # Should emphasize that learning is preserved
+        assert "preserves" in content.lower() or "learning" in content.lower(), "Should mention learning preservation"
+        # Should mention batching as key optimization
+        assert "batch" in content.lower() or "batched" in content.lower(), "Should mention batched learning"
 
     def test_all_command_templates_exist(self, templates_commands_dir):
         """Test that all expected command template files exist."""

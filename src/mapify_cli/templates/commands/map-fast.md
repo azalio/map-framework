@@ -1,32 +1,16 @@
 ---
-description: Fast implementation with minimal agents (NOT RECOMMENDED - use /map-efficient instead)
+description: Minimal workflow for throwaway code (40-50% savings, NO learning)
 ---
 
 # MAP Fast Workflow
 
-**⚠️ WARNING: NOT RECOMMENDED FOR PRODUCTION CODE ⚠️**
+**⚠️ WARNING: For throwaway prototypes only - use /map-efficient for production**
 
-This workflow is **INTENTIONALLY LIMITED** to save tokens (~40-50%) but **SACRIFICES CRITICAL CAPABILITIES**:
+Minimal agent sequence (40-50% token savings). Skips: Predictor, Evaluator, Reflector, Curator.
 
-❌ **NO Impact Analysis** (Predictor) → Breaking changes undetected
-❌ **NO Quality Scoring** (Evaluator) → Security/performance issues missed
-❌ **NO Learning** (Reflector/Curator) → Knowledge never accumulates
-❌ **NO Playbook Updates** → Same mistakes repeated forever
-❌ **NO Cipher Integration** → Cross-project knowledge lost
+**Consequences:** No impact analysis, no quality scoring, no learning, playbook never improves.
 
-**🎯 RECOMMENDED ALTERNATIVE: Use `/map-efficient` instead**
-- Still saves 30-40% tokens
-- Preserves learning and quality gates
-- Suitable for production code
-
-**ONLY use /map-fast for:**
-- Throwaway prototypes you'll discard
-- Quick experiments where quality doesn't matter
-- Learning/tutorial contexts where failure is acceptable
-
----
-
-Implement the following with minimal validation:
+Implement the following:
 
 **Task:** $ARGUMENTS
 
@@ -131,67 +115,21 @@ Output JSON with:
 - Apply code changes using Write/Edit tools
 - Move to next subtask
 
-**⚠️ NO LEARNING STEP:** Unlike full MAP workflow, there is NO Reflector or Curator step here. You are not learning from this implementation.
-
 ## Step 3: Final Summary
 
 After all subtasks completed:
 
-1. **Run basic tests** (if applicable)
-2. **Create commit** with message
-3. **Summarize**:
-   - What was implemented
-   - Files changed
-   - ⚠️ **NO playbook bullets added** (learning disabled)
-   - ⚠️ **NO cipher patterns stored** (knowledge lost)
+1. Run basic tests (if applicable)
+2. Create commit with message
+3. Summarize what was implemented
 
-**REMINDER:** You used /map-fast. Consider if you should have used /map-efficient instead to preserve learning.
-
-## Comparison: What You're Missing
-
-| Feature | /map-feature | /map-efficient | /map-fast (YOU) |
-|---------|--------------|----------------|-----------------|
-| Impact Analysis (Predictor) | ✅ Always | ✅ Conditional | ❌ Never |
-| Quality Scoring (Evaluator) | ✅ Always | ❌ Skipped | ❌ Never |
-| Learning (Reflector) | ✅ Per-subtask | ✅ Batched | ❌ Never |
-| Playbook Updates (Curator) | ✅ Per-subtask | ✅ Batched | ❌ Never |
-| Token Savings | 0% | 30-40% | 40-50% |
-| **Production Ready** | **✅ Yes** | **✅ Yes** | **❌ NO** |
+**Note:** No playbook updates, no cipher patterns stored (learning disabled).
 
 ## Critical Constraints
 
-- **ONLY use for throwaway code** - not production
-- **NO learning** means playbook stays empty
-- **NO quality gates** means bugs may be missed
-- **NO impact analysis** means breaking changes undetected
-- **MAX 3 iterations** per subtask
-- **Consider using /map-efficient** for better balance
-
-## Example
-
-User says: `/map-fast prototype a simple todo list API`
-
-This is acceptable because:
-- It's explicitly a prototype (throwaway)
-- Quality/learning not critical for quick exploration
-- Token savings matter more than robustness
-
-User says: `/map-fast implement user authentication`
-
-This is **DANGEROUS** because:
-- Authentication is security-critical (needs Evaluator)
-- Breaking changes affect many files (needs Predictor)
-- Common pattern that should be learned (needs Reflector/Curator)
-- **Should use /map-efficient instead**
-
----
-
-**Final Warning:** By using /map-fast, you are consciously accepting:
-- Higher risk of bugs and security issues
-- No learning or knowledge accumulation
-- No quality scoring or impact analysis
-- Suitability only for non-critical throwaway code
-
-**If any of these concerns matter to you, use `/map-efficient` instead.**
+- MAX 3 iterations per subtask
+- NO learning cycle (Reflector/Curator skipped)
+- NO impact analysis (Predictor skipped)
+- NO quality scoring (Evaluator skipped)
 
 Begin now with minimal workflow.
