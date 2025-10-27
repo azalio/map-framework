@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.4] - 2025-10-27
+
+### Added
+- **Token-Optimized Workflow Variants**: Two new slash commands for token-conscious development
+  - `/map-efficient` (⭐ RECOMMENDED): 30-40% token savings with full learning preservation
+    - Batched Reflector/Curator execution (once at end vs per-subtask)
+    - Conditional Predictor (only for high-risk subtasks)
+    - Skips Evaluator (Monitor provides sufficient validation)
+    - Maintains playbook updates and cipher integration
+  - `/map-fast` (⚠️ throwaway code only): 40-50% token savings, no learning
+    - Minimal agent sequence: TaskDecomposer → Actor → Monitor
+    - Skips: Predictor, Evaluator, Reflector, Curator
+    - Use only for temporary prototypes, not production code
+
+### Changed
+- **Cleaner Command Templates**: Removed verbose marketing/educational content from slash commands
+  - Commands now contain concise technical instructions only
+  - Educational content preserved in README.md and docs/USAGE.md
+  - Improved readability for Claude Code execution
+
+### Fixed
+- **Test Infrastructure**: Updated test suite to validate only canonical template sources
+  - Tests now check `src/mapify_cli/templates/` (canonical source) instead of gitignored `.claude/` directory
+  - Prevents CI failures due to missing generated files
+
+### Documentation
+- **Comprehensive Workflow Guide** (docs/USAGE.md): 220+ line guide for workflow selection
+  - Decision flowchart for choosing between /map-feature, /map-efficient, /map-fast
+  - Real-world token usage examples (small/medium/large tasks)
+  - Cost analysis: $270/month savings for teams running 10 workflows/day
+  - Migration guide and common misconceptions
+- **Architecture Documentation** (docs/ARCHITECTURE.md): Technical details on workflow optimization
+  - Conditional Predictor logic implementation
+  - Batched learning algorithms
+  - Token savings breakdown per optimization
+- **Updated Development Instructions** (.claude/CLAUDE.md): Commands directory synchronization process
+
 ## [1.0.3] - 2025-10-27
 
 ## [1.0.2] - 2025-10-27
