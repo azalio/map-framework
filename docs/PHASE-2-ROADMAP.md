@@ -121,7 +121,7 @@ class MapStateManager:
 ```
 
 **Acceptance Criteria:**
-- ✅ Checkpoint saved to `.map/checkpoints/<task_id>/checkpoint_<subtask_id>.json`
+- ✅ Checkpoint saved to `.map/checkpoints/<task_id>/checkpoint_<subtask_id: integer>.json`
 - ✅ Checkpoint includes all required fields (schema above)
 - ✅ Load checkpoint returns exact state
 - ✅ CLI commands work: `save`, `load`, `list`, `resume`

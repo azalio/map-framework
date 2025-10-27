@@ -196,7 +196,7 @@ Perfect! I found highly relevant existing knowledge. The cipher search revealed.
 **Output:** Line 91: ### 3.1.5 Update Recitation Plan (BEFORE Actor)
 **Commands:**
 ```bash
-mapify recitation update <subtask_id> in_progress
+mapify recitation update <subtask_id: integer> in_progress
 PLAN_CONTEXT=$(mapify recitation get-context)
 ```
 **Integration:** PLAN_CONTEXT injected into Actor prompt via {{plan_context}} variable
@@ -295,14 +295,14 @@ END OF VERIFIED FACTS - MAP WORKFLOW
 [✓ VERIFIED]
 **Fact:** When Monitor rejects Actor output, orchestrator updates plan with error message
 **Verification:** map-feature.md lines 172-177
-**Command:** mapify recitation update <subtask_id> in_progress "Monitor feedback: [error details]"
+**Command:** mapify recitation update <subtask_id: integer> in_progress "Monitor feedback: [error details]"
 **Display:** Plan shows "⚠️ Retry attempt 2 - review previous errors"
 **Implementation:** Implements arch-0005 error learning pattern
 
 [✓ VERIFIED]
 **Fact:** When Evaluator approves solution, orchestrator marks subtask completed
 **Verification:** map-feature.md lines 253-258
-**Command:** mapify recitation update <subtask_id> completed
+**Command:** mapify recitation update <subtask_id: integer> completed
 **Display:** Plan shows "✓ Subtask N completed", next subtask sees progress
 
 [✓ VERIFIED]

@@ -51,7 +51,7 @@ mapify recitation create "$TASK_ID" "$GOAL" "$SUBTASKS_JSON"
 ### 3.1.5 Update Recitation Plan (BEFORE Actor)
 # Mark subtask as in_progress and get fresh context:
 
-mapify recitation update <subtask_id> in_progress
+mapify recitation update <subtask_id: integer> in_progress
 
 # Get current plan for Actor context (RECITATION PATTERN)
 PLAN_CONTEXT=$(mapify recitation get-context)
@@ -146,19 +146,19 @@ This plan keeps the overall goal and progress "fresh" in your context window.
 
 **Before Actor (mark in_progress):**
 ```bash
-mapify recitation update <subtask_id> in_progress
+mapify recitation update <subtask_id: integer> in_progress
 # Updates .map/current_plan.md with → marker
 ```
 
 **After Evaluator approval (mark completed):**
 ```bash
-mapify recitation update <subtask_id> completed
+mapify recitation update <subtask_id: integer> completed
 # Updates .map/current_plan.md with ✓ marker
 ```
 
 **On Monitor failure (record error):**
 ```bash
-mapify recitation update <subtask_id> in_progress "Monitor feedback: [error details]"
+mapify recitation update <subtask_id: integer> in_progress "Monitor feedback: [error details]"
 # Keeps → marker but adds error note
 # Shows "⚠️ Retry attempt N" on next iteration
 ```

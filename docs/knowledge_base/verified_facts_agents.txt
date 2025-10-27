@@ -617,13 +617,13 @@ changelog: .claude/agents/CHANGELOG.md
 mapify recitation create <task_id> "<feature>" "<subtasks_json>"
 
 # Update before each Actor invocation
-mapify recitation update <subtask_id> in_progress
+mapify recitation update <subtask_id: integer> in_progress
 
 # Get context for Actor prompt
 PLAN_CONTEXT=$(mapify recitation get-context)
 
 # Mark completed after Evaluator approval
-mapify recitation update <subtask_id> completed
+mapify recitation update <subtask_id: integer> completed
 
 # Get final statistics
 mapify recitation stats

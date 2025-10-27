@@ -59,11 +59,11 @@ Phase 1 of the MAP Framework Context Engineering improvements is **complete**. A
 mapify recitation create "<task_id>" "<goal>" '<subtasks_json>'
 
 # Before each Actor invocation
-mapify recitation update <subtask_id> in_progress
+mapify recitation update <subtask_id: integer> in_progress
 PLAN_CONTEXT=$(mapify recitation get-context)
 
 # After Evaluator approval
-mapify recitation update <subtask_id> completed
+mapify recitation update <subtask_id: integer> completed
 
 # After workflow completion
 mapify recitation clear

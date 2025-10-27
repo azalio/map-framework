@@ -1104,6 +1104,8 @@ MAP Framework applies cutting-edge context engineering principles for AI agents,
 
 **Log Format:**
 
+**Note:** `subtask_id` is an **integer** (not string) matching the `id` field from TaskDecomposer output. TaskDecomposer generates subtask IDs as sequential integers: 1, 2, 3, etc.
+
 ```json
 {
   "task_id": "feat_auth_20251023_143022",
@@ -1111,7 +1113,7 @@ MAP Framework applies cutting-edge context engineering principles for AI agents,
   "start_time": "2025-10-23T14:30:22Z",
   "subtasks": [
     {
-      "subtask_id": "auth_001",
+      "subtask_id": 1,
       "description": "Create User model",
       "status": "completed",
       "iterations": 1,

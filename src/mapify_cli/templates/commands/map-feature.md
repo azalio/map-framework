@@ -115,8 +115,10 @@ Search `.claude/playbook.json` for relevant patterns related to the current subt
 **Mark subtask as in_progress and get fresh context:**
 
 ```bash
-# Update plan status (subtask_id from TaskDecomposer)
-mapify recitation update <subtask_id> in_progress
+# Update plan status (use integer ID from TaskDecomposer output)
+# TaskDecomposer returns {"id": 1, ...}, {"id": 2, ...} - use these integers directly
+# Example: if current subtask has "id": 1, use: mapify recitation update 1 in_progress
+mapify recitation update <subtask_id: integer from TaskDecomposer> in_progress
 
 # Get current plan for Actor context (RECITATION PATTERN)
 PLAN_CONTEXT=$(mapify recitation get-context)
@@ -192,8 +194,9 @@ Output JSON with:
 **If monitor.valid === false:**
 - **Record error in plan (Recitation):**
   ```bash
-  # Update with error message for retry
-  mapify recitation update <subtask_id> in_progress "Monitor feedback: [error details]"
+  # Update with error message for retry (use integer ID from TaskDecomposer)
+  # Example: mapify recitation update 2 in_progress "Monitor feedback: missing error handling"
+  mapify recitation update <subtask_id: integer> in_progress "Monitor feedback: [error details]"
   # Plan will show: "⚠️ Retry attempt 2 - review previous errors"
   ```
 - Provide monitor feedback to actor
@@ -274,8 +277,10 @@ Output JSON with:
 - Apply code changes (use Write/Edit tools)
 - **Mark subtask as completed (Recitation):**
   ```bash
-  mapify recitation update <subtask_id> completed
-  # Plan will show: "✓ Subtask N completed"
+  # Mark complete using integer ID from TaskDecomposer
+  # Example: mapify recitation update 1 completed
+  mapify recitation update <subtask_id: integer> completed
+  # Plan will show: "✓ Subtask 1 completed"
   # Next subtask will see this progress
   ```
 - Continue to step 3.8
