@@ -2,24 +2,24 @@
 
 ## Critical: Template Synchronization
 
-**ВАЖНО**: После изменения любых файлов агентов в `.claude/agents/`, ВСЕГДА синхронизируй их в `src/mapify_cli/templates/agents/`!
+**ВАЖНО**: После изменения любых файлов в `.claude/agents/` или `.claude/commands/`, ВСЕГДА синхронизируй их в `src/mapify_cli/templates/`!
 
 ### Почему это критично?
 
-Когда пользователи запускают `mapify init`, они получают шаблоны из `src/mapify_cli/templates/agents/`, а НЕ из `.claude/agents/`. Если забыть синхронизировать:
+Когда пользователи запускают `mapify init`, они получают шаблоны из `src/mapify_cli/templates/`, а НЕ из `.claude/`. Если забыть синхронизировать:
 - Новые пользователи получают УСТАРЕВШИЕ шаблоны
-- Улучшения, добавленные в `.claude/agents/`, НЕ доступны через `mapify init`
+- Улучшения НЕ доступны через `mapify init`
 - Создаётся расхождение между dev и production шаблонами
 
 ### Процесс синхронизации
 
-После ЛЮБОГО изменения файлов в `.claude/agents/`:
+После ЛЮБОГО изменения файлов в `.claude/agents/` или `.claude/commands/`:
 
 ```bash
-# 1. Проверь какие агенты изменились
-git status .claude/agents/
+# 1. Проверь что изменилось
+git status .claude/agents/ .claude/commands/
 
-# 2. Синхронизируй каждый изменённый файл
+# 2. Синхронизируй агентов
 cp .claude/agents/task-decomposer.md src/mapify_cli/templates/agents/
 cp .claude/agents/actor.md src/mapify_cli/templates/agents/
 cp .claude/agents/monitor.md src/mapify_cli/templates/agents/
@@ -29,11 +29,19 @@ cp .claude/agents/reflector.md src/mapify_cli/templates/agents/
 cp .claude/agents/curator.md src/mapify_cli/templates/agents/
 cp .claude/agents/documentation-reviewer.md src/mapify_cli/templates/agents/
 
-# 3. Проверь что файлы скопировались
-git status src/mapify_cli/templates/agents/
+# 3. Синхронизируй команды
+cp .claude/commands/map-feature.md src/mapify_cli/templates/commands/
+cp .claude/commands/map-debug.md src/mapify_cli/templates/commands/
+cp .claude/commands/map-refactor.md src/mapify_cli/templates/commands/
+cp .claude/commands/map-review.md src/mapify_cli/templates/commands/
+cp .claude/commands/map-efficient.md src/mapify_cli/templates/commands/
+cp .claude/commands/map-fast.md src/mapify_cli/templates/commands/
 
-# 4. Закоммить вместе с остальными изменениями
-git add src/mapify_cli/templates/agents/
+# 4. Проверь что файлы скопировались
+git status src/mapify_cli/templates/
+
+# 5. Закоммить вместе с остальными изменениями
+git add src/mapify_cli/templates/
 ```
 
 ### Автоматическая проверка
@@ -46,19 +54,37 @@ git add src/mapify_cli/templates/agents/
 
 echo "Checking template synchronization..."
 
+# Check agents
 for agent in task-decomposer actor monitor predictor evaluator reflector curator documentation-reviewer; do
     source=".claude/agents/${agent}.md"
     target="src/mapify_cli/templates/agents/${agent}.md"
 
     if [ -f "$source" ] && [ -f "$target" ]; then
         if ! diff -q "$source" "$target" > /dev/null; then
-            echo "❌ OUT OF SYNC: ${agent}.md"
+            echo "❌ OUT OF SYNC: agents/${agent}.md"
             echo "   Run: cp $source $target"
         else
-            echo "✅ IN SYNC: ${agent}.md"
+            echo "✅ IN SYNC: agents/${agent}.md"
         fi
     else
-        echo "⚠️  MISSING: ${agent}.md (source or target not found)"
+        echo "⚠️  MISSING: agents/${agent}.md (source or target not found)"
+    fi
+done
+
+# Check commands
+for command in map-feature map-debug map-refactor map-review map-efficient map-fast; do
+    source=".claude/commands/${command}.md"
+    target="src/mapify_cli/templates/commands/${command}.md"
+
+    if [ -f "$source" ] && [ -f "$target" ]; then
+        if ! diff -q "$source" "$target" > /dev/null; then
+            echo "❌ OUT OF SYNC: commands/${command}.md"
+            echo "   Run: cp $source $target"
+        else
+            echo "✅ IN SYNC: commands/${command}.md"
+        fi
+    else
+        echo "⚠️  MISSING: commands/${command}.md (source or target not found)"
     fi
 done
 ```
