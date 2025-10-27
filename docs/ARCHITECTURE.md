@@ -106,6 +106,134 @@ MAP Framework implements cognitive architecture inspired by prefrontal cortex fu
 - Workflow logs in `.map/workflow_logs/`
 - Metrics tracked in `.claude/metrics/agent_metrics.jsonl`
 
+### Workflow Variants
+
+MAP Framework provides three workflow variants with different agent orchestration strategies:
+
+#### 1. `/map-feature` - Full Pipeline (8 Agents)
+
+**Agent Sequence:** TaskDecomposer → (Actor → Monitor → Predictor → Evaluator → Reflector → Curator) per subtask
+
+**Token Usage:** Baseline (100%)
+**Learning:** Per-subtask reflection and curation
+**Quality Gates:** All agents (maximum QA)
+
+**Use for:**
+- Security-critical features
+- First-time complex implementations
+- High-risk refactoring
+- Maximum quality assurance required
+
+#### 2. `/map-efficient` - Optimized Pipeline (5-6 Agents) ⭐ RECOMMENDED
+
+**Agent Sequence:** TaskDecomposer → (Actor → Monitor → conditional Predictor) per subtask → batch Reflector → batch Curator
+
+**Optimizations:**
+
+1. **Conditional Predictor** (5-10% token savings)
+   - Only called if TaskDecomposer assigns `risk_level='high'/'medium'`
+   - OR if Monitor sets `high_risk_detected=true`
+   - Low-risk subtasks (simple CRUD, UI updates) skip impact analysis
+
+2. **Evaluator Skipped** (8-12% token savings)
+   - Monitor provides sufficient validation for most tasks
+   - Evaluator's 6-dimension scoring rarely changes proceed/reject decision
+   - Quality still ensured by Monitor's comprehensive checks
+
+3. **Batched Learning** (10-15% token savings)
+   - Reflector analyzes ALL subtask outputs at end (vs per-subtask)
+   - Curator makes single playbook update (vs N updates for N subtasks)
+   - More holistic insights (sees patterns across entire workflow)
+   - Saves (N-1) × 3K tokens for N subtasks
+
+**Token Usage:** 60-70% of baseline
+**Learning:** Batched at end (full Reflector/Curator cycle preserved)
+**Quality Gates:** Essential agents (Monitor, conditional Predictor)
+
+**Technical Details:**
+
+```python
+# Conditional Predictor Logic (Orchestrator)
+for subtask in subtasks:
+    actor_output = call_actor(subtask)
+    monitor_output = call_monitor(actor_output)
+
+    if monitor_output.valid:
+        # Only call Predictor if high risk
+        if (subtask.risk_level in ['high', 'medium'] or
+            monitor_output.high_risk_detected):
+            predictor_output = call_predictor(actor_output)
+        # Apply changes
+        apply_code_changes(actor_output)
+
+# Batched Learning (after all subtasks)
+all_outputs = collect_all_subtask_outputs()
+reflector_output = call_reflector(all_outputs)  # Batch analysis
+curator_output = call_curator(reflector_output)  # Single update
+update_playbook(curator_output)
+```
+
+**Use for:**
+- Production code where token costs matter (RECOMMENDED)
+- Well-understood features (standard CRUD, APIs, UI)
+- Iterative development with frequent workflows
+- Any task where /map-fast feels too risky but /map-feature too expensive
+
+#### 3. `/map-fast` - Minimal Pipeline (3 Agents) ⚠️
+
+**Agent Sequence:** TaskDecomposer → (Actor → Monitor) per subtask
+
+**Agents SKIPPED:**
+- ❌ Predictor (no impact analysis)
+- ❌ Evaluator (no quality scoring)
+- ❌ Reflector (no lesson extraction)
+- ❌ Curator (no playbook updates)
+
+**Token Usage:** 50-60% of baseline
+**Learning:** None (defeats MAP's purpose)
+**Quality Gates:** Basic only (Monitor validation)
+
+**Architectural Consequences:**
+- Playbook remains static (no continuous improvement)
+- Cipher knowledge base never grows
+- Breaking changes undetected (no Predictor)
+- Security/performance issues may slip through (no Evaluator)
+- Same mistakes repeated (no Reflector)
+
+**Use ONLY for:**
+- Throwaway prototypes
+- Quick experiments
+- Tutorial/learning contexts
+- **NEVER for production code**
+
+#### Token Breakdown by Agent
+
+Typical token consumption per subtask (estimated):
+
+| Agent | Prompt | Output | Total | Notes |
+|-------|--------|--------|-------|-------|
+| TaskDecomposer | 1.5K | 1K | 2.5K | One-time (not per subtask) |
+| Actor | 2K | 3-4K | 5-6K | Largest consumer (full file content) |
+| Monitor | 1.5K | 1K | 2.5K | Always included |
+| Predictor | 1.5K | 1K | 2.5K | Conditional in /map-efficient |
+| Evaluator | 2K | 1K | 3K | Skipped in /map-efficient |
+| Reflector | 2K | 1K | 3K | Batched in /map-efficient |
+| Curator | 1.5K | 0.5K | 2K | Batched in /map-efficient |
+
+**Per-subtask totals:**
+- /map-feature: ~15-20K tokens
+- /map-efficient: ~9-12K tokens (40% savings)
+- /map-fast: ~8-10K tokens (50% savings)
+
+**For 5-subtask workflow:**
+- /map-feature: ~75-100K tokens
+- /map-efficient: ~45-60K tokens (batched learning saves (5-1)×5K = 20K additional)
+- /map-fast: ~40-50K tokens (but no learning)
+
+#### Workflow Variant Selection
+
+See [USAGE.md - Workflow Variants](./USAGE.md#workflow-variants) for detailed decision guide, real-world examples, and cost analysis.
+
 ---
 
 ## Agent Specifications

@@ -17,8 +17,11 @@ Implementation of **Modular Agentic Planner (MAP)** — a cognitive architecture
 ### Inside Claude Code (Recommended)
 
 ```bash
-# Feature development
+# Feature development (full quality - 8 agents)
 /map-feature implement user authentication with JWT tokens
+
+# ⭐ RECOMMENDED: Efficient workflow (30-40% token savings, preserves learning)
+/map-efficient implement user profile page with avatar upload
 
 # Debugging
 /map-debug fix the API 500 error on login endpoint
@@ -28,6 +31,9 @@ Implementation of **Modular Agentic Planner (MAP)** — a cognitive architecture
 
 # Code review
 /map-review review the recent changes in auth.py
+
+# ⚠️ Fast workflow (40-50% savings, NO learning - throwaway code only)
+/map-fast prototype a quick API endpoint mockup
 ```
 
 ### Command Line Usage
@@ -101,6 +107,54 @@ pip install -e .
 **Other installation methods** (manual copy, troubleshooting): See [INSTALL.md](docs/INSTALL.md)
 
 **For maintainers**: Release process documented in [RELEASING.md](RELEASING.md)
+
+## 🔀 Workflow Variants
+
+MAP Framework offers three workflow variants optimized for different scenarios:
+
+| Command | Token Usage | Learning | Quality Gates | Best For |
+|---------|-------------|----------|---------------|----------|
+| **`/map-feature`** | 100% (baseline) | ✅ Full (per-subtask) | ✅ All 8 agents | Critical features, first-time implementations, maximum QA |
+| **`/map-efficient`** ⭐ | **60-70%** | ✅ Full (batched) | ✅ Essential agents | **RECOMMENDED: Most production tasks** |
+| **`/map-fast`** ⚠️ | 50-60% | ❌ None | ⚠️ Basic only | Throwaway prototypes, experiments (NOT production) |
+
+### Which Workflow Should You Use?
+
+**Use `/map-efficient` (RECOMMENDED) when:**
+- ✅ Building production features where token costs matter
+- ✅ Well-understood tasks with low to medium risk
+- ✅ You want learning without excessive token usage
+- ✅ Iterative development with frequent workflows
+
+**Use `/map-feature` (full workflow) when:**
+- 🔒 Implementing security-critical functionality
+- 🔒 First-time complex features requiring maximum validation
+- 🔒 High-risk changes affecting many files
+- 🔒 You need complete quality assurance and impact analysis
+
+**Use `/map-fast` (minimal) ONLY when:**
+- 🗑️ Creating throwaway prototypes you'll discard
+- 🗑️ Quick experiments where quality doesn't matter
+- 🗑️ Learning/tutorial contexts where failure is acceptable
+- ⚠️ **NEVER for production code** - no learning, quality risks
+
+### Key Differences
+
+**`/map-efficient` optimizations:**
+- **Conditional Predictor**: Only called for high-risk tasks (security, breaking changes)
+- **Batched Learning**: Reflector/Curator run once at end (vs per-subtask)
+- **Evaluator Skipped**: Monitor provides sufficient validation for most tasks
+- **Result**: 30-40% token savings while preserving learning and essential quality gates
+
+**`/map-fast` limitations:**
+- ❌ No impact analysis (Predictor skipped)
+- ❌ No quality scoring (Evaluator skipped)
+- ❌ No learning (Reflector/Curator skipped)
+- ❌ Playbook never improves
+- ❌ Cipher knowledge never accumulates
+- ⚠️ **Defeats MAP's core purpose of continuous improvement**
+
+**See [USAGE.md](docs/USAGE.md#workflow-variants) for detailed decision guide and real-world token usage examples.**
 
 ## Requirements
 

@@ -314,6 +314,220 @@ Summary:
 4. **Visualize complex graphs** — Use `--visualize` to understand execution order
 5. **Check exit codes** — Use `$?` in shell scripts for automated validation
 
+## 🔀 Workflow Variants
+
+MAP Framework offers three workflow variants with different trade-offs between token usage, quality assurance, and learning:
+
+### Comparison Table
+
+| Feature | /map-feature | /map-efficient ⭐ | /map-fast ⚠️ |
+|---------|--------------|-------------------|--------------|
+| **Agents Used** | 8 (full pipeline) | 5-6 (optimized) | 3 (minimal) |
+| **Token Savings** | 0% (baseline) | **30-40%** | 40-50% |
+| **Learning Enabled** | ✅ Per-subtask | ✅ Batched at end | ❌ None |
+| **Quality Gates** | All agents | Essential agents | Basic only |
+| **Impact Analysis** | ✅ Always (Predictor) | ✅ Conditional | ❌ Never |
+| **Quality Scoring** | ✅ Yes (Evaluator) | ❌ Skipped | ❌ Never |
+| **Playbook Updates** | ✅ Per-subtask | ✅ End of workflow | ❌ None |
+| **Cipher Integration** | ✅ Per-subtask | ✅ End of workflow | ❌ None |
+| **Best For** | Critical features | **Most tasks** | Throwaway only |
+| **Production Ready** | ✅ Maximum QA | ✅ Yes | ❌ NO |
+
+### Decision Guide: Which Workflow Should I Use?
+
+#### Use `/map-efficient` (RECOMMENDED) ⭐
+
+**When:**
+- ✅ Production code where token costs matter
+- ✅ Well-understood features with low-medium risk
+- ✅ Iterative development with frequent workflows
+- ✅ You want learning without excessive token usage
+- ✅ Standard CRUD operations, UI components
+- ✅ Refactoring with clear scope
+
+**Why it's better than /map-fast:**
+- Still preserves full learning (Reflector/Curator)
+- Conditional Predictor catches high-risk issues
+- Only 10% less token savings but much safer
+
+**Example use cases:**
+```bash
+# Standard feature development
+/map-efficient implement user profile editing with form validation
+
+# API development
+/map-efficient create REST API endpoints for product management
+
+# UI components
+/map-efficient build responsive navigation menu with mobile support
+```
+
+#### Use `/map-feature` (Full Workflow)
+
+**When:**
+- 🔒 Security-critical functionality (authentication, authorization)
+- 🔒 First-time implementation of complex features
+- 🔒 High-risk changes affecting many files/modules
+- 🔒 Database schema migrations
+- 🔒 Breaking API changes
+- 🔒 You need maximum quality assurance
+
+**Why it's worth the extra tokens:**
+- Evaluator scores quality across 6 dimensions
+- Predictor always analyzes breaking changes
+- Per-subtask learning captures more nuanced patterns
+- Maximum safety for critical code
+
+**Example use cases:**
+```bash
+# Security-critical
+/map-feature implement JWT authentication with refresh tokens
+
+# Complex first-time feature
+/map-feature build real-time chat system with WebSocket support
+
+# High-risk refactoring
+/map-refactor migrate entire codebase from REST to GraphQL
+```
+
+#### Use `/map-fast` (Minimal) ⚠️
+
+**ONLY when:**
+- 🗑️ Creating throwaway prototypes you'll discard
+- 🗑️ Quick experiments to test feasibility
+- 🗑️ Learning/tutorial contexts where failure is acceptable
+- 🗑️ Mockups for demonstrations
+
+**⚠️ NEVER use for:**
+- ❌ Production code
+- ❌ Code you'll commit to repository
+- ❌ Features that others will depend on
+- ❌ Security-sensitive functionality
+
+**Why it's dangerous:**
+- No impact analysis → Breaking changes undetected
+- No learning → Playbook stays empty, same mistakes repeated
+- No quality scoring → Security/performance issues missed
+- No cipher integration → Knowledge lost forever
+
+**Example use cases (acceptable):**
+```bash
+# Quick prototype to show stakeholder
+/map-fast prototype a dashboard layout with mock data
+
+# Feasibility experiment
+/map-fast test if library X can integrate with our stack
+
+# Tutorial/learning
+/map-fast follow the React tutorial to learn hooks
+```
+
+### Real-World Token Usage Examples
+
+**Small Task (1-2 subtasks):**
+- `/map-feature`: ~20-30K tokens
+- `/map-efficient`: ~12-20K tokens (40% savings)
+- `/map-fast`: ~10-15K tokens (50% savings)
+
+**Medium Task (3-5 subtasks):**
+- `/map-feature`: ~75-100K tokens
+- `/map-efficient`: ~45-60K tokens (40% savings)
+- `/map-fast`: ~30-40K tokens (60% savings)
+
+**Large Task (6-8 subtasks):**
+- `/map-feature`: ~150-200K tokens
+- `/map-efficient`: ~90-120K tokens (40% savings)
+- `/map-fast`: ~60-80K tokens (60% savings)
+
+**Cost at $3/M input, $15/M output (Claude Sonnet 3.5):**
+
+| Task Size | /map-feature | /map-efficient | Savings |
+|-----------|--------------|----------------|---------|
+| Small | $0.30-0.45 | $0.18-0.30 | $0.12-0.15 |
+| Medium | $1.13-1.50 | $0.68-0.90 | $0.45-0.60 |
+| Large | $2.25-3.00 | $1.35-1.80 | $0.90-1.20 |
+
+**For teams running 10 workflows/day:**
+- /map-feature: ~$22.50/day
+- /map-efficient: ~$13.50/day
+- **Monthly savings: $270** (12 fewer dollars/day × 30 days)
+
+### How /map-efficient Works
+
+**Key Optimizations:**
+
+1. **Conditional Predictor** (5-10% savings)
+   - TaskDecomposer assigns risk_level to each subtask
+   - Predictor only called if risk_level='high' or Monitor flags issues
+   - Low-risk tasks (simple CRUD, UI updates) skip impact analysis
+
+2. **Batched Learning** (10-15% savings)
+   - Reflector analyzes ALL subtasks together at end
+   - Curator makes single playbook update
+   - More holistic insights (sees patterns across subtasks)
+   - Saves (N-1) × 3K tokens for N subtasks
+
+3. **Evaluator Skipped** (8-12% savings)
+   - Monitor provides sufficient validation for most tasks
+   - Evaluator's 6-dimension scoring rarely changes decisions
+   - Quality still ensured by Monitor's comprehensive checks
+
+**What's Preserved:**
+- ✅ Full learning cycle (Reflector + Curator)
+- ✅ Playbook updates (batched but complete)
+- ✅ Cipher integration (high-quality patterns stored)
+- ✅ Essential quality gates (Monitor validation)
+- ✅ Impact analysis (when needed)
+
+### Workflow Selection Flowchart
+
+```
+START: I need to implement a feature
+  |
+  ├─ Is it throwaway/prototype code?
+  |    └─ YES → /map-fast (but consider if learning would help)
+  |    └─ NO → Continue
+  |
+  ├─ Is it security-critical or first-time complex feature?
+  |    └─ YES → /map-feature (maximum QA)
+  |    └─ NO → Continue
+  |
+  ├─ Do I care about token costs?
+  |    └─ NO → /map-feature (best quality)
+  |    └─ YES → /map-efficient ⭐ (RECOMMENDED)
+```
+
+### Migration Guide
+
+**Switching from /map-feature to /map-efficient:**
+
+No code changes needed! Just use `/map-efficient` instead:
+
+```bash
+# Old
+/map-feature implement user dashboard
+
+# New (saves 30-40% tokens, same learning)
+/map-efficient implement user dashboard
+```
+
+**When to keep using /map-feature:**
+- First implementation of authentication/authorization
+- Database migrations affecting multiple tables
+- Breaking API changes
+- Any feature where failure is costly
+
+### Common Misconceptions
+
+**❌ Misconception:** "/map-fast is 50% cheaper, so it's always better for saving money"
+**✅ Reality:** /map-fast defeats MAP's purpose (no learning = repeat mistakes = waste tokens long-term). Use /map-efficient instead.
+
+**❌ Misconception:** "/map-efficient skips quality checks"
+**✅ Reality:** Monitor still validates everything. Only Evaluator's scoring is skipped (rarely changes decisions).
+
+**❌ Misconception:** "Batched learning in /map-efficient is inferior to per-subtask learning"
+**✅ Reality:** Batched learning sees patterns ACROSS subtasks, often producing better insights than isolated per-subtask analysis.
+
 ## 🎯 Best Practices
 
 ### 1. Clear Requirements
