@@ -79,6 +79,158 @@ IF industry comparison needed:
 
 **Example:** "Caching improves performance but uses memory. Trace trade-offs: [reasoning]. Testability requires: DI, isolation, coverage. Assess each: [analysis]"
 
+#### Example Usage Patterns
+
+**When to invoke sequential-thinking during quality evaluation:**
+
+##### 1. Competing Performance vs Security Trade-offs
+
+**Use When**: Implementation chooses between performance optimization and security hardening, where improving one dimension impacts another.
+
+**Decision-Making Context**:
+- IF caching sensitive data → evaluate security (encryption, TTL) vs performance (speed, memory)
+- IF input validation complexity → evaluate security (comprehensive checks) vs performance (request latency)
+- IF authentication mechanism → evaluate security (multi-factor, encryption) vs performance (response time, throughput)
+
+**Thought Structure Example**:
+```
+Thought 1: Identify performance optimization and initial hypothesis
+Thought 2: Evaluate security implications of optimization (caching unencrypted data)
+Thought 3: Analyze performance gain quantitatively (response time, throughput)
+Thought 4: Assess alternative approaches (encrypted cache, selective caching)
+Thought 5: Evaluate testability impact (mocking cache, testing TTL logic)
+Thought 6: Consider completeness (monitoring, cache invalidation, error handling)
+Thought 7: Calculate weighted scores across dimensions
+Thought 8: Generate justified recommendation with trade-off explanation
+```
+
+**What to Look For**:
+- Caching strategies (in-memory, Redis, CDN) vs encryption requirements
+- Input validation depth (regex, whitelist, sanitization) vs request latency
+- Authentication methods (JWT, session, OAuth) vs API response time
+- Batch operations (throughput) vs transaction safety (atomicity)
+- Async operations (concurrency) vs error handling complexity
+- Connection pooling (reuse) vs resource exhaustion (limits)
+
+**Example Scenario**: Actor implements Redis caching for user profile API. Cache stores plaintext user data (email, phone) for 5 minutes.
+
+**Initial hypothesis**: Performance 9/10 (fast cache), Security 8/10 (Redis secured)
+
+**Sequential-thinking discovery**:
+- **Thought 2**: Cache stores PII unencrypted → security risk if Redis compromised (Security 6/10)
+- **Thought 4**: Alternative: encrypt cache values OR exclude sensitive fields → performance tradeoff
+- **Thought 5**: Tests don't mock cache failures → testability gap (Testability 7/10)
+- **Thought 6**: No cache invalidation on user update → completeness issue (Completeness 7/10)
+- **Consolidated**: Performance 9/10, Security 6/10 (PII exposure), Testability 7/10, Completeness 7/10
+- **Recommendation**: "improve" - encrypt cached PII or exclude sensitive fields, add cache invalidation on updates
+
+---
+
+##### 2. Testability vs Simplicity Trade-offs
+
+**Use When**: Implementation balances code simplicity with design-for-testability patterns (dependency injection, mocking seams).
+
+**Decision-Making Context**:
+- IF hardcoded dependencies → evaluate simplicity (fewer abstractions) vs testability (cannot mock)
+- IF complex DI framework → evaluate testability (full isolation) vs code_quality (boilerplate complexity)
+- IF tightly coupled components → evaluate simplicity (direct calls) vs testability (integration test only)
+
+**Thought Structure Example**:
+```
+Thought 1: Assess code structure and dependency management
+Thought 2: Evaluate testability dimension (can components be tested in isolation?)
+Thought 3: Evaluate code_quality dimension (is code clear and maintainable?)
+Thought 4: Identify tension between simplicity and testability
+Thought 5: Check test coverage and quality of existing tests
+Thought 6: Assess alternative designs (manual DI, factory pattern, partial mocks)
+Thought 7: Consider completeness (are tests comprehensive despite design choices?)
+Thought 8: Generate recommendation balancing dimensions
+```
+
+**What to Look For**:
+- Hardcoded external APIs, database connections, file I/O (testability issue)
+- Constructor injection vs service locator vs global state
+- Test doubles provided (mocks, stubs, fakes) or test requires real infrastructure
+- Function size and complexity (small functions easier to test)
+- Side effects isolated (pure functions) vs scattered throughout code
+- Test coverage percentage vs test quality (meaningful assertions)
+
+**Example Scenario**: Actor implements email notification service that directly instantiates `SMTPClient()` inside `send_notification()` method.
+
+**Initial hypothesis**: Code_quality 8/10 (simple, clear), Testability 9/10 (can test, right?)
+
+**Sequential-thinking discovery**:
+- **Thought 2**: Cannot mock SMTPClient → tests require real SMTP server (Testability 4/10)
+- **Thought 3**: Code is simple BUT creates tight coupling → maintainability suffers when switching email providers (Code_quality 6/10)
+- **Thought 5**: Tests use real SMTP → flaky, slow, require network (Testability 3/10, Completeness 5/10)
+- **Thought 6**: Alternative: inject email client as parameter → adds one line of complexity, gains full testability
+- **Thought 7**: Current tests incomplete (no error case tests) because mocking impossible (Completeness 5/10)
+- **Consolidated**: Code_quality 6/10 (tight coupling), Testability 3/10 (cannot isolate), Completeness 5/10 (incomplete tests)
+- **Recommendation**: "improve" - inject SMTPClient dependency to enable mocking, add comprehensive test coverage for error cases
+
+---
+
+##### 3. Completeness Assessment with Research Requirements
+
+**Use When**: Evaluating whether Actor performed adequate research for unfamiliar libraries, complex algorithms, or post-cutoff features.
+
+**Decision-Making Context**:
+- IF using library released after training cutoff (e.g., Next.js 14+ features) → expect research in Approach section
+- IF implementing complex algorithm (rate limiting, distributed consensus) → check for research or authoritative sources
+- IF security-critical implementation (auth, encryption) → validate against current best practices via research
+
+**Thought Structure Example**:
+```
+Thought 1: Identify knowledge gap areas (post-cutoff APIs, complex algorithms, security patterns)
+Thought 2: Check Actor output for research documentation (context7, deepwiki, codex-bridge citations)
+Thought 3: Evaluate if research was appropriate (did gap require external knowledge?)
+Thought 4: Assess implementation correctness against research sources or known patterns
+Thought 5: Determine if research omission caused correctness issues (outdated API, wrong algorithm)
+Thought 6: Score completeness dimension (research, docs, tests, error handling)
+Thought 7: Generate recommendation with research feedback
+```
+
+**What to Look For**:
+- Next.js 14+ Server Actions, App Router (post-cutoff features)
+- React 18+ hooks, concurrent features (post-cutoff patterns)
+- Sliding window rate limiters, CRDT algorithms (complex algorithms)
+- OAuth 2.1, WebAuthn, FIDO2 (modern security standards)
+- Actor Approach section mentions "Based on [source]..." or "Research: [tool]"
+- Trade-offs section explains "Chose X over Y per [docs/repo]"
+
+**Example Scenario**: Actor implements Next.js 13+ Server Actions without mentioning research. Uses outdated `getServerSideProps` pattern (Next.js 12 API).
+
+**Initial hypothesis**: Completeness 7/10 (has tests, docs), Functionality 8/10 (works)
+
+**Sequential-thinking discovery**:
+- **Thought 1**: Next.js Server Actions released April 2023 (post-cutoff) → expect context7 research
+- **Thought 2**: No research citations in Approach section → used training data (outdated)
+- **Thought 4**: Implementation uses `getServerSideProps` → deprecated in Next.js 13+ (Functionality 6/10, uses old API)
+- **Thought 5**: Should use async Server Components pattern → research would have caught this
+- **Thought 6**: Completeness 5/10 (missing research step, outdated implementation approach)
+- **Consolidated**: Functionality 6/10 (wrong pattern), Completeness 5/10 (no research), Code_quality 7/10 (clear but outdated)
+- **Recommendation**: "improve" - use mcp__context7 to get Next.js 14 Server Actions docs, refactor to async Server Components pattern
+
+---
+
+#### Key Principles for Evaluator Sequential-Thinking
+
+**When to Invoke**:
+1. **Competing Dimensions**: Security vs Performance, Simplicity vs Testability, Completeness vs Complexity
+2. **Trade-off Analysis**: When improving one score would decrease another (caching + encryption, DI + boilerplate)
+3. **Multi-factor Scoring**: When multiple dimensions interact (tight coupling → testability AND maintainability issues)
+4. **Research Validation**: When unfamiliar tech or post-cutoff features require external knowledge verification
+
+**Reasoning Pattern**:
+- **Hypothesis formation**: Initial score estimates per dimension
+- **Dimension interaction**: How does optimization in dimension A impact dimension B?
+- **Trade-off identification**: Explicit conflicts (fast + insecure, simple + untestable)
+- **Alternative evaluation**: Could different design balance dimensions better?
+- **Consolidated scoring**: Final scores with justifications referencing trade-offs
+- **Recommendation logic**: proceed/improve/reconsider based on weighted scores + trade-off severity
+
+**Value Add**: Sequential-thinking reveals dimension interactions that single-pass evaluation misses, leading to more accurate scores and actionable recommendations that address root trade-offs (not just symptoms).
+
 ### 2. mcp__claude-reviewer__get_review_history
 **Use When**: Check consistency with past implementations
 **Rationale**: Maintain consistent standards (e.g., if past testability scored 8/10, use same criteria). Prevents score inflation/deflation.

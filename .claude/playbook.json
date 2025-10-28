@@ -4,8 +4,8 @@
     "project": "map-framework",
     "description": "ACE-style comprehensive playbook for MAP Framework development",
     "created_at": "2025-10-10T00:00:00Z",
-    "last_updated": "2025-10-27T19:38:54.477692+00:00",
-    "total_bullets": 105,
+    "last_updated": "2025-10-28T14:38:42.143927",
+    "total_bullets": 111,
     "sections_count": 12,
     "top_k": 5,
     "version": "1.4"
@@ -1118,6 +1118,53 @@
           ],
           "deprecated": false,
           "deprecation_reason": null
+        },
+        {
+          "id": "impl-workflow-risk",
+          "content": "MAP Workflow Selection by Risk Profile: Match validation intensity to change risk, not task count. Documentation-only changes (markdown, comments, READMEs) → MAP Efficient workflow (skip per-subtask Monitor/Predictor, batch Evaluator/Reflector). Production code (logic, APIs, schemas) → MAP Feature (full validation per subtask). Evidence-based decision: documentation workflow saved 35% tokens (97K vs 150K theoretical) with 0 errors across 7 subtasks. Risk profile determines workflow, not arbitrary 'simple vs complex' heuristic.",
+          "code_example": "```bash\n# Decision matrix for workflow selection\nif [[ $change_type == \"documentation\" ]] && [[ $touches_code == false ]]; then\n  workflow=\"/map-efficient\"  # 35% token savings\nelif [[ $change_type == \"production_code\" ]] || [[ $touches_logic == true ]]; then\n  workflow=\"/map-feature\"    # Full validation\nfi\n```",
+          "tags": [
+            "map-framework",
+            "workflow-selection",
+            "risk-management",
+            "token-optimization"
+          ],
+          "helpful_count": 1,
+          "last_used": "2025-10-28T14:38:42.143908"
+        },
+        {
+          "id": "impl-atomic-decomposition",
+          "content": "Atomic Task Decomposition for Zero-Iteration Workflows: Break complex tasks into 7+ atomic subtasks with explicit success criteria (not 2-3 vague phases). Each subtask must have: single responsibility, clear input/output, independently verifiable success metrics (line counts, example counts, verification commands - NOT subjective 'looks good'). Prevents iteration loops by making acceptance criteria binary. Evidence: Sequential Thinking Integration decomposed into 7 atomic subtasks achieved 7/7 completion with 0 iterations vs typical 3-4 iterations for monolithic 'update documentation' task.",
+          "code_example": "```markdown\n# ❌ VAGUE\nSubtask 1: Update Monitor agent documentation\nSuccess: Documentation improved\n\n# ✅ ATOMIC\nSubtask 1: Add 'When to Use' section to Monitor agent\nOutput: Minimum 8 bullet points\nVerification: grep -c \"^-\" monitor.md (expect ≥8)\n```",
+          "related_to": [
+            "impl-0014",
+            "impl-0049"
+          ],
+          "tags": [
+            "task-decomposition",
+            "workflow-optimization",
+            "acceptance-criteria",
+            "zero-iteration"
+          ],
+          "helpful_count": 1,
+          "last_used": "2025-10-28T14:38:42.143919"
+        },
+        {
+          "id": "impl-actor-format",
+          "content": "Actor Content Generation Output Format Specification: When invoking Actor for content generation (documentation sections, code snippets, config files), explicitly request literal insertable format in prompt. Specify: 'Generate content for INSERTION at line X. Format: markdown/python/yaml. No summarization. Copy-pasteable.' Prevents Actor from summarizing output ('I added 3 examples...') instead of providing actual content, eliminating extraction step and avoiding format loss. Evidence: 3/3 Actor invocations for Sequential Thinking Integration required zero reformatting.",
+          "code_example": "```python\n# ❌ VAGUE PROMPT\nprompt = \"Add examples to Monitor agent\"\n# Result: \"I added 8 examples...\"\n\n# ✅ EXPLICIT FORMAT  \nprompt = \"\"\"Generate for INSERTION at line 45.\nFormat: Markdown list.\nContent: 8 examples.\nNo explanatory text.\n\"\"\"\n# Result: Actual markdown ready for insertion\n```",
+          "related_to": [
+            "impl-0050",
+            "impl-0018"
+          ],
+          "tags": [
+            "actor-agent",
+            "content-generation",
+            "prompt-engineering",
+            "output-format"
+          ],
+          "helpful_count": 1,
+          "last_used": "2025-10-28T14:38:42.143922"
         }
       ]
     },
@@ -1238,6 +1285,22 @@
           ],
           "deprecated": false,
           "deprecation_reason": null
+        },
+        {
+          "id": "perf-docs-optimization",
+          "content": "Documentation Workflow Token Optimization: For true documentation changes (markdown files, agent templates, README updates - NOT code comments near logic), use MAP Efficient workflow to skip per-subtask Monitor/Predictor validation and batch Evaluator/Reflector/Curator at end. Achieves 35% token savings (97K vs 150K) with 0 error rate for documentation-only changes. CRITICAL: Only apply to documentation changes that don't affect code behavior. Code comments near logic require full validation. Evidence: Sequential Thinking Integration added 782 lines using MAP Efficient, 0 errors, 53K tokens saved.",
+          "code_example": "```bash\nchanged_files=$(git diff --name-only HEAD)\nif echo \"$changed_files\" | grep -qE '\\.(py|js|go)$'; then\n  workflow=\"/map-feature\"  # Code changes\nelif echo \"$changed_files\" | grep -qE '\\.(md|\\.claude/)$'; then\n  workflow=\"/map-efficient\"  # Docs only (35% savings)\nfi\n```",
+          "related_to": [
+            "perf-0024"
+          ],
+          "tags": [
+            "token-optimization",
+            "workflow-selection",
+            "documentation",
+            "map-framework"
+          ],
+          "helpful_count": 1,
+          "last_used": "2025-10-28T14:38:42.143923"
         }
       ]
     },
@@ -1795,6 +1858,23 @@
           ],
           "deprecated": false,
           "deprecation_reason": null
+        },
+        {
+          "id": "tool-bidirectional-sync",
+          "content": "Bidirectional Template Synchronization for CLI Tools: When developing CLI tools that distribute templates via package managers (pip install, npm install), maintain bidirectional sync between development templates (.claude/) and distribution templates (src/templates/). Pattern: dedicated verification subtask + check script (./scripts/check-template-sync.sh using diff -q) + git pre-commit hook. Critical because users get templates via 'mapify init' from packaged src/templates/, NOT from .claude/ dev directory. Evidence: Zero drift issues across 8 agent templates + 6 command templates after Sequential Thinking Integration.",
+          "code_example": "```bash\n#!/bin/bash\n# scripts/check-template-sync.sh\nfor agent in task-decomposer actor monitor predictor evaluator; do\n  source=\".claude/agents/${agent}.md\"\n  target=\"src/templates/agents/${agent}.md\"\n  if ! diff -q \"$source\" \"$target\" > /dev/null; then\n    echo \"❌ OUT OF SYNC: ${agent}.md\"\n    exit 1\n  fi\ndone\necho \"✅ All templates in sync\"\n```",
+          "related_to": [
+            "impl-0005"
+          ],
+          "tags": [
+            "cli-tools",
+            "template-management",
+            "package-distribution",
+            "synchronization",
+            "bash"
+          ],
+          "helpful_count": 1,
+          "last_used": "2025-10-28T14:38:42.143918"
         }
       ]
     },
@@ -2411,6 +2491,22 @@
           ],
           "deprecated": false,
           "deprecation_reason": null
+        },
+        {
+          "id": "doc-mcp-integration",
+          "content": "MCP Tool Integration Documentation Pattern: When documenting MCP tool integration in agent templates, use consistent 4-section structure across all agents: 1) When to Use (8+ examples with pattern matching), 2) Decision Context (how to decide when tool applies), 3) Thought Structure (expected output format from tool), 4) What to Look For (verification criteria). Apply identical structure to all agents using same MCP tool. Reduces cognitive load, enables pattern verification. Evidence: 8 MCP patterns documented with consistent structure made review trivial.",
+          "code_example": "```markdown\n## When to Use {Tool}\n- Pattern 1: [specific scenario]\n(minimum 8 patterns)\n\n## Decision Context\n1. Condition A (with threshold)\n(minimum 6 criteria)\n```",
+          "related_to": [
+            "doc-0010"
+          ],
+          "tags": [
+            "mcp-tools",
+            "documentation-structure",
+            "agent-templates",
+            "cognitive-load"
+          ],
+          "helpful_count": 1,
+          "last_used": "2025-10-28T14:38:42.143921"
         }
       ]
     },
