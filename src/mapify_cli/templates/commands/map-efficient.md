@@ -1,19 +1,40 @@
 ---
-description: Token-optimized workflow with batched learning (30-40% savings, preserves learning)
+description: Optimized workflow with batched learning (RECOMMENDED for token-conscious production work)
 ---
 
 # MAP Efficient Workflow
 
-Token-optimized workflow (30-40% savings) with batched learning and conditional analysis.
+**✅ RECOMMENDED: Best Balance of Speed and Quality**
 
-**Key optimizations:**
-- Evaluator skipped (Monitor sufficient for most tasks)
-- Predictor conditional (only for high-risk subtasks)
-- Reflector/Curator batched (once at end vs per-subtask)
+This workflow provides **intelligent token optimization (30-40% savings)** while **preserving MAP's core value**:
 
-**Preserves:** Full learning cycle, playbook updates, cipher integration
+✅ **Impact Analysis** (Predictor) → Conditional on risk level
+✅ **Basic Validation** (Monitor) → Always enforced
+✅ **Learning Preserved** (Reflector/Curator) → Batched at end
+✅ **Playbook Updates** → Single update after all subtasks
+✅ **Cipher Integration** → Cross-project knowledge maintained
 
-Implement the following:
+**Token Savings vs Full Workflow:**
+- Skip Evaluator per subtask: ~8-12% savings
+- Conditional Predictor: ~5-10% savings
+- Batched Reflector/Curator: ~10-15% savings
+- **Total: 30-40% token reduction**
+
+**When to use /map-efficient:**
+- Production code where token costs matter
+- Well-understood tasks with low risk
+- Iterative development with frequent workflows
+- Any task where /map-fast feels too risky but /map-feature too expensive
+
+**When to use /map-feature instead:**
+- First time implementing critical functionality
+- High-risk changes (security, authentication, data handling)
+- Complex refactoring across many files
+- When maximum quality assurance is required
+
+---
+
+Implement the following with efficient workflow:
 
 **Task:** $ARGUMENTS
 
@@ -80,7 +101,17 @@ mapify recitation create "$TASK_ID" "$ARGUMENTS" "$SUBTASKS_JSON"
 
 ### 3.1 Get Relevant Playbook Bullets
 
-Search `.claude/playbook.json` for relevant patterns (use grep/read).
+Query playbook using FTS5 (faster for large playbooks):
+
+```bash
+# Query playbook using FTS5 full-text search
+PLAYBOOK_BULLETS=$(mapify playbook query "[subtask description]" --limit 5 --mode local)
+```
+
+**Benefits over grep/read:**
+- Works with large playbooks (>256KB)
+- FTS5 full-text search with relevance ranking
+- Quality-scored results
 
 ### 3.1.5 Update Recitation Plan
 
@@ -303,6 +334,8 @@ Output JSON with:
   )
   ```
 
+**Token Savings Note:** One batched curator vs per-subtask curator saves ~(N-1) * 2K tokens.
+
 ## Step 5: Final Summary
 
 ```bash
@@ -313,7 +346,11 @@ Run tests (if applicable), create commit, and summarize:
 - Features implemented
 - Files changed
 - Playbook bullets added
-- Token efficiency: Predictor calls vs total subtasks
+- Overall quality
+- **Token efficiency:**
+  - Predictor calls: [count] / [total_subtasks] subtasks ([X]% saved)
+  - Batched learning: [N-1] reflection cycles saved
+  - Estimated token savings: ~[X]% vs /map-feature
 
 ```bash
 mapify recitation clear
@@ -327,12 +364,57 @@ mapify recitation clear
 - `mcp__context7__get-library-docs` - Get library documentation
 - `mcp__claude-reviewer__request_review` - Request code review
 
+## Comparison: /map-efficient vs Alternatives
+
+| Feature | /map-feature (Full) | /map-efficient (YOU) | /map-fast (Minimal) |
+|---------|---------------------|----------------------|---------------------|
+| **Validation** | Monitor + Evaluator | Monitor only | Monitor only |
+| **Impact Analysis** | Always (Predictor) | Conditional | Never |
+| **Learning** | Per-subtask | Batched (end) | None |
+| **Quality Gates** | All agents | Essential agents | Basic only |
+| **Token Usage** | 100% (baseline) | **60-70%** | 50-60% |
+| **Production Safe** | ✅ Maximum | ✅ Yes | ❌ No |
+| **Knowledge Growth** | ✅ Full | ✅ Full | ❌ None |
+| **Best For** | Critical features | **Most tasks** | Throwaway only |
+
 ## Critical Constraints
 
-- Predictor conditional on risk level
-- Evaluator skipped (Monitor provides sufficient validation)
-- Reflector/Curator batched (single learning cycle at end)
-- Learning preserved (playbook and cipher still updated)
-- MAX 5 iterations per subtask
+- **Predictor conditional** on risk level (saves tokens for low-risk tasks)
+- **Evaluator skipped** (Monitor provides sufficient validation)
+- **Reflector/Curator batched** (single learning cycle at end)
+- **Learning preserved** (playbook and cipher still updated)
+- **MAX 5 iterations** per subtask
+- **Use /map-feature** if you need maximum quality assurance
+
+## Example
+
+User says: `/map-efficient implement user profile editing feature`
+
+This workflow will:
+1. Decompose into subtasks (e.g., API endpoint, database update, frontend form)
+2. For each subtask:
+   - Actor implements
+   - Monitor validates
+   - Predictor called only if high risk (e.g., database migration)
+   - Apply changes
+3. After all subtasks:
+   - Batch Reflector analyzes entire feature
+   - Batch Curator updates playbook once
+   - Cipher receives high-quality patterns
+
+**Token savings**: ~35% vs /map-feature, while maintaining:
+- Full learning (playbook + cipher updated)
+- Essential quality gates (Monitor, conditional Predictor)
+- Production readiness
+
+---
+
+**Why /map-efficient is RECOMMENDED:**
+
+✅ **Preserves MAP's core value** (continuous learning)
+✅ **Significant token savings** (30-40%)
+✅ **Production-ready** (essential quality gates maintained)
+✅ **Holistic insights** (batched reflection sees patterns across subtasks)
+✅ **Best balance** of speed, quality, and learning
 
 Begin now with efficient workflow.

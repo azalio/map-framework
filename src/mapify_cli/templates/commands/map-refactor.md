@@ -47,6 +47,13 @@ Refactoring requires careful analysis to ensure no behavioral changes:
 
 ## Step 1: Initial Impact Analysis (Critical!)
 
+**Query playbook for refactoring patterns:**
+
+```bash
+# Search for refactoring best practices
+REFACTOR_PATTERNS=$(mapify playbook query "refactor [component type]" --limit 5 --section ARCHITECTURE_PATTERNS --section CODE_QUALITY_RULES)
+```
+
 **ALWAYS run predictor FIRST** before any refactoring:
 
 ```

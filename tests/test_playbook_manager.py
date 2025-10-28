@@ -6,6 +6,7 @@ to reduce context distraction and save tokens.
 """
 
 import json
+import sqlite3
 import pytest
 from pathlib import Path
 from mapify_cli.playbook_manager import PlaybookManager
@@ -36,15 +37,19 @@ class TestTopKConfiguration:
         assert manager.playbook["metadata"]["top_k"] == 5
 
     def test_playbook_file_on_disk_has_top_k(self, temp_playbook):
-        """Playbook saved to disk includes top_k in metadata"""
-        PlaybookManager(playbook_path=str(temp_playbook), use_semantic_search=False)
+        """Playbook saved to database includes top_k in metadata"""
+        manager = PlaybookManager(playbook_path=str(temp_playbook), use_semantic_search=False)
 
-        # Read playbook from disk
-        with open(temp_playbook, 'r') as f:
-            playbook_data = json.load(f)
+        # Read from SQLite database
+        db_path = temp_playbook.parent / "playbook.db"
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM metadata WHERE key = 'top_k'")
+        top_k_value = cursor.fetchone()[0]
+        conn.close()
+        manager.close()
 
-        assert "top_k" in playbook_data["metadata"]
-        assert playbook_data["metadata"]["top_k"] == 5
+        assert top_k_value == "5"
 
     def test_loading_playbook_without_top_k_adds_default(self, temp_playbook):
         """Loading legacy playbook without top_k adds default value 5"""
@@ -371,20 +376,20 @@ class TestMissingFieldHandling:
                     "bullets": [
                         {
                             "id": "impl-0001",
-                            "content": "Complete bullet",
+                            "content": "Complete pattern with all fields",
                             "deprecated": False,
                             "helpful_count": 5,
                             "harmful_count": 1
                         },
                         {
                             "id": "impl-0002",
-                            "content": "Missing deprecated",
+                            "content": "Pattern missing deprecated field",
                             "helpful_count": 3,
                             "harmful_count": 0
                         },
                         {
                             "id": "impl-0003",
-                            "content": "Missing counts",
+                            "content": "Pattern missing count fields",
                             "deprecated": False
                         }
                     ]
@@ -394,7 +399,8 @@ class TestMissingFieldHandling:
         temp_playbook.write_text(json.dumps(playbook_data))
 
         manager = PlaybookManager(playbook_path=str(temp_playbook), use_semantic_search=False)
-        results = manager.get_relevant_bullets("bullet")
+        # Search for "pattern" which appears in all three bullets
+        results = manager.get_relevant_bullets("pattern")
 
         # Should handle all three bullets without crashing
         assert len(results) == 3

@@ -46,7 +46,12 @@ Debugging workflow focuses on analysis before implementation:
 
 ## Step 1: Analyze the Issue
 
-Before calling task-decomposer, gather context:
+Before calling task-decomposer, gather context and query playbook:
+
+```bash
+# Search for similar debugging patterns
+PLAYBOOK_CONTEXT=$(mapify playbook query "debug [issue type]" --limit 5 --section ERROR_PATTERNS --section DEBUGGING_TECHNIQUES)
+```
 
 1. **Read error logs/stack traces** (if provided in $ARGUMENTS)
 2. **Search cipher for similar issues**: `mcp__cipher__cipher_memory_search("debug pattern [error_type]")`

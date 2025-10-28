@@ -108,7 +108,24 @@ For each subtask from task-decomposer output:
 
 ### 3.1 Get Relevant Playbook Bullets
 
-Search `.claude/playbook.json` for relevant patterns related to the current subtask (use grep/read).
+Query playbook using task context (faster and works with large playbooks):
+
+```bash
+# Query playbook using FTS5 full-text search
+PLAYBOOK_BULLETS=$(mapify playbook query "[subtask description]" --limit 5 --mode local)
+```
+
+**Why use `mapify playbook query` instead of grep/read:**
+- ✅ Works with large playbooks (>256KB) - grep/read fails
+- ✅ FTS5 full-text search - faster and more accurate than grep
+- ✅ Ranked by relevance - best patterns first
+- ✅ Optional cipher integration (--mode hybrid) for broader knowledge
+- ✅ Quality scoring - prioritizes proven patterns
+
+**Search modes:**
+- `--mode local` (default) - Search local playbook only (fast)
+- `--mode hybrid` - Search both playbook and cipher (broader knowledge)
+- `--mode cipher` - Search cipher only (cross-project patterns)
 
 ### 3.1.5 Update Recitation Plan (BEFORE Actor)
 
@@ -143,11 +160,13 @@ Task(
 **Acceptance Criteria:** [criteria]
 
 **Relevant Playbook Context:**
-[Include 3-5 relevant bullets from playbook]
+```
+$PLAYBOOK_BULLETS
+```
 
 **Plan Context (for recitation):**
 ```
-[Insert output from: mapify recitation get-context]
+$PLAN_CONTEXT
 ```
 
 Output JSON with:

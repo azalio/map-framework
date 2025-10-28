@@ -38,6 +38,10 @@ htmlcov/
 # ACE Playbook - user-specific data
 .claude/embeddings_cache/
 .claude/playbook.json
+.claude/playbook.json.backup.*
+.claude/playbook.db
+.claude/playbook.db-shm
+.claude/playbook.db-wal
 .claude/mcp_config.json
 .claude/commands/
 

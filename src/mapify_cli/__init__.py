@@ -1939,6 +1939,103 @@ def playbook_sync(threshold: int = typer.Option(5, help="Minimum helpful count")
     patterns = manager.get_bullets_for_sync(threshold=threshold)
     console.print_json(data={"threshold": threshold, "count": len(patterns), "patterns": [{"id": p.get("id"), "helpful_count": p.get("helpful_count")} for p in patterns]})
 
+@playbook_app.command("query")
+def playbook_query(
+    query_text: str = typer.Argument(..., help="Search query"),
+    sections: List[str] = typer.Option([], "--section", help="Filter by section (can specify multiple)"),
+    limit: int = typer.Option(5, "--limit", help="Maximum results to return"),
+    mode: str = typer.Option("local", "--mode", help="Search mode: local, cipher, or hybrid"),
+    format_output: str = typer.Option("markdown", "--format", help="Output format: markdown or json"),
+    min_quality: int = typer.Option(0, "--min-quality", help="Minimum quality score (helpful - harmful)"),
+):
+    """Query playbook using FTS5 full-text search with optional cipher integration
+
+    Examples:
+        mapify playbook query "JWT authentication" --limit 5
+        mapify playbook query "error handling" --mode hybrid --limit 10
+        mapify playbook query "API design" --section ARCHITECTURE_PATTERNS --section IMPLEMENTATION_PATTERNS
+    """
+    from mapify_cli.playbook_manager import PlaybookManager
+    from mapify_cli.playbook_query import PlaybookQuery, SearchMode
+
+    playbook_path = Path.cwd() / ".claude" / "playbook.json"
+    if not playbook_path.exists():
+        console.print("[yellow]Warning:[/yellow] Playbook not found. Initialize with 'mapify init'")
+        raise typer.Exit(1)
+
+    try:
+        # Map mode string to SearchMode enum
+        mode_map = {
+            "local": SearchMode.PLAYBOOK_ONLY,
+            "cipher": SearchMode.CIPHER_ONLY,
+            "hybrid": SearchMode.HYBRID
+        }
+        search_mode = mode_map.get(mode.lower(), SearchMode.PLAYBOOK_ONLY)
+
+        # Create query
+        query = PlaybookQuery(
+            query=query_text,
+            sections=list(sections) if sections else None,
+            limit=limit,
+            search_mode=search_mode,
+            min_quality_score=min_quality
+        )
+
+        # Execute query
+        manager = PlaybookManager(playbook_path)
+        response = manager.query(query)
+
+        # Format output
+        if format_output == "json":
+            # JSON output
+            results_json = {
+                "query": query_text,
+                "metadata": response.metadata,
+                "results": [
+                    {
+                        "id": r.id,
+                        "section": r.section,
+                        "content": r.content,
+                        "code_example": r.code_example,
+                        "quality_score": r.quality_score,
+                        "relevance_score": r.relevance_score,
+                        "combined_score": r.combined_score,
+                        "source": r.source
+                    }
+                    for r in response.results
+                ]
+            }
+            console.print_json(data=results_json)
+        else:
+            # Markdown output (default)
+            if not response.results:
+                console.print("[yellow]No results found[/yellow]")
+                return
+
+            console.print(f"# Query Results: {query_text}\n")
+            console.print(f"**Found {len(response.results)} results in {response.metadata['total_time_ms']}ms**\n")
+            console.print(f"*Search method: {response.metadata['search_method']}*\n")
+
+            for i, result in enumerate(response.results, 1):
+                console.print(f"## {i}. [{result.id}] Score: {result.combined_score:.2f}\n")
+                console.print(f"**Section:** {result.section}\n")
+                console.print(f"**Quality:** {result.quality_score} | **Relevance:** {result.relevance_score:.2f} | **Source:** {result.source}\n")
+                console.print(f"{result.content}\n")
+
+                if result.code_example:
+                    console.print("```")
+                    console.print(result.code_example)
+                    console.print("```\n")
+
+                console.print("---\n")
+
+    except ValueError as e:
+        console.print(f"[red]Error:[/red] {str(e)}")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Unexpected error:[/red] {str(e)}")
+        raise typer.Exit(1)
+
 # Validate commands
 
 @validate_app.command("graph")
