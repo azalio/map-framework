@@ -106,6 +106,75 @@ mapify playbook query "testing strategies" --format json
 - ✅ **Quality scoring** - Prioritizes proven patterns (helpful_count - harmful_count)
 - ✅ **Cipher integration** - Optional cross-project knowledge
 
+### Apply Delta Operations (MAP Workflow Integration)
+
+**Purpose:** Apply Curator agent output to update the playbook database.
+
+```bash
+# Apply operations from file
+mapify playbook apply-delta curator_output.json
+
+# Preview changes without applying (dry-run)
+mapify playbook apply-delta operations.json --dry-run
+
+# Pipe from Curator agent (recommended in MAP workflows)
+cat curator_output.json | mapify playbook apply-delta
+echo '{"operations": [{"type": "UPDATE", "bullet_id": "impl-0001", "increment_helpful": 1}]}' | mapify playbook apply-delta
+```
+
+**Operation Types:**
+
+1. **ADD** - Add new bullet to playbook
+   ```json
+   {
+     "type": "ADD",
+     "section": "IMPLEMENTATION_PATTERNS",
+     "content": "Use async/await for I/O operations",
+     "code_example": "async def fetch(): ...",
+     "tags": ["python", "async"]
+   }
+   ```
+
+2. **UPDATE** - Increment helpful/harmful counters
+   ```json
+   {
+     "type": "UPDATE",
+     "bullet_id": "impl-0042",
+     "increment_helpful": 1
+   }
+   ```
+
+3. **DEPRECATE** - Mark bullet as deprecated
+   ```json
+   {
+     "type": "DEPRECATE",
+     "bullet_id": "impl-0099",
+     "reason": "Superseded by impl-0105"
+   }
+   ```
+
+**Input Format:**
+
+```json
+{
+  "operations": [
+    {"type": "ADD", "section": "...", "content": "..."},
+    {"type": "UPDATE", "bullet_id": "...", "increment_helpful": 1},
+    {"type": "DEPRECATE", "bullet_id": "...", "reason": "..."}
+  ]
+}
+```
+
+**When to Use:**
+
+- ✅ **After Curator agent** in MAP workflows (/map-feature, /map-debug, etc.)
+- ✅ **Batch updates** from CI/CD pipelines
+- ✅ **Automated playbook maintenance**
+
+**Exit Codes:**
+- `0` - Success (operations applied or dry-run completed)
+- `1` - Validation error or application failure
+
 ### Statistics
 
 ```bash

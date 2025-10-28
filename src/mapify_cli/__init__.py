@@ -2036,6 +2036,148 @@ def playbook_query(
         console.print(f"[red]Unexpected error:[/red] {str(e)}")
         raise typer.Exit(1)
 
+@playbook_app.command("apply-delta")
+def playbook_apply_delta(
+    input_file: Optional[Path] = typer.Argument(None, help="JSON file containing delta operations (or use stdin)"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview changes without applying them")
+):
+    """Apply delta operations to playbook (ADD, UPDATE, DEPRECATE)
+
+    Accepts JSON from file or stdin with structure:
+    {
+      "operations": [
+        {
+          "type": "ADD",
+          "section": "IMPLEMENTATION_PATTERNS",
+          "content": "Pattern description...",
+          "code_example": "code here",
+          "helpful_count": 1,
+          "harmful_count": 0
+        },
+        {
+          "type": "UPDATE",
+          "bullet_id": "impl-0042",
+          "increment_helpful": 1,
+          "increment_harmful": 0
+        },
+        {
+          "type": "DEPRECATE",
+          "bullet_id": "impl-0099",
+          "reason": "Superseded by impl-0105"
+        }
+      ]
+    }
+
+    Examples:
+        mapify playbook apply-delta operations.json
+        mapify playbook apply-delta operations.json --dry-run
+        cat operations.json | mapify playbook apply-delta
+        echo '{"operations": [{"type": "UPDATE", "bullet_id": "impl-0001", "increment_helpful": 1}]}' | mapify playbook apply-delta
+
+    Exit codes:
+        0 - Operations applied successfully (or dry-run preview completed)
+        1 - Validation error or application failure
+    """
+    from mapify_cli.tools.validate_dependencies import load_input
+    from mapify_cli.playbook_manager import PlaybookManager
+
+    playbook_path = Path.cwd() / ".claude" / "playbook.json"
+    if not playbook_path.exists():
+        console.print("[red]Error:[/red] Playbook not found. Initialize with 'mapify init'")
+        raise typer.Exit(1)
+
+    try:
+        # Load input from file or stdin
+        data = load_input(str(input_file) if input_file else None)
+
+        # Validate structure
+        if not isinstance(data, dict):
+            raise ValueError("Input must be a JSON object")
+
+        if "operations" not in data:
+            raise ValueError("Missing required field: 'operations'")
+
+        operations = data["operations"]
+        if not isinstance(operations, list):
+            raise ValueError("'operations' must be an array")
+
+        # Validate each operation
+        for i, op in enumerate(operations):
+            if not isinstance(op, dict):
+                raise ValueError(f"Operation {i} must be a JSON object")
+
+            op_type = op.get("type")
+            if not op_type:
+                raise ValueError(f"Operation {i} missing required field: 'type'")
+
+            if op_type not in ["ADD", "UPDATE", "DEPRECATE"]:
+                raise ValueError(f"Operation {i} has invalid type: {op_type} (must be ADD, UPDATE, or DEPRECATE)")
+
+            # Validate type-specific required fields
+            if op_type == "ADD":
+                required = ["section", "content"]
+                missing = [f for f in required if f not in op]
+                if missing:
+                    raise ValueError(f"ADD operation {i} missing required fields: {', '.join(missing)}")
+
+            elif op_type == "UPDATE":
+                if "bullet_id" not in op:
+                    raise ValueError(f"UPDATE operation {i} missing required field: 'bullet_id'")
+                if "increment_helpful" not in op and "increment_harmful" not in op:
+                    raise ValueError(f"UPDATE operation {i} must specify at least one of: increment_helpful, increment_harmful")
+
+            elif op_type == "DEPRECATE":
+                required = ["bullet_id", "reason"]
+                missing = [f for f in required if f not in op]
+                if missing:
+                    raise ValueError(f"DEPRECATE operation {i} missing required fields: {', '.join(missing)}")
+
+        # Dry-run mode: preview without applying
+        if dry_run:
+            # Count operations by type
+            add_count = sum(1 for op in operations if op.get("type") == "ADD")
+            update_count = sum(1 for op in operations if op.get("type") == "UPDATE")
+            deprecate_count = sum(1 for op in operations if op.get("type") == "DEPRECATE")
+
+            console.print_json(data={
+                "status": "dry_run",
+                "message": "DRY RUN - No changes applied",
+                "would_apply": {
+                    "total_operations": len(operations),
+                    "add": add_count,
+                    "update": update_count,
+                    "deprecate": deprecate_count
+                },
+                "operations": operations
+            })
+            return
+
+        # Apply operations
+        manager = PlaybookManager(playbook_path)
+        summary = manager.apply_delta(operations)
+
+        # Output JSON summary
+        console.print_json(data={
+            "status": "success",
+            "message": "Delta operations applied successfully",
+            "summary": summary
+        })
+
+    except ValueError as e:
+        console.print_json(data={
+            "status": "error",
+            "error_type": "validation_error",
+            "message": str(e)
+        })
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print_json(data={
+            "status": "error",
+            "error_type": "unexpected_error",
+            "message": str(e)
+        })
+        raise typer.Exit(1)
+
 # Validate commands
 
 @validate_app.command("graph")

@@ -4,8 +4,8 @@
     "project": "map-framework",
     "description": "ACE-style comprehensive playbook for MAP Framework development",
     "created_at": "2025-10-10T00:00:00Z",
-    "last_updated": "2025-10-28T14:38:42.143927",
-    "total_bullets": 111,
+    "last_updated": "2025-10-28T16:19:49.521736Z",
+    "total_bullets": 117,
     "sections_count": 12,
     "top_k": 5,
     "version": "1.4"
@@ -355,6 +355,42 @@
           ],
           "deprecated": false,
           "deprecation_reason": null
+        },
+        {
+          "id": "arch-0015",
+          "content": "SPECIFICATION ITERATION GATE - Write detailed spec → Submit for Monitor review → Fix fundamental flaws → THEN implement. Prevents 30+ hours of rework when architecture has critical issues. Spec review catches: missing error handling, unrealistic performance claims, incomplete integration points, unverified assumptions. Example: Playbook query API spec review found 8 issues (FTS5 sanitization missing, duplicate handling unclear, null safety gaps) before any code written. Pattern: 15 min spec iteration vs 30-45 min per implementation rejection cycle. Critical for: data migrations, API designs, storage solutions, integration architectures.",
+          "helpful_count": 8,
+          "harmful_count": 0,
+          "created_at": "2025-10-28T16:19:49.521736Z",
+          "last_used_at": "2025-10-28T16:19:49.521736Z",
+          "related_bullets": [],
+          "tags": [
+            "architecture",
+            "validation",
+            "workflow",
+            "quality-gates"
+          ],
+          "deprecated": false,
+          "deprecation_reason": null
+        },
+        {
+          "id": "arch-0016",
+          "content": "MULTI-STAGE SEARCH MODES WITH DEDUPLICATION - Support three search strategies via mode enum: 1) CIPHER_ONLY (cross-project knowledge), 2) PLAYBOOK_ONLY (project-specific patterns), 3) HYBRID (both sources, deduplicated). Deduplication: Track seen content hashes to prevent duplicates when merging cipher + playbook results. Critical: Normalize scores from different sources before merging, sort by combined score, limit total results. Example: Curator searches cipher first (dedupe check), then merges with playbook bullets for final ranking.",
+          "helpful_count": 6,
+          "harmful_count": 0,
+          "created_at": "2025-10-28T16:19:49.521736Z",
+          "last_used_at": "2025-10-28T16:19:49.521736Z",
+          "related_bullets": [],
+          "tags": [
+            "python",
+            "search",
+            "architecture",
+            "deduplication",
+            "multi-source"
+          ],
+          "deprecated": false,
+          "deprecation_reason": null,
+          "code_example": "```python\nfrom enum import Enum\n\nclass SearchMode(Enum):\n    CIPHER_ONLY = \"cipher\"\n    PLAYBOOK_ONLY = \"playbook\"\n    HYBRID = \"hybrid\"\n\ndef search(query: str, mode: SearchMode, top_k: int = 10):\n    results = []\n    seen_hashes = set()\n\n    if mode in (SearchMode.CIPHER_ONLY, SearchMode.HYBRID):\n        cipher_results = search_cipher(query, top_k)\n        for r in cipher_results:\n            h = hash(r[\"text\"])\n            if h not in seen_hashes:\n                seen_hashes.add(h)\n                results.append({**r, \"source\": \"cipher\"})\n\n    if mode in (SearchMode.PLAYBOOK_ONLY, SearchMode.HYBRID):\n        playbook_results = search_playbook_fts5(query, top_k)\n        for r in playbook_results:\n            h = hash(r[\"content\"])\n            if h not in seen_hashes:  # Dedup\n                seen_hashes.add(h)\n                results.append({**r, \"source\": \"playbook\"})\n\n    # Sort by combined score, limit results\n    results.sort(key=lambda x: x.get(\"score\", 0), reverse=True)\n    return results[:top_k]\n```"
         }
       ]
     },
@@ -1165,6 +1201,63 @@
           ],
           "helpful_count": 1,
           "last_used": "2025-10-28T14:38:42.143922"
+        },
+        {
+          "id": "impl-0037",
+          "content": "SQLITE AUTO-MIGRATION WITH NULL SAFETY - Transparent JSON→SQLite migration for production systems. Pattern: 1) Check if DB exists, else auto-create from JSON seed, 2) Null-safe loading (if JSON missing/empty, initialize empty DB), 3) Duplicate detection on insert (check existing before add), 4) Atomic operations (INSERT OR IGNORE, UPDATE with WHERE checks). Critical safeguards: DB file permissions (0600), foreign key enforcement (PRAGMA foreign_keys=ON), WAL mode for concurrency. Example: Playbook migration from .claude/playbook.json to .claude/playbook.db with zero user intervention. Handles: missing source files, corrupted JSON, concurrent access, duplicate entries.",
+          "helpful_count": 7,
+          "harmful_count": 0,
+          "created_at": "2025-10-28T16:19:49.521736Z",
+          "last_used_at": "2025-10-28T16:19:49.521736Z",
+          "related_bullets": [],
+          "tags": [
+            "python",
+            "sqlite",
+            "migration",
+            "data-integrity",
+            "null-safety"
+          ],
+          "deprecated": false,
+          "deprecation_reason": null,
+          "code_example": "```python\n# Auto-migration with null safety\nif not db_path.exists():\n    if json_path.exists():\n        data = json.loads(json_path.read_text())\n    else:\n        data = {\"sections\": {}, \"metadata\": {}}  # Null-safe default\n\n    conn = sqlite3.connect(db_path)\n    conn.execute(\"PRAGMA foreign_keys=ON\")\n    conn.execute(\"PRAGMA journal_mode=WAL\")\n    # CREATE TABLE statements...\n\n    # Duplicate-safe inserts\n    for bullet in data.get(\"sections\", {}).get(\"IMPL\", {}).get(\"bullets\", []):\n        conn.execute(\n            \"INSERT OR IGNORE INTO bullets (id, content, section) VALUES (?, ?, ?)\",\n            (bullet[\"id\"], bullet[\"content\"], \"IMPL\")\n        )\n```"
+        },
+        {
+          "id": "impl-0038",
+          "content": "FTS5 SPECIAL CHARACTER SANITIZATION - SQLite FTS5 syntax errors from user input with operators (AND, OR, NOT, parentheses, quotes). Solution: Strip FTS5 reserved characters before query execution. Pattern: Create sanitize_fts5_query() that removes: operators (AND/OR/NOT), parentheses, quotes, wildcards (*), column specifiers (:). Preserves: alphanumerics, spaces, hyphens, underscores. Critical: Apply to ALL user-generated search queries, log original query for debugging. Example: Query 'actor AND (monitor OR predictor)' becomes 'actor monitor predictor' - prevents syntax errors while maintaining search intent.",
+          "helpful_count": 6,
+          "harmful_count": 0,
+          "created_at": "2025-10-28T16:19:49.521736Z",
+          "last_used_at": "2025-10-28T16:19:49.521736Z",
+          "related_bullets": [],
+          "tags": [
+            "python",
+            "sqlite",
+            "fts5",
+            "input-validation",
+            "security"
+          ],
+          "deprecated": false,
+          "deprecation_reason": null,
+          "code_example": "```python\nimport re\n\ndef sanitize_fts5_query(query: str) -> str:\n    \"\"\"Remove FTS5 special characters to prevent syntax errors.\"\"\"\n    # Remove FTS5 operators and special syntax\n    query = re.sub(r'\\b(AND|OR|NOT|NEAR)\\b', ' ', query, flags=re.IGNORECASE)\n    query = re.sub(r'[()\"*:]', ' ', query)  # Remove special chars\n    query = re.sub(r'\\s+', ' ', query).strip()  # Normalize whitespace\n    return query\n\n# Usage\nuser_query = \"actor AND (monitor OR predictor)\"\nsafe_query = sanitize_fts5_query(user_query)  # \"actor monitor predictor\"\ncursor.execute(\"SELECT * FROM bullets_fts WHERE bullets_fts MATCH ?\", (safe_query,))\n```"
+        },
+        {
+          "id": "impl-0039",
+          "content": "COMBINED SCORE NORMALIZATION FOR HYBRID SEARCH - When combining bounded (0-1) and unbounded scores, normalize separately before aggregation. Pattern: 1) Quality score (unbounded): normalize to 0-1 using tanh(score/10), 2) Relevance score (0-1): use as-is, 3) Combine with weights (0.4*quality + 0.6*relevance). Critical: Match normalization ranges before combining, otherwise unbounded scores dominate. Example: Playbook search combines helpful_count (unbounded) with FTS5 rank (bounded) - tanh normalization prevents quality from overpowering relevance.",
+          "helpful_count": 5,
+          "harmful_count": 0,
+          "created_at": "2025-10-28T16:19:49.521736Z",
+          "last_used_at": "2025-10-28T16:19:49.521736Z",
+          "related_bullets": [],
+          "tags": [
+            "python",
+            "algorithm",
+            "search",
+            "normalization",
+            "scoring"
+          ],
+          "deprecated": false,
+          "deprecation_reason": null,
+          "code_example": "```python\nimport math\n\ndef normalize_quality_score(helpful_count: int) -> float:\n    \"\"\"Normalize unbounded quality to 0-1 using tanh.\"\"\"\n    return math.tanh(helpful_count / 10.0)\n\ndef combined_score(helpful_count: int, fts5_rank: float) -> float:\n    \"\"\"Combine normalized quality with bounded relevance.\"\"\"\n    quality = normalize_quality_score(helpful_count)  # Unbounded → 0-1\n    relevance = min(1.0, abs(fts5_rank))  # Already 0-1\n    return 0.4 * quality + 0.6 * relevance  # Weighted average\n\n# Example: helpful_count=25 (unbounded) + rank=0.8 (bounded)\nquality = math.tanh(25/10)  # 0.92\nrelevance = 0.8\nscore = 0.4*0.92 + 0.6*0.8  # 0.848\n```"
         }
       ]
     },
@@ -1663,6 +1756,25 @@
           ],
           "deprecated": false,
           "deprecation_reason": null
+        },
+        {
+          "id": "test-0015",
+          "content": "CALLBACK-BASED CIPHER INTEGRATION FOR TESTING - Decouple MCP server dependency via callback injection. Pattern: 1) Core logic accepts optional cipher_callback parameter, 2) Production: Auto-detects MCP server availability, 3) Testing: Inject mock callback returning test data. Enables: testing without MCP servers, simulating MCP failures, verifying deduplication logic, E2E tests in CI/CD. Example: PlaybookManager.set_cipher_callback(lambda q: mock_results) allows testing cipher search integration without running actual MCP server.",
+          "helpful_count": 7,
+          "harmful_count": 0,
+          "created_at": "2025-10-28T16:19:49.521736Z",
+          "last_used_at": "2025-10-28T16:19:49.521736Z",
+          "related_bullets": [],
+          "tags": [
+            "python",
+            "testing",
+            "dependency-injection",
+            "mcp",
+            "mocking"
+          ],
+          "deprecated": false,
+          "deprecation_reason": null,
+          "code_example": "```python\nclass PlaybookManager:\n    def __init__(self):\n        self._cipher_callback = None\n\n    def set_cipher_callback(self, callback):\n        \"\"\"Inject cipher search for testing.\"\"\"\n        self._cipher_callback = callback\n\n    def search_cipher(self, query):\n        if self._cipher_callback:\n            return self._cipher_callback(query)  # Use test mock\n        else:\n            return self._mcp_cipher_search(query)  # Use real MCP\n\n# In tests\ndef test_deduplication():\n    manager = PlaybookManager()\n    manager.set_cipher_callback(lambda q: [\n        {\"text\": \"existing pattern\", \"similarity\": 0.85}\n    ])\n    result = manager.add_bullet_with_dedup(\"similar pattern\")\n    assert result.action == \"SKIP\"  # Detected duplicate\n```"
         }
       ]
     },
