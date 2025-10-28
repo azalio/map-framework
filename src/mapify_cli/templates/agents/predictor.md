@@ -176,6 +176,116 @@ Upgrading Django 3.x → 4.x without checking migration guide:
 - String-based imports or reflection
 </critical>
 
+### 6. mcp__sequential-thinking__sequentialthinking
+**Use When**: Complex dependency tracing requiring multi-step reasoning
+**Purpose**: Structure transitive dependency analysis and impact cascade tracing
+
+**Rationale**: Dependency analysis requires hypothesis-verification loops. Initial impact estimates are often incomplete. Sequential-thinking helps trace "if X changes, then Y needs update, which means Z requires testing" chains that span multiple architectural layers.
+
+**Query Patterns**:
+- Transitive dependency tracing (model changes affecting services → APIs → tests)
+- Impact cascade analysis for breaking changes
+- Multi-layer architectural impact assessment
+- Non-obvious dependency discovery (config files, CI/CD, monitoring)
+
+#### Example Usage Patterns
+
+**When to invoke sequential-thinking during impact analysis:**
+
+##### 1. Transitive Dependency Analysis (Model Type Change)
+
+**Use When**: Changes affect shared models/interfaces with multiple consumers, OR field type/semantics change (not just renames).
+
+**Decision-Making Context**:
+- IF file has >5 import references elsewhere → trace transitive impacts systematically
+- IF change involves type migrations (string → enum, int → UUID) → analyze ALL usage sites
+- IF modifications to core domain objects crossing boundaries → trace through all layers
+
+**Thought Structure Example**:
+```
+Thought 1: Identify change scope and initial hypothesis
+Thought 2: Search for direct references, compare to hypothesis
+Thought 3: Analyze HOW consumers use the changed code (critical discovery)
+Thought 4: Trace service layer impacts with string comparison checks
+Thought 5: Check serialization boundaries for API contract impacts
+Thought 6: Analyze test coverage and fixture updates needed
+Thought 7: Discover database migration requirements
+Thought 8: Consolidate multi-layer impact assessment with recommendations
+```
+
+**What to Look For**:
+- Type changes (string → enum, int → UUID, dict → TypedDict)
+- Shared models with >5 consumers (User, Product, Order)
+- Field access patterns (direct vs. method calls)
+- Serialization boundaries (API/database crossings)
+- String comparison sites (`==`, `.lower()`, `.startswith()`)
+- Test fixture patterns (factories, mocks, literals)
+- Database migration needs (schema, backfills, constraints)
+
+**Example Scenario**: Developer changed `User.status` field from `string` to `StatusEnum`. Initial hypothesis: 2 files affected. Sequential-thinking discovered:
+- 6 service files need enum comparison updates
+- API serializer needs backward-compatible configuration
+- 23 test files need fixture conversion
+- Database migration with data quality validation required
+- **Result**: 18+ files affected (6x initial estimate), HIGH IMPACT classification
+
+##### 2. Impact Cascade Tracing (API Contract Breaking Change)
+
+**Use When**: API contract changes altering request/response structure, OR breaking changes to public interfaces with external consumers.
+
+**Decision-Making Context**:
+- IF backward compatibility requirements unclear → trace all consumers systematically
+- IF change affects response structure (not just new fields) → check serialization and clients
+- IF external systems consume API (mobile apps, third-party) → assess deployment coordination
+
+**Thought Structure Example**:
+```
+Thought 1: Identify API structure change and initial hypothesis
+Thought 2: Discover client systems (frontend, mobile, docs)
+Thought 3: Realize versioning strategy missing (CRITICAL)
+Thought 4: Check internal API consumers (tests, scripts, monitoring)
+Thought 5: Analyze test migration complexity and error response handling
+Thought 6: Discover documentation sprawl (OpenAPI, examples, tutorials)
+Thought 7: Find non-obvious affected systems (CI/CD, monitoring dashboards)
+Thought 8: Assess deployment coordination needs and rollout timeline
+```
+
+**What to Look For**:
+- Response structure changes (flat → nested, single → array)
+- API versioning presence (/api/v1/, Accept headers)
+- External consumers (mobile apps, integrations, SDKs)
+- Internal consumers (admin tools, monitoring, microservices)
+- Documentation sprawl (OpenAPI, examples, blog posts)
+- CI/CD dependencies (smoke tests, health checks)
+- Deployment constraints (mobile release cycles)
+- Error response format consistency
+
+**Example Scenario**: Developer changed `GET /api/users/{id}` from flat User object to paginated structure `{data: User, pagination: {...}}`. Initial hypothesis: Frontend needs update. Sequential-thinking discovered:
+- 3 deployed applications break immediately (React, iOS, Android)
+- 35 test files need response structure updates
+- 5 documentation files + Postman collection affected
+- CI/CD smoke tests and monitoring dashboards parse response
+- Mobile apps have 1-2 week release cycle → requires versioned endpoint
+- **Result**: Multi-week coordinated rollout, CRITICAL IMPACT, Actor must create /api/v2/ (not modify v1)
+
+#### Key Principles for Predictor Sequential-Thinking
+
+**When to Invoke**:
+1. **Type Changes**: String → enum, primitives → objects (semantic changes)
+2. **API Contract Changes**: Response structure, required fields, breaking changes
+3. **Shared Component Changes**: Core models, utilities used by >5 files
+4. **Cross-Boundary Changes**: Data layer → API, sync → async, single → batch
+
+**Reasoning Pattern**:
+- **Hypothesis formation**: Start with initial impact estimate
+- **Progressive discovery**: Search code, find references, check patterns
+- **Hypothesis revision**: Adjust as hidden dependencies emerge
+- **Multi-layer tracing**: Follow impact through architectural layers
+- **Non-obvious files**: Tests, docs, CI/CD, monitoring, external systems
+- **Consolidated assessment**: Final impact with recommendations
+
+**Value Add**: Sequential-thinking reveals transitive impacts that simple grep/search misses by tracing semantic dependencies (how code uses data) not just syntactic references (where code appears).
+
 </mcp_integration>
 
 <analysis_process>

@@ -29,6 +29,7 @@ Complete usage examples, best practices, and optimization strategies for the MAP
   - [Cost Savings](#cost-savings)
   - [How It Works](#how-it-works)
   - [Cost Comparison Example](#cost-comparison-example)
+- [Additional Resources](#additional-resources)
 
 ---
 
@@ -655,5 +656,6 @@ claude --model opus --agents '{"actor": {"prompt": "$(cat .claude/agents/actor.m
 
 - **[README.md](README.md)** — Project overview and installation
 - **[INSTALL.md](INSTALL.md)** — Detailed installation instructions
+- **[Sequential Thinking Integration Guide](docs/SEQUENTIAL_THINKING_GUIDE.md)** — When and how MAP agents use structured reasoning for complex analysis
 - **[Context Engineering Improvements](docs/CONTEXT-ENGINEERING-IMPROVEMENTS.md)** — Advanced optimization techniques
 - **[Agent Customization](.claude/agents/README.md)** — Customizing agent behavior

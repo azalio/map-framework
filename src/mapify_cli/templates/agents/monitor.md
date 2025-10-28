@@ -64,6 +64,124 @@ request_review({
 **Use For**: Multi-step workflows, complex branches, race conditions, edge case analysis
 **Rationale**: Systematic analysis traces execution paths, finds subtle bugs
 
+#### Example Usage Patterns
+
+**When to invoke sequential-thinking during code review:**
+
+##### 1. Complex Logic Validation
+
+**Use When**: Reviewing code with nested conditionals, state machines, multi-step workflows, or branching logic where execution paths are non-obvious.
+
+**Decision-Making Context**:
+- IF code has ≥3 levels of nested conditionals → evaluate execution paths systematically
+- IF state transitions exist → trace state machine logic for invalid transitions
+- IF multiple error paths exist → analyze each failure scenario
+
+**Thought Structure Example**:
+```
+Thought 1: Identify all entry points and initial conditions
+Thought 2: Trace happy path execution (all validations pass)
+Thought 3: Evaluate first error branch (missing field)
+Thought 4: Evaluate second error branch (invalid format)
+Thought 5: Check for unreachable code or logic gaps
+Thought 6: Verify all paths have appropriate error handling
+Conclusion: Found unreachable else clause at line 45, missing timeout handling
+```
+
+**What to Look For**:
+- Unreachable code paths
+- Missing error handling for specific branches
+- Incorrect condition ordering (e.g., null check after access)
+- State transitions that skip validation
+- Edge cases where multiple conditions interact unexpectedly
+
+---
+
+##### 2. Race Condition Analysis
+
+**Use When**: Reviewing concurrent code, async operations, shared resource access, or timing-dependent logic.
+
+**Decision-Making Context**:
+- IF code uses async/await or threading → analyze interleaving scenarios
+- IF shared state modified without locks → evaluate race conditions
+- IF timing assumptions exist ("X always happens before Y") → challenge assumptions
+
+**Thought Structure Example**:
+```
+Thought 1: Identify all shared resources (database, cache, files)
+Thought 2: Map all write operations to shared resources
+Thought 3: Analyze concurrent read-modify-write sequences
+Thought 4: Evaluate scenario: Thread A reads, Thread B reads, A writes, B writes (lost update)
+Thought 5: Check if transactions, locks, or atomic operations used
+Thought 6: Trace timeout/retry logic for deadlock potential
+Conclusion: Cache update at line 67 has read-modify-write race, needs atomic operation or lock
+```
+
+**What to Look For**:
+- Read-modify-write sequences without atomicity
+- Missing locks/mutexes on shared state
+- Incorrect lock granularity (too broad → performance; too narrow → race)
+- Deadlock potential (circular lock dependencies)
+- Timeout handling in concurrent scenarios
+- Assumptions about execution order that aren't guaranteed
+
+---
+
+##### 3. Edge Case Enumeration
+
+**Use When**: Reviewing code with multiple input parameters, data transformations, or workflows where edge cases are critical (financial, security, data integrity).
+
+**Decision-Making Context**:
+- IF function has ≥3 parameters → systematically enumerate boundary combinations
+- IF data transformation occurs → analyze empty/null/malformed inputs
+- IF external API called → evaluate timeout, error response, partial failure scenarios
+
+**Thought Structure Example**:
+```
+Thought 1: List all input parameters and their valid ranges
+Thought 2: Identify boundary values (empty, null, zero, max, negative)
+Thought 3: Evaluate edge case: empty list input → does code handle gracefully?
+Thought 4: Evaluate edge case: all items fail validation → partial vs complete failure?
+Thought 5: Evaluate edge case: API returns 500 mid-processing → transaction rollback?
+Thought 6: Cross-check error handling for each edge case
+Thought 7: Verify edge cases have corresponding tests
+Conclusion: Missing handling for empty input (line 23), partial failure not rolled back (line 89)
+```
+
+**What to Look For**:
+- Missing validation for empty/null/zero inputs
+- Boundary condition bugs (off-by-one, integer overflow)
+- Partial failure scenarios (some items succeed, some fail)
+- External dependency failures (API timeout, database unavailable)
+- Data format variations (missing optional fields, unexpected types)
+- Combinations of edge cases (empty list + timeout + retry = ?)
+
+---
+
+**Decision Framework for Choosing Sequential-Thinking**:
+
+```
+IF reviewing complex logic (nested conditionals, state machine):
+  → Use Example 1 pattern: trace execution paths
+
+ELSE IF reviewing concurrent/async code:
+  → Use Example 2 pattern: analyze race conditions
+
+ELSE IF reviewing functions with multiple parameters or critical workflows:
+  → Use Example 3 pattern: enumerate edge cases
+
+ELSE:
+  → Sequential-thinking may not be needed (simple linear code)
+```
+
+**Integration with Review Workflow**:
+
+1. **Start review** with request_review and cipher_memory_search
+2. **Identify complexity** during initial read-through
+3. **Invoke sequential-thinking** if code matches patterns above
+4. **Document findings** in issues array with specific line references
+5. **Include in mcp_tools_used** array for transparency
+
 ### 4. mcp__context7__get-library-docs
 **Use When**: Code uses external libraries/frameworks
 **Process**: `resolve-library-id` → `get-library-docs(library_id, topic)`
