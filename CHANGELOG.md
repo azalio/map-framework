@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.1.0] - 2025-10-29
 
+## [1.1.0] - 2025-10-29
+
 ### Added
 - **`mapify playbook apply-delta` CLI Command**: New command for applying Curator delta operations to playbook
   - Supports both file input and stdin (pipe-friendly for CI/CD)
