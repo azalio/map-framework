@@ -1282,7 +1282,7 @@ Filesystem (persists forever)           Conversation Memory (clears on compactio
      Reference these files in new session:
      @.map/current_plan.md
      @.map/dev_docs/context.md
-     @.map/tasks.md
+     @.map/dev_docs/tasks.md
    ```
 
 3. **Recovery Workflow** (after compaction):
