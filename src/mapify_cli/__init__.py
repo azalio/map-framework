@@ -1170,6 +1170,18 @@ def install_hooks(project_path: Path, with_hooks: bool = True) -> int:
         dest_file.chmod(dest_file.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
         hooks_count += 1
 
+    # Copy helpers directory (Python helper scripts)
+    helpers_src = hooks_template_dir / "helpers"
+    if helpers_src.exists() and helpers_src.is_dir():
+        helpers_dest = hooks_dir / "helpers"
+        if helpers_dest.exists():
+            shutil.rmtree(helpers_dest)
+        shutil.copytree(helpers_src, helpers_dest)
+        # Make Python scripts executable
+        for py_file in helpers_dest.glob("*.py"):
+            if py_file.name != "__init__.py":
+                py_file.chmod(py_file.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+
     # Copy README.md
     readme_src = hooks_template_dir / "README.md"
     if readme_src.exists():
