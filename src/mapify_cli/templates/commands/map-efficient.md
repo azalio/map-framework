@@ -62,7 +62,7 @@ Optimized agent sequence (batched learning, conditional analysis):
 
 ## Step 1: Load Playbook Context
 
-Read `.claude/playbook.json` to get existing knowledge.
+Use `mapify playbook query` or `mapify playbook search` to get relevant patterns from the playbook SQLite database.
 
 ## Step 2: Task Decomposition
 
@@ -306,7 +306,6 @@ Task(
   description="Update playbook with workflow learnings",
   prompt="Integrate batched learnings into playbook:
 
-**Current Playbook:** [read from .claude/playbook.json]
 **Reflector Insights:** [paste reflector JSON from step 4.1]
 
 **MANDATORY STEPS:**
@@ -323,9 +322,16 @@ Output JSON with:
 
 ### 4.3 Apply Curator Operations
 
-- Read `.claude/playbook.json`
-- Apply curator operations (ADD/UPDATE/DEPRECATE bullets)
-- Write updated playbook
+Apply Curator delta operations using the CLI command:
+
+```bash
+# Save Curator output to file
+echo '[Curator JSON output]' > curator_operations.json
+
+# Apply to playbook SQLite database
+mapify playbook apply-delta curator_operations.json
+```
+
 - **If `sync_to_cipher` array has entries:**
   ```
   mcp__cipher__cipher_extract_and_operate_memory(

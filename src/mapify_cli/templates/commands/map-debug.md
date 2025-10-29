@@ -257,7 +257,6 @@ Task(
   description="Update playbook with debugging patterns",
   prompt="Integrate debugging lessons into playbook:
 
-**Current Playbook:** [read from .claude/playbook.json]
 **Reflector Insights:** [paste reflector JSON]
 
 Focus on:
@@ -270,7 +269,15 @@ Output JSON with curator operations."
 )
 ```
 
-Apply curator operations to `.claude/playbook.json`.
+Apply curator operations using CLI:
+
+```bash
+# Save Curator output to file
+echo '[Curator JSON output]' > curator_operations.json
+
+# Apply to playbook SQLite database
+mapify playbook apply-delta curator_operations.json
+```
 
 ## Step 4: Verification
 

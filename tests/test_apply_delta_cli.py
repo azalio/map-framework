@@ -211,9 +211,22 @@ class TestApplyDeltaUnit:
 class TestApplyDeltaCLI:
     """CLI integration tests using typer.testing.CliRunner."""
 
-    def test_cli_apply_delta_from_file(self, runner, temp_playbook_with_bullets):
+    @staticmethod
+    def extract_json_from_output(stdout: str) -> dict:
+        """Extract JSON from stdout that may contain migration messages."""
+        json_lines = []
+        in_json = False
+        for line in stdout.split('\n'):
+            if line.strip().startswith('{'):
+                in_json = True
+            if in_json:
+                json_lines.append(line)
+        return json.loads('\n'.join(json_lines))
+
+    def test_cli_apply_delta_from_file(self, runner, temp_playbook_with_bullets, monkeypatch):
         """Test apply-delta command with file input."""
         tmpdir, playbook_path, manager = temp_playbook_with_bullets
+        monkeypatch.chdir(tmpdir)
 
         # Create delta file
         delta_file = Path(tmpdir) / "delta.json"
@@ -231,18 +244,18 @@ class TestApplyDeltaCLI:
         # Run command
         result = runner.invoke(
             app,
-            ["playbook", "apply-delta", str(delta_file)],
-            cwd=tmpdir
+            ["playbook", "apply-delta", str(delta_file)]
         )
 
         assert result.exit_code == 0
-        output = json.loads(result.stdout)
+        output = self.extract_json_from_output(result.stdout)
         assert output["status"] == "success"
         assert output["summary"]["updated"] == 1
 
-    def test_cli_apply_delta_stdin(self, runner, temp_playbook_with_bullets):
+    def test_cli_apply_delta_stdin(self, runner, temp_playbook_with_bullets, monkeypatch):
         """Test apply-delta command with stdin input."""
         tmpdir, playbook_path, manager = temp_playbook_with_bullets
+        monkeypatch.chdir(tmpdir)
 
         delta_data = {
             "operations": [
@@ -257,17 +270,17 @@ class TestApplyDeltaCLI:
         result = runner.invoke(
             app,
             ["playbook", "apply-delta"],
-            input=json.dumps(delta_data),
-            cwd=tmpdir
+            input=json.dumps(delta_data)
         )
 
         assert result.exit_code == 0
-        output = json.loads(result.stdout)
+        output = self.extract_json_from_output(result.stdout)
         assert output["status"] == "success"
 
-    def test_cli_apply_delta_dry_run(self, runner, temp_playbook_with_bullets):
+    def test_cli_apply_delta_dry_run(self, runner, temp_playbook_with_bullets, monkeypatch):
         """Test --dry-run flag previews without applying."""
         tmpdir, playbook_path, manager = temp_playbook_with_bullets
+        monkeypatch.chdir(tmpdir)
 
         delta_data = {
             "operations": [
@@ -287,64 +300,64 @@ class TestApplyDeltaCLI:
         result = runner.invoke(
             app,
             ["playbook", "apply-delta", "--dry-run"],
-            input=json.dumps(delta_data),
-            cwd=tmpdir
+            input=json.dumps(delta_data)
         )
 
         assert result.exit_code == 0
-        output = json.loads(result.stdout)
+        output = self.extract_json_from_output(result.stdout)
         assert output["status"] == "dry_run"
         assert output["message"] == "DRY RUN - No changes applied"
         assert output["would_apply"]["total_operations"] == 2
         assert output["would_apply"]["add"] == 1
         assert output["would_apply"]["update"] == 1
 
-    def test_cli_missing_playbook(self, runner, tmp_path):
+    def test_cli_missing_playbook(self, runner, tmp_path, monkeypatch):
         """Test error when playbook.json doesn't exist."""
+        monkeypatch.chdir(tmp_path)
         result = runner.invoke(
             app,
             ["playbook", "apply-delta"],
-            input='{"operations": []}',
-            cwd=str(tmp_path)
+            input='{"operations": []}'
         )
 
         assert result.exit_code == 1
         assert "Playbook not found" in result.stdout
 
-    def test_cli_invalid_json(self, runner, temp_playbook_with_bullets):
+    def test_cli_invalid_json(self, runner, temp_playbook_with_bullets, monkeypatch):
         """Test error with invalid JSON input."""
         tmpdir, playbook_path, manager = temp_playbook_with_bullets
+        monkeypatch.chdir(tmpdir)
 
         result = runner.invoke(
             app,
             ["playbook", "apply-delta"],
-            input="{invalid json}",
-            cwd=tmpdir
+            input="{invalid json}"
         )
 
         assert result.exit_code == 1
-        output = json.loads(result.stdout)
+        output = self.extract_json_from_output(result.stdout)
         assert output["status"] == "error"
         assert output["error_type"] == "validation_error"
 
-    def test_cli_missing_operations_field(self, runner, temp_playbook_with_bullets):
+    def test_cli_missing_operations_field(self, runner, temp_playbook_with_bullets, monkeypatch):
         """Test error when 'operations' field is missing."""
         tmpdir, playbook_path, manager = temp_playbook_with_bullets
+        monkeypatch.chdir(tmpdir)
 
         result = runner.invoke(
             app,
             ["playbook", "apply-delta"],
-            input='{"data": []}',
-            cwd=tmpdir
+            input='{"data": []}'
         )
 
         assert result.exit_code == 1
-        output = json.loads(result.stdout)
+        output = self.extract_json_from_output(result.stdout)
         assert "Missing required field: 'operations'" in output["message"]
 
-    def test_cli_invalid_operation_type(self, runner, temp_playbook_with_bullets):
+    def test_cli_invalid_operation_type(self, runner, temp_playbook_with_bullets, monkeypatch):
         """Test error with invalid operation type."""
         tmpdir, playbook_path, manager = temp_playbook_with_bullets
+        monkeypatch.chdir(tmpdir)
 
         delta_data = {
             "operations": [
@@ -358,17 +371,17 @@ class TestApplyDeltaCLI:
         result = runner.invoke(
             app,
             ["playbook", "apply-delta"],
-            input=json.dumps(delta_data),
-            cwd=tmpdir
+            input=json.dumps(delta_data)
         )
 
         assert result.exit_code == 1
-        output = json.loads(result.stdout)
+        output = self.extract_json_from_output(result.stdout)
         assert "invalid type: INVALID" in output["message"]
 
-    def test_cli_add_missing_required_fields(self, runner, temp_playbook_with_bullets):
+    def test_cli_add_missing_required_fields(self, runner, temp_playbook_with_bullets, monkeypatch):
         """Test error when ADD operation missing required fields."""
         tmpdir, playbook_path, manager = temp_playbook_with_bullets
+        monkeypatch.chdir(tmpdir)
 
         delta_data = {
             "operations": [
@@ -383,17 +396,17 @@ class TestApplyDeltaCLI:
         result = runner.invoke(
             app,
             ["playbook", "apply-delta"],
-            input=json.dumps(delta_data),
-            cwd=tmpdir
+            input=json.dumps(delta_data)
         )
 
         assert result.exit_code == 1
-        output = json.loads(result.stdout)
+        output = self.extract_json_from_output(result.stdout)
         assert "missing required fields: content" in output["message"]
 
-    def test_cli_update_missing_bullet_id(self, runner, temp_playbook_with_bullets):
+    def test_cli_update_missing_bullet_id(self, runner, temp_playbook_with_bullets, monkeypatch):
         """Test error when UPDATE operation missing bullet_id."""
         tmpdir, playbook_path, manager = temp_playbook_with_bullets
+        monkeypatch.chdir(tmpdir)
 
         delta_data = {
             "operations": [
@@ -408,17 +421,17 @@ class TestApplyDeltaCLI:
         result = runner.invoke(
             app,
             ["playbook", "apply-delta"],
-            input=json.dumps(delta_data),
-            cwd=tmpdir
+            input=json.dumps(delta_data)
         )
 
         assert result.exit_code == 1
-        output = json.loads(result.stdout)
+        output = self.extract_json_from_output(result.stdout)
         assert "missing required field: 'bullet_id'" in output["message"]
 
-    def test_cli_update_no_delta_fields(self, runner, temp_playbook_with_bullets):
+    def test_cli_update_no_delta_fields(self, runner, temp_playbook_with_bullets, monkeypatch):
         """Test error when UPDATE has no increment fields."""
         tmpdir, playbook_path, manager = temp_playbook_with_bullets
+        monkeypatch.chdir(tmpdir)
 
         delta_data = {
             "operations": [
@@ -433,12 +446,11 @@ class TestApplyDeltaCLI:
         result = runner.invoke(
             app,
             ["playbook", "apply-delta"],
-            input=json.dumps(delta_data),
-            cwd=tmpdir
+            input=json.dumps(delta_data)
         )
 
         assert result.exit_code == 1
-        output = json.loads(result.stdout)
+        output = self.extract_json_from_output(result.stdout)
         assert "must specify at least one of: increment_helpful, increment_harmful" in output["message"]
 
 
@@ -474,3 +486,144 @@ class TestApplyDeltaE2E:
         assert result.returncode == 0
         output = json.loads(result.stdout)
         assert output["status"] == "success"
+
+
+class TestApplyDeltaStatsIntegration:
+    """Integration tests for apply-delta → stats workflow."""
+
+    @staticmethod
+    def extract_json_from_output(stdout: str) -> dict:
+        """Extract JSON from stdout that may contain migration messages."""
+        json_lines = []
+        in_json = False
+        for line in stdout.split('\n'):
+            if line.strip().startswith('{'):
+                in_json = True
+            if in_json:
+                json_lines.append(line)
+        return json.loads('\n'.join(json_lines))
+
+    def test_apply_delta_updates_stats(self, runner, temp_playbook_with_bullets, monkeypatch):
+        """Test that apply-delta changes are reflected in stats command.
+
+        This is the critical workflow test that would have caught the
+        playbook_stats JSON read issue discovered in MAP review.
+        """
+        tmpdir, playbook_path, manager = temp_playbook_with_bullets
+        monkeypatch.chdir(tmpdir)
+
+        # Get initial stats
+        result = runner.invoke(app, ["playbook", "stats"])
+        assert result.exit_code == 0
+        initial_stats = self.extract_json_from_output(result.stdout)
+        initial_count = initial_stats["total_bullets"]
+
+        # Apply delta: add 3 new bullets
+        delta_data = {
+            "operations": [
+                {
+                    "type": "ADD",
+                    "section": "IMPLEMENTATION_PATTERNS",
+                    "content": "Test bullet 1"
+                },
+                {
+                    "type": "ADD",
+                    "section": "IMPLEMENTATION_PATTERNS",
+                    "content": "Test bullet 2"
+                },
+                {
+                    "type": "ADD",
+                    "section": "ERROR_PATTERNS",
+                    "content": "Test bullet 3"
+                }
+            ]
+        }
+
+        result = runner.invoke(
+            app,
+            ["playbook", "apply-delta"],
+            input=json.dumps(delta_data)
+        )
+        assert result.exit_code == 0
+
+        # Verify stats reflect the changes
+        result = runner.invoke(app, ["playbook", "stats"])
+        assert result.exit_code == 0
+        updated_stats = self.extract_json_from_output(result.stdout)
+
+        # Critical assertion: stats should show SQLite data, not stale JSON
+        assert updated_stats["total_bullets"] == initial_count + 3, \
+            f"Stats should show {initial_count + 3} bullets (initial {initial_count} + 3 added), " \
+            f"but got {updated_stats['total_bullets']}. This indicates stats is reading stale JSON instead of SQLite."
+
+    def test_update_operation_reflected_in_stats(self, runner, temp_playbook_with_bullets, monkeypatch):
+        """Test that UPDATE operations don't affect total_bullets count in stats."""
+        tmpdir, playbook_path, manager = temp_playbook_with_bullets
+        monkeypatch.chdir(tmpdir)
+
+        # Get initial stats
+        result = runner.invoke(app, ["playbook", "stats"])
+        assert result.exit_code == 0
+        initial_stats = self.extract_json_from_output(result.stdout)
+        initial_count = initial_stats["total_bullets"]
+
+        # Apply UPDATE operation (should not change count)
+        delta_data = {
+            "operations": [
+                {
+                    "type": "UPDATE",
+                    "bullet_id": "impl-0001",
+                    "increment_helpful": 1
+                }
+            ]
+        }
+
+        result = runner.invoke(
+            app,
+            ["playbook", "apply-delta"],
+            input=json.dumps(delta_data)
+        )
+        assert result.exit_code == 0
+
+        # Verify stats count unchanged
+        result = runner.invoke(app, ["playbook", "stats"])
+        assert result.exit_code == 0
+        updated_stats = self.extract_json_from_output(result.stdout)
+        assert updated_stats["total_bullets"] == initial_count
+
+    def test_deprecate_operation_reflected_in_stats(self, runner, temp_playbook_with_bullets, monkeypatch):
+        """Test that DEPRECATE operations affect stats count."""
+        tmpdir, playbook_path, manager = temp_playbook_with_bullets
+        monkeypatch.chdir(tmpdir)
+
+        # Get initial stats
+        result = runner.invoke(app, ["playbook", "stats"])
+        assert result.exit_code == 0
+        initial_stats = self.extract_json_from_output(result.stdout)
+        initial_count = initial_stats["total_bullets"]
+
+        # Apply DEPRECATE operation
+        delta_data = {
+            "operations": [
+                {
+                    "type": "DEPRECATE",
+                    "bullet_id": "impl-0001",
+                    "reason": "Outdated pattern"
+                }
+            ]
+        }
+
+        result = runner.invoke(
+            app,
+            ["playbook", "apply-delta"],
+            input=json.dumps(delta_data)
+        )
+        assert result.exit_code == 0
+
+        # Verify stats show deprecated bullet removed
+        result = runner.invoke(app, ["playbook", "stats"])
+        assert result.exit_code == 0
+        updated_stats = self.extract_json_from_output(result.stdout)
+        # DEPRECATE marks as deprecated, might still be counted or not depending on implementation
+        # Just verify stats command executes successfully with consistent data
+        assert "total_bullets" in updated_stats

@@ -80,23 +80,6 @@ class PlaybookManager:
                 print(f"Warning: Could not initialize semantic search: {e}", file=sys.stderr)
                 print("  Falling back to keyword matching", file=sys.stderr)
 
-    def _load_playbook(self) -> Dict:
-        """Load playbook from disk or create empty one."""
-        if not self.playbook_path.exists():
-            self.playbook_path.parent.mkdir(parents=True, exist_ok=True)
-            playbook = self._create_empty_playbook()
-            self._save_playbook(playbook)
-            return playbook
-
-        with open(self.playbook_path, 'r', encoding='utf-8') as f:
-            playbook = json.load(f)
-
-        # Ensure top_k exists with default value for backward compatibility
-        if "top_k" not in playbook.get("metadata", {}):
-            playbook.setdefault("metadata", {})["top_k"] = 5
-
-        return playbook
-
     def _create_empty_playbook(self) -> Dict:
         """Create empty playbook structure."""
         return {
@@ -622,10 +605,29 @@ class PlaybookManager:
         # Extract prefix from section name (first 4 chars, lowercase)
         prefix = re.sub(r'[^a-z]', '', section.lower())[:4]
 
-        # Count existing bullets in section
-        count = len(self.playbook["sections"][section]["bullets"])
+        # Find max existing ID number in section from SQLite (source of truth)
+        cursor = self.db_conn.cursor()
+        cursor.execute("""
+            SELECT id FROM bullets
+            WHERE section = ? AND id LIKE ?
+            ORDER BY id DESC LIMIT 1
+        """, (section, f"{prefix}-%"))
 
-        return f"{prefix}-{count:04d}"
+        result = cursor.fetchone()
+        if result:
+            # Extract number from ID like "impl-0042" -> 42
+            last_id = result[0]
+            try:
+                last_num = int(last_id.split('-')[1])
+                next_num = last_num + 1
+            except (IndexError, ValueError):
+                # Fallback to count if ID format is unexpected
+                cursor.execute("SELECT COUNT(*) FROM bullets WHERE section = ?", (section,))
+                next_num = cursor.fetchone()[0]
+        else:
+            next_num = 0
+
+        return f"{prefix}-{next_num:04d}"
 
     def _deduplicate(self, threshold: float = 0.9) -> Dict:
         """

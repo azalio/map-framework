@@ -1903,13 +1903,21 @@ def recitation_clear():
 @playbook_app.command("stats")
 def playbook_stats():
     """Show playbook statistics"""
+    from mapify_cli.playbook_manager import PlaybookManager
+
     playbook_path = Path.cwd() / ".claude" / "playbook.json"
     if not playbook_path.exists():
         console.print_json(data={"error": "Playbook not found"})
         raise typer.Exit(1)
-    playbook = json.loads(playbook_path.read_text())
-    total = sum(len(section["bullets"]) for section in playbook.get("sections", {}).values())
-    stats = {"total_bullets": total, "sections": len(playbook.get("sections", {})), "metadata": playbook.get("metadata", {})}
+
+    # Use PlaybookManager to read from SQLite backend
+    manager = PlaybookManager(playbook_path)
+    total = sum(len(section["bullets"]) for section in manager.playbook.get("sections", {}).values())
+    stats = {
+        "total_bullets": total,
+        "sections": len(manager.playbook.get("sections", {})),
+        "metadata": manager.playbook.get("metadata", {})
+    }
     console.print_json(data=stats)
 
 @playbook_app.command("search")

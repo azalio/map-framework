@@ -54,7 +54,7 @@ You will orchestrate the MAP workflow by sequentially calling subagents using th
 
 ## Step 1: Load Playbook Context
 
-Before starting, read `.claude/playbook.json` to get existing knowledge.
+Use `mapify playbook query` or `mapify playbook search` to get relevant patterns from the playbook SQLite database.
 
 ## Step 2: Task Decomposition
 
@@ -369,7 +369,6 @@ Task(
   description="Update playbook with learnings",
   prompt="Integrate these learnings into the playbook:
 
-**Current Playbook:** [read from .claude/playbook.json]
 **Reflector Insights:** [paste reflector JSON]
 
 **MANDATORY STEPS (per agent template):**
@@ -386,11 +385,21 @@ Output JSON with:
 
 ### 3.10 Apply Curator Operations
 
-**⚠️ CRITICAL ENFORCEMENT:**
+**⚠️ CRITICAL - Use CLI Command:**
 
-- Read `.claude/playbook.json`
-- Apply curator operations (ADD/UPDATE/DEPRECATE bullets)
-- Write updated playbook back to `.claude/playbook.json`
+Apply Curator delta operations using the CLI command:
+
+```bash
+# Save Curator output to file
+echo '[Curator JSON output]' > curator_operations.json
+
+# Apply to playbook SQLite database
+mapify playbook apply-delta curator_operations.json
+
+# Or pipe directly from Curator output
+echo '[Curator JSON output]' | mapify playbook apply-delta
+```
+
 - **MANDATORY**: If Curator output contains `sync_to_cipher` array with ANY entries, you MUST call:
   ```
   mcp__cipher__cipher_extract_and_operate_memory(
@@ -462,7 +471,7 @@ Use these MCP tools throughout the workflow:
 User says: `/map-feature add user authentication with JWT`
 
 You should:
-1. Read `.claude/playbook.json`
+1. Query playbook context: `mapify playbook query "authentication JWT" --limit 5`
 2. Call Task(subagent_type="task-decomposer", ...) to get subtasks
 3. For each subtask:
    - Task(subagent_type="actor", ...)
@@ -472,7 +481,7 @@ You should:
    - If proceed: apply changes
    - Task(subagent_type="reflector", ...)
    - Task(subagent_type="curator", ...)
-   - Update playbook
+   - Apply curator operations: `mapify playbook apply-delta curator_output.json`
 4. Commit and summarize
 
 Begin now with the feature request above.
