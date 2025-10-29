@@ -10,12 +10,10 @@ Tests the cipher semantic search integration (subtask_6) including:
 """
 
 import pytest
-from pathlib import Path
 from mapify_cli.playbook_manager import PlaybookManager
 from mapify_cli.playbook_query import (
     PlaybookQuery,
     PlaybookResult,
-    PlaybookQueryResponse,
     SearchMode
 )
 
@@ -180,9 +178,6 @@ class TestHybridMode:
         # Should be deduplicated (playbook version kept)
 
         # Check that we have fewer results than cipher + playbook total
-        original_count = response.metadata['cipher_results_count'] + response.metadata['playbook_results_count']
-        merged_count = len(response.results)
-
         # If deduplication occurred, merged < original
         # Note: May not always deduplicate depending on similarity threshold
         assert response.metadata['deduplicated_count'] >= 0

@@ -5,16 +5,13 @@ Tests the new query() method with PlaybookQuery dataclasses,
 FTS5 full-text search, and backward compatibility.
 """
 
-import json
 import pytest
-from pathlib import Path
 from mapify_cli.playbook_manager import PlaybookManager
 from mapify_cli.playbook_query import (
     PlaybookQuery,
     PlaybookResult,
     PlaybookQueryResponse,
-    SearchMode,
-    VALID_SECTIONS
+    SearchMode
 )
 
 

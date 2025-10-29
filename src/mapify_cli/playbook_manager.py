@@ -14,7 +14,7 @@ import sqlite3
 import shutil
 import time
 from datetime import datetime
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Optional, Tuple
 from pathlib import Path
 import re
 
@@ -39,6 +39,12 @@ except (ImportError, ValueError) as e:
     import os
     if os.environ.get('DEBUG_SEMANTIC_SEARCH'):
         print(f"Semantic search unavailable: {type(e).__name__}: {e}")
+
+
+# Quality score normalization constants
+QUALITY_SCORE_MAX = 10.0  # Typical max quality score for bullets
+RELEVANCE_WEIGHT = 0.7    # Weight for relevance in combined score
+QUALITY_WEIGHT = 0.3      # Weight for quality in combined score
 
 
 class PlaybookManager:
@@ -887,11 +893,11 @@ class PlaybookManager:
         # Stage 3: Merge and deduplicate results
         merged_results = self._merge_results(cipher_results, playbook_results)
 
-        # Calculate combined scores: relevance * 0.7 + quality * 0.03
+        # Calculate combined scores: relevance * 0.7 + quality * 0.3
         # Quality normalized to 0-1 range (assuming quality_score typically 0-10)
         for result in merged_results:
-            quality_normalized = max(0.0, min(1.0, result.quality_score / 10.0))
-            result.combined_score = result.relevance_score * 0.7 + quality_normalized * 0.3
+            quality_normalized = max(0.0, min(1.0, result.quality_score / QUALITY_SCORE_MAX))
+            result.combined_score = result.relevance_score * RELEVANCE_WEIGHT + quality_normalized * QUALITY_WEIGHT
 
         # Sort by combined score
         merged_results.sort(key=lambda r: r.combined_score, reverse=True)
