@@ -203,74 +203,302 @@ MAP workflows automatically save progress to the `.map/` directory, which persis
 Context compaction occurs when Claude's conversation memory reaches its limit. When this happens:
 - The conversation history is cleared to free up space
 - But your work files on disk remain intact
-- You can seamlessly resume from where you left off
+- MAP **automatically restores your workflow state** in the new session
 
-### Recovery Workflow
+### Automatic Recovery (Phase 2) ✨ NEW
 
-**1. Before Compaction (Optional):**
+**How it works:**
 
-If you notice context getting low, checkpoint your progress:
+MAP Framework uses a **SessionStart hook** that automatically injects your checkpoint at the beginning of each new session. When you start a conversation:
 
-```bash
-mapify recitation checkpoint
+1. **Hook triggers automatically** - No user action required
+2. **Validates checkpoint file** - 4-layer security validation (see Security section below)
+3. **Injects context seamlessly** - Claude receives your plan with a restoration header
+
+**What you'll see:**
+
+When starting a new session with an existing checkpoint (`.map/current_plan.md`), Claude will display:
+
+```markdown
+# 🔄 MAP Workflow Context Restored
+
+This context was automatically restored from your previous session's checkpoint.
+The plan below reflects your current task progress and helps maintain workflow
+continuity after context compaction.
+
+---
+
+# Current Task: feat_auth_1730000000
+## Goal: Implement JWT authentication
+## Progress: 3/5 subtasks completed
+
+- [✓] 1/5: Create User model
+- [✓] 2/5: Implement login endpoint
+- [✓] 3/5: Add token validation middleware
+- [→] 4/5: Add refresh token logic (CURRENT)
+- [☐] 5/5: Write integration tests
 ```
 
-This will display:
-- Current task status
-- Absolute file paths to your work
-- Instructions for recovery
-
-**Example output:**
-```
-✅ Progress Checkpointed
-
-Task: feat_auth_1730000000
-Progress: 3/5 subtasks completed
-Current Subtask: 4
-
-Files persisted:
-  • .map/current_plan.md
-  • .map/dev_docs/context.md
-  • .map/dev_docs/tasks.md
-
-To resume after compaction:
-  Reference these files in new session:
-  @.map/current_plan.md
-  @.map/context.md
-  @.map/tasks.md
-```
-
-**2. After Compaction:**
-
-In the new conversation session, reference the saved files:
+**Zero cognitive load** - You can immediately continue with:
 
 ```
+User: continue with the current subtask
+
+Claude: [already has context from auto-injected checkpoint]
+        Continuing subtask 4: "Add refresh token logic"
+        [implements solution]
+```
+
+**Benefits:**
+
+- ✅ **Invisible recovery** - No manual file references needed
+- ✅ **Always current** - Checkpoint auto-updates on every status change
+- ✅ **Secure by design** - 4-layer validation prevents malicious files
+- ✅ **Cross-session continuity** - Start new session, pick up exactly where you left off
+
+### Security Validations
+
+The SessionStart hook implements **defense-in-depth security** with 4 validation layers:
+
+1. **Path Traversal Prevention**
+   - Only allows files within `.map/` directory
+   - Resolves symlinks and `../` paths to prevent escaping
+   - Rejects absolute paths outside project
+
+2. **Size Bomb Protection**
+   - Maximum file size: **256KB** (prevents memory exhaustion)
+   - Validates size **before reading** file content
+   - Rejects oversized files with clear error message
+
+3. **UTF-8 Encoding Validation**
+   - Enforces strict UTF-8 encoding
+   - Handles decoding errors gracefully
+   - Prevents binary file injection
+
+4. **Content Sanitization**
+   - Strips control characters (terminal escape codes, NULL bytes)
+   - Preserves newlines and tabs (formatting)
+   - Removes: `\x00-\x08`, `\x0b-\x0d`, `\x0e-\x1f`, `\x7f` (DELETE), Unicode control chars
+
+**Why this matters:**
+
+- **Path traversal attacks** - Malicious checkpoint could try to inject `/etc/passwd` or `~/.ssh/id_rsa`
+- **Size bombs** - Large files could exhaust memory, causing Claude Code to crash
+- **Control character injection** - Terminal escape codes could manipulate Claude's output
+- **Encoding exploits** - Binary data could contain executable payloads
+
+**Implementation:**
+
+```python
+# .claude/hooks/helpers/validate_checkpoint_file.py
+# All checks use AND logic - file must pass ALL layers to be valid
+
+validate_path_security()      # Layer 1: .map/ only
+validate_file_size()           # Layer 2: <256KB
+read_and_validate_content()   # Layer 3: UTF-8
+sanitize_content()             # Layer 4: Strip control chars
+```
+
+See [validate_checkpoint_file.py](.claude/hooks/helpers/validate_checkpoint_file.py) for implementation details.
+
+### Manual Recovery (Fallback)
+
+**When to use manual recovery:**
+
+- **Hook fails** - SessionStart hook not working (see Troubleshooting)
+- **Debugging** - Want to verify checkpoint contents before injecting
+- **Explicit control** - Prefer to manually reference files
+
+**Steps:**
+
+1. **Generate checkpoint display** (optional - files auto-save already):
+
+   ```bash
+   mapify recitation checkpoint
+   ```
+
+   Output:
+   ```
+   ✅ Progress Checkpointed
+
+   Task: feat_auth_1730000000
+   Progress: 3/5 subtasks completed
+   Current Subtask: 4
+
+   Files persisted:
+     • .map/current_plan.md
+     • .map/dev_docs/context.md
+     • .map/dev_docs/tasks.md
+
+   To resume after compaction:
+     Reference these files in new session:
+     @.map/current_plan.md
+     @.map/context.md
+     @.map/tasks.md
+   ```
+
+2. **After compaction**, manually reference files:
+
+   ```
+   User: continue MAP workflow
+         @.map/current_plan.md
+         @.map/dev_docs/context.md
+         @.map/dev_docs/tasks.md
+
+   Claude: [reads files]
+           Resuming subtask 4: "Add refresh token logic"
+           [continues implementation from saved state]
+   ```
+
+### Before/After Comparison
+
+| Phase 1 (Manual) | Phase 2 (Automatic) ✨ |
+|------------------|----------------------|
+| Notice context getting low | No monitoring needed |
+| Run `mapify recitation checkpoint` | Automatic on every update |
+| Copy file paths from output | No action required |
+| Paste paths with `@` prefix in new session | Hook auto-injects checkpoint |
+| Claude reads files manually | Claude receives context automatically |
+| **User action required** | **Zero user action** |
+
+**Example Workflow:**
+
+**Phase 1 (Manual):**
+```
+[Context gets low]
+User: mapify recitation checkpoint
+[Compaction happens]
+[New session starts]
 User: continue MAP workflow
       @.map/current_plan.md
       @.map/dev_docs/context.md
       @.map/dev_docs/tasks.md
-
-Claude: [reads files]
-        Resuming subtask 4: "Add error handling to API routes"
-        [continues implementation from saved state]
+Claude: [reads files] Resuming...
 ```
+
+**Phase 2 (Automatic):**
+```
+[Context gets low]
+[Compaction happens]
+[New session starts - hook triggers automatically]
+Claude: # 🔄 MAP Workflow Context Restored
+        [checkpoint injected automatically]
+User: continue with current subtask
+Claude: [already has context] Continuing subtask 4...
+```
+
+### Troubleshooting
+
+#### Hook not working?
+
+**Symptoms:**
+- New session starts WITHOUT checkpoint restoration header
+- No "🔄 MAP Workflow Context Restored" message
+
+**Diagnosis:**
+
+1. **Check if checkpoint file exists:**
+   ```bash
+   ls -lh .map/current_plan.md
+   ```
+   - If missing: No checkpoint to restore (expected for new projects)
+   - If exists: Proceed to step 2
+
+2. **Check hook is installed:**
+   ```bash
+   ls -l .claude/hooks/session-start.sh
+   ```
+   - If missing: Run `mapify init` to install hooks
+   - If exists: Proceed to step 3
+
+3. **Check hook logs** (Claude Code stderr):
+   - Look for: `[session-start] SessionStart hook triggered`
+   - Look for: `[session-start] ✅ Successfully validated checkpoint`
+   - If error: Check validation failure reason
+
+4. **Manual validation test:**
+   ```bash
+   python3 .claude/hooks/helpers/validate_checkpoint_file.py \
+       --file .map/current_plan.md
+   ```
+   - Should output: `{"valid": true, ...}`
+   - If `valid: false`: Check error message for reason
+
+**Common issues:**
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| Hook not executing | Hooks not enabled in Claude Code | Check Claude Code settings |
+| File too large | Checkpoint >256KB | Reduce plan verbosity, split into subtasks |
+| Path traversal error | Checkpoint outside `.map/` | Move checkpoint to `.map/current_plan.md` |
+| UTF-8 decoding error | Binary or corrupted file | Regenerate checkpoint with `mapify recitation update` |
+
+**Fallback:**
+
+If hook continues to fail, use [Manual Recovery](#manual-recovery-fallback) workflow.
+
+#### How to verify auto-recovery is working
+
+**Test sequence:**
+
+1. **Create a test task:**
+   ```bash
+   /map-feature "add test function to app.py"
+   ```
+
+2. **Wait for first subtask completion** - Checkpoint should be created at `.map/current_plan.md`
+
+3. **Start NEW conversation** (simulate compaction):
+   - Open new chat or use "Clear conversation" (if available)
+
+4. **Verify restoration:**
+   - Look for "🔄 MAP Workflow Context Restored" header
+   - Check plan shows correct progress (e.g., "1/3 completed")
+
+5. **Continue workflow:**
+   ```
+   User: continue MAP workflow
+   Claude: [should immediately continue from saved state]
+   ```
+
+**Expected behavior:**
+
+- ✅ Hook triggers automatically on new session
+- ✅ Checkpoint injected with restoration header
+- ✅ Plan shows accurate progress (completed/current/pending subtasks)
+- ✅ Can continue workflow immediately without manual file references
 
 ### Key Points
 
+- ✅ **Automatic restoration** - SessionStart hook injects checkpoint on every new session
 - ✅ **Progress auto-saves** - Every `mapify recitation update` saves to disk
+- ✅ **Secure by design** - 4-layer validation (path, size, UTF-8, sanitization)
 - ✅ **No manual checkpointing required** - Files update automatically during workflow
 - ✅ **Files persist forever** - They're on your filesystem, not in conversation memory
-- ✅ **Cross-session recovery** - Resume in any new conversation by referencing files
+- ✅ **Cross-session recovery** - Resume in any new conversation seamlessly
+- ✅ **Manual fallback available** - Use `mapify recitation checkpoint` if needed
 
 ### Architecture
 
-MAP's recitation system uses file-based persistence:
+MAP's recitation system uses file-based persistence with automatic injection:
+
+**Files:**
 - `.map/current_plan.json` - Structured plan data
-- `.map/current_plan.md` - Human-readable plan for Claude
+- `.map/current_plan.md` - Human-readable plan (auto-injected by SessionStart hook)
 - `.map/dev_docs/context.md` - Project context
 - `.map/dev_docs/tasks.md` - Task checklist
 
+**Hooks:**
+- `.claude/hooks/session-start.sh` - SessionStart hook (auto-injection logic)
+- `.claude/hooks/helpers/validate_checkpoint_file.py` - Security validation
+
 These files survive compaction because they're stored on disk, not in conversation memory.
+
+**Technical Details:**
+
+For implementation details on SessionStart hook, security validation, and compaction resilience architecture, see:
+- [ARCHITECTURE.md - Context Engineering](ARCHITECTURE.md#context-engineering) - Recitation Pattern and Compaction Resilience
+- [ARCHITECTURE.md - Context Engineering Roadmap](ARCHITECTURE.md#context-engineering-roadmap) - Phase 2 checkpoint implementation
 
 ## 🔍 Dependency Validation
 
