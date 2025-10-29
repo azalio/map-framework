@@ -46,6 +46,9 @@ QUALITY_SCORE_MAX = 10.0  # Typical max quality score for bullets
 RELEVANCE_WEIGHT = 0.7    # Weight for relevance in combined score
 QUALITY_WEIGHT = 0.3      # Weight for quality in combined score
 
+# Schema version constants
+CURRENT_SCHEMA_VERSION = '2.1'  # Added executable_scripts field
+
 
 class PlaybookManager:
     """Manages ACE-style playbook with incremental delta updates."""
@@ -72,6 +75,9 @@ class PlaybookManager:
         self.db_conn.row_factory = sqlite3.Row
         # Enable WAL mode for better concurrency
         self.db_conn.execute("PRAGMA journal_mode=WAL")
+
+        # Run schema migrations if needed
+        self._migrate_schema()
 
         # Load playbook structure from SQLite for backward compatibility
         self.playbook = self._load_playbook_from_db()
@@ -163,7 +169,8 @@ class PlaybookManager:
                 deprecated INTEGER DEFAULT 0,
                 deprecation_reason TEXT,
                 tags TEXT,
-                related_bullets TEXT
+                related_bullets TEXT,
+                executable_scripts TEXT
             )
         """)
 
@@ -222,11 +229,53 @@ class PlaybookManager:
         cursor.execute("INSERT OR IGNORE INTO metadata VALUES ('version', '1.0')")
         cursor.execute(f"INSERT OR IGNORE INTO metadata VALUES ('last_updated', '{now}')")
         cursor.execute("INSERT OR IGNORE INTO metadata VALUES ('total_bullets', '0')")
-        cursor.execute("INSERT OR IGNORE INTO metadata VALUES ('schema_version', '2.0')")
+        cursor.execute(f"INSERT OR IGNORE INTO metadata VALUES ('schema_version', '{CURRENT_SCHEMA_VERSION}')")
         cursor.execute("INSERT OR IGNORE INTO metadata VALUES ('top_k', '5')")
 
         conn.commit()
         conn.close()
+
+    def _migrate_schema(self) -> None:
+        """
+        Run schema migrations to upgrade database to current version.
+
+        Migrations are idempotent and safe to run multiple times.
+        Each migration checks schema_version before applying changes.
+        """
+        cursor = self.db_conn.cursor()
+
+        # Get current schema version
+        cursor.execute("SELECT value FROM metadata WHERE key = 'schema_version'")
+        result = cursor.fetchone()
+        current_version = result[0] if result else '2.0'  # Default for old DBs without version
+
+        # Migration: 2.0 -> 2.1 (add executable_scripts field)
+        if current_version == '2.0':
+            print("Migrating schema from 2.0 to 2.1 (adding executable_scripts field)...", file=sys.stderr)
+
+            # Check if column already exists (idempotency)
+            cursor.execute("PRAGMA table_info(bullets)")
+            columns = [row[1] for row in cursor.fetchall()]
+
+            if 'executable_scripts' not in columns:
+                # Add new column with NULL default (backward compatible)
+                cursor.execute("ALTER TABLE bullets ADD COLUMN executable_scripts TEXT")
+                print("✓ Added executable_scripts column to bullets table", file=sys.stderr)
+            else:
+                print("✓ executable_scripts column already exists, skipping", file=sys.stderr)
+
+            # Update schema version
+            cursor.execute("UPDATE metadata SET value = '2.1' WHERE key = 'schema_version'")
+            self.db_conn.commit()
+            print("✓ Schema migration complete (2.0 -> 2.1)", file=sys.stderr)
+
+        elif current_version == CURRENT_SCHEMA_VERSION:
+            # Already at current version, no migration needed
+            pass
+
+        else:
+            # Future version or unknown version
+            print(f"Warning: Unknown schema version {current_version}, expected {CURRENT_SCHEMA_VERSION}", file=sys.stderr)
 
     def _migrate_json_to_sqlite(self) -> None:
         """
@@ -266,8 +315,8 @@ class PlaybookManager:
                                               helpful_count, harmful_count,
                                               created_at, last_used_at,
                                               deprecated, deprecation_reason,
-                                              tags, related_bullets)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                              tags, related_bullets, executable_scripts)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         bullet['id'],
                         section_name,
@@ -280,7 +329,8 @@ class PlaybookManager:
                         1 if bullet.get('deprecated', False) else 0,
                         bullet.get('deprecation_reason'),
                         json.dumps(bullet.get('tags', [])),
-                        json.dumps(bullet.get('related_bullets', []))
+                        json.dumps(bullet.get('related_bullets', [])),
+                        json.dumps(bullet.get('executable_scripts', [])) if bullet.get('executable_scripts') else None
                     ))
                     total_bullets += 1
                 except sqlite3.IntegrityError as e:
@@ -334,7 +384,7 @@ class PlaybookManager:
             SELECT section, id, content, code_example,
                    helpful_count, harmful_count, quality_score,
                    created_at, last_used_at, deprecated, deprecation_reason,
-                   tags, related_bullets
+                   tags, related_bullets, executable_scripts
             FROM bullets
             ORDER BY section, quality_score DESC
         """)
@@ -371,6 +421,8 @@ class PlaybookManager:
                 bullet['tags'] = json.loads(row['tags'])
             if row['related_bullets']:
                 bullet['related_bullets'] = json.loads(row['related_bullets'])
+            if row['executable_scripts']:
+                bullet['executable_scripts'] = json.loads(row['executable_scripts'])
 
             sections[section_name]['bullets'].append(bullet)
 
@@ -422,7 +474,8 @@ class PlaybookManager:
                         content=op["content"],
                         code_example=op.get("code_example"),
                         related_to=op.get("related_to", []),
-                        tags=op.get("tags", [])
+                        tags=op.get("tags", []),
+                        executable_scripts=op.get("executable_scripts", [])
                     )
                     summary["added"] += 1
 
@@ -461,7 +514,8 @@ class PlaybookManager:
         content: str,
         code_example: Optional[str] = None,
         related_to: List[str] = None,
-        tags: List[str] = None
+        tags: List[str] = None,
+        executable_scripts: List[str] = None
     ) -> str:
         """Add new bullet to section (saves to SQLite)."""
         if section not in self.playbook["sections"]:
@@ -477,8 +531,8 @@ class PlaybookManager:
                                   helpful_count, harmful_count,
                                   created_at, last_used_at,
                                   deprecated, deprecation_reason,
-                                  tags, related_bullets)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                  tags, related_bullets, executable_scripts)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             bullet_id,
             section,
@@ -491,7 +545,8 @@ class PlaybookManager:
             0,  # deprecated
             None,
             json.dumps(tags or []),
-            json.dumps(related_to or [])
+            json.dumps(related_to or []),
+            json.dumps(executable_scripts) if executable_scripts else None
         ))
 
         # Update metadata
@@ -514,6 +569,9 @@ class PlaybookManager:
             "deprecated": False,
             "deprecation_reason": None
         }
+        if executable_scripts:
+            bullet["executable_scripts"] = executable_scripts
+
         self.playbook["sections"][section]["bullets"].append(bullet)
         self.playbook["metadata"]["total_bullets"] += 1
 

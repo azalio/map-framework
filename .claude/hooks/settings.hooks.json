@@ -1,0 +1,47 @@
+{
+  "$schema": "https://cdn.jsdelivr.net/npm/@anthropic-ai/claude-code@latest/schemas/settings.schema.json",
+  "description": "Claude Code hooks configuration for MAP Framework",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "description": "Auto-inject relevant playbook bullets into user prompts",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/user-prompt-submit.sh",
+            "timeout": 5,
+            "description": "Enhances prompts with contextually relevant patterns from playbook"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "description": "Validate agent template integrity before modifications",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/validate-agent-templates.sh",
+            "timeout": 5,
+            "description": "Prevents accidental removal of {{template}} variables from agents"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "Write|Edit",
+        "description": "Quality gates - run automated checks after code modifications",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/stop.sh",
+            "timeout": 30,
+            "description": "Catches syntax errors and test failures before response submission"
+          }
+        ]
+      }
+    ]
+  }
+}
