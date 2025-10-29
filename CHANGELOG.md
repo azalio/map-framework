@@ -7,6 +7,99 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2025-10-30
+
+### Added
+
+**Compaction Recovery System:**
+- **`mapify recitation checkpoint` CLI Command**: Displays state file paths, current progress, and recovery instructions (PR #15)
+  - Shows absolute paths to all state files (.map/current_plan.json, .map/current_plan.md)
+  - Displays current task, progress (N/M subtasks), and active subtask
+  - Prints file contents with intelligent truncation (>2000 chars)
+  - Provides copy-paste recovery instructions for post-compaction scenarios
+  - Handles missing files gracefully with actionable error messages
+  - **Benefits**: Self-service recovery reduces support burden, zero work loss guaranteed
+
+- **Phase 2: Automatic Context Restoration via SessionStart Hook** (PR #15)
+  - Automatic restoration of MAP workflow context after Claude Code session compaction
+  - Filesystem persistence via `.map/` directory ensures workflow state survives compaction
+  - Seamless user experience: workflows resume automatically without manual intervention
+  - **Benefits**: Eliminates manual recovery steps, maintains workflow continuity
+
+- **Defensive Documentation in MAP Workflow Templates** (PR #15)
+  - Alert boxes in all command templates warn users about compaction before it occurs
+  - Provide 4-step recovery workflow with concrete commands
+  - Updated templates: map-feature.md, map-efficient.md, map-debug.md, map-refactor.md
+  - Synchronized to `src/mapify_cli/templates/commands/` (all ✅ in sync)
+  - **Benefits**: Users know what to do when compaction occurs, reduces confusion
+
+**Multi-language Quality Gates:** (PR #14)
+- **Extended Stop Hook**: Quality gates now support Go, TypeScript, and Rust beyond Python
+  - **Go** (.go): `go fmt` + `go vet` for formatting and static analysis
+  - **TypeScript** (.ts, .tsx): `tsc --noEmit` for type checking
+  - **Rust** (.rs): `rustc` syntax validation
+  - Language detection via file extension-based routing
+  - Graceful degradation: skips checks if language toolchain not installed
+  - Non-blocking: always exits 0, shows warnings only
+  - **Benefits**: Universal code quality enforcement for polyglot codebases
+
+**Hooks System Enhancements:**
+- Hooks templates synchronized to `src/mapify_cli/templates/hooks/` for `mapify init`
+- Implemented findings from Reddit post analysis (docs/reddit-analysis-improvements-CORRECTED.md)
+- Enhanced hooks documentation and changelog
+
+### Fixed
+
+**FTS5 Query Engine:** (PR #16)
+- **Resolved "no such column" SQL errors** for hyphenated queries in `mapify playbook query`
+  - Root cause: FTS5 tokenizer splits hyphens at index time ("session-start" → ["session", "start"]), but queries preserved hyphens
+  - Solution: Automatic hyphen-to-space conversion in `_build_fts_query` (playbook_manager.py:1012)
+  - Fixed queries: "auto-activation" ✅, "session-start" ✅, "multi-subtask" ✅
+  - Added 25 comprehensive regression tests covering hyphenated queries, edge cases, backward compatibility
+  - Documented FTS5 query format guidelines in USAGE.md (383 lines)
+  - **Benefits**: Playbook query now works reliably with natural hyphenated terms
+
+**CLI Improvements:**
+- Fixed `mapify init` not copying `helpers/` directory to `.claude/hooks/helpers/`
+- Fixed 3 dataclass attribute access bugs in checkpoint command implementation
+- Fixed size bomb test moved out of parametrize to avoid ARG_MAX limits
+- Removed unused variables in tests (code review cleanup)
+
+### Changed
+
+**Documentation:**
+- **USAGE.md**: Added "Handling Context Compaction" section (78 lines)
+  - User-friendly explanation of compaction concept
+  - Step-by-step recovery workflow with examples
+  - Checkpoint command output format documentation
+
+- **ARCHITECTURE.md**: Added "Compaction Resilience" section (101 lines)
+  - Technical architecture with `.map/` directory diagram
+  - Filesystem persistence mechanism details
+  - Comparison table: conversation memory vs filesystem
+
+**Playbook Growth:** 5 new patterns added
+- **Recovery-Oriented CLI Design** (CLI_TOOL_PATTERNS - new section)
+- **Dual-Documentation Pattern** (DOCUMENTATION_PATTERNS): Serve both user and developer audiences
+- **Defensive Documentation in Templates** (DOCUMENTATION_PATTERNS): Warn users before problems occur
+- **Filesystem-as-Resilience-Layer** (IMPLEMENTATION_PATTERNS): .map/ directory persistence strategy
+- **Python Dataclass Attribute Access** (IMPLEMENTATION_PATTERNS): Best practices for dataclass usage
+
+### Testing
+
+- **All 386 tests passing** (no regressions from multi-language support)
+- **25 new FTS5 query tests** covering hyphenated terms and edge cases
+- Manual validation completed for multi-language quality gates (Go, TypeScript, Rust)
+- Full test suite execution time: ~2 minutes
+
+### Implementation Stats (PR #15)
+
+- 8/8 subtasks completed (100% success rate)
+- 8 total iterations (1 per subtask, zero rework)
+- 179 lines of documentation added
+- 95 lines of CLI implementation
+- 68 lines of command template updates (4 files)
+
 ## [1.1.0] - 2025-10-29
 
 ## [1.1.0] - 2025-10-29
