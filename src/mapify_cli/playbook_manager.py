@@ -1007,6 +1007,10 @@ class PlaybookManager:
         import string
         fts_query = params.query
 
+        # FTS5 tokenizer splits hyphens at index time ("session-start" → ["session", "start"])
+        # Align query tokenization by replacing hyphens with spaces
+        fts_query = fts_query.replace('-', ' ')
+
         # Remove FTS5 special characters: @ # ( ) " ' :
         fts_special_chars = '@#()"\':'
         for char in fts_special_chars:
