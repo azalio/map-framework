@@ -8,7 +8,7 @@ and integration flow with mocked subprocess calls.
 import json
 import pytest
 import subprocess
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 import sys
 import os
 

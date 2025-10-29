@@ -615,6 +615,7 @@ class TestDevDocsGeneration:
         """Test generating context when README is missing (fallback to project name)"""
         # No README exists
         context_path = manager.generate_context_md()
+        assert context_path == str(manager.context_file)
 
         content = manager.context_file.read_text()
         assert "# Project Context" in content
@@ -623,7 +624,7 @@ class TestDevDocsGeneration:
 
     def test_generate_context_missing_playbook(self, manager):
         """Test generating context when playbook is missing (graceful degradation)"""
-        context_path = manager.generate_context_md()
+        manager.generate_context_md()
 
         content = manager.context_file.read_text()
         assert "# Project Context" in content
@@ -924,7 +925,7 @@ class TestDevDocsGeneration:
     def test_get_dev_docs_all_files_exist(self, manager, sample_subtasks):
         """Test get_dev_docs when all files exist - returns all 3 docs"""
         # Create plan (creates plan.md and tasks.md)
-        plan = manager.create_plan("test", "Test goal", sample_subtasks)
+        manager.create_plan("test", "Test goal", sample_subtasks)
 
         # Create context.md
         manager.generate_context_md()
@@ -1204,7 +1205,7 @@ class TestDevDocsEdgeCases:
         """Test context generation doesn't crash even with missing data"""
         # No README, no playbook, no architecture
         # Should still generate valid context.md
-        context_path = manager.generate_context_md()
+        manager.generate_context_md()
 
         assert manager.context_file.exists()
         content = manager.context_file.read_text()
