@@ -102,6 +102,24 @@ This creates `.map/current_plan.md` which will be updated before each subtask to
 mapify recitation create feat_1760783000 "Add user authentication" '[{"id":1,"description":"Create User model",...}]'
 ```
 
+### 🔄 Handling Context Compaction
+
+> **IMPORTANT:** If context compaction occurs during workflow, your plan survives on filesystem!
+>
+> **Recovery Steps:**
+> 1. Run `mapify recitation checkpoint` to see current state
+> 2. Copy the @-mention paths shown in output
+> 3. Paste recovery message to Claude:
+>    ```
+>    Continue MAP workflow from checkpoint:
+>    @.map/current_plan.md
+>    @.map/dev_docs/context.md
+>    @.map/dev_docs/tasks.md
+>    ```
+> 4. Resume from current subtask (all progress preserved)
+>
+> Files in `.map/` directory persist forever—conversation memory clears but filesystem doesn't.
+
 ## Step 3: For Each Subtask - Implementation Loop
 
 For each subtask from task-decomposer output:

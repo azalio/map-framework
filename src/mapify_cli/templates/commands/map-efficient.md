@@ -97,6 +97,24 @@ TASK_ID="feat_$(date +%s)"
 mapify recitation create "$TASK_ID" "$ARGUMENTS" "$SUBTASKS_JSON"
 ```
 
+### 🔄 Handling Context Compaction
+
+> **IMPORTANT:** If context compaction occurs during workflow, your plan survives on filesystem!
+>
+> **Recovery Steps:**
+> 1. Run `mapify recitation checkpoint` to see current state
+> 2. Copy the @-mention paths shown in output
+> 3. Paste recovery message to Claude:
+>    ```
+>    Continue MAP workflow from checkpoint:
+>    @.map/current_plan.md
+>    @.map/dev_docs/context.md
+>    @.map/dev_docs/tasks.md
+>    ```
+> 4. Resume from current subtask (all progress preserved)
+>
+> Files in `.map/` directory persist forever—conversation memory clears but filesystem doesn't.
+
 ## Step 3: For Each Subtask - Efficient Loop
 
 ### 3.1 Get Relevant Playbook Bullets

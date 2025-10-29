@@ -42,6 +42,19 @@
           }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "description": "Auto-inject MAP workflow context from checkpoint",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/session-start.sh",
+            "timeout": 5,
+            "description": "Restores .map/current_plan.md checkpoint for seamless compaction recovery"
+          }
+        ]
+      }
     ]
   }
 }

@@ -43,6 +43,83 @@ MIN_QUERY_LENGTH=10    # Minimum message length (default: 10 chars)
 
 ---
 
+### SessionStart - MAP Workflow Context Restoration
+
+**Hook**: `session-start.sh`
+**Triggers**: At session start (before first user interaction)
+**Purpose**: Automatically restores `.map/current_plan.md` checkpoint to maintain workflow continuity after context compaction
+
+**How It Works**:
+1. SessionStart event triggers hook execution
+2. Checks if `.map/current_plan.md` checkpoint file exists
+3. Calls validator helper script (`helpers/validate_checkpoint_file.py`)
+4. Validator performs 4-layer security validation (path, size, UTF-8, sanitization)
+5. Strips control characters while preserving newlines and tabs
+6. Returns JSON with `additionalContext` containing sanitized checkpoint
+7. Claude receives restored plan automatically before first interaction
+
+**Example Output** (Successful Injection):
+```json
+{
+  "continue": true,
+  "additionalContext": "# 🔄 MAP Workflow Context Restored\n\nThis context was automatically restored from your previous session's checkpoint.\nThe plan below reflects your current task progress and helps maintain workflow continuity after context compaction.\n\n---\n\n# Current Task: feat_auth\n## Progress: 3/5 completed\n## Subtask 3: Implement JWT token validation"
+}
+```
+
+**Example Output** (No Checkpoint - New Session):
+```json
+{
+  "continue": true
+}
+```
+
+**Edge Cases Handled**:
+- No checkpoint file → Skip injection gracefully (new session)
+- Checkpoint >256KB → Reject, log error to stderr, skip injection
+- Path traversal (`../../../etc/passwd`) → Reject, log error to stderr, skip injection
+- Invalid UTF-8 encoding → Reject, log error to stderr, skip injection
+- Binary files → Rejected by UTF-8 validation
+- Control characters (ESC codes, NULL bytes) → Sanitized automatically (preserves \n and \t)
+- Empty content after sanitization → Skip injection
+- Validator script missing → Skip injection gracefully, fallback to manual Phase 1
+- Validator script fails → Skip injection gracefully, log error
+
+**Security Validations** (4 Layers - Defense-in-Depth):
+1. **Path Security**: Blocks path traversal attacks (`../`, absolute paths outside `.map/`)
+2. **Size Bomb Protection**: Rejects files >256KB before reading into memory
+3. **UTF-8 Validation**: Ensures file is text (blocks binary files like images, executables)
+4. **Content Sanitization**: Strips control characters (prevents terminal injection, escape code attacks)
+
+**Performance**:
+- Typical: <0.5s for small checkpoints (5KB)
+- Maximum: <2s for large checkpoints (100KB)
+- Timeout: 5s (Claude Code hook timeout limit)
+- Validation overhead: ~0.1s (path + size + UTF-8 checks)
+
+**Testing**:
+- **Unit Tests**: `tests/hooks/test_validate_checkpoint_file.py` (41 test cases covering all security layers)
+- **Integration Tests**: `tests/hooks/test_session_start_integration.py` (23 test cases for full hook workflow)
+
+**Manual Testing**:
+```bash
+# Test with valid checkpoint
+echo '{}' | .claude/hooks/session-start.sh
+
+# Test with large file (size bomb attack)
+dd if=/dev/zero of=.map/current_plan.md bs=1M count=1
+echo '{}' | .claude/hooks/session-start.sh
+
+# Test with path traversal (security)
+ln -s /etc/passwd .map/current_plan.md
+echo '{}' | .claude/hooks/session-start.sh
+
+# Test with no checkpoint (new session)
+rm -f .map/current_plan.md
+echo '{}' | .claude/hooks/session-start.sh
+```
+
+---
+
 ### PreToolUse - Template Variable Validation
 
 **Hook**: `validate-agent-templates.sh`
