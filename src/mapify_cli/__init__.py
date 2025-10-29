@@ -1903,13 +1903,21 @@ def recitation_clear():
 @playbook_app.command("stats")
 def playbook_stats():
     """Show playbook statistics"""
+    from mapify_cli.playbook_manager import PlaybookManager
+
     playbook_path = Path.cwd() / ".claude" / "playbook.json"
     if not playbook_path.exists():
         console.print_json(data={"error": "Playbook not found"})
         raise typer.Exit(1)
-    playbook = json.loads(playbook_path.read_text())
-    total = sum(len(section["bullets"]) for section in playbook.get("sections", {}).values())
-    stats = {"total_bullets": total, "sections": len(playbook.get("sections", {})), "metadata": playbook.get("metadata", {})}
+
+    # Use PlaybookManager to read from SQLite backend
+    manager = PlaybookManager(playbook_path)
+    total = sum(len(section["bullets"]) for section in manager.playbook.get("sections", {}).values())
+    stats = {
+        "total_bullets": total,
+        "sections": len(manager.playbook.get("sections", {})),
+        "metadata": manager.playbook.get("metadata", {})
+    }
     console.print_json(data=stats)
 
 @playbook_app.command("search")
@@ -1938,6 +1946,245 @@ def playbook_sync(threshold: int = typer.Option(5, help="Minimum helpful count")
     manager = PlaybookManager(playbook_path)
     patterns = manager.get_bullets_for_sync(threshold=threshold)
     console.print_json(data={"threshold": threshold, "count": len(patterns), "patterns": [{"id": p.get("id"), "helpful_count": p.get("helpful_count")} for p in patterns]})
+
+@playbook_app.command("query")
+def playbook_query(
+    query_text: str = typer.Argument(..., help="Search query"),
+    sections: List[str] = typer.Option([], "--section", help="Filter by section (can specify multiple)"),
+    limit: int = typer.Option(5, "--limit", help="Maximum results to return"),
+    mode: str = typer.Option("local", "--mode", help="Search mode: local, cipher, or hybrid"),
+    format_output: str = typer.Option("markdown", "--format", help="Output format: markdown or json"),
+    min_quality: int = typer.Option(0, "--min-quality", help="Minimum quality score (helpful - harmful)"),
+):
+    """Query playbook using FTS5 full-text search with optional cipher integration
+
+    Examples:
+        mapify playbook query "JWT authentication" --limit 5
+        mapify playbook query "error handling" --mode hybrid --limit 10
+        mapify playbook query "API design" --section ARCHITECTURE_PATTERNS --section IMPLEMENTATION_PATTERNS
+    """
+    from mapify_cli.playbook_manager import PlaybookManager
+    from mapify_cli.playbook_query import PlaybookQuery, SearchMode
+
+    playbook_path = Path.cwd() / ".claude" / "playbook.json"
+    if not playbook_path.exists():
+        console.print("[yellow]Warning:[/yellow] Playbook not found. Initialize with 'mapify init'")
+        raise typer.Exit(1)
+
+    try:
+        # Map mode string to SearchMode enum
+        mode_map = {
+            "local": SearchMode.PLAYBOOK_ONLY,
+            "cipher": SearchMode.CIPHER_ONLY,
+            "hybrid": SearchMode.HYBRID
+        }
+        search_mode = mode_map.get(mode.lower(), SearchMode.PLAYBOOK_ONLY)
+
+        # Create query
+        query = PlaybookQuery(
+            query=query_text,
+            sections=list(sections) if sections else None,
+            limit=limit,
+            search_mode=search_mode,
+            min_quality_score=min_quality
+        )
+
+        # Execute query
+        manager = PlaybookManager(playbook_path)
+        response = manager.query(query)
+
+        # Format output
+        if format_output == "json":
+            # JSON output
+            results_json = {
+                "query": query_text,
+                "metadata": response.metadata,
+                "results": [
+                    {
+                        "id": r.id,
+                        "section": r.section,
+                        "content": r.content,
+                        "code_example": r.code_example,
+                        "quality_score": r.quality_score,
+                        "relevance_score": r.relevance_score,
+                        "combined_score": r.combined_score,
+                        "source": r.source
+                    }
+                    for r in response.results
+                ]
+            }
+            console.print_json(data=results_json)
+        else:
+            # Markdown output (default)
+            if not response.results:
+                console.print("[yellow]No results found[/yellow]")
+                return
+
+            console.print(f"# Query Results: {query_text}\n")
+            console.print(f"**Found {len(response.results)} results in {response.metadata['total_time_ms']}ms**\n")
+            console.print(f"*Search method: {response.metadata['search_method']}*\n")
+
+            for i, result in enumerate(response.results, 1):
+                console.print(f"## {i}. [{result.id}] Score: {result.combined_score:.2f}\n")
+                console.print(f"**Section:** {result.section}\n")
+                console.print(f"**Quality:** {result.quality_score} | **Relevance:** {result.relevance_score:.2f} | **Source:** {result.source}\n")
+                console.print(f"{result.content}\n")
+
+                if result.code_example:
+                    console.print("```")
+                    console.print(result.code_example)
+                    console.print("```\n")
+
+                console.print("---\n")
+
+    except ValueError as e:
+        console.print(f"[red]Error:[/red] {str(e)}")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Unexpected error:[/red] {str(e)}")
+        raise typer.Exit(1)
+
+@playbook_app.command("apply-delta")
+def playbook_apply_delta(
+    input_file: Optional[Path] = typer.Argument(None, help="JSON file containing delta operations (or use stdin)"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview changes without applying them")
+):
+    """Apply delta operations to playbook (ADD, UPDATE, DEPRECATE)
+
+    Accepts JSON from file or stdin with structure:
+    {
+      "operations": [
+        {
+          "type": "ADD",
+          "section": "IMPLEMENTATION_PATTERNS",
+          "content": "Pattern description...",
+          "code_example": "code here",
+          "helpful_count": 1,
+          "harmful_count": 0
+        },
+        {
+          "type": "UPDATE",
+          "bullet_id": "impl-0042",
+          "increment_helpful": 1,
+          "increment_harmful": 0
+        },
+        {
+          "type": "DEPRECATE",
+          "bullet_id": "impl-0099",
+          "reason": "Superseded by impl-0105"
+        }
+      ]
+    }
+
+    Examples:
+        mapify playbook apply-delta operations.json
+        mapify playbook apply-delta operations.json --dry-run
+        cat operations.json | mapify playbook apply-delta
+        echo '{"operations": [{"type": "UPDATE", "bullet_id": "impl-0001", "increment_helpful": 1}]}' | mapify playbook apply-delta
+
+    Exit codes:
+        0 - Operations applied successfully (or dry-run preview completed)
+        1 - Validation error or application failure
+    """
+    from mapify_cli.tools.validate_dependencies import load_input
+    from mapify_cli.playbook_manager import PlaybookManager
+
+    playbook_path = Path.cwd() / ".claude" / "playbook.json"
+    if not playbook_path.exists():
+        console.print("[red]Error:[/red] Playbook not found. Initialize with 'mapify init'")
+        raise typer.Exit(1)
+
+    try:
+        # Load input from file or stdin
+        data = load_input(str(input_file) if input_file else None)
+
+        # Validate structure
+        if not isinstance(data, dict):
+            raise ValueError("Input must be a JSON object")
+
+        if "operations" not in data:
+            raise ValueError("Missing required field: 'operations'")
+
+        operations = data["operations"]
+        if not isinstance(operations, list):
+            raise ValueError("'operations' must be an array")
+
+        # Validate each operation
+        for i, op in enumerate(operations):
+            if not isinstance(op, dict):
+                raise ValueError(f"Operation {i} must be a JSON object")
+
+            op_type = op.get("type")
+            if not op_type:
+                raise ValueError(f"Operation {i} missing required field: 'type'")
+
+            if op_type not in ["ADD", "UPDATE", "DEPRECATE"]:
+                raise ValueError(f"Operation {i} has invalid type: {op_type} (must be ADD, UPDATE, or DEPRECATE)")
+
+            # Validate type-specific required fields
+            if op_type == "ADD":
+                required = ["section", "content"]
+                missing = [f for f in required if f not in op]
+                if missing:
+                    raise ValueError(f"ADD operation {i} missing required fields: {', '.join(missing)}")
+
+            elif op_type == "UPDATE":
+                if "bullet_id" not in op:
+                    raise ValueError(f"UPDATE operation {i} missing required field: 'bullet_id'")
+                if "increment_helpful" not in op and "increment_harmful" not in op:
+                    raise ValueError(f"UPDATE operation {i} must specify at least one of: increment_helpful, increment_harmful")
+
+            elif op_type == "DEPRECATE":
+                required = ["bullet_id", "reason"]
+                missing = [f for f in required if f not in op]
+                if missing:
+                    raise ValueError(f"DEPRECATE operation {i} missing required fields: {', '.join(missing)}")
+
+        # Dry-run mode: preview without applying
+        if dry_run:
+            # Count operations by type
+            add_count = sum(1 for op in operations if op.get("type") == "ADD")
+            update_count = sum(1 for op in operations if op.get("type") == "UPDATE")
+            deprecate_count = sum(1 for op in operations if op.get("type") == "DEPRECATE")
+
+            console.print_json(data={
+                "status": "dry_run",
+                "message": "DRY RUN - No changes applied",
+                "would_apply": {
+                    "total_operations": len(operations),
+                    "add": add_count,
+                    "update": update_count,
+                    "deprecate": deprecate_count
+                },
+                "operations": operations
+            })
+            return
+
+        # Apply operations
+        manager = PlaybookManager(playbook_path)
+        summary = manager.apply_delta(operations)
+
+        # Output JSON summary
+        console.print_json(data={
+            "status": "success",
+            "message": "Delta operations applied successfully",
+            "summary": summary
+        })
+
+    except ValueError as e:
+        console.print_json(data={
+            "status": "error",
+            "error_type": "validation_error",
+            "message": str(e)
+        })
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print_json(data={
+            "status": "error",
+            "error_type": "unexpected_error",
+            "message": str(e)
+        })
+        raise typer.Exit(1)
 
 # Validate commands
 

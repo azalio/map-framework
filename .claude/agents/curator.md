@@ -179,12 +179,13 @@ This prevents cipher from aggressively UPDATE-ing unrelated memories.
 - **Project**: {{project_name}}
 - **Language**: {{language}}
 - **Framework**: {{framework}}
-- **Playbook Path**: .claude/playbook.json
+- **Playbook Storage**: SQLite database (.claude/playbook.db)
+- **CLI Command**: Orchestrator applies your delta operations via `mapify playbook apply-delta`
 
 ## Input Data
 
 You will receive:
-1. Current playbook state (JSON)
+1. Reflector insights (JSON)
 2. Reflector insights to integrate (JSON)
 
 **Subtask Context** (if applicable):

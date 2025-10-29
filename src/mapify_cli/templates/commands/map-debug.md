@@ -46,7 +46,12 @@ Debugging workflow focuses on analysis before implementation:
 
 ## Step 1: Analyze the Issue
 
-Before calling task-decomposer, gather context:
+Before calling task-decomposer, gather context and query playbook:
+
+```bash
+# Search for similar debugging patterns
+PLAYBOOK_CONTEXT=$(mapify playbook query "debug [issue type]" --limit 5 --section ERROR_PATTERNS --section DEBUGGING_TECHNIQUES)
+```
 
 1. **Read error logs/stack traces** (if provided in $ARGUMENTS)
 2. **Search cipher for similar issues**: `mcp__cipher__cipher_memory_search("debug pattern [error_type]")`
@@ -252,7 +257,6 @@ Task(
   description="Update playbook with debugging patterns",
   prompt="Integrate debugging lessons into playbook:
 
-**Current Playbook:** [read from .claude/playbook.json]
 **Reflector Insights:** [paste reflector JSON]
 
 Focus on:
@@ -265,7 +269,15 @@ Output JSON with curator operations."
 )
 ```
 
-Apply curator operations to `.claude/playbook.json`.
+Apply curator operations using CLI:
+
+```bash
+# Save Curator output to file
+echo '[Curator JSON output]' > curator_operations.json
+
+# Apply to playbook SQLite database
+mapify playbook apply-delta curator_operations.json
+```
 
 ## Step 4: Verification
 

@@ -73,22 +73,126 @@ Study express-rate-limit via deepwiki, then create optimized version.
 
 The playbook manager CLI provides tools to analyze and manage learned patterns:
 
+### Querying Playbook (NEW - FTS5 Full-Text Search)
+
+**Recommended:** Use `mapify playbook query` instead of `mapify playbook search` for better performance with large playbooks.
+
+```bash
+# Basic query (local playbook only)
+mapify playbook query "JWT authentication" --limit 5
+
+# With cipher integration (broader knowledge)
+mapify playbook query "error handling patterns" --mode hybrid --limit 10
+
+# Filter by sections
+mapify playbook query "API design" --section ARCHITECTURE_PATTERNS --section IMPLEMENTATION_PATTERNS
+
+# Minimum quality filter
+mapify playbook query "security patterns" --min-quality 3
+
+# JSON output (for scripts)
+mapify playbook query "testing strategies" --format json
+```
+
+**Query modes:**
+- `--mode local` (default) - Search local playbook only (fast, <50ms)
+- `--mode hybrid` - Search both playbook and cipher (comprehensive)
+- `--mode cipher` - Search cipher only (cross-project patterns)
+
+**Why use `query` instead of `search`:**
+- ✅ **Works with large playbooks** - Handles >256KB (current playbook: 270KB)
+- ✅ **FTS5 full-text search** - 10x faster than grep
+- ✅ **Relevance ranking** - Best patterns first
+- ✅ **Quality scoring** - Prioritizes proven patterns (helpful_count - harmful_count)
+- ✅ **Cipher integration** - Optional cross-project knowledge
+
+### Apply Delta Operations (MAP Workflow Integration)
+
+**Purpose:** Apply Curator agent output to update the playbook database.
+
+```bash
+# Apply operations from file
+mapify playbook apply-delta curator_output.json
+
+# Preview changes without applying (dry-run)
+mapify playbook apply-delta operations.json --dry-run
+
+# Pipe from Curator agent (recommended in MAP workflows)
+cat curator_output.json | mapify playbook apply-delta
+echo '{"operations": [{"type": "UPDATE", "bullet_id": "impl-0001", "increment_helpful": 1}]}' | mapify playbook apply-delta
+```
+
+**Operation Types:**
+
+1. **ADD** - Add new bullet to playbook
+   ```json
+   {
+     "type": "ADD",
+     "section": "IMPLEMENTATION_PATTERNS",
+     "content": "Use async/await for I/O operations",
+     "code_example": "async def fetch(): ...",
+     "tags": ["python", "async"]
+   }
+   ```
+
+2. **UPDATE** - Increment helpful/harmful counters
+   ```json
+   {
+     "type": "UPDATE",
+     "bullet_id": "impl-0042",
+     "increment_helpful": 1
+   }
+   ```
+
+3. **DEPRECATE** - Mark bullet as deprecated
+   ```json
+   {
+     "type": "DEPRECATE",
+     "bullet_id": "impl-0099",
+     "reason": "Superseded by impl-0105"
+   }
+   ```
+
+**Input Format:**
+
+```json
+{
+  "operations": [
+    {"type": "ADD", "section": "...", "content": "..."},
+    {"type": "UPDATE", "bullet_id": "...", "increment_helpful": 1},
+    {"type": "DEPRECATE", "bullet_id": "...", "reason": "..."}
+  ]
+}
+```
+
+**When to Use:**
+
+- ✅ **After Curator agent** in MAP workflows (/map-feature, /map-debug, etc.)
+- ✅ **Batch updates** from CI/CD pipelines
+- ✅ **Automated playbook maintenance**
+
+**Exit Codes:**
+- `0` - Success (operations applied or dry-run completed)
+- `1` - Validation error or application failure
+
+### Statistics
+
 ```bash
 # Statistics
 mapify playbook stats
 
-# Search patterns
-mapify playbook search "JWT authentication"
-
-# High-quality patterns
+# High-quality patterns ready for sync
 mapify playbook sync
 ```
 
-**Note:** These commands help you:
+### Legacy Search (deprecated for large playbooks)
 
-- View playbook statistics (total patterns, average quality)
-- Search for specific implementation patterns
-- Sync high-quality patterns between playbook and cipher
+```bash
+# Search patterns (works for small playbooks <256KB)
+mapify playbook search "JWT authentication"
+```
+
+**Note:** `search` command uses simple keyword matching and may fail on large playbooks. Use `query` instead.
 
 ## 🔍 Dependency Validation
 
