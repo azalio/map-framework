@@ -539,7 +539,6 @@ def test_hook_with_missing_validator_script(hook_script_path, tmp_path, monkeypa
     # (checkpoint_content, should_have_additionalContext, expected_stderr_fragment)
     ("# Valid checkpoint\n\nProgress: 2/5", True, "Successfully validated checkpoint"),
     ("", False, "Sanitized content is empty"),
-    ("x" * (257 * 1024), False, "File too large"),
 ])
 def test_checkpoint_scenarios_parametrized(
     hook_script_path,
@@ -571,6 +570,29 @@ def test_checkpoint_scenarios_parametrized(
 
     # Verify expected stderr fragment
     assert expected_in_stderr in result.stderr
+
+
+def test_checkpoint_size_bomb_scenario(hook_script_path, test_workspace):
+    """Test size bomb scenario separately (cannot be parametrized due to ARG_MAX limit)"""
+    # Setup: Create oversized checkpoint (257KB)
+    checkpoint = test_workspace / ".map" / "current_plan.md"
+    checkpoint.write_text("x" * (257 * 1024), encoding='utf-8')
+
+    # Execute hook
+    result = run_hook(hook_script_path, test_workspace)
+
+    # Verify exit code
+    assert result.returncode == 0
+
+    # Parse output
+    output = parse_hook_output(result)
+    assert output["continue"] is True
+
+    # Verify no injection (size bomb blocked)
+    assert "additionalContext" not in output
+
+    # Verify expected stderr
+    assert "File too large" in result.stderr
 
 
 # ============================================================================
