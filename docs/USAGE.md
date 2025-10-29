@@ -194,6 +194,84 @@ mapify playbook search "JWT authentication"
 
 **Note:** `search` command uses simple keyword matching and may fail on large playbooks. Use `query` instead.
 
+## 🔄 Handling Context Compaction
+
+MAP workflows automatically save progress to the `.map/` directory, which persists across context compactions. This ensures your work is never lost, even if the conversation context is cleared.
+
+### What is Context Compaction?
+
+Context compaction occurs when Claude's conversation memory reaches its limit. When this happens:
+- The conversation history is cleared to free up space
+- But your work files on disk remain intact
+- You can seamlessly resume from where you left off
+
+### Recovery Workflow
+
+**1. Before Compaction (Optional):**
+
+If you notice context getting low, checkpoint your progress:
+
+```bash
+mapify recitation checkpoint
+```
+
+This will display:
+- Current task status
+- Absolute file paths to your work
+- Instructions for recovery
+
+**Example output:**
+```
+✅ Progress Checkpointed
+
+Task: feat_auth_1730000000
+Progress: 3/5 subtasks completed
+Current Subtask: 4
+
+Files persisted:
+  • .map/current_plan.md
+  • .map/dev_docs/context.md
+  • .map/dev_docs/tasks.md
+
+To resume after compaction:
+  Reference these files in new session:
+  @.map/current_plan.md
+  @.map/context.md
+  @.map/tasks.md
+```
+
+**2. After Compaction:**
+
+In the new conversation session, reference the saved files:
+
+```
+User: continue MAP workflow
+      @.map/current_plan.md
+      @.map/dev_docs/context.md
+      @.map/dev_docs/tasks.md
+
+Claude: [reads files]
+        Resuming subtask 4: "Add error handling to API routes"
+        [continues implementation from saved state]
+```
+
+### Key Points
+
+- ✅ **Progress auto-saves** - Every `mapify recitation update` saves to disk
+- ✅ **No manual checkpointing required** - Files update automatically during workflow
+- ✅ **Files persist forever** - They're on your filesystem, not in conversation memory
+- ✅ **Cross-session recovery** - Resume in any new conversation by referencing files
+
+### Architecture
+
+MAP's recitation system uses file-based persistence:
+- `.map/current_plan.json` - Structured plan data
+- `.map/current_plan.md` - Human-readable plan for Claude
+- `.map/dev_docs/context.md` - Project context
+- `.map/dev_docs/tasks.md` - Task checklist
+
+These files survive compaction because they're stored on disk, not in conversation memory.
+
 ## 🔍 Dependency Validation
 
 The dependency validation utility (`scripts/validate-dependencies.py`) ensures TaskDecomposer output has valid dependency graphs before execution. It prevents workflow failures by detecting:

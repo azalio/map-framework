@@ -1224,6 +1224,107 @@ MAP Framework applies cutting-edge context engineering principles for AI agents,
 - ✅ +50% observability (clear progress tracking)
 - ✅ Error context persistence (retry loops retain error history)
 
+### Compaction Resilience
+
+**Problem:** Context compaction (conversation history clearing) would normally lose workflow state, forcing restart from scratch.
+
+**Solution:** File-based persistence architecture where all recitation state persists to disk, surviving compaction.
+
+**Architecture:**
+
+```
+Filesystem (persists forever)           Conversation Memory (clears on compaction)
+─────────────────────────────           ─────────────────────────────────────────
+.map/
+├── current_plan.json                   ← Structured state
+│   ├── task_id, goal                   ← NEVER lost
+│   ├── subtasks[]
+│   │   ├── id, description
+│   │   ├── status (pending/in_progress/completed)
+│   │   ├── iterations, errors
+│   │   └── depends_on[]
+│   └── current_subtask_id
+│
+├── current_plan.md                     ← Human-readable format
+│   └── Formatted for Claude to read    ← Injected after compaction
+│
+└── dev_docs/
+    ├── context.md                      ← Project-specific context
+    └── tasks.md                        ← Auto-generated task list
+```
+
+**Persistence Mechanism:**
+
+1. **Automatic Saves** (every recitation update):
+   ```python
+   # Every time status changes, both files update
+   manager.update_subtask_status(2, "in_progress")
+   # → Writes to .map/current_plan.json (structured)
+   # → Writes to .map/current_plan.md (readable)
+   ```
+
+2. **Checkpoint Command** (user-facing):
+   ```bash
+   $ mapify recitation checkpoint
+
+   ✅ Progress Checkpointed
+
+   Task: feat_auth_1730000000
+   Progress: 3/5 subtasks completed
+   Current Subtask: 4
+
+   Files persisted:
+     • .map/current_plan.md
+     • .map/dev_docs/context.md
+     • .map/dev_docs/tasks.md
+
+   To resume after compaction:
+     Reference these files in new session:
+     @.map/current_plan.md
+     @.map/context.md
+     @.map/tasks.md
+   ```
+
+3. **Recovery Workflow** (after compaction):
+   ```
+   User: continue MAP workflow
+         @.map/current_plan.md
+         @.map/dev_docs/context.md
+         @.map/dev_docs/tasks.md
+
+   Claude: [reads files from disk]
+           Resuming from saved state...
+           Current task: feat_auth_1730000000
+           Progress: 3/5 completed
+           Current subtask: 4 - Add error handling
+           [continues implementation]
+   ```
+
+**Why This Works:**
+
+| Storage Type | Compaction Effect | MAP's Choice |
+|-------------|-------------------|--------------|
+| Conversation memory | ❌ Cleared | Not used for state |
+| File system (.map/) | ✅ Persists | Used for all state |
+| Automatic updates | ✅ Always current | No manual checkpointing |
+
+**Comparison to Manual Approaches:**
+
+- **Manual checkpointing** (e.g., "/update-dev-docs"): Requires user to remember command before compaction. Risk of forgetting.
+- **MAP's approach**: Automatic persistence with optional checkpoint command for guidance. Zero cognitive load.
+
+**Benefits:**
+- ✅ **Zero data loss** - All progress persists across compactions
+- ✅ **Automatic** - No manual checkpointing required
+- ✅ **Always current** - Files update on every status change
+- ✅ **Cross-session** - Resume in any new conversation
+- ✅ **Observable** - Checkpoint command shows recovery paths
+
+**Implementation:**
+- Class: `RecitationManager._save_plan()` (line 238-261)
+- Files: `.map/current_plan.json`, `.map/current_plan.md`
+- CLI: `mapify recitation checkpoint` command
+
 ### Workflow Logging (Phase 1.2)
 
 **Problem:** Debugging failed workflows requires manual correlation of agent outputs.

@@ -1977,6 +1977,104 @@ def recitation_get_docs():
         })
         raise typer.Exit(1)
 
+
+@recitation_app.command("checkpoint")
+def recitation_checkpoint():
+    """Show current MAP workflow state and recovery instructions for post-compaction"""
+    from mapify_cli.recitation_manager import RecitationManager
+    import os
+
+    manager = RecitationManager(Path.cwd())
+    map_dir = Path.cwd() / ".map"
+
+    # Check if .map directory exists
+    if not map_dir.exists():
+        console.print("[yellow]⚠️  No active MAP workflow found[/yellow]")
+        console.print("\nThe `.map/` directory doesn't exist yet.")
+        console.print("Start a MAP workflow with: [cyan]/map-feature[/cyan], [cyan]/map-debug[/cyan], or [cyan]/map-refactor[/cyan]")
+        raise typer.Exit(0)
+
+    # Define files to check
+    files_to_check = {
+        "plan_json": manager.plan_json,
+        "plan_md": manager.plan_file,
+        "context_md": manager.context_file,
+        "tasks_md": manager.tasks_file
+    }
+
+    # Check which files exist
+    existing_files = {name: path for name, path in files_to_check.items() if path.exists()}
+
+    if not existing_files:
+        console.print("[yellow]⚠️  MAP workflow directory exists but no state files found[/yellow]")
+        console.print(f"\nDirectory: {map_dir.absolute()}")
+        console.print("Expected files are missing. The workflow may not have been initialized properly.")
+        raise typer.Exit(0)
+
+    # Print checkpoint header
+    console.print("\n[bold green]📍 MAP Workflow Checkpoint[/bold green]")
+    console.print("=" * 60)
+
+    # Print file locations
+    console.print("\n[bold]📁 State Files (absolute paths):[/bold]")
+    for name, path in existing_files.items():
+        file_size = path.stat().st_size
+        console.print(f"  • {path.absolute()} ([dim]{file_size} bytes[/dim])")
+
+    # Show current task status if plan exists
+    if "plan_json" in existing_files:
+        try:
+            plan = manager.get_plan()
+            if plan:
+                console.print(f"\n[bold]🎯 Current Task:[/bold] {plan.goal}")
+                console.print(f"[bold]📊 Progress:[/bold] {plan.current_subtask_id}/{len(plan.subtasks)} subtasks")
+
+                # Show current subtask
+                current = next((s for s in plan.subtasks if s.id == plan.current_subtask_id), None)
+                if current:
+                    console.print(f"[bold]▶️  Active:[/bold] {current.description} [{current.status}]")
+        except Exception as e:
+            console.print(f"[yellow]⚠️  Could not parse plan: {str(e)}[/yellow]")
+
+    # Print file contents with headers
+    console.print("\n[bold]📄 File Contents:[/bold]")
+    console.print("-" * 60)
+
+    for name, path in existing_files.items():
+        console.print(f"\n[bold cyan]### {path.name}[/bold cyan]")
+        try:
+            content = path.read_text()
+            # Truncate very long files
+            if len(content) > 2000:
+                console.print(content[:2000])
+                console.print(f"\n[dim]... (truncated, {len(content) - 2000} more chars)[/dim]")
+            else:
+                console.print(content)
+        except Exception as e:
+            console.print(f"[red]Error reading file: {str(e)}[/red]")
+
+    # Print recovery instructions
+    console.print("\n" + "=" * 60)
+    console.print("[bold green]🔄 Recovery Instructions (for post-compaction):[/bold green]")
+    console.print("\nAfter context compaction, paste this to Claude:\n")
+
+    recovery_message = f"""```
+Continue MAP workflow from checkpoint:
+
+@{manager.plan_file.absolute()}"""
+
+    if "context_md" in existing_files:
+        recovery_message += f"\n@{manager.context_file.absolute()}"
+    if "tasks_md" in existing_files:
+        recovery_message += f"\n@{manager.tasks_file.absolute()}"
+
+    recovery_message += "\n```"
+
+    console.print(recovery_message)
+    console.print("\n[dim]Claude will automatically resume from where you left off.[/dim]")
+    console.print("=" * 60 + "\n")
+
+
 # Playbook commands
 
 @playbook_app.command("stats")
