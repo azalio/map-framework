@@ -240,8 +240,8 @@ Monitor catches connection failures unit tests miss (registration gaps, stream m
 - Add encoding fallback for README.md reading (UTF-8 → Latin-1 → replace)
 
 ### Feature Extensions
-- Support TypeScript/Go in quality gates hook
-- Add more test discovery patterns (*.test.py, *_test.py)
+- Add more test discovery patterns (*.test.py, *_test.py) for Python
+- Implement test discovery for Go (go test), TypeScript (jest/vitest), Rust (cargo test)
 - Implement caching for expensive operations
 
 ---

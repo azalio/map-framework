@@ -20,7 +20,6 @@ import subprocess
 import argparse
 from pathlib import Path
 from typing import Dict, List, Optional
-import os
 
 
 def run_command(cmd: List[str], cwd: Optional[str] = None, timeout: int = 25) -> Dict:
@@ -192,13 +191,9 @@ def check_rust_syntax(file_path: str) -> Dict:
             'details': None
         }
 
-    # Use rustc --parse-only for syntax check (no codegen)
-    # Note: This is a simple check, cargo check would be more comprehensive
-    result = run_command(['rustc', '-Z', 'parse-only', file_path], timeout=10)
-
-    # If parse-only not available, try regular compilation
-    if 'unknown' in result['stderr'] or result['returncode'] != 0:
-        result = run_command(['rustc', '--crate-type', 'lib', file_path], timeout=10)
+    # Use rustc --crate-type lib for syntax check (works on stable and nightly)
+    # Note: cargo check would be more comprehensive for projects with dependencies
+    result = run_command(['rustc', '--crate-type', 'lib', file_path], timeout=10)
 
     if result['returncode'] == 0:
         return {
