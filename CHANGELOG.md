@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2025-10-29
+
+### Added
+- **`mapify playbook apply-delta` CLI Command**: New command for applying Curator delta operations to playbook
+  - Supports both file input and stdin (pipe-friendly for CI/CD)
+  - `--dry-run` flag for preview without applying changes
+  - `--verbose` flag for detailed operation logging
+  - JSON output with operation results (added, updated, deprecated counts)
+  - Comprehensive test suite with 19 tests (unit, CLI, integration)
+
+### Changed
+- **Complete SQLite Migration**: All playbook commands now use SQLite as source of truth
+  - `playbook stats` now reads from SQLite backend (not JSON)
+  - `playbook query`, `search`, `apply-delta`, `sync` all use SQLite
+  - Automatic JSON → SQLite migration on first access
+  - No breaking changes - JSON files still supported
+
+- **Workflow Template Updates**: All MAP workflow templates now document CLI usage
+  - `.claude/commands/map-feature.md` - Updated Step 1 and Step 3.10
+  - `.claude/commands/map-efficient.md` - Same changes
+  - `.claude/commands/map-debug.md` - Same changes
+  - `.claude/agents/curator.md` - Documents apply-delta integration
+  - All changes synced to `src/mapify_cli/templates/`
+
+### Fixed
+- **Unique ID Generation**: Fixed UNIQUE constraint failures in ADD operations
+  - Changed from in-memory COUNT to SQLite MAX(id) + 1
+  - Ensures IDs are always unique across concurrent operations
+
+- **Test Compatibility**: Fixed `test_playbook_stats` to handle migration messages
+  - Added JSON extraction logic for mixed output (migration messages + JSON)
+  - All 315 tests passing on all platforms (Ubuntu + macOS, Python 3.11 + 3.12)
+
+### Improved
+- **Code Quality**: Addressed all Copilot code review feedback
+  - Replaced magic numbers with named constants (QUALITY_SCORE_MAX, RELEVANCE_WEIGHT, QUALITY_WEIGHT)
+  - Removed 7 unused imports across test files
+  - Fixed comment typo (0.03 → 0.3) in quality score calculation
+
+### Documentation
+- **Updated USAGE.md**: Added examples for `mapify playbook apply-delta` command
+- **Template Synchronization**: All .claude/ templates synced to src/mapify_cli/templates/
+
 ## [1.0.4] - 2025-10-27
 
 ### Added
