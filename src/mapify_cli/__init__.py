@@ -1898,6 +1898,73 @@ def recitation_clear():
     manager.clear_plan()
     console.print_json(data={"status": "success", "message": "Plan cleared"})
 
+
+@recitation_app.command("generate-context")
+def recitation_generate_context():
+    """Generate context.md from project metadata and playbook"""
+    from mapify_cli.recitation_manager import RecitationManager
+    manager = RecitationManager(Path.cwd())
+    try:
+        context_file = manager.generate_context_md()
+        console.print_json(data={
+            "status": "success",
+            "message": "Generated context.md",
+            "file": context_file
+        })
+    except Exception as e:
+        console.print_json(data={
+            "status": "error",
+            "message": f"Failed to generate context.md: {str(e)}"
+        })
+        raise typer.Exit(1)
+
+
+@recitation_app.command("generate-tasks")
+def recitation_generate_tasks():
+    """Regenerate tasks.md from current plan"""
+    from mapify_cli.recitation_manager import RecitationManager
+    manager = RecitationManager(Path.cwd())
+    try:
+        plan = manager.get_plan()
+        if not plan:
+            console.print_json(data={
+                "status": "error",
+                "message": "No active plan to generate tasks from"
+            })
+            raise typer.Exit(1)
+
+        manager._generate_tasks_md(plan)
+        console.print_json(data={
+            "status": "success",
+            "message": "Generated tasks.md",
+            "file": str(manager.tasks_file)
+        })
+    except Exception as e:
+        console.print_json(data={
+            "status": "error",
+            "message": f"Failed to generate tasks.md: {str(e)}"
+        })
+        raise typer.Exit(1)
+
+
+@recitation_app.command("get-docs")
+def recitation_get_docs():
+    """Get all dev docs content (plan + context + tasks)"""
+    from mapify_cli.recitation_manager import RecitationManager
+    manager = RecitationManager(Path.cwd())
+    try:
+        docs = manager.get_dev_docs()
+        console.print_json(data={
+            "status": "success",
+            "docs": docs
+        })
+    except Exception as e:
+        console.print_json(data={
+            "status": "error",
+            "message": f"Failed to get dev docs: {str(e)}"
+        })
+        raise typer.Exit(1)
+
 # Playbook commands
 
 @playbook_app.command("stats")

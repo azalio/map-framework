@@ -397,3 +397,201 @@ class TestBackwardCompatibility:
         assert any("database" in r["content"].lower() for r in results)
 
         manager.close()
+
+
+class TestSchemaMigration:
+    """Test schema version migration from 2.0 to 2.1"""
+
+    def test_migration_adds_executable_scripts_field(self, temp_playbook_dir):
+        """Migration from 2.0 to 2.1 adds executable_scripts column"""
+        db_path = temp_playbook_dir / "playbook.db"
+
+        # Create a 2.0 schema database manually (without executable_scripts)
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
+
+        # Create old schema (2.0) without executable_scripts
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS bullets (
+                id TEXT PRIMARY KEY,
+                section TEXT NOT NULL,
+                content TEXT NOT NULL,
+                code_example TEXT,
+                helpful_count INTEGER DEFAULT 0,
+                harmful_count INTEGER DEFAULT 0,
+                quality_score INTEGER GENERATED ALWAYS AS (helpful_count - harmful_count) VIRTUAL,
+                created_at TEXT NOT NULL,
+                last_used_at TEXT NOT NULL,
+                deprecated INTEGER DEFAULT 0,
+                deprecation_reason TEXT,
+                tags TEXT,
+                related_bullets TEXT
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
+
+        # Set schema version to 2.0
+        cursor.execute("INSERT INTO metadata VALUES ('schema_version', '2.0')")
+
+        # Add a test bullet
+        cursor.execute("""
+            INSERT INTO bullets (id, section, content, created_at, last_used_at, tags, related_bullets)
+            VALUES ('impl-0001', 'IMPLEMENTATION_PATTERNS', 'Test pattern', '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z', '[]', '[]')
+        """)
+
+        conn.commit()
+        conn.close()
+
+        # Create PlaybookManager - should trigger migration
+        json_path = temp_playbook_dir / "playbook.json"
+        manager = PlaybookManager(playbook_path=str(json_path), db_path=str(db_path), use_semantic_search=False)
+
+        # Verify schema version updated
+        cursor = manager.db_conn.cursor()
+        cursor.execute("SELECT value FROM metadata WHERE key = 'schema_version'")
+        version = cursor.fetchone()[0]
+        assert version == '2.1'
+
+        # Verify column exists
+        cursor.execute("PRAGMA table_info(bullets)")
+        columns = [row[1] for row in cursor.fetchall()]
+        assert 'executable_scripts' in columns
+
+        # Verify existing data preserved
+        cursor.execute("SELECT id, content FROM bullets WHERE id = 'impl-0001'")
+        row = cursor.fetchone()
+        assert row[0] == 'impl-0001'
+        assert row[1] == 'Test pattern'
+
+        manager.close()
+
+    def test_migration_idempotent(self, temp_playbook_dir):
+        """Migration can be run multiple times without errors"""
+        db_path = temp_playbook_dir / "playbook.db"
+
+        # Create a 2.0 schema database
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS bullets (
+                id TEXT PRIMARY KEY,
+                section TEXT NOT NULL,
+                content TEXT NOT NULL,
+                code_example TEXT,
+                helpful_count INTEGER DEFAULT 0,
+                harmful_count INTEGER DEFAULT 0,
+                quality_score INTEGER GENERATED ALWAYS AS (helpful_count - harmful_count) VIRTUAL,
+                created_at TEXT NOT NULL,
+                last_used_at TEXT NOT NULL,
+                deprecated INTEGER DEFAULT 0,
+                deprecation_reason TEXT,
+                tags TEXT,
+                related_bullets TEXT
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
+
+        cursor.execute("INSERT INTO metadata VALUES ('schema_version', '2.0')")
+        conn.commit()
+        conn.close()
+
+        # First migration
+        json_path = temp_playbook_dir / "playbook.json"
+        manager1 = PlaybookManager(playbook_path=str(json_path), db_path=str(db_path), use_semantic_search=False)
+        manager1.close()
+
+        # Second migration (should be no-op)
+        manager2 = PlaybookManager(playbook_path=str(json_path), db_path=str(db_path), use_semantic_search=False)
+
+        # Verify still at 2.1
+        cursor = manager2.db_conn.cursor()
+        cursor.execute("SELECT value FROM metadata WHERE key = 'schema_version'")
+        version = cursor.fetchone()[0]
+        assert version == '2.1'
+
+        manager2.close()
+
+    def test_executable_scripts_nullable(self, temp_playbook_dir):
+        """New executable_scripts field allows NULL for existing bullets"""
+        json_path = temp_playbook_dir / "playbook.json"
+
+        manager = PlaybookManager(playbook_path=str(json_path), use_semantic_search=False)
+
+        # Add bullet without executable_scripts
+        manager._add_bullet(
+            section="IMPLEMENTATION_PATTERNS",
+            content="Test pattern without scripts"
+        )
+
+        # Verify it was added with NULL executable_scripts
+        cursor = manager.db_conn.cursor()
+        cursor.execute("SELECT executable_scripts FROM bullets LIMIT 1")
+        result = cursor.fetchone()
+        assert result[0] is None
+
+        manager.close()
+
+    def test_new_bullets_accept_executable_scripts(self, temp_playbook_dir):
+        """New bullets can store executable_scripts data"""
+        json_path = temp_playbook_dir / "playbook.json"
+
+        manager = PlaybookManager(playbook_path=str(json_path), use_semantic_search=False)
+
+        # Add bullet with executable_scripts
+        scripts = ["scripts/test.sh", "scripts/validate.py"]
+        bullet_id = manager._add_bullet(
+            section="IMPLEMENTATION_PATTERNS",
+            content="Test pattern with scripts",
+            executable_scripts=scripts
+        )
+
+        # Verify it was stored correctly
+        cursor = manager.db_conn.cursor()
+        cursor.execute("SELECT executable_scripts FROM bullets WHERE id = ?", (bullet_id,))
+        stored = cursor.fetchone()[0]
+        assert json.loads(stored) == scripts
+
+        # Verify in-memory playbook also has it
+        bullet = manager._find_bullet(bullet_id)
+        assert bullet["executable_scripts"] == scripts
+
+        manager.close()
+
+    def test_apply_delta_supports_executable_scripts(self, temp_playbook_dir):
+        """apply_delta ADD operation supports executable_scripts"""
+        json_path = temp_playbook_dir / "playbook.json"
+
+        manager = PlaybookManager(playbook_path=str(json_path), use_semantic_search=False)
+
+        operations = [
+            {
+                "type": "ADD",
+                "section": "IMPLEMENTATION_PATTERNS",
+                "content": "Pattern with attached scripts",
+                "executable_scripts": ["scripts/deploy.sh", "scripts/rollback.sh"]
+            }
+        ]
+
+        summary = manager.apply_delta(operations)
+        assert summary["added"] == 1
+        assert summary["errors"] == []
+
+        # Verify scripts were stored
+        bullets = manager.playbook["sections"]["IMPLEMENTATION_PATTERNS"]["bullets"]
+        assert len(bullets) == 1
+        assert bullets[0]["executable_scripts"] == ["scripts/deploy.sh", "scripts/rollback.sh"]
+
+        manager.close()
