@@ -2,13 +2,15 @@
 
 ## Workflow Overview
 
-MAP Framework uses a **strictly sequential 6-agent orchestration** for each subtask.
+MAP Framework uses a **strictly sequential orchestration** that begins with TaskDecomposer and then runs an implementation loop for each subtask.
 
 **Mandatory sequence:**
 
 ```mermaid
 flowchart TD
-    Start([Subtask Start]) --> Actor[1. Actor<br/>Implement solution]
+    Start([Task Start]) --> Decompose[0. TaskDecomposer<br/>Create subtasks]
+    Decompose --> Plan[2.5 Recitation Plan<br/>Create current_plan.md]
+    Plan --> Actor[1. Actor<br/>Implement subtask]
     Actor --> Monitor[2. Monitor<br/>Quality validation]
 
     Monitor -->|Valid| Predictor[3. Predictor<br/>Impact analysis]
@@ -16,10 +18,11 @@ flowchart TD
 
     Predictor --> Evaluator[4. Evaluator<br/>Quality assessment]
 
-    Evaluator -->|Approved| Reflector[5. Reflector<br/>Extract lessons<br/><b>MANDATORY</b>]
+    Evaluator -->|Approved| Accept[5. ACCEPT changes<br/>Apply to files]
     Evaluator -->|Not Approved| Actor
 
-    Reflector --> Curator[6. Curator<br/>Update playbook<br/><b>MANDATORY</b>]
+    Accept --> Reflector[6. Reflector<br/>Extract lessons<br/><b>MANDATORY</b>]
+    Reflector --> Curator[7. Curator<br/>Update playbook<br/><b>MANDATORY</b>]
 
     Curator --> End([Subtask Complete])
 ```
@@ -107,7 +110,7 @@ MAP uses **TWO knowledge storage systems**:
 
 **Mechanism:**
 
-1. **Step 3.1.3:** **Orchestrator** generates a fresh recitation plan before Actor runs
+1. **Step 2.5:** **Orchestrator** creates a recitation plan after TaskDecomposer
 
    ```bash
    mapify recitation create "$TASK_ID" "$ARGUMENTS" "$SUBTASKS_JSON"
@@ -192,29 +195,27 @@ Before completing any MAP workflow subtask the orchestrator **MUST** check 4 que
 
 **MapWorkflowLogger** — detailed logging of MAP workflows.
 
-**Activation:** Logging is **optional**, enabled only when:
+**Activation:** Logging is optional and enabled via:
 
-- CLI flag: `--debug` (e.g., `mapify init --debug`)
+- CLI flag: `--debug` (e.g., `mapify init --debug`, `mapify check --debug`)
 - Environment variable: `MAP_DEBUG=true`
 
-**Captured events (7 types):**
+**Actual event names:**
 
-1. `workflow_start` — init
-2. `workflow_end` — finish/failure
-3. `agent_call` — each agent invocation
-4. `tool_use` — MCP tool calls
-5. `recitation_created` — plan creation
-6. `recitation_updated` — plan status updates
-7. `error` — workflow failures
+- `session_start`, `session_end`
+- `agent_invocation`
+- `error`, `timing`
+- `recitation_plan_created`, `recitation_subtask_updated`, `recitation_context_retrieved`
+- Custom events via `log_event` (e.g., `command_start`)
 
-**Format:** JSON Lines (`/.map/logs/workflow_TIMESTAMP.log`)
+**Format:** JSON Lines (`.map/logs/workflow_TIMESTAMP.log`)
 
 **Each line includes:**
 
 - `timestamp` (ISO 8601)
-- `event_type` (from the list above)
+- `event` (event name)
 - `task_id` (correlates with RecitationManager)
-- `data` (event-specific payload)
+- Event-specific fields (e.g., `prompt_preview`, `response_preview` for agent_invocation)
 
 **Usage:**
 

@@ -66,8 +66,7 @@
     "evaluator": ["sequential-thinking", "claude-reviewer", "cipher", "context7", "deepwiki"],
     "reflector": ["cipher", "sequential-thinking", "context7", "deepwiki"],
     "curator": ["cipher", "context7", "deepwiki"],
-    "documentation-reviewer": ["cipher", "context7", "deepwiki"],
-    "test-generator": ["cipher", "codex-bridge", "context7", "deepwiki"]
+    "documentation-reviewer": ["cipher", "context7", "deepwiki"]
   },
   "workflow_settings": {
     "always_retrieve_knowledge": true,

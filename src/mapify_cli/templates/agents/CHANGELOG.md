@@ -75,7 +75,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Functionality moved to slash commands: /map-feature, /map-debug, /map-review
 
 ### Fixed
-- **Missing Fallback Generators**: Added fallback generators for reflector, curator, and test-generator in src/mapify_cli/__init__.py
+- **Missing Fallback Generators**: Added fallback generators for reflector and curator in src/mapify_cli/__init__.py
 - **Hook Cleanup**: Removed 4 non-functional MCP hooks (auto-store-knowledge, enrich-context, session-init, track-metrics)
 - **Template Sync**: Synchronized .claude/agents/*.md with src/mapify_cli/templates/agents/*.md
 
@@ -102,7 +102,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.0] - 2025-01-15 (Baseline)
 
 Initial release of MAP agent templates with basic structure:
-- 9 core agents (actor, monitor, predictor, evaluator, task-decomposer, reflector, curator, test-generator, documentation-reviewer)
+- 8 core agents (actor, monitor, predictor, evaluator, task-decomposer, reflector, curator, documentation-reviewer)
 - Basic markdown formatting
 - Minimal examples (50-100 lines per agent)
 - Simple tool specifications

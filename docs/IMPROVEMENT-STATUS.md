@@ -135,22 +135,7 @@
 - Weighted scoring for operation selection
 - Final curator checklist
 
-### ✅ 8. Test-Generator Agent (Test Automation)
-**File**: `.claude/agents/test-generator.md`
-**Lines**: 234 → 1,428 (+510%, +1,194 lines)
-
-**Improvements**:
-- 4 decision frameworks (test type selection, coverage strategy, mock strategy, naming)
-- 3 complete examples (simple unit test, complex integration test, edge case suite)
-- 5 rationale blocks (why AAA pattern, why 80% coverage, why edge cases)
-- Coverage strategy (critical 100%, high 90%, medium 80%, low 60%)
-- Mock/fixture strategy (when to mock vs real implementation)
-- Test naming strategy (`test_function_scenario_outcome`)
-- Good/bad test patterns (structure, mocking, edge cases, assertions)
-- Quality gates (5 gates: coverage, independence, performance, assertion quality, error paths)
-- Final test validation checklist
-
-### ✅ 9. Documentation-Reviewer Agent (Doc Quality)
+### ✅ 8. Documentation-Reviewer Agent (Doc Quality)
 **File**: `.claude/agents/documentation-reviewer.md`
 **Lines**: 344 → 1,250 (+263%, +906 lines)
 
@@ -404,7 +389,6 @@
 | **task-decomposer** | 91 | 1,133 | +1145% | 3 | 3 | 5 |
 | **reflector** | 980 | 980 | 0% | ✓ | ✓ | ✓ |
 | **curator** | 352 | 1,121 | +218% | 4 | 3 | 5 |
-| **test-generator** | 234 | 1,428 | +510% | 4 | 3 | 5 |
 | **documentation-reviewer** | 344 | 1,250 | +263% | 4 | 3 | 5 |
 | **TOTAL** | **2,588** | **9,269** | **+258%** | **28** | **23** | **39** |
 
@@ -427,14 +411,13 @@
 
 ### Quality Assurance Agents
 
-8. **test-generator** - Creates comprehensive test suites (unit, integration, edge cases)
-9. **documentation-reviewer** - Reviews docs for completeness, consistency, dependencies
+8. **documentation-reviewer** - Reviews docs for completeness, consistency, dependencies
 
 ---
 
 ## SUCCESS CRITERIA MET
 
-✅ **All 9 agents improved** (100% completion)
+✅ **All 8 agents improved** (100% completion)
 ✅ **Architecture integrity maintained** (MAP + ACE preserved)
 ✅ **Claude Code patterns applied** (16/16 patterns)
 ✅ **Quality gates achieved** (all agents 2-3x larger with substance)
