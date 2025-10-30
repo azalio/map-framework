@@ -163,13 +163,13 @@ Installation creates `.claude/playbook.json` with a starter structure:
 {
   "metadata": {
     "total_bullets": 21,
-    "sections_count": 9,
+    "sections_count": 10,
     "top_k": 5
   }
 }
 ```
 
-**9 Pattern Categories:**
+**10 Pattern Categories:**
 
 1. ARCHITECTURE_PATTERNS
 2. IMPLEMENTATION_PATTERNS
@@ -180,6 +180,7 @@ Installation creates `.claude/playbook.json` with a starter structure:
 7. CODE_QUALITY_RULES
 8. TOOL_USAGE
 9. DEBUGGING_TECHNIQUES
+10. CLI_TOOL_PATTERNS
 
 **top_k = 5:** Actor receives only the 5 most relevant patterns per task (reduces cognitive load)
 

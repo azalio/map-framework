@@ -2,18 +2,7 @@
 
 ## Overview
 
-MAP Framework is built around **8 specialized agents**, coordinated by the Orchestrator. Total agent template code size: **7,890 lines**.
-
-**Agents by size:**
-
-1. DocumentationReviewer — 1,282 lines (largest)
-2. TaskDecomposer — 1,169 lines
-3. Curator — 1,145 lines
-4. Reflector — 1,004 lines
-5. Monitor — 908 lines
-6. Predictor — 898 lines
-7. Evaluator — 843 lines
-8. Actor — 641 lines
+MAP Framework is built around **8 specialized agents**, coordinated by the Orchestrator.
 
 The **Orchestrator** is NOT an agent template. Workflow coordination logic lives in the slash commands `.claude/commands/map-*.md` (map-feature, map-debug, map-refactor, map-review).
 
@@ -141,7 +130,7 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 
 **Output:** operations (ADD/UPDATE/DEPRECATE), deduplication_check, sync_to_cipher
 
-### 8. DocumentationReviewer (1,282 lines)
+### 8. DocumentationReviewer
 
 **Model:** sonnet
 **Purpose:** Technical documentation expert; catches missing requirements and integration gaps
@@ -201,6 +190,8 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 - YAML frontmatter: name, description, model (sonnet/haiku), version 2.2.0
 - Handlebars variables: {{project_name}}, {{language}}, {{framework}}, {{subtask_description}}, {{playbook_bullets}}, {{feedback}}
 - Standard sections: IDENTITY, context, mcp_integration, rationale, critical/constraints, examples, output_format
+
+<!-- TestGenerator removed from presentation scope per request -->
 
 ### Model Strategy
 

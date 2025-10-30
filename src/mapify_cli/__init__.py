@@ -494,7 +494,6 @@ def create_agent_files(project_path: Path, mcp_servers: List[str]) -> None:
             "evaluator": create_evaluator_content(mcp_servers),
             "reflector": create_reflector_content(mcp_servers),
             "curator": create_curator_content(mcp_servers),
-            "test-generator": create_test_generator_content(mcp_servers),
             "documentation-reviewer": create_documentation_reviewer_content(mcp_servers)
         }
 
@@ -898,62 +897,7 @@ Return JSON with:
 """
 
 
-def create_test_generator_content(mcp_servers: List[str]) -> str:
-    """Create test-generator agent content"""
-    mcp_section = ""
-    if any(s in mcp_servers for s in ["cipher", "context7"]):
-        mcp_section = """
-# MCP INTEGRATION
-
-**Use these tools for test generation:**
-"""
-        if "cipher" in mcp_servers:
-            mcp_section += """
-1. **mcp__cipher__cipher_memory_search** - Find similar test patterns
-   - Query: "test pattern [feature_type]"
-"""
-        if "context7" in mcp_servers:
-            mcp_section += """
-2. **mcp__context7__get-library-docs** - Verify testing framework usage
-   - Ensure correct test syntax for language/framework
-"""
-
-    return f"""---
-name: test-generator
-description: Generates comprehensive test suites for Actor output
-tools: Read, Write, Edit, Bash, Grep, Glob
-model: sonnet
----
-
-# IDENTITY
-
-You are a test automation specialist who creates comprehensive, maintainable test suites.
-{mcp_section}
-# ROLE
-
-Generate tests for Actor implementations covering:
-- Unit tests (individual functions)
-- Integration tests (component interactions)
-- Edge cases and error handling
-- Security-critical paths (100% coverage required)
-
-## Test Strategy
-
-1. **AAA Pattern**: Arrange, Act, Assert
-2. **Coverage Targets**:
-   - Critical code: 100%
-   - High priority: 90%
-   - Medium priority: 80%
-3. **Edge Cases**: Empty inputs, null values, boundaries
-
-## Output Format (JSON)
-
-Return JSON with:
-- approach: Test strategy for this code
-- test_files: Array of {{file_path, content, test_type}}
-- coverage_analysis: Expected coverage percentage
-- testing_notes: Special considerations
-"""
+# Note: test-generator agent removed
 
 
 def create_documentation_reviewer_content(mcp_servers: List[str]) -> str:
@@ -1290,8 +1234,7 @@ def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
             "orchestrator": [],
             "reflector": [],
             "curator": [],
-            "documentation-reviewer": [],
-            "test-generator": []
+            "documentation-reviewer": []
         },
         "workflow_settings": {
             "always_retrieve_knowledge": True,
@@ -1381,7 +1324,7 @@ def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
                 config["agent_mcp_mappings"][agent].append("claude-reviewer")
 
     if "codex-bridge" in mcp_servers:
-        for agent in ["actor", "predictor", "test-generator"]:
+        for agent in ["actor", "predictor"]:
             if agent in config["agent_mcp_mappings"]:
                 config["agent_mcp_mappings"][agent].append("codex-bridge")
 
@@ -1707,7 +1650,7 @@ def init(
     tracker.add("create-agents", "Create MAP agents")
     tracker.start("create-agents")
     create_agent_files(project_path, selected_mcp_servers)
-    tracker.complete("create-agents", "9 agents")
+    tracker.complete("create-agents", "8 agents")
 
     tracker.add("create-commands", "Create slash commands")
     tracker.start("create-commands")

@@ -169,7 +169,7 @@
 - strategic-plan-architect for planning
 
 **MAP Implementation:**
-**9 specialized agents:**
+**8 specialized agents:**
 1. `task-decomposer` (80K lines!) - Breaks tasks into subtasks
 2. `actor` - Generates implementation proposals
 3. `monitor` - Validates correctness, security, standards
@@ -178,12 +178,11 @@
 6. `reflector` - Extracts lessons from successes/failures
 7. `curator` - Updates playbook incrementally
 8. `documentation-reviewer` - Reviews technical docs
-9. `test-generator` - Generates comprehensive test suites
 
 **Comparison:**
 | Feature | Reddit | MAP |
 |---------|--------|-----|
-| Agent count | ~10 specialized | ✅ **9 with MAP protocol** |
+| Agent count | ~10 specialized | ✅ **8 with MAP protocol** |
 | Planning agent | ✅ strategic-plan-architect | ✅ task-decomposer |
 | Code review | ✅ architecture-reviewer | ✅ monitor + evaluator |
 | Error resolution | ✅ error-resolver | ✅ monitor feedback loops |

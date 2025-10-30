@@ -423,7 +423,7 @@ class TestAgentCreation:
 
         Verifies that:
         - Fallback generators create valid agent content
-        - All 9 agents are created successfully
+        - All 8 agents are created successfully
         - Content includes required sections (IDENTITY, ROLE)
         - MCP integration sections are included when MCP servers specified
         """
@@ -438,11 +438,11 @@ class TestAgentCreation:
         agents_dir = tmp_path / ".claude" / "agents"
         assert agents_dir.exists()
 
-        # Verify all 9 agents were created using fallback generators
+        # Verify all 8 agents were created using fallback generators
         expected_agents = [
             "task-decomposer.md", "actor.md", "monitor.md",
             "predictor.md", "evaluator.md", "reflector.md",
-            "curator.md", "test-generator.md", "documentation-reviewer.md"
+            "curator.md", "documentation-reviewer.md"
         ]
 
         for agent_file in expected_agents:
@@ -458,7 +458,7 @@ class TestAgentCreation:
             assert has_core_section, f"Agent {agent_file} missing core sections"
 
             # Verify MCP integration for cipher-enabled agents
-            if any(name in agent_file for name in ["reflector", "curator", "test-generator"]):
+            if any(name in agent_file for name in ["reflector", "curator"]):
                 assert "cipher" in content.lower() or "mcp" in content.lower(), \
                     f"Agent {agent_file} missing MCP integration section"
 

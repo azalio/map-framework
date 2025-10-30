@@ -2,13 +2,15 @@
 
 ## Обзор Workflow
 
-MAP Framework использует **строго последовательную 6-агентную оркестрацию** для каждой подзадачи (subtask).
+MAP Framework использует **строго последовательную оркестрацию**, которая начинается с TaskDecomposer, после чего для каждой подзадачи запускается цикл реализации.
 
 **Обязательная последовательность:**
 
 ```mermaid
 flowchart TD
-    Start([Начало Subtask]) --> Actor[1. Actor<br/>Реализация решения]
+    Start([Начало задачи]) --> Decompose[0. TaskDecomposer<br/>Декомпозиция]
+    Decompose --> Plan[2.5 Recitation Plan<br/>Создать current_plan.md]
+    Plan --> Actor[1. Actor<br/>Реализация подзадачи]
     Actor --> Monitor[2. Monitor<br/>Валидация качества]
 
     Monitor -->|Valid| Predictor[3. Predictor<br/>Анализ влияния изменений]
@@ -16,10 +18,11 @@ flowchart TD
 
     Predictor --> Evaluator[4. Evaluator<br/>Оценка качества]
 
-    Evaluator -->|Approved| Reflector[5. Reflector<br/>Извлечение уроков<br/><b>MANDATORY</b>]
+    Evaluator -->|Approved| Accept[5. ACCEPT changes<br/>Применение изменений]
     Evaluator -->|Not Approved| Actor
 
-    Reflector --> Curator[6. Curator<br/>Обновление playbook<br/><b>MANDATORY</b>]
+    Accept --> Reflector[6. Reflector<br/>Извлечение уроков<br/><b>MANDATORY</b>]
+    Reflector --> Curator[7. Curator<br/>Обновление playbook<br/><b>MANDATORY</b>]
 
     Curator --> End([Subtask Complete])
 ```
@@ -210,29 +213,27 @@ MAP использует **6 core MCP tools** для расширения воз
 
 **MapWorkflowLogger** — детальное логирование выполнения MAP workflows.
 
-**Активация:** Логирование **опционально**, включается только при:
+**Активация:** Логирование опционально и включается через:
 
-- CLI флаг: `--debug` (например, `mapify init --debug`)
-- Переменная окружения: `MAP_DEBUG=true`
+- CLI флаг: `--debug` (например, `mapify init --debug`, `mapify check --debug`)
+- Переменную окружения: `MAP_DEBUG=true`
 
-**Захватываемые события (7 типов):**
+**Фактические имена событий:**
 
-1. `workflow_start` — инициализация
-2. `workflow_end` — завершение/провал
-3. `agent_call` — каждый agent invocation
-4. `tool_use` — MCP tool calls
-5. `recitation_created` — создание plan
-6. `recitation_updated` — изменения статуса plan
-7. `error` — сбои workflow
+- `session_start`, `session_end`
+- `agent_invocation`
+- `error`, `timing`
+- `recitation_plan_created`, `recitation_subtask_updated`, `recitation_context_retrieved`
+- Пользовательские события через `log_event` (например, `command_start`)
 
 **Формат:** JSON Lines (`.map/logs/workflow_TIMESTAMP.log`)
 
-**Структура каждой строки:**
+**Структура строки:**
 
 - `timestamp` (ISO 8601)
-- `event_type` (из списка выше)
+- `event` (имя события)
 - `task_id` (корреляция с RecitationManager)
-- `data` (event-specific payload)
+- Специфичные поля для события (например, `prompt_preview`, `response_preview` для agent_invocation)
 
 **Использование:**
 
