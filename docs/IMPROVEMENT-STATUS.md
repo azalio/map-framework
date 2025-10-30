@@ -5,11 +5,11 @@
 
 ---
 
-## ✅ PROJECT COMPLETE: All 9 Agents Improved
+## ✅ PROJECT COMPLETE: All 8 Agents Improved
 
-**Status**: 9/9 agents improved with Claude Code patterns (100%)
+**Status**: 8/8 agents improved with Claude Code patterns (100%)
 
-**Total Impact**: 2,588 → 9,269 lines (+258% growth, +6,681 lines added)
+**Total Impact**: 2,354 → 7,841 lines (+233% growth, +5,487 lines added)
 
 ---
 
@@ -178,7 +178,7 @@
 
 ### Quantitative Results
 
-**Before** (9 agents):
+**Before** (8 agents):
 - actor: 213
 - monitor: 212
 - evaluator: 81
@@ -186,11 +186,10 @@
 - task-decomposer: 91
 - reflector: 980
 - curator: 352
-- test-generator: 234
 - documentation-reviewer: 344
-**Total**: 2,588 lines
+**Total**: 2,354 lines
 
-**After** (9 agents):
+**After** (8 agents):
 - actor: 611 (+187%)
 - monitor: 980 (+362%)
 - evaluator: 901 (+1012%)
@@ -198,11 +197,10 @@
 - task-decomposer: 1,133 (+1145%)
 - reflector: 980 (no change)
 - curator: 1,121 (+218%)
-- test-generator: 1,428 (+510%)
 - documentation-reviewer: 1,250 (+263%)
-**Total**: 9,269 lines
+**Total**: 7,841 lines
 
-**Growth**: +6,681 lines (+258%)
+**Growth**: +5,487 lines (+233%)
 
 ### Content Improvements
 
@@ -286,8 +284,7 @@
 5. **.claude/agents/task-decomposer.md**: 91 → 1,133 (+1145%)
 6. **.claude/agents/reflector.md**: 980 → 980 (no change, already excellent)
 7. **.claude/agents/curator.md**: 352 → 1,121 (+218%)
-8. **.claude/agents/test-generator.md**: 234 → 1,428 (+510%)
-9. **.claude/agents/documentation-reviewer.md**: 344 → 1,250 (+263%)
+8. **.claude/agents/documentation-reviewer.md**: 344 → 1,250 (+263%)
 
 ### Architecture Files Modified
 
@@ -431,7 +428,7 @@
 
 ### Project Outcome: SUCCESS
 
-The MAP Framework prompt improvement project is **complete and production-ready**. All 9 agents now demonstrate Claude Code-level prompt engineering quality with:
+The MAP Framework prompt improvement project is **complete and production-ready**. All 8 agents now demonstrate Claude Code-level prompt engineering quality with:
 
 **Structural Excellence**:
 - XML semantic tagging throughout
@@ -440,7 +437,7 @@ The MAP Framework prompt improvement project is **complete and production-ready*
 - 39 rationale blocks explaining WHY
 
 **Content Quality**:
-- 258% size increase (2,588 → 9,269 lines)
+- 233% size increase (2,354 → 7,841 lines)
 - Good/bad patterns for key concepts
 - Critical emphasis at safety points
 - Self-validation checklists

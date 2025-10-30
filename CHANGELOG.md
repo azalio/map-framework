@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1] - 2025-10-30
+
+### Removed
+
+**Agent Framework Cleanup:**
+- **Removed test-generator agent** from MAP Framework (reduced from 9 to 8 core agents)
+  - Deleted `src/mapify_cli/templates/agents/test-generator.md` (1,175 lines)
+  - Removed test-generator from `mcp_config.json` agent_mcp_mappings
+  - Removed test-generator creation function from `src/mapify_cli/__init__.py`
+  - Updated all documentation references from 9 agents to 8 agents
+  - **Rationale**: Test generation responsibility shifted to Actor agent (which has codex-bridge access)
+  - **Impact**: Zero breaking changes for existing users; orphaned files are harmless
+
+### Changed
+
+**Documentation Updates:**
+- Updated `docs/IMPROVEMENT-STATUS.md` to reflect 8-agent architecture
+  - Removed test-generator statistics from agent metrics
+  - Recalculated totals: 2,354 → 7,841 lines (+233% growth)
+- Updated presentation files (English and Russian) to show correct agent count
+- Updated `tests/test_mapify_cli.py` to expect 8 agents
+
 ## [1.2.0] - 2025-10-30
 
 ## [1.2.0] - 2025-10-30
