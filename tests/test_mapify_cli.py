@@ -781,28 +781,20 @@ class TestPlaybookSubcommands:
         """Test getting playbook statistics."""
         os.chdir(tmp_path)
 
-        # Create minimal playbook structure
+        # Create minimal playbook structure using PlaybookManager
         playbook_dir = tmp_path / ".claude"
         playbook_dir.mkdir()
-        playbook_file = playbook_dir / "playbook.json"
+        playbook_db = playbook_dir / "playbook.db"
 
-        playbook_data = {
-            "metadata": {"project": "test"},
-            "sections": {
-                "IMPLEMENTATION_PATTERNS": {
-                    "bullets": [
-                        {"id": "impl-0001", "content": "Test pattern 1"},
-                        {"id": "impl-0002", "content": "Test pattern 2"}
-                    ]
-                },
-                "DEBUGGING_TECHNIQUES": {
-                    "bullets": [
-                        {"id": "debug-0001", "content": "Debug pattern 1"}
-                    ]
-                }
-            }
-        }
-        playbook_file.write_text(json.dumps(playbook_data))
+        # Import here to avoid circular imports
+        from mapify_cli.playbook_manager import PlaybookManager
+
+        # Create playbook database with test data
+        manager = PlaybookManager(db_path=str(playbook_db), use_semantic_search=False)
+        manager._add_bullet("IMPLEMENTATION_PATTERNS", "Test pattern 1")
+        manager._add_bullet("IMPLEMENTATION_PATTERNS", "Test pattern 2")
+        manager._add_bullet("DEBUGGING_TECHNIQUES", "Debug pattern 1")
+        manager.close()
 
         result = runner.invoke(app, ["playbook", "stats"])
 
@@ -835,29 +827,24 @@ class TestPlaybookSubcommands:
         """Test searching playbook patterns."""
         os.chdir(tmp_path)
 
-        # Create minimal playbook structure
+        # Create minimal playbook structure using PlaybookManager
         playbook_dir = tmp_path / ".claude"
         playbook_dir.mkdir()
-        playbook_file = playbook_dir / "playbook.json"
+        playbook_db = playbook_dir / "playbook.db"
 
-        playbook_data = {
-            "metadata": {"project": "test"},
-            "sections": {
-                "IMPLEMENTATION_PATTERNS": {
-                    "bullets": [
-                        {"id": "impl-0001", "content": "JWT authentication pattern", "deprecated": False, "helpful_count": 0, "harmful_count": 0},
-                        {"id": "impl-0002", "content": "Database migration pattern", "deprecated": False, "helpful_count": 0, "harmful_count": 0}
-                    ]
-                }
-            }
-        }
-        playbook_file.write_text(json.dumps(playbook_data))
+        from mapify_cli.playbook_manager import PlaybookManager
+
+        # Create playbook database with test data
+        manager = PlaybookManager(db_path=str(playbook_db), use_semantic_search=False)
+        manager._add_bullet("IMPLEMENTATION_PATTERNS", "JWT authentication pattern")
+        manager._add_bullet("IMPLEMENTATION_PATTERNS", "Database migration pattern")
+        manager.close()
 
         result = runner.invoke(app, ["playbook", "search", "authentication"])
 
         assert result.exit_code == 0
         # Should find the JWT authentication pattern
-        assert "impl-0001" in result.stdout
+        assert "impl" in result.stdout
         assert "authentication" in result.stdout.lower()
 
     def test_playbook_search_no_results(self, tmp_path):
@@ -928,22 +915,19 @@ class TestPlaybookSubcommands:
         """Test syncing playbook to cipher."""
         os.chdir(tmp_path)
 
-        # Create minimal playbook structure
+        # Create minimal playbook structure using PlaybookManager
         playbook_dir = tmp_path / ".claude"
         playbook_dir.mkdir()
-        playbook_file = playbook_dir / "playbook.json"
+        playbook_db = playbook_dir / "playbook.db"
 
-        playbook_data = {
-            "metadata": {"project": "test"},
-            "sections": {
-                "IMPLEMENTATION_PATTERNS": {
-                    "bullets": [
-                        {"id": "impl-0001", "content": "Test pattern", "helpful_count": 5, "harmful_count": 0, "deprecated": False}
-                    ]
-                }
-            }
-        }
-        playbook_file.write_text(json.dumps(playbook_data))
+        from mapify_cli.playbook_manager import PlaybookManager
+
+        # Create playbook database with high-quality bullet
+        manager = PlaybookManager(db_path=str(playbook_db), use_semantic_search=False)
+        bullet_id = manager._add_bullet("IMPLEMENTATION_PATTERNS", "Test pattern")
+        # Update to make it high quality (helpful_count >= 5)
+        manager._update_bullet(bullet_id, increment_helpful=5)
+        manager.close()
 
         result = runner.invoke(app, ["playbook", "sync"])
 
