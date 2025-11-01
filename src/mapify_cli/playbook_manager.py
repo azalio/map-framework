@@ -55,12 +55,25 @@ class PlaybookManager:
 
     def __init__(
         self,
-        playbook_path: str = ".claude/playbook.json",
+        playbook_path: Optional[str] = None,  # DEPRECATED: kept for backward compatibility
         db_path: Optional[str] = None,
         use_semantic_search: bool = True
     ):
-        self.playbook_path = Path(playbook_path)
-        self.db_path = Path(db_path) if db_path else self.playbook_path.parent / "playbook.db"
+        # Handle legacy playbook_path parameter
+        if playbook_path is not None:
+            self.playbook_path = Path(playbook_path)
+            # If db_path not explicitly provided, derive from playbook_path
+            if db_path is None:
+                self.db_path = self.playbook_path.parent / "playbook.db"
+            else:
+                self.db_path = Path(db_path)
+        else:
+            # New behavior: db_path is primary, playbook_path is legacy
+            if db_path is None:
+                self.db_path = Path(".claude/playbook.db")
+            else:
+                self.db_path = Path(db_path)
+            self.playbook_path = self.db_path.parent / "playbook.json"  # For migration check only
 
         # Check if DB exists, if not but JSON exists → migrate
         if not self.db_path.exists() and self.playbook_path.exists():
@@ -288,9 +301,21 @@ class PlaybookManager:
         4. Insert metadata
         5. Create backup of playbook.json
         """
-        # Load JSON playbook
-        with open(self.playbook_path, 'r', encoding='utf-8') as f:
-            playbook = json.load(f)
+        # Load JSON playbook with corruption handling
+        try:
+            with open(self.playbook_path, 'r', encoding='utf-8') as f:
+                playbook = json.load(f)
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                f"Corrupted playbook.json at line {e.lineno}, column {e.colno}: {e.msg}\n"
+                f"\n"
+                f"Recovery options:\n"
+                f"1. Fix the JSON syntax error in {self.playbook_path}\n"
+                f"2. Rename playbook.json to playbook.json.backup and run 'mapify init' again\n"
+                f"3. Delete playbook.json if you want to start fresh (data will be lost)\n"
+                f"\n"
+                f"Tip: Validate JSON at https://jsonlint.com/"
+            ) from e
 
         # Create schema
         self._create_schema()

@@ -552,43 +552,49 @@ class RecitationManager:
         try:
             from mapify_cli.playbook_manager import PlaybookManager
 
-            playbook = PlaybookManager(
-                playbook_path=str(self.project_root / ".claude" / "playbook.json")
-            )
+            playbook_db_path = self.project_root / ".claude" / "playbook.db"
+            playbook_json_path = self.project_root / ".claude" / "playbook.json"
 
-            # Get high-quality bullets (quality_score >= 5)
-            high_quality = playbook.get_bullets_for_sync(threshold=5)
+            # Check if playbook exists (prefer .db, fall back to .json for backward compatibility)
+            if playbook_db_path.exists() or playbook_json_path.exists():
+                playbook = PlaybookManager(
+                    playbook_path=str(playbook_json_path) if playbook_json_path.exists() else None,
+                    db_path=str(playbook_db_path)
+                )
 
-            if high_quality:
-                lines.append("### Proven Patterns (from Playbook)")
-                lines.append("")
+                # Get high-quality bullets (quality_score >= 5)
+                high_quality = playbook.get_bullets_for_sync(threshold=5)
 
-                # Group by section and take top 3 per section
-                from collections import defaultdict
-                by_section = defaultdict(list)
-                for bullet in high_quality:
-                    by_section[bullet['section']].append(bullet)
-
-                # Sort each section by quality and take top 3
-                for section_name, bullets in sorted(by_section.items()):
-                    bullets.sort(key=lambda b: b.get('quality_score', 0), reverse=True)
-                    top_bullets = bullets[:3]
-
-                    section_display = section_name.replace('_', ' ').title()
-                    lines.append(f"#### {section_display}")
+                if high_quality:
+                    lines.append("### Proven Patterns (from Playbook)")
                     lines.append("")
 
-                    for bullet in top_bullets:
-                        # Truncate content if too long
-                        content = bullet['content']
-                        if len(content) > 200:
-                            content = content[:200] + "..."
-                        lines.append(f"- [{bullet['id']}] {content}")
+                    # Group by section and take top 3 per section
+                    from collections import defaultdict
+                    by_section = defaultdict(list)
+                    for bullet in high_quality:
+                        by_section[bullet['section']].append(bullet)
 
+                    # Sort each section by quality and take top 3
+                    for section_name, bullets in sorted(by_section.items()):
+                        bullets.sort(key=lambda b: b.get('quality_score', 0), reverse=True)
+                        top_bullets = bullets[:3]
+
+                        section_display = section_name.replace('_', ' ').title()
+                        lines.append(f"#### {section_display}")
+                        lines.append("")
+
+                        for bullet in top_bullets:
+                            # Truncate content if too long
+                            content = bullet['content']
+                            if len(content) > 200:
+                                content = content[:200] + "..."
+                            lines.append(f"- [{bullet['id']}] {content}")
+
+                        lines.append("")
+                else:
+                    lines.append("*(No high-quality patterns in playbook yet)*")
                     lines.append("")
-            else:
-                lines.append("*(No high-quality patterns in playbook yet)*")
-                lines.append("")
 
         except Exception as e:
             lines.append(f"*(Could not load playbook patterns: {e})*")

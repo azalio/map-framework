@@ -30,6 +30,7 @@ import subprocess
 import sys
 import shutil
 import json
+import sqlite3
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
@@ -1671,6 +1672,36 @@ def init(
         create_mcp_config(project_path, selected_mcp_servers)
         tracker.complete("mcp-config", f"{len(selected_mcp_servers)} servers")
 
+    # Initialize playbook database
+    tracker.add("init-playbook", "Initialize playbook database")
+    tracker.start("init-playbook")
+    try:
+        from mapify_cli.playbook_manager import PlaybookManager
+        playbook_db_path = project_path / ".claude" / "playbook.db"
+        manager = PlaybookManager(db_path=str(playbook_db_path), use_semantic_search=False)
+        manager.close()
+        tracker.complete("init-playbook", "database created")
+    except sqlite3.Error as e:
+        tracker.error("init-playbook", "database error")
+        console.print(f"[red]Error:[/red] Failed to initialize playbook database: {e}")
+        console.print("[yellow]Please check disk space and permissions[/yellow]")
+        raise typer.Exit(1)
+    except PermissionError as e:
+        tracker.error("init-playbook", "permission denied")
+        console.print(f"[red]Error:[/red] Permission denied creating playbook: {e}")
+        console.print("[yellow]Run with appropriate permissions or choose a different directory[/yellow]")
+        raise typer.Exit(1)
+    except OSError as e:
+        tracker.error("init-playbook", "filesystem error")
+        console.print(f"[red]Error:[/red] Could not create playbook directory: {e}")
+        console.print("[yellow]Please check directory permissions[/yellow]")
+        raise typer.Exit(1)
+    except json.JSONDecodeError as e:
+        tracker.error("init-playbook", "invalid JSON")
+        console.print(f"[red]Error:[/red] Corrupted playbook.json file: {e}")
+        console.print("[yellow]Suggestion: Rename or delete .claude/playbook.json and try again[/yellow]")
+        raise typer.Exit(1)
+
     # Initialize git
     if not no_git and git_available:
         tracker.add("git", "Initialize git repository")
@@ -2025,13 +2056,22 @@ def playbook_stats():
     """Show playbook statistics"""
     from mapify_cli.playbook_manager import PlaybookManager
 
-    playbook_path = Path.cwd() / ".claude" / "playbook.json"
-    if not playbook_path.exists():
-        console.print_json(data={"error": "Playbook not found"})
+    playbook_db_path = Path.cwd() / ".claude" / "playbook.db"
+    playbook_json_path = Path.cwd() / ".claude" / "playbook.json"
+
+    # Check for playbook.db first (primary storage)
+    if not playbook_db_path.exists():
+        # Backward compatibility: check if old playbook.json exists
+        if playbook_json_path.exists():
+            console.print_json(data={
+                "error": "Found legacy playbook.json. Run 'mapify init' to migrate to playbook.db"
+            })
+        else:
+            console.print_json(data={"error": "Playbook not found. Initialize with 'mapify init'"})
         raise typer.Exit(1)
 
-    # Use PlaybookManager to read from SQLite backend
-    manager = PlaybookManager(playbook_path)
+    # Use PlaybookManager with db_path (SQLite backend)
+    manager = PlaybookManager(db_path=str(playbook_db_path))
     total = sum(len(section["bullets"]) for section in manager.playbook.get("sections", {}).values())
     stats = {
         "total_bullets": total,
@@ -2044,11 +2084,11 @@ def playbook_stats():
 def playbook_search(query: str, top_k: int = typer.Option(5, help="Number of results")):
     """Search playbook for relevant patterns"""
     from mapify_cli.playbook_manager import PlaybookManager
-    playbook_path = Path.cwd() / ".claude" / "playbook.json"
-    if not playbook_path.exists():
+    playbook_db_path = Path.cwd() / ".claude" / "playbook.db"
+    if not playbook_db_path.exists():
         console.print("No patterns found (playbook not initialized)")
         return
-    manager = PlaybookManager(playbook_path)
+    manager = PlaybookManager(db_path=str(playbook_db_path))
     results = manager.get_relevant_bullets(query, limit=top_k)
     if not results:
         console.print("No patterns found matching your query")
@@ -2059,11 +2099,22 @@ def playbook_search(query: str, top_k: int = typer.Option(5, help="Number of res
 def playbook_sync(threshold: int = typer.Option(5, help="Minimum helpful count")):
     """Show high-quality patterns ready for cross-project sync"""
     from mapify_cli.playbook_manager import PlaybookManager
-    playbook_path = Path.cwd() / ".claude" / "playbook.json"
-    if not playbook_path.exists():
-        console.print_json(data={"status": "error", "message": "Playbook not found"})
+    playbook_db_path = Path.cwd() / ".claude" / "playbook.db"
+    playbook_json_path = Path.cwd() / ".claude" / "playbook.json"
+
+    # Check for playbook.db first (primary storage)
+    if not playbook_db_path.exists():
+        # Backward compatibility: check if old playbook.json exists
+        if playbook_json_path.exists():
+            console.print_json(data={
+                "status": "error",
+                "message": "Found legacy playbook.json. Run 'mapify init' to migrate to playbook.db"
+            })
+        else:
+            console.print_json(data={"status": "error", "message": "Playbook not found. Initialize with 'mapify init'"})
         raise typer.Exit(1)
-    manager = PlaybookManager(playbook_path)
+
+    manager = PlaybookManager(db_path=str(playbook_db_path))
     patterns = manager.get_bullets_for_sync(threshold=threshold)
     console.print_json(data={"threshold": threshold, "count": len(patterns), "patterns": [{"id": p.get("id"), "helpful_count": p.get("helpful_count")} for p in patterns]})
 
@@ -2086,9 +2137,16 @@ def playbook_query(
     from mapify_cli.playbook_manager import PlaybookManager
     from mapify_cli.playbook_query import PlaybookQuery, SearchMode
 
-    playbook_path = Path.cwd() / ".claude" / "playbook.json"
-    if not playbook_path.exists():
-        console.print("[yellow]Warning:[/yellow] Playbook not found. Initialize with 'mapify init'")
+    playbook_db_path = Path.cwd() / ".claude" / "playbook.db"
+    playbook_json_path = Path.cwd() / ".claude" / "playbook.json"
+
+    # Check for playbook.db first (primary storage)
+    if not playbook_db_path.exists():
+        # Backward compatibility: check if old playbook.json exists
+        if playbook_json_path.exists():
+            console.print("[yellow]Warning:[/yellow] Found legacy playbook.json. Run 'mapify init' to migrate to playbook.db")
+        else:
+            console.print("[yellow]Warning:[/yellow] Playbook not found. Initialize with 'mapify init'")
         raise typer.Exit(1)
 
     try:
@@ -2110,7 +2168,7 @@ def playbook_query(
         )
 
         # Execute query
-        manager = PlaybookManager(playbook_path)
+        manager = PlaybookManager(db_path=str(playbook_db_path))
         response = manager.query(query)
 
         # Format output
@@ -2209,9 +2267,16 @@ def playbook_apply_delta(
     from mapify_cli.tools.validate_dependencies import load_input
     from mapify_cli.playbook_manager import PlaybookManager
 
-    playbook_path = Path.cwd() / ".claude" / "playbook.json"
-    if not playbook_path.exists():
-        console.print("[red]Error:[/red] Playbook not found. Initialize with 'mapify init'")
+    playbook_db_path = Path.cwd() / ".claude" / "playbook.db"
+    playbook_json_path = Path.cwd() / ".claude" / "playbook.json"
+
+    # Check for playbook.db first (primary storage)
+    if not playbook_db_path.exists():
+        # Backward compatibility: check if old playbook.json exists
+        if playbook_json_path.exists():
+            console.print("[red]Error:[/red] Found legacy playbook.json. Run 'mapify init' to migrate to playbook.db")
+        else:
+            console.print("[red]Error:[/red] Playbook not found. Initialize with 'mapify init'")
         raise typer.Exit(1)
 
     try:
@@ -2281,7 +2346,7 @@ def playbook_apply_delta(
             return
 
         # Apply operations
-        manager = PlaybookManager(playbook_path)
+        manager = PlaybookManager(db_path=str(playbook_db_path))
         summary = manager.apply_delta(operations)
 
         # Output JSON summary

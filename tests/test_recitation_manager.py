@@ -573,28 +573,18 @@ class TestDevDocsGeneration:
         readme = manager.project_root / "README.md"
         readme.write_text("# Test Project\n\nThis is a test project for MAP Framework testing.")
 
-        # Create playbook
+        # Create playbook using PlaybookManager
         playbook_dir = manager.project_root / ".claude"
         playbook_dir.mkdir()
-        playbook_file = playbook_dir / "playbook.json"
-        playbook_data = {
-            "metadata": {"project": "test"},
-            "sections": {
-                "IMPLEMENTATION_PATTERNS": {
-                    "bullets": [
-                        {
-                            "id": "impl-0001",
-                            "content": "Use dependency injection for testability",
-                            "deprecated": False,
-                            "helpful_count": 5,
-                            "harmful_count": 0,
-                            "quality_score": 5.0
-                        }
-                    ]
-                }
-            }
-        }
-        playbook_file.write_text(json.dumps(playbook_data))
+        playbook_db = playbook_dir / "playbook.db"
+
+        from mapify_cli.playbook_manager import PlaybookManager
+        pm = PlaybookManager(db_path=str(playbook_db), use_semantic_search=False)
+        try:
+            bullet_id = pm._add_bullet("IMPLEMENTATION_PATTERNS", "Use dependency injection for testability")
+            pm._update_bullet(bullet_id, increment_helpful=5)
+        finally:
+            pm.close()
 
         # Generate context
         context_path = manager.generate_context_md()
@@ -608,7 +598,7 @@ class TestDevDocsGeneration:
         assert "# Project Context" in content
         assert "Test Project" in content
         assert "This is a test project" in content
-        assert "impl-0001" in content
+        assert "impl-0000" in content
         assert "dependency injection" in content
 
     def test_generate_context_missing_readme(self, manager):
@@ -628,8 +618,8 @@ class TestDevDocsGeneration:
 
         content = manager.context_file.read_text()
         assert "# Project Context" in content
-        # Should mention no patterns available
-        assert "Could not load playbook" in content or "No high-quality patterns" in content
+        # Context should still be generated, playbook section simply omitted
+        assert "Common Gotchas" in content
 
     def test_generate_context_readme_parsing(self, manager):
         """Test README parsing extracts title from # heading"""
