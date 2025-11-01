@@ -553,10 +553,12 @@ class RecitationManager:
             from mapify_cli.playbook_manager import PlaybookManager
 
             playbook_db_path = self.project_root / ".claude" / "playbook.db"
+            playbook_json_path = self.project_root / ".claude" / "playbook.json"
 
-            # Only integrate playbook if playbook.db exists
-            if playbook_db_path.exists():
+            # Check if playbook exists (prefer .db, fall back to .json for backward compatibility)
+            if playbook_db_path.exists() or playbook_json_path.exists():
                 playbook = PlaybookManager(
+                    playbook_path=str(playbook_json_path) if playbook_json_path.exists() else None,
                     db_path=str(playbook_db_path)
                 )
 

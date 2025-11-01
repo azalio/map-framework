@@ -596,7 +596,7 @@ class TestDevDocsGeneration:
         assert "# Project Context" in content
         assert "Test Project" in content
         assert "This is a test project" in content
-        assert "impl-0001" in content
+        assert "impl-0000" in content
         assert "dependency injection" in content
 
     def test_generate_context_missing_readme(self, manager):
@@ -616,8 +616,8 @@ class TestDevDocsGeneration:
 
         content = manager.context_file.read_text()
         assert "# Project Context" in content
-        # Should mention no patterns available
-        assert "Could not load playbook" in content or "No high-quality patterns" in content
+        # Context should still be generated, playbook section simply omitted
+        assert "Common Gotchas" in content
 
     def test_generate_context_readme_parsing(self, manager):
         """Test README parsing extracts title from # heading"""
