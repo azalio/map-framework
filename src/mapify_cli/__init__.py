@@ -1686,15 +1686,15 @@ def init(
         console.print(f"[red]Error:[/red] Failed to initialize playbook database: {e}")
         console.print("[yellow]Please check disk space and permissions[/yellow]")
         raise typer.Exit(1)
-    except OSError as e:
-        tracker.error("init-playbook", "filesystem error")
-        console.print(f"[red]Error:[/red] Could not create playbook directory: {e}")
-        console.print("[yellow]Please check directory permissions[/yellow]")
-        raise typer.Exit(1)
     except PermissionError as e:
         tracker.error("init-playbook", "permission denied")
         console.print(f"[red]Error:[/red] Permission denied creating playbook: {e}")
         console.print("[yellow]Run with appropriate permissions or choose a different directory[/yellow]")
+        raise typer.Exit(1)
+    except OSError as e:
+        tracker.error("init-playbook", "filesystem error")
+        console.print(f"[red]Error:[/red] Could not create playbook directory: {e}")
+        console.print("[yellow]Please check directory permissions[/yellow]")
         raise typer.Exit(1)
     except json.JSONDecodeError as e:
         tracker.error("init-playbook", "invalid JSON")

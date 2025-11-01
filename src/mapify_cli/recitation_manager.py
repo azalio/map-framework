@@ -554,47 +554,45 @@ class RecitationManager:
 
             playbook_db_path = self.project_root / ".claude" / "playbook.db"
 
-            # Skip playbook integration if playbook.db doesn't exist
-            if not playbook_db_path.exists():
-                return ""  # Return empty string to skip playbook section
+            # Only integrate playbook if playbook.db exists
+            if playbook_db_path.exists():
+                playbook = PlaybookManager(
+                    db_path=str(playbook_db_path)
+                )
 
-            playbook = PlaybookManager(
-                db_path=str(playbook_db_path)
-            )
+                # Get high-quality bullets (quality_score >= 5)
+                high_quality = playbook.get_bullets_for_sync(threshold=5)
 
-            # Get high-quality bullets (quality_score >= 5)
-            high_quality = playbook.get_bullets_for_sync(threshold=5)
-
-            if high_quality:
-                lines.append("### Proven Patterns (from Playbook)")
-                lines.append("")
-
-                # Group by section and take top 3 per section
-                from collections import defaultdict
-                by_section = defaultdict(list)
-                for bullet in high_quality:
-                    by_section[bullet['section']].append(bullet)
-
-                # Sort each section by quality and take top 3
-                for section_name, bullets in sorted(by_section.items()):
-                    bullets.sort(key=lambda b: b.get('quality_score', 0), reverse=True)
-                    top_bullets = bullets[:3]
-
-                    section_display = section_name.replace('_', ' ').title()
-                    lines.append(f"#### {section_display}")
+                if high_quality:
+                    lines.append("### Proven Patterns (from Playbook)")
                     lines.append("")
 
-                    for bullet in top_bullets:
-                        # Truncate content if too long
-                        content = bullet['content']
-                        if len(content) > 200:
-                            content = content[:200] + "..."
-                        lines.append(f"- [{bullet['id']}] {content}")
+                    # Group by section and take top 3 per section
+                    from collections import defaultdict
+                    by_section = defaultdict(list)
+                    for bullet in high_quality:
+                        by_section[bullet['section']].append(bullet)
 
+                    # Sort each section by quality and take top 3
+                    for section_name, bullets in sorted(by_section.items()):
+                        bullets.sort(key=lambda b: b.get('quality_score', 0), reverse=True)
+                        top_bullets = bullets[:3]
+
+                        section_display = section_name.replace('_', ' ').title()
+                        lines.append(f"#### {section_display}")
+                        lines.append("")
+
+                        for bullet in top_bullets:
+                            # Truncate content if too long
+                            content = bullet['content']
+                            if len(content) > 200:
+                                content = content[:200] + "..."
+                            lines.append(f"- [{bullet['id']}] {content}")
+
+                        lines.append("")
+                else:
+                    lines.append("*(No high-quality patterns in playbook yet)*")
                     lines.append("")
-            else:
-                lines.append("*(No high-quality patterns in playbook yet)*")
-                lines.append("")
 
         except Exception as e:
             lines.append(f"*(Could not load playbook patterns: {e})*")
