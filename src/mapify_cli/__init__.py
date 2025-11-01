@@ -30,6 +30,7 @@ import subprocess
 import sys
 import shutil
 import json
+import sqlite3
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
@@ -1676,7 +1677,6 @@ def init(
     tracker.start("init-playbook")
     try:
         from mapify_cli.playbook_manager import PlaybookManager
-        import sqlite3
         playbook_db_path = project_path / ".claude" / "playbook.db"
         manager = PlaybookManager(db_path=str(playbook_db_path), use_semantic_search=False)
         manager.close()

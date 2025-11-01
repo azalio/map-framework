@@ -580,9 +580,11 @@ class TestDevDocsGeneration:
 
         from mapify_cli.playbook_manager import PlaybookManager
         pm = PlaybookManager(db_path=str(playbook_db), use_semantic_search=False)
-        bullet_id = pm._add_bullet("IMPLEMENTATION_PATTERNS", "Use dependency injection for testability")
-        pm._update_bullet(bullet_id, increment_helpful=5)
-        pm.close()
+        try:
+            bullet_id = pm._add_bullet("IMPLEMENTATION_PATTERNS", "Use dependency injection for testability")
+            pm._update_bullet(bullet_id, increment_helpful=5)
+        finally:
+            pm.close()
 
         # Generate context
         context_path = manager.generate_context_md()

@@ -791,10 +791,12 @@ class TestPlaybookSubcommands:
 
         # Create playbook database with test data
         manager = PlaybookManager(db_path=str(playbook_db), use_semantic_search=False)
-        manager._add_bullet("IMPLEMENTATION_PATTERNS", "Test pattern 1")
-        manager._add_bullet("IMPLEMENTATION_PATTERNS", "Test pattern 2")
-        manager._add_bullet("DEBUGGING_TECHNIQUES", "Debug pattern 1")
-        manager.close()
+        try:
+            manager._add_bullet("IMPLEMENTATION_PATTERNS", "Test pattern 1")
+            manager._add_bullet("IMPLEMENTATION_PATTERNS", "Test pattern 2")
+            manager._add_bullet("DEBUGGING_TECHNIQUES", "Debug pattern 1")
+        finally:
+            manager.close()
 
         result = runner.invoke(app, ["playbook", "stats"])
 

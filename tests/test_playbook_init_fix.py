@@ -7,7 +7,6 @@ import sqlite3
 import sys
 from pathlib import Path
 
-import pytest
 from typer.testing import CliRunner
 
 # Add src directory to path for imports
@@ -53,6 +52,7 @@ class TestPlaybookDBInitialization:
 
         # Run init
         result = runner.invoke(app, ["init", ".", "--no-git", "--force", "--mcp", "none"])
+        assert result.exit_code == 0, f"Init should succeed, got exit code {result.exit_code}"
 
         playbook_db = tmp_path / ".claude" / "playbook.db"
 
@@ -215,6 +215,7 @@ class TestPlaybookInitIdempotency:
 
         # Run init second time (should be safe - already initialized message)
         result2 = runner.invoke(app, ["init", ".", "--no-git", "--force", "--mcp", "none"])
+        assert result2.exit_code == 0
 
         # Should not crash (may show "already initialized" message)
         assert playbook_db.exists()
