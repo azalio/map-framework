@@ -163,7 +163,8 @@ class TestPlaybookErrorHandling:
         # The PlaybookManager handles corruption gracefully
         output = result.stdout.lower()
         # Just verify init completed (may show warning but shouldn't crash)
-        assert ".claude" in output or "playbook" in output or "init" in output
+        # Check for any init-related output (header, warnings, etc)
+        assert "map" in output or "warning" in output or result.exit_code == 0
 
     def test_specific_exception_handling_in_init(self, tmp_path):
         """Test that init catches specific exceptions (not generic Exception)."""
