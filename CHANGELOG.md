@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+**Playbook Database Initialization:**
+- **Fixed playbook.db initialization and migration from playbook.json** (PR #18)
+  - `mapify init` now creates `playbook.db` instead of `playbook.json`
+  - RecitationManager checks for `playbook.db` existence instead of deprecated `playbook.json`
+  - Added backward compatibility: automatically migrates data from `playbook.json` to `playbook.db` if old file exists
+  - Updated all tests to use `--mcp none` flag for isolated testing
+  - Fixed test assertions for corrupted JSON handling
+  - **Impact**: Seamless migration for existing users, no data loss
+
 ## [1.2.1] - 2025-10-30
 
 ### Removed
