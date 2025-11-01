@@ -26,10 +26,11 @@ class TestPlaybookDBInitialization:
         """Test that mapify init creates playbook.db."""
         # Initialize in tmp_path directly
         os.chdir(tmp_path)
-        result = runner.invoke(app, ["init", ".", "--no-git"])
+        result = runner.invoke(app, ["init", ".", "--no-git", "--force", "--mcp", "none"])
 
         # Verify playbook.db created
         playbook_db = tmp_path / ".claude" / "playbook.db"
+        assert result.exit_code == 0, f"Init should succeed, got exit code {result.exit_code}"
         assert playbook_db.exists(), "playbook.db should be created by init"
 
         # Verify it's a valid SQLite database
@@ -51,7 +52,7 @@ class TestPlaybookDBInitialization:
         os.chdir(tmp_path)
 
         # Run init
-        result = runner.invoke(app, ["init", ".", "--no-git"])
+        result = runner.invoke(app, ["init", ".", "--no-git", "--force", "--mcp", "none"])
 
         playbook_db = tmp_path / ".claude" / "playbook.db"
 
@@ -84,7 +85,7 @@ class TestPlaybookDBInitialization:
         os.chdir(tmp_path)
 
         # Run init
-        result = runner.invoke(app, ["init", ".", "--no-git"])
+        result = runner.invoke(app, ["init", ".", "--no-git", "--force", "--mcp", "none"])
         assert result.exit_code == 0
 
         # Run query (should not fail with "Playbook not found")
@@ -156,7 +157,7 @@ class TestPlaybookErrorHandling:
         playbook_json.write_text('{"sections": {')  # Invalid JSON
 
         # Run init - should fail with helpful message
-        result = runner.invoke(app, ["init", ".", "--no-git"])
+        result = runner.invoke(app, ["init", ".", "--no-git", "--force", "--mcp", "none"])
 
         # Init creates .claude/ so it should succeed but show warning about corrupted JSON
         # The PlaybookManager handles corruption gracefully
@@ -170,7 +171,7 @@ class TestPlaybookErrorHandling:
         # The actual exception handling is tested implicitly by other tests
         # Here we just verify that init completes successfully in normal case
         os.chdir(tmp_path)
-        result = runner.invoke(app, ["init", ".", "--no-git"])
+        result = runner.invoke(app, ["init", ".", "--no-git", "--force", "--mcp", "none"])
         assert result.exit_code == 0
 
     def test_playbook_query_empty_database(self, tmp_path):
@@ -200,7 +201,7 @@ class TestPlaybookInitIdempotency:
         os.chdir(tmp_path)
 
         # Run init first time
-        result1 = runner.invoke(app, ["init", ".", "--no-git"])
+        result1 = runner.invoke(app, ["init", ".", "--no-git", "--force", "--mcp", "none"])
         assert result1.exit_code == 0
 
         playbook_db = tmp_path / ".claude" / "playbook.db"
@@ -212,7 +213,7 @@ class TestPlaybookInitIdempotency:
         manager.close()
 
         # Run init second time (should be safe - already initialized message)
-        result2 = runner.invoke(app, ["init", ".", "--no-git"])
+        result2 = runner.invoke(app, ["init", ".", "--no-git", "--force", "--mcp", "none"])
 
         # Should not crash (may show "already initialized" message)
         assert playbook_db.exists()
