@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1] - 2025-11-02
+
 ### Fixed
 
 **Playbook Database Initialization:**
@@ -17,8 +19,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Updated all tests to use `--mcp none` flag for isolated testing
   - Fixed test assertions for corrupted JSON handling
   - **Impact**: Seamless migration for existing users, no data loss
-
-## [1.2.1] - 2025-10-30
 
 ### Removed
 
@@ -39,8 +39,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Recalculated totals: 2,354 → 7,841 lines (+233% growth)
 - Updated presentation files (English and Russian) to show correct agent count
 - Updated `tests/test_mapify_cli.py` to expect 8 agents
-
-## [1.2.0] - 2025-10-30
 
 ## [1.2.0] - 2025-10-30
 
