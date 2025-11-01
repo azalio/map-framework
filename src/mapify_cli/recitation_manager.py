@@ -552,8 +552,14 @@ class RecitationManager:
         try:
             from mapify_cli.playbook_manager import PlaybookManager
 
+            playbook_db_path = self.project_root / ".claude" / "playbook.db"
+
+            # Skip playbook integration if playbook.db doesn't exist
+            if not playbook_db_path.exists():
+                return ""  # Return empty string to skip playbook section
+
             playbook = PlaybookManager(
-                playbook_path=str(self.project_root / ".claude" / "playbook.json")
+                db_path=str(playbook_db_path)
             )
 
             # Get high-quality bullets (quality_score >= 5)
