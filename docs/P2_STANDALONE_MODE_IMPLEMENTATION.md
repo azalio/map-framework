@@ -11,7 +11,7 @@
 - ✅ P1 Skills System implemented
 - ⚠️ Significant refactoring of command templates required
 
-**Статус:** EVALUATE FIRST (assess cost/benefit before implementing)
+**Status:** EVALUATE FIRST (assess cost/benefit before implementing)
 
 ---
 

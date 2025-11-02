@@ -55,12 +55,34 @@ class RecitationManager:
 
     @staticmethod
     def _format_acceptance_criteria(criteria: Optional[Union[str, List[str]]]) -> Optional[str]:
-        """Format acceptance criteria as a string"""
+        """Format acceptance criteria as a string.
+
+        Args:
+            criteria: Acceptance criteria as string or list of strings
+
+        Returns:
+            - None if criteria is None or empty list (for consistency)
+            - Original string if criteria is already a string
+            - Formatted bulleted list if criteria is a non-empty list
+
+        Examples:
+            >>> _format_acceptance_criteria(None)
+            None
+            >>> _format_acceptance_criteria([])
+            None
+            >>> _format_acceptance_criteria("All tests pass")
+            'All tests pass'
+            >>> _format_acceptance_criteria(["Test A passes", "Test B passes"])
+            '- Test A passes\\n- Test B passes'
+        """
         if criteria is None:
             return None
         if isinstance(criteria, str):
             return criteria
-        # If it's a list, join with newlines
+        # If it's a list, return None for empty lists (consistency with None input)
+        if not criteria:
+            return None
+        # For non-empty lists, join with newlines
         return "\n".join(f"- {item}" for item in criteria)
 
     def __init__(self, project_root: Path, logger: Optional['MapWorkflowLogger'] = None):

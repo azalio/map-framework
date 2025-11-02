@@ -1282,7 +1282,7 @@ class TestStringIDSupport:
 
     def test_json_persistence_with_string_ids(self, manager, string_id_subtasks):
         """Test JSON serialization/deserialization with string IDs"""
-        plan = manager.create_plan('test', 'Test', string_id_subtasks)
+        manager.create_plan('test', 'Test', string_id_subtasks)
 
         # Save and reload
         plan_data = json.loads(manager.plan_json.read_text())
@@ -1459,9 +1459,9 @@ class TestAcceptanceCriteriaListSupport:
         # Empty list should be preserved
         assert plan.subtasks[0].acceptance_criteria == []
 
-        # Formatting empty list should return empty string
+        # Formatting empty list should return None (consistency with None input)
         result = manager._format_acceptance_criteria([])
-        assert result == ""
+        assert result is None
 
 
 class TestStringIDAndListCriteriaIntegration:

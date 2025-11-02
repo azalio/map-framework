@@ -10,7 +10,7 @@
 - ✅ P0 Auto-Activation System должен быть реализован
 - ✅ workflow-rules.json существует и работает
 
-**Статус:** READY TO START (после P0)
+**Status:** READY TO START (after P0)
 
 ---
 
