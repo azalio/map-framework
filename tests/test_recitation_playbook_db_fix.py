@@ -5,7 +5,6 @@ This test verifies the fix for the issue where map-efficient was trying
 to read .claude/playbook.json even when .claude/playbook.db already existed.
 """
 
-import tempfile
 from pathlib import Path
 import json
 import pytest
