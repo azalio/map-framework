@@ -1204,5 +1204,384 @@ class TestDevDocsEdgeCases:
         assert "## Key Conventions" in content
 
 
+class TestStringIDSupport:
+    """Test support for string IDs (e.g., 'ST-001', 'subtask-1')"""
+
+    @pytest.fixture
+    def string_id_subtasks(self):
+        """Sample subtasks with string IDs"""
+        return [
+            {
+                'id': 'ST-001',
+                'description': 'Create User model',
+                'acceptance_criteria': ['Model validates email', 'Password is hashed'],
+                'estimated_complexity': 'low',
+                'depends_on': []
+            },
+            {
+                'id': 'ST-002',
+                'description': 'Implement login endpoint',
+                'acceptance_criteria': 'POST /auth/login returns JWT token',
+                'estimated_complexity': 'medium',
+                'depends_on': ['ST-001']
+            },
+            {
+                'id': 'subtask-3',
+                'description': 'Add token validation',
+                'acceptance_criteria': ['Middleware validates tokens', 'Expired tokens rejected'],
+                'estimated_complexity': 'low',
+                'depends_on': ['ST-002']
+            }
+        ]
+
+    def test_create_plan_with_string_ids(self, manager, string_id_subtasks):
+        """Test creating plan with string IDs instead of integers"""
+        plan = manager.create_plan(
+            task_id='feat_auth',
+            goal='Implement JWT authentication',
+            subtasks=string_id_subtasks
+        )
+
+        assert plan.task_id == 'feat_auth'
+        assert len(plan.subtasks) == 3
+        assert plan.subtasks[0].id == 'ST-001'
+        assert plan.subtasks[1].id == 'ST-002'
+        assert plan.subtasks[2].id == 'subtask-3'
+        assert plan.current_subtask_id == 'ST-001'
+
+    def test_update_subtask_with_string_id(self, manager, string_id_subtasks):
+        """Test updating subtask status using string ID"""
+        manager.create_plan('test', 'Test', string_id_subtasks)
+
+        plan = manager.update_subtask_status('ST-001', 'in_progress')
+
+        assert plan.subtasks[0].status == 'in_progress'
+        assert plan.current_subtask_id == 'ST-001'
+
+    def test_string_id_dependencies(self, manager, string_id_subtasks):
+        """Test that string ID dependencies work correctly"""
+        plan = manager.create_plan('test', 'Test', string_id_subtasks)
+
+        # Check dependencies are preserved as strings
+        assert plan.subtasks[1].depends_on == ['ST-001']
+        assert plan.subtasks[2].depends_on == ['ST-002']
+
+    def test_markdown_with_string_ids(self, manager, string_id_subtasks):
+        """Test markdown generation with string IDs"""
+        manager.create_plan('test', 'Test', string_id_subtasks)
+        manager.update_subtask_status('ST-002', 'in_progress')
+
+        md = manager.plan_file.read_text()
+
+        # Check that string IDs appear in markdown
+        assert 'ST-001' in md
+        assert 'ST-002' in md
+        assert 'subtask-3' in md
+        assert 'CURRENT' in md  # ST-002 is current
+
+    def test_json_persistence_with_string_ids(self, manager, string_id_subtasks):
+        """Test JSON serialization/deserialization with string IDs"""
+        plan = manager.create_plan('test', 'Test', string_id_subtasks)
+
+        # Save and reload
+        plan_data = json.loads(manager.plan_json.read_text())
+
+        assert plan_data['subtasks'][0]['id'] == 'ST-001'
+        assert plan_data['subtasks'][1]['id'] == 'ST-002'
+        assert plan_data['current_subtask_id'] == 'ST-001'
+
+    def test_update_nonexistent_string_id(self, manager, string_id_subtasks):
+        """Test updating non-existent string ID raises error"""
+        manager.create_plan('test', 'Test', string_id_subtasks)
+
+        with pytest.raises(ValueError, match="Subtask with id INVALID-ID"):
+            manager.update_subtask_status('INVALID-ID', 'completed')
+
+    def test_mixed_string_id_formats(self, manager):
+        """Test various string ID formats (UUID-like, alphanumeric, etc.)"""
+        mixed_subtasks = [
+            {'id': 'uuid-123e4567-e89b', 'description': 'Task 1', 'depends_on': []},
+            {'id': 'TASK_001', 'description': 'Task 2', 'depends_on': ['uuid-123e4567-e89b']},
+            {'id': 'feature-auth-login', 'description': 'Task 3', 'depends_on': []},
+        ]
+
+        plan = manager.create_plan('test', 'Test', mixed_subtasks)
+
+        assert plan.subtasks[0].id == 'uuid-123e4567-e89b'
+        assert plan.subtasks[1].id == 'TASK_001'
+        assert plan.subtasks[2].id == 'feature-auth-login'
+
+
+class TestAcceptanceCriteriaListSupport:
+    """Test support for acceptance_criteria as list instead of string"""
+
+    def test_acceptance_criteria_as_list(self, manager):
+        """Test creating plan with acceptance_criteria as list"""
+        subtasks = [{
+            'id': 'ST-001',
+            'description': 'Create User model',
+            'acceptance_criteria': [
+                'Model validates email format',
+                'Password is hashed using bcrypt',
+                'Username is unique'
+            ],
+            'depends_on': []
+        }]
+
+        plan = manager.create_plan('test', 'Test', subtasks)
+
+        assert plan.subtasks[0].acceptance_criteria == [
+            'Model validates email format',
+            'Password is hashed using bcrypt',
+            'Username is unique'
+        ]
+
+    def test_acceptance_criteria_as_string(self, manager):
+        """Test creating plan with acceptance_criteria as string (backward compatibility)"""
+        subtasks = [{
+            'id': 'ST-001',
+            'description': 'Create User model',
+            'acceptance_criteria': 'Model validates email and hashes password',
+            'depends_on': []
+        }]
+
+        plan = manager.create_plan('test', 'Test', subtasks)
+
+        assert plan.subtasks[0].acceptance_criteria == 'Model validates email and hashes password'
+
+    def test_format_acceptance_criteria_string(self, manager):
+        """Test _format_acceptance_criteria with string input"""
+        result = manager._format_acceptance_criteria('Test criterion')
+        assert result == 'Test criterion'
+
+    def test_format_acceptance_criteria_list(self, manager):
+        """Test _format_acceptance_criteria with list input"""
+        criteria_list = ['Criterion 1', 'Criterion 2', 'Criterion 3']
+        result = manager._format_acceptance_criteria(criteria_list)
+
+        expected = "- Criterion 1\n- Criterion 2\n- Criterion 3"
+        assert result == expected
+
+    def test_format_acceptance_criteria_none(self, manager):
+        """Test _format_acceptance_criteria with None input"""
+        result = manager._format_acceptance_criteria(None)
+        assert result is None
+
+    def test_markdown_with_list_acceptance_criteria(self, manager):
+        """Test markdown generation with list acceptance_criteria"""
+        subtasks = [{
+            'id': 'ST-001',
+            'description': 'Create User model',
+            'acceptance_criteria': [
+                'Model validates email',
+                'Password is hashed',
+                'Username is unique'
+            ],
+            'depends_on': []
+        }]
+
+        manager.create_plan('test', 'Test', subtasks)
+        manager.update_subtask_status('ST-001', 'in_progress')
+
+        md = manager.plan_file.read_text()
+
+        # Should contain formatted list
+        assert 'Acceptance Criteria:' in md
+        assert '- Model validates email' in md
+        assert '- Password is hashed' in md
+        assert '- Username is unique' in md
+
+    def test_tasks_md_with_list_acceptance_criteria(self, manager):
+        """Test tasks.md generation with list acceptance_criteria"""
+        subtasks = [{
+            'id': 'ST-001',
+            'description': 'Create User model',
+            'acceptance_criteria': [
+                'Model validates email',
+                'Password is hashed'
+            ],
+            'depends_on': []
+        }]
+
+        plan = manager.create_plan('test', 'Test', subtasks)
+        plan.subtasks[0].status = 'in_progress'
+        manager._generate_tasks_md(plan)
+
+        content = manager.tasks_file.read_text()
+
+        # Should contain formatted acceptance criteria
+        assert '**Acceptance:**' in content
+        assert '- Model validates email' in content
+        assert '- Password is hashed' in content
+
+    def test_mixed_acceptance_criteria_formats(self, manager):
+        """Test plan with mixed string and list acceptance_criteria"""
+        subtasks = [
+            {
+                'id': 'ST-001',
+                'description': 'Task 1',
+                'acceptance_criteria': 'Simple string criterion',
+                'depends_on': []
+            },
+            {
+                'id': 'ST-002',
+                'description': 'Task 2',
+                'acceptance_criteria': ['Criterion 1', 'Criterion 2'],
+                'depends_on': []
+            },
+            {
+                'id': 'ST-003',
+                'description': 'Task 3',
+                'acceptance_criteria': None,
+                'depends_on': []
+            }
+        ]
+
+        plan = manager.create_plan('test', 'Test', subtasks)
+
+        # Verify all formats are preserved
+        assert isinstance(plan.subtasks[0].acceptance_criteria, str)
+        assert isinstance(plan.subtasks[1].acceptance_criteria, list)
+        assert plan.subtasks[2].acceptance_criteria is None
+
+    def test_empty_acceptance_criteria_list(self, manager):
+        """Test handling of empty acceptance_criteria list"""
+        subtasks = [{
+            'id': 'ST-001',
+            'description': 'Task 1',
+            'acceptance_criteria': [],
+            'depends_on': []
+        }]
+
+        plan = manager.create_plan('test', 'Test', subtasks)
+
+        # Empty list should be preserved
+        assert plan.subtasks[0].acceptance_criteria == []
+
+        # Formatting empty list should return empty string
+        result = manager._format_acceptance_criteria([])
+        assert result == ""
+
+
+class TestStringIDAndListCriteriaIntegration:
+    """Integration tests for string IDs + list acceptance_criteria"""
+
+    def test_full_workflow_with_new_types(self, manager):
+        """Test complete workflow with string IDs and list acceptance_criteria"""
+        subtasks = [
+            {
+                'id': 'ST-001',
+                'description': 'Create User model',
+                'acceptance_criteria': [
+                    'Email validation works',
+                    'Password hashing implemented',
+                    'Model tests pass'
+                ],
+                'estimated_complexity': 'medium',
+                'depends_on': []
+            },
+            {
+                'id': 'ST-002',
+                'description': 'Create login endpoint',
+                'acceptance_criteria': [
+                    'POST /auth/login accepts credentials',
+                    'Returns JWT on success',
+                    'Returns 401 on failure'
+                ],
+                'estimated_complexity': 'medium',
+                'depends_on': ['ST-001']
+            }
+        ]
+
+        # Create plan
+        plan = manager.create_plan('feat_auth', 'Add authentication', subtasks)
+        assert plan.current_subtask_id == 'ST-001'
+
+        # Start first task
+        manager.update_subtask_status('ST-001', 'in_progress')
+        md1 = manager.plan_file.read_text()
+        assert 'ST-001' in md1
+        assert '- Email validation works' in md1
+        assert 'CURRENT' in md1
+
+        # Complete first task
+        manager.update_subtask_status('ST-001', 'completed')
+
+        # Start second task
+        manager.update_subtask_status('ST-002', 'in_progress')
+        md2 = manager.plan_file.read_text()
+        assert '✓' in md2  # First task completed
+        assert 'ST-002' in md2
+        assert '- POST /auth/login' in md2
+
+        # Complete workflow
+        manager.update_subtask_status('ST-002', 'completed')
+
+        stats = manager.get_statistics()
+        assert stats['completed'] == 2
+        assert stats['pending'] == 0
+
+    def test_cli_with_string_ids_and_list_criteria(self, tmp_path):
+        """Test CLI commands work with string IDs and list acceptance_criteria"""
+        os.chdir(tmp_path)
+        map_dir = tmp_path / ".map"
+        map_dir.mkdir()
+
+        subtasks_json = json.dumps([
+            {
+                'id': 'ST-001',
+                'description': 'Test task',
+                'acceptance_criteria': ['Criterion 1', 'Criterion 2'],
+                'estimated_complexity': 'low',
+                'depends_on': []
+            }
+        ])
+
+        # Create plan via CLI
+        result = runner.invoke(app, [
+            'recitation', 'create',
+            'test_task', 'Test goal', subtasks_json
+        ])
+
+        assert result.exit_code == 0
+        output = json.loads(result.stdout)
+        assert output['status'] == 'success'
+
+        # Update via CLI with string ID
+        result = runner.invoke(app, [
+            'recitation', 'update',
+            'ST-001', 'in_progress'
+        ])
+
+        assert result.exit_code == 0
+        output = json.loads(result.stdout)
+        assert output['status'] == 'success'
+        assert output['current_subtask'] == 'ST-001'
+
+    def test_persistence_across_manager_instances(self, temp_project):
+        """Test string IDs and list criteria persist correctly"""
+        subtasks = [
+            {
+                'id': 'ST-001',
+                'description': 'Task',
+                'acceptance_criteria': ['Criterion 1', 'Criterion 2'],
+                'depends_on': []
+            }
+        ]
+
+        # Create with first manager
+        manager1 = RecitationManager(temp_project)
+        manager1.create_plan('test', 'Test', subtasks)
+        manager1.update_subtask_status('ST-001', 'in_progress')
+
+        # Load with second manager
+        manager2 = RecitationManager(temp_project)
+        plan = manager2.get_plan()
+
+        assert plan.subtasks[0].id == 'ST-001'
+        assert plan.subtasks[0].acceptance_criteria == ['Criterion 1', 'Criterion 2']
+        assert plan.subtasks[0].status == 'in_progress'
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

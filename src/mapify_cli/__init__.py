@@ -1837,7 +1837,7 @@ def recitation_create(
 
 @recitation_app.command("update")
 def recitation_update(
-    subtask_id: int,
+    subtask_id: str,
     status: str,
     error: Optional[str] = typer.Argument(None)
 ):
