@@ -297,8 +297,6 @@ class ContradictionDetector:
         if not entities:
             return []
 
-        kg_query = KnowledgeGraphQuery(db_conn)
-
         # For each entity in the new pattern, check for CONTRADICTS relationships
         # with existing entities in the graph
         all_conflicts = []
