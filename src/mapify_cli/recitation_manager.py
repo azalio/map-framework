@@ -557,8 +557,9 @@ class RecitationManager:
 
             # Check if playbook exists (prefer .db, fall back to .json for backward compatibility)
             if playbook_db_path.exists() or playbook_json_path.exists():
+                # Prefer .db if it exists, only pass playbook_path if .db doesn't exist yet
                 playbook = PlaybookManager(
-                    playbook_path=str(playbook_json_path) if playbook_json_path.exists() else None,
+                    playbook_path=str(playbook_json_path) if not playbook_db_path.exists() and playbook_json_path.exists() else None,
                     db_path=str(playbook_db_path)
                 )
 
