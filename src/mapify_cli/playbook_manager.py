@@ -239,13 +239,40 @@ class PlaybookManager:
             )
         """)
 
-        # Insert default metadata
+        # Insert default metadata (schema_version will be set by schema_v3.0.sql)
         now = datetime.utcnow().isoformat() + "Z"
         cursor.execute("INSERT OR IGNORE INTO metadata VALUES ('version', '1.0')")
         cursor.execute(f"INSERT OR IGNORE INTO metadata VALUES ('last_updated', '{now}')")
         cursor.execute("INSERT OR IGNORE INTO metadata VALUES ('total_bullets', '0')")
-        cursor.execute(f"INSERT OR IGNORE INTO metadata VALUES ('schema_version', '{CURRENT_SCHEMA_VERSION}')")
         cursor.execute("INSERT OR IGNORE INTO metadata VALUES ('top_k', '5')")
+
+        # Add Knowledge Graph tables (schema v3.0)
+        # Execute schema_v3.0.sql to create entities, relationships, provenance tables
+        schema_file = Path(__file__).parent.parent / 'docs' / 'knowledge_graph' / 'schema_v3.0.sql'
+
+        # Fallback: check if schema file exists in project root (for development)
+        if not schema_file.exists():
+            schema_file = Path.cwd() / 'docs' / 'knowledge_graph' / 'schema_v3.0.sql'
+
+        if schema_file.exists():
+            try:
+                with open(schema_file, 'r', encoding='utf-8') as f:
+                    kg_schema_sql = f.read()
+                cursor.executescript(kg_schema_sql)
+                print("✓ Knowledge Graph tables created (schema v3.0)", file=sys.stderr)
+            except Exception as e:
+                conn.rollback()
+                conn.close()
+                raise RuntimeError(
+                    f"Failed to create Knowledge Graph schema: {e}\n"
+                    f"Schema file: {schema_file}"
+                ) from e
+        else:
+            # Fallback: If schema file not found, create v2.1 schema and log warning
+            # This prevents breaking existing installations if file is missing
+            print(f"⚠ Warning: schema_v3.0.sql not found at {schema_file}", file=sys.stderr)
+            print("  Creating playbook.db with schema v2.1 (without Knowledge Graph)", file=sys.stderr)
+            cursor.execute(f"INSERT OR IGNORE INTO metadata VALUES ('schema_version', '2.1')")
 
         conn.commit()
         conn.close()
