@@ -101,12 +101,12 @@ class RecitationManager:
 
         plan_subtasks = [
             Subtask(
-                id=st['id'],
+                id=str(st['id']),  # Convert ID to string for consistency
                 description=st['description'],
                 status='pending',
                 acceptance_criteria=st.get('acceptance_criteria'),
                 estimated_complexity=st.get('estimated_complexity'),
-                depends_on=st.get('depends_on', [])
+                depends_on=[str(dep) for dep in st.get('depends_on', [])]  # Convert dependencies to strings
             )
             for st in subtasks
         ]
