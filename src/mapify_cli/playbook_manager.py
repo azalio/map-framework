@@ -18,6 +18,8 @@ from typing import List, Dict, Optional, Tuple
 from pathlib import Path
 import re
 
+from .schemas import SCHEMA_V3_0_SQL
+
 # Import query API dataclasses
 from mapify_cli.playbook_query import (
     PlaybookQuery,
@@ -106,6 +108,31 @@ class PlaybookManager:
             except Exception as e:
                 print(f"Warning: Could not initialize semantic search: {e}", file=sys.stderr)
                 print("  Falling back to keyword matching", file=sys.stderr)
+
+        # Lazy initialization for Knowledge Graph query interface
+        self._kg_query = None
+
+    @property
+    def kg_query(self):
+        """
+        Lazy-initialized Knowledge Graph query interface.
+
+        Provides access to graph traversal operations (find_paths, get_neighbors,
+        entities_since, etc.) without requiring immediate initialization.
+
+        Returns:
+            KnowledgeGraphQuery instance
+
+        Example:
+            >>> from mapify_cli.playbook_manager import PlaybookManager
+            >>> pm = PlaybookManager()
+            >>> paths = pm.kg_query.find_paths('ent-pytest', 'ent-python')
+            >>> neighbors = pm.kg_query.get_neighbors('ent-pytest', direction='outgoing')
+        """
+        if self._kg_query is None:
+            from mapify_cli.graph_query import KnowledgeGraphQuery
+            self._kg_query = KnowledgeGraphQuery(self.db_conn)
+        return self._kg_query
 
     def _create_empty_playbook(self) -> Dict:
         """Create empty playbook structure."""
@@ -247,32 +274,16 @@ class PlaybookManager:
         cursor.execute("INSERT OR IGNORE INTO metadata VALUES ('top_k', '5')")
 
         # Add Knowledge Graph tables (schema v3.0)
-        # Execute schema_v3.0.sql to create entities, relationships, provenance tables
-        schema_file = Path(__file__).parent.parent / 'docs' / 'knowledge_graph' / 'schema_v3.0.sql'
-
-        # Fallback: check if schema file exists in project root (for development)
-        if not schema_file.exists():
-            schema_file = Path.cwd() / 'docs' / 'knowledge_graph' / 'schema_v3.0.sql'
-
-        if schema_file.exists():
-            try:
-                with open(schema_file, 'r', encoding='utf-8') as f:
-                    kg_schema_sql = f.read()
-                cursor.executescript(kg_schema_sql)
-                print("✓ Knowledge Graph tables created (schema v3.0)", file=sys.stderr)
-            except Exception as e:
-                conn.rollback()
-                conn.close()
-                raise RuntimeError(
-                    f"Failed to create Knowledge Graph schema: {e}\n"
-                    f"Schema file: {schema_file}"
-                ) from e
-        else:
-            # Fallback: If schema file not found, create v2.1 schema and log warning
-            # This prevents breaking existing installations if file is missing
-            print(f"⚠ Warning: schema_v3.0.sql not found at {schema_file}", file=sys.stderr)
-            print("  Creating playbook.db with schema v2.1 (without Knowledge Graph)", file=sys.stderr)
-            cursor.execute(f"INSERT OR IGNORE INTO metadata VALUES ('schema_version', '2.1')")
+        # Schema is embedded in code (schemas.py) to ensure availability in packaged installations
+        try:
+            cursor.executescript(SCHEMA_V3_0_SQL)
+            print("✓ Knowledge Graph tables created (schema v3.0)", file=sys.stderr)
+        except Exception as e:
+            conn.rollback()
+            conn.close()
+            raise RuntimeError(
+                f"Failed to create Knowledge Graph schema: {e}"
+            ) from e
 
         conn.commit()
         conn.close()
@@ -316,28 +327,11 @@ class PlaybookManager:
         if current_version == '2.1':
             print("Migrating schema from 2.1 to 3.0 (adding Knowledge Graph tables)...", file=sys.stderr)
 
-            # Read and execute schema_v3.0.sql
-            schema_file = Path(__file__).parent.parent / 'docs' / 'knowledge_graph' / 'schema_v3.0.sql'
-
-            # Fallback: check if schema file exists in project root (for development)
-            if not schema_file.exists():
-                schema_file = Path.cwd() / 'docs' / 'knowledge_graph' / 'schema_v3.0.sql'
-
-            if not schema_file.exists():
-                raise FileNotFoundError(
-                    f"Schema migration file not found: {schema_file}\n"
-                    "Expected location: docs/knowledge_graph/schema_v3.0.sql"
-                )
-
             try:
-                # Read SQL file
-                with open(schema_file, 'r', encoding='utf-8') as f:
-                    schema_sql = f.read()
-
-                # Execute all SQL statements (executescript handles multiple statements)
-                # Note: executescript() operates in autocommit mode and commits after each statement
+                # Execute embedded schema SQL (from schemas.py)
+                # executescript() operates in autocommit mode and commits after each statement
                 # No explicit commit needed here - changes are already committed
-                cursor.executescript(schema_sql)
+                cursor.executescript(SCHEMA_V3_0_SQL)
 
                 # Verify tables were created
                 cursor.execute("""
