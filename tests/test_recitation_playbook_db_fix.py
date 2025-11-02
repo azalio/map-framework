@@ -7,7 +7,6 @@ to read .claude/playbook.json even when .claude/playbook.db already existed.
 
 from pathlib import Path
 import json
-import pytest
 from mapify_cli.recitation_manager import RecitationManager
 
 
