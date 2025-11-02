@@ -47,7 +47,7 @@ RELEVANCE_WEIGHT = 0.7    # Weight for relevance in combined score
 QUALITY_WEIGHT = 0.3      # Weight for quality in combined score
 
 # Schema version constants
-CURRENT_SCHEMA_VERSION = '2.1'  # Added executable_scripts field
+CURRENT_SCHEMA_VERSION = '3.0'  # Added Knowledge Graph tables (entities, relationships, provenance)
 
 
 class PlaybookManager:
@@ -88,6 +88,8 @@ class PlaybookManager:
         self.db_conn.row_factory = sqlite3.Row
         # Enable WAL mode for better concurrency
         self.db_conn.execute("PRAGMA journal_mode=WAL")
+        # Enable foreign key constraints (required for KG schema CASCADE deletes)
+        self.db_conn.execute("PRAGMA foreign_keys=ON")
 
         # Run schema migrations if needed
         self._migrate_schema()
@@ -281,6 +283,78 @@ class PlaybookManager:
             cursor.execute("UPDATE metadata SET value = '2.1' WHERE key = 'schema_version'")
             self.db_conn.commit()
             print("✓ Schema migration complete (2.0 -> 2.1)", file=sys.stderr)
+            current_version = '2.1'  # Proceed to next migration if needed
+
+        # Migration: 2.1 -> 3.0 (add Knowledge Graph tables)
+        if current_version == '2.1':
+            print("Migrating schema from 2.1 to 3.0 (adding Knowledge Graph tables)...", file=sys.stderr)
+
+            # Read and execute schema_v3.0.sql
+            schema_file = Path(__file__).parent.parent / 'docs' / 'knowledge_graph' / 'schema_v3.0.sql'
+
+            # Fallback: check if schema file exists in project root (for development)
+            if not schema_file.exists():
+                schema_file = Path.cwd() / 'docs' / 'knowledge_graph' / 'schema_v3.0.sql'
+
+            if not schema_file.exists():
+                raise FileNotFoundError(
+                    f"Schema migration file not found: {schema_file}\n"
+                    "Expected location: docs/knowledge_graph/schema_v3.0.sql"
+                )
+
+            try:
+                # Read SQL file
+                with open(schema_file, 'r', encoding='utf-8') as f:
+                    schema_sql = f.read()
+
+                # Execute all SQL statements (executescript handles multiple statements)
+                # Note: executescript() operates in autocommit mode and commits after each statement
+                # No explicit commit needed here - changes are already committed
+                cursor.executescript(schema_sql)
+
+                # Verify tables were created
+                cursor.execute("""
+                    SELECT name FROM sqlite_master
+                    WHERE type='table' AND name IN ('entities', 'relationships', 'provenance')
+                    ORDER BY name
+                """)
+                created_tables = [row[0] for row in cursor.fetchall()]
+
+                if len(created_tables) == 3:
+                    print(f"✓ Created KG tables: {', '.join(created_tables)}", file=sys.stderr)
+                else:
+                    print(f"⚠ Warning: Expected 3 KG tables, found {len(created_tables)}: {created_tables}", file=sys.stderr)
+
+                # Verify schema version was updated (schema_v3.0.sql includes this)
+                cursor.execute("SELECT value FROM metadata WHERE key = 'schema_version'")
+                new_version = cursor.fetchone()[0]
+
+                if new_version == '3.0':
+                    print("✓ Schema migration complete (2.1 -> 3.0)", file=sys.stderr)
+                else:
+                    raise RuntimeError(
+                        f"Schema version not updated correctly. Expected '3.0', got '{new_version}'"
+                    )
+
+            except sqlite3.Error as e:
+                self.db_conn.rollback()
+                raise RuntimeError(
+                    f"Failed to execute schema migration SQL: {e}\n"
+                    f"\n"
+                    f"Recovery steps:\n"
+                    f"1. Check error above for root cause (disk space, permissions, etc.)\n"
+                    f"2. Fix underlying issue\n"
+                    f"3. Restart application - migration will retry safely (uses IF NOT EXISTS guards)\n"
+                    f"4. If issue persists, restore from backup: .claude/playbook.db.backup.*\n"
+                    f"5. See docs/knowledge_graph/MIGRATION_ROLLBACK.md for detailed rollback instructions"
+                ) from e
+            except Exception as e:
+                self.db_conn.rollback()
+                raise RuntimeError(
+                    f"Unexpected error during schema migration: {e}\n"
+                    f"\n"
+                    f"Recovery: Restore from backup (.claude/playbook.db.backup.*) or see MIGRATION_ROLLBACK.md"
+                ) from e
 
         elif current_version == CURRENT_SCHEMA_VERSION:
             # Already at current version, no migration needed

@@ -2,6 +2,9 @@
 -- Adds entity-relationship graph capabilities to playbook.db
 -- Compatible with existing bullets table (schema v2.1)
 -- Migration target: v2.1 -> v3.0
+--
+-- IMPORTANT: Requires PRAGMA foreign_keys=ON (enforced by playbook_manager.py)
+-- This ensures ON DELETE CASCADE behavior works correctly.
 
 -- ============================================================================
 -- ENTITIES TABLE
@@ -220,7 +223,8 @@ CREATE INDEX IF NOT EXISTS idx_prov_extracted_at ON provenance(extracted_at DESC
 -- ============================================================================
 -- METADATA UPDATES
 -- ============================================================================
--- Update schema version to 3.0
+-- Update schema version to 3.0 (must use REPLACE to update existing value)
 INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', '3.0');
-INSERT OR REPLACE INTO metadata (key, value) VALUES ('kg_enabled', '1');
-INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_kg_extraction', NULL);
+-- Preserve existing settings if already set (use IGNORE to avoid overwriting)
+INSERT OR IGNORE INTO metadata (key, value) VALUES ('kg_enabled', '1');
+INSERT OR IGNORE INTO metadata (key, value) VALUES ('last_kg_extraction', NULL);
