@@ -13,10 +13,12 @@ import sys
 import sqlite3
 import shutil
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Optional, Tuple
 from pathlib import Path
 import re
+
+from .schemas import SCHEMA_V3_0_SQL
 
 # Import query API dataclasses
 from mapify_cli.playbook_query import (
@@ -47,7 +49,7 @@ RELEVANCE_WEIGHT = 0.7    # Weight for relevance in combined score
 QUALITY_WEIGHT = 0.3      # Weight for quality in combined score
 
 # Schema version constants
-CURRENT_SCHEMA_VERSION = '2.1'  # Added executable_scripts field
+CURRENT_SCHEMA_VERSION = '3.0'  # Added Knowledge Graph tables (entities, relationships, provenance)
 
 
 class PlaybookManager:
@@ -88,6 +90,8 @@ class PlaybookManager:
         self.db_conn.row_factory = sqlite3.Row
         # Enable WAL mode for better concurrency
         self.db_conn.execute("PRAGMA journal_mode=WAL")
+        # Enable foreign key constraints (required for KG schema CASCADE deletes)
+        self.db_conn.execute("PRAGMA foreign_keys=ON")
 
         # Run schema migrations if needed
         self._migrate_schema()
@@ -105,14 +109,39 @@ class PlaybookManager:
                 print(f"Warning: Could not initialize semantic search: {e}", file=sys.stderr)
                 print("  Falling back to keyword matching", file=sys.stderr)
 
+        # Lazy initialization for Knowledge Graph query interface
+        self._kg_query = None
+
+    @property
+    def kg_query(self):
+        """
+        Lazy-initialized Knowledge Graph query interface.
+
+        Provides access to graph traversal operations (find_paths, get_neighbors,
+        entities_since, etc.) without requiring immediate initialization.
+
+        Returns:
+            KnowledgeGraphQuery instance
+
+        Example:
+            >>> from mapify_cli.playbook_manager import PlaybookManager
+            >>> pm = PlaybookManager()
+            >>> paths = pm.kg_query.find_paths('ent-pytest', 'ent-python')
+            >>> neighbors = pm.kg_query.get_neighbors('ent-pytest', direction='outgoing')
+        """
+        if self._kg_query is None:
+            from mapify_cli.graph_query import KnowledgeGraphQuery
+            self._kg_query = KnowledgeGraphQuery(self.db_conn)
+        return self._kg_query
+
     def _create_empty_playbook(self) -> Dict:
         """Create empty playbook structure."""
         return {
             "version": "1.0",
             "metadata": {
                 "project": "map-framework",
-                "created_at": datetime.utcnow().isoformat() + "Z",
-                "last_updated": datetime.utcnow().isoformat() + "Z",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "last_updated": datetime.now(timezone.utc).isoformat(),
                 "total_bullets": 0,
                 "sections_count": 10,
                 # Phase 1.3: Limit playbook patterns to reduce context distraction and save ~15% tokens
@@ -237,13 +266,24 @@ class PlaybookManager:
             )
         """)
 
-        # Insert default metadata
-        now = datetime.utcnow().isoformat() + "Z"
+        # Insert default metadata (schema_version will be set by schema_v3.0.sql)
+        now = datetime.now(timezone.utc).isoformat()
         cursor.execute("INSERT OR IGNORE INTO metadata VALUES ('version', '1.0')")
         cursor.execute(f"INSERT OR IGNORE INTO metadata VALUES ('last_updated', '{now}')")
         cursor.execute("INSERT OR IGNORE INTO metadata VALUES ('total_bullets', '0')")
-        cursor.execute(f"INSERT OR IGNORE INTO metadata VALUES ('schema_version', '{CURRENT_SCHEMA_VERSION}')")
         cursor.execute("INSERT OR IGNORE INTO metadata VALUES ('top_k', '5')")
+
+        # Add Knowledge Graph tables (schema v3.0)
+        # Schema is embedded in code (schemas.py) to ensure availability in packaged installations
+        try:
+            cursor.executescript(SCHEMA_V3_0_SQL)
+            print("✓ Knowledge Graph tables created (schema v3.0)", file=sys.stderr)
+        except Exception as e:
+            conn.rollback()
+            conn.close()
+            raise RuntimeError(
+                f"Failed to create Knowledge Graph schema: {e}"
+            ) from e
 
         conn.commit()
         conn.close()
@@ -281,6 +321,61 @@ class PlaybookManager:
             cursor.execute("UPDATE metadata SET value = '2.1' WHERE key = 'schema_version'")
             self.db_conn.commit()
             print("✓ Schema migration complete (2.0 -> 2.1)", file=sys.stderr)
+            current_version = '2.1'  # Proceed to next migration if needed
+
+        # Migration: 2.1 -> 3.0 (add Knowledge Graph tables)
+        if current_version == '2.1':
+            print("Migrating schema from 2.1 to 3.0 (adding Knowledge Graph tables)...", file=sys.stderr)
+
+            try:
+                # Execute embedded schema SQL (from schemas.py)
+                # executescript() operates in autocommit mode and commits after each statement
+                # No explicit commit needed here - changes are already committed
+                cursor.executescript(SCHEMA_V3_0_SQL)
+
+                # Verify tables were created
+                cursor.execute("""
+                    SELECT name FROM sqlite_master
+                    WHERE type='table' AND name IN ('entities', 'relationships', 'provenance')
+                    ORDER BY name
+                """)
+                created_tables = [row[0] for row in cursor.fetchall()]
+
+                if len(created_tables) == 3:
+                    print(f"✓ Created KG tables: {', '.join(created_tables)}", file=sys.stderr)
+                else:
+                    print(f"⚠ Warning: Expected 3 KG tables, found {len(created_tables)}: {created_tables}", file=sys.stderr)
+
+                # Verify schema version was updated (schema_v3.0.sql includes this)
+                cursor.execute("SELECT value FROM metadata WHERE key = 'schema_version'")
+                new_version = cursor.fetchone()[0]
+
+                if new_version == '3.0':
+                    print("✓ Schema migration complete (2.1 -> 3.0)", file=sys.stderr)
+                else:
+                    raise RuntimeError(
+                        f"Schema version not updated correctly. Expected '3.0', got '{new_version}'"
+                    )
+
+            except sqlite3.Error as e:
+                self.db_conn.rollback()
+                raise RuntimeError(
+                    f"Failed to execute schema migration SQL: {e}\n"
+                    f"\n"
+                    f"Recovery steps:\n"
+                    f"1. Check error above for root cause (disk space, permissions, etc.)\n"
+                    f"2. Fix underlying issue\n"
+                    f"3. Restart application - migration will retry safely (uses IF NOT EXISTS guards)\n"
+                    f"4. If issue persists, restore from backup: .claude/playbook.db.backup.*\n"
+                    f"5. See docs/knowledge_graph/MIGRATION_ROLLBACK.md for detailed rollback instructions"
+                ) from e
+            except Exception as e:
+                self.db_conn.rollback()
+                raise RuntimeError(
+                    f"Unexpected error during schema migration: {e}\n"
+                    f"\n"
+                    f"Recovery: Restore from backup (.claude/playbook.db.backup.*) or see MIGRATION_ROLLBACK.md"
+                ) from e
 
         elif current_version == CURRENT_SCHEMA_VERSION:
             # Already at current version, no migration needed
@@ -330,7 +425,7 @@ class PlaybookManager:
         for section_name, section_data in playbook['sections'].items():
             for bullet in section_data['bullets']:
                 # Handle None values explicitly (dict.get() returns None if key exists with null value)
-                now = datetime.utcnow().isoformat() + "Z"
+                now = datetime.now(timezone.utc).isoformat()
                 created_at = bullet.get('created_at') or now
                 last_used_at = bullet.get('last_used_at') or now
 
@@ -370,7 +465,7 @@ class PlaybookManager:
         cursor.execute("UPDATE metadata SET value = ? WHERE key = 'version'",
                        (metadata.get('version', '1.0'),))
         cursor.execute("UPDATE metadata SET value = ? WHERE key = 'last_updated'",
-                       (metadata.get('last_updated', datetime.utcnow().isoformat() + "Z"),))
+                       (metadata.get('last_updated', datetime.now(timezone.utc).isoformat()),))
         cursor.execute("UPDATE metadata SET value = ? WHERE key = 'total_bullets'",
                        (str(total_bullets),))
         cursor.execute("UPDATE metadata SET value = ? WHERE key = 'top_k'",
@@ -389,7 +484,7 @@ class PlaybookManager:
         conn.close()
 
         # Create backup of JSON
-        backup_path = str(self.playbook_path) + f".backup.{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
+        backup_path = str(self.playbook_path) + f".backup.{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
         shutil.copy(str(self.playbook_path), backup_path)
 
         print(f"✅ Migrated {db_count} bullets from {self.playbook_path} to {self.db_path}", file=sys.stderr)
@@ -456,7 +551,7 @@ class PlaybookManager:
             'version': metadata.get('version', '1.0'),
             'metadata': {
                 'version': metadata.get('version', '1.0'),
-                'last_updated': metadata.get('last_updated', datetime.utcnow().isoformat() + "Z"),
+                'last_updated': metadata.get('last_updated', datetime.now(timezone.utc).isoformat()),
                 'total_bullets': int(metadata.get('total_bullets', 0)),
                 'sections_count': 10,
                 'top_k': int(metadata.get('top_k', 5))
@@ -547,7 +642,7 @@ class PlaybookManager:
             raise ValueError(f"Unknown section: {section}")
 
         bullet_id = self._generate_id(section)
-        now = datetime.utcnow().isoformat() + "Z"
+        now = datetime.now(timezone.utc).isoformat()
 
         # Insert into SQLite
         cursor = self.db_conn.cursor()
@@ -617,7 +712,7 @@ class PlaybookManager:
         if not row:
             return False
 
-        now = datetime.utcnow().isoformat() + "Z"
+        now = datetime.now(timezone.utc).isoformat()
         new_helpful = row['helpful_count'] + increment_helpful
         new_harmful = row['harmful_count'] + increment_harmful
 
@@ -662,7 +757,7 @@ class PlaybookManager:
         if not cursor.fetchone():
             return False
 
-        now = datetime.utcnow().isoformat() + "Z"
+        now = datetime.now(timezone.utc).isoformat()
         cursor.execute("""
             UPDATE bullets
             SET deprecated = 1,
@@ -883,7 +978,7 @@ class PlaybookManager:
         _add_bullet, _update_bullet, _deprecate_bullet. This method
         just updates the last_updated timestamp.
         """
-        now = datetime.utcnow().isoformat() + "Z"
+        now = datetime.now(timezone.utc).isoformat()
         cursor = self.db_conn.cursor()
         cursor.execute("UPDATE metadata SET value = ? WHERE key = 'last_updated'", (now,))
         self.db_conn.commit()

@@ -646,6 +646,127 @@ IF new bullet in IMPLEMENTATION_PATTERNS relates to existing SECURITY_PATTERNS b
 
 </decision_framework>
 
+# CONTRADICTION DETECTION (RECOMMENDED)
+
+<recommended_enhancement>
+
+## Purpose
+
+Check if new playbook bullets conflict with existing knowledge before adding them. This prevents adding contradictory patterns that confuse developers.
+
+## When to Check
+
+Check for contradictions when:
+- **Operation type is ADD** (new bullet being added)
+- Bullet content includes **technical patterns or anti-patterns**
+- **High-stakes decisions** in sections like:
+  - ARCHITECTURE_PATTERNS
+  - SECURITY_PATTERNS
+  - PERFORMANCE_PATTERNS
+  - IMPLEMENTATION_PATTERNS
+
+**Skip for**:
+- Low-risk sections (DEBUGGING_TECHNIQUES, TOOL_USAGE general tips)
+- UPDATE operations (only modifying existing bullets)
+- Simple code style rules
+
+## How to Check
+
+**Step 1: Extract Entities from New Bullet**
+
+```python
+from mapify_cli.entity_extractor import extract_entities
+
+# For each ADD operation
+for operation in delta_operations:
+    if operation["type"] == "ADD":
+        bullet_content = operation["content"]
+
+        # Extract entities to understand what the bullet is about
+        entities = extract_entities(bullet_content)
+```
+
+**Step 2: Check for Conflicts**
+
+```python
+from mapify_cli.contradiction_detector import check_new_pattern_conflicts
+from mapify_cli.playbook_manager import PlaybookManager
+
+# Get database connection
+pm = PlaybookManager()
+
+# Check for conflicts with existing knowledge
+conflicts = check_new_pattern_conflicts(
+    db_conn=pm.db_conn,
+    pattern_text=bullet_content,
+    entities=entities,
+    min_confidence=0.7  # Only high-confidence conflicts
+)
+```
+
+**Step 3: Handle Conflicts**
+
+```python
+# Filter to high-severity conflicts
+high_severity = [c for c in conflicts if c.severity == "high"]
+
+if high_severity:
+    print(f"⚠ WARNING: New bullet conflicts with existing patterns:")
+    for conflict in high_severity:
+        print(f"  - {conflict.description}")
+        print(f"    Conflicting bullet: {conflict.existing_bullet_id}")
+        print(f"    Suggestion: {conflict.resolution_suggestion}")
+
+    # DECISION POINT - Choose one:
+    # Option 1: Reject ADD operation (safest)
+    # Option 2: Change to UPDATE with deprecation of conflicting bullet
+    # Option 3: Add warning to metadata, let user decide
+```
+
+**Step 4: Document in Operations**
+
+If contradictions detected, include in operation metadata:
+
+```json
+{
+  "type": "ADD",
+  "section": "SECURITY_PATTERNS",
+  "content": "...",
+  "metadata": {
+    "conflicts_detected": 2,
+    "highest_severity": "medium",
+    "conflicting_bullets": ["sec-0012", "sec-0034"],
+    "resolution": "Manual review recommended - conflicts with existing JWT patterns"
+  }
+}
+```
+
+## Conflict Resolution Strategies
+
+**High Severity Conflicts**:
+- **Stop and warn**: Don't add the bullet, explain conflict to user
+- **Update existing**: If new pattern is better, UPDATE existing bullet instead
+- **Deprecate old**: If new pattern obsoletes old, DEPRECATE old bullet
+
+**Medium Severity Conflicts**:
+- **Add with warning**: Include conflict note in metadata
+- **Link bullets**: Use `related_to` to show relationship
+- **Request clarification**: Ask Reflector for more context
+
+**Low Severity Conflicts**:
+- **Proceed with ADD**: Minor conflicts acceptable
+- **Document relationship**: Note similarity in metadata
+
+## Important Notes
+
+- **This is RECOMMENDED but not mandatory**: Curation works without contradiction detection
+- **Only check high-confidence conflicts** (≥0.7 confidence threshold)
+- **Don't auto-reject**: Provide warning and let orchestrator/user decide
+- **Keep it fast**: Detection should add <3 seconds to curation time
+- **No breaking changes**: This is an additive safety check
+
+</recommended_enhancement>
+
 # OUTPUT FORMAT (Strict JSON)
 
 <critical>
