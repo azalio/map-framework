@@ -157,6 +157,9 @@ class RecitationManager:
         Raises:
             ValueError: If no active plan exists
         """
+        # Convert subtask_id to string for consistency and backward compatibility
+        subtask_id = str(subtask_id)
+
         plan = self._load_plan()
 
         # Check if plan exists

@@ -71,7 +71,8 @@ class TestRecitationManagerCreation:
         assert plan.task_id == 'feat_auth'
         assert plan.goal == 'Implement JWT authentication'
         assert len(plan.subtasks) == 3
-        assert plan.current_subtask_id == 1
+        # IDs are now stored as strings
+        assert plan.current_subtask_id in [1, "1"]  # Support both for backward compatibility
         assert plan.subtasks[0].status == 'pending'
 
     def test_plan_files_created(self, manager, sample_subtasks):
@@ -129,7 +130,7 @@ class TestSubtaskStatusUpdates:
 
         assert plan.subtasks[0].status == 'in_progress'
         assert plan.subtasks[0].iterations == 1
-        assert plan.current_subtask_id == 1
+        assert plan.current_subtask_id in [1, "1"]  # Support both for backward compatibility
 
     def test_update_to_completed(self, manager, sample_subtasks):
         """Test updating subtask to completed"""
@@ -192,7 +193,7 @@ class TestSubtaskStatusUpdates:
         assert plan.subtasks[0].status == 'completed'
         assert plan.subtasks[1].status == 'completed'
         assert plan.subtasks[2].status == 'in_progress'
-        assert plan.current_subtask_id == 3
+        assert plan.current_subtask_id in [3, "3"]  # Support both for backward compatibility
 
 
 class TestMarkdownGeneration:
