@@ -13,7 +13,6 @@ Tests cover:
 
 import pytest
 import sqlite3
-import json
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -22,7 +21,6 @@ import tempfile
 # Import modules under test
 from mapify_cli.graph_query import (
     KnowledgeGraphQuery,
-    Path as GraphPath,
     find_paths,
     get_neighbors,
     entities_since,
@@ -30,8 +28,8 @@ from mapify_cli.graph_query import (
     query_relationships,
     get_entity_provenance
 )
-from mapify_cli.entity_extractor import Entity, EntityType
-from mapify_cli.relationship_detector import Relationship, RelationshipType
+from mapify_cli.entity_extractor import EntityType
+from mapify_cli.relationship_detector import RelationshipType
 from mapify_cli.playbook_manager import PlaybookManager
 from mapify_cli.schemas import SCHEMA_V3_0_SQL
 
@@ -572,6 +570,7 @@ def test_find_paths_performance(sample_graph):
     paths = kg_query.find_paths('ent-pytest', 'ent-python', max_depth=3)
     elapsed = (time.perf_counter() - start) * 1000  # Convert to ms
 
+    assert isinstance(paths, list), "find_paths should return a list"
     assert elapsed < 100, f"find_paths took {elapsed:.2f}ms (target: <100ms)"
 
 
@@ -583,6 +582,7 @@ def test_get_neighbors_performance(sample_graph):
     neighbors = kg_query.get_neighbors('ent-pytest', direction='both')
     elapsed = (time.perf_counter() - start) * 1000
 
+    assert isinstance(neighbors, list), "get_neighbors should return a list"
     assert elapsed < 50, f"get_neighbors took {elapsed:.2f}ms (target: <50ms)"
 
 
@@ -596,6 +596,7 @@ def test_entities_since_performance(sample_graph):
     entities = kg_query.entities_since(cutoff)
     elapsed = (time.perf_counter() - start) * 1000
 
+    assert isinstance(entities, list)
     assert elapsed < 30, f"entities_since took {elapsed:.2f}ms (target: <30ms)"
 
 
@@ -607,6 +608,7 @@ def test_query_entities_performance(sample_graph):
     entities = kg_query.query_entities(entity_type=EntityType.TOOL)
     elapsed = (time.perf_counter() - start) * 1000
 
+    assert isinstance(entities, list)
     assert elapsed < 50, f"query_entities took {elapsed:.2f}ms (target: <50ms)"
 
 
@@ -618,6 +620,7 @@ def test_get_provenance_performance(sample_graph):
     provenance = kg_query.get_entity_provenance('ent-pytest')
     elapsed = (time.perf_counter() - start) * 1000
 
+    assert provenance, "Provenance data should not be empty or None"
     assert elapsed < 20, f"get_entity_provenance took {elapsed:.2f}ms (target: <20ms)"
 
 

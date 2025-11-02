@@ -138,7 +138,7 @@ ls -lh .claude/playbook.db*
 
 If you encounter issues with migration or rollback:
 - **GitHub Issues**: https://github.com/azalio/map-framework/issues
-- **Schema Design Docs**: `docs/knowledge_graph/SCHEMA_DESIGN.md`
+- **Schema Design Docs**: `docs/knowledge_graph/ERD_v3.0.md`
 - **Migration SQL**: `docs/knowledge_graph/schema_v3.0.sql`
 
 ## Technical Details

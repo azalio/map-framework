@@ -10,9 +10,9 @@ Entity types: TOOL, PATTERN, CONCEPT, ERROR_TYPE, TECHNOLOGY, WORKFLOW, ANTIPATT
 
 import re
 import uuid
-from dataclasses import dataclass, field
-from datetime import datetime
-from typing import List, Dict, Set, Optional, Tuple
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import List, Dict, Optional, Tuple
 from enum import Enum
 
 
@@ -338,7 +338,6 @@ class EntityExtractor:
         """
         entities = []
         # Use timezone-aware datetime (fixes deprecation warning)
-        from datetime import timezone
         now = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
 
         # Step 1: Extract code entities (highest confidence: 0.9)

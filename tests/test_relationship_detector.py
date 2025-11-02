@@ -146,7 +146,6 @@ class TestRelationshipDetector:
 
     def test_extract_depends_on_needs(self, detector, sample_entities):
         """Test extracting DEPENDS_ON with 'needs' verb."""
-        text = "The workflow needs playbook.db to function."
         # Note: "workflow" won't match "MAP-workflow" unless we add it as entity
         # Use exact entity name
         text = "MAP-workflow needs playbook.db to function."
@@ -387,6 +386,7 @@ class TestRelationshipDetector:
         alt_rels = [r for r in rels if r.type == RelationshipType.ALTERNATIVE_TO]
         # May or may not extract (unittest not in sample_entities)
         # This tests the pattern works when entities are present
+        assert len(alt_rels) >= 1
 
     # ============================================================================
     # Edge Cases
@@ -583,6 +583,35 @@ class TestRelationshipDetector:
     # Accuracy Test (Main Requirement: ≥70%)
     # ============================================================================
 
+    def _format_relationship_details(self, rel, entities_map, entity_names):
+        """Helper function to format relationship details for debugging.
+
+        Args:
+            rel: Relationship object
+            entities_map: Dict mapping entity names to Entity objects
+            entity_names: List of entity names involved
+
+        Returns:
+            Tuple of (relationship_type, source_name, target_name)
+        """
+        # Get source entity name
+        if len(entity_names) > 0 and rel.source_entity_id == entities_map[entity_names[0]].id:
+            source_name = entities_map[entity_names[0]].name
+        elif len(entity_names) > 1 and rel.source_entity_id == entities_map[entity_names[1]].id:
+            source_name = entities_map[entity_names[1]].name
+        else:
+            source_name = '?'
+
+        # Get target entity name
+        if len(entity_names) > 1 and rel.target_entity_id == entities_map[entity_names[1]].id:
+            target_name = entities_map[entity_names[1]].name
+        elif len(entity_names) > 0 and rel.target_entity_id == entities_map[entity_names[0]].id:
+            target_name = entities_map[entity_names[0]].name
+        else:
+            target_name = '?'
+
+        return (rel.type.value, source_name, target_name)
+
     def test_accuracy_on_corpus(self, detector):
         """
         Test extraction accuracy on comprehensive test corpus.
@@ -752,7 +781,8 @@ class TestRelationshipDetector:
                 else:
                     print(f"✗ Test {i+1}: MISSED {expected_source} {expected_type.value} {expected_target}")
                     print(f"  Text: {text}")
-                    print(f"  Detected: {[(r.type.value, entities_map[entity_names[0]].name if r.source_entity_id == entities_map[entity_names[0]].id else entities_map[entity_names[1]].name if len(entity_names) > 1 else '?', entities_map[entity_names[1]].name if len(entity_names) > 1 and r.target_entity_id == entities_map[entity_names[1]].id else entities_map[entity_names[0]].name if r.target_entity_id == entities_map[entity_names[0]].id else '?') for r in detected_rels]}")
+                    formatted_rels = [self._format_relationship_details(r, entities_map, entity_names) for r in detected_rels]
+                    print(f"  Detected: {formatted_rels}")
 
         accuracy = correct / total * 100
         print(f"\nAccuracy: {correct}/{total} = {accuracy:.1f}%")

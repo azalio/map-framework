@@ -15,7 +15,7 @@ import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import List, Dict, Set, Optional, Tuple
+from typing import List, Dict, Optional, Tuple
 from enum import Enum
 
 # Import Entity and EntityType from entity_extractor

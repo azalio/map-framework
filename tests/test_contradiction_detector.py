@@ -373,10 +373,6 @@ class TestContradictionDetector:
         new_pattern = "Always use generic exception handling for simplicity"
         entities = extract_entities(new_pattern)
 
-        conflicts = detector.check_new_pattern_conflicts(
-            db_conn, new_pattern, entities, min_confidence=0.7
-        )
-
         # Should detect conflict with specific-exceptions pattern
         # Note: This depends on entity extraction finding 'generic exception' entity
         # If no entities extracted, result will be empty
@@ -506,6 +502,7 @@ class TestContradictionDetector:
         )
         elapsed_ms = (time.perf_counter() - start_time) * 1000
 
+        assert isinstance(conflicts, list), "check_new_pattern_conflicts should return a list"
         # Relaxed performance target
         assert elapsed_ms < 200, f"Performance target missed: {elapsed_ms:.2f}ms > 200ms"
 
