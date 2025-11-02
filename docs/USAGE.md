@@ -195,6 +195,309 @@ mapify playbook search "JWT authentication"
 
 **Note:** `search` command uses simple keyword matching and may fail on large playbooks. Use `query` instead.
 
+---
+
+## 🧠 Knowledge Graph Features
+
+> **Added in v3.0** — Semantic knowledge extraction and querying for enhanced pattern discovery.
+
+The Knowledge Graph (KG) layer automatically extracts entities (tools, patterns, concepts) and relationships (uses, depends-on, contradicts) from your playbook, enabling advanced queries and contradiction detection.
+
+### What is the Knowledge Graph?
+
+Instead of treating playbook bullets as plain text, the KG:
+- **Extracts entities**: Identifies tools (pytest, Docker), patterns (retry-with-backoff), concepts (idempotency), etc.
+- **Detects relationships**: Discovers "pytest USES Python", "race-condition CAUSES data-corruption", etc.
+- **Tracks provenance**: Links each entity back to the bullet it came from
+- **Finds contradictions**: Alerts you when new patterns conflict with existing knowledge
+
+**Extraction happens automatically** during MAP workflows (Reflector/Curator agents), so you don't need to manually populate the graph.
+
+### Entity Types (7)
+
+| Type | Description | Examples |
+|------|-------------|----------|
+| TOOL | CLI tools, libraries, frameworks | pytest, Docker, SQLite, npm |
+| PATTERN | Implementation patterns | retry-with-backoff, feature-flags, circuit-breaker |
+| CONCEPT | Abstract ideas | idempotency, eventual-consistency, ACID |
+| ERROR_TYPE | Error categories | race-condition, null-pointer, deadlock |
+| TECHNOLOGY | Tech stack components | Python, Kubernetes, PostgreSQL, React |
+| WORKFLOW | Process patterns | TDD, CI/CD, MAP-workflow |
+| ANTIPATTERN | Known bad practices | generic-exception, magic-number, god-object |
+
+### Relationship Types (9)
+
+| Type | Meaning | Example |
+|------|---------|---------|
+| USES | X uses Y as dependency | pytest USES Python |
+| DEPENDS_ON | X requires Y to function | retry-pattern DEPENDS_ON exponential-backoff |
+| CONTRADICTS | X conflicts with Y | generic-exception CONTRADICTS specific-exceptions |
+| SUPERSEDES | X replaces Y | playbook.db SUPERSEDES playbook.json |
+| IMPLEMENTS | X implements pattern Y | retry-logic IMPLEMENTS resilience-pattern |
+| CAUSES | X causes problem Y | race-condition CAUSES data-corruption |
+| PREVENTS | X prevents problem Y | mutex-lock PREVENTS race-condition |
+| ALTERNATIVE_TO | X is alternative to Y | pytest ALTERNATIVE_TO unittest |
+| RELATED_TO | X and Y are semantically related | Testing RELATED_TO quality-assurance |
+
+### Querying the Knowledge Graph (Python API)
+
+```python
+from mapify_cli.playbook_manager import PlaybookManager
+from mapify_cli.entity_extractor import EntityType
+from mapify_cli.relationship_detector import RelationshipType
+
+# Initialize (auto-migrates to KG schema v3.0 if needed)
+pm = PlaybookManager(db_path=".claude/playbook.db")
+kg = pm.kg_query
+
+# Example 1: Find all tools with high confidence
+tools = kg.query_entities(entity_type=EntityType.TOOL, min_confidence=0.8)
+print(f"High-confidence tools: {[t.name for t in tools]}")
+# Output: ['pytest', 'Docker', 'SQLite', 'npm']
+
+# Example 2: Find what pytest uses/depends on
+neighbors = kg.get_neighbors('ent-pytest', direction='outgoing')
+for entity, relationship in neighbors:
+    print(f"pytest {relationship.type.value} {entity.name}")
+# Output:
+# pytest USES Python
+# pytest DEPENDS_ON unittest
+
+# Example 3: Find path between two entities
+paths = kg.find_paths('ent-pytest', 'ent-python', max_depth=3)
+if paths:
+    path = paths[0]  # Shortest path
+    print(f"Path: {' -> '.join(path.entities())} (length: {path.length})")
+# Output: Path: ent-pytest -> ent-python (length: 1)
+
+# Example 4: Find entities created in last 24 hours
+from datetime import datetime, timedelta, timezone
+cutoff = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+recent = kg.entities_since(cutoff, min_confidence=0.7)
+print(f"New entities (last 24h): {len(recent)}")
+
+# Example 5: Find all dependencies in your playbook
+deps = kg.query_relationships(relationship_type=RelationshipType.DEPENDS_ON)
+for dep in deps:
+    source = kg.query_entities()[0]  # Get entity details
+    target = kg.query_entities()[0]
+    print(f"{source.name} depends on {target.name}")
+```
+
+### Contradiction Detection
+
+The KG automatically detects conflicting patterns and suggests resolutions.
+
+#### Example: Detecting Contradictions
+
+```python
+from mapify_cli.contradiction_detector import ContradictionDetector
+
+detector = ContradictionDetector()
+
+# Find all contradictions in playbook
+contradictions = detector.detect_contradictions(pm.db_conn, min_confidence=0.7)
+
+for contra in contradictions:
+    print(f"[{contra.severity.upper()}] {contra.entity_a.name} vs {contra.entity_b.name}")
+    print(f"  Description: {contra.description}")
+    print(f"  Resolution: {contra.resolution_suggestion}\n")
+```
+
+**Example Output:**
+```
+[HIGH] generic-exception vs specific-exceptions
+  Description: Entity 'generic-exception' contradicts 'specific-exceptions'
+  Resolution: Consider deprecating older entity 'generic-exception' in favor of newer higher-confidence entity 'specific-exceptions'
+
+[MEDIUM] magic-numbers vs named-constants
+  Description: Entity 'magic-numbers' contradicts 'named-constants'
+  Resolution: Manual review recommended - similar confidence and timestamps
+```
+
+#### Severity Levels
+
+| Severity | Criteria | Action |
+|----------|----------|--------|
+| **High** | Relationship confidence ≥0.8 AND both entities >0.8 | Immediate review required |
+| **Medium** | Relationship 0.7-0.8 OR one entity 0.6-0.8 | Review when convenient |
+| **Low** | Relationship <0.7 OR both entities <0.6 | Low priority |
+
+#### Checking New Patterns for Conflicts (Curator Integration)
+
+When adding new bullets to the playbook, the Curator agent automatically checks for contradictions:
+
+```python
+from mapify_cli.entity_extractor import extract_entities
+
+# New pattern being added
+new_pattern = "Always use generic exception handling for simplicity"
+entities = extract_entities(new_pattern)
+
+# Check for conflicts with existing knowledge
+conflicts = detector.check_new_pattern_conflicts(pm.db_conn, new_pattern, entities)
+
+if conflicts:
+    print(f"⚠️  Warning: {len(conflicts)} conflicts found!")
+    for conflict in conflicts:
+        print(f"  - {conflict.description}")
+        print(f"    Resolution: {conflict.resolution_suggestion}")
+    # Curator will REJECT or REQUEST_REVIEW based on severity
+else:
+    print("✅ No conflicts - safe to add to playbook")
+```
+
+### Temporal Queries (Find Recent Knowledge)
+
+```python
+from datetime import datetime, timedelta, timezone
+
+# Entities from last week
+week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+recent_entities = kg.entities_since(week_ago, min_confidence=0.7)
+
+print(f"Entities added in last week: {len(recent_entities)}")
+for entity in recent_entities:
+    print(f"  - {entity.name} ({entity.type.value})")
+    print(f"    Confidence: {entity.confidence:.2f}")
+    print(f"    First seen: {entity.first_seen_at}")
+```
+
+### Provenance Tracking (Find Source Bullets)
+
+Every entity/relationship links back to the bullet it was extracted from:
+
+```python
+# Find which bullets mention 'pytest'
+provenance = kg.get_entity_provenance('ent-pytest')
+
+for record in provenance:
+    print(f"Bullet: {record['bullet_id']}")
+    print(f"  Extraction method: {record['extraction_method']}")
+    print(f"  Confidence: {record['confidence']:.2f}")
+    print(f"  Extracted at: {record['extracted_at']}")
+```
+
+### SQL Queries (Advanced)
+
+For advanced users, you can query the KG directly via SQL:
+
+```python
+import sqlite3
+
+conn = pm.db_conn
+
+# Find all TOOL entities
+tools = conn.execute("""
+    SELECT name, confidence FROM entities
+    WHERE type = 'TOOL' AND confidence > 0.8
+    ORDER BY confidence DESC
+""").fetchall()
+
+# Find all USES relationships with details
+uses_rels = conn.execute("""
+    SELECT
+        e1.name AS source,
+        r.type,
+        e2.name AS target,
+        r.confidence
+    FROM relationships r
+    JOIN entities e1 ON r.source_entity_id = e1.id
+    JOIN entities e2 ON r.target_entity_id = e2.id
+    WHERE r.type = 'USES'
+    ORDER BY r.confidence DESC
+""").fetchall()
+
+# Full-text search on entity names
+search_results = conn.execute("""
+    SELECT name, type, confidence
+    FROM entities_fts
+    WHERE entities_fts MATCH 'pytest OR testing'
+    ORDER BY rank
+    LIMIT 10
+""").fetchall()
+```
+
+### Best Practices
+
+#### When to Use Knowledge Graph Queries
+
+✅ **Use KG when:**
+- Finding relationships between tools/patterns ("What does X depend on?")
+- Checking for contradictions before adding new patterns
+- Analyzing technology stack evolution over time (temporal queries)
+- Discovering implicit knowledge connections (path finding)
+- Auditing antipatterns and their alternatives
+
+❌ **Don't use KG when:**
+- Searching for specific code examples (use playbook FTS5 search instead)
+- Looking for human-readable best practices (use `mapify playbook query`)
+- You need exact text matches (KG extracts semantic entities, not full text)
+
+#### Confidence Thresholds
+
+**Recommended `min_confidence` values:**
+
+| Use Case | Recommended | Reasoning |
+|----------|-------------|-----------|
+| Production decisions | 0.8 | High confidence only (explicit mentions) |
+| General queries | 0.7 | Balance of quality and coverage |
+| Exploration | 0.5 | Include inferred relationships |
+| Research/debugging | 0.0 | See all extractions (noisy) |
+
+#### Performance Tips
+
+- **Use type filters**: `query_entities(entity_type=EntityType.TOOL)` faster than scanning all entities
+- **Limit path depth**: `find_paths(max_depth=3)` prevents expensive traversals
+- **Filter by confidence**: `min_confidence=0.7` reduces result sets significantly
+- **Use FTS5 for text search**: Full-text search on `entities_fts` is optimized
+- **Batch queries**: Collect entity IDs first, then query details (reduces round trips)
+
+### Migration from v2.1 to v3.0
+
+**Migration is automatic** when you upgrade to MAP Framework v1.3.0+:
+- Runs when `PlaybookManager` initializes
+- Adds 4 new tables: `entities`, `relationships`, `provenance`, `entities_fts`
+- **Zero data loss** (only adds tables, never modifies existing bullets)
+- Takes <1 second (idempotent, safe to run multiple times)
+
+**After migration:**
+- Existing bullets remain unchanged (v2.1 schema)
+- KG tables start empty (entities extracted incrementally via MAP workflows)
+- All v2.1 queries continue to work
+
+**See:** [Migration Guide](./knowledge_graph/MIGRATION_V2.1_TO_V3.0.md) for details.
+
+### Opt-Out (If Needed)
+
+Knowledge Graph extraction is opt-in (happens during MAP workflows, not on existing data). To disable KG features:
+
+```python
+# Disable KG extraction (not recommended - loses semantic benefits)
+pm.db_conn.execute("UPDATE metadata SET value='0' WHERE key='kg_enabled'")
+pm.db_conn.commit()
+```
+
+**Why you might disable:**
+- Performance concerns on very large playbooks (>50K entities)
+- You only need text-based search (FTS5), not semantic queries
+- Debugging KG extraction issues
+
+**Why you should keep it enabled:**
+- Automatic contradiction detection prevents conflicting patterns
+- Semantic queries discover implicit knowledge connections
+- Temporal queries show knowledge evolution over time
+- Minimal overhead (<100ms per extraction)
+
+### Documentation
+
+- **API Reference**: [`docs/knowledge_graph/API_REFERENCE.md`](./knowledge_graph/API_REFERENCE.md)
+- **Schema ERD**: [`docs/knowledge_graph/ERD_v3.0.md`](./knowledge_graph/ERD_v3.0.md)
+- **Architecture**: [ARCHITECTURE.md#knowledge-graph-layer](./ARCHITECTURE.md#knowledge-graph-layer)
+- **Migration Guide**: [`docs/knowledge_graph/MIGRATION_V2.1_TO_V3.0.md`](./knowledge_graph/MIGRATION_V2.1_TO_V3.0.md)
+
+---
+
 ## 🔍 FTS5 Query Format Guidelines
 
 The `mapify playbook query` command uses SQLite's FTS5 (Full-Text Search version 5) for fast, accurate pattern matching. Understanding how FTS5 tokenizes and matches queries helps you write effective searches.

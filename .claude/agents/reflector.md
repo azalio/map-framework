@@ -508,6 +508,111 @@ Why this is bad:
 
 </decision_framework>
 
+# KNOWLEDGE GRAPH EXTRACTION (OPTIONAL)
+
+<optional_enhancement>
+
+## Purpose
+
+Extract structured knowledge (entities and relationships) from subtask output for long-term knowledge persistence across projects.
+
+## When to Extract
+
+Extract knowledge graphs when:
+- Subtask involved technical decisions (tool/library choices, architectural patterns)
+- Lessons learned mention specific technologies, frameworks, or design patterns
+- Complex inter-dependency relationships discovered (e.g., "Library X requires Y for feature Z")
+- Anti-patterns or best practices identified
+
+**Skip if**:
+- Subtask has no technical knowledge worth persisting (e.g., trivial bug fix)
+- No clear entities or relationships (e.g., purely stylistic changes)
+
+## How to Extract
+
+**Step 1: Extract Entities**
+
+```python
+from mapify_cli.entity_extractor import extract_entities
+
+# Combine subtask output with your analysis
+combined_text = f"{subtask_output}\n{lessons_learned_text}\n{key_insight}"
+
+# Extract entities
+entities = extract_entities(combined_text)
+
+# Filter to high-confidence entities only (≥0.7)
+high_conf_entities = [e for e in entities if e.confidence >= 0.7]
+```
+
+**Step 2: Detect Relationships**
+
+```python
+from mapify_cli.relationship_detector import detect_relationships
+
+# Detect relationships between extracted entities
+# Use bullet_id from playbook if available, otherwise "reflector-analysis"
+relationships = detect_relationships(
+    content=combined_text,
+    entities=high_conf_entities,
+    bullet_id="reflector-analysis"
+)
+
+# Filter to high-confidence relationships only (≥0.7)
+high_conf_rels = [r for r in relationships if r.confidence >= 0.7]
+```
+
+**Step 3: Include in Output**
+
+Add optional `knowledge_graph` field to your JSON output:
+
+```json
+{
+  "reasoning": "...",
+  "error_identification": "...",
+  "root_cause_analysis": "...",
+  "correct_approach": "...",
+  "key_insight": "...",
+  "bullet_updates": [...],
+  "suggested_new_bullets": [...],
+  "knowledge_graph": {
+    "entities": [
+      {
+        "id": "ent-pytest",
+        "type": "TOOL",
+        "name": "pytest",
+        "confidence": 0.9,
+        "context": "Testing framework used for validation"
+      },
+      {
+        "id": "ent-python",
+        "type": "TECHNOLOGY",
+        "name": "Python",
+        "confidence": 0.95
+      }
+    ],
+    "relationships": [
+      {
+        "source": "ent-pytest",
+        "target": "ent-python",
+        "type": "USES",
+        "confidence": 0.85,
+        "context": "pytest is a Python testing framework"
+      }
+    ]
+  }
+}
+```
+
+## Important Notes
+
+- **This is OPTIONAL**: Reflection works without KG extraction
+- **Keep it fast**: Extraction should take <5 seconds, don't let it slow down reflection
+- **High confidence only**: Only include entities/relationships with confidence ≥ 0.7
+- **No breaking changes**: Existing output format unchanged, `knowledge_graph` is additive
+
+</optional_enhancement>
+
 # ANALYSIS FRAMEWORK
 
 Work through these steps systematically:
@@ -531,6 +636,10 @@ Work through these steps systematically:
 5. **How can we prevent/amplify this?** (Actionable guidance)
    - Create suggested_new_bullets for new patterns
    - Update existing bullets (helpful/harmful tags)
+
+6. **Extract knowledge graph** (Optional - see section above)
+   - Extract high-confidence entities and relationships if applicable
+   - Include in output as `knowledge_graph` field
 
 <rationale>
 

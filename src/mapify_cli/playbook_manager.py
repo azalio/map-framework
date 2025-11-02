@@ -13,7 +13,7 @@ import sys
 import sqlite3
 import shutil
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Optional, Tuple
 from pathlib import Path
 import re
@@ -140,8 +140,8 @@ class PlaybookManager:
             "version": "1.0",
             "metadata": {
                 "project": "map-framework",
-                "created_at": datetime.utcnow().isoformat() + "Z",
-                "last_updated": datetime.utcnow().isoformat() + "Z",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "last_updated": datetime.now(timezone.utc).isoformat(),
                 "total_bullets": 0,
                 "sections_count": 10,
                 # Phase 1.3: Limit playbook patterns to reduce context distraction and save ~15% tokens
@@ -267,7 +267,7 @@ class PlaybookManager:
         """)
 
         # Insert default metadata (schema_version will be set by schema_v3.0.sql)
-        now = datetime.utcnow().isoformat() + "Z"
+        now = datetime.now(timezone.utc).isoformat()
         cursor.execute("INSERT OR IGNORE INTO metadata VALUES ('version', '1.0')")
         cursor.execute(f"INSERT OR IGNORE INTO metadata VALUES ('last_updated', '{now}')")
         cursor.execute("INSERT OR IGNORE INTO metadata VALUES ('total_bullets', '0')")
@@ -425,7 +425,7 @@ class PlaybookManager:
         for section_name, section_data in playbook['sections'].items():
             for bullet in section_data['bullets']:
                 # Handle None values explicitly (dict.get() returns None if key exists with null value)
-                now = datetime.utcnow().isoformat() + "Z"
+                now = datetime.now(timezone.utc).isoformat()
                 created_at = bullet.get('created_at') or now
                 last_used_at = bullet.get('last_used_at') or now
 
@@ -465,7 +465,7 @@ class PlaybookManager:
         cursor.execute("UPDATE metadata SET value = ? WHERE key = 'version'",
                        (metadata.get('version', '1.0'),))
         cursor.execute("UPDATE metadata SET value = ? WHERE key = 'last_updated'",
-                       (metadata.get('last_updated', datetime.utcnow().isoformat() + "Z"),))
+                       (metadata.get('last_updated', datetime.now(timezone.utc).isoformat()),))
         cursor.execute("UPDATE metadata SET value = ? WHERE key = 'total_bullets'",
                        (str(total_bullets),))
         cursor.execute("UPDATE metadata SET value = ? WHERE key = 'top_k'",
@@ -484,7 +484,7 @@ class PlaybookManager:
         conn.close()
 
         # Create backup of JSON
-        backup_path = str(self.playbook_path) + f".backup.{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
+        backup_path = str(self.playbook_path) + f".backup.{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
         shutil.copy(str(self.playbook_path), backup_path)
 
         print(f"✅ Migrated {db_count} bullets from {self.playbook_path} to {self.db_path}", file=sys.stderr)
@@ -551,7 +551,7 @@ class PlaybookManager:
             'version': metadata.get('version', '1.0'),
             'metadata': {
                 'version': metadata.get('version', '1.0'),
-                'last_updated': metadata.get('last_updated', datetime.utcnow().isoformat() + "Z"),
+                'last_updated': metadata.get('last_updated', datetime.now(timezone.utc).isoformat()),
                 'total_bullets': int(metadata.get('total_bullets', 0)),
                 'sections_count': 10,
                 'top_k': int(metadata.get('top_k', 5))
@@ -642,7 +642,7 @@ class PlaybookManager:
             raise ValueError(f"Unknown section: {section}")
 
         bullet_id = self._generate_id(section)
-        now = datetime.utcnow().isoformat() + "Z"
+        now = datetime.now(timezone.utc).isoformat()
 
         # Insert into SQLite
         cursor = self.db_conn.cursor()
@@ -712,7 +712,7 @@ class PlaybookManager:
         if not row:
             return False
 
-        now = datetime.utcnow().isoformat() + "Z"
+        now = datetime.now(timezone.utc).isoformat()
         new_helpful = row['helpful_count'] + increment_helpful
         new_harmful = row['harmful_count'] + increment_harmful
 
@@ -757,7 +757,7 @@ class PlaybookManager:
         if not cursor.fetchone():
             return False
 
-        now = datetime.utcnow().isoformat() + "Z"
+        now = datetime.now(timezone.utc).isoformat()
         cursor.execute("""
             UPDATE bullets
             SET deprecated = 1,
@@ -978,7 +978,7 @@ class PlaybookManager:
         _add_bullet, _update_bullet, _deprecate_bullet. This method
         just updates the last_updated timestamp.
         """
-        now = datetime.utcnow().isoformat() + "Z"
+        now = datetime.now(timezone.utc).isoformat()
         cursor = self.db_conn.cursor()
         cursor.execute("UPDATE metadata SET value = ? WHERE key = 'last_updated'", (now,))
         self.db_conn.commit()

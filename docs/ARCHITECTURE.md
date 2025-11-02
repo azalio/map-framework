@@ -752,6 +752,343 @@ MCP servers are configured differently depending on the usage context:
 
 ---
 
+## Knowledge Graph Layer
+
+> **Added in v3.0** — Semantic knowledge extraction and relationship mapping for enhanced pattern discovery and contradiction detection.
+
+### Overview
+
+The Knowledge Graph (KG) layer transforms implicit playbook knowledge into an explicit, queryable semantic graph. Instead of storing patterns as unstructured text bullets, the KG extracts entities (tools, patterns, concepts) and relationships (uses, depends-on, contradicts) for advanced querying and analysis.
+
+**Key Capabilities:**
+- **Entity Extraction**: Automatically identifies 7 entity types from playbook bullets
+- **Relationship Detection**: Discovers 9 typed relationships between entities
+- **Graph Queries**: BFS path finding, neighbor traversal, temporal queries
+- **Contradiction Detection**: Identifies conflicting patterns with severity levels and resolution suggestions
+- **Provenance Tracking**: Traces each entity/relationship back to source bullets
+
+### Architecture
+
+```
+┌────────────────────────────────────────────────────────┐
+│  PLAYBOOK MANAGER (playbook.db schema v3.0)           │
+│  ┌──────────────┐     ┌─────────────────────────┐    │
+│  │  bullets     │     │   Knowledge Graph       │    │
+│  │  (v2.1)      │────→│   ┌───────────────┐     │    │
+│  │              │     │   │   entities    │     │    │
+│  │ - content    │     │   │ - TOOL        │     │    │
+│  │ - section    │     │   │ - PATTERN     │     │    │
+│  │ - helpful_   │     │   │ - CONCEPT     │     │    │
+│  │   count      │     │   │ - ERROR_TYPE  │     │    │
+│  └──────────────┘     │   │ - TECHNOLOGY  │     │    │
+│                       │   │ - WORKFLOW    │     │    │
+│                       │   │ - ANTIPATTERN │     │    │
+│                       │   └───────┬───────┘     │    │
+│                       │           │             │    │
+│                       │   ┌───────▼───────┐     │    │
+│                       │   │relationships  │     │    │
+│                       │   │ - USES        │     │    │
+│                       │   │ - DEPENDS_ON  │     │    │
+│                       │   │ - CONTRADICTS │     │    │
+│                       │   │ - SUPERSEDES  │     │    │
+│                       │   │ - IMPLEMENTS  │     │    │
+│                       │   │ - CAUSES      │     │    │
+│                       │   │ - PREVENTS    │     │    │
+│                       │   └───────┬───────┘     │    │
+│                       │           │             │    │
+│                       │   ┌───────▼───────┐     │    │
+│                       │   │ provenance    │     │    │
+│                       │   │ (bullet src)  │     │    │
+│                       │   └───────────────┘     │    │
+│                       └─────────────────────────┘    │
+└────────────────────────────────────────────────────────┘
+                │
+    ┌───────────▼──────────────┐
+    │  KG EXTRACTION PIPELINE  │
+    │  (Reflector/Curator)     │
+    │                          │
+    │  1. EntityExtractor      │
+    │     Pattern matching     │
+    │     Accuracy: ≥80%       │
+    │                          │
+    │  2. RelationshipDetector │
+    │     Pattern + proximity  │
+    │     Accuracy: ≥70%       │
+    │                          │
+    │  3. ContradictionDetector│
+    │     Semantic conflict    │
+    │     Resolution suggest.  │
+    └──────────────────────────┘
+                │
+    ┌───────────▼──────────────┐
+    │  KG QUERY INTERFACE      │
+    │  (KnowledgeGraphQuery)   │
+    │                          │
+    │  - find_paths()          │
+    │  - get_neighbors()       │
+    │  - query_entities()      │
+    │  - entities_since()      │
+    │  - get_provenance()      │
+    │                          │
+    │  Performance: <100ms     │
+    └──────────────────────────┘
+```
+
+### Dual Memory System
+
+MAP Framework now operates with **two complementary memory layers**:
+
+| Layer | Storage | Structure | Query Method | Purpose |
+|-------|---------|-----------|--------------|---------|
+| **Playbook** | SQLite bullets table | Unstructured text | FTS5 full-text search | Human-readable best practices |
+| **Knowledge Graph** | SQLite entities/relationships | Semantic graph | BFS, SQL queries | Machine-queryable knowledge |
+
+**Relationship:**
+- Playbook bullets are **source of truth** for content
+- KG entities/relationships are **derived** from bullets (via extraction)
+- Both updated simultaneously by Curator during MAP workflows
+
+**Example:**
+
+Playbook bullet (v2.1 style):
+```
+"Use pytest for testing Python applications. pytest depends on unittest internally."
+```
+
+Knowledge Graph (v3.0 extraction):
+```
+Entities:
+- ent-pytest (TOOL, confidence: 0.9)
+- ent-python (TECHNOLOGY, confidence: 0.9)
+- ent-unittest (TOOL, confidence: 0.8)
+
+Relationships:
+- pytest USES Python (confidence: 0.85)
+- pytest DEPENDS_ON unittest (confidence: 0.80)
+
+Provenance:
+- All entities/relationships link back to source bullet ID
+```
+
+### Integration with MAP Agents
+
+#### Reflector Agent
+
+**When:** After each subtask completion (or batched in `/map-efficient`)
+
+**What Reflector does:**
+1. Analyzes Actor output (code, decisions, errors)
+2. Extracts lessons learned (success/failure patterns)
+3. **Calls EntityExtractor** to identify entities in lessons
+4. **Calls RelationshipDetector** to find entity relationships
+5. Passes structured data to Curator
+
+**Example Reflector output:**
+```json
+{
+  "lessons_learned": [
+    {
+      "pattern": "Use retry logic with exponential backoff for API calls",
+      "entities": [
+        {"id": "ent-retry-logic", "type": "PATTERN"},
+        {"id": "ent-exponential-backoff", "type": "PATTERN"},
+        {"id": "ent-api-calls", "type": "CONCEPT"}
+      ],
+      "relationships": [
+        {"source": "ent-retry-logic", "target": "ent-exponential-backoff", "type": "IMPLEMENTS"},
+        {"source": "ent-retry-logic", "target": "ent-api-calls", "type": "USES"}
+      ]
+    }
+  ]
+}
+```
+
+#### Curator Agent
+
+**When:** After Reflector completes analysis
+
+**What Curator does:**
+1. Receives Reflector's lessons + extracted entities/relationships
+2. **Queries KG** for existing knowledge (`find_entity_contradictions`)
+3. **Detects contradictions** with ContradictionDetector
+4. Decides: ADD/UPDATE/SKIP bullet based on conflicts
+5. **Inserts entities/relationships** into SQLite via PlaybookManager
+6. Updates playbook.json (backward compatibility)
+
+**Contradiction Detection Flow:**
+```python
+# Curator checks new pattern for conflicts
+new_pattern = "Use generic exception handling for simplicity"
+entities = extractor.extract_entities(new_pattern)
+conflicts = detector.check_new_pattern_conflicts(db_conn, new_pattern, entities)
+
+if conflicts:
+    # HIGH severity conflict found
+    curator_decision = "REJECT"
+    reasoning = conflicts[0].resolution_suggestion
+    # "Consider deprecating 'generic-exception' in favor of 'specific-exceptions' (higher confidence, newer pattern)"
+```
+
+### Extraction Pipeline Performance
+
+| Stage | Module | Latency | Accuracy |
+|-------|--------|---------|----------|
+| Entity Extraction | EntityExtractor | <10ms (1KB text) | ≥80% |
+| Relationship Detection | RelationshipDetector | <20ms (5 entities) | ≥70% |
+| Contradiction Detection | ContradictionDetector | <50ms (100 patterns) | ≥85% |
+| **Total Pipeline** | - | **<100ms** | - |
+
+**Scalability:**
+- 1K entities: <50ms queries
+- 10K entities: <100ms queries
+- 50K entities: <500ms (requires index tuning)
+
+### Query Performance Targets
+
+All KG queries target <100ms latency:
+
+| Query Type | Method | Target Latency | Notes |
+|------------|--------|----------------|-------|
+| Path Finding | `find_paths()` | <100ms | BFS with max depth limit |
+| Neighbors | `get_neighbors()` | <50ms | Single-hop traversal |
+| Temporal | `entities_since()` | <30ms | Index on `first_seen_at` |
+| Entity Search | `query_entities()` | <50ms | B-tree + FTS5 indexes |
+| Relationship Search | `query_relationships()` | <50ms | Composite indexes |
+| Provenance | `get_entity_provenance()` | <20ms | Direct FK lookup |
+
+**Index Strategy:**
+- B-tree indexes on type, confidence, timestamps
+- FTS5 virtual table on entity names + metadata
+- Composite indexes for bidirectional relationship queries
+- Foreign key indexes for CASCADE deletes
+
+### Schema Migration
+
+**From v2.1 to v3.0:**
+
+Migration is **automatic** (runs on PlaybookManager initialization):
+- Checks `metadata.schema_version`
+- If `< 3.0`, executes `schemas.SCHEMA_V3_0_SQL`
+- Adds 4 new tables: `entities`, `relationships`, `provenance`, `entities_fts`
+- Updates `schema_version` to `'3.0'`
+- Sets `kg_enabled = '1'`
+
+**Backward Compatibility:**
+- ✅ Existing `bullets` table unchanged
+- ✅ All v2.1 queries continue to work
+- ✅ FTS5 search on bullets unaffected
+- ✅ Playbook JSON export still functions
+
+**Migration Time:** <1 second (idempotent, safe to run multiple times)
+
+**Rollback:** See [`docs/knowledge_graph/MIGRATION_ROLLBACK.md`](./knowledge_graph/MIGRATION_ROLLBACK.md)
+
+### API Usage Examples
+
+#### Basic Entity/Relationship Queries
+
+```python
+from mapify_cli.playbook_manager import PlaybookManager
+from mapify_cli.entity_extractor import EntityType
+from mapify_cli.relationship_detector import RelationshipType
+
+# Initialize (auto-migrates to v3.0 if needed)
+pm = PlaybookManager(db_path=".claude/playbook.db")
+kg = pm.kg_query
+
+# Find all tools
+tools = kg.query_entities(entity_type=EntityType.TOOL, min_confidence=0.8)
+print(f"High-confidence tools: {[t.name for t in tools]}")
+
+# Find dependencies
+deps = kg.query_relationships(relationship_type=RelationshipType.DEPENDS_ON)
+for dep in deps:
+    print(f"{dep.source_entity_id} depends on {dep.target_entity_id}")
+
+# Find path between entities
+paths = kg.find_paths('ent-pytest', 'ent-python', max_depth=3)
+for path in paths:
+    print(f"Path: {' -> '.join(path.entities())} (length: {path.length})")
+```
+
+#### Contradiction Detection
+
+```python
+from mapify_cli.contradiction_detector import ContradictionDetector
+
+detector = ContradictionDetector()
+
+# Detect all contradictions
+contradictions = detector.detect_contradictions(pm.db_conn, min_confidence=0.7)
+
+for contra in contradictions:
+    if contra.severity == 'high':
+        print(f"⚠️  HIGH SEVERITY CONFLICT:")
+        print(f"   {contra.entity_a.name} vs {contra.entity_b.name}")
+        print(f"   {contra.description}")
+        print(f"   → {contra.resolution_suggestion}\n")
+
+# Check specific entity for conflicts
+conflicts = detector.find_entity_contradictions(pm.db_conn, 'ent-generic-exception')
+if conflicts:
+    print(f"{len(conflicts)} conflicts found for this pattern")
+```
+
+#### Temporal Queries
+
+```python
+from datetime import datetime, timedelta, timezone
+
+# Get entities created in last 24 hours
+cutoff = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+recent = kg.entities_since(cutoff, min_confidence=0.7)
+
+print(f"New entities (last 24h): {len(recent)}")
+for entity in recent:
+    print(f"  - {entity.name} ({entity.type.value}, conf: {entity.confidence:.2f})")
+```
+
+### Data Model
+
+**Entity Types (7):**
+- **TOOL**: CLI tools, libraries, frameworks (pytest, Docker, SQLite)
+- **PATTERN**: Implementation patterns (retry-with-backoff, feature-flags)
+- **CONCEPT**: Abstract ideas (idempotency, eventual-consistency, ACID)
+- **ERROR_TYPE**: Error categories (race-condition, null-pointer, deadlock)
+- **TECHNOLOGY**: Tech stack (Python, Kubernetes, React, PostgreSQL)
+- **WORKFLOW**: Process patterns (TDD, CI/CD, MAP-workflow)
+- **ANTIPATTERN**: Known bad practices (generic-exception, magic-number)
+
+**Relationship Types (9):**
+- **USES**: X uses Y as dependency (pytest USES Python)
+- **DEPENDS_ON**: X requires Y to function (MAP-workflow DEPENDS_ON playbook.db)
+- **CONTRADICTS**: X conflicts with Y (generic-exception CONTRADICTS specific-exceptions)
+- **SUPERSEDES**: X replaces Y (playbook.db SUPERSEDES playbook.json)
+- **IMPLEMENTS**: X implements pattern Y (retry-logic IMPLEMENTS resilience-pattern)
+- **CAUSES**: X causes problem Y (race-condition CAUSES data-corruption)
+- **PREVENTS**: X prevents problem Y (mutex-lock PREVENTS race-condition)
+- **ALTERNATIVE_TO**: X is alternative to Y (pytest ALTERNATIVE_TO unittest)
+- **RELATED_TO**: X and Y are semantically related (proximity-based, low confidence)
+
+**Confidence Scoring:**
+- Entities: 0.5-1.0 (extraction quality)
+  - 0.9-1.0: Code blocks, explicit mentions
+  - 0.7-0.9: Keyword matching
+  - 0.5-0.7: Inferred from context
+- Relationships: 0.4-1.0 (relationship strength)
+  - 0.8-1.0: Explicit patterns ("X uses Y")
+  - 0.6-0.8: Implicit patterns ("X with Y")
+  - 0.4-0.6: Proximity-based
+
+### Documentation
+
+- **API Reference**: [`docs/knowledge_graph/API_REFERENCE.md`](./knowledge_graph/API_REFERENCE.md)
+- **Schema ERD**: [`docs/knowledge_graph/ERD_v3.0.md`](./knowledge_graph/ERD_v3.0.md)
+- **Migration Guide**: [`docs/knowledge_graph/MIGRATION_V2.1_TO_V3.0.md`](./knowledge_graph/MIGRATION_V2.1_TO_V3.0.md)
+- **Design Rationale**: [`docs/knowledge_graph/DESIGN_RATIONALE.md`](./knowledge_graph/DESIGN_RATIONALE.md)
+
+---
+
 ## Customization Guide
 
 ### Modifying Agent Prompts
