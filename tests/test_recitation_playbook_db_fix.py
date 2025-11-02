@@ -90,6 +90,11 @@ def test_recitation_migrates_json_to_db_when_only_json_exists(tmp_path):
     # Generate context - should trigger migration
     context = manager.generate_context_md()
 
+    # Verify context file was generated and is non-empty
+    assert context is not None
+    assert Path(context).exists()
+    content = Path(context).read_text()
+    assert len(content) > 0
     # Verify migration happened
     db_path = claude_dir / "playbook.db"
     assert db_path.exists(), "Migration should create playbook.db"
