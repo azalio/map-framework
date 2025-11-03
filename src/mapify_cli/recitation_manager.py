@@ -12,7 +12,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, TYPE_CHECKING
+from typing import List, Optional, TYPE_CHECKING, Union
 
 if TYPE_CHECKING:
     from mapify_cli.workflow_logger import MapWorkflowLogger
@@ -21,12 +21,12 @@ if TYPE_CHECKING:
 @dataclass
 class Subtask:
     """Represents a single subtask in the plan"""
-    id: int
+    id: str
     description: str
     status: str  # 'pending', 'in_progress', 'completed', 'failed'
-    acceptance_criteria: Optional[str] = None
+    acceptance_criteria: Optional[Union[str, List[str]]] = None
     estimated_complexity: Optional[str] = None
-    depends_on: List[int] = field(default_factory=list)
+    depends_on: List[str] = field(default_factory=list)
     iterations: int = 0
     errors: List[str] = field(default_factory=list)
 
@@ -37,7 +37,7 @@ class TaskPlan:
     task_id: str
     goal: str
     subtasks: List[Subtask]
-    current_subtask_id: Optional[int] = None
+    current_subtask_id: Optional[str] = None
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
@@ -52,6 +52,38 @@ class RecitationManager:
     3. Show progress clearly (✓, →, ☐)
     4. Highlight current focus
     """
+
+    @staticmethod
+    def _format_acceptance_criteria(criteria: Optional[Union[str, List[str]]]) -> Optional[str]:
+        """Format acceptance criteria as a string.
+
+        Args:
+            criteria: Acceptance criteria as string or list of strings
+
+        Returns:
+            - None if criteria is None or empty list (for consistency)
+            - Original string if criteria is already a string
+            - Formatted bulleted list if criteria is a non-empty list
+
+        Examples:
+            >>> _format_acceptance_criteria(None)
+            None
+            >>> _format_acceptance_criteria([])
+            None
+            >>> _format_acceptance_criteria("All tests pass")
+            'All tests pass'
+            >>> _format_acceptance_criteria(["Test A passes", "Test B passes"])
+            '- Test A passes\\n- Test B passes'
+        """
+        if criteria is None:
+            return None
+        if isinstance(criteria, str):
+            return criteria
+        # If it's a list, return None for empty lists (consistency with None input)
+        if not criteria:
+            return None
+        # For non-empty lists, join with newlines
+        return "\n".join(f"- {item}" for item in criteria)
 
     def __init__(self, project_root: Path, logger: Optional['MapWorkflowLogger'] = None):
         self.project_root = Path(project_root)
@@ -91,12 +123,12 @@ class RecitationManager:
 
         plan_subtasks = [
             Subtask(
-                id=st['id'],
+                id=str(st['id']),  # Convert ID to string for consistency
                 description=st['description'],
                 status='pending',
                 acceptance_criteria=st.get('acceptance_criteria'),
                 estimated_complexity=st.get('estimated_complexity'),
-                depends_on=st.get('depends_on', [])
+                depends_on=[str(dep) for dep in st.get('depends_on', [])]  # Convert dependencies to strings
             )
             for st in subtasks
         ]
@@ -129,7 +161,7 @@ class RecitationManager:
 
     def update_subtask_status(
         self,
-        subtask_id: int,
+        subtask_id: str,
         status: str,
         error: Optional[str] = None
     ) -> TaskPlan:
@@ -147,6 +179,9 @@ class RecitationManager:
         Raises:
             ValueError: If no active plan exists
         """
+        # Convert subtask_id to string for consistency and backward compatibility
+        subtask_id = str(subtask_id)
+
         plan = self._load_plan()
 
         # Check if plan exists
@@ -359,9 +394,10 @@ class RecitationManager:
             ])
 
             if current_st.acceptance_criteria:
+                formatted_criteria = self._format_acceptance_criteria(current_st.acceptance_criteria)
                 md_lines.extend([
                     "**Acceptance Criteria:**",
-                    current_st.acceptance_criteria,
+                    formatted_criteria,
                     ""
                 ])
 
@@ -437,7 +473,8 @@ class RecitationManager:
             for st in in_progress:
                 lines.append(f"- **[{st.id}]** {st.description}")
                 if st.acceptance_criteria:
-                    lines.append(f"  - **Acceptance:** {st.acceptance_criteria}")
+                    formatted_criteria = self._format_acceptance_criteria(st.acceptance_criteria)
+                    lines.append(f"  - **Acceptance:** {formatted_criteria}")
                 if st.estimated_complexity:
                     lines.append(f"  - **Complexity:** {st.estimated_complexity}")
                 if st.depends_on:
@@ -771,7 +808,7 @@ if __name__ == "__main__":
             print("Error: update requires <subtask_id> <status> [error]")
             sys.exit(1)
 
-        subtask_id = int(sys.argv[2])
+        subtask_id = sys.argv[2]
         status = sys.argv[3]
         error = sys.argv[4] if len(sys.argv) > 4 else None
 

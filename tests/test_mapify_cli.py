@@ -611,7 +611,8 @@ class TestRecitationSubcommands:
         assert result.exit_code == 0
         output = json.loads(result.stdout)
         assert output["status"] == "success"
-        assert output["current_subtask"] == 1  # Returns current_subtask, not subtask_id
+        # IDs are now stored as strings, so integer 1 becomes "1"
+        assert output["current_subtask"] in [1, "1"]  # Support both int and str for backward compatibility
         assert "updated" in output["message"].lower()
 
     def test_recitation_update_with_error(self, tmp_path):
