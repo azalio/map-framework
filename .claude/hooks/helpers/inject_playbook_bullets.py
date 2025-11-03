@@ -156,15 +156,15 @@ def main():
     args = parser.parse_args()
 
     # SECURITY FIX: Support both stdin (preferred) and --message (backward compatibility)
-    # Prioritize stdin if available, fallback to --message argument
-    if not sys.stdin.isatty():
-        # stdin has data (new secure approach)
-        message = sys.stdin.read().strip()
-        print("[inject_playbook_bullets] Reading from stdin (secure mode)", file=sys.stderr)
-    elif args.message:
-        # Fallback to --message argument (backward compatibility)
+    # Check --message first for backward compatibility with existing tests/callers
+    if args.message:
+        # Backward compatibility: --message argument still works
         message = args.message
         print("[inject_playbook_bullets] Using --message argument (legacy mode)", file=sys.stderr)
+    elif not sys.stdin.isatty():
+        # New secure approach: stdin input (preferred when no --message)
+        message = sys.stdin.read().strip()
+        print("[inject_playbook_bullets] Reading from stdin (secure mode)", file=sys.stderr)
     else:
         print("[inject_playbook_bullets] No input provided (stdin or --message)", file=sys.stderr)
         print(json.dumps({"continue": True}))
