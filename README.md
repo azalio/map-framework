@@ -138,6 +138,30 @@ MAP Framework offers three workflow variants optimized for different scenarios:
 - 🗑️ Learning/tutorial contexts where failure is acceptable
 - ⚠️ **NEVER for production code** - no learning, quality risks
 
+### 🎯 Auto-Activation System
+
+**Don't remember which workflow to use?** MAP automatically suggests the right workflow based on your request!
+
+Just describe your task naturally - no need to remember slash commands:
+
+| Your Request | MAP Suggests | Why |
+|--------------|--------------|-----|
+| "Fix the failing tests" | `/map-debug` | Keywords: fix, failing test |
+| "Implement user login" | `/map-feature` | Keywords: implement, feature |
+| "Optimize database queries" | `/map-efficient` | Keywords: optimize |
+| "Restructure auth module" | `/map-refactor` | Keywords: restructure |
+| "Quick prototype for testing" | `/map-fast` | Keywords: quick, prototype |
+
+**How it works:**
+1. Start typing your request normally
+2. MAP analyzes keywords and intent patterns
+3. Suggests the most appropriate workflow
+4. You can accept the suggestion or proceed with your request
+
+**Customization:**
+Edit `.claude/workflow-rules.json` to add project-specific trigger words and patterns.
+
+
 ### Key Differences
 
 **`/map-efficient` optimizations:**

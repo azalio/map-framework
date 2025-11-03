@@ -1,0 +1,114 @@
+{
+  "version": "1.0",
+  "description": "MAP workflow activation triggers",
+  "workflows": {
+    "map-debug": {
+      "priority": "high",
+      "description": "Debug issues, fix bugs, resolve test failures",
+      "promptTriggers": {
+        "keywords": [
+          "bug",
+          "error",
+          "failing test",
+          "broken",
+          "not working",
+          "issue",
+          "fix",
+          "debug"
+        ],
+        "intentPatterns": [
+          "(fix|debug|resolve).*?(bug|error|issue|test)",
+          "(why|what).*?(not working|failing|broken)",
+          "tests?.*?(fail|error)"
+        ]
+      },
+      "fileTriggers": {
+        "pathPatterns": [
+          "**/*.test.ts",
+          "**/*.test.py",
+          "**/*.spec.ts",
+          "**/tests/**"
+        ]
+      }
+    },
+    "map-feature": {
+      "priority": "high",
+      "description": "Implement new features (critical, full validation)",
+      "promptTriggers": {
+        "keywords": [
+          "implement",
+          "add feature",
+          "new feature",
+          "create",
+          "build",
+          "critical"
+        ],
+        "intentPatterns": [
+          "(implement|add|create|build).*?(feature|functionality)",
+          "new.*?(feature|component|module)",
+          "critical.*?(feature|implementation)"
+        ]
+      }
+    },
+    "map-efficient": {
+      "priority": "high",
+      "description": "Production features (optimized workflow, 60-70% tokens)",
+      "promptTriggers": {
+        "keywords": [
+          "production",
+          "optimize",
+          "enhance",
+          "improve",
+          "update feature"
+        ],
+        "intentPatterns": [
+          "(optimize|enhance|improve).*?(feature|code|implementation)",
+          "production.*?(feature|deploy)",
+          "update.*?(feature|functionality)"
+        ]
+      }
+    },
+    "map-refactor": {
+      "priority": "medium",
+      "description": "Refactor code, improve structure",
+      "promptTriggers": {
+        "keywords": [
+          "refactor",
+          "restructure",
+          "reorganize",
+          "clean up",
+          "improve structure"
+        ],
+        "intentPatterns": [
+          "(refactor|restructure|reorganize).*?(code|component|module)",
+          "clean.*?up.*?(code|structure)",
+          "improve.*?(structure|architecture)"
+        ]
+      }
+    },
+    "map-fast": {
+      "priority": "low",
+      "description": "Quick prototypes, throwaway code (NO learning)",
+      "promptTriggers": {
+        "keywords": [
+          "quick",
+          "prototype",
+          "throwaway",
+          "experiment",
+          "test idea",
+          "spike"
+        ],
+        "intentPatterns": [
+          "(quick|fast).*?(prototype|test|experiment)",
+          "throwaway.*?(code|implementation)",
+          "(spike|experiment).*?(idea|approach)"
+        ]
+      }
+    }
+  },
+  "notes": {
+    "priority_matching": "If multiple workflows match, suggest highest priority",
+    "session_tracking": "Track suggested workflows per session to avoid repeats",
+    "customization": "Add project-specific keywords and file patterns as needed"
+  }
+}
