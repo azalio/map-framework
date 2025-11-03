@@ -102,12 +102,15 @@ def load_workflow_rules(rules_path: Path) -> Optional[Dict]:
         # SECURITY: Validate all regex patterns in workflow rules
         for workflow_id, config in rules.get('workflows', {}).items():
             patterns = config.get('promptTriggers', {}).get('intentPatterns', [])
+            valid_patterns = []
             for pattern in patterns:
                 is_valid, error = validate_regex_pattern(pattern)
                 if not is_valid:
                     print(f"[suggest_workflow] Invalid pattern in '{workflow_id}': {error}", file=sys.stderr)
-                    # Remove invalid pattern instead of failing entire workflow
-                    patterns.remove(pattern)
+                else:
+                    valid_patterns.append(pattern)
+            # Replace with only valid patterns
+            config['promptTriggers']['intentPatterns'] = valid_patterns
 
         return rules
 
