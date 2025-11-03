@@ -20,36 +20,23 @@ import json
 from pathlib import Path
 
 # Add src to path for imports
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root / "src"))
 
 from mapify_cli.playbook_manager import PlaybookManager, SEMANTIC_SEARCH_AVAILABLE
 
 
-def test_initialization():
+def test_initialization(manager):
     """Test PlaybookManager initialization with semantic search."""
     print("\n" + "="*70)
     print("TEST 1: PlaybookManager Initialization")
     print("="*70)
 
-    if not SEMANTIC_SEARCH_AVAILABLE:
-        print("❌ FAILED: sentence-transformers not installed")
-        print("   Install with: pip install -r requirements-semantic.txt")
-        return False
-
-    manager = PlaybookManager(
-        playbook_path=".claude/playbook_test.json",
-        use_semantic_search=True
-    )
-
-    if manager.semantic_engine is None:
-        print("❌ FAILED: Semantic engine not initialized")
-        return False
+    assert manager.semantic_engine is not None, "Semantic engine not initialized"
 
     print("✓ PlaybookManager initialized with semantic search")
     print(f"  Model: {manager.semantic_engine.model_name}")
     print(f"  Cache dir: {manager.semantic_engine.cache_dir}")
-
-    return manager
 
 
 def test_add_bullets(manager):
