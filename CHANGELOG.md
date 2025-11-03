@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+**CRITICAL: Template Synchronization Bugfix:**
+- **Fixed `mapify init --force` deleting user's custom files** (Critical Bug)
+  - **Problem**: `install_hooks()` used `shutil.rmtree()` to delete entire `.claude/hooks/helpers/` directory before copying templates, destroying all user's custom helper scripts
+  - **Solution**: Changed to individual file copying with `shutil.copy2()` - only updates template files, preserves user files
+  - **Impact**: Users can now safely run `mapify init --force` to update templates without losing their custom scripts
+  - **Files affected**: `src/mapify_cli/__init__.py` (lines 1118-1140)
+  - **Test coverage**: Added comprehensive regression test `test_init_force_preserves_user_files` in `tests/test_mapify_cli.py`
+  - **Verified**: Test creates user files in `.claude/hooks/helpers/`, runs `--force`, confirms files still exist with original content
+  - **Related fix**: Added `validate_checkpoint_file.py` to templates (was missing, causing deletion during `--force`)
+
 ## [1.2.1] - 2025-11-02
 
 ### Fixed

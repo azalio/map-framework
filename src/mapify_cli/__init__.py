@@ -1116,16 +1116,28 @@ def install_hooks(project_path: Path, with_hooks: bool = True) -> int:
         hooks_count += 1
 
     # Copy helpers directory (Python helper scripts)
+    # IMPORTANT: Only copy/update files from templates, preserve user's custom files
     helpers_src = hooks_template_dir / "helpers"
     if helpers_src.exists() and helpers_src.is_dir():
         helpers_dest = hooks_dir / "helpers"
-        if helpers_dest.exists():
-            shutil.rmtree(helpers_dest)
-        shutil.copytree(helpers_src, helpers_dest)
-        # Make Python scripts executable
-        for py_file in helpers_dest.glob("*.py"):
-            if py_file.name != "__init__.py":
-                py_file.chmod(py_file.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+        helpers_dest.mkdir(exist_ok=True)  # Create dir if doesn't exist
+
+        # Copy each file individually (preserves user files not in templates)
+        for helper_file in helpers_src.rglob("*"):
+            if helper_file.is_file():
+                # Compute relative path from helpers_src
+                rel_path = helper_file.relative_to(helpers_src)
+                dest_file = helpers_dest / rel_path
+
+                # Create parent directory if needed
+                dest_file.parent.mkdir(parents=True, exist_ok=True)
+
+                # Copy template file (overwrites if exists)
+                shutil.copy2(helper_file, dest_file)
+
+                # Make Python scripts executable (except __init__.py)
+                if dest_file.suffix == ".py" and dest_file.name != "__init__.py":
+                    dest_file.chmod(dest_file.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 
     # Copy README.md
     readme_src = hooks_template_dir / "README.md"
