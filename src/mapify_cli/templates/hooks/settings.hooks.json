@@ -4,13 +4,13 @@
   "hooks": {
     "UserPromptSubmit": [
       {
-        "description": "Auto-inject relevant playbook bullets into user prompts",
+        "description": "Auto-inject playbook bullets and suggest appropriate MAP workflows",
         "hooks": [
           {
             "type": "command",
             "command": ".claude/hooks/user-prompt-submit.sh",
             "timeout": 5,
-            "description": "Enhances prompts with contextually relevant patterns from playbook"
+            "description": "Enhances prompts with playbook patterns and workflow suggestions based on context"
           }
         ]
       }
@@ -39,6 +39,19 @@
             "command": ".claude/hooks/stop.sh",
             "timeout": 30,
             "description": "Catches syntax errors and test failures before response submission"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "description": "Auto-inject MAP workflow context from checkpoint",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/session-start.sh",
+            "timeout": 5,
+            "description": "Restores .map/current_plan.md checkpoint for seamless compaction recovery"
           }
         ]
       }

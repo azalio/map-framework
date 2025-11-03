@@ -4,13 +4,13 @@
   "hooks": {
     "UserPromptSubmit": [
       {
-        "description": "Auto-inject relevant playbook bullets into user prompts",
+        "description": "Auto-inject playbook bullets and suggest appropriate MAP workflows",
         "hooks": [
           {
             "type": "command",
             "command": ".claude/hooks/user-prompt-submit.sh",
             "timeout": 5,
-            "description": "Enhances prompts with contextually relevant patterns from playbook"
+            "description": "Enhances prompts with playbook patterns and workflow suggestions based on context"
           }
         ]
       }

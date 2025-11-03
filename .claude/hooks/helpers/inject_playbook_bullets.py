@@ -143,8 +143,8 @@ def main():
     )
     parser.add_argument(
         '--message',
-        required=True,
-        help='User message to analyze'
+        required=False,
+        help='User message to analyze (deprecated: use stdin instead)'
     )
     parser.add_argument(
         '--limit',
@@ -155,8 +155,23 @@ def main():
 
     args = parser.parse_args()
 
+    # SECURITY FIX: Support both stdin (preferred) and --message (backward compatibility)
+    # Prioritize stdin if available, fallback to --message argument
+    if not sys.stdin.isatty():
+        # stdin has data (new secure approach)
+        message = sys.stdin.read().strip()
+        print("[inject_playbook_bullets] Reading from stdin (secure mode)", file=sys.stderr)
+    elif args.message:
+        # Fallback to --message argument (backward compatibility)
+        message = args.message
+        print("[inject_playbook_bullets] Using --message argument (legacy mode)", file=sys.stderr)
+    else:
+        print("[inject_playbook_bullets] No input provided (stdin or --message)", file=sys.stderr)
+        print(json.dumps({"continue": True}))
+        return 0
+
     # Extract keywords from message
-    keywords = extract_keywords(args.message)
+    keywords = extract_keywords(message)
 
     if not keywords:
         print("[inject_playbook_bullets] No keywords extracted from message", file=sys.stderr)
