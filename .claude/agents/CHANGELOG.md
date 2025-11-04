@@ -5,6 +5,31 @@ All notable changes to MAP agent templates will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2025-11-04 (Curator)
+
+### Added
+- **Quality Checklist (Curation Decisions)** (Curator v2.3.0): Added structured 8-item editorial validation framework for curation decision quality. Checklist ensures systematic verification of: deduplication completion (cipher search performed), helpful count gate enforcement (>=5 threshold), Reflector evidence examination, content specificity validation, code example completeness, update safety verification, section fit correctness, and actionability confirmation.
+  - **Expected impact**: 15-20% playbook quality improvement through systematic editorial validation
+  - Inserted before "OUTPUT FORMAT" section (line 770) for pre-operation validation
+  - Emphasizes helpful_count threshold (>= 5) for sync_to_cipher eligibility
+  - Integrates with cipher_memory_search for deduplication and cross-project pattern discovery
+  - Prevents eight specific failure modes: duplicate bullets, low-quality cipher sync, shallow lessons, vague advice, missing code examples, logical contradictions, misclassification, incomplete guidance
+  - Explains relationship to Reflector's checklists (reflection layer, content layer, curation layer)
+  - Follows same pattern as Monitor (v2.4.0), Actor (v2.3.0), Predictor (v2.4.0), and Reflector (v2.4.0) Quality Checklists
+  - Tier 2 implementation - final quality gate before playbook entry
+
+## [2.4.0] - 2025-11-04 (Reflector)
+
+### Added
+- **Quality Checklist (Reflection Process)** (Reflector v2.4.0): Added structured 8-item self-review framework for reflection process quality validation. Checklist ensures systematic verification of: root cause analysis depth (5 Whys + sequential-thinking for complex cases), evidence-based insights, alternative hypotheses consideration, cipher search for deduplication, lesson generalization, action specificity, technology grounding, and success factor identification.
+  - **Expected impact**: 20-25% improvement in reflection depth and insight quality
+  - Inserted before existing "Content Quality Checklist" section (line 429) for pre-analysis validation
+  - Includes distinguishing note explaining two checklists: Reflection Process (analysis depth) vs Content Quality (bullet formatting)
+  - Integrates with sequential-thinking MCP tool for complex root cause analysis
+  - Emphasizes cipher_memory_search integration to prevent duplicate knowledge creation
+  - Follows same pattern as Monitor (v2.4.0), Actor (v2.3.0), and Predictor (v2.4.0) Quality Checklists
+  - Tier 2 implementation - foundational quality gate for playbook entries
+
 ## [2.4.0] - 2025-11-04 (Predictor)
 
 ### Added

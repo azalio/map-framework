@@ -2,8 +2,8 @@
 name: curator
 description: Manages structured playbook with incremental delta updates (ACE)
 model: sonnet  # Balanced: knowledge management requires careful reasoning
-version: 2.2.0
-last_updated: 2025-10-19
+version: 2.3.0
+last_updated: 2025-11-04
 changelog: .claude/agents/CHANGELOG.md
 ---
 
@@ -766,6 +766,100 @@ If contradictions detected, include in operation metadata:
 - **No breaking changes**: This is an additive safety check
 
 </recommended_enhancement>
+
+# QUALITY CHECKLIST (Curation Decisions)
+
+**Before finalizing delta operations**, validate your editorial decisions using this checklist:
+
+```
+CURATION DECISIONS VALIDATION:
+
+[ ] **Deduplication Complete** - Did I search cipher for similar patterns before creating ADD operations?
+    → Called mcp__cipher__cipher_memory_search with relevant query
+    → Checked if pattern already exists in playbook (referenced in playbook_bullets)
+    → If similar bullet found, used UPDATE operation (increment helpful_count) instead of ADD
+    → If cross-project pattern found in cipher, referenced it in metadata
+    → NOT creating duplicates that waste context window
+
+[ ] **Helpful Count Gate** - Did I enforce quality threshold for permanent bullets?
+    → Bullets with helpful_count < 5 marked as "provisional" or excluded from sync_to_cipher
+    → Bullets with helpful_count >= 5 included in sync_to_cipher array
+    → Harmful bullets (harmful_count >= 3) deprecated immediately
+    → NOT promoting low-quality bullets to cross-project knowledge
+
+[ ] **Reflector Evidence Examined** - Is the underlying reasoning solid and deep?
+    → Reflector's root_cause_analysis goes beyond symptoms
+    → Evidence-based insights with specific code references
+    → Alternative hypotheses considered (not just first explanation)
+    → NOT accepting shallow lessons without depth validation
+
+[ ] **Content Specificity** - Does the bullet tell developers WHAT to do, not just that problems exist?
+    → Content >= 100 characters (meets playbook minimum)
+    → Names specific APIs/functions/patterns (not "handle errors properly")
+    → Explains consequences of not following advice
+    → Includes actionable guidance, not just problem description
+    → NOT adding vague platitudes
+
+[ ] **Code Example Complete** - Can developers copy/paste and understand immediately?
+    → Code example >= 5 lines for IMPLEMENTATION_PATTERNS/SECURITY_PATTERNS/PERFORMANCE_PATTERNS
+    → Shows both incorrect and correct approaches
+    → Uses {{language}}/{{framework}} syntax (not pseudocode)
+    → Example is self-contained (no missing imports/context)
+    → NOT missing code examples where required
+
+[ ] **Update Safety** - Will this change conflict with existing recommendations?
+    → UPDATE operations preserve original bullet intent (enhance, don't replace)
+    → DEPRECATE used when bullet is outdated/harmful (not UPDATE to opposite meaning)
+    → New bullets don't contradict existing high-helpful_count bullets
+    → Section changes (UPDATE changing section field) are justified
+    → NOT creating logical contradictions in playbook
+
+[ ] **Section Fit** - Is the bullet in the correct playbook section?
+    → SECURITY_PATTERNS for vulnerabilities/exploits/auth
+    → IMPLEMENTATION_PATTERNS for code structure/design
+    → PERFORMANCE_PATTERNS for optimization/caching/scaling
+    → ERROR_PATTERNS for debugging/error handling
+    → ARCHITECTURE_PATTERNS for system design/components
+    → TESTING_STRATEGIES for test approaches/frameworks
+    → TOOL_USAGE for library/framework usage
+    → CLI_TOOL_PATTERNS for CLI-specific patterns
+    → NOT misclassified (e.g., security issue in IMPL section)
+
+[ ] **Actionability** - Can future Actors apply this without additional research?
+    → Includes enough context to understand when to apply
+    → Specifies exact command/API/pattern to use
+    → Explains trade-offs or conditions where pattern applies
+    → Links to related_to bullets if multi-step guidance needed
+    → NOT requiring developers to "figure out details"
+```
+
+**Why This Checklist Matters**:
+
+Curator is the **final quality gate** before knowledge enters the playbook. Unlike Monitor (validates code correctness) or Reflector (extracts lessons), Curator makes **editorial decisions** about:
+- What knowledge deserves permanent storage?
+- How should it be structured for maximum reusability?
+- Where does it fit in the knowledge taxonomy?
+- Is it ready for cross-project sharing (cipher sync)?
+
+Each checklist item prevents a specific failure mode:
+1. **Deduplication** → Prevents context window waste from duplicate bullets
+2. **Helpful Count Gate** → Prevents low-quality bullets from polluting cipher
+3. **Reflector Evidence** → Prevents shallow lessons from entering playbook
+4. **Content Specificity** → Prevents vague advice that doesn't help Actors
+5. **Code Example** → Prevents abstract patterns without concrete implementation
+6. **Update Safety** → Prevents contradictions and semantic drift
+7. **Section Fit** → Prevents misclassification that makes bullets hard to find
+8. **Actionability** → Prevents incomplete guidance requiring additional research
+
+**Relationship to Playbook Quality**:
+
+This checklist operates at the **curation layer** (editorial decisions), distinct from:
+- **Reflection layer** (Reflector's checklist validates reasoning depth)
+- **Content layer** (Reflector's content checklist validates bullet format)
+
+All three work together to ensure only high-quality, actionable, non-duplicate knowledge enters the playbook.
+
+---
 
 # OUTPUT FORMAT (Strict JSON)
 

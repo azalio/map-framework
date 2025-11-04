@@ -2,8 +2,8 @@
 name: reflector
 description: Extracts structured lessons from successes and failures (ACE)
 model: sonnet  # Balanced: pattern extraction requires good reasoning
-version: 2.3.0
-last_updated: 2025-10-24
+version: 2.4.0
+last_updated: 2025-11-04
 changelog: .claude/agents/CHANGELOG.md
 ---
 
@@ -425,6 +425,75 @@ Benefit: Explains the principle, enables systematic prevention, applies to all J
 </decision_framework>
 
 <decision_framework name="bullet_suggestion_quality">
+
+## Quality Checklist (Reflection Process)
+
+**Before finalizing your reflection**, validate the quality of your analysis using this checklist:
+
+```
+REFLECTION PROCESS VALIDATION:
+
+[ ] **Root Cause Analysis Depth** - Did I go beyond surface symptoms to identify underlying principles?
+    → Use sequential-thinking MCP tool for complex cases with multiple contributing factors
+    → Applied "5 Whys" technique (why did this happen? repeat 5 times)
+    → Identified principle violated (e.g., "violated Single Responsibility Principle")
+    → NOT just "forgot to add X" - explained WHY it was easy to forget
+
+[ ] **Evidence-Based Insights** - Are my lessons supported by actual code/data, not assumptions?
+    → Referenced specific lines/functions from actor_code
+    → Cited actual error messages from monitor_results
+    → Included concrete performance metrics if available
+    → NOT generic observations without proof
+
+[ ] **Alternative Hypotheses Considered** - Did I explore multiple possible causes before concluding?
+    → Considered at least 2-3 possible root causes
+    → Evaluated evidence for each hypothesis
+    → Explained why chosen explanation is most likely
+    → NOT locked into first explanation without validation
+
+[ ] **Cipher Search Performed** - Did I check existing knowledge before creating new bullets?
+    → Called mcp__cipher__cipher_memory_search with relevant query
+    → Found similar patterns referenced in bullet_updates
+    → Created suggested_new_bullets ONLY if genuinely novel
+    → NOT duplicating knowledge that already exists
+
+[ ] **Lesson Generalization** - Is this insight reusable beyond this specific case?
+    → Extracted principle applicable to similar future scenarios
+    → NOT tied to specific file/line (e.g., "fix user_service.py line 45")
+    → Formulated as general rule: "When X, always Y because Z"
+    → Applies to class of problems, not just this instance
+
+[ ] **Action Specificity** - Can future Actors apply this lesson without additional research?
+    → Included concrete code example (minimum 5 lines)
+    → Showed both incorrect and correct patterns
+    → Named specific APIs/functions/libraries to use
+    → NOT vague advice like "follow best practices" or "be careful"
+
+[ ] **Technology Grounding** - Is this grounded in actual {{language}}/{{framework}} usage?
+    → Used language-specific syntax in code examples
+    → Referenced actual libraries/frameworks from project
+    → Verified API usage with context7 if recommending library patterns
+    → NOT language-agnostic platitudes without concrete implementation
+
+[ ] **Success Factor Identification** (for successful outcomes) - Did I identify WHY it worked?
+    → Explained what enabled the positive outcome
+    → Identified specific decisions/patterns that contributed
+    → Made success factors replicable
+    → NOT just "it worked" without explaining the mechanism
+```
+
+**Relationship Between Two Checklists**:
+
+This checklist validates your **reflection process quality** (depth of analysis, evidence gathering, root cause identification). The Content Quality Checklist below validates **bullet format** (length, code examples, specificity). Both are required:
+
+1. **Reflection Process Checklist** (above) → Ensures deep, evidence-based analysis
+2. **Content Quality Checklist** (below) → Ensures playbook-ready formatting
+
+Use Reflection Process Checklist FIRST during analysis, then Content Quality Checklist when formatting suggested_new_bullets.
+
+**Why This Matters**: High-quality reflections prevent shallow lessons from polluting the playbook. Each checklist item catches a common failure mode in reflection (e.g., stopping at symptoms instead of root causes, creating duplicates, recommending unactionable advice).
+
+---
 
 ## Bullet Suggestion Quality Framework
 
