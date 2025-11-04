@@ -1584,5 +1584,134 @@ class TestStringIDAndListCriteriaIntegration:
         assert plan.subtasks[0].status == 'in_progress'
 
 
+class TestSubtaskIDFormatRegression:
+    """Regression tests for subtask ID format handling (fix for issue #26)
+
+    Verifies that:
+    1. String IDs (e.g., "ST-001") work correctly
+    2. Integer IDs are automatically converted to strings (backward compatibility)
+    3. CLI documentation matches actual behavior
+
+    Background:
+    - RecitationManager.update_subtask_status() accepts both int and string IDs
+    - All IDs are converted to strings internally: str(subtask_id)
+    - Lookup is done by string comparison: subtask.id == subtask_id
+
+    This ensures /map-efficient workflow documentation is accurate.
+    """
+
+    @pytest.fixture
+    def string_id_subtasks(self):
+        """Subtasks with string IDs matching workflow documentation"""
+        return [
+            {
+                'id': 'ST-001',
+                'description': 'First subtask',
+                'acceptance_criteria': ['Works correctly'],
+                'estimated_complexity': 'low',
+                'depends_on': []
+            },
+            {
+                'id': 'ST-002',
+                'description': 'Second subtask',
+                'acceptance_criteria': ['Also works'],
+                'estimated_complexity': 'low',
+                'depends_on': ['ST-001']
+            }
+        ]
+
+    @pytest.fixture
+    def integer_id_subtasks(self):
+        """Subtasks with integer IDs (old format, for backward compatibility)"""
+        return [
+            {
+                'id': 1,
+                'description': 'First subtask',
+                'acceptance_criteria': ['Works correctly'],
+                'estimated_complexity': 'low',
+                'depends_on': []
+            },
+            {
+                'id': 2,
+                'description': 'Second subtask',
+                'acceptance_criteria': ['Also works'],
+                'estimated_complexity': 'low',
+                'depends_on': [1]
+            }
+        ]
+
+    def test_string_id_update_in_progress(self, manager, string_id_subtasks):
+        """Test: mapify recitation update "ST-001" in_progress"""
+        manager.create_plan('test', 'Test', string_id_subtasks)
+
+        plan = manager.update_subtask_status('ST-001', 'in_progress')
+
+        assert plan.subtasks[0].status == 'in_progress'
+        assert plan.current_subtask_id == 'ST-001'
+        assert plan.subtasks[0].iterations == 1
+
+    def test_string_id_update_completed(self, manager, string_id_subtasks):
+        """Test: mapify recitation update "ST-001" completed"""
+        manager.create_plan('test', 'Test', string_id_subtasks)
+        manager.update_subtask_status('ST-001', 'in_progress')
+
+        plan = manager.update_subtask_status('ST-001', 'completed')
+
+        assert plan.subtasks[0].status == 'completed'
+
+    def test_string_id_with_error_message(self, manager, string_id_subtasks):
+        """Test: mapify recitation update "ST-001" in_progress "Error details" """
+        manager.create_plan('test', 'Test', string_id_subtasks)
+
+        error_msg = "Monitor feedback: syntax error in file.py line 42"
+        plan = manager.update_subtask_status('ST-001', 'in_progress', error=error_msg)
+
+        assert plan.subtasks[0].errors == [error_msg]
+
+    def test_integer_id_auto_conversion(self, manager, integer_id_subtasks):
+        """Test: Integer IDs are auto-converted to strings (backward compatibility)"""
+        manager.create_plan('test', 'Test', integer_id_subtasks)
+
+        # Call with integer (old behavior)
+        plan = manager.update_subtask_status(1, 'in_progress')
+
+        # Should work - ID is converted to "1" internally
+        assert plan.subtasks[0].status == 'in_progress'
+        # current_subtask_id could be "1" or 1, both are valid
+        assert str(plan.current_subtask_id) == '1'
+
+    def test_nonexistent_string_id_raises_error(self, manager, string_id_subtasks):
+        """Test: Nonexistent ID raises clear error message"""
+        manager.create_plan('test', 'Test', string_id_subtasks)
+
+        with pytest.raises(ValueError) as exc_info:
+            manager.update_subtask_status('INVALID-ID', 'completed')
+
+        assert 'Subtask with id INVALID-ID was not found' in str(exc_info.value)
+
+    def test_workflow_documentation_accuracy(self, manager, string_id_subtasks):
+        """Test: Workflow examples from /map-efficient.md work exactly as documented
+
+        This test validates the exact commands from the workflow documentation:
+        - mapify recitation update "ST-001" in_progress
+        - mapify recitation update "ST-001" in_progress "Monitor feedback: [error]"
+        - mapify recitation update "ST-001" completed
+        """
+        manager.create_plan('test_fix', 'Test fix for subtask ID format', string_id_subtasks)
+
+        # Step 1: Mark as in_progress (from workflow step 3.1.5)
+        plan = manager.update_subtask_status("ST-001", "in_progress")
+        assert plan.subtasks[0].status == "in_progress"
+
+        # Step 2: Add error feedback (from workflow step 3.4 - monitor feedback)
+        plan = manager.update_subtask_status("ST-001", "in_progress", "Monitor feedback: needs revision")
+        assert "Monitor feedback: needs revision" in plan.subtasks[0].errors
+        assert plan.subtasks[0].iterations == 2  # Second iteration
+
+        # Step 3: Mark as completed (from workflow step 3.6)
+        plan = manager.update_subtask_status("ST-001", "completed")
+        assert plan.subtasks[0].status == "completed"
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
