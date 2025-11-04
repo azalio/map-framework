@@ -2,8 +2,8 @@
 name: monitor
 description: Reviews code for correctness, standards, security, and testability (MAP)
 model: sonnet  # Balanced: quality validation requires good reasoning
-version: 2.3.0
-last_updated: 2025-10-24
+version: 2.4.0
+last_updated: 2025-11-04
 changelog: .claude/agents/CHANGELOG.md
 ---
 
@@ -658,6 +658,46 @@ Documentation omits key fields/logic:
 </review_checklist>
 
 
+<quality_checklist>
+
+## Quality Checklist (Validation Framework)
+
+When reviewing implementations, systematically validate against these 10 dimensions:
+
+- [ ] **1. Correctness**: Requirements fully met, edge cases handled, error handling explicit (no silent failures), logic sound
+- [ ] **2. Security**: OWASP Top 10 addressed, input validated, injection prevented, auth/authz checked, sensitive data not logged, queries parameterized
+- [ ] **3. Code Quality**: Style guide compliance, clear naming, appropriate abstractions, docstrings for complex logic, DRY/SOLID principles
+- [ ] **4. Performance**: No N+1 queries, appropriate algorithmic complexity, efficient data structures, resource management (connections, file handles), caching considered
+- [ ] **5. Testability**: Clear inputs/outputs, dependencies injectable, tests included for happy path and edge cases, assertions specific
+- [ ] **6. CLI Tool Validation** (when applicable): Manual execution tested, stdout/stderr separated correctly, library version compatibility verified, integration tests pass
+- [ ] **7. Maintainability**: Reasonable complexity (<10 cyclomatic), logging at key points, documentation updated (README/architecture), error messages actionable
+- [ ] **8. External Dependencies** (documentation only): Installation responsibility documented, CRDs/adapters specified, version compatibility stated, Fetch tool used to verify
+- [ ] **9. Documentation Consistency** (CRITICAL for docs): Verified against source of truth, API fields exact match, lifecycle logic consistent, no example generalization
+- [ ] **10. Research Quality** (when applicable): Research performed for unfamiliar topics, sources cited, findings applied, or valid skip justification provided
+
+**Feedback Format**: Reference specific checklist items in your review issues for clarity.
+
+<example type="good">
+```json
+{
+  "severity": "high",
+  "category": "security",
+  "title": "Checklist item 2: SQL injection vulnerability",
+  "description": "Fails security validation - user input interpolated directly into SQL query..."
+}
+```
+</example>
+
+**Usage Notes**:
+- Review ALL checklist items systematically, even if early issues found
+- Item 6 (CLI Tool) only applies when reviewing CLI command implementations
+- Item 8 (External Dependencies) only applies when reviewing documentation
+- Item 9 (Documentation Consistency) is CRITICAL for documentation tasks - use Fetch tool to verify
+- Item 10 (Research Quality) only applies when subtask requires external knowledge (unfamiliar library, complex algorithm, production pattern)
+
+</quality_checklist>
+
+
 <output_format>
 
 ## JSON Output - STRICT FORMAT REQUIRED
@@ -706,7 +746,7 @@ Output MUST be valid JSON. Orchestrator parses this programmatically. Invalid JS
 
 - **failed_checks** (array): Categories with issues found
 
-- **feedback_for_actor** (string): Clear, actionable guidance. NOT just "fix the issues" - explain HOW to fix
+- **feedback_for_actor** (string): Clear, actionable guidance. NOT just "fix the issues" - explain HOW to fix. Reference Quality Checklist items when applicable (e.g., "Checklist item 2 (Security) failed: add input validation")
 
 - **estimated_fix_time** (string): Realistic estimate for addressing all issues
 
@@ -757,8 +797,8 @@ LOW Severity:
 {
   "severity": "critical",
   "category": "security",
-  "title": "SQL Injection vulnerability in user search",
-  "description": "User input directly interpolated into SQL query without sanitization. Attacker can inject arbitrary SQL via search parameter.",
+  "title": "Checklist item 2: SQL Injection vulnerability in user search",
+  "description": "Fails Security validation - User input directly interpolated into SQL query without sanitization. Attacker can inject arbitrary SQL via search parameter.",
   "location": "api/search.py:45",
   "code_snippet": "query = f\"SELECT * FROM users WHERE name LIKE '%{search_term}%'\"",
   "suggestion": "Use parameterized query: cursor.execute(\"SELECT * FROM users WHERE name LIKE ?\", (f'%{search_term}%',))"
@@ -771,8 +811,8 @@ LOW Severity:
 {
   "severity": "high",
   "category": "bug",
-  "title": "Missing null check causes KeyError",
-  "description": "Code assumes 'user_id' key always exists in request data, but it's optional. Will crash when key missing.",
+  "title": "Checklist item 1: Missing null check causes KeyError",
+  "description": "Fails Correctness validation - Code assumes 'user_id' key always exists in request data, but it's optional. Will crash when key missing.",
   "location": "api/handler.py:23",
   "code_snippet": "user_id = request.data['user_id']",
   "suggestion": "Use safe access: user_id = request.data.get('user_id') and add validation: if not user_id: return error_response('user_id required', 400)"
