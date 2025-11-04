@@ -1,0 +1,29 @@
+{
+  "version": "1.0",
+  "description": "Skill activation triggers for MAP Framework",
+  "skills": {
+    "map-workflows-guide": {
+      "type": "domain",
+      "enforcement": "suggest",
+      "priority": "high",
+      "description": "Guide for choosing the right MAP workflow",
+      "promptTriggers": {
+        "keywords": [
+          "which workflow",
+          "map-fast or map-efficient",
+          "difference between workflows",
+          "when to use",
+          "workflow comparison",
+          "map workflow",
+          "choose workflow"
+        ],
+        "intentPatterns": [
+          "(which|what).*?(workflow|mode).*?(use|choose)",
+          "(difference|compare).*?(map-fast|map-efficient|map-feature)",
+          "(when|how).*(choose|use|pick).*(workflow|map-\\w+)",
+          "explain.*?(workflow|map-fast|map-efficient)"
+        ]
+      }
+    }
+  }
+}

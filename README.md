@@ -180,6 +180,28 @@ Edit `.claude/workflow-rules.json` to add project-specific trigger words and pat
 
 **See [USAGE.md](docs/USAGE.md#workflow-variants) for detailed decision guide and real-world token usage examples.**
 
+## 📚 Skills System
+
+MAP includes interactive skills that provide specialized guidance:
+
+**map-workflows-guide** - Helps you choose the right workflow
+
+**Auto-suggested when you ask:**
+- "Which workflow should I use?"
+- "What's the difference between workflows?"
+- "When to use /map-efficient vs /map-feature?"
+
+**What you get:**
+- Quick decision tree (5 questions → recommended workflow)
+- Comparison matrix (token cost, learning, agents, use cases)
+- 8 detailed resource guides (progressive disclosure)
+
+**Skills vs Agents:**
+- **Skills** = Passive documentation (guidance)
+- **Agents** = Active execution (code generation)
+
+**See [docs/USAGE.md](docs/USAGE.md#skills-system) for full details.**
+
 ## Requirements
 
 - **Claude Code CLI** — installed and configured
