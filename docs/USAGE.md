@@ -1756,3 +1756,87 @@ claude --model opus --agents '{"actor": {"prompt": "$(cat .claude/agents/actor.m
 - **[Sequential Thinking Integration Guide](docs/SEQUENTIAL_THINKING_GUIDE.md)** — When and how MAP agents use structured reasoning for complex analysis
 - **[Context Engineering Improvements](docs/CONTEXT-ENGINEERING-IMPROVEMENTS.md)** — Advanced optimization techniques
 - **[Agent Customization](.claude/agents/README.md)** — Customizing agent behavior
+
+---
+
+## 📚 Skills System
+
+MAP includes interactive skills to help you navigate workflows and understand the framework.
+
+### Available Skills
+
+#### map-workflows-guide
+
+Get help choosing the right workflow for your task.
+
+**How to access:**
+```
+User: "Which workflow should I use?"
+MAP: [Loads map-workflows-guide skill automatically]
+```
+
+**What you get:**
+- **Quick decision tree** - Answer 5 questions to find your workflow
+- **Comparison matrix** - Token cost, learning, agents, best-for columns
+- **Detailed guides** - When to use each workflow, trade-offs, examples
+- **8 deep-dive resources** - Progressive disclosure for comprehensive learning
+
+**Skills vs Agents:**
+- **Skills** provide passive guidance (documentation)
+- **Agents** execute active tasks (code generation)
+- Skills load via Skill tool, agents execute via Task tool
+
+### Auto-Activation
+
+Skills automatically suggest themselves when relevant:
+
+**Keywords that trigger map-workflows-guide:**
+- "which workflow"
+- "difference between workflows"
+- "when to use map-efficient"
+- "workflow comparison"
+
+**Example flow:**
+```
+User: "I need to add a feature"
+MAP: 🎯 "Consider /map-efficient"
+
+User: "What's the difference between efficient and feature?"
+MAP: 📚 "Loading map-workflows-guide skill"
+[Shows comparison: efficient = production, feature = critical]
+```
+
+### Progressive Disclosure
+
+Skills follow the 500-line rule:
+- **Main SKILL.md** (<500 lines) - High-level overview, quick decisions
+- **Resources/** (8 files) - Deep-dive topics loaded on demand
+
+**Benefits:**
+- Fast scanning (5-10 min for main skill)
+- Comprehensive when needed (25+ min with all resources)
+- Prevents context limit issues
+
+### Resources Available
+
+**Workflow deep-dives:**
+- `map-fast-deep-dive.md` - Skip conditions, when to avoid
+- `map-efficient-deep-dive.md` - Optimization strategy, recommended default
+- `map-feature-deep-dive.md` - Full validation, critical features
+- `map-debug-deep-dive.md` - Debugging strategies, error analysis
+- `map-refactor-deep-dive.md` - Dependency analysis, breaking changes
+
+**System architecture:**
+- `agent-architecture.md` - How 8 agents orchestrate
+- `playbook-system.md` - Knowledge storage, quality scoring
+- `cipher-integration.md` - Cross-project learning
+
+### Creating Custom Skills
+
+See `.claude/skills/README.md` for:
+- Skill structure (SKILL.md + resources/)
+- Trigger configuration (skill-rules.json)
+- Integration with auto-activation
+- Best practices and examples
+
+---
