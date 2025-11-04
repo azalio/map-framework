@@ -54,6 +54,7 @@ coverage.json
 # Claude Code hooks runtime files
 .claude/sessions/
 .claude/metrics/
+.claude/cache/
 .map/
 
 # Temporary verification files
@@ -63,3 +64,5 @@ docs/claude-task-master
 docs/awesome-claude-code
 docs/core
 docs/claude-code-infrastructure-showcase
+
+

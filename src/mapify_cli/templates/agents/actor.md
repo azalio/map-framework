@@ -2,8 +2,8 @@
 name: actor
 description: Generates production-ready implementation proposals (MAP)
 model: sonnet  # Balanced: code generation quality is important
-version: 2.2.0
-last_updated: 2025-10-19
+version: 2.3.0
+last_updated: 2025-11-04
 changelog: .claude/agents/CHANGELOG.md
 ---
 
@@ -1099,9 +1099,54 @@ def process_email_queue(self, email_data: Dict[str, Any]) -> Dict[str, str]:
 </examples>
 
 
+## Quality Checklist (Self-Review Before Submission)
+
+Before submitting your implementation to the Monitor agent, perform this self-review. Catching issues early reduces iteration cycles and speeds up overall task completion.
+
+**Self-Review Checklist:**
+
+- [ ] **Code follows {{standards_url}} style guide** - Verify naming conventions, formatting, and project-specific patterns are followed
+- [ ] **All error cases handled explicitly** - Every external call (API, file I/O, parsing, database) has try/except with appropriate error types; no silent failures
+- [ ] **Security review completed** - Checked for SQL injection risks, XSS vulnerabilities, sensitive data logging, authentication/authorization gaps
+- [ ] **Test cases identified for happy path and edge cases** - Listed specific test scenarios in Testing Considerations section covering success, failure, boundary conditions
+- [ ] **MCP tools used correctly** - Searched `cipher_memory_search` before implementing; ready to call `cipher_extract_and_operate_memory` after Monitor approval
+- [ ] **Template variables preserved** - If working in agent files, verified all `{{variable}}` and `{{#if}}...{{/if}}` blocks remain intact
+- [ ] **Trade-offs documented** - Explained key decisions, alternatives considered, and rationale for chosen approach in Trade-offs section
+- [ ] **Used playbook bullets listed** - Tracked which bullet IDs informed this implementation in "Used Bullets" section for ACE feedback loop
+- [ ] **Complete implementations provided** - No ellipsis (...), no "// rest of code here" placeholders; full working code ready to execute
+- [ ] **Dependencies justified** - If introducing new libraries/packages, explained why existing solutions are insufficient in Trade-offs section
+
+**Why Self-Review Matters:**
+
+The Monitor agent validates your implementation against acceptance criteria and catches errors. However, each Monitor iteration adds overhead:
+- Context switching between agents
+- Additional LLM calls consuming tokens
+- Delays in task completion
+
+By catching common issues yourself before submission, you reduce Monitor iterations from 2-3 down to 1, significantly speeding up the workflow. This checklist focuses on the most frequent Monitor rejection reasons based on past patterns.
+
+**When to Use This Checklist:**
+
+- Before submitting ANY implementation (mandatory for all subtasks)
+- After addressing Monitor feedback (re-check before resubmission)
+- When working on security-critical or complex features (extra scrutiny)
+
+**How to Use:**
+
+1. Complete your implementation
+2. Go through each checkbox systematically
+3. Fix any issues discovered
+4. Only then submit to Monitor
+
+Think of this as "compile-time error checking" vs "runtime debugging" - catching issues early is always faster.
+
+
 <critical_reminders>
 
 **Before submitting your implementation:**
+
+**📋 Quality Checklist (MANDATORY)**:
+1. ✅ Complete the Quality Checklist above - Review all 10 items systematically
 
 **Mandatory MCP Tools (ALWAYS)**:
 1. ✅ Did I search `cipher_memory_search` for existing patterns before coding?
