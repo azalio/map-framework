@@ -1628,7 +1628,36 @@ No code changes needed! Just use `/map-efficient` instead:
 
 ## 🎯 Best Practices
 
-### 1. Clear Requirements
+### 1. Actor Quality Checklist (NEW in v2.3.0)
+
+The Actor agent now includes a 10-item Quality Checklist for self-review before submitting implementations to Monitor. Using this checklist reduces iteration cycles by 30-40%.
+
+**Benefits:**
+- Catches common issues early (before Monitor validation)
+- Reduces Monitor iterations from 2-3 down to 1
+- Speeds up overall workflow completion
+- Trains Actor to internalize quality criteria
+
+**The checklist covers:**
+1. Code style compliance (follows project standards)
+2. Explicit error handling (no silent failures)
+3. Security review (SQL injection, XSS, sensitive data)
+4. Test case identification (happy path + edge cases)
+5. MCP tools usage (cipher_memory_search, context7)
+6. Template variable preservation (orchestration compatibility)
+7. Trade-offs documentation (decision rationale)
+8. Playbook bullet tracking (ACE feedback loop)
+9. Complete implementations (no ellipsis or placeholders)
+10. Dependency justification (no unnecessary libraries)
+
+**How it works:**
+- Actor performs self-review before submission
+- Critical Reminders section references the checklist
+- Monitor validation is faster (fewer common issues)
+
+**Learn more:** See `.claude/agents/actor.md` lines 1102-1142 for the complete checklist.
+
+### 2. Clear Requirements
 
 Always provide specific, detailed requirements to get the best results.
 

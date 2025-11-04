@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+**P0 Improvement - Quality Checklist for Actor Agent (R1):**
+- **Added Quality Checklist section to Actor agent template** (Implementation Plan P0 R1)
+  - **New section**: 10-item self-review checklist following Claude Code "Rule of 10" pattern
+  - **Location**: Inserted after `</examples>` section (line 1102-1142) in `.claude/agents/actor.md`
+  - **Template variables**: Integrated `{{standards_url}}` for dynamic style guide reference
+  - **Checklist items cover**:
+    1. Code style compliance ({{standards_url}})
+    2. Explicit error handling (no silent failures)
+    3. Security review (SQL injection, XSS, sensitive data logging)
+    4. Test case identification (happy path + edge cases)
+    5. MCP tools usage (cipher_memory_search, context7)
+    6. Template variable preservation (orchestration compatibility)
+    7. Trade-offs documentation
+    8. Playbook bullet tracking (ACE feedback loop)
+    9. Complete implementations (no ellipsis)
+    10. Dependency justification
+  - **Updated Critical Reminders**: Added reference to Quality Checklist at line 1148-1149
+  - **Synchronized**: Template copied to `src/mapify_cli/templates/agents/actor.md`
+  - **Expected impact**: 30-40% reduction in Monitor iteration cycles (from 2-3 to 1 iteration)
+  - **Rationale**: Enables Actor self-review before Monitor submission, catching common rejection reasons early
+  - **Reference**: Based on analysis in `docs/map-framework-improvement-plan.md` (P0 R1) and `analysis/claude-code-subagent-structure-analysis.md`
+
 ## [1.2.2] - 2025-11-03
 
 ### Fixed
