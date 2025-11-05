@@ -124,26 +124,38 @@ mapify recitation create feat_1760783000 "Add user authentication" '[{"id":1,"de
 
 For each subtask from task-decomposer output:
 
-### 3.1 Get Relevant Playbook Bullets
+### 3.1 Get Relevant Playbook Context
 
-Query playbook using task context (faster and works with large playbooks):
+**Step A: Query Local Playbook** (project-specific patterns):
 
 ```bash
-# Query playbook using FTS5 full-text search
-PLAYBOOK_BULLETS=$(mapify playbook query "[subtask description]" --limit 5 --mode local)
+# Query playbook using FTS5 full-text search (local project patterns)
+PLAYBOOK_BULLETS=$(mapify playbook query "[subtask description]" --limit 5)
 ```
 
 **Why use `mapify playbook query` instead of grep/read:**
 - ✅ Works with large playbooks (>256KB) - grep/read fails
 - ✅ FTS5 full-text search - faster and more accurate than grep
 - ✅ Ranked by relevance - best patterns first
-- ✅ Optional cipher integration (--mode hybrid) for broader knowledge
 - ✅ Quality scoring - prioritizes proven patterns
 
-**Search modes:**
-- `--mode local` (default) - Search local playbook only (fast)
-- `--mode hybrid` - Search both playbook and cipher (broader knowledge)
-- `--mode cipher` - Search cipher only (cross-project patterns)
+**Step B: Search Cipher** (cross-project validated patterns):
+
+IMPORTANT: Also search cipher directly via MCP tool for broader knowledge:
+
+```
+# Call this BEFORE Actor to get cross-project patterns
+mcp__cipher__cipher_memory_search(
+  query="[subtask concept or pattern type]",
+  top_k=5
+)
+```
+
+**Why separate tools:**
+- Playbook (via Bash): Project-specific conventions and lessons
+- Cipher (via MCP): Cross-project validated patterns
+- Bash commands can't invoke MCP tools - must call separately
+- Agent combines both sources for richer context
 
 ### 3.1.5 Update Recitation Plan (BEFORE Actor)
 
