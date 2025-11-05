@@ -5,6 +5,19 @@ All notable changes to MAP agent templates will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2025-11-05 (Evaluator)
+
+### Added
+- **Quality Checklist (Scoring Consistency)** (Evaluator v2.4.0): Added structured 10-item validation framework for evaluation scoring consistency. Checklist ensures systematic verification of: dimensional coverage (all six dimensions scored), evidence-based scoring justifications, comparative analysis against standards, consistency with published scoring rubric, recommendation logic following from scores, false positive prevention, scale calibration (0.0-1.0 range), comparative context for scores, documentation of non-obvious scores, and completeness validation.
+  - **Expected impact**: 10-15% improvement in scoring consistency across subtasks
+  - Inserted before `<output_format>` section (line 572) for pre-output validation
+  - Emphasizes six-dimensional model integration (Functionality, Code Quality, Performance, Security, Testability, Completeness)
+  - Includes cipher_memory_search reference for finding similar past evaluations for calibration
+  - Prevents four specific failure modes: inconsistent scores, false positive noise, missing dimensions, vague justifications
+  - Explains downstream impact: consistent Evaluator scores → trustworthy Curator helpful_count thresholds → higher playbook quality
+  - Follows same pattern as Monitor (v2.4.0), Actor (v2.3.0), Predictor (v2.4.0), Reflector (v2.4.0), and Curator (v2.3.0) Quality Checklists
+  - Tier 3 implementation - ROI score 5.5 (12.5 benefit / 2 hours effort)
+
 ## [2.3.0] - 2025-11-04 (Curator)
 
 ### Added
