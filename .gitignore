@@ -71,3 +71,6 @@ docs/claude-code-subagents
 .claude/curator_delta_operations.json
 .claude/curator_integration_report.json
 .claude/curator_operations.json
+.claude/*_integration_report.json
+.claude/apply_*_deltas.py
+.claude/insert_*_bullets.sql
