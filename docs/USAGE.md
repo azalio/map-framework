@@ -97,15 +97,28 @@ mapify playbook query "testing strategies" --format json
 
 **Query modes:**
 - `--mode local` (default) - Search local playbook only (fast, <50ms)
-- `--mode hybrid` - Search both playbook and cipher (comprehensive)
-- `--mode cipher` - Search cipher only (cross-project patterns)
+- `--mode hybrid` - Intended for future standalone mode (in workflows, gracefully degrades to local-only search)
+- `--mode cipher` - Reserved for future cipher backend
+
+**IMPORTANT for MAP Workflows:**
+
+⚠️ The `--mode hybrid` flag **does not work** in MAP workflows because:
+- `mapify playbook query` runs as separate bash process
+- Separate processes cannot invoke Claude MCP tools
+- Cipher search returns empty list (graceful degradation)
+
+**Correct approach for MAP workflows:**
+1. Use `mapify playbook query` (local playbook via Bash)
+2. Separately call `mcp__cipher__cipher_memory_search` (cross-project via MCP tool)
+3. Agent combines both sources
+
+See [PLAYBOOK-CIPHER-INTEGRATION.md](PLAYBOOK-CIPHER-INTEGRATION.md) for details.
 
 **Why use `query` instead of `search`:**
 - ✅ **Works with large playbooks** - Handles >256KB (current playbook: 270KB)
 - ✅ **FTS5 full-text search** - 10x faster than grep
 - ✅ **Relevance ranking** - Best patterns first
 - ✅ **Quality scoring** - Prioritizes proven patterns (helpful_count - harmful_count)
-- ✅ **Cipher integration** - Optional cross-project knowledge
 
 ### Apply Delta Operations (MAP Workflow Integration)
 

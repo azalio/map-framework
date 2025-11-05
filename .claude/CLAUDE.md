@@ -126,7 +126,7 @@ fi
 
 ❌ **ПЛОХО**:
 - "Я сам проанализирую успех и напишу lessons learned"
-- "Я сам обновлю playbook.json"
+- "Я сам обновлю playbook напрямую" (через sqlite3 или Edit)
 - "Пропущу Reflector для простой задачи"
 
 ✅ **ХОРОШО**:
@@ -138,7 +138,7 @@ fi
 ### Почему это важно?
 
 **Двойная система памяти**:
-- **Playbook** (`.claude/playbook.json`) - проектные паттерны
+- **Playbook** (`.claude/playbook.db` SQLite) - проектные паттерны
 - **Cipher** (MCP tool) - кросс-проектные знания
 
 Когда пропускаешь агентов:
@@ -146,6 +146,27 @@ fi
 - ❌ Cipher НЕ обновляется (MCP tools не вызываются)
 - ❌ Знания не дедуплицируются (cipher_memory_search не вызывается)
 - ❌ Будущие workflows не получают преимуществ
+
+## Playbook Update Rules
+
+**CRITICAL: How to Update Playbook**
+
+✅ **CORRECT WAY (via Curator agent)**:
+1. Call `Task(subagent_type="curator", ...)`
+2. Curator outputs JSON delta operations
+3. Apply via: `mapify playbook apply-delta curator_operations.json`
+
+❌ **NEVER DO THIS**:
+- ❌ `sqlite3 .claude/playbook.db "UPDATE bullets SET..."`  (direct SQL)
+- ❌ `Edit(.claude/playbook.db, ...)` (Edit tool on binary file)
+- ❌ Reading/writing playbook.json (doesn't exist anymore - migrated to SQLite)
+- ❌ Manually creating JSON and applying without Curator review
+
+**Why**:
+- Curator validates quality, checks duplicates, scores patterns
+- `apply-delta` maintains playbook integrity, handles transactions
+- Direct sqlite breaks schema, bypasses validation
+- playbook.json is legacy (removed in favor of playbook.db)
 
 ## Template Variable Protection
 

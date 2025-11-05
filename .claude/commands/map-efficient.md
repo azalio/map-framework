@@ -117,19 +117,30 @@ mapify recitation create "$TASK_ID" "$ARGUMENTS" "$SUBTASKS_JSON"
 
 ## Step 3: For Each Subtask - Efficient Loop
 
-### 3.1 Get Relevant Playbook Bullets
+### 3.1 Get Relevant Playbook Context
 
-Query playbook using FTS5 (faster for large playbooks):
+**Step A: Query Local Playbook**:
 
 ```bash
-# Query playbook using FTS5 full-text search
-PLAYBOOK_BULLETS=$(mapify playbook query "[subtask description]" --limit 5 --mode local)
+# Query playbook using FTS5 (project-specific patterns)
+PLAYBOOK_BULLETS=$(mapify playbook query "[subtask description]" --limit 5)
+```
+
+**Step B: Search Cipher** (optional but recommended):
+
+```
+# Get cross-project patterns via MCP tool
+mcp__cipher__cipher_memory_search(
+  query="[subtask concept]",
+  top_k=5
+)
 ```
 
 **Benefits over grep/read:**
 - Works with large playbooks (>256KB)
 - FTS5 full-text search with relevance ranking
 - Quality-scored results
+- Cipher adds cross-project validated patterns
 
 ### 3.1.5 Update Recitation Plan
 
