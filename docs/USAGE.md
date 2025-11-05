@@ -97,7 +97,7 @@ mapify playbook query "testing strategies" --format json
 
 **Query modes:**
 - `--mode local` (default) - Search local playbook only (fast, <50ms)
-- `--mode hybrid` - Intended for future standalone mode (currently NO-OP in workflows)
+- `--mode hybrid` - Intended for future standalone mode (in workflows, gracefully degrades to local-only search)
 - `--mode cipher` - Reserved for future cipher backend
 
 **IMPORTANT for MAP Workflows:**
