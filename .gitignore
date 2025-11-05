@@ -66,3 +66,8 @@ docs/core
 docs/claude-code-infrastructure-showcase
 docs/claude-code-subagents
 
+
+# Curator temporary files
+.claude/curator_delta_operations.json
+.claude/curator_integration_report.json
+.claude/curator_operations.json
