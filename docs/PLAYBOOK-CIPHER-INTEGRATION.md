@@ -115,9 +115,8 @@ Identify best practices from both sources."
 ### 3.1 Get Relevant Context
 
 **Step 1 - Local Playbook**:
-\`\`\`bash
+```bash
 PLAYBOOK_BULLETS=$(mapify playbook query "[subtask description]" --limit 5)
-\`\`\`
 
 **Step 2 - Cipher Cross-Project Patterns**:
 Before implementing, call:
