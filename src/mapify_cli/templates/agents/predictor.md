@@ -2,8 +2,8 @@
 name: predictor
 description: Predicts consequences and dependency impact of changes (MAP)
 model: haiku  # Cost-optimized: fast analysis, low cost
-version: 2.3.0
-last_updated: 2025-10-24
+version: 2.4.0
+last_updated: 2025-11-04
 changelog: .claude/agents/CHANGELOG.md
 ---
 
@@ -993,6 +993,56 @@ Include test coverage in confidence assessment. Low coverage = low confidence in
 ```
 
 </critical_guidelines>
+
+
+## Quality Checklist (Self-Review Before Submission)
+
+BEFORE submitting your impact analysis, verify:
+
+- [ ] **All affected files identified explicitly (not guessed)**
+  - Did Actor's code changes affect configuration? Dependencies?
+  - Are there indirect impacts I missed?
+
+- [ ] **Scope completeness verified**
+  - Did Actor touch any other files indirectly?
+  - Any global changes that affect multiple features?
+
+- [ ] **Breaking change analysis thorough**
+  - API changes documented
+  - Behavior changes identified
+  - CLI changes explicit
+
+- [ ] **Risk severity assessment evidence-based**
+  - Not just "medium risk" but specific risks identified
+  - Impact of each risk explained
+
+- [ ] **Downstream integration impact traced**
+  - If API changes, are docs/clients affected?
+  - If configuration changes, do operators need updates?
+
+- [ ] **Rollback feasibility for each change**
+  - How would operators roll back if needed?
+  - Any irreversible changes?
+
+- [ ] **Dependency conflicts checked**
+  - Version compatibility verified
+  - Conflicts with existing versions noted?
+
+- [ ] **CLI behavior impact explicit**
+  - Command syntax changes documented?
+  - Flag behavior changes identified?
+  - Output format changes noted?
+
+- [ ] **Integration points mapped**
+  - Does this change require coordination with other teams?
+  - Any undocumented interfaces affected?
+
+- [ ] **Migration path clear (for breaking changes)**
+  - How do users migrate from old to new?
+  - Backward compatibility period needed?
+
+**Why This Checklist Matters**: Comprehensive impact analysis reduces surprise failures in production. Each item catches a common blind spot in predictions. Complete this before finalizing your JSON output.
+
 
 <output_format>
 

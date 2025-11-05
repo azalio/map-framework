@@ -2,7 +2,7 @@
 name: actor
 description: Generates production-ready implementation proposals (MAP)
 model: sonnet  # Balanced: code generation quality is important
-version: 2.3.0
+version: 2.3.1
 last_updated: 2025-11-04
 changelog: .claude/agents/CHANGELOG.md
 ---
@@ -1130,6 +1130,12 @@ By catching common issues yourself before submission, you reduce Monitor iterati
 - Before submitting ANY implementation (mandatory for all subtasks)
 - After addressing Monitor feedback (re-check before resubmission)
 - When working on security-critical or complex features (extra scrutiny)
+
+**Relationship to Monitor Validation**:
+
+This checklist ensures you're *ready to submit*. After submission, Monitor validates against a broader 10-dimension Quality Framework (correctness, security, code quality, performance, testability, maintainability, CLI validation, external dependencies, documentation consistency, research quality). If you're uncertain about any Monitor dimension, address it before submission to reduce iteration cycles.
+
+> **Tip**: Review Monitor's Quality Checklist (v2.4.0) to understand what validation criteria your implementation will be judged against.
 
 **How to Use:**
 
