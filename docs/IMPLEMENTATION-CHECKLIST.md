@@ -285,7 +285,7 @@
   # Save checkpoint for context compaction recovery
   ```
 
-**Tier 1 Status**: ✅ **COMPLETE** (2025-11-04) | ⏱️ ~2 hours actual → 🎯 55-70% cumulative reduction achieved | Commit: de906d4
+**Tier 1 Status**: ✅ **COMPLETE** (2025-11-04) | ⏱️ ~2 hours actual → 🎯 55-70% cumulative reduction achieved
 
 ---
 
@@ -607,7 +607,7 @@
   mapify recitation checkpoint
   ```
 
-**Tier 3 Status**: ✅ **COMPLETE** (2025-11-05) | ⏱️ ~1 hour actual (2 hours estimated) → 🎯 85-95% stable reduction achieved | Commit: [pending]
+**Tier 3 Status**: ✅ **COMPLETE** (2025-11-05) | ⏱️ ~1 hour actual (2 hours estimated) → 🎯 85-95% stable reduction achieved
 
 ---
 

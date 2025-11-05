@@ -8,7 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2.4.0] - 2025-11-05 (Evaluator)
 
 ### Added
-- **Quality Checklist (Scoring Consistency)** (Evaluator v2.4.0): Added structured 10-item validation framework for evaluation scoring consistency. Checklist ensures systematic verification of: dimensional coverage (all six dimensions scored), evidence-based scoring justifications, comparative analysis against standards, consistency with published scoring rubric, recommendation logic following from scores, false positive prevention, scale calibration (0.0-1.0 range), comparative context for scores, documentation of non-obvious scores, and completeness validation.
+- **Quality Checklist (Scoring Consistency)** (Evaluator v2.4.0): Added structured 10-item validation framework for evaluation scoring consistency.
+  - Checklist ensures systematic verification of:
+    - Dimensional coverage (all six dimensions scored)
+    - Evidence-based scoring justifications
+    - Comparative analysis against standards
+    - Consistency with published scoring rubric
+    - Recommendation logic following from scores
+    - False positive prevention
+    - Scale calibration (0.0-1.0 range)
+    - Comparative context for scores
+    - Documentation of non-obvious scores
+    - Completeness validation
   - **Expected impact**: 10-15% improvement in scoring consistency across subtasks
   - Inserted before `<output_format>` section (line 572) for pre-output validation
   - Emphasizes six-dimensional model integration (Functionality, Code Quality, Performance, Security, Testability, Completeness)
@@ -17,19 +28,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Explains downstream impact: consistent Evaluator scores → trustworthy Curator helpful_count thresholds → higher playbook quality
   - Follows same pattern as Monitor (v2.4.0), Actor (v2.3.0), Predictor (v2.4.0), Reflector (v2.4.0), and Curator (v2.3.0) Quality Checklists
   - Tier 3 implementation - ROI score 5.5 (12.5 benefit / 2 hours effort)
-
-## [2.3.0] - 2025-11-04 (Curator)
-
-### Added
-- **Quality Checklist (Curation Decisions)** (Curator v2.3.0): Added structured 8-item editorial validation framework for curation decision quality. Checklist ensures systematic verification of: deduplication completion (cipher search performed), helpful count gate enforcement (>=5 threshold), Reflector evidence examination, content specificity validation, code example completeness, update safety verification, section fit correctness, and actionability confirmation.
-  - **Expected impact**: 15-20% playbook quality improvement through systematic editorial validation
-  - Inserted before "OUTPUT FORMAT" section (line 770) for pre-operation validation
-  - Emphasizes helpful_count threshold (>= 5) for sync_to_cipher eligibility
-  - Integrates with cipher_memory_search for deduplication and cross-project pattern discovery
-  - Prevents eight specific failure modes: duplicate bullets, low-quality cipher sync, shallow lessons, vague advice, missing code examples, logical contradictions, misclassification, incomplete guidance
-  - Explains relationship to Reflector's checklists (reflection layer, content layer, curation layer)
-  - Follows same pattern as Monitor (v2.4.0), Actor (v2.3.0), Predictor (v2.4.0), and Reflector (v2.4.0) Quality Checklists
-  - Tier 2 implementation - final quality gate before playbook entry
 
 ## [2.4.0] - 2025-11-04 (Reflector)
 
@@ -80,6 +78,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Example: "Checklist item 2: SQL injection vulnerability" vs generic "Security issue found"
   - Standardizes validation language across all reviews
   - Helps Actor self-review against same criteria before Monitor submission
+
+## [2.3.0] - 2025-11-04 (Curator)
+
+### Added
+- **Quality Checklist (Curation Decisions)** (Curator v2.3.0): Added structured 8-item editorial validation framework for curation decision quality.
+  - Checklist ensures systematic verification of:
+    - Deduplication completion (cipher search performed)
+    - Helpful count gate enforcement (>=5 threshold)
+    - Reflector evidence examination
+    - Content specificity validation
+    - Code example completeness
+    - Update safety verification
+    - Section fit correctness
+    - Actionability confirmation
+  - **Expected impact**: 15-20% playbook quality improvement through systematic editorial validation
+  - Inserted before "OUTPUT FORMAT" section (line 770) for pre-operation validation
+  - Emphasizes helpful_count threshold (>= 5) for sync_to_cipher eligibility
+  - Integrates with cipher_memory_search for deduplication and cross-project pattern discovery
+  - Prevents eight specific failure modes: duplicate bullets, low-quality cipher sync, shallow lessons, vague advice, missing code examples, logical contradictions, misclassification, incomplete guidance
+  - Explains relationship to Reflector's checklists (reflection layer, content layer, curation layer)
+  - Follows same pattern as Monitor (v2.4.0), Actor (v2.3.0), Predictor (v2.4.0), and Reflector (v2.4.0) Quality Checklists
+  - Tier 2 implementation - final quality gate before playbook entry
 
 ## [2.1.0] - 2025-10-18
 

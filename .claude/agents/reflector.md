@@ -484,10 +484,10 @@ REFLECTION PROCESS VALIDATION:
 
 **Relationship Between Two Checklists**:
 
-This checklist validates your **reflection process quality** (depth of analysis, evidence gathering, root cause identification). The Content Quality Checklist below validates **bullet format** (length, code examples, specificity). Both are required:
+This checklist validates your **reflection process quality** (depth of analysis, evidence gathering, root cause identification). The Content Quality Checklist in the Bullet Suggestion Quality Framework section below validates **bullet format** (length, code examples, specificity). Both are required:
 
 1. **Reflection Process Checklist** (above) → Ensures deep, evidence-based analysis
-2. **Content Quality Checklist** (below) → Ensures playbook-ready formatting
+2. **Content Quality Checklist** (in the Bullet Suggestion Quality Framework section below) → Ensures playbook-ready formatting
 
 Use Reflection Process Checklist FIRST during analysis, then Content Quality Checklist when formatting suggested_new_bullets.
 
