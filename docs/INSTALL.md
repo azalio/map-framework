@@ -114,11 +114,13 @@ mapify --version
 ```
 
 **Expected output:**
+
 ```
 mapify-cli version x.x.x
 ```
 
 **Troubleshooting:**
+
 - If `which mapify` shows the path but `mapify` doesn't work, check file permissions: `ls -la ~/.local/bin/mapify`
 - If using a custom shell or environment, ensure `UV_TOOL_BIN_DIR` is not set to a different location
 - For Docker/CI environments, consider setting `UV_TOOL_BIN_DIR=/usr/local/bin` for system-wide access
@@ -306,12 +308,14 @@ If you selected MCP servers during installation, ensure they're configured:
 ### Cipher (Knowledge Management)
 
 **Overview:**
+
 - Stores successful patterns and solutions
 - Retrieves relevant past implementations
 - Builds institutional knowledge over time
 - Enables cross-project learning through semantic search
 
 **Quick Setup:**
+
 ```bash
 # Install Cipher globally
 npm install -g @byterover/cipher
@@ -323,15 +327,17 @@ cipher --version
 **Backend Infrastructure (Optional but Recommended):**
 
 Cipher can work with in-memory storage, but for production use we recommend setting up persistent backends:
+
 - **Qdrant**: Vector database for semantic search
 - **PostgreSQL**: Relational database for structured memory data
 
 **📚 Full Installation Guide:**
 For complete setup instructions including Qdrant + PostgreSQL backend, configuration examples for different LLM providers, troubleshooting, and integration with MAP Framework:
 
-→ **[MCP Cipher + Qdrant + PostgreSQL Setup Guide](MCP-CIPHER-QDRANT-SETUP.md)**
+→ **[MCP Cipher + Qdrant + PostgreSQL Setup Guide](QUICKSTART-CIPHER.md)**
 
 This comprehensive guide includes:
+
 - Docker infrastructure setup
 - Cipher installation and configuration
 - Claude Code MCP integration
@@ -392,12 +398,14 @@ pip install -r requirements-semantic.txt
 ```
 
 **What you get:**
+
 - 🎯 Meaning-based search (not just keywords)
 - 🧠 Synonym understanding: "JWT signature" ≈ "token verification"
 - ⚡ Automatic deduplication of similar patterns (90% threshold)
 - 💾 Fast embedding cache (`.claude/embeddings_cache/`)
 
 **Technical Details:**
+
 - Model: `all-MiniLM-L6-v2` (80MB, 384 dimensions)
 - Speed: ~3000 sentences/second on CPU
 - First run downloads ~500MB model (works offline afterwards)
@@ -405,6 +413,7 @@ pip install -r requirements-semantic.txt
 **Fallback:** If not installed, MAP uses keyword matching automatically.
 
 **Troubleshooting:** See [SEMANTIC_SEARCH_SETUP.md](SEMANTIC_SEARCH_SETUP.md) for:
+
 - HuggingFace authentication issues
 - Keras 3 compatibility fixes
 - Model download problems
@@ -446,6 +455,7 @@ uv tool update-shell
 ```
 
 Then open a new terminal or run:
+
 ```bash
 source ~/.zshrc  # or ~/.bashrc for Bash
 ```
