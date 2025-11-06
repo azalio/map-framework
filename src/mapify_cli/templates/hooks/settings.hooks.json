@@ -4,7 +4,18 @@
   "hooks": {
     "UserPromptSubmit": [
       {
-        "description": "Auto-inject playbook bullets and suggest appropriate MAP workflows",
+        "description": "Step 1: Disambiguate vague prompts",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/improve-prompt.py",
+            "timeout": 5,
+            "description": "Wraps vague prompts with evaluation instructions for clarification"
+          }
+        ]
+      },
+      {
+        "description": "Step 2: Inject playbook patterns and suggest workflows",
         "hooks": [
           {
             "type": "command",
