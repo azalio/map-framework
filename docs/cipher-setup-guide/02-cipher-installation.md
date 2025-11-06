@@ -1,106 +1,22 @@
-# Установка Cipher через npm
+# Cipher Installation
 
-Эта секция описывает установку MCP сервера Cipher для использования с MAP Framework и Claude Code.
-
-## Prerequisites (Предварительные требования)
-
-### Обязательные
-
-- **Node.js**: версия 16.x или выше
-
-  ```bash
-  node --version  # Проверка версии
-  ```
-
-- **npm**: версия 8.x или выше
-
-  ```bash
-  npm --version  # Проверка версии
-  ```
-
-### Опциональные
-
-- **Docker и Docker Compose**: для контейнерной установки
-- **pnpm**: для установки из исходников
-- **API ключи** от LLM провайдеров (OpenAI, Anthropic, Gemini, или Qwen) или локально запущенная Olama
-- **Git**: для установки из исходников
-
-## Методы установки
-
-### Метод 1: Глобальная установка через npm (Рекомендуется)
-
-**Для кого:** Большинство пользователей, особенно при использовании с Claude Code и MAP Framework
-
-**Команды:**
+## Install Cipher globally
 
 ```bash
 npm install -g @byterover/cipher
-cipher --version
 ```
 
-**Плюсы:**
-
-- ✅ Доступна команда `cipher` из любой директории
-- ✅ Простая интеграция с MCP серверами
-- ✅ Автоматические обновления через npm
-- ✅ Минимальная конфигурация
-
-**Минусы:**
-
-- ❌ Требует глобальные права установки
-- ❌ Может конфликтовать с другими глобальными пакетами
-- ❌ Одна версия на всю систему
-
-## Проверка установки
-
-### Шаг 1: Проверка версии
+## Verify installation
 
 ```bash
 cipher --version
 ```
 
-**Ожидаемый вывод:**
-
+Expected output:
 ```
-cipher version x.x.x (или информация о версии)
-```
-
-**Что проверяется:** Успешная установка и доступность команды cipher
-
----
-
-### Шаг 2: Проверка справки
-
-```bash
-cipher --help
+cipher version X.Y.Z
 ```
 
-**Ожидаемый вывод:**
+## Next Steps
 
-```
-Вывод справки с доступными командами и опциями
-```
-
-**Что проверяется:** Работоспособность CLI интерфейса
-
-## Важные замечания
-
-Cipher использует embeddings для семантического поиска по памяти, что требует подключения к LLM API.
-
-### 💡 Локальная vs глобальная
-
-Для MAP Framework рекомендуется глобальная установка, так как MCP сервер должен быть доступен из любой директории.
-
-## Следующие шаги
-
-После успешной установки Cipher:
-
-1. ✅ Настройте файл конфигурации `cipher.yml` → [03-cipher-configuration.md](03-cipher-configuration.md)
-2. ✅ Настройте Claude Code MCP integration → [04-claude-code-setup.md](04-claude-code-setup.md)
-3. ✅ Проверьте работоспособность → [05-verification.md](05-verification.md)
-
-## Дополнительные ресурсы
-
-- 📚 [Официальная документация Cipher](https://docs.byterover.dev/cipher/overview)
-- 💻 [GitHub репозиторий](https://github.com/campfirein/cipher)
-- 🔧 [Примеры конфигурации](../../examples/cipher/)
+Proceed to [03-cipher-configuration.md](03-cipher-configuration.md) to configure Cipher.

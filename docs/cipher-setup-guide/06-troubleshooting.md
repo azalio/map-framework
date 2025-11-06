@@ -1,1008 +1,389 @@
-# Расширенный Troubleshooting
+# Troubleshooting
 
-Этот документ содержит решения распространенных и редких проблем при работе с Cipher + Qdrant + PostgreSQL.
+Common issues during Cipher quick start setup and their solutions.
 
-## Категории проблем
+## Categories
 
-- [Docker и инфраструктура](#docker-и-инфраструктура)
+- [Docker Infrastructure](#docker-infrastructure)
 - [PostgreSQL](#postgresql)
 - [Qdrant](#qdrant)
-- [Cipher установка и конфигурация](#cipher-установка-и-конфигурация)
-- [Claude Code и MCP](#claude-desktop-и-mcp)
-- [Performance и оптимизация](#performance-и-оптимизация)
-- [Security и безопасность](#security-и-безопасность)
+- [Neo4j](#neo4j)
+- [Cipher](#cipher)
+- [Claude Code MCP](#claude-code-mcp)
 
 ---
 
-## Docker и инфраструктура
+## Docker Infrastructure
 
-### Проблема: Docker контейнеры не запускаются
+### Containers won't start
 
-**Симптомы:**
 ```bash
 docker compose up -d
 # ERROR: ...
 ```
 
-**Решения:**
-
-**1. Проверка Docker daemon:**
+**Check Docker daemon:**
 ```bash
 docker info
 ```
 
-Если ошибка `Cannot connect to the Docker daemon`:
-- macOS: Откройте Docker Desktop
+If `Cannot connect to the Docker daemon`:
+- macOS: Open Docker Desktop
 - Linux: `sudo systemctl start docker`
-- Windows: Запустите Docker Desktop
 
----
-
-**2. Проверка docker-compose.yml синтаксиса:**
+**Check docker-compose.yml syntax:**
 ```bash
 docker compose config
 ```
 
-Если ошибка `yaml: line X: ...`:
-- Проверьте отступы (только пробелы, не табы!)
-- Проверьте что все ключи уникальны
-- Валидируйте через `yamllint docker-compose.yml`
-
----
-
-**3. Конфликт портов:**
+**Port conflicts:**
 ```bash
-# Проверка занятых портов
 lsof -i :5432  # PostgreSQL
-lsof -i :6333  # Qdrant REST
-lsof -i :6334  # Qdrant gRPC
+lsof -i :6333  # Qdrant
+lsof -i :7687  # Neo4j
 ```
 
-Если порт занят:
-- Остановите конфликтующий процесс: `kill -9 <PID>`
-- Или измените порты в docker-compose.yml:
-  ```yaml
-  ports:
-    - "5433:5432"  # Внешний порт 5433 вместо 5432
-  ```
+If port is occupied:
+- Stop conflicting process: `kill -9 <PID>`
+- Or change port in docker-compose.yml
 
----
+### Containers restart immediately
 
-### Проблема: Контейнеры запускаются, но падают сразу
-
-**Симптомы:**
 ```bash
 docker compose ps
 # STATE: Restarting
 ```
 
-**Решения:**
-
-**1. Проверка логов:**
+**Check logs:**
 ```bash
 docker compose logs postgres
 docker compose logs qdrant
+docker compose logs neo4j
 ```
 
-**2. Типичные ошибки:**
-
-**Недостаточно памяти:**
+**Memory issues:**
 ```
-FATAL:  could not map anonymous shared memory: Cannot allocate memory
+FATAL: could not map anonymous shared memory
 ```
 
-Решение:
+Solution: Docker Desktop → Settings → Resources → Memory → 4GB+
+
+**Volume problems:**
 ```bash
-# Увеличьте Docker memory limit
-# Docker Desktop → Settings → Resources → Memory → 4GB+
-```
-
-**Проблемы с volumes:**
-```
-ERROR: Cannot start service postgres: error while mounting volume
-```
-
-Решение:
-```bash
-# Удалите старые volumes
 docker compose down -v
-
-# Пересоздайте
 docker compose up -d
-```
-
----
-
-### Проблема: `docker compose` команда не найдена
-
-**Симптомы:**
-```bash
-docker compose
-# -bash: docker: command not found
-```
-
-**Решения:**
-
-**Для старых версий Docker используйте `docker-compose` (с дефисом):**
-```bash
-docker-compose --version
-
-# Если не установлен:
-# macOS
-brew install docker-compose
-
-# Linux
-sudo apt-get install docker-compose
-
-# Или используйте Docker Compose V2 (встроен в Docker 20.10+)
-docker compose version
 ```
 
 ---
 
 ## PostgreSQL
 
-### Проблема: PostgreSQL не принимает подключения
+### Connection refused
 
-**Симптомы:**
 ```
-psql: error: connection to server at "localhost" (127.0.0.1), port 5432 failed: Connection refused
+psql: connection to server failed: Connection refused
 ```
 
-**Решения:**
-
-**1. Проверка что контейнер запущен и healthy:**
+**Check container status:**
 ```bash
 docker compose ps postgres
+# Should show: Up, healthy
 ```
 
-Должен показывать `Up` и `healthy` (не `starting`).
-
----
-
-**2. Проверка логов:**
+**Check logs:**
 ```bash
-docker compose logs postgres --tail=100 | grep -i error
+docker compose logs postgres --tail=50
 ```
 
-**3. Типичные ошибки:**
+**Wait for startup:**
+PostgreSQL takes 10-30 seconds to initialize. Check `docker compose ps` until status is `healthy`.
 
-**"database system is starting up":**
-- Подождите 10-30 секунд, PostgreSQL еще загружается
-- Проверьте через `docker compose ps` когда статус станет `healthy`
+### Authentication failed
 
-**"FATAL: password authentication failed":**
+```
+FATAL: password authentication failed
+```
+
+**Verify credentials match .env:**
 ```bash
-# Проверьте переменные окружения
 docker compose exec postgres env | grep POSTGRES
-
-# Должны совпадать с вашим .env файлом
 ```
 
-Решение:
+**Recreate with correct credentials:**
 ```bash
-# Пересоздайте контейнер с правильными credentials
-docker compose down -v  # ВАЖНО: -v удалит данные!
+docker compose down -v  # WARNING: deletes data
 docker compose up -d
 ```
 
----
+### Permission denied
 
-### Проблема: Нет прав на запись в PostgreSQL
-
-**Симптомы:**
 ```
 ERROR: permission denied for table memories
 ```
 
-**Решения:**
-
-**1. Проверка пользователя:**
-```bash
-docker exec -it cipher-postgres psql -U cipher -d cipher -c "\du"
-```
-
-Пользователь `cipher` должен иметь права `Superuser` или `Create DB`.
-
----
-
-**2. Если нет прав, дайте их:**
+**Grant permissions:**
 ```bash
 docker exec -it cipher-postgres psql -U cipher -d cipher -c "ALTER USER cipher CREATEDB;"
 ```
 
 ---
 
-### Проблема: PostgreSQL занимает много места
-
-**Симптомы:**
-```bash
-docker exec -it cipher-postgres du -sh /var/lib/postgresql/data
-# 5.0G
-```
-
-**Решения:**
-
-**1. Vacuum и анализ:**
-```bash
-docker exec -it cipher-postgres psql -U cipher -d cipher -c "VACUUM FULL; ANALYZE;"
-```
-
-**2. Очистка старых WAL файлов:**
-```bash
-docker exec -it cipher-postgres psql -U cipher -d cipher -c "SELECT pg_wal_replay_pause();"
-docker exec -it cipher-postgres psql -U cipher -d cipher -c "SELECT pg_wal_replay_resume();"
-```
-
-**3. Архивация и удаление старых данных:**
-```bash
-# Создайте backup перед удалением
-docker exec -it cipher-postgres pg_dump -U cipher cipher > backup.sql
-
-# Удалите старые записи (например, старше 6 месяцев)
-docker exec -it cipher-postgres psql -U cipher -d cipher -c "DELETE FROM memories WHERE created_at < NOW() - INTERVAL '6 months';"
-
-# Vacuum для освобождения места
-docker exec -it cipher-postgres psql -U cipher -d cipher -c "VACUUM FULL;"
-```
-
----
-
 ## Qdrant
 
-### Проблема: Qdrant не отвечает на запросы
+### Cannot connect to Qdrant
 
-**Симптомы:**
-```bash
-curl http://localhost:6333/healthz
-# curl: (7) Failed to connect to localhost port 6333: Connection refused
+```
+Failed to connect to Qdrant at http://localhost:6333
 ```
 
-**Решения:**
-
-**1. Проверка контейнера:**
+**Check container:**
 ```bash
 docker compose ps qdrant
 ```
 
-**2. Проверка логов:**
+**Check health:**
+```bash
+curl http://localhost:6333/healthz
+# Should return: {"title":"qdrant - vector search engine","version":"..."}
+```
+
+**Check logs:**
 ```bash
 docker compose logs qdrant --tail=50
 ```
 
-**Типичные ошибки:**
+### Dimension mismatch
 
-**"address already in use":**
+```
+ERROR: Dimension mismatch: expected 1024, got 1536
+```
+
+**Ensure cipher.yml and Claude Code config match:**
+- cipher.yml: `dimensions: 1024`
+- ~/.claude.json: `VECTOR_STORE_DIMENSION: "1024"`
+
+**Recreate collection:**
 ```bash
-# Найдите процесс на порту 6333
-lsof -i :6333
-
-# Остановите его
-kill -9 <PID>
-
-# Перезапустите Qdrant
-docker compose restart qdrant
-```
-
-**"failed to create collection":**
-```bash
-# Проверьте storage volume
-docker volume inspect qdrant_storage
-
-# Если проблемы с правами:
-docker compose down
-docker volume rm qdrant_storage
-docker compose up -d
-```
-
----
-
-### Проблема: Dimension mismatch error
-
-**Симптомы:**
-```
-ERROR: Vector dimension mismatch: expected 1024, got 1536
-```
-
-**Причина:** `VECTOR_STORE_DIMENSION` не совпадает с `embedding.dimensions` в cipher.yml
-
-**Решения:**
-
-**1. Проверьте размерности:**
-```bash
-# cipher.yml
-grep -A 4 'embedding:' ~/.cipher/cipher.yml | grep dimensions
-
-# Environment variable
-echo $VECTOR_STORE_DIMENSION
-
-# Claude Code config
-jq '.mcpServers.cipher.env.VECTOR_STORE_DIMENSION' ~/.claude.json
-```
-
-**2. Если не совпадают, синхронизируйте:**
-```bash
-# Вариант 1: Измените VECTOR_STORE_DIMENSION
-export VECTOR_STORE_DIMENSION="1536"  # Совпадает с OpenAI embeddings
-
-# Вариант 2: Измените cipher.yml
-# embedding:
-#   dimensions: 1024  # Совпадает с VECTOR_STORE_DIMENSION
-```
-
-**3. Пересоздайте коллекцию в Qdrant:**
-```bash
-# Удалите старую коллекцию
 curl -X DELETE http://localhost:6333/collections/cipher_memory
-
-# При следующем запуске Cipher создаст коллекцию с правильной размерностью
+# Restart Cipher to recreate
 ```
 
 ---
 
-### Проблема: Qdrant медленный поиск
+## Neo4j
 
-**Симптомы:**
+### Cannot connect to Neo4j
+
 ```bash
-time curl -X POST http://localhost:6333/collections/cipher_memory/points/search ...
-# real    0m5.234s  # > 1 секунды
+# Check container
+docker compose ps neo4j
+
+# Check logs
+docker compose logs neo4j --tail=50
 ```
 
-**Решения:**
+**Common issues:**
 
-**1. Создайте индексы:**
+1. **Container still starting:** Neo4j takes 30-60 seconds. Wait for `healthy` status.
+
+2. **Wrong credentials:** Check .env file matches ~/.claude.json `KNOWLEDGE_GRAPH_PASSWORD`.
+
+3. **Port conflict:**
 ```bash
-curl -X PUT http://localhost:6333/collections/cipher_memory/index \
-  -H "Content-Type: application/json" \
-  -d '{
-    "field_name": "created_at",
-    "field_schema": "datetime"
-  }'
+lsof -i :7687
+lsof -i :7474
 ```
 
-**2. Оптимизируйте параметры поиска:**
-```bash
-# В cipher.yml
-memoryOptions:
-  maxSimilarResults: 5  # Меньше результатов = быстрее
-  similarityThreshold: 0.85  # Выше порог = меньше кандидатов
-```
+### Browser connection fails
 
-**3. Увеличьте память для Qdrant:**
-```yaml
-# docker-compose.yml
-services:
-  qdrant:
-    deploy:
-      resources:
-        limits:
-          memory: 1G  # Было 512M
+Open http://localhost:7474
+
+**Login:**
+- Username: `neo4j`
+- Password: from .env (`NEO4J_PASSWORD`)
+
+If fails, restart container:
+```bash
+docker compose restart neo4j
 ```
 
 ---
 
-## Cipher установка и конфигурация
+## Cipher
 
-### Проблема: Cipher не устанавливается через npm
+### Cipher command not found
 
-**Симптомы:**
 ```bash
-npm install -g @byterover/cipher
-# ERR! code EACCES
-# ERR! syscall access
-# ERR! path /usr/local/lib/node_modules
+cipher --version
+# command not found
 ```
 
-**Решения:**
-
-❌ **НЕ используйте sudo!**
-
-✅ **Настройте npm prefix:**
+**Verify installation:**
 ```bash
-mkdir ~/.npm-global
-npm config set prefix '~/.npm-global'
-echo 'export PATH=~/.npm-global/bin:$PATH' >> ~/.zshrc
-source ~/.zshrc
+npm list -g @byterover/cipher
+```
 
-# Теперь установите
+**Reinstall:**
+```bash
 npm install -g @byterover/cipher
 ```
 
----
+### Environment variables not loaded
 
-### Проблема: cipher.yml environment variables не работают
-
-**Симптомы:**
 ```
-ERROR: Environment variable OLLAMA_BASE_URL is not defined
+Error: OLLAMA_BASE_URL is not set
 ```
 
-**Решения:**
-
-**1. Проверьте что переменные экспортированы:**
-```bash
-env | grep OLLAMA_BASE_URL
-```
-
-Если пусто:
+**Export variables before running cipher:**
 ```bash
 export OLLAMA_BASE_URL="http://localhost:11434"
+# ... other variables from 05-verification.md
 ```
 
-**2. Для постоянного эффекта:**
+### YAML syntax error
+
+```
+Error parsing cipher.yml: invalid YAML
+```
+
+**Validate YAML:**
 ```bash
-echo 'export OLLAMA_BASE_URL="http://localhost:11434"' >> ~/.zshrc
-source ~/.zshrc
+cat ~/.cipher/cipher.yml | head -20
 ```
 
-**3. Или используйте явные значения в cipher.yml:**
-```yaml
-llm:
-  baseURL: "http://localhost:11434"  # Без $
+**Check common issues:**
+- Indentation (use spaces, not tabs)
+- Quotes around special characters
+- Correct multiline syntax for systemPrompt
+
+### Ollama models not found
+
+```
+Error: model qwen2.5-coder:7b not found
 ```
 
----
-
-### Проблема: Cipher не может загрузить LLM model
-
-**Симптомы:**
-```
-ERROR: Failed to load model qwen2.5-coder:7b
-```
-
-**Решения:**
-
-**Для Ollama:**
+**List models:**
 ```bash
-# Проверьте что Ollama запущен
-curl http://localhost:11434/api/tags
+ollama list
+```
 
-# Загрузите модель
+**Pull missing models:**
+```bash
 ollama pull qwen2.5-coder:7b
-
-# Проверьте что модель загружена
-ollama list | grep qwen2.5-coder
-```
-
-**Для embedding models:**
-```bash
 ollama pull mxbai-embed-large
 ```
 
 ---
 
-### Проблема: YAML syntax error в cipher.yml
+## Claude Code MCP
 
-**Симптомы:**
-```
-ERROR: Error parsing cipher.yml: yaml: line 15: mapping values are not allowed in this context
-```
+### MCP server fails to load
 
-**Решения:**
+**Check Claude Code logs:**
 
-**1. Проверка отступов (только пробелы!):**
+macOS/Linux:
 ```bash
-# Найдите табы (плохо)
-sed 's/\t/[TAB]/g' ~/.cipher/cipher.yml | grep '\[TAB\]'
-
-# Замените табы на пробелы
-sed -i 's/\t/  /g' ~/.cipher/cipher.yml
-```
-
-**2. Валидация YAML:**
-```bash
-python3 -c "import yaml, os; yaml.safe_load(open(os.path.expanduser('~/.cipher/cipher.yml')))"
-```
-
-**3. Используйте YAML linter:**
-```bash
-# Установите yamllint
-pip3 install yamllint
-
-# Проверьте файл
-yamllint ~/.cipher/cipher.yml
-```
-
----
-
-### Проблема: "Knowledge graph is disabled in environment"
-
-**Симптомы:**
-```
-INFO: [KG-Factory] Knowledge graph is disabled in environment
-```
-
-**Это НЕ ошибка!** Knowledge Graph выключен по умолчанию и опционален.
-
-**Что это значит:**
-
-Cipher может работать с двумя типами storage:
-1. **Vector database** (Qdrant) - для semantic search (основное хранилище)
-2. **Knowledge Graph** (Neo4j/in-memory) - для relationship modeling (опционально)
-
-По умолчанию используется только Qdrant. Knowledge Graph нужен только для advanced use cases.
-
-**Когда включать Knowledge Graph:**
-
-✅ **Включить если:**
-- Моделируете сложные связи между entities
-- Нужна визуализация relationships
-- Работаете с большим объёмом взаимосвязанных знаний
-
-❌ **Не нужен если:**
-- Просто храните facts и reasoning traces (большинство случаев)
-- Semantic search через Qdrant достаточен
-
-**Как включить (если нужно):**
-
-**Вариант 1: In-Memory (простой)**
-
-Добавьте в `~/.claude.json` в секцию `env`:
-```json
-{
-  "env": {
-    ...
-    "KNOWLEDGE_GRAPH_ENABLED": "true",
-    "KNOWLEDGE_GRAPH_TYPE": "in-memory"
-  }
-}
-```
-
-**Вариант 2: Neo4j (production)**
-
-Сначала запустите Neo4j:
-```bash
-docker run -d --name cipher-neo4j \
-  -p 7687:7687 -p 7474:7474 \
-  -e NEO4J_AUTH=neo4j/your_password \
-  neo4j:latest
-```
-
-Затем добавьте в `~/.claude.json`:
-```json
-{
-  "env": {
-    ...
-    "KNOWLEDGE_GRAPH_ENABLED": "true",
-    "KNOWLEDGE_GRAPH_TYPE": "neo4j",
-    "KNOWLEDGE_GRAPH_PASSWORD": "your_password"
-  }
-}
-```
-
-Подробнее: [03-cipher-configuration.md](03-cipher-configuration.md#5-knowledge-graph-опционально)
-
----
-
-## Claude Code и MCP
-
-### Проблема: Claude Code не загружает MCP конфиг
-
-**Симптомы:**
-- MCP серверы не появляются в Claude Code
-- Нет доступа к cipher tools
-
-**Решения:**
-
-**1. Проверка расположения конфига:**
-```bash
-# macOS - должен быть здесь:
-ls -la ~/.claude.json
-
-# Linux:
-ls -la ~/.claude.json
-```
-
-**2. Валидация JSON:**
-```bash
-# macOS
-python3 -m json.tool ~/.claude.json
-
-# Если ошибка, найдите строку с проблемой
-```
-
-**3. Полный перезапуск Claude Code:**
-```bash
-# macOS
-osascript -e 'quit app "Claude"'
-killall Claude  # Если osascript не сработал
-open -a Claude
-
-# Linux
-pkill -9 claude
-claude
-```
-
-**4. Проверка прав на файл:**
-```bash
-# Файл должен быть readable
-chmod 644 ~/.claude.json
-```
-
----
-
-### Проблема: MCP server "Failed to start"
-
-**Симптомы:**
-В Claude Code:
-```
-❌ cipher - Failed to start
-```
-
-**Решения:**
-
-**1. Проверка логов:**
-```bash
-# macOS
-tail -f ~/Library/Logs/Claude/mcp*.log
-
-# Linux
 tail -f ~/.config/Claude/logs/mcp*.log
 ```
 
-**Типичные ошибки в логах:**
+**Common issues:**
 
-**"command not found: cipher":**
+1. **cipher command not in PATH:**
+   - Verify: `which cipher`
+   - Ensure global npm bin is in PATH
+
+2. **Wrong cipher.yml path:**
+   - Use `${HOME}` in ~/.claude.json, not `~`
+   - Example: `${HOME}/.cipher/cipher.yml`
+
+3. **Environment variables missing:**
+   - All vars in ~/.claude.json `env` section required
+   - Check for typos in variable names
+
+### MCP tools not visible
+
+**Restart Claude Code completely:**
+- Quit application
+- Wait 5 seconds
+- Restart
+
+**Check ~/.claude.json syntax:**
 ```bash
-# Проверьте что cipher установлен
-which cipher
-
-# Если нет, используйте npx в конфиге:
-{
-  "command": "npx",
-  "args": ["-y", "@byterover/cipher", "--mode", "mcp", ...]
-}
+cat ~/.claude.json | jq .
+# Should parse without errors
 ```
 
-**"Cannot find module cipher.yml":**
-```bash
-# Проверьте путь в args
-jq '.mcpServers.cipher.args' ~/.claude.json
+### Connection timeouts
 
-# Используйте абсолютный путь:
-"--agent", "/Users/username/.cipher/cipher.yml"
-
-# Или используйте ${HOME}:
-"--agent", "${HOME}/.cipher/cipher.yml"
+```
+MCP server timeout after 30s
 ```
 
-**"Environment variable X not set":**
+**Verify infrastructure running:**
 ```bash
-# Добавьте переменные явно в env секцию конфига
+docker compose ps
+# All containers should be Up and healthy
+```
+
+**Check cipher can connect:**
+```bash
+cipher --mode mcp --agent ~/.cipher/cipher.yml
+# Should show successful connections
 ```
 
 ---
 
-### Проблема: Environment variables не пробрасываются в MCP
+## Diagnostic Script
 
-**Симптомы:**
-Cipher запускается, но не может подключиться к БД из-за отсутствия env vars
-
-**Причина:** Claude Code не загружает `~/.zshrc` автоматически
-
-**Решения:**
-
-**Вариант 1: Запуск Claude Code из терминала**
-```bash
-# macOS
-open -a Claude
-
-# Теперь переменные из shell будут доступны
-```
-
-**Вариант 2: Явные переменные в конфиге**
-```json
-{
-  "mcpServers": {
-    "cipher": {
-      "env": {
-        "CIPHER_PG_URL": "postgresql://cipher:password@localhost:5432/cipher",
-        "OLLAMA_BASE_URL": "http://localhost:11434",
-        ...
-      }
-    }
-  }
-}
-```
-
-**Вариант 3: launchd environment (macOS)**
-```bash
-# Создайте ~/Library/LaunchAgents/environment.plist
-launchctl setenv CIPHER_PG_URL "postgresql://..."
-```
-
----
-
-### Проблема: MCP tools не вызываются
-
-**Симптомы:**
-Claude отвечает, но не использует cipher tools
-
-**Решения:**
-
-**1. Проверьте что tools доступны:**
-В Claude Code чате напишите:
-```
-Покажи мне список всех доступных MCP tools
-```
-
-Claude должен показать `cipher_memory_search`, `cipher_extract_and_operate_memory`, и т.д.
-
-**2. Явно попросите использовать tool:**
-```
-Используй cipher_memory_search чтобы найти информацию про "test"
-```
-
-**3. Проверьте логи MCP сервера:**
-```bash
-tail -f ~/Library/Logs/Claude/mcp-cipher.log
-```
-
----
-
-## Performance и оптимизация
-
-### Проблема: Медленные запросы к памяти
-
-**Симптомы:**
-`cipher_memory_search` занимает > 5 секунд
-
-**Решения:**
-
-**1. Оптимизация PostgreSQL:**
-```sql
--- Создайте индексы
-CREATE INDEX idx_memories_created_at ON memories(created_at);
-CREATE INDEX idx_memories_updated_at ON memories(updated_at);
-
--- Анализ таблиц
-ANALYZE memories;
-```
-
-**2. Оптимизация Qdrant:**
-```bash
-# Остановите контейнеры
-docker compose down
-# Запустите контейнеры (память указывается в docker-compose.yml)
-docker compose up -d --scale qdrant=1
-```
-
-Затем укажите лимит памяти для сервиса qdrant в вашем `docker-compose.yml`:
-
-```yaml
-services:
-  qdrant:
-    deploy:
-      resources:
-        limits:
-          memory: 1g
-```
-
-**3. Уменьшите количество результатов:**
-```yaml
-# cipher.yml
-memoryOptions:
-  maxSimilarResults: 3  # Было 5 или 10
-```
-
----
-
-### Проблема: Высокое использование памяти
-
-**Симптомы:**
-```bash
-docker stats
-# qdrant   1.5GB  # Слишком много
-```
-
-**Решения:**
-
-**1. Ограничьте память в docker-compose.yml:**
-```yaml
-services:
-  qdrant:
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-        reservations:
-          memory: 256M
-```
-
-**2. Очистите старые коллекции:**
-```bash
-curl -X DELETE http://localhost:6333/collections/old_collection
-```
-
-**3. Оптимизируйте индексы:**
-```bash
-curl -X POST http://localhost:6333/collections/cipher_memory/optimizer \
-  -H "Content-Type: application/json" \
-  -d '{"optimize": true}'
-```
-
----
-
-## Security и безопасность
-
-### Проблема: Пароли в plain text в конфигах
-
-**Решение:**
-
-✅ **Используйте environment variable expansion:**
-
-**Плохо:**
-```json
-{
-  "env": {
-    "CIPHER_PG_URL": "postgresql://cipher:YOUR_PASSWORD_HERE@localhost:5432/cipher"
-  }
-}
-```
-
-**Хорошо:**
-```json
-{
-  "env": {
-    "CIPHER_PG_URL": "${CIPHER_PG_URL}"
-  }
-}
-```
-
-```bash
-# В ~/.zshrc
-export CIPHER_PG_URL="postgresql://cipher:$(cat ~/.secrets/pg_password)@localhost:5432/cipher"
-```
-
----
-
-### Проблема: API ключи в git репозитории
-
-**Симптомы:**
-Случайно закоммитили `.env` или конфиг с ключами
-
-**Решения:**
-
-**1. Немедленно ротируйте ключи:**
-- Anthropic: https://console.anthropic.com/settings/keys
-- OpenAI: https://platform.openai.com/api-keys
-- Voyage AI: https://dash.voyageai.com/api-keys
-
-**2. Удалите из git history:**
-```bash
-# Используйте git-filter-repo
-pip3 install git-filter-repo
-git filter-repo --path .env --invert-paths --force
-
-# Или BFG Repo-Cleaner
-java -jar bfg.jar --delete-files .env
-```
-
-**3. Добавьте в .gitignore:**
-```bash
-echo ".env" >> .gitignore
-echo ".claude.json" >> .gitignore
-git add .gitignore
-git commit -m "Add sensitive files to .gitignore"
-```
-
----
-
-### Проблема: PostgreSQL доступен из интернета
-
-**Симптомы:**
-```bash
-netstat -an | grep 5432
-# 0.0.0.0:5432  # Плохо! Слушает все интерфейсы
-```
-
-**Решения:**
-
-**1. Ограничьте в docker-compose.yml:**
-```yaml
-services:
-  postgres:
-    ports:
-      - "127.0.0.1:5432:5432"  # Только localhost
-```
-
-**2. Настройте firewall:**
-```bash
-# UFW (Ubuntu)
-sudo ufw deny 5432
-
-# iptables
-sudo iptables -A INPUT -p tcp --dport 5432 -j DROP
-sudo iptables -A INPUT -s 127.0.0.1 -p tcp --dport 5432 -j ACCEPT
-```
-
----
-
-## Диагностика в одну команду
-
-Быстрая проверка всех компонентов:
+Quick health check for all components:
 
 ```bash
 #!/bin/bash
 echo "=== Cipher Setup Diagnostic ==="
-echo
 
-echo "1. Docker:"
-docker --version && echo "✅ Docker installed" || echo "❌ Docker not found"
+echo -e "\n1. Docker Containers:"
+docker compose ps
 
-echo
-echo "2. Docker Compose:"
-docker compose version && echo "✅ Docker Compose V2" || docker-compose --version && echo "✅ Docker Compose V1" || echo "❌ Docker Compose not found"
+echo -e "\n2. Qdrant Health:"
+curl -s http://localhost:6333/healthz | jq .
 
-echo
-echo "3. PostgreSQL:"
-docker compose ps | grep postgres | grep healthy && echo "✅ PostgreSQL healthy" || echo "❌ PostgreSQL not healthy"
-psql "postgresql://cipher:${POSTGRES_PASSWORD}@localhost:5432/cipher" -c "SELECT 1" > /dev/null 2>&1 && echo "✅ PostgreSQL connection OK" || echo "❌ PostgreSQL connection failed"
+echo -e "\n3. PostgreSQL Connection:"
+psql "postgresql://cipher:YOUR_PASSWORD@localhost:5432/cipher" -c "SELECT 1" 2>&1
 
-echo
-echo "4. Qdrant:"
-docker compose ps | grep qdrant | grep healthy && echo "✅ Qdrant healthy" || echo "❌ Qdrant not healthy"
-curl -s http://localhost:6333/healthz > /dev/null && echo "✅ Qdrant API OK" || echo "❌ Qdrant API failed"
+echo -e "\n4. Neo4j Connection:"
+curl -s http://localhost:7474 > /dev/null && echo "Neo4j responding" || echo "Neo4j NOT responding"
 
-echo
-echo "5. Cipher:"
-which cipher > /dev/null && echo "✅ Cipher installed" || echo "❌ Cipher not found"
-[ -f ~/.cipher/cipher.yml ] && echo "✅ cipher.yml exists" || echo "❌ cipher.yml not found"
-python3 -c "import os, yaml; yaml.safe_load(open(os.path.expanduser('~/.cipher/cipher.yml')))" 2>/dev/null && echo "✅ cipher.yml valid" || echo "❌ cipher.yml invalid"
+echo -e "\n5. Ollama Models:"
+ollama list | grep -E 'qwen2.5-coder|mxbai-embed-large'
 
-echo
-echo "6. Claude Code:"
-[ -f ~/.claude.json ] && echo "✅ Config exists" || echo "❌ Config not found"
-python3 -m json.tool ~/.claude.json > /dev/null 2>&1 && echo "✅ Config valid JSON" || echo "❌ Config invalid JSON"
+echo -e "\n6. Cipher Installation:"
+cipher --version
 
-echo
-echo "=== End of Diagnostic ==="
+echo -e "\n7. Cipher Config:"
+test -f ~/.cipher/cipher.yml && echo "Config exists" || echo "Config MISSING"
+
+echo -e "\n=== Diagnostic Complete ==="
 ```
 
-Сохраните как `diagnose-cipher.sh` и запустите:
-```bash
-chmod +x diagnose-cipher.sh
-./diagnose-cipher.sh
-```
+Save as `check-cipher.sh`, make executable: `chmod +x check-cipher.sh`, run: `./check-cipher.sh`
 
 ---
 
-## Получение помощи
+## Getting Help
 
-Если проблема не решена:
+If issues persist:
 
-1. 📝 Соберите логи:
-```bash
-# Docker logs
-docker compose logs > cipher-logs.txt
+1. **Collect diagnostic information:**
+   ```bash
+   docker compose logs > docker-logs.txt
+   cipher --version > cipher-info.txt
+   cat ~/.claude.json > claude-config.txt  # Remove passwords before sharing!
+   ```
 
-# Claude Code logs (macOS)
-tar -czf claude-logs.tar.gz ~/Library/Logs/Claude/
+2. **Check documentation:**
+   - [Cipher Documentation](https://docs.byterover.dev/cipher/overview)
+   - [MAP Framework Repository](https://github.com/azalio/map-framework)
 
-# System info
-uname -a > system-info.txt
-docker --version >> system-info.txt
-```
-
-2. 🔍 Опишите проблему:
-- Что вы пытались сделать?
-- Какой результат ожидали?
-- Что произошло вместо этого?
-- Какие сообщения об ошибках видели?
-
-3. 💬 Создайте issue:
-- [MAP Framework GitHub](https://github.com/your-repo/map-framework/issues)
-- [Cipher GitHub](https://github.com/campfirein/cipher/issues)
-
-4. 🤝 Сообщество:
-- [Cipher Discord](https://discord.gg/byterover)
-- [Claude Code Discord](https://discord.gg/anthropic)
-
----
-
-## Дополнительные ресурсы
-
-- 📚 [Официальная документация Cipher](https://docs.byterover.dev/cipher/troubleshooting)
-- 💻 [FAQ по Qdrant](https://qdrant.tech/documentation/faq/)
-- 🔧 [PostgreSQL Performance Tips](https://wiki.postgresql.org/wiki/Performance_Optimization)
-- 🐳 [Docker troubleshooting guide](https://docs.docker.com/config/daemon/#troubleshoot-the-daemon)
+3. **Ask for help:**
+   - Create issue in MAP Framework repository
+   - Include diagnostic output (remove sensitive data first)
