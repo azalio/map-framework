@@ -30,6 +30,11 @@ Complete usage examples, best practices, and optimization strategies for the MAP
   - [Cost Savings](#cost-savings)
   - [How It Works](#how-it-works)
   - [Cost Comparison Example](#cost-comparison-example)
+- [Hooks System](#-hooks-system)
+  - [Prompt Clarification](#prompt-clarification-prompt-improver-hook)
+  - [Sequential Hook Processing](#sequential-hook-processing)
+  - [Disabling Prompt-Improver](#disabling-prompt-improver)
+  - [Other Active Hooks](#other-active-hooks)
 - [Additional Resources](#additional-resources)
 
 ---
@@ -1880,5 +1885,109 @@ See `.claude/skills/README.md` for:
 - Trigger configuration (skill-rules.json)
 - Integration with auto-activation
 - Best practices and examples
+
+---
+
+## 🔌 Hooks System
+
+MAP Framework uses Claude Code hooks to enhance your workflow experience.
+
+### Prompt Clarification (Prompt-Improver Hook)
+
+**Enabled by default** - Automatically disambiguates vague prompts before execution.
+
+**What it does:**
+1. **Evaluates prompt clarity** using conversation history
+2. **For vague prompts** (e.g., "fix the bug"):
+   - Creates research plan (TodoWrite)
+   - Gathers context from codebase, docs, web
+   - Asks 1-6 grounded questions with specific options
+3. **For clear prompts**: Proceeds immediately
+
+**Example flow:**
+```
+User: "fix the error"
+
+MAP: [Prompt Improver Hook seeking clarification]
+     [Research: Found 3 recent errors in logs]
+
+     Which error needs fixing?
+     ○ TypeError in src/components/Map.tsx (recent change)
+     ○ API timeout in src/services/osmService.ts
+     ○ Other (paste error message)
+
+User: [Selects option]
+
+MAP: [Proceeds with full context + playbook patterns]
+```
+
+**Bypass options:**
+- `* your prompt` - Skip evaluation (remove `*` prefix)
+- `/command` - Slash commands bypass automatically
+- `# memorize` - Memorize feature bypasses automatically
+
+**Token overhead:**
+- ~300 tokens per wrapped prompt
+- Only adds questions when genuinely needed
+- Better outcomes on first try = overall efficiency
+
+**Design philosophy:**
+- **Rarely intervene** - Most prompts pass through
+- **Trust user intent** - Research before asking
+- **Transparent** - Evaluation visible in conversation
+- **Max 1-6 questions** - Focused clarification
+
+### Sequential Hook Processing
+
+MAP uses **sequential UserPromptSubmit hooks**:
+
+1. **Step 1: Prompt-Improver** - Disambiguates vague prompts
+2. **Step 2: Playbook Injection** - Adds relevant patterns
+3. **Step 3: Workflow Suggestion** - Recommends MAP workflows
+4. **Step 4: Skill Suggestion** - Suggests helpful skills
+
+**Benefits:**
+- Each hook enhances the previous result
+- Prompt-Improver clarifies → Playbook adds patterns → Workflow guides approach
+- Modular design (hooks can be disabled independently)
+
+### Disabling Prompt-Improver
+
+If you prefer direct execution without clarification:
+
+**Option 1: Use bypass prefix**
+```bash
+* implement user authentication  # Skips improvement
+```
+
+**Option 2: Remove from settings.hooks.json**
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      // Comment out or remove Prompt-Improver hook
+      {
+        "description": "Inject playbook patterns only",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/user-prompt-submit.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+### Other Active Hooks
+
+MAP Framework includes additional hooks:
+
+- **SessionStart** - Auto-injects checkpoint after compaction (see [Compaction Resilience](#-compaction-resilience))
+- **PreToolUse** - Validates agent templates before modifications
+- **Stop** - Quality gates after code modifications
+
+See `.claude/hooks/README.md` for implementation details.
 
 ---
