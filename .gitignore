@@ -74,3 +74,4 @@ docs/claude-code-subagents
 .claude/*_integration_report.json
 .claude/apply_*_deltas.py
 .claude/insert_*_bullets.sql
+docs/claude-code-prompt-improver
