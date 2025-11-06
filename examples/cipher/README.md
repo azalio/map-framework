@@ -34,10 +34,11 @@ docker compose ps
 
 ### docker-compose.yml
 
-Конфигурация Docker Compose с двумя сервисами:
+Конфигурация Docker Compose с тремя сервисами:
 
 - **Qdrant** (порты 6333/6334) - векторная база данных для embeddings
 - **PostgreSQL** (порт 5432) - реляционная БД для метаданных
+- **Neo4j** (порты 7687/7474) - граф БД для knowledge graph (опционально)
 
 ### .env.example
 
@@ -56,6 +57,24 @@ postgresql://cipher:your_secure_password_here@localhost:5432/cipher
 ```
 http://localhost:6333
 ```
+
+**Neo4j (опционально):**
+```
+bolt://localhost:7687
+```
+
+### Доступ к Neo4j Browser
+
+После запуска Neo4j откройте в браузере:
+```
+http://localhost:7474
+```
+
+**Credentials:**
+- Username: `neo4j` (или значение из NEO4J_USER)
+- Password: ваш пароль из `.env` файла (NEO4J_PASSWORD)
+
+**APOC Plugin:** Автоматически установлен для расширенных graph операций.
 
 ## Следующие шаги
 
@@ -76,12 +95,15 @@ http://localhost:6333
 
 ### Порты заняты
 
-Если порты 5432, 6333, или 6334 заняты другими процессами:
+Если порты 5432, 6333, 6334, 7474, или 7687 заняты другими процессами:
 
 ```bash
 # Проверьте какой процесс использует порт
-lsof -i :5432
-lsof -i :6333
+lsof -i :5432   # PostgreSQL
+lsof -i :6333   # Qdrant REST
+lsof -i :6334   # Qdrant gRPC
+lsof -i :7474   # Neo4j Browser
+lsof -i :7687   # Neo4j Bolt
 
 # Либо измените порты в docker-compose.yml
 ```
@@ -92,9 +114,20 @@ lsof -i :6333
 # Проверьте логи
 docker compose logs postgres
 docker compose logs qdrant
+docker compose logs neo4j
 
 # Проверьте что Docker daemon запущен
 docker ps
+```
+
+### Neo4j требует много памяти
+
+По умолчанию Neo4j настроен на 512MB-2GB heap memory. Если у вас мало RAM:
+
+```yaml
+# В docker-compose.yml измените:
+NEO4J_dbms_memory_heap_initial__size: 256m
+NEO4J_dbms_memory_heap_max__size: 512m
 ```
 
 Полное руководство: [docs/MCP-CIPHER-QDRANT-SETUP.md](../../docs/MCP-CIPHER-QDRANT-SETUP.md)

@@ -237,6 +237,27 @@ knowledgeGraph:
 
 **Шаг 1:** Запустите Neo4j в Docker
 
+**Способ 1: Через Docker Compose (рекомендуется)**
+
+Neo4j уже включён в `examples/cipher/docker-compose.yml`:
+
+```bash
+cd examples/cipher/
+cp .env.example .env
+
+# Отредактируйте .env и установите пароли:
+# - POSTGRES_PASSWORD
+# - NEO4J_PASSWORD
+
+# Запустите все сервисы (Qdrant + PostgreSQL + Neo4j)
+docker compose up -d
+
+# Проверьте статус
+docker compose ps
+```
+
+**Способ 2: Отдельный контейнер**
+
 ```bash
 docker run -d \
   --name cipher-neo4j \
