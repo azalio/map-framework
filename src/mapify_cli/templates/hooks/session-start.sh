@@ -16,6 +16,13 @@ VALIDATOR_SCRIPT="$SCRIPT_DIR/helpers/validate_checkpoint_file.py"
 # Debug logging to stderr (visible in Claude Code logs)
 echo "[session-start] SessionStart hook triggered" >&2
 
+# Check if jq is installed (required for JSON parsing)
+if ! command -v jq &> /dev/null; then
+    echo "[session-start] ERROR: jq not found (required for JSON parsing)" >&2
+    echo '{"continue": true}'
+    exit 0
+fi
+
 # Check if checkpoint file exists (new sessions won't have one)
 if [ ! -f "$CHECKPOINT_FILE" ]; then
     echo "[session-start] No checkpoint found at $CHECKPOINT_FILE (new session, skipping injection)" >&2
@@ -34,7 +41,7 @@ fi
 # Validator returns JSON to stdout: {valid: bool, error: str|null, sanitized_content: str, metadata: {...}}
 # Validator logs to stderr (we preserve that for debugging)
 echo "[session-start] Validating checkpoint file via $VALIDATOR_SCRIPT" >&2
-VALIDATION_OUTPUT=$(python3 "$VALIDATOR_SCRIPT" --file "$CHECKPOINT_FILE" 2>&2)
+VALIDATION_OUTPUT=$(python3 "$VALIDATOR_SCRIPT" --file "$CHECKPOINT_FILE")
 VALIDATOR_EXIT=$?
 
 if [ $VALIDATOR_EXIT -ne 0 ]; then
@@ -45,17 +52,17 @@ if [ $VALIDATOR_EXIT -ne 0 ]; then
 fi
 
 # Parse validation result using jq
-VALID=$(echo "$VALIDATION_OUTPUT" | jq -r '.valid // false' 2>/dev/null)
+VALID=$(echo "$VALIDATION_OUTPUT" | jq -r '.valid // false' 2>/dev/null || echo "false")
 
 if [ "$VALID" != "true" ]; then
-    ERROR_MSG=$(echo "$VALIDATION_OUTPUT" | jq -r '.error // "Unknown validation error"' 2>/dev/null)
+    ERROR_MSG=$(echo "$VALIDATION_OUTPUT" | jq -r '.error // "Unknown validation error"' 2>/dev/null || echo "Unknown validation error")
     echo "[session-start] Checkpoint validation failed: $ERROR_MSG" >&2
     echo '{"continue": true}'
     exit 0
 fi
 
 # Extract sanitized content
-SANITIZED_CONTENT=$(echo "$VALIDATION_OUTPUT" | jq -r '.sanitized_content // ""' 2>/dev/null)
+SANITIZED_CONTENT=$(echo "$VALIDATION_OUTPUT" | jq -r '.sanitized_content // ""' 2>/dev/null || echo "")
 
 if [ -z "$SANITIZED_CONTENT" ]; then
     echo "[session-start] Sanitized content is empty after validation" >&2
@@ -77,7 +84,7 @@ The plan below reflects your current task progress and helps maintain workflow c
 FULL_CONTEXT="${INJECTION_HEADER}${SANITIZED_CONTENT}"
 
 # Get file size for logging
-FILE_SIZE=$(echo "$VALIDATION_OUTPUT" | jq -r '.metadata.size_bytes // 0' 2>/dev/null)
+FILE_SIZE=$(echo "$VALIDATION_OUTPUT" | jq -r '.metadata.size_bytes // 0' 2>/dev/null || echo "0")
 FILE_SIZE_KB=$((FILE_SIZE / 1024))
 
 echo "[session-start] ✅ Successfully validated checkpoint (${FILE_SIZE_KB}KB)" >&2
