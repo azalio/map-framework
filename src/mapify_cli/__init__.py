@@ -1147,10 +1147,11 @@ def install_hooks(project_path: Path, with_hooks: bool = True) -> int:
         readme_dest = hooks_dir / "README.md"
         shutil.copy2(readme_src, readme_dest)
 
-    # Copy settings.hooks.json to .claude/hooks/
+    # Copy settings.hooks.json to .claude/ (not .claude/hooks/)
+    # Claude Code reads hooks config from .claude/settings.hooks.json
     settings_hooks_src = hooks_template_dir / "settings.hooks.json"
     if settings_hooks_src.exists():
-        settings_hooks_dest = hooks_dir / "settings.hooks.json"
+        settings_hooks_dest = project_path / ".claude" / "settings.hooks.json"
         shutil.copy2(settings_hooks_src, settings_hooks_dest)
 
     return hooks_count
