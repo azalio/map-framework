@@ -1103,17 +1103,19 @@ def install_hooks(project_path: Path, with_hooks: bool = True) -> int:
         # Hooks templates not found, skip installation
         return 0
 
-    # Copy all hook scripts
+    # Copy all hook scripts (.sh and .py)
     import shutil
     import stat
 
     hooks_count = 0
-    for hook_file in hooks_template_dir.glob("*.sh"):
-        dest_file = hooks_dir / hook_file.name
-        shutil.copy2(hook_file, dest_file)
-        # Make executable
-        dest_file.chmod(dest_file.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-        hooks_count += 1
+    # Copy both .sh and .py hook files
+    for pattern in ["*.sh", "*.py"]:
+        for hook_file in hooks_template_dir.glob(pattern):
+            dest_file = hooks_dir / hook_file.name
+            shutil.copy2(hook_file, dest_file)
+            # Make executable
+            dest_file.chmod(dest_file.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+            hooks_count += 1
 
     # Copy helpers directory (Python helper scripts)
     # IMPORTANT: Only copy/update files from templates, preserve user's custom files
@@ -1145,10 +1147,10 @@ def install_hooks(project_path: Path, with_hooks: bool = True) -> int:
         readme_dest = hooks_dir / "README.md"
         shutil.copy2(readme_src, readme_dest)
 
-    # Copy settings.hooks.json to .claude/
-    settings_hooks_src = templates_dir / "settings.hooks.json"
+    # Copy settings.hooks.json to .claude/hooks/
+    settings_hooks_src = hooks_template_dir / "settings.hooks.json"
     if settings_hooks_src.exists():
-        settings_hooks_dest = project_path / ".claude" / "settings.hooks.json"
+        settings_hooks_dest = hooks_dir / "settings.hooks.json"
         shutil.copy2(settings_hooks_src, settings_hooks_dest)
 
     return hooks_count
