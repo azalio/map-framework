@@ -491,7 +491,7 @@ sed -i 's/\t/  /g' ~/.cipher/cipher.yml
 
 **2. Валидация YAML:**
 ```bash
-python3 -c "import yaml; yaml.safe_load(open(os.path.expanduser('~/.cipher/cipher.yml')))"
+python3 -c "import yaml, os; yaml.safe_load(open(os.path.expanduser('~/.cipher/cipher.yml')))"
 ```
 
 **3. Используйте YAML linter:**
@@ -692,9 +692,21 @@ ANALYZE memories;
 
 **2. Оптимизация Qdrant:**
 ```bash
-# Увеличьте memory для кэширования
+# Остановите контейнеры
 docker compose down
-docker compose up -d --scale qdrant=1 --memory="1g"
+# Запустите контейнеры (память указывается в docker-compose.yml)
+docker compose up -d --scale qdrant=1
+```
+
+Затем укажите лимит памяти для сервиса qdrant в вашем `docker-compose.yml`:
+
+```yaml
+services:
+  qdrant:
+    deploy:
+      resources:
+        limits:
+          memory: 1g
 ```
 
 **3. Уменьшите количество результатов:**
@@ -754,7 +766,7 @@ curl -X POST http://localhost:6333/collections/cipher_memory/optimizer \
 ```json
 {
   "env": {
-    "CIPHER_PG_URL": "postgresql://cipher:mypassword123@localhost:5432/cipher"
+    "CIPHER_PG_URL": "postgresql://cipher:YOUR_PASSWORD_HERE@localhost:5432/cipher"
   }
 }
 ```
@@ -867,7 +879,7 @@ echo
 echo "5. Cipher:"
 which cipher > /dev/null && echo "✅ Cipher installed" || echo "❌ Cipher not found"
 [ -f ~/.cipher/cipher.yml ] && echo "✅ cipher.yml exists" || echo "❌ cipher.yml not found"
-python3 -c "import yaml; yaml.safe_load(open('$HOME/.cipher/cipher.yml'))" 2>/dev/null && echo "✅ cipher.yml valid" || echo "❌ cipher.yml invalid"
+python3 -c "import os, yaml; yaml.safe_load(open(os.path.expanduser('~/.cipher/cipher.yml')))" 2>/dev/null && echo "✅ cipher.yml valid" || echo "❌ cipher.yml invalid"
 
 echo
 echo "6. Claude Desktop:"

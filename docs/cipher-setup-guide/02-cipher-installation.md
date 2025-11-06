@@ -266,7 +266,7 @@ export ANTHROPIC_API_KEY=your_key
 
 **Решение 3:** Используйте dotenv в shell config
 ```bash
-eval $(cat .env | sed 's/^/export /')
+set -a; source .env; set +a
 ```
 
 ---

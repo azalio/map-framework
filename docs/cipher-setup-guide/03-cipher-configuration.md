@@ -464,7 +464,7 @@ export STORAGE_DATABASE_TYPE="postgresql"
 
 ```bash
 # Проверка синтаксиса YAML
-python3 -c "import yaml; yaml.safe_load(open('~/.cipher/cipher.yml'))"
+python3 -c "import yaml, os; yaml.safe_load(open(os.path.expanduser('~/.cipher/cipher.yml')))"
 
 # Или через yq (если установлен)
 yq eval '.' ~/.cipher/cipher.yml
@@ -525,7 +525,7 @@ cp /Users/azalio/gitroot/cipher/memAgent/cipher.yml ~/.cipher/
 sed 's/\t/[TAB]/g' ~/.cipher/cipher.yml | head -20
 
 # Валидация через Python
-python3 -c "import yaml; yaml.safe_load(open(os.path.expanduser('~/.cipher/cipher.yml')))"
+python3 -c "import yaml, os; yaml.safe_load(open(os.path.expanduser('~/.cipher/cipher.yml')))"
 ```
 
 ---

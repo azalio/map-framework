@@ -274,7 +274,7 @@ CIPHER_PG_URL=postgresql://cipher:password@localhost:5432/cipher
 ```bash
 # В ~/.zshrc или ~/.bashrc
 if [ -f ~/.cipher/.env ]; then
-  export $(grep -v '^#' ~/.cipher/.env | xargs)
+  set -a; source ~/.cipher/.env; set +a
 fi
 ```
 

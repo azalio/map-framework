@@ -49,7 +49,7 @@ docker compose ps
 
 **PostgreSQL:**
 ```
-postgresql://cipher:ваш_пароль@localhost:5432/cipher
+postgresql://cipher:your_secure_password_here@localhost:5432/cipher
 ```
 
 **Qdrant:**
