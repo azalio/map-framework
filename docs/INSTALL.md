@@ -305,9 +305,39 @@ If you selected MCP servers during installation, ensure they're configured:
 
 ### Cipher (Knowledge Management)
 
+**Overview:**
 - Stores successful patterns and solutions
 - Retrieves relevant past implementations
 - Builds institutional knowledge over time
+- Enables cross-project learning through semantic search
+
+**Quick Setup:**
+```bash
+# Install Cipher globally
+npm install -g @byterover/cipher
+
+# Verify installation
+cipher --version
+```
+
+**Backend Infrastructure (Optional but Recommended):**
+
+Cipher can work with in-memory storage, but for production use we recommend setting up persistent backends:
+- **Qdrant**: Vector database for semantic search
+- **PostgreSQL**: Relational database for structured memory data
+
+**📚 Full Installation Guide:**
+For complete setup instructions including Qdrant + PostgreSQL backend, configuration examples for different LLM providers, troubleshooting, and integration with MAP Framework:
+
+→ **[MCP Cipher + Qdrant + PostgreSQL Setup Guide](MCP-CIPHER-QDRANT-SETUP.md)**
+
+This comprehensive guide includes:
+- Docker infrastructure setup
+- Cipher installation and configuration
+- Claude Code MCP integration
+- Verification checklist
+- Troubleshooting guide
+- Performance optimization tips
 
 ### Claude-Reviewer (Professional Review)
 
