@@ -1937,19 +1937,22 @@ MAP: [Proceeds with full context + playbook patterns]
 - **Transparent** - Evaluation visible in conversation
 - **Max 1-6 questions** - Focused clarification
 
-### Sequential Hook Processing
+### Multi-Hook Processing
 
-MAP uses **sequential UserPromptSubmit hooks**:
+MAP uses **multiple UserPromptSubmit hooks** that run in parallel:
 
-1. **Step 1: Prompt-Improver** – Disambiguates vague prompts
-2. **Step 2: Playbook Injection** – Adds relevant patterns, and suggests workflows and skills
+1. **Prompt-Improver** – Disambiguates vague prompts (wraps prompt with evaluation instructions)
+2. **Playbook Injection** – Adds relevant patterns, and suggests workflows and skills
 
-> **Note:** In the current implementation, workflow and skill suggestions are combined within the Playbook Injection step (handled by `.claude/hooks/user-prompt-submit.sh`), rather than as separate steps.
+> **Note:** Claude Code executes all matching hooks in parallel. Each hook's `additionalContext` output is concatenated and added to the prompt. The order is not guaranteed, but both enhancements are applied.
+
+> **Implementation detail:** Workflow and skill suggestions are handled within the Playbook Injection hook (`.claude/hooks/user-prompt-submit.sh`), not as separate hooks.
 
 **Benefits:**
-- Each hook enhances the previous result
-- Prompt-Improver clarifies → Playbook adds patterns, workflows, and skills
+- Both hooks enhance the prompt with different types of context
+- Prompt-Improver adds evaluation wrapper, Playbook adds patterns/workflows/skills
 - Modular design (hooks can be disabled independently)
+- Parallel execution (efficient)
 
 ### Disabling Prompt-Improver
 

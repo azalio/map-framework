@@ -22,8 +22,10 @@ escaped_prompt = prompt.replace("\\", "\\\\").replace('"', '\\"')
 def output_json(text):
     """Output text in UserPromptSubmit JSON format"""
     output = {
-        "continue": True,
-        "additionalContext": text
+        "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": text
+        }
     }
     print(json.dumps(output))
 
@@ -31,20 +33,9 @@ def output_json(text):
 # 1. Explicit bypass with * prefix
 # 2. Slash commands (built-in or custom)
 # 3. Memorize feature (# prefix)
-if prompt.startswith("*"):
-    # User explicitly bypassed improvement - remove * prefix
-    clean_prompt = prompt[1:].strip()
-    output_json(clean_prompt)
-    sys.exit(0)
-
-if prompt.startswith("/"):
-    # Slash command - pass through unchanged
-    output_json(prompt)
-    sys.exit(0)
-
-if prompt.startswith("#"):
-    # Memorize feature - pass through unchanged
-    output_json(prompt)
+if prompt.startswith("*") or prompt.startswith("/") or prompt.startswith("#"):
+    # User bypassed improvement - don't add evaluation wrapper
+    # Exit without output so hook doesn't modify the prompt
     sys.exit(0)
 
 # Build the improvement wrapper
