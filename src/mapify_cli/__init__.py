@@ -73,6 +73,117 @@ def create_ssl_context():
 
 ssl_context = create_ssl_context()
 
+
+def load_settings_with_merge(settings_file: Path) -> Dict[str, Any]:
+    """Load settings.json file with safe defaults for missing/corrupted files.
+
+    Matches the pattern from configure_global_permissions():
+    - Returns empty dict for missing files (allows fresh setup)
+    - Returns empty dict for corrupted JSON (prints warning)
+    - Caller can safely merge new settings while preserving existing ones
+
+    Args:
+        settings_file: Path to settings.json file
+
+    Returns:
+        Dictionary with existing settings, or empty dict if file missing/corrupted
+    """
+    if settings_file.exists():
+        try:
+            with open(settings_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            console.print(f"[yellow]Warning:[/yellow] Corrupted {settings_file.name}, will recreate")
+            return {}
+    else:
+        return {}
+
+
+def merge_hooks_settings(existing_settings: Dict[str, Any], template_settings: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge template hooks into existing settings preserving user customizations.
+
+    Follows the same merge philosophy as configure_global_permissions():
+    - Preserves user's top-level keys (permissions, custom settings)
+    - Merges hooks additively using matcher field for deduplication
+    - Preserves user's custom hooks not in template
+
+    Args:
+        existing_settings: User's current settings (from load_settings_with_merge)
+        template_settings: Template settings with default hooks
+
+    Returns:
+        Merged settings dict with template hooks added, user customizations preserved
+    """
+    import copy
+
+    # Deep copy to prevent mutation of original settings
+    merged = copy.deepcopy(existing_settings)
+
+    # If template has no hooks section, nothing to merge
+    if "hooks" not in template_settings:
+        return merged
+
+    # If user has no hooks section at all, use template's hooks entirely
+    if "hooks" not in merged:
+        merged["hooks"] = template_settings["hooks"]
+        return merged
+
+    # Merge each hook type (UserPromptSubmit, SessionStart, PreToolUse, Stop)
+    template_hooks = template_settings["hooks"]
+    user_hooks = merged["hooks"]
+
+    for hook_type, template_hook_groups in template_hooks.items():
+        # Validate template hooks is a list
+        if not isinstance(template_hook_groups, list):
+            console.print(f"[yellow]Warning:[/yellow] Skipping malformed template hooks for {hook_type}")
+            continue
+
+        # If user doesn't have this hook type, add template's entire array
+        if hook_type not in user_hooks:
+            user_hooks[hook_type] = template_hook_groups
+            continue
+
+        # Validate user hooks is a list
+        if not isinstance(user_hooks[hook_type], list):
+            console.print(f"[yellow]Warning:[/yellow] Resetting malformed user hooks for {hook_type}")
+            user_hooks[hook_type] = []
+
+        # User has this hook type - merge hook groups using matcher for deduplication
+        # Build set of existing matchers (similar to configure_global_permissions)
+        existing_matchers = set()
+        for hook_group in user_hooks[hook_type]:
+            if isinstance(hook_group, dict) and "matcher" in hook_group and hook_group["matcher"]:
+                existing_matchers.add(hook_group["matcher"])
+
+        # Add template hook groups that user doesn't have (by matcher)
+        for template_hook_group in template_hook_groups:
+            if not isinstance(template_hook_group, dict):
+                continue
+
+            template_matcher = template_hook_group.get("matcher", "")
+
+            # If template has explicit non-empty matcher, check against existing
+            if template_matcher:
+                if template_matcher not in existing_matchers:
+                    user_hooks[hook_type].append(template_hook_group)
+            else:
+                # No matcher or empty matcher - use full JSON comparison
+                template_json = json.dumps(template_hook_group, sort_keys=True)
+                hook_exists = False
+
+                for user_hook_group in user_hooks[hook_type]:
+                    if isinstance(user_hook_group, dict):
+                        user_json = json.dumps(user_hook_group, sort_keys=True)
+                        if template_json == user_json:
+                            hook_exists = True
+                            break
+
+                if not hook_exists:
+                    user_hooks[hook_type].append(template_hook_group)
+
+    return merged
+
+
 # Constants
 MCP_SERVER_CHOICES = {
     "all": "All available MCP servers",
@@ -1084,10 +1195,31 @@ Provide detailed analysis of code quality, potential impacts, and quality scores
 
 
 def install_hooks(project_path: Path, with_hooks: bool = True) -> int:
-    """Install Claude Code hooks in .claude/hooks/
+    """Install Claude Code hooks in .claude/hooks/ with intelligent merging.
+
+    Follows the same merge philosophy as configure_global_permissions():
+    - Preserves user's existing .claude/settings.json customizations
+    - Merges template hooks into existing settings using matcher-based deduplication
+    - User's custom hooks, permissions, and top-level keys are preserved
+    - Template hooks are added only if they don't already exist (by matcher field)
+
+    This implements the SQLite auto-migration pattern from cipher:
+    1. Load existing settings (returns {} if missing/corrupted)
+    2. Load template settings with error handling
+    3. Merge using matcher field for deduplication
+    4. Write merged result atomically
+
+    Args:
+        project_path: Path to project root directory
+        with_hooks: Whether to install hooks (default: True)
 
     Returns:
-        Number of hook scripts installed
+        Number of hook scripts installed (excludes settings.json)
+
+    See Also:
+        - load_settings_with_merge(): Safely loads existing settings
+        - merge_hooks_settings(): Merges template into existing settings
+        - configure_global_permissions(): Similar merge pattern for permissions
     """
     if not with_hooks:
         return 0
@@ -1147,12 +1279,48 @@ def install_hooks(project_path: Path, with_hooks: bool = True) -> int:
         readme_dest = hooks_dir / "README.md"
         shutil.copy2(readme_src, readme_dest)
 
-    # Copy settings.hooks.json to .claude/ (not .claude/hooks/)
-    # Claude Code reads hooks config from .claude/settings.hooks.json
-    settings_hooks_src = hooks_template_dir / "settings.hooks.json"
-    if settings_hooks_src.exists():
-        settings_hooks_dest = project_path / ".claude" / "settings.hooks.json"
-        shutil.copy2(settings_hooks_src, settings_hooks_dest)
+    # Merge hooks settings.json into .claude/settings.json
+    # Claude Code reads hooks config from .claude/settings.json
+    # IMPORTANT: Merge with existing settings to preserve user customizations
+    settings_src = hooks_template_dir / "settings.json"
+    if settings_src.exists():
+        settings_dest = project_path / ".claude" / "settings.json"
+
+        # Load existing settings (returns {} if missing/corrupted)
+        existing_settings = load_settings_with_merge(settings_dest)
+
+        # Load template settings
+        try:
+            with open(settings_src, 'r', encoding='utf-8') as f:
+                template_settings = json.load(f)
+
+            # Validate template is a dict (not array, string, etc.)
+            if not isinstance(template_settings, dict):
+                console.print("[yellow]Warning:[/yellow] Invalid template settings format")
+                console.print("[yellow]Skipping settings.json merge (hook scripts still installed)[/yellow]")
+                return hooks_count
+
+        except json.JSONDecodeError as e:
+            console.print(f"[yellow]Warning:[/yellow] Corrupted template settings.json: {e}")
+            console.print("[yellow]Skipping settings.json merge (hook scripts still installed)[/yellow]")
+            return hooks_count
+        except Exception as e:
+            console.print(f"[yellow]Warning:[/yellow] Failed to read template settings: {e}")
+            return hooks_count
+
+        # Merge template into existing settings
+        merged_settings = merge_hooks_settings(existing_settings, template_settings)
+
+        # Write merged settings atomically
+        try:
+            with open(settings_dest, 'w', encoding='utf-8') as f:
+                json.dump(merged_settings, f, indent=2, ensure_ascii=False)
+            console.print("[green]✓[/green] Merged hooks settings into .claude/settings.json")
+        except OSError as e:
+            console.print(f"[yellow]Warning:[/yellow] Failed to write settings.json: {e}")
+            console.print("[yellow]You may need to manually configure hooks[/yellow]")
+        except Exception as e:
+            console.print(f"[yellow]Warning:[/yellow] Unexpected error writing settings: {e}")
 
     return hooks_count
 

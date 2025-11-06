@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "description": "Claude Code hooks configuration for MAP Framework",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "description": "Enhance prompts with clarification and playbook context",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/improve-prompt.py",
+            "timeout": 5,
+            "description": "Disambiguate vague prompts with evaluation instructions"
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/user-prompt-submit.sh",
+            "timeout": 5,
+            "description": "Inject playbook patterns and suggest workflows"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "",
+        "description": "Auto-inject MAP workflow context from checkpoint",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/session-start.sh",
+            "timeout": 5,
+            "description": "Restores .map/current_plan.md checkpoint for seamless compaction recovery"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "description": "Validate agent template integrity before modifications",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/validate-agent-templates.sh",
+            "timeout": 5,
+            "description": "Prevents accidental removal of {{template}} variables from agents"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "description": "Quality gates - run automated checks after code modifications",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/stop.sh",
+            "timeout": 30,
+            "description": "Catches syntax errors and test failures before response submission"
+          }
+        ]
+      }
+    ]
+  }
+}
