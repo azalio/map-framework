@@ -505,6 +505,75 @@ yamllint ~/.cipher/cipher.yml
 
 ---
 
+### Проблема: "Knowledge graph is disabled in environment"
+
+**Симптомы:**
+```
+INFO: [KG-Factory] Knowledge graph is disabled in environment
+```
+
+**Это НЕ ошибка!** Knowledge Graph выключен по умолчанию и опционален.
+
+**Что это значит:**
+
+Cipher может работать с двумя типами storage:
+1. **Vector database** (Qdrant) - для semantic search (основное хранилище)
+2. **Knowledge Graph** (Neo4j/in-memory) - для relationship modeling (опционально)
+
+По умолчанию используется только Qdrant. Knowledge Graph нужен только для advanced use cases.
+
+**Когда включать Knowledge Graph:**
+
+✅ **Включить если:**
+- Моделируете сложные связи между entities
+- Нужна визуализация relationships
+- Работаете с большим объёмом взаимосвязанных знаний
+
+❌ **Не нужен если:**
+- Просто храните facts и reasoning traces (большинство случаев)
+- Semantic search через Qdrant достаточен
+
+**Как включить (если нужно):**
+
+**Вариант 1: In-Memory (простой)**
+
+Добавьте в `~/.claude.json` в секцию `env`:
+```json
+{
+  "env": {
+    ...
+    "KNOWLEDGE_GRAPH_ENABLED": "true",
+    "KNOWLEDGE_GRAPH_TYPE": "in-memory"
+  }
+}
+```
+
+**Вариант 2: Neo4j (production)**
+
+Сначала запустите Neo4j:
+```bash
+docker run -d --name cipher-neo4j \
+  -p 7687:7687 -p 7474:7474 \
+  -e NEO4J_AUTH=neo4j/your_password \
+  neo4j:latest
+```
+
+Затем добавьте в `~/.claude.json`:
+```json
+{
+  "env": {
+    ...
+    "KNOWLEDGE_GRAPH_ENABLED": "true",
+    "KNOWLEDGE_GRAPH_TYPE": "neo4j",
+    "KNOWLEDGE_GRAPH_PASSWORD": "your_password"
+  }
+}
+```
+
+Подробнее: [03-cipher-configuration.md](03-cipher-configuration.md#5-knowledge-graph-опционально)
+
+---
+
 ## Claude Code и MCP
 
 ### Проблема: Claude Code не загружает MCP конфиг

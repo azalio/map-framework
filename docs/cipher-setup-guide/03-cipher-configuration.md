@@ -192,6 +192,177 @@ systemPrompt:
 
 ---
 
+### 5. Knowledge Graph (опционально)
+
+Knowledge Graph позволяет Cipher моделировать сложные связи между entities (advanced relationship modeling).
+
+**По умолчанию выключен!** Если при запуске `cipher --mode mcp` видите:
+```
+INFO: [KG-Factory] Knowledge graph is disabled in environment
+```
+
+Это нормально. Knowledge Graph опционален.
+
+#### Вариант 1: In-Memory (рекомендуется для начала)
+
+Простой вариант без дополнительной инфраструктуры:
+
+```bash
+export KNOWLEDGE_GRAPH_ENABLED="true"
+export KNOWLEDGE_GRAPH_TYPE="in-memory"
+```
+
+Или в cipher.yml (если поддерживается):
+
+```yaml
+knowledgeGraph:
+  enabled: true
+  type: in-memory
+```
+
+**Плюсы:**
+- ✅ Не требует Neo4j
+- ✅ Быстрый старт
+- ✅ Достаточно для большинства случаев
+
+**Минусы:**
+- ❌ Данные не персистятся между перезапусками Cipher
+- ❌ Ограниченные возможности graph queries
+
+---
+
+#### Вариант 2: Neo4j (production)
+
+Для advanced relationship modeling и персистентности:
+
+**Шаг 1:** Запустите Neo4j в Docker
+
+```bash
+docker run -d \
+  --name cipher-neo4j \
+  -p 7687:7687 \
+  -p 7474:7474 \
+  -e NEO4J_AUTH=neo4j/secure_neo4j_password \
+  -v neo4j_data:/data \
+  neo4j:latest
+```
+
+**Шаг 2:** Настройте environment variables
+
+```bash
+export KNOWLEDGE_GRAPH_ENABLED="true"
+export KNOWLEDGE_GRAPH_TYPE="neo4j"
+export KNOWLEDGE_GRAPH_HOST="localhost"
+export KNOWLEDGE_GRAPH_PORT="7687"
+export KNOWLEDGE_GRAPH_USERNAME="neo4j"
+export KNOWLEDGE_GRAPH_PASSWORD="secure_neo4j_password"
+export KNOWLEDGE_GRAPH_DATABASE="neo4j"
+```
+
+**Или укажите полный URI:**
+
+```bash
+export KNOWLEDGE_GRAPH_URI="bolt://localhost:7687"
+```
+
+**Шаг 3:** Проверьте подключение
+
+```bash
+# Через Neo4j Browser
+open http://localhost:7474
+
+# Или через curl
+curl http://localhost:7474
+```
+
+**Плюсы:**
+- ✅ Персистентное хранилище
+- ✅ Продвинутые graph queries (Cypher)
+- ✅ Визуализация связей через Neo4j Browser
+- ✅ Поддержка множественных баз (Neo4j 4.0+)
+
+**Минусы:**
+- ❌ Требует дополнительный Docker контейнер
+- ❌ Больше памяти и CPU
+- ❌ Сложнее настройка
+
+---
+
+#### Полный список KG переменных
+
+| Переменная | Значение по умолчанию | Обязательна | Описание |
+|------------|----------------------|-------------|----------|
+| `KNOWLEDGE_GRAPH_ENABLED` | `false` | Нет | Включить knowledge graph |
+| `KNOWLEDGE_GRAPH_TYPE` | `in-memory` | Нет | `in-memory` или `neo4j` |
+| `KNOWLEDGE_GRAPH_HOST` | `localhost` | Для Neo4j | Хост Neo4j сервера |
+| `KNOWLEDGE_GRAPH_PORT` | `7687` | Для Neo4j | Bolt протокол порт |
+| `KNOWLEDGE_GRAPH_URI` | — | Для Neo4j | Полный URI (bolt://...) |
+| `KNOWLEDGE_GRAPH_USERNAME` | `neo4j` | Для Neo4j | Пользователь Neo4j |
+| `KNOWLEDGE_GRAPH_PASSWORD` | — | **Да (Neo4j)** | Пароль Neo4j |
+| `KNOWLEDGE_GRAPH_DATABASE` | `neo4j` | Для Neo4j | Имя базы данных |
+
+---
+
+#### Пример использования с Claude Code MCP
+
+В `~/.claude.json`:
+
+```json
+{
+  "mcpServers": {
+    "cipher": {
+      "command": "cipher",
+      "args": ["--mode", "mcp", "--agent", "${HOME}/.cipher/cipher.yml"],
+      "env": {
+        "CIPHER_PG_URL": "${CIPHER_PG_URL}",
+        "VECTOR_STORE_TYPE": "qdrant",
+        "VECTOR_STORE_URL": "http://localhost:6333",
+        "VECTOR_STORE_HOST": "localhost",
+        "VECTOR_STORE_PORT": "6333",
+        "VECTOR_STORE_DIMENSION": "1024",
+        "MCP_SERVER_MODE": "aggregator",
+        "STORAGE_DATABASE_TYPE": "postgresql",
+
+        "KNOWLEDGE_GRAPH_ENABLED": "true",
+        "KNOWLEDGE_GRAPH_TYPE": "in-memory"
+      }
+    }
+  }
+}
+```
+
+**Для Neo4j добавьте:**
+
+```json
+{
+  "env": {
+    ...
+    "KNOWLEDGE_GRAPH_TYPE": "neo4j",
+    "KNOWLEDGE_GRAPH_PASSWORD": "${KNOWLEDGE_GRAPH_PASSWORD}"
+  }
+}
+```
+
+---
+
+**Когда использовать Knowledge Graph:**
+
+✅ **Включить если:**
+- Нужно моделировать сложные связи между entities
+- Важна визуализация relationships
+- Работаете с большим объёмом взаимосвязанных знаний
+- Используете Neo4j для других задач в проекте
+
+❌ **Не нужен если:**
+- Просто храните facts и reasoning traces
+- Semantic search через Qdrant достаточен
+- Хотите минимальную конфигурацию
+- Избегаете дополнительной инфраструктуры
+
+**Совет:** Начните без knowledge graph. Включите позже если почувствуете ограничения semantic search.
+
+---
+
 ## Environment Variables
 
 Cipher использует environment variables для secrets и настроек подключения.
@@ -287,7 +458,7 @@ memoryOptions:
 
 ```bash
 export OLLAMA_BASE_URL="http://localhost:11434"
-export CIPHER_PG_URL="postgresql://cipher:secure_password@localhost:5432/cipher"
+export CIPHER_PG_URL="postgresql://cipher:cipherpass@localhost:5432/cipher"
 export VECTOR_STORE_TYPE="qdrant"
 export VECTOR_STORE_URL="http://localhost:6333"
 export VECTOR_STORE_HOST="localhost"
@@ -296,116 +467,6 @@ export VECTOR_STORE_DIMENSION="1024"
 export MCP_SERVER_MODE="aggregator"
 export STORAGE_DATABASE_TYPE="postgresql"
 ```
-
----
-
-### Пример 2: Anthropic Claude + Voyage embeddings
-
-**Для кого:** Профессиональные разработчики, приоритет качество > стоимость
-
-**cipher.yml:**
-
-```yaml
-mcpServers: {}
-
-llm:
-  provider: anthropic
-  model: claude-3-5-sonnet-20241022
-  apiKey: $ANTHROPIC_API_KEY
-  maxIterations: 50
-
-embedding:
-  type: voyage
-  model: voyage-3-large
-  apiKey: $VOYAGE_API_KEY
-  dimensions: 1024
-
-systemPrompt:
-  enabled: true
-  content: |
-    You are Cipher, a knowledge management and reasoning system for MAP Framework.
-    Extract actionable knowledge, identify patterns, support ACE learning cycles.
-
-memoryOptions:
-  similarityThreshold: 0.80
-  useLLMDecisions: true  # Используем Claude для решений
-  confidenceThreshold: 0.7
-  maxSimilarResults: 10  # Больше контекста
-  enableBatchProcessing: true
-  enableDeleteOperations: true
-```
-
-**Environment variables:**
-
-```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
-export VOYAGE_API_KEY="pa-..."
-export CIPHER_PG_URL="postgresql://cipher:secure_password@localhost:5432/cipher"
-export VECTOR_STORE_TYPE="qdrant"
-export VECTOR_STORE_URL="http://localhost:6333"
-export VECTOR_STORE_HOST="localhost"
-export VECTOR_STORE_PORT="6333"
-export VECTOR_STORE_DIMENSION="1024"
-export MCP_SERVER_MODE="aggregator"
-export STORAGE_DATABASE_TYPE="postgresql"
-```
-
----
-
-### Пример 3: Гибридная конфигурация (Ollama LLM + OpenAI embeddings)
-
-**Для кого:** Баланс между стоимостью и качеством
-
-**cipher.yml:**
-
-```yaml
-mcpServers: {}
-
-llm:
-  provider: ollama
-  model: qwen2.5-coder:7b
-  maxIterations: 50
-  baseURL: $OLLAMA_BASE_URL
-
-embedding:
-  type: openai
-  model: text-embedding-3-small
-  apiKey: $OPENAI_API_KEY
-  dimensions: 1536  # Обратите внимание на другую размерность!
-
-systemPrompt:
-  enabled: true
-  content: |
-    You are Cipher, a knowledge management and reasoning system for MAP Framework.
-    Extract actionable knowledge, identify patterns, support ACE learning cycles.
-
-memoryOptions:
-  similarityThreshold: 0.85
-  useLLMDecisions: false
-  confidenceThreshold: 0.7
-  maxSimilarResults: 5
-  enableBatchProcessing: true
-  enableDeleteOperations: true
-```
-
-**Environment variables:**
-
-```bash
-export OLLAMA_BASE_URL="http://localhost:11434"
-export OPENAI_API_KEY="sk-..."
-export CIPHER_PG_URL="postgresql://cipher:secure_password@localhost:5432/cipher"
-export VECTOR_STORE_TYPE="qdrant"
-export VECTOR_STORE_URL="http://localhost:6333"
-export VECTOR_STORE_HOST="localhost"
-export VECTOR_STORE_PORT="6333"
-export VECTOR_STORE_DIMENSION="1536"  # Важно! Совпадает с embedding dimensions
-export MCP_SERVER_MODE="aggregator"
-export STORAGE_DATABASE_TYPE="postgresql"
-```
-
-⚠️ **Внимание:** `VECTOR_STORE_DIMENSION` должна совпадать с `embedding.dimensions`!
-
----
 
 ## Проверка конфигурации
 
@@ -427,10 +488,6 @@ echo "CIPHER_PG_URL: ${CIPHER_PG_URL:-(not set)}"
 echo "VECTOR_STORE_URL: ${VECTOR_STORE_URL:-(not set)}"
 echo "VECTOR_STORE_DIMENSION: ${VECTOR_STORE_DIMENSION:-(not set)}"
 echo "MCP_SERVER_MODE: ${MCP_SERVER_MODE:-(not set)}"
-
-# Проверка API ключей (частично)
-echo "ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:0:10}..."
-echo "OPENAI_API_KEY: ${OPENAI_API_KEY:0:10}..."
 ```
 
 ### Шаг 3: Тестовый запуск
@@ -445,79 +502,6 @@ cipher --mode mcp --agent ~/.cipher/cipher.yml
 # - Подключение к Qdrant успешно
 # - MCP сервер слушает stdin/stdout
 ```
-
----
-
-## Troubleshooting
-
-### Проблема: "Cannot find cipher.yml"
-
-**Решение:**
-
-```bash
-# Проверьте путь
-ls -la ~/.cipher/cipher.yml
-
-# Создайте директорию если нужно
-mkdir -p ~/.cipher
-
-# Создайте конфигурацию из примера
-cp /Users/azalio/gitroot/cipher/memAgent/cipher.yml ~/.cipher/
-```
-
----
-
-### Проблема: "Invalid YAML syntax"
-
-**Решение:**
-
-```bash
-# Проверьте отступы (только пробелы, НЕ табы!)
-sed 's/\t/[TAB]/g' ~/.cipher/cipher.yml | head -20
-
-# Валидация через Python
-python3 -c "import yaml, os; yaml.safe_load(open(os.path.expanduser('~/.cipher/cipher.yml')))"
-```
-
----
-
-### Проблема: "Environment variable not found"
-
-**Симптомы:** `$OLLAMA_BASE_URL is not defined`
-
-**Решение:**
-
-```bash
-# Убедитесь что переменные экспортированы
-export OLLAMA_BASE_URL="http://localhost:11434"
-
-# Для постоянного эффекта добавьте в ~/.zshrc или ~/.bashrc
-echo 'export OLLAMA_BASE_URL="http://localhost:11434"' >> ~/.zshrc
-source ~/.zshrc
-```
-
----
-
-### Проблема: "Dimension mismatch"
-
-**Симптомы:** Qdrant ошибка о несоответствии размерности векторов
-
-**Причина:** `VECTOR_STORE_DIMENSION` не совпадает с `embedding.dimensions` в cipher.yml
-
-**Решение:**
-
-```bash
-# Проверьте cipher.yml
-grep -A 4 'embedding:' ~/.cipher/cipher.yml | grep dimensions
-
-# Проверьте environment variable
-echo $VECTOR_STORE_DIMENSION
-
-# Они должны совпадать! Если нет:
-export VECTOR_STORE_DIMENSION="1024"  # Или 1536 для OpenAI embeddings
-```
-
----
 
 ## Следующие шаги
 
