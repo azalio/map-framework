@@ -5,11 +5,17 @@
 ## Расположение конфигурационного файла
 
 По умолчанию Cipher ищет `cipher.yml` в:
+
 1. Текущей директории: `./cipher.yml`
 2. Домашней директории: `~/.cipher/cipher.yml`
 3. Явно указанном пути через флаг: `--agent /path/to/cipher.yml`
 
 **Рекомендация:** Создайте `~/.cipher/cipher.yml` для глобальной конфигурации.
+
+```bash
+mkdir -p ~/.cipher/
+touch ~/.cipher/cipher.yml
+```
 
 ## Базовая структура cipher.yml
 
@@ -35,7 +41,8 @@ embedding:
 systemPrompt:
   enabled: true
   content: |
-    You are an AI programming assistant focused on coding and reasoning tasks.
+    You are Cipher, a knowledge management and reasoning system for MAP Framework.
+    Extract actionable knowledge, identify patterns, support ACE learning cycles.
 
 # Memory операции (опционально)
 memoryOptions:
@@ -51,7 +58,7 @@ memoryOptions:
 
 ### 1. LLM Provider Configuration
 
-Cipher поддерживает множество LLM провайдеров. Выберите один:
+Cipher поддерживает множество LLM провайдеров. За дополнительной документацией обратитесь к документации cipher.
 
 #### Ollama (Локальный LLM)
 
@@ -64,76 +71,15 @@ llm:
 ```
 
 **Преимущества:**
+
 - ✅ Полностью локальный, без затрат на API
 - ✅ Приватность данных
 - ✅ Быстрая работа на мощном железе
 
 **Требования:**
+
 - Ollama установлен и запущен
 - Модель загружена: `ollama pull qwen2.5-coder:7b`
-
----
-
-#### Anthropic (Claude)
-
-```yaml
-llm:
-  provider: anthropic
-  model: claude-3-5-sonnet-20241022
-  apiKey: $ANTHROPIC_API_KEY
-  maxIterations: 50
-```
-
-**Преимущества:**
-- ✅ Отличное качество reasoning
-- ✅ Большой контекст (200K tokens)
-- ✅ Надежность
-
-**Требования:**
-- API ключ от Anthropic
-- Баланс на аккаунте
-
----
-
-#### OpenAI (GPT)
-
-```yaml
-llm:
-  provider: openai
-  model: gpt-4o
-  apiKey: $OPENAI_API_KEY
-  maxIterations: 50
-```
-
----
-
-#### Gemini (Google)
-
-```yaml
-llm:
-  provider: gemini
-  model: gemini-2.0-flash-exp
-  apiKey: $GEMINI_API_KEY
-  maxIterations: 50
-```
-
----
-
-#### AWS Bedrock
-
-```yaml
-llm:
-  provider: aws
-  model: us.anthropic.claude-3-5-sonnet-20241022-v2:0
-  maxIterations: 50
-  aws:
-    region: $AWS_REGION
-    accessKeyId: $AWS_ACCESS_KEY_ID
-    secretAccessKey: $AWS_SECRET_ACCESS_KEY
-    sessionToken: $AWS_SESSION_TOKEN  # Опционально
-```
-
----
 
 ### 2. Embedding Configuration
 
@@ -150,45 +96,9 @@ embedding:
 ```
 
 **Требования:**
+
 - Модель загружена: `ollama pull mxbai-embed-large`
 - Размерность (1024) должна совпадать с `VECTOR_STORE_DIMENSION` в environment variables
-
----
-
-#### Voyage AI (Рекомендуется для Anthropic пользователей)
-
-```yaml
-embedding:
-  type: voyage
-  model: voyage-3-large
-  apiKey: $VOYAGE_API_KEY
-  dimensions: 1024  # Поддерживает: 1024, 512, 256, 2048
-```
-
----
-
-#### OpenAI Embeddings
-
-```yaml
-embedding:
-  type: openai
-  model: text-embedding-3-small
-  apiKey: $OPENAI_API_KEY
-  dimensions: 1536
-```
-
----
-
-#### Gemini Embeddings
-
-```yaml
-embedding:
-  type: gemini
-  model: text-embedding-004
-  apiKey: $GEMINI_API_KEY
-```
-
----
 
 ### 3. Memory Options
 
@@ -218,6 +128,7 @@ memoryOptions:
 ```
 
 **Рекомендации:**
+
 - `similarityThreshold: 0.85` - высокий порог предотвращает дубликаты
 - `useLLMDecisions: false` - экономит токены, достаточно similarity
 - `confidenceThreshold: 0.7` - балансирует precision/recall
@@ -226,28 +137,58 @@ memoryOptions:
 
 ### 4. System Prompt
 
-Кастомизация базового поведения Cipher:
+Кастомизация базового поведения Cipher для MAP Framework:
 
 ```yaml
 systemPrompt:
   enabled: true
   content: |
-    You are an AI programming assistant integrated with MAP Framework.
-    You excel at:
-    - Writing clean, maintainable code
-    - Debugging and problem-solving with systematic approach
-    - Code review with security awareness
-    - Explaining complex technical concepts clearly
-    - Reasoning through multi-step challenges
+    You are Cipher, a knowledge management and reasoning system integrated with MAP Framework.
 
-    Guidelines:
-    - Always validate inputs and handle errors gracefully
-    - Consider security implications in your solutions
-    - Provide code examples when helpful
-    - Break down complex problems into steps
+    Your core capabilities:
+    - Knowledge Management: Extract, store, and retrieve semantic knowledge across sessions
+    - Reasoning Analysis: Capture and evaluate multi-step thought processes
+    - Pattern Recognition: Identify recurring patterns in problem-solving approaches
+    - Context Integration: Connect related knowledge from different domains
+
+    MAP Framework Integration:
+    - Support ACE (Acquire, Curate, Extract) learning patterns
+    - Enable MAP (Modular Agentic Planner) workflow memory persistence
+    - Facilitate cross-session knowledge continuity
+    - Track reasoning evolution across tasks
+
+    Operating Principles:
+    - Semantic search over exact matches (use embeddings effectively)
+    - Deduplication before storage (avoid redundant knowledge)
+    - Quality scoring for knowledge entries (helpful_count matters)
+    - Cross-project knowledge sharing (not project-siloed)
+
+    Knowledge Domains You Handle:
+    - Software architecture and design patterns
+    - Technical documentation and specifications
+    - Problem-solving approaches and trade-offs
+    - Testing strategies and verification methods
+    - Code quality principles and best practices
+    - Security considerations and threat models
+    - API design and integration patterns
+    - System debugging and troubleshooting
+
+    When Processing Interactions:
+    1. Extract actionable knowledge (not conversational fluff)
+    2. Identify reasoning patterns (not just conclusions)
+    3. Classify domain appropriately (frontend, backend, devops, etc.)
+    4. Score confidence accurately (0.0-1.0 scale)
+    5. Suggest operation (ADD/UPDATE/DELETE/NONE) based on similarity
+
+    Response Style:
+    - Concise and structured (not verbose)
+    - Focus on "why" and "when" (not just "what")
+    - Include trade-offs and alternatives
+    - Cite source when retrieving knowledge
+    - Admit uncertainty rather than hallucinate
 ```
 
-**Совет:** Адаптируйте prompt под свой workflow. Для MAP Framework упомяните ACE patterns и structured thinking.
+**Важно:** Этот промпт оптимизирован для MAP Framework, фокусируется на knowledge management и reasoning, а не только на программировании.
 
 ---
 
@@ -311,6 +252,7 @@ export CIPHER_LOG_LEVEL="info"  # debug, info, warn, error
 **Для кого:** Пользователи с мощным локальным железом, заботящиеся о приватности
 
 **cipher.yml:**
+
 ```yaml
 mcpServers: {}
 
@@ -329,7 +271,8 @@ embedding:
 systemPrompt:
   enabled: true
   content: |
-    You are a helpful AI assistant for coding tasks.
+    You are Cipher, a knowledge management and reasoning system for MAP Framework.
+    Extract actionable knowledge, identify patterns, support ACE learning cycles.
 
 memoryOptions:
   similarityThreshold: 0.85
@@ -341,6 +284,7 @@ memoryOptions:
 ```
 
 **Environment variables:**
+
 ```bash
 export OLLAMA_BASE_URL="http://localhost:11434"
 export CIPHER_PG_URL="postgresql://cipher:secure_password@localhost:5432/cipher"
@@ -360,6 +304,7 @@ export STORAGE_DATABASE_TYPE="postgresql"
 **Для кого:** Профессиональные разработчики, приоритет качество > стоимость
 
 **cipher.yml:**
+
 ```yaml
 mcpServers: {}
 
@@ -378,8 +323,8 @@ embedding:
 systemPrompt:
   enabled: true
   content: |
-    You are an expert AI programming assistant integrated with MAP Framework.
-    Focus on clean code, security, and maintainability.
+    You are Cipher, a knowledge management and reasoning system for MAP Framework.
+    Extract actionable knowledge, identify patterns, support ACE learning cycles.
 
 memoryOptions:
   similarityThreshold: 0.80
@@ -391,6 +336,7 @@ memoryOptions:
 ```
 
 **Environment variables:**
+
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
 export VOYAGE_API_KEY="pa-..."
@@ -411,6 +357,7 @@ export STORAGE_DATABASE_TYPE="postgresql"
 **Для кого:** Баланс между стоимостью и качеством
 
 **cipher.yml:**
+
 ```yaml
 mcpServers: {}
 
@@ -429,7 +376,8 @@ embedding:
 systemPrompt:
   enabled: true
   content: |
-    You are an AI assistant specialized in software engineering.
+    You are Cipher, a knowledge management and reasoning system for MAP Framework.
+    Extract actionable knowledge, identify patterns, support ACE learning cycles.
 
 memoryOptions:
   similarityThreshold: 0.85
@@ -441,6 +389,7 @@ memoryOptions:
 ```
 
 **Environment variables:**
+
 ```bash
 export OLLAMA_BASE_URL="http://localhost:11434"
 export OPENAI_API_KEY="sk-..."
@@ -504,6 +453,7 @@ cipher --mode mcp --agent ~/.cipher/cipher.yml
 ### Проблема: "Cannot find cipher.yml"
 
 **Решение:**
+
 ```bash
 # Проверьте путь
 ls -la ~/.cipher/cipher.yml
@@ -520,6 +470,7 @@ cp /Users/azalio/gitroot/cipher/memAgent/cipher.yml ~/.cipher/
 ### Проблема: "Invalid YAML syntax"
 
 **Решение:**
+
 ```bash
 # Проверьте отступы (только пробелы, НЕ табы!)
 sed 's/\t/[TAB]/g' ~/.cipher/cipher.yml | head -20
@@ -535,6 +486,7 @@ python3 -c "import yaml, os; yaml.safe_load(open(os.path.expanduser('~/.cipher/c
 **Симптомы:** `$OLLAMA_BASE_URL is not defined`
 
 **Решение:**
+
 ```bash
 # Убедитесь что переменные экспортированы
 export OLLAMA_BASE_URL="http://localhost:11434"
@@ -553,6 +505,7 @@ source ~/.zshrc
 **Причина:** `VECTOR_STORE_DIMENSION` не совпадает с `embedding.dimensions` в cipher.yml
 
 **Решение:**
+
 ```bash
 # Проверьте cipher.yml
 grep -A 4 'embedding:' ~/.cipher/cipher.yml | grep dimensions
