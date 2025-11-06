@@ -1941,14 +1941,14 @@ MAP: [Proceeds with full context + playbook patterns]
 
 MAP uses **sequential UserPromptSubmit hooks**:
 
-1. **Step 1: Prompt-Improver** - Disambiguates vague prompts
-2. **Step 2: Playbook Injection** - Adds relevant patterns
-3. **Step 3: Workflow Suggestion** - Recommends MAP workflows
-4. **Step 4: Skill Suggestion** - Suggests helpful skills
+1. **Step 1: Prompt-Improver** – Disambiguates vague prompts
+2. **Step 2: Playbook Injection** – Adds relevant patterns, and suggests workflows and skills
+
+> **Note:** In the current implementation, workflow and skill suggestions are combined within the Playbook Injection step (handled by `.claude/hooks/user-prompt-submit.sh`), rather than as separate steps.
 
 **Benefits:**
 - Each hook enhances the previous result
-- Prompt-Improver clarifies → Playbook adds patterns → Workflow guides approach
+- Prompt-Improver clarifies → Playbook adds patterns, workflows, and skills
 - Modular design (hooks can be disabled independently)
 
 ### Disabling Prompt-Improver
@@ -1967,7 +1967,7 @@ If you prefer direct execution without clarification:
     "UserPromptSubmit": [
       // Comment out or remove Prompt-Improver hook
       {
-        "description": "Inject playbook patterns only",
+        "description": "Step 2: Inject playbook patterns and suggest workflows",
         "hooks": [
           {
             "type": "command",

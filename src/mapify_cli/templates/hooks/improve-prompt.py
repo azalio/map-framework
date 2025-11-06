@@ -22,10 +22,8 @@ escaped_prompt = prompt.replace("\\", "\\\\").replace('"', '\\"')
 def output_json(text):
     """Output text in UserPromptSubmit JSON format"""
     output = {
-        "hookSpecificOutput": {
-            "hookEventName": "UserPromptSubmit",
-            "additionalContext": text
-        }
+        "continue": True,
+        "additionalContext": text
     }
     print(json.dumps(output))
 
