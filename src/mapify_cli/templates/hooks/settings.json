@@ -1,27 +1,37 @@
 {
-  "$schema": "https://cdn.jsdelivr.net/npm/@anthropic-ai/claude-code@latest/schemas/settings.schema.json",
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "description": "Claude Code hooks configuration for MAP Framework",
   "hooks": {
     "UserPromptSubmit": [
       {
-        "description": "Step 1: Disambiguate vague prompts",
+        "matcher": "",
+        "description": "Enhance prompts with clarification and playbook context",
         "hooks": [
           {
             "type": "command",
             "command": "python3 .claude/hooks/improve-prompt.py",
             "timeout": 5,
-            "description": "Wraps vague prompts with evaluation instructions for clarification"
-          }
-        ]
-      },
-      {
-        "description": "Step 2: Inject playbook patterns and suggest workflows",
-        "hooks": [
+            "description": "Disambiguate vague prompts with evaluation instructions"
+          },
           {
             "type": "command",
             "command": ".claude/hooks/user-prompt-submit.sh",
             "timeout": 5,
-            "description": "Enhances prompts with playbook patterns and workflow suggestions based on context"
+            "description": "Inject playbook patterns and suggest workflows"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "",
+        "description": "Auto-inject MAP workflow context from checkpoint",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/session-start.sh",
+            "timeout": 5,
+            "description": "Restores .map/current_plan.md checkpoint for seamless compaction recovery"
           }
         ]
       }
@@ -42,7 +52,7 @@
     ],
     "Stop": [
       {
-        "matcher": "Write|Edit",
+        "matcher": "",
         "description": "Quality gates - run automated checks after code modifications",
         "hooks": [
           {
@@ -50,19 +60,6 @@
             "command": ".claude/hooks/stop.sh",
             "timeout": 30,
             "description": "Catches syntax errors and test failures before response submission"
-          }
-        ]
-      }
-    ],
-    "SessionStart": [
-      {
-        "description": "Auto-inject MAP workflow context from checkpoint",
-        "hooks": [
-          {
-            "type": "command",
-            "command": ".claude/hooks/session-start.sh",
-            "timeout": 5,
-            "description": "Restores .map/current_plan.md checkpoint for seamless compaction recovery"
           }
         ]
       }
