@@ -1142,6 +1142,96 @@ Claude: [already has context] Continuing subtask 4...
 
 If hook continues to fail, use [Manual Recovery](#manual-recovery-fallback) workflow.
 
+#### Safe re-initialization with merge behavior
+
+**Key Feature:** Running `mapify init` preserves your customizations when updating MAP Framework hooks.
+
+**What gets preserved:**
+- ✅ Your custom hooks (UserPromptSubmit, PreToolUse, Stop, etc.)
+- ✅ Your permissions settings
+- ✅ Your top-level configuration keys (description, customKey, etc.)
+
+**What gets added:**
+- ✅ New MAP Framework hooks (if they don't already exist)
+- ✅ Updated hook scripts from templates
+
+**How it works:**
+
+```bash
+# Safe to run multiple times - your customizations won't be lost
+mapify init --force
+```
+
+**Deduplication strategy:**
+
+MAP Framework uses the `matcher` field to identify duplicate hook groups:
+
+| Hook Scenario | Behavior |
+|---------------|----------|
+| User has `matcher: "custom-pattern"` | Preserved (not in template) |
+| Template has `matcher: "Bash\\(.*\\)"` | Added only if user doesn't have this matcher |
+| Both have same `matcher: "Edit\\|Write"` | User's version preserved, template not added |
+| Hook has no `matcher` or `matcher: ""` | Full JSON comparison used for deduplication |
+
+**Example:**
+
+Your existing `.claude/settings.json`:
+```json
+{
+  "permissions": {
+    "allow": ["Bash(git status:*)", "Bash(custom-command:*)"]
+  },
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "custom-pattern",
+        "description": "User's custom hook",
+        "hooks": [{"type": "command", "command": "python3 /custom/script.py"}]
+      }
+    ]
+  }
+}
+```
+
+After `mapify init`:
+```json
+{
+  "permissions": {
+    "allow": ["Bash(git status:*)", "Bash(custom-command:*)"]  // ✅ Preserved
+  },
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "custom-pattern",  // ✅ Your custom hook preserved
+        "description": "User's custom hook",
+        "hooks": [{"type": "command", "command": "python3 /custom/script.py"}]
+      },
+      {
+        "matcher": "",  // ✅ MAP Framework hook added
+        "description": "Enhance prompts with clarification and playbook context",
+        "hooks": [
+          {"type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/improve-prompt.py"},
+          {"type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/user-prompt-submit.sh"}
+        ]
+      }
+    ],
+    "SessionStart": [  // ✅ MAP Framework hook added
+      {
+        "matcher": "",
+        "description": "Auto-inject MAP workflow context from checkpoint",
+        "hooks": [{"type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/session-start.sh"}]
+      }
+    ]
+  }
+}
+```
+
+**When to re-run `mapify init`:**
+- ✅ After MAP Framework updates (to get new hooks)
+- ✅ If hooks are not working (safe to repair)
+- ✅ To update hook scripts without losing customizations
+- ⚠️ Your customizations are ALWAYS preserved
+
 #### How to verify auto-recovery is working
 
 **Test sequence:**
