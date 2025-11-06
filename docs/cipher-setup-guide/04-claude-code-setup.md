@@ -1,26 +1,16 @@
 # Настройка Claude Code для работы с Cipher MCP
 
-После установки Cipher и настройки `cipher.yml`, необходимо настроить Claude Code (Claude Desktop) для использования Cipher как MCP сервера.
+После установки Cipher и настройки `cipher.yml`, необходимо настроить Claude Code CLI для использования Cipher как MCP сервера.
 
 ## Расположение конфигурации
 
-Claude Code ищет MCP конфигурацию в двух местах:
+Claude Code CLI ищет MCP конфигурацию в двух местах:
 
 ### Глобальная конфигурация (рекомендуется)
 
-**macOS:**
+**Все платформы (macOS/Linux/Windows):**
 ```
-~/Library/Application Support/Claude/claude_desktop_config.json
-```
-
-**Linux:**
-```
-~/.config/Claude/claude_desktop_config.json
-```
-
-**Windows:**
-```
-%APPDATA%\Claude\claude_desktop_config.json
+~/.claude.json
 ```
 
 ### Проектная конфигурация
@@ -39,7 +29,7 @@ Claude Code ищет MCP конфигурацию в двух местах:
 
 Если вы установили Cipher глобально (`npm install -g @byterover/cipher`):
 
-**~/Library/Application Support/Claude/claude_desktop_config.json:**
+**~/.claude.json:**
 ```json
 {
   "mcpServers": {
@@ -159,7 +149,7 @@ export OPENAI_API_KEY="sk-..."
 source ~/.zshrc
 ```
 
-⚠️ **Внимание:** Claude Desktop должен быть запущен из shell с этими переменными!
+⚠️ **Внимание:** Claude Code должен быть запущен из shell с этими переменными!
 
 ---
 
@@ -255,7 +245,7 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 export OPENAI_API_KEY="sk-..."
 export VOYAGE_API_KEY="pa-..."
 
-# Важно! Перезапустите Claude Desktop после изменений
+# Важно! Перезапустите Claude Code после изменений
 ```
 
 ---
@@ -286,10 +276,10 @@ fi
 
 ```bash
 # Проверка синтаксиса JSON (macOS)
-python3 -m json.tool ~/Library/Application\ Support/Claude/claude_desktop_config.json
+python3 -m json.tool ~/.claude.json
 
 # Или через jq
-jq '.' ~/Library/Application\ Support/Claude/claude_desktop_config.json
+jq '.' ~/.claude.json
 ```
 
 **Если ошибка синтаксиса:**
@@ -309,7 +299,7 @@ which cipher
 ls -la ~/.cipher/cipher.yml
 
 # Проверка что путь в конфиге правильный
-jq '.mcpServers.cipher.args' ~/Library/Application\ Support/Claude/claude_desktop_config.json
+jq '.mcpServers.cipher.args' ~/.claude.json
 ```
 
 ---
@@ -334,7 +324,7 @@ echo $CIPHER_PG_URL
 
 ---
 
-### Шаг 4: Перезапуск Claude Desktop
+### Шаг 4: Перезапуск Claude Code
 
 **macOS:**
 ```bash
@@ -353,7 +343,7 @@ pkill -9 claude
 claude  # Или через иконку приложения
 ```
 
-⚠️ **Важно:** После ЛЮБЫХ изменений в `claude_desktop_config.json` нужен полный перезапуск Claude Desktop!
+⚠️ **Важно:** После ЛЮБЫХ изменений в `.claude.json` нужен полный перезапуск Claude Code!
 
 ---
 
@@ -395,7 +385,7 @@ Claude автоматически вызовет `cipher_memory_search` с ва�
 
 **Решение:**
 
-**Шаг 1:** Проверьте логи Claude Desktop
+**Шаг 1:** Проверьте логи Claude Code
 ```bash
 # macOS
 tail -f ~/Library/Logs/Claude/mcp*.log
@@ -416,7 +406,7 @@ cipher --mode mcp --agent ~/.cipher/cipher.yml
 
 **Шаг 3:** Проверьте конфигурацию
 ```bash
-jq '.mcpServers.cipher' ~/Library/Application\ Support/Claude/claude_desktop_config.json
+jq '.mcpServers.cipher' ~/.claude.json
 ```
 
 ---
@@ -427,7 +417,7 @@ jq '.mcpServers.cipher' ~/Library/Application\ Support/Claude/claude_desktop_con
 
 **Решение:**
 
-Claude Desktop не загружает `~/.zshrc` автоматически!
+Claude Code не загружает `~/.zshrc` автоматически!
 
 **Вариант 1:** Запустите Claude из терминала
 ```bash
@@ -477,7 +467,7 @@ psql "postgresql://cipher:ваш_пароль@localhost:5432/cipher" -c "SELECT 
 
 **Шаг 3:** Проверьте environment variable в MCP конфиге
 ```bash
-jq '.mcpServers.cipher.env.CIPHER_PG_URL' ~/Library/Application\ Support/Claude/claude_desktop_config.json
+jq '.mcpServers.cipher.env.CIPHER_PG_URL' ~/.claude.json
 ```
 
 ---
@@ -497,7 +487,7 @@ curl http://localhost:6333/healthz
 
 **Шаг 2:** Проверьте VECTOR_STORE_URL
 ```bash
-jq '.mcpServers.cipher.env.VECTOR_STORE_URL' ~/Library/Application\ Support/Claude/claude_desktop_config.json
+jq '.mcpServers.cipher.env.VECTOR_STORE_URL' ~/.claude.json
 ```
 
 **Шаг 3:** Проверьте firewall/ports
@@ -510,13 +500,13 @@ netstat -an | grep 6333
 
 ### Проблема 5: "JSON parse error in config"
 
-**Симптомы:** Claude Desktop не запускается или показывает ошибку конфигурации
+**Симптомы:** Claude Code не запускается или показывает ошибку конфигурации
 
 **Решение:**
 
 **Шаг 1:** Валидация JSON
 ```bash
-python3 -m json.tool ~/Library/Application\ Support/Claude/claude_desktop_config.json
+python3 -m json.tool ~/.claude.json
 ```
 
 **Шаг 2:** Найдите ошибку в выводе
@@ -528,7 +518,7 @@ python3 -m json.tool ~/Library/Application\ Support/Claude/claude_desktop_config
 
 **Шаг 3:** Используйте резервную копию
 ```bash
-cp ~/Library/Application\ Support/Claude/claude_desktop_config.json.bak ~/Library/Application\ Support/Claude/claude_desktop_config.json
+cp ~/.claude.json.bak ~/.claude.json
 ```
 
 ---

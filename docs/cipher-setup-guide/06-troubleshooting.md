@@ -8,7 +8,7 @@
 - [PostgreSQL](#postgresql)
 - [Qdrant](#qdrant)
 - [Cipher установка и конфигурация](#cipher-установка-и-конфигурация)
-- [Claude Desktop и MCP](#claude-desktop-и-mcp)
+- [Claude Code и MCP](#claude-desktop-и-mcp)
 - [Performance и оптимизация](#performance-и-оптимизация)
 - [Security и безопасность](#security-и-безопасность)
 
@@ -316,8 +316,8 @@ grep -A 4 'embedding:' ~/.cipher/cipher.yml | grep dimensions
 # Environment variable
 echo $VECTOR_STORE_DIMENSION
 
-# Claude Desktop config
-jq '.mcpServers.cipher.env.VECTOR_STORE_DIMENSION' ~/Library/Application\ Support/Claude/claude_desktop_config.json
+# Claude Code config
+jq '.mcpServers.cipher.env.VECTOR_STORE_DIMENSION' ~/.claude.json
 ```
 
 **2. Если не совпадают, синхронизируйте:**
@@ -505,9 +505,9 @@ yamllint ~/.cipher/cipher.yml
 
 ---
 
-## Claude Desktop и MCP
+## Claude Code и MCP
 
-### Проблема: Claude Desktop не загружает MCP конфиг
+### Проблема: Claude Code не загружает MCP конфиг
 
 **Симптомы:**
 - MCP серверы не появляются в Claude Code
@@ -518,21 +518,21 @@ yamllint ~/.cipher/cipher.yml
 **1. Проверка расположения конфига:**
 ```bash
 # macOS - должен быть здесь:
-ls -la ~/Library/Application\ Support/Claude/claude_desktop_config.json
+ls -la ~/.claude.json
 
 # Linux:
-ls -la ~/.config/Claude/claude_desktop_config.json
+ls -la ~/.claude.json
 ```
 
 **2. Валидация JSON:**
 ```bash
 # macOS
-python3 -m json.tool ~/Library/Application\ Support/Claude/claude_desktop_config.json
+python3 -m json.tool ~/.claude.json
 
 # Если ошибка, найдите строку с проблемой
 ```
 
-**3. Полный перезапуск Claude Desktop:**
+**3. Полный перезапуск Claude Code:**
 ```bash
 # macOS
 osascript -e 'quit app "Claude"'
@@ -547,7 +547,7 @@ claude
 **4. Проверка прав на файл:**
 ```bash
 # Файл должен быть readable
-chmod 644 ~/Library/Application\ Support/Claude/claude_desktop_config.json
+chmod 644 ~/.claude.json
 ```
 
 ---
@@ -555,7 +555,7 @@ chmod 644 ~/Library/Application\ Support/Claude/claude_desktop_config.json
 ### Проблема: MCP server "Failed to start"
 
 **Симптомы:**
-В Claude Desktop:
+В Claude Code:
 ```
 ❌ cipher - Failed to start
 ```
@@ -588,7 +588,7 @@ which cipher
 **"Cannot find module cipher.yml":**
 ```bash
 # Проверьте путь в args
-jq '.mcpServers.cipher.args' ~/Library/Application\ Support/Claude/claude_desktop_config.json
+jq '.mcpServers.cipher.args' ~/.claude.json
 
 # Используйте абсолютный путь:
 "--agent", "/Users/username/.cipher/cipher.yml"
@@ -609,11 +609,11 @@ jq '.mcpServers.cipher.args' ~/Library/Application\ Support/Claude/claude_deskto
 **Симптомы:**
 Cipher запускается, но не может подключиться к БД из-за отсутствия env vars
 
-**Причина:** Claude Desktop не загружает `~/.zshrc` автоматически
+**Причина:** Claude Code не загружает `~/.zshrc` автоматически
 
 **Решения:**
 
-**Вариант 1: Запуск Claude Desktop из терминала**
+**Вариант 1: Запуск Claude Code из терминала**
 ```bash
 # macOS
 open -a Claude
@@ -812,7 +812,7 @@ java -jar bfg.jar --delete-files .env
 **3. Добавьте в .gitignore:**
 ```bash
 echo ".env" >> .gitignore
-echo "claude_desktop_config.json" >> .gitignore
+echo ".claude.json" >> .gitignore
 git add .gitignore
 git commit -m "Add sensitive files to .gitignore"
 ```
@@ -882,9 +882,9 @@ which cipher > /dev/null && echo "✅ Cipher installed" || echo "❌ Cipher not 
 python3 -c "import os, yaml; yaml.safe_load(open(os.path.expanduser('~/.cipher/cipher.yml')))" 2>/dev/null && echo "✅ cipher.yml valid" || echo "❌ cipher.yml invalid"
 
 echo
-echo "6. Claude Desktop:"
-[ -f ~/Library/Application\ Support/Claude/claude_desktop_config.json ] && echo "✅ Config exists" || echo "❌ Config not found"
-python3 -m json.tool ~/Library/Application\ Support/Claude/claude_desktop_config.json > /dev/null 2>&1 && echo "✅ Config valid JSON" || echo "❌ Config invalid JSON"
+echo "6. Claude Code:"
+[ -f ~/.claude.json ] && echo "✅ Config exists" || echo "❌ Config not found"
+python3 -m json.tool ~/.claude.json > /dev/null 2>&1 && echo "✅ Config valid JSON" || echo "❌ Config invalid JSON"
 
 echo
 echo "=== End of Diagnostic ==="
@@ -907,7 +907,7 @@ chmod +x diagnose-cipher.sh
 # Docker logs
 docker compose logs > cipher-logs.txt
 
-# Claude Desktop logs (macOS)
+# Claude Code logs (macOS)
 tar -czf claude-logs.tar.gz ~/Library/Logs/Claude/
 
 # System info

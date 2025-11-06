@@ -8,7 +8,7 @@
 - [ ] Qdrant запущен и доступен
 - [ ] Cipher установлен и запускается
 - [ ] cipher.yml корректно настроен
-- [ ] Claude Desktop видит Cipher MCP
+- [ ] Claude Code видит Cipher MCP
 - [ ] MCP tools доступны в Claude Code
 - [ ] Memory операции работают
 
@@ -252,16 +252,16 @@ cipher --mode mcp --agent ~/.cipher/cipher.yml 2>&1 | head -20
 
 ---
 
-## Шаг 4: Проверка Claude Desktop конфигурации
+## Шаг 4: Проверка Claude Code конфигурации
 
-### Валидация claude_desktop_config.json
+### Валидация .claude.json
 
 ```bash
 # macOS
-python3 -m json.tool ~/Library/Application\ Support/Claude/claude_desktop_config.json > /dev/null && echo "✅ JSON валиден"
+python3 -m json.tool ~/.claude.json > /dev/null && echo "✅ JSON валиден"
 
 # Linux
-python3 -m json.tool ~/.config/Claude/claude_desktop_config.json > /dev/null && echo "✅ JSON валиден"
+python3 -m json.tool ~/.claude.json > /dev/null && echo "✅ JSON валиден"
 ```
 
 **Ожидаемый вывод:**
@@ -275,10 +275,10 @@ python3 -m json.tool ~/.config/Claude/claude_desktop_config.json > /dev/null && 
 
 ```bash
 # macOS
-jq '.mcpServers | keys[]' ~/Library/Application\ Support/Claude/claude_desktop_config.json | grep cipher
+jq '.mcpServers | keys[]' ~/.claude.json | grep cipher
 
 # Linux
-jq '.mcpServers | keys[]' ~/.config/Claude/claude_desktop_config.json | grep cipher
+jq '.mcpServers | keys[]' ~/.claude.json | grep cipher
 ```
 
 **Ожидаемый вывод:**
@@ -292,7 +292,7 @@ jq '.mcpServers | keys[]' ~/.config/Claude/claude_desktop_config.json | grep cip
 
 ```bash
 # macOS
-jq '.mcpServers.cipher.env' ~/Library/Application\ Support/Claude/claude_desktop_config.json
+jq '.mcpServers.cipher.env' ~/.claude.json
 ```
 
 **Ожидаемый вывод (примерно):**
@@ -317,9 +317,9 @@ jq '.mcpServers.cipher.env' ~/Library/Application\ Support/Claude/claude_desktop
 
 ---
 
-## Шаг 5: Проверка Claude Desktop
+## Шаг 5: Проверка Claude Code
 
-### Перезапуск Claude Desktop
+### Перезапуск Claude Code
 
 **macOS:**
 ```bash
@@ -342,7 +342,7 @@ claude
 
 ### Проверка MCP серверов в Claude Code
 
-1. Откройте Claude Desktop
+1. Откройте Claude Code
 2. Создайте новый чат
 3. В правом верхнем углу найдите иконку MCP (или Settings)
 4. Проверьте список MCP серверов
@@ -465,7 +465,7 @@ curl -s http://localhost:6333/collections/cipher_memory | jq '.result.points_cou
 1. Сначала нужно установить Node.js
 2. Затем установить Cipher через npm
 3. Настроить cipher.yml
-4. Настроить Claude Desktop
+4. Настроить Claude Code
 
 Извлеки эти reasoning steps и сохрани их.
 ```
@@ -551,7 +551,7 @@ docker compose logs postgres --tail=100
 
 Если видите `FATAL: password authentication failed`:
 - Проверьте пароль в `.env` файле
-- Проверьте `CIPHER_PG_URL` в Claude Desktop конфиге
+- Проверьте `CIPHER_PG_URL` в Claude Code конфиге
 - Пересоздайте контейнер: `docker compose down -v && docker compose up -d`
 
 ---
@@ -583,15 +583,15 @@ docker compose logs qdrant --tail=50
 
 ---
 
-### Проблема: Claude Desktop не видит MCP tools
+### Проблема: Claude Code не видит MCP tools
 
 **Симптомы:** В чате нет доступа к cipher tools
 
 **Решение:**
 
 1. Проверьте логи: `tail -f ~/Library/Logs/Claude/mcp*.log`
-2. Полный перезапуск Claude Desktop (Cmd+Q, затем запуск)
-3. Проверьте JSON конфиг: `python3 -m json.tool ~/Library/Application\ Support/Claude/claude_desktop_config.json`
+2. Полный перезапуск Claude Code (Cmd+Q, затем запуск)
+3. Проверьте JSON конфиг: `python3 -m json.tool ~/.claude.json`
 4. Проверьте что Cipher запускается: `cipher --mode mcp --agent ~/.cipher/cipher.yml`
 
 ---
@@ -607,10 +607,10 @@ docker compose logs qdrant --tail=50
 - [ ] Конфиг валиден: `python3 -c "import yaml; yaml.safe_load(open('$HOME/.cipher/cipher.yml'))"`
 - [ ] MCP режим работает: `cipher --mode mcp --agent ~/.cipher/cipher.yml` → запускается без ошибок
 
-✅ **Claude Desktop:**
-- [ ] Конфиг валиден: `python3 -m json.tool ~/Library/Application\ Support/Claude/claude_desktop_config.json`
+✅ **Claude Code:**
+- [ ] Конфиг валиден: `python3 -m json.tool ~/.claude.json`
 - [ ] Cipher в конфиге: `jq '.mcpServers | keys[]' ... | grep cipher` → `"cipher"`
-- [ ] MCP сервер подключен: В Claude Desktop UI → `✅ cipher - Connected`
+- [ ] MCP сервер подключен: В Claude Code UI → `✅ cipher - Connected`
 
 ✅ **Функциональность:**
 - [ ] Memory search работает: Тест в Claude Code чате

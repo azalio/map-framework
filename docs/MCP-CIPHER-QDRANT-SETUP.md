@@ -109,11 +109,11 @@ mkdir -p ~/.cipher
 cp /path/to/cipher.yml.example ~/.cipher/cipher.yml
 nano ~/.cipher/cipher.yml  # Настройте LLM провайдер
 
-# 6. Настройте Claude Desktop
-nano ~/Library/Application\ Support/Claude/claude_desktop_config.json
+# 6. Настройте Claude Code
+nano ~/.claude.json
 # Добавьте cipher MCP server конфигурацию
 
-# 7. Перезапустите Claude Desktop
+# 7. Перезапустите Claude Code
 osascript -e 'quit app "Claude"'
 open -a Claude
 
@@ -172,15 +172,15 @@ open -a Claude
 
 ### Шаг 4: Настройка Claude Code MCP
 
-Подключите Cipher как MCP сервер в Claude Desktop.
+Подключите Cipher как MCP сервер в Claude Code.
 
 **Время:** ~10 минут
 **Документ:** [cipher-setup-guide/04-claude-code-setup.md](cipher-setup-guide/04-claude-code-setup.md)
 
 **Что вы сделаете:**
-- Отредактируете `claude_desktop_config.json`
+- Отредактируете `.claude.json`
 - Настроите environment variables для MCP сервера
-- Перезапустите Claude Desktop
+- Перезапустите Claude Code
 - Проверите что Cipher подключен
 
 ---
@@ -211,7 +211,7 @@ open -a Claude
 - PostgreSQL connection issues
 - Qdrant dimension mismatch errors
 - Cipher installation и configuration проблемы
-- Claude Desktop MCP integration issues
+- Claude Code MCP integration issues
 - Performance optimization
 - Security best practices
 
@@ -399,12 +399,12 @@ npm update -g @byterover/cipher
 # Проверка версии
 cipher --version
 
-# Перезапустите Claude Desktop после обновления
+# Перезапустите Claude Code после обновления
 ```
 
 ---
 
-### Q: Безопасно ли хранить API ключи в claude_desktop_config.json?
+### Q: Безопасно ли хранить API ключи в .claude.json?
 
 **A:** Относительно безопасно (файл доступен только вашему пользователю), но лучше использовать environment variable expansion:
 
