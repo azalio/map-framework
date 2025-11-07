@@ -1,0 +1,802 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Mapify CLI Reference",
+  "version": "1.0.0",
+  "description": "Machine-readable specification of mapify CLI commands, parameters, and usage patterns",
+  "commands": {
+    "playbook": {
+      "description": "Manage and search playbook patterns",
+      "subcommands": {
+        "query": {
+          "description": "Query playbook using FTS5 full-text search with optional cipher integration",
+          "usage": "mapify playbook query [QUERY_TEXT] [OPTIONS]",
+          "parameters": {
+            "query_text": {
+              "type": "string",
+              "required": true,
+              "position": "argument",
+              "description": "Search query text (supports FTS5 query syntax)"
+            },
+            "section": {
+              "type": "string[]",
+              "required": false,
+              "flag": "--section",
+              "description": "Filter by section (can specify multiple)",
+              "examples": ["ARCHITECTURE_PATTERNS", "IMPLEMENTATION_PATTERNS", "TESTING_PATTERNS"]
+            },
+            "limit": {
+              "type": "integer",
+              "required": false,
+              "flag": "--limit",
+              "default": 5,
+              "description": "Maximum results to return"
+            },
+            "mode": {
+              "type": "string",
+              "required": false,
+              "flag": "--mode",
+              "default": "local",
+              "enum": ["local", "cipher", "hybrid"],
+              "description": "Search mode: local (playbook only), cipher (cross-project), or hybrid (both)"
+            },
+            "format": {
+              "type": "string",
+              "required": false,
+              "flag": "--format",
+              "default": "markdown",
+              "enum": ["markdown", "json"],
+              "description": "Output format"
+            },
+            "min-quality": {
+              "type": "integer",
+              "required": false,
+              "flag": "--min-quality",
+              "default": 0,
+              "description": "Minimum quality score (helpful - harmful)"
+            }
+          },
+          "examples": [
+            {
+              "command": "mapify playbook query \"JWT authentication\" --limit 5",
+              "description": "Basic query for JWT patterns"
+            },
+            {
+              "command": "mapify playbook query \"error handling\" --mode hybrid --limit 10",
+              "description": "Hybrid search (playbook + cipher)"
+            },
+            {
+              "command": "mapify playbook query \"API design\" --section ARCHITECTURE_PATTERNS",
+              "description": "Query specific section"
+            }
+          ],
+          "common_errors": [
+            {
+              "wrong": "mapify playbook query --bullet-id test-0016",
+              "correct": "mapify playbook query \"test-0016\"",
+              "explanation": "Use query text as argument, not --bullet-id option (doesn't exist)"
+            }
+          ]
+        },
+        "search": {
+          "description": "Search playbook for relevant patterns (semantic search, slower than query)",
+          "usage": "mapify playbook search [QUERY] [OPTIONS]",
+          "parameters": {
+            "query": {
+              "type": "string",
+              "required": true,
+              "position": "argument",
+              "description": "Search query"
+            },
+            "top-k": {
+              "type": "integer",
+              "required": false,
+              "flag": "--top-k",
+              "default": 5,
+              "description": "Number of results to return"
+            }
+          },
+          "examples": [
+            {
+              "command": "mapify playbook search \"authentication patterns\" --top-k 10",
+              "description": "Semantic search for authentication patterns"
+            }
+          ],
+          "common_errors": [
+            {
+              "wrong": "mapify playbook search --limit 3",
+              "correct": "mapify playbook search \"query text\" --top-k 3",
+              "explanation": "Use --top-k, not --limit (different from query command)"
+            }
+          ]
+        },
+        "apply-delta": {
+          "description": "Apply delta operations to playbook (ADD, UPDATE, DEPRECATE)",
+          "usage": "mapify playbook apply-delta [FILE] [OPTIONS]",
+          "parameters": {
+            "input_file": {
+              "type": "path",
+              "required": false,
+              "position": "argument",
+              "description": "JSON file containing delta operations (or use stdin)"
+            },
+            "dry-run": {
+              "type": "boolean",
+              "required": false,
+              "flag": "--dry-run",
+              "default": false,
+              "description": "Preview changes without applying them"
+            }
+          },
+          "input_format": {
+            "type": "object",
+            "schema": {
+              "operations": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": ["ADD", "UPDATE", "DEPRECATE"],
+                      "description": "Operation type"
+                    },
+                    "bullet_id": {
+                      "type": "string",
+                      "description": "Required for UPDATE and DEPRECATE"
+                    },
+                    "section": {
+                      "type": "string",
+                      "description": "Required for ADD"
+                    },
+                    "content": {
+                      "type": "string",
+                      "description": "Required for ADD only (UPDATE uses increment counters)"
+                    },
+                    "code_example": {
+                      "type": "string",
+                      "description": "Optional for ADD - code snippet demonstrating the pattern"
+                    },
+                    "tags": {
+                      "type": "array",
+                      "items": {"type": "string"},
+                      "description": "Optional for ADD - categorization tags"
+                    },
+                    "related_to": {
+                      "type": "array",
+                      "items": {"type": "string"},
+                      "description": "Optional for ADD - IDs of related bullets"
+                    },
+                    "executable_scripts": {
+                      "type": "array",
+                      "items": {"type": "string"},
+                      "description": "Optional for ADD - runnable code examples"
+                    },
+                    "increment_helpful": {
+                      "type": "integer",
+                      "description": "Optional for UPDATE - increment helpful counter"
+                    },
+                    "increment_harmful": {
+                      "type": "integer",
+                      "description": "Optional for UPDATE - increment harmful counter"
+                    },
+                    "reason": {
+                      "type": "string",
+                      "description": "Optional for DEPRECATE - deprecation reason (rationale deprecated)"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "examples": [
+            {
+              "command": "mapify playbook apply-delta operations.json",
+              "description": "Apply operations from file",
+              "sample_operations": {
+                "operations": [
+                  {
+                    "type": "ADD",
+                    "section": "SECURITY_PATTERNS",
+                    "content": "Use parameterized queries to prevent SQL injection",
+                    "code_example": "cursor.execute('SELECT * FROM users WHERE id = ?', (user_id,))",
+                    "tags": ["security", "sql", "injection-prevention"]
+                  },
+                  {
+                    "type": "UPDATE",
+                    "bullet_id": "sec-0012",
+                    "increment_helpful": 1
+                  },
+                  {
+                    "type": "DEPRECATE",
+                    "bullet_id": "impl-0001",
+                    "reason": "Pattern obsolete due to library update"
+                  }
+                ]
+              }
+            },
+            {
+              "command": "echo '{\"operations\":[{\"type\":\"UPDATE\",\"bullet_id\":\"impl-0042\",\"increment_helpful\":1}]}' | mapify playbook apply-delta",
+              "description": "Apply operations from stdin"
+            },
+            {
+              "command": "mapify playbook apply-delta operations.json --dry-run",
+              "description": "Preview changes without applying"
+            }
+          ],
+          "notes": [
+            "This is the ONLY correct way to update playbook",
+            "Never use direct sqlite3 commands",
+            "Never use Edit tool on playbook.db"
+          ]
+        },
+        "stats": {
+          "description": "Show playbook statistics",
+          "usage": "mapify playbook stats",
+          "parameters": {},
+          "examples": [
+            {
+              "command": "mapify playbook stats",
+              "description": "Display bullet counts by section and quality metrics"
+            }
+          ]
+        },
+        "sync": {
+          "description": "Show high-quality patterns ready for cross-project sync",
+          "usage": "mapify playbook sync [OPTIONS]",
+          "parameters": {
+            "threshold": {
+              "type": "integer",
+              "required": false,
+              "flag": "--threshold",
+              "default": 5,
+              "description": "Minimum helpful count for patterns to be considered high-quality"
+            }
+          },
+          "examples": [
+            {
+              "command": "mapify playbook sync",
+              "description": "Show patterns with helpful_count >= 5"
+            },
+            {
+              "command": "mapify playbook sync --threshold 10",
+              "description": "Show patterns with helpful_count >= 10"
+            }
+          ]
+        }
+      },
+      "removed_commands": [
+        {
+          "command": "list",
+          "wrong_usage": "mapify playbook list --sections",
+          "explanation": "This command doesn't exist. Use 'mapify playbook stats' to see section overview or 'mapify playbook query' to search."
+        },
+        {
+          "command": "get",
+          "wrong_usage": "mapify playbook get docu-0005",
+          "correct_usage": "mapify playbook query \"docu-0005\"",
+          "explanation": "Use 'query' command with bullet ID as search text"
+        }
+      ]
+    },
+    "recitation": {
+      "description": "Manage MAP workflow task execution plans",
+      "subcommands": {
+        "create": {
+          "description": "Create a new task execution plan",
+          "usage": "mapify recitation create [TASK_ID] [GOAL] [SUBTASKS_JSON] [OPTIONS]",
+          "parameters": {
+            "task_id": {
+              "type": "string",
+              "required": true,
+              "position": "argument",
+              "description": "Unique identifier for the task"
+            },
+            "goal": {
+              "type": "string",
+              "required": true,
+              "position": "argument",
+              "description": "High-level goal description"
+            },
+            "subtasks_json": {
+              "type": "string",
+              "required": true,
+              "position": "argument",
+              "description": "JSON string containing subtask definitions"
+            },
+            "force": {
+              "type": "boolean",
+              "required": false,
+              "flag": "--force",
+              "default": false,
+              "description": "Overwrite existing plan"
+            }
+          },
+          "examples": [
+            {
+              "command": "mapify recitation create task-001 \"Implement auth\" '[{\"id\":\"subtask-1\",\"description\":\"...\"}]'",
+              "description": "Create new execution plan"
+            }
+          ]
+        },
+        "update": {
+          "description": "Update subtask status",
+          "usage": "mapify recitation update [SUBTASK_ID] [STATUS] [ERROR]",
+          "parameters": {
+            "subtask_id": {
+              "type": "string",
+              "required": true,
+              "position": "argument",
+              "description": "Subtask identifier"
+            },
+            "status": {
+              "type": "string",
+              "required": true,
+              "position": "argument",
+              "enum": ["pending", "in_progress", "completed", "failed", "blocked"],
+              "description": "New status"
+            },
+            "error": {
+              "type": "string",
+              "required": false,
+              "position": "argument",
+              "description": "Error message (for failed status)"
+            }
+          },
+          "examples": [
+            {
+              "command": "mapify recitation update subtask-1 completed",
+              "description": "Mark subtask as completed"
+            },
+            {
+              "command": "mapify recitation update subtask-2 failed \"Validation error\"",
+              "description": "Mark subtask as failed with error"
+            }
+          ]
+        },
+        "checkpoint": {
+          "description": "Show current MAP workflow state and recovery instructions",
+          "usage": "mapify recitation checkpoint",
+          "parameters": {},
+          "examples": [
+            {
+              "command": "mapify recitation checkpoint",
+              "description": "Display current workflow state for post-compaction recovery"
+            }
+          ]
+        },
+        "get-context": {
+          "description": "Get current plan context as markdown",
+          "usage": "mapify recitation get-context",
+          "parameters": {},
+          "examples": [
+            {
+              "command": "mapify recitation get-context",
+              "description": "Display current execution plan in markdown format"
+            }
+          ]
+        },
+        "get-docs": {
+          "description": "Get all dev docs content (plan + context + tasks)",
+          "usage": "mapify recitation get-docs",
+          "parameters": {},
+          "output_format": {
+            "type": "json",
+            "schema": {
+              "status": "string",
+              "docs": {
+                "plan": "string",
+                "context": "string",
+                "tasks": "string"
+              }
+            }
+          },
+          "examples": [
+            {
+              "command": "mapify recitation get-docs",
+              "description": "Get complete dev documentation as JSON"
+            }
+          ]
+        },
+        "generate-context": {
+          "description": "Generate context.md from project metadata and playbook",
+          "usage": "mapify recitation generate-context",
+          "parameters": {},
+          "examples": [
+            {
+              "command": "mapify recitation generate-context",
+              "description": "Generate .map/context.md from current state"
+            }
+          ]
+        },
+        "generate-tasks": {
+          "description": "Regenerate tasks.md from current plan",
+          "usage": "mapify recitation generate-tasks",
+          "parameters": {},
+          "examples": [
+            {
+              "command": "mapify recitation generate-tasks",
+              "description": "Regenerate .map/tasks.md from execution plan"
+            }
+          ]
+        },
+        "stats": {
+          "description": "Show plan statistics",
+          "usage": "mapify recitation stats",
+          "parameters": {},
+          "output_format": {
+            "type": "json",
+            "schema": {
+              "total_subtasks": "integer",
+              "completed": "integer",
+              "in_progress": "integer",
+              "pending": "integer",
+              "failed": "integer",
+              "blocked": "integer"
+            }
+          },
+          "examples": [
+            {
+              "command": "mapify recitation stats",
+              "description": "Display execution plan statistics"
+            }
+          ]
+        },
+        "clear": {
+          "description": "Clear active plan",
+          "usage": "mapify recitation clear",
+          "parameters": {},
+          "examples": [
+            {
+              "command": "mapify recitation clear",
+              "description": "Remove current execution plan"
+            }
+          ]
+        }
+      }
+    },
+    "validate": {
+      "description": "Validate task dependency graphs",
+      "subcommands": {
+        "graph": {
+          "description": "Validate TaskDecomposer dependency graph",
+          "usage": "mapify validate graph [INPUT_FILE] [OPTIONS]",
+          "parameters": {
+            "input_file": {
+              "type": "path",
+              "required": false,
+              "position": "argument",
+              "description": "JSON file to validate (or use stdin)"
+            },
+            "visualize": {
+              "type": "boolean",
+              "required": false,
+              "flag": "--visualize",
+              "default": false,
+              "description": "Show ASCII dependency tree"
+            },
+            "no-color": {
+              "type": "boolean",
+              "required": false,
+              "flag": "--no-color",
+              "default": false,
+              "description": "Disable colored output"
+            },
+            "format": {
+              "type": "string",
+              "required": false,
+              "flag": "--format",
+              "alias": "-f",
+              "default": "json",
+              "enum": ["json", "text"],
+              "description": "Output format"
+            },
+            "strict": {
+              "type": "boolean",
+              "required": false,
+              "flag": "--strict",
+              "default": false,
+              "description": "Fail on warnings (orphaned tasks), not just critical errors"
+            }
+          },
+          "exit_codes": {
+            "0": "Valid graph (no critical errors; warnings allowed unless --strict)",
+            "1": "Invalid graph (critical errors found, or warnings with --strict)",
+            "2": "Malformed input (invalid JSON or missing required fields)"
+          },
+          "examples": [
+            {
+              "command": "mapify validate graph task_plan.json",
+              "description": "Validate graph from file"
+            },
+            {
+              "command": "echo '{\"subtasks\":[...]}' | mapify validate graph",
+              "description": "Validate graph from stdin"
+            },
+            {
+              "command": "mapify validate graph task_plan.json --visualize",
+              "description": "Validate and show dependency tree"
+            },
+            {
+              "command": "mapify validate graph task_plan.json --strict",
+              "description": "Fail on warnings as well as errors"
+            }
+          ]
+        }
+      }
+    },
+    "root": {
+      "description": "Root-level mapify commands",
+      "commands": {
+        "init": {
+          "description": "Initialize a new MAP Framework project",
+          "usage": "mapify init [PROJECT_NAME] [OPTIONS]",
+          "parameters": {
+            "project_name": {
+              "type": "string",
+              "required": false,
+              "position": "argument",
+              "description": "Name for your new project directory (use '.' for current directory)"
+            },
+            "mcp": {
+              "type": "string",
+              "required": false,
+              "flag": "--mcp",
+              "enum": ["all", "essential", "docs", "none", "comma-separated-list"],
+              "description": "MCP servers to enable"
+            },
+            "no-git": {
+              "type": "boolean",
+              "required": false,
+              "flag": "--no-git",
+              "default": false,
+              "description": "Skip git repository initialization"
+            },
+            "force": {
+              "type": "boolean",
+              "required": false,
+              "flag": "--force",
+              "default": false,
+              "description": "Force merge/overwrite when using '.' in non-empty directory"
+            }
+          },
+          "examples": [
+            {
+              "command": "mapify init my-project",
+              "description": "Create new project directory with MAP templates"
+            },
+            {
+              "command": "mapify init . --mcp essential",
+              "description": "Initialize MAP in current directory with essential MCP servers"
+            },
+            {
+              "command": "mapify init . --force",
+              "description": "Force initialization in non-empty directory"
+            }
+          ]
+        },
+        "check": {
+          "description": "Check that all required tools are installed",
+          "usage": "mapify check [OPTIONS]",
+          "parameters": {
+            "debug": {
+              "type": "boolean",
+              "required": false,
+              "flag": "--debug",
+              "default": false,
+              "description": "Enable debug logging"
+            }
+          },
+          "examples": [
+            {
+              "command": "mapify check",
+              "description": "Verify all dependencies are installed"
+            },
+            {
+              "command": "mapify check --debug",
+              "description": "Check with verbose debug output"
+            }
+          ]
+        },
+        "upgrade": {
+          "description": "Upgrade MAP agents to the latest version",
+          "usage": "mapify upgrade",
+          "parameters": {},
+          "examples": [
+            {
+              "command": "mapify upgrade",
+              "description": "Update agent templates to latest version"
+            }
+          ]
+        }
+      }
+    }
+  },
+  "common_patterns": {
+    "query_vs_search": {
+      "description": "Understanding the difference between playbook query and search",
+      "query": {
+        "method": "FTS5 full-text search",
+        "speed": "Fast (indexed)",
+        "use_case": "Known keywords, exact terms, large playbooks",
+        "syntax": "SQLite FTS5 query syntax (AND, OR, NOT, NEAR, prefix*)"
+      },
+      "search": {
+        "method": "Semantic search (embedding-based)",
+        "speed": "Slower (requires embeddings)",
+        "use_case": "Conceptual search, similar patterns, synonyms",
+        "syntax": "Natural language"
+      },
+      "recommendation": "Use 'query' for most cases, 'search' for semantic similarity"
+    },
+    "playbook_modes": {
+      "local": "Search only project playbook (fast)",
+      "cipher": "Search only cross-project cipher memory (requires MCP)",
+      "hybrid": "Search both playbook and cipher (comprehensive)"
+    },
+    "stdin_support": {
+      "description": "Commands that accept stdin input",
+      "commands": [
+        "mapify playbook apply-delta",
+        "mapify validate graph"
+      ],
+      "example": "echo '{...}' | mapify playbook apply-delta"
+    }
+  },
+  "fts5_query_syntax": {
+    "description": "SQLite FTS5 query syntax for 'mapify playbook query'",
+    "operators": {
+      "AND": {
+        "syntax": "term1 AND term2",
+        "description": "Both terms must be present",
+        "example": "JWT AND authentication"
+      },
+      "OR": {
+        "syntax": "term1 OR term2",
+        "description": "Either term must be present",
+        "example": "error OR exception"
+      },
+      "NOT": {
+        "syntax": "term1 NOT term2",
+        "description": "First term present, second term absent",
+        "example": "testing NOT integration"
+      },
+      "NEAR": {
+        "syntax": "NEAR(term1 term2, N)",
+        "description": "Terms within N tokens of each other",
+        "example": "NEAR(JWT token, 5)"
+      },
+      "prefix": {
+        "syntax": "term*",
+        "description": "Prefix matching",
+        "example": "auth* (matches auth, authentication, authorize)"
+      },
+      "phrase": {
+        "syntax": "\"exact phrase\"",
+        "description": "Exact phrase match",
+        "example": "\"error handling\""
+      }
+    },
+    "examples": [
+      {
+        "query": "JWT AND authentication",
+        "description": "Find bullets with both JWT and authentication"
+      },
+      {
+        "query": "error OR exception OR failure",
+        "description": "Find bullets with any error-related terms"
+      },
+      {
+        "query": "test* AND NOT integration",
+        "description": "Find testing patterns excluding integration tests"
+      },
+      {
+        "query": "\"API design\" AND REST",
+        "description": "Find REST API design patterns"
+      }
+    ]
+  },
+  "error_patterns": {
+    "description": "Common mistakes and corrections",
+    "errors": [
+      {
+        "category": "wrong_command",
+        "mistake": "mapify playbook list --sections",
+        "reason": "Command 'list' doesn't exist",
+        "correction": "mapify playbook stats",
+        "explanation": "Use 'stats' to see section overview"
+      },
+      {
+        "category": "wrong_command",
+        "mistake": "mapify playbook get docu-0005",
+        "reason": "Command 'get' doesn't exist",
+        "correction": "mapify playbook query \"docu-0005\"",
+        "explanation": "Use 'query' with bullet ID as search text"
+      },
+      {
+        "category": "wrong_parameter",
+        "mistake": "mapify playbook search --limit 3",
+        "reason": "Parameter '--limit' doesn't exist for search",
+        "correction": "mapify playbook search \"query\" --top-k 3",
+        "explanation": "search uses --top-k, not --limit (query uses --limit)"
+      },
+      {
+        "category": "wrong_parameter",
+        "mistake": "mapify playbook query --bullet-id test-0016",
+        "reason": "Option '--bullet-id' doesn't exist",
+        "correction": "mapify playbook query \"test-0016\"",
+        "explanation": "Use bullet ID as query text argument"
+      },
+      {
+        "category": "wrong_approach",
+        "mistake": "sqlite3 .claude/playbook.db \"UPDATE bullets SET ...\"",
+        "reason": "Direct database modification bypasses validation",
+        "correction": "mapify playbook apply-delta operations.json",
+        "explanation": "Always use apply-delta to maintain integrity"
+      },
+      {
+        "category": "wrong_approach",
+        "mistake": "Edit tool on playbook.db",
+        "reason": "Cannot edit binary SQLite database",
+        "correction": "mapify playbook apply-delta operations.json",
+        "explanation": "Use apply-delta with JSON delta operations"
+      },
+      {
+        "category": "legacy_reference",
+        "mistake": "Reading playbook.json",
+        "reason": "playbook.json is deprecated (migrated to playbook.db)",
+        "correction": "mapify playbook query \"...\"",
+        "explanation": "Use CLI commands to interact with playbook.db"
+      }
+    ]
+  },
+  "integration_notes": {
+    "map_workflow": {
+      "description": "How MAP agents use the CLI",
+      "curator_agent": {
+        "role": "Updates playbook via delta operations",
+        "workflow": [
+          "1. Curator analyzes reflector insights",
+          "2. Generates delta operations (ADD/UPDATE/DEPRECATE)",
+          "3. Outputs JSON to file",
+          "4. Main agent runs: mapify playbook apply-delta operations.json"
+        ],
+        "critical_rule": "NEVER manually update playbook.db - always use apply-delta"
+      },
+      "reflector_agent": {
+        "role": "Searches for existing patterns before extracting new ones",
+        "workflow": [
+          "1. Search cipher for similar patterns",
+          "2. Search local playbook",
+          "3. Extract only novel patterns"
+        ],
+        "uses_commands": [
+          "mapify playbook query \"...\" --mode hybrid"
+        ]
+      }
+    },
+    "cipher_mcp": {
+      "description": "Integration with cipher MCP server for cross-project memory",
+      "commands_using_cipher": [
+        "mapify playbook query --mode cipher",
+        "mapify playbook query --mode hybrid"
+      ],
+      "requirement": "Cipher MCP server must be configured in Claude Desktop config"
+    }
+  },
+  "metadata": {
+    "generated_from": "src/mapify_cli/__init__.py",
+    "command_definitions": [
+      "@app.command() decorators",
+      "@playbook_app.command() decorators",
+      "@recitation_app.command() decorators",
+      "@validate_app.command() decorators"
+    ],
+    "version": "Based on map-framework {{VERSION}}",
+    "last_updated": "2025-11-07",
+    "related_docs": [
+      "docs/USAGE.md",
+      "docs/PLAYBOOK-USAGE-GUIDE.md",
+      "docs/CLI_TESTING_GUIDE.md"
+    ]
+  }
+}
