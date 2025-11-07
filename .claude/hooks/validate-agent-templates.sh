@@ -65,8 +65,8 @@ if [ ${#MISSING_PATTERNS[@]} -gt 0 ]; then
     MESSAGE+="\\nTo bypass this check (NOT recommended):\\n"
     MESSAGE+="  Disable the PreToolUse hook in .claude/settings.hooks.json"
 
-    # Return blocking decision with message
-    echo "{\"decision\": \"block\", \"message\": \"$MESSAGE\"}"
+    # Return blocking decision with message using jq for proper JSON escaping
+    jq -n --arg msg "$MESSAGE" '{decision: "block", message: $msg}'
     exit 1
 fi
 
@@ -84,7 +84,8 @@ if [ -f "$FILE_PATH" ]; then
         MESSAGE+="This might include critical Handlebars templates or instructions.\\n"
         MESSAGE+="\\nIf this is intentional, proceed. Otherwise, review the changes carefully."
 
-        echo "{\"decision\": \"allow\", \"message\": \"$MESSAGE\"}"
+        # Return allow decision with warning message using jq for proper JSON escaping
+        jq -n --arg msg "$MESSAGE" '{decision: "allow", message: $msg}'
         exit 0
     fi
 fi

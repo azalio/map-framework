@@ -19,6 +19,14 @@ INPUT=$(cat)
 # Debug logging to stderr
 echo "[stop/quality-gates] Hook triggered" >&2
 
+# Validate JSON input before processing
+if ! echo "$INPUT" | jq empty 2>/dev/null; then
+    echo "[stop/quality-gates] ⚠️  WARNING: Received malformed JSON input" >&2
+    echo "[stop/quality-gates] Skipping quality gates (non-blocking)" >&2
+    echo '{"continue": true}'
+    exit 0
+fi
+
 # Check if quality gates are enabled
 if [ "$QUALITY_GATES_ENABLED" != "true" ]; then
     echo "[stop/quality-gates] Quality gates disabled via QUALITY_GATES_ENABLED" >&2
@@ -26,8 +34,8 @@ if [ "$QUALITY_GATES_ENABLED" != "true" ]; then
     exit 0
 fi
 
-# Extract tool name from JSON
-TOOL=$(echo "$INPUT" | jq -r '.tool // empty')
+# Extract tool name from JSON (using heredoc to avoid echo issues)
+TOOL=$(jq -r '.tool // empty' <<< "$INPUT")
 
 # Only run quality gates for Write and Edit operations
 if [[ "$TOOL" != "Write" && "$TOOL" != "Edit" ]]; then
@@ -36,8 +44,8 @@ if [[ "$TOOL" != "Write" && "$TOOL" != "Edit" ]]; then
     exit 0
 fi
 
-# Extract file path that was modified
-FILE_PATH=$(echo "$INPUT" | jq -r '.parameters.file_path // empty')
+# Extract file path that was modified (using heredoc to avoid echo issues)
+FILE_PATH=$(jq -r '.parameters.file_path // empty' <<< "$INPUT")
 
 if [ -z "$FILE_PATH" ]; then
     echo "[stop/quality-gates] No file_path in parameters, skipping checks" >&2
