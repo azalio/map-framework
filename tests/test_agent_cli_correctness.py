@@ -206,31 +206,15 @@ class TestAgentCLICorrectness:
                 print(f"  - {warning}")
 
     def test_correct_cli_examples_present(self, agent_files):
-        """Test that agents with CLI examples use correct syntax."""
-        errors = []
+        """Test that agents with CLI examples use correct syntax.
 
-        for agent_file in agent_files:
-            content = agent_file.read_text()
-
-            # If agent mentions playbook query/search, ensure correct usage
-            if 'mapify playbook' in content:
-                # Verify query examples have correct syntax
-                query_examples = re.findall(
-                    r'mapify\s+playbook\s+query\s+"[^"]*"(?:\s+--\w+\s+\d+)?',
-                    content
-                )
-
-                # Verify search examples have correct syntax
-                search_examples = re.findall(
-                    r'mapify\s+playbook\s+search\s+"[^"]*"(?:\s+--top-k\s+\d+)?',
-                    content
-                )
-
-                # This test mainly documents expected patterns
-                # Actual validation happens in other tests
-                pass
-
-        assert not errors, "\n".join(errors)
+        Note: This test documents expected CLI patterns. Actual validation
+        of command correctness happens in other test methods.
+        """
+        # Pattern documentation for future validation:
+        # - Query: mapify playbook query "<text>" [--limit N] [--mode MODE]
+        # - Search: mapify playbook search "<text>" [--top-k N]
+        # Actual command validation is handled by other test methods
 
 
 if __name__ == "__main__":

@@ -181,7 +181,7 @@
                     },
                     "reason": {
                       "type": "string",
-                      "description": "Optional for DEPRECATE - deprecation reason (rationale deprecated)"
+                      "description": "Optional for DEPRECATE - deprecation reason"
                     }
                   }
                 }

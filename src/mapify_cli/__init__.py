@@ -1210,9 +1210,6 @@ def create_skill_files(project_path: Path) -> int:
     count = 0
 
     if skills_template_dir.exists():
-        # Copy skill directories from templates
-        import shutil
-
         # Copy README.md and skill-rules.json to .claude/skills/
         if (skills_template_dir / "README.md").exists():
             shutil.copy2(skills_template_dir / "README.md", skills_dir / "README.md")
