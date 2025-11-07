@@ -59,7 +59,7 @@ run_test() {
     local exit_code
     
     set +e
-    output=$(echo "$input_json" | bash "$hook_path" 2>/dev/null)
+    output=$(echo "$input_json" | bash "$hook_path" 2>&1)
     exit_code=$?
     set -e
     

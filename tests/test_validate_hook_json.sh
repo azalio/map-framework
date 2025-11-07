@@ -7,6 +7,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK_PATH="$SCRIPT_DIR/../.claude/hooks/validate-agent-templates.sh"
 
+# Setup cleanup trap for temporary files
+TEMP_AGENT_FILE="$SCRIPT_DIR/../.claude/agents/test-temp-agent.md"
+trap 'rm -f "$TEMP_AGENT_FILE"' EXIT
+
 echo "Testing validate-agent-templates.sh JSON output..."
 
 # Test Case 1: Block decision with multiline message
@@ -72,20 +76,6 @@ echo ""
 echo "Test 2: Allow decision with warning message"
 echo "--------------------------------------------"
 
-# Create a test input that triggers warning but allows
-# (agent file with valid templates but many lines removed)
-TEST_INPUT_2=$(cat <<'EOF'
-{
-  "tool": "Edit",
-  "parameters": {
-    "file_path": ".claude/agents/actor.md",
-    "old_string": "dummy",
-    "new_string": "# Actor\n\n{{language}}\n{{project_name}}\n{{#if playbook_bullets}}test{{/if}}\n{{#if feedback}}test{{/if}}\n{{subtask_description}}\n\nShort content that removed many lines."
-  }
-}
-EOF
-)
-
 # For this test, we need an existing file with >500 lines
 # Create a temporary large file
 TEMP_AGENT_FILE="$SCRIPT_DIR/../.claude/agents/test-temp-agent.md"
@@ -99,7 +89,7 @@ mkdir -p "$(dirname "$TEMP_AGENT_FILE")"
     echo "{{#if playbook_bullets}}test{{/if}}"
     echo "{{#if feedback}}test{{/if}}"
     echo "{{subtask_description}}"
-    for i in {1..600}; do
+    for i in $(seq 1 600); do
         echo "Line $i content here"
     done
 } > "$TEMP_AGENT_FILE"
@@ -147,9 +137,6 @@ else
     echo "$OUTPUT_3" | jq empty 2>&1 || true
     exit 1
 fi
-
-# Cleanup
-rm -f "$TEMP_AGENT_FILE"
 
 # Test Case 3: Allow decision (valid file)
 echo ""
