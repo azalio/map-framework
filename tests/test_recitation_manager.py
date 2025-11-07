@@ -6,11 +6,10 @@ Validates the Recitation pattern implementation for MAP Framework.
 
 import json
 import os
-from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 from mapify_cli import app
-from mapify_cli.recitation_manager import RecitationManager, TaskPlan, Subtask
+from mapify_cli.recitation_manager import RecitationManager, TaskPlan
 
 runner = CliRunner()
 

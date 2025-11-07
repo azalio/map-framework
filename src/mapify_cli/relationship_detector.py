@@ -19,7 +19,7 @@ from typing import List, Dict, Optional, Tuple
 from enum import Enum
 
 # Import Entity and EntityType from entity_extractor
-from mapify_cli.entity_extractor import Entity, EntityType
+from mapify_cli.entity_extractor import Entity
 
 
 class RelationshipType(Enum):

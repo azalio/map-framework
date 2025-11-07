@@ -199,11 +199,11 @@ class TemplateOptimizer:
                     f"   💰 Potential savings: ~{savings} lines ({savings/lines*100:.1f}%)"
                 )
             else:
-                print(f"   ✓ Already optimized")
+                print("   ✓ Already optimized")
             print()
 
         print(f"{'='*60}")
-        print(f"📊 SUMMARY")
+        print("📊 SUMMARY")
         print(f"{'='*60}")
         print(f"Total lines:          {total_lines}")
         print(

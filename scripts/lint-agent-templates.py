@@ -15,7 +15,7 @@ import re
 import sys
 import yaml
 from pathlib import Path
-from typing import List, Dict, Tuple
+from typing import Dict, Tuple
 from collections import defaultdict
 
 
@@ -65,7 +65,7 @@ class TemplateLinter:
         try:
             frontmatter = yaml.safe_load(yaml_content)
             return frontmatter, len(yaml_content.split("\n"))
-        except yaml.YAMLError as e:
+        except yaml.YAMLError:
             return {}, 0
 
     def lint_yaml_frontmatter(self, file_path: Path, content: str):

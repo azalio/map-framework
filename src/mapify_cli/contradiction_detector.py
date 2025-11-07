@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from typing import List, Dict, Optional, Set
 
 # Import existing graph components
-from mapify_cli.entity_extractor import Entity, EntityType, extract_entities
+from mapify_cli.entity_extractor import Entity, EntityType
 from mapify_cli.relationship_detector import Relationship, RelationshipType
 from mapify_cli.graph_query import KnowledgeGraphQuery
 

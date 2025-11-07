@@ -1002,7 +1002,7 @@ class TestContradictionDetector:
         accuracy = (true_positive + true_negative) / total_cases
 
         # Debug output
-        print(f"\nAccuracy Test Results:")
+        print("\nAccuracy Test Results:")
         print(f"  True Positives: {true_positive}/{true_contradictions_count}")
         print(f"  True Negatives: {true_negative}/{false_contradictions_count}")
         print(f"  Accuracy: {accuracy * 100:.1f}%")

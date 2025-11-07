@@ -10,8 +10,6 @@ Tests both DependencyValidator and ASCIIGraphRenderer classes:
 
 import json
 import pytest
-import sys
-from pathlib import Path
 from io import StringIO
 from unittest import mock
 
@@ -19,7 +17,6 @@ from unittest import mock
 from mapify_cli.tools.validate_dependencies import (
     DependencyValidator,
     ASCIIGraphRenderer,
-    ValidationIssue,
     IssueSeverity,
     ANSIColors,
     load_input,

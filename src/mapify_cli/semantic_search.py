@@ -28,7 +28,6 @@ if "HF_TOKEN" in os.environ:
 if "HUGGING_FACE_HUB_TOKEN" in os.environ:
     del os.environ["HUGGING_FACE_HUB_TOKEN"]
 
-import json
 import hashlib
 import pickle
 import sys

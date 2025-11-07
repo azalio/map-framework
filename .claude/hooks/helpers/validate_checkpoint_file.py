@@ -22,7 +22,7 @@ import json
 import re
 import argparse
 from pathlib import Path
-from typing import Dict, Optional, Any
+from typing import Dict, Any
 
 # Security constants
 MAX_FILE_SIZE_BYTES = 256 * 1024  # 256KB

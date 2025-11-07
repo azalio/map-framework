@@ -7,7 +7,6 @@ covering all edge cases specified in ST-003 acceptance criteria.
 
 import json
 import pytest
-from pathlib import Path
 from unittest import mock
 from mapify_cli import load_settings_with_merge, merge_hooks_settings
 

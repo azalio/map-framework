@@ -19,14 +19,13 @@ os.environ["TF_USE_LEGACY_KERAS"] = (
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 import sys
-import json
 from pathlib import Path
 
 # Add src to path for imports
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root / "src"))
 
-from mapify_cli.playbook_manager import PlaybookManager, SEMANTIC_SEARCH_AVAILABLE
+from mapify_cli.playbook_manager import PlaybookManager
 
 
 def test_initialization(manager):

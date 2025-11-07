@@ -6,7 +6,6 @@ while adding new template hooks.
 """
 
 import json
-from pathlib import Path
 import pytest
 from mapify_cli import install_hooks
 

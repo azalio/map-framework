@@ -330,12 +330,12 @@ def run_quality_gates(file_path: str) -> Dict:
         checks.append(syntax_result)
 
         # Check 2: Run related tests for Python files
-        print(f"[quality_gates] Looking for related tests...", file=sys.stderr)
+        print("[quality_gates] Looking for related tests...", file=sys.stderr)
         test_target = find_related_tests(file_path)
         if test_target:
             print(f"[quality_gates] Found test target: {test_target}", file=sys.stderr)
         else:
-            print(f"[quality_gates] No related tests found", file=sys.stderr)
+            print("[quality_gates] No related tests found", file=sys.stderr)
 
         pytest_result = run_pytest(test_target)
         checks.append(pytest_result)

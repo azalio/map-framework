@@ -5,7 +5,6 @@ Validates workflow logging functionality for MAP Framework Phase 1.2.
 """
 
 import json
-from pathlib import Path
 import pytest
 from mapify_cli.workflow_logger import MapWorkflowLogger
 

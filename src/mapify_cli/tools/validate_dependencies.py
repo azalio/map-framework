@@ -24,7 +24,7 @@ Exit Codes:
 import sys
 import json
 import argparse
-from typing import Dict, List, Set, Tuple, Optional
+from typing import Dict, List, Set
 from collections import defaultdict, deque
 from enum import Enum
 
@@ -686,8 +686,8 @@ def print_report(report: dict, output_format: str = "json"):
         print(json.dumps(report, indent=2))
     else:
         # Text format for human readability
-        print(f"Validation Report")
-        print(f"=" * 60)
+        print("Validation Report")
+        print("=" * 60)
         print(f"Total Tasks: {report['total_tasks']}")
         print(f"Total Issues: {report['total_issues']}")
         print(f"  Critical: {report['critical_issues']}")
@@ -695,8 +695,8 @@ def print_report(report: dict, output_format: str = "json"):
         print(f"Status: {'✅ VALID' if report['valid'] else '❌ INVALID'}")
 
         if report["issues"]:
-            print(f"\nIssues Found:")
-            print(f"-" * 60)
+            print("\nIssues Found:")
+            print("-" * 60)
             for issue in report["issues"]:
                 severity_icon = "🔴" if issue["severity"] == "critical" else "🟡"
                 print(

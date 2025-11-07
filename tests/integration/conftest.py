@@ -2,9 +2,6 @@
 
 import os
 import pytest
-from pathlib import Path
-import tempfile
-import shutil
 
 # Set environment variables before any imports
 os.environ["TRANSFORMERS_NO_TF"] = "1"

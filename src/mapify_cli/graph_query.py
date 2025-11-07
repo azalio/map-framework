@@ -20,7 +20,6 @@ import json
 from dataclasses import dataclass
 from typing import List, Optional, Tuple, Dict, Any
 from collections import deque
-from datetime import datetime
 
 # Import Entity and Relationship data models
 from mapify_cli.entity_extractor import Entity, EntityType

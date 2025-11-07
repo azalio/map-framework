@@ -1259,7 +1259,6 @@ class PlaybookManager:
             (sql_string, parameters)
         """
         # Sanitize query for FTS5 (remove special characters that cause syntax errors)
-        import string
 
         fts_query = params.query
 

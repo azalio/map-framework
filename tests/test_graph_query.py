@@ -838,7 +838,7 @@ def test_end_to_end_graph_workflow():
                         rel.updated_at,
                     ),
                 )
-            except Exception as e:
+            except Exception:
                 # Skip if relationship insertion fails (e.g., duplicate)
                 pass
 
