@@ -134,6 +134,39 @@ Sequential thinking prevents shallow analysis. Without it, you might conclude "f
 
 </mcp_integration>
 
+<mapify_cli_reference>
+
+## mapify CLI Quick Reference
+
+**Common Commands for Reflectors**:
+
+```bash
+# Search existing patterns BEFORE extracting new ones (deduplication)
+mapify playbook query "error handling" --mode hybrid --limit 10
+mapify playbook query "JWT authentication" --mode cipher  # Cross-project patterns
+
+# Check if pattern exists by ID
+mapify playbook query "impl-0042"
+
+# Semantic search for similar concepts
+mapify playbook search "authentication patterns" --top-k 10
+```
+
+**Common Mistakes to Avoid**:
+- ❌ `mapify playbook search --limit 10` → ✅ Use `--top-k` with search
+- ❌ `mapify playbook get bullet-id` → ✅ Use `query "bullet-id"`
+- ❌ Skipping cipher search → ✅ Always use `--mode hybrid` to check cross-project knowledge
+- ❌ Creating duplicates → ✅ Use cipher_memory_search MCP tool FIRST
+
+**Playbook Query Modes**:
+- `--mode local` - Project playbook only (fast, default)
+- `--mode cipher` - Cross-project knowledge only (requires cipher MCP)
+- `--mode hybrid` - Both sources (recommended for deduplication)
+
+**Need detailed help?** Use the `map-cli-reference` skill for comprehensive CLI documentation.
+
+</mapify_cli_reference>
+
 <context>
 
 ## Project Information
