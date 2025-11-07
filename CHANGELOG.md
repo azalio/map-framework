@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Release Automation**: Fixed `bump-version.sh` script to automatically update `__version__` in `src/mapify_cli/__init__.py`. This prevents version mismatch between package metadata (pyproject.toml) and runtime version display (`mapify --version`).
+- **Release Workflow**: Added critical verification step in `.claude/commands/map-release.md` to check `__version__` matches before pushing tags, preventing PyPI packages with incorrect version strings.
+
 ## [1.3.2] - 2025-11-07
 
 ### Fixed

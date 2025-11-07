@@ -22,9 +22,10 @@
 #   1. Validates input: major/minor/patch or explicit X.Y.Z semver format
 #   2. Checks for duplicate git tags to prevent version collisions
 #   3. Updates pyproject.toml version field
-#   4. Updates CHANGELOG.md with new version section and current date
-#   5. Creates git commit with conventional commit message
-#   6. Creates annotated git tag with changelog excerpt in tag message
+#   4. Updates __version__ variable in src/mapify_cli/__init__.py
+#   5. Updates CHANGELOG.md with new version section and current date
+#   6. Creates git commit with conventional commit message
+#   7. Creates annotated git tag with changelog excerpt in tag message
 #
 # VALIDATION GATES (following impl-0026):
 #   - Tag format matches semver (X.Y.Z)
@@ -55,7 +56,7 @@
 #   MAP Framework Contributors
 #
 # VERSION:
-#   1.0.0
+#   1.1.0 - Added __version__ update in __init__.py (fixes version mismatch bug)
 #
 ################################################################################
 
@@ -118,9 +119,10 @@ Description:
   1. Validating version format (semantic versioning)
   2. Checking for duplicate git tags
   3. Updating pyproject.toml version field
-  4. Updating CHANGELOG.md with new version section
-  5. Creating git commit with conventional commit format
-  6. Creating annotated git tag with changelog excerpt
+  4. Updating __version__ in src/mapify_cli/__init__.py
+  5. Updating CHANGELOG.md with new version section
+  6. Creating git commit with conventional commit format
+  7. Creating annotated git tag with changelog excerpt
 
 Notes:
   - Must be run from repository root or scripts/ directory
@@ -226,6 +228,41 @@ update_pyproject_version() {
     fi
 
     success "Updated pyproject.toml to version ${new_version}"
+}
+
+# Update __version__ in src/mapify_cli/__init__.py
+update_init_version() {
+    local new_version="$1"
+    local init_file="${REPO_ROOT}/src/mapify_cli/__init__.py"
+
+    if [[ ! -f "$init_file" ]]; then
+        die "__init__.py not found at: $init_file"
+    fi
+
+    info "Updating __init__.py: __version__ = \"${new_version}\""
+
+    # Escape version string for sed (defense in depth)
+    local escaped_version
+    escaped_version=$(printf '%s' "$new_version" | sed 's/[&/\]/\\&/g')
+
+    # Use sed to update __version__ field
+    # Works with both GNU sed and BSD sed (macOS)
+    if sed --version 2>/dev/null | grep -q GNU; then
+        # GNU sed
+        sed -i "s/^__version__ = \".*\"/__version__ = \"${escaped_version}\"/" "$init_file"
+    else
+        # BSD sed (macOS)
+        sed -i '' "s/^__version__ = \".*\"/__version__ = \"${escaped_version}\"/" "$init_file"
+    fi
+
+    # Verify update
+    local updated_version
+    updated_version=$(grep -E '^__version__ = ' "$init_file" | head -1 | sed -E 's/__version__ = "(.*)"/\1/')
+    if [[ "$updated_version" != "$new_version" ]]; then
+        die "Failed to update __init__.py version (expected: $new_version, got: $updated_version)"
+    fi
+
+    success "Updated __init__.py to version ${new_version}"
 }
 
 # Create CHANGELOG.md if it doesn't exist
@@ -338,16 +375,18 @@ update_changelog() {
 # Create git commit
 create_git_commit() {
     local new_version="$1"
+    local init_file="${REPO_ROOT}/src/mapify_cli/__init__.py"
 
     info "Creating git commit"
 
     # Stage changes
-    git add "$PYPROJECT_FILE" "$CHANGELOG_FILE"
+    git add "$PYPROJECT_FILE" "$CHANGELOG_FILE" "$init_file"
 
     # Create commit with conventional commit format
     local commit_message="chore(release): bump version to ${new_version}
 
 - Updated pyproject.toml version field
+- Updated __init__.py __version__ variable
 - Updated CHANGELOG.md with release date
 "
 
@@ -471,6 +510,7 @@ main() {
     info "Executing version bump..."
 
     update_pyproject_version "$new_version"
+    update_init_version "$new_version"
     update_changelog "$new_version"
     create_git_commit "$new_version"
     create_git_tag "$new_version"

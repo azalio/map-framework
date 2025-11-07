@@ -16,6 +16,7 @@ You are **STRICTLY PROHIBITED** from:
 ❌ **"Proceeding without user confirmation on IRREVERSIBLE steps"** - Tag push cannot be undone easily
 ❌ **"Skipping Reflector/Curator after release"** - Release learnings MUST be captured
 ❌ **"Creating releases without updating CHANGELOG.md"** - Users need to know what changed
+❌ **"Pushing tag without verifying __version__ in __init__.py"** - CRITICAL: bump-version.sh has known bug
 ❌ **Any variation of "I'll optimize the release process"** - Follow the workflow exactly
 
 **IF YOU VIOLATE THESE RULES:**
@@ -28,6 +29,7 @@ You are **STRICTLY PROHIBITED** from:
 **YOU MUST:**
 ✅ Execute ALL 8 phases sequentially
 ✅ Validate every gate before proceeding
+✅ **CRITICAL:** Verify `__version__` in `__init__.py` matches tag BEFORE pushing
 ✅ Get explicit user confirmation for IRREVERSIBLE operations
 ✅ Monitor CI/CD pipeline status in real-time
 ✅ Run Reflector + Curator to capture release learnings
@@ -434,7 +436,32 @@ if [[ "$PYPROJECT_VERSION" != "$TAG_VERSION" ]]; then
   exit 1
 fi
 
+# 🚨 CRITICAL: Verify __version__ in __init__.py matches (bump-version.sh bug workaround)
+INIT_VERSION=$(grep -E '^__version__ = ' src/mapify_cli/__init__.py | head -1 | sed -E 's/__version__ = "(.*)"/\1/')
+
+if [[ "$INIT_VERSION" != "$TAG_VERSION" ]]; then
+  echo "❌ CRITICAL ERROR: __version__ mismatch!"
+  echo "   pyproject.toml: $PYPROJECT_VERSION"
+  echo "   __init__.py:    $INIT_VERSION"
+  echo "   tag:            $TAG_VERSION"
+  echo ""
+  echo "⚠️  KNOWN ISSUE: bump-version.sh does NOT update __version__ in __init__.py"
+  echo "   This will cause PyPI package to show wrong version when installed."
+  echo ""
+  echo "ACTION REQUIRED:"
+  echo "1. Update src/mapify_cli/__init__.py manually:"
+  echo "   sed -i '' 's/__version__ = \".*\"/__version__ = \"$TAG_VERSION\"/' src/mapify_cli/__init__.py"
+  echo "2. Amend the commit:"
+  echo "   git add src/mapify_cli/__init__.py"
+  echo "   git commit --amend --no-edit"
+  echo "3. Update the tag to point to amended commit:"
+  echo "   git tag -f $LAST_TAG"
+  echo "4. Re-run verification"
+  exit 1
+fi
+
 echo "✅ Version bump successful: $PYPROJECT_VERSION"
+echo "✅ All version fields match (pyproject.toml, __init__.py, git tag)"
 ```
 
 **If verification fails:** Do NOT proceed to Phase 4. Investigate issue.
