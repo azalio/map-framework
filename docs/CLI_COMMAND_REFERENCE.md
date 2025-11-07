@@ -1,0 +1,709 @@
+# Mapify CLI Command Reference
+
+> **Machine-readable specification**: See [CLI_REFERENCE.json](./CLI_REFERENCE.json) for complete JSON schema
+
+Complete reference for all mapify CLI commands with correct syntax, parameters, and common error corrections.
+
+## Table of Contents
+
+- [Playbook Commands](#playbook-commands)
+  - [query](#mapify-playbook-query)
+  - [search](#mapify-playbook-search)
+  - [apply-delta](#mapify-playbook-apply-delta)
+  - [stats](#mapify-playbook-stats)
+  - [sync](#mapify-playbook-sync)
+- [Recitation Commands](#recitation-commands)
+  - [create](#mapify-recitation-create)
+  - [update](#mapify-recitation-update)
+  - [checkpoint](#mapify-recitation-checkpoint)
+  - [get-context](#mapify-recitation-get-context)
+  - [get-docs](#mapify-recitation-get-docs)
+  - [generate-context](#mapify-recitation-generate-context)
+  - [generate-tasks](#mapify-recitation-generate-tasks)
+  - [stats](#mapify-recitation-stats)
+  - [clear](#mapify-recitation-clear)
+- [Validate Commands](#validate-commands)
+  - [graph](#mapify-validate-graph)
+- [Root Commands](#root-commands)
+  - [init](#mapify-init)
+  - [check](#mapify-check)
+  - [upgrade](#mapify-upgrade)
+- [Common Mistakes](#common-mistakes)
+- [Query Syntax Guide](#query-syntax-guide)
+
+---
+
+## Playbook Commands
+
+Manage and search playbook patterns.
+
+### `mapify playbook query`
+
+**Fast FTS5 full-text search** (recommended for most cases)
+
+```bash
+mapify playbook query [QUERY_TEXT] [OPTIONS]
+```
+
+**Parameters:**
+- `QUERY_TEXT` (required): Search query (supports FTS5 syntax)
+- `--section TEXT`: Filter by section (repeatable)
+- `--limit INT`: Maximum results (default: 5)
+- `--mode [local|cipher|hybrid]`: Search mode (default: local)
+- `--format [markdown|json]`: Output format (default: markdown)
+- `--min-quality INT`: Minimum quality score (default: 0)
+
+**Examples:**
+
+```bash
+# Basic query
+mapify playbook query "JWT authentication" --limit 5
+
+# Hybrid search (playbook + cipher)
+mapify playbook query "error handling" --mode hybrid --limit 10
+
+# Filter by section
+mapify playbook query "API design" --section ARCHITECTURE_PATTERNS
+
+# Minimum quality filter
+mapify playbook query "security patterns" --min-quality 3
+
+# JSON output
+mapify playbook query "testing strategies" --format json
+```
+
+**FTS5 Query Syntax:**
+
+```bash
+# Boolean operators
+mapify playbook query "JWT AND authentication"
+mapify playbook query "error OR exception"
+mapify playbook query "testing NOT integration"
+
+# Phrase matching
+mapify playbook query "\"error handling\""
+
+# Prefix matching
+mapify playbook query "auth*"  # matches auth, authentication, authorize
+
+# Proximity search
+mapify playbook query "NEAR(JWT token, 5)"  # within 5 tokens
+```
+
+**Common Mistakes:**
+
+❌ **WRONG**: `mapify playbook query --bullet-id test-0016`
+✅ **CORRECT**: `mapify playbook query "test-0016"`
+📝 Use bullet ID as query text, not as option
+
+❌ **WRONG**: `mapify playbook get docu-0005`
+✅ **CORRECT**: `mapify playbook query "docu-0005"`
+📝 `get` command doesn't exist
+
+---
+
+### `mapify playbook search`
+
+**Semantic search** using embeddings (slower but conceptual)
+
+```bash
+mapify playbook search [QUERY] [OPTIONS]
+```
+
+**Parameters:**
+- `QUERY` (required): Natural language search query
+- `--top-k INT`: Number of results (default: 5)
+
+**Examples:**
+
+```bash
+# Semantic search
+mapify playbook search "authentication patterns" --top-k 10
+
+# Natural language query
+mapify playbook search "how to handle errors in async code"
+```
+
+**Common Mistakes:**
+
+❌ **WRONG**: `mapify playbook search --limit 3`
+✅ **CORRECT**: `mapify playbook search "query" --top-k 3`
+📝 Use `--top-k`, not `--limit` (different from `query` command)
+
+**When to use query vs search:**
+- **Use `query`**: Fast keyword search, known terms, exact matches
+- **Use `search`**: Conceptual search, semantic similarity, synonyms
+
+---
+
+### `mapify playbook apply-delta`
+
+**Apply delta operations to playbook** (ADD, UPDATE, DEPRECATE)
+
+```bash
+mapify playbook apply-delta [FILE] [OPTIONS]
+```
+
+**Parameters:**
+- `FILE` (optional): JSON file with operations (or use stdin)
+- `--dry-run`: Preview changes without applying
+
+**Input Format:**
+
+```json
+{
+  "operations": [
+    {
+      "type": "ADD",
+      "section": "IMPLEMENTATION_PATTERNS",
+      "content": "New pattern description",
+      "code_example": "optional code snippet",
+      "tags": ["tag1", "tag2"],
+      "related_to": ["impl-0001"],
+      "executable_scripts": ["optional runnable examples"]
+    },
+    {
+      "type": "UPDATE",
+      "bullet_id": "impl-0042",
+      "increment_helpful": 1,
+      "increment_harmful": 0
+    },
+    {
+      "type": "DEPRECATE",
+      "bullet_id": "impl-0001",
+      "reason": "Pattern is obsolete"
+    }
+  ]
+}
+```
+
+**Operation Fields:**
+
+- **ADD**: `type`, `section`, `content` (required); `code_example`, `tags`, `related_to`, `executable_scripts` (optional)
+- **UPDATE**: `type`, `bullet_id` (required); `increment_helpful`, `increment_harmful` (optional)
+  - **Note**: UPDATE increments counters, does NOT change content
+- **DEPRECATE**: `type`, `bullet_id` (required); `reason` (optional)
+
+**Examples:**
+
+```bash
+# Apply from file
+mapify playbook apply-delta operations.json
+
+# Apply from stdin
+echo '{"operations":[...]}' | mapify playbook apply-delta
+
+# Preview changes
+mapify playbook apply-delta operations.json --dry-run
+```
+
+**Critical Rules:**
+
+⚠️ **This is the ONLY correct way to update playbook**
+
+❌ **NEVER DO THIS**:
+- `sqlite3 .claude/playbook.db "UPDATE bullets SET..."`
+- `Edit(.claude/playbook.db, ...)`
+- Manually editing playbook.json (deprecated)
+
+✅ **ALWAYS USE**: `mapify playbook apply-delta`
+
+**Why?**
+- Maintains database integrity
+- Validates operations
+- Updates FTS5 indexes
+- Handles transactions correctly
+
+---
+
+### `mapify playbook stats`
+
+**Show playbook statistics**
+
+```bash
+mapify playbook stats
+```
+
+No parameters. Displays:
+- Total bullets by section
+- Quality metrics (helpful/harmful counts)
+- Most active sections
+
+**Example:**
+
+```bash
+mapify playbook stats
+```
+
+**Common Mistakes:**
+
+❌ **WRONG**: `mapify playbook list --sections`
+✅ **CORRECT**: `mapify playbook stats`
+📝 `list` command doesn't exist
+
+---
+
+### `mapify playbook sync`
+
+**Show high-quality patterns ready for cross-project sync**
+
+```bash
+mapify playbook sync [OPTIONS]
+```
+
+**Parameters:**
+- `--threshold INT`: Minimum helpful count (default: 5)
+
+**Examples:**
+
+```bash
+# Default (helpful_count >= 5)
+mapify playbook sync
+
+# Higher quality threshold
+mapify playbook sync --threshold 10
+```
+
+**Use Case:** Identify patterns that should be synced to cipher for cross-project reuse.
+
+---
+
+## Recitation Commands
+
+Manage MAP workflow task execution plans.
+
+### `mapify recitation create`
+
+**Create a new task execution plan**
+
+```bash
+mapify recitation create [TASK_ID] [GOAL] [SUBTASKS_JSON] [OPTIONS]
+```
+
+**Parameters:**
+- `TASK_ID` (required): Unique task identifier
+- `GOAL` (required): High-level goal description
+- `SUBTASKS_JSON` (required): JSON string with subtask definitions
+- `--force`: Overwrite existing plan
+
+**Example:**
+
+```bash
+mapify recitation create task-001 "Implement authentication" \
+  '[{"id":"subtask-1","description":"Create User model","dependencies":[]}]'
+```
+
+---
+
+### `mapify recitation update`
+
+**Update subtask status**
+
+```bash
+mapify recitation update [SUBTASK_ID] [STATUS] [ERROR]
+```
+
+**Parameters:**
+- `SUBTASK_ID` (required): Subtask identifier
+- `STATUS` (required): One of: pending, in_progress, completed, failed, blocked
+- `ERROR` (optional): Error message for failed status
+
+**Examples:**
+
+```bash
+# Mark completed
+mapify recitation update subtask-1 completed
+
+# Mark failed with error
+mapify recitation update subtask-2 failed "Validation error"
+
+# Mark in progress
+mapify recitation update subtask-3 in_progress
+```
+
+---
+
+### `mapify recitation checkpoint`
+
+**Show current MAP workflow state**
+
+```bash
+mapify recitation checkpoint
+```
+
+Displays:
+- Current execution plan
+- Subtask statuses
+- Recovery instructions for post-compaction
+
+**Use Case:** Determine where to resume after context window compaction.
+
+---
+
+### `mapify recitation get-context`
+
+**Get current plan context as markdown**
+
+```bash
+mapify recitation get-context
+```
+
+Outputs current execution plan in human-readable markdown format.
+
+---
+
+### `mapify recitation get-docs`
+
+**Get all dev docs content**
+
+```bash
+mapify recitation get-docs
+```
+
+Returns JSON with:
+- `plan`: Execution plan content
+- `context`: Project context
+- `tasks`: Task list
+
+**Output Format:**
+
+```json
+{
+  "status": "success",
+  "docs": {
+    "plan": "...",
+    "context": "...",
+    "tasks": "..."
+  }
+}
+```
+
+---
+
+### `mapify recitation generate-context`
+
+**Generate context.md from project metadata**
+
+```bash
+mapify recitation generate-context
+```
+
+Creates `.map/context.md` with:
+- Project metadata
+- Relevant playbook bullets
+- Current state
+
+---
+
+### `mapify recitation generate-tasks`
+
+**Regenerate tasks.md from current plan**
+
+```bash
+mapify recitation generate-tasks
+```
+
+Creates `.map/tasks.md` from execution plan state.
+
+---
+
+### `mapify recitation stats`
+
+**Show plan statistics**
+
+```bash
+mapify recitation stats
+```
+
+Returns JSON with subtask counts by status:
+
+```json
+{
+  "total_subtasks": 5,
+  "completed": 2,
+  "in_progress": 1,
+  "pending": 2,
+  "failed": 0,
+  "blocked": 0
+}
+```
+
+---
+
+### `mapify recitation clear`
+
+**Clear active plan**
+
+```bash
+mapify recitation clear
+```
+
+Removes current execution plan.
+
+---
+
+## Validate Commands
+
+### `mapify validate graph`
+
+**Validate TaskDecomposer dependency graph**
+
+```bash
+mapify validate graph [INPUT_FILE] [OPTIONS]
+```
+
+**Parameters:**
+- `INPUT_FILE` (optional): JSON file to validate (or use stdin)
+- `--visualize`: Show ASCII dependency tree
+- `--no-color`: Disable colored output
+- `--format [json|text]` / `-f`: Output format (default: json)
+- `--strict`: Fail on warnings (orphaned tasks)
+
+**Exit Codes:**
+- `0`: Valid graph (no critical errors; warnings allowed unless --strict)
+- `1`: Invalid graph (critical errors found, or warnings with --strict)
+- `2`: Malformed input (invalid JSON or missing required fields)
+
+**Examples:**
+
+```bash
+# Validate from file
+mapify validate graph task_plan.json
+
+# Validate from stdin
+echo '{"subtasks":[...]}' | mapify validate graph
+
+# Visualize dependencies
+mapify validate graph task_plan.json --visualize
+
+# Strict mode (fail on warnings)
+mapify validate graph task_plan.json --strict
+
+# Text output
+mapify validate graph task_plan.json --format text
+```
+
+**Input Format:**
+
+```json
+{
+  "subtasks": [
+    {
+      "id": "task-1",
+      "description": "First task",
+      "dependencies": []
+    },
+    {
+      "id": "task-2",
+      "description": "Second task",
+      "dependencies": ["task-1"]
+    }
+  ]
+}
+```
+
+**Validation Checks:**
+- ✅ No circular dependencies
+- ✅ All dependencies exist (no forward references)
+- ✅ Valid JSON format
+- ⚠️ No orphaned tasks (warning only, unless `--strict`)
+
+---
+
+## Root Commands
+
+### `mapify init`
+
+**Initialize a new MAP Framework project**
+
+```bash
+mapify init [PROJECT_NAME] [OPTIONS]
+```
+
+**Parameters:**
+- `PROJECT_NAME` (optional): Directory name (use '.' for current directory)
+- `--mcp [all|essential|docs|none|LIST]`: MCP servers to enable
+- `--no-git`: Skip git initialization
+- `--force`: Force merge/overwrite in non-empty directory
+
+**Examples:**
+
+```bash
+# Create new project
+mapify init my-project
+
+# Initialize in current directory
+mapify init . --mcp essential
+
+# Force init in non-empty directory
+mapify init . --force
+
+# Skip git initialization
+mapify init my-project --no-git
+
+# Enable specific MCP servers
+mapify init . --mcp cipher,context7
+```
+
+---
+
+### `mapify check`
+
+**Check that all required tools are installed**
+
+```bash
+mapify check [OPTIONS]
+```
+
+**Parameters:**
+- `--debug`: Enable debug logging
+
+**Examples:**
+
+```bash
+# Standard check
+mapify check
+
+# Verbose output
+mapify check --debug
+```
+
+---
+
+### `mapify upgrade`
+
+**Upgrade MAP agents to the latest version**
+
+```bash
+mapify upgrade
+```
+
+Updates agent templates in `.claude/agents/` to latest versions.
+
+---
+
+## Common Mistakes
+
+### 1. Wrong Command Name
+
+| ❌ Wrong | ✅ Correct | Explanation |
+|---------|-----------|-------------|
+| `mapify playbook list --sections` | `mapify playbook stats` | `list` doesn't exist |
+| `mapify playbook get docu-0005` | `mapify playbook query "docu-0005"` | `get` doesn't exist |
+
+### 2. Wrong Parameter Name
+
+| ❌ Wrong | ✅ Correct | Explanation |
+|---------|-----------|-------------|
+| `mapify playbook search --limit 3` | `mapify playbook search "query" --top-k 3` | `search` uses `--top-k` |
+| `mapify playbook query --bullet-id test-0016` | `mapify playbook query "test-0016"` | No `--bullet-id` option |
+
+### 3. Wrong Approach
+
+| ❌ Wrong | ✅ Correct | Explanation |
+|---------|-----------|-------------|
+| `sqlite3 .claude/playbook.db "UPDATE..."` | `mapify playbook apply-delta ops.json` | Direct DB access breaks integrity |
+| `Edit(.claude/playbook.db, ...)` | `mapify playbook apply-delta ops.json` | Cannot edit binary DB |
+| Reading `playbook.json` | `mapify playbook query "..."` | `playbook.json` is deprecated |
+
+---
+
+## Query Syntax Guide
+
+### FTS5 Query Operators (for `mapify playbook query`)
+
+| Operator | Syntax | Example | Description |
+|----------|--------|---------|-------------|
+| AND | `term1 AND term2` | `JWT AND authentication` | Both terms required |
+| OR | `term1 OR term2` | `error OR exception` | Either term required |
+| NOT | `term1 NOT term2` | `testing NOT integration` | First yes, second no |
+| Phrase | `"exact phrase"` | `"error handling"` | Exact phrase match |
+| Prefix | `term*` | `auth*` | Matches auth, authentication, etc. |
+| Proximity | `NEAR(term1 term2, N)` | `NEAR(JWT token, 5)` | Within N tokens |
+
+### Example Queries
+
+```bash
+# Find JWT authentication patterns
+mapify playbook query "JWT AND authentication"
+
+# Find error-related patterns
+mapify playbook query "error OR exception OR failure"
+
+# Find testing patterns (exclude integration tests)
+mapify playbook query "test* AND NOT integration"
+
+# Find REST API design patterns
+mapify playbook query "\"API design\" AND REST"
+
+# Find patterns about async error handling
+mapify playbook query "NEAR(async error, 10)"
+```
+
+### Query vs Search Decision Tree
+
+```
+Need exact keyword match?
+  YES → Use `mapify playbook query`
+  NO ↓
+
+Large playbook (>100 bullets)?
+  YES → Use `mapify playbook query`
+  NO ↓
+
+Need semantic/conceptual search?
+  YES → Use `mapify playbook search`
+  NO → Use `mapify playbook query` (faster)
+```
+
+---
+
+## Integration with MAP Workflow
+
+### Curator Agent Usage
+
+```bash
+# Curator generates delta operations
+# Then main agent applies them:
+mapify playbook apply-delta curator_operations.json
+```
+
+**Critical Rule**: Curator must NEVER:
+- Run `sqlite3` commands directly
+- Use `Edit` tool on playbook.db
+- Manually create/modify playbook files
+
+**Always**: Generate delta JSON → Apply via CLI
+
+### Reflector Agent Usage
+
+```bash
+# Reflector searches for existing patterns
+mapify playbook query "error handling" --mode hybrid --limit 10
+```
+
+Checks both local playbook and cipher before extracting new patterns.
+
+---
+
+## Related Documentation
+
+- **Machine-readable spec**: [CLI_REFERENCE.json](./CLI_REFERENCE.json)
+- **Usage examples**: [USAGE.md](./USAGE.md)
+- **Playbook guide**: [PLAYBOOK-USAGE-GUIDE.md](./PLAYBOOK-USAGE-GUIDE.md)
+- **Testing guide**: [CLI_TESTING_GUIDE.md](./CLI_TESTING_GUIDE.md)
+- **Architecture**: [ARCHITECTURE.md](./ARCHITECTURE.md)
+
+---
+
+## Version Information
+
+**Generated from**: `src/mapify_cli/__init__.py`
+**Framework version**: Based on map-framework {{VERSION}}
+**Last updated**: 2025-11-07
+
+For the most up-to-date command definitions, see the source code decorators:
+- `@app.command()` - Root commands
+- `@playbook_app.command()` - Playbook commands
+- `@recitation_app.command()` - Recitation commands
+- `@validate_app.command()` - Validate commands

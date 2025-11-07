@@ -172,6 +172,49 @@ This prevents cipher from aggressively UPDATE-ing unrelated memories.
 
 </mcp_integration>
 
+<mapify_cli_reference>
+
+## mapify CLI Quick Reference
+
+**CRITICAL: ONLY Way to Update Playbook**
+
+```bash
+# Apply delta operations (orchestrator runs this with your JSON output)
+mapify playbook apply-delta curator_operations.json
+echo '{"operations":[...]}' | mapify playbook apply-delta
+
+# Preview changes without applying
+mapify playbook apply-delta operations.json --dry-run
+```
+
+**Correct Operation Format (use "type", NOT "op")**:
+
+```json
+{
+  "operations": [
+    {"type": "ADD", "section": "IMPLEMENTATION_PATTERNS", "content": "..."},
+    {"type": "UPDATE", "bullet_id": "impl-0042", "increment_helpful": 1},
+    {"type": "DEPRECATE", "bullet_id": "impl-0001", "reason": "..."}
+  ]
+}
+```
+
+**NEVER DO THIS (Breaks Playbook Integrity)**:
+- ❌ `sqlite3 .claude/playbook.db "UPDATE bullets SET..."` → Direct SQL bypasses validation
+- ❌ `Edit(.claude/playbook.db, ...)` → Cannot edit binary database
+- ❌ Using "op" field → ✅ Correct field name is "type"
+- ❌ Reading/writing playbook.json → ✅ Migrated to playbook.db (SQLite)
+
+**Why apply-delta is mandatory**:
+- Validates operations before applying
+- Maintains database integrity and FTS5 indexes
+- Handles transactions correctly
+- Your role: Generate valid JSON operations, orchestrator applies them
+
+**Need detailed help?** Use the `map-cli-reference` skill for comprehensive CLI documentation.
+
+</mapify_cli_reference>
+
 <context>
 
 ## Project Information

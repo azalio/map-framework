@@ -1194,6 +1194,39 @@ Provide detailed analysis of code quality, potential impacts, and quality scores
             shutil.copy2(command_template, dest_file)
 
 
+def create_skill_files(project_path: Path) -> int:
+    """Create MAP skills in .claude/skills/
+
+    Returns:
+        Number of skills installed
+    """
+    skills_dir = project_path / ".claude" / "skills"
+    skills_dir.mkdir(parents=True, exist_ok=True)
+
+    # Get templates directory
+    templates_dir = get_templates_dir()
+    skills_template_dir = templates_dir / "skills"
+
+    count = 0
+
+    if skills_template_dir.exists():
+        # Copy README.md and skill-rules.json to .claude/skills/
+        if (skills_template_dir / "README.md").exists():
+            shutil.copy2(skills_template_dir / "README.md", skills_dir / "README.md")
+
+        if (skills_template_dir / "skill-rules.json").exists():
+            shutil.copy2(skills_template_dir / "skill-rules.json", skills_dir / "skill-rules.json")
+
+        # Copy each skill directory
+        for skill_template in skills_template_dir.iterdir():
+            if skill_template.is_dir() and skill_template.name != "__pycache__":
+                target = skills_dir / skill_template.name
+                shutil.copytree(skill_template, target, dirs_exist_ok=True)
+                count += 1
+
+    return count
+
+
 def install_hooks(project_path: Path, with_hooks: bool = True) -> int:
     """Install Claude Code hooks in .claude/hooks/ with intelligent merging.
 
@@ -1840,6 +1873,12 @@ def init(
     tracker.start("create-commands")
     create_command_files(project_path)
     tracker.complete("create-commands", "4 commands")
+
+    tracker.add("create-skills", "Create skills")
+    tracker.start("create-skills")
+    skill_count = create_skill_files(project_path)
+    skill_word = "skill" if skill_count == 1 else "skills"
+    tracker.complete("create-skills", f"{skill_count} {skill_word}")
 
     # Install Claude Code hooks
     if with_hooks:

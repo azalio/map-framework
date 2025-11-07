@@ -799,6 +799,32 @@ return process(result) if result else None  # Silent failure
 </implementation_guidelines>
 
 
+<mapify_cli_reference>
+
+## mapify CLI Quick Reference
+
+**Common Commands for Actors**:
+
+```bash
+# Query playbook for patterns (fast keyword search)
+mapify playbook query "JWT AND authentication" --limit 5
+mapify playbook query "test-0016"  # Search by bullet ID
+
+# Semantic search (slower, conceptual)
+mapify playbook search "authentication patterns" --top-k 10
+```
+
+**Common Mistakes to Avoid**:
+- ❌ `mapify playbook search --limit 3` → ✅ Use `--top-k` with search
+- ❌ `mapify playbook get bullet-id` → ✅ Use `query "bullet-id"`
+- ❌ `mapify playbook list` → ✅ Use `stats` command
+- ❌ Direct database access → ✅ Use `apply-delta` (Curator only)
+
+**Need detailed help?** Use the `map-cli-reference` skill for comprehensive CLI documentation and troubleshooting.
+
+</mapify_cli_reference>
+
+
 <output_format>
 
 ## Required Output Structure

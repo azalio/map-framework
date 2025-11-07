@@ -11,6 +11,13 @@ Complete usage examples, best practices, and optimization strategies for the MAP
   - [Library Integration](#library-integration)
   - [Learning from Open Source](#learning-from-open-source)
 - [Playbook Commands](#playbook-commands)
+- [Common CLI Mistakes](#-common-cli-mistakes)
+  - [Wrong Command Names](#wrong-command-names)
+  - [Wrong Parameter Names](#wrong-parameter-names)
+  - [Wrong Approach](#wrong-approach-critical)
+  - [Wrong Operation Field Name](#wrong-operation-field-name)
+  - [Quick Reference Resources](#quick-reference-resources)
+  - [Validation Tools](#validation-tools)
 - [FTS5 Query Format Guidelines](#fts5-query-format-guidelines)
 - [Dependency Validation](#dependency-validation)
   - [Basic Usage](#basic-usage)
@@ -212,6 +219,83 @@ mapify playbook search "JWT authentication"
 ```
 
 **Note:** `search` command uses simple keyword matching and may fail on large playbooks. Use `query` instead.
+
+---
+
+## ⚠️ Common CLI Mistakes
+
+This section documents frequently encountered CLI command errors and their corrections. These validations are enforced by:
+- Pre-commit hooks (`.git/hooks/pre-commit`)
+- E2E tests (`tests/test_agent_cli_correctness.py`)
+- Agent template CLI reference sections
+
+### Wrong Command Names
+
+| ❌ Incorrect | ✅ Correct | Explanation |
+|-------------|-----------|-------------|
+| `mapify playbook list --sections` | `mapify playbook stats` | Command `list` doesn't exist. Use `stats` to see section overview. |
+| `mapify playbook get docu-0005` | `mapify playbook query "docu-0005"` | Command `get` doesn't exist. Use `query` with bullet ID as search text. |
+
+### Wrong Parameter Names
+
+| ❌ Incorrect | ✅ Correct | Explanation |
+|-------------|-----------|-------------|
+| `mapify playbook search --limit 3` | `mapify playbook search "query" --top-k 3` | `search` command uses `--top-k`, not `--limit` (different from `query` command). |
+| `mapify playbook query --bullet-id test-0016` | `mapify playbook query "test-0016"` | Option `--bullet-id` doesn't exist. Use bullet ID as query text argument. |
+
+### Wrong Approach (CRITICAL)
+
+| ❌ NEVER DO THIS | ✅ ALWAYS USE THIS | Why |
+|------------------|-------------------|-----|
+| `sqlite3 .claude/playbook.db "UPDATE bullets SET..."` | `mapify playbook apply-delta ops.json` | Direct database access breaks integrity, bypasses validation, and corrupts FTS5 indexes. |
+| `Edit(.claude/playbook.db, ...)` | `mapify playbook apply-delta ops.json` | Cannot edit binary SQLite database. Generate delta operations JSON and apply via CLI. |
+| Reading/writing `playbook.json` | `mapify playbook query "..."` | `playbook.json` is deprecated (migrated to `playbook.db` in v2.2). Use CLI commands to interact with playbook. |
+
+### Wrong Operation Field Name
+
+| ❌ Incorrect JSON | ✅ Correct JSON |
+|------------------|----------------|
+| `{"op": "ADD", "section": "...", "content": "..."}` | `{"type": "ADD", "section": "...", "content": "..."}` |
+| `{"op": "UPDATE", "bullet_id": "..."}` | `{"type": "UPDATE", "bullet_id": "..."}` |
+| `{"op": "DEPRECATE", "bullet_id": "..."}` | `{"type": "DEPRECATE", "bullet_id": "..."}` |
+
+**Explanation:** Delta operations use the field name `"type"`, not `"op"`. This is validated by `mapify playbook apply-delta` and enforced in agent templates.
+
+### Quick Reference Resources
+
+For comprehensive CLI documentation, see:
+
+- **Quick reference skill**: `.claude/skills/map-cli-reference/SKILL.md`
+  - Auto-suggests when CLI errors occur
+  - Provides immediate corrections
+  - ~250 lines, follows 500-line skill rule
+
+- **Complete CLI guide**: `docs/CLI_COMMAND_REFERENCE.md`
+  - Full command reference with examples
+  - FTS5 query syntax guide
+  - Exit codes and troubleshooting
+
+- **Machine-readable spec**: `docs/CLI_REFERENCE.json`
+  - JSON schema for all commands
+  - Parameter types and validation rules
+  - Error pattern definitions
+
+### Validation Tools
+
+**Pre-commit hook** (`.git/hooks/pre-commit`):
+- Blocks commits with incorrect CLI commands in agent templates
+- Validates template variables aren't removed
+- Runs automatically on `git commit`
+
+**E2E test** (`tests/test_agent_cli_correctness.py`):
+- 6 test cases covering common mistakes
+- Runs in CI on every PR
+- Validates agent templates use correct CLI syntax
+
+**Skip validation** (if absolutely necessary):
+```bash
+git commit --no-verify  # NOT RECOMMENDED
+```
 
 ---
 
