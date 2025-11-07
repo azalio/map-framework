@@ -25,7 +25,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root / "src"))
 
-from mapify_cli.playbook_manager import PlaybookManager
+from mapify_cli.playbook_manager import PlaybookManager  # noqa: E402
 
 
 def test_initialization(manager):

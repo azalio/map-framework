@@ -154,12 +154,12 @@ class TestCreatePlanWhenPlanExists:
     def test_create_overwrites_existing_plan(self, manager, sample_subtasks):
         """Test that creating new plan with force=True overwrites existing incomplete plan"""
         # Create first plan
-        plan1 = manager.create_plan("feat_auth", "Auth feature", sample_subtasks)
+        plan1 = manager.create_plan("feat_auth", "Auth feature", sample_subtasks)  # noqa: F841
         manager.update_subtask_status(1, "in_progress")
 
         # Create second plan with force=True - should overwrite
         new_subtasks = [{"id": 1, "description": "New task", "depends_on": []}]
-        plan2 = manager.create_plan("feat_new", "New feature", new_subtasks, force=True)
+        plan2 = manager.create_plan("feat_new", "New feature", new_subtasks, force=True)  # noqa: F841
 
         # Verify new plan replaced old one
         loaded_plan = manager.get_plan()

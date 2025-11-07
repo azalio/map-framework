@@ -467,7 +467,7 @@ class TestEdgeCases:
             {"id": 1, "description": "Добавить аутентификацию 🔐", "depends_on": []}
         ]
 
-        plan = manager.create_plan("test", "Test 测试", subtasks)
+        plan = manager.create_plan("test", "Test 测试", subtasks)  # noqa: F841
         md = manager.get_current_context()
 
         assert "Добавить" in md

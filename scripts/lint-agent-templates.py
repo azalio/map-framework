@@ -151,7 +151,7 @@ class TemplateLinter:
                     )
 
                 # Check for common variable names (for consistency)
-                common_vars = [
+                _common_vars = [
                     "project_name",
                     "language",
                     "framework",

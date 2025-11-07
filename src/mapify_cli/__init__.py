@@ -31,6 +31,7 @@ import sys
 import shutil
 import json
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
@@ -2380,7 +2381,6 @@ def recitation_get_docs():
 def recitation_checkpoint():
     """Show current MAP workflow state and recovery instructions for post-compaction"""
     from mapify_cli.recitation_manager import RecitationManager
-    import os
 
     manager = RecitationManager(Path.cwd())
     map_dir = Path.cwd() / ".map"
@@ -2942,7 +2942,7 @@ def validate_graph(
 
         # Validate
         validator = DependencyValidator(data)
-        is_valid = validator.validate_all()
+        validator.validate_all()
         report = validator.get_report()
 
         # Print report

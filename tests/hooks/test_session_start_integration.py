@@ -223,7 +223,7 @@ def test_valid_checkpoint_logs_success_metrics(
     # Setup: Create valid checkpoint
     checkpoint = test_workspace / ".map" / "current_plan.md"
     checkpoint.write_text(valid_checkpoint_content, encoding="utf-8")
-    file_size_kb = checkpoint.stat().st_size / 1024
+    _file_size_kb = checkpoint.stat().st_size / 1024
 
     # Execute hook
     result = run_hook(hook_script_path, test_workspace)

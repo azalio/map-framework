@@ -558,7 +558,7 @@ class TestApplyDeltaStatsIntegration:
         result = runner.invoke(app, ["playbook", "stats"])
         assert result.exit_code == 0
         initial_stats = self.extract_json_from_output(result.stdout)
-        initial_count = initial_stats["total_bullets"]
+        initial_count = initial_stats["total_bullets"]  # noqa: F841
 
         # Apply DEPRECATE operation
         delta_data = {

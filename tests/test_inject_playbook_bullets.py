@@ -8,7 +8,7 @@ and integration flow with mocked subprocess calls.
 import json
 import pytest
 import subprocess
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, ANY
 import sys
 import os
 
@@ -433,7 +433,7 @@ class TestMainFunction:
 
         main()
 
-        mock_query.assert_called_once_with(unittest.mock.ANY, 3)
+        mock_query.assert_called_once_with(ANY, 3)
 
     @patch("sys.argv", ["inject_playbook_bullets.py", "--message", "test"])
     @patch("inject_playbook_bullets.query_playbook")
@@ -447,5 +447,3 @@ class TestMainFunction:
             main()
 
 
-# Import unittest.mock for the custom limit test
-import unittest.mock
