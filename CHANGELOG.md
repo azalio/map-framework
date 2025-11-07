@@ -30,6 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Code Quality and Linting** (251e5dd, 5b166d3, ce41dde)
+  - Applied black formatting to 53 Python files for consistent code style
+  - Fixed 38 ruff linting issues (removed unused imports, f-string prefixes, unused variables)
+  - Added missing datetime import in CLI module
+  - Resolved unittest.mock import issues in tests
+  - Added noqa comments for intentional unused variables in test fixtures
+
 - **Hooks System Improvements** (2f91b05, d35c954, ae22179, 67fdc49)
   - Removed redundant PreToolUse hook for template validation (d0c4d88, c35c12d)
   - Resolved JSON parsing errors in Claude Code hooks (manual JSON → jq-based generation)
