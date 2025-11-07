@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Version Display**: Updated `__version__` in `__init__.py` to match package version (1.3.0). Previous release v1.3.0 had mismatched versions: pyproject.toml showed 1.3.0 but `mapify --version` displayed 1.0.4 due to missed update in bump-version.sh script.
+
 ## [1.3.0] - 2025-11-07
 
 ### Added

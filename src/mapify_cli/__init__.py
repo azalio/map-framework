@@ -23,7 +23,7 @@ Or install globally:
     mapify check
 """
 
-__version__ = "1.0.4"
+__version__ = "1.3.0"
 
 import os
 import subprocess
