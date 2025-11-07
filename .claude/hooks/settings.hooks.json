@@ -42,7 +42,7 @@
     ],
     "Stop": [
       {
-        "matcher": "Write|Edit",
+        "matcher": "Edit|Write",
         "description": "Quality gates - run automated checks after code modifications",
         "hooks": [
           {
