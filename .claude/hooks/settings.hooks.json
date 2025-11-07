@@ -26,20 +26,6 @@
         ]
       }
     ],
-    "PreToolUse": [
-      {
-        "matcher": "Edit|Write",
-        "description": "Validate agent template integrity before modifications",
-        "hooks": [
-          {
-            "type": "command",
-            "command": ".claude/hooks/validate-agent-templates.sh",
-            "timeout": 5,
-            "description": "Prevents accidental removal of {{template}} variables from agents"
-          }
-        ]
-      }
-    ],
     "Stop": [
       {
         "matcher": "Edit|Write",

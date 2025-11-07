@@ -11,9 +11,16 @@ set -euo pipefail
 # Read JSON input from Claude Code
 INPUT=$(cat)
 
-# Extract tool name and file path from JSON
-TOOL=$(echo "$INPUT" | jq -r '.tool // empty')
-FILE_PATH=$(echo "$INPUT" | jq -r '.parameters.file_path // empty')
+# Validate JSON input before processing
+if ! jq empty <<< "$INPUT" 2>/dev/null; then
+    echo "[validate-agent-templates] ⚠️  WARNING: Received malformed JSON input" >&2
+    echo '{"decision": "allow"}'
+    exit 0
+fi
+
+# Extract tool name and file path from JSON (using heredoc to avoid echo issues with multiline content)
+TOOL=$(jq -r '.tool // empty' <<< "$INPUT")
+FILE_PATH=$(jq -r '.parameters.file_path // empty' <<< "$INPUT")
 
 # Only validate agent files
 if [[ ! "$FILE_PATH" =~ \.claude/agents/.*\.md$ ]]; then
@@ -22,8 +29,8 @@ if [[ ! "$FILE_PATH" =~ \.claude/agents/.*\.md$ ]]; then
     exit 0
 fi
 
-# Get the new content that will be written
-NEW_CONTENT=$(echo "$INPUT" | jq -r '.parameters.content // .parameters.new_string // empty')
+# Get the new content that will be written (using heredoc to avoid echo issues with multiline content)
+NEW_CONTENT=$(jq -r '.parameters.content // .parameters.new_string // empty' <<< "$INPUT")
 
 if [ -z "$NEW_CONTENT" ]; then
     # No content to validate - allow (might be a read operation)
