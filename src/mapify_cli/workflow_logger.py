@@ -18,6 +18,7 @@ from typing import Optional, Dict, Any
 @dataclass
 class AgentInvocation:
     """Represents a single agent invocation in the workflow"""
+
     agent_name: str
     timestamp: str
     prompt_preview: str  # Truncated prompt for readability
@@ -90,7 +91,7 @@ class MapWorkflowLogger:
             "event": "session_start",
             "timestamp": self.session_start_time.isoformat(),
             "task_id": task_id,
-            "project_root": str(self.project_root)
+            "project_root": str(self.project_root),
         }
         self._write_log_entry(session_info)
 
@@ -117,7 +118,7 @@ class MapWorkflowLogger:
             "event": "session_end",
             "timestamp": session_end_time.isoformat(),
             "task_id": self.task_id,
-            "duration_seconds": duration_seconds
+            "duration_seconds": duration_seconds,
         }
         self._write_log_entry(session_info)
 
@@ -135,7 +136,7 @@ class MapWorkflowLogger:
         status: str = "success",
         error_message: Optional[str] = None,
         subtask_id: Optional[int] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Log an agent invocation with full details.
@@ -167,7 +168,7 @@ class MapWorkflowLogger:
             error_message=error_message,
             task_id=self.task_id,
             subtask_id=subtask_id,
-            metadata=metadata or {}
+            metadata=metadata or {},
         )
 
         # Convert to dict and write as JSON line
@@ -182,7 +183,7 @@ class MapWorkflowLogger:
             "error_message": invocation.error_message,
             "task_id": invocation.task_id,
             "subtask_id": invocation.subtask_id,
-            "metadata": invocation.metadata
+            "metadata": invocation.metadata,
         }
 
         self._write_log_entry(log_entry)
@@ -193,7 +194,7 @@ class MapWorkflowLogger:
         agent_name: Optional[str] = None,
         subtask_id: Optional[int] = None,
         stack_trace: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Log an error that occurred during workflow execution.
@@ -215,8 +216,12 @@ class MapWorkflowLogger:
             "agent_name": agent_name,
             "subtask_id": subtask_id,
             "task_id": self.task_id,
-            "stack_trace": self._truncate_text(stack_trace, max_length=2000) if stack_trace else None,
-            "metadata": metadata or {}
+            "stack_trace": (
+                self._truncate_text(stack_trace, max_length=2000)
+                if stack_trace
+                else None
+            ),
+            "metadata": metadata or {},
         }
 
         self._write_log_entry(log_entry)
@@ -225,7 +230,7 @@ class MapWorkflowLogger:
         self,
         operation_name: str,
         duration_ms: float,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Log timing information for performance analysis.
@@ -244,16 +249,13 @@ class MapWorkflowLogger:
             "operation_name": operation_name,
             "duration_ms": duration_ms,
             "task_id": self.task_id,
-            "metadata": metadata or {}
+            "metadata": metadata or {},
         }
 
         self._write_log_entry(log_entry)
 
     def log_event(
-        self,
-        event_type: str,
-        message: str,
-        metadata: Optional[Dict[str, Any]] = None
+        self, event_type: str, message: str, metadata: Optional[Dict[str, Any]] = None
     ) -> None:
         """
         Log a custom workflow event.
@@ -271,7 +273,7 @@ class MapWorkflowLogger:
             "timestamp": datetime.now().isoformat(),
             "message": message,
             "task_id": self.task_id,
-            "metadata": metadata or {}
+            "metadata": metadata or {},
         }
 
         self._write_log_entry(log_entry)
@@ -293,9 +295,12 @@ class MapWorkflowLogger:
             # Don't fail workflow execution if logging fails
             # Just print to stderr for debugging
             import sys
+
             print(f"Warning: Failed to write log entry: {e}", file=sys.stderr)
 
-    def _truncate_text(self, text: Optional[str], max_length: int = 500) -> Optional[str]:
+    def _truncate_text(
+        self, text: Optional[str], max_length: int = 500
+    ) -> Optional[str]:
         """
         Truncate text to maximum length with ellipsis.
 
@@ -345,7 +350,9 @@ if __name__ == "__main__":
         print("  # Test logger functionality")
         print("  python -m mapify_cli.workflow_logger test")
         print("\n  # Parse and display log file")
-        print("  python -m mapify_cli.workflow_logger parse .map/logs/workflow_20251018_143022.log")
+        print(
+            "  python -m mapify_cli.workflow_logger parse .map/logs/workflow_20251018_143022.log"
+        )
         sys.exit(1)
 
     command = sys.argv[1]
@@ -365,13 +372,13 @@ if __name__ == "__main__":
             duration_ms=123.45,
             status="success",
             subtask_id=1,
-            metadata={"test_key": "test_value"}
+            metadata={"test_key": "test_value"},
         )
         logger.log_error(
             error_message="Test error message",
             agent_name="test-agent",
             subtask_id=1,
-            metadata={"error_code": "TEST_001"}
+            metadata={"error_code": "TEST_001"},
         )
         logger.log_timing("test_operation", 456.78, metadata={"step": "initialization"})
         logger.end_session()

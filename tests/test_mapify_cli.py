@@ -82,7 +82,9 @@ class TestTemplates:
     def test_get_templates_dir_bundled(self, mock_files):
         """Test finding templates in bundled package."""
         mock_path = mock.Mock()
-        mock_path.__truediv__ = mock.Mock(return_value=Path(__file__).parent.parent / "templates")
+        mock_path.__truediv__ = mock.Mock(
+            return_value=Path(__file__).parent.parent / "templates"
+        )
         mock_files.return_value = mock_path
 
         result = get_templates_dir()
@@ -139,7 +141,9 @@ class TestGitOperations:
 
     def test_init_git_repo_no_git(self, tmp_path):
         """Test graceful handling when git is not installed."""
-        with mock.patch("subprocess.run", side_effect=FileNotFoundError("git not found")):
+        with mock.patch(
+            "subprocess.run", side_effect=FileNotFoundError("git not found")
+        ):
             result = init_git_repo(tmp_path, quiet=True)
             assert result is False
 
@@ -203,8 +207,11 @@ class TestInitCommand:
         assert result.exit_code != 0
         # Typer should reject the unknown option
         # Check both stdout and output for compatibility across Typer versions
-        output_text = getattr(result, 'output', result.stdout)
-        assert "no such option" in output_text.lower() or "unrecognized" in output_text.lower()
+        output_text = getattr(result, "output", result.stdout)
+        assert (
+            "no such option" in output_text.lower()
+            or "unrecognized" in output_text.lower()
+        )
 
     @mock.patch("mapify_cli.select_with_arrows")
     @mock.patch("mapify_cli.select_multiple_with_arrows")
@@ -234,7 +241,9 @@ class TestInitCommand:
 
     @mock.patch("mapify_cli.select_with_arrows")
     @mock.patch("mapify_cli.select_multiple_with_arrows")
-    def test_init_tracker_shows_claude(self, mock_select_multiple, mock_select, tmp_path):
+    def test_init_tracker_shows_claude(
+        self, mock_select_multiple, mock_select, tmp_path
+    ):
         """Test that tracker shows Claude as selected AI.
 
         Verifies that:
@@ -252,7 +261,9 @@ class TestInitCommand:
 
     @mock.patch("mapify_cli.select_with_arrows")
     @mock.patch("mapify_cli.select_multiple_with_arrows")
-    def test_init_claude_with_essential_mcp(self, mock_select_multiple, mock_select, tmp_path):
+    def test_init_claude_with_essential_mcp(
+        self, mock_select_multiple, mock_select, tmp_path
+    ):
         """Test initialization with Claude and essential MCP servers."""
         os.chdir(tmp_path)
         mock_select.return_value = "essential"
@@ -285,7 +296,9 @@ class TestInitCommand:
 
     @mock.patch("mapify_cli.select_with_arrows")
     @mock.patch("mapify_cli.select_multiple_with_arrows")
-    def test_init_already_initialized(self, mock_select_multiple, mock_select, tmp_path):
+    def test_init_already_initialized(
+        self, mock_select_multiple, mock_select, tmp_path
+    ):
         """Test init when project already has .claude directory."""
         os.chdir(tmp_path)
         mock_select.return_value = "none"
@@ -298,7 +311,9 @@ class TestInitCommand:
         result2 = runner.invoke(app, ["init", ".", "--no-git", "--force"])
         assert result2.exit_code == 0
         # Should succeed with --force
-        assert "Project ready" in result2.stdout or "already initialized" in result2.stdout
+        assert (
+            "Project ready" in result2.stdout or "already initialized" in result2.stdout
+        )
 
     @mock.patch("mapify_cli.select_with_arrows")
     @mock.patch("mapify_cli.select_multiple_with_arrows")
@@ -318,7 +333,9 @@ class TestInitCommand:
 
     @mock.patch("mapify_cli.select_with_arrows")
     @mock.patch("mapify_cli.select_multiple_with_arrows")
-    def test_init_force_preserves_user_files(self, mock_select_multiple, mock_select, tmp_path):
+    def test_init_force_preserves_user_files(
+        self, mock_select_multiple, mock_select, tmp_path
+    ):
         """Test that 'mapify init --force' preserves user's custom files.
 
         Critical bug regression test: Verify that reinitializing a project with --force
@@ -353,37 +370,67 @@ class TestInitCommand:
 
         # Verify user files exist before --force
         assert user_file.exists(), "User file should exist before --force"
-        assert user_subfile.exists(), "User subdirectory file should exist before --force"
+        assert (
+            user_subfile.exists()
+        ), "User subdirectory file should exist before --force"
 
         # Step 3: Get list of template files before --force
-        template_files_before = set(helpers_dir.rglob("*.py")) - {user_file, user_subfile}
-        assert len(template_files_before) > 0, "Should have template files from first init"
+        template_files_before = set(helpers_dir.rglob("*.py")) - {
+            user_file,
+            user_subfile,
+        }
+        assert (
+            len(template_files_before) > 0
+        ), "Should have template files from first init"
 
         # Step 4: Run init --force to reinitialize
-        result2 = runner.invoke(app, ["init", ".", "--force", "--no-git", "--mcp", "none"])
+        result2 = runner.invoke(
+            app, ["init", ".", "--force", "--no-git", "--mcp", "none"]
+        )
         assert result2.exit_code == 0, f"Second init --force failed: {result2.stdout}"
 
         # Step 5: Verify user files still exist with original content
         assert user_file.exists(), "CRITICAL: User file was deleted by init --force!"
-        assert user_file.read_text() == user_file_content, "User file content was modified!"
+        assert (
+            user_file.read_text() == user_file_content
+        ), "User file content was modified!"
 
-        assert user_subfile.exists(), "CRITICAL: User subdirectory file was deleted by init --force!"
-        assert user_subfile.read_text() == user_subfile_content, "User subdirectory file content was modified!"
+        assert (
+            user_subfile.exists()
+        ), "CRITICAL: User subdirectory file was deleted by init --force!"
+        assert (
+            user_subfile.read_text() == user_subfile_content
+        ), "User subdirectory file content was modified!"
 
         # Step 6: Verify template files were updated (still exist)
-        template_files_after = set(helpers_dir.rglob("*.py")) - {user_file, user_subfile}
-        assert len(template_files_after) > 0, "Template files should still exist after --force"
+        template_files_after = set(helpers_dir.rglob("*.py")) - {
+            user_file,
+            user_subfile,
+        }
+        assert (
+            len(template_files_after) > 0
+        ), "Template files should still exist after --force"
 
         # Verify at least some common template files exist
-        expected_template_files = ["quality_gates.py", "inject_playbook_bullets.py", "__init__.py"]
+        expected_template_files = [
+            "quality_gates.py",
+            "inject_playbook_bullets.py",
+            "__init__.py",
+        ]
         for template_file in expected_template_files:
-            assert (helpers_dir / template_file).exists(), f"Template file {template_file} should exist after --force"
+            assert (
+                helpers_dir / template_file
+            ).exists(), f"Template file {template_file} should exist after --force"
 
         # Step 7: Verify both user and template files coexist
         all_files = set(helpers_dir.rglob("*.py"))
         assert user_file in all_files, "User file should be in final file list"
-        assert user_subfile in all_files, "User subdirectory file should be in final file list"
-        assert len(all_files) >= len(template_files_after) + 2, "Should have both template and user files"
+        assert (
+            user_subfile in all_files
+        ), "User subdirectory file should be in final file list"
+        assert (
+            len(all_files) >= len(template_files_after) + 2
+        ), "Should have both template and user files"
 
 
 class TestCheckCommand:
@@ -396,7 +443,9 @@ class TestCheckCommand:
 
         # Should show available tools
         assert result.exit_code == 0
-        assert "Check Available Tools" in result.stdout or "MAP Framework" in result.stdout
+        assert (
+            "Check Available Tools" in result.stdout or "MAP Framework" in result.stdout
+        )
 
     @mock.patch("mapify_cli.check_tool")
     def test_check_initialized(self, mock_check_tool, tmp_path):
@@ -407,7 +456,9 @@ class TestCheckCommand:
         result = runner.invoke(app, ["check"])
 
         assert result.exit_code == 0
-        assert "Check Available Tools" in result.stdout or "MAP Framework" in result.stdout
+        assert (
+            "Check Available Tools" in result.stdout or "MAP Framework" in result.stdout
+        )
 
     @mock.patch("mapify_cli.check_tool")
     def test_check_with_mcp_servers(self, mock_check_tool, tmp_path):
@@ -430,14 +481,17 @@ class TestUpgradeCommand:
         os.chdir(tmp_path)
         mock_get_latest.return_value = {
             "tag_name": "v2.0.0",
-            "html_url": "https://github.com/azalio/map-framework/releases/tag/v2.0.0"
+            "html_url": "https://github.com/azalio/map-framework/releases/tag/v2.0.0",
         }
 
         result = runner.invoke(app, ["upgrade"])
 
         assert result.exit_code == 0
         # For now, upgrade shows "coming soon" message
-        assert "Upgrade feature coming soon" in result.stdout or "New version available" in result.stdout
+        assert (
+            "Upgrade feature coming soon" in result.stdout
+            or "New version available" in result.stdout
+        )
 
     @mock.patch("mapify_cli.get_latest_release")
     def test_upgrade_not_available(self, mock_get_latest, tmp_path):
@@ -445,13 +499,16 @@ class TestUpgradeCommand:
         os.chdir(tmp_path)
         mock_get_latest.return_value = {
             "tag_name": "v1.0.0",
-            "html_url": "https://github.com/azalio/map-framework/releases/tag/v1.0.0"
+            "html_url": "https://github.com/azalio/map-framework/releases/tag/v1.0.0",
         }
 
         result = runner.invoke(app, ["upgrade"])
 
         assert result.exit_code == 0
-        assert "Upgrade feature coming soon" in result.stdout or "already on the latest version" in result.stdout
+        assert (
+            "Upgrade feature coming soon" in result.stdout
+            or "already on the latest version" in result.stdout
+        )
 
     def test_upgrade_not_initialized(self, tmp_path):
         """Test upgrade in non-initialized directory."""
@@ -459,7 +516,10 @@ class TestUpgradeCommand:
         result = runner.invoke(app, ["upgrade"])
 
         assert result.exit_code == 0
-        assert "Upgrade feature coming soon" in result.stdout or "MAP Framework not initialized" in result.stdout
+        assert (
+            "Upgrade feature coming soon" in result.stdout
+            or "MAP Framework not initialized" in result.stdout
+        )
 
 
 class TestAgentCreation:
@@ -509,9 +569,14 @@ class TestAgentCreation:
 
         # Verify all 8 agents were created using fallback generators
         expected_agents = [
-            "task-decomposer.md", "actor.md", "monitor.md",
-            "predictor.md", "evaluator.md", "reflector.md",
-            "curator.md", "documentation-reviewer.md"
+            "task-decomposer.md",
+            "actor.md",
+            "monitor.md",
+            "predictor.md",
+            "evaluator.md",
+            "reflector.md",
+            "curator.md",
+            "documentation-reviewer.md",
         ]
 
         for agent_file in expected_agents:
@@ -523,13 +588,16 @@ class TestAgentCreation:
             assert "---" in content, f"Agent {agent_file} missing YAML frontmatter"
             assert "name:" in content, f"Agent {agent_file} missing name field"
             # Check for role/identity sections (various formats)
-            has_core_section = any(marker in content for marker in ["IDENTITY", "ROLE", "Role:", "# Role"])
+            has_core_section = any(
+                marker in content for marker in ["IDENTITY", "ROLE", "Role:", "# Role"]
+            )
             assert has_core_section, f"Agent {agent_file} missing core sections"
 
             # Verify MCP integration for cipher-enabled agents
             if any(name in agent_file for name in ["reflector", "curator"]):
-                assert "cipher" in content.lower() or "mcp" in content.lower(), \
-                    f"Agent {agent_file} missing MCP integration section"
+                assert (
+                    "cipher" in content.lower() or "mcp" in content.lower()
+                ), f"Agent {agent_file} missing MCP integration section"
 
 
 class TestCommandCreation:
@@ -569,7 +637,7 @@ class TestHelperFunctions:
         mock_response.status_code = 200
         mock_response.json.return_value = {
             "tag_name": "v1.0.0",
-            "html_url": "https://github.com/azalio/map-framework/releases/tag/v1.0.0"
+            "html_url": "https://github.com/azalio/map-framework/releases/tag/v1.0.0",
         }
 
         mock_client_instance = mock.Mock()
@@ -593,19 +661,20 @@ class TestRecitationSubcommands:
         map_dir = tmp_path / ".map"
         map_dir.mkdir()
 
-        subtasks_json = json.dumps([
-            {
-                "id": 1,
-                "description": "Test task 1",
-                "acceptance_criteria": "Should work",
-                "estimated_complexity": "low",
-                "depends_on": []
-            }
-        ])
+        subtasks_json = json.dumps(
+            [
+                {
+                    "id": 1,
+                    "description": "Test task 1",
+                    "acceptance_criteria": "Should work",
+                    "estimated_complexity": "low",
+                    "depends_on": [],
+                }
+            ]
+        )
 
         result = runner.invoke(
-            app,
-            ["recitation", "create", "test_task", "Test goal", subtasks_json]
+            app, ["recitation", "create", "test_task", "Test goal", subtasks_json]
         )
 
         assert result.exit_code == 0
@@ -622,8 +691,7 @@ class TestRecitationSubcommands:
         map_dir.mkdir()
 
         result = runner.invoke(
-            app,
-            ["recitation", "create", "test_task", "Test goal", "invalid json"]
+            app, ["recitation", "create", "test_task", "Test goal", "invalid json"]
         )
 
         assert result.exit_code == 1
@@ -636,21 +704,19 @@ class TestRecitationSubcommands:
         map_dir = tmp_path / ".map"
         map_dir.mkdir()
 
-        subtasks_json = json.dumps([
-            {"id": 1, "description": "Task 1", "depends_on": []}
-        ])
+        subtasks_json = json.dumps(
+            [{"id": 1, "description": "Task 1", "depends_on": []}]
+        )
 
         # Create first plan
         result1 = runner.invoke(
-            app,
-            ["recitation", "create", "task1", "Goal 1", subtasks_json]
+            app, ["recitation", "create", "task1", "Goal 1", subtasks_json]
         )
         assert result1.exit_code == 0
 
         # Create second plan with --force
         result2 = runner.invoke(
-            app,
-            ["recitation", "create", "task2", "Goal 2", subtasks_json, "--force"]
+            app, ["recitation", "create", "task2", "Goal 2", subtasks_json, "--force"]
         )
         assert result2.exit_code == 0
         output = json.loads(result2.stdout)
@@ -663,25 +729,24 @@ class TestRecitationSubcommands:
         map_dir.mkdir()
 
         # Create plan first
-        subtasks_json = json.dumps([
-            {"id": 1, "description": "Task 1", "depends_on": []}
-        ])
+        subtasks_json = json.dumps(
+            [{"id": 1, "description": "Task 1", "depends_on": []}]
+        )
         runner.invoke(
-            app,
-            ["recitation", "create", "test_task", "Test goal", subtasks_json]
+            app, ["recitation", "create", "test_task", "Test goal", subtasks_json]
         )
 
         # Update status
-        result = runner.invoke(
-            app,
-            ["recitation", "update", "1", "in_progress"]
-        )
+        result = runner.invoke(app, ["recitation", "update", "1", "in_progress"])
 
         assert result.exit_code == 0
         output = json.loads(result.stdout)
         assert output["status"] == "success"
         # IDs are now stored as strings, so integer 1 becomes "1"
-        assert output["current_subtask"] in [1, "1"]  # Support both int and str for backward compatibility
+        assert output["current_subtask"] in [
+            1,
+            "1",
+        ]  # Support both int and str for backward compatibility
         assert "updated" in output["message"].lower()
 
     def test_recitation_update_with_error(self, tmp_path):
@@ -691,18 +756,16 @@ class TestRecitationSubcommands:
         map_dir.mkdir()
 
         # Create plan first
-        subtasks_json = json.dumps([
-            {"id": 1, "description": "Task 1", "depends_on": []}
-        ])
+        subtasks_json = json.dumps(
+            [{"id": 1, "description": "Task 1", "depends_on": []}]
+        )
         runner.invoke(
-            app,
-            ["recitation", "create", "test_task", "Test goal", subtasks_json]
+            app, ["recitation", "create", "test_task", "Test goal", subtasks_json]
         )
 
         # Update with error
         result = runner.invoke(
-            app,
-            ["recitation", "update", "1", "in_progress", "Test error message"]
+            app, ["recitation", "update", "1", "in_progress", "Test error message"]
         )
 
         assert result.exit_code == 0
@@ -716,19 +779,15 @@ class TestRecitationSubcommands:
         map_dir.mkdir()
 
         # Create plan first
-        subtasks_json = json.dumps([
-            {"id": 1, "description": "Task 1", "depends_on": []}
-        ])
+        subtasks_json = json.dumps(
+            [{"id": 1, "description": "Task 1", "depends_on": []}]
+        )
         runner.invoke(
-            app,
-            ["recitation", "create", "test_task", "Test goal", subtasks_json]
+            app, ["recitation", "create", "test_task", "Test goal", subtasks_json]
         )
 
         # Update non-existent subtask
-        result = runner.invoke(
-            app,
-            ["recitation", "update", "999", "completed"]
-        )
+        result = runner.invoke(app, ["recitation", "update", "999", "completed"])
 
         assert result.exit_code == 1
         output = json.loads(result.stdout)
@@ -742,12 +801,11 @@ class TestRecitationSubcommands:
         map_dir.mkdir()
 
         # Create plan first
-        subtasks_json = json.dumps([
-            {"id": 1, "description": "Task 1", "depends_on": []}
-        ])
+        subtasks_json = json.dumps(
+            [{"id": 1, "description": "Task 1", "depends_on": []}]
+        )
         runner.invoke(
-            app,
-            ["recitation", "create", "test_task", "Test goal", subtasks_json]
+            app, ["recitation", "create", "test_task", "Test goal", subtasks_json]
         )
 
         # Get context
@@ -775,13 +833,14 @@ class TestRecitationSubcommands:
         map_dir.mkdir()
 
         # Create plan first
-        subtasks_json = json.dumps([
-            {"id": 1, "description": "Task 1", "depends_on": []},
-            {"id": 2, "description": "Task 2", "depends_on": [1]}
-        ])
+        subtasks_json = json.dumps(
+            [
+                {"id": 1, "description": "Task 1", "depends_on": []},
+                {"id": 2, "description": "Task 2", "depends_on": [1]},
+            ]
+        )
         runner.invoke(
-            app,
-            ["recitation", "create", "test_task", "Test goal", subtasks_json]
+            app, ["recitation", "create", "test_task", "Test goal", subtasks_json]
         )
 
         # Get stats
@@ -813,12 +872,11 @@ class TestRecitationSubcommands:
         map_dir.mkdir()
 
         # Create plan first
-        subtasks_json = json.dumps([
-            {"id": 1, "description": "Task 1", "depends_on": []}
-        ])
+        subtasks_json = json.dumps(
+            [{"id": 1, "description": "Task 1", "depends_on": []}]
+        )
         runner.invoke(
-            app,
-            ["recitation", "create", "test_task", "Test goal", subtasks_json]
+            app, ["recitation", "create", "test_task", "Test goal", subtasks_json]
         )
 
         # Clear plan
@@ -874,12 +932,12 @@ class TestPlaybookSubcommands:
         # Extract JSON from output (may contain migration messages)
         json_lines = []
         in_json = False
-        for line in result.stdout.split('\n'):
-            if line.strip().startswith('{'):
+        for line in result.stdout.split("\n"):
+            if line.strip().startswith("{"):
                 in_json = True
             if in_json:
                 json_lines.append(line)
-        output = json.loads('\n'.join(json_lines))
+        output = json.loads("\n".join(json_lines))
         assert output["total_bullets"] == 3
         # SQLite backend creates all 10 default sections, not just 2
         assert output["sections"] >= 2
@@ -933,15 +991,23 @@ class TestPlaybookSubcommands:
             "sections": {
                 "IMPLEMENTATION_PATTERNS": {
                     "bullets": [
-                        {"id": "impl-0001", "content": "JWT authentication pattern", "deprecated": False, "helpful_count": 0, "harmful_count": 0}
+                        {
+                            "id": "impl-0001",
+                            "content": "JWT authentication pattern",
+                            "deprecated": False,
+                            "helpful_count": 0,
+                            "harmful_count": 0,
+                        }
                     ]
                 }
-            }
+            },
         }
         playbook_file.write_text(json.dumps(playbook_data))
 
         # Use a very specific query unlikely to match
-        result = runner.invoke(app, ["playbook", "search", "xyzzy123nonexistent456plugh"])
+        result = runner.invoke(
+            app, ["playbook", "search", "xyzzy123nonexistent456plugh"]
+        )
 
         assert result.exit_code == 0
         # PlaybookManager may use fuzzy matching, so accept both no results and found results
@@ -962,15 +1028,23 @@ class TestPlaybookSubcommands:
             "sections": {
                 "IMPLEMENTATION_PATTERNS": {
                     "bullets": [
-                        {"id": f"impl-{i:04d}", "content": f"Test authentication pattern {i}", "deprecated": False, "helpful_count": 0, "harmful_count": 0}
+                        {
+                            "id": f"impl-{i:04d}",
+                            "content": f"Test authentication pattern {i}",
+                            "deprecated": False,
+                            "helpful_count": 0,
+                            "harmful_count": 0,
+                        }
                         for i in range(1, 11)  # 10 patterns
                     ]
                 }
-            }
+            },
         }
         playbook_file.write_text(json.dumps(playbook_data))
 
-        result = runner.invoke(app, ["playbook", "search", "authentication", "--top-k", "3"])
+        result = runner.invoke(
+            app, ["playbook", "search", "authentication", "--top-k", "3"]
+        )
 
         assert result.exit_code == 0
         # Output should be either JSON with results or "No patterns found" message
@@ -1009,7 +1083,7 @@ class TestPlaybookSubcommands:
         # Extract JSON from output (may contain diagnostic messages from semantic search)
         # Find the JSON object by looking for the opening brace
         stdout = result.stdout
-        json_start = stdout.find('{')
+        json_start = stdout.find("{")
         if json_start == -1:
             pytest.fail(f"No JSON found in output: {stdout[:200]}")
         json_str = stdout[json_start:]

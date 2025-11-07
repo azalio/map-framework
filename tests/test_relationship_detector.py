@@ -17,13 +17,9 @@ from mapify_cli.relationship_detector import (
     RelationshipDetector,
     detect_relationships,
     Relationship,
-    RelationshipType
+    RelationshipType,
 )
-from mapify_cli.entity_extractor import (
-    Entity,
-    EntityType,
-    extract_entities
-)
+from mapify_cli.entity_extractor import Entity, EntityType, extract_entities
 
 
 class TestRelationshipDetector:
@@ -38,36 +34,121 @@ class TestRelationshipDetector:
     def sample_entities(self):
         """Create sample entities for testing."""
         from datetime import timezone
-        now = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         return [
-            Entity(id="ent-pytest", type=EntityType.TOOL, name="pytest",
-                   confidence=0.9, first_seen_at=now, last_seen_at=now),
-            Entity(id="ent-python", type=EntityType.TECHNOLOGY, name="Python",
-                   confidence=0.9, first_seen_at=now, last_seen_at=now),
-            Entity(id="ent-map-workflow", type=EntityType.WORKFLOW, name="MAP-workflow",
-                   confidence=0.8, first_seen_at=now, last_seen_at=now),
-            Entity(id="ent-playbook-db", type=EntityType.TOOL, name="playbook.db",
-                   confidence=0.9, first_seen_at=now, last_seen_at=now),
-            Entity(id="ent-generic-exception", type=EntityType.ANTIPATTERN, name="generic-exception",
-                   confidence=0.8, first_seen_at=now, last_seen_at=now),
-            Entity(id="ent-specific-exceptions", type=EntityType.PATTERN, name="specific-exceptions",
-                   confidence=0.8, first_seen_at=now, last_seen_at=now),
-            Entity(id="ent-playbook-json", type=EntityType.TOOL, name="playbook.json",
-                   confidence=0.7, first_seen_at=now, last_seen_at=now),
-            Entity(id="ent-sqlite", type=EntityType.TOOL, name="SQLite",
-                   confidence=0.9, first_seen_at=now, last_seen_at=now),
-            Entity(id="ent-fts5", type=EntityType.TOOL, name="FTS5",
-                   confidence=0.8, first_seen_at=now, last_seen_at=now),
-            Entity(id="ent-race-condition", type=EntityType.ERROR_TYPE, name="race-condition",
-                   confidence=0.8, first_seen_at=now, last_seen_at=now),
-            Entity(id="ent-data-corruption", type=EntityType.ERROR_TYPE, name="data-corruption",
-                   confidence=0.7, first_seen_at=now, last_seen_at=now),
-            Entity(id="ent-mutex-lock", type=EntityType.PATTERN, name="mutex-lock",
-                   confidence=0.8, first_seen_at=now, last_seen_at=now),
-            Entity(id="ent-retry-logic", type=EntityType.PATTERN, name="retry-logic",
-                   confidence=0.8, first_seen_at=now, last_seen_at=now),
-            Entity(id="ent-resilience-pattern", type=EntityType.PATTERN, name="resilience-pattern",
-                   confidence=0.7, first_seen_at=now, last_seen_at=now),
+            Entity(
+                id="ent-pytest",
+                type=EntityType.TOOL,
+                name="pytest",
+                confidence=0.9,
+                first_seen_at=now,
+                last_seen_at=now,
+            ),
+            Entity(
+                id="ent-python",
+                type=EntityType.TECHNOLOGY,
+                name="Python",
+                confidence=0.9,
+                first_seen_at=now,
+                last_seen_at=now,
+            ),
+            Entity(
+                id="ent-map-workflow",
+                type=EntityType.WORKFLOW,
+                name="MAP-workflow",
+                confidence=0.8,
+                first_seen_at=now,
+                last_seen_at=now,
+            ),
+            Entity(
+                id="ent-playbook-db",
+                type=EntityType.TOOL,
+                name="playbook.db",
+                confidence=0.9,
+                first_seen_at=now,
+                last_seen_at=now,
+            ),
+            Entity(
+                id="ent-generic-exception",
+                type=EntityType.ANTIPATTERN,
+                name="generic-exception",
+                confidence=0.8,
+                first_seen_at=now,
+                last_seen_at=now,
+            ),
+            Entity(
+                id="ent-specific-exceptions",
+                type=EntityType.PATTERN,
+                name="specific-exceptions",
+                confidence=0.8,
+                first_seen_at=now,
+                last_seen_at=now,
+            ),
+            Entity(
+                id="ent-playbook-json",
+                type=EntityType.TOOL,
+                name="playbook.json",
+                confidence=0.7,
+                first_seen_at=now,
+                last_seen_at=now,
+            ),
+            Entity(
+                id="ent-sqlite",
+                type=EntityType.TOOL,
+                name="SQLite",
+                confidence=0.9,
+                first_seen_at=now,
+                last_seen_at=now,
+            ),
+            Entity(
+                id="ent-fts5",
+                type=EntityType.TOOL,
+                name="FTS5",
+                confidence=0.8,
+                first_seen_at=now,
+                last_seen_at=now,
+            ),
+            Entity(
+                id="ent-race-condition",
+                type=EntityType.ERROR_TYPE,
+                name="race-condition",
+                confidence=0.8,
+                first_seen_at=now,
+                last_seen_at=now,
+            ),
+            Entity(
+                id="ent-data-corruption",
+                type=EntityType.ERROR_TYPE,
+                name="data-corruption",
+                confidence=0.7,
+                first_seen_at=now,
+                last_seen_at=now,
+            ),
+            Entity(
+                id="ent-mutex-lock",
+                type=EntityType.PATTERN,
+                name="mutex-lock",
+                confidence=0.8,
+                first_seen_at=now,
+                last_seen_at=now,
+            ),
+            Entity(
+                id="ent-retry-logic",
+                type=EntityType.PATTERN,
+                name="retry-logic",
+                confidence=0.8,
+                first_seen_at=now,
+                last_seen_at=now,
+            ),
+            Entity(
+                id="ent-resilience-pattern",
+                type=EntityType.PATTERN,
+                name="resilience-pattern",
+                confidence=0.7,
+                first_seen_at=now,
+                last_seen_at=now,
+            ),
         ]
 
     # ============================================================================
@@ -84,9 +165,13 @@ class TestRelationshipDetector:
 
         # Should extract: pytest USES Python
         pytest_uses_python = next(
-            (r for r in uses_rels
-             if r.source_entity_id == "ent-pytest" and r.target_entity_id == "ent-python"),
-            None
+            (
+                r
+                for r in uses_rels
+                if r.source_entity_id == "ent-pytest"
+                and r.target_entity_id == "ent-python"
+            ),
+            None,
         )
         assert pytest_uses_python is not None
         assert pytest_uses_python.confidence >= 0.7
@@ -109,9 +194,13 @@ class TestRelationshipDetector:
         assert len(uses_rels) >= 1
 
         pytest_uses_python = next(
-            (r for r in uses_rels
-             if r.source_entity_id == "ent-pytest" and r.target_entity_id == "ent-python"),
-            None
+            (
+                r
+                for r in uses_rels
+                if r.source_entity_id == "ent-pytest"
+                and r.target_entity_id == "ent-python"
+            ),
+            None,
         )
         assert pytest_uses_python is not None
 
@@ -129,9 +218,13 @@ class TestRelationshipDetector:
 
         # Should extract: MAP-workflow DEPENDS_ON playbook.db
         map_depends_db = next(
-            (r for r in depends_rels
-             if r.source_entity_id == "ent-map-workflow" and r.target_entity_id == "ent-playbook-db"),
-            None
+            (
+                r
+                for r in depends_rels
+                if r.source_entity_id == "ent-map-workflow"
+                and r.target_entity_id == "ent-playbook-db"
+            ),
+            None,
         )
         assert map_depends_db is not None
         assert map_depends_db.confidence >= 0.7
@@ -168,10 +261,13 @@ class TestRelationshipDetector:
 
         # Should extract: generic-exception CONTRADICTS specific-exceptions
         contradiction = next(
-            (r for r in contradicts_rels
-             if r.source_entity_id == "ent-generic-exception"
-             and r.target_entity_id == "ent-specific-exceptions"),
-            None
+            (
+                r
+                for r in contradicts_rels
+                if r.source_entity_id == "ent-generic-exception"
+                and r.target_entity_id == "ent-specific-exceptions"
+            ),
+            None,
         )
         assert contradiction is not None
         assert contradiction.confidence >= 0.7
@@ -186,10 +282,13 @@ class TestRelationshipDetector:
 
         # Should extract: specific-exceptions CONTRADICTS generic-exception
         contradiction = next(
-            (r for r in contradicts_rels
-             if r.source_entity_id == "ent-specific-exceptions"
-             and r.target_entity_id == "ent-generic-exception"),
-            None
+            (
+                r
+                for r in contradicts_rels
+                if r.source_entity_id == "ent-specific-exceptions"
+                and r.target_entity_id == "ent-generic-exception"
+            ),
+            None,
         )
         assert contradiction is not None
 
@@ -215,10 +314,13 @@ class TestRelationshipDetector:
 
         # Should extract: playbook.db SUPERSEDES playbook.json
         supersedes = next(
-            (r for r in supersedes_rels
-             if r.source_entity_id == "ent-playbook-db"
-             and r.target_entity_id == "ent-playbook-json"),
-            None
+            (
+                r
+                for r in supersedes_rels
+                if r.source_entity_id == "ent-playbook-db"
+                and r.target_entity_id == "ent-playbook-json"
+            ),
+            None,
         )
         assert supersedes is not None
         assert supersedes.confidence >= 0.7
@@ -233,10 +335,13 @@ class TestRelationshipDetector:
 
         # Should extract: playbook.db SUPERSEDES playbook.json
         supersedes = next(
-            (r for r in supersedes_rels
-             if r.source_entity_id == "ent-playbook-db"
-             and r.target_entity_id == "ent-playbook-json"),
-            None
+            (
+                r
+                for r in supersedes_rels
+                if r.source_entity_id == "ent-playbook-db"
+                and r.target_entity_id == "ent-playbook-json"
+            ),
+            None,
         )
         assert supersedes is not None
 
@@ -263,10 +368,19 @@ class TestRelationshipDetector:
 
         # Check that relationship exists
         sqlite_fts5_rel = next(
-            (r for r in related_rels
-             if (r.source_entity_id == "ent-sqlite" and r.target_entity_id == "ent-fts5")
-             or (r.source_entity_id == "ent-fts5" and r.target_entity_id == "ent-sqlite")),
-            None
+            (
+                r
+                for r in related_rels
+                if (
+                    r.source_entity_id == "ent-sqlite"
+                    and r.target_entity_id == "ent-fts5"
+                )
+                or (
+                    r.source_entity_id == "ent-fts5"
+                    and r.target_entity_id == "ent-sqlite"
+                )
+            ),
+            None,
         )
         assert sqlite_fts5_rel is not None
         # Proximity-based relationships have lower confidence
@@ -298,10 +412,13 @@ class TestRelationshipDetector:
 
         # Should extract: retry-logic IMPLEMENTS resilience-pattern
         implements = next(
-            (r for r in implements_rels
-             if r.source_entity_id == "ent-retry-logic"
-             and r.target_entity_id == "ent-resilience-pattern"),
-            None
+            (
+                r
+                for r in implements_rels
+                if r.source_entity_id == "ent-retry-logic"
+                and r.target_entity_id == "ent-resilience-pattern"
+            ),
+            None,
         )
         assert implements is not None
         assert implements.confidence >= 0.6
@@ -328,10 +445,13 @@ class TestRelationshipDetector:
 
         # Should extract: race-condition CAUSES data-corruption
         causes = next(
-            (r for r in causes_rels
-             if r.source_entity_id == "ent-race-condition"
-             and r.target_entity_id == "ent-data-corruption"),
-            None
+            (
+                r
+                for r in causes_rels
+                if r.source_entity_id == "ent-race-condition"
+                and r.target_entity_id == "ent-data-corruption"
+            ),
+            None,
         )
         assert causes is not None
         assert causes.confidence >= 0.6
@@ -358,10 +478,13 @@ class TestRelationshipDetector:
 
         # Should extract: mutex-lock PREVENTS race-condition
         prevents = next(
-            (r for r in prevents_rels
-             if r.source_entity_id == "ent-mutex-lock"
-             and r.target_entity_id == "ent-race-condition"),
-            None
+            (
+                r
+                for r in prevents_rels
+                if r.source_entity_id == "ent-mutex-lock"
+                and r.target_entity_id == "ent-race-condition"
+            ),
+            None,
         )
         assert prevents is not None
         assert prevents.confidence >= 0.6
@@ -420,10 +543,17 @@ class TestRelationshipDetector:
     def test_self_relationship_filtered(self, detector):
         """Test that self-relationships are filtered out."""
         from datetime import timezone
-        now = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         entities = [
-            Entity(id="ent-pytest", type=EntityType.TOOL, name="pytest",
-                   confidence=0.9, first_seen_at=now, last_seen_at=now)
+            Entity(
+                id="ent-pytest",
+                type=EntityType.TOOL,
+                name="pytest",
+                confidence=0.9,
+                first_seen_at=now,
+                last_seen_at=now,
+            )
         ]
 
         # Text that could create self-relationship
@@ -458,7 +588,10 @@ class TestRelationshipDetector:
             rel = uses_rels[0]
             assert rel.metadata is not None
             assert "extraction_method" in rel.metadata
-            assert rel.metadata["extraction_method"] in ["pattern_matching", "proximity_based"]
+            assert rel.metadata["extraction_method"] in [
+                "pattern_matching",
+                "proximity_based",
+            ]
 
     # ============================================================================
     # Confidence Scoring
@@ -504,7 +637,8 @@ class TestRelationshipDetector:
 
         # Count pytest USES Python relationships
         pytest_python_uses = [
-            r for r in rels
+            r
+            for r in rels
             if r.type == RelationshipType.USES
             and r.source_entity_id == "ent-pytest"
             and r.target_entity_id == "ent-python"
@@ -526,12 +660,25 @@ class TestRelationshipDetector:
     def test_entity_name_case_insensitive(self, detector):
         """Test that entity matching is case-insensitive."""
         from datetime import timezone
-        now = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         entities = [
-            Entity(id="ent-pytest", type=EntityType.TOOL, name="pytest",
-                   confidence=0.9, first_seen_at=now, last_seen_at=now),
-            Entity(id="ent-python", type=EntityType.TECHNOLOGY, name="Python",
-                   confidence=0.9, first_seen_at=now, last_seen_at=now),
+            Entity(
+                id="ent-pytest",
+                type=EntityType.TOOL,
+                name="pytest",
+                confidence=0.9,
+                first_seen_at=now,
+                last_seen_at=now,
+            ),
+            Entity(
+                id="ent-python",
+                type=EntityType.TECHNOLOGY,
+                name="Python",
+                confidence=0.9,
+                first_seen_at=now,
+                last_seen_at=now,
+            ),
         ]
 
         # Use different cases
@@ -544,12 +691,25 @@ class TestRelationshipDetector:
     def test_entity_name_hyphen_space_normalization(self, detector):
         """Test that entity names with hyphens/spaces are matched correctly."""
         from datetime import timezone
-        now = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         entities = [
-            Entity(id="ent-map-workflow", type=EntityType.WORKFLOW, name="MAP-workflow",
-                   confidence=0.8, first_seen_at=now, last_seen_at=now),
-            Entity(id="ent-playbook-db", type=EntityType.TOOL, name="playbook.db",
-                   confidence=0.9, first_seen_at=now, last_seen_at=now),
+            Entity(
+                id="ent-map-workflow",
+                type=EntityType.WORKFLOW,
+                name="MAP-workflow",
+                confidence=0.8,
+                first_seen_at=now,
+                last_seen_at=now,
+            ),
+            Entity(
+                id="ent-playbook-db",
+                type=EntityType.TOOL,
+                name="playbook.db",
+                confidence=0.9,
+                first_seen_at=now,
+                last_seen_at=now,
+            ),
         ]
 
         # Use space instead of hyphen
@@ -563,12 +723,25 @@ class TestRelationshipDetector:
     def test_entity_name_multi_word_handling(self, detector):
         """Test matching entities with 3+ word names via progressive prefix matching."""
         from datetime import timezone
-        now = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         entities = [
-            Entity(id="ent-pytest-framework", type=EntityType.TOOL, name="Python test framework pytest",
-                   confidence=0.9, first_seen_at=now, last_seen_at=now),
-            Entity(id="ent-python", type=EntityType.TECHNOLOGY, name="Python",
-                   confidence=0.9, first_seen_at=now, last_seen_at=now),
+            Entity(
+                id="ent-pytest-framework",
+                type=EntityType.TOOL,
+                name="Python test framework pytest",
+                confidence=0.9,
+                first_seen_at=now,
+                last_seen_at=now,
+            ),
+            Entity(
+                id="ent-python",
+                type=EntityType.TECHNOLOGY,
+                name="Python",
+                confidence=0.9,
+                first_seen_at=now,
+                last_seen_at=now,
+            ),
         ]
 
         # Pattern can only match 1-2 words, but _find_entity_match handles progressive prefix
@@ -595,20 +768,32 @@ class TestRelationshipDetector:
             Tuple of (relationship_type, source_name, target_name)
         """
         # Get source entity name
-        if len(entity_names) > 0 and rel.source_entity_id == entities_map[entity_names[0]].id:
+        if (
+            len(entity_names) > 0
+            and rel.source_entity_id == entities_map[entity_names[0]].id
+        ):
             source_name = entities_map[entity_names[0]].name
-        elif len(entity_names) > 1 and rel.source_entity_id == entities_map[entity_names[1]].id:
+        elif (
+            len(entity_names) > 1
+            and rel.source_entity_id == entities_map[entity_names[1]].id
+        ):
             source_name = entities_map[entity_names[1]].name
         else:
-            source_name = '?'
+            source_name = "?"
 
         # Get target entity name
-        if len(entity_names) > 1 and rel.target_entity_id == entities_map[entity_names[1]].id:
+        if (
+            len(entity_names) > 1
+            and rel.target_entity_id == entities_map[entity_names[1]].id
+        ):
             target_name = entities_map[entity_names[1]].name
-        elif len(entity_names) > 0 and rel.target_entity_id == entities_map[entity_names[0]].id:
+        elif (
+            len(entity_names) > 0
+            and rel.target_entity_id == entities_map[entity_names[0]].id
+        ):
             target_name = entities_map[entity_names[0]].name
         else:
-            target_name = '?'
+            target_name = "?"
 
         return (rel.type.value, source_name, target_name)
 
@@ -622,107 +807,148 @@ class TestRelationshipDetector:
         test_cases = [
             # Format: (text, entities, expected_relationships)
             # Each expected_relationship: (source_name, target_name, rel_type)
-
             # USES relationships (5 cases)
-            ("We use pytest for testing Python applications.",
-             ["pytest", "Python"],
-             [("pytest", "Python", RelationshipType.USES)]),
-
-            ("Flask uses Jinja2 templates for rendering.",
-             ["Flask", "Jinja2"],
-             [("Flask", "Jinja2", RelationshipType.USES)]),
-
-            ("pytest is built on Python.",
-             ["pytest", "Python"],
-             [("pytest", "Python", RelationshipType.USES)]),
-
-            ("Testing with pytest on Python platform.",
-             ["pytest", "Python"],
-             [("pytest", "Python", RelationshipType.USES)]),
-
-            ("SQLite leverages FTS5 for full-text search.",
-             ["SQLite", "FTS5"],
-             [("SQLite", "FTS5", RelationshipType.USES)]),
-
+            (
+                "We use pytest for testing Python applications.",
+                ["pytest", "Python"],
+                [("pytest", "Python", RelationshipType.USES)],
+            ),
+            (
+                "Flask uses Jinja2 templates for rendering.",
+                ["Flask", "Jinja2"],
+                [("Flask", "Jinja2", RelationshipType.USES)],
+            ),
+            (
+                "pytest is built on Python.",
+                ["pytest", "Python"],
+                [("pytest", "Python", RelationshipType.USES)],
+            ),
+            (
+                "Testing with pytest on Python platform.",
+                ["pytest", "Python"],
+                [("pytest", "Python", RelationshipType.USES)],
+            ),
+            (
+                "SQLite leverages FTS5 for full-text search.",
+                ["SQLite", "FTS5"],
+                [("SQLite", "FTS5", RelationshipType.USES)],
+            ),
             # DEPENDS_ON relationships (4 cases)
-            ("The MAP workflow depends on playbook.db to store patterns.",
-             ["MAP-workflow", "playbook.db"],
-             [("MAP-workflow", "playbook.db", RelationshipType.DEPENDS_ON)]),
-
-            ("MAP workflow requires playbook.db for storage.",
-             ["MAP-workflow", "playbook.db"],
-             [("MAP-workflow", "playbook.db", RelationshipType.DEPENDS_ON)]),
-
-            ("Actor needs Monitor for validation.",
-             ["Actor", "Monitor"],
-             [("Actor", "Monitor", RelationshipType.DEPENDS_ON)]),
-
-            ("The system relies on SQLite for persistence.",
-             ["system", "SQLite"],
-             [("system", "SQLite", RelationshipType.DEPENDS_ON)]),
-
+            (
+                "The MAP workflow depends on playbook.db to store patterns.",
+                ["MAP-workflow", "playbook.db"],
+                [("MAP-workflow", "playbook.db", RelationshipType.DEPENDS_ON)],
+            ),
+            (
+                "MAP workflow requires playbook.db for storage.",
+                ["MAP-workflow", "playbook.db"],
+                [("MAP-workflow", "playbook.db", RelationshipType.DEPENDS_ON)],
+            ),
+            (
+                "Actor needs Monitor for validation.",
+                ["Actor", "Monitor"],
+                [("Actor", "Monitor", RelationshipType.DEPENDS_ON)],
+            ),
+            (
+                "The system relies on SQLite for persistence.",
+                ["system", "SQLite"],
+                [("system", "SQLite", RelationshipType.DEPENDS_ON)],
+            ),
             # CONTRADICTS relationships (3 cases)
-            ("Never use generic-exception. Use specific-exceptions instead.",
-             ["generic-exception", "specific-exceptions"],
-             [("specific-exceptions", "generic-exception", RelationshipType.CONTRADICTS)]),
-
-            ("Avoid hardcoded-values, use environment-variables instead.",
-             ["environment-variables", "hardcoded-values"],
-             [("environment-variables", "hardcoded-values", RelationshipType.CONTRADICTS)]),
-
-            ("generic-exception contradicts specific-exceptions best practice.",
-             ["generic-exception", "specific-exceptions"],
-             [("generic-exception", "specific-exceptions", RelationshipType.CONTRADICTS)]),
-
+            (
+                "Never use generic-exception. Use specific-exceptions instead.",
+                ["generic-exception", "specific-exceptions"],
+                [
+                    (
+                        "specific-exceptions",
+                        "generic-exception",
+                        RelationshipType.CONTRADICTS,
+                    )
+                ],
+            ),
+            (
+                "Avoid hardcoded-values, use environment-variables instead.",
+                ["environment-variables", "hardcoded-values"],
+                [
+                    (
+                        "environment-variables",
+                        "hardcoded-values",
+                        RelationshipType.CONTRADICTS,
+                    )
+                ],
+            ),
+            (
+                "generic-exception contradicts specific-exceptions best practice.",
+                ["generic-exception", "specific-exceptions"],
+                [
+                    (
+                        "generic-exception",
+                        "specific-exceptions",
+                        RelationshipType.CONTRADICTS,
+                    )
+                ],
+            ),
             # SUPERSEDES relationships (3 cases)
-            ("playbook.db supersedes playbook.json for pattern storage.",
-             ["playbook.db", "playbook.json"],
-             [("playbook.db", "playbook.json", RelationshipType.SUPERSEDES)]),
-
-            ("We migrated from playbook.json to playbook.db.",
-             ["playbook.db", "playbook.json"],
-             [("playbook.db", "playbook.json", RelationshipType.SUPERSEDES)]),
-
-            ("Python 3 replaces Python 2.",
-             ["Python-3", "Python-2"],
-             [("Python-3", "Python-2", RelationshipType.SUPERSEDES)]),
-
+            (
+                "playbook.db supersedes playbook.json for pattern storage.",
+                ["playbook.db", "playbook.json"],
+                [("playbook.db", "playbook.json", RelationshipType.SUPERSEDES)],
+            ),
+            (
+                "We migrated from playbook.json to playbook.db.",
+                ["playbook.db", "playbook.json"],
+                [("playbook.db", "playbook.json", RelationshipType.SUPERSEDES)],
+            ),
+            (
+                "Python 3 replaces Python 2.",
+                ["Python-3", "Python-2"],
+                [("Python-3", "Python-2", RelationshipType.SUPERSEDES)],
+            ),
             # IMPLEMENTS relationships (2 cases)
-            ("retry-logic implements resilience-pattern for fault tolerance.",
-             ["retry-logic", "resilience-pattern"],
-             [("retry-logic", "resilience-pattern", RelationshipType.IMPLEMENTS)]),
-
-            ("Actor follows Strategy pattern.",
-             ["Actor", "Strategy-pattern"],
-             [("Actor", "Strategy-pattern", RelationshipType.IMPLEMENTS)]),
-
+            (
+                "retry-logic implements resilience-pattern for fault tolerance.",
+                ["retry-logic", "resilience-pattern"],
+                [("retry-logic", "resilience-pattern", RelationshipType.IMPLEMENTS)],
+            ),
+            (
+                "Actor follows Strategy pattern.",
+                ["Actor", "Strategy-pattern"],
+                [("Actor", "Strategy-pattern", RelationshipType.IMPLEMENTS)],
+            ),
             # CAUSES relationships (2 cases)
-            ("race-condition causes data-corruption in concurrent systems.",
-             ["race-condition", "data-corruption"],
-             [("race-condition", "data-corruption", RelationshipType.CAUSES)]),
-
-            ("null-pointer leads to application crash.",
-             ["null-pointer", "crash"],
-             [("null-pointer", "crash", RelationshipType.CAUSES)]),
-
+            (
+                "race-condition causes data-corruption in concurrent systems.",
+                ["race-condition", "data-corruption"],
+                [("race-condition", "data-corruption", RelationshipType.CAUSES)],
+            ),
+            (
+                "null-pointer leads to application crash.",
+                ["null-pointer", "crash"],
+                [("null-pointer", "crash", RelationshipType.CAUSES)],
+            ),
             # PREVENTS relationships (2 cases)
-            ("mutex-lock prevents race-condition in shared memory.",
-             ["mutex-lock", "race-condition"],
-             [("mutex-lock", "race-condition", RelationshipType.PREVENTS)]),
-
-            ("Validation avoids null-pointer errors.",
-             ["Validation", "null-pointer"],
-             [("Validation", "null-pointer", RelationshipType.PREVENTS)]),
-
+            (
+                "mutex-lock prevents race-condition in shared memory.",
+                ["mutex-lock", "race-condition"],
+                [("mutex-lock", "race-condition", RelationshipType.PREVENTS)],
+            ),
+            (
+                "Validation avoids null-pointer errors.",
+                ["Validation", "null-pointer"],
+                [("Validation", "null-pointer", RelationshipType.PREVENTS)],
+            ),
             # RELATED_TO (proximity-based, 1 case)
-            ("SQLite and FTS5 enable fast search.",
-             ["SQLite", "FTS5"],
-             [("SQLite", "FTS5", RelationshipType.RELATED_TO)]),
+            (
+                "SQLite and FTS5 enable fast search.",
+                ["SQLite", "FTS5"],
+                [("SQLite", "FTS5", RelationshipType.RELATED_TO)],
+            ),
         ]
 
         # Create entities for all test cases
         from datetime import timezone
-        now = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         all_entity_names = set()
         for text, entity_names, expected_rels in test_cases:
             all_entity_names.update(entity_names)
@@ -733,13 +959,26 @@ class TestRelationshipDetector:
             # Infer entity type (simplified)
             if "pattern" in name.lower():
                 etype = EntityType.PATTERN
-            elif name.lower() in ["pytest", "flask", "sqlite", "fts5", "playbook.db", "playbook.json"]:
+            elif name.lower() in [
+                "pytest",
+                "flask",
+                "sqlite",
+                "fts5",
+                "playbook.db",
+                "playbook.json",
+            ]:
                 etype = EntityType.TOOL
             elif name.lower() in ["python", "jinja2", "python-2", "python-3"]:
                 etype = EntityType.TECHNOLOGY
             elif "workflow" in name.lower() or name.lower() in ["actor", "monitor"]:
                 etype = EntityType.WORKFLOW
-            elif "exception" in name.lower() or "condition" in name.lower() or "pointer" in name.lower() or "crash" in name.lower() or "corruption" in name.lower():
+            elif (
+                "exception" in name.lower()
+                or "condition" in name.lower()
+                or "pointer" in name.lower()
+                or "crash" in name.lower()
+                or "corruption" in name.lower()
+            ):
                 etype = EntityType.ERROR_TYPE
             elif name.lower() in ["hardcoded-values", "generic-exception"]:
                 etype = EntityType.ANTIPATTERN
@@ -747,8 +986,12 @@ class TestRelationshipDetector:
                 etype = EntityType.CONCEPT
 
             entities_map[name] = Entity(
-                id=entity_id, type=etype, name=name,
-                confidence=0.8, first_seen_at=now, last_seen_at=now
+                id=entity_id,
+                type=etype,
+                name=name,
+                confidence=0.8,
+                first_seen_at=now,
+                last_seen_at=now,
             )
 
         # Run tests and calculate accuracy
@@ -760,7 +1003,9 @@ class TestRelationshipDetector:
             test_entities = [entities_map[name] for name in entity_names]
 
             # Detect relationships
-            detected_rels = detector.detect_relationships(text, test_entities, f"bullet-accuracy-{i}")
+            detected_rels = detector.detect_relationships(
+                text, test_entities, f"bullet-accuracy-{i}"
+            )
 
             # Check if expected relationships are detected
             for expected_source, expected_target, expected_type in expected_rels:
@@ -777,11 +1022,18 @@ class TestRelationshipDetector:
 
                 if found:
                     correct += 1
-                    print(f"✓ Test {i+1}: Detected {expected_source} {expected_type.value} {expected_target}")
+                    print(
+                        f"✓ Test {i+1}: Detected {expected_source} {expected_type.value} {expected_target}"
+                    )
                 else:
-                    print(f"✗ Test {i+1}: MISSED {expected_source} {expected_type.value} {expected_target}")
+                    print(
+                        f"✗ Test {i+1}: MISSED {expected_source} {expected_type.value} {expected_target}"
+                    )
                     print(f"  Text: {text}")
-                    formatted_rels = [self._format_relationship_details(r, entities_map, entity_names) for r in detected_rels]
+                    formatted_rels = [
+                        self._format_relationship_details(r, entities_map, entity_names)
+                        for r in detected_rels
+                    ]
                     print(f"  Detected: {formatted_rels}")
 
         accuracy = correct / total * 100
@@ -816,7 +1068,7 @@ class TestRelationshipDetector:
                 target_entity_id="ent-target",
                 type=RelationshipType.USES,
                 created_from_bullet_id="bullet-001",
-                confidence=1.5  # Invalid: > 1.0
+                confidence=1.5,  # Invalid: > 1.0
             )
 
     def test_relationship_validation_id_format(self):
@@ -828,7 +1080,7 @@ class TestRelationshipDetector:
                 target_entity_id="ent-target",
                 type=RelationshipType.USES,
                 created_from_bullet_id="bullet-001",
-                confidence=0.8
+                confidence=0.8,
             )
 
     def test_relationship_validation_entity_id_format(self):
@@ -840,7 +1092,7 @@ class TestRelationshipDetector:
                 target_entity_id="ent-target",
                 type=RelationshipType.USES,
                 created_from_bullet_id="bullet-001",
-                confidence=0.8
+                confidence=0.8,
             )
 
     def test_relationship_timestamps_auto_set(self):
@@ -851,7 +1103,7 @@ class TestRelationshipDetector:
             target_entity_id="ent-target",
             type=RelationshipType.USES,
             created_from_bullet_id="bullet-001",
-            confidence=0.8
+            confidence=0.8,
         )
 
         assert rel.created_at != ""
@@ -862,6 +1114,7 @@ class TestRelationshipDetector:
 # ============================================================================
 # Integration Tests
 # ============================================================================
+
 
 class TestIntegration:
     """Integration tests combining entity extraction and relationship detection."""
@@ -886,7 +1139,10 @@ class TestIntegration:
 
         # Check that we have various relationship types
         rel_types = {r.type for r in rels}
-        assert RelationshipType.USES in rel_types or RelationshipType.DEPENDS_ON in rel_types
+        assert (
+            RelationshipType.USES in rel_types
+            or RelationshipType.DEPENDS_ON in rel_types
+        )
 
     def test_integration_with_real_playbook_content(self):
         """Test with realistic playbook bullet content."""

@@ -37,6 +37,7 @@ class Path:
         length: Number of hops (relationship count)
         confidence: Minimum confidence across all relationships in path
     """
+
     relationships: List[Relationship]
     length: int
     confidence: float
@@ -106,7 +107,7 @@ class KnowledgeGraphQuery:
         source_id: str,
         target_id: str,
         max_depth: int = 3,
-        relationship_types: Optional[List[RelationshipType]] = None
+        relationship_types: Optional[List[RelationshipType]] = None,
     ) -> List[Path]:
         """
         Find all paths from source entity to target entity using BFS.
@@ -139,10 +140,14 @@ class KnowledgeGraphQuery:
             ['ent-pytest', 'ent-python']
         """
         # Validate inputs
-        if not source_id.startswith('ent-'):
-            raise ValueError(f"Source entity ID must start with 'ent-', got {source_id}")
-        if not target_id.startswith('ent-'):
-            raise ValueError(f"Target entity ID must start with 'ent-', got {target_id}")
+        if not source_id.startswith("ent-"):
+            raise ValueError(
+                f"Source entity ID must start with 'ent-', got {source_id}"
+            )
+        if not target_id.startswith("ent-"):
+            raise ValueError(
+                f"Target entity ID must start with 'ent-', got {target_id}"
+            )
 
         # Edge case: path to self
         if source_id == target_id:
@@ -156,7 +161,7 @@ class KnowledgeGraphQuery:
         type_filter_sql = ""
         type_params = []
         if relationship_types:
-            type_placeholders = ','.join(['?' for _ in relationship_types])
+            type_placeholders = ",".join(["?" for _ in relationship_types])
             type_filter_sql = f"AND type IN ({type_placeholders})"
             type_params = [rt.value for rt in relationship_types]
 
@@ -173,7 +178,8 @@ class KnowledgeGraphQuery:
                 continue
 
             # Fetch outgoing relationships from current entity
-            cursor = self.db_conn.execute(f"""
+            cursor = self.db_conn.execute(
+                f"""
                 SELECT
                     id, source_entity_id, target_entity_id, type,
                     created_from_bullet_id, confidence, metadata,
@@ -182,20 +188,22 @@ class KnowledgeGraphQuery:
                 WHERE source_entity_id = ?
                 {type_filter_sql}
                 ORDER BY confidence DESC
-            """, [current_id] + type_params)
+            """,
+                [current_id] + type_params,
+            )
 
             for row in cursor:
                 # Reconstruct Relationship object
                 rel = Relationship(
-                    id=row['id'],
-                    source_entity_id=row['source_entity_id'],
-                    target_entity_id=row['target_entity_id'],
-                    type=RelationshipType(row['type']),
-                    created_from_bullet_id=row['created_from_bullet_id'],
-                    confidence=row['confidence'],
-                    metadata=json.loads(row['metadata']) if row['metadata'] else None,
-                    created_at=row['created_at'],
-                    updated_at=row['updated_at']
+                    id=row["id"],
+                    source_entity_id=row["source_entity_id"],
+                    target_entity_id=row["target_entity_id"],
+                    type=RelationshipType(row["type"]),
+                    created_from_bullet_id=row["created_from_bullet_id"],
+                    confidence=row["confidence"],
+                    metadata=json.loads(row["metadata"]) if row["metadata"] else None,
+                    created_at=row["created_at"],
+                    updated_at=row["updated_at"],
                 )
 
                 next_id = rel.target_entity_id
@@ -204,11 +212,13 @@ class KnowledgeGraphQuery:
                 if next_id == target_id:
                     path_relationships = current_path + [rel]
                     path_confidence = min(r.confidence for r in path_relationships)
-                    found_paths.append(Path(
-                        relationships=path_relationships,
-                        length=len(path_relationships),
-                        confidence=path_confidence
-                    ))
+                    found_paths.append(
+                        Path(
+                            relationships=path_relationships,
+                            length=len(path_relationships),
+                            confidence=path_confidence,
+                        )
+                    )
                     continue  # Don't explore beyond target
 
                 # Avoid cycles: skip if already visited in this path
@@ -216,11 +226,13 @@ class KnowledgeGraphQuery:
                     continue
 
                 # Add to queue for further exploration
-                queue.append((
-                    next_id,
-                    current_path + [rel],
-                    visited | {next_id}  # Create new set with next_id added
-                ))
+                queue.append(
+                    (
+                        next_id,
+                        current_path + [rel],
+                        visited | {next_id},  # Create new set with next_id added
+                    )
+                )
 
         # Sort paths by length (shortest first), then by confidence (highest first)
         found_paths.sort(key=lambda p: (p.length, -p.confidence))
@@ -231,9 +243,9 @@ class KnowledgeGraphQuery:
     def get_neighbors(
         self,
         entity_id: str,
-        direction: str = 'both',
+        direction: str = "both",
         relationship_types: Optional[List[RelationshipType]] = None,
-        min_confidence: float = 0.5
+        min_confidence: float = 0.5,
     ) -> List[Tuple[Entity, Relationship]]:
         """
         Get neighboring entities connected to given entity.
@@ -265,17 +277,19 @@ class KnowledgeGraphQuery:
             'Python'
         """
         # Validate inputs
-        if not entity_id.startswith('ent-'):
+        if not entity_id.startswith("ent-"):
             raise ValueError(f"Entity ID must start with 'ent-', got {entity_id}")
 
-        if direction not in ('outgoing', 'incoming', 'both'):
-            raise ValueError(f"Direction must be 'outgoing', 'incoming', or 'both', got {direction}")
+        if direction not in ("outgoing", "incoming", "both"):
+            raise ValueError(
+                f"Direction must be 'outgoing', 'incoming', or 'both', got {direction}"
+            )
 
         # Build SQL query based on direction
-        if direction == 'outgoing':
+        if direction == "outgoing":
             direction_clause = "r.source_entity_id = ?"
             neighbor_id_column = "r.target_entity_id"
-        elif direction == 'incoming':
+        elif direction == "incoming":
             direction_clause = "r.target_entity_id = ?"
             neighbor_id_column = "r.source_entity_id"
         else:  # both
@@ -286,18 +300,21 @@ class KnowledgeGraphQuery:
         type_filter_sql = ""
         type_params = []
         if relationship_types:
-            type_placeholders = ','.join(['?' for _ in relationship_types])
+            type_placeholders = ",".join(["?" for _ in relationship_types])
             type_filter_sql = f"AND r.type IN ({type_placeholders})"
             type_params = [rt.value for rt in relationship_types]
 
         # Build query parameters
-        if direction == 'both':
-            query_params = [entity_id, entity_id, entity_id] + type_params + [min_confidence]
+        if direction == "both":
+            query_params = (
+                [entity_id, entity_id, entity_id] + type_params + [min_confidence]
+            )
         else:
             query_params = [entity_id] + type_params + [min_confidence]
 
         # Execute JOIN query to fetch neighbors and relationships in one go
-        cursor = self.db_conn.execute(f"""
+        cursor = self.db_conn.execute(
+            f"""
             SELECT
                 -- Entity columns
                 e.id as entity_id,
@@ -324,31 +341,39 @@ class KnowledgeGraphQuery:
             AND r.confidence >= ?
             ORDER BY r.confidence DESC
             LIMIT 1000
-        """, query_params)
+        """,
+            query_params,
+        )
 
         # Reconstruct Entity and Relationship objects
         results = []
         for row in cursor:
             entity = Entity(
-                id=row['entity_id'],
-                type=EntityType(row['entity_type']),
-                name=row['entity_name'],
-                confidence=row['entity_confidence'],
-                first_seen_at=row['entity_first_seen'],
-                last_seen_at=row['entity_last_seen'],
-                metadata=json.loads(row['entity_metadata']) if row['entity_metadata'] else None
+                id=row["entity_id"],
+                type=EntityType(row["entity_type"]),
+                name=row["entity_name"],
+                confidence=row["entity_confidence"],
+                first_seen_at=row["entity_first_seen"],
+                last_seen_at=row["entity_last_seen"],
+                metadata=(
+                    json.loads(row["entity_metadata"])
+                    if row["entity_metadata"]
+                    else None
+                ),
             )
 
             relationship = Relationship(
-                id=row['rel_id'],
-                source_entity_id=row['rel_source'],
-                target_entity_id=row['rel_target'],
-                type=RelationshipType(row['rel_type']),
-                created_from_bullet_id=row['rel_bullet_id'],
-                confidence=row['rel_confidence'],
-                metadata=json.loads(row['rel_metadata']) if row['rel_metadata'] else None,
-                created_at=row['rel_created_at'],
-                updated_at=row['rel_updated_at']
+                id=row["rel_id"],
+                source_entity_id=row["rel_source"],
+                target_entity_id=row["rel_target"],
+                type=RelationshipType(row["rel_type"]),
+                created_from_bullet_id=row["rel_bullet_id"],
+                confidence=row["rel_confidence"],
+                metadata=(
+                    json.loads(row["rel_metadata"]) if row["rel_metadata"] else None
+                ),
+                created_at=row["rel_created_at"],
+                updated_at=row["rel_updated_at"],
             )
 
             results.append((entity, relationship))
@@ -359,7 +384,7 @@ class KnowledgeGraphQuery:
         self,
         timestamp: str,
         entity_types: Optional[List[EntityType]] = None,
-        min_confidence: float = 0.5
+        min_confidence: float = 0.5,
     ) -> List[Entity]:
         """
         Get entities first seen after given timestamp.
@@ -385,12 +410,13 @@ class KnowledgeGraphQuery:
         type_filter_sql = ""
         type_params = []
         if entity_types:
-            type_placeholders = ','.join(['?' for _ in entity_types])
+            type_placeholders = ",".join(["?" for _ in entity_types])
             type_filter_sql = f"AND type IN ({type_placeholders})"
             type_params = [et.value for et in entity_types]
 
         # Execute query
-        cursor = self.db_conn.execute(f"""
+        cursor = self.db_conn.execute(
+            f"""
             SELECT
                 id, type, name, confidence,
                 first_seen_at, last_seen_at, metadata
@@ -400,20 +426,24 @@ class KnowledgeGraphQuery:
             AND confidence >= ?
             ORDER BY first_seen_at DESC
             LIMIT 1000
-        """, [timestamp] + type_params + [min_confidence])
+        """,
+            [timestamp] + type_params + [min_confidence],
+        )
 
         # Reconstruct Entity objects
         entities = []
         for row in cursor:
-            entities.append(Entity(
-                id=row['id'],
-                type=EntityType(row['type']),
-                name=row['name'],
-                confidence=row['confidence'],
-                first_seen_at=row['first_seen_at'],
-                last_seen_at=row['last_seen_at'],
-                metadata=json.loads(row['metadata']) if row['metadata'] else None
-            ))
+            entities.append(
+                Entity(
+                    id=row["id"],
+                    type=EntityType(row["type"]),
+                    name=row["name"],
+                    confidence=row["confidence"],
+                    first_seen_at=row["first_seen_at"],
+                    last_seen_at=row["last_seen_at"],
+                    metadata=json.loads(row["metadata"]) if row["metadata"] else None,
+                )
+            )
 
         return entities
 
@@ -421,7 +451,7 @@ class KnowledgeGraphQuery:
         self,
         entity_type: Optional[EntityType] = None,
         min_confidence: float = 0.0,
-        name_pattern: Optional[str] = None
+        name_pattern: Optional[str] = None,
     ) -> List[Entity]:
         """
         Generic entity query with filters.
@@ -455,7 +485,8 @@ class KnowledgeGraphQuery:
         where_clause = " AND ".join(filters)
 
         # Execute query
-        cursor = self.db_conn.execute(f"""
+        cursor = self.db_conn.execute(
+            f"""
             SELECT
                 id, type, name, confidence,
                 first_seen_at, last_seen_at, metadata
@@ -463,20 +494,24 @@ class KnowledgeGraphQuery:
             WHERE {where_clause}
             ORDER BY confidence DESC
             LIMIT 1000
-        """, params)
+        """,
+            params,
+        )
 
         # Reconstruct Entity objects
         entities = []
         for row in cursor:
-            entities.append(Entity(
-                id=row['id'],
-                type=EntityType(row['type']),
-                name=row['name'],
-                confidence=row['confidence'],
-                first_seen_at=row['first_seen_at'],
-                last_seen_at=row['last_seen_at'],
-                metadata=json.loads(row['metadata']) if row['metadata'] else None
-            ))
+            entities.append(
+                Entity(
+                    id=row["id"],
+                    type=EntityType(row["type"]),
+                    name=row["name"],
+                    confidence=row["confidence"],
+                    first_seen_at=row["first_seen_at"],
+                    last_seen_at=row["last_seen_at"],
+                    metadata=json.loads(row["metadata"]) if row["metadata"] else None,
+                )
+            )
 
         return entities
 
@@ -485,7 +520,7 @@ class KnowledgeGraphQuery:
         relationship_type: Optional[RelationshipType] = None,
         source_id: Optional[str] = None,
         target_id: Optional[str] = None,
-        min_confidence: float = 0.0
+        min_confidence: float = 0.0,
     ) -> List[Relationship]:
         """
         Generic relationship query with filters.
@@ -516,21 +551,26 @@ class KnowledgeGraphQuery:
             params.append(relationship_type.value)
 
         if source_id:
-            if not source_id.startswith('ent-'):
-                raise ValueError(f"Source entity ID must start with 'ent-', got {source_id}")
+            if not source_id.startswith("ent-"):
+                raise ValueError(
+                    f"Source entity ID must start with 'ent-', got {source_id}"
+                )
             filters.append("source_entity_id = ?")
             params.append(source_id)
 
         if target_id:
-            if not target_id.startswith('ent-'):
-                raise ValueError(f"Target entity ID must start with 'ent-', got {target_id}")
+            if not target_id.startswith("ent-"):
+                raise ValueError(
+                    f"Target entity ID must start with 'ent-', got {target_id}"
+                )
             filters.append("target_entity_id = ?")
             params.append(target_id)
 
         where_clause = " AND ".join(filters)
 
         # Execute query
-        cursor = self.db_conn.execute(f"""
+        cursor = self.db_conn.execute(
+            f"""
             SELECT
                 id, source_entity_id, target_entity_id, type,
                 created_from_bullet_id, confidence, metadata,
@@ -539,22 +579,26 @@ class KnowledgeGraphQuery:
             WHERE {where_clause}
             ORDER BY confidence DESC
             LIMIT 1000
-        """, params)
+        """,
+            params,
+        )
 
         # Reconstruct Relationship objects
         relationships = []
         for row in cursor:
-            relationships.append(Relationship(
-                id=row['id'],
-                source_entity_id=row['source_entity_id'],
-                target_entity_id=row['target_entity_id'],
-                type=RelationshipType(row['type']),
-                created_from_bullet_id=row['created_from_bullet_id'],
-                confidence=row['confidence'],
-                metadata=json.loads(row['metadata']) if row['metadata'] else None,
-                created_at=row['created_at'],
-                updated_at=row['updated_at']
-            ))
+            relationships.append(
+                Relationship(
+                    id=row["id"],
+                    source_entity_id=row["source_entity_id"],
+                    target_entity_id=row["target_entity_id"],
+                    type=RelationshipType(row["type"]),
+                    created_from_bullet_id=row["created_from_bullet_id"],
+                    confidence=row["confidence"],
+                    metadata=json.loads(row["metadata"]) if row["metadata"] else None,
+                    created_at=row["created_at"],
+                    updated_at=row["updated_at"],
+                )
+            )
 
         return relationships
 
@@ -580,11 +624,12 @@ class KnowledgeGraphQuery:
             'impl-0042'
         """
         # Validate input
-        if not entity_id.startswith('ent-'):
+        if not entity_id.startswith("ent-"):
             raise ValueError(f"Entity ID must start with 'ent-', got {entity_id}")
 
         # Execute query
-        cursor = self.db_conn.execute("""
+        cursor = self.db_conn.execute(
+            """
             SELECT
                 source_bullet_id as bullet_id,
                 extraction_method,
@@ -593,29 +638,34 @@ class KnowledgeGraphQuery:
             FROM provenance
             WHERE entity_id = ?
             ORDER BY extracted_at DESC
-        """, [entity_id])
+        """,
+            [entity_id],
+        )
 
         # Convert to list of dicts
         provenance_records = []
         for row in cursor:
-            provenance_records.append({
-                'bullet_id': row['bullet_id'],
-                'extraction_method': row['extraction_method'],
-                'confidence': row['confidence'],
-                'extracted_at': row['extracted_at']
-            })
+            provenance_records.append(
+                {
+                    "bullet_id": row["bullet_id"],
+                    "extraction_method": row["extraction_method"],
+                    "confidence": row["confidence"],
+                    "extracted_at": row["extracted_at"],
+                }
+            )
 
         return provenance_records
 
 
 # Convenience functions for module-level API
 
+
 def find_paths(
     db_conn: sqlite3.Connection,
     source_id: str,
     target_id: str,
     max_depth: int = 3,
-    relationship_types: Optional[List[RelationshipType]] = None
+    relationship_types: Optional[List[RelationshipType]] = None,
 ) -> List[Path]:
     """
     Find all paths from source to target entity.
@@ -633,9 +683,9 @@ def find_paths(
 def get_neighbors(
     db_conn: sqlite3.Connection,
     entity_id: str,
-    direction: str = 'both',
+    direction: str = "both",
     relationship_types: Optional[List[RelationshipType]] = None,
-    min_confidence: float = 0.5
+    min_confidence: float = 0.5,
 ) -> List[Tuple[Entity, Relationship]]:
     """
     Get neighboring entities.
@@ -647,14 +697,16 @@ def get_neighbors(
         >>> neighbors = get_neighbors(db_conn, 'ent-pytest', direction='outgoing')
     """
     kg_query = KnowledgeGraphQuery(db_conn)
-    return kg_query.get_neighbors(entity_id, direction, relationship_types, min_confidence)
+    return kg_query.get_neighbors(
+        entity_id, direction, relationship_types, min_confidence
+    )
 
 
 def entities_since(
     db_conn: sqlite3.Connection,
     timestamp: str,
     entity_types: Optional[List[EntityType]] = None,
-    min_confidence: float = 0.5
+    min_confidence: float = 0.5,
 ) -> List[Entity]:
     """
     Get entities first seen after given timestamp.
@@ -675,7 +727,7 @@ def query_entities(
     db_conn: sqlite3.Connection,
     entity_type: Optional[EntityType] = None,
     min_confidence: float = 0.0,
-    name_pattern: Optional[str] = None
+    name_pattern: Optional[str] = None,
 ) -> List[Entity]:
     """
     Generic entity query with filters.
@@ -696,7 +748,7 @@ def query_relationships(
     relationship_type: Optional[RelationshipType] = None,
     source_id: Optional[str] = None,
     target_id: Optional[str] = None,
-    min_confidence: float = 0.0
+    min_confidence: float = 0.0,
 ) -> List[Relationship]:
     """
     Generic relationship query with filters.
@@ -709,13 +761,12 @@ def query_relationships(
         >>> uses = query_relationships(db_conn, relationship_type=RelationshipType.USES)
     """
     kg_query = KnowledgeGraphQuery(db_conn)
-    return kg_query.query_relationships(relationship_type, source_id, target_id, min_confidence)
+    return kg_query.query_relationships(
+        relationship_type, source_id, target_id, min_confidence
+    )
 
 
-def get_entity_provenance(
-    db_conn: sqlite3.Connection,
-    entity_id: str
-) -> List[Dict]:
+def get_entity_provenance(db_conn: sqlite3.Connection, entity_id: str) -> List[Dict]:
     """
     Get all bullets that contributed to this entity.
 

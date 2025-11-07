@@ -126,7 +126,7 @@ class TestAgentInvocationLogging:
             response="Test response",
             duration_ms=123.45,
             status="success",
-            subtask_id=1
+            subtask_id=1,
         )
 
         content = logger_enabled.current_log_file.read_text()
@@ -148,9 +148,7 @@ class TestAgentInvocationLogging:
         long_prompt = "A" * 600  # 600 chars
 
         logger_enabled.log_agent_invocation(
-            agent_name="test-agent",
-            prompt=long_prompt,
-            response="Short response"
+            agent_name="test-agent", prompt=long_prompt, response="Short response"
         )
 
         content = logger_enabled.current_log_file.read_text()
@@ -167,9 +165,7 @@ class TestAgentInvocationLogging:
         long_response = "B" * 1200  # 1200 chars
 
         logger_enabled.log_agent_invocation(
-            agent_name="test-agent",
-            prompt="Short prompt",
-            response=long_response
+            agent_name="test-agent", prompt="Short prompt", response=long_response
         )
 
         content = logger_enabled.current_log_file.read_text()
@@ -187,7 +183,7 @@ class TestAgentInvocationLogging:
             prompt="Prompt",
             response="Error output",
             status="error",
-            error_message="Test error occurred"
+            error_message="Test error occurred",
         )
 
         content = logger_enabled.current_log_file.read_text()
@@ -204,7 +200,7 @@ class TestAgentInvocationLogging:
             agent_name="test-agent",
             prompt="Prompt",
             response="Response",
-            metadata={"custom_key": "custom_value", "attempt": 2}
+            metadata={"custom_key": "custom_value", "attempt": 2},
         )
 
         content = logger_enabled.current_log_file.read_text()
@@ -222,9 +218,7 @@ class TestErrorLogging:
         """log_error() writes error event"""
         logger_enabled.start_session(task_id="test_task")
         logger_enabled.log_error(
-            error_message="Test error occurred",
-            agent_name="test-agent",
-            subtask_id=3
+            error_message="Test error occurred", agent_name="test-agent", subtask_id=3
         )
 
         content = logger_enabled.current_log_file.read_text()
@@ -243,8 +237,7 @@ class TestErrorLogging:
         long_stack_trace = "Line\n" * 500  # Very long stack trace
 
         logger_enabled.log_error(
-            error_message="Error with stack",
-            stack_trace=long_stack_trace
+            error_message="Error with stack", stack_trace=long_stack_trace
         )
 
         content = logger_enabled.current_log_file.read_text()
@@ -265,7 +258,7 @@ class TestTimingLogging:
         logger_enabled.log_timing(
             operation_name="database_query",
             duration_ms=456.78,
-            metadata={"query": "SELECT *"}
+            metadata={"query": "SELECT *"},
         )
 
         content = logger_enabled.current_log_file.read_text()
@@ -288,7 +281,7 @@ class TestCustomEventLogging:
         logger_enabled.log_event(
             event_type="custom_event",
             message="Something interesting happened",
-            metadata={"detail": "value"}
+            metadata={"detail": "value"},
         )
 
         content = logger_enabled.current_log_file.read_text()
@@ -461,9 +454,11 @@ class TestIntegrationWithRecitationManager:
         manager = RecitationManager(temp_project, logger=logger_enabled)
 
         # Create plan should log an event
-        manager.create_plan("test_task", "Test goal", [
-            {"id": 1, "description": "Task 1", "depends_on": []}
-        ])
+        manager.create_plan(
+            "test_task",
+            "Test goal",
+            [{"id": 1, "description": "Task 1", "depends_on": []}],
+        )
 
         content = logger_enabled.current_log_file.read_text()
         lines = content.strip().split("\n")

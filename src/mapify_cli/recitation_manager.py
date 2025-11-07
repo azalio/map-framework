@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 @dataclass
 class Subtask:
     """Represents a single subtask in the plan"""
+
     id: str
     description: str
     status: str  # 'pending', 'in_progress', 'completed', 'failed'
@@ -34,6 +35,7 @@ class Subtask:
 @dataclass
 class TaskPlan:
     """Represents the overall task plan"""
+
     task_id: str
     goal: str
     subtasks: List[Subtask]
@@ -54,7 +56,9 @@ class RecitationManager:
     """
 
     @staticmethod
-    def _format_acceptance_criteria(criteria: Optional[Union[str, List[str]]]) -> Optional[str]:
+    def _format_acceptance_criteria(
+        criteria: Optional[Union[str, List[str]]],
+    ) -> Optional[str]:
         """Format acceptance criteria as a string.
 
         Args:
@@ -85,7 +89,9 @@ class RecitationManager:
         # For non-empty lists, join with newlines
         return "\n".join(f"- {item}" for item in criteria)
 
-    def __init__(self, project_root: Path, logger: Optional['MapWorkflowLogger'] = None):
+    def __init__(
+        self, project_root: Path, logger: Optional["MapWorkflowLogger"] = None
+    ):
         self.project_root = Path(project_root)
         self.map_dir = self.project_root / ".map"
         self.plan_file = self.map_dir / "current_plan.md"
@@ -99,7 +105,9 @@ class RecitationManager:
         self.map_dir.mkdir(exist_ok=True)
         self.dev_docs_dir.mkdir(exist_ok=True)
 
-    def create_plan(self, task_id: str, goal: str, subtasks: List[dict], force: bool = False) -> TaskPlan:
+    def create_plan(
+        self, task_id: str, goal: str, subtasks: List[dict], force: bool = False
+    ) -> TaskPlan:
         """
         Create a new task plan from TaskDecomposer output.
 
@@ -123,12 +131,14 @@ class RecitationManager:
 
         plan_subtasks = [
             Subtask(
-                id=str(st['id']),  # Convert ID to string for consistency
-                description=st['description'],
-                status='pending',
-                acceptance_criteria=st.get('acceptance_criteria'),
-                estimated_complexity=st.get('estimated_complexity'),
-                depends_on=[str(dep) for dep in st.get('depends_on', [])]  # Convert dependencies to strings
+                id=str(st["id"]),  # Convert ID to string for consistency
+                description=st["description"],
+                status="pending",
+                acceptance_criteria=st.get("acceptance_criteria"),
+                estimated_complexity=st.get("estimated_complexity"),
+                depends_on=[
+                    str(dep) for dep in st.get("depends_on", [])
+                ],  # Convert dependencies to strings
             )
             for st in subtasks
         ]
@@ -137,7 +147,7 @@ class RecitationManager:
             task_id=task_id,
             goal=goal,
             subtasks=plan_subtasks,
-            current_subtask_id=plan_subtasks[0].id if plan_subtasks else None
+            current_subtask_id=plan_subtasks[0].id if plan_subtasks else None,
         )
 
         self._save_plan(plan)
@@ -153,17 +163,14 @@ class RecitationManager:
                     "task_id": task_id,
                     "goal": goal,
                     "total_subtasks": len(plan_subtasks),
-                    "forced": force
-                }
+                    "forced": force,
+                },
             )
 
         return plan
 
     def update_subtask_status(
-        self,
-        subtask_id: str,
-        status: str,
-        error: Optional[str] = None
+        self, subtask_id: str, status: str, error: Optional[str] = None
     ) -> TaskPlan:
         """
         Update the status of a subtask.
@@ -193,8 +200,7 @@ class RecitationManager:
 
         # Find the target subtask up front so we can validate and log reliably
         target_subtask = next(
-            (subtask for subtask in plan.subtasks if subtask.id == subtask_id),
-            None
+            (subtask for subtask in plan.subtasks if subtask.id == subtask_id), None
         )
 
         if target_subtask is None:
@@ -203,7 +209,7 @@ class RecitationManager:
             )
 
         target_subtask.status = status
-        if status == 'in_progress':
+        if status == "in_progress":
             plan.current_subtask_id = subtask_id
             target_subtask.iterations += 1
         if error:
@@ -224,8 +230,8 @@ class RecitationManager:
                     "subtask_id": subtask_id,
                     "status": status,
                     "error": error,
-                    "iterations": target_subtask.iterations
-                }
+                    "iterations": target_subtask.iterations,
+                },
             )
 
         return plan
@@ -253,8 +259,8 @@ class RecitationManager:
                 message="Retrieved current plan context for Actor",
                 metadata={
                     "current_subtask": plan.current_subtask_id if plan else None,
-                    "context_length": len(context)
-                }
+                    "context_length": len(context),
+                },
             )
 
         return context
@@ -273,24 +279,24 @@ class RecitationManager:
     def _save_plan(self, plan: TaskPlan):
         """Save plan to JSON file"""
         plan_dict = {
-            'task_id': plan.task_id,
-            'goal': plan.goal,
-            'subtasks': [
+            "task_id": plan.task_id,
+            "goal": plan.goal,
+            "subtasks": [
                 {
-                    'id': st.id,
-                    'description': st.description,
-                    'status': st.status,
-                    'acceptance_criteria': st.acceptance_criteria,
-                    'estimated_complexity': st.estimated_complexity,
-                    'depends_on': st.depends_on,
-                    'iterations': st.iterations,
-                    'errors': st.errors
+                    "id": st.id,
+                    "description": st.description,
+                    "status": st.status,
+                    "acceptance_criteria": st.acceptance_criteria,
+                    "estimated_complexity": st.estimated_complexity,
+                    "depends_on": st.depends_on,
+                    "iterations": st.iterations,
+                    "errors": st.errors,
                 }
                 for st in plan.subtasks
             ],
-            'current_subtask_id': plan.current_subtask_id,
-            'created_at': plan.created_at,
-            'updated_at': plan.updated_at
+            "current_subtask_id": plan.current_subtask_id,
+            "created_at": plan.created_at,
+            "updated_at": plan.updated_at,
         }
 
         self.plan_json.write_text(json.dumps(plan_dict, indent=2))
@@ -304,25 +310,25 @@ class RecitationManager:
 
         subtasks = [
             Subtask(
-                id=st['id'],
-                description=st['description'],
-                status=st['status'],
-                acceptance_criteria=st.get('acceptance_criteria'),
-                estimated_complexity=st.get('estimated_complexity'),
-                depends_on=st.get('depends_on', []),
-                iterations=st.get('iterations', 0),
-                errors=st.get('errors', [])
+                id=st["id"],
+                description=st["description"],
+                status=st["status"],
+                acceptance_criteria=st.get("acceptance_criteria"),
+                estimated_complexity=st.get("estimated_complexity"),
+                depends_on=st.get("depends_on", []),
+                iterations=st.get("iterations", 0),
+                errors=st.get("errors", []),
             )
-            for st in plan_dict['subtasks']
+            for st in plan_dict["subtasks"]
         ]
 
         return TaskPlan(
-            task_id=plan_dict['task_id'],
-            goal=plan_dict['goal'],
+            task_id=plan_dict["task_id"],
+            goal=plan_dict["goal"],
             subtasks=subtasks,
-            current_subtask_id=plan_dict.get('current_subtask_id'),
-            created_at=plan_dict.get('created_at'),
-            updated_at=plan_dict.get('updated_at')
+            current_subtask_id=plan_dict.get("current_subtask_id"),
+            created_at=plan_dict.get("created_at"),
+            updated_at=plan_dict.get("updated_at"),
         )
 
     def _generate_markdown(self, plan: TaskPlan):
@@ -334,15 +340,14 @@ class RecitationManager:
         - Current focus highlighted
         - Concise but complete
         """
-        completed = sum(1 for st in plan.subtasks if st.status == 'completed')
+        completed = sum(1 for st in plan.subtasks if st.status == "completed")
         total = len(plan.subtasks)
 
         # Find current subtask
         current_st = None
         if plan.current_subtask_id:
             current_st = next(
-                (st for st in plan.subtasks if st.id == plan.current_subtask_id),
-                None
+                (st for st in plan.subtasks if st.id == plan.current_subtask_id), None
             )
 
         md_lines = [
@@ -352,17 +357,17 @@ class RecitationManager:
             plan.goal,
             "",
             f"## Progress: {completed}/{total} subtasks completed",
-            ""
+            "",
         ]
 
         # Add subtasks list
         md_lines.append("## Subtasks")
         for st in plan.subtasks:
-            if st.status == 'completed':
+            if st.status == "completed":
                 marker = "✓"
-            elif st.status == 'in_progress':
+            elif st.status == "in_progress":
                 marker = "→"
-            elif st.status == 'failed':
+            elif st.status == "failed":
                 marker = "✗"
             else:
                 marker = "☐"
@@ -387,19 +392,19 @@ class RecitationManager:
 
         # Add current focus section
         if current_st:
-            md_lines.extend([
-                "## Current Focus",
-                f"**Subtask {current_st.id}:** {current_st.description}",
-                ""
-            ])
+            md_lines.extend(
+                [
+                    "## Current Focus",
+                    f"**Subtask {current_st.id}:** {current_st.description}",
+                    "",
+                ]
+            )
 
             if current_st.acceptance_criteria:
-                formatted_criteria = self._format_acceptance_criteria(current_st.acceptance_criteria)
-                md_lines.extend([
-                    "**Acceptance Criteria:**",
-                    formatted_criteria,
-                    ""
-                ])
+                formatted_criteria = self._format_acceptance_criteria(
+                    current_st.acceptance_criteria
+                )
+                md_lines.extend(["**Acceptance Criteria:**", formatted_criteria, ""])
 
             if current_st.estimated_complexity:
                 md_lines.append(f"**Complexity:** {current_st.estimated_complexity}")
@@ -413,13 +418,15 @@ class RecitationManager:
                 md_lines.append("")
 
         # Add footer with timestamp
-        md_lines.extend([
-            "---",
-            f"_Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}_",
-            "",
-            "**Note:** This plan keeps goals fresh in context (Recitation pattern). "
-            "Review before each subtask."
-        ])
+        md_lines.extend(
+            [
+                "---",
+                f"_Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}_",
+                "",
+                "**Note:** This plan keeps goals fresh in context (Recitation pattern). "
+                "Review before each subtask.",
+            ]
+        )
 
         self.plan_file.write_text("\n".join(md_lines))
 
@@ -430,15 +437,15 @@ class RecitationManager:
             return {}
 
         return {
-            'total_subtasks': len(plan.subtasks),
-            'completed': sum(1 for st in plan.subtasks if st.status == 'completed'),
-            'in_progress': sum(1 for st in plan.subtasks if st.status == 'in_progress'),
-            'failed': sum(1 for st in plan.subtasks if st.status == 'failed'),
-            'pending': sum(1 for st in plan.subtasks if st.status == 'pending'),
-            'total_iterations': sum(st.iterations for st in plan.subtasks),
-            'current_subtask': plan.current_subtask_id,
-            'created_at': plan.created_at,
-            'updated_at': plan.updated_at
+            "total_subtasks": len(plan.subtasks),
+            "completed": sum(1 for st in plan.subtasks if st.status == "completed"),
+            "in_progress": sum(1 for st in plan.subtasks if st.status == "in_progress"),
+            "failed": sum(1 for st in plan.subtasks if st.status == "failed"),
+            "pending": sum(1 for st in plan.subtasks if st.status == "pending"),
+            "total_iterations": sum(st.iterations for st in plan.subtasks),
+            "current_subtask": plan.current_subtask_id,
+            "created_at": plan.created_at,
+            "updated_at": plan.updated_at,
         }
 
     def _generate_tasks_md(self, plan: TaskPlan):
@@ -455,30 +462,31 @@ class RecitationManager:
             f"**Updated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
             "",
             "## Task List",
-            ""
+            "",
         ]
 
         # Group tasks by status
-        pending = [st for st in plan.subtasks if st.status == 'pending']
-        in_progress = [st for st in plan.subtasks if st.status == 'in_progress']
-        completed = [st for st in plan.subtasks if st.status == 'completed']
-        failed = [st for st in plan.subtasks if st.status == 'failed']
+        pending = [st for st in plan.subtasks if st.status == "pending"]
+        in_progress = [st for st in plan.subtasks if st.status == "in_progress"]
+        completed = [st for st in plan.subtasks if st.status == "completed"]
+        failed = [st for st in plan.subtasks if st.status == "failed"]
 
         # In Progress section (most important)
         if in_progress:
-            lines.extend([
-                "### 🔄 In Progress",
-                ""
-            ])
+            lines.extend(["### 🔄 In Progress", ""])
             for st in in_progress:
                 lines.append(f"- **[{st.id}]** {st.description}")
                 if st.acceptance_criteria:
-                    formatted_criteria = self._format_acceptance_criteria(st.acceptance_criteria)
+                    formatted_criteria = self._format_acceptance_criteria(
+                        st.acceptance_criteria
+                    )
                     lines.append(f"  - **Acceptance:** {formatted_criteria}")
                 if st.estimated_complexity:
                     lines.append(f"  - **Complexity:** {st.estimated_complexity}")
                 if st.depends_on:
-                    lines.append(f"  - **Depends on:** {', '.join(map(str, st.depends_on))}")
+                    lines.append(
+                        f"  - **Depends on:** {', '.join(map(str, st.depends_on))}"
+                    )
                 if st.iterations > 1:
                     lines.append(f"  - ⚠️ **Retry #{st.iterations}**")
                 if st.errors:
@@ -487,32 +495,25 @@ class RecitationManager:
 
         # Pending section
         if pending:
-            lines.extend([
-                "### ☐ Pending",
-                ""
-            ])
+            lines.extend(["### ☐ Pending", ""])
             for st in pending:
                 lines.append(f"- **[{st.id}]** {st.description}")
                 if st.depends_on:
-                    lines.append(f"  - **Depends on:** {', '.join(map(str, st.depends_on))}")
+                    lines.append(
+                        f"  - **Depends on:** {', '.join(map(str, st.depends_on))}"
+                    )
                 lines.append("")
 
         # Completed section
         if completed:
-            lines.extend([
-                "### ✓ Completed",
-                ""
-            ])
+            lines.extend(["### ✓ Completed", ""])
             for st in completed:
                 lines.append(f"- ~~**[{st.id}]** {st.description}~~")
                 lines.append("")
 
         # Failed section
         if failed:
-            lines.extend([
-                "### ✗ Failed",
-                ""
-            ])
+            lines.extend(["### ✗ Failed", ""])
             for st in failed:
                 lines.append(f"- **[{st.id}]** {st.description}")
                 if st.errors:
@@ -521,14 +522,16 @@ class RecitationManager:
 
         # Summary
         total = len(plan.subtasks)
-        lines.extend([
-            "---",
-            "",
-            f"**Progress:** {len(completed)}/{total} completed, "
-            f"{len(in_progress)} in progress, "
-            f"{len(pending)} pending, "
-            f"{len(failed)} failed"
-        ])
+        lines.extend(
+            [
+                "---",
+                "",
+                f"**Progress:** {len(completed)}/{total} completed, "
+                f"{len(in_progress)} in progress, "
+                f"{len(pending)} pending, "
+                f"{len(failed)} failed",
+            ]
+        )
 
         self.tasks_file.write_text("\n".join(lines))
 
@@ -538,21 +541,16 @@ class RecitationManager:
 
         This is typically run once or on-demand to capture project context.
         """
-        lines = [
-            "# Project Context",
-            "",
-            "## Project Information",
-            ""
-        ]
+        lines = ["# Project Context", "", "## Project Information", ""]
 
         # Try to read project info from README
         readme_path = self.project_root / "README.md"
         if readme_path.exists():
             try:
-                readme_content = readme_path.read_text(encoding='utf-8')
+                readme_content = readme_path.read_text(encoding="utf-8")
                 # Extract title (first h1)
-                for line in readme_content.split('\n'):
-                    if line.startswith('# '):
+                for line in readme_content.split("\n"):
+                    if line.startswith("# "):
                         project_name = line[2:].strip()
                         lines.append(f"**Project:** {project_name}")
                         break
@@ -560,13 +558,15 @@ class RecitationManager:
                 # Extract description (first paragraph after title)
                 in_description = False
                 description_lines = []
-                for line in readme_content.split('\n'):
-                    if line.startswith('# '):
+                for line in readme_content.split("\n"):
+                    if line.startswith("# "):
                         in_description = True
                         continue
-                    if in_description and line.strip() and not line.startswith('#'):
+                    if in_description and line.strip() and not line.startswith("#"):
                         description_lines.append(line.strip())
-                    if in_description and (line.startswith('##') or len(description_lines) > 3):
+                    if in_description and (
+                        line.startswith("##") or len(description_lines) > 3
+                    ):
                         break
 
                 if description_lines:
@@ -577,13 +577,9 @@ class RecitationManager:
         else:
             lines.append(f"**Project:** {self.project_root.name}")
 
-        lines.extend([
-            "",
-            f"**Location:** `{self.project_root}`",
-            "",
-            "## Key Conventions",
-            ""
-        ])
+        lines.extend(
+            ["", f"**Location:** `{self.project_root}`", "", "## Key Conventions", ""]
+        )
 
         # Try to query playbook for high-quality patterns
         try:
@@ -596,8 +592,12 @@ class RecitationManager:
             if playbook_db_path.exists() or playbook_json_path.exists():
                 # Prefer .db if it exists, only pass playbook_path if .db doesn't exist yet
                 playbook = PlaybookManager(
-                    playbook_path=str(playbook_json_path) if not playbook_db_path.exists() and playbook_json_path.exists() else None,
-                    db_path=str(playbook_db_path)
+                    playbook_path=(
+                        str(playbook_json_path)
+                        if not playbook_db_path.exists() and playbook_json_path.exists()
+                        else None
+                    ),
+                    db_path=str(playbook_db_path),
                 )
 
                 # Get high-quality bullets (quality_score >= 5)
@@ -609,22 +609,25 @@ class RecitationManager:
 
                     # Group by section and take top 3 per section
                     from collections import defaultdict
+
                     by_section = defaultdict(list)
                     for bullet in high_quality:
-                        by_section[bullet['section']].append(bullet)
+                        by_section[bullet["section"]].append(bullet)
 
                     # Sort each section by quality and take top 3
                     for section_name, bullets in sorted(by_section.items()):
-                        bullets.sort(key=lambda b: b.get('quality_score', 0), reverse=True)
+                        bullets.sort(
+                            key=lambda b: b.get("quality_score", 0), reverse=True
+                        )
                         top_bullets = bullets[:3]
 
-                        section_display = section_name.replace('_', ' ').title()
+                        section_display = section_name.replace("_", " ").title()
                         lines.append(f"#### {section_display}")
                         lines.append("")
 
                         for bullet in top_bullets:
                             # Truncate content if too long
-                            content = bullet['content']
+                            content = bullet["content"]
                             if len(content) > 200:
                                 content = content[:200] + "..."
                             lines.append(f"- [{bullet['id']}] {content}")
@@ -641,23 +644,27 @@ class RecitationManager:
         # Add architecture section
         arch_path = self.project_root / "ARCHITECTURE.md"
         if arch_path.exists():
-            lines.extend([
-                "## Architecture Overview",
-                "",
-                f"See [ARCHITECTURE.md]({arch_path.relative_to(self.project_root)}) for details.",
-                ""
-            ])
+            lines.extend(
+                [
+                    "## Architecture Overview",
+                    "",
+                    f"See [ARCHITECTURE.md]({arch_path.relative_to(self.project_root)}) for details.",
+                    "",
+                ]
+            )
 
         # Add common gotchas section
-        lines.extend([
-            "## Common Gotchas",
-            "",
-            "*(This section should be manually updated as you discover pitfalls)*",
-            "",
-            "---",
-            "",
-            f"*Last generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*"
-        ])
+        lines.extend(
+            [
+                "## Common Gotchas",
+                "",
+                "*(This section should be manually updated as you discover pitfalls)*",
+                "",
+                "---",
+                "",
+                f"*Last generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*",
+            ]
+        )
 
         self.context_file.write_text("\n".join(lines))
 
@@ -669,25 +676,23 @@ class RecitationManager:
 
         Returns a dict with plan, context, and tasks content.
         """
-        result = {
-            "plan": "",
-            "context": "",
-            "tasks": ""
-        }
+        result = {"plan": "", "context": "", "tasks": ""}
 
         # Read plan.md (current_plan.md)
         if self.plan_file.exists():
-            result["plan"] = self.plan_file.read_text(encoding='utf-8')
+            result["plan"] = self.plan_file.read_text(encoding="utf-8")
 
         # Read context.md
         if self.context_file.exists():
-            result["context"] = self.context_file.read_text(encoding='utf-8')
+            result["context"] = self.context_file.read_text(encoding="utf-8")
         else:
-            result["context"] = "# Context\n\n*(Not generated yet. Run `mapify recitation generate-context`)*"
+            result["context"] = (
+                "# Context\n\n*(Not generated yet. Run `mapify recitation generate-context`)*"
+            )
 
         # Read tasks.md
         if self.tasks_file.exists():
-            result["tasks"] = self.tasks_file.read_text(encoding='utf-8')
+            result["tasks"] = self.tasks_file.read_text(encoding="utf-8")
         else:
             result["tasks"] = "# Tasks\n\n*(No active plan)*"
 
@@ -699,9 +704,9 @@ if __name__ == "__main__":
     import sys
 
     # Detect --force flag before parsing positional arguments
-    force_flag = '--force' in sys.argv
+    force_flag = "--force" in sys.argv
     if force_flag:
-        sys.argv.remove('--force')
+        sys.argv.remove("--force")
 
     if len(sys.argv) < 2:
         print("Usage:")
@@ -715,9 +720,13 @@ if __name__ == "__main__":
         print("  mapify recitation get-docs")
         print("\nExamples:")
         print("  # Create plan")
-        print('  mapify recitation create feat_auth "Add JWT auth" \'[{"id":1,"description":"Create model",...}]\'')
+        print(
+            '  mapify recitation create feat_auth "Add JWT auth" \'[{"id":1,"description":"Create model",...}]\''
+        )
         print("  # Create plan (overwrite existing)")
-        print('  mapify recitation create feat_auth "Add JWT auth" \'[{"id":1,...}]\' --force')
+        print(
+            '  mapify recitation create feat_auth "Add JWT auth" \'[{"id":1,...}]\' --force'
+        )
         print("\n  # Update status")
         print("  mapify recitation update 1 in_progress")
         print('  mapify recitation update 1 in_progress "Missing import"')
@@ -729,9 +738,15 @@ if __name__ == "__main__":
         print("\n  # Clear plan")
         print("  mapify recitation clear")
         print("\n  # Generate dev docs")
-        print("  mapify recitation generate-context  # Generate context.md from README and playbook")
-        print("  mapify recitation generate-tasks    # Regenerate tasks.md from current plan")
-        print("  mapify recitation get-docs          # Get all dev docs (plan + context + tasks)")
+        print(
+            "  mapify recitation generate-context  # Generate context.md from README and playbook"
+        )
+        print(
+            "  mapify recitation generate-tasks    # Regenerate tasks.md from current plan"
+        )
+        print(
+            "  mapify recitation get-docs          # Get all dev docs (plan + context + tasks)"
+        )
         sys.exit(1)
 
     command = sys.argv[1]
@@ -751,9 +766,13 @@ if __name__ == "__main__":
         print("  --force    Overwrite existing plan when using 'create' command")
         print("\nExamples:")
         print("  # Create plan")
-        print('  mapify recitation create feat_auth "Add JWT auth" \'[{"id":1,"description":"Create model",...}]\'')
+        print(
+            '  mapify recitation create feat_auth "Add JWT auth" \'[{"id":1,"description":"Create model",...}]\''
+        )
         print("  # Create plan (overwrite existing)")
-        print('  mapify recitation create feat_auth "Add JWT auth" \'[{"id":1,...}]\' --force')
+        print(
+            '  mapify recitation create feat_auth "Add JWT auth" \'[{"id":1,...}]\' --force'
+        )
         print("\n  # Update status")
         print("  mapify recitation update 1 in_progress")
         print('  mapify recitation update 1 in_progress "Missing import"')
@@ -765,9 +784,15 @@ if __name__ == "__main__":
         print("\n  # Clear plan")
         print("  mapify recitation clear")
         print("\n  # Generate dev docs")
-        print("  mapify recitation generate-context  # Generate context.md from README and playbook")
-        print("  mapify recitation generate-tasks    # Regenerate tasks.md from current plan")
-        print("  mapify recitation get-docs          # Get all dev docs (plan + context + tasks)")
+        print(
+            "  mapify recitation generate-context  # Generate context.md from README and playbook"
+        )
+        print(
+            "  mapify recitation generate-tasks    # Regenerate tasks.md from current plan"
+        )
+        print(
+            "  mapify recitation get-docs          # Get all dev docs (plan + context + tasks)"
+        )
         sys.exit(0)
 
     manager = RecitationManager(Path.cwd())
@@ -784,23 +809,26 @@ if __name__ == "__main__":
         try:
             subtasks = json.loads(subtasks_json)
             plan = manager.create_plan(task_id, goal, subtasks, force=force_flag)
-            print(json.dumps({
-                "status": "success",
-                "message": "Plan created",
-                "plan_file": str(manager.plan_file),
-                "subtasks_count": len(plan.subtasks)
-            }, indent=2))
+            print(
+                json.dumps(
+                    {
+                        "status": "success",
+                        "message": "Plan created",
+                        "plan_file": str(manager.plan_file),
+                        "subtasks_count": len(plan.subtasks),
+                    },
+                    indent=2,
+                )
+            )
         except ValueError as e:
-            print(json.dumps({
-                "status": "error",
-                "message": str(e)
-            }, indent=2))
+            print(json.dumps({"status": "error", "message": str(e)}, indent=2))
             sys.exit(1)
         except json.JSONDecodeError as e:
-            print(json.dumps({
-                "status": "error",
-                "message": f"Invalid JSON: {e}"
-            }, indent=2))
+            print(
+                json.dumps(
+                    {"status": "error", "message": f"Invalid JSON: {e}"}, indent=2
+                )
+            )
             sys.exit(1)
 
     elif command == "update":
@@ -814,17 +842,19 @@ if __name__ == "__main__":
 
         try:
             plan = manager.update_subtask_status(subtask_id, status, error)
-            print(json.dumps({
-                "status": "success",
-                "message": f"Subtask {subtask_id} updated to {status}",
-                "current_subtask": plan.current_subtask_id,
-                "updated_at": plan.updated_at
-            }, indent=2))
+            print(
+                json.dumps(
+                    {
+                        "status": "success",
+                        "message": f"Subtask {subtask_id} updated to {status}",
+                        "current_subtask": plan.current_subtask_id,
+                        "updated_at": plan.updated_at,
+                    },
+                    indent=2,
+                )
+            )
         except Exception as e:
-            print(json.dumps({
-                "status": "error",
-                "message": str(e)
-            }, indent=2))
+            print(json.dumps({"status": "error", "message": str(e)}, indent=2))
             sys.exit(1)
 
     elif command == "get-context":
@@ -840,69 +870,89 @@ if __name__ == "__main__":
         if stats:
             print(json.dumps(stats, indent=2))
         else:
-            print(json.dumps({
-                "status": "error",
-                "message": "No active plan"
-            }, indent=2))
+            print(
+                json.dumps({"status": "error", "message": "No active plan"}, indent=2)
+            )
             sys.exit(1)
 
     elif command == "clear":
         manager.clear_plan()
-        print(json.dumps({
-            "status": "success",
-            "message": "Plan cleared"
-        }, indent=2))
+        print(json.dumps({"status": "success", "message": "Plan cleared"}, indent=2))
 
     elif command == "generate-context":
         try:
             context_file = manager.generate_context_md()
-            print(json.dumps({
-                "status": "success",
-                "message": "Generated context.md",
-                "file": context_file
-            }, indent=2))
+            print(
+                json.dumps(
+                    {
+                        "status": "success",
+                        "message": "Generated context.md",
+                        "file": context_file,
+                    },
+                    indent=2,
+                )
+            )
         except Exception as e:
-            print(json.dumps({
-                "status": "error",
-                "message": f"Failed to generate context.md: {str(e)}"
-            }, indent=2))
+            print(
+                json.dumps(
+                    {
+                        "status": "error",
+                        "message": f"Failed to generate context.md: {str(e)}",
+                    },
+                    indent=2,
+                )
+            )
             sys.exit(1)
 
     elif command == "generate-tasks":
         try:
             plan = manager.get_plan()
             if not plan:
-                print(json.dumps({
-                    "status": "error",
-                    "message": "No active plan to generate tasks from"
-                }, indent=2))
+                print(
+                    json.dumps(
+                        {
+                            "status": "error",
+                            "message": "No active plan to generate tasks from",
+                        },
+                        indent=2,
+                    )
+                )
                 sys.exit(1)
 
             manager._generate_tasks_md(plan)
-            print(json.dumps({
-                "status": "success",
-                "message": "Generated tasks.md",
-                "file": str(manager.tasks_file)
-            }, indent=2))
+            print(
+                json.dumps(
+                    {
+                        "status": "success",
+                        "message": "Generated tasks.md",
+                        "file": str(manager.tasks_file),
+                    },
+                    indent=2,
+                )
+            )
         except Exception as e:
-            print(json.dumps({
-                "status": "error",
-                "message": f"Failed to generate tasks.md: {str(e)}"
-            }, indent=2))
+            print(
+                json.dumps(
+                    {
+                        "status": "error",
+                        "message": f"Failed to generate tasks.md: {str(e)}",
+                    },
+                    indent=2,
+                )
+            )
             sys.exit(1)
 
     elif command == "get-docs":
         try:
             docs = manager.get_dev_docs()
-            print(json.dumps({
-                "status": "success",
-                "docs": docs
-            }, indent=2))
+            print(json.dumps({"status": "success", "docs": docs}, indent=2))
         except Exception as e:
-            print(json.dumps({
-                "status": "error",
-                "message": f"Failed to get dev docs: {str(e)}"
-            }, indent=2))
+            print(
+                json.dumps(
+                    {"status": "error", "message": f"Failed to get dev docs: {str(e)}"},
+                    indent=2,
+                )
+            )
             sys.exit(1)
 
     else:

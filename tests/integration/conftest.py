@@ -1,4 +1,5 @@
 """Pytest fixtures for integration tests."""
+
 import os
 import pytest
 from pathlib import Path
@@ -6,9 +7,9 @@ import tempfile
 import shutil
 
 # Set environment variables before any imports
-os.environ['TRANSFORMERS_NO_TF'] = '1'
-os.environ['TF_USE_LEGACY_KERAS'] = '1'
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+os.environ["TRANSFORMERS_NO_TF"] = "1"
+os.environ["TF_USE_LEGACY_KERAS"] = "1"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 from mapify_cli.playbook_manager import PlaybookManager, SEMANTIC_SEARCH_AVAILABLE
 
@@ -25,8 +26,7 @@ def manager(tmp_path_factory):
 
     # Initialize manager
     manager = PlaybookManager(
-        playbook_path=str(playbook_path),
-        use_semantic_search=True
+        playbook_path=str(playbook_path), use_semantic_search=True
     )
 
     yield manager

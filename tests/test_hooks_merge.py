@@ -18,17 +18,9 @@ def template_settings():
     return {
         "hooks": {
             "UserPromptSubmit": [
-                {
-                    "matcher": "Bash\\(.*\\)",
-                    "message": "Template validation message"
-                }
+                {"matcher": "Bash\\(.*\\)", "message": "Template validation message"}
             ],
-            "SessionStart": [
-                {
-                    "matcher": "",
-                    "message": "Session start template"
-                }
-            ]
+            "SessionStart": [{"matcher": "", "message": "Session start template"}],
         }
     }
 
@@ -37,23 +29,15 @@ def template_settings():
 def user_settings_with_hooks():
     """Existing user settings with custom hooks."""
     return {
-        "permissions": {
-            "auto_approve": ["Read", "Glob"]
-        },
+        "permissions": {"auto_approve": ["Read", "Glob"]},
         "hooks": {
             "UserPromptSubmit": [
-                {
-                    "matcher": "Write\\(.*\\)",
-                    "message": "User custom write hook"
-                }
+                {"matcher": "Write\\(.*\\)", "message": "User custom write hook"}
             ],
             "PreToolUse": [
-                {
-                    "matcher": "Edit\\(.*\\)",
-                    "message": "User custom edit hook"
-                }
-            ]
-        }
+                {"matcher": "Edit\\(.*\\)", "message": "User custom edit hook"}
+            ],
+        },
     }
 
 
@@ -65,7 +49,7 @@ class TestLoadSettingsWithMerge:
         settings_file = tmp_path / "settings.json"
         test_data = {"key": "value", "nested": {"data": 123}}
 
-        with open(settings_file, 'w', encoding='utf-8') as f:
+        with open(settings_file, "w", encoding="utf-8") as f:
             json.dump(test_data, f)
 
         result = load_settings_with_merge(settings_file)
@@ -87,10 +71,10 @@ class TestLoadSettingsWithMerge:
         settings_file = tmp_path / "settings.json"
 
         # Write invalid JSON
-        with open(settings_file, 'w', encoding='utf-8') as f:
+        with open(settings_file, "w", encoding="utf-8") as f:
             f.write('{"invalid": json syntax}')
 
-        with mock.patch('mapify_cli.console.print') as mock_print:
+        with mock.patch("mapify_cli.console.print") as mock_print:
             result = load_settings_with_merge(settings_file)
 
         assert result == {}
@@ -107,7 +91,7 @@ class TestLoadSettingsWithMerge:
         # Create empty file
         settings_file.touch()
 
-        with mock.patch('mapify_cli.console.print') as mock_print:
+        with mock.patch("mapify_cli.console.print") as mock_print:
             result = load_settings_with_merge(settings_file)
 
         assert result == {}
@@ -117,10 +101,10 @@ class TestLoadSettingsWithMerge:
         """File with only whitespace returns empty dict with warning."""
         settings_file = tmp_path / "settings.json"
 
-        with open(settings_file, 'w', encoding='utf-8') as f:
-            f.write('   \n\t  ')
+        with open(settings_file, "w", encoding="utf-8") as f:
+            f.write("   \n\t  ")
 
-        with mock.patch('mapify_cli.console.print') as mock_print:
+        with mock.patch("mapify_cli.console.print") as mock_print:
             result = load_settings_with_merge(settings_file)
 
         assert result == {}
@@ -156,10 +140,7 @@ class TestMergeHooksSettings:
         existing = {
             "hooks": {
                 "UserPromptSubmit": [
-                    {
-                        "matcher": "Bash\\(.*\\)",
-                        "message": "User existing bash hook"
-                    }
+                    {"matcher": "Bash\\(.*\\)", "message": "User existing bash hook"}
                 ]
             }
         }
@@ -169,7 +150,7 @@ class TestMergeHooksSettings:
                 "UserPromptSubmit": [
                     {
                         "matcher": "Bash\\(.*\\)",
-                        "message": "Template bash hook (should not duplicate)"
+                        "message": "Template bash hook (should not duplicate)",
                     }
                 ]
             }
@@ -179,7 +160,10 @@ class TestMergeHooksSettings:
 
         # Should have only 1 hook (existing preserved, template not added)
         assert len(result["hooks"]["UserPromptSubmit"]) == 1
-        assert result["hooks"]["UserPromptSubmit"][0]["message"] == "User existing bash hook"
+        assert (
+            result["hooks"]["UserPromptSubmit"][0]["message"]
+            == "User existing bash hook"
+        )
 
     def test_custom_hooks_preserved(self, template_settings):
         """User's custom hooks not in template are preserved."""
@@ -188,15 +172,10 @@ class TestMergeHooksSettings:
                 "PreToolUse": [
                     {
                         "matcher": "sqlite3\\(.*\\)",
-                        "message": "User custom SQLite validation"
+                        "message": "User custom SQLite validation",
                     }
                 ],
-                "Stop": [
-                    {
-                        "matcher": "",
-                        "message": "User custom stop hook"
-                    }
-                ]
+                "Stop": [{"matcher": "", "message": "User custom stop hook"}],
             }
         }
 
@@ -205,7 +184,10 @@ class TestMergeHooksSettings:
         # User's PreToolUse and Stop hooks should be preserved
         assert "PreToolUse" in result["hooks"]
         assert len(result["hooks"]["PreToolUse"]) == 1
-        assert result["hooks"]["PreToolUse"][0]["message"] == "User custom SQLite validation"
+        assert (
+            result["hooks"]["PreToolUse"][0]["message"]
+            == "User custom SQLite validation"
+        )
 
         assert "Stop" in result["hooks"]
         assert len(result["hooks"]["Stop"]) == 1
@@ -230,7 +212,7 @@ class TestMergeHooksSettings:
                     {
                         "matcher": "",
                         "message": "Welcome message",
-                        "custom_field": "value"
+                        "custom_field": "value",
                     }
                 ]
             }
@@ -242,7 +224,7 @@ class TestMergeHooksSettings:
                     {
                         "matcher": "",
                         "message": "Welcome message",
-                        "custom_field": "value"
+                        "custom_field": "value",
                     }
                 ]
             }
@@ -254,7 +236,7 @@ class TestMergeHooksSettings:
                     {
                         "matcher": "",
                         "message": "Different welcome message",
-                        "custom_field": "value"
+                        "custom_field": "value",
                     }
                 ]
             }
@@ -270,20 +252,16 @@ class TestMergeHooksSettings:
 
     def test_malformed_template_hooks_skipped_with_warning(self):
         """Malformed template hooks (not a list) are skipped with warning."""
-        existing = {
-            "hooks": {
-                "UserPromptSubmit": []
-            }
-        }
+        existing = {"hooks": {"UserPromptSubmit": []}}
 
         template = {
             "hooks": {
                 "UserPromptSubmit": "not a list",  # Malformed
-                "SessionStart": [{"matcher": "", "message": "Valid"}]
+                "SessionStart": [{"matcher": "", "message": "Valid"}],
             }
         }
 
-        with mock.patch('mapify_cli.console.print') as mock_print:
+        with mock.patch("mapify_cli.console.print") as mock_print:
             result = merge_hooks_settings(existing, template)
 
         # UserPromptSubmit should remain unchanged
@@ -300,13 +278,9 @@ class TestMergeHooksSettings:
 
     def test_malformed_user_hooks_reset_with_warning(self, template_settings):
         """Malformed user hooks (not a list) are reset with warning."""
-        existing = {
-            "hooks": {
-                "UserPromptSubmit": {"not": "a list"}  # Malformed
-            }
-        }
+        existing = {"hooks": {"UserPromptSubmit": {"not": "a list"}}}  # Malformed
 
-        with mock.patch('mapify_cli.console.print') as mock_print:
+        with mock.patch("mapify_cli.console.print") as mock_print:
             result = merge_hooks_settings(existing, template_settings)
 
         # UserPromptSubmit should be reset and template added
@@ -322,11 +296,7 @@ class TestMergeHooksSettings:
 
     def test_no_hooks_in_existing_adds_template_hooks(self, template_settings):
         """If user has no hooks section at all, template hooks added entirely."""
-        existing = {
-            "permissions": {
-                "auto_approve": ["Read"]
-            }
-        }
+        existing = {"permissions": {"auto_approve": ["Read"]}}
 
         result = merge_hooks_settings(existing, template_settings)
 
@@ -337,16 +307,10 @@ class TestMergeHooksSettings:
     def test_no_hooks_in_template_preserves_existing(self):
         """If template has no hooks, existing hooks unchanged."""
         existing = {
-            "hooks": {
-                "UserPromptSubmit": [{"matcher": "Test", "message": "User hook"}]
-            }
+            "hooks": {"UserPromptSubmit": [{"matcher": "Test", "message": "User hook"}]}
         }
 
-        template = {
-            "permissions": {
-                "auto_approve": ["Write"]
-            }
-        }
+        template = {"permissions": {"auto_approve": ["Write"]}}
 
         result = merge_hooks_settings(existing, template)
 
@@ -357,9 +321,7 @@ class TestMergeHooksSettings:
     def test_hook_type_not_in_existing_adds_template_array(self, template_settings):
         """If user doesn't have specific hook type, template's entire array added."""
         existing = {
-            "hooks": {
-                "PreToolUse": [{"matcher": "Edit", "message": "User edit hook"}]
-            }
+            "hooks": {"PreToolUse": [{"matcher": "Edit", "message": "User edit hook"}]}
         }
 
         result = merge_hooks_settings(existing, template_settings)
@@ -376,9 +338,12 @@ class TestMergeHooksSettings:
         assert "SessionStart" in result["hooks"]
         assert len(result["hooks"]["SessionStart"]) == 1
 
-    def test_deep_copy_prevents_mutation(self, user_settings_with_hooks, template_settings):
+    def test_deep_copy_prevents_mutation(
+        self, user_settings_with_hooks, template_settings
+    ):
         """Merge doesn't mutate original existing_settings."""
         import copy
+
         original_existing = copy.deepcopy(user_settings_with_hooks)
 
         result = merge_hooks_settings(user_settings_with_hooks, template_settings)
@@ -396,7 +361,7 @@ class TestMergeHooksSettings:
             "hooks": {
                 "UserPromptSubmit": [
                     {"matcher": "Read\\(.*\\)", "message": "User read"},
-                    {"matcher": "Write\\(.*\\)", "message": "User write"}
+                    {"matcher": "Write\\(.*\\)", "message": "User write"},
                 ]
             }
         }
@@ -405,7 +370,7 @@ class TestMergeHooksSettings:
             "hooks": {
                 "UserPromptSubmit": [
                     {"matcher": "Bash\\(.*\\)", "message": "Template bash"},
-                    {"matcher": "Read\\(.*\\)", "message": "Template read (duplicate)"}
+                    {"matcher": "Read\\(.*\\)", "message": "Template read (duplicate)"},
                 ]
             }
         }
@@ -423,19 +388,13 @@ class TestMergeHooksSettings:
 
     def test_empty_matcher_string_uses_json_comparison(self):
         """Empty string matcher "" uses full JSON comparison."""
-        existing = {
-            "hooks": {
-                "SessionStart": [
-                    {"matcher": "", "message": "Msg A"}
-                ]
-            }
-        }
+        existing = {"hooks": {"SessionStart": [{"matcher": "", "message": "Msg A"}]}}
 
         template = {
             "hooks": {
                 "SessionStart": [
                     {"matcher": "", "message": "Msg A"},  # Duplicate
-                    {"matcher": "", "message": "Msg B"}   # Different
+                    {"matcher": "", "message": "Msg B"},  # Different
                 ]
             }
         }
@@ -452,11 +411,7 @@ class TestMergeHooksSettings:
 
     def test_non_dict_hook_groups_skipped(self):
         """Non-dict hook groups in template are skipped gracefully."""
-        existing = {
-            "hooks": {
-                "UserPromptSubmit": []
-            }
-        }
+        existing = {"hooks": {"UserPromptSubmit": []}}
 
         template = {
             "hooks": {
@@ -464,7 +419,7 @@ class TestMergeHooksSettings:
                     "not a dict",
                     {"matcher": "Valid", "message": "Valid hook"},
                     123,
-                    None
+                    None,
                 ]
             }
         }
@@ -480,30 +435,23 @@ class TestMergeHooksSettings:
         existing = {
             "permissions": {
                 "auto_approve": ["Read", "Write"],
-                "require_approval": ["Bash"]
+                "require_approval": ["Bash"],
             },
             "hooks": {
                 "UserPromptSubmit": [
                     {
                         "matcher": "Complex\\(.*\\)",
                         "message": "Complex hook",
-                        "nested": {
-                            "data": [1, 2, 3],
-                            "config": {"key": "value"}
-                        }
+                        "nested": {"data": [1, 2, 3], "config": {"key": "value"}},
                     }
                 ]
             },
-            "custom_section": {
-                "user_data": "should be preserved"
-            }
+            "custom_section": {"user_data": "should be preserved"},
         }
 
         template = {
             "hooks": {
-                "UserPromptSubmit": [
-                    {"matcher": "Simple", "message": "Simple hook"}
-                ]
+                "UserPromptSubmit": [{"matcher": "Simple", "message": "Simple hook"}]
             }
         }
 
@@ -514,8 +462,11 @@ class TestMergeHooksSettings:
         assert result["custom_section"] == existing["custom_section"]
 
         # Existing hook preserved with nested structure
-        complex_hook = [h for h in result["hooks"]["UserPromptSubmit"]
-                       if h.get("matcher") == "Complex\\(.*\\)"][0]
+        complex_hook = [
+            h
+            for h in result["hooks"]["UserPromptSubmit"]
+            if h.get("matcher") == "Complex\\(.*\\)"
+        ][0]
         assert complex_hook["nested"]["data"] == [1, 2, 3]
         assert complex_hook["nested"]["config"]["key"] == "value"
 

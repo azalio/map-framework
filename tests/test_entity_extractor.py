@@ -15,7 +15,7 @@ from mapify_cli.entity_extractor import (
     EntityExtractor,
     extract_entities,
     Entity,
-    EntityType
+    EntityType,
 )
 
 
@@ -72,7 +72,9 @@ class TestEntityExtractor:
         tool_names = {e.name.lower() for e in tool_entities}
 
         assert "docker" in tool_names or any("docker" in name for name in tool_names)
-        assert "kubernetes" in tool_names or any("kubernetes" in name for name in tool_names)
+        assert "kubernetes" in tool_names or any(
+            "kubernetes" in name for name in tool_names
+        )
 
     def test_skip_stdlib_imports(self, extractor):
         """Test that standard library imports are skipped."""
@@ -256,7 +258,9 @@ class TestEntityExtractor:
 
         # Check confidence boost for negative context
         high_conf_entities = [e for e in antipattern_entities if e.confidence >= 0.85]
-        assert len(high_conf_entities) >= 1  # At least one should have boosted confidence
+        assert (
+            len(high_conf_entities) >= 1
+        )  # At least one should have boosted confidence
 
     def test_extract_antipattern_without_negative_context(self, extractor):
         """Test extracting ANTIPATTERN without negative context."""
@@ -284,16 +288,20 @@ class TestEntityExtractor:
         antipatterns = [e for e in entities if e.type == EntityType.ANTIPATTERN]
 
         # generic-exception near 'Never' and 'avoided' → high confidence
-        generic_exc = next((e for e in antipatterns if 'generic' in e.name.lower()), None)
+        generic_exc = next(
+            (e for e in antipatterns if "generic" in e.name.lower()), None
+        )
         assert generic_exc is not None, "Should extract generic-exception"
-        assert generic_exc.confidence >= 0.85, \
-            f"generic-exception near 'Never' should have high confidence, got {generic_exc.confidence}"
+        assert (
+            generic_exc.confidence >= 0.85
+        ), f"generic-exception near 'Never' should have high confidence, got {generic_exc.confidence}"
 
         # magic-number >100 chars away from negative words → lower confidence
-        magic_num = next((e for e in antipatterns if 'magic' in e.name.lower()), None)
+        magic_num = next((e for e in antipatterns if "magic" in e.name.lower()), None)
         assert magic_num is not None, "Should extract magic-number"
-        assert magic_num.confidence <= 0.75, \
-            f"magic-number without nearby negative context should have lower confidence, got {magic_num.confidence}"
+        assert (
+            magic_num.confidence <= 0.75
+        ), f"magic-number without nearby negative context should have lower confidence, got {magic_num.confidence}"
 
     # ============================================================================
     # Confidence Scoring Tests
@@ -315,8 +323,9 @@ class TestEntityExtractor:
         assert len(entities) > 0
 
         for entity in entities:
-            assert 0.0 <= entity.confidence <= 1.0, \
-                f"Entity {entity.name} has invalid confidence: {entity.confidence}"
+            assert (
+                0.0 <= entity.confidence <= 1.0
+            ), f"Entity {entity.name} has invalid confidence: {entity.confidence}"
 
     def test_code_entity_high_confidence(self, extractor):
         """Test that code entities (backticks) have high confidence."""
@@ -326,8 +335,9 @@ class TestEntityExtractor:
         code_entities = [e for e in entities if e.name.lower() in ["pytest", "sqlite"]]
 
         for entity in code_entities:
-            assert entity.confidence >= 0.7, \
-                f"Code entity {entity.name} should have high confidence, got {entity.confidence}"
+            assert (
+                entity.confidence >= 0.7
+            ), f"Code entity {entity.name} should have high confidence, got {entity.confidence}"
 
     def test_inferred_entity_lower_confidence(self, extractor):
         """Test that inferred entities have lower confidence than explicit ones."""
@@ -356,7 +366,11 @@ class TestEntityExtractor:
         entities = extractor.extract_entities(text)
 
         # Should have only ONE pytest entity (deduplicated)
-        pytest_entities = [e for e in entities if "pytest" in e.name.lower() and e.type == EntityType.TOOL]
+        pytest_entities = [
+            e
+            for e in entities
+            if "pytest" in e.name.lower() and e.type == EntityType.TOOL
+        ]
         assert len(pytest_entities) == 1
 
     def test_deduplication_keeps_highest_confidence(self, extractor):
@@ -368,7 +382,7 @@ class TestEntityExtractor:
             name="pytest",
             confidence=0.9,
             first_seen_at="2024-01-01T00:00:00Z",
-            last_seen_at="2024-01-01T00:00:00Z"
+            last_seen_at="2024-01-01T00:00:00Z",
         )
         entity2 = Entity(
             id="ent-pytest",
@@ -376,7 +390,7 @@ class TestEntityExtractor:
             name="pytest",
             confidence=0.7,
             first_seen_at="2024-01-02T00:00:00Z",
-            last_seen_at="2024-01-02T00:00:00Z"
+            last_seen_at="2024-01-02T00:00:00Z",
         )
 
         deduplicated = extractor._deduplicate_entities([entity1, entity2])
@@ -394,7 +408,7 @@ class TestEntityExtractor:
             name="retry-pattern",
             confidence=0.8,
             first_seen_at="2024-01-01T00:00:00Z",
-            last_seen_at="2024-01-01T00:00:00Z"
+            last_seen_at="2024-01-01T00:00:00Z",
         )
         entity2 = Entity(
             id="ent-retry-workflow",
@@ -402,7 +416,7 @@ class TestEntityExtractor:
             name="retry-pattern",  # Same name, different type
             confidence=0.8,
             first_seen_at="2024-01-01T00:00:00Z",
-            last_seen_at="2024-01-01T00:00:00Z"
+            last_seen_at="2024-01-01T00:00:00Z",
         )
 
         deduplicated = extractor._deduplicate_entities([entity1, entity2])
@@ -483,8 +497,9 @@ class TestEntityExtractor:
         entities = extractor.extract_entities(text)
 
         for entity in entities:
-            assert entity.id.startswith("ent-"), \
-                f"Entity ID must start with 'ent-', got {entity.id}"
+            assert entity.id.startswith(
+                "ent-"
+            ), f"Entity ID must start with 'ent-', got {entity.id}"
 
     def test_entity_timestamps(self, extractor):
         """Test that entities have valid ISO8601 timestamps."""
@@ -508,7 +523,10 @@ class TestEntityExtractor:
         pytest_entity = next((e for e in entities if "pytest" in e.name.lower()), None)
         if pytest_entity and pytest_entity.metadata:
             # May have extraction_method metadata
-            assert "extraction_method" in pytest_entity.metadata or pytest_entity.metadata is None
+            assert (
+                "extraction_method" in pytest_entity.metadata
+                or pytest_entity.metadata is None
+            )
 
     # ============================================================================
     # Accuracy Tests (Test Corpus)
@@ -531,7 +549,11 @@ class TestEntityExtractor:
             ("Ensure idempotency", "idempotency", EntityType.CONCEPT),
             ("Fixed race-condition", "race-condition", EntityType.ERROR_TYPE),
             ("Follow TDD workflow", "tdd", EntityType.WORKFLOW),
-            ("Never use generic-exception", "generic-exception", EntityType.ANTIPATTERN),
+            (
+                "Never use generic-exception",
+                "generic-exception",
+                EntityType.ANTIPATTERN,
+            ),
             ("Use `SQLite` database", "sqlite", EntityType.TOOL),
             ("Deploy to Kubernetes", "kubernetes", EntityType.TECHNOLOGY),
             ("Circuit-breaker pattern", "circuit-breaker", EntityType.PATTERN),
@@ -564,9 +586,10 @@ class TestEntityExtractor:
         accuracy = correct_extractions / len(test_corpus)
 
         # Acceptance criteria: ≥80% accuracy
-        assert accuracy >= 0.80, \
-            f"Extraction accuracy {accuracy:.1%} is below 80% threshold. " \
+        assert accuracy >= 0.80, (
+            f"Extraction accuracy {accuracy:.1%} is below 80% threshold. "
             f"Correct: {correct_extractions}/{len(test_corpus)}"
+        )
 
     # ============================================================================
     # Module-Level API Tests
@@ -593,7 +616,7 @@ class TestEntityDataclass:
             name="pytest",
             confidence=0.9,
             first_seen_at="2024-01-01T00:00:00Z",
-            last_seen_at="2024-01-01T00:00:00Z"
+            last_seen_at="2024-01-01T00:00:00Z",
         )
 
         assert entity.id == "ent-pytest"
@@ -610,7 +633,7 @@ class TestEntityDataclass:
                 name="test",
                 confidence=1.5,  # Invalid: > 1.0
                 first_seen_at="2024-01-01T00:00:00Z",
-                last_seen_at="2024-01-01T00:00:00Z"
+                last_seen_at="2024-01-01T00:00:00Z",
             )
 
         with pytest.raises(ValueError, match="Confidence must be in"):
@@ -620,7 +643,7 @@ class TestEntityDataclass:
                 name="test",
                 confidence=-0.1,  # Invalid: < 0.0
                 first_seen_at="2024-01-01T00:00:00Z",
-                last_seen_at="2024-01-01T00:00:00Z"
+                last_seen_at="2024-01-01T00:00:00Z",
             )
 
     def test_entity_id_validation(self):
@@ -632,7 +655,7 @@ class TestEntityDataclass:
                 name="test",
                 confidence=0.8,
                 first_seen_at="2024-01-01T00:00:00Z",
-                last_seen_at="2024-01-01T00:00:00Z"
+                last_seen_at="2024-01-01T00:00:00Z",
             )
 
     def test_entity_with_metadata(self):
@@ -644,7 +667,7 @@ class TestEntityDataclass:
             confidence=0.9,
             first_seen_at="2024-01-01T00:00:00Z",
             last_seen_at="2024-01-01T00:00:00Z",
-            metadata={"version": "7.4.0", "license": "MIT"}
+            metadata={"version": "7.4.0", "license": "MIT"},
         )
 
         assert entity.metadata == {"version": "7.4.0", "license": "MIT"}
@@ -692,4 +715,4 @@ class TestSlugGeneration:
         slug = extractor._generate_slug("!!!")
         # Should be 8-char UUID fallback
         assert len(slug) == 8
-        assert slug.isalnum() or '-' in slug
+        assert slug.isalnum() or "-" in slug

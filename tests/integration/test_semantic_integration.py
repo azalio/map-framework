@@ -11,9 +11,12 @@ Tests:
 
 # IMPORTANT: Set environment variables BEFORE any imports
 import os
-os.environ['TRANSFORMERS_NO_TF'] = '1'
-os.environ['TF_USE_LEGACY_KERAS'] = '1'  # Force TensorFlow to use Keras 2 instead of Keras 3
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
+os.environ["TRANSFORMERS_NO_TF"] = "1"
+os.environ["TF_USE_LEGACY_KERAS"] = (
+    "1"  # Force TensorFlow to use Keras 2 instead of Keras 3
+)
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 import sys
 import json
@@ -28,9 +31,9 @@ from mapify_cli.playbook_manager import PlaybookManager, SEMANTIC_SEARCH_AVAILAB
 
 def test_initialization(manager):
     """Test PlaybookManager initialization with semantic search."""
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("TEST 1: PlaybookManager Initialization")
-    print("="*70)
+    print("=" * 70)
 
     assert manager.semantic_engine is not None, "Semantic engine not initialized"
 
@@ -41,9 +44,9 @@ def test_initialization(manager):
 
 def test_add_bullets(manager):
     """Test adding bullets via delta operations."""
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("TEST 2: Adding Bullets via Delta Operations")
-    print("="*70)
+    print("=" * 70)
 
     # Add test bullets
     operations = [
@@ -52,36 +55,36 @@ def test_add_bullets(manager):
             "section": "SECURITY_PATTERNS",
             "content": "Always verify JWT token signatures to prevent forgery and tampering",
             "code_example": "```python\nimport jwt\ntoken = jwt.decode(token_str, secret_key, algorithms=['HS256'])\n```",
-            "tags": ["jwt", "authentication", "security"]
+            "tags": ["jwt", "authentication", "security"],
         },
         {
             "type": "ADD",
             "section": "SECURITY_PATTERNS",
             "content": "Validate JWT signatures using cryptographic verification",
             "code_example": "```python\nfrom jwt import decode\nverified = decode(token, key, verify=True)\n```",
-            "tags": ["jwt", "crypto"]
+            "tags": ["jwt", "crypto"],
         },
         {
             "type": "ADD",
             "section": "SECURITY_PATTERNS",
             "content": "Use bcrypt with cost factor 12 for password hashing",
             "code_example": "```python\nimport bcrypt\nhashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=12))\n```",
-            "tags": ["password", "hashing"]
+            "tags": ["password", "hashing"],
         },
         {
             "type": "ADD",
             "section": "PERFORMANCE_PATTERNS",
             "content": "Use Redis caching to speed up database queries",
             "code_example": "```python\nimport redis\ncache = redis.Redis()\nresult = cache.get(key) or db.query()\n```",
-            "tags": ["redis", "caching"]
+            "tags": ["redis", "caching"],
         },
         {
             "type": "ADD",
             "section": "IMPLEMENTATION_PATTERNS",
             "content": "Implement authentication with bearer tokens in HTTP headers",
             "code_example": "```python\nheaders = {'Authorization': f'Bearer {token}'}\nresponse = requests.get(url, headers=headers)\n```",
-            "tags": ["auth", "http"]
-        }
+            "tags": ["auth", "http"],
+        },
     ]
 
     summary = manager.apply_delta(operations)
@@ -94,14 +97,14 @@ def test_add_bullets(manager):
 
 def test_semantic_search(manager):
     """Test semantic search retrieval."""
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("TEST 3: Semantic Search Retrieval")
-    print("="*70)
+    print("=" * 70)
 
     queries = [
         "token authentication security",
         "password hashing",
-        "improve query performance"
+        "improve query performance",
     ]
 
     for query in queries:
@@ -109,9 +112,7 @@ def test_semantic_search(manager):
         print("-" * 70)
 
         bullets = manager.get_relevant_bullets(
-            query=query,
-            limit=3,
-            similarity_threshold=0.2
+            query=query, limit=3, similarity_threshold=0.2
         )
 
         if not bullets:
@@ -128,9 +129,9 @@ def test_semantic_search(manager):
 
 def test_deduplication(manager):
     """Test semantic deduplication."""
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("TEST 4: Semantic Deduplication")
-    print("="*70)
+    print("=" * 70)
 
     # Add a near-duplicate bullet
     operations = [
@@ -138,7 +139,7 @@ def test_deduplication(manager):
             "type": "ADD",
             "section": "SECURITY_PATTERNS",
             "content": "JWT signature verification prevents token tampering and ensures authenticity",
-            "tags": ["jwt", "security"]
+            "tags": ["jwt", "security"],
         }
     ]
 
@@ -153,7 +154,7 @@ def test_deduplication(manager):
     print(f"  SECURITY_PATTERNS: {len(sec_bullets)} bullets")
     print(f"  Duplicates removed: {summary.get('deduplicated', 0)}")
 
-    if summary.get('deduplicated', 0) > 0:
+    if summary.get("deduplicated", 0) > 0:
         print("\n✓ Deduplication working correctly")
     else:
         print("\n⚠ No duplicates detected (similarity threshold might be too high)")
@@ -163,23 +164,22 @@ def test_deduplication(manager):
 
 def test_fallback_mode():
     """Test fallback to keyword matching when semantic search unavailable."""
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("TEST 5: Fallback to Keyword Matching")
-    print("="*70)
+    print("=" * 70)
 
     manager = PlaybookManager(
         playbook_path=".claude/playbook_test.json",
-        use_semantic_search=False  # Force disable
+        use_semantic_search=False,  # Force disable
     )
 
     if manager.semantic_engine is not None:
-        print("⚠ WARNING: Semantic engine initialized despite use_semantic_search=False")
+        print(
+            "⚠ WARNING: Semantic engine initialized despite use_semantic_search=False"
+        )
 
     # Test search with keyword matching
-    bullets = manager.get_relevant_bullets(
-        query="token authentication",
-        limit=3
-    )
+    bullets = manager.get_relevant_bullets(query="token authentication", limit=3)
 
     print(f"✓ Keyword matching fallback working ({len(bullets)} results)")
 
@@ -188,9 +188,9 @@ def test_fallback_mode():
 
 def main():
     """Run all tests."""
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("SEMANTIC SEARCH INTEGRATION TEST SUITE")
-    print("="*70)
+    print("=" * 70)
 
     try:
         # Test 1: Initialization
@@ -214,9 +214,9 @@ def main():
         if not test_fallback_mode():
             return 1
 
-        print("\n" + "="*70)
+        print("\n" + "=" * 70)
         print("ALL TESTS PASSED ✓")
-        print("="*70)
+        print("=" * 70)
 
         # Cleanup
         test_file = Path(".claude/playbook_test.json")
@@ -229,6 +229,7 @@ def main():
     except Exception as e:
         print(f"\n❌ TEST FAILED: {e}")
         import traceback
+
         traceback.print_exc()
         return 1
 

@@ -24,6 +24,7 @@ from mapify_cli.entity_extractor import Entity, EntityType
 
 class RelationshipType(Enum):
     """Relationship types matching schema_v3.0.sql CHECK constraint."""
+
     # Required 5 types (for 70% accuracy requirement)
     USES = "USES"  # A uses B (pytest USES Python)
     DEPENDS_ON = "DEPENDS_ON"  # A depends on B (MAP-workflow DEPENDS_ON playbook.db)
@@ -32,10 +33,14 @@ class RelationshipType(Enum):
     RELATED_TO = "RELATED_TO"  # Generic relationship (fallback)
 
     # Bonus 4 types (for comprehensive graph)
-    IMPLEMENTS = "IMPLEMENTS"  # A implements B (retry-logic IMPLEMENTS resilience-pattern)
+    IMPLEMENTS = (
+        "IMPLEMENTS"  # A implements B (retry-logic IMPLEMENTS resilience-pattern)
+    )
     CAUSES = "CAUSES"  # A causes B (race-condition CAUSES data-corruption)
     PREVENTS = "PREVENTS"  # A prevents B (mutex-lock PREVENTS race-condition)
-    ALTERNATIVE_TO = "ALTERNATIVE_TO"  # A is alternative to B (JSON-storage ALTERNATIVE_TO SQLite)
+    ALTERNATIVE_TO = (
+        "ALTERNATIVE_TO"  # A is alternative to B (JSON-storage ALTERNATIVE_TO SQLite)
+    )
 
 
 @dataclass
@@ -54,6 +59,7 @@ class Relationship:
         created_at: ISO8601 timestamp
         updated_at: ISO8601 timestamp (same as created_at for new extractions)
     """
+
     id: str
     source_entity_id: str
     target_entity_id: str
@@ -75,15 +81,21 @@ class Relationship:
 
         # Set timestamps if not provided
         if not self.created_at:
-            self.created_at = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+            self.created_at = (
+                datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            )
         if not self.updated_at:
             self.updated_at = self.created_at
 
         # Validate entity IDs
         if not self.source_entity_id.startswith("ent-"):
-            raise ValueError(f"Source entity ID must start with 'ent-', got {self.source_entity_id}")
+            raise ValueError(
+                f"Source entity ID must start with 'ent-', got {self.source_entity_id}"
+            )
         if not self.target_entity_id.startswith("ent-"):
-            raise ValueError(f"Target entity ID must start with 'ent-', got {self.target_entity_id}")
+            raise ValueError(
+                f"Target entity ID must start with 'ent-', got {self.target_entity_id}"
+            )
 
 
 class RelationshipDetector:
@@ -121,71 +133,137 @@ class RelationshipDetector:
         # Examples: "pytest uses Python", "Flask uses Jinja2", "MAP workflow uses playbook.db"
         # Pattern captures: word or multi-word entity (limited to 2 words)
         self.uses_patterns = [
-            re.compile(r'\b(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)*?)\s+uses?\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\b', re.IGNORECASE),
-            re.compile(r'\buse\s+(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+for\s+(?:testing|running|building)\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)', re.IGNORECASE),
-            re.compile(r'\b(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+is\s+built\s+on\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\b', re.IGNORECASE),
-            re.compile(r'\b(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+leverages?\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\b', re.IGNORECASE),
+            re.compile(
+                r"\b(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)*?)\s+uses?\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\b",
+                re.IGNORECASE,
+            ),
+            re.compile(
+                r"\buse\s+(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+for\s+(?:testing|running|building)\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)",
+                re.IGNORECASE,
+            ),
+            re.compile(
+                r"\b(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+is\s+built\s+on\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\b",
+                re.IGNORECASE,
+            ),
+            re.compile(
+                r"\b(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+leverages?\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\b",
+                re.IGNORECASE,
+            ),
         ]
 
         # DEPENDS_ON: A depends on B
         # Examples: "MAP workflow depends on playbook.db", "Actor requires Monitor"
         self.depends_on_patterns = [
-            re.compile(r'\b(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+depends?\s+on\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\b', re.IGNORECASE),
-            re.compile(r'\b(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+requires?\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\b', re.IGNORECASE),
-            re.compile(r'\b(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+needs?\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\b', re.IGNORECASE),
-            re.compile(r'\b(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+relies\s+on\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\b', re.IGNORECASE),
+            re.compile(
+                r"\b(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+depends?\s+on\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\b",
+                re.IGNORECASE,
+            ),
+            re.compile(
+                r"\b(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+requires?\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\b",
+                re.IGNORECASE,
+            ),
+            re.compile(
+                r"\b(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+needs?\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\b",
+                re.IGNORECASE,
+            ),
+            re.compile(
+                r"\b(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+relies\s+on\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\b",
+                re.IGNORECASE,
+            ),
         ]
 
         # CONTRADICTS: A contradicts B
         # Examples: "generic exception contradicts specific exceptions", "use pytest instead of unittest"
         self.contradicts_patterns = [
-            re.compile(r'\b(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+contradicts?\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\b', re.IGNORECASE),
-            re.compile(r'\b(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+conflicts?\s+with\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\b', re.IGNORECASE),
-            re.compile(r'\buse\s+(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+instead\s+of\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\b', re.IGNORECASE),
-            re.compile(r'\bavoid\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)[\s,]+use\s+(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\b', re.IGNORECASE),
+            re.compile(
+                r"\b(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+contradicts?\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\b",
+                re.IGNORECASE,
+            ),
+            re.compile(
+                r"\b(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+conflicts?\s+with\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\b",
+                re.IGNORECASE,
+            ),
+            re.compile(
+                r"\buse\s+(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+instead\s+of\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\b",
+                re.IGNORECASE,
+            ),
+            re.compile(
+                r"\bavoid\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)[\s,]+use\s+(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\b",
+                re.IGNORECASE,
+            ),
         ]
 
         # SUPERSEDES: A replaces B
         # Examples: "playbook.db supersedes playbook.json", "migrated from JSON to SQLite"
         self.supersedes_patterns = [
-            re.compile(r'\b(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+supersedes?\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\b', re.IGNORECASE),
-            re.compile(r'\b(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+replaces?\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\b', re.IGNORECASE),
-            re.compile(r'\bmigrated\s+from\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+to\s+(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\b', re.IGNORECASE),
-            re.compile(r'\bupgraded\s+from\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+to\s+(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\b', re.IGNORECASE),
+            re.compile(
+                r"\b(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+supersedes?\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\b",
+                re.IGNORECASE,
+            ),
+            re.compile(
+                r"\b(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+replaces?\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\b",
+                re.IGNORECASE,
+            ),
+            re.compile(
+                r"\bmigrated\s+from\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+to\s+(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\b",
+                re.IGNORECASE,
+            ),
+            re.compile(
+                r"\bupgraded\s+from\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+to\s+(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\b",
+                re.IGNORECASE,
+            ),
         ]
 
         # IMPLEMENTS: A implements pattern B
         # Examples: "retry logic implements resilience pattern", "Actor implements Strategy pattern"
         self.implements_patterns = [
-            re.compile(r'\b(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+implements?\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)(?:\s+pattern)?\b', re.IGNORECASE),
-            re.compile(r'\b(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+follows?\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)(?:\s+pattern)?\b', re.IGNORECASE),
+            re.compile(
+                r"\b(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+implements?\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)(?:\s+pattern)?\b",
+                re.IGNORECASE,
+            ),
+            re.compile(
+                r"\b(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+follows?\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)(?:\s+pattern)?\b",
+                re.IGNORECASE,
+            ),
         ]
 
         # CAUSES: A causes error B
         # Examples: "race condition causes data corruption", "null pointer causes crash"
         self.causes_patterns = [
-            re.compile(r'\b(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+causes?\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\b', re.IGNORECASE),
-            re.compile(r'\b(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+leads?\s+to\s+(?:(?:an?\s+)?(?:application|system)\s+)?(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\b', re.IGNORECASE),
+            re.compile(
+                r"\b(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+causes?\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\b",
+                re.IGNORECASE,
+            ),
+            re.compile(
+                r"\b(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+leads?\s+to\s+(?:(?:an?\s+)?(?:application|system)\s+)?(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\b",
+                re.IGNORECASE,
+            ),
         ]
 
         # PREVENTS: A prevents B
         # Examples: "mutex lock prevents race condition", "validation prevents null pointer"
         self.prevents_patterns = [
-            re.compile(r'\b(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+prevents?\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\b', re.IGNORECASE),
-            re.compile(r'\b(?P<source>[\w\-\.]+)\s+avoids?\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)(?:\s+errors?)?\b', re.IGNORECASE),
+            re.compile(
+                r"\b(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+prevents?\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\b",
+                re.IGNORECASE,
+            ),
+            re.compile(
+                r"\b(?P<source>[\w\-\.]+)\s+avoids?\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)(?:\s+errors?)?\b",
+                re.IGNORECASE,
+            ),
         ]
 
         # ALTERNATIVE_TO: A is alternative to B
         # Examples: "JSON storage alternative to SQLite", "pytest instead of unittest"
         self.alternative_to_patterns = [
-            re.compile(r'\b(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+(?:is\s+)?(?:an?\s+)?alternative\s+to\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\b', re.IGNORECASE),
+            re.compile(
+                r"\b(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+(?:is\s+)?(?:an?\s+)?alternative\s+to\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\b",
+                re.IGNORECASE,
+            ),
         ]
 
     def detect_relationships(
-        self,
-        content: str,
-        entities: List[Entity],
-        bullet_id: str
+        self, content: str, entities: List[Entity], bullet_id: str
     ) -> List[Relationship]:
         """
         Detect relationships between entities in content.
@@ -225,35 +303,83 @@ class RelationshipDetector:
         relationships = []
 
         # Process each relationship type
-        relationships.extend(self._extract_typed_relationships(
-            content, entity_lookup, bullet_id, RelationshipType.USES, self.uses_patterns
-        ))
-        relationships.extend(self._extract_typed_relationships(
-            content, entity_lookup, bullet_id, RelationshipType.DEPENDS_ON, self.depends_on_patterns
-        ))
-        relationships.extend(self._extract_typed_relationships(
-            content, entity_lookup, bullet_id, RelationshipType.CONTRADICTS, self.contradicts_patterns
-        ))
-        relationships.extend(self._extract_typed_relationships(
-            content, entity_lookup, bullet_id, RelationshipType.SUPERSEDES, self.supersedes_patterns
-        ))
-        relationships.extend(self._extract_typed_relationships(
-            content, entity_lookup, bullet_id, RelationshipType.IMPLEMENTS, self.implements_patterns
-        ))
-        relationships.extend(self._extract_typed_relationships(
-            content, entity_lookup, bullet_id, RelationshipType.CAUSES, self.causes_patterns
-        ))
-        relationships.extend(self._extract_typed_relationships(
-            content, entity_lookup, bullet_id, RelationshipType.PREVENTS, self.prevents_patterns
-        ))
-        relationships.extend(self._extract_typed_relationships(
-            content, entity_lookup, bullet_id, RelationshipType.ALTERNATIVE_TO, self.alternative_to_patterns
-        ))
+        relationships.extend(
+            self._extract_typed_relationships(
+                content,
+                entity_lookup,
+                bullet_id,
+                RelationshipType.USES,
+                self.uses_patterns,
+            )
+        )
+        relationships.extend(
+            self._extract_typed_relationships(
+                content,
+                entity_lookup,
+                bullet_id,
+                RelationshipType.DEPENDS_ON,
+                self.depends_on_patterns,
+            )
+        )
+        relationships.extend(
+            self._extract_typed_relationships(
+                content,
+                entity_lookup,
+                bullet_id,
+                RelationshipType.CONTRADICTS,
+                self.contradicts_patterns,
+            )
+        )
+        relationships.extend(
+            self._extract_typed_relationships(
+                content,
+                entity_lookup,
+                bullet_id,
+                RelationshipType.SUPERSEDES,
+                self.supersedes_patterns,
+            )
+        )
+        relationships.extend(
+            self._extract_typed_relationships(
+                content,
+                entity_lookup,
+                bullet_id,
+                RelationshipType.IMPLEMENTS,
+                self.implements_patterns,
+            )
+        )
+        relationships.extend(
+            self._extract_typed_relationships(
+                content,
+                entity_lookup,
+                bullet_id,
+                RelationshipType.CAUSES,
+                self.causes_patterns,
+            )
+        )
+        relationships.extend(
+            self._extract_typed_relationships(
+                content,
+                entity_lookup,
+                bullet_id,
+                RelationshipType.PREVENTS,
+                self.prevents_patterns,
+            )
+        )
+        relationships.extend(
+            self._extract_typed_relationships(
+                content,
+                entity_lookup,
+                bullet_id,
+                RelationshipType.ALTERNATIVE_TO,
+                self.alternative_to_patterns,
+            )
+        )
 
         # Extract proximity-based RELATED_TO relationships (fallback)
-        relationships.extend(self._extract_proximity_relationships(
-            content, entities, bullet_id
-        ))
+        relationships.extend(
+            self._extract_proximity_relationships(content, entities, bullet_id)
+        )
 
         # Deduplicate and return
         return self._deduplicate_relationships(relationships)
@@ -280,15 +406,15 @@ class RelationshipDetector:
             lookup[name_lower] = entity
 
             # Add hyphenated version (for "map workflow" → "map-workflow")
-            hyphenated = name_lower.replace(' ', '-')
+            hyphenated = name_lower.replace(" ", "-")
             lookup[hyphenated] = entity
 
             # Add de-hyphenated version (for "map-workflow" → "map workflow")
-            dehyphenated = name_lower.replace('-', ' ')
+            dehyphenated = name_lower.replace("-", " ")
             lookup[dehyphenated] = entity
 
             # Add underscore version (for "retry_with_backoff")
-            underscored = name_lower.replace(' ', '_').replace('-', '_')
+            underscored = name_lower.replace(" ", "_").replace("-", "_")
             lookup[underscored] = entity
 
         return lookup
@@ -299,7 +425,7 @@ class RelationshipDetector:
         entity_lookup: Dict[str, Entity],
         bullet_id: str,
         rel_type: RelationshipType,
-        patterns: List[re.Pattern]
+        patterns: List[re.Pattern],
     ) -> List[Relationship]:
         """
         Extract relationships of a specific type using pattern list.
@@ -319,8 +445,12 @@ class RelationshipDetector:
         for pattern in patterns:
             for match in pattern.finditer(content):
                 # Extract source and target from named groups
-                source_name = match.group('source') if 'source' in match.groupdict() else None
-                target_name = match.group('target') if 'target' in match.groupdict() else None
+                source_name = (
+                    match.group("source") if "source" in match.groupdict() else None
+                )
+                target_name = (
+                    match.group("target") if "target" in match.groupdict() else None
+                )
 
                 # Skip if either is missing
                 if not source_name or not target_name:
@@ -351,22 +481,26 @@ class RelationshipDetector:
                 rel_id = f"rel-{uuid.uuid4()}"
                 metadata = {
                     "extraction_method": "pattern_matching",
-                    "pattern_matched": match.group(0)
+                    "pattern_matched": match.group(0),
                 }
 
-                relationships.append(Relationship(
-                    id=rel_id,
-                    source_entity_id=source_entity.id,
-                    target_entity_id=target_entity.id,
-                    type=rel_type,
-                    created_from_bullet_id=bullet_id,
-                    confidence=confidence,
-                    metadata=metadata
-                ))
+                relationships.append(
+                    Relationship(
+                        id=rel_id,
+                        source_entity_id=source_entity.id,
+                        target_entity_id=target_entity.id,
+                        type=rel_type,
+                        created_from_bullet_id=bullet_id,
+                        confidence=confidence,
+                        metadata=metadata,
+                    )
+                )
 
         return relationships
 
-    def _find_entity_match(self, text: str, entity_lookup: Dict[str, Entity]) -> Optional[Entity]:
+    def _find_entity_match(
+        self, text: str, entity_lookup: Dict[str, Entity]
+    ) -> Optional[Entity]:
         """
         Find entity in lookup that matches text (exact or partial).
 
@@ -389,23 +523,20 @@ class RelationshipDetector:
         # Try progressively shorter prefixes (e.g., "Python applications" → "Python")
         words = text.split()
         for num_words in range(len(words), 0, -1):
-            prefix = ' '.join(words[:num_words])
+            prefix = " ".join(words[:num_words])
             if prefix in entity_lookup:
                 return entity_lookup[prefix]
 
         # Try finding entity names that are prefixes of text
         # (e.g., "pytest" matches "pytest for testing")
         for entity_name, entity in entity_lookup.items():
-            if text.startswith(entity_name + ' ') or text.startswith(entity_name + '-'):
+            if text.startswith(entity_name + " ") or text.startswith(entity_name + "-"):
                 return entity
 
         return None
 
     def _extract_proximity_relationships(
-        self,
-        content: str,
-        entities: List[Entity],
-        bullet_id: str
+        self, content: str, entities: List[Entity], bullet_id: str
     ) -> List[Relationship]:
         """
         Extract RELATED_TO relationships based on entity proximity.
@@ -431,7 +562,7 @@ class RelationshipDetector:
         entity_positions = []
         for entity in entities:
             # Find all occurrences of entity name (case-insensitive)
-            pattern = re.compile(r'\b' + re.escape(entity.name) + r'\b', re.IGNORECASE)
+            pattern = re.compile(r"\b" + re.escape(entity.name) + r"\b", re.IGNORECASE)
             for match in pattern.finditer(content):
                 entity_positions.append((match.start(), match.end(), entity))
 
@@ -440,7 +571,7 @@ class RelationshipDetector:
 
         # Find pairs within proximity threshold
         for i, (start1, end1, entity1) in enumerate(entity_positions):
-            for start2, end2, entity2 in entity_positions[i+1:]:
+            for start2, end2, entity2 in entity_positions[i + 1 :]:
                 # Check distance
                 distance = start2 - end1
 
@@ -462,18 +593,20 @@ class RelationshipDetector:
                 rel_id = f"rel-{uuid.uuid4()}"
                 metadata = {
                     "extraction_method": "proximity_based",
-                    "distance_chars": distance
+                    "distance_chars": distance,
                 }
 
-                relationships.append(Relationship(
-                    id=rel_id,
-                    source_entity_id=entity1.id,
-                    target_entity_id=entity2.id,
-                    type=RelationshipType.RELATED_TO,
-                    created_from_bullet_id=bullet_id,
-                    confidence=confidence,
-                    metadata=metadata
-                ))
+                relationships.append(
+                    Relationship(
+                        id=rel_id,
+                        source_entity_id=entity1.id,
+                        target_entity_id=entity2.id,
+                        type=RelationshipType.RELATED_TO,
+                        created_from_bullet_id=bullet_id,
+                        confidence=confidence,
+                        metadata=metadata,
+                    )
+                )
 
         return relationships
 
@@ -483,7 +616,7 @@ class RelationshipDetector:
         target: Entity,
         rel_type: RelationshipType,
         matched_text: str,
-        full_content: str
+        full_content: str,
     ) -> float:
         """
         Calculate confidence score for a relationship.
@@ -526,7 +659,7 @@ class RelationshipDetector:
             context_window = full_content[window_start:window_end]
 
             # Check for code context markers
-            if '`' in context_window or '```' in context_window:
+            if "`" in context_window or "```" in context_window:
                 confidence = min(1.0, confidence + 0.1)
 
         # Cap at 0.95 (never 1.0 for pattern-based extraction)
@@ -534,7 +667,9 @@ class RelationshipDetector:
 
         return round(confidence, 2)
 
-    def _deduplicate_relationships(self, relationships: List[Relationship]) -> List[Relationship]:
+    def _deduplicate_relationships(
+        self, relationships: List[Relationship]
+    ) -> List[Relationship]:
         """
         Deduplicate relationships by (source, target, type) tuple.
 
@@ -577,7 +712,7 @@ class RelationshipDetector:
                         confidence=rel.confidence,
                         metadata=rel.metadata,
                         created_at=rel.created_at,
-                        updated_at=rel.updated_at
+                        updated_at=rel.updated_at,
                     )
             else:
                 # Directed relationships: use as-is
@@ -592,7 +727,9 @@ class RelationshipDetector:
                 # Keep higher confidence
                 if rel.confidence > existing.confidence:
                     existing.confidence = rel.confidence
-                    existing.metadata = rel.metadata  # Update metadata from higher-confidence extraction
+                    existing.metadata = (
+                        rel.metadata
+                    )  # Update metadata from higher-confidence extraction
 
                 # Keep earliest created_at
                 if rel.created_at < existing.created_at:
@@ -604,9 +741,7 @@ class RelationshipDetector:
 
 # Convenience function for module-level API
 def detect_relationships(
-    content: str,
-    entities: List[Entity],
-    bullet_id: str
+    content: str, entities: List[Entity], bullet_id: str
 ) -> List[Relationship]:
     """
     Detect relationships between entities in content.

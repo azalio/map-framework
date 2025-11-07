@@ -31,12 +31,14 @@ from enum import Enum
 
 class IssueSeverity(Enum):
     """Issue severity levels."""
+
     CRITICAL = "critical"  # Blocks execution
-    WARNING = "warning"    # May cause issues
+    WARNING = "warning"  # May cause issues
 
 
 class ANSIColors:
     """ANSI color codes for terminal output."""
+
     GREEN = "\033[92m"
     RED = "\033[91m"
     YELLOW = "\033[93m"
@@ -49,8 +51,13 @@ class ANSIColors:
 class ValidationIssue:
     """Represents a validation issue found in the task graph."""
 
-    def __init__(self, issue_type: str, severity: IssueSeverity,
-                 affected_tasks: List[int], message: str):
+    def __init__(
+        self,
+        issue_type: str,
+        severity: IssueSeverity,
+        affected_tasks: List[int],
+        message: str,
+    ):
         self.issue_type = issue_type
         self.severity = severity
         self.affected_tasks = affected_tasks
@@ -62,7 +69,7 @@ class ValidationIssue:
             "type": self.issue_type,
             "severity": self.severity.value,
             "affected_tasks": self.affected_tasks,
-            "message": self.message
+            "message": self.message,
         }
 
 
@@ -133,12 +140,14 @@ class DependencyValidator:
 
             if invalid_deps:
                 found_issues = True
-                self.issues.append(ValidationIssue(
-                    issue_type="forward_reference",
-                    severity=IssueSeverity.CRITICAL,
-                    affected_tasks=[task_id] + invalid_deps,
-                    message=f"Task {task_id} depends on non-existent tasks: {invalid_deps}"
-                ))
+                self.issues.append(
+                    ValidationIssue(
+                        issue_type="forward_reference",
+                        severity=IssueSeverity.CRITICAL,
+                        affected_tasks=[task_id] + invalid_deps,
+                        message=f"Task {task_id} depends on non-existent tasks: {invalid_deps}",
+                    )
+                )
 
         return not found_issues
 
@@ -154,12 +163,14 @@ class DependencyValidator:
         for task_id, deps in self.adjacency.items():
             if task_id in deps:
                 found_issues = True
-                self.issues.append(ValidationIssue(
-                    issue_type="self_dependency",
-                    severity=IssueSeverity.CRITICAL,
-                    affected_tasks=[task_id],
-                    message=f"Task {task_id} depends on itself"
-                ))
+                self.issues.append(
+                    ValidationIssue(
+                        issue_type="self_dependency",
+                        severity=IssueSeverity.CRITICAL,
+                        affected_tasks=[task_id],
+                        message=f"Task {task_id} depends on itself",
+                    )
+                )
 
         return not found_issues
 
@@ -194,12 +205,14 @@ class DependencyValidator:
                     cycle_start_idx = path_stack.index(neighbor)
                     cycle_path = path_stack[cycle_start_idx:] + [neighbor]
 
-                    self.issues.append(ValidationIssue(
-                        issue_type="circular_dependency",
-                        severity=IssueSeverity.CRITICAL,
-                        affected_tasks=cycle_path,
-                        message=f"Circular dependency detected: {' → '.join(map(str, cycle_path))}"
-                    ))
+                    self.issues.append(
+                        ValidationIssue(
+                            issue_type="circular_dependency",
+                            severity=IssueSeverity.CRITICAL,
+                            affected_tasks=cycle_path,
+                            message=f"Circular dependency detected: {' → '.join(map(str, cycle_path))}",
+                        )
+                    )
                     return True
 
             path_stack.pop()
@@ -233,12 +246,14 @@ class DependencyValidator:
                 orphaned.append(task_id)
 
         if orphaned:
-            self.issues.append(ValidationIssue(
-                issue_type="orphaned_tasks",
-                severity=IssueSeverity.WARNING,
-                affected_tasks=orphaned,
-                message=f"Tasks with no dependencies or dependents (isolated): {orphaned}"
-            ))
+            self.issues.append(
+                ValidationIssue(
+                    issue_type="orphaned_tasks",
+                    severity=IssueSeverity.WARNING,
+                    affected_tasks=orphaned,
+                    message=f"Tasks with no dependencies or dependents (isolated): {orphaned}",
+                )
+            )
             return False
 
         return True
@@ -254,7 +269,7 @@ class DependencyValidator:
             self.validate_forward_references(),
             self.validate_self_dependencies(),
             self.validate_circular_dependencies(),
-            self.validate_orphaned_tasks()
+            self.validate_orphaned_tasks(),
         ]
 
         return all(results)
@@ -266,7 +281,9 @@ class DependencyValidator:
         Returns:
             Dict with validation results and issues
         """
-        critical_issues = [i for i in self.issues if i.severity == IssueSeverity.CRITICAL]
+        critical_issues = [
+            i for i in self.issues if i.severity == IssueSeverity.CRITICAL
+        ]
         warning_issues = [i for i in self.issues if i.severity == IssueSeverity.WARNING]
 
         return {
@@ -275,7 +292,7 @@ class DependencyValidator:
             "total_issues": len(self.issues),
             "critical_issues": len(critical_issues),
             "warnings": len(warning_issues),
-            "issues": [issue.to_dict() for issue in self.issues]
+            "issues": [issue.to_dict() for issue in self.issues],
         }
 
     def get_task_title(self, task_id: int) -> str:
@@ -368,8 +385,7 @@ class ASCIIGraphRenderer:
         # Note: In graph theory terms, these are outgoing edges, but we call it "in-degree"
         # because it counts incoming dependencies that must be satisfied before A can execute
         in_degree: Dict[int, int] = {
-            task_id: len(self.adjacency.get(task_id, []))
-            for task_id in self.task_ids
+            task_id: len(self.adjacency.get(task_id, [])) for task_id in self.task_ids
         }
 
         # Start with root nodes (tasks that have no dependencies)
@@ -393,9 +409,16 @@ class ASCIIGraphRenderer:
 
         return sorted_order
 
-    def _render_tree_node(self, task_id: int, prefix: str, is_last: bool,
-                          visited: Set[int], max_depth: int, current_depth: int = 0,
-                          use_colors: bool = True) -> List[str]:
+    def _render_tree_node(
+        self,
+        task_id: int,
+        prefix: str,
+        is_last: bool,
+        visited: Set[int],
+        max_depth: int,
+        current_depth: int = 0,
+        use_colors: bool = True,
+    ) -> List[str]:
         """
         Recursively render a task node and its dependents.
 
@@ -448,16 +471,23 @@ class ASCIIGraphRenderer:
 
         # Render children
         for i, dep_task_id in enumerate(dependents):
-            is_last_child = (i == len(dependents) - 1)
+            is_last_child = i == len(dependents) - 1
             child_lines = self._render_tree_node(
-                dep_task_id, child_prefix, is_last_child,
-                visited, max_depth, current_depth + 1, use_colors
+                dep_task_id,
+                child_prefix,
+                is_last_child,
+                visited,
+                max_depth,
+                current_depth + 1,
+                use_colors,
             )
             lines.extend(child_lines)
 
         return lines
 
-    def render(self, use_colors: bool = True, max_depth: int = 20, max_width: int = 120) -> str:
+    def render(
+        self, use_colors: bool = True, max_depth: int = 20, max_width: int = 120
+    ) -> str:
         """
         Render complete dependency graph as ASCII tree.
 
@@ -476,22 +506,29 @@ class ASCIIGraphRenderer:
             # Create empty color mapping for no-color mode
             class NoColors:
                 GREEN = RED = YELLOW = GRAY = BOLD = RESET = ""
+
             C = NoColors
 
         lines = []
 
         # Header
         total_issues = len(self.issues)
-        critical_count = sum(1 for i in self.issues if i.severity == IssueSeverity.CRITICAL)
-        warning_count = sum(1 for i in self.issues if i.severity == IssueSeverity.WARNING)
+        critical_count = sum(
+            1 for i in self.issues if i.severity == IssueSeverity.CRITICAL
+        )
+        warning_count = sum(
+            1 for i in self.issues if i.severity == IssueSeverity.WARNING
+        )
 
         status_color = C.GREEN if critical_count == 0 else C.RED
         lines.append(f"{C.BOLD}Task Dependency Graph{C.RESET}")
         lines.append(f"{C.GRAY}{'=' * 60}{C.RESET}")
         lines.append(f"Total Tasks: {len(self.task_ids)}")
-        lines.append(f"Issues: {status_color}{total_issues}{C.RESET} "
-                    f"({C.RED}{critical_count} critical{C.RESET}, "
-                    f"{C.YELLOW}{warning_count} warnings{C.RESET})")
+        lines.append(
+            f"Issues: {status_color}{total_issues}{C.RESET} "
+            f"({C.RED}{critical_count} critical{C.RESET}, "
+            f"{C.YELLOW}{warning_count} warnings{C.RESET})"
+        )
         lines.append("")
 
         # Legend
@@ -517,7 +554,7 @@ class ASCIIGraphRenderer:
         visited: Set[int] = set()
 
         for i, root_id in enumerate(roots):
-            is_last_root = (i == len(roots) - 1)
+            is_last_root = i == len(roots) - 1
 
             # Render root and its subtree
             root_lines = self._render_tree_node(
@@ -571,8 +608,9 @@ class ASCIIGraphRenderer:
             Text with ANSI codes removed
         """
         import re
-        ansi_escape = re.compile(r'\033\[[0-9;]*m')
-        return ansi_escape.sub('', text)
+
+        ansi_escape = re.compile(r"\033\[[0-9;]*m")
+        return ansi_escape.sub("", text)
 
     def _truncate_line(self, line: str, max_length: int) -> str:
         """
@@ -586,7 +624,8 @@ class ASCIIGraphRenderer:
             Truncated line with ANSI codes preserved
         """
         import re
-        ansi_escape = re.compile(r'\033\[[0-9;]*m')
+
+        ansi_escape = re.compile(r"\033\[[0-9;]*m")
 
         result = []
         visible_count = 0
@@ -605,7 +644,7 @@ class ASCIIGraphRenderer:
                 visible_count += 1
                 pos += 1
 
-        return ''.join(result)
+        return "".join(result)
 
 
 def load_input(file_path: str = None) -> dict:
@@ -623,7 +662,7 @@ def load_input(file_path: str = None) -> dict:
     """
     try:
         if file_path:
-            with open(file_path, 'r', encoding='utf-8') as f:
+            with open(file_path, "r", encoding="utf-8") as f:
                 return json.load(f)
         else:
             return json.load(sys.stdin)
@@ -655,12 +694,14 @@ def print_report(report: dict, output_format: str = "json"):
         print(f"  Warnings: {report['warnings']}")
         print(f"Status: {'✅ VALID' if report['valid'] else '❌ INVALID'}")
 
-        if report['issues']:
+        if report["issues"]:
             print(f"\nIssues Found:")
             print(f"-" * 60)
-            for issue in report['issues']:
-                severity_icon = "🔴" if issue['severity'] == 'critical' else "🟡"
-                print(f"\n{severity_icon} {issue['type'].upper()} ({issue['severity']})")
+            for issue in report["issues"]:
+                severity_icon = "🔴" if issue["severity"] == "critical" else "🟡"
+                print(
+                    f"\n{severity_icon} {issue['type'].upper()} ({issue['severity']})"
+                )
                 print(f"   Affected tasks: {issue['affected_tasks']}")
                 print(f"   {issue['message']}")
 
@@ -691,29 +732,28 @@ Exit Codes:
   0: Valid task graph (no critical issues)
   1: Invalid task graph (critical issues found)
   2: Invalid input (malformed JSON or missing fields)
-        """
+        """,
     )
 
     parser.add_argument(
         "input_file",
         nargs="?",
-        help="Path to TaskDecomposer JSON output (default: stdin)"
+        help="Path to TaskDecomposer JSON output (default: stdin)",
     )
     parser.add_argument(
-        "-f", "--format",
+        "-f",
+        "--format",
         choices=["json", "text"],
         default="json",
-        help="Output format (default: json)"
+        help="Output format (default: json)",
     )
     parser.add_argument(
         "--visualize",
         action="store_true",
-        help="Display ASCII dependency tree visualization"
+        help="Display ASCII dependency tree visualization",
     )
     parser.add_argument(
-        "--no-color",
-        action="store_true",
-        help="Disable color output in visualization"
+        "--no-color", action="store_true", help="Disable color output in visualization"
     )
 
     args = parser.parse_args()
@@ -745,18 +785,14 @@ Exit Codes:
         error_report = {
             "valid": False,
             "error": str(e),
-            "error_type": "input_validation"
+            "error_type": "input_validation",
         }
         print(json.dumps(error_report, indent=2), file=sys.stderr)
         sys.exit(2)
 
     except Exception as e:
         # Unexpected error
-        error_report = {
-            "valid": False,
-            "error": str(e),
-            "error_type": "unexpected"
-        }
+        error_report = {"valid": False, "error": str(e), "error_type": "unexpected"}
         print(json.dumps(error_report, indent=2), file=sys.stderr)
         sys.exit(2)
 

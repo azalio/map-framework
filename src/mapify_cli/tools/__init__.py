@@ -13,16 +13,16 @@ from .validate_dependencies import (
     ANSIColors,
     load_input,
     print_report,
-    main
+    main,
 )
 
 __all__ = [
-    'DependencyValidator',
-    'ASCIIGraphRenderer',
-    'ValidationIssue',
-    'IssueSeverity',
-    'ANSIColors',
-    'load_input',
-    'print_report',
-    'main'
+    "DependencyValidator",
+    "ASCIIGraphRenderer",
+    "ValidationIssue",
+    "IssueSeverity",
+    "ANSIColors",
+    "load_input",
+    "print_report",
+    "main",
 ]

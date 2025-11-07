@@ -13,13 +13,15 @@ import sys
 import os
 
 # Add helpers directory to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '.claude', 'hooks', 'helpers'))
+sys.path.insert(
+    0, os.path.join(os.path.dirname(__file__), "..", ".claude", "hooks", "helpers")
+)
 
 from inject_playbook_bullets import (
     extract_keywords,
     query_playbook,
     format_bullets_as_markdown,
-    main
+    main,
 )
 
 
@@ -111,7 +113,7 @@ class TestExtractKeywords:
 class TestQueryPlaybook:
     """Test playbook querying via mapify CLI"""
 
-    @patch('subprocess.run')
+    @patch("subprocess.run")
     def test_successful_query(self, mock_run):
         """Successful query returns parsed JSON"""
         mock_response = {
@@ -121,15 +123,13 @@ class TestQueryPlaybook:
                     "section": "IMPLEMENTATION_PATTERNS",
                     "content": "Test pattern",
                     "quality_score": 5,
-                    "relevance_score": 0.85
+                    "relevance_score": 0.85,
                 }
             ]
         }
 
         mock_run.return_value = Mock(
-            returncode=0,
-            stdout=json.dumps(mock_response),
-            stderr=""
+            returncode=0, stdout=json.dumps(mock_response), stderr=""
         )
 
         result = query_playbook("test query", limit=5)
@@ -151,69 +151,57 @@ class TestQueryPlaybook:
         assert "--limit" in args
         assert "5" in args
 
-    @patch('subprocess.run')
+    @patch("subprocess.run")
     def test_cli_failure(self, mock_run):
         """CLI failure returns None"""
         mock_run.return_value = Mock(
-            returncode=1,
-            stdout="",
-            stderr="Error: playbook not found"
+            returncode=1, stdout="", stderr="Error: playbook not found"
         )
 
         result = query_playbook("test query")
         assert result is None
 
-    @patch('subprocess.run')
+    @patch("subprocess.run")
     def test_timeout_exception(self, mock_run):
         """Timeout exception returns None"""
-        mock_run.side_effect = subprocess.TimeoutExpired(
-            cmd=['mapify'], timeout=10
-        )
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd=["mapify"], timeout=10)
 
         result = query_playbook("test query")
         assert result is None
 
-    @patch('subprocess.run')
+    @patch("subprocess.run")
     def test_json_parse_error(self, mock_run):
         """Invalid JSON returns None"""
         mock_run.return_value = Mock(
-            returncode=0,
-            stdout="This is not valid JSON",
-            stderr=""
+            returncode=0, stdout="This is not valid JSON", stderr=""
         )
 
         result = query_playbook("test query")
         assert result is None
 
-    @patch('subprocess.run')
+    @patch("subprocess.run")
     def test_empty_results(self, mock_run):
         """Empty results list is valid"""
         mock_response = {"results": []}
 
         mock_run.return_value = Mock(
-            returncode=0,
-            stdout=json.dumps(mock_response),
-            stderr=""
+            returncode=0, stdout=json.dumps(mock_response), stderr=""
         )
 
         result = query_playbook("test query")
         assert result is not None
         assert result["results"] == []
 
-    @patch('subprocess.run')
+    @patch("subprocess.run")
     def test_timeout_parameter(self, mock_run):
         """Timeout parameter is passed to subprocess"""
-        mock_run.return_value = Mock(
-            returncode=0,
-            stdout='{"results": []}',
-            stderr=""
-        )
+        mock_run.return_value = Mock(returncode=0, stdout='{"results": []}', stderr="")
 
         query_playbook("test", limit=3)
 
         # Check timeout was set
         call_kwargs = mock_run.call_args[1]
-        assert call_kwargs['timeout'] == 10
+        assert call_kwargs["timeout"] == 10
 
 
 class TestFormatBulletsAsMarkdown:
@@ -232,7 +220,7 @@ class TestFormatBulletsAsMarkdown:
                 "section": "IMPLEMENTATION_PATTERNS",
                 "content": "Test pattern content",
                 "quality_score": 5,
-                "relevance_score": 0.85
+                "relevance_score": 0.85,
             }
         ]
 
@@ -253,15 +241,15 @@ class TestFormatBulletsAsMarkdown:
                 "section": "IMPLEMENTATION_PATTERNS",
                 "content": "Pattern 1",
                 "quality_score": 5,
-                "relevance_score": 0.85
+                "relevance_score": 0.85,
             },
             {
                 "id": "sec-0002",
                 "section": "SECURITY_PATTERNS",
                 "content": "Pattern 2",
                 "quality_score": 8,
-                "relevance_score": 0.92
-            }
+                "relevance_score": 0.92,
+            },
         ]
 
         markdown = format_bullets_as_markdown(results)
@@ -298,7 +286,7 @@ class TestFormatBulletsAsMarkdown:
                 "content": "Pattern with code",
                 "code_example": "def foo():\n    return 42",
                 "quality_score": 5,
-                "relevance_score": 0.85
+                "relevance_score": 0.85,
             }
         ]
 
@@ -316,7 +304,7 @@ class TestFormatBulletsAsMarkdown:
                 "section": "IMPLEMENTATION_PATTERNS",
                 "content": "Pattern without code",
                 "quality_score": 5,
-                "relevance_score": 0.85
+                "relevance_score": 0.85,
             }
         ]
 
@@ -333,7 +321,7 @@ class TestFormatBulletsAsMarkdown:
                 "content": "Pattern",
                 "code_example": "",
                 "quality_score": 5,
-                "relevance_score": 0.85
+                "relevance_score": 0.85,
             }
         ]
 
@@ -349,7 +337,7 @@ class TestFormatBulletsAsMarkdown:
                 "section": "IMPLEMENTATION_PATTERNS",
                 "content": "Test",
                 "quality_score": 7,
-                "relevance_score": 0.9234
+                "relevance_score": 0.9234,
             }
         ]
 
@@ -362,8 +350,8 @@ class TestFormatBulletsAsMarkdown:
 class TestMainFunction:
     """Test main integration function"""
 
-    @patch('sys.argv', ['inject_playbook_bullets.py', '--message', 'test message'])
-    @patch('inject_playbook_bullets.query_playbook')
+    @patch("sys.argv", ["inject_playbook_bullets.py", "--message", "test message"])
+    @patch("inject_playbook_bullets.query_playbook")
     def test_full_flow_with_results(self, mock_query, capsys):
         """Full flow with results outputs correct JSON"""
         mock_query.return_value = {
@@ -373,7 +361,7 @@ class TestMainFunction:
                     "section": "IMPLEMENTATION_PATTERNS",
                     "content": "Test pattern",
                     "quality_score": 5,
-                    "relevance_score": 0.85
+                    "relevance_score": 0.85,
                 }
             ]
         }
@@ -389,7 +377,7 @@ class TestMainFunction:
         assert "additionalContext" in output
         assert "Test pattern" in output["additionalContext"]
 
-    @patch('sys.argv', ['inject_playbook_bullets.py', '--message', 'a b c'])
+    @patch("sys.argv", ["inject_playbook_bullets.py", "--message", "a b c"])
     def test_empty_keywords_case(self, capsys):
         """Empty keywords returns continue without context"""
         exit_code = main()
@@ -402,8 +390,8 @@ class TestMainFunction:
         assert output["continue"] is True
         assert "additionalContext" not in output
 
-    @patch('sys.argv', ['inject_playbook_bullets.py', '--message', 'test message'])
-    @patch('inject_playbook_bullets.query_playbook')
+    @patch("sys.argv", ["inject_playbook_bullets.py", "--message", "test message"])
+    @patch("inject_playbook_bullets.query_playbook")
     def test_no_query_results(self, mock_query, capsys):
         """No query results returns continue without context"""
         mock_query.return_value = None
@@ -418,8 +406,8 @@ class TestMainFunction:
         assert output["continue"] is True
         assert "additionalContext" not in output
 
-    @patch('sys.argv', ['inject_playbook_bullets.py', '--message', 'test message'])
-    @patch('inject_playbook_bullets.query_playbook')
+    @patch("sys.argv", ["inject_playbook_bullets.py", "--message", "test message"])
+    @patch("inject_playbook_bullets.query_playbook")
     def test_empty_results_list(self, mock_query, capsys):
         """Empty results list returns continue without context"""
         mock_query.return_value = {"results": []}
@@ -434,8 +422,11 @@ class TestMainFunction:
         assert output["continue"] is True
         assert "additionalContext" not in output
 
-    @patch('sys.argv', ['inject_playbook_bullets.py', '--message', 'test message', '--limit', '3'])
-    @patch('inject_playbook_bullets.query_playbook')
+    @patch(
+        "sys.argv",
+        ["inject_playbook_bullets.py", "--message", "test message", "--limit", "3"],
+    )
+    @patch("inject_playbook_bullets.query_playbook")
     def test_custom_limit_parameter(self, mock_query):
         """Custom limit parameter is passed through"""
         mock_query.return_value = {"results": []}
@@ -444,8 +435,8 @@ class TestMainFunction:
 
         mock_query.assert_called_once_with(unittest.mock.ANY, 3)
 
-    @patch('sys.argv', ['inject_playbook_bullets.py', '--message', 'test'])
-    @patch('inject_playbook_bullets.query_playbook')
+    @patch("sys.argv", ["inject_playbook_bullets.py", "--message", "test"])
+    @patch("inject_playbook_bullets.query_playbook")
     def test_fatal_error_handling(self, mock_query, capsys):
         """Fatal errors are propagated from main() (caught by __main__ wrapper)"""
         mock_query.side_effect = Exception("Unexpected error")

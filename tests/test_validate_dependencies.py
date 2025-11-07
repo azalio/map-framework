@@ -23,13 +23,14 @@ from mapify_cli.tools.validate_dependencies import (
     IssueSeverity,
     ANSIColors,
     load_input,
-    main
+    main,
 )
 
 
 # ============================================================================
 # Test Fixtures - Sample Task Graphs
 # ============================================================================
+
 
 @pytest.fixture
 def simple_linear_chain():
@@ -38,7 +39,7 @@ def simple_linear_chain():
         "subtasks": [
             {"id": 1, "title": "First task", "dependencies": []},
             {"id": 2, "title": "Second task", "dependencies": [1]},
-            {"id": 3, "title": "Third task", "dependencies": [2]}
+            {"id": 3, "title": "Third task", "dependencies": [2]},
         ]
     }
 
@@ -51,7 +52,7 @@ def valid_dag():
             {"id": 1, "title": "Root task", "dependencies": []},
             {"id": 2, "title": "Task 2", "dependencies": [1]},
             {"id": 3, "title": "Task 3", "dependencies": [1]},
-            {"id": 4, "title": "Task 4", "dependencies": [2, 3]}
+            {"id": 4, "title": "Task 4", "dependencies": [2, 3]},
         ]
     }
 
@@ -63,7 +64,7 @@ def cyclic_dependencies():
         "subtasks": [
             {"id": 1, "title": "Task 1", "dependencies": [3]},
             {"id": 2, "title": "Task 2", "dependencies": [1]},
-            {"id": 3, "title": "Task 3", "dependencies": [2]}
+            {"id": 3, "title": "Task 3", "dependencies": [2]},
         ]
     }
 
@@ -71,11 +72,7 @@ def cyclic_dependencies():
 @pytest.fixture
 def self_dependency():
     """Task that depends on itself"""
-    return {
-        "subtasks": [
-            {"id": 1, "title": "Self-referencing", "dependencies": [1]}
-        ]
-    }
+    return {"subtasks": [{"id": 1, "title": "Self-referencing", "dependencies": [1]}]}
 
 
 @pytest.fixture
@@ -84,7 +81,7 @@ def forward_reference():
     return {
         "subtasks": [
             {"id": 1, "title": "Valid task", "dependencies": []},
-            {"id": 2, "title": "Invalid deps", "dependencies": [1, 99]}
+            {"id": 2, "title": "Invalid deps", "dependencies": [1, 99]},
         ]
     }
 
@@ -97,7 +94,7 @@ def orphaned_tasks():
             {"id": 1, "title": "Connected task", "dependencies": []},
             {"id": 2, "title": "Depends on 1", "dependencies": [1]},
             {"id": 3, "title": "Orphaned task", "dependencies": []},
-            {"id": 4, "title": "Another orphan", "dependencies": []}
+            {"id": 4, "title": "Another orphan", "dependencies": []},
         ]
     }
 
@@ -110,7 +107,7 @@ def disconnected_graphs():
             {"id": 1, "title": "Chain 1 root", "dependencies": []},
             {"id": 2, "title": "Chain 1 child", "dependencies": [1]},
             {"id": 3, "title": "Chain 2 root", "dependencies": []},
-            {"id": 4, "title": "Chain 2 child", "dependencies": [3]}
+            {"id": 4, "title": "Chain 2 child", "dependencies": [3]},
         ]
     }
 
@@ -122,17 +119,14 @@ def large_graph():
     # Create a deep chain
     for i in range(1, 101):
         deps = [i - 1] if i > 1 else []
-        subtasks.append({
-            "id": i,
-            "title": f"Task {i}",
-            "dependencies": deps
-        })
+        subtasks.append({"id": i, "title": f"Task {i}", "dependencies": deps})
     return {"subtasks": subtasks}
 
 
 # ============================================================================
 # DependencyValidator Tests
 # ============================================================================
+
 
 class TestDependencyValidator:
     """Test validation logic"""
@@ -155,7 +149,9 @@ class TestDependencyValidator:
         assert validator.validate_circular_dependencies() is False
 
         # Should have exactly one cycle issue
-        cycle_issues = [i for i in validator.issues if i.issue_type == "circular_dependency"]
+        cycle_issues = [
+            i for i in validator.issues if i.issue_type == "circular_dependency"
+        ]
         assert len(cycle_issues) == 1
 
         # Cycle should involve tasks 1, 2, 3
@@ -168,7 +164,9 @@ class TestDependencyValidator:
         validator = DependencyValidator(self_dependency)
         assert validator.validate_self_dependencies() is False
 
-        self_dep_issues = [i for i in validator.issues if i.issue_type == "self_dependency"]
+        self_dep_issues = [
+            i for i in validator.issues if i.issue_type == "self_dependency"
+        ]
         assert len(self_dep_issues) == 1
         assert self_dep_issues[0].affected_tasks == [1]
         assert self_dep_issues[0].severity == IssueSeverity.CRITICAL
@@ -178,7 +176,9 @@ class TestDependencyValidator:
         validator = DependencyValidator(forward_reference)
         assert validator.validate_forward_references() is False
 
-        fwd_ref_issues = [i for i in validator.issues if i.issue_type == "forward_reference"]
+        fwd_ref_issues = [
+            i for i in validator.issues if i.issue_type == "forward_reference"
+        ]
         assert len(fwd_ref_issues) == 1
         assert 99 in fwd_ref_issues[0].affected_tasks
         assert fwd_ref_issues[0].severity == IssueSeverity.CRITICAL
@@ -188,7 +188,9 @@ class TestDependencyValidator:
         validator = DependencyValidator(orphaned_tasks)
         assert validator.validate_orphaned_tasks() is False
 
-        orphan_issues = [i for i in validator.issues if i.issue_type == "orphaned_tasks"]
+        orphan_issues = [
+            i for i in validator.issues if i.issue_type == "orphaned_tasks"
+        ]
         assert len(orphan_issues) == 1
 
         # Tasks 3 and 4 are orphaned (no connections)
@@ -217,23 +219,17 @@ class TestDependencyValidator:
     def test_invalid_task_missing_id(self):
         """Raises error for task without ID"""
         with pytest.raises(ValueError, match="Task missing 'id' field"):
-            DependencyValidator({
-                "subtasks": [{"title": "No ID"}]
-            })
+            DependencyValidator({"subtasks": [{"title": "No ID"}]})
 
     def test_invalid_task_id_not_integer(self):
         """Raises error for non-integer task ID"""
         with pytest.raises(ValueError, match="Task ID must be integer"):
-            DependencyValidator({
-                "subtasks": [{"id": "1", "title": "String ID"}]
-            })
+            DependencyValidator({"subtasks": [{"id": "1", "title": "String ID"}]})
 
     def test_invalid_dependencies_not_list(self):
         """Raises error for non-list dependencies"""
         with pytest.raises(ValueError, match="dependencies must be a list"):
-            DependencyValidator({
-                "subtasks": [{"id": 1, "dependencies": "not a list"}]
-            })
+            DependencyValidator({"subtasks": [{"id": 1, "dependencies": "not a list"}]})
 
     def test_validation_report_structure(self, simple_linear_chain):
         """Report has correct structure and counts"""
@@ -272,6 +268,7 @@ class TestDependencyValidator:
     def test_large_graph_performance(self, large_graph):
         """Large graph (100 tasks) validates in reasonable time"""
         import time
+
         start = time.time()
         validator = DependencyValidator(large_graph)
         validator.validate_all()
@@ -285,6 +282,7 @@ class TestDependencyValidator:
 # ============================================================================
 # ASCIIGraphRenderer Tests
 # ============================================================================
+
 
 class TestASCIIGraphRenderer:
     """Test graph visualization rendering"""
@@ -444,9 +442,9 @@ class TestASCIIGraphRenderer:
         for subtask in valid_dag["subtasks"]:
             task_id = subtask["id"]
             for dep in subtask.get("dependencies", []):
-                assert position[dep] < position[task_id], (
-                    f"Dependency {dep} should appear before {task_id} in topological order"
-                )
+                assert (
+                    position[dep] < position[task_id]
+                ), f"Dependency {dep} should appear before {task_id} in topological order"
 
     def test_topological_sort_with_cycle(self, cyclic_dependencies):
         """Topological sort handles cycles gracefully"""
@@ -498,6 +496,7 @@ class TestASCIIGraphRenderer:
     def test_large_graph_rendering_performance(self, large_graph):
         """Large graph renders in reasonable time"""
         import time
+
         validator = DependencyValidator(large_graph)
         renderer = ASCIIGraphRenderer(validator)
 
@@ -529,7 +528,7 @@ class TestASCIIGraphRenderer:
         data = {
             "subtasks": [
                 {"id": 1, "title": "A" * 200, "dependencies": []},
-                {"id": 2, "title": "Short", "dependencies": [1]}
+                {"id": 2, "title": "Short", "dependencies": [1]},
             ]
         }
         validator = DependencyValidator(data)
@@ -538,7 +537,7 @@ class TestASCIIGraphRenderer:
         output = renderer.render(use_colors=False, max_width=50)
 
         # Check that lines are truncated
-        for line in output.split('\n'):
+        for line in output.split("\n"):
             # Strip ANSI codes to measure visible length
             visible_line = renderer._strip_ansi(line)
             # Allow for "..." suffix
@@ -546,11 +545,7 @@ class TestASCIIGraphRenderer:
 
     def test_max_width_preserves_short_lines(self):
         """max_width doesn't affect lines shorter than limit"""
-        data = {
-            "subtasks": [
-                {"id": 1, "title": "Short", "dependencies": []}
-            ]
-        }
+        data = {"subtasks": [{"id": 1, "title": "Short", "dependencies": []}]}
         validator = DependencyValidator(data)
         renderer = ASCIIGraphRenderer(validator)
 
@@ -565,13 +560,14 @@ class TestASCIIGraphRenderer:
 # CLI Integration Tests
 # ============================================================================
 
+
 class TestCLIIntegration:
     """Test command-line interface"""
 
     def test_load_input_from_file(self, tmp_path, simple_linear_chain):
         """Loads JSON from file path"""
         test_file = tmp_path / "test.json"
-        with open(test_file, 'w') as f:
+        with open(test_file, "w") as f:
             json.dump(simple_linear_chain, f)
 
         data = load_input(str(test_file))
@@ -580,14 +576,14 @@ class TestCLIIntegration:
     def test_load_input_from_stdin(self, simple_linear_chain):
         """Loads JSON from stdin"""
         stdin_data = json.dumps(simple_linear_chain)
-        with mock.patch('sys.stdin', StringIO(stdin_data)):
+        with mock.patch("sys.stdin", StringIO(stdin_data)):
             data = load_input(None)
             assert data == simple_linear_chain
 
     def test_load_input_invalid_json(self, tmp_path):
         """Raises error for malformed JSON"""
         test_file = tmp_path / "invalid.json"
-        with open(test_file, 'w') as f:
+        with open(test_file, "w") as f:
             f.write("not valid json {")
 
         with pytest.raises(ValueError, match="Invalid JSON input"):
@@ -601,10 +597,10 @@ class TestCLIIntegration:
     def test_main_valid_input_exit_0(self, tmp_path, simple_linear_chain):
         """Valid input exits with code 0"""
         test_file = tmp_path / "valid.json"
-        with open(test_file, 'w') as f:
+        with open(test_file, "w") as f:
             json.dump(simple_linear_chain, f)
 
-        with mock.patch('sys.argv', ['validate-dependencies.py', str(test_file)]):
+        with mock.patch("sys.argv", ["validate-dependencies.py", str(test_file)]):
             with pytest.raises(SystemExit) as exc_info:
                 main()
             assert exc_info.value.code == 0
@@ -612,10 +608,10 @@ class TestCLIIntegration:
     def test_main_invalid_graph_exit_1(self, tmp_path, cyclic_dependencies):
         """Invalid graph exits with code 1"""
         test_file = tmp_path / "cyclic.json"
-        with open(test_file, 'w') as f:
+        with open(test_file, "w") as f:
             json.dump(cyclic_dependencies, f)
 
-        with mock.patch('sys.argv', ['validate-dependencies.py', str(test_file)]):
+        with mock.patch("sys.argv", ["validate-dependencies.py", str(test_file)]):
             with pytest.raises(SystemExit) as exc_info:
                 main()
             assert exc_info.value.code == 1
@@ -623,10 +619,10 @@ class TestCLIIntegration:
     def test_main_malformed_input_exit_2(self, tmp_path):
         """Malformed input exits with code 2"""
         test_file = tmp_path / "malformed.json"
-        with open(test_file, 'w') as f:
+        with open(test_file, "w") as f:
             f.write("{invalid json}")
 
-        with mock.patch('sys.argv', ['validate-dependencies.py', str(test_file)]):
+        with mock.patch("sys.argv", ["validate-dependencies.py", str(test_file)]):
             with pytest.raises(SystemExit) as exc_info:
                 main()
             assert exc_info.value.code == 2
@@ -634,10 +630,12 @@ class TestCLIIntegration:
     def test_main_visualize_flag(self, tmp_path, simple_linear_chain, capsys):
         """--visualize flag displays ASCII tree"""
         test_file = tmp_path / "test.json"
-        with open(test_file, 'w') as f:
+        with open(test_file, "w") as f:
             json.dump(simple_linear_chain, f)
 
-        with mock.patch('sys.argv', ['validate-dependencies.py', '--visualize', str(test_file)]):
+        with mock.patch(
+            "sys.argv", ["validate-dependencies.py", "--visualize", str(test_file)]
+        ):
             with pytest.raises(SystemExit):
                 main()
 
@@ -648,10 +646,13 @@ class TestCLIIntegration:
     def test_main_no_color_flag(self, tmp_path, simple_linear_chain, capsys):
         """--no-color flag removes ANSI codes"""
         test_file = tmp_path / "test.json"
-        with open(test_file, 'w') as f:
+        with open(test_file, "w") as f:
             json.dump(simple_linear_chain, f)
 
-        with mock.patch('sys.argv', ['validate-dependencies.py', '--visualize', '--no-color', str(test_file)]):
+        with mock.patch(
+            "sys.argv",
+            ["validate-dependencies.py", "--visualize", "--no-color", str(test_file)],
+        ):
             with pytest.raises(SystemExit):
                 main()
 
@@ -662,10 +663,12 @@ class TestCLIIntegration:
     def test_main_text_format(self, tmp_path, simple_linear_chain, capsys):
         """--format text outputs human-readable report"""
         test_file = tmp_path / "test.json"
-        with open(test_file, 'w') as f:
+        with open(test_file, "w") as f:
             json.dump(simple_linear_chain, f)
 
-        with mock.patch('sys.argv', ['validate-dependencies.py', '-f', 'text', str(test_file)]):
+        with mock.patch(
+            "sys.argv", ["validate-dependencies.py", "-f", "text", str(test_file)]
+        ):
             with pytest.raises(SystemExit):
                 main()
 
@@ -676,10 +679,12 @@ class TestCLIIntegration:
     def test_main_json_format(self, tmp_path, simple_linear_chain, capsys):
         """--format json outputs structured JSON"""
         test_file = tmp_path / "test.json"
-        with open(test_file, 'w') as f:
+        with open(test_file, "w") as f:
             json.dump(simple_linear_chain, f)
 
-        with mock.patch('sys.argv', ['validate-dependencies.py', '-f', 'json', str(test_file)]):
+        with mock.patch(
+            "sys.argv", ["validate-dependencies.py", "-f", "json", str(test_file)]
+        ):
             with pytest.raises(SystemExit):
                 main()
 
@@ -693,6 +698,7 @@ class TestCLIIntegration:
 # ============================================================================
 # Edge Cases and Regression Tests
 # ============================================================================
+
 
 class TestEdgeCases:
     """Test edge cases and boundary conditions"""
@@ -734,13 +740,15 @@ class TestEdgeCases:
                 {"id": 2, "dependencies": [1]},
                 # Cycle 2: 3 -> 4 -> 3
                 {"id": 3, "dependencies": [4]},
-                {"id": 4, "dependencies": [3]}
+                {"id": 4, "dependencies": [3]},
             ]
         }
         validator = DependencyValidator(data)
         assert validator.validate_circular_dependencies() is False
         # Should detect at least one cycle (may detect both)
-        cycle_issues = [i for i in validator.issues if i.issue_type == "circular_dependency"]
+        cycle_issues = [
+            i for i in validator.issues if i.issue_type == "circular_dependency"
+        ]
         assert len(cycle_issues) >= 1
 
     def test_complex_cycle_detection(self):
@@ -762,7 +770,9 @@ class TestEdgeCases:
         validator = DependencyValidator(data)
         # This is actually a valid DAG, not a cycle
         # Task 5 has two dependencies (2 and 4), both reachable without cycles
-        assert validator.validate_circular_dependencies() is True  # Valid DAG - no cycle detected
+        assert (
+            validator.validate_circular_dependencies() is True
+        )  # Valid DAG - no cycle detected
 
         # To create an actual cycle, we need to introduce a dependency from a descendant back to an ancestor (creates a cycle):
         cyclic_data = {
@@ -779,11 +789,7 @@ class TestEdgeCases:
 
     def test_non_integer_dependency_id(self):
         """Raises error for string dependency IDs"""
-        data = {
-            "subtasks": [
-                {"id": 1, "dependencies": ["2"]}  # String instead of int
-            ]
-        }
+        data = {"subtasks": [{"id": 1, "dependencies": ["2"]}]}  # String instead of int
         with pytest.raises(ValueError, match="Dependency ID must be integer"):
             DependencyValidator(data)
 
@@ -792,7 +798,7 @@ class TestEdgeCases:
         data = {
             "subtasks": [
                 {"id": 1, "title": "First", "dependencies": []},
-                {"id": 1, "title": "Duplicate", "dependencies": []}  # Duplicate ID
+                {"id": 1, "title": "Duplicate", "dependencies": []},  # Duplicate ID
             ]
         }
         # Should not crash, but behavior is undefined

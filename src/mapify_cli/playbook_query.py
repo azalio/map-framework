@@ -14,24 +14,25 @@ from enum import Enum
 
 # Valid section names for validation
 VALID_SECTIONS = {
-    'ARCHITECTURE_PATTERNS',
-    'IMPLEMENTATION_PATTERNS',
-    'SECURITY_PATTERNS',
-    'PERFORMANCE_PATTERNS',
-    'TESTING_STRATEGIES',
-    'ERROR_PATTERNS',
-    'DEBUGGING_TECHNIQUES',
-    'CODE_QUALITY_RULES',
-    'TOOL_USAGE',
-    'CLI_TOOL_PATTERNS',
-    'DOCUMENTATION_PATTERNS',
-    'DEPLOYMENT_PATTERNS',
-    'MONITORING_PATTERNS'
+    "ARCHITECTURE_PATTERNS",
+    "IMPLEMENTATION_PATTERNS",
+    "SECURITY_PATTERNS",
+    "PERFORMANCE_PATTERNS",
+    "TESTING_STRATEGIES",
+    "ERROR_PATTERNS",
+    "DEBUGGING_TECHNIQUES",
+    "CODE_QUALITY_RULES",
+    "TOOL_USAGE",
+    "CLI_TOOL_PATTERNS",
+    "DOCUMENTATION_PATTERNS",
+    "DEPLOYMENT_PATTERNS",
+    "MONITORING_PATTERNS",
 }
 
 
 class SearchMode(Enum):
     """Search mode for playbook queries."""
+
     CIPHER_ONLY = "cipher_only"  # Search cipher only
     PLAYBOOK_ONLY = "playbook_only"  # Search local playbook only
     HYBRID = "hybrid"  # Search both (default)

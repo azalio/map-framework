@@ -11,7 +11,7 @@ from mapify_cli.playbook_query import (
     PlaybookQuery,
     PlaybookResult,
     PlaybookQueryResponse,
-    SearchMode
+    SearchMode,
 )
 
 
@@ -26,27 +26,29 @@ def temp_playbook(tmp_path):
 @pytest.fixture
 def manager_with_bullets(temp_playbook):
     """Create PlaybookManager with test bullets"""
-    manager = PlaybookManager(playbook_path=str(temp_playbook), use_semantic_search=False)
+    manager = PlaybookManager(
+        playbook_path=str(temp_playbook), use_semantic_search=False
+    )
 
     # Add test bullets for JWT authentication
     manager._add_bullet(
         section="SECURITY_PATTERNS",
         content="Always set JWT exp claim for token expiration",
         code_example="jwt.encode({'exp': datetime.utcnow() + timedelta(hours=1)})",
-        tags=["security", "jwt", "authentication"]
+        tags=["security", "jwt", "authentication"],
     )
 
     manager._add_bullet(
         section="SECURITY_PATTERNS",
         content="Use httpOnly cookies for refresh token storage",
-        tags=["security", "cookies", "authentication"]
+        tags=["security", "cookies", "authentication"],
     )
 
     manager._add_bullet(
         section="IMPLEMENTATION_PATTERNS",
         content="Implement JWT token validation middleware",
         code_example="@app.middleware('http')\nasync def validate_jwt(request, call_next): ...",
-        tags=["jwt", "middleware"]
+        tags=["jwt", "middleware"],
     )
 
     # Add bullets for database optimization
@@ -54,20 +56,20 @@ def manager_with_bullets(temp_playbook):
         section="PERFORMANCE_PATTERNS",
         content="Add indexes to frequently queried columns",
         code_example="CREATE INDEX idx_user_email ON users(email);",
-        tags=["database", "performance", "optimization"]
+        tags=["database", "performance", "optimization"],
     )
 
     manager._add_bullet(
         section="DEBUGGING_TECHNIQUES",
         content="Use EXPLAIN ANALYZE to profile database queries",
-        tags=["database", "debugging"]
+        tags=["database", "debugging"],
     )
 
     # Add a deprecated bullet
     deprecated_id = manager._add_bullet(
         section="ERROR_PATTERNS",
         content="Old authentication pattern (deprecated)",
-        tags=["authentication"]
+        tags=["authentication"],
     )
     manager._deprecate_bullet(deprecated_id, "Replaced by JWT")
 
@@ -75,7 +77,7 @@ def manager_with_bullets(temp_playbook):
     high_quality_id = manager._add_bullet(
         section="TESTING_STRATEGIES",
         content="Always test authentication flows with invalid tokens",
-        tags=["testing", "authentication"]
+        tags=["testing", "authentication"],
     )
     manager._update_bullet(high_quality_id, increment_helpful=5)
 
@@ -91,7 +93,7 @@ class TestPlaybookQueryDataclass:
             query="JWT authentication",
             sections=["SECURITY_PATTERNS"],
             min_quality_score=0,
-            limit=5
+            limit=5,
         )
 
         assert query.query == "JWT authentication"
@@ -116,16 +118,12 @@ class TestPlaybookQueryDataclass:
     def test_invalid_sections_raise_error(self):
         """Invalid section names should raise ValueError"""
         with pytest.raises(ValueError, match="Invalid sections"):
-            PlaybookQuery(
-                query="test",
-                sections=["INVALID_SECTION", "ANOTHER_INVALID"]
-            )
+            PlaybookQuery(query="test", sections=["INVALID_SECTION", "ANOTHER_INVALID"])
 
     def test_valid_sections_accepted(self):
         """Valid section names should be accepted"""
         query = PlaybookQuery(
-            query="test",
-            sections=["SECURITY_PATTERNS", "IMPLEMENTATION_PATTERNS"]
+            query="test", sections=["SECURITY_PATTERNS", "IMPLEMENTATION_PATTERNS"]
         )
         assert query.sections == ["SECURITY_PATTERNS", "IMPLEMENTATION_PATTERNS"]
 
@@ -163,10 +161,7 @@ class TestQueryAPIBasic:
 
     def test_query_simple_search(self, manager_with_bullets):
         """Test simple FTS5 query"""
-        params = PlaybookQuery(
-            query="JWT",
-            limit=5
-        )
+        params = PlaybookQuery(query="JWT", limit=5)
 
         response = manager_with_bullets.query(params)
 
@@ -181,9 +176,7 @@ class TestQueryAPIBasic:
     def test_query_with_section_filter(self, manager_with_bullets):
         """Test query with section filtering"""
         params = PlaybookQuery(
-            query="authentication",
-            sections=["SECURITY_PATTERNS"],
-            limit=10
+            query="authentication", sections=["SECURITY_PATTERNS"], limit=10
         )
 
         response = manager_with_bullets.query(params)
@@ -194,11 +187,7 @@ class TestQueryAPIBasic:
 
     def test_query_with_quality_filter(self, manager_with_bullets):
         """Test query with minimum quality score filter"""
-        params = PlaybookQuery(
-            query="authentication",
-            min_quality_score=3,
-            limit=10
-        )
+        params = PlaybookQuery(query="authentication", min_quality_score=3, limit=10)
 
         response = manager_with_bullets.query(params)
 
@@ -208,24 +197,20 @@ class TestQueryAPIBasic:
 
     def test_query_excludes_deprecated(self, manager_with_bullets):
         """Test that deprecated bullets are excluded by default"""
-        params = PlaybookQuery(
-            query="authentication",
-            limit=10
-        )
+        params = PlaybookQuery(query="authentication", limit=10)
 
         response = manager_with_bullets.query(params)
 
         # No deprecated bullets should be in results
         for result in response.results:
-            assert "deprecated" not in result.content.lower() or \
-                   "Old authentication pattern" not in result.content
+            assert (
+                "deprecated" not in result.content.lower()
+                or "Old authentication pattern" not in result.content
+            )
 
     def test_query_with_limit(self, manager_with_bullets):
         """Test query respects limit parameter"""
-        params = PlaybookQuery(
-            query="database",
-            limit=1
-        )
+        params = PlaybookQuery(query="database", limit=1)
 
         response = manager_with_bullets.query(params)
 
@@ -277,20 +262,22 @@ class TestQueryAPIMetadata:
 
         # Should complete in reasonable time (<500ms for test data)
         assert response.metadata["search_time_ms"] < 500
-        assert response.metadata["search_time_ms"] >= 0  # Can be 0 for very fast queries
+        assert (
+            response.metadata["search_time_ms"] >= 0
+        )  # Can be 0 for very fast queries
 
     def test_metadata_sections_searched(self, manager_with_bullets):
         """Test sections_searched metadata"""
         params = PlaybookQuery(
             query="JWT",
             sections=["SECURITY_PATTERNS", "IMPLEMENTATION_PATTERNS"],
-            limit=5
+            limit=5,
         )
         response = manager_with_bullets.query(params)
 
         assert response.metadata["sections_searched"] == [
             "SECURITY_PATTERNS",
-            "IMPLEMENTATION_PATTERNS"
+            "IMPLEMENTATION_PATTERNS",
         ]
 
 
@@ -306,20 +293,20 @@ class TestPlaybookResultStructure:
         result = response.results[0]
 
         # Check all required fields exist
-        assert hasattr(result, 'id')
-        assert hasattr(result, 'section')
-        assert hasattr(result, 'content')
-        assert hasattr(result, 'code_example')
-        assert hasattr(result, 'helpful_count')
-        assert hasattr(result, 'harmful_count')
-        assert hasattr(result, 'quality_score')
-        assert hasattr(result, 'relevance_score')
-        assert hasattr(result, 'source')
-        assert hasattr(result, 'combined_score')
-        assert hasattr(result, 'related_bullets')
-        assert hasattr(result, 'tags')
-        assert hasattr(result, 'created_at')
-        assert hasattr(result, 'last_used_at')
+        assert hasattr(result, "id")
+        assert hasattr(result, "section")
+        assert hasattr(result, "content")
+        assert hasattr(result, "code_example")
+        assert hasattr(result, "helpful_count")
+        assert hasattr(result, "harmful_count")
+        assert hasattr(result, "quality_score")
+        assert hasattr(result, "relevance_score")
+        assert hasattr(result, "source")
+        assert hasattr(result, "combined_score")
+        assert hasattr(result, "related_bullets")
+        assert hasattr(result, "tags")
+        assert hasattr(result, "created_at")
+        assert hasattr(result, "last_used_at")
 
     def test_result_scores_valid_range(self, manager_with_bullets):
         """Test scores are in valid ranges"""
@@ -349,9 +336,7 @@ class TestBackwardCompatibility:
     def test_get_relevant_bullets_uses_query(self, manager_with_bullets):
         """Test get_relevant_bullets() wraps query() correctly"""
         results = manager_with_bullets.get_relevant_bullets(
-            query="JWT authentication",
-            limit=5,
-            min_quality_score=0
+            query="JWT authentication", limit=5, min_quality_score=0
         )
 
         # Should return list of dicts (old format)
@@ -368,17 +353,13 @@ class TestBackwardCompatibility:
         """Test get_relevant_bullets() returns same data as query()"""
         # Call get_relevant_bullets()
         old_results = manager_with_bullets.get_relevant_bullets(
-            query="JWT",
-            limit=3,
-            min_quality_score=0
+            query="JWT", limit=3, min_quality_score=0
         )
 
         # Call query() with same params
-        new_response = manager_with_bullets.query(PlaybookQuery(
-            query="JWT",
-            limit=3,
-            min_quality_score=0
-        ))
+        new_response = manager_with_bullets.query(
+            PlaybookQuery(query="JWT", limit=3, min_quality_score=0)
+        )
 
         # Should return same number of results
         assert len(old_results) == len(new_response.results)
@@ -397,24 +378,27 @@ class TestBackwardCompatibility:
         # Should return at most top_k results
         assert len(results) <= 2
 
-    def test_get_relevant_bullets_backward_compatible_signature(self, manager_with_bullets):
+    def test_get_relevant_bullets_backward_compatible_signature(
+        self, manager_with_bullets
+    ):
         """Test method signature is backward compatible"""
         # Old-style positional call
         try:
             manager_with_bullets.get_relevant_bullets("test", 5)
         except TypeError:
-            pytest.fail("Positional arguments not supported (backward compatibility broken)")
+            pytest.fail(
+                "Positional arguments not supported (backward compatibility broken)"
+            )
 
         # Old-style keyword call
         try:
             manager_with_bullets.get_relevant_bullets(
-                query="test",
-                limit=5,
-                min_quality_score=0,
-                similarity_threshold=0.3
+                query="test", limit=5, min_quality_score=0, similarity_threshold=0.3
             )
         except TypeError:
-            pytest.fail("Keyword arguments not supported (backward compatibility broken)")
+            pytest.fail(
+                "Keyword arguments not supported (backward compatibility broken)"
+            )
 
 
 class TestFTS5PrefixMatching:
@@ -425,15 +409,11 @@ class TestFTS5PrefixMatching:
         # Add a bullet with "authentication"
         manager_with_bullets._add_bullet(
             section="SECURITY_PATTERNS",
-            content="Authentication flows require proper token handling"
+            content="Authentication flows require proper token handling",
         )
 
         # Query with "auth" should match "authentication" with prefix matching
-        params = PlaybookQuery(
-            query="auth",
-            fts_prefix=True,
-            limit=10
-        )
+        params = PlaybookQuery(query="auth", fts_prefix=True, limit=10)
 
         response = manager_with_bullets.query(params)
 
@@ -443,11 +423,7 @@ class TestFTS5PrefixMatching:
 
     def test_prefix_matching_disabled(self, manager_with_bullets):
         """Test disabling prefix matching"""
-        params = PlaybookQuery(
-            query="auth",
-            fts_prefix=False,
-            limit=10
-        )
+        params = PlaybookQuery(query="auth", fts_prefix=False, limit=10)
 
         response = manager_with_bullets.query(params)
 
@@ -463,9 +439,7 @@ class TestMultiSectionSearch:
     def test_search_all_sections(self, manager_with_bullets):
         """Test searching all sections when sections=None"""
         params = PlaybookQuery(
-            query="authentication",
-            sections=None,  # All sections
-            limit=10
+            query="authentication", sections=None, limit=10  # All sections
         )
 
         response = manager_with_bullets.query(params)
@@ -479,7 +453,7 @@ class TestMultiSectionSearch:
         params = PlaybookQuery(
             query="database",
             sections=["PERFORMANCE_PATTERNS", "DEBUGGING_TECHNIQUES"],
-            limit=10
+            limit=10,
         )
 
         response = manager_with_bullets.query(params)
@@ -494,10 +468,7 @@ class TestEdgeCases:
 
     def test_query_with_no_results(self, manager_with_bullets):
         """Test query that matches no bullets"""
-        params = PlaybookQuery(
-            query="nonexistent_term_xyz123",
-            limit=10
-        )
+        params = PlaybookQuery(query="nonexistent_term_xyz123", limit=10)
 
         response = manager_with_bullets.query(params)
 
@@ -507,7 +478,9 @@ class TestEdgeCases:
 
     def test_query_empty_playbook(self, temp_playbook):
         """Test query on empty playbook"""
-        manager = PlaybookManager(playbook_path=str(temp_playbook), use_semantic_search=False)
+        manager = PlaybookManager(
+            playbook_path=str(temp_playbook), use_semantic_search=False
+        )
 
         params = PlaybookQuery(query="test", limit=5)
         response = manager.query(params)
@@ -516,10 +489,7 @@ class TestEdgeCases:
 
     def test_query_with_special_characters(self, manager_with_bullets):
         """Test query with special characters"""
-        params = PlaybookQuery(
-            query="JWT @authentication #token",
-            limit=5
-        )
+        params = PlaybookQuery(query="JWT @authentication #token", limit=5)
 
         # Should not raise error
         response = manager_with_bullets.query(params)
@@ -527,14 +497,14 @@ class TestEdgeCases:
 
     def test_result_ordering_by_combined_score(self, manager_with_bullets):
         """Test results are ordered by combined score"""
-        params = PlaybookQuery(
-            query="authentication",
-            limit=10
-        )
+        params = PlaybookQuery(query="authentication", limit=10)
 
         response = manager_with_bullets.query(params)
 
         # Results should be in descending order of combined_score
         if len(response.results) > 1:
             for i in range(len(response.results) - 1):
-                assert response.results[i].combined_score >= response.results[i + 1].combined_score
+                assert (
+                    response.results[i].combined_score
+                    >= response.results[i + 1].combined_score
+                )

@@ -32,7 +32,8 @@ class TestAgentCLICorrectness:
 
         # Get all .md files except documentation
         agent_files = [
-            f for f in agents_dir.glob("*.md")
+            f
+            for f in agents_dir.glob("*.md")
             if f.name not in ["README.md", "CHANGELOG.md", "MCP-PATTERNS.md"]
         ]
 
@@ -46,14 +47,14 @@ class TestAgentCLICorrectness:
             content = agent_file.read_text()
 
             # Check for wrong command: 'mapify playbook list'
-            if re.search(r'mapify\s+playbook\s+list(?!\s*/)', content):
+            if re.search(r"mapify\s+playbook\s+list(?!\s*/)", content):
                 # Ignore if it's in error examples (has ❌ nearby)
-                matches = re.finditer(r'mapify\s+playbook\s+list', content)
+                matches = re.finditer(r"mapify\s+playbook\s+list", content)
                 for match in matches:
                     start = max(0, match.start() - 100)
                     end = min(len(content), match.end() + 100)
                     context = content[start:end]
-                    if '❌' not in context and '**WRONG**' not in context:
+                    if "❌" not in context and "**WRONG**" not in context:
                         errors.append(
                             f"{agent_file.name}: 'mapify playbook list' doesn't exist, "
                             f"use 'mapify playbook stats'"
@@ -61,13 +62,13 @@ class TestAgentCLICorrectness:
                         break
 
             # Check for wrong command: 'mapify playbook get'
-            if re.search(r'mapify\s+playbook\s+get\s+', content):
-                matches = re.finditer(r'mapify\s+playbook\s+get\s+', content)
+            if re.search(r"mapify\s+playbook\s+get\s+", content):
+                matches = re.finditer(r"mapify\s+playbook\s+get\s+", content)
                 for match in matches:
                     start = max(0, match.start() - 100)
                     end = min(len(content), match.end() + 100)
                     context = content[start:end]
-                    if '❌' not in context and '**WRONG**' not in context:
+                    if "❌" not in context and "**WRONG**" not in context:
                         errors.append(
                             f"{agent_file.name}: 'mapify playbook get' doesn't exist, "
                             f"use 'mapify playbook query \"<bullet-id>\"'"
@@ -84,13 +85,13 @@ class TestAgentCLICorrectness:
             content = agent_file.read_text()
 
             # Check for --limit with search command
-            if re.search(r'playbook\s+search.*--limit', content):
-                matches = re.finditer(r'playbook\s+search.*--limit', content)
+            if re.search(r"playbook\s+search.*--limit", content):
+                matches = re.finditer(r"playbook\s+search.*--limit", content)
                 for match in matches:
                     start = max(0, match.start() - 100)
                     end = min(len(content), match.end() + 100)
                     context = content[start:end]
-                    if '❌' not in context and '**WRONG**' not in context:
+                    if "❌" not in context and "**WRONG**" not in context:
                         errors.append(
                             f"{agent_file.name}: 'mapify playbook search' uses '--top-k', "
                             f"not '--limit'"
@@ -98,13 +99,13 @@ class TestAgentCLICorrectness:
                         break
 
             # Check for --bullet-id with query command
-            if re.search(r'playbook\s+query.*--bullet-id', content):
-                matches = re.finditer(r'playbook\s+query.*--bullet-id', content)
+            if re.search(r"playbook\s+query.*--bullet-id", content):
+                matches = re.finditer(r"playbook\s+query.*--bullet-id", content)
                 for match in matches:
                     start = max(0, match.start() - 100)
                     end = min(len(content), match.end() + 100)
                     context = content[start:end]
-                    if '❌' not in context and '**WRONG**' not in context:
+                    if "❌" not in context and "**WRONG**" not in context:
                         errors.append(
                             f"{agent_file.name}: 'mapify playbook query' doesn't have "
                             f"'--bullet-id' option, use bullet ID as query text"
@@ -121,14 +122,18 @@ class TestAgentCLICorrectness:
             content = agent_file.read_text()
 
             # Check for direct sqlite3 usage (without warning context)
-            if re.search(r'sqlite3.*playbook\.db', content):
-                matches = re.finditer(r'sqlite3.*playbook\.db', content)
+            if re.search(r"sqlite3.*playbook\.db", content):
+                matches = re.finditer(r"sqlite3.*playbook\.db", content)
                 for match in matches:
                     start = max(0, match.start() - 100)
                     end = min(len(content), match.end() + 100)
                     context = content[start:end]
                     # Allow if it's in error examples or warnings
-                    if '❌' not in context and '**NEVER**' not in context and '**WRONG**' not in context:
+                    if (
+                        "❌" not in context
+                        and "**NEVER**" not in context
+                        and "**WRONG**" not in context
+                    ):
                         errors.append(
                             f"{agent_file.name}: Direct sqlite3 usage detected without warning "
                             f"context. Always use 'mapify playbook apply-delta' instead"
@@ -136,16 +141,19 @@ class TestAgentCLICorrectness:
                         break
 
             # Check for playbook.json references (without warning context)
-            if re.search(r'playbook\.json', content):
-                matches = re.finditer(r'playbook\.json', content)
+            if re.search(r"playbook\.json", content):
+                matches = re.finditer(r"playbook\.json", content)
                 for match in matches:
                     start = max(0, match.start() - 100)
                     end = min(len(content), match.end() + 100)
                     context = content[start:end]
                     # Allow if it's in error examples or migration notes
-                    if ('❌' not in context and '**WRONG**' not in context
-                        and 'deprecated' not in context.lower()
-                        and 'migrated' not in context.lower()):
+                    if (
+                        "❌" not in context
+                        and "**WRONG**" not in context
+                        and "deprecated" not in context.lower()
+                        and "migrated" not in context.lower()
+                    ):
                         errors.append(
                             f"{agent_file.name}: Reference to playbook.json detected "
                             f"(deprecated, migrated to playbook.db)"
@@ -169,7 +177,7 @@ class TestAgentCLICorrectness:
                     end = min(len(content), match.end() + 100)
                     context = content[start:end]
                     # Allow if it's in error examples
-                    if '❌' not in context and '**WRONG**' not in context:
+                    if "❌" not in context and "**WRONG**" not in context:
                         errors.append(
                             f"{agent_file.name}: Using '\"op\":' field, should be '\"type\":' "
                             f"in delta operations"
@@ -190,8 +198,12 @@ class TestAgentCLICorrectness:
                 content = agent_file.read_text()
 
                 # Check if agent has CLI reference section or examples
-                has_cli_reference = '<mapify_cli_reference>' in content
-                has_cli_examples = bool(re.search(r'mapify\s+playbook\s+(query|search|apply-delta)', content))
+                has_cli_reference = "<mapify_cli_reference>" in content
+                has_cli_examples = bool(
+                    re.search(
+                        r"mapify\s+playbook\s+(query|search|apply-delta)", content
+                    )
+                )
 
                 if not has_cli_reference and not has_cli_examples:
                     warnings.append(

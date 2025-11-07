@@ -36,6 +36,7 @@ class Contradiction:
         resolution_suggestion: How to resolve (e.g., "deprecate entity_a")
         detected_at: ISO8601 timestamp of detection
     """
+
     id: str
     entity_a: Entity
     entity_b: Entity
@@ -49,15 +50,21 @@ class Contradiction:
         """Validate contradiction constraints."""
         # Set timestamp if not provided
         if not self.detected_at:
-            self.detected_at = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+            self.detected_at = (
+                datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            )
 
         # Validate severity
-        if self.severity not in ['high', 'medium', 'low']:
-            raise ValueError(f"Severity must be 'high', 'medium', or 'low', got {self.severity}")
+        if self.severity not in ["high", "medium", "low"]:
+            raise ValueError(
+                f"Severity must be 'high', 'medium', or 'low', got {self.severity}"
+            )
 
         # Validate ID format
         if not self.id.startswith("contra-"):
-            raise ValueError(f"Contradiction ID must start with 'contra-', got {self.id}")
+            raise ValueError(
+                f"Contradiction ID must start with 'contra-', got {self.id}"
+            )
 
 
 class ContradictionDetector:
@@ -87,9 +94,7 @@ class ContradictionDetector:
         pass
 
     def detect_contradictions(
-        self,
-        db_conn: sqlite3.Connection,
-        min_confidence: float = 0.7
+        self, db_conn: sqlite3.Connection, min_confidence: float = 0.7
     ) -> List[Contradiction]:
         """
         Find all CONTRADICTS relationships in the graph.
@@ -115,7 +120,7 @@ class ContradictionDetector:
         # Query all CONTRADICTS relationships above confidence threshold
         contradicts_rels = kg_query.query_relationships(
             relationship_type=RelationshipType.CONTRADICTS,
-            min_confidence=min_confidence
+            min_confidence=min_confidence,
         )
 
         # Edge case: no contradictions found
@@ -152,27 +157,28 @@ class ContradictionDetector:
 
             # Create Contradiction object
             contra_id = f"contra-{uuid.uuid4()}"
-            contradictions.append(Contradiction(
-                id=contra_id,
-                entity_a=entity_a,
-                entity_b=entity_b,
-                relationship=rel,
-                severity=severity,
-                description=description,
-                resolution_suggestion=resolution
-            ))
+            contradictions.append(
+                Contradiction(
+                    id=contra_id,
+                    entity_a=entity_a,
+                    entity_b=entity_b,
+                    relationship=rel,
+                    severity=severity,
+                    description=description,
+                    resolution_suggestion=resolution,
+                )
+            )
 
         # Sort by severity (high → medium → low), then by confidence (descending)
-        severity_order = {'high': 0, 'medium': 1, 'low': 2}
-        contradictions.sort(key=lambda c: (severity_order[c.severity], -c.relationship.confidence))
+        severity_order = {"high": 0, "medium": 1, "low": 2}
+        contradictions.sort(
+            key=lambda c: (severity_order[c.severity], -c.relationship.confidence)
+        )
 
         return contradictions
 
     def find_entity_contradictions(
-        self,
-        db_conn: sqlite3.Connection,
-        entity_id: str,
-        min_confidence: float = 0.7
+        self, db_conn: sqlite3.Connection, entity_id: str, min_confidence: float = 0.7
     ) -> List[Contradiction]:
         """
         Find all contradictions involving a specific entity.
@@ -196,7 +202,7 @@ class ContradictionDetector:
             'specific-exceptions'
         """
         # Validate entity_id format
-        if not entity_id.startswith('ent-'):
+        if not entity_id.startswith("ent-"):
             raise ValueError(f"Entity ID must start with 'ent-', got {entity_id}")
 
         kg_query = KnowledgeGraphQuery(db_conn)
@@ -205,14 +211,14 @@ class ContradictionDetector:
         outgoing = kg_query.query_relationships(
             relationship_type=RelationshipType.CONTRADICTS,
             source_id=entity_id,
-            min_confidence=min_confidence
+            min_confidence=min_confidence,
         )
 
         # Query CONTRADICTS relationships where entity is target
         incoming = kg_query.query_relationships(
             relationship_type=RelationshipType.CONTRADICTS,
             target_id=entity_id,
-            min_confidence=min_confidence
+            min_confidence=min_confidence,
         )
 
         # Combine all relationships
@@ -244,19 +250,23 @@ class ContradictionDetector:
             resolution = self._generate_resolution_suggestion(entity_a, entity_b, rel)
 
             contra_id = f"contra-{uuid.uuid4()}"
-            contradictions.append(Contradiction(
-                id=contra_id,
-                entity_a=entity_a,
-                entity_b=entity_b,
-                relationship=rel,
-                severity=severity,
-                description=description,
-                resolution_suggestion=resolution
-            ))
+            contradictions.append(
+                Contradiction(
+                    id=contra_id,
+                    entity_a=entity_a,
+                    entity_b=entity_b,
+                    relationship=rel,
+                    severity=severity,
+                    description=description,
+                    resolution_suggestion=resolution,
+                )
+            )
 
         # Sort by severity and confidence
-        severity_order = {'high': 0, 'medium': 1, 'low': 2}
-        contradictions.sort(key=lambda c: (severity_order[c.severity], -c.relationship.confidence))
+        severity_order = {"high": 0, "medium": 1, "low": 2}
+        contradictions.sort(
+            key=lambda c: (severity_order[c.severity], -c.relationship.confidence)
+        )
 
         return contradictions
 
@@ -265,7 +275,7 @@ class ContradictionDetector:
         db_conn: sqlite3.Connection,
         pattern_text: str,
         entities: List[Entity],
-        min_confidence: float = 0.7
+        min_confidence: float = 0.7,
     ) -> List[Contradiction]:
         """
         Check if new pattern (from Curator) conflicts with existing knowledge.
@@ -326,8 +336,10 @@ class ContradictionDetector:
                 unique_conflicts.append(conflict)
 
         # Sort by severity
-        severity_order = {'high': 0, 'medium': 1, 'low': 2}
-        unique_conflicts.sort(key=lambda c: (severity_order[c.severity], -c.relationship.confidence))
+        severity_order = {"high": 0, "medium": 1, "low": 2}
+        unique_conflicts.sort(
+            key=lambda c: (severity_order[c.severity], -c.relationship.confidence)
+        )
 
         return unique_conflicts
 
@@ -335,7 +347,7 @@ class ContradictionDetector:
         self,
         db_conn: sqlite3.Connection,
         min_confidence: float = 0.7,
-        group_by: str = 'severity'
+        group_by: str = "severity",
     ) -> Dict:
         """
         Generate summary report of all contradictions.
@@ -361,8 +373,10 @@ class ContradictionDetector:
             [Contradiction(...), Contradiction(...)]
         """
         # Validate group_by parameter
-        if group_by not in ('severity', 'entity_type', 'none'):
-            raise ValueError(f"group_by must be 'severity', 'entity_type', or 'none', got {group_by}")
+        if group_by not in ("severity", "entity_type", "none"):
+            raise ValueError(
+                f"group_by must be 'severity', 'entity_type', or 'none', got {group_by}"
+            )
 
         # Detect all contradictions
         contradictions = self.detect_contradictions(db_conn, min_confidence)
@@ -370,15 +384,15 @@ class ContradictionDetector:
         # Edge case: no contradictions
         if not contradictions:
             return {
-                'total_count': 0,
-                'groups': {},
-                'summary': "No contradictions found"
+                "total_count": 0,
+                "groups": {},
+                "summary": "No contradictions found",
             }
 
         # Group contradictions
         groups: Dict[str, List[Contradiction]] = {}
 
-        if group_by == 'severity':
+        if group_by == "severity":
             # Group by severity level
             for contra in contradictions:
                 severity = contra.severity
@@ -386,7 +400,7 @@ class ContradictionDetector:
                     groups[severity] = []
                 groups[severity].append(contra)
 
-        elif group_by == 'entity_type':
+        elif group_by == "entity_type":
             # Group by entity_a type (primary entity in conflict)
             for contra in contradictions:
                 entity_type = contra.entity_a.type.value
@@ -396,37 +410,33 @@ class ContradictionDetector:
 
         else:  # group_by == 'none'
             # No grouping: single group with all contradictions
-            groups['all'] = contradictions
+            groups["all"] = contradictions
 
         # Generate summary text
         total_count = len(contradictions)
 
-        if group_by == 'severity':
-            high_count = len(groups.get('high', []))
-            medium_count = len(groups.get('medium', []))
-            low_count = len(groups.get('low', []))
+        if group_by == "severity":
+            high_count = len(groups.get("high", []))
+            medium_count = len(groups.get("medium", []))
+            low_count = len(groups.get("low", []))
             summary = f"Found {total_count} contradictions: {high_count} high, {medium_count} medium, {low_count} low severity"
-        elif group_by == 'entity_type':
+        elif group_by == "entity_type":
             type_counts = {k: len(v) for k, v in groups.items()}
-            type_summary = ', '.join([f"{count} {type}" for type, count in sorted(type_counts.items())])
+            type_summary = ", ".join(
+                [f"{count} {type}" for type, count in sorted(type_counts.items())]
+            )
             summary = f"Found {total_count} contradictions grouped by entity type: {type_summary}"
         else:
             summary = f"Found {total_count} contradictions"
 
-        return {
-            'total_count': total_count,
-            'groups': groups,
-            'summary': summary
-        }
+        return {"total_count": total_count, "groups": groups, "summary": summary}
 
     # ========================================================================
     # Private Helper Methods
     # ========================================================================
 
     def _fetch_entities_by_ids(
-        self,
-        db_conn: sqlite3.Connection,
-        entity_ids: List[str]
+        self, db_conn: sqlite3.Connection, entity_ids: List[str]
     ) -> Dict[str, Entity]:
         """
         Fetch entities by IDs and return as lookup dict.
@@ -442,36 +452,38 @@ class ContradictionDetector:
             return {}
 
         # Build parameterized query
-        placeholders = ','.join(['?' for _ in entity_ids])
-        cursor = db_conn.execute(f"""
+        placeholders = ",".join(["?" for _ in entity_ids])
+        cursor = db_conn.execute(
+            f"""
             SELECT
                 id, type, name, confidence,
                 first_seen_at, last_seen_at, metadata
             FROM entities
             WHERE id IN ({placeholders})
-        """, entity_ids)
+        """,
+            entity_ids,
+        )
 
         # Build lookup dict
         import json
+
         entity_lookup = {}
         for row in cursor:
             entity = Entity(
-                id=row['id'],
-                type=EntityType(row['type']),
-                name=row['name'],
-                confidence=row['confidence'],
-                first_seen_at=row['first_seen_at'],
-                last_seen_at=row['last_seen_at'],
-                metadata=json.loads(row['metadata']) if row['metadata'] else None
+                id=row["id"],
+                type=EntityType(row["type"]),
+                name=row["name"],
+                confidence=row["confidence"],
+                first_seen_at=row["first_seen_at"],
+                last_seen_at=row["last_seen_at"],
+                metadata=json.loads(row["metadata"]) if row["metadata"] else None,
             )
             entity_lookup[entity.id] = entity
 
         return entity_lookup
 
     def _find_similar_entities(
-        self,
-        db_conn: sqlite3.Connection,
-        name: str
+        self, db_conn: sqlite3.Connection, name: str
     ) -> List[str]:
         """
         Find entity IDs with similar names using FTS5.
@@ -485,20 +497,20 @@ class ContradictionDetector:
         """
         # Use FTS5 for fuzzy name matching
         # Simple approach: exact match on name (case-insensitive)
-        cursor = db_conn.execute("""
+        cursor = db_conn.execute(
+            """
             SELECT id
             FROM entities
             WHERE LOWER(name) = LOWER(?)
             LIMIT 10
-        """, [name])
+        """,
+            [name],
+        )
 
-        return [row['id'] for row in cursor]
+        return [row["id"] for row in cursor]
 
     def _calculate_severity(
-        self,
-        entity_a: Entity,
-        entity_b: Entity,
-        relationship: Relationship
+        self, entity_a: Entity, entity_b: Entity, relationship: Relationship
     ) -> str:
         """
         Calculate severity of contradiction.
@@ -522,20 +534,17 @@ class ContradictionDetector:
 
         # High severity: strong relationship + both entities highly confident
         if rel_conf >= 0.8 and entity_a_conf > 0.8 and entity_b_conf > 0.8:
-            return 'high'
+            return "high"
 
         # Low severity: weak relationship or both entities low confidence
         if rel_conf < 0.7 or (entity_a_conf < 0.6 and entity_b_conf < 0.6):
-            return 'low'
+            return "low"
 
         # Medium severity: everything else
-        return 'medium'
+        return "medium"
 
     def _generate_description(
-        self,
-        entity_a: Entity,
-        entity_b: Entity,
-        relationship: Relationship
+        self, entity_a: Entity, entity_b: Entity, relationship: Relationship
     ) -> str:
         """
         Generate human-readable description of contradiction.
@@ -549,7 +558,11 @@ class ContradictionDetector:
             Description string
         """
         # Extract pattern matched from relationship metadata
-        pattern = relationship.metadata.get('pattern_matched', '') if relationship.metadata else ''
+        pattern = (
+            relationship.metadata.get("pattern_matched", "")
+            if relationship.metadata
+            else ""
+        )
 
         if pattern:
             return f"Pattern '{entity_a.name}' contradicts '{entity_b.name}' (detected via: {pattern})"
@@ -557,10 +570,7 @@ class ContradictionDetector:
             return f"Pattern '{entity_a.name}' contradicts '{entity_b.name}'"
 
     def _generate_resolution_suggestion(
-        self,
-        entity_a: Entity,
-        entity_b: Entity,
-        relationship: Relationship
+        self, entity_a: Entity, entity_b: Entity, relationship: Relationship
     ) -> str:
         """
         Generate resolution suggestion for contradiction.
@@ -581,8 +591,12 @@ class ContradictionDetector:
         # Compare timestamps (last_seen_at)
         # Parse ISO8601 timestamps for comparison
         try:
-            time_a = datetime.fromisoformat(entity_a.last_seen_at.replace('Z', '+00:00'))
-            time_b = datetime.fromisoformat(entity_b.last_seen_at.replace('Z', '+00:00'))
+            time_a = datetime.fromisoformat(
+                entity_a.last_seen_at.replace("Z", "+00:00")
+            )
+            time_b = datetime.fromisoformat(
+                entity_b.last_seen_at.replace("Z", "+00:00")
+            )
 
             # If one entity significantly newer (>1 hour difference)
             # Reduced from 1 day to handle test cases with yesterday vs today
@@ -611,9 +625,9 @@ class ContradictionDetector:
 
 # Convenience functions for module-level API
 
+
 def detect_contradictions(
-    db_conn: sqlite3.Connection,
-    min_confidence: float = 0.7
+    db_conn: sqlite3.Connection, min_confidence: float = 0.7
 ) -> List[Contradiction]:
     """
     Find all CONTRADICTS relationships in the graph.
@@ -640,9 +654,7 @@ def detect_contradictions(
 
 
 def find_entity_contradictions(
-    db_conn: sqlite3.Connection,
-    entity_id: str,
-    min_confidence: float = 0.7
+    db_conn: sqlite3.Connection, entity_id: str, min_confidence: float = 0.7
 ) -> List[Contradiction]:
     """
     Find all contradictions involving a specific entity.
@@ -669,7 +681,7 @@ def check_new_pattern_conflicts(
     db_conn: sqlite3.Connection,
     pattern_text: str,
     entities: List[Entity],
-    min_confidence: float = 0.7
+    min_confidence: float = 0.7,
 ) -> List[Contradiction]:
     """
     Check if new pattern conflicts with existing knowledge.
@@ -693,13 +705,13 @@ def check_new_pattern_conflicts(
         >>> conflicts = check_new_pattern_conflicts(pm.db_conn, new_pattern, entities)
     """
     detector = ContradictionDetector()
-    return detector.check_new_pattern_conflicts(db_conn, pattern_text, entities, min_confidence)
+    return detector.check_new_pattern_conflicts(
+        db_conn, pattern_text, entities, min_confidence
+    )
 
 
 def get_contradiction_report(
-    db_conn: sqlite3.Connection,
-    min_confidence: float = 0.7,
-    group_by: str = 'severity'
+    db_conn: sqlite3.Connection, min_confidence: float = 0.7, group_by: str = "severity"
 ) -> Dict:
     """
     Generate summary report of all contradictions.

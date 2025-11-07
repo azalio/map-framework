@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **CLI Validation and Agent Guidance** (f8ce250, 0c71566)
+  - Added MAP CLI reference skill for correcting mapify command errors
+  - Documented actual CLI structure in machine-readable format
+  - Updated Actor, Reflector, and Curator agent templates with CLI guidance
+  - Added E2E tests for CLI command correctness validation
+  - Updated documentation with CLI best practices
+
+- **Cipher Infrastructure Enhancements** (fd505ce, 30b0947, c7a3fa4, 59cbe7f)
+  - Added Neo4j to Cipher Docker Compose infrastructure for Knowledge Graph support
+  - Comprehensive Cipher + Qdrant + PostgreSQL setup documentation
+  - Knowledge Graph configuration documentation
+  - Refactored Cipher setup docs into modular quick-start guides (condensed from 76KB to ~15KB)
+  - Added infrastructure examples with docker-compose.yml and .env.example
+
+- **Claude Code Hooks Integration** (1ffedbc, d27bfb9, ba43d1b)
+  - Integrated claude-code-prompt-improver with sequential hooks
+  - Use CLAUDE_PROJECT_DIR for absolute hook paths
+  - Added git hooks testing to CI pipeline
+
+### Fixed
+
+- **Hooks System Improvements** (2f91b05, d35c954, ae22179, 67fdc49)
+  - Removed redundant PreToolUse hook for template validation (d0c4d88, c35c12d)
+  - Resolved JSON parsing errors in Claude Code hooks (manual JSON → jq-based generation)
+  - Separated stdout/stderr in E2E tests for proper JSON parsing
+  - Preserved user settings during hooks installation (merge strategy)
+
+- **mapify init Command Fixes** (1aee890, 7d264ef, 956ef96)
+  - Fixed mapify init to copy Python hooks and settings.hooks.json correctly
+  - Corrected settings file location (.claude/ not .claude/hooks/)
+  - Restored SessionStart hook functionality
+
+- **Documentation Corrections** (d998100, cc572b0, 62f4626, 3b8b492, b62bea7, 5e5ee62)
+  - Fixed Claude Desktop → Claude Code references in Cipher setup
+  - Addressed Copilot review comments across multiple PRs
+  - Aligned with official Claude Code hooks documentation
+
+### Changed
+
+- **Documentation Organization** (1b8846e, 841c2d3)
+  - Replaced programming-focused prompts with MAP Framework system prompt
+  - Removed redundant hooks-json-parsing-errors.md documentation
+
+### Removed
+
+- **Cleanup** (cd93cfe, 4c0602b, cf0573c)
+  - Removed obsolete Cipher example files and curator outputs
+  - Removed generated curator_output.json file
+
 ## [1.2.3] - 2025-11-05
 
 ### Added

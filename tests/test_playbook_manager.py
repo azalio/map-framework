@@ -31,14 +31,18 @@ class TestTopKConfiguration:
 
     def test_empty_playbook_creation_includes_top_k(self, temp_playbook):
         """New empty playbooks include top_k=5 in metadata"""
-        manager = PlaybookManager(playbook_path=str(temp_playbook), use_semantic_search=False)
+        manager = PlaybookManager(
+            playbook_path=str(temp_playbook), use_semantic_search=False
+        )
 
         assert "top_k" in manager.playbook["metadata"]
         assert manager.playbook["metadata"]["top_k"] == 5
 
     def test_playbook_file_on_disk_has_top_k(self, temp_playbook):
         """Playbook saved to database includes top_k in metadata"""
-        manager = PlaybookManager(playbook_path=str(temp_playbook), use_semantic_search=False)
+        manager = PlaybookManager(
+            playbook_path=str(temp_playbook), use_semantic_search=False
+        )
 
         # Read from SQLite database
         db_path = temp_playbook.parent / "playbook.db"
@@ -56,23 +60,17 @@ class TestTopKConfiguration:
         # Create playbook without top_k (simulate legacy playbook)
         legacy_playbook = {
             "version": "1.0",
-            "metadata": {
-                "project": "test",
-                "total_bullets": 0
-            },
-            "sections": {
-                "TEST_SECTION": {
-                    "description": "Test",
-                    "bullets": []
-                }
-            }
+            "metadata": {"project": "test", "total_bullets": 0},
+            "sections": {"TEST_SECTION": {"description": "Test", "bullets": []}},
         }
 
-        with open(temp_playbook, 'w') as f:
+        with open(temp_playbook, "w") as f:
             json.dump(legacy_playbook, f)
 
         # Load playbook - should add top_k=5
-        manager = PlaybookManager(playbook_path=str(temp_playbook), use_semantic_search=False)
+        manager = PlaybookManager(
+            playbook_path=str(temp_playbook), use_semantic_search=False
+        )
 
         assert "top_k" in manager.playbook["metadata"]
         assert manager.playbook["metadata"]["top_k"] == 5
@@ -84,20 +82,17 @@ class TestTopKConfiguration:
             "metadata": {
                 "project": "test",
                 "total_bullets": 0,
-                "top_k": 3  # Custom value
+                "top_k": 3,  # Custom value
             },
-            "sections": {
-                "TEST_SECTION": {
-                    "description": "Test",
-                    "bullets": []
-                }
-            }
+            "sections": {"TEST_SECTION": {"description": "Test", "bullets": []}},
         }
 
-        with open(temp_playbook, 'w') as f:
+        with open(temp_playbook, "w") as f:
             json.dump(custom_playbook, f)
 
-        manager = PlaybookManager(playbook_path=str(temp_playbook), use_semantic_search=False)
+        manager = PlaybookManager(
+            playbook_path=str(temp_playbook), use_semantic_search=False
+        )
 
         assert manager.playbook["metadata"]["top_k"] == 3
 
@@ -108,13 +103,15 @@ class TestTopKConfiguration:
             manager_with_playbook._add_bullet(
                 section="ARCHITECTURE_PATTERNS",
                 content=f"Test pattern {i} about architecture and design",
-                tags=["test"]
+                tags=["test"],
             )
 
         # Call without explicit limit - should return 5 (default top_k)
         results = manager_with_playbook.get_relevant_bullets("architecture design")
 
-        assert len(results) == 5, f"Expected 5 bullets (top_k default), got {len(results)}"
+        assert (
+            len(results) == 5
+        ), f"Expected 5 bullets (top_k default), got {len(results)}"
 
     def test_explicit_limit_overrides_playbook_top_k(self, manager_with_playbook):
         """Explicit limit parameter overrides playbook top_k"""
@@ -123,13 +120,15 @@ class TestTopKConfiguration:
             manager_with_playbook._add_bullet(
                 section="ARCHITECTURE_PATTERNS",
                 content=f"Test pattern {i} about architecture",
-                tags=["test"]
+                tags=["test"],
             )
 
         # Call with explicit limit=3 - should return 3 (not top_k=5)
         results = manager_with_playbook.get_relevant_bullets("architecture", limit=3)
 
-        assert len(results) == 3, f"Expected 3 bullets (explicit limit), got {len(results)}"
+        assert (
+            len(results) == 3
+        ), f"Expected 3 bullets (explicit limit), got {len(results)}"
 
     def test_explicit_limit_10_overrides_top_k_5(self, manager_with_playbook):
         """Explicit limit=10 overrides playbook top_k=5"""
@@ -138,13 +137,15 @@ class TestTopKConfiguration:
             manager_with_playbook._add_bullet(
                 section="ARCHITECTURE_PATTERNS",
                 content=f"Test pattern {i} about architecture",
-                tags=["test"]
+                tags=["test"],
             )
 
         # Call with explicit limit=10 - should return 10 (not top_k=5)
         results = manager_with_playbook.get_relevant_bullets("architecture", limit=10)
 
-        assert len(results) == 10, f"Expected 10 bullets (explicit limit), got {len(results)}"
+        assert (
+            len(results) == 10
+        ), f"Expected 10 bullets (explicit limit), got {len(results)}"
 
     def test_changing_top_k_affects_retrieval(self, manager_with_playbook):
         """Changing top_k in playbook affects get_relevant_bullets()"""
@@ -153,7 +154,7 @@ class TestTopKConfiguration:
             manager_with_playbook._add_bullet(
                 section="ARCHITECTURE_PATTERNS",
                 content=f"Test pattern {i} about architecture",
-                tags=["test"]
+                tags=["test"],
             )
 
         # Default top_k=5
@@ -177,12 +178,14 @@ class TestTopKConfiguration:
             manager_with_playbook._add_bullet(
                 section="ARCHITECTURE_PATTERNS",
                 content=f"Test pattern {i} about architecture",
-                tags=["test"]
+                tags=["test"],
             )
 
         results = manager_with_playbook.get_relevant_bullets("architecture")
 
-        assert len(results) == 3, f"Expected 3 bullets (all available), got {len(results)}"
+        assert (
+            len(results) == 3
+        ), f"Expected 3 bullets (all available), got {len(results)}"
 
     def test_top_k_backward_compatibility(self, manager_with_playbook):
         """Method signature remains backward compatible"""
@@ -211,7 +214,7 @@ class TestTopKEdgeCases:
             bullet_id = manager_with_playbook._add_bullet(
                 section="ARCHITECTURE_PATTERNS",
                 content=f"High quality pattern {i}",
-                tags=["test"]
+                tags=["test"],
             )
             # Mark as helpful
             manager_with_playbook._update_bullet(bullet_id, increment_helpful=3)
@@ -220,7 +223,7 @@ class TestTopKEdgeCases:
             bullet_id = manager_with_playbook._add_bullet(
                 section="ARCHITECTURE_PATTERNS",
                 content=f"Low quality pattern {i}",
-                tags=["test"]
+                tags=["test"],
             )
             # Mark as harmful
             manager_with_playbook._update_bullet(bullet_id, increment_harmful=2)
@@ -228,8 +231,7 @@ class TestTopKEdgeCases:
         # Get bullets with min_quality_score=1 and default top_k=5
         # Should return 5 high-quality bullets (exactly top_k)
         results = manager_with_playbook.get_relevant_bullets(
-            "pattern",
-            min_quality_score=1
+            "pattern", min_quality_score=1
         )
 
         assert len(results) == 5
@@ -242,9 +244,7 @@ class TestTopKEdgeCases:
         # Add 8 bullets, deprecate 3 of them
         for i in range(8):
             bullet_id = manager_with_playbook._add_bullet(
-                section="ARCHITECTURE_PATTERNS",
-                content=f"Pattern {i}",
-                tags=["test"]
+                section="ARCHITECTURE_PATTERNS", content=f"Pattern {i}", tags=["test"]
             )
             if i < 3:
                 manager_with_playbook._deprecate_bullet(bullet_id, "Test deprecation")
@@ -273,16 +273,18 @@ class TestMissingFieldHandling:
                             "id": "impl-0001",
                             "content": "Pattern without deprecated field",
                             "helpful_count": 1,
-                            "harmful_count": 0
+                            "harmful_count": 0,
                             # Note: no 'deprecated' field
                         }
                     ]
                 }
-            }
+            },
         }
         temp_playbook.write_text(json.dumps(playbook_data))
 
-        manager = PlaybookManager(playbook_path=str(temp_playbook), use_semantic_search=False)
+        manager = PlaybookManager(
+            playbook_path=str(temp_playbook), use_semantic_search=False
+        )
         results = manager.get_relevant_bullets("pattern")
 
         # Should not crash and should return the bullet
@@ -299,16 +301,18 @@ class TestMissingFieldHandling:
                         {
                             "id": "impl-0001",
                             "content": "Pattern without count fields",
-                            "deprecated": False
+                            "deprecated": False,
                             # Note: no helpful_count or harmful_count
                         }
                     ]
                 }
-            }
+            },
         }
         temp_playbook.write_text(json.dumps(playbook_data))
 
-        manager = PlaybookManager(playbook_path=str(temp_playbook), use_semantic_search=False)
+        manager = PlaybookManager(
+            playbook_path=str(temp_playbook), use_semantic_search=False
+        )
         results = manager.get_relevant_bullets("pattern")
 
         # Should not crash and should treat missing counts as 0
@@ -326,16 +330,18 @@ class TestMissingFieldHandling:
                             "id": "impl-0001",
                             "content": "High quality pattern",
                             "helpful_count": 10,
-                            "harmful_count": 0
+                            "harmful_count": 0,
                             # Note: no 'deprecated' field
                         }
                     ]
                 }
-            }
+            },
         }
         temp_playbook.write_text(json.dumps(playbook_data))
 
-        manager = PlaybookManager(playbook_path=str(temp_playbook), use_semantic_search=False)
+        manager = PlaybookManager(
+            playbook_path=str(temp_playbook), use_semantic_search=False
+        )
         results = manager.get_bullets_for_sync(threshold=5)
 
         # Should not crash and should return high-quality bullet
@@ -352,16 +358,18 @@ class TestMissingFieldHandling:
                         {
                             "id": "impl-0001",
                             "content": "Pattern without counts",
-                            "deprecated": False
+                            "deprecated": False,
                             # Note: no helpful_count or harmful_count
                         }
                     ]
                 }
-            }
+            },
         }
         temp_playbook.write_text(json.dumps(playbook_data))
 
-        manager = PlaybookManager(playbook_path=str(temp_playbook), use_semantic_search=False)
+        manager = PlaybookManager(
+            playbook_path=str(temp_playbook), use_semantic_search=False
+        )
         results = manager.get_bullets_for_sync(threshold=5)
 
         # Should not crash, but won't return bullet (quality_score = 0 < 5)
@@ -379,26 +387,28 @@ class TestMissingFieldHandling:
                             "content": "Complete pattern with all fields",
                             "deprecated": False,
                             "helpful_count": 5,
-                            "harmful_count": 1
+                            "harmful_count": 1,
                         },
                         {
                             "id": "impl-0002",
                             "content": "Pattern missing deprecated field",
                             "helpful_count": 3,
-                            "harmful_count": 0
+                            "harmful_count": 0,
                         },
                         {
                             "id": "impl-0003",
                             "content": "Pattern missing count fields",
-                            "deprecated": False
-                        }
+                            "deprecated": False,
+                        },
                     ]
                 }
-            }
+            },
         }
         temp_playbook.write_text(json.dumps(playbook_data))
 
-        manager = PlaybookManager(playbook_path=str(temp_playbook), use_semantic_search=False)
+        manager = PlaybookManager(
+            playbook_path=str(temp_playbook), use_semantic_search=False
+        )
         # Search for "pattern" which appears in all three bullets
         results = manager.get_relevant_bullets("pattern")
 

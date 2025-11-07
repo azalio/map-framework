@@ -26,7 +26,7 @@ from mapify_cli.graph_query import (
     entities_since,
     query_entities,
     query_relationships,
-    get_entity_provenance
+    get_entity_provenance,
 )
 from mapify_cli.entity_extractor import EntityType
 from mapify_cli.relationship_detector import RelationshipType
@@ -37,7 +37,7 @@ from mapify_cli.schemas import SCHEMA_V3_0_SQL
 @pytest.fixture
 def temp_db():
     """Create temporary SQLite database with KG schema."""
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.db', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".db", delete=False) as f:
         db_path = f.name
 
     # Create schema
@@ -46,7 +46,8 @@ def temp_db():
     conn.execute("PRAGMA foreign_keys=ON")
 
     # Create bullets table (required for relationships FK)
-    conn.execute("""
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS bullets (
             id TEXT PRIMARY KEY,
             section TEXT NOT NULL,
@@ -56,15 +57,18 @@ def temp_db():
             created_at TEXT NOT NULL,
             last_used_at TEXT NOT NULL
         )
-    """)
+    """
+    )
 
     # Create metadata table (required for schema)
-    conn.execute("""
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS metadata (
             key TEXT PRIMARY KEY,
             value TEXT
         )
-    """)
+    """
+    )
 
     # Create KG schema
     conn.executescript(SCHEMA_V3_0_SQL)
@@ -97,70 +101,150 @@ def sample_graph(temp_db):
         - Transitive: playbook.json -> playbook.db -> MAP-workflow (2 hops via SUPERSEDES + DEPENDS_ON)
     """
     conn = temp_db
-    now = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
-    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat().replace('+00:00', 'Z')
+    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    yesterday = (
+        (datetime.now(timezone.utc) - timedelta(days=1))
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
     # Insert bullets (for FK constraints)
     bullets = [
-        ('impl-0001', 'IMPLEMENTATION_PATTERNS', 'Use pytest for testing'),
-        ('impl-0002', 'IMPLEMENTATION_PATTERNS', 'MAP workflow depends on playbook.db'),
-        ('impl-0003', 'IMPLEMENTATION_PATTERNS', 'Retry pattern prevents timeouts'),
-        ('anti-0001', 'ERROR_PATTERNS', 'Avoid generic exceptions'),
+        ("impl-0001", "IMPLEMENTATION_PATTERNS", "Use pytest for testing"),
+        ("impl-0002", "IMPLEMENTATION_PATTERNS", "MAP workflow depends on playbook.db"),
+        ("impl-0003", "IMPLEMENTATION_PATTERNS", "Retry pattern prevents timeouts"),
+        ("anti-0001", "ERROR_PATTERNS", "Avoid generic exceptions"),
     ]
     for bullet_id, section, content in bullets:
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO bullets (id, section, content, created_at, last_used_at)
             VALUES (?, ?, ?, ?, ?)
-        """, (bullet_id, section, content, now, now))
+        """,
+            (bullet_id, section, content, now, now),
+        )
 
     # Insert entities
     entities = [
-        ('ent-pytest', 'TOOL', 'pytest', 0.9, yesterday, now),
-        ('ent-python', 'TECHNOLOGY', 'Python', 0.95, yesterday, now),
-        ('ent-unittest', 'TOOL', 'unittest', 0.85, yesterday, now),
-        ('ent-map-workflow', 'WORKFLOW', 'MAP-workflow', 0.8, now, now),  # Created today
-        ('ent-playbook-db', 'TOOL', 'playbook.db', 0.9, now, now),  # Created today
-        ('ent-playbook-json', 'TOOL', 'playbook.json', 0.7, yesterday, yesterday),  # Deprecated
-        ('ent-retry-pattern', 'PATTERN', 'retry-pattern', 0.85, yesterday, now),
-        ('ent-timeout-error', 'ERROR_TYPE', 'timeout-error', 0.8, yesterday, now),
-        ('ent-generic-exception', 'ANTIPATTERN', 'generic-exception-catch', 0.9, yesterday, now),
-        ('ent-specific-exceptions', 'PATTERN', 'specific-exceptions', 0.9, yesterday, now),
+        ("ent-pytest", "TOOL", "pytest", 0.9, yesterday, now),
+        ("ent-python", "TECHNOLOGY", "Python", 0.95, yesterday, now),
+        ("ent-unittest", "TOOL", "unittest", 0.85, yesterday, now),
+        (
+            "ent-map-workflow",
+            "WORKFLOW",
+            "MAP-workflow",
+            0.8,
+            now,
+            now,
+        ),  # Created today
+        ("ent-playbook-db", "TOOL", "playbook.db", 0.9, now, now),  # Created today
+        (
+            "ent-playbook-json",
+            "TOOL",
+            "playbook.json",
+            0.7,
+            yesterday,
+            yesterday,
+        ),  # Deprecated
+        ("ent-retry-pattern", "PATTERN", "retry-pattern", 0.85, yesterday, now),
+        ("ent-timeout-error", "ERROR_TYPE", "timeout-error", 0.8, yesterday, now),
+        (
+            "ent-generic-exception",
+            "ANTIPATTERN",
+            "generic-exception-catch",
+            0.9,
+            yesterday,
+            now,
+        ),
+        (
+            "ent-specific-exceptions",
+            "PATTERN",
+            "specific-exceptions",
+            0.9,
+            yesterday,
+            now,
+        ),
     ]
 
     for entity_id, entity_type, name, confidence, first_seen, last_seen in entities:
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO entities (id, type, name, confidence, first_seen_at, last_seen_at, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (entity_id, entity_type, name, confidence, first_seen, last_seen, now, now))
+        """,
+            (entity_id, entity_type, name, confidence, first_seen, last_seen, now, now),
+        )
 
     # Insert relationships
     relationships = [
-        ('rel-001', 'ent-pytest', 'ent-python', 'USES', 'impl-0001', 0.9),
-        ('rel-002', 'ent-pytest', 'ent-unittest', 'DEPENDS_ON', 'impl-0001', 0.8),
-        ('rel-003', 'ent-map-workflow', 'ent-playbook-db', 'DEPENDS_ON', 'impl-0002', 0.85),
-        ('rel-004', 'ent-playbook-db', 'ent-playbook-json', 'SUPERSEDES', 'impl-0002', 0.9),
-        ('rel-005', 'ent-retry-pattern', 'ent-timeout-error', 'PREVENTS', 'impl-0003', 0.8),
-        ('rel-006', 'ent-generic-exception', 'ent-specific-exceptions', 'CONTRADICTS', 'anti-0001', 0.85),
+        ("rel-001", "ent-pytest", "ent-python", "USES", "impl-0001", 0.9),
+        ("rel-002", "ent-pytest", "ent-unittest", "DEPENDS_ON", "impl-0001", 0.8),
+        (
+            "rel-003",
+            "ent-map-workflow",
+            "ent-playbook-db",
+            "DEPENDS_ON",
+            "impl-0002",
+            0.85,
+        ),
+        (
+            "rel-004",
+            "ent-playbook-db",
+            "ent-playbook-json",
+            "SUPERSEDES",
+            "impl-0002",
+            0.9,
+        ),
+        (
+            "rel-005",
+            "ent-retry-pattern",
+            "ent-timeout-error",
+            "PREVENTS",
+            "impl-0003",
+            0.8,
+        ),
+        (
+            "rel-006",
+            "ent-generic-exception",
+            "ent-specific-exceptions",
+            "CONTRADICTS",
+            "anti-0001",
+            0.85,
+        ),
     ]
 
     for rel_id, source, target, rel_type, bullet_id, confidence in relationships:
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO relationships (id, source_entity_id, target_entity_id, type, created_from_bullet_id, confidence, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (rel_id, source, target, rel_type, bullet_id, confidence, now, now))
+        """,
+            (rel_id, source, target, rel_type, bullet_id, confidence, now, now),
+        )
 
     # Insert provenance
     provenance_records = [
-        ('prov-001', 'ent-pytest', None, 'impl-0001', 'RULE_BASED', 0.9, now),
-        ('prov-002', 'ent-python', None, 'impl-0001', 'RULE_BASED', 0.95, now),
-        ('prov-003', None, 'rel-001', 'impl-0001', 'RULE_BASED', 0.9, now),
+        ("prov-001", "ent-pytest", None, "impl-0001", "RULE_BASED", 0.9, now),
+        ("prov-002", "ent-python", None, "impl-0001", "RULE_BASED", 0.95, now),
+        ("prov-003", None, "rel-001", "impl-0001", "RULE_BASED", 0.9, now),
     ]
 
-    for prov_id, entity_id, rel_id, bullet_id, method, confidence, extracted_at in provenance_records:
-        conn.execute("""
+    for (
+        prov_id,
+        entity_id,
+        rel_id,
+        bullet_id,
+        method,
+        confidence,
+        extracted_at,
+    ) in provenance_records:
+        conn.execute(
+            """
             INSERT INTO provenance (id, entity_id, relationship_id, source_bullet_id, extraction_method, extraction_confidence, extracted_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (prov_id, entity_id, rel_id, bullet_id, method, confidence, extracted_at))
+        """,
+            (prov_id, entity_id, rel_id, bullet_id, method, confidence, extracted_at),
+        )
 
     conn.commit()
     return conn
@@ -170,17 +254,18 @@ def sample_graph(temp_db):
 # PATH FINDING TESTS
 # ==============================================================================
 
+
 def test_find_paths_direct_path(sample_graph):
     """Test finding direct path (1 hop): pytest -> Python."""
     kg_query = KnowledgeGraphQuery(sample_graph)
 
-    paths = kg_query.find_paths('ent-pytest', 'ent-python', max_depth=3)
+    paths = kg_query.find_paths("ent-pytest", "ent-python", max_depth=3)
 
     assert len(paths) == 1
     assert paths[0].length == 1
     assert paths[0].confidence == 0.9
     assert paths[0].relationships[0].type == RelationshipType.USES
-    assert paths[0].entities() == ['ent-pytest', 'ent-python']
+    assert paths[0].entities() == ["ent-pytest", "ent-python"]
 
 
 def test_find_paths_indirect_path(sample_graph):
@@ -193,14 +278,18 @@ def test_find_paths_indirect_path(sample_graph):
     # So there's no path from playbook.json -> MAP-workflow following relationship directions
 
     # But there IS a path from MAP-workflow -> playbook.json (2 hops)
-    paths = kg_query.find_paths('ent-map-workflow', 'ent-playbook-json', max_depth=3)
+    paths = kg_query.find_paths("ent-map-workflow", "ent-playbook-json", max_depth=3)
 
     assert len(paths) == 1
     assert paths[0].length == 2
     # Path: MAP-workflow --DEPENDS_ON--> playbook.db --SUPERSEDES--> playbook.json
     assert paths[0].relationships[0].type == RelationshipType.DEPENDS_ON
     assert paths[0].relationships[1].type == RelationshipType.SUPERSEDES
-    assert paths[0].entities() == ['ent-map-workflow', 'ent-playbook-db', 'ent-playbook-json']
+    assert paths[0].entities() == [
+        "ent-map-workflow",
+        "ent-playbook-db",
+        "ent-playbook-json",
+    ]
 
 
 def test_find_paths_no_path(sample_graph):
@@ -208,7 +297,7 @@ def test_find_paths_no_path(sample_graph):
     kg_query = KnowledgeGraphQuery(sample_graph)
 
     # pytest and retry-pattern are in different graph components
-    paths = kg_query.find_paths('ent-pytest', 'ent-retry-pattern', max_depth=3)
+    paths = kg_query.find_paths("ent-pytest", "ent-retry-pattern", max_depth=3)
 
     assert len(paths) == 0
 
@@ -217,7 +306,7 @@ def test_find_paths_self_path(sample_graph):
     """Test path to self returns empty list."""
     kg_query = KnowledgeGraphQuery(sample_graph)
 
-    paths = kg_query.find_paths('ent-pytest', 'ent-pytest', max_depth=3)
+    paths = kg_query.find_paths("ent-pytest", "ent-pytest", max_depth=3)
 
     assert len(paths) == 0
 
@@ -225,17 +314,20 @@ def test_find_paths_self_path(sample_graph):
 def test_find_paths_with_cycle_termination(sample_graph):
     """Test cycle handling with max_depth termination."""
     # Add a cycle: Python -> pytest (creates cycle with existing pytest -> Python)
-    now = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
-    sample_graph.execute("""
+    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    sample_graph.execute(
+        """
         INSERT INTO relationships (id, source_entity_id, target_entity_id, type, created_from_bullet_id, confidence, created_at, updated_at)
         VALUES ('rel-cycle', 'ent-python', 'ent-pytest', 'USES', 'impl-0001', 0.7, ?, ?)
-    """, (now, now))
+    """,
+        (now, now),
+    )
     sample_graph.commit()
 
     kg_query = KnowledgeGraphQuery(sample_graph)
 
     # Should still find direct path without getting stuck in cycle
-    paths = kg_query.find_paths('ent-pytest', 'ent-python', max_depth=3)
+    paths = kg_query.find_paths("ent-pytest", "ent-python", max_depth=3)
 
     assert len(paths) >= 1
     # Should find direct path (1 hop) first
@@ -249,10 +341,10 @@ def test_find_paths_with_type_filter(sample_graph):
     # pytest has both USES and DEPENDS_ON relationships
     # Filter to only USES
     paths = kg_query.find_paths(
-        'ent-pytest',
-        'ent-python',
+        "ent-pytest",
+        "ent-python",
         max_depth=2,
-        relationship_types=[RelationshipType.USES]
+        relationship_types=[RelationshipType.USES],
     )
 
     assert len(paths) == 1
@@ -260,10 +352,10 @@ def test_find_paths_with_type_filter(sample_graph):
 
     # Filter to only DEPENDS_ON (should not find Python path)
     paths = kg_query.find_paths(
-        'ent-pytest',
-        'ent-python',
+        "ent-pytest",
+        "ent-python",
         max_depth=2,
-        relationship_types=[RelationshipType.DEPENDS_ON]
+        relationship_types=[RelationshipType.DEPENDS_ON],
     )
 
     assert len(paths) == 0
@@ -275,29 +367,30 @@ def test_find_paths_validation(sample_graph):
 
     # Invalid source ID (doesn't start with 'ent-')
     with pytest.raises(ValueError, match="must start with 'ent-'"):
-        kg_query.find_paths('pytest', 'ent-python')
+        kg_query.find_paths("pytest", "ent-python")
 
     # Invalid target ID
     with pytest.raises(ValueError, match="must start with 'ent-'"):
-        kg_query.find_paths('ent-pytest', 'python')
+        kg_query.find_paths("ent-pytest", "python")
 
 
 # ==============================================================================
 # NEIGHBOR QUERIES
 # ==============================================================================
 
+
 def test_get_neighbors_outgoing(sample_graph):
     """Test getting outgoing neighbors (entity as source)."""
     kg_query = KnowledgeGraphQuery(sample_graph)
 
-    neighbors = kg_query.get_neighbors('ent-pytest', direction='outgoing')
+    neighbors = kg_query.get_neighbors("ent-pytest", direction="outgoing")
 
     # pytest has 2 outgoing relationships: USES Python, DEPENDS_ON unittest
     assert len(neighbors) == 2
 
     # Should be sorted by confidence descending
     entity1, rel1 = neighbors[0]
-    assert entity1.name in ('Python', 'unittest')
+    assert entity1.name in ("Python", "unittest")
     assert rel1.confidence >= neighbors[1][1].confidence
 
 
@@ -305,12 +398,12 @@ def test_get_neighbors_incoming(sample_graph):
     """Test getting incoming neighbors (entity as target)."""
     kg_query = KnowledgeGraphQuery(sample_graph)
 
-    neighbors = kg_query.get_neighbors('ent-python', direction='incoming')
+    neighbors = kg_query.get_neighbors("ent-python", direction="incoming")
 
     # Python is target of: pytest USES Python
     assert len(neighbors) == 1
     entity, rel = neighbors[0]
-    assert entity.id == 'ent-pytest'
+    assert entity.id == "ent-pytest"
     assert rel.type == RelationshipType.USES
 
 
@@ -318,7 +411,7 @@ def test_get_neighbors_both_directions(sample_graph):
     """Test getting neighbors in both directions."""
     kg_query = KnowledgeGraphQuery(sample_graph)
 
-    neighbors = kg_query.get_neighbors('ent-playbook-db', direction='both')
+    neighbors = kg_query.get_neighbors("ent-playbook-db", direction="both")
 
     # playbook.db has:
     # - Incoming: MAP-workflow DEPENDS_ON playbook.db
@@ -326,8 +419,8 @@ def test_get_neighbors_both_directions(sample_graph):
     assert len(neighbors) == 2
 
     entity_ids = {entity.id for entity, _ in neighbors}
-    assert 'ent-map-workflow' in entity_ids
-    assert 'ent-playbook-json' in entity_ids
+    assert "ent-map-workflow" in entity_ids
+    assert "ent-playbook-json" in entity_ids
 
 
 def test_get_neighbors_with_type_filter(sample_graph):
@@ -336,14 +429,12 @@ def test_get_neighbors_with_type_filter(sample_graph):
 
     # Filter pytest neighbors to only USES relationships
     neighbors = kg_query.get_neighbors(
-        'ent-pytest',
-        direction='outgoing',
-        relationship_types=[RelationshipType.USES]
+        "ent-pytest", direction="outgoing", relationship_types=[RelationshipType.USES]
     )
 
     assert len(neighbors) == 1
     entity, rel = neighbors[0]
-    assert entity.name == 'Python'
+    assert entity.name == "Python"
     assert rel.type == RelationshipType.USES
 
 
@@ -353,15 +444,13 @@ def test_get_neighbors_with_confidence_threshold(sample_graph):
 
     # Get pytest neighbors with high confidence (>= 0.85)
     neighbors = kg_query.get_neighbors(
-        'ent-pytest',
-        direction='outgoing',
-        min_confidence=0.85
+        "ent-pytest", direction="outgoing", min_confidence=0.85
     )
 
     # Only USES Python (0.9) should pass, not DEPENDS_ON unittest (0.8)
     assert len(neighbors) == 1
     entity, rel = neighbors[0]
-    assert entity.name == 'Python'
+    assert entity.name == "Python"
     assert rel.confidence >= 0.85
 
 
@@ -371,29 +460,35 @@ def test_get_neighbors_validation(sample_graph):
 
     # Invalid entity ID
     with pytest.raises(ValueError, match="must start with 'ent-'"):
-        kg_query.get_neighbors('pytest')
+        kg_query.get_neighbors("pytest")
 
     # Invalid direction
     with pytest.raises(ValueError, match="Direction must be"):
-        kg_query.get_neighbors('ent-pytest', direction='invalid')
+        kg_query.get_neighbors("ent-pytest", direction="invalid")
 
 
 # ==============================================================================
 # TEMPORAL QUERIES
 # ==============================================================================
 
+
 def test_entities_since(sample_graph):
     """Test getting entities created after timestamp."""
     kg_query = KnowledgeGraphQuery(sample_graph)
 
     # Get entities created today (MAP-workflow, playbook.db)
-    cutoff = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat().replace('+00:00', 'Z')
+    cutoff = (
+        datetime.now(timezone.utc)
+        .replace(hour=0, minute=0, second=0, microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     recent = kg_query.entities_since(cutoff)
 
     assert len(recent) == 2
     entity_names = {e.name for e in recent}
-    assert 'MAP-workflow' in entity_names
-    assert 'playbook.db' in entity_names
+    assert "MAP-workflow" in entity_names
+    assert "playbook.db" in entity_names
 
     # Should be sorted by first_seen_at DESC (newest first)
     assert recent[0].first_seen_at >= recent[1].first_seen_at
@@ -403,16 +498,18 @@ def test_entities_since_with_type_filter(sample_graph):
     """Test temporal query with entity type filter."""
     kg_query = KnowledgeGraphQuery(sample_graph)
 
-    cutoff = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat().replace('+00:00', 'Z')
-
-    # Filter to only WORKFLOW entities created today
-    recent = kg_query.entities_since(
-        cutoff,
-        entity_types=[EntityType.WORKFLOW]
+    cutoff = (
+        datetime.now(timezone.utc)
+        .replace(hour=0, minute=0, second=0, microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
     )
 
+    # Filter to only WORKFLOW entities created today
+    recent = kg_query.entities_since(cutoff, entity_types=[EntityType.WORKFLOW])
+
     assert len(recent) == 1
-    assert recent[0].name == 'MAP-workflow'
+    assert recent[0].name == "MAP-workflow"
     assert recent[0].type == EntityType.WORKFLOW
 
 
@@ -420,20 +517,26 @@ def test_entities_since_with_confidence_threshold(sample_graph):
     """Test temporal query with confidence filter."""
     kg_query = KnowledgeGraphQuery(sample_graph)
 
-    cutoff = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat().replace('+00:00', 'Z')
+    cutoff = (
+        datetime.now(timezone.utc)
+        .replace(hour=0, minute=0, second=0, microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
     # Get recent entities with high confidence (>= 0.85)
     recent = kg_query.entities_since(cutoff, min_confidence=0.85)
 
     # MAP-workflow (0.8) should be filtered out
     assert len(recent) == 1
-    assert recent[0].name == 'playbook.db'
+    assert recent[0].name == "playbook.db"
     assert recent[0].confidence >= 0.85
 
 
 # ==============================================================================
 # GENERIC QUERIES
 # ==============================================================================
+
 
 def test_query_entities_by_type(sample_graph):
     """Test querying entities by type."""
@@ -444,8 +547,8 @@ def test_query_entities_by_type(sample_graph):
     # Should find: pytest, unittest, playbook.db, playbook.json
     assert len(tools) == 4
     tool_names = {e.name for e in tools}
-    assert 'pytest' in tool_names
-    assert 'unittest' in tool_names
+    assert "pytest" in tool_names
+    assert "unittest" in tool_names
 
 
 def test_query_entities_by_confidence(sample_graph):
@@ -465,19 +568,21 @@ def test_query_entities_by_name_pattern(sample_graph):
     kg_query = KnowledgeGraphQuery(sample_graph)
 
     # Find entities with 'playbook' in name
-    playbook_entities = kg_query.query_entities(name_pattern='%playbook%')
+    playbook_entities = kg_query.query_entities(name_pattern="%playbook%")
 
     assert len(playbook_entities) == 2
     names = {e.name for e in playbook_entities}
-    assert 'playbook.db' in names
-    assert 'playbook.json' in names
+    assert "playbook.db" in names
+    assert "playbook.json" in names
 
 
 def test_query_relationships_by_type(sample_graph):
     """Test querying relationships by type."""
     kg_query = KnowledgeGraphQuery(sample_graph)
 
-    depends_on = kg_query.query_relationships(relationship_type=RelationshipType.DEPENDS_ON)
+    depends_on = kg_query.query_relationships(
+        relationship_type=RelationshipType.DEPENDS_ON
+    )
 
     # Should find 2 DEPENDS_ON relationships
     assert len(depends_on) == 2
@@ -489,23 +594,23 @@ def test_query_relationships_by_source(sample_graph):
     """Test querying relationships by source entity."""
     kg_query = KnowledgeGraphQuery(sample_graph)
 
-    pytest_rels = kg_query.query_relationships(source_id='ent-pytest')
+    pytest_rels = kg_query.query_relationships(source_id="ent-pytest")
 
     # pytest has 2 outgoing relationships
     assert len(pytest_rels) == 2
     for rel in pytest_rels:
-        assert rel.source_entity_id == 'ent-pytest'
+        assert rel.source_entity_id == "ent-pytest"
 
 
 def test_query_relationships_by_target(sample_graph):
     """Test querying relationships by target entity."""
     kg_query = KnowledgeGraphQuery(sample_graph)
 
-    python_rels = kg_query.query_relationships(target_id='ent-python')
+    python_rels = kg_query.query_relationships(target_id="ent-python")
 
     # Python has 1 incoming relationship (pytest USES Python)
     assert len(python_rels) == 1
-    assert python_rels[0].target_entity_id == 'ent-python'
+    assert python_rels[0].target_entity_id == "ent-python"
 
 
 def test_query_relationships_validation(sample_graph):
@@ -514,29 +619,30 @@ def test_query_relationships_validation(sample_graph):
 
     # Invalid source ID
     with pytest.raises(ValueError, match="must start with 'ent-'"):
-        kg_query.query_relationships(source_id='pytest')
+        kg_query.query_relationships(source_id="pytest")
 
     # Invalid target ID
     with pytest.raises(ValueError, match="must start with 'ent-'"):
-        kg_query.query_relationships(target_id='python')
+        kg_query.query_relationships(target_id="python")
 
 
 # ==============================================================================
 # PROVENANCE QUERIES
 # ==============================================================================
 
+
 def test_get_entity_provenance(sample_graph):
     """Test getting entity provenance records."""
     kg_query = KnowledgeGraphQuery(sample_graph)
 
-    provenance = kg_query.get_entity_provenance('ent-pytest')
+    provenance = kg_query.get_entity_provenance("ent-pytest")
 
     assert len(provenance) == 1
     record = provenance[0]
-    assert record['bullet_id'] == 'impl-0001'
-    assert record['extraction_method'] == 'RULE_BASED'
-    assert record['confidence'] == 0.9
-    assert 'extracted_at' in record
+    assert record["bullet_id"] == "impl-0001"
+    assert record["extraction_method"] == "RULE_BASED"
+    assert record["confidence"] == 0.9
+    assert "extracted_at" in record
 
 
 def test_get_entity_provenance_validation(sample_graph):
@@ -545,7 +651,7 @@ def test_get_entity_provenance_validation(sample_graph):
 
     # Invalid entity ID
     with pytest.raises(ValueError, match="must start with 'ent-'"):
-        kg_query.get_entity_provenance('pytest')
+        kg_query.get_entity_provenance("pytest")
 
 
 def test_get_entity_provenance_no_records(sample_graph):
@@ -553,7 +659,7 @@ def test_get_entity_provenance_no_records(sample_graph):
     kg_query = KnowledgeGraphQuery(sample_graph)
 
     # unittest entity has no provenance records
-    provenance = kg_query.get_entity_provenance('ent-unittest')
+    provenance = kg_query.get_entity_provenance("ent-unittest")
 
     assert len(provenance) == 0
 
@@ -562,12 +668,13 @@ def test_get_entity_provenance_no_records(sample_graph):
 # PERFORMANCE TESTS
 # ==============================================================================
 
+
 def test_find_paths_performance(sample_graph):
     """Test find_paths performance (<100ms)."""
     kg_query = KnowledgeGraphQuery(sample_graph)
 
     start = time.perf_counter()
-    paths = kg_query.find_paths('ent-pytest', 'ent-python', max_depth=3)
+    paths = kg_query.find_paths("ent-pytest", "ent-python", max_depth=3)
     elapsed = (time.perf_counter() - start) * 1000  # Convert to ms
 
     assert isinstance(paths, list), "find_paths should return a list"
@@ -579,7 +686,7 @@ def test_get_neighbors_performance(sample_graph):
     kg_query = KnowledgeGraphQuery(sample_graph)
 
     start = time.perf_counter()
-    neighbors = kg_query.get_neighbors('ent-pytest', direction='both')
+    neighbors = kg_query.get_neighbors("ent-pytest", direction="both")
     elapsed = (time.perf_counter() - start) * 1000
 
     assert isinstance(neighbors, list), "get_neighbors should return a list"
@@ -590,7 +697,12 @@ def test_entities_since_performance(sample_graph):
     """Test entities_since performance (<30ms)."""
     kg_query = KnowledgeGraphQuery(sample_graph)
 
-    cutoff = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat().replace('+00:00', 'Z')
+    cutoff = (
+        datetime.now(timezone.utc)
+        .replace(hour=0, minute=0, second=0, microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
     start = time.perf_counter()
     entities = kg_query.entities_since(cutoff)
@@ -617,7 +729,7 @@ def test_get_provenance_performance(sample_graph):
     kg_query = KnowledgeGraphQuery(sample_graph)
 
     start = time.perf_counter()
-    provenance = kg_query.get_entity_provenance('ent-pytest')
+    provenance = kg_query.get_entity_provenance("ent-pytest")
     elapsed = (time.perf_counter() - start) * 1000
 
     assert provenance, "Provenance data should not be empty or None"
@@ -627,6 +739,7 @@ def test_get_provenance_performance(sample_graph):
 # ==============================================================================
 # INTEGRATION TESTS
 # ==============================================================================
+
 
 def test_playbook_manager_kg_query_property():
     """Test PlaybookManager.kg_query property integration."""
@@ -672,34 +785,59 @@ def test_end_to_end_graph_workflow():
 
         # Step 2: Detect relationships
         detector = RelationshipDetector()
-        bullet_id = 'test-001'
+        bullet_id = "test-001"
 
         # Insert bullet first (FK requirement)
-        now = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
-        pm.db_conn.execute("""
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        pm.db_conn.execute(
+            """
             INSERT INTO bullets (id, section, content, created_at, last_used_at)
             VALUES (?, 'TEST', ?, ?, ?)
-        """, (bullet_id, text, now, now))
+        """,
+            (bullet_id, text, now, now),
+        )
         pm.db_conn.commit()
 
         relationships = detector.detect_relationships(text, entities, bullet_id)
 
         # Step 3: Insert entities into database
         for entity in entities:
-            pm.db_conn.execute("""
+            pm.db_conn.execute(
+                """
                 INSERT OR IGNORE INTO entities (id, type, name, confidence, first_seen_at, last_seen_at, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (entity.id, entity.type.value, entity.name, entity.confidence,
-                  entity.first_seen_at, entity.last_seen_at, now, now))
+            """,
+                (
+                    entity.id,
+                    entity.type.value,
+                    entity.name,
+                    entity.confidence,
+                    entity.first_seen_at,
+                    entity.last_seen_at,
+                    now,
+                    now,
+                ),
+            )
 
         # Step 4: Insert relationships
         for rel in relationships:
             try:
-                pm.db_conn.execute("""
+                pm.db_conn.execute(
+                    """
                     INSERT OR IGNORE INTO relationships (id, source_entity_id, target_entity_id, type, created_from_bullet_id, confidence, created_at, updated_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """, (rel.id, rel.source_entity_id, rel.target_entity_id, rel.type.value,
-                      rel.created_from_bullet_id, rel.confidence, rel.created_at, rel.updated_at))
+                """,
+                    (
+                        rel.id,
+                        rel.source_entity_id,
+                        rel.target_entity_id,
+                        rel.type.value,
+                        rel.created_from_bullet_id,
+                        rel.confidence,
+                        rel.created_at,
+                        rel.updated_at,
+                    ),
+                )
             except Exception as e:
                 # Skip if relationship insertion fails (e.g., duplicate)
                 pass
@@ -708,20 +846,20 @@ def test_end_to_end_graph_workflow():
 
         # Step 5: Query graph
         # Find path from pytest to Python
-        paths = pm.kg_query.find_paths('ent-pytest', 'ent-python', max_depth=2)
+        paths = pm.kg_query.find_paths("ent-pytest", "ent-python", max_depth=2)
 
         # Should find at least one path (pytest USES Python)
         assert len(paths) >= 1
         assert paths[0].length <= 2
 
         # Get pytest neighbors
-        neighbors = pm.kg_query.get_neighbors('ent-pytest', direction='outgoing')
+        neighbors = pm.kg_query.get_neighbors("ent-pytest", direction="outgoing")
         assert len(neighbors) >= 1
 
         # Query all tools
         tools = pm.kg_query.query_entities(entity_type=EntityType.TOOL)
         tool_names = {e.name for e in tools}
-        assert 'pytest' in tool_names
+        assert "pytest" in tool_names
 
 
 def test_module_level_convenience_functions(sample_graph):
@@ -729,11 +867,11 @@ def test_module_level_convenience_functions(sample_graph):
     from datetime import datetime, timezone, timedelta
 
     # Test find_paths convenience function
-    paths = find_paths(sample_graph, 'ent-pytest', 'ent-python')
+    paths = find_paths(sample_graph, "ent-pytest", "ent-python")
     assert len(paths) == 1
 
     # Test get_neighbors convenience function
-    neighbors = get_neighbors(sample_graph, 'ent-pytest', direction='outgoing')
+    neighbors = get_neighbors(sample_graph, "ent-pytest", direction="outgoing")
     assert len(neighbors) == 2
 
     # Test entities_since convenience function
@@ -742,13 +880,17 @@ def test_module_level_convenience_functions(sample_graph):
     assert len(recent_entities) > 0  # Should have entities from today
 
     # Test query_entities convenience function
-    tools = query_entities(sample_graph, entity_type=EntityType.TOOL, min_confidence=0.7)
+    tools = query_entities(
+        sample_graph, entity_type=EntityType.TOOL, min_confidence=0.7
+    )
     assert len(tools) >= 1  # At least pytest
 
     # Test query_relationships convenience function
-    uses_rels = query_relationships(sample_graph, relationship_type=RelationshipType.USES)
+    uses_rels = query_relationships(
+        sample_graph, relationship_type=RelationshipType.USES
+    )
     assert len(uses_rels) >= 1  # pytest USES Python
 
     # Test get_entity_provenance convenience function
-    provenance = get_entity_provenance(sample_graph, 'ent-pytest')
+    provenance = get_entity_provenance(sample_graph, "ent-pytest")
     assert len(provenance) >= 1  # At least one source bullet

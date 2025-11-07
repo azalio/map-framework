@@ -30,11 +30,7 @@ class TestMigrationJSONToSQLite:
         # Create a JSON playbook
         playbook_data = {
             "version": "1.0",
-            "metadata": {
-                "project": "test-project",
-                "total_bullets": 2,
-                "top_k": 5
-            },
+            "metadata": {"project": "test-project", "total_bullets": 2, "top_k": 5},
             "sections": {
                 "IMPLEMENTATION_PATTERNS": {
                     "bullets": [
@@ -46,7 +42,7 @@ class TestMigrationJSONToSQLite:
                             "created_at": "2025-01-01T00:00:00Z",
                             "last_used_at": "2025-01-01T00:00:00Z",
                             "tags": ["test"],
-                            "related_bullets": []
+                            "related_bullets": [],
                         },
                         {
                             "id": "impl-0002",
@@ -57,17 +53,19 @@ class TestMigrationJSONToSQLite:
                             "created_at": "2025-01-01T00:00:00Z",
                             "last_used_at": "2025-01-01T00:00:00Z",
                             "tags": ["test", "code"],
-                            "related_bullets": ["impl-0001"]
-                        }
+                            "related_bullets": ["impl-0001"],
+                        },
                     ]
                 }
-            }
+            },
         }
 
         json_path.write_text(json.dumps(playbook_data))
 
         # Create PlaybookManager - should trigger migration
-        manager = PlaybookManager(playbook_path=str(json_path), use_semantic_search=False)
+        manager = PlaybookManager(
+            playbook_path=str(json_path), use_semantic_search=False
+        )
 
         # Verify database was created
         assert db_path.exists()
@@ -97,7 +95,7 @@ class TestMigrationJSONToSQLite:
                             "created_at": "2025-01-01T00:00:00Z",
                             "last_used_at": "2025-01-01T00:00:00Z",
                             "tags": [],
-                            "related_bullets": []
+                            "related_bullets": [],
                         }
                     ]
                 },
@@ -111,7 +109,7 @@ class TestMigrationJSONToSQLite:
                             "created_at": "2025-01-01T00:00:00Z",
                             "last_used_at": "2025-01-01T00:00:00Z",
                             "tags": [],
-                            "related_bullets": []
+                            "related_bullets": [],
                         },
                         {
                             "id": "impl-0002",
@@ -121,17 +119,19 @@ class TestMigrationJSONToSQLite:
                             "created_at": "2025-01-01T00:00:00Z",
                             "last_used_at": "2025-01-01T00:00:00Z",
                             "tags": [],
-                            "related_bullets": []
-                        }
+                            "related_bullets": [],
+                        },
                     ]
-                }
-            }
+                },
+            },
         }
 
         json_path.write_text(json.dumps(playbook_data))
 
         # Migrate
-        manager = PlaybookManager(playbook_path=str(json_path), use_semantic_search=False)
+        manager = PlaybookManager(
+            playbook_path=str(json_path), use_semantic_search=False
+        )
 
         # Verify all bullets in database
         conn = sqlite3.connect(str(db_path))
@@ -150,20 +150,16 @@ class TestMigrationJSONToSQLite:
 
         playbook_data = {
             "version": "1.0",
-            "metadata": {
-                "project": "test-project",
-                "total_bullets": 0,
-                "top_k": 7
-            },
-            "sections": {
-                "IMPLEMENTATION_PATTERNS": {"bullets": []}
-            }
+            "metadata": {"project": "test-project", "total_bullets": 0, "top_k": 7},
+            "sections": {"IMPLEMENTATION_PATTERNS": {"bullets": []}},
         }
 
         json_path.write_text(json.dumps(playbook_data))
 
         # Migrate
-        manager = PlaybookManager(playbook_path=str(json_path), use_semantic_search=False)
+        manager = PlaybookManager(
+            playbook_path=str(json_path), use_semantic_search=False
+        )
 
         # Verify metadata
         conn = sqlite3.connect(str(db_path))
@@ -198,17 +194,19 @@ class TestMigrationJSONToSQLite:
                             "created_at": "2025-01-01T00:00:00Z",
                             "last_used_at": "2025-01-01T00:00:00Z",
                             "tags": ["python", "functions", "testing"],
-                            "related_bullets": ["impl-0002", "impl-0003"]
+                            "related_bullets": ["impl-0002", "impl-0003"],
                         }
                     ]
                 }
-            }
+            },
         }
 
         json_path.write_text(json.dumps(playbook_data))
 
         # Migrate
-        manager = PlaybookManager(playbook_path=str(json_path), use_semantic_search=False)
+        manager = PlaybookManager(
+            playbook_path=str(json_path), use_semantic_search=False
+        )
 
         # Verify complex fields
         conn = sqlite3.connect(str(db_path))
@@ -219,9 +217,9 @@ class TestMigrationJSONToSQLite:
         conn.close()
         manager.close()
 
-        assert row['code_example'] == "def foo():\n    return 42"
-        assert json.loads(row['tags']) == ["python", "functions", "testing"]
-        assert json.loads(row['related_bullets']) == ["impl-0002", "impl-0003"]
+        assert row["code_example"] == "def foo():\n    return 42"
+        assert json.loads(row["tags"]) == ["python", "functions", "testing"]
+        assert json.loads(row["related_bullets"]) == ["impl-0002", "impl-0003"]
 
 
 class TestSchemaIdempotency:
@@ -233,11 +231,15 @@ class TestSchemaIdempotency:
         json_path = temp_playbook_dir / "playbook.json"
 
         # Create manager (creates schema)
-        manager1 = PlaybookManager(playbook_path=str(json_path), use_semantic_search=False)
+        manager1 = PlaybookManager(
+            playbook_path=str(json_path), use_semantic_search=False
+        )
         manager1.close()
 
         # Create another manager (schema already exists)
-        manager2 = PlaybookManager(playbook_path=str(json_path), use_semantic_search=False)
+        manager2 = PlaybookManager(
+            playbook_path=str(json_path), use_semantic_search=False
+        )
         manager2.close()
 
         # Verify database still works
@@ -272,27 +274,31 @@ class TestFTS5Integration:
                             "created_at": "2025-01-01T00:00:00Z",
                             "last_used_at": "2025-01-01T00:00:00Z",
                             "tags": [],
-                            "related_bullets": []
+                            "related_bullets": [],
                         }
                     ]
                 }
-            }
+            },
         }
 
         json_path.write_text(json.dumps(playbook_data))
 
         # Migrate
-        manager = PlaybookManager(playbook_path=str(json_path), use_semantic_search=False)
+        manager = PlaybookManager(
+            playbook_path=str(json_path), use_semantic_search=False
+        )
 
         # Verify FTS index works
         conn = sqlite3.connect(str(db_path))
         cursor = conn.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT b.id, b.content
             FROM bullets b
             JOIN bullets_fts fts ON b.rowid = fts.rowid
             WHERE fts.bullets_fts MATCH 'JWT'
-        """)
+        """
+        )
         results = cursor.fetchall()
         conn.close()
         manager.close()
@@ -306,24 +312,28 @@ class TestFTS5Integration:
         db_path = temp_playbook_dir / "playbook.db"
 
         # Create empty playbook
-        manager = PlaybookManager(playbook_path=str(json_path), use_semantic_search=False)
+        manager = PlaybookManager(
+            playbook_path=str(json_path), use_semantic_search=False
+        )
 
         # Add bullet via manager
         manager._add_bullet(
             section="IMPLEMENTATION_PATTERNS",
             content="Database connection pooling",
-            tags=["database", "performance"]
+            tags=["database", "performance"],
         )
 
         # Query via FTS
         conn = sqlite3.connect(str(db_path))
         cursor = conn.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT b.content
             FROM bullets b
             JOIN bullets_fts fts ON b.rowid = fts.rowid
             WHERE fts.bullets_fts MATCH 'pooling'
-        """)
+        """
+        )
         results = cursor.fetchall()
         conn.close()
         manager.close()
@@ -353,22 +363,26 @@ class TestBackwardCompatibility:
                             "created_at": "2025-01-01T00:00:00Z",
                             "last_used_at": "2025-01-01T00:00:00Z",
                             "tags": [],
-                            "related_bullets": []
+                            "related_bullets": [],
                         }
                     ]
                 }
-            }
+            },
         }
 
         json_path.write_text(json.dumps(playbook_data))
 
-        manager = PlaybookManager(playbook_path=str(json_path), use_semantic_search=False)
+        manager = PlaybookManager(
+            playbook_path=str(json_path), use_semantic_search=False
+        )
 
         # Verify playbook dict available
         assert "metadata" in manager.playbook
         assert "sections" in manager.playbook
         assert manager.playbook["metadata"]["top_k"] == 5
-        assert len(manager.playbook["sections"]["IMPLEMENTATION_PATTERNS"]["bullets"]) == 1
+        assert (
+            len(manager.playbook["sections"]["IMPLEMENTATION_PATTERNS"]["bullets"]) == 1
+        )
 
         manager.close()
 
@@ -376,18 +390,20 @@ class TestBackwardCompatibility:
         """Existing get_relevant_bullets() API still works"""
         json_path = temp_playbook_dir / "playbook.json"
 
-        manager = PlaybookManager(playbook_path=str(json_path), use_semantic_search=False)
+        manager = PlaybookManager(
+            playbook_path=str(json_path), use_semantic_search=False
+        )
 
         # Add bullets
         manager._add_bullet(
             section="IMPLEMENTATION_PATTERNS",
             content="Pattern about database optimization",
-            tags=["database"]
+            tags=["database"],
         )
         manager._add_bullet(
             section="IMPLEMENTATION_PATTERNS",
             content="Pattern about authentication",
-            tags=["security"]
+            tags=["security"],
         )
 
         # Query using old API
@@ -411,7 +427,8 @@ class TestSchemaMigration:
         cursor = conn.cursor()
 
         # Create old schema (2.0) without executable_scripts
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS bullets (
                 id TEXT PRIMARY KEY,
                 section TEXT NOT NULL,
@@ -427,53 +444,64 @@ class TestSchemaMigration:
                 tags TEXT,
                 related_bullets TEXT
             )
-        """)
+        """
+        )
 
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS metadata (
                 key TEXT PRIMARY KEY,
                 value TEXT
             )
-        """)
+        """
+        )
 
         # Set schema version to 2.0
         cursor.execute("INSERT INTO metadata VALUES ('schema_version', '2.0')")
 
         # Add a test bullet
-        cursor.execute("""
+        cursor.execute(
+            """
             INSERT INTO bullets (id, section, content, created_at, last_used_at, tags, related_bullets)
             VALUES ('impl-0001', 'IMPLEMENTATION_PATTERNS', 'Test pattern', '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z', '[]', '[]')
-        """)
+        """
+        )
 
         conn.commit()
         conn.close()
 
         # Create PlaybookManager - should trigger migration to 2.1 then 3.0
         json_path = temp_playbook_dir / "playbook.json"
-        manager = PlaybookManager(playbook_path=str(json_path), db_path=str(db_path), use_semantic_search=False)
+        manager = PlaybookManager(
+            playbook_path=str(json_path),
+            db_path=str(db_path),
+            use_semantic_search=False,
+        )
 
         # Verify schema version updated to 3.0 (migration chain: 2.0 -> 2.1 -> 3.0)
         cursor = manager.db_conn.cursor()
         cursor.execute("SELECT value FROM metadata WHERE key = 'schema_version'")
         version = cursor.fetchone()[0]
-        assert version == '3.0', f"Expected final schema version 3.0, got {version}"
+        assert version == "3.0", f"Expected final schema version 3.0, got {version}"
 
         # Verify executable_scripts column exists (from 2.1 migration)
         cursor.execute("PRAGMA table_info(bullets)")
         columns = [row[1] for row in cursor.fetchall()]
-        assert 'executable_scripts' in columns
+        assert "executable_scripts" in columns
 
         # Verify existing data preserved
         cursor.execute("SELECT id, content FROM bullets WHERE id = 'impl-0001'")
         row = cursor.fetchone()
-        assert row[0] == 'impl-0001'
-        assert row[1] == 'Test pattern'
+        assert row[0] == "impl-0001"
+        assert row[1] == "Test pattern"
 
         # Verify KG tables exist (from 3.0 migration)
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT COUNT(*) FROM sqlite_master
             WHERE type='table' AND name IN ('entities', 'relationships', 'provenance')
-        """)
+        """
+        )
         kg_table_count = cursor.fetchone()[0]
         assert kg_table_count == 3, "KG tables not created during migration chain"
 
@@ -487,7 +515,8 @@ class TestSchemaMigration:
         conn = sqlite3.connect(str(db_path))
         cursor = conn.cursor()
 
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS bullets (
                 id TEXT PRIMARY KEY,
                 section TEXT NOT NULL,
@@ -503,14 +532,17 @@ class TestSchemaMigration:
                 tags TEXT,
                 related_bullets TEXT
             )
-        """)
+        """
+        )
 
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS metadata (
                 key TEXT PRIMARY KEY,
                 value TEXT
             )
-        """)
+        """
+        )
 
         cursor.execute("INSERT INTO metadata VALUES ('schema_version', '2.0')")
         conn.commit()
@@ -518,17 +550,25 @@ class TestSchemaMigration:
 
         # First migration (2.0 -> 2.1 -> 3.0)
         json_path = temp_playbook_dir / "playbook.json"
-        manager1 = PlaybookManager(playbook_path=str(json_path), db_path=str(db_path), use_semantic_search=False)
+        manager1 = PlaybookManager(
+            playbook_path=str(json_path),
+            db_path=str(db_path),
+            use_semantic_search=False,
+        )
         manager1.close()
 
         # Second migration (should be no-op, already at 3.0)
-        manager2 = PlaybookManager(playbook_path=str(json_path), db_path=str(db_path), use_semantic_search=False)
+        manager2 = PlaybookManager(
+            playbook_path=str(json_path),
+            db_path=str(db_path),
+            use_semantic_search=False,
+        )
 
         # Verify at 3.0 (migration chain completed)
         cursor = manager2.db_conn.cursor()
         cursor.execute("SELECT value FROM metadata WHERE key = 'schema_version'")
         version = cursor.fetchone()[0]
-        assert version == '3.0', f"Expected schema version 3.0, got {version}"
+        assert version == "3.0", f"Expected schema version 3.0, got {version}"
 
         manager2.close()
 
@@ -536,12 +576,13 @@ class TestSchemaMigration:
         """New executable_scripts field allows NULL for existing bullets"""
         json_path = temp_playbook_dir / "playbook.json"
 
-        manager = PlaybookManager(playbook_path=str(json_path), use_semantic_search=False)
+        manager = PlaybookManager(
+            playbook_path=str(json_path), use_semantic_search=False
+        )
 
         # Add bullet without executable_scripts
         manager._add_bullet(
-            section="IMPLEMENTATION_PATTERNS",
-            content="Test pattern without scripts"
+            section="IMPLEMENTATION_PATTERNS", content="Test pattern without scripts"
         )
 
         # Verify it was added with NULL executable_scripts
@@ -556,19 +597,23 @@ class TestSchemaMigration:
         """New bullets can store executable_scripts data"""
         json_path = temp_playbook_dir / "playbook.json"
 
-        manager = PlaybookManager(playbook_path=str(json_path), use_semantic_search=False)
+        manager = PlaybookManager(
+            playbook_path=str(json_path), use_semantic_search=False
+        )
 
         # Add bullet with executable_scripts
         scripts = ["scripts/test.sh", "scripts/validate.py"]
         bullet_id = manager._add_bullet(
             section="IMPLEMENTATION_PATTERNS",
             content="Test pattern with scripts",
-            executable_scripts=scripts
+            executable_scripts=scripts,
         )
 
         # Verify it was stored correctly
         cursor = manager.db_conn.cursor()
-        cursor.execute("SELECT executable_scripts FROM bullets WHERE id = ?", (bullet_id,))
+        cursor.execute(
+            "SELECT executable_scripts FROM bullets WHERE id = ?", (bullet_id,)
+        )
         stored = cursor.fetchone()[0]
         assert json.loads(stored) == scripts
 
@@ -587,7 +632,8 @@ class TestSchemaMigration:
         cursor = conn.cursor()
 
         # Create 2.1 schema (with executable_scripts)
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS bullets (
                 id TEXT PRIMARY KEY,
                 section TEXT NOT NULL,
@@ -604,68 +650,83 @@ class TestSchemaMigration:
                 related_bullets TEXT,
                 executable_scripts TEXT
             )
-        """)
+        """
+        )
 
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS metadata (
                 key TEXT PRIMARY KEY,
                 value TEXT
             )
-        """)
+        """
+        )
 
         # Set schema version to 2.1
         cursor.execute("INSERT INTO metadata VALUES ('schema_version', '2.1')")
 
         # Add a test bullet
-        cursor.execute("""
+        cursor.execute(
+            """
             INSERT INTO bullets (id, section, content, created_at, last_used_at, tags, related_bullets)
             VALUES ('impl-0001', 'IMPLEMENTATION_PATTERNS', 'Test pattern', '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z', '[]', '[]')
-        """)
+        """
+        )
 
         conn.commit()
         conn.close()
 
         # Create PlaybookManager - should trigger migration to 3.0
         json_path = temp_playbook_dir / "playbook.json"
-        manager = PlaybookManager(playbook_path=str(json_path), db_path=str(db_path), use_semantic_search=False)
+        manager = PlaybookManager(
+            playbook_path=str(json_path),
+            db_path=str(db_path),
+            use_semantic_search=False,
+        )
 
         # Verify schema version updated to 3.0
         cursor = manager.db_conn.cursor()
         cursor.execute("SELECT value FROM metadata WHERE key = 'schema_version'")
         version = cursor.fetchone()[0]
-        assert version == '3.0', f"Expected schema version 3.0, got {version}"
+        assert version == "3.0", f"Expected schema version 3.0, got {version}"
 
         # Verify KG tables exist
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT name FROM sqlite_master
             WHERE type='table' AND name IN ('entities', 'relationships', 'provenance')
             ORDER BY name
-        """)
+        """
+        )
         kg_tables = [row[0] for row in cursor.fetchall()]
-        assert len(kg_tables) == 3, f"Expected 3 KG tables, found {len(kg_tables)}: {kg_tables}"
-        assert 'entities' in kg_tables
-        assert 'relationships' in kg_tables
-        assert 'provenance' in kg_tables
+        assert (
+            len(kg_tables) == 3
+        ), f"Expected 3 KG tables, found {len(kg_tables)}: {kg_tables}"
+        assert "entities" in kg_tables
+        assert "relationships" in kg_tables
+        assert "provenance" in kg_tables
 
         # Verify FTS table for entities exists
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT name FROM sqlite_master
             WHERE type='table' AND name = 'entities_fts'
-        """)
+        """
+        )
         fts_table = cursor.fetchone()
         assert fts_table is not None, "entities_fts table not created"
 
         # Verify existing bullet data preserved
         cursor.execute("SELECT id, content FROM bullets WHERE id = 'impl-0001'")
         row = cursor.fetchone()
-        assert row[0] == 'impl-0001'
-        assert row[1] == 'Test pattern'
+        assert row[0] == "impl-0001"
+        assert row[1] == "Test pattern"
 
         # Verify metadata keys added
         cursor.execute("SELECT value FROM metadata WHERE key = 'kg_enabled'")
         kg_enabled = cursor.fetchone()
         assert kg_enabled is not None
-        assert kg_enabled[0] == '1'
+        assert kg_enabled[0] == "1"
 
         manager.close()
 
@@ -677,7 +738,8 @@ class TestSchemaMigration:
         conn = sqlite3.connect(str(db_path))
         cursor = conn.cursor()
 
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS bullets (
                 id TEXT PRIMARY KEY,
                 section TEXT NOT NULL,
@@ -694,14 +756,17 @@ class TestSchemaMigration:
                 related_bullets TEXT,
                 executable_scripts TEXT
             )
-        """)
+        """
+        )
 
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS metadata (
                 key TEXT PRIMARY KEY,
                 value TEXT
             )
-        """)
+        """
+        )
 
         cursor.execute("INSERT INTO metadata VALUES ('schema_version', '2.1')")
         conn.commit()
@@ -709,23 +774,33 @@ class TestSchemaMigration:
 
         # First migration to 3.0
         json_path = temp_playbook_dir / "playbook.json"
-        manager1 = PlaybookManager(playbook_path=str(json_path), db_path=str(db_path), use_semantic_search=False)
+        manager1 = PlaybookManager(
+            playbook_path=str(json_path),
+            db_path=str(db_path),
+            use_semantic_search=False,
+        )
         manager1.close()
 
         # Second instantiation (should be no-op, already at 3.0)
-        manager2 = PlaybookManager(playbook_path=str(json_path), db_path=str(db_path), use_semantic_search=False)
+        manager2 = PlaybookManager(
+            playbook_path=str(json_path),
+            db_path=str(db_path),
+            use_semantic_search=False,
+        )
 
         # Verify still at 3.0
         cursor = manager2.db_conn.cursor()
         cursor.execute("SELECT value FROM metadata WHERE key = 'schema_version'")
         version = cursor.fetchone()[0]
-        assert version == '3.0'
+        assert version == "3.0"
 
         # Verify tables still exist
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT COUNT(*) FROM sqlite_master
             WHERE type='table' AND name IN ('entities', 'relationships', 'provenance')
-        """)
+        """
+        )
         table_count = cursor.fetchone()[0]
         assert table_count == 3
 
@@ -735,13 +810,17 @@ class TestSchemaMigration:
         """Verify foreign key constraints are enabled (required for KG CASCADE deletes)"""
         json_path = temp_playbook_dir / "playbook.json"
 
-        manager = PlaybookManager(playbook_path=str(json_path), use_semantic_search=False)
+        manager = PlaybookManager(
+            playbook_path=str(json_path), use_semantic_search=False
+        )
 
         # Check PRAGMA foreign_keys
         cursor = manager.db_conn.cursor()
         cursor.execute("PRAGMA foreign_keys")
         foreign_keys_enabled = cursor.fetchone()[0]
-        assert foreign_keys_enabled == 1, "Foreign keys not enabled! Required for KG schema CASCADE deletes."
+        assert (
+            foreign_keys_enabled == 1
+        ), "Foreign keys not enabled! Required for KG schema CASCADE deletes."
 
         manager.close()
 
@@ -749,14 +828,16 @@ class TestSchemaMigration:
         """apply_delta ADD operation supports executable_scripts"""
         json_path = temp_playbook_dir / "playbook.json"
 
-        manager = PlaybookManager(playbook_path=str(json_path), use_semantic_search=False)
+        manager = PlaybookManager(
+            playbook_path=str(json_path), use_semantic_search=False
+        )
 
         operations = [
             {
                 "type": "ADD",
                 "section": "IMPLEMENTATION_PATTERNS",
                 "content": "Pattern with attached scripts",
-                "executable_scripts": ["scripts/deploy.sh", "scripts/rollback.sh"]
+                "executable_scripts": ["scripts/deploy.sh", "scripts/rollback.sh"],
             }
         ]
 
@@ -767,6 +848,9 @@ class TestSchemaMigration:
         # Verify scripts were stored
         bullets = manager.playbook["sections"]["IMPLEMENTATION_PATTERNS"]["bullets"]
         assert len(bullets) == 1
-        assert bullets[0]["executable_scripts"] == ["scripts/deploy.sh", "scripts/rollback.sh"]
+        assert bullets[0]["executable_scripts"] == [
+            "scripts/deploy.sh",
+            "scripts/rollback.sh",
+        ]
 
         manager.close()

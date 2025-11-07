@@ -27,6 +27,7 @@ from pathlib import Path
 # Test Fixtures
 # ============================================================================
 
+
 @pytest.fixture
 def hook_script_path():
     """Return absolute path to session-start.sh hook script"""
@@ -82,7 +83,10 @@ def checkpoint_with_control_chars():
 # Helper Functions
 # ============================================================================
 
-def run_hook(hook_path: Path, workspace: Path, timeout: int = 5) -> subprocess.CompletedProcess:
+
+def run_hook(
+    hook_path: Path, workspace: Path, timeout: int = 5
+) -> subprocess.CompletedProcess:
     """
     Execute session-start hook as subprocess.
 
@@ -99,7 +103,7 @@ def run_hook(hook_path: Path, workspace: Path, timeout: int = 5) -> subprocess.C
         cwd=str(workspace),
         capture_output=True,
         text=True,
-        timeout=timeout
+        timeout=timeout,
     )
     return result
 
@@ -123,6 +127,7 @@ def parse_hook_output(result: subprocess.CompletedProcess) -> dict:
 # ============================================================================
 # Subprocess Execution Tests (2 cases)
 # ============================================================================
+
 
 def test_hook_executes_as_subprocess(hook_script_path, test_workspace):
     """Test that hook script executes successfully as subprocess"""
@@ -150,15 +155,14 @@ def test_hook_logs_to_stderr(hook_script_path, test_workspace):
 # Valid Injection Tests (3 cases)
 # ============================================================================
 
+
 def test_valid_checkpoint_returns_json_with_context(
-    hook_script_path,
-    test_workspace,
-    valid_checkpoint_content
+    hook_script_path, test_workspace, valid_checkpoint_content
 ):
     """Test that valid checkpoint file returns JSON with additionalContext"""
     # Setup: Create valid checkpoint
     checkpoint = test_workspace / ".map" / "current_plan.md"
-    checkpoint.write_text(valid_checkpoint_content, encoding='utf-8')
+    checkpoint.write_text(valid_checkpoint_content, encoding="utf-8")
 
     # Execute hook
     result = run_hook(hook_script_path, test_workspace)
@@ -185,14 +189,12 @@ def test_valid_checkpoint_returns_json_with_context(
 
 
 def test_valid_checkpoint_includes_sanitized_content(
-    hook_script_path,
-    test_workspace,
-    checkpoint_with_control_chars
+    hook_script_path, test_workspace, checkpoint_with_control_chars
 ):
     """Test that checkpoint content is sanitized before injection"""
     # Setup: Create checkpoint with control characters
     checkpoint = test_workspace / ".map" / "current_plan.md"
-    checkpoint.write_text(checkpoint_with_control_chars, encoding='utf-8')
+    checkpoint.write_text(checkpoint_with_control_chars, encoding="utf-8")
 
     # Execute hook
     result = run_hook(hook_script_path, test_workspace)
@@ -205,7 +207,7 @@ def test_valid_checkpoint_includes_sanitized_content(
     # Verify control characters are removed
     assert "\x00" not in context  # NULL removed
     assert "\x1b" not in context  # ESC removed
-    assert "\r" not in context    # CR removed
+    assert "\r" not in context  # CR removed
     assert "\x7f" not in context  # DELETE removed
 
     # Verify valid content remains
@@ -215,14 +217,12 @@ def test_valid_checkpoint_includes_sanitized_content(
 
 
 def test_valid_checkpoint_logs_success_metrics(
-    hook_script_path,
-    test_workspace,
-    valid_checkpoint_content
+    hook_script_path, test_workspace, valid_checkpoint_content
 ):
     """Test that successful validation logs file size metrics"""
     # Setup: Create valid checkpoint
     checkpoint = test_workspace / ".map" / "current_plan.md"
-    checkpoint.write_text(valid_checkpoint_content, encoding='utf-8')
+    checkpoint.write_text(valid_checkpoint_content, encoding="utf-8")
     file_size_kb = checkpoint.stat().st_size / 1024
 
     # Execute hook
@@ -241,6 +241,7 @@ def test_valid_checkpoint_logs_success_metrics(
 # ============================================================================
 # Missing File Tests (2 cases)
 # ============================================================================
+
 
 def test_missing_checkpoint_returns_minimal_json(hook_script_path, test_workspace):
     """Test that missing checkpoint file returns {continue: true} without context"""
@@ -286,12 +287,13 @@ def test_missing_map_directory_returns_minimal_json(hook_script_path, tmp_path):
 # Validation Failure Tests (4 cases)
 # ============================================================================
 
+
 def test_oversized_checkpoint_no_injection(hook_script_path, test_workspace):
     """Test that checkpoint >256KB fails validation and doesn't inject"""
     # Setup: Create 257KB checkpoint (just over limit)
     checkpoint = test_workspace / ".map" / "current_plan.md"
     large_content = "x" * (257 * 1024)
-    checkpoint.write_text(large_content, encoding='utf-8')
+    checkpoint.write_text(large_content, encoding="utf-8")
 
     # Execute hook
     result = run_hook(hook_script_path, test_workspace)
@@ -317,10 +319,10 @@ def test_path_traversal_checkpoint_no_injection(hook_script_path, test_workspace
 
     # Create a file outside .map/ that we'll try to reference
     outside_file = test_workspace / "secret.txt"
-    outside_file.write_text("Secret data!", encoding='utf-8')
+    outside_file.write_text("Secret data!", encoding="utf-8")
 
     # Write checkpoint that references outside file (in content)
-    checkpoint.write_text("Include: ../secret.txt", encoding='utf-8')
+    checkpoint.write_text("Include: ../secret.txt", encoding="utf-8")
 
     # Execute hook (should work - path traversal is about file location, not content)
     result = run_hook(hook_script_path, test_workspace)
@@ -338,7 +340,7 @@ def test_checkpoint_outside_map_directory_blocked(hook_script_path, test_workspa
     """Test that checkpoint file outside .map/ directory is rejected"""
     # Setup: Create checkpoint OUTSIDE .map/ directory
     malicious_checkpoint = test_workspace / "evil_checkpoint.md"
-    malicious_checkpoint.write_text("Malicious content", encoding='utf-8')
+    malicious_checkpoint.write_text("Malicious content", encoding="utf-8")
 
     # Create symlink inside .map/ pointing to outside file
     checkpoint_link = test_workspace / ".map" / "current_plan.md"
@@ -362,8 +364,8 @@ def test_invalid_utf8_checkpoint_no_injection(hook_script_path, test_workspace):
     # Setup: Create checkpoint with invalid UTF-8 bytes
     checkpoint = test_workspace / ".map" / "current_plan.md"
 
-    with open(checkpoint, 'wb') as f:
-        f.write(b'Valid start\xFF\xFEInvalid UTF-8 bytes')
+    with open(checkpoint, "wb") as f:
+        f.write(b"Valid start\xff\xfeInvalid UTF-8 bytes")
 
     # Execute hook
     result = run_hook(hook_script_path, test_workspace)
@@ -382,15 +384,14 @@ def test_invalid_utf8_checkpoint_no_injection(hook_script_path, test_workspace):
 # Performance Tests (2 cases)
 # ============================================================================
 
+
 def test_hook_execution_time_under_5_seconds(
-    hook_script_path,
-    test_workspace,
-    valid_checkpoint_content
+    hook_script_path, test_workspace, valid_checkpoint_content
 ):
     """Test that hook execution completes in <5 seconds"""
     # Setup: Create valid checkpoint
     checkpoint = test_workspace / ".map" / "current_plan.md"
-    checkpoint.write_text(valid_checkpoint_content, encoding='utf-8')
+    checkpoint.write_text(valid_checkpoint_content, encoding="utf-8")
 
     # Measure execution time
     start_time = time.time()
@@ -404,19 +405,19 @@ def test_hook_execution_time_under_5_seconds(
     assert elapsed_time < 5.0, f"Hook took {elapsed_time:.2f}s, exceeds 5s limit"
 
     # Typical execution should be much faster (<1s)
-    assert elapsed_time < 2.0, f"Hook took {elapsed_time:.2f}s, unusually slow (expected <1s)"
+    assert (
+        elapsed_time < 2.0
+    ), f"Hook took {elapsed_time:.2f}s, unusually slow (expected <1s)"
 
 
 def test_hook_execution_time_typical_performance(
-    hook_script_path,
-    test_workspace,
-    valid_checkpoint_content
+    hook_script_path, test_workspace, valid_checkpoint_content
 ):
     """Test that typical execution is fast (~0.1-0.5s)"""
     # Setup: Create reasonably sized checkpoint (5KB - typical size)
     checkpoint = test_workspace / ".map" / "current_plan.md"
     typical_content = valid_checkpoint_content * 5  # ~5KB
-    checkpoint.write_text(typical_content, encoding='utf-8')
+    checkpoint.write_text(typical_content, encoding="utf-8")
 
     # Measure execution time
     start_time = time.time()
@@ -429,18 +430,21 @@ def test_hook_execution_time_typical_performance(
     assert "additionalContext" in output
 
     # Verify typical performance (<1s for 5KB file)
-    assert elapsed_time < 1.0, f"Hook took {elapsed_time:.2f}s for 5KB file (expected <1s)"
+    assert (
+        elapsed_time < 1.0
+    ), f"Hook took {elapsed_time:.2f}s for 5KB file (expected <1s)"
 
 
 # ============================================================================
 # Cleanup Tests (2 cases)
 # ============================================================================
 
+
 def test_tmp_path_fixture_cleanup_after_test(test_workspace):
     """Verify that tmp_path fixture cleans up after test completes"""
     # Create files in test workspace
     checkpoint = test_workspace / ".map" / "current_plan.md"
-    checkpoint.write_text("Test content", encoding='utf-8')
+    checkpoint.write_text("Test content", encoding="utf-8")
 
     # Verify files exist during test
     assert checkpoint.exists()
@@ -454,7 +458,7 @@ def test_multiple_tests_use_isolated_workspaces(hook_script_path, test_workspace
     """Verify that each test gets isolated workspace (no cross-contamination)"""
     # Create checkpoint in this test's workspace
     checkpoint = test_workspace / ".map" / "current_plan.md"
-    checkpoint.write_text("Test isolation", encoding='utf-8')
+    checkpoint.write_text("Test isolation", encoding="utf-8")
 
     # Execute hook
     result = run_hook(hook_script_path, test_workspace)
@@ -471,11 +475,12 @@ def test_multiple_tests_use_isolated_workspaces(hook_script_path, test_workspace
 # Edge Cases and Error Handling (3 cases)
 # ============================================================================
 
+
 def test_empty_checkpoint_file_handled(hook_script_path, test_workspace):
     """Test that empty checkpoint file is handled gracefully"""
     # Setup: Create empty checkpoint
     checkpoint = test_workspace / ".map" / "current_plan.md"
-    checkpoint.write_text("", encoding='utf-8')
+    checkpoint.write_text("", encoding="utf-8")
 
     # Execute hook
     result = run_hook(hook_script_path, test_workspace)
@@ -496,7 +501,7 @@ def test_checkpoint_with_only_whitespace(hook_script_path, test_workspace):
     """Test that checkpoint with only whitespace/newlines is handled"""
     # Setup: Create checkpoint with only whitespace
     checkpoint = test_workspace / ".map" / "current_plan.md"
-    checkpoint.write_text("\n\n\t\t\n\n", encoding='utf-8')
+    checkpoint.write_text("\n\n\t\t\n\n", encoding="utf-8")
 
     # Execute hook
     result = run_hook(hook_script_path, test_workspace)
@@ -517,7 +522,7 @@ def test_hook_with_missing_validator_script(hook_script_path, tmp_path, monkeypa
     map_dir = tmp_path / ".map"
     map_dir.mkdir()
     checkpoint = map_dir / "current_plan.md"
-    checkpoint.write_text("Test content", encoding='utf-8')
+    checkpoint.write_text("Test content", encoding="utf-8")
 
     # Note: This test assumes validator is normally found
     # Hook script checks for validator existence and handles missing case
@@ -535,22 +540,26 @@ def test_hook_with_missing_validator_script(hook_script_path, tmp_path, monkeypa
 # Parametrized Tests for Multiple Scenarios (1 case)
 # ============================================================================
 
-@pytest.mark.parametrize("content,should_inject,expected_in_stderr", [
-    # (checkpoint_content, should_have_additionalContext, expected_stderr_fragment)
-    ("# Valid checkpoint\n\nProgress: 2/5", True, "Successfully validated checkpoint"),
-    ("", False, "Sanitized content is empty"),
-])
+
+@pytest.mark.parametrize(
+    "content,should_inject,expected_in_stderr",
+    [
+        # (checkpoint_content, should_have_additionalContext, expected_stderr_fragment)
+        (
+            "# Valid checkpoint\n\nProgress: 2/5",
+            True,
+            "Successfully validated checkpoint",
+        ),
+        ("", False, "Sanitized content is empty"),
+    ],
+)
 def test_checkpoint_scenarios_parametrized(
-    hook_script_path,
-    test_workspace,
-    content,
-    should_inject,
-    expected_in_stderr
+    hook_script_path, test_workspace, content, should_inject, expected_in_stderr
 ):
     """Parametrized test for multiple checkpoint scenarios"""
     # Setup: Create checkpoint with given content
     checkpoint = test_workspace / ".map" / "current_plan.md"
-    checkpoint.write_text(content, encoding='utf-8')
+    checkpoint.write_text(content, encoding="utf-8")
 
     # Execute hook
     result = run_hook(hook_script_path, test_workspace)
@@ -576,7 +585,7 @@ def test_checkpoint_size_bomb_scenario(hook_script_path, test_workspace):
     """Test size bomb scenario separately (cannot be parametrized due to ARG_MAX limit)"""
     # Setup: Create oversized checkpoint (257KB)
     checkpoint = test_workspace / ".map" / "current_plan.md"
-    checkpoint.write_text("x" * (257 * 1024), encoding='utf-8')
+    checkpoint.write_text("x" * (257 * 1024), encoding="utf-8")
 
     # Execute hook
     result = run_hook(hook_script_path, test_workspace)
@@ -599,6 +608,7 @@ def test_checkpoint_size_bomb_scenario(hook_script_path, test_workspace):
 # JSON Output Validation (2 cases)
 # ============================================================================
 
+
 def test_hook_output_valid_json_structure(hook_script_path, test_workspace):
     """Test that hook always outputs valid JSON with required fields"""
     # Test with no checkpoint
@@ -613,14 +623,12 @@ def test_hook_output_valid_json_structure(hook_script_path, test_workspace):
 
 
 def test_hook_additional_context_is_string(
-    hook_script_path,
-    test_workspace,
-    valid_checkpoint_content
+    hook_script_path, test_workspace, valid_checkpoint_content
 ):
     """Test that additionalContext field is a string (not object)"""
     # Setup: Create valid checkpoint
     checkpoint = test_workspace / ".map" / "current_plan.md"
-    checkpoint.write_text(valid_checkpoint_content, encoding='utf-8')
+    checkpoint.write_text(valid_checkpoint_content, encoding="utf-8")
 
     # Execute hook
     result = run_hook(hook_script_path, test_workspace)

@@ -34,26 +34,26 @@ def sample_subtasks():
     """Sample subtasks for testing"""
     return [
         {
-            'id': 1,
-            'description': 'Create User model',
-            'acceptance_criteria': 'Model validates email and hashes password',
-            'estimated_complexity': 'low',
-            'depends_on': []
+            "id": 1,
+            "description": "Create User model",
+            "acceptance_criteria": "Model validates email and hashes password",
+            "estimated_complexity": "low",
+            "depends_on": [],
         },
         {
-            'id': 2,
-            'description': 'Implement login endpoint',
-            'acceptance_criteria': 'POST /auth/login returns JWT token',
-            'estimated_complexity': 'medium',
-            'depends_on': [1]
+            "id": 2,
+            "description": "Implement login endpoint",
+            "acceptance_criteria": "POST /auth/login returns JWT token",
+            "estimated_complexity": "medium",
+            "depends_on": [1],
         },
         {
-            'id': 3,
-            'description': 'Add token validation',
-            'acceptance_criteria': 'Middleware validates tokens',
-            'estimated_complexity': 'low',
-            'depends_on': [2]
-        }
+            "id": 3,
+            "description": "Add token validation",
+            "acceptance_criteria": "Middleware validates tokens",
+            "estimated_complexity": "low",
+            "depends_on": [2],
+        },
     ]
 
 
@@ -63,24 +63,25 @@ class TestRecitationManagerCreation:
     def test_create_plan(self, manager, sample_subtasks):
         """Test creating a new plan"""
         plan = manager.create_plan(
-            task_id='feat_auth',
-            goal='Implement JWT authentication',
-            subtasks=sample_subtasks
+            task_id="feat_auth",
+            goal="Implement JWT authentication",
+            subtasks=sample_subtasks,
         )
 
-        assert plan.task_id == 'feat_auth'
-        assert plan.goal == 'Implement JWT authentication'
+        assert plan.task_id == "feat_auth"
+        assert plan.goal == "Implement JWT authentication"
         assert len(plan.subtasks) == 3
         # IDs are now stored as strings
-        assert plan.current_subtask_id in [1, "1"]  # Support both for backward compatibility
-        assert plan.subtasks[0].status == 'pending'
+        assert plan.current_subtask_id in [
+            1,
+            "1",
+        ]  # Support both for backward compatibility
+        assert plan.subtasks[0].status == "pending"
 
     def test_plan_files_created(self, manager, sample_subtasks):
         """Test that plan files are created"""
         manager.create_plan(
-            task_id='test_task',
-            goal='Test goal',
-            subtasks=sample_subtasks
+            task_id="test_task", goal="Test goal", subtasks=sample_subtasks
         )
 
         assert manager.plan_file.exists()
@@ -90,110 +91,111 @@ class TestRecitationManagerCreation:
     def test_plan_json_structure(self, manager, sample_subtasks):
         """Test JSON plan structure"""
         manager.create_plan(
-            task_id='test_task',
-            goal='Test goal',
-            subtasks=sample_subtasks
+            task_id="test_task", goal="Test goal", subtasks=sample_subtasks
         )
 
         plan_data = json.loads(manager.plan_json.read_text())
 
-        assert 'task_id' in plan_data
-        assert 'goal' in plan_data
-        assert 'subtasks' in plan_data
-        assert 'current_subtask_id' in plan_data
-        assert 'created_at' in plan_data
-        assert 'updated_at' in plan_data
+        assert "task_id" in plan_data
+        assert "goal" in plan_data
+        assert "subtasks" in plan_data
+        assert "current_subtask_id" in plan_data
+        assert "created_at" in plan_data
+        assert "updated_at" in plan_data
 
     def test_markdown_generated(self, manager, sample_subtasks):
         """Test that markdown is generated"""
         manager.create_plan(
-            task_id='test_task',
-            goal='Test goal',
-            subtasks=sample_subtasks
+            task_id="test_task", goal="Test goal", subtasks=sample_subtasks
         )
 
         md_content = manager.plan_file.read_text()
 
-        assert '# Current Task: test_task' in md_content
-        assert 'Test goal' in md_content
-        assert 'Progress: 0/3' in md_content
-        assert '☐' in md_content  # Pending marker
+        assert "# Current Task: test_task" in md_content
+        assert "Test goal" in md_content
+        assert "Progress: 0/3" in md_content
+        assert "☐" in md_content  # Pending marker
+
 
 class TestSubtaskStatusUpdates:
     """Test subtask status update functionality"""
 
     def test_update_to_in_progress(self, manager, sample_subtasks):
         """Test updating subtask to in_progress"""
-        manager.create_plan('test', 'Test', sample_subtasks)
+        manager.create_plan("test", "Test", sample_subtasks)
 
-        plan = manager.update_subtask_status(1, 'in_progress')
+        plan = manager.update_subtask_status(1, "in_progress")
 
-        assert plan.subtasks[0].status == 'in_progress'
+        assert plan.subtasks[0].status == "in_progress"
         assert plan.subtasks[0].iterations == 1
-        assert plan.current_subtask_id in [1, "1"]  # Support both for backward compatibility
+        assert plan.current_subtask_id in [
+            1,
+            "1",
+        ]  # Support both for backward compatibility
 
     def test_update_to_completed(self, manager, sample_subtasks):
         """Test updating subtask to completed"""
-        manager.create_plan('test', 'Test', sample_subtasks)
-        manager.update_subtask_status(1, 'in_progress')
+        manager.create_plan("test", "Test", sample_subtasks)
+        manager.update_subtask_status(1, "in_progress")
 
-        plan = manager.update_subtask_status(1, 'completed')
+        plan = manager.update_subtask_status(1, "completed")
 
-        assert plan.subtasks[0].status == 'completed'
+        assert plan.subtasks[0].status == "completed"
 
     def test_retry_increments_iterations(self, manager, sample_subtasks):
         """Test that retries increment iteration count"""
-        manager.create_plan('test', 'Test', sample_subtasks)
+        manager.create_plan("test", "Test", sample_subtasks)
 
-        manager.update_subtask_status(1, 'in_progress')
-        manager.update_subtask_status(1, 'in_progress')  # Retry
-        plan = manager.update_subtask_status(1, 'in_progress')  # Another retry
+        manager.update_subtask_status(1, "in_progress")
+        manager.update_subtask_status(1, "in_progress")  # Retry
+        plan = manager.update_subtask_status(1, "in_progress")  # Another retry
 
         assert plan.subtasks[0].iterations == 3
 
     def test_error_recording(self, manager, sample_subtasks):
         """Test that errors are recorded"""
-        manager.create_plan('test', 'Test', sample_subtasks)
+        manager.create_plan("test", "Test", sample_subtasks)
 
-        manager.update_subtask_status(1, 'in_progress')
+        manager.update_subtask_status(1, "in_progress")
         plan = manager.update_subtask_status(
-            1,
-            'in_progress',
-            error='Missing import for JWT library'
+            1, "in_progress", error="Missing import for JWT library"
         )
 
         assert len(plan.subtasks[0].errors) == 1
-        assert 'JWT library' in plan.subtasks[0].errors[0]
+        assert "JWT library" in plan.subtasks[0].errors[0]
 
     def test_multiple_errors_recorded(self, manager, sample_subtasks):
         """Test that multiple errors are tracked"""
-        manager.create_plan('test', 'Test', sample_subtasks)
+        manager.create_plan("test", "Test", sample_subtasks)
 
-        manager.update_subtask_status(1, 'in_progress')
-        manager.update_subtask_status(1, 'in_progress', error='Error 1')
-        plan = manager.update_subtask_status(1, 'in_progress', error='Error 2')
+        manager.update_subtask_status(1, "in_progress")
+        manager.update_subtask_status(1, "in_progress", error="Error 1")
+        plan = manager.update_subtask_status(1, "in_progress", error="Error 2")
 
         assert len(plan.subtasks[0].errors) == 2
 
     def test_progress_through_all_subtasks(self, manager, sample_subtasks):
         """Test progressing through all subtasks"""
-        manager.create_plan('test', 'Test', sample_subtasks)
+        manager.create_plan("test", "Test", sample_subtasks)
 
         # Complete subtask 1
-        manager.update_subtask_status(1, 'in_progress')
-        manager.update_subtask_status(1, 'completed')
+        manager.update_subtask_status(1, "in_progress")
+        manager.update_subtask_status(1, "completed")
 
         # Complete subtask 2
-        manager.update_subtask_status(2, 'in_progress')
-        manager.update_subtask_status(2, 'completed')
+        manager.update_subtask_status(2, "in_progress")
+        manager.update_subtask_status(2, "completed")
 
         # Start subtask 3
-        plan = manager.update_subtask_status(3, 'in_progress')
+        plan = manager.update_subtask_status(3, "in_progress")
 
-        assert plan.subtasks[0].status == 'completed'
-        assert plan.subtasks[1].status == 'completed'
-        assert plan.subtasks[2].status == 'in_progress'
-        assert plan.current_subtask_id in [3, "3"]  # Support both for backward compatibility
+        assert plan.subtasks[0].status == "completed"
+        assert plan.subtasks[1].status == "completed"
+        assert plan.subtasks[2].status == "in_progress"
+        assert plan.current_subtask_id in [
+            3,
+            "3",
+        ]  # Support both for backward compatibility
 
 
 class TestMarkdownGeneration:
@@ -201,98 +203,94 @@ class TestMarkdownGeneration:
 
     def test_pending_marker(self, manager, sample_subtasks):
         """Test that pending subtasks show ☐"""
-        manager.create_plan('test', 'Test', sample_subtasks)
+        manager.create_plan("test", "Test", sample_subtasks)
 
         md = manager.plan_file.read_text()
-        assert '☐' in md
+        assert "☐" in md
 
     def test_in_progress_marker(self, manager, sample_subtasks):
         """Test that in-progress subtasks show →"""
-        manager.create_plan('test', 'Test', sample_subtasks)
-        manager.update_subtask_status(1, 'in_progress')
+        manager.create_plan("test", "Test", sample_subtasks)
+        manager.update_subtask_status(1, "in_progress")
 
         md = manager.plan_file.read_text()
-        assert '→' in md
-        assert 'CURRENT' in md
+        assert "→" in md
+        assert "CURRENT" in md
 
     def test_completed_marker(self, manager, sample_subtasks):
         """Test that completed subtasks show ✓"""
-        manager.create_plan('test', 'Test', sample_subtasks)
-        manager.update_subtask_status(1, 'in_progress')
-        manager.update_subtask_status(1, 'completed')
+        manager.create_plan("test", "Test", sample_subtasks)
+        manager.update_subtask_status(1, "in_progress")
+        manager.update_subtask_status(1, "completed")
 
         md = manager.plan_file.read_text()
-        assert '✓' in md
+        assert "✓" in md
 
     def test_current_focus_section(self, manager, sample_subtasks):
         """Test that current focus section is generated"""
-        manager.create_plan('test', 'Test', sample_subtasks)
-        manager.update_subtask_status(2, 'in_progress')
+        manager.create_plan("test", "Test", sample_subtasks)
+        manager.update_subtask_status(2, "in_progress")
 
         md = manager.plan_file.read_text()
-        assert '## Current Focus' in md
-        assert 'Subtask 2' in md
-        assert 'Implement login endpoint' in md
+        assert "## Current Focus" in md
+        assert "Subtask 2" in md
+        assert "Implement login endpoint" in md
 
     def test_acceptance_criteria_shown(self, manager, sample_subtasks):
         """Test that acceptance criteria is shown for current task"""
-        manager.create_plan('test', 'Test', sample_subtasks)
-        manager.update_subtask_status(1, 'in_progress')
+        manager.create_plan("test", "Test", sample_subtasks)
+        manager.update_subtask_status(1, "in_progress")
 
         md = manager.plan_file.read_text()
-        assert 'Acceptance Criteria:' in md
-        assert 'Model validates email' in md
+        assert "Acceptance Criteria:" in md
+        assert "Model validates email" in md
 
     def test_complexity_shown(self, manager, sample_subtasks):
         """Test that complexity is shown"""
-        manager.create_plan('test', 'Test', sample_subtasks)
-        manager.update_subtask_status(2, 'in_progress')
+        manager.create_plan("test", "Test", sample_subtasks)
+        manager.update_subtask_status(2, "in_progress")
 
         md = manager.plan_file.read_text()
-        assert 'Complexity:' in md
-        assert 'medium' in md
+        assert "Complexity:" in md
+        assert "medium" in md
 
     def test_retry_warning(self, manager, sample_subtasks):
         """Test that retry warning is shown"""
-        manager.create_plan('test', 'Test', sample_subtasks)
-        manager.update_subtask_status(1, 'in_progress')
-        manager.update_subtask_status(1, 'in_progress')  # Retry
+        manager.create_plan("test", "Test", sample_subtasks)
+        manager.update_subtask_status(1, "in_progress")
+        manager.update_subtask_status(1, "in_progress")  # Retry
 
         md = manager.plan_file.read_text()
-        assert '⚠️' in md
-        assert 'Retry attempt 2' in md
+        assert "⚠️" in md
+        assert "Retry attempt 2" in md
 
     def test_error_shown_in_markdown(self, manager, sample_subtasks):
         """Test that errors are shown in markdown"""
-        manager.create_plan('test', 'Test', sample_subtasks)
-        manager.update_subtask_status(
-            1,
-            'in_progress',
-            error='Test error message'
-        )
+        manager.create_plan("test", "Test", sample_subtasks)
+        manager.update_subtask_status(1, "in_progress", error="Test error message")
 
         md = manager.plan_file.read_text()
-        assert 'Test error' in md
+        assert "Test error" in md
 
     def test_progress_counter(self, manager, sample_subtasks):
         """Test that progress counter is accurate"""
-        manager.create_plan('test', 'Test', sample_subtasks)
+        manager.create_plan("test", "Test", sample_subtasks)
 
         # Initially 0/3
         md = manager.plan_file.read_text()
-        assert 'Progress: 0/3' in md
+        assert "Progress: 0/3" in md
 
         # Complete one
-        manager.update_subtask_status(1, 'in_progress')
-        manager.update_subtask_status(1, 'completed')
+        manager.update_subtask_status(1, "in_progress")
+        manager.update_subtask_status(1, "completed")
         md = manager.plan_file.read_text()
-        assert 'Progress: 1/3' in md
+        assert "Progress: 1/3" in md
 
         # Complete two
-        manager.update_subtask_status(2, 'in_progress')
-        manager.update_subtask_status(2, 'completed')
+        manager.update_subtask_status(2, "in_progress")
+        manager.update_subtask_status(2, "completed")
         md = manager.plan_file.read_text()
-        assert 'Progress: 2/3' in md
+        assert "Progress: 2/3" in md
 
 
 class TestContextRetrieval:
@@ -300,13 +298,13 @@ class TestContextRetrieval:
 
     def test_get_current_context(self, manager, sample_subtasks):
         """Test getting current context"""
-        manager.create_plan('test', 'Test', sample_subtasks)
+        manager.create_plan("test", "Test", sample_subtasks)
 
         context = manager.get_current_context()
 
         assert isinstance(context, str)
         assert len(context) > 0
-        assert '# Current Task:' in context
+        assert "# Current Task:" in context
 
     def test_get_context_when_no_plan(self, manager):
         """Test getting context when no plan exists"""
@@ -316,12 +314,12 @@ class TestContextRetrieval:
 
     def test_get_plan_object(self, manager, sample_subtasks):
         """Test getting plan object"""
-        manager.create_plan('test', 'Test', sample_subtasks)
+        manager.create_plan("test", "Test", sample_subtasks)
 
         plan = manager.get_plan()
 
         assert isinstance(plan, TaskPlan)
-        assert plan.task_id == 'test'
+        assert plan.task_id == "test"
 
 
 class TestStatistics:
@@ -329,52 +327,52 @@ class TestStatistics:
 
     def test_statistics_structure(self, manager, sample_subtasks):
         """Test statistics dictionary structure"""
-        manager.create_plan('test', 'Test', sample_subtasks)
+        manager.create_plan("test", "Test", sample_subtasks)
 
         stats = manager.get_statistics()
 
-        assert 'total_subtasks' in stats
-        assert 'completed' in stats
-        assert 'in_progress' in stats
-        assert 'failed' in stats
-        assert 'pending' in stats
-        assert 'total_iterations' in stats
-        assert 'current_subtask' in stats
-        assert 'created_at' in stats
-        assert 'updated_at' in stats
+        assert "total_subtasks" in stats
+        assert "completed" in stats
+        assert "in_progress" in stats
+        assert "failed" in stats
+        assert "pending" in stats
+        assert "total_iterations" in stats
+        assert "current_subtask" in stats
+        assert "created_at" in stats
+        assert "updated_at" in stats
 
     def test_statistics_counts(self, manager, sample_subtasks):
         """Test that statistics counts are accurate"""
-        manager.create_plan('test', 'Test', sample_subtasks)
+        manager.create_plan("test", "Test", sample_subtasks)
 
         stats = manager.get_statistics()
-        assert stats['total_subtasks'] == 3
-        assert stats['pending'] == 3
-        assert stats['completed'] == 0
+        assert stats["total_subtasks"] == 3
+        assert stats["pending"] == 3
+        assert stats["completed"] == 0
 
         # Complete one
-        manager.update_subtask_status(1, 'in_progress')
-        manager.update_subtask_status(1, 'completed')
+        manager.update_subtask_status(1, "in_progress")
+        manager.update_subtask_status(1, "completed")
 
         stats = manager.get_statistics()
-        assert stats['completed'] == 1
-        assert stats['pending'] == 2
+        assert stats["completed"] == 1
+        assert stats["pending"] == 2
 
     def test_total_iterations(self, manager, sample_subtasks):
         """Test total iterations count"""
-        manager.create_plan('test', 'Test', sample_subtasks)
+        manager.create_plan("test", "Test", sample_subtasks)
 
         # First task: 2 iterations
-        manager.update_subtask_status(1, 'in_progress')
-        manager.update_subtask_status(1, 'in_progress')
+        manager.update_subtask_status(1, "in_progress")
+        manager.update_subtask_status(1, "in_progress")
 
         # Second task: 3 iterations
-        manager.update_subtask_status(2, 'in_progress')
-        manager.update_subtask_status(2, 'in_progress')
-        manager.update_subtask_status(2, 'in_progress')
+        manager.update_subtask_status(2, "in_progress")
+        manager.update_subtask_status(2, "in_progress")
+        manager.update_subtask_status(2, "in_progress")
 
         stats = manager.get_statistics()
-        assert stats['total_iterations'] == 5
+        assert stats["total_iterations"] == 5
 
     def test_statistics_when_no_plan(self, manager):
         """Test statistics when no plan exists"""
@@ -388,7 +386,7 @@ class TestPlanClearing:
 
     def test_clear_plan(self, manager, sample_subtasks):
         """Test clearing the plan"""
-        manager.create_plan('test', 'Test', sample_subtasks)
+        manager.create_plan("test", "Test", sample_subtasks)
 
         assert manager.plan_file.exists()
         assert manager.plan_json.exists()
@@ -411,27 +409,27 @@ class TestPersistence:
         """Test that plan persists across manager instances"""
         # Create plan with first manager
         manager1 = RecitationManager(temp_project)
-        manager1.create_plan('test', 'Test', sample_subtasks)
-        manager1.update_subtask_status(1, 'in_progress')
+        manager1.create_plan("test", "Test", sample_subtasks)
+        manager1.update_subtask_status(1, "in_progress")
 
         # Load with second manager
         manager2 = RecitationManager(temp_project)
         plan = manager2.get_plan()
 
         assert plan is not None
-        assert plan.task_id == 'test'
-        assert plan.subtasks[0].status == 'in_progress'
+        assert plan.task_id == "test"
+        assert plan.subtasks[0].status == "in_progress"
 
     def test_statistics_after_reload(self, temp_project, sample_subtasks):
         """Test statistics work after reload"""
         manager1 = RecitationManager(temp_project)
-        manager1.create_plan('test', 'Test', sample_subtasks)
-        manager1.update_subtask_status(1, 'completed')
+        manager1.create_plan("test", "Test", sample_subtasks)
+        manager1.update_subtask_status(1, "completed")
 
         manager2 = RecitationManager(temp_project)
         stats = manager2.get_statistics()
 
-        assert stats['completed'] == 1
+        assert stats["completed"] == 1
 
 
 class TestEdgeCases:
@@ -439,45 +437,43 @@ class TestEdgeCases:
 
     def test_empty_subtasks_list(self, manager):
         """Test creating plan with no subtasks"""
-        plan = manager.create_plan('test', 'Test', [])
+        plan = manager.create_plan("test", "Test", [])
 
         assert plan.current_subtask_id is None
         assert len(plan.subtasks) == 0
 
     def test_update_nonexistent_subtask(self, manager, sample_subtasks):
         """Test updating a subtask that doesn't exist"""
-        manager.create_plan('test', 'Test', sample_subtasks)
+        manager.create_plan("test", "Test", sample_subtasks)
 
         # Should raise an error when subtask ID is not found
         with pytest.raises(ValueError, match="Subtask with id 999"):
-            manager.update_subtask_status(999, 'completed')
+            manager.update_subtask_status(999, "completed")
 
     def test_long_error_message(self, manager, sample_subtasks):
         """Test that long error messages are truncated in markdown"""
-        manager.create_plan('test', 'Test', sample_subtasks)
+        manager.create_plan("test", "Test", sample_subtasks)
 
-        long_error = 'Error: ' + 'x' * 200
-        manager.update_subtask_status(1, 'in_progress', error=long_error)
+        long_error = "Error: " + "x" * 200
+        manager.update_subtask_status(1, "in_progress", error=long_error)
 
         md = manager.plan_file.read_text()
         # Check that error is truncated to ~100 chars
-        assert 'xxx...' in md
+        assert "xxx..." in md
         assert len(long_error) > 100
 
     def test_unicode_in_description(self, manager):
         """Test that unicode characters work in descriptions"""
-        subtasks = [{
-            'id': 1,
-            'description': 'Добавить аутентификацию 🔐',
-            'depends_on': []
-        }]
+        subtasks = [
+            {"id": 1, "description": "Добавить аутентификацию 🔐", "depends_on": []}
+        ]
 
-        plan = manager.create_plan('test', 'Test 测试', subtasks)
+        plan = manager.create_plan("test", "Test 测试", subtasks)
         md = manager.get_current_context()
 
-        assert 'Добавить' in md
-        assert '🔐' in md
-        assert '测试' in md
+        assert "Добавить" in md
+        assert "🔐" in md
+        assert "测试" in md
 
 
 class TestRecitationPattern:
@@ -486,60 +482,52 @@ class TestRecitationPattern:
     def test_full_workflow(self, manager, sample_subtasks):
         """Test a complete workflow with recitation"""
         # Create plan
-        manager.create_plan(
-            'feat_auth',
-            'Implement authentication',
-            sample_subtasks
-        )
+        manager.create_plan("feat_auth", "Implement authentication", sample_subtasks)
 
         # Simulate Actor working on subtask 1
-        manager.update_subtask_status(1, 'in_progress')
+        manager.update_subtask_status(1, "in_progress")
         context1 = manager.get_current_context()
-        assert '→' in context1
-        assert 'Subtask 1' in context1
+        assert "→" in context1
+        assert "Subtask 1" in context1
 
         # Monitor approves, complete subtask 1
-        manager.update_subtask_status(1, 'completed')
+        manager.update_subtask_status(1, "completed")
 
         # Actor starts subtask 2
-        manager.update_subtask_status(2, 'in_progress')
+        manager.update_subtask_status(2, "in_progress")
         context2 = manager.get_current_context()
-        assert '✓' in context2  # Subtask 1 completed
-        assert '→' in context2  # Subtask 2 in progress
-        assert 'Subtask 2' in context2
+        assert "✓" in context2  # Subtask 1 completed
+        assert "→" in context2  # Subtask 2 in progress
+        assert "Subtask 2" in context2
 
         # Monitor rejects, Actor retries
-        manager.update_subtask_status(2, 'in_progress', error='Missing validation')
+        manager.update_subtask_status(2, "in_progress", error="Missing validation")
         context3 = manager.get_current_context()
-        assert 'Retry attempt 2' in context3
-        assert 'Missing validation' in context3
+        assert "Retry attempt 2" in context3
+        assert "Missing validation" in context3
 
         # Second attempt succeeds
-        manager.update_subtask_status(2, 'completed')
+        manager.update_subtask_status(2, "completed")
 
         # Final statistics
         stats = manager.get_statistics()
-        assert stats['completed'] == 2
-        assert stats['total_iterations'] == 3  # 1 + 2
+        assert stats["completed"] == 2
+        assert stats["total_iterations"] == 3  # 1 + 2
 
     def test_context_grows_appropriately(self, manager):
         """Test that context size doesn't explode with many subtasks"""
         # Create plan with 10 subtasks
         many_subtasks = [
-            {
-                'id': i,
-                'description': f'Task {i}',
-                'depends_on': []
-            }
+            {"id": i, "description": f"Task {i}", "depends_on": []}
             for i in range(1, 11)
         ]
 
-        manager.create_plan('test', 'Test', many_subtasks)
+        manager.create_plan("test", "Test", many_subtasks)
 
         context = manager.get_current_context()
 
         # Context should be reasonable size (~30-50 lines for 10 tasks)
-        line_count = len(context.split('\n'))
+        line_count = len(context.split("\n"))
         assert 20 < line_count < 80  # Reasonable bounds
 
     def test_recitation_improves_focus(self, manager, sample_subtasks):
@@ -549,16 +537,16 @@ class TestRecitationPattern:
         In actual use, this would be an A/B test showing that Actor with
         recitation has higher success rate than without.
         """
-        manager.create_plan('test', 'Test', sample_subtasks)
-        manager.update_subtask_status(2, 'in_progress')
+        manager.create_plan("test", "Test", sample_subtasks)
+        manager.update_subtask_status(2, "in_progress")
 
         context = manager.get_current_context()
 
         # Key elements that keep model focused:
-        assert '## Current Focus' in context  # Clear current objective
-        assert 'Subtask 2' in context  # Which subtask we're on
-        assert 'Progress: 0/3' in context  # Where we are overall
-        assert 'Implement login endpoint' in context  # Specific task
+        assert "## Current Focus" in context  # Clear current objective
+        assert "Subtask 2" in context  # Which subtask we're on
+        assert "Progress: 0/3" in context  # Where we are overall
+        assert "Implement login endpoint" in context  # Specific task
 
         # All of these are in recent tokens → high attention weight
 
@@ -572,7 +560,9 @@ class TestDevDocsGeneration:
         """Test generating context.md with README and playbook"""
         # Create README
         readme = manager.project_root / "README.md"
-        readme.write_text("# Test Project\n\nThis is a test project for MAP Framework testing.")
+        readme.write_text(
+            "# Test Project\n\nThis is a test project for MAP Framework testing."
+        )
 
         # Create playbook using PlaybookManager
         playbook_dir = manager.project_root / ".claude"
@@ -580,9 +570,12 @@ class TestDevDocsGeneration:
         playbook_db = playbook_dir / "playbook.db"
 
         from mapify_cli.playbook_manager import PlaybookManager
+
         pm = PlaybookManager(db_path=str(playbook_db), use_semantic_search=False)
         try:
-            bullet_id = pm._add_bullet("IMPLEMENTATION_PATTERNS", "Use dependency injection for testability")
+            bullet_id = pm._add_bullet(
+                "IMPLEMENTATION_PATTERNS", "Use dependency injection for testability"
+            )
             pm._update_bullet(bullet_id, increment_helpful=5)
         finally:
             pm.close()
@@ -665,16 +658,37 @@ class TestDevDocsGeneration:
             "sections": {
                 "IMPLEMENTATION_PATTERNS": {
                     "bullets": [
-                        {"id": "impl-0001", "content": "Pattern 1", "quality_score": 6, "helpful_count": 6, "harmful_count": 0, "deprecated": False},
-                        {"id": "impl-0002", "content": "Pattern 2", "quality_score": 5, "helpful_count": 5, "harmful_count": 0, "deprecated": False}
+                        {
+                            "id": "impl-0001",
+                            "content": "Pattern 1",
+                            "quality_score": 6,
+                            "helpful_count": 6,
+                            "harmful_count": 0,
+                            "deprecated": False,
+                        },
+                        {
+                            "id": "impl-0002",
+                            "content": "Pattern 2",
+                            "quality_score": 5,
+                            "helpful_count": 5,
+                            "harmful_count": 0,
+                            "deprecated": False,
+                        },
                     ]
                 },
                 "DEBUGGING_TECHNIQUES": {
                     "bullets": [
-                        {"id": "debug-0001", "content": "Debug 1", "quality_score": 7, "helpful_count": 7, "harmful_count": 0, "deprecated": False}
+                        {
+                            "id": "debug-0001",
+                            "content": "Debug 1",
+                            "quality_score": 7,
+                            "helpful_count": 7,
+                            "harmful_count": 0,
+                            "deprecated": False,
+                        }
                     ]
-                }
-            }
+                },
+            },
         }
         playbook_file.write_text(json.dumps(playbook_data))
 
@@ -698,10 +712,17 @@ class TestDevDocsGeneration:
             "sections": {
                 "IMPLEMENTATION_PATTERNS": {
                     "bullets": [
-                        {"id": "impl-0001", "content": long_content, "quality_score": 5, "helpful_count": 5, "harmful_count": 0, "deprecated": False}
+                        {
+                            "id": "impl-0001",
+                            "content": long_content,
+                            "quality_score": 5,
+                            "helpful_count": 5,
+                            "harmful_count": 0,
+                            "deprecated": False,
+                        }
                     ]
                 }
-            }
+            },
         }
         playbook_file.write_text(json.dumps(playbook_data))
 
@@ -721,17 +742,20 @@ class TestDevDocsGeneration:
 
         # Create 5 bullets with different quality scores
         bullets = [
-            {"id": f"impl-{i:04d}", "content": f"Pattern {i}", "quality_score": 10 - i, "helpful_count": 10 - i, "harmful_count": 0, "deprecated": False}
+            {
+                "id": f"impl-{i:04d}",
+                "content": f"Pattern {i}",
+                "quality_score": 10 - i,
+                "helpful_count": 10 - i,
+                "harmful_count": 0,
+                "deprecated": False,
+            }
             for i in range(1, 6)
         ]
 
         playbook_data = {
             "metadata": {"project": "test"},
-            "sections": {
-                "IMPLEMENTATION_PATTERNS": {
-                    "bullets": bullets
-                }
-            }
+            "sections": {"IMPLEMENTATION_PATTERNS": {"bullets": bullets}},
         }
         playbook_file.write_text(json.dumps(playbook_data))
 
@@ -759,10 +783,17 @@ class TestDevDocsGeneration:
             "sections": {
                 "IMPLEMENTATION_PATTERNS": {
                     "bullets": [
-                        {"id": "impl-0001", "content": "Pattern with 日本語 and émojis 🔥", "quality_score": 5, "helpful_count": 5, "harmful_count": 0, "deprecated": False}
+                        {
+                            "id": "impl-0001",
+                            "content": "Pattern with 日本語 and émojis 🔥",
+                            "quality_score": 5,
+                            "helpful_count": 5,
+                            "harmful_count": 0,
+                            "deprecated": False,
+                        }
                     ]
                 }
-            }
+            },
         }
         playbook_file.write_text(json.dumps(playbook_data))
 
@@ -799,9 +830,9 @@ class TestDevDocsGeneration:
         plan = manager.create_plan("test", "Test goal", sample_subtasks)
 
         # Set different statuses
-        plan.subtasks[0].status = 'completed'
-        plan.subtasks[1].status = 'in_progress'
-        plan.subtasks[2].status = 'pending'
+        plan.subtasks[0].status = "completed"
+        plan.subtasks[1].status = "in_progress"
+        plan.subtasks[2].status = "pending"
 
         manager._generate_tasks_md(plan)
 
@@ -813,7 +844,7 @@ class TestDevDocsGeneration:
     def test_generate_tasks_markdown_formatting(self, manager, sample_subtasks):
         """Test markdown formatting (headers, lists, strikethrough)"""
         plan = manager.create_plan("test", "Test goal", sample_subtasks)
-        plan.subtasks[0].status = 'completed'
+        plan.subtasks[0].status = "completed"
 
         manager._generate_tasks_md(plan)
 
@@ -844,7 +875,7 @@ class TestDevDocsGeneration:
         """Test iterations and errors are displayed"""
         plan = manager.create_plan("test", "Test goal", sample_subtasks)
 
-        plan.subtasks[0].status = 'in_progress'
+        plan.subtasks[0].status = "in_progress"
         plan.subtasks[0].iterations = 3
         plan.subtasks[0].errors = ["Error 1", "Error 2", "Error 3"]
 
@@ -859,7 +890,7 @@ class TestDevDocsGeneration:
         plan = manager.create_plan("test", "Test goal", sample_subtasks)
 
         long_error = "Error: " + "x" * 200
-        plan.subtasks[0].status = 'in_progress'
+        plan.subtasks[0].status = "in_progress"
         plan.subtasks[0].errors = [long_error]
 
         manager._generate_tasks_md(plan)
@@ -885,14 +916,16 @@ class TestDevDocsGeneration:
         """Test progress summary calculation"""
         plan = manager.create_plan("test", "Test goal", sample_subtasks)
 
-        plan.subtasks[0].status = 'completed'
-        plan.subtasks[1].status = 'in_progress'
-        plan.subtasks[2].status = 'failed'
+        plan.subtasks[0].status = "completed"
+        plan.subtasks[1].status = "in_progress"
+        plan.subtasks[2].status = "failed"
 
         manager._generate_tasks_md(plan)
 
         content = manager.tasks_file.read_text()
-        assert "**Progress:** 1/3 completed, 1 in progress, 0 pending, 1 failed" in content
+        assert (
+            "**Progress:** 1/3 completed, 1 in progress, 0 pending, 1 failed" in content
+        )
 
     def test_generate_tasks_file_creation_and_timestamp(self, manager, sample_subtasks):
         """Test file creation and timestamp"""
@@ -1021,10 +1054,12 @@ class TestDevDocsCLI:
         map_dir.mkdir()
 
         # Create plan first
-        subtasks_json = json.dumps([
-            {"id": 1, "description": "Task 1", "depends_on": []}
-        ])
-        runner.invoke(app, ["recitation", "create", "test_task", "Test goal", subtasks_json])
+        subtasks_json = json.dumps(
+            [{"id": 1, "description": "Task 1", "depends_on": []}]
+        )
+        runner.invoke(
+            app, ["recitation", "create", "test_task", "Test goal", subtasks_json]
+        )
 
         # Generate tasks
         result = runner.invoke(app, ["recitation", "generate-tasks"])
@@ -1045,7 +1080,7 @@ class TestDevDocsCLI:
 
         assert result.exit_code == 1
         # Output may contain multiple JSON objects, parse first one
-        first_json_line = result.stdout.strip().split('\n}\n')[0] + '\n}'
+        first_json_line = result.stdout.strip().split("\n}\n")[0] + "\n}"
         output = json.loads(first_json_line)
         assert output["status"] == "error"
         assert "no active plan" in output["message"].lower()
@@ -1057,10 +1092,12 @@ class TestDevDocsCLI:
         map_dir.mkdir()
 
         # Create plan
-        subtasks_json = json.dumps([
-            {"id": 1, "description": "Task 1", "depends_on": []}
-        ])
-        runner.invoke(app, ["recitation", "create", "test_task", "Test goal", subtasks_json])
+        subtasks_json = json.dumps(
+            [{"id": 1, "description": "Task 1", "depends_on": []}]
+        )
+        runner.invoke(
+            app, ["recitation", "create", "test_task", "Test goal", subtasks_json]
+        )
 
         # Get docs
         result = runner.invoke(app, ["recitation", "get-docs"])
@@ -1099,10 +1136,11 @@ class TestDevDocsIntegration:
 
         # Small delay to ensure timestamp difference
         import time
+
         time.sleep(0.01)
 
         # Update subtask
-        manager.update_subtask_status(1, 'in_progress')
+        manager.update_subtask_status(1, "in_progress")
 
         # File should be regenerated
         new_mtime = manager.tasks_file.stat().st_mtime
@@ -1117,7 +1155,7 @@ class TestDevDocsIntegration:
         assert "### 🔄 In Progress" not in initial_content
 
         # Update to in_progress
-        manager.update_subtask_status(1, 'in_progress')
+        manager.update_subtask_status(1, "in_progress")
 
         updated_content = manager.tasks_file.read_text()
         # Now should have "In Progress" section
@@ -1170,15 +1208,15 @@ class TestDevDocsEdgeCases:
         # Use subtasks with special markdown characters
         special_subtasks = [
             {
-                'id': 1,
-                'description': 'Task with **bold** and _italic_ and `code`',
-                'depends_on': []
+                "id": 1,
+                "description": "Task with **bold** and _italic_ and `code`",
+                "depends_on": [],
             },
             {
-                'id': 2,
-                'description': 'Task with [link](http://example.com) and > quote',
-                'depends_on': []
-            }
+                "id": 2,
+                "description": "Task with [link](http://example.com) and > quote",
+                "depends_on": [],
+            },
         ]
 
         plan = manager.create_plan("test", "Test goal", special_subtasks)
@@ -1213,104 +1251,111 @@ class TestStringIDSupport:
         """Sample subtasks with string IDs"""
         return [
             {
-                'id': 'ST-001',
-                'description': 'Create User model',
-                'acceptance_criteria': ['Model validates email', 'Password is hashed'],
-                'estimated_complexity': 'low',
-                'depends_on': []
+                "id": "ST-001",
+                "description": "Create User model",
+                "acceptance_criteria": ["Model validates email", "Password is hashed"],
+                "estimated_complexity": "low",
+                "depends_on": [],
             },
             {
-                'id': 'ST-002',
-                'description': 'Implement login endpoint',
-                'acceptance_criteria': 'POST /auth/login returns JWT token',
-                'estimated_complexity': 'medium',
-                'depends_on': ['ST-001']
+                "id": "ST-002",
+                "description": "Implement login endpoint",
+                "acceptance_criteria": "POST /auth/login returns JWT token",
+                "estimated_complexity": "medium",
+                "depends_on": ["ST-001"],
             },
             {
-                'id': 'subtask-3',
-                'description': 'Add token validation',
-                'acceptance_criteria': ['Middleware validates tokens', 'Expired tokens rejected'],
-                'estimated_complexity': 'low',
-                'depends_on': ['ST-002']
-            }
+                "id": "subtask-3",
+                "description": "Add token validation",
+                "acceptance_criteria": [
+                    "Middleware validates tokens",
+                    "Expired tokens rejected",
+                ],
+                "estimated_complexity": "low",
+                "depends_on": ["ST-002"],
+            },
         ]
 
     def test_create_plan_with_string_ids(self, manager, string_id_subtasks):
         """Test creating plan with string IDs instead of integers"""
         plan = manager.create_plan(
-            task_id='feat_auth',
-            goal='Implement JWT authentication',
-            subtasks=string_id_subtasks
+            task_id="feat_auth",
+            goal="Implement JWT authentication",
+            subtasks=string_id_subtasks,
         )
 
-        assert plan.task_id == 'feat_auth'
+        assert plan.task_id == "feat_auth"
         assert len(plan.subtasks) == 3
-        assert plan.subtasks[0].id == 'ST-001'
-        assert plan.subtasks[1].id == 'ST-002'
-        assert plan.subtasks[2].id == 'subtask-3'
-        assert plan.current_subtask_id == 'ST-001'
+        assert plan.subtasks[0].id == "ST-001"
+        assert plan.subtasks[1].id == "ST-002"
+        assert plan.subtasks[2].id == "subtask-3"
+        assert plan.current_subtask_id == "ST-001"
 
     def test_update_subtask_with_string_id(self, manager, string_id_subtasks):
         """Test updating subtask status using string ID"""
-        manager.create_plan('test', 'Test', string_id_subtasks)
+        manager.create_plan("test", "Test", string_id_subtasks)
 
-        plan = manager.update_subtask_status('ST-001', 'in_progress')
+        plan = manager.update_subtask_status("ST-001", "in_progress")
 
-        assert plan.subtasks[0].status == 'in_progress'
-        assert plan.current_subtask_id == 'ST-001'
+        assert plan.subtasks[0].status == "in_progress"
+        assert plan.current_subtask_id == "ST-001"
 
     def test_string_id_dependencies(self, manager, string_id_subtasks):
         """Test that string ID dependencies work correctly"""
-        plan = manager.create_plan('test', 'Test', string_id_subtasks)
+        plan = manager.create_plan("test", "Test", string_id_subtasks)
 
         # Check dependencies are preserved as strings
-        assert plan.subtasks[1].depends_on == ['ST-001']
-        assert plan.subtasks[2].depends_on == ['ST-002']
+        assert plan.subtasks[1].depends_on == ["ST-001"]
+        assert plan.subtasks[2].depends_on == ["ST-002"]
 
     def test_markdown_with_string_ids(self, manager, string_id_subtasks):
         """Test markdown generation with string IDs"""
-        manager.create_plan('test', 'Test', string_id_subtasks)
-        manager.update_subtask_status('ST-002', 'in_progress')
+        manager.create_plan("test", "Test", string_id_subtasks)
+        manager.update_subtask_status("ST-002", "in_progress")
 
         md = manager.plan_file.read_text()
 
         # Check that string IDs appear in markdown
-        assert 'ST-001' in md
-        assert 'ST-002' in md
-        assert 'subtask-3' in md
-        assert 'CURRENT' in md  # ST-002 is current
+        assert "ST-001" in md
+        assert "ST-002" in md
+        assert "subtask-3" in md
+        assert "CURRENT" in md  # ST-002 is current
 
     def test_json_persistence_with_string_ids(self, manager, string_id_subtasks):
         """Test JSON serialization/deserialization with string IDs"""
-        manager.create_plan('test', 'Test', string_id_subtasks)
+        manager.create_plan("test", "Test", string_id_subtasks)
 
         # Save and reload
         plan_data = json.loads(manager.plan_json.read_text())
 
-        assert plan_data['subtasks'][0]['id'] == 'ST-001'
-        assert plan_data['subtasks'][1]['id'] == 'ST-002'
-        assert plan_data['current_subtask_id'] == 'ST-001'
+        assert plan_data["subtasks"][0]["id"] == "ST-001"
+        assert plan_data["subtasks"][1]["id"] == "ST-002"
+        assert plan_data["current_subtask_id"] == "ST-001"
 
     def test_update_nonexistent_string_id(self, manager, string_id_subtasks):
         """Test updating non-existent string ID raises error"""
-        manager.create_plan('test', 'Test', string_id_subtasks)
+        manager.create_plan("test", "Test", string_id_subtasks)
 
         with pytest.raises(ValueError, match="Subtask with id INVALID-ID"):
-            manager.update_subtask_status('INVALID-ID', 'completed')
+            manager.update_subtask_status("INVALID-ID", "completed")
 
     def test_mixed_string_id_formats(self, manager):
         """Test various string ID formats (UUID-like, alphanumeric, etc.)"""
         mixed_subtasks = [
-            {'id': 'uuid-123e4567-e89b', 'description': 'Task 1', 'depends_on': []},
-            {'id': 'TASK_001', 'description': 'Task 2', 'depends_on': ['uuid-123e4567-e89b']},
-            {'id': 'feature-auth-login', 'description': 'Task 3', 'depends_on': []},
+            {"id": "uuid-123e4567-e89b", "description": "Task 1", "depends_on": []},
+            {
+                "id": "TASK_001",
+                "description": "Task 2",
+                "depends_on": ["uuid-123e4567-e89b"],
+            },
+            {"id": "feature-auth-login", "description": "Task 3", "depends_on": []},
         ]
 
-        plan = manager.create_plan('test', 'Test', mixed_subtasks)
+        plan = manager.create_plan("test", "Test", mixed_subtasks)
 
-        assert plan.subtasks[0].id == 'uuid-123e4567-e89b'
-        assert plan.subtasks[1].id == 'TASK_001'
-        assert plan.subtasks[2].id == 'feature-auth-login'
+        assert plan.subtasks[0].id == "uuid-123e4567-e89b"
+        assert plan.subtasks[1].id == "TASK_001"
+        assert plan.subtasks[2].id == "feature-auth-login"
 
 
 class TestAcceptanceCriteriaListSupport:
@@ -1318,46 +1363,53 @@ class TestAcceptanceCriteriaListSupport:
 
     def test_acceptance_criteria_as_list(self, manager):
         """Test creating plan with acceptance_criteria as list"""
-        subtasks = [{
-            'id': 'ST-001',
-            'description': 'Create User model',
-            'acceptance_criteria': [
-                'Model validates email format',
-                'Password is hashed using bcrypt',
-                'Username is unique'
-            ],
-            'depends_on': []
-        }]
+        subtasks = [
+            {
+                "id": "ST-001",
+                "description": "Create User model",
+                "acceptance_criteria": [
+                    "Model validates email format",
+                    "Password is hashed using bcrypt",
+                    "Username is unique",
+                ],
+                "depends_on": [],
+            }
+        ]
 
-        plan = manager.create_plan('test', 'Test', subtasks)
+        plan = manager.create_plan("test", "Test", subtasks)
 
         assert plan.subtasks[0].acceptance_criteria == [
-            'Model validates email format',
-            'Password is hashed using bcrypt',
-            'Username is unique'
+            "Model validates email format",
+            "Password is hashed using bcrypt",
+            "Username is unique",
         ]
 
     def test_acceptance_criteria_as_string(self, manager):
         """Test creating plan with acceptance_criteria as string (backward compatibility)"""
-        subtasks = [{
-            'id': 'ST-001',
-            'description': 'Create User model',
-            'acceptance_criteria': 'Model validates email and hashes password',
-            'depends_on': []
-        }]
+        subtasks = [
+            {
+                "id": "ST-001",
+                "description": "Create User model",
+                "acceptance_criteria": "Model validates email and hashes password",
+                "depends_on": [],
+            }
+        ]
 
-        plan = manager.create_plan('test', 'Test', subtasks)
+        plan = manager.create_plan("test", "Test", subtasks)
 
-        assert plan.subtasks[0].acceptance_criteria == 'Model validates email and hashes password'
+        assert (
+            plan.subtasks[0].acceptance_criteria
+            == "Model validates email and hashes password"
+        )
 
     def test_format_acceptance_criteria_string(self, manager):
         """Test _format_acceptance_criteria with string input"""
-        result = manager._format_acceptance_criteria('Test criterion')
-        assert result == 'Test criterion'
+        result = manager._format_acceptance_criteria("Test criterion")
+        assert result == "Test criterion"
 
     def test_format_acceptance_criteria_list(self, manager):
         """Test _format_acceptance_criteria with list input"""
-        criteria_list = ['Criterion 1', 'Criterion 2', 'Criterion 3']
+        criteria_list = ["Criterion 1", "Criterion 2", "Criterion 3"]
         result = manager._format_acceptance_criteria(criteria_list)
 
         expected = "- Criterion 1\n- Criterion 2\n- Criterion 3"
@@ -1370,75 +1422,76 @@ class TestAcceptanceCriteriaListSupport:
 
     def test_markdown_with_list_acceptance_criteria(self, manager):
         """Test markdown generation with list acceptance_criteria"""
-        subtasks = [{
-            'id': 'ST-001',
-            'description': 'Create User model',
-            'acceptance_criteria': [
-                'Model validates email',
-                'Password is hashed',
-                'Username is unique'
-            ],
-            'depends_on': []
-        }]
+        subtasks = [
+            {
+                "id": "ST-001",
+                "description": "Create User model",
+                "acceptance_criteria": [
+                    "Model validates email",
+                    "Password is hashed",
+                    "Username is unique",
+                ],
+                "depends_on": [],
+            }
+        ]
 
-        manager.create_plan('test', 'Test', subtasks)
-        manager.update_subtask_status('ST-001', 'in_progress')
+        manager.create_plan("test", "Test", subtasks)
+        manager.update_subtask_status("ST-001", "in_progress")
 
         md = manager.plan_file.read_text()
 
         # Should contain formatted list
-        assert 'Acceptance Criteria:' in md
-        assert '- Model validates email' in md
-        assert '- Password is hashed' in md
-        assert '- Username is unique' in md
+        assert "Acceptance Criteria:" in md
+        assert "- Model validates email" in md
+        assert "- Password is hashed" in md
+        assert "- Username is unique" in md
 
     def test_tasks_md_with_list_acceptance_criteria(self, manager):
         """Test tasks.md generation with list acceptance_criteria"""
-        subtasks = [{
-            'id': 'ST-001',
-            'description': 'Create User model',
-            'acceptance_criteria': [
-                'Model validates email',
-                'Password is hashed'
-            ],
-            'depends_on': []
-        }]
+        subtasks = [
+            {
+                "id": "ST-001",
+                "description": "Create User model",
+                "acceptance_criteria": ["Model validates email", "Password is hashed"],
+                "depends_on": [],
+            }
+        ]
 
-        plan = manager.create_plan('test', 'Test', subtasks)
-        plan.subtasks[0].status = 'in_progress'
+        plan = manager.create_plan("test", "Test", subtasks)
+        plan.subtasks[0].status = "in_progress"
         manager._generate_tasks_md(plan)
 
         content = manager.tasks_file.read_text()
 
         # Should contain formatted acceptance criteria
-        assert '**Acceptance:**' in content
-        assert '- Model validates email' in content
-        assert '- Password is hashed' in content
+        assert "**Acceptance:**" in content
+        assert "- Model validates email" in content
+        assert "- Password is hashed" in content
 
     def test_mixed_acceptance_criteria_formats(self, manager):
         """Test plan with mixed string and list acceptance_criteria"""
         subtasks = [
             {
-                'id': 'ST-001',
-                'description': 'Task 1',
-                'acceptance_criteria': 'Simple string criterion',
-                'depends_on': []
+                "id": "ST-001",
+                "description": "Task 1",
+                "acceptance_criteria": "Simple string criterion",
+                "depends_on": [],
             },
             {
-                'id': 'ST-002',
-                'description': 'Task 2',
-                'acceptance_criteria': ['Criterion 1', 'Criterion 2'],
-                'depends_on': []
+                "id": "ST-002",
+                "description": "Task 2",
+                "acceptance_criteria": ["Criterion 1", "Criterion 2"],
+                "depends_on": [],
             },
             {
-                'id': 'ST-003',
-                'description': 'Task 3',
-                'acceptance_criteria': None,
-                'depends_on': []
-            }
+                "id": "ST-003",
+                "description": "Task 3",
+                "acceptance_criteria": None,
+                "depends_on": [],
+            },
         ]
 
-        plan = manager.create_plan('test', 'Test', subtasks)
+        plan = manager.create_plan("test", "Test", subtasks)
 
         # Verify all formats are preserved
         assert isinstance(plan.subtasks[0].acceptance_criteria, str)
@@ -1447,14 +1500,16 @@ class TestAcceptanceCriteriaListSupport:
 
     def test_empty_acceptance_criteria_list(self, manager):
         """Test handling of empty acceptance_criteria list"""
-        subtasks = [{
-            'id': 'ST-001',
-            'description': 'Task 1',
-            'acceptance_criteria': [],
-            'depends_on': []
-        }]
+        subtasks = [
+            {
+                "id": "ST-001",
+                "description": "Task 1",
+                "acceptance_criteria": [],
+                "depends_on": [],
+            }
+        ]
 
-        plan = manager.create_plan('test', 'Test', subtasks)
+        plan = manager.create_plan("test", "Test", subtasks)
 
         # Empty list should be preserved
         assert plan.subtasks[0].acceptance_criteria == []
@@ -1471,56 +1526,56 @@ class TestStringIDAndListCriteriaIntegration:
         """Test complete workflow with string IDs and list acceptance_criteria"""
         subtasks = [
             {
-                'id': 'ST-001',
-                'description': 'Create User model',
-                'acceptance_criteria': [
-                    'Email validation works',
-                    'Password hashing implemented',
-                    'Model tests pass'
+                "id": "ST-001",
+                "description": "Create User model",
+                "acceptance_criteria": [
+                    "Email validation works",
+                    "Password hashing implemented",
+                    "Model tests pass",
                 ],
-                'estimated_complexity': 'medium',
-                'depends_on': []
+                "estimated_complexity": "medium",
+                "depends_on": [],
             },
             {
-                'id': 'ST-002',
-                'description': 'Create login endpoint',
-                'acceptance_criteria': [
-                    'POST /auth/login accepts credentials',
-                    'Returns JWT on success',
-                    'Returns 401 on failure'
+                "id": "ST-002",
+                "description": "Create login endpoint",
+                "acceptance_criteria": [
+                    "POST /auth/login accepts credentials",
+                    "Returns JWT on success",
+                    "Returns 401 on failure",
                 ],
-                'estimated_complexity': 'medium',
-                'depends_on': ['ST-001']
-            }
+                "estimated_complexity": "medium",
+                "depends_on": ["ST-001"],
+            },
         ]
 
         # Create plan
-        plan = manager.create_plan('feat_auth', 'Add authentication', subtasks)
-        assert plan.current_subtask_id == 'ST-001'
+        plan = manager.create_plan("feat_auth", "Add authentication", subtasks)
+        assert plan.current_subtask_id == "ST-001"
 
         # Start first task
-        manager.update_subtask_status('ST-001', 'in_progress')
+        manager.update_subtask_status("ST-001", "in_progress")
         md1 = manager.plan_file.read_text()
-        assert 'ST-001' in md1
-        assert '- Email validation works' in md1
-        assert 'CURRENT' in md1
+        assert "ST-001" in md1
+        assert "- Email validation works" in md1
+        assert "CURRENT" in md1
 
         # Complete first task
-        manager.update_subtask_status('ST-001', 'completed')
+        manager.update_subtask_status("ST-001", "completed")
 
         # Start second task
-        manager.update_subtask_status('ST-002', 'in_progress')
+        manager.update_subtask_status("ST-002", "in_progress")
         md2 = manager.plan_file.read_text()
-        assert '✓' in md2  # First task completed
-        assert 'ST-002' in md2
-        assert '- POST /auth/login' in md2
+        assert "✓" in md2  # First task completed
+        assert "ST-002" in md2
+        assert "- POST /auth/login" in md2
 
         # Complete workflow
-        manager.update_subtask_status('ST-002', 'completed')
+        manager.update_subtask_status("ST-002", "completed")
 
         stats = manager.get_statistics()
-        assert stats['completed'] == 2
-        assert stats['pending'] == 0
+        assert stats["completed"] == 2
+        assert stats["pending"] == 0
 
     def test_cli_with_string_ids_and_list_criteria(self, tmp_path):
         """Test CLI commands work with string IDs and list acceptance_criteria"""
@@ -1528,60 +1583,58 @@ class TestStringIDAndListCriteriaIntegration:
         map_dir = tmp_path / ".map"
         map_dir.mkdir()
 
-        subtasks_json = json.dumps([
-            {
-                'id': 'ST-001',
-                'description': 'Test task',
-                'acceptance_criteria': ['Criterion 1', 'Criterion 2'],
-                'estimated_complexity': 'low',
-                'depends_on': []
-            }
-        ])
+        subtasks_json = json.dumps(
+            [
+                {
+                    "id": "ST-001",
+                    "description": "Test task",
+                    "acceptance_criteria": ["Criterion 1", "Criterion 2"],
+                    "estimated_complexity": "low",
+                    "depends_on": [],
+                }
+            ]
+        )
 
         # Create plan via CLI
-        result = runner.invoke(app, [
-            'recitation', 'create',
-            'test_task', 'Test goal', subtasks_json
-        ])
+        result = runner.invoke(
+            app, ["recitation", "create", "test_task", "Test goal", subtasks_json]
+        )
 
         assert result.exit_code == 0
         output = json.loads(result.stdout)
-        assert output['status'] == 'success'
+        assert output["status"] == "success"
 
         # Update via CLI with string ID
-        result = runner.invoke(app, [
-            'recitation', 'update',
-            'ST-001', 'in_progress'
-        ])
+        result = runner.invoke(app, ["recitation", "update", "ST-001", "in_progress"])
 
         assert result.exit_code == 0
         output = json.loads(result.stdout)
-        assert output['status'] == 'success'
-        assert output['current_subtask'] == 'ST-001'
+        assert output["status"] == "success"
+        assert output["current_subtask"] == "ST-001"
 
     def test_persistence_across_manager_instances(self, temp_project):
         """Test string IDs and list criteria persist correctly"""
         subtasks = [
             {
-                'id': 'ST-001',
-                'description': 'Task',
-                'acceptance_criteria': ['Criterion 1', 'Criterion 2'],
-                'depends_on': []
+                "id": "ST-001",
+                "description": "Task",
+                "acceptance_criteria": ["Criterion 1", "Criterion 2"],
+                "depends_on": [],
             }
         ]
 
         # Create with first manager
         manager1 = RecitationManager(temp_project)
-        manager1.create_plan('test', 'Test', subtasks)
-        manager1.update_subtask_status('ST-001', 'in_progress')
+        manager1.create_plan("test", "Test", subtasks)
+        manager1.update_subtask_status("ST-001", "in_progress")
 
         # Load with second manager
         manager2 = RecitationManager(temp_project)
         plan = manager2.get_plan()
 
-        assert plan.subtasks[0].id == 'ST-001'
-        assert plan.subtasks[0].acceptance_criteria == ['Criterion 1', 'Criterion 2']
-        assert plan.subtasks[0].status == 'in_progress'
+        assert plan.subtasks[0].id == "ST-001"
+        assert plan.subtasks[0].acceptance_criteria == ["Criterion 1", "Criterion 2"]
+        assert plan.subtasks[0].status == "in_progress"
 
 
 class TestSubtaskIDFormatRegression:
@@ -1605,19 +1658,19 @@ class TestSubtaskIDFormatRegression:
         """Subtasks with string IDs matching workflow documentation"""
         return [
             {
-                'id': 'ST-001',
-                'description': 'First subtask',
-                'acceptance_criteria': ['Works correctly'],
-                'estimated_complexity': 'low',
-                'depends_on': []
+                "id": "ST-001",
+                "description": "First subtask",
+                "acceptance_criteria": ["Works correctly"],
+                "estimated_complexity": "low",
+                "depends_on": [],
             },
             {
-                'id': 'ST-002',
-                'description': 'Second subtask',
-                'acceptance_criteria': ['Also works'],
-                'estimated_complexity': 'low',
-                'depends_on': ['ST-001']
-            }
+                "id": "ST-002",
+                "description": "Second subtask",
+                "acceptance_criteria": ["Also works"],
+                "estimated_complexity": "low",
+                "depends_on": ["ST-001"],
+            },
         ]
 
     @pytest.fixture
@@ -1625,69 +1678,69 @@ class TestSubtaskIDFormatRegression:
         """Subtasks with integer IDs (old format, for backward compatibility)"""
         return [
             {
-                'id': 1,
-                'description': 'First subtask',
-                'acceptance_criteria': ['Works correctly'],
-                'estimated_complexity': 'low',
-                'depends_on': []
+                "id": 1,
+                "description": "First subtask",
+                "acceptance_criteria": ["Works correctly"],
+                "estimated_complexity": "low",
+                "depends_on": [],
             },
             {
-                'id': 2,
-                'description': 'Second subtask',
-                'acceptance_criteria': ['Also works'],
-                'estimated_complexity': 'low',
-                'depends_on': [1]
-            }
+                "id": 2,
+                "description": "Second subtask",
+                "acceptance_criteria": ["Also works"],
+                "estimated_complexity": "low",
+                "depends_on": [1],
+            },
         ]
 
     def test_string_id_update_in_progress(self, manager, string_id_subtasks):
         """Test: mapify recitation update "ST-001" in_progress"""
-        manager.create_plan('test', 'Test', string_id_subtasks)
+        manager.create_plan("test", "Test", string_id_subtasks)
 
-        plan = manager.update_subtask_status('ST-001', 'in_progress')
+        plan = manager.update_subtask_status("ST-001", "in_progress")
 
-        assert plan.subtasks[0].status == 'in_progress'
-        assert plan.current_subtask_id == 'ST-001'
+        assert plan.subtasks[0].status == "in_progress"
+        assert plan.current_subtask_id == "ST-001"
         assert plan.subtasks[0].iterations == 1
 
     def test_string_id_update_completed(self, manager, string_id_subtasks):
         """Test: mapify recitation update "ST-001" completed"""
-        manager.create_plan('test', 'Test', string_id_subtasks)
-        manager.update_subtask_status('ST-001', 'in_progress')
+        manager.create_plan("test", "Test", string_id_subtasks)
+        manager.update_subtask_status("ST-001", "in_progress")
 
-        plan = manager.update_subtask_status('ST-001', 'completed')
+        plan = manager.update_subtask_status("ST-001", "completed")
 
-        assert plan.subtasks[0].status == 'completed'
+        assert plan.subtasks[0].status == "completed"
 
     def test_string_id_with_error_message(self, manager, string_id_subtasks):
         """Test: mapify recitation update "ST-001" in_progress "Error details" """
-        manager.create_plan('test', 'Test', string_id_subtasks)
+        manager.create_plan("test", "Test", string_id_subtasks)
 
         error_msg = "Monitor feedback: syntax error in file.py line 42"
-        plan = manager.update_subtask_status('ST-001', 'in_progress', error=error_msg)
+        plan = manager.update_subtask_status("ST-001", "in_progress", error=error_msg)
 
         assert plan.subtasks[0].errors == [error_msg]
 
     def test_integer_id_auto_conversion(self, manager, integer_id_subtasks):
         """Test: Integer IDs are auto-converted to strings (backward compatibility)"""
-        manager.create_plan('test', 'Test', integer_id_subtasks)
+        manager.create_plan("test", "Test", integer_id_subtasks)
 
         # Call with integer (old behavior)
-        plan = manager.update_subtask_status(1, 'in_progress')
+        plan = manager.update_subtask_status(1, "in_progress")
 
         # Should work - ID is converted to "1" internally
-        assert plan.subtasks[0].status == 'in_progress'
+        assert plan.subtasks[0].status == "in_progress"
         # current_subtask_id could be "1" or 1, both are valid
-        assert str(plan.current_subtask_id) == '1'
+        assert str(plan.current_subtask_id) == "1"
 
     def test_nonexistent_string_id_raises_error(self, manager, string_id_subtasks):
         """Test: Nonexistent ID raises clear error message"""
-        manager.create_plan('test', 'Test', string_id_subtasks)
+        manager.create_plan("test", "Test", string_id_subtasks)
 
         with pytest.raises(ValueError) as exc_info:
-            manager.update_subtask_status('INVALID-ID', 'completed')
+            manager.update_subtask_status("INVALID-ID", "completed")
 
-        assert 'Subtask with id INVALID-ID was not found' in str(exc_info.value)
+        assert "Subtask with id INVALID-ID was not found" in str(exc_info.value)
 
     def test_workflow_documentation_accuracy(self, manager, string_id_subtasks):
         """Test: Workflow examples from /map-efficient.md work exactly as documented
@@ -1697,14 +1750,18 @@ class TestSubtaskIDFormatRegression:
         - mapify recitation update "ST-001" in_progress "Monitor feedback: [error]"
         - mapify recitation update "ST-001" completed
         """
-        manager.create_plan('test_fix', 'Test fix for subtask ID format', string_id_subtasks)
+        manager.create_plan(
+            "test_fix", "Test fix for subtask ID format", string_id_subtasks
+        )
 
         # Step 1: Mark as in_progress (from workflow step 3.1.5)
         plan = manager.update_subtask_status("ST-001", "in_progress")
         assert plan.subtasks[0].status == "in_progress"
 
         # Step 2: Add error feedback (from workflow step 3.4 - monitor feedback)
-        plan = manager.update_subtask_status("ST-001", "in_progress", "Monitor feedback: needs revision")
+        plan = manager.update_subtask_status(
+            "ST-001", "in_progress", "Monitor feedback: needs revision"
+        )
         assert "Monitor feedback: needs revision" in plan.subtasks[0].errors
         assert plan.subtasks[0].iterations == 2  # Second iteration
 
@@ -1713,5 +1770,5 @@ class TestSubtaskIDFormatRegression:
         assert plan.subtasks[0].status == "completed"
 
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

@@ -26,11 +26,8 @@ def user_custom_settings():
         "$schema": "https://json.schemastore.org/claude-code-settings.json",
         "description": "User's custom configuration",
         "permissions": {
-            "allow": [
-                "Bash(git status:*)",
-                "Bash(custom-command:*)"
-            ],
-            "deny": ["Bash(rm:*)"]
+            "allow": ["Bash(git status:*)", "Bash(custom-command:*)"],
+            "deny": ["Bash(rm:*)"],
         },
         "hooks": {
             "UserPromptSubmit": [
@@ -41,9 +38,9 @@ def user_custom_settings():
                         {
                             "type": "command",
                             "command": "python3 /custom/script.py",
-                            "timeout": 10
+                            "timeout": 10,
                         }
-                    ]
+                    ],
                 }
             ],
             "PreToolUse": [
@@ -54,13 +51,13 @@ def user_custom_settings():
                         {
                             "type": "command",
                             "command": ".custom/hooks/validate.sh",
-                            "timeout": 5
+                            "timeout": 5,
                         }
-                    ]
+                    ],
                 }
-            ]
+            ],
         },
-        "customKey": "userValue"
+        "customKey": "userValue",
     }
 
 
@@ -79,100 +76,116 @@ class TestInitMerge:
         assert settings_file.exists(), "Should create settings.json"
 
         # Read and validate settings
-        with open(settings_file, 'r', encoding='utf-8') as f:
+        with open(settings_file, "r", encoding="utf-8") as f:
             settings = json.load(f)
 
         assert "hooks" in settings, "Should have hooks section"
-        assert "UserPromptSubmit" in settings["hooks"], "Should have UserPromptSubmit hooks"
+        assert (
+            "UserPromptSubmit" in settings["hooks"]
+        ), "Should have UserPromptSubmit hooks"
         assert "SessionStart" in settings["hooks"], "Should have SessionStart hooks"
 
     def test_preserves_user_permissions(self, mock_project, user_custom_settings):
         """Test that user's permissions section is preserved during merge."""
         # Setup: Create existing settings with custom permissions
         settings_file = mock_project / ".claude" / "settings.json"
-        with open(settings_file, 'w', encoding='utf-8') as f:
+        with open(settings_file, "w", encoding="utf-8") as f:
             json.dump(user_custom_settings, f, indent=2)
 
         # Run install_hooks
         install_hooks(mock_project, with_hooks=True)
 
         # Verify permissions preserved
-        with open(settings_file, 'r', encoding='utf-8') as f:
+        with open(settings_file, "r", encoding="utf-8") as f:
             merged_settings = json.load(f)
 
         assert "permissions" in merged_settings, "Should preserve permissions section"
-        assert merged_settings["permissions"] == user_custom_settings["permissions"], \
-            "Permissions should be unchanged"
+        assert (
+            merged_settings["permissions"] == user_custom_settings["permissions"]
+        ), "Permissions should be unchanged"
 
     def test_preserves_custom_hooks(self, mock_project, user_custom_settings):
         """Test that user's custom hooks are preserved during merge."""
         # Setup
         settings_file = mock_project / ".claude" / "settings.json"
-        with open(settings_file, 'w', encoding='utf-8') as f:
+        with open(settings_file, "w", encoding="utf-8") as f:
             json.dump(user_custom_settings, f, indent=2)
 
         # Run install_hooks
         install_hooks(mock_project, with_hooks=True)
 
         # Verify custom hooks preserved
-        with open(settings_file, 'r', encoding='utf-8') as f:
+        with open(settings_file, "r", encoding="utf-8") as f:
             merged_settings = json.load(f)
 
         # User's custom UserPromptSubmit hook should still be there
         user_prompt_hooks = merged_settings["hooks"]["UserPromptSubmit"]
-        custom_hook = next((h for h in user_prompt_hooks if h["matcher"] == "custom-pattern"), None)
+        custom_hook = next(
+            (h for h in user_prompt_hooks if h["matcher"] == "custom-pattern"), None
+        )
         assert custom_hook is not None, "Should preserve user's custom hook"
         assert custom_hook["hooks"][0]["command"] == "python3 /custom/script.py"
 
         # User's PreToolUse hook should still be there
-        assert "PreToolUse" in merged_settings["hooks"], "Should preserve PreToolUse hooks"
+        assert (
+            "PreToolUse" in merged_settings["hooks"]
+        ), "Should preserve PreToolUse hooks"
         pre_tool_hooks = merged_settings["hooks"]["PreToolUse"]
-        user_hook = next((h for h in pre_tool_hooks if h["matcher"] == "Edit|Write"), None)
+        user_hook = next(
+            (h for h in pre_tool_hooks if h["matcher"] == "Edit|Write"), None
+        )
         assert user_hook is not None, "Should preserve user's PreToolUse hook"
 
     def test_adds_new_template_hooks(self, mock_project, user_custom_settings):
         """Test that new template hooks are added to existing settings."""
         # Setup
         settings_file = mock_project / ".claude" / "settings.json"
-        with open(settings_file, 'w', encoding='utf-8') as f:
+        with open(settings_file, "w", encoding="utf-8") as f:
             json.dump(user_custom_settings, f, indent=2)
 
         # Run install_hooks
         install_hooks(mock_project, with_hooks=True)
 
         # Verify template hooks added
-        with open(settings_file, 'r', encoding='utf-8') as f:
+        with open(settings_file, "r", encoding="utf-8") as f:
             merged_settings = json.load(f)
 
         # Should have SessionStart from template (not in user settings)
-        assert "SessionStart" in merged_settings["hooks"], "Should add SessionStart from template"
+        assert (
+            "SessionStart" in merged_settings["hooks"]
+        ), "Should add SessionStart from template"
 
         # Should have MAP Framework UserPromptSubmit hook (matcher="") added
         user_prompt_hooks = merged_settings["hooks"]["UserPromptSubmit"]
         assert len(user_prompt_hooks) >= 2, "Should have both user and template hooks"
 
         # Find template hook (empty matcher)
-        template_hook = next((h for h in user_prompt_hooks if h.get("matcher") == ""), None)
+        template_hook = next(
+            (h for h in user_prompt_hooks if h.get("matcher") == ""), None
+        )
         assert template_hook is not None, "Should add template hook with empty matcher"
 
     def test_preserves_custom_top_level_keys(self, mock_project, user_custom_settings):
         """Test that user's custom top-level keys are preserved."""
         # Setup
         settings_file = mock_project / ".claude" / "settings.json"
-        with open(settings_file, 'w', encoding='utf-8') as f:
+        with open(settings_file, "w", encoding="utf-8") as f:
             json.dump(user_custom_settings, f, indent=2)
 
         # Run install_hooks
         install_hooks(mock_project, with_hooks=True)
 
         # Verify custom keys preserved
-        with open(settings_file, 'r', encoding='utf-8') as f:
+        with open(settings_file, "r", encoding="utf-8") as f:
             merged_settings = json.load(f)
 
         assert "customKey" in merged_settings, "Should preserve custom top-level key"
-        assert merged_settings["customKey"] == "userValue", "Custom key value should be unchanged"
-        assert merged_settings["description"] == "User's custom configuration", \
-            "Should preserve user's description"
+        assert (
+            merged_settings["customKey"] == "userValue"
+        ), "Custom key value should be unchanged"
+        assert (
+            merged_settings["description"] == "User's custom configuration"
+        ), "Should preserve user's description"
 
     def test_no_duplicate_hooks_created(self, mock_project):
         """Test that running init twice doesn't create duplicate hooks."""
@@ -180,7 +193,7 @@ class TestInitMerge:
         install_hooks(mock_project, with_hooks=True)
 
         settings_file = mock_project / ".claude" / "settings.json"
-        with open(settings_file, 'r', encoding='utf-8') as f:
+        with open(settings_file, "r", encoding="utf-8") as f:
             first_settings = json.load(f)
 
         first_count = len(first_settings["hooks"]["UserPromptSubmit"])
@@ -188,14 +201,15 @@ class TestInitMerge:
         # Second init (simulating user running mapify init --force)
         install_hooks(mock_project, with_hooks=True)
 
-        with open(settings_file, 'r', encoding='utf-8') as f:
+        with open(settings_file, "r", encoding="utf-8") as f:
             second_settings = json.load(f)
 
         second_count = len(second_settings["hooks"]["UserPromptSubmit"])
 
         # Should have same count (no duplicates)
-        assert second_count == first_count, \
-            f"Should not create duplicates: first={first_count}, second={second_count}"
+        assert (
+            second_count == first_count
+        ), f"Should not create duplicates: first={first_count}, second={second_count}"
 
     def test_handles_corrupted_existing_settings(self, mock_project):
         """Test that corrupted existing settings.json is handled gracefully."""
@@ -209,7 +223,7 @@ class TestInitMerge:
         assert hooks_count > 0, "Should still install hooks"
 
         # Verify new settings created
-        with open(settings_file, 'r', encoding='utf-8') as f:
+        with open(settings_file, "r", encoding="utf-8") as f:
             settings = json.load(f)
 
         assert "hooks" in settings, "Should create valid settings despite corruption"

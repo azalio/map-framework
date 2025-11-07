@@ -31,10 +31,14 @@ ALLOWED_BASE_DIR = ".map"  # Only allow files from .map/ directory
 # Regex to strip control characters except newline (\n) and tab (\t)
 # Removes: \x00-\x08, \x0b-\x0d (includes \r), \x0e-\x1f, \x7f (DELETE)
 # Also removes Unicode control characters: \u0080-\u009f, \u2028, \u2029
-CONTROL_CHAR_PATTERN = re.compile(r'[\x00-\x08\x0b-\x0d\x0e-\x1f\x7f\u0080-\u009f\u2028\u2029]')
+CONTROL_CHAR_PATTERN = re.compile(
+    r"[\x00-\x08\x0b-\x0d\x0e-\x1f\x7f\u0080-\u009f\u2028\u2029]"
+)
 
 
-def validate_path_security(file_path: str, base_dir: str = ALLOWED_BASE_DIR) -> Dict[str, Any]:
+def validate_path_security(
+    file_path: str, base_dir: str = ALLOWED_BASE_DIR
+) -> Dict[str, Any]:
     """Validate file path is within allowed directory (prevents path traversal).
 
     Security checks:
@@ -69,7 +73,7 @@ def validate_path_security(file_path: str, base_dir: str = ALLOWED_BASE_DIR) -> 
                 return {
                     "valid": False,
                     "error": f"Path traversal detected: {file_path} escapes {base_dir}/ directory",
-                    "resolved_path": None
+                    "resolved_path": None,
                 }
         except AttributeError:
             # Python 3.8 fallback: Check if resolved path starts with base_path
@@ -79,24 +83,22 @@ def validate_path_security(file_path: str, base_dir: str = ALLOWED_BASE_DIR) -> 
                 return {
                     "valid": False,
                     "error": f"Path traversal detected: {file_path} escapes {base_dir}/ directory",
-                    "resolved_path": None
+                    "resolved_path": None,
                 }
 
-        return {
-            "valid": True,
-            "error": None,
-            "resolved_path": resolved
-        }
+        return {"valid": True, "error": None, "resolved_path": resolved}
 
     except Exception as e:
         return {
             "valid": False,
             "error": f"Path validation error: {str(e)}",
-            "resolved_path": None
+            "resolved_path": None,
         }
 
 
-def validate_file_size(file_path: Path, max_size: int = MAX_FILE_SIZE_BYTES) -> Dict[str, Any]:
+def validate_file_size(
+    file_path: Path, max_size: int = MAX_FILE_SIZE_BYTES
+) -> Dict[str, Any]:
     """Validate file size is within allowed limit (prevents size bomb attacks).
 
     Security: Check size BEFORE reading file into memory.
@@ -117,14 +119,14 @@ def validate_file_size(file_path: Path, max_size: int = MAX_FILE_SIZE_BYTES) -> 
             return {
                 "valid": False,
                 "error": f"File not found: {file_path}",
-                "size_bytes": 0
+                "size_bytes": 0,
             }
 
         if not file_path.is_file():
             return {
                 "valid": False,
                 "error": f"Not a regular file: {file_path}",
-                "size_bytes": 0
+                "size_bytes": 0,
             }
 
         # Get file size without reading content
@@ -136,20 +138,16 @@ def validate_file_size(file_path: Path, max_size: int = MAX_FILE_SIZE_BYTES) -> 
             return {
                 "valid": False,
                 "error": f"File too large: {size_kb:.1f}KB exceeds {max_kb:.0f}KB limit",
-                "size_bytes": size_bytes
+                "size_bytes": size_bytes,
             }
 
-        return {
-            "valid": True,
-            "error": None,
-            "size_bytes": size_bytes
-        }
+        return {"valid": True, "error": None, "size_bytes": size_bytes}
 
     except Exception as e:
         return {
             "valid": False,
             "error": f"Size validation error: {str(e)}",
-            "size_bytes": 0
+            "size_bytes": 0,
         }
 
 
@@ -177,7 +175,7 @@ def sanitize_content(content: str) -> str:
     Returns:
         Sanitized content with control characters removed
     """
-    return CONTROL_CHAR_PATTERN.sub('', content)
+    return CONTROL_CHAR_PATTERN.sub("", content)
 
 
 def read_and_validate_content(file_path: Path) -> Dict[str, Any]:
@@ -194,29 +192,29 @@ def read_and_validate_content(file_path: Path) -> Dict[str, Any]:
     """
     try:
         # Read with explicit UTF-8 encoding and error handling
-        content = file_path.read_text(encoding='utf-8', errors='strict')
+        content = file_path.read_text(encoding="utf-8", errors="strict")
 
-        return {
-            "valid": True,
-            "error": None,
-            "content": content
-        }
+        return {"valid": True, "error": None, "content": content}
 
     except UnicodeDecodeError as e:
         return {
             "valid": False,
             "error": f"Invalid UTF-8 encoding: {str(e)}",
-            "content": None
+            "content": None,
         }
     except Exception as e:
         return {
             "valid": False,
             "error": f"Failed to read file: {str(e)}",
-            "content": None
+            "content": None,
         }
 
 
-def validate_checkpoint_file(file_path: str, base_dir: str = ALLOWED_BASE_DIR, max_size: int = MAX_FILE_SIZE_BYTES) -> Dict[str, Any]:
+def validate_checkpoint_file(
+    file_path: str,
+    base_dir: str = ALLOWED_BASE_DIR,
+    max_size: int = MAX_FILE_SIZE_BYTES,
+) -> Dict[str, Any]:
     """Validate checkpoint file with multiple security layers (defense-in-depth).
 
     Security layers (all must pass - AND logic):
@@ -237,11 +235,7 @@ def validate_checkpoint_file(file_path: str, base_dir: str = ALLOWED_BASE_DIR, m
         - sanitized_content: str (sanitized content if valid, empty if invalid)
         - metadata: dict (validation details: size, path)
     """
-    metadata = {
-        "original_path": file_path,
-        "resolved_path": None,
-        "size_bytes": 0
-    }
+    metadata = {"original_path": file_path, "resolved_path": None, "size_bytes": 0}
 
     # Layer 1: Path security validation
     path_result = validate_path_security(file_path, base_dir)
@@ -250,7 +244,7 @@ def validate_checkpoint_file(file_path: str, base_dir: str = ALLOWED_BASE_DIR, m
             "valid": False,
             "error": path_result["error"],
             "sanitized_content": "",
-            "metadata": metadata
+            "metadata": metadata,
         }
 
     resolved_path = path_result["resolved_path"]
@@ -263,7 +257,7 @@ def validate_checkpoint_file(file_path: str, base_dir: str = ALLOWED_BASE_DIR, m
             "valid": False,
             "error": size_result["error"],
             "sanitized_content": "",
-            "metadata": metadata
+            "metadata": metadata,
         }
 
     metadata["size_bytes"] = size_result["size_bytes"]
@@ -275,7 +269,7 @@ def validate_checkpoint_file(file_path: str, base_dir: str = ALLOWED_BASE_DIR, m
             "valid": False,
             "error": content_result["error"],
             "sanitized_content": "",
-            "metadata": metadata
+            "metadata": metadata,
         }
 
     # Layer 4: Sanitize content (remove control characters)
@@ -286,30 +280,30 @@ def validate_checkpoint_file(file_path: str, base_dir: str = ALLOWED_BASE_DIR, m
         "valid": True,
         "error": None,
         "sanitized_content": sanitized,
-        "metadata": metadata
+        "metadata": metadata,
     }
 
 
 def main():
     """Main entry point for validation helper script."""
     parser = argparse.ArgumentParser(
-        description='Validate checkpoint file with security checks'
+        description="Validate checkpoint file with security checks"
     )
     parser.add_argument(
-        '--file',
+        "--file",
         required=True,
-        help='Path to checkpoint file (must be in .map/ directory)'
+        help="Path to checkpoint file (must be in .map/ directory)",
     )
     parser.add_argument(
-        '--base-dir',
+        "--base-dir",
         default=ALLOWED_BASE_DIR,
-        help=f'Base directory for validation (default: {ALLOWED_BASE_DIR})'
+        help=f"Base directory for validation (default: {ALLOWED_BASE_DIR})",
     )
     parser.add_argument(
-        '--max-size-kb',
+        "--max-size-kb",
         type=int,
         default=256,
-        help='Maximum file size in KB (default: 256)'
+        help="Maximum file size in KB (default: 256)",
     )
 
     args = parser.parse_args()
@@ -323,9 +317,15 @@ def main():
     # Log to stderr for debugging
     if result["valid"]:
         size_kb = result["metadata"]["size_bytes"] / 1024
-        print(f"[validate_checkpoint_file] ✓ Valid file: {args.file} ({size_kb:.1f}KB)", file=sys.stderr)
+        print(
+            f"[validate_checkpoint_file] ✓ Valid file: {args.file} ({size_kb:.1f}KB)",
+            file=sys.stderr,
+        )
     else:
-        print(f"[validate_checkpoint_file] ✗ Invalid file: {result['error']}", file=sys.stderr)
+        print(
+            f"[validate_checkpoint_file] ✗ Invalid file: {result['error']}",
+            file=sys.stderr,
+        )
 
     # Output JSON to stdout
     print(json.dumps(result, indent=2))
@@ -333,7 +333,7 @@ def main():
     return 0
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     try:
         sys.exit(main())
     except Exception as e:
@@ -343,7 +343,7 @@ if __name__ == '__main__':
             "valid": False,
             "error": f"Unexpected error: {str(e)}",
             "sanitized_content": "",
-            "metadata": {}
+            "metadata": {},
         }
         print(json.dumps(error_result, indent=2))
         sys.exit(0)  # Exit 0 to avoid blocking hooks

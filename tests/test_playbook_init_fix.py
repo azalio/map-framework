@@ -25,11 +25,15 @@ class TestPlaybookDBInitialization:
         """Test that mapify init creates playbook.db."""
         # Initialize in tmp_path directly
         os.chdir(tmp_path)
-        result = runner.invoke(app, ["init", ".", "--no-git", "--force", "--mcp", "none"])
+        result = runner.invoke(
+            app, ["init", ".", "--no-git", "--force", "--mcp", "none"]
+        )
 
         # Verify playbook.db created
         playbook_db = tmp_path / ".claude" / "playbook.db"
-        assert result.exit_code == 0, f"Init should succeed, got exit code {result.exit_code}"
+        assert (
+            result.exit_code == 0
+        ), f"Init should succeed, got exit code {result.exit_code}"
         assert playbook_db.exists(), "playbook.db should be created by init"
 
         # Verify it's a valid SQLite database
@@ -51,8 +55,12 @@ class TestPlaybookDBInitialization:
         os.chdir(tmp_path)
 
         # Run init
-        result = runner.invoke(app, ["init", ".", "--no-git", "--force", "--mcp", "none"])
-        assert result.exit_code == 0, f"Init should succeed, got exit code {result.exit_code}"
+        result = runner.invoke(
+            app, ["init", ".", "--no-git", "--force", "--mcp", "none"]
+        )
+        assert (
+            result.exit_code == 0
+        ), f"Init should succeed, got exit code {result.exit_code}"
 
         playbook_db = tmp_path / ".claude" / "playbook.db"
 
@@ -65,17 +73,27 @@ class TestPlaybookDBInitialization:
         columns = {row[1] for row in cursor.fetchall()}
 
         expected_columns = {
-            "id", "section", "content", "code_example",
-            "helpful_count", "harmful_count",
-            "created_at", "last_used_at",
-            "deprecated", "deprecation_reason",
-            "tags", "related_bullets", "executable_scripts"
+            "id",
+            "section",
+            "content",
+            "code_example",
+            "helpful_count",
+            "harmful_count",
+            "created_at",
+            "last_used_at",
+            "deprecated",
+            "deprecation_reason",
+            "tags",
+            "related_bullets",
+            "executable_scripts",
         }
 
         assert expected_columns.issubset(columns), "All expected columns should exist"
 
         # Check FTS5 table exists
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='bullets_fts'")
+        cursor.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='bullets_fts'"
+        )
         assert cursor.fetchone() is not None, "FTS5 table should exist"
 
         conn.close()
@@ -85,7 +103,9 @@ class TestPlaybookDBInitialization:
         os.chdir(tmp_path)
 
         # Run init
-        result = runner.invoke(app, ["init", ".", "--no-git", "--force", "--mcp", "none"])
+        result = runner.invoke(
+            app, ["init", ".", "--no-git", "--force", "--mcp", "none"]
+        )
         assert result.exit_code == 0
 
         # Run query (should not fail with "Playbook not found")
@@ -121,16 +141,18 @@ class TestPlaybookDBInitialization:
         claude_dir.mkdir()
 
         playbook_json = claude_dir / "playbook.json"
-        playbook_json.write_text(json.dumps({
-            "metadata": {"project": "test"},
-            "sections": {
-                "IMPLEMENTATION_PATTERNS": {
-                    "bullets": [
-                        {"id": "impl-0001", "content": "Test"}
-                    ]
+        playbook_json.write_text(
+            json.dumps(
+                {
+                    "metadata": {"project": "test"},
+                    "sections": {
+                        "IMPLEMENTATION_PATTERNS": {
+                            "bullets": [{"id": "impl-0001", "content": "Test"}]
+                        }
+                    },
                 }
-            }
-        }))
+            )
+        )
 
         # Run stats
         result = runner.invoke(app, ["playbook", "stats"])
@@ -157,7 +179,9 @@ class TestPlaybookErrorHandling:
         playbook_json.write_text('{"sections": {')  # Invalid JSON
 
         # Run init - should fail with helpful message
-        result = runner.invoke(app, ["init", ".", "--no-git", "--force", "--mcp", "none"])
+        result = runner.invoke(
+            app, ["init", ".", "--no-git", "--force", "--mcp", "none"]
+        )
 
         # Init creates .claude/ so it should succeed but show warning about corrupted JSON
         # The PlaybookManager handles corruption gracefully
@@ -172,7 +196,9 @@ class TestPlaybookErrorHandling:
         # The actual exception handling is tested implicitly by other tests
         # Here we just verify that init completes successfully in normal case
         os.chdir(tmp_path)
-        result = runner.invoke(app, ["init", ".", "--no-git", "--force", "--mcp", "none"])
+        result = runner.invoke(
+            app, ["init", ".", "--no-git", "--force", "--mcp", "none"]
+        )
         assert result.exit_code == 0
 
     def test_playbook_query_empty_database(self, tmp_path):
@@ -202,7 +228,9 @@ class TestPlaybookInitIdempotency:
         os.chdir(tmp_path)
 
         # Run init first time
-        result1 = runner.invoke(app, ["init", ".", "--no-git", "--force", "--mcp", "none"])
+        result1 = runner.invoke(
+            app, ["init", ".", "--no-git", "--force", "--mcp", "none"]
+        )
         assert result1.exit_code == 0
 
         playbook_db = tmp_path / ".claude" / "playbook.db"
@@ -214,7 +242,9 @@ class TestPlaybookInitIdempotency:
         manager.close()
 
         # Run init second time (should be safe - already initialized message)
-        result2 = runner.invoke(app, ["init", ".", "--no-git", "--force", "--mcp", "none"])
+        result2 = runner.invoke(
+            app, ["init", ".", "--no-git", "--force", "--mcp", "none"]
+        )
         assert result2.exit_code == 0
 
         # Should not crash (may show "already initialized" message)
@@ -249,11 +279,11 @@ class TestPlaybookDBMigration:
                             "id": "impl-0001",
                             "content": "Test pattern",
                             "helpful_count": 5,
-                            "harmful_count": 0
+                            "harmful_count": 0,
                         }
                     ]
                 }
-            }
+            },
         }
         playbook_json.write_text(json.dumps(playbook_data))
 
@@ -263,7 +293,7 @@ class TestPlaybookDBMigration:
         manager = PlaybookManager(
             playbook_path=str(playbook_json),
             db_path=str(playbook_db),
-            use_semantic_search=False
+            use_semantic_search=False,
         )
 
         # Verify migration happened

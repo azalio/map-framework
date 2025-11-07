@@ -33,16 +33,51 @@ def extract_keywords(message: str, max_keywords: int = 10) -> str:
     """
     # Common stop words to filter out
     stop_words = {
-        'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
-        'of', 'with', 'by', 'from', 'up', 'about', 'into', 'through', 'during',
-        'please', 'can', 'you', 'could', 'would', 'should', 'help', 'me', 'i',
-        'my', 'we', 'need', 'want', 'like', 'make', 'get', 'use', 'do', 'does'
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "but",
+        "in",
+        "on",
+        "at",
+        "to",
+        "for",
+        "of",
+        "with",
+        "by",
+        "from",
+        "up",
+        "about",
+        "into",
+        "through",
+        "during",
+        "please",
+        "can",
+        "you",
+        "could",
+        "would",
+        "should",
+        "help",
+        "me",
+        "i",
+        "my",
+        "we",
+        "need",
+        "want",
+        "like",
+        "make",
+        "get",
+        "use",
+        "do",
+        "does",
     }
 
     # Basic tokenization and filtering
     words = message.lower().split()
     keywords = [
-        word.strip('.,!?;:\"\'')
+        word.strip(".,!?;:\"'")
         for word in words
         if word.lower() not in stop_words and len(word) > 2
     ]
@@ -57,7 +92,7 @@ def extract_keywords(message: str, max_keywords: int = 10) -> str:
             if len(unique_keywords) >= max_keywords:
                 break
 
-    return ' '.join(unique_keywords[:max_keywords])
+    return " ".join(unique_keywords[:max_keywords])
 
 
 def query_playbook(query: str, limit: int = 5) -> Optional[Dict]:
@@ -73,14 +108,26 @@ def query_playbook(query: str, limit: int = 5) -> Optional[Dict]:
     try:
         # Call mapify playbook query with JSON output
         result = subprocess.run(
-            ['mapify', 'playbook', 'query', query, '--format', 'json', '--limit', str(limit)],
+            [
+                "mapify",
+                "playbook",
+                "query",
+                query,
+                "--format",
+                "json",
+                "--limit",
+                str(limit),
+            ],
             capture_output=True,
             text=True,
-            timeout=10  # 10 second timeout
+            timeout=10,  # 10 second timeout
         )
 
         if result.returncode != 0:
-            print(f"[inject_playbook_bullets] mapify command failed: {result.stderr}", file=sys.stderr)
+            print(
+                f"[inject_playbook_bullets] mapify command failed: {result.stderr}",
+                file=sys.stderr,
+            )
             return None
 
         # Parse JSON output
@@ -92,7 +139,10 @@ def query_playbook(query: str, limit: int = 5) -> Optional[Dict]:
         return None
     except json.JSONDecodeError as e:
         print(f"[inject_playbook_bullets] Failed to parse JSON: {e}", file=sys.stderr)
-        print(f"[inject_playbook_bullets] Output was: {result.stdout[:200]}", file=sys.stderr)
+        print(
+            f"[inject_playbook_bullets] Output was: {result.stdout[:200]}",
+            file=sys.stderr,
+        )
         return None
     except Exception as e:
         print(f"[inject_playbook_bullets] Unexpected error: {e}", file=sys.stderr)
@@ -112,45 +162,49 @@ def format_bullets_as_markdown(results: List[Dict]) -> str:
         return ""
 
     lines = ["# Relevant Playbook Patterns\n"]
-    lines.append("*The following patterns from your project playbook may be relevant to this task:*\n")
+    lines.append(
+        "*The following patterns from your project playbook may be relevant to this task:*\n"
+    )
 
     for i, result in enumerate(results, 1):
-        bullet_id = result.get('id', 'unknown')
-        section = result.get('section', 'GENERAL')
-        content = result.get('content', '')
-        quality_score = result.get('quality_score', 0)
-        relevance_score = result.get('relevance_score', 0)
+        bullet_id = result.get("id", "unknown")
+        section = result.get("section", "GENERAL")
+        content = result.get("content", "")
+        quality_score = result.get("quality_score", 0)
+        relevance_score = result.get("relevance_score", 0)
 
         # Format bullet with metadata
         lines.append(f"\n## {i}. [{bullet_id}] {section}")
-        lines.append(f"*Quality: {quality_score}/10 | Relevance: {relevance_score:.2f}*\n")
+        lines.append(
+            f"*Quality: {quality_score}/10 | Relevance: {relevance_score:.2f}*\n"
+        )
         lines.append(content)
 
         # Include code example if available
-        code_example = result.get('code_example', '')
+        code_example = result.get("code_example", "")
         if code_example and code_example.strip():
             lines.append(f"\n**Example:**\n{code_example}")
 
         lines.append("\n---")
 
-    return '\n'.join(lines)
+    return "\n".join(lines)
 
 
 def main():
     """Main entry point for helper script."""
     parser = argparse.ArgumentParser(
-        description='Query playbook and format bullets for Claude Code injection'
+        description="Query playbook and format bullets for Claude Code injection"
     )
     parser.add_argument(
-        '--message',
+        "--message",
         required=False,
-        help='User message to analyze (deprecated: use stdin instead)'
+        help="User message to analyze (deprecated: use stdin instead)",
     )
     parser.add_argument(
-        '--limit',
+        "--limit",
         type=int,
         default=5,
-        help='Maximum number of bullets to inject (default: 5)'
+        help="Maximum number of bullets to inject (default: 5)",
     )
 
     args = parser.parse_args()
@@ -160,13 +214,22 @@ def main():
     if args.message:
         # Backward compatibility: --message argument still works
         message = args.message
-        print("[inject_playbook_bullets] Using --message argument (legacy mode)", file=sys.stderr)
+        print(
+            "[inject_playbook_bullets] Using --message argument (legacy mode)",
+            file=sys.stderr,
+        )
     elif not sys.stdin.isatty():
         # New secure approach: stdin input (preferred when no --message)
         message = sys.stdin.read().strip()
-        print("[inject_playbook_bullets] Reading from stdin (secure mode)", file=sys.stderr)
+        print(
+            "[inject_playbook_bullets] Reading from stdin (secure mode)",
+            file=sys.stderr,
+        )
     else:
-        print("[inject_playbook_bullets] No input provided (stdin or --message)", file=sys.stderr)
+        print(
+            "[inject_playbook_bullets] No input provided (stdin or --message)",
+            file=sys.stderr,
+        )
         print(json.dumps({"continue": True}))
         return 0
 
@@ -174,7 +237,10 @@ def main():
     keywords = extract_keywords(message)
 
     if not keywords:
-        print("[inject_playbook_bullets] No keywords extracted from message", file=sys.stderr)
+        print(
+            "[inject_playbook_bullets] No keywords extracted from message",
+            file=sys.stderr,
+        )
         print(json.dumps({"continue": True}))
         return 0
 
@@ -184,18 +250,23 @@ def main():
     response = query_playbook(keywords, args.limit)
 
     if not response:
-        print("[inject_playbook_bullets] No response from playbook query", file=sys.stderr)
+        print(
+            "[inject_playbook_bullets] No response from playbook query", file=sys.stderr
+        )
         print(json.dumps({"continue": True}))
         return 0
 
     # Check if we have results
-    results = response.get('results', [])
+    results = response.get("results", [])
     if not results:
         print("[inject_playbook_bullets] No relevant bullets found", file=sys.stderr)
         print(json.dumps({"continue": True}))
         return 0
 
-    print(f"[inject_playbook_bullets] Found {len(results)} relevant bullets", file=sys.stderr)
+    print(
+        f"[inject_playbook_bullets] Found {len(results)} relevant bullets",
+        file=sys.stderr,
+    )
 
     # Format bullets as markdown
     additional_context = format_bullets_as_markdown(results)
@@ -205,16 +276,13 @@ def main():
     if not additional_context:
         output = {"continue": True}
     else:
-        output = {
-            "continue": True,
-            "additionalContext": additional_context
-        }
+        output = {"continue": True, "additionalContext": additional_context}
     print(json.dumps(output, indent=2))
 
     return 0
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     try:
         sys.exit(main())
     except Exception as e:

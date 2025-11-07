@@ -18,6 +18,7 @@ from enum import Enum
 
 class EntityType(Enum):
     """Entity types matching schema_v3.0.sql CHECK constraint."""
+
     TOOL = "TOOL"  # CLI tools, libraries, frameworks (pytest, SQLite, Docker)
     PATTERN = "PATTERN"  # Implementation patterns (retry-with-backoff, feature-flags)
     CONCEPT = "CONCEPT"  # Abstract ideas (idempotency, eventual-consistency)
@@ -41,6 +42,7 @@ class Entity:
         last_seen_at: ISO8601 timestamp of last mention (same as first_seen for new extractions)
         metadata: Optional JSON-serializable dict for entity-specific attributes
     """
+
     id: str
     type: EntityType
     name: str
@@ -85,39 +87,113 @@ class EntityExtractor:
         # Exact keyword match → confidence 0.9
         self.tool_keywords = {
             # Testing frameworks
-            "pytest", "unittest", "jest", "mocha", "jasmine", "cypress",
+            "pytest",
+            "unittest",
+            "jest",
+            "mocha",
+            "jasmine",
+            "cypress",
             # Databases
-            "sqlite", "postgresql", "postgres", "mysql", "mongodb", "redis",
+            "sqlite",
+            "postgresql",
+            "postgres",
+            "mysql",
+            "mongodb",
+            "redis",
             "fts5",  # SQLite FTS5 extension
             # Python libraries
-            "numpy", "pandas", "flask", "django", "fastapi", "requests",
-            "sqlalchemy", "pydantic", "click",
+            "numpy",
+            "pandas",
+            "flask",
+            "django",
+            "fastapi",
+            "requests",
+            "sqlalchemy",
+            "pydantic",
+            "click",
             # CLI tools
-            "git", "docker", "kubernetes", "kubectl", "helm", "terraform",
-            "ansible", "make", "cmake", "gradle", "maven",
+            "git",
+            "docker",
+            "kubernetes",
+            "kubectl",
+            "helm",
+            "terraform",
+            "ansible",
+            "make",
+            "cmake",
+            "gradle",
+            "maven",
             # Build/package tools
-            "npm", "yarn", "pip", "poetry", "cargo", "go mod",
+            "npm",
+            "yarn",
+            "pip",
+            "poetry",
+            "cargo",
+            "go mod",
             # Monitoring/logging
-            "prometheus", "grafana", "elk", "elasticsearch", "kibana", "logstash",
+            "prometheus",
+            "grafana",
+            "elk",
+            "elasticsearch",
+            "kibana",
+            "logstash",
             # CI/CD
-            "jenkins", "github actions", "gitlab ci", "circleci", "travis ci",
+            "jenkins",
+            "github actions",
+            "gitlab ci",
+            "circleci",
+            "travis ci",
         }
 
         # TECHNOLOGY: Tech stack components
         # Exact keyword match → confidence 0.9
         self.technology_keywords = {
             # Languages
-            "python", "javascript", "typescript", "java", "go", "rust",
-            "c++", "c#", "ruby", "php", "swift", "kotlin",
+            "python",
+            "javascript",
+            "typescript",
+            "java",
+            "go",
+            "rust",
+            "c++",
+            "c#",
+            "ruby",
+            "php",
+            "swift",
+            "kotlin",
             # Frameworks/platforms
-            "react", "vue", "angular", "next.js", "nuxt", "svelte",
-            "node.js", "express", "koa", "fastify",
+            "react",
+            "vue",
+            "angular",
+            "next.js",
+            "nuxt",
+            "svelte",
+            "node.js",
+            "express",
+            "koa",
+            "fastify",
             # Infrastructure
-            "kubernetes", "docker", "aws", "azure", "gcp", "heroku",
-            "ci/cd", "devops", "microservices", "serverless",
+            "kubernetes",
+            "docker",
+            "aws",
+            "azure",
+            "gcp",
+            "heroku",
+            "ci/cd",
+            "devops",
+            "microservices",
+            "serverless",
             # Protocols/standards
-            "http", "https", "grpc", "rest", "graphql", "websocket",
-            "oauth", "jwt", "saml", "openid",
+            "http",
+            "https",
+            "grpc",
+            "rest",
+            "graphql",
+            "websocket",
+            "oauth",
+            "jwt",
+            "saml",
+            "openid",
         }
 
         # PATTERN: Implementation patterns
@@ -240,38 +316,35 @@ class EntityExtractor:
         # Pattern 1: Code entities in backticks
         # Matches: `pytest`, `SQLite`, `retry_with_backoff()`
         # Confidence: 0.9 (explicit code reference)
-        self.code_entity_pattern = re.compile(r'`([a-zA-Z0-9_\-\.]+(?:\(\))?)`')
+        self.code_entity_pattern = re.compile(r"`([a-zA-Z0-9_\-\.]+(?:\(\))?)`")
 
         # Pattern 2: Code blocks (triple backticks or indentation)
         # Extract tool names from import statements, function calls
         # Confidence: 0.8 (code context)
         self.code_block_pattern = re.compile(
-            r'```[\w]*\n(.*?)```|^(?: {4}|\t)(.+)$',
-            re.MULTILINE | re.DOTALL
+            r"```[\w]*\n(.*?)```|^(?: {4}|\t)(.+)$", re.MULTILINE | re.DOTALL
         )
 
         # Pattern 3: Import statements
         # Matches: import pytest, from flask import Flask
         # Confidence: 0.9 (explicit tool usage)
         self.import_pattern = re.compile(
-            r'(?:import|from)\s+([a-zA-Z0-9_\.]+)',
-            re.IGNORECASE
+            r"(?:import|from)\s+([a-zA-Z0-9_\.]+)", re.IGNORECASE
         )
 
         # Pattern 4: Negative context for antipatterns
         # Matches: "never use", "avoid", "don't do"
         # Confidence boost: +0.2
         self.negative_context_pattern = re.compile(
-            r'\b(never|avoid|don\'t|do not|anti[\s-]?pattern|bad practice|wrong)\b',
-            re.IGNORECASE
+            r"\b(never|avoid|don\'t|do not|anti[\s-]?pattern|bad practice|wrong)\b",
+            re.IGNORECASE,
         )
 
         # Pattern 5: Pattern suffix detection
         # Matches: "retry pattern", "singleton Pattern", "factory-pattern"
         # Confidence: 0.8
         self.pattern_suffix_pattern = re.compile(
-            r'\b([a-z][\w\-]+)[\s\-]pattern\b',
-            re.IGNORECASE
+            r"\b([a-z][\w\-]+)[\s\-]pattern\b", re.IGNORECASE
         )
 
     def extract_entities(self, content: str) -> List[Entity]:
@@ -315,7 +388,7 @@ class EntityExtractor:
             for i in range(0, len(content), chunk_size):
                 # Include overlap from previous chunk
                 start = max(0, i - overlap)
-                chunk = content[start:i + chunk_size]
+                chunk = content[start : i + chunk_size]
                 all_entities.extend(self._extract_from_text(chunk))
             # Deduplicate across chunks
             return self._deduplicate_entities(all_entities)
@@ -338,36 +411,62 @@ class EntityExtractor:
         """
         entities = []
         # Use timezone-aware datetime (fixes deprecation warning)
-        now = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
         # Step 1: Extract code entities (highest confidence: 0.9)
         entities.extend(self._extract_code_entities(text, now))
 
         # Step 2: Extract tools and technologies from keywords
-        entities.extend(self._extract_keyword_entities(
-            text, self.tool_keywords, EntityType.TOOL, now, base_confidence=0.9
-        ))
-        entities.extend(self._extract_keyword_entities(
-            text, self.technology_keywords, EntityType.TECHNOLOGY, now, base_confidence=0.9
-        ))
+        entities.extend(
+            self._extract_keyword_entities(
+                text, self.tool_keywords, EntityType.TOOL, now, base_confidence=0.9
+            )
+        )
+        entities.extend(
+            self._extract_keyword_entities(
+                text,
+                self.technology_keywords,
+                EntityType.TECHNOLOGY,
+                now,
+                base_confidence=0.9,
+            )
+        )
 
         # Step 3: Extract patterns (with pattern suffix detection)
         entities.extend(self._extract_pattern_entities(text, now))
 
         # Step 4: Extract concepts (context-based inference)
-        entities.extend(self._extract_keyword_entities(
-            text, self.concept_keywords, EntityType.CONCEPT, now, base_confidence=0.6
-        ))
+        entities.extend(
+            self._extract_keyword_entities(
+                text,
+                self.concept_keywords,
+                EntityType.CONCEPT,
+                now,
+                base_confidence=0.6,
+            )
+        )
 
         # Step 5: Extract error types
-        entities.extend(self._extract_keyword_entities(
-            text, self.error_type_keywords, EntityType.ERROR_TYPE, now, base_confidence=0.7
-        ))
+        entities.extend(
+            self._extract_keyword_entities(
+                text,
+                self.error_type_keywords,
+                EntityType.ERROR_TYPE,
+                now,
+                base_confidence=0.7,
+            )
+        )
 
         # Step 6: Extract workflows
-        entities.extend(self._extract_keyword_entities(
-            text, self.workflow_keywords, EntityType.WORKFLOW, now, base_confidence=0.7
-        ))
+        entities.extend(
+            self._extract_keyword_entities(
+                text,
+                self.workflow_keywords,
+                EntityType.WORKFLOW,
+                now,
+                base_confidence=0.7,
+            )
+        )
 
         # Step 7: Extract antipatterns (with negative context boost)
         entities.extend(self._extract_antipattern_entities(text, now))
@@ -387,7 +486,7 @@ class EntityExtractor:
             code_entity = match.group(1).strip()
 
             # Remove function parentheses: retry_with_backoff() → retry_with_backoff
-            code_entity = re.sub(r'\(\)$', '', code_entity)
+            code_entity = re.sub(r"\(\)$", "", code_entity)
 
             # Skip if too short (single char) or too long (>50 chars)
             if len(code_entity) < 2 or len(code_entity) > 50:
@@ -398,58 +497,99 @@ class EntityExtractor:
 
             # Check if it's a known tool
             if entity_lower in self.tool_keywords:
-                entities.append(self._create_entity(
-                    name=code_entity,
-                    entity_type=EntityType.TOOL,
-                    confidence=0.9,
-                    timestamp=timestamp
-                ))
+                entities.append(
+                    self._create_entity(
+                        name=code_entity,
+                        entity_type=EntityType.TOOL,
+                        confidence=0.9,
+                        timestamp=timestamp,
+                    )
+                )
             # Check if it's a known technology
             elif entity_lower in self.technology_keywords:
-                entities.append(self._create_entity(
-                    name=code_entity,
-                    entity_type=EntityType.TECHNOLOGY,
-                    confidence=0.9,
-                    timestamp=timestamp
-                ))
+                entities.append(
+                    self._create_entity(
+                        name=code_entity,
+                        entity_type=EntityType.TECHNOLOGY,
+                        confidence=0.9,
+                        timestamp=timestamp,
+                    )
+                )
             # Otherwise, infer as TOOL (generic code entity)
             else:
                 # Lower confidence for unknown code entities
-                entities.append(self._create_entity(
-                    name=code_entity,
-                    entity_type=EntityType.TOOL,
-                    confidence=0.7,
-                    timestamp=timestamp,
-                    metadata={"inferred_from": "code_context"}
-                ))
+                entities.append(
+                    self._create_entity(
+                        name=code_entity,
+                        entity_type=EntityType.TOOL,
+                        confidence=0.7,
+                        timestamp=timestamp,
+                        metadata={"inferred_from": "code_context"},
+                    )
+                )
 
         # Extract from import statements
         for match in self.import_pattern.finditer(text):
             module_name = match.group(1).strip()
 
             # Get top-level module: flask.app → flask
-            top_level = module_name.split('.')[0]
+            top_level = module_name.split(".")[0]
 
             # Skip standard library imports (common false positives)
             # Expanded list to reduce false positive tool extractions
             stdlib_modules = {
-                'os', 'sys', 'json', 're', 'time', 'datetime', 'typing', 'pathlib',
-                'collections', 'itertools', 'functools', 'copy', 'hashlib', 'uuid',
-                'logging', 'warnings', 'contextlib', 'abc', 'enum', 'dataclasses',
-                'io', 'tempfile', 'shutil', 'glob', 'fnmatch', 'subprocess', 'threading',
-                'multiprocessing', 'asyncio', 'math', 'random', 'statistics', 'decimal',
-                'fractions', 'string', 'textwrap', 'unicodedata', 'struct', 'codecs'
+                "os",
+                "sys",
+                "json",
+                "re",
+                "time",
+                "datetime",
+                "typing",
+                "pathlib",
+                "collections",
+                "itertools",
+                "functools",
+                "copy",
+                "hashlib",
+                "uuid",
+                "logging",
+                "warnings",
+                "contextlib",
+                "abc",
+                "enum",
+                "dataclasses",
+                "io",
+                "tempfile",
+                "shutil",
+                "glob",
+                "fnmatch",
+                "subprocess",
+                "threading",
+                "multiprocessing",
+                "asyncio",
+                "math",
+                "random",
+                "statistics",
+                "decimal",
+                "fractions",
+                "string",
+                "textwrap",
+                "unicodedata",
+                "struct",
+                "codecs",
             }
             if top_level in stdlib_modules:
                 continue
 
-            entities.append(self._create_entity(
-                name=top_level,
-                entity_type=EntityType.TOOL,
-                confidence=0.9,
-                timestamp=timestamp,
-                metadata={"extraction_method": "import_statement"}
-            ))
+            entities.append(
+                self._create_entity(
+                    name=top_level,
+                    entity_type=EntityType.TOOL,
+                    confidence=0.9,
+                    timestamp=timestamp,
+                    metadata={"extraction_method": "import_statement"},
+                )
+            )
 
         return entities
 
@@ -459,7 +599,7 @@ class EntityExtractor:
         keywords,  # Can be Set[str] or Dict[str, str]
         entity_type: EntityType,
         timestamp: str,
-        base_confidence: float
+        base_confidence: float,
     ) -> List[Entity]:
         """
         Extract entities by exact keyword matching.
@@ -488,15 +628,17 @@ class EntityExtractor:
         for keyword, canonical_name in keyword_items:
             # Use word boundary regex for exact match
             # Handles: "pytest" matches, but not "apytest"
-            pattern = r'\b' + re.escape(keyword) + r'\b'
+            pattern = r"\b" + re.escape(keyword) + r"\b"
 
             if re.search(pattern, text_lower):
-                entities.append(self._create_entity(
-                    name=canonical_name,
-                    entity_type=entity_type,
-                    confidence=base_confidence,
-                    timestamp=timestamp
-                ))
+                entities.append(
+                    self._create_entity(
+                        name=canonical_name,
+                        entity_type=entity_type,
+                        confidence=base_confidence,
+                        timestamp=timestamp,
+                    )
+                )
 
         return entities
 
@@ -514,9 +656,15 @@ class EntityExtractor:
         entities = []
 
         # First, extract from pattern_keywords
-        entities.extend(self._extract_keyword_entities(
-            text, self.pattern_keywords, EntityType.PATTERN, timestamp, base_confidence=0.8
-        ))
+        entities.extend(
+            self._extract_keyword_entities(
+                text,
+                self.pattern_keywords,
+                EntityType.PATTERN,
+                timestamp,
+                base_confidence=0.8,
+            )
+        )
 
         # Second, detect "{word} pattern" or "{word}-pattern"
         for match in self.pattern_suffix_pattern.finditer(text):
@@ -529,13 +677,15 @@ class EntityExtractor:
             # Create canonical name: retry → retry-pattern
             canonical_name = f"{pattern_name}-pattern"
 
-            entities.append(self._create_entity(
-                name=canonical_name,
-                entity_type=EntityType.PATTERN,
-                confidence=0.7,  # Slightly lower for inferred patterns
-                timestamp=timestamp,
-                metadata={"inferred_from": "pattern_suffix"}
-            ))
+            entities.append(
+                self._create_entity(
+                    name=canonical_name,
+                    entity_type=EntityType.PATTERN,
+                    confidence=0.7,  # Slightly lower for inferred patterns
+                    timestamp=timestamp,
+                    metadata={"inferred_from": "pattern_suffix"},
+                )
+            )
 
         return entities
 
@@ -556,7 +706,7 @@ class EntityExtractor:
 
         # Process each antipattern keyword
         for keyword, canonical_name in self.antipattern_keywords.items():
-            pattern = r'\b' + re.escape(keyword) + r'\b'
+            pattern = r"\b" + re.escape(keyword) + r"\b"
 
             # Find all matches of this antipattern
             for match in re.finditer(pattern, text_lower):
@@ -566,7 +716,9 @@ class EntityExtractor:
                 context_window = text_lower[start:end]
 
                 # Check for negative context in local window only
-                has_local_negative = bool(self.negative_context_pattern.search(context_window))
+                has_local_negative = bool(
+                    self.negative_context_pattern.search(context_window)
+                )
 
                 confidence = 0.9 if has_local_negative else 0.7
                 metadata = {}
@@ -574,13 +726,15 @@ class EntityExtractor:
                 if has_local_negative:
                     metadata["negative_context_detected"] = True
 
-                entities.append(self._create_entity(
-                    name=canonical_name,
-                    entity_type=EntityType.ANTIPATTERN,
-                    confidence=confidence,
-                    timestamp=timestamp,
-                    metadata=metadata if metadata else None
-                ))
+                entities.append(
+                    self._create_entity(
+                        name=canonical_name,
+                        entity_type=EntityType.ANTIPATTERN,
+                        confidence=confidence,
+                        timestamp=timestamp,
+                        metadata=metadata if metadata else None,
+                    )
+                )
 
         return entities
 
@@ -590,7 +744,7 @@ class EntityExtractor:
         entity_type: EntityType,
         confidence: float,
         timestamp: str,
-        metadata: Optional[Dict] = None
+        metadata: Optional[Dict] = None,
     ) -> Entity:
         """
         Create Entity object with semantic ID.
@@ -615,7 +769,7 @@ class EntityExtractor:
             confidence=confidence,
             first_seen_at=timestamp,
             last_seen_at=timestamp,
-            metadata=metadata
+            metadata=metadata,
         )
 
     def _generate_slug(self, name: str) -> str:
@@ -637,19 +791,19 @@ class EntityExtractor:
         slug = name.lower()
 
         # Remove function parentheses
-        slug = re.sub(r'\(\)$', '', slug)
+        slug = re.sub(r"\(\)$", "", slug)
 
         # Replace spaces and underscores with hyphens
-        slug = re.sub(r'[\s_]+', '-', slug)
+        slug = re.sub(r"[\s_]+", "-", slug)
 
         # Remove special characters (keep alphanumeric and hyphens)
-        slug = re.sub(r'[^a-z0-9\-]', '', slug)
+        slug = re.sub(r"[^a-z0-9\-]", "", slug)
 
         # Collapse multiple hyphens
-        slug = re.sub(r'-+', '-', slug)
+        slug = re.sub(r"-+", "-", slug)
 
         # Strip leading/trailing hyphens
-        slug = slug.strip('-')
+        slug = slug.strip("-")
 
         # Fallback: if slug is empty, use UUID
         if not slug:

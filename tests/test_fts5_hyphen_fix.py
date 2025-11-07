@@ -57,7 +57,7 @@ class TestFTS5HyphenFix:
                     "last_updated": datetime.utcnow().isoformat() + "Z",
                     "total_bullets": 10,
                     "sections_count": 2,
-                    "top_k": 10
+                    "top_k": 10,
                 },
                 "sections": {
                     "IMPLEMENTATION_PATTERNS": {
@@ -69,7 +69,7 @@ class TestFTS5HyphenFix:
                                 "helpful_count": 5,
                                 "harmful_count": 0,
                                 "created_at": datetime.utcnow().isoformat() + "Z",
-                                "last_used_at": datetime.utcnow().isoformat() + "Z"
+                                "last_used_at": datetime.utcnow().isoformat() + "Z",
                             },
                             {
                                 "id": "impl-0002",
@@ -77,7 +77,7 @@ class TestFTS5HyphenFix:
                                 "helpful_count": 3,
                                 "harmful_count": 0,
                                 "created_at": datetime.utcnow().isoformat() + "Z",
-                                "last_used_at": datetime.utcnow().isoformat() + "Z"
+                                "last_used_at": datetime.utcnow().isoformat() + "Z",
                             },
                             {
                                 "id": "impl-0003",
@@ -85,7 +85,7 @@ class TestFTS5HyphenFix:
                                 "helpful_count": 4,
                                 "harmful_count": 0,
                                 "created_at": datetime.utcnow().isoformat() + "Z",
-                                "last_used_at": datetime.utcnow().isoformat() + "Z"
+                                "last_used_at": datetime.utcnow().isoformat() + "Z",
                             },
                             {
                                 "id": "impl-0004",
@@ -93,7 +93,7 @@ class TestFTS5HyphenFix:
                                 "helpful_count": 6,
                                 "harmful_count": 0,
                                 "created_at": datetime.utcnow().isoformat() + "Z",
-                                "last_used_at": datetime.utcnow().isoformat() + "Z"
+                                "last_used_at": datetime.utcnow().isoformat() + "Z",
                             },
                             {
                                 "id": "impl-0005",
@@ -101,7 +101,7 @@ class TestFTS5HyphenFix:
                                 "helpful_count": 7,
                                 "harmful_count": 0,
                                 "created_at": datetime.utcnow().isoformat() + "Z",
-                                "last_used_at": datetime.utcnow().isoformat() + "Z"
+                                "last_used_at": datetime.utcnow().isoformat() + "Z",
                             },
                             {
                                 "id": "impl-0006",
@@ -109,9 +109,9 @@ class TestFTS5HyphenFix:
                                 "helpful_count": 5,
                                 "harmful_count": 0,
                                 "created_at": datetime.utcnow().isoformat() + "Z",
-                                "last_used_at": datetime.utcnow().isoformat() + "Z"
-                            }
-                        ]
+                                "last_used_at": datetime.utcnow().isoformat() + "Z",
+                            },
+                        ],
                     },
                     "ARCHITECTURE_PATTERNS": {
                         "description": "Architecture patterns",
@@ -122,7 +122,7 @@ class TestFTS5HyphenFix:
                                 "helpful_count": 4,
                                 "harmful_count": 0,
                                 "created_at": datetime.utcnow().isoformat() + "Z",
-                                "last_used_at": datetime.utcnow().isoformat() + "Z"
+                                "last_used_at": datetime.utcnow().isoformat() + "Z",
                             },
                             {
                                 "id": "arch-0002",
@@ -130,7 +130,7 @@ class TestFTS5HyphenFix:
                                 "helpful_count": 8,
                                 "harmful_count": 0,
                                 "created_at": datetime.utcnow().isoformat() + "Z",
-                                "last_used_at": datetime.utcnow().isoformat() + "Z"
+                                "last_used_at": datetime.utcnow().isoformat() + "Z",
                             },
                             {
                                 "id": "arch-0003",
@@ -138,7 +138,7 @@ class TestFTS5HyphenFix:
                                 "helpful_count": 6,
                                 "harmful_count": 0,
                                 "created_at": datetime.utcnow().isoformat() + "Z",
-                                "last_used_at": datetime.utcnow().isoformat() + "Z"
+                                "last_used_at": datetime.utcnow().isoformat() + "Z",
                             },
                             {
                                 "id": "arch-0004",
@@ -146,16 +146,20 @@ class TestFTS5HyphenFix:
                                 "helpful_count": 5,
                                 "harmful_count": 0,
                                 "created_at": datetime.utcnow().isoformat() + "Z",
-                                "last_used_at": datetime.utcnow().isoformat() + "Z"
-                            }
-                        ]
-                    }
-                }
+                                "last_used_at": datetime.utcnow().isoformat() + "Z",
+                            },
+                        ],
+                    },
+                },
             }
 
             playbook_path.write_text(json.dumps(playbook, indent=2))
 
-            manager = PlaybookManager(playbook_path=str(playbook_path), db_path=str(db_path), use_semantic_search=False)
+            manager = PlaybookManager(
+                playbook_path=str(playbook_path),
+                db_path=str(db_path),
+                use_semantic_search=False,
+            )
             yield manager
             manager.close()
 
@@ -173,24 +177,27 @@ class TestFTS5HyphenFix:
         query = "hooks auto-activation workflow"
 
         params = PlaybookQuery(
-            query=query,
-            limit=10,
-            search_mode=SearchMode.PLAYBOOK_ONLY,
-            fts_prefix=True
+            query=query, limit=10, search_mode=SearchMode.PLAYBOOK_ONLY, fts_prefix=True
         )
 
         # Should NOT raise sqlite3.OperationalError
         try:
             response = temp_playbook_with_diverse_content.query(params)
             assert response is not None
-            assert len(response.results) > 0, "Expected to find bullets matching 'auto-activation'"
+            assert (
+                len(response.results) > 0
+            ), "Expected to find bullets matching 'auto-activation'"
 
             # Verify we found the correct bullet
             bullet_ids = [r.id for r in response.results]
-            assert "impl-0001" in bullet_ids, "Expected to find impl-0001 (auto-activation bullet)"
+            assert (
+                "impl-0001" in bullet_ids
+            ), "Expected to find impl-0001 (auto-activation bullet)"
 
         except sqlite3.OperationalError as e:
-            pytest.fail(f"FTS5 error occurred: {e}. The hyphen fix should prevent this error.")
+            pytest.fail(
+                f"FTS5 error occurred: {e}. The hyphen fix should prevent this error."
+            )
 
     def test_session_start_query_no_error(self, temp_playbook_with_diverse_content):
         """
@@ -202,23 +209,26 @@ class TestFTS5HyphenFix:
         query = "session-start hook auto-injection"
 
         params = PlaybookQuery(
-            query=query,
-            limit=10,
-            search_mode=SearchMode.PLAYBOOK_ONLY,
-            fts_prefix=True
+            query=query, limit=10, search_mode=SearchMode.PLAYBOOK_ONLY, fts_prefix=True
         )
 
         try:
             response = temp_playbook_with_diverse_content.query(params)
             assert response is not None
-            assert len(response.results) > 0, "Expected to find bullets matching 'session-start'"
+            assert (
+                len(response.results) > 0
+            ), "Expected to find bullets matching 'session-start'"
 
             # Verify we found the correct bullet
             bullet_ids = [r.id for r in response.results]
-            assert "impl-0002" in bullet_ids, "Expected to find impl-0002 (session-start bullet)"
+            assert (
+                "impl-0002" in bullet_ids
+            ), "Expected to find impl-0002 (session-start bullet)"
 
         except sqlite3.OperationalError as e:
-            pytest.fail(f"FTS5 error occurred: {e}. The hyphen fix should prevent this error.")
+            pytest.fail(
+                f"FTS5 error occurred: {e}. The hyphen fix should prevent this error."
+            )
 
     def test_multi_subtask_query_no_error(self, temp_playbook_with_diverse_content):
         """
@@ -230,23 +240,26 @@ class TestFTS5HyphenFix:
         query = "multi-subtask dependency verification"
 
         params = PlaybookQuery(
-            query=query,
-            limit=10,
-            search_mode=SearchMode.PLAYBOOK_ONLY,
-            fts_prefix=True
+            query=query, limit=10, search_mode=SearchMode.PLAYBOOK_ONLY, fts_prefix=True
         )
 
         try:
             response = temp_playbook_with_diverse_content.query(params)
             assert response is not None
-            assert len(response.results) > 0, "Expected to find bullets matching 'multi-subtask'"
+            assert (
+                len(response.results) > 0
+            ), "Expected to find bullets matching 'multi-subtask'"
 
             # Verify we found the correct bullet
             bullet_ids = [r.id for r in response.results]
-            assert "impl-0003" in bullet_ids, "Expected to find impl-0003 (multi-subtask bullet)"
+            assert (
+                "impl-0003" in bullet_ids
+            ), "Expected to find impl-0003 (multi-subtask bullet)"
 
         except sqlite3.OperationalError as e:
-            pytest.fail(f"FTS5 error occurred: {e}. The hyphen fix should prevent this error.")
+            pytest.fail(
+                f"FTS5 error occurred: {e}. The hyphen fix should prevent this error."
+            )
 
     # ========================================================================
     # Test Category 2: Other Hyphenated Patterns
@@ -257,110 +270,125 @@ class TestFTS5HyphenFix:
         query = "error-handling middleware retry"
 
         params = PlaybookQuery(
-            query=query,
-            limit=10,
-            search_mode=SearchMode.PLAYBOOK_ONLY,
-            fts_prefix=True
+            query=query, limit=10, search_mode=SearchMode.PLAYBOOK_ONLY, fts_prefix=True
         )
 
         try:
             response = temp_playbook_with_diverse_content.query(params)
             assert response is not None
-            assert len(response.results) > 0, "Expected to find bullets matching 'error-handling'"
+            assert (
+                len(response.results) > 0
+            ), "Expected to find bullets matching 'error-handling'"
 
             bullet_ids = [r.id for r in response.results]
-            assert "impl-0004" in bullet_ids, "Expected to find impl-0004 (error-handling bullet)"
+            assert (
+                "impl-0004" in bullet_ids
+            ), "Expected to find impl-0004 (error-handling bullet)"
 
         except sqlite3.OperationalError as e:
-            pytest.fail(f"FTS5 error occurred: {e}. The hyphen fix should prevent this error.")
+            pytest.fail(
+                f"FTS5 error occurred: {e}. The hyphen fix should prevent this error."
+            )
 
     def test_jwt_token_hyphen_query(self, temp_playbook_with_diverse_content):
         """Test: "JWT-token" query works without FTS5 errors."""
         query = "JWT-token authentication refresh-token"
 
         params = PlaybookQuery(
-            query=query,
-            limit=10,
-            search_mode=SearchMode.PLAYBOOK_ONLY,
-            fts_prefix=True
+            query=query, limit=10, search_mode=SearchMode.PLAYBOOK_ONLY, fts_prefix=True
         )
 
         try:
             response = temp_playbook_with_diverse_content.query(params)
             assert response is not None
-            assert len(response.results) > 0, "Expected to find bullets matching 'JWT-token'"
+            assert (
+                len(response.results) > 0
+            ), "Expected to find bullets matching 'JWT-token'"
 
             bullet_ids = [r.id for r in response.results]
-            assert "impl-0005" in bullet_ids, "Expected to find impl-0005 (JWT-token bullet)"
+            assert (
+                "impl-0005" in bullet_ids
+            ), "Expected to find impl-0005 (JWT-token bullet)"
 
         except sqlite3.OperationalError as e:
-            pytest.fail(f"FTS5 error occurred: {e}. The hyphen fix should prevent this error.")
+            pytest.fail(
+                f"FTS5 error occurred: {e}. The hyphen fix should prevent this error."
+            )
 
     def test_database_connection_hyphen_query(self, temp_playbook_with_diverse_content):
         """Test: "database-connection" query works without FTS5 errors."""
         query = "database-connection pool high-throughput"
 
         params = PlaybookQuery(
-            query=query,
-            limit=10,
-            search_mode=SearchMode.PLAYBOOK_ONLY,
-            fts_prefix=True
+            query=query, limit=10, search_mode=SearchMode.PLAYBOOK_ONLY, fts_prefix=True
         )
 
         try:
             response = temp_playbook_with_diverse_content.query(params)
             assert response is not None
-            assert len(response.results) > 0, "Expected to find bullets matching 'database-connection'"
+            assert (
+                len(response.results) > 0
+            ), "Expected to find bullets matching 'database-connection'"
 
             bullet_ids = [r.id for r in response.results]
-            assert "impl-0006" in bullet_ids, "Expected to find impl-0006 (database-connection bullet)"
+            assert (
+                "impl-0006" in bullet_ids
+            ), "Expected to find impl-0006 (database-connection bullet)"
 
         except sqlite3.OperationalError as e:
-            pytest.fail(f"FTS5 error occurred: {e}. The hyphen fix should prevent this error.")
+            pytest.fail(
+                f"FTS5 error occurred: {e}. The hyphen fix should prevent this error."
+            )
 
     def test_circuit_breaker_hyphen_query(self, temp_playbook_with_diverse_content):
         """Test: "circuit-breaker" query works without FTS5 errors."""
         query = "circuit-breaker pattern microservices"
 
         params = PlaybookQuery(
-            query=query,
-            limit=10,
-            search_mode=SearchMode.PLAYBOOK_ONLY,
-            fts_prefix=True
+            query=query, limit=10, search_mode=SearchMode.PLAYBOOK_ONLY, fts_prefix=True
         )
 
         try:
             response = temp_playbook_with_diverse_content.query(params)
             assert response is not None
-            assert len(response.results) > 0, "Expected to find bullets matching 'circuit-breaker'"
+            assert (
+                len(response.results) > 0
+            ), "Expected to find bullets matching 'circuit-breaker'"
 
             bullet_ids = [r.id for r in response.results]
-            assert "arch-0002" in bullet_ids, "Expected to find arch-0002 (circuit-breaker bullet)"
+            assert (
+                "arch-0002" in bullet_ids
+            ), "Expected to find arch-0002 (circuit-breaker bullet)"
 
         except sqlite3.OperationalError as e:
-            pytest.fail(f"FTS5 error occurred: {e}. The hyphen fix should prevent this error.")
+            pytest.fail(
+                f"FTS5 error occurred: {e}. The hyphen fix should prevent this error."
+            )
 
     def test_message_queue_hyphen_query(self, temp_playbook_with_diverse_content):
         """Test: "message-queue" query works without FTS5 errors."""
         query = "message-queue event-driven async"
 
         params = PlaybookQuery(
-            query=query,
-            limit=10,
-            search_mode=SearchMode.PLAYBOOK_ONLY,
-            fts_prefix=True
+            query=query, limit=10, search_mode=SearchMode.PLAYBOOK_ONLY, fts_prefix=True
         )
 
         try:
             response = temp_playbook_with_diverse_content.query(params)
             assert response is not None
-            assert len(response.results) > 0, "Expected to find bullets matching 'message-queue'"
+            assert (
+                len(response.results) > 0
+            ), "Expected to find bullets matching 'message-queue'"
 
             bullet_ids = [r.id for r in response.results]
-            assert "arch-0003" in bullet_ids, "Expected to find arch-0003 (message-queue bullet)"
+            assert (
+                "arch-0003" in bullet_ids
+            ), "Expected to find arch-0003 (message-queue bullet)"
 
         except sqlite3.OperationalError as e:
-            pytest.fail(f"FTS5 error occurred: {e}. The hyphen fix should prevent this error.")
+            pytest.fail(
+                f"FTS5 error occurred: {e}. The hyphen fix should prevent this error."
+            )
 
     # ========================================================================
     # Test Category 3: Multi-Word Phrases (no hyphens)
@@ -371,16 +399,15 @@ class TestFTS5HyphenFix:
         query = "database connection pool"
 
         params = PlaybookQuery(
-            query=query,
-            limit=10,
-            search_mode=SearchMode.PLAYBOOK_ONLY,
-            fts_prefix=True
+            query=query, limit=10, search_mode=SearchMode.PLAYBOOK_ONLY, fts_prefix=True
         )
 
         try:
             response = temp_playbook_with_diverse_content.query(params)
             assert response is not None
-            assert len(response.results) > 0, "Expected to find bullets matching 'database connection pool'"
+            assert (
+                len(response.results) > 0
+            ), "Expected to find bullets matching 'database connection pool'"
 
             # Should find both arch-0001 and impl-0006 (both mention database connection pool)
             bullet_ids = [r.id for r in response.results]
@@ -394,10 +421,7 @@ class TestFTS5HyphenFix:
         query = "single source of truth configuration management"
 
         params = PlaybookQuery(
-            query=query,
-            limit=10,
-            search_mode=SearchMode.PLAYBOOK_ONLY,
-            fts_prefix=True
+            query=query, limit=10, search_mode=SearchMode.PLAYBOOK_ONLY, fts_prefix=True
         )
 
         try:
@@ -406,7 +430,9 @@ class TestFTS5HyphenFix:
             # May or may not find results (depends on exact matching), but should NOT error
 
         except sqlite3.OperationalError as e:
-            pytest.fail(f"FTS5 error occurred: {e}. Multi-word queries should not cause errors.")
+            pytest.fail(
+                f"FTS5 error occurred: {e}. Multi-word queries should not cause errors."
+            )
 
     # ========================================================================
     # Test Category 4: Edge Cases
@@ -417,10 +443,7 @@ class TestFTS5HyphenFix:
         query = "circuit-breaker-pattern"
 
         params = PlaybookQuery(
-            query=query,
-            limit=10,
-            search_mode=SearchMode.PLAYBOOK_ONLY,
-            fts_prefix=True
+            query=query, limit=10, search_mode=SearchMode.PLAYBOOK_ONLY, fts_prefix=True
         )
 
         try:
@@ -429,17 +452,16 @@ class TestFTS5HyphenFix:
             # Should transform to "circuit breaker pattern" and search
 
         except sqlite3.OperationalError as e:
-            pytest.fail(f"FTS5 error occurred: {e}. Multiple hyphens should be handled.")
+            pytest.fail(
+                f"FTS5 error occurred: {e}. Multiple hyphens should be handled."
+            )
 
     def test_leading_hyphen(self, temp_playbook_with_diverse_content):
         """Test: Leading hyphen "-word" is handled without errors."""
         query = "-session"
 
         params = PlaybookQuery(
-            query=query,
-            limit=10,
-            search_mode=SearchMode.PLAYBOOK_ONLY,
-            fts_prefix=True
+            query=query, limit=10, search_mode=SearchMode.PLAYBOOK_ONLY, fts_prefix=True
         )
 
         try:
@@ -448,17 +470,16 @@ class TestFTS5HyphenFix:
             # Leading hyphen becomes leading space, which is fine
 
         except sqlite3.OperationalError as e:
-            pytest.fail(f"FTS5 error occurred: {e}. Leading hyphen should be handled safely.")
+            pytest.fail(
+                f"FTS5 error occurred: {e}. Leading hyphen should be handled safely."
+            )
 
     def test_trailing_hyphen(self, temp_playbook_with_diverse_content):
         """Test: Trailing hyphen "word-" is handled without errors."""
         query = "session-"
 
         params = PlaybookQuery(
-            query=query,
-            limit=10,
-            search_mode=SearchMode.PLAYBOOK_ONLY,
-            fts_prefix=True
+            query=query, limit=10, search_mode=SearchMode.PLAYBOOK_ONLY, fts_prefix=True
         )
 
         try:
@@ -467,7 +488,9 @@ class TestFTS5HyphenFix:
             # Trailing hyphen becomes trailing space, which is fine
 
         except sqlite3.OperationalError as e:
-            pytest.fail(f"FTS5 error occurred: {e}. Trailing hyphen should be handled safely.")
+            pytest.fail(
+                f"FTS5 error occurred: {e}. Trailing hyphen should be handled safely."
+            )
 
     def test_single_hyphen_only(self, temp_playbook_with_diverse_content):
         """
@@ -487,7 +510,7 @@ class TestFTS5HyphenFix:
                 query=query,
                 limit=10,
                 search_mode=SearchMode.PLAYBOOK_ONLY,
-                fts_prefix=True
+                fts_prefix=True,
             )
             # If validation passes, query execution may fail with FTS5 syntax error
             # This is acceptable for a malformed query
@@ -504,10 +527,7 @@ class TestFTS5HyphenFix:
         query = "session-start hook auto injection"
 
         params = PlaybookQuery(
-            query=query,
-            limit=10,
-            search_mode=SearchMode.PLAYBOOK_ONLY,
-            fts_prefix=True
+            query=query, limit=10, search_mode=SearchMode.PLAYBOOK_ONLY, fts_prefix=True
         )
 
         try:
@@ -532,7 +552,7 @@ class TestFTS5HyphenFix:
                 query=query,
                 limit=10,
                 search_mode=SearchMode.PLAYBOOK_ONLY,
-                fts_prefix=True
+                fts_prefix=True,
             )
             # If validation passes, query execution may fail with FTS5 syntax error
             # or return empty results - both are acceptable for malformed query
@@ -552,38 +572,40 @@ class TestFTS5HyphenFix:
         query = "authentication"
 
         params = PlaybookQuery(
-            query=query,
-            limit=10,
-            search_mode=SearchMode.PLAYBOOK_ONLY,
-            fts_prefix=True
+            query=query, limit=10, search_mode=SearchMode.PLAYBOOK_ONLY, fts_prefix=True
         )
 
         try:
             response = temp_playbook_with_diverse_content.query(params)
             assert response is not None
-            assert len(response.results) > 0, "Expected to find bullets matching 'authentication'"
+            assert (
+                len(response.results) > 0
+            ), "Expected to find bullets matching 'authentication'"
 
             bullet_ids = [r.id for r in response.results]
-            assert "impl-0005" in bullet_ids, "Expected to find impl-0005 (JWT authentication)"
+            assert (
+                "impl-0005" in bullet_ids
+            ), "Expected to find impl-0005 (JWT authentication)"
 
         except sqlite3.OperationalError as e:
-            pytest.fail(f"FTS5 error occurred: {e}. Single-word queries should still work.")
+            pytest.fail(
+                f"FTS5 error occurred: {e}. Single-word queries should still work."
+            )
 
     def test_simple_two_word_query(self, temp_playbook_with_diverse_content):
         """Test: Simple two-word queries (no hyphens) work correctly."""
         query = "database pool"
 
         params = PlaybookQuery(
-            query=query,
-            limit=10,
-            search_mode=SearchMode.PLAYBOOK_ONLY,
-            fts_prefix=True
+            query=query, limit=10, search_mode=SearchMode.PLAYBOOK_ONLY, fts_prefix=True
         )
 
         try:
             response = temp_playbook_with_diverse_content.query(params)
             assert response is not None
-            assert len(response.results) > 0, "Expected to find bullets matching 'database pool'"
+            assert (
+                len(response.results) > 0
+            ), "Expected to find bullets matching 'database pool'"
 
         except sqlite3.OperationalError as e:
             pytest.fail(f"FTS5 error occurred: {e}. Two-word queries should work.")
@@ -596,7 +618,7 @@ class TestFTS5HyphenFix:
             query=query,
             limit=10,
             search_mode=SearchMode.PLAYBOOK_ONLY,
-            fts_prefix=False  # Disable prefix matching
+            fts_prefix=False,  # Disable prefix matching
         )
 
         try:
@@ -605,13 +627,17 @@ class TestFTS5HyphenFix:
             # May or may not find results, but shouldn't error
 
         except sqlite3.OperationalError as e:
-            pytest.fail(f"FTS5 error occurred: {e}. Non-prefix queries should work with hyphen fix.")
+            pytest.fail(
+                f"FTS5 error occurred: {e}. Non-prefix queries should work with hyphen fix."
+            )
 
     # ========================================================================
     # Test Category 6: Verify Fix Implementation
     # ========================================================================
 
-    def test_verify_hyphen_replacement_in_fts_query(self, temp_playbook_with_diverse_content):
+    def test_verify_hyphen_replacement_in_fts_query(
+        self, temp_playbook_with_diverse_content
+    ):
         """
         Verify that the fix correctly replaces hyphens with spaces in FTS query.
 
@@ -621,14 +647,13 @@ class TestFTS5HyphenFix:
         query = "session-start auto-activation"
 
         params = PlaybookQuery(
-            query=query,
-            limit=5,
-            search_mode=SearchMode.PLAYBOOK_ONLY,
-            fts_prefix=True
+            query=query, limit=5, search_mode=SearchMode.PLAYBOOK_ONLY, fts_prefix=True
         )
 
         # Build FTS query (internal method, but accessible for testing)
-        sql, sql_params = temp_playbook_with_diverse_content._build_fts_query(params, limit=5)
+        sql, sql_params = temp_playbook_with_diverse_content._build_fts_query(
+            params, limit=5
+        )
 
         # Extract the FTS query parameter (first param is the FTS query)
         fts_query_param = sql_params[0]
@@ -639,13 +664,17 @@ class TestFTS5HyphenFix:
         # After fix: hyphens should be replaced with spaces
         # "session-start auto-activation" → "session start auto activation"
         # With prefix matching: "session* start* auto* activation*"
-        assert "-" not in fts_query_param, "Hyphens should be replaced with spaces in FTS query"
+        assert (
+            "-" not in fts_query_param
+        ), "Hyphens should be replaced with spaces in FTS query"
         assert "session" in fts_query_param, "Expected 'session' in FTS query"
         assert "start" in fts_query_param, "Expected 'start' in FTS query"
         assert "auto" in fts_query_param, "Expected 'auto' in FTS query"
         assert "activation" in fts_query_param, "Expected 'activation' in FTS query"
 
-    def test_fix_prevents_no_such_column_error(self, temp_playbook_with_diverse_content):
+    def test_fix_prevents_no_such_column_error(
+        self, temp_playbook_with_diverse_content
+    ):
         """
         Integration test: Verify the fix prevents "no such column" errors.
 
@@ -662,7 +691,7 @@ class TestFTS5HyphenFix:
             "circuit-breaker",
             "message-queue",
             "event-driven",
-            "refresh-token"
+            "refresh-token",
         ]
 
         for query in test_queries:
@@ -670,7 +699,7 @@ class TestFTS5HyphenFix:
                 query=query,
                 limit=10,
                 search_mode=SearchMode.PLAYBOOK_ONLY,
-                fts_prefix=True
+                fts_prefix=True,
             )
 
             try:
@@ -704,7 +733,7 @@ class TestFTS5HyphenFixEdgeCasesExtended:
                     "last_updated": datetime.utcnow().isoformat() + "Z",
                     "total_bullets": 1,
                     "sections_count": 1,
-                    "top_k": 5
+                    "top_k": 5,
                 },
                 "sections": {
                     "TEST": {
@@ -716,16 +745,20 @@ class TestFTS5HyphenFixEdgeCasesExtended:
                                 "helpful_count": 1,
                                 "harmful_count": 0,
                                 "created_at": datetime.utcnow().isoformat() + "Z",
-                                "last_used_at": datetime.utcnow().isoformat() + "Z"
+                                "last_used_at": datetime.utcnow().isoformat() + "Z",
                             }
-                        ]
+                        ],
                     }
-                }
+                },
             }
 
             playbook_path.write_text(json.dumps(playbook, indent=2))
 
-            manager = PlaybookManager(playbook_path=str(playbook_path), db_path=str(db_path), use_semantic_search=False)
+            manager = PlaybookManager(
+                playbook_path=str(playbook_path),
+                db_path=str(db_path),
+                use_semantic_search=False,
+            )
             yield manager
             manager.close()
 
@@ -734,10 +767,7 @@ class TestFTS5HyphenFixEdgeCasesExtended:
         query = "café-menu"
 
         params = PlaybookQuery(
-            query=query,
-            limit=5,
-            search_mode=SearchMode.PLAYBOOK_ONLY,
-            fts_prefix=True
+            query=query, limit=5, search_mode=SearchMode.PLAYBOOK_ONLY, fts_prefix=True
         )
 
         try:
@@ -745,17 +775,16 @@ class TestFTS5HyphenFixEdgeCasesExtended:
             assert response is not None
 
         except sqlite3.OperationalError as e:
-            pytest.fail(f"FTS5 error occurred: {e}. Unicode with hyphens should be handled.")
+            pytest.fail(
+                f"FTS5 error occurred: {e}. Unicode with hyphens should be handled."
+            )
 
     def test_numbers_with_hyphens(self, minimal_playbook):
         """Test: Numbers with hyphens (e.g., "HTTP-401") are handled."""
         query = "HTTP-401 error"
 
         params = PlaybookQuery(
-            query=query,
-            limit=5,
-            search_mode=SearchMode.PLAYBOOK_ONLY,
-            fts_prefix=True
+            query=query, limit=5, search_mode=SearchMode.PLAYBOOK_ONLY, fts_prefix=True
         )
 
         try:
@@ -763,17 +792,16 @@ class TestFTS5HyphenFixEdgeCasesExtended:
             assert response is not None
 
         except sqlite3.OperationalError as e:
-            pytest.fail(f"FTS5 error occurred: {e}. Numbers with hyphens should be handled.")
+            pytest.fail(
+                f"FTS5 error occurred: {e}. Numbers with hyphens should be handled."
+            )
 
     def test_uppercase_hyphenated_words(self, minimal_playbook):
         """Test: Uppercase hyphenated words (e.g., "REST-API") are handled."""
         query = "REST-API JWT-TOKEN"
 
         params = PlaybookQuery(
-            query=query,
-            limit=5,
-            search_mode=SearchMode.PLAYBOOK_ONLY,
-            fts_prefix=True
+            query=query, limit=5, search_mode=SearchMode.PLAYBOOK_ONLY, fts_prefix=True
         )
 
         try:
@@ -781,17 +809,16 @@ class TestFTS5HyphenFixEdgeCasesExtended:
             assert response is not None
 
         except sqlite3.OperationalError as e:
-            pytest.fail(f"FTS5 error occurred: {e}. Uppercase hyphenated words should be handled.")
+            pytest.fail(
+                f"FTS5 error occurred: {e}. Uppercase hyphenated words should be handled."
+            )
 
     def test_very_long_hyphenated_word(self, minimal_playbook):
         """Test: Very long hyphenated compound words are handled."""
         query = "one-two-three-four-five-six-seven-eight"
 
         params = PlaybookQuery(
-            query=query,
-            limit=5,
-            search_mode=SearchMode.PLAYBOOK_ONLY,
-            fts_prefix=True
+            query=query, limit=5, search_mode=SearchMode.PLAYBOOK_ONLY, fts_prefix=True
         )
 
         try:
@@ -799,7 +826,9 @@ class TestFTS5HyphenFixEdgeCasesExtended:
             assert response is not None
 
         except sqlite3.OperationalError as e:
-            pytest.fail(f"FTS5 error occurred: {e}. Long hyphenated words should be handled.")
+            pytest.fail(
+                f"FTS5 error occurred: {e}. Long hyphenated words should be handled."
+            )
 
 
 if __name__ == "__main__":

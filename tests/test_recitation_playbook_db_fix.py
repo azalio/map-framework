@@ -19,6 +19,7 @@ def test_recitation_prefers_db_over_json(tmp_path):
     # Create playbook.db (empty but valid SQLite database)
     db_path = claude_dir / "playbook.db"
     import sqlite3
+
     conn = sqlite3.connect(str(db_path))
     conn.execute("CREATE TABLE IF NOT EXISTS metadata (key TEXT, value TEXT)")
     conn.commit()
@@ -26,11 +27,9 @@ def test_recitation_prefers_db_over_json(tmp_path):
 
     # Create playbook.json (should NOT be read when .db exists)
     json_path = claude_dir / "playbook.json"
-    json_path.write_text(json.dumps({
-        "version": "1.0",
-        "metadata": {"total_bullets": 0},
-        "sections": {}
-    }))
+    json_path.write_text(
+        json.dumps({"version": "1.0", "metadata": {"total_bullets": 0}, "sections": {}})
+    )
 
     # Test: Initialize RecitationManager
     manager = RecitationManager(project_root=tmp_path)
@@ -56,32 +55,36 @@ def test_recitation_migrates_json_to_db_when_only_json_exists(tmp_path):
 
     # Create only playbook.json
     json_path = claude_dir / "playbook.json"
-    json_path.write_text(json.dumps({
-        "version": "1.0",
-        "metadata": {
-            "project": "test",
-            "created_at": "2024-01-01T00:00:00Z",
-            "last_updated": "2024-01-01T00:00:00Z",
-            "total_bullets": 1,
-            "sections_count": 10,
-            "top_k": 5
-        },
-        "sections": {
-            "IMPLEMENTATION_PATTERNS": {
-                "description": "Code patterns",
-                "bullets": [
-                    {
-                        "id": "impl-0001",
-                        "content": "Test pattern",
-                        "helpful_count": 0,
-                        "harmful_count": 0,
-                        "created_at": "2024-01-01T00:00:00Z",
-                        "last_used_at": "2024-01-01T00:00:00Z"
+    json_path.write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "metadata": {
+                    "project": "test",
+                    "created_at": "2024-01-01T00:00:00Z",
+                    "last_updated": "2024-01-01T00:00:00Z",
+                    "total_bullets": 1,
+                    "sections_count": 10,
+                    "top_k": 5,
+                },
+                "sections": {
+                    "IMPLEMENTATION_PATTERNS": {
+                        "description": "Code patterns",
+                        "bullets": [
+                            {
+                                "id": "impl-0001",
+                                "content": "Test pattern",
+                                "helpful_count": 0,
+                                "harmful_count": 0,
+                                "created_at": "2024-01-01T00:00:00Z",
+                                "last_used_at": "2024-01-01T00:00:00Z",
+                            }
+                        ],
                     }
-                ]
+                },
             }
-        }
-    }))
+        )
+    )
 
     # Test: Initialize RecitationManager
     manager = RecitationManager(project_root=tmp_path)

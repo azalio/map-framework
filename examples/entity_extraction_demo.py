@@ -34,8 +34,12 @@ def print_entities(text: str, title: str):
     for entity_type in EntityType:
         if entity_type in by_type:
             print(f"\n{entity_type.value}:")
-            for entity in sorted(by_type[entity_type], key=lambda e: e.confidence, reverse=True):
-                print(f"  - {entity.name:30} (confidence: {entity.confidence:.2f}, id: {entity.id})")
+            for entity in sorted(
+                by_type[entity_type], key=lambda e: e.confidence, reverse=True
+            ):
+                print(
+                    f"  - {entity.name:30} (confidence: {entity.confidence:.2f}, id: {entity.id})"
+                )
 
 
 def main():
@@ -48,7 +52,7 @@ def main():
         Implement retry pattern with exponential backoff for API calls.
         Never use generic-exception handlers - be specific.
         """,
-        title="Example 1: Testing Best Practices"
+        title="Example 1: Testing Best Practices",
     )
 
     # Example 2: Architecture discussion
@@ -59,7 +63,7 @@ def main():
         Use circuit-breaker pattern to prevent cascading failures.
         Ensure idempotency for all API endpoints.
         """,
-        title="Example 2: Architecture Description"
+        title="Example 2: Architecture Description",
     )
 
     # Example 3: Error handling discussion
@@ -70,7 +74,7 @@ def main():
         Added proper null-pointer exception handling.
         Implemented mutex-lock to prevent concurrent access issues.
         """,
-        title="Example 3: Bug Fixes and Error Handling"
+        title="Example 3: Bug Fixes and Error Handling",
     )
 
     # Example 4: Code snippet with imports
@@ -86,7 +90,7 @@ def main():
             pass
         ```
         """,
-        title="Example 4: Code Snippet with Imports"
+        title="Example 4: Code Snippet with Imports",
     )
 
     # Example 5: Workflow and antipatterns
@@ -97,7 +101,7 @@ def main():
         Avoid magic-number antipattern and hardcoded values.
         Never use silent-failure patterns - log errors explicitly.
         """,
-        title="Example 5: Workflows and Antipatterns"
+        title="Example 5: Workflows and Antipatterns",
     )
 
     # Example 6: Mixed content
@@ -109,12 +113,12 @@ def main():
         Deploy with blue-green deployment strategy to minimize downtime.
         Handle timeout-error gracefully with fallback to cached data.
         """,
-        title="Example 6: Migration and Deployment Strategy"
+        title="Example 6: Migration and Deployment Strategy",
     )
 
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("Demo complete!")
-    print("="*80 + "\n")
+    print("=" * 80 + "\n")
 
 
 if __name__ == "__main__":

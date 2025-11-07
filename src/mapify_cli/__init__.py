@@ -38,8 +38,10 @@ import typer
 import httpx
 import readchar
 import ssl
+
 try:
     import truststore
+
     HAS_TRUSTSTORE = True
 except ImportError:
     HAS_TRUSTSTORE = False
@@ -52,6 +54,7 @@ from rich.align import Align
 from rich.table import Table
 from rich.tree import Tree
 from typer.core import TyperGroup
+
 
 # Create secure SSL context with proper fallback
 def create_ssl_context():
@@ -70,6 +73,7 @@ def create_ssl_context():
     context.check_hostname = True
     context.verify_mode = ssl.CERT_REQUIRED
     return context
+
 
 ssl_context = create_ssl_context()
 
@@ -90,16 +94,20 @@ def load_settings_with_merge(settings_file: Path) -> Dict[str, Any]:
     """
     if settings_file.exists():
         try:
-            with open(settings_file, 'r', encoding='utf-8') as f:
+            with open(settings_file, "r", encoding="utf-8") as f:
                 return json.load(f)
         except json.JSONDecodeError:
-            console.print(f"[yellow]Warning:[/yellow] Corrupted {settings_file.name}, will recreate")
+            console.print(
+                f"[yellow]Warning:[/yellow] Corrupted {settings_file.name}, will recreate"
+            )
             return {}
     else:
         return {}
 
 
-def merge_hooks_settings(existing_settings: Dict[str, Any], template_settings: Dict[str, Any]) -> Dict[str, Any]:
+def merge_hooks_settings(
+    existing_settings: Dict[str, Any], template_settings: Dict[str, Any]
+) -> Dict[str, Any]:
     """Merge template hooks into existing settings preserving user customizations.
 
     Follows the same merge philosophy as configure_global_permissions():
@@ -135,7 +143,9 @@ def merge_hooks_settings(existing_settings: Dict[str, Any], template_settings: D
     for hook_type, template_hook_groups in template_hooks.items():
         # Validate template hooks is a list
         if not isinstance(template_hook_groups, list):
-            console.print(f"[yellow]Warning:[/yellow] Skipping malformed template hooks for {hook_type}")
+            console.print(
+                f"[yellow]Warning:[/yellow] Skipping malformed template hooks for {hook_type}"
+            )
             continue
 
         # If user doesn't have this hook type, add template's entire array
@@ -145,14 +155,20 @@ def merge_hooks_settings(existing_settings: Dict[str, Any], template_settings: D
 
         # Validate user hooks is a list
         if not isinstance(user_hooks[hook_type], list):
-            console.print(f"[yellow]Warning:[/yellow] Resetting malformed user hooks for {hook_type}")
+            console.print(
+                f"[yellow]Warning:[/yellow] Resetting malformed user hooks for {hook_type}"
+            )
             user_hooks[hook_type] = []
 
         # User has this hook type - merge hook groups using matcher for deduplication
         # Build set of existing matchers (similar to configure_global_permissions)
         existing_matchers = set()
         for hook_group in user_hooks[hook_type]:
-            if isinstance(hook_group, dict) and "matcher" in hook_group and hook_group["matcher"]:
+            if (
+                isinstance(hook_group, dict)
+                and "matcher" in hook_group
+                and hook_group["matcher"]
+            ):
                 existing_matchers.add(hook_group["matcher"])
 
         # Add template hook groups that user doesn't have (by matcher)
@@ -190,7 +206,7 @@ MCP_SERVER_CHOICES = {
     "essential": "Essential (cipher, claude-reviewer, sequential-thinking)",
     "docs": "Documentation (context7, deepwiki)",
     "custom": "Select individually",
-    "none": "Skip MCP setup"
+    "none": "Skip MCP setup",
 }
 
 INDIVIDUAL_MCP_SERVERS = {
@@ -199,7 +215,7 @@ INDIVIDUAL_MCP_SERVERS = {
     "sequential-thinking": "Chain-of-thought reasoning",
     "codex-bridge": "AI code generation",
     "context7": "Library documentation",
-    "deepwiki": "GitHub repository intelligence"
+    "deepwiki": "GitHub repository intelligence",
 }
 
 # ASCII Art Banner
@@ -213,11 +229,15 @@ TAGLINE = "MAP Kit - Modular Agentic Planner Framework for Claude Code"
 
 console = Console()
 
+
 class StepTracker:
     """Track and render hierarchical steps as a tree"""
+
     def __init__(self, title: str):
         self.title = title
-        self.steps: List[Dict[str, Any]] = []  # list of dicts: {key, label, status, detail}
+        self.steps: List[Dict[str, Any]] = (
+            []
+        )  # list of dicts: {key, label, status, detail}
         self._refresh_cb = None
 
     def attach_refresh(self, cb):
@@ -225,7 +245,9 @@ class StepTracker:
 
     def add(self, key: str, label: str):
         if key not in [s["key"] for s in self.steps]:
-            self.steps.append({"key": key, "label": label, "status": "pending", "detail": ""})
+            self.steps.append(
+                {"key": key, "label": label, "status": "pending", "detail": ""}
+            )
             self._maybe_refresh()
 
     def start(self, key: str, detail: str = ""):
@@ -249,7 +271,9 @@ class StepTracker:
                 self._maybe_refresh()
                 return
         # If not present, add it
-        self.steps.append({"key": key, "label": key, "status": status, "detail": detail})
+        self.steps.append(
+            {"key": key, "label": key, "status": status, "detail": detail}
+        )
         self._maybe_refresh()
 
     def _maybe_refresh(self):
@@ -283,7 +307,9 @@ class StepTracker:
             if status == "pending":
                 # Entire line light gray (pending)
                 if detail_text:
-                    line = f"{symbol} [bright_black]{label} ({detail_text})[/bright_black]"
+                    line = (
+                        f"{symbol} [bright_black]{label} ({detail_text})[/bright_black]"
+                    )
                 else:
                     line = f"{symbol} [bright_black]{label}[/bright_black]"
             else:
@@ -303,26 +329,26 @@ def get_key():
 
     # Arrow keys
     if key == readchar.key.UP or key == readchar.key.CTRL_P:
-        return 'up'
+        return "up"
     if key == readchar.key.DOWN or key == readchar.key.CTRL_N:
-        return 'down'
+        return "down"
 
     # Enter/Return - support multiple variants for cross-platform compatibility
-    if key == readchar.key.ENTER or key == '\r' or key == '\n':
-        return 'enter'
+    if key == readchar.key.ENTER or key == "\r" or key == "\n":
+        return "enter"
     # Also check for readchar.key.CR (carriage return) if it exists
-    if hasattr(readchar.key, 'CR') and key == readchar.key.CR:
-        return 'enter'
-    if hasattr(readchar.key, 'LF') and key == readchar.key.LF:
-        return 'enter'
+    if hasattr(readchar.key, "CR") and key == readchar.key.CR:
+        return "enter"
+    if hasattr(readchar.key, "LF") and key == readchar.key.LF:
+        return "enter"
 
     # Space for toggle
-    if key == ' ':
-        return 'space'
+    if key == " ":
+        return "space"
 
     # Escape
     if key == readchar.key.ESC:
-        return 'escape'
+        return "escape"
 
     # Ctrl+C
     if key == readchar.key.CTRL_C:
@@ -331,7 +357,11 @@ def get_key():
     return key
 
 
-def select_with_arrows(options: dict, prompt_text: str = "Select an option", default_key: Optional[str] = None) -> str:
+def select_with_arrows(
+    options: dict,
+    prompt_text: str = "Select an option",
+    default_key: Optional[str] = None,
+) -> str:
     """Interactive selection using arrow keys"""
     option_keys = list(options.keys())
     if default_key and default_key in option_keys:
@@ -354,29 +384,33 @@ def select_with_arrows(options: dict, prompt_text: str = "Select an option", def
                 table.add_row(" ", f"[cyan]{key}[/cyan] [dim]({options[key]})[/dim]")
 
         table.add_row("", "")
-        table.add_row("", "[dim]Use ↑/↓ to navigate, Enter to select, Esc to cancel[/dim]")
+        table.add_row(
+            "", "[dim]Use ↑/↓ to navigate, Enter to select, Esc to cancel[/dim]"
+        )
 
         return Panel(
             table,
             title=f"[bold]{prompt_text}[/bold]",
             border_style="cyan",
-            padding=(1, 2)
+            padding=(1, 2),
         )
 
     console.print()
 
-    with Live(create_selection_panel(), console=console, transient=True, auto_refresh=False) as live:
+    with Live(
+        create_selection_panel(), console=console, transient=True, auto_refresh=False
+    ) as live:
         while True:
             try:
                 key = get_key()
-                if key == 'up':
+                if key == "up":
                     selected_index = (selected_index - 1) % len(option_keys)
-                elif key == 'down':
+                elif key == "down":
                     selected_index = (selected_index + 1) % len(option_keys)
-                elif key == 'enter':
+                elif key == "enter":
                     selected_key = option_keys[selected_index]
                     break
-                elif key == 'escape':
+                elif key == "escape":
                     console.print("\n[yellow]Selection cancelled[/yellow]")
                     raise typer.Exit(1)
 
@@ -389,7 +423,9 @@ def select_with_arrows(options: dict, prompt_text: str = "Select an option", def
     return selected_key
 
 
-def select_multiple_with_arrows(options: dict, prompt_text: str = "Select options") -> List[str]:
+def select_multiple_with_arrows(
+    options: dict, prompt_text: str = "Select options"
+) -> List[str]:
     """Interactive multiple selection using arrow keys and space"""
     option_keys = list(options.keys())
     selected_index = 0
@@ -404,40 +440,49 @@ def select_multiple_with_arrows(options: dict, prompt_text: str = "Select option
         for i, key in enumerate(option_keys):
             checkbox = "[x]" if key in selected_items else "[ ]"
             if i == selected_index:
-                table.add_row("▶", f"{checkbox} [cyan]{key}[/cyan] [dim]({options[key]})[/dim]")
+                table.add_row(
+                    "▶", f"{checkbox} [cyan]{key}[/cyan] [dim]({options[key]})[/dim]"
+                )
             else:
-                table.add_row(" ", f"{checkbox} [cyan]{key}[/cyan] [dim]({options[key]})[/dim]")
+                table.add_row(
+                    " ", f"{checkbox} [cyan]{key}[/cyan] [dim]({options[key]})[/dim]"
+                )
 
         table.add_row("", "")
         table.add_row("", f"[dim]Selected: {len(selected_items)}/{len(options)}[/dim]")
-        table.add_row("", "[dim]Use ↑/↓ to navigate, Space to toggle, Enter to confirm, Esc to cancel[/dim]")
+        table.add_row(
+            "",
+            "[dim]Use ↑/↓ to navigate, Space to toggle, Enter to confirm, Esc to cancel[/dim]",
+        )
 
         return Panel(
             table,
             title=f"[bold]{prompt_text}[/bold]",
             border_style="cyan",
-            padding=(1, 2)
+            padding=(1, 2),
         )
 
     console.print()
 
-    with Live(create_selection_panel(), console=console, transient=True, auto_refresh=False) as live:
+    with Live(
+        create_selection_panel(), console=console, transient=True, auto_refresh=False
+    ) as live:
         while True:
             try:
                 key = get_key()
-                if key == 'up':
+                if key == "up":
                     selected_index = (selected_index - 1) % len(option_keys)
-                elif key == 'down':
+                elif key == "down":
                     selected_index = (selected_index + 1) % len(option_keys)
-                elif key == 'space':
+                elif key == "space":
                     current_key = option_keys[selected_index]
                     if current_key in selected_items:
                         selected_items.remove(current_key)
                     else:
                         selected_items.add(current_key)
-                elif key == 'enter':
+                elif key == "enter":
                     break
-                elif key == 'escape':
+                elif key == "escape":
                     console.print("\n[yellow]Selection cancelled[/yellow]")
                     raise typer.Exit(1)
 
@@ -468,7 +513,9 @@ app = typer.Typer(
 )
 
 # Create subcommand groups
-recitation_app = typer.Typer(name="recitation", help="Manage task execution plans (recitation pattern)")
+recitation_app = typer.Typer(
+    name="recitation", help="Manage task execution plans (recitation pattern)"
+)
 playbook_app = typer.Typer(name="playbook", help="Manage and search playbook patterns")
 validate_app = typer.Typer(name="validate", help="Validate task dependency graphs")
 
@@ -479,7 +526,7 @@ app.add_typer(validate_app, name="validate")
 
 def show_banner():
     """Display the ASCII art banner."""
-    banner_lines = BANNER.strip().split('\n')
+    banner_lines = BANNER.strip().split("\n")
     colors = ["bright_blue", "blue", "cyan"]
 
     styled_banner = Text()
@@ -502,12 +549,25 @@ def version_callback(value: bool):
 @app.callback()
 def callback(
     ctx: typer.Context,
-    version: Optional[bool] = typer.Option(None, "--version", callback=version_callback, is_eager=True, help="Show version and exit")
+    version: Optional[bool] = typer.Option(
+        None,
+        "--version",
+        callback=version_callback,
+        is_eager=True,
+        help="Show version and exit",
+    ),
 ):
     """Show banner when no subcommand is provided."""
-    if ctx.invoked_subcommand is None and "--help" not in sys.argv and "-h" not in sys.argv and not version:
+    if (
+        ctx.invoked_subcommand is None
+        and "--help" not in sys.argv
+        and "-h" not in sys.argv
+        and not version
+    ):
         show_banner()
-        console.print(Align.center("[dim]Run 'mapify --help' for usage information[/dim]"))
+        console.print(
+            Align.center("[dim]Run 'mapify --help' for usage information[/dim]")
+        )
         console.print()
 
 
@@ -544,17 +604,18 @@ def is_debug_enabled(debug_flag: Optional[bool] = None) -> bool:
         return debug_flag
 
     # Check MAP_DEBUG environment variable
-    env_debug = os.environ.get('MAP_DEBUG', '').lower()
-    return env_debug in ('true', '1', 'yes', 'on')
+    env_debug = os.environ.get("MAP_DEBUG", "").lower()
+    return env_debug in ("true", "1", "yes", "on")
 
 
 def get_templates_dir() -> Path:
     """Get the path to bundled templates directory."""
     import importlib.resources
+
     try:
         # Python 3.11+ with importlib.resources.files
-        if hasattr(importlib.resources, 'files'):
-            return Path(str(importlib.resources.files('mapify_cli') / 'templates'))
+        if hasattr(importlib.resources, "files"):
+            return Path(str(importlib.resources.files("mapify_cli") / "templates"))
     except Exception:
         pass
 
@@ -606,7 +667,9 @@ def create_agent_files(project_path: Path, mcp_servers: List[str]) -> None:
             "evaluator": create_evaluator_content(mcp_servers),
             "reflector": create_reflector_content(mcp_servers),
             "curator": create_curator_content(mcp_servers),
-            "documentation-reviewer": create_documentation_reviewer_content(mcp_servers)
+            "documentation-reviewer": create_documentation_reviewer_content(
+                mcp_servers
+            ),
         }
 
         for name, content in agents.items():
@@ -617,7 +680,10 @@ def create_agent_files(project_path: Path, mcp_servers: List[str]) -> None:
 def create_task_decomposer_content(mcp_servers: List[str]) -> str:
     """Create task-decomposer agent content"""
     mcp_section = ""
-    if any(s in mcp_servers for s in ["cipher", "sequential-thinking", "deepwiki", "context7"]):
+    if any(
+        s in mcp_servers
+        for s in ["cipher", "sequential-thinking", "deepwiki", "context7"]
+    ):
         mcp_section = """
 ## MCP Integration
 
@@ -672,7 +738,9 @@ Return a valid JSON document with subtasks, dependencies, and acceptance criteri
 def create_actor_content(mcp_servers: List[str]) -> str:
     """Create actor agent content"""
     mcp_section = ""
-    if any(s in mcp_servers for s in ["cipher", "codex-bridge", "context7", "deepwiki"]):
+    if any(
+        s in mcp_servers for s in ["cipher", "codex-bridge", "context7", "deepwiki"]
+    ):
         mcp_section = """
 # MCP INTEGRATION
 
@@ -836,7 +904,9 @@ Return strictly valid JSON with validation results and specific issues.
 def create_predictor_content(mcp_servers: List[str]) -> str:
     """Create predictor agent content"""
     mcp_section = ""
-    if any(s in mcp_servers for s in ["cipher", "codex-bridge", "deepwiki", "context7"]):
+    if any(
+        s in mcp_servers for s in ["cipher", "codex-bridge", "deepwiki", "context7"]
+    ):
         mcp_section = """
 ## MCP Integration
 
@@ -1180,7 +1250,7 @@ description: Comprehensive MAP review of changes
 Use monitor, predictor, and evaluator agents to review current changes.
 
 Provide detailed analysis of code quality, potential impacts, and quality scores.
-"""
+""",
         }
 
         for name, content in commands.items():
@@ -1189,6 +1259,7 @@ Provide detailed analysis of code quality, potential impacts, and quality scores
     else:
         # Copy templates from bundled directory
         import shutil
+
         for command_template in commands_template_dir.glob("*.md"):
             dest_file = commands_dir / command_template.name
             shutil.copy2(command_template, dest_file)
@@ -1215,7 +1286,10 @@ def create_skill_files(project_path: Path) -> int:
             shutil.copy2(skills_template_dir / "README.md", skills_dir / "README.md")
 
         if (skills_template_dir / "skill-rules.json").exists():
-            shutil.copy2(skills_template_dir / "skill-rules.json", skills_dir / "skill-rules.json")
+            shutil.copy2(
+                skills_template_dir / "skill-rules.json",
+                skills_dir / "skill-rules.json",
+            )
 
         # Copy each skill directory
         for skill_template in skills_template_dir.iterdir():
@@ -1279,7 +1353,9 @@ def install_hooks(project_path: Path, with_hooks: bool = True) -> int:
             dest_file = hooks_dir / hook_file.name
             shutil.copy2(hook_file, dest_file)
             # Make executable
-            dest_file.chmod(dest_file.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+            dest_file.chmod(
+                dest_file.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH
+            )
             hooks_count += 1
 
     # Copy helpers directory (Python helper scripts)
@@ -1304,7 +1380,12 @@ def install_hooks(project_path: Path, with_hooks: bool = True) -> int:
 
                 # Make Python scripts executable (except __init__.py)
                 if dest_file.suffix == ".py" and dest_file.name != "__init__.py":
-                    dest_file.chmod(dest_file.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+                    dest_file.chmod(
+                        dest_file.stat().st_mode
+                        | stat.S_IEXEC
+                        | stat.S_IXGRP
+                        | stat.S_IXOTH
+                    )
 
     # Copy README.md
     readme_src = hooks_template_dir / "README.md"
@@ -1324,21 +1405,31 @@ def install_hooks(project_path: Path, with_hooks: bool = True) -> int:
 
         # Load template settings
         try:
-            with open(settings_src, 'r', encoding='utf-8') as f:
+            with open(settings_src, "r", encoding="utf-8") as f:
                 template_settings = json.load(f)
 
             # Validate template is a dict (not array, string, etc.)
             if not isinstance(template_settings, dict):
-                console.print("[yellow]Warning:[/yellow] Invalid template settings format")
-                console.print("[yellow]Skipping settings.json merge (hook scripts still installed)[/yellow]")
+                console.print(
+                    "[yellow]Warning:[/yellow] Invalid template settings format"
+                )
+                console.print(
+                    "[yellow]Skipping settings.json merge (hook scripts still installed)[/yellow]"
+                )
                 return hooks_count
 
         except json.JSONDecodeError as e:
-            console.print(f"[yellow]Warning:[/yellow] Corrupted template settings.json: {e}")
-            console.print("[yellow]Skipping settings.json merge (hook scripts still installed)[/yellow]")
+            console.print(
+                f"[yellow]Warning:[/yellow] Corrupted template settings.json: {e}"
+            )
+            console.print(
+                "[yellow]Skipping settings.json merge (hook scripts still installed)[/yellow]"
+            )
             return hooks_count
         except Exception as e:
-            console.print(f"[yellow]Warning:[/yellow] Failed to read template settings: {e}")
+            console.print(
+                f"[yellow]Warning:[/yellow] Failed to read template settings: {e}"
+            )
             return hooks_count
 
         # Merge template into existing settings
@@ -1346,14 +1437,20 @@ def install_hooks(project_path: Path, with_hooks: bool = True) -> int:
 
         # Write merged settings atomically
         try:
-            with open(settings_dest, 'w', encoding='utf-8') as f:
+            with open(settings_dest, "w", encoding="utf-8") as f:
                 json.dump(merged_settings, f, indent=2, ensure_ascii=False)
-            console.print("[green]✓[/green] Merged hooks settings into .claude/settings.json")
+            console.print(
+                "[green]✓[/green] Merged hooks settings into .claude/settings.json"
+            )
         except OSError as e:
-            console.print(f"[yellow]Warning:[/yellow] Failed to write settings.json: {e}")
+            console.print(
+                f"[yellow]Warning:[/yellow] Failed to write settings.json: {e}"
+            )
             console.print("[yellow]You may need to manually configure hooks[/yellow]")
         except Exception as e:
-            console.print(f"[yellow]Warning:[/yellow] Unexpected error writing settings: {e}")
+            console.print(
+                f"[yellow]Warning:[/yellow] Unexpected error writing settings: {e}"
+            )
 
     return hooks_count
 
@@ -1404,18 +1501,20 @@ def configure_global_permissions() -> None:
             "Bash(chmod +x:*)",
             "Read(//Users/**)",
             "Read(//private/tmp/**)",
-            "Glob(**)"
+            "Glob(**)",
         ],
-        "deny": []
+        "deny": [],
     }
 
     # Read existing settings or create new
     if settings_file.exists():
         try:
-            with open(settings_file, 'r') as f:
+            with open(settings_file, "r") as f:
                 settings = json.load(f)
         except json.JSONDecodeError:
-            console.print("[yellow]Warning:[/yellow] Corrupted settings.json, will recreate")
+            console.print(
+                "[yellow]Warning:[/yellow] Corrupted settings.json, will recreate"
+            )
             settings = {}
     else:
         settings = {}
@@ -1431,11 +1530,13 @@ def configure_global_permissions() -> None:
                 settings["permissions"].setdefault("allow", []).append(perm)
 
     # Write back
-    with open(settings_file, 'w') as f:
+    with open(settings_file, "w") as f:
         json.dump(settings, f, indent=2)
 
     console.print(f"[green]✓[/green] Configured global permissions in {settings_file}")
-    console.print(f"[dim]  Added {len(default_permissions['allow'])} read-only command patterns[/dim]")
+    console.print(
+        f"[dim]  Added {len(default_permissions['allow'])} read-only command patterns[/dim]"
+    )
 
 
 def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
@@ -1451,15 +1552,15 @@ def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
             "orchestrator": [],
             "reflector": [],
             "curator": [],
-            "documentation-reviewer": []
+            "documentation-reviewer": [],
         },
         "workflow_settings": {
             "always_retrieve_knowledge": True,
             "store_successful_patterns": True,
             "use_professional_review": True,
             "enable_sequential_thinking": True,
-            "knowledge_cache_ttl": 3600
-        }
+            "knowledge_cache_ttl": 3600,
+        },
     }
 
     # Add server configurations
@@ -1470,8 +1571,8 @@ def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
             "config": {
                 "auto_review": True,
                 "focus_areas": ["security", "performance", "testing"],
-                "severity_threshold": "medium"
-            }
+                "severity_threshold": "medium",
+            },
         },
         "sequential-thinking": {
             "enabled": True,
@@ -1479,8 +1580,8 @@ def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
             "config": {
                 "max_thoughts": 10,
                 "branch_exploration": True,
-                "hypothesis_verification": True
-            }
+                "hypothesis_verification": True,
+            },
         },
         "cipher": {
             "enabled": True,
@@ -1488,8 +1589,8 @@ def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
             "config": {
                 "auto_store": True,
                 "retrieval_limit": 5,
-                "conflict_resolution": "manual"
-            }
+                "conflict_resolution": "manual",
+            },
         },
         "codex-bridge": {
             "enabled": True,
@@ -1497,27 +1598,19 @@ def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
             "config": {
                 "format": "json",
                 "timeout": 600,  # 10 minutes required for complex operations
-                "batch_size": 5
-            }
+                "batch_size": 5,
+            },
         },
         "context7": {
             "enabled": True,
             "description": "Up-to-date library documentation",
-            "config": {
-                "tokens": 5000,
-                "auto_resolve": True,
-                "cache_duration": 3600
-            }
+            "config": {"tokens": 5000, "auto_resolve": True, "cache_duration": 3600},
         },
         "deepwiki": {
             "enabled": True,
             "description": "GitHub repository intelligence",
-            "config": {
-                "auto_structure": True,
-                "max_depth": 3,
-                "cache_repos": True
-            }
-        }
+            "config": {"auto_structure": True, "max_depth": 3, "cache_repos": True},
+        },
     }
 
     # Add selected servers
@@ -1531,7 +1624,13 @@ def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
             config["agent_mcp_mappings"][agent].append("cipher")
 
     if "sequential-thinking" in mcp_servers:
-        for agent in ["task-decomposer", "monitor", "evaluator", "orchestrator", "reflector"]:
+        for agent in [
+            "task-decomposer",
+            "monitor",
+            "evaluator",
+            "orchestrator",
+            "reflector",
+        ]:
             if agent in config["agent_mcp_mappings"]:
                 config["agent_mcp_mappings"][agent].append("sequential-thinking")
 
@@ -1576,48 +1675,60 @@ def init_git_repo(project_path: Path, quiet: bool = False) -> bool:
                 ["git", "config", "user.email"],
                 capture_output=True,
                 text=True,
-                check=False
+                check=False,
             ).stdout.strip()
 
             user_name = subprocess.run(
                 ["git", "config", "user.name"],
                 capture_output=True,
                 text=True,
-                check=False
+                check=False,
             ).stdout.strip()
 
             if not user_email or not user_name:
                 if not quiet:
                     console.print("[yellow]Git identity not configured.[/yellow]")
-                    console.print("Setting temporary git identity for initial commit...")
+                    console.print(
+                        "Setting temporary git identity for initial commit..."
+                    )
 
                 # Set temporary identity for this repository only
                 subprocess.run(
-                    ["git", "config", "--local", "user.email", "map-framework@example.com"],
+                    [
+                        "git",
+                        "config",
+                        "--local",
+                        "user.email",
+                        "map-framework@example.com",
+                    ],
                     check=True,
-                    capture_output=True
+                    capture_output=True,
                 )
                 subprocess.run(
                     ["git", "config", "--local", "user.name", "MAP Framework"],
                     check=True,
-                    capture_output=True
+                    capture_output=True,
                 )
 
                 if not quiet:
-                    console.print("[yellow]Note: Please configure your git identity with:[/yellow]")
-                    console.print("  git config --global user.email 'your.email@example.com'")
+                    console.print(
+                        "[yellow]Note: Please configure your git identity with:[/yellow]"
+                    )
+                    console.print(
+                        "  git config --global user.email 'your.email@example.com'"
+                    )
                     console.print("  git config --global user.name 'Your Name'")
         except subprocess.CalledProcessError:
             # If we can't check config, set temporary values
             subprocess.run(
                 ["git", "config", "--local", "user.email", "map-framework@example.com"],
                 check=False,
-                capture_output=True
+                capture_output=True,
             )
             subprocess.run(
                 ["git", "config", "--local", "user.name", "MAP Framework"],
                 check=False,
-                capture_output=True
+                capture_output=True,
             )
 
         # Add files and create initial commit
@@ -1627,17 +1738,24 @@ def init_git_repo(project_path: Path, quiet: bool = False) -> bool:
         result = subprocess.run(
             ["git", "commit", "-m", "Initial commit from MAP Framework"],
             capture_output=True,
-            text=True
+            text=True,
         )
 
         if result.returncode != 0:
             # Check if it's because there are no changes (all files might be ignored)
-            if "nothing to commit" in result.stdout or "nothing to commit" in result.stderr:
+            if (
+                "nothing to commit" in result.stdout
+                or "nothing to commit" in result.stderr
+            ):
                 if not quiet:
-                    console.print("[yellow]⚠[/yellow] No files to commit (check .gitignore)")
+                    console.print(
+                        "[yellow]⚠[/yellow] No files to commit (check .gitignore)"
+                    )
                 return True
             else:
-                raise subprocess.CalledProcessError(result.returncode, result.args, result.stdout, result.stderr)
+                raise subprocess.CalledProcessError(
+                    result.returncode, result.args, result.stdout, result.stderr
+                )
 
         if not quiet:
             console.print("[green]✓[/green] Git repository initialized")
@@ -1645,15 +1763,19 @@ def init_git_repo(project_path: Path, quiet: bool = False) -> bool:
     except subprocess.CalledProcessError as e:
         if not quiet:
             error_msg = str(e)
-            if hasattr(e, 'stderr') and e.stderr:
+            if hasattr(e, "stderr") and e.stderr:
                 error_msg = e.stderr
             console.print(f"[red]Error initializing git repository:[/red] {error_msg}")
-            console.print("[yellow]Tip: You can skip git initialization with --no-git[/yellow]")
+            console.print(
+                "[yellow]Tip: You can skip git initialization with --no-git[/yellow]"
+            )
         return False
     except FileNotFoundError:
         if not quiet:
             console.print("[red]Git is not installed or not in PATH.[/red]")
-            console.print("[yellow]Please install git or use --no-git to skip repository initialization[/yellow]")
+            console.print(
+                "[yellow]Please install git or use --no-git to skip repository initialization[/yellow]"
+            )
         return False
     finally:
         os.chdir(original_cwd)
@@ -1681,11 +1803,7 @@ def is_command(cmd_list: List[str]) -> bool:
     if not cmd_list:
         return False
     try:
-        subprocess.run(
-            ["which", cmd_list[0]],
-            check=True,
-            capture_output=True
-        )
+        subprocess.run(["which", cmd_list[0]], check=True, capture_output=True)
         return True
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
@@ -1710,7 +1828,8 @@ def create_commands_dir(project_path: Path) -> None:
     commands_dir.mkdir(parents=True, exist_ok=True)
 
     readme = commands_dir / "README.md"
-    readme.write_text("""# Claude Code Commands
+    readme.write_text(
+        """# Claude Code Commands
 
 This directory contains custom slash commands for Claude Code.
 
@@ -1734,17 +1853,34 @@ Your command prompt here
 ```
 
 The filename becomes the command name (without the `.md` extension).
-""")
+"""
+    )
 
 
 @app.command()
 def init(
-    project_name: Optional[str] = typer.Argument(None, help="Name for your new project directory (use '.' for current directory)"),
-    mcp: Optional[str] = typer.Option(None, "--mcp", help="MCP servers to enable: all, essential, docs, none, or comma-separated list"),
-    no_git: bool = typer.Option(False, "--no-git", help="Skip git repository initialization"),
-    force: bool = typer.Option(False, "--force", help="Force merge/overwrite when using '.' in non-empty directory"),
-    with_hooks: bool = typer.Option(True, "--with-hooks/--no-hooks", help="Install Claude Code hooks (default: yes)"),
-    debug: bool = typer.Option(False, "--debug", help="Enable debug logging (creates .map/logs/workflow_*.log)"),
+    project_name: Optional[str] = typer.Argument(
+        None, help="Name for your new project directory (use '.' for current directory)"
+    ),
+    mcp: Optional[str] = typer.Option(
+        None,
+        "--mcp",
+        help="MCP servers to enable: all, essential, docs, none, or comma-separated list",
+    ),
+    no_git: bool = typer.Option(
+        False, "--no-git", help="Skip git repository initialization"
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Force merge/overwrite when using '.' in non-empty directory",
+    ),
+    with_hooks: bool = typer.Option(
+        True, "--with-hooks/--no-hooks", help="Install Claude Code hooks (default: yes)"
+    ),
+    debug: bool = typer.Option(
+        False, "--debug", help="Enable debug logging (creates .map/logs/workflow_*.log)"
+    ),
 ):
     """
     Initialize a new MAP Framework project.
@@ -1770,20 +1906,29 @@ def init(
     workflow_logger = None
     if is_debug_enabled(debug):
         from mapify_cli.workflow_logger import MapWorkflowLogger
+
         workflow_logger = MapWorkflowLogger(Path.cwd(), enabled=True)
-        log_file = workflow_logger.start_session(task_id=f"mapify_init_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+        log_file = workflow_logger.start_session(
+            task_id=f"mapify_init_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        )
         console.print(f"[dim]Debug logging enabled: {log_file}[/dim]")
-        workflow_logger.log_event("command_start", f"mapify init {project_name or '.'}", metadata={"debug": debug, "mcp": mcp})
+        workflow_logger.log_event(
+            "command_start",
+            f"mapify init {project_name or '.'}",
+            metadata={"debug": debug, "mcp": mcp},
+        )
 
     # Handle '.' as shorthand for current directory
-    use_current_dir = (project_name == ".")
+    use_current_dir = project_name == "."
 
     if use_current_dir:
         project_name = None
 
     # Validate arguments
     if not use_current_dir and not project_name:
-        console.print("[red]Error:[/red] Must specify either a project name or use '.' for current directory")
+        console.print(
+            "[red]Error:[/red] Must specify either a project name or use '.' for current directory"
+        )
         raise typer.Exit(1)
 
     # Determine project directory
@@ -1794,7 +1939,9 @@ def init(
         # Check if current directory has any files
         existing_items = list(project_path.iterdir())
         if existing_items:
-            console.print(f"[yellow]Warning:[/yellow] Current directory is not empty ({len(existing_items)} items)")
+            console.print(
+                f"[yellow]Warning:[/yellow] Current directory is not empty ({len(existing_items)} items)"
+            )
             if not force:
                 response = typer.confirm("Do you want to continue?")
                 if not response:
@@ -1803,7 +1950,9 @@ def init(
     else:
         project_path = Path(project_name).resolve()
         if project_path.exists():
-            console.print(f"[red]Error:[/red] Directory '{project_name}' already exists")
+            console.print(
+                f"[red]Error:[/red] Directory '{project_name}' already exists"
+            )
             raise typer.Exit(1)
         project_path.mkdir(parents=True)
 
@@ -1845,10 +1994,14 @@ def init(
         selected_mcp_servers = []
     elif mcp:
         # Parse comma-separated list
-        selected_mcp_servers = [s.strip() for s in mcp.split(",") if s.strip() in INDIVIDUAL_MCP_SERVERS]
+        selected_mcp_servers = [
+            s.strip() for s in mcp.split(",") if s.strip() in INDIVIDUAL_MCP_SERVERS
+        ]
     else:
         # Interactive selection
-        mcp_choice = select_with_arrows(MCP_SERVER_CHOICES, "Choose MCP configuration:", "essential")
+        mcp_choice = select_with_arrows(
+            MCP_SERVER_CHOICES, "Choose MCP configuration:", "essential"
+        )
 
         if mcp_choice == "all":
             selected_mcp_servers = list(INDIVIDUAL_MCP_SERVERS.keys())
@@ -1857,7 +2010,9 @@ def init(
         elif mcp_choice == "docs":
             selected_mcp_servers = ["context7", "deepwiki"]
         elif mcp_choice == "custom":
-            selected_mcp_servers = select_multiple_with_arrows(INDIVIDUAL_MCP_SERVERS, "Select MCP servers:")
+            selected_mcp_servers = select_multiple_with_arrows(
+                INDIVIDUAL_MCP_SERVERS, "Select MCP servers:"
+            )
         else:
             selected_mcp_servers = []
 
@@ -1899,8 +2054,11 @@ def init(
     tracker.start("init-playbook")
     try:
         from mapify_cli.playbook_manager import PlaybookManager
+
         playbook_db_path = project_path / ".claude" / "playbook.db"
-        manager = PlaybookManager(db_path=str(playbook_db_path), use_semantic_search=False)
+        manager = PlaybookManager(
+            db_path=str(playbook_db_path), use_semantic_search=False
+        )
         manager.close()
         tracker.complete("init-playbook", "database created")
     except sqlite3.Error as e:
@@ -1911,7 +2069,9 @@ def init(
     except PermissionError as e:
         tracker.error("init-playbook", "permission denied")
         console.print(f"[red]Error:[/red] Permission denied creating playbook: {e}")
-        console.print("[yellow]Run with appropriate permissions or choose a different directory[/yellow]")
+        console.print(
+            "[yellow]Run with appropriate permissions or choose a different directory[/yellow]"
+        )
         raise typer.Exit(1)
     except OSError as e:
         tracker.error("init-playbook", "filesystem error")
@@ -1921,7 +2081,9 @@ def init(
     except json.JSONDecodeError as e:
         tracker.error("init-playbook", "invalid JSON")
         console.print(f"[red]Error:[/red] Corrupted playbook.json file: {e}")
-        console.print("[yellow]Suggestion: Rename or delete .claude/playbook.json and try again[/yellow]")
+        console.print(
+            "[yellow]Suggestion: Rename or delete .claude/playbook.json and try again[/yellow]"
+        )
         raise typer.Exit(1)
 
     # Initialize git
@@ -1953,37 +2115,46 @@ def init(
     # Next steps
     steps_lines = []
     if not use_current_dir:
-        steps_lines.append(f"1. Go to the project folder: [cyan]cd {project_name}[/cyan]")
+        steps_lines.append(
+            f"1. Go to the project folder: [cyan]cd {project_name}[/cyan]"
+        )
         step_num = 2
     else:
         steps_lines.append("1. You're already in the project directory!")
         step_num = 2
 
     steps_lines.append(f"{step_num}. Start using MAP commands with Claude Code:")
-    steps_lines.append("   • [cyan]/map-feature[/] - Implement new feature with MAP workflow")
+    steps_lines.append(
+        "   • [cyan]/map-feature[/] - Implement new feature with MAP workflow"
+    )
     steps_lines.append("   • [cyan]/map-debug[/] - Debug issue using MAP analysis")
     steps_lines.append("   • [cyan]/map-refactor[/] - Refactor with impact analysis")
     steps_lines.append("   • [cyan]/map-review[/] - Full MAP review of changes")
     steps_lines.append(f"{step_num + 1}. Or use orchestrator directly:")
     steps_lines.append('   [cyan]"Use orchestrator agent to implement [feature]"[/]')
 
-    steps_panel = Panel("\n".join(steps_lines), title="Next Steps", border_style="cyan", padding=(1, 2))
+    steps_panel = Panel(
+        "\n".join(steps_lines), title="Next Steps", border_style="cyan", padding=(1, 2)
+    )
     console.print()
     console.print(steps_panel)
 
 
 @app.command()
-def check(
-    debug: bool = typer.Option(False, "--debug", help="Enable debug logging")
-):
+def check(debug: bool = typer.Option(False, "--debug", help="Enable debug logging")):
     """Check that all required tools are installed."""
     # Initialize workflow logger if debug mode is enabled
     if is_debug_enabled(debug):
         from mapify_cli.workflow_logger import MapWorkflowLogger
+
         workflow_logger = MapWorkflowLogger(Path.cwd(), enabled=True)
-        log_file = workflow_logger.start_session(task_id=f"mapify_check_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+        log_file = workflow_logger.start_session(
+            task_id=f"mapify_check_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        )
         console.print(f"[dim]Debug logging enabled: {log_file}[/dim]")
-        workflow_logger.log_event("command_start", "mapify check", metadata={"debug": debug})
+        workflow_logger.log_event(
+            "command_start", "mapify check", metadata={"debug": debug}
+        )
     show_banner()
     console.print("[bold]Checking for installed tools...[/bold]\n")
 
@@ -2012,13 +2183,17 @@ def check(
     console.print()
 
     if all(results.values()):
-        console.print("[bold green]All tools are installed! MAP Framework is ready to use.[/bold green]")
+        console.print(
+            "[bold green]All tools are installed! MAP Framework is ready to use.[/bold green]"
+        )
     else:
         console.print("[yellow]Some tools are missing:[/yellow]")
         if not results.get("git"):
             console.print("  • Install git: https://git-scm.com/downloads")
         if not results.get("claude"):
-            console.print("  • Install Claude Code: https://docs.anthropic.com/en/docs/claude-code/setup")
+            console.print(
+                "  • Install Claude Code: https://docs.anthropic.com/en/docs/claude-code/setup"
+            )
 
 
 @app.command()
@@ -2038,46 +2213,60 @@ def upgrade():
 
 # Recitation commands
 
+
 @recitation_app.command("create")
 def recitation_create(
     task_id: str,
     goal: str,
     subtasks_json: str,
-    force: bool = typer.Option(False, "--force", help="Overwrite existing plan")
+    force: bool = typer.Option(False, "--force", help="Overwrite existing plan"),
 ):
     """Create a new task execution plan"""
     from mapify_cli.recitation_manager import RecitationManager
+
     manager = RecitationManager(Path.cwd())
     try:
         subtasks = json.loads(subtasks_json)
         plan = manager.create_plan(task_id, goal, subtasks, force=force)
-        result = {"status": "success", "message": "Plan created", "plan_file": str(manager.plan_file), "subtasks_count": len(plan.subtasks)}
+        result = {
+            "status": "success",
+            "message": "Plan created",
+            "plan_file": str(manager.plan_file),
+            "subtasks_count": len(plan.subtasks),
+        }
         console.print_json(data=result)
     except (ValueError, json.JSONDecodeError) as e:
         console.print_json(data={"status": "error", "message": str(e)})
         raise typer.Exit(1)
 
+
 @recitation_app.command("update")
 def recitation_update(
-    subtask_id: str,
-    status: str,
-    error: Optional[str] = typer.Argument(None)
+    subtask_id: str, status: str, error: Optional[str] = typer.Argument(None)
 ):
     """Update subtask status"""
     from mapify_cli.recitation_manager import RecitationManager
+
     manager = RecitationManager(Path.cwd())
     try:
         plan = manager.update_subtask_status(subtask_id, status, error)
-        result = {"status": "success", "message": f"Subtask {subtask_id} updated to {status}", "current_subtask": plan.current_subtask_id, "updated_at": plan.updated_at}
+        result = {
+            "status": "success",
+            "message": f"Subtask {subtask_id} updated to {status}",
+            "current_subtask": plan.current_subtask_id,
+            "updated_at": plan.updated_at,
+        }
         console.print_json(data=result)
     except Exception as e:
         console.print_json(data={"status": "error", "message": str(e)})
         raise typer.Exit(1)
 
+
 @recitation_app.command("get-context")
 def recitation_get_context():
     """Get current plan context as markdown"""
     from mapify_cli.recitation_manager import RecitationManager
+
     manager = RecitationManager(Path.cwd())
     context = manager.get_current_context()
     if context:
@@ -2086,10 +2275,12 @@ def recitation_get_context():
         console.print("# No active plan\n\nNo recitation plan is currently active.")
         raise typer.Exit(1)
 
+
 @recitation_app.command("stats")
 def recitation_stats():
     """Show plan statistics"""
     from mapify_cli.recitation_manager import RecitationManager
+
     manager = RecitationManager(Path.cwd())
     stats = manager.get_statistics()
     if stats:
@@ -2098,10 +2289,12 @@ def recitation_stats():
         console.print_json(data={"status": "error", "message": "No active plan"})
         raise typer.Exit(1)
 
+
 @recitation_app.command("clear")
 def recitation_clear():
     """Clear active plan"""
     from mapify_cli.recitation_manager import RecitationManager
+
     manager = RecitationManager(Path.cwd())
     manager.clear_plan()
     console.print_json(data={"status": "success", "message": "Plan cleared"})
@@ -2111,19 +2304,24 @@ def recitation_clear():
 def recitation_generate_context():
     """Generate context.md from project metadata and playbook"""
     from mapify_cli.recitation_manager import RecitationManager
+
     manager = RecitationManager(Path.cwd())
     try:
         context_file = manager.generate_context_md()
-        console.print_json(data={
-            "status": "success",
-            "message": "Generated context.md",
-            "file": context_file
-        })
+        console.print_json(
+            data={
+                "status": "success",
+                "message": "Generated context.md",
+                "file": context_file,
+            }
+        )
     except Exception as e:
-        console.print_json(data={
-            "status": "error",
-            "message": f"Failed to generate context.md: {str(e)}"
-        })
+        console.print_json(
+            data={
+                "status": "error",
+                "message": f"Failed to generate context.md: {str(e)}",
+            }
+        )
         raise typer.Exit(1)
 
 
@@ -2131,27 +2329,34 @@ def recitation_generate_context():
 def recitation_generate_tasks():
     """Regenerate tasks.md from current plan"""
     from mapify_cli.recitation_manager import RecitationManager
+
     manager = RecitationManager(Path.cwd())
     try:
         plan = manager.get_plan()
         if not plan:
-            console.print_json(data={
-                "status": "error",
-                "message": "No active plan to generate tasks from"
-            })
+            console.print_json(
+                data={
+                    "status": "error",
+                    "message": "No active plan to generate tasks from",
+                }
+            )
             raise typer.Exit(1)
 
         manager._generate_tasks_md(plan)
-        console.print_json(data={
-            "status": "success",
-            "message": "Generated tasks.md",
-            "file": str(manager.tasks_file)
-        })
+        console.print_json(
+            data={
+                "status": "success",
+                "message": "Generated tasks.md",
+                "file": str(manager.tasks_file),
+            }
+        )
     except Exception as e:
-        console.print_json(data={
-            "status": "error",
-            "message": f"Failed to generate tasks.md: {str(e)}"
-        })
+        console.print_json(
+            data={
+                "status": "error",
+                "message": f"Failed to generate tasks.md: {str(e)}",
+            }
+        )
         raise typer.Exit(1)
 
 
@@ -2159,18 +2364,15 @@ def recitation_generate_tasks():
 def recitation_get_docs():
     """Get all dev docs content (plan + context + tasks)"""
     from mapify_cli.recitation_manager import RecitationManager
+
     manager = RecitationManager(Path.cwd())
     try:
         docs = manager.get_dev_docs()
-        console.print_json(data={
-            "status": "success",
-            "docs": docs
-        })
+        console.print_json(data={"status": "success", "docs": docs})
     except Exception as e:
-        console.print_json(data={
-            "status": "error",
-            "message": f"Failed to get dev docs: {str(e)}"
-        })
+        console.print_json(
+            data={"status": "error", "message": f"Failed to get dev docs: {str(e)}"}
+        )
         raise typer.Exit(1)
 
 
@@ -2187,7 +2389,9 @@ def recitation_checkpoint():
     if not map_dir.exists():
         console.print("[yellow]⚠️  No active MAP workflow found[/yellow]")
         console.print("\nThe `.map/` directory doesn't exist yet.")
-        console.print("Start a MAP workflow with: [cyan]/map-feature[/cyan], [cyan]/map-debug[/cyan], or [cyan]/map-refactor[/cyan]")
+        console.print(
+            "Start a MAP workflow with: [cyan]/map-feature[/cyan], [cyan]/map-debug[/cyan], or [cyan]/map-refactor[/cyan]"
+        )
         raise typer.Exit(0)
 
     # Define files to check
@@ -2195,16 +2399,22 @@ def recitation_checkpoint():
         "plan_json": manager.plan_json,
         "plan_md": manager.plan_file,
         "context_md": manager.context_file,
-        "tasks_md": manager.tasks_file
+        "tasks_md": manager.tasks_file,
     }
 
     # Check which files exist
-    existing_files = {name: path for name, path in files_to_check.items() if path.exists()}
+    existing_files = {
+        name: path for name, path in files_to_check.items() if path.exists()
+    }
 
     if not existing_files:
-        console.print("[yellow]⚠️  MAP workflow directory exists but no state files found[/yellow]")
+        console.print(
+            "[yellow]⚠️  MAP workflow directory exists but no state files found[/yellow]"
+        )
         console.print(f"\nDirectory: {map_dir.absolute()}")
-        console.print("Expected files are missing. The workflow may not have been initialized properly.")
+        console.print(
+            "Expected files are missing. The workflow may not have been initialized properly."
+        )
         raise typer.Exit(0)
 
     # Print checkpoint header
@@ -2223,12 +2433,18 @@ def recitation_checkpoint():
             plan = manager.get_plan()
             if plan:
                 console.print(f"\n[bold]🎯 Current Task:[/bold] {plan.goal}")
-                console.print(f"[bold]📊 Progress:[/bold] {plan.current_subtask_id}/{len(plan.subtasks)} subtasks")
+                console.print(
+                    f"[bold]📊 Progress:[/bold] {plan.current_subtask_id}/{len(plan.subtasks)} subtasks"
+                )
 
                 # Show current subtask
-                current = next((s for s in plan.subtasks if s.id == plan.current_subtask_id), None)
+                current = next(
+                    (s for s in plan.subtasks if s.id == plan.current_subtask_id), None
+                )
                 if current:
-                    console.print(f"[bold]▶️  Active:[/bold] {current.description} [{current.status}]")
+                    console.print(
+                        f"[bold]▶️  Active:[/bold] {current.description} [{current.status}]"
+                    )
         except Exception as e:
             console.print(f"[yellow]⚠️  Could not parse plan: {str(e)}[/yellow]")
 
@@ -2243,7 +2459,9 @@ def recitation_checkpoint():
             # Truncate very long files
             if len(content) > 2000:
                 console.print(content[:2000])
-                console.print(f"\n[dim]... (truncated, {len(content) - 2000} more chars)[/dim]")
+                console.print(
+                    f"\n[dim]... (truncated, {len(content) - 2000} more chars)[/dim]"
+                )
             else:
                 console.print(content)
         except Exception as e:
@@ -2251,7 +2469,9 @@ def recitation_checkpoint():
 
     # Print recovery instructions
     console.print("\n" + "=" * 60)
-    console.print("[bold green]🔄 Recovery Instructions (for post-compaction):[/bold green]")
+    console.print(
+        "[bold green]🔄 Recovery Instructions (for post-compaction):[/bold green]"
+    )
     console.print("\nAfter context compaction, paste this to Claude:\n")
 
     recovery_message = f"""```
@@ -2267,11 +2487,14 @@ Continue MAP workflow from checkpoint:
     recovery_message += "\n```"
 
     console.print(recovery_message)
-    console.print("\n[dim]Claude will automatically resume from where you left off.[/dim]")
+    console.print(
+        "\n[dim]Claude will automatically resume from where you left off.[/dim]"
+    )
     console.print("=" * 60 + "\n")
 
 
 # Playbook commands
+
 
 @playbook_app.command("stats")
 def playbook_stats():
@@ -2285,27 +2508,36 @@ def playbook_stats():
     if not playbook_db_path.exists():
         # Backward compatibility: check if old playbook.json exists
         if playbook_json_path.exists():
-            console.print_json(data={
-                "error": "Found legacy playbook.json. Run 'mapify init' to migrate to playbook.db"
-            })
+            console.print_json(
+                data={
+                    "error": "Found legacy playbook.json. Run 'mapify init' to migrate to playbook.db"
+                }
+            )
         else:
-            console.print_json(data={"error": "Playbook not found. Initialize with 'mapify init'"})
+            console.print_json(
+                data={"error": "Playbook not found. Initialize with 'mapify init'"}
+            )
         raise typer.Exit(1)
 
     # Use PlaybookManager with db_path (SQLite backend)
     manager = PlaybookManager(db_path=str(playbook_db_path))
-    total = sum(len(section["bullets"]) for section in manager.playbook.get("sections", {}).values())
+    total = sum(
+        len(section["bullets"])
+        for section in manager.playbook.get("sections", {}).values()
+    )
     stats = {
         "total_bullets": total,
         "sections": len(manager.playbook.get("sections", {})),
-        "metadata": manager.playbook.get("metadata", {})
+        "metadata": manager.playbook.get("metadata", {}),
     }
     console.print_json(data=stats)
+
 
 @playbook_app.command("search")
 def playbook_search(query: str, top_k: int = typer.Option(5, help="Number of results")):
     """Search playbook for relevant patterns"""
     from mapify_cli.playbook_manager import PlaybookManager
+
     playbook_db_path = Path.cwd() / ".claude" / "playbook.db"
     if not playbook_db_path.exists():
         console.print("No patterns found (playbook not initialized)")
@@ -2315,12 +2547,23 @@ def playbook_search(query: str, top_k: int = typer.Option(5, help="Number of res
     if not results:
         console.print("No patterns found matching your query")
     else:
-        console.print_json(data={"query": query, "count": len(results), "results": [{"id": b.get("id"), "content": b.get("content")[:100] + "..."} for b in results]})
+        console.print_json(
+            data={
+                "query": query,
+                "count": len(results),
+                "results": [
+                    {"id": b.get("id"), "content": b.get("content")[:100] + "..."}
+                    for b in results
+                ],
+            }
+        )
+
 
 @playbook_app.command("sync")
 def playbook_sync(threshold: int = typer.Option(5, help="Minimum helpful count")):
     """Show high-quality patterns ready for cross-project sync"""
     from mapify_cli.playbook_manager import PlaybookManager
+
     playbook_db_path = Path.cwd() / ".claude" / "playbook.db"
     playbook_json_path = Path.cwd() / ".claude" / "playbook.json"
 
@@ -2328,26 +2571,51 @@ def playbook_sync(threshold: int = typer.Option(5, help="Minimum helpful count")
     if not playbook_db_path.exists():
         # Backward compatibility: check if old playbook.json exists
         if playbook_json_path.exists():
-            console.print_json(data={
-                "status": "error",
-                "message": "Found legacy playbook.json. Run 'mapify init' to migrate to playbook.db"
-            })
+            console.print_json(
+                data={
+                    "status": "error",
+                    "message": "Found legacy playbook.json. Run 'mapify init' to migrate to playbook.db",
+                }
+            )
         else:
-            console.print_json(data={"status": "error", "message": "Playbook not found. Initialize with 'mapify init'"})
+            console.print_json(
+                data={
+                    "status": "error",
+                    "message": "Playbook not found. Initialize with 'mapify init'",
+                }
+            )
         raise typer.Exit(1)
 
     manager = PlaybookManager(db_path=str(playbook_db_path))
     patterns = manager.get_bullets_for_sync(threshold=threshold)
-    console.print_json(data={"threshold": threshold, "count": len(patterns), "patterns": [{"id": p.get("id"), "helpful_count": p.get("helpful_count")} for p in patterns]})
+    console.print_json(
+        data={
+            "threshold": threshold,
+            "count": len(patterns),
+            "patterns": [
+                {"id": p.get("id"), "helpful_count": p.get("helpful_count")}
+                for p in patterns
+            ],
+        }
+    )
+
 
 @playbook_app.command("query")
 def playbook_query(
     query_text: str = typer.Argument(..., help="Search query"),
-    sections: List[str] = typer.Option([], "--section", help="Filter by section (can specify multiple)"),
+    sections: List[str] = typer.Option(
+        [], "--section", help="Filter by section (can specify multiple)"
+    ),
     limit: int = typer.Option(5, "--limit", help="Maximum results to return"),
-    mode: str = typer.Option("local", "--mode", help="Search mode: local, cipher, or hybrid"),
-    format_output: str = typer.Option("markdown", "--format", help="Output format: markdown or json"),
-    min_quality: int = typer.Option(0, "--min-quality", help="Minimum quality score (helpful - harmful)"),
+    mode: str = typer.Option(
+        "local", "--mode", help="Search mode: local, cipher, or hybrid"
+    ),
+    format_output: str = typer.Option(
+        "markdown", "--format", help="Output format: markdown or json"
+    ),
+    min_quality: int = typer.Option(
+        0, "--min-quality", help="Minimum quality score (helpful - harmful)"
+    ),
 ):
     """Query playbook using FTS5 full-text search with optional cipher integration
 
@@ -2366,9 +2634,13 @@ def playbook_query(
     if not playbook_db_path.exists():
         # Backward compatibility: check if old playbook.json exists
         if playbook_json_path.exists():
-            console.print("[yellow]Warning:[/yellow] Found legacy playbook.json. Run 'mapify init' to migrate to playbook.db")
+            console.print(
+                "[yellow]Warning:[/yellow] Found legacy playbook.json. Run 'mapify init' to migrate to playbook.db"
+            )
         else:
-            console.print("[yellow]Warning:[/yellow] Playbook not found. Initialize with 'mapify init'")
+            console.print(
+                "[yellow]Warning:[/yellow] Playbook not found. Initialize with 'mapify init'"
+            )
         raise typer.Exit(1)
 
     try:
@@ -2376,7 +2648,7 @@ def playbook_query(
         mode_map = {
             "local": SearchMode.PLAYBOOK_ONLY,
             "cipher": SearchMode.CIPHER_ONLY,
-            "hybrid": SearchMode.HYBRID
+            "hybrid": SearchMode.HYBRID,
         }
         search_mode = mode_map.get(mode.lower(), SearchMode.PLAYBOOK_ONLY)
 
@@ -2386,7 +2658,7 @@ def playbook_query(
             sections=list(sections) if sections else None,
             limit=limit,
             search_mode=search_mode,
-            min_quality_score=min_quality
+            min_quality_score=min_quality,
         )
 
         # Execute query
@@ -2408,10 +2680,10 @@ def playbook_query(
                         "quality_score": r.quality_score,
                         "relevance_score": r.relevance_score,
                         "combined_score": r.combined_score,
-                        "source": r.source
+                        "source": r.source,
                     }
                     for r in response.results
-                ]
+                ],
             }
             console.print_json(data=results_json)
         else:
@@ -2421,13 +2693,19 @@ def playbook_query(
                 return
 
             console.print(f"# Query Results: {query_text}\n")
-            console.print(f"**Found {len(response.results)} results in {response.metadata['total_time_ms']}ms**\n")
+            console.print(
+                f"**Found {len(response.results)} results in {response.metadata['total_time_ms']}ms**\n"
+            )
             console.print(f"*Search method: {response.metadata['search_method']}*\n")
 
             for i, result in enumerate(response.results, 1):
-                console.print(f"## {i}. [{result.id}] Score: {result.combined_score:.2f}\n")
+                console.print(
+                    f"## {i}. [{result.id}] Score: {result.combined_score:.2f}\n"
+                )
                 console.print(f"**Section:** {result.section}\n")
-                console.print(f"**Quality:** {result.quality_score} | **Relevance:** {result.relevance_score:.2f} | **Source:** {result.source}\n")
+                console.print(
+                    f"**Quality:** {result.quality_score} | **Relevance:** {result.relevance_score:.2f} | **Source:** {result.source}\n"
+                )
                 console.print(f"{result.content}\n")
 
                 if result.code_example:
@@ -2444,10 +2722,15 @@ def playbook_query(
         console.print(f"[red]Unexpected error:[/red] {str(e)}")
         raise typer.Exit(1)
 
+
 @playbook_app.command("apply-delta")
 def playbook_apply_delta(
-    input_file: Optional[Path] = typer.Argument(None, help="JSON file containing delta operations (or use stdin)"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Preview changes without applying them")
+    input_file: Optional[Path] = typer.Argument(
+        None, help="JSON file containing delta operations (or use stdin)"
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Preview changes without applying them"
+    ),
 ):
     """Apply delta operations to playbook (ADD, UPDATE, DEPRECATE)
 
@@ -2496,9 +2779,13 @@ def playbook_apply_delta(
     if not playbook_db_path.exists():
         # Backward compatibility: check if old playbook.json exists
         if playbook_json_path.exists():
-            console.print("[red]Error:[/red] Found legacy playbook.json. Run 'mapify init' to migrate to playbook.db")
+            console.print(
+                "[red]Error:[/red] Found legacy playbook.json. Run 'mapify init' to migrate to playbook.db"
+            )
         else:
-            console.print("[red]Error:[/red] Playbook not found. Initialize with 'mapify init'")
+            console.print(
+                "[red]Error:[/red] Playbook not found. Initialize with 'mapify init'"
+            )
         raise typer.Exit(1)
 
     try:
@@ -2526,45 +2813,59 @@ def playbook_apply_delta(
                 raise ValueError(f"Operation {i} missing required field: 'type'")
 
             if op_type not in ["ADD", "UPDATE", "DEPRECATE"]:
-                raise ValueError(f"Operation {i} has invalid type: {op_type} (must be ADD, UPDATE, or DEPRECATE)")
+                raise ValueError(
+                    f"Operation {i} has invalid type: {op_type} (must be ADD, UPDATE, or DEPRECATE)"
+                )
 
             # Validate type-specific required fields
             if op_type == "ADD":
                 required = ["section", "content"]
                 missing = [f for f in required if f not in op]
                 if missing:
-                    raise ValueError(f"ADD operation {i} missing required fields: {', '.join(missing)}")
+                    raise ValueError(
+                        f"ADD operation {i} missing required fields: {', '.join(missing)}"
+                    )
 
             elif op_type == "UPDATE":
                 if "bullet_id" not in op:
-                    raise ValueError(f"UPDATE operation {i} missing required field: 'bullet_id'")
+                    raise ValueError(
+                        f"UPDATE operation {i} missing required field: 'bullet_id'"
+                    )
                 if "increment_helpful" not in op and "increment_harmful" not in op:
-                    raise ValueError(f"UPDATE operation {i} must specify at least one of: increment_helpful, increment_harmful")
+                    raise ValueError(
+                        f"UPDATE operation {i} must specify at least one of: increment_helpful, increment_harmful"
+                    )
 
             elif op_type == "DEPRECATE":
                 required = ["bullet_id", "reason"]
                 missing = [f for f in required if f not in op]
                 if missing:
-                    raise ValueError(f"DEPRECATE operation {i} missing required fields: {', '.join(missing)}")
+                    raise ValueError(
+                        f"DEPRECATE operation {i} missing required fields: {', '.join(missing)}"
+                    )
 
         # Dry-run mode: preview without applying
         if dry_run:
             # Count operations by type
             add_count = sum(1 for op in operations if op.get("type") == "ADD")
             update_count = sum(1 for op in operations if op.get("type") == "UPDATE")
-            deprecate_count = sum(1 for op in operations if op.get("type") == "DEPRECATE")
+            deprecate_count = sum(
+                1 for op in operations if op.get("type") == "DEPRECATE"
+            )
 
-            console.print_json(data={
-                "status": "dry_run",
-                "message": "DRY RUN - No changes applied",
-                "would_apply": {
-                    "total_operations": len(operations),
-                    "add": add_count,
-                    "update": update_count,
-                    "deprecate": deprecate_count
-                },
-                "operations": operations
-            })
+            console.print_json(
+                data={
+                    "status": "dry_run",
+                    "message": "DRY RUN - No changes applied",
+                    "would_apply": {
+                        "total_operations": len(operations),
+                        "add": add_count,
+                        "update": update_count,
+                        "deprecate": deprecate_count,
+                    },
+                    "operations": operations,
+                }
+            )
             return
 
         # Apply operations
@@ -2572,36 +2873,54 @@ def playbook_apply_delta(
         summary = manager.apply_delta(operations)
 
         # Output JSON summary
-        console.print_json(data={
-            "status": "success",
-            "message": "Delta operations applied successfully",
-            "summary": summary
-        })
+        console.print_json(
+            data={
+                "status": "success",
+                "message": "Delta operations applied successfully",
+                "summary": summary,
+            }
+        )
 
     except ValueError as e:
-        console.print_json(data={
-            "status": "error",
-            "error_type": "validation_error",
-            "message": str(e)
-        })
+        console.print_json(
+            data={
+                "status": "error",
+                "error_type": "validation_error",
+                "message": str(e),
+            }
+        )
         raise typer.Exit(1)
     except Exception as e:
-        console.print_json(data={
-            "status": "error",
-            "error_type": "unexpected_error",
-            "message": str(e)
-        })
+        console.print_json(
+            data={
+                "status": "error",
+                "error_type": "unexpected_error",
+                "message": str(e),
+            }
+        )
         raise typer.Exit(1)
+
 
 # Validate commands
 
+
 @validate_app.command("graph")
 def validate_graph(
-    input_file: Optional[Path] = typer.Argument(None, help="JSON file to validate (or use stdin)"),
-    visualize: bool = typer.Option(False, "--visualize", help="Show ASCII dependency tree"),
+    input_file: Optional[Path] = typer.Argument(
+        None, help="JSON file to validate (or use stdin)"
+    ),
+    visualize: bool = typer.Option(
+        False, "--visualize", help="Show ASCII dependency tree"
+    ),
     no_color: bool = typer.Option(False, "--no-color", help="Disable colored output"),
-    format: str = typer.Option("json", "-f", "--format", help="Output format: json or text"),
-    strict: bool = typer.Option(False, "--strict", help="Fail on warnings (e.g., orphaned tasks), not just critical errors (cycles, forward refs)")
+    format: str = typer.Option(
+        "json", "-f", "--format", help="Output format: json or text"
+    ),
+    strict: bool = typer.Option(
+        False,
+        "--strict",
+        help="Fail on warnings (e.g., orphaned tasks), not just critical errors (cycles, forward refs)",
+    ),
 ):
     """Validate TaskDecomposer dependency graph
 
@@ -2611,7 +2930,10 @@ def validate_graph(
       2 - Malformed input (invalid JSON or missing required fields)
     """
     from mapify_cli.tools.validate_dependencies import (
-        load_input, DependencyValidator, ASCIIGraphRenderer, print_report
+        load_input,
+        DependencyValidator,
+        ASCIIGraphRenderer,
+        print_report,
     )
 
     try:
@@ -2650,7 +2972,7 @@ def validate_graph(
         error_report = {
             "valid": False,
             "error": str(e),
-            "error_type": "input_validation"
+            "error_type": "input_validation",
         }
         console.print_json(data=error_report)
         raise typer.Exit(2)

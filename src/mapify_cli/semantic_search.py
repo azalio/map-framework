@@ -16,14 +16,17 @@ Usage:
 
 # Set environment variables before importing transformers/sentence-transformers
 import os
-os.environ['TRANSFORMERS_NO_TF'] = '1'
-os.environ['TF_USE_LEGACY_KERAS'] = '1'  # Force TensorFlow to use Keras 2 instead of Keras 3
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
+os.environ["TRANSFORMERS_NO_TF"] = "1"
+os.environ["TF_USE_LEGACY_KERAS"] = (
+    "1"  # Force TensorFlow to use Keras 2 instead of Keras 3
+)
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 # Clear HuggingFace tokens to avoid 401 errors
-if 'HF_TOKEN' in os.environ:
-    del os.environ['HF_TOKEN']
-if 'HUGGING_FACE_HUB_TOKEN' in os.environ:
-    del os.environ['HUGGING_FACE_HUB_TOKEN']
+if "HF_TOKEN" in os.environ:
+    del os.environ["HF_TOKEN"]
+if "HUGGING_FACE_HUB_TOKEN" in os.environ:
+    del os.environ["HUGGING_FACE_HUB_TOKEN"]
 
 import json
 import hashlib
@@ -36,10 +39,14 @@ import numpy as np
 try:
     from sentence_transformers import SentenceTransformer
     from sklearn.metrics.pairwise import cosine_similarity
+
     SEMANTIC_SEARCH_AVAILABLE = True
 except ImportError:
     SEMANTIC_SEARCH_AVAILABLE = False
-    print("Warning: sentence-transformers not installed. Run: pip install -r requirements-semantic.txt", file=sys.stderr)
+    print(
+        "Warning: sentence-transformers not installed. Run: pip install -r requirements-semantic.txt",
+        file=sys.stderr,
+    )
 
 
 class SemanticSearchEngine:
@@ -56,7 +63,7 @@ class SemanticSearchEngine:
     def __init__(
         self,
         model_name: str = "all-MiniLM-L6-v2",
-        cache_dir: str = ".claude/embeddings_cache"
+        cache_dir: str = ".claude/embeddings_cache",
     ):
         """
         Initialize semantic search engine.
@@ -89,9 +96,12 @@ class SemanticSearchEngine:
         cache_file = self.cache_dir / "embeddings.pkl"
         if cache_file.exists():
             try:
-                with open(cache_file, 'rb') as f:
+                with open(cache_file, "rb") as f:
                     self._embedding_cache = pickle.load(f)
-                print(f"✓ Loaded {len(self._embedding_cache)} cached embeddings", file=sys.stderr)
+                print(
+                    f"✓ Loaded {len(self._embedding_cache)} cached embeddings",
+                    file=sys.stderr,
+                )
             except Exception as e:
                 print(f"Warning: Could not load cache: {e}", file=sys.stderr)
                 self._embedding_cache = {}
@@ -100,7 +110,7 @@ class SemanticSearchEngine:
         """Save embedding cache to disk."""
         cache_file = self.cache_dir / "embeddings.pkl"
         try:
-            with open(cache_file, 'wb') as f:
+            with open(cache_file, "wb") as f:
                 pickle.dump(self._embedding_cache, f)
         except Exception as e:
             print(f"Warning: Could not save cache: {e}", file=sys.stderr)
@@ -167,11 +177,13 @@ class SemanticSearchEngine:
                 texts_to_encode,
                 batch_size=batch_size,
                 convert_to_numpy=True,
-                show_progress_bar=len(texts_to_encode) > 50
+                show_progress_bar=len(texts_to_encode) > 50,
             )
 
             # Update cache and results
-            for idx, text, embedding in zip(indices_to_encode, texts_to_encode, new_embeddings):
+            for idx, text, embedding in zip(
+                indices_to_encode, texts_to_encode, new_embeddings
+            ):
                 embeddings[idx] = embedding
                 cache_key = self._get_cache_key(text)
                 self._embedding_cache[cache_key] = embedding
@@ -181,11 +193,7 @@ class SemanticSearchEngine:
         return np.array(embeddings)
 
     def find_similar(
-        self,
-        query: str,
-        bullets: List[Dict],
-        top_k: int = 10,
-        threshold: float = 0.3
+        self, query: str, bullets: List[Dict], top_k: int = 10, threshold: float = 0.3
     ) -> List[Tuple[Dict, float]]:
         """
         Find semantically similar bullets to query.
@@ -232,9 +240,7 @@ class SemanticSearchEngine:
         return results[:top_k]
 
     def deduplicate_bullets(
-        self,
-        bullets: List[Dict],
-        threshold: float = 0.9
+        self, bullets: List[Dict], threshold: float = 0.9
     ) -> Tuple[List[Dict], List[Tuple[int, int, float]]]:
         """
         Find duplicate bullets based on semantic similarity.
@@ -281,17 +287,12 @@ class SemanticSearchEngine:
                     seen_indices.add(j)  # Mark j as duplicate
 
         # Keep unique bullets
-        unique_bullets = [
-            b for i, b in enumerate(bullets)
-            if i not in seen_indices
-        ]
+        unique_bullets = [b for i, b in enumerate(bullets) if i not in seen_indices]
 
         return unique_bullets, duplicates
 
     def cluster_bullets(
-        self,
-        bullets: List[Dict],
-        n_clusters: Optional[int] = None
+        self, bullets: List[Dict], n_clusters: Optional[int] = None
     ) -> Dict[int, List[Dict]]:
         """
         Cluster bullets by semantic similarity (optional feature).
@@ -335,6 +336,7 @@ class SemanticSearchEngine:
 # Singleton instance for easy import
 _engine_instance: Optional[SemanticSearchEngine] = None
 
+
 def get_search_engine() -> SemanticSearchEngine:
     """Get singleton instance of SemanticSearchEngine."""
     global _engine_instance
@@ -357,23 +359,32 @@ if __name__ == "__main__":
 
     # Test bullets
     bullets = [
-        {"id": "sec-0001", "content": "Always verify JWT token signatures to prevent forgery"},
-        {"id": "sec-0002", "content": "Use bcrypt with cost factor 12 for password hashing"},
+        {
+            "id": "sec-0001",
+            "content": "Always verify JWT token signatures to prevent forgery",
+        },
+        {
+            "id": "sec-0002",
+            "content": "Use bcrypt with cost factor 12 for password hashing",
+        },
         {"id": "impl-0003", "content": "Implement authentication with bearer tokens"},
-        {"id": "perf-0004", "content": "Use Redis caching to speed up database queries"},
-        {"id": "perf-0005", "content": "Add indexes to frequently queried columns"}
+        {
+            "id": "perf-0004",
+            "content": "Use Redis caching to speed up database queries",
+        },
+        {"id": "perf-0005", "content": "Add indexes to frequently queried columns"},
     ]
 
     # Test queries
     queries = [
         "token authentication security",
         "password hashing",
-        "improve query performance"
+        "improve query performance",
     ]
 
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("SEMANTIC SEARCH DEMO")
-    print("="*60)
+    print("=" * 60)
 
     for query in queries:
         print(f"\nQuery: '{query}'")
@@ -385,12 +396,15 @@ if __name__ == "__main__":
             print(f"  [{bullet['id']}] {score:.3f} - {bullet['content'][:60]}...")
 
     # Test deduplication
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("DEDUPLICATION TEST")
-    print("="*60)
+    print("=" * 60)
 
     dupes_bullets = bullets + [
-        {"id": "sec-0006", "content": "JWT signature verification prevents token tampering"}  # Similar to sec-0001
+        {
+            "id": "sec-0006",
+            "content": "JWT signature verification prevents token tampering",
+        }  # Similar to sec-0001
     ]
 
     unique, duplicates = engine.deduplicate_bullets(dupes_bullets, threshold=0.85)
@@ -400,6 +414,8 @@ if __name__ == "__main__":
     print(f"Duplicate pairs found: {len(duplicates)}")
 
     for idx1, idx2, sim in duplicates:
-        print(f"\n  {dupes_bullets[idx1]['id']} ≈ {dupes_bullets[idx2]['id']} ({sim:.1%} similar)")
+        print(
+            f"\n  {dupes_bullets[idx1]['id']} ≈ {dupes_bullets[idx2]['id']} ({sim:.1%} similar)"
+        )
         print(f"    1: {dupes_bullets[idx1]['content'][:50]}...")
         print(f"    2: {dupes_bullets[idx2]['content'][:50]}...")
