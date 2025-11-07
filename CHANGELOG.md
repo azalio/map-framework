@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **PyPI Package Version**: Fix v1.3.1 PyPI package which was built before final commit amendment, resulting in package containing `__version__ = "1.3.0"` instead of "1.3.1". The v1.3.1 git tag points to correct code, but the PyPI package was built from an earlier state. This release ensures PyPI package matches git tag.
+
 ## [1.3.1] - 2025-11-07
 
 ### Fixed
