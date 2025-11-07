@@ -59,8 +59,15 @@ run_test() {
     local exit_code
     
     set +e
-    output=$(echo "$input_json" | bash "$hook_path" 2>&1)
+    # Capture stdout (JSON) and stderr (debug logs) separately
+    # Redirect stderr to a temp file for debugging, capture stdout as output
+    local stderr_file=$(mktemp)
+    output=$(echo "$input_json" | bash "$hook_path" 2>"$stderr_file")
     exit_code=$?
+    local stderr_content=$(cat "$stderr_file")
+    rm -f "$stderr_file"
+    # Combine for full output display on errors
+    local full_output="$stderr_content$output"
     set -e
     
     echo "Exit code: $exit_code (expected: $expected_exit)"
@@ -68,13 +75,19 @@ run_test() {
     # Check exit code
     if [ "$exit_code" -ne "$expected_exit" ]; then
         echo -e "${RED}❌ FAIL: Exit code mismatch${NC}"
+        echo "Full output:"
+        echo "$full_output"
         FAILED_TESTS=$((FAILED_TESTS + 1))
         return 1
     fi
-    
+
     # Validate JSON output
     if ! echo "$output" | jq empty 2>/dev/null; then
         echo -e "${RED}❌ FAIL: Output is not valid JSON${NC}"
+        echo "Full output:"
+        echo "$full_output"
+        echo "Extracted JSON:"
+        echo "$output"
         FAILED_TESTS=$((FAILED_TESTS + 1))
         return 1
     fi
