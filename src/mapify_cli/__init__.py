@@ -519,10 +519,12 @@ recitation_app = typer.Typer(
 )
 playbook_app = typer.Typer(name="playbook", help="Manage and search playbook patterns")
 validate_app = typer.Typer(name="validate", help="Validate task dependency graphs")
+world_model_app = typer.Typer(name="world-model", help="Manage workflow context accumulation")
 
 app.add_typer(recitation_app, name="recitation")
 app.add_typer(playbook_app, name="playbook")
 app.add_typer(validate_app, name="validate")
+app.add_typer(world_model_app, name="world-model")
 
 
 def show_banner():
@@ -2976,6 +2978,529 @@ def validate_graph(
         }
         console.print_json(data=error_report)
         raise typer.Exit(2)
+
+
+# World Model commands
+
+
+@world_model_app.command("init")
+def world_model_init(
+    workflow_id: str = typer.Option(..., help="Unique workflow identifier"),
+    workflow_type: str = typer.Option(
+        ...,
+        help="Workflow type (map-feature, map-debug, map-refactor, map-review, map-release)",
+    ),
+):
+    """Initialize a new world model for a workflow"""
+    from mapify_cli.world_model import WorldModel, WorldModelError
+
+    try:
+        # Check if .map/dev_docs directory exists
+        dev_docs_dir = Path.cwd() / ".map" / "dev_docs"
+        if not dev_docs_dir.exists():
+            console.print(
+                "[yellow]Warning: .map/dev_docs directory not found. Creating it...[/yellow]"
+            )
+
+        # Validate workflow_type
+        valid_types = ["map-feature", "map-debug", "map-refactor", "map-review", "map-release"]
+        if workflow_type not in valid_types:
+            console.print(
+                f"[red]Error: Invalid workflow type '{workflow_type}'. "
+                f"Must be one of: {', '.join(valid_types)}[/red]"
+            )
+            raise typer.Exit(1)
+
+        # Create world model
+        wm = WorldModel(workflow_id=workflow_id, workflow_type=workflow_type)
+
+        result = {
+            "status": "success",
+            "message": "World model initialized",
+            "workflow_id": workflow_id,
+            "workflow_type": workflow_type,
+            "file_path": str(wm.file_path),
+        }
+        console.print_json(data=result)
+    except WorldModelError as e:
+        console.print_json(data={"status": "error", "message": str(e)})
+        raise typer.Exit(1)
+
+
+@world_model_app.command("add-subtask")
+def world_model_add_subtask(
+    subtask_id: str = typer.Option(..., "--id", help="Subtask ID (e.g., ST-001)"),
+    name: str = typer.Option(..., "--name", help="Subtask name/description"),
+    status: str = typer.Option("pending", "--status", help="Initial status (pending, in_progress, completed, failed)"),
+):
+    """Add a new subtask to the world model"""
+    from mapify_cli.world_model import WorldModel, WorldModelError
+
+    try:
+        # Load existing world model
+        world_model_path = Path.cwd() / ".map" / "dev_docs" / "world_model.json"
+        if not world_model_path.exists():
+            console.print(
+                "[red]Error: No world model found. Run 'mapify world-model init' first.[/red]"
+            )
+            raise typer.Exit(1)
+
+        # Load the world model to get workflow info
+        with open(world_model_path, 'r') as f:
+            data = json.load(f)
+
+        wm = WorldModel(workflow_id=data["workflow_id"], workflow_type=data["workflow_type"])
+        wm.add_subtask(subtask_id=subtask_id, name=name, status=status)
+
+        result = {
+            "status": "success",
+            "message": f"Subtask '{subtask_id}' added",
+            "subtask_id": subtask_id,
+            "name": name,
+            "status": status,
+        }
+        console.print_json(data=result)
+    except WorldModelError as e:
+        console.print_json(data={"status": "error", "message": str(e)})
+        raise typer.Exit(1)
+
+
+@world_model_app.command("update-subtask")
+def world_model_update_subtask(
+    subtask_id: str = typer.Argument(..., help="Subtask ID to update"),
+    status: Optional[str] = typer.Option(None, "--status", help="Update status"),
+    quality_score: Optional[float] = typer.Option(None, "--quality-score", help="Set quality score (0.0-1.0)"),
+    findings: Optional[List[str]] = typer.Option(None, "--finding", help="Add finding (can be used multiple times)"),
+    patterns: Optional[List[str]] = typer.Option(None, "--pattern", help="Add pattern (can be used multiple times)"),
+    files_changed: Optional[int] = typer.Option(None, "--files-changed", help="Number of files changed"),
+    risk_level: Optional[str] = typer.Option(None, "--risk-level", help="Risk level (low, medium, high, critical)"),
+):
+    """Update an existing subtask in the world model"""
+    from mapify_cli.world_model import WorldModel, WorldModelError, WorldModelSubtaskNotFoundError
+
+    try:
+        # Load existing world model
+        world_model_path = Path.cwd() / ".map" / "dev_docs" / "world_model.json"
+        if not world_model_path.exists():
+            console.print(
+                "[red]Error: No world model found. Run 'mapify world-model init' first.[/red]"
+            )
+            raise typer.Exit(1)
+
+        with open(world_model_path, 'r') as f:
+            data = json.load(f)
+
+        wm = WorldModel(workflow_id=data["workflow_id"], workflow_type=data["workflow_type"])
+
+        # Build update kwargs
+        updates = {}
+        if status is not None:
+            updates["status"] = status
+        if quality_score is not None:
+            if not 0.0 <= quality_score <= 1.0:
+                console.print("[red]Error: quality_score must be between 0.0 and 1.0[/red]")
+                raise typer.Exit(1)
+            updates["quality_score"] = quality_score
+        if findings:
+            updates["findings"] = findings
+        if patterns:
+            updates["patterns_discovered"] = patterns
+
+        # Handle impact analysis updates
+        if files_changed is not None or risk_level is not None:
+            impact_updates = {}
+            if files_changed is not None:
+                impact_updates["files_changed"] = files_changed
+            if risk_level is not None:
+                if risk_level not in ["low", "medium", "high", "critical"]:
+                    console.print("[red]Error: risk_level must be low, medium, high, or critical[/red]")
+                    raise typer.Exit(1)
+                impact_updates["risk_level"] = risk_level
+            wm.update_impact_analysis(subtask_id, **impact_updates)
+
+        # Apply other updates
+        if updates:
+            wm.update_subtask(subtask_id, **updates)
+
+        result = {
+            "status": "success",
+            "message": f"Subtask '{subtask_id}' updated",
+            "subtask_id": subtask_id,
+            "updates": updates,
+        }
+        console.print_json(data=result)
+    except WorldModelSubtaskNotFoundError as e:
+        console.print_json(data={"status": "error", "message": str(e)})
+        raise typer.Exit(1)
+    except WorldModelError as e:
+        console.print_json(data={"status": "error", "message": str(e)})
+        raise typer.Exit(1)
+
+
+@world_model_app.command("query")
+def world_model_query(
+    subtask_id: Optional[str] = typer.Option(None, "--subtask", help="Query specific subtask"),
+    field: Optional[str] = typer.Option(None, "--field", help="Query specific field (e.g., 'patterns_discovered')"),
+):
+    """Query the world model"""
+    from mapify_cli.world_model import WorldModel, WorldModelError
+
+    try:
+        # Load existing world model
+        world_model_path = Path.cwd() / ".map" / "dev_docs" / "world_model.json"
+        if not world_model_path.exists():
+            console.print(
+                "[red]Error: No world model found. Run 'mapify world-model init' first.[/red]"
+            )
+            raise typer.Exit(1)
+
+        with open(world_model_path, 'r') as f:
+            data = json.load(f)
+
+        if subtask_id:
+            # Query specific subtask
+            subtask = next((st for st in data["subtasks"] if st["id"] == subtask_id), None)
+            if not subtask:
+                console.print_json(
+                    data={
+                        "status": "error",
+                        "message": f"Subtask '{subtask_id}' not found",
+                    }
+                )
+                raise typer.Exit(1)
+
+            if field:
+                # Query specific field of subtask
+                parts = field.split(".")
+                value = subtask
+                for part in parts:
+                    if isinstance(value, dict):
+                        value = value.get(part)
+                    else:
+                        value = None
+                        break
+                console.print_json(data={field: value})
+            else:
+                # Return entire subtask
+                console.print_json(data=subtask)
+        elif field:
+            # Query field across all subtasks or cumulative metrics
+            if field in data:
+                console.print_json(data={field: data[field]})
+            else:
+                # Try to extract from all subtasks
+                results = []
+                for st in data["subtasks"]:
+                    parts = field.split(".")
+                    value = st
+                    for part in parts:
+                        if isinstance(value, dict):
+                            value = value.get(part)
+                        else:
+                            value = None
+                            break
+                    if value is not None:
+                        results.append({"subtask_id": st["id"], field: value})
+                console.print_json(data=results)
+        else:
+            # Return entire world model
+            console.print_json(data=data)
+
+    except WorldModelError as e:
+        console.print_json(data={"status": "error", "message": str(e)})
+        raise typer.Exit(1)
+
+
+@world_model_app.command("summary")
+def world_model_summary():
+    """Display a summary of the current world model"""
+    from mapify_cli.world_model import WorldModel, WorldModelError
+
+    try:
+        # Load existing world model
+        world_model_path = Path.cwd() / ".map" / "dev_docs" / "world_model.json"
+        if not world_model_path.exists():
+            console.print(
+                "[red]Error: No world model found. Run 'mapify world-model init' first.[/red]"
+            )
+            raise typer.Exit(1)
+
+        with open(world_model_path, 'r') as f:
+            data = json.load(f)
+
+        # Create summary table
+        console.print("\n[bold cyan]World Model Summary[/bold cyan]\n")
+        console.print(f"[bold]Workflow ID:[/bold] {data['workflow_id']}")
+        console.print(f"[bold]Workflow Type:[/bold] {data['workflow_type']}")
+        console.print(f"[bold]Created:[/bold] {data['created_at']}")
+        console.print(f"[bold]Updated:[/bold] {data['updated_at']}\n")
+
+        # Cumulative metrics
+        metrics = data["cumulative_metrics"]
+        console.print("[bold yellow]Cumulative Metrics:[/bold yellow]")
+        console.print(f"  Files Changed: {metrics['total_files_changed']}")
+        console.print(f"  Avg Quality Score: {metrics['average_quality_score']:.3f}")
+        console.print(f"  Patterns Discovered: {metrics['total_patterns_discovered']}")
+        console.print(f"  Security Issues: {metrics['total_security_issues']}\n")
+
+        # Subtasks summary
+        subtasks = data["subtasks"]
+        console.print(f"[bold green]Subtasks ({len(subtasks)} total):[/bold green]")
+
+        if subtasks:
+            table = Table(show_header=True, header_style="bold magenta")
+            table.add_column("ID", style="cyan")
+            table.add_column("Name", style="white")
+            table.add_column("Status", style="yellow")
+            table.add_column("Quality", style="green")
+            table.add_column("Risk", style="red")
+
+            for st in subtasks:
+                table.add_row(
+                    st["id"],
+                    st["name"][:50] + ("..." if len(st["name"]) > 50 else ""),
+                    st["status"],
+                    f"{st['quality_score']:.2f}",
+                    st["impact_analysis"].get("risk_level", "low"),
+                )
+
+            console.print(table)
+        else:
+            console.print("  [dim]No subtasks yet[/dim]")
+
+    except WorldModelError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@world_model_app.command("export")
+def world_model_export(
+    format: str = typer.Option("json", "--format", help="Export format: json or markdown"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="Output file path (default: stdout)"),
+):
+    """Export the world model to JSON or markdown format"""
+    from mapify_cli.world_model import WorldModel, WorldModelError
+
+    try:
+        # Load existing world model
+        world_model_path = Path.cwd() / ".map" / "dev_docs" / "world_model.json"
+        if not world_model_path.exists():
+            console.print(
+                "[red]Error: No world model found. Run 'mapify world-model init' first.[/red]"
+            )
+            raise typer.Exit(1)
+
+        with open(world_model_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        # Validate format option
+        if format.lower() not in ["json", "markdown"]:
+            console.print(
+                f"[red]Error: Invalid format '{format}'. Must be 'json' or 'markdown'.[/red]"
+            )
+            raise typer.Exit(1)
+
+        # Generate output based on format
+        if format.lower() == "json":
+            output_content = json.dumps(data, indent=2, ensure_ascii=False)
+        else:  # markdown
+            # Generate markdown representation
+            lines = []
+            lines.append(f"# World Model: {data['workflow_id']}\n")
+            lines.append(f"**Workflow Type:** {data['workflow_type']}\n")
+            lines.append(f"**Created:** {data['created_at']}")
+            lines.append(f"**Updated:** {data['updated_at']}\n")
+
+            # Cumulative metrics
+            metrics = data["cumulative_metrics"]
+            lines.append("## Cumulative Metrics\n")
+            lines.append(f"- **Total Files Changed:** {metrics['total_files_changed']}")
+            lines.append(f"- **Total Lines Added:** {metrics['total_lines_added']}")
+            lines.append(f"- **Total Lines Removed:** {metrics['total_lines_removed']}")
+            lines.append(f"- **Average Quality Score:** {metrics['average_quality_score']:.3f}")
+            lines.append(f"- **Total Patterns Discovered:** {metrics['total_patterns_discovered']}")
+            lines.append(f"- **Total Security Issues:** {metrics['total_security_issues']}\n")
+
+            # Subtasks
+            lines.append(f"## Subtasks ({len(data['subtasks'])} total)\n")
+            for st in data["subtasks"]:
+                lines.append(f"### {st['id']}: {st['name']}\n")
+                lines.append(f"**Status:** {st['status']}")
+                lines.append(f"**Quality Score:** {st['quality_score']:.2f}\n")
+
+                # Impact analysis
+                impact = st["impact_analysis"]
+                lines.append("**Impact Analysis:**")
+                lines.append(f"- Files Changed: {impact['files_changed']}")
+                lines.append(f"- Risk Level: {impact['risk_level']}")
+                lines.append(f"- Breaking Changes: {impact['breaking_changes']}")
+                if impact['dependencies_affected']:
+                    lines.append(f"- Dependencies Affected: {', '.join(impact['dependencies_affected'])}")
+                lines.append("")
+
+                # Findings
+                if st["findings"]:
+                    lines.append("**Findings:**")
+                    for finding in st["findings"]:
+                        lines.append(f"- {finding}")
+                    lines.append("")
+
+                # Patterns discovered
+                if st["patterns_discovered"]:
+                    lines.append("**Patterns Discovered:**")
+                    for pattern in st["patterns_discovered"]:
+                        lines.append(f"- {pattern}")
+                    lines.append("")
+
+                # Validation results
+                if st["validation_results"]:
+                    lines.append("**Validation Results:**")
+                    for key, value in st["validation_results"].items():
+                        lines.append(f"- {key}: {value}")
+                    lines.append("")
+
+                lines.append("---\n")
+
+            output_content = "\n".join(lines)
+
+        # Write to file or stdout
+        if output:
+            output_path = Path(output)
+            try:
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(output_path, 'w', encoding='utf-8') as f:
+                    f.write(output_content)
+                console.print(
+                    f"[green]World model exported to {output_path}[/green]"
+                )
+            except (OSError, IOError) as e:
+                console.print(
+                    f"[red]Error writing to file {output_path}: {e}[/red]"
+                )
+                raise typer.Exit(1)
+        else:
+            # Print to stdout
+            console.print(output_content)
+
+    except WorldModelError as e:
+        console.print_json(data={"status": "error", "message": str(e)})
+        raise typer.Exit(1)
+
+
+@world_model_app.command("cleanup")
+def world_model_cleanup(
+    older_than: int = typer.Option(
+        7,
+        "--older-than",
+        help="Delete world models older than N days (default: 7)"
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Show what would be deleted without actually deleting"
+    ),
+):
+    """Delete old world models based on age"""
+    from mapify_cli.world_model import WorldModel, WorldModelError
+
+    try:
+        # Validate older_than parameter
+        if older_than < 1:
+            console.print(
+                "[red]Error: --older-than must be at least 1 day[/red]"
+            )
+            raise typer.Exit(1)
+
+        # Check if world model file exists
+        world_model_path = Path.cwd() / ".map" / "dev_docs" / "world_model.json"
+        if not world_model_path.exists():
+            console.print(
+                f"[yellow]No world model file found at {world_model_path}[/yellow]"
+            )
+            result = {
+                "status": "success",
+                "message": "No world models to clean up",
+                "deleted": 0,
+            }
+            console.print_json(data=result)
+            return
+
+        # Load and check age of current world model
+        try:
+            with open(world_model_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError, IOError) as e:
+            console.print(
+                f"[red]Error reading world model file: {e}[/red]"
+            )
+            raise typer.Exit(1)
+
+        # Parse created_at timestamp (ISO 8601 format with 'Z' suffix)
+        try:
+            created_at_str = data.get("created_at", "")
+            # Remove 'Z' suffix and parse as UTC
+            if created_at_str.endswith("Z"):
+                created_at_str = created_at_str[:-1]
+            created_at = datetime.fromisoformat(created_at_str)
+        except (ValueError, AttributeError) as e:
+            console.print(
+                f"[red]Error parsing created_at timestamp: {e}[/red]"
+            )
+            raise typer.Exit(1)
+
+        # Calculate age in days
+        now = datetime.utcnow()
+        age_days = (now - created_at).days
+
+        # Check if world model is old enough to delete
+        if age_days < older_than:
+            result = {
+                "status": "success",
+                "message": f"World model is only {age_days} days old (threshold: {older_than} days)",
+                "deleted": 0,
+                "workflow_id": data["workflow_id"],
+                "age_days": age_days,
+            }
+            console.print_json(data=result)
+            return
+
+        # Prepare deletion summary
+        workflow_id = data.get("workflow_id", "unknown")
+        workflow_type = data.get("workflow_type", "unknown")
+
+        if dry_run:
+            # Dry run mode - show what would be deleted
+            result = {
+                "status": "dry_run",
+                "message": f"Would delete world model (age: {age_days} days)",
+                "workflow_id": workflow_id,
+                "workflow_type": workflow_type,
+                "age_days": age_days,
+                "file_path": str(world_model_path),
+            }
+            console.print_json(data=result)
+        else:
+            # Actually delete the file
+            try:
+                world_model_path.unlink()
+                result = {
+                    "status": "success",
+                    "message": f"Deleted world model (age: {age_days} days)",
+                    "workflow_id": workflow_id,
+                    "workflow_type": workflow_type,
+                    "deleted": 1,
+                    "age_days": age_days,
+                }
+                console.print_json(data=result)
+            except OSError as e:
+                console.print(
+                    f"[red]Error deleting world model file: {e}[/red]"
+                )
+                raise typer.Exit(1)
+
+    except WorldModelError as e:
+        console.print_json(data={"status": "error", "message": str(e)})
+        raise typer.Exit(1)
 
 
 def main():

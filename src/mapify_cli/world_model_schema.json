@@ -1,0 +1,83 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["workflow_id", "workflow_type", "created_at", "subtasks", "cumulative_metrics"],
+  "properties": {
+    "workflow_id": {
+      "type": "string",
+      "description": "Unique workflow identifier"
+    },
+    "workflow_type": {
+      "type": "string",
+      "enum": ["map-feature", "map-debug", "map-refactor", "map-review", "map-release", "map-efficient", "map-fast"],
+      "description": "Type of MAP workflow"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "subtasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "status"],
+        "properties": {
+          "id": {"type": "string"},
+          "name": {"type": "string"},
+          "status": {
+            "type": "string",
+            "enum": ["pending", "in_progress", "completed", "failed"]
+          },
+          "findings": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "patterns_discovered": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "impact_analysis": {
+            "type": "object",
+            "properties": {
+              "files_changed": {"type": "integer", "minimum": 0},
+              "risk_level": {
+                "type": "string",
+                "enum": ["low", "medium", "high", "critical"]
+              },
+              "dependencies_affected": {
+                "type": "array",
+                "items": {"type": "string"}
+              },
+              "breaking_changes": {"type": "boolean"}
+            }
+          },
+          "quality_score": {
+            "type": "number",
+            "minimum": 0.0
+          },
+          "validation_results": {
+            "type": "object"
+          },
+          "agent_outputs": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "cumulative_metrics": {
+      "type": "object",
+      "properties": {
+        "total_files_changed": {"type": "integer", "minimum": 0},
+        "total_lines_added": {"type": "integer", "minimum": 0},
+        "total_lines_removed": {"type": "integer", "minimum": 0},
+        "average_quality_score": {"type": "number", "minimum": 0.0},
+        "total_patterns_discovered": {"type": "integer", "minimum": 0},
+        "total_security_issues": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}
