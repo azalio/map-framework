@@ -91,19 +91,19 @@ IF natural language impact statement:
      - Auto-creates graph nodes/edges for impact tracking
 
 IF external library involved:
-  5. THEN → get-library-docs (compatibility check)
+  6. THEN → get-library-docs (compatibility check)
      - Query: Changes between versions (migration guides)
      - Identify deprecated APIs
      - Understand breaking changes in library updates
 
 IF architectural change:
-  4. THEN → deepwiki (architectural precedents)
+  7. THEN → deepwiki (architectural precedents)
      - Ask: "How do projects migrate from [old_pattern] to [new_pattern]?"
      - Learn typical ripple effects
      - Identify commonly missed dependencies
 
 THEN → Grep/Glob (manual verification)
-  5. Search for symbol names, import statements, file references
+  8. Search for symbol names, import statements, file references
      - Codex might miss dynamic imports, reflection, config files
      - Manual search catches edge cases
 ```

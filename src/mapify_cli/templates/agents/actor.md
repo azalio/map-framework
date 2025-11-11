@@ -185,23 +185,25 @@ STEP 6 - Post-Implementation (AFTER Monitor approval):
    Result: Got current API (Next.js 14):
    - Use export const config = { matcher: [...] } for middleware (NEW in v13+)
    - Middleware runs in Edge Runtime (different from training data which showed Node.js runtime)
-   - Response.next() replaces old NextResponse (BREAKING CHANGE)
+   - NextResponse.next() is the CURRENT API for middleware (not deprecated)
 
 3. Implement using CURRENT API:
    ```typescript
    // middleware.ts
+   import { NextResponse } from 'next/server'
+
    export const config = {
      matcher: '/api/:path*',  // NEW syntax
    }
 
    export function middleware(request: Request) {
-     return Response.next();  // CURRENT API
+     return NextResponse.next();  // CURRENT API
    }
    ```
 
 4. Implementation benefited from current docs:
    - Used correct v14 syntax (not outdated v12 from training)
-   - Avoided deprecated APIs (NextResponse)
+   - Used correct NextResponse.next() API per official docs
    - Understood Edge Runtime limitations
 </example>
 
