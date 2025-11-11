@@ -273,7 +273,7 @@ IF you need to violate a constraint:
 </critical_reminders>
 
 
-<!-- ===== DYNAMIC CONTENT SECTION ===== -->
+# ===== DYNAMIC CONTENT =====
 
 <context>
 
@@ -381,7 +381,7 @@ This is an early task - no playbook bullets available yet. Your implementation w
 </playbook_context>
 
 
-<!-- ===== REFERENCE MATERIAL (stable but lower priority) ===== -->
+# ===== REFERENCE MATERIAL =====
 
 <thinking_process>
 

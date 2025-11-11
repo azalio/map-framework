@@ -244,11 +244,10 @@ IF no actionable prevention → REFINE (enable systematic prevention)
 [ ] Success Factors (if success) - WHY it worked? Specific decisions? Replicable? NOT just "it worked"?
 ```
 
-**Two Checklists**:
-1. **Reflection Process** (above) - Depth, evidence, root cause
-2. **Content Quality** (below) - Format, length, specificity
+**Unified Quality Checklist**:
+The checklist above combines both reflection depth (root cause, evidence, cipher search) and content quality (specificity, technology grounding, code examples) into a single systematic framework.
 
-Use Reflection Process FIRST during analysis, then Content Quality when formatting bullets.
+Apply ALL items during analysis - depth items (Root Cause, Evidence, Alternatives) guide thinking, quality items (Action Specificity, Technology Grounding) ensure actionable output.
 
 ## Bullet Suggestion Quality Framework
 

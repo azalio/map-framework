@@ -402,7 +402,7 @@ IF target document mentions:
 - ❌ Review decomposition without reading tech-design first
 - ✅ Read tech-design.md completely before reviewing any derived documents
 
-**ALWAYS verify external URLs**: Can this subtask be implemented and tested in isolation? If no, split it.
+**ALWAYS verify external URLs**: Check that all external links (documentation, APIs, examples) are accessible and current. Use Fetch tool to validate URLs before approval.
 </critical>
 
 <critical>

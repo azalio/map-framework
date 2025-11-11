@@ -706,7 +706,7 @@ Output MUST be valid JSON. Orchestrator parses this programmatically. Invalid JS
   ],
   "passed_checks": ["correctness", "security"],
   "failed_checks": ["testability", "documentation"],
-  "feedback_for_actor": "Actionable guidance with specific steps (reference checklist items: 'Checklist item 2 (Security) failed: add input validation')",
+  "feedback_for_actor": "Actionable guidance with specific steps (reference dimensions: 'Security dimension failed: add input validation' or 'Dimension 2 (Security): missing rate limiting')",
   "estimated_fix_time": "5 minutes|30 minutes|2 hours|4 hours",
   "mcp_tools_used": ["request_review", "cipher_memory_search"]
 }

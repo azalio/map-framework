@@ -186,6 +186,8 @@ Use these thresholds when comparing new bullet against existing playbook bullets
 
 ### High Similarity (≥ 0.85): UPDATE existing bullet
 
+**Threshold Rationale**: 0.85 chosen based on empirical analysis of semantic similarity between same-pattern-different-details cases (e.g., JWT with refresh tokens vs JWT with role claims: 0.89 similarity). This threshold captures pattern variations while avoiding false merges of distinct approaches (e.g., JWT vs OAuth2: 0.72 similarity).
+
 **Criteria**:
 - Same core pattern (e.g., both about "JWT authentication")
 - Same language/framework context

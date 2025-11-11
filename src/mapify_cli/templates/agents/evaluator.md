@@ -134,13 +134,14 @@ Overall Score: 2.25 + 2.00 + 1.05 + 1.20 + 0.60 + 0.90 + 0.40 = 8.4/10
 
 ### Using This Score Card
 
-**Step 1: Evaluate Each Dimension** (use 6-dimensional model from evaluation_criteria section)
-- Functionality → maps to Correctness dimension
-- Code Quality → direct mapping
-- Performance → direct mapping
-- Security → direct mapping
-- Testability → maps to Testing dimension
-- Completeness → maps to Documentation + Error Handling
+**Step 1: Evaluate Each Dimension** (use 7-dimensional model defined above)
+- **Correctness** (25%) - Functional accuracy, edge cases
+- **Security** (20%) - Vulnerabilities, input validation
+- **Code Quality** (15%) - Readability, structure
+- **Testing** (15%) - Coverage, test quality
+- **Documentation** (10%) - Docstrings, examples
+- **Performance** (10%) - Speed, scalability
+- **Error Handling** (5%) - Explicit, fail-safe
 
 **Step 2: Calculate Overall Score** (use weighted formula)
 - Apply dimension weights from evaluation_criteria section (functionality 25%, code_quality 20%, etc.)
