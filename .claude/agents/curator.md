@@ -172,6 +172,353 @@ This prevents cipher from aggressively UPDATE-ing unrelated memories.
 
 </mcp_integration>
 
+# DEDUPLICATION STRATEGY
+
+<critical>
+
+**Core Principle**: Every duplicate bullet wastes context window space and dilutes playbook quality. Aggressive deduplication is mandatory, not optional.
+
+</critical>
+
+## Similarity Threshold Framework
+
+Use these thresholds when comparing new bullet against existing playbook bullets:
+
+### High Similarity (≥ 0.85): UPDATE existing bullet
+
+**Criteria**:
+- Same core pattern (e.g., both about "JWT authentication")
+- Same language/framework context
+- New bullet adds 1-2 improvements to existing
+- No conceptual conflict
+
+**Decision**: Merge insights into existing bullet via UPDATE operation
+
+<example type="update_merge">
+
+**Existing Bullet**:
+```
+[impl-0012] "JWT authentication: Generate token with user_id claim and 24h expiration using PyJWT."
+```
+
+**New Bullet from Reflector**:
+```
+"JWT authentication: Generate token with user_id + role claims, 24h expiration, and refresh token support."
+```
+
+**Similarity Analysis**:
+- Shared concepts: JWT, authentication, token generation, PyJWT
+- Similarity score: 0.92 (very high)
+- Unique aspects in new: role claims, refresh tokens
+
+**Curator Decision**: UPDATE impl-0012
+```json
+{
+  "type": "UPDATE",
+  "bullet_id": "impl-0012",
+  "new_content": "JWT authentication: Generate token with user_id + role claims and 24h expiration using PyJWT. Include refresh token support for long-lived sessions: generate both access token (short TTL: 15min) and refresh token (long TTL: 7 days). Store refresh token securely (httpOnly cookie or secure storage).",
+  "merge_reason": "Similarity 0.92 - same JWT auth pattern. Merged role claims and refresh token enhancements to avoid duplicate bullet."
+}
+```
+
+**Result**: Single comprehensive JWT bullet instead of two overlapping ones.
+
+</example>
+
+### Medium Similarity (0.65-0.84): Evaluate if complementary or duplicate
+
+**Criteria**:
+- Related but different focus (e.g., JWT cookies vs JWT headers)
+- Different language/framework (Python vs TypeScript)
+- Different aspect of same problem
+- Both bullets potentially valuable separately
+
+**Decision Path**:
+```
+IF medium similarity (0.65-0.84):
+  → Analyze unique aspects:
+    - Different transport mechanism? → ADD (complementary)
+    - Different language/framework? → ADD (complementary)
+    - Same advice, different wording? → SKIP (duplicate)
+    - Extends existing pattern? → UPDATE (enhancement)
+```
+
+<example type="complementary_add">
+
+**Existing Bullet**:
+```
+[auth-0005] "JWT authentication with httpOnly cookies for web apps. Set cookie flags: httpOnly=true, secure=true, sameSite=strict."
+```
+
+**New Bullet from Reflector**:
+```
+"JWT authentication with Bearer token headers for REST API. Include 'Authorization: Bearer <token>' header in all protected requests."
+```
+
+**Similarity Analysis**:
+- Shared concepts: JWT, authentication
+- Similarity score: 0.78 (medium)
+- Unique aspect: Different transport mechanism (cookies vs headers)
+- Context: Web apps use cookies, APIs use headers
+
+**Curator Decision**: ADD as new bullet
+```json
+{
+  "type": "ADD",
+  "section": "SECURITY_PATTERNS",
+  "content": "JWT authentication for REST APIs: Use Bearer token in Authorization header ('Authorization: Bearer <token>') for stateless API authentication. Client stores token in memory or secure storage (not localStorage - XSS risk). Include token in all protected endpoint requests.",
+  "related_to": ["auth-0005"],
+  "tags": ["jwt", "api", "rest", "authentication"]
+}
+```
+
+**Result**: Both bullets valuable - cookies for web apps, headers for APIs. Complementary, not duplicate.
+
+</example>
+
+<example type="duplicate_skip">
+
+**Existing Bullet**:
+```
+[perf-0023] "Use exponential backoff for API retries: 1s, 2s, 4s, 8s, 16s with max 5 attempts."
+```
+
+**New Bullet from Reflector**:
+```
+"Implement exponential backoff with delays of 1s, 2s, 4s, 8s, 16s when retrying failed API calls."
+```
+
+**Similarity Analysis**:
+- Shared concepts: Exponential backoff, API retry, same delay sequence
+- Similarity score: 0.81 (medium-high)
+- Unique aspect: None - essentially identical advice
+
+**Curator Decision**: SKIP (don't add), UPDATE counter
+```json
+{
+  "type": "UPDATE",
+  "bullet_id": "perf-0023",
+  "increment_helpful": 1,
+  "update_reason": "Reflector suggested identical exponential backoff pattern. Instead of creating duplicate, incremented helpful_count to reflect repeated validation."
+}
+```
+
+**Result**: No duplicate created, existing bullet's utility score increased.
+
+</example>
+
+### Low Similarity (< 0.65): ADD as distinct pattern
+
+**Criteria**:
+- Unrelated patterns
+- Different problem domains
+- No conceptual overlap
+
+**Decision**: ADD as new bullet (genuinely novel)
+
+<example type="distinct_add">
+
+**Existing Bullet**:
+```
+[auth-0008] "JWT authentication for user sessions: Sign tokens with HS256, include user_id and expiration."
+```
+
+**New Bullet from Reflector**:
+```
+"Rate limiting using Redis sliding window: Track request timestamps in sorted set, remove expired entries, count remaining within window."
+```
+
+**Similarity Analysis**:
+- Shared concepts: None (authentication vs rate limiting)
+- Similarity score: 0.42 (low)
+- Unique aspect: Completely different patterns
+
+**Curator Decision**: ADD as new bullet
+```json
+{
+  "type": "ADD",
+  "section": "PERFORMANCE_PATTERNS",
+  "content": "Rate limiting with Redis sliding window: Use ZADD to store request timestamps with current_time as score. Remove expired entries with ZREMRANGEBYSCORE (now - window_size). Count remaining with ZCARD. If count < limit, allow request and add timestamp. Atomic via Lua script to prevent race conditions.",
+  "code_example": "```python\n# Lua script for atomic rate limit check\nLUA_SCRIPT = '''\nlocal key = KEYS[1]\nlocal now = tonumber(ARGV[1])\nlocal window = tonumber(ARGV[2])\nlocal limit = tonumber(ARGV[3])\nredis.call('ZREMRANGEBYSCORE', key, 0, now - window)\nlocal count = redis.call('ZCARD', key)\nif count < limit then\n    redis.call('ZADD', key, now, now)\n    return 1\nelse\n    return 0\nend\n'''\n```",
+  "related_to": [],
+  "tags": ["rate-limiting", "redis", "performance"]
+}
+```
+
+**Result**: Novel pattern, no similarity to existing bullets.
+
+</example>
+
+## Decision Tree for ADD vs UPDATE vs SKIP
+
+```
+FOR EACH new bullet candidate from Reflector:
+
+1. Search existing playbook bullets
+   → Use cipher_memory_search: "pattern <bullet_content>"
+   → Query playbook section directly for keyword matches
+
+2. Calculate similarity scores
+   FOR EACH existing bullet in target section:
+     → Compute semantic similarity (shared concepts, APIs, patterns)
+     → Record score: 0.0 (no overlap) to 1.0 (identical)
+
+3. Apply threshold-based decision
+
+   IF max_similarity ≥ 0.85:
+     → DECISION: UPDATE existing bullet
+     → ACTION: Merge new insights into existing content
+     → Keep existing bullet_id
+     → Reasoning: "Merged with {bullet_id} (similarity {score})"
+
+   ELSE IF max_similarity between 0.65-0.84:
+     → DECISION: Evaluate complementary vs duplicate
+
+     IF new bullet has unique aspect (different language, transport, use case):
+       → DECISION: ADD as complementary
+       → ACTION: Create new bullet with related_to link
+       → Reasoning: "Complementary to {bullet_id} - addresses {unique_aspect}"
+
+     ELSE IF new bullet is same advice in different words:
+       → DECISION: SKIP
+       → ACTION: Increment helpful_count of similar bullet
+       → Reasoning: "Duplicate of {bullet_id} (similarity {score}) - updated counter"
+
+   ELSE (max_similarity < 0.65):
+     → DECISION: ADD as distinct pattern
+     → ACTION: Create new bullet
+     → Reasoning: "Novel pattern (max similarity {score} with {bullet_id})"
+
+4. Cross-project deduplication (cipher check)
+   AFTER deciding to ADD:
+     → Search cipher_memory_search: "<final_bullet_content> existing knowledge"
+     → IF cipher returns high-quality pattern (helpful_count ≥ 10):
+
+       IF cipher pattern identical:
+         → DECISION: SKIP adding to playbook
+         → ACTION: Reference cipher pattern in metadata
+         → Reasoning: "Pattern exists in cipher with helpful_count={count}"
+
+       ELSE IF cipher pattern complementary:
+         → DECISION: ADD to playbook
+         → ACTION: Link to cipher pattern in related_to or metadata
+         → Reasoning: "Builds on cipher pattern {id}"
+
+     ELSE (no high-quality cipher match):
+       → DECISION: Proceed with ADD
+       → IF bullet reaches helpful_count ≥ 5 later:
+         → Add to sync_to_cipher for cross-project sharing
+```
+
+## cipher_memory_search Integration
+
+### When to Search Cipher
+
+**Before CREATE (ADD) operations**:
+```python
+# Step 1: Check playbook for similar bullets
+playbook_similar = check_playbook_similarity(new_bullet_content, target_section)
+
+if playbook_similar and similarity >= 0.85:
+    # Use UPDATE instead of ADD
+    pass
+else:
+    # Step 2: Check cipher for cross-project patterns
+    cipher_results = cipher_memory_search(
+        query=f"pattern {new_bullet_content}",
+        top_k=5,
+        similarity_threshold=0.7
+    )
+
+    if cipher_results and max(r.similarity for r in cipher_results) >= 0.85:
+        # High-similarity pattern exists in cipher
+        # Decision: Skip or reference cipher pattern
+        pass
+```
+
+**Query Patterns for cipher_memory_search**:
+
+```python
+# For implementation patterns
+cipher_memory_search("pattern JWT authentication Python")
+cipher_memory_search("pattern Redis caching TTL")
+
+# For security patterns
+cipher_memory_search("pattern SQL injection prevention parameterized queries")
+cipher_memory_search("pattern XSS sanitization user input")
+
+# For performance patterns
+cipher_memory_search("pattern database connection pooling")
+cipher_memory_search("pattern async concurrent requests")
+
+# For finding similar existing knowledge
+cipher_memory_search(f"{bullet_content} existing knowledge")
+```
+
+### When to Sync to Cipher (via sync_to_cipher)
+
+**After UPDATE operations** that increment helpful_count:
+```python
+if bullet.helpful_count >= 5:
+    # Bullet has proven quality - sync to cipher
+    sync_to_cipher.append({
+        "bullet_id": bullet.id,
+        "current_helpful_count": bullet.helpful_count,
+        "reason": "Crossed helpful_count threshold. Proven pattern ready for cross-project sharing.",
+        "sync_priority": "high"
+    })
+```
+
+**Important**: Always include these options when calling cipher_extract_and_operate_memory:
+```json
+{
+  "options": {
+    "useLLMDecisions": false,
+    "similarityThreshold": 0.85,
+    "confidenceThreshold": 0.7
+  }
+}
+```
+
+This prevents cipher from aggressively UPDATE-ing unrelated memories.
+
+## Duplicate vs Complementary Examples Summary
+
+| Scenario | Similarity | Decision | Reasoning |
+|----------|-----------|----------|-----------|
+| Same JWT pattern, adds refresh tokens | 0.92 | UPDATE | Same core pattern, new aspect enhances existing |
+| JWT cookies vs JWT headers | 0.78 | ADD | Different transport mechanisms, both valid |
+| Exponential backoff, same sequence | 0.81 | SKIP + UPDATE counter | Identical advice, different wording |
+| JWT auth vs Rate limiting | 0.42 | ADD | Completely different patterns |
+| Python JWT vs TypeScript JWT | 0.73 | ADD | Same pattern, different languages |
+| Redis caching vs Redis rate limiting | 0.58 | ADD | Same technology, different use cases |
+
+## Common Pitfalls
+
+**Pitfall 1: Ignoring Language/Framework Context**
+```
+❌ BAD: Treat "Python JWT with PyJWT" and "JavaScript JWT with jsonwebtoken" as duplicates
+✅ GOOD: Recognize different languages → ADD both as complementary
+```
+
+**Pitfall 2: Over-Merging Distinct Use Cases**
+```
+❌ BAD: Merge "JWT for web app cookies" into "JWT for API headers" because both use JWT
+✅ GOOD: Keep separate - different transport mechanisms for different contexts
+```
+
+**Pitfall 3: Creating Duplicates for Minor Variations**
+```
+❌ BAD: Create separate bullets for "5 retry attempts" vs "3 retry attempts"
+✅ GOOD: Update existing bullet with configurable retry count guidance
+```
+
+**Pitfall 4: Skipping cipher Search**
+```
+❌ BAD: Only check playbook, miss that pattern exists in cipher with helpful_count=15
+✅ GOOD: Search cipher before ADD, reference existing high-quality pattern
+```
+
 <mapify_cli_reference>
 
 ## mapify CLI Quick Reference
@@ -570,122 +917,23 @@ IF related_to contains bullet_ids that don't exist:
 
 <decision_framework name="deduplication_strategy">
 
-## Deduplication Strategy Framework
+## Deduplication Strategy Framework (Legacy Reference)
 
-Prevent context collapse through aggressive deduplication:
+**Note**: See comprehensive DEDUPLICATION STRATEGY section above (lines 175-520) for detailed thresholds and decision trees. This section preserved for backward compatibility.
 
-### Strategy 1: Semantic Similarity Check
-
-```
-FOR EACH suggested_new_bullet:
-
-  1. Extract key concepts:
-     → Tokenize content (remove stopwords)
-     → Identify technical terms (APIs, libraries, patterns)
-     → Create semantic fingerprint
-
-  2. Compare against existing bullets in target section:
-     → Use semantic similarity (cosine similarity, embeddings)
-     → Threshold: similarity > 0.85 = duplicate
-
-  3. Decision matrix:
-
-     IF similarity > 0.95 (near-identical):
-       → SKIP ADD entirely
-       → UPDATE existing bullet's helpful_count
-       → Reasoning: "Identical to {bullet_id}, updated counter"
-
-     ELSE IF similarity > 0.85 (very similar):
-       → MERGE insights
-       → UPDATE existing bullet's content with additional details
-       → Reasoning: "Merged with {bullet_id}, added {new_aspect}"
-
-     ELSE IF similarity > 0.70 (somewhat similar):
-       → ADD new bullet
-       → Link via related_to: [existing_bullet_id]
-       → Reasoning: "Related to {bullet_id} but addresses {unique_aspect}"
-
-     ELSE (similarity <= 0.70):
-       → ADD new bullet (genuinely novel)
-```
-
-<example name="deduplication_in_action" complexity="complex">
-
-## Deduplication Example: JWT Verification
-
-**Scenario**: Reflector suggests new bullet about JWT verification
-
-**Existing Playbook**:
-```json
-{
-  "section": "SECURITY_PATTERNS",
-  "bullets": [
-    {
-      "id": "sec-0034",
-      "content": "JWT Authentication: Use HMAC signing for stateless auth. Store secret securely.",
-      "helpful_count": 3
-    }
-  ]
-}
-```
-
-**Reflector Insight**:
-```json
-{
-  "section": "SECURITY_PATTERNS",
-  "content": "Always verify JWT signatures with verify=True to prevent token forgery. PyJWT defaults to verify=False."
-}
-```
-
-**Semantic Similarity Analysis**:
-- Shared concepts: JWT, authentication, security
-- Similarity score: 0.88 (very similar)
-- Unique aspect in new insight: signature verification specifics
-
-**Curator Decision**:
-```json
-{
-  "reasoning": "Existing sec-0034 covers JWT auth but lacks signature verification details. Similarity 0.88 indicates same topic. Merging insights rather than creating duplicate bullet. This keeps playbook concise while adding critical security detail.",
-
-  "operations": [
-    {
-      "type": "UPDATE",
-      "bullet_id": "sec-0034",
-      "new_content": "JWT Authentication: Use HMAC signing (HS256) for stateless auth. CRITICAL: Always verify signatures with jwt.decode(token, secret, algorithms=['HS256'], options={'verify_signature': True}). PyJWT defaults to verify=False for backward compatibility - this is INSECURE for production. Without verification, attackers can modify token payloads and the application will accept them. Store secret securely (environment variables, not hardcoded).",
-      "code_example": "```python\nimport jwt\n\n# ❌ INSECURE - accepts forged tokens\ndata = jwt.decode(token, secret)\n\n# ✅ SECURE - verifies signature\ndata = jwt.decode(\n    token,\n    secret,\n    algorithms=['HS256'],\n    options={'verify_signature': True}\n)\n```",
-      "increment_helpful": 0
-    }
-  ],
-
-  "deduplication_check": {
-    "checked_sections": ["SECURITY_PATTERNS"],
-    "similar_bullets_found": ["sec-0034"],
-    "similarity_scores": {"sec-0034": 0.88},
-    "action": "merged_with_sec-0034",
-    "reasoning": "Added signature verification details to existing JWT bullet rather than creating duplicate. Preserves context budget."
-  }
-}
-```
-
-**Result**: One comprehensive JWT bullet instead of two overlapping ones.
-
-</example>
-
-### Strategy 2: Cross-Section Linkage
-
-Sometimes related patterns span multiple sections. Link them:
+### Quick Reference
 
 ```
-IF new bullet in IMPLEMENTATION_PATTERNS relates to existing SECURITY_PATTERNS bullet:
-  → Add related_to link
-  → This enables cross-referencing without duplication
-```
+Similarity Thresholds:
+- ≥ 0.85: UPDATE existing bullet (merge insights)
+- 0.65-0.84: Evaluate complementary vs duplicate
+- < 0.65: ADD as distinct pattern
 
-**Example**:
-- impl-0045: "Async database queries with asyncpg"
-- sec-0023: "SQL injection prevention with parameterized queries"
-- Link: impl-0045.related_to = ["sec-0023"]
-- Result: Implementation references security requirement
+Cross-Section Linkage:
+- Use related_to to link patterns across sections
+- Example: impl-0045.related_to = ["sec-0023"]
+- Enables cross-referencing without duplication
+```
 
 </decision_framework>
 
