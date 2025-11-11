@@ -222,21 +222,103 @@ gh run view
 
 **If CI failed:** ABORT release, investigate and fix CI failures first.
 
-#### Gate 12: CHANGELOG.md Validation
+#### Gate 12: CHANGELOG.md Completeness Validation
+
+**Purpose:** Verify CHANGELOG.md is complete and reflects all commits since last release.
 
 ```bash
-# Verify [Unreleased] section exists with content
+# Step 1: Check [Unreleased] section exists
+if ! grep -q "## \[Unreleased\]" CHANGELOG.md; then
+  echo "❌ ERROR: CHANGELOG.md missing [Unreleased] section"
+  exit 1
+fi
+
+# Step 2: Check [Unreleased] has content
 if ! grep -A 5 "## \[Unreleased\]" CHANGELOG.md | grep -qE "^### (Added|Changed|Fixed|Removed)"; then
   echo "❌ ERROR: CHANGELOG.md [Unreleased] section is empty"
   exit 1
 fi
+
+# Step 3: Completeness check - compare commits vs CHANGELOG entries
+LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+if [[ -n "$LAST_TAG" ]]; then
+  echo "Checking CHANGELOG completeness since $LAST_TAG..."
+
+  # Get commits since last tag (exclude merge commits)
+  COMMITS_SINCE=$(git log ${LAST_TAG}..HEAD --oneline --no-merges | wc -l | tr -d ' ')
+
+  # Count CHANGELOG entries in [Unreleased] section
+  CHANGELOG_ENTRIES=$(awk '/## \[Unreleased\]/,/## \[/' CHANGELOG.md | grep -cE "^- " || echo "0")
+
+  echo "Commits since $LAST_TAG: $COMMITS_SINCE"
+  echo "CHANGELOG entries: $CHANGELOG_ENTRIES"
+
+  # If significant gap, show commits for review
+  if [[ $COMMITS_SINCE -gt $(($CHANGELOG_ENTRIES + 2)) ]]; then
+    echo ""
+    echo "⚠️  WARNING: CHANGELOG may be incomplete"
+    echo "════════════════════════════════════════════════════════"
+    echo "Commits since $LAST_TAG:"
+    echo "════════════════════════════════════════════════════════"
+    git log ${LAST_TAG}..HEAD --oneline --no-merges
+    echo "════════════════════════════════════════════════════════"
+    echo ""
+    echo "Current CHANGELOG [Unreleased] content:"
+    awk '/## \[Unreleased\]/,/## \[/' CHANGELOG.md | sed '$d'
+    echo ""
+
+    # Ask user to update CHANGELOG
+    read -p "CHANGELOG appears incomplete. Update it now? (y/n): " UPDATE_CHANGELOG
+
+    if [[ "$UPDATE_CHANGELOG" == "y" ]]; then
+      # Extract commit messages and suggest CHANGELOG format
+      echo ""
+      echo "Suggested CHANGELOG entries (review and add manually):"
+      echo "────────────────────────────────────────────────────────"
+      git log ${LAST_TAG}..HEAD --no-merges --format="%s (%h)" | while read -r commit_msg; do
+        # Categorize by conventional commit prefix
+        if [[ "$commit_msg" =~ ^feat ]]; then
+          echo "### Changed"
+          echo "- ${commit_msg#feat*: }"
+        elif [[ "$commit_msg" =~ ^fix ]]; then
+          echo "### Fixed"
+          echo "- ${commit_msg#fix*: }"
+        elif [[ "$commit_msg" =~ ^docs ]]; then
+          echo "### Documentation"
+          echo "- ${commit_msg#docs*: }"
+        else
+          echo "### Changed"
+          echo "- $commit_msg"
+        fi
+      done
+      echo "────────────────────────────────────────────────────────"
+      echo ""
+      echo "Please update CHANGELOG.md manually, then re-run the release."
+      exit 1
+    else
+      read -p "Continue with potentially incomplete CHANGELOG? (y/N): " PROCEED_ANYWAY
+      [[ "$PROCEED_ANYWAY" != "y" ]] && exit 1
+    fi
+  fi
+else
+  echo "ℹ️  No previous tag found, skipping completeness check"
+fi
 ```
 
 **Expected Results:**
-- ✅ CHANGELOG.md has [Unreleased] section
-- ✅ [Unreleased] section contains changes to release
+- ✅ CHANGELOG.md has [Unreleased] section with content
+- ✅ Number of CHANGELOG entries roughly matches commit count (±2 tolerance)
+- ✅ If gap detected: User reviews commits and updates CHANGELOG OR explicitly confirms to proceed
 
-**If empty:** ABORT release, document changes in CHANGELOG.md first.
+**If incomplete:**
+1. Script shows all commits since last tag
+2. Script suggests CHANGELOG entries based on commit messages
+3. User can:
+   - Update CHANGELOG and re-run release
+   - Explicitly confirm to proceed with incomplete CHANGELOG
+
+**Gap tolerance:** ±2 commits (accounts for chore commits, merge commits, etc.)
 
 ### 1.4 Mark Phase 1 Complete
 
