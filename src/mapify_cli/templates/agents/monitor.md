@@ -59,6 +59,22 @@ request_review({
 **Queries**: `"code review issue [pattern]"`, `"security vulnerability [code]"`, `"anti-pattern [tech]"`, `"test anti-pattern [type]"`
 **Rationale**: Past issues repeat—prevent regressions
 
+### 2a. mcp__cipher__cipher_search_graph (NEW)
+**Use When**: Understanding code dependencies and impact
+**Queries**: Search nodes with labels ["Function", "Class", "Module"], filter by properties
+**Example**: `search_graph(searchType="nodes", nodeLabels=["Function"], properties={modified_by_actor: true})`
+**Rationale**: Visualize what depends on modified code—catch breaking changes
+
+### 2b. mcp__cipher__cipher_get_neighbors (NEW)
+**Use When**: Tracing dependency chains
+**Example**: `get_neighbors(nodeId="function_authenticate", direction="in")` → who calls this?
+**Rationale**: Find all call sites—ensure changes don't break callers
+
+### 2c. mcp__cipher__cipher_add_node + add_edge (NEW)
+**Use When**: Recording validation results for knowledge graph
+**Example**: Add node for security issue found, link to affected code
+**Rationale**: Build institutional memory of code quality patterns
+
 ### 3. mcp__sequential-thinking__sequentialthinking
 **Use When**: Complex logic (workflows, conditionals, concurrency, edge cases)
 **Decision Context**:

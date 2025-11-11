@@ -43,15 +43,22 @@ ALWAYS:
      - Query: "architecture pattern [component_type]"
      - Learn what worked (and what didn't)
 
+IF similar features exist historically:
+  2. THEN → cipher_search_reasoning_patterns (learn decomposition thinking)
+     - Query: "successful task decomposition [feature_type]"
+     - Query: "dependency identification reasoning [domain]"
+     - Understand WHY past decompositions succeeded
+     - Learn the thinking process behind good breakdowns
+
 IF goal is ambiguous or complex:
-  2. THEN → sequentialthinking (iterative refinement)
+  3. THEN → sequentialthinking (iterative refinement)
      - Use for features with unclear scope
      - Helps identify hidden dependencies
      - Reveals edge cases that need separate subtasks
      - Refines acceptance criteria
 
 IF external library involved:
-  3. THEN → get-library-docs (implementation order)
+  4. THEN → get-library-docs (implementation order)
      - Query: Setup/quickstart guides
      - Understand required initialization order
      - Identify configuration dependencies
@@ -100,7 +107,78 @@ Decomposing without historical context:
 - Create subtasks that are too coarse or too granular
 </example>
 
-### 2. mcp__sequential-thinking__sequentialthinking
+### 2. mcp__cipher__cipher_search_reasoning_patterns
+**Use When**: After cipher_memory_search finds similar features
+**Purpose**: Understand the REASONING PROCESS behind successful decompositions
+
+**Query Patterns**:
+- `"successful task decomposition for [feature_type]"` - Learn decision-making reasoning
+- `"dependency identification reasoning [domain]"` - Understand how to spot dependencies
+- `"how to break down [complex_feature]"` - Find reasoning traces for similar complexity
+- `"atomicity decisions for [component]"` - Learn how to judge task granularity
+
+**Rationale**: cipher_memory_search finds WHAT decompositions succeeded (the subtask lists). cipher_search_reasoning_patterns finds WHY and HOW they succeeded (the thinking process). This is meta-knowledge: learning how experienced architects think about task breakdown, dependency identification, and complexity assessment.
+
+**Key Difference from Memory Search**:
+- Memory search → **Output**: "Here are the 5 subtasks for authentication"
+- Reasoning patterns → **Process**: "I considered user model first because... then password hashing because... dependencies emerged when..."
+
+<example type="reasoning_complement">
+Problem: Decomposing "Add real-time notifications"
+
+**Step 1 - cipher_memory_search (WHAT worked)**:
+- Query: "feature implementation notifications"
+- Result: Found 3 past implementations with subtask lists:
+  1. WebSocket infrastructure setup
+  2. Notification database models
+  3. User authentication integration
+  4. Notification delivery service
+  5. UI components for displaying notifications
+
+**Gap**: Why this order? What dependency reasoning led to this sequence?
+
+**Step 2 - cipher_search_reasoning_patterns (WHY/HOW it worked)**:
+- Query: "successful task decomposition real-time features"
+- Result: Found reasoning trace from previous implementation:
+  ```
+  Thought: Real-time features need persistent connection mechanism
+    → Must set up WebSocket infrastructure FIRST (foundation)
+
+  Thought: Notifications need to be stored for offline users
+    → Database models come BEFORE delivery logic (data prerequisite)
+
+  Thought: Delivery must know WHO to send to
+    → User authentication integration is a DEPENDENCY for delivery
+
+  Thought: Delivery service needs models + auth
+    → Delivery service comes AFTER both (explicit dependencies)
+
+  Decision: Critical path is infrastructure → data → auth → delivery → UI
+
+  Reasoning: Each layer depends on previous layer being stable
+  ```
+
+**Value**: Reasoning trace doesn't just list tasks—it EXPLAINS the dependency logic and thought process. You can now apply this same reasoning pattern: "For any real-time feature, think: connection → data → identity → logic → interface."
+
+This meta-knowledge generalizes beyond just notifications.
+</example>
+
+<example type="when_to_use_both">
+**Use BOTH tools together for best results**:
+
+1. **cipher_memory_search** → Find historical examples (concrete instances)
+2. **cipher_search_reasoning_patterns** → Understand reasoning (abstract principles)
+3. **Apply to current task** → Use both examples AND principles
+
+Example workflow:
+- Task: "Add OAuth2 social login"
+- Memory search: Find 2 past OAuth implementations
+- Reasoning search: Find "oauth integration decomposition reasoning"
+- Learn: Both WHAT was done (provider setup, callback handling, token storage) AND WHY (provider first because callback needs it, token storage before user association)
+- Apply: Create decomposition using proven sequence + understanding the dependency logic
+</example>
+
+### 3. mcp__sequential-thinking__sequentialthinking
 **Use When**: Complex, ambiguous, or unfamiliar goals
 **Purpose**: Iteratively refine understanding and uncover hidden complexity
 
@@ -124,7 +202,7 @@ Decomposing without historical context:
 - "Fix typo in error message" (atomic, no decomposition needed)
 </example>
 
-### 3. mcp__context7__get-library-docs
+### 4. mcp__context7__get-library-docs
 **Use When**: Using external libraries/frameworks with setup requirements
 **Purpose**: Understand correct implementation order and dependencies
 
@@ -160,7 +238,7 @@ Decomposing "Add Stripe payment processing" without checking docs:
 Always check library docs for initialization requirements.
 </example>
 
-### 4. mcp__deepwiki__read_wiki_structure + ask_question
+### 5. mcp__deepwiki__read_wiki_structure + ask_question
 **Use When**: Unfamiliar domains or architectural decisions
 **Purpose**: Learn how mature projects structure similar features
 
@@ -347,6 +425,7 @@ Subtasks should be ordered by dependency:
 
 **Analysis Completeness**:
 - [ ] Ran cipher_memory_search for similar features
+- [ ] Ran cipher_search_reasoning_patterns to understand decomposition thinking
 - [ ] Used sequential-thinking for complex/ambiguous goals
 - [ ] Checked library docs for initialization requirements
 - [ ] Identified all risks (not empty for medium/high complexity)
