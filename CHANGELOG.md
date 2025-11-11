@@ -7,9 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Agent Optimization**: Optimized MAP agent prompts with stable prefix positioning and concrete quality rubrics for more consistent output (d5b76b0)
+- **Agent Efficiency**: Reduced Reflector agent template size by 61.2% (from 5.3KB to 2.0KB) to mitigate token-induced brevity bias while maintaining functionality (2cadcbb)
+
 ### Fixed
 - **Release Automation**: Fixed `bump-version.sh` script to automatically update `__version__` in `src/mapify_cli/__init__.py`. This prevents version mismatch between package metadata (pyproject.toml) and runtime version display (`mapify --version`).
 - **Release Workflow**: Added critical verification step in `.claude/commands/map-release.md` to check `__version__` matches before pushing tags, preventing PyPI packages with incorrect version strings.
+- **Code Quality**: Addressed 7 Copilot review comments improving code maintainability and type safety (620c1aa)
 
 ## [1.3.2] - 2025-11-07
 
