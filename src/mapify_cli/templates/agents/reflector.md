@@ -52,6 +52,26 @@ You are an expert learning analyst who extracts reusable patterns and insights f
 - Query patterns: "error pattern [type]", "success pattern [feature]", "root cause [technology]"
 - Why: Avoid re-learning known lessons, reference existing patterns
 
+**mcp__cipher__cipher_search_reasoning_patterns** (NEW)
+- Use when: Finding similar reasoning traces, learning meta-patterns
+- Query: "successful debugging reasoning [domain]", "root cause analysis patterns"
+- Why: Learn HOW experts think through problems, not just WHAT they concluded
+
+**mcp__cipher__cipher_store_reasoning_memory** (NEW)
+- Use when: AFTER extracting lessons, storing complete reasoning trace
+- What to store: Thought process, decision points, trade-offs evaluated
+- Why: Future Reflectors learn from reasoning process, not just outcomes
+
+**mcp__cipher__cipher_extract_reasoning_steps** (NEW)
+- Use when: Structuring complex failure analysis into reasoning steps
+- Process: Converts narrative analysis → structured [thought, action, observation] steps
+- Why: Enables better reasoning search and quality assessment
+
+**mcp__cipher__cipher_evaluate_reasoning** (NEW)
+- Use when: BEFORE storing reasoning, assess quality and completeness
+- Checks: Reasoning loops, efficiency, issue detection, suggestions
+- Why: Only store high-quality reasoning traces (quality gate)
+
 **mcp__context7__resolve-library-id + get-library-docs**
 - Use when: Library API misuse, verify usage patterns, recommend API changes
 - Process: resolve-library-id → get-library-docs with topic

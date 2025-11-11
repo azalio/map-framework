@@ -215,6 +215,10 @@ ALWAYS:
 IF complex architectural decisions:
   → cipher_memory_search: "quality metrics [feature]", "performance benchmark [op]", "best practice score [tech]"
 
+IF learning from past evaluation reasoning:
+  → cipher_search_reasoning_patterns (NEW): "quality assessment for [feature]", "scoring rationale [pattern]"
+  → Understand WHY past implementations scored high/low, apply reasoning
+
 IF previous implementations exist:
   → get_review_history (compare solutions, learn from past issues, maintain scoring consistency)
 

@@ -70,26 +70,40 @@ ALWAYS:
      - Query: "migration strategy [similar_change]"
      - Learn from past impact analyses
 
-IF complex dependency graph:
-  2. THEN → consult_codex (automated dependency analysis)
+IF analyzing dependency chains:
+  2. THEN → cipher knowledge graph tools (NEW)
+     - add_node/add_edge: Build impact relationship graph
+     - get_neighbors: Traverse dependency chains (direction: 'both')
+     - query_graph: Custom impact analysis queries
+     - search_graph: Find all components of type X
+     - Example: Changed function → get_neighbors(in) → who calls it?
+
+IF complex codebase analysis:
+  3. THEN → consult_codex (automated dependency analysis)
      - Query: "Find all usages of [function/class] in codebase"
      - Query: "Analyze dependencies for [component]"
      - Gets exhaustive list of affected code
 
+IF natural language impact statement:
+  4. THEN → intelligent_processor (NEW)
+     - Process: "API endpoint /users changed signature"
+     - Extracts: entities (endpoint, signature), relationships
+     - Auto-creates graph nodes/edges for impact tracking
+
 IF external library involved:
-  3. THEN → get-library-docs (compatibility check)
+  6. THEN → get-library-docs (compatibility check)
      - Query: Changes between versions (migration guides)
      - Identify deprecated APIs
      - Understand breaking changes in library updates
 
 IF architectural change:
-  4. THEN → deepwiki (architectural precedents)
+  7. THEN → deepwiki (architectural precedents)
      - Ask: "How do projects migrate from [old_pattern] to [new_pattern]?"
      - Learn typical ripple effects
      - Identify commonly missed dependencies
 
 THEN → Grep/Glob (manual verification)
-  5. Search for symbol names, import statements, file references
+  8. Search for symbol names, import statements, file references
      - Codex might miss dynamic imports, reflection, config files
      - Manual search catches edge cases
 ```

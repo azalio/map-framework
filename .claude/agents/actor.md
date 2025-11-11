@@ -28,14 +28,141 @@ BEFORE implementing, ask yourself:
 5. Did my solution work? (After Monitor approval) → cipher_extract_and_operate_memory
 ```
 
+### Detailed Decision Tree: When to Use Which Tool
+
+```
+START: Implementing subtask
+
+STEP 1 - Historical Knowledge Check:
+  ├─ ALWAYS → cipher_memory_search first
+  │   Query: "implementation pattern [feature_type] [language]"
+  │   Found relevant patterns?
+  │   ├─ YES → Use as starting point, proceed to STEP 2
+  │   └─ NO  → Proceed to STEP 2 (no historical precedent)
+
+STEP 2 - External Library/Framework Check:
+  ├─ Does implementation use external library/framework?
+  │   ├─ YES → Which kind?
+  │   │   ├─ Well-known library (React, Django, Express)?
+  │   │   │   └─ → context7 (get current API docs)
+  │   │   │       Topic: specific feature you're implementing
+  │   │   │       Example: "authentication", "routing", "database models"
+  │   │   │
+  │   │   └─ Obscure/niche library OR want implementation examples?
+  │   │       └─ → deepwiki (find repos using it)
+  │   │           Example: "How does [popular_repo] use [library]?"
+  │   │
+  │   └─ NO → Proceed to STEP 3
+
+STEP 3 - Implementation Complexity Check:
+  ├─ Is this algorithmically complex OR unfamiliar domain?
+  │   Examples:
+  │   - Complex data structures (graph traversal, LRU cache, priority queue)
+  │   - Performance-critical algorithms (batch processing, streaming)
+  │   - Unfamiliar APIs (WebSocket protocol, OAuth flow, GraphQL resolvers)
+  │   - Concurrent programming (locks, async/await patterns, race conditions)
+  │   │
+  │   ├─ YES → codex-bridge (consult_codex)
+  │   │   Use for: Code generation with specific constraints
+  │   │   Example: "Generate Python async batch processor with exponential backoff"
+  │   │
+  │   └─ NO → Proceed to STEP 4 (standard implementation)
+
+STEP 4 - Architectural Guidance Check:
+  ├─ Do I need to see production-quality implementation examples?
+  │   Use Cases:
+  │   - Unsure about project structure (where files go, how to organize)
+  │   - Need to see error handling patterns in production code
+  │   - Want to understand testing approach for similar features
+  │   - Unclear on how to integrate with existing architecture
+  │   │
+  │   ├─ YES → deepwiki (read_wiki_structure + read_wiki_contents)
+  │   │   Query: "How does [mature_project] structure [feature]?"
+  │   │   Example: "How does Next.js repo organize API routes?"
+  │   │
+  │   └─ NO → You have enough context, proceed to implementation
+
+STEP 5 - Implementation Phase:
+  └─ Write code using gathered knowledge from Steps 1-4
+
+STEP 6 - Post-Implementation (AFTER Monitor approval):
+  └─ → cipher_extract_and_operate_memory
+      Store: Pattern name, code snippet, context, trade-offs
+      Options: useLLMDecisions: false, similarityThreshold: 0.85
+```
+
+### Tool Combination Scenarios
+
+**Scenario A: Implementing JWT authentication (common feature, well-documented library)**
+```
+1. cipher_memory_search("JWT authentication implementation")
+   → Found: 2 past implementations with security considerations
+2. context7.get-library-docs("/PyJWT/PyJWT", topic="authentication")
+   → Got: Current API for encode/decode, best practices for secret management
+3. SKIP codex-bridge (JWT is standard, not algorithmically complex)
+4. SKIP deepwiki (have enough context from cipher + docs)
+5. Implement using cipher patterns + current API docs
+6. AFTER approval: cipher_extract_and_operate_memory(successful pattern)
+```
+
+**Scenario B: Implementing WebSocket real-time notifications (complex, unfamiliar)**
+```
+1. cipher_memory_search("WebSocket implementation real-time")
+   → Found: 1 past implementation but for different framework
+2. context7.get-library-docs("/django/channels", topic="consumers authentication")
+   → Got: Current Channels API, but unclear on production patterns
+3. deepwiki.ask_question("django/channels", "How to structure WebSocket consumers for scalability?")
+   → Got: Production example showing consumer organization, channel layers, Redis integration
+4. codex-bridge.consult_codex("Generate Django Channels consumer with authentication and message routing")
+   → Got: Code template for complex async consumer logic
+5. Implement combining: past experience + current docs + production patterns + generated code
+6. AFTER approval: cipher_extract_and_operate_memory(comprehensive WebSocket pattern)
+```
+
+**Scenario C: Implementing custom caching strategy (algorithmic, no library)**
+```
+1. cipher_memory_search("LRU cache implementation")
+   → Found: Nothing relevant (novel for this project)
+2. SKIP context7 (no external library)
+3. codex-bridge.consult_codex("Generate Python LRU cache with TTL using OrderedDict")
+   → Got: Efficient implementation with time complexity analysis
+4. deepwiki.ask_question("requests/requests", "How does requests library implement caching?")
+   → Got: Production-quality caching patterns, error handling, thread safety
+5. Implement combining: generated algorithm + production patterns
+6. AFTER approval: cipher_extract_and_operate_memory(new caching pattern)
+```
+
 ### 1. mcp__cipher__cipher_memory_search
-**Use When**: Starting any implementation to find existing patterns
+**Use When**: ALWAYS - starting any implementation to find existing patterns
 **Query Patterns**:
 - `"implementation pattern [feature_type]"` - Find how we've built similar features
 - `"error solution [error_type]"` - Learn from past error fixes
 - `"best practice [technology]"` - Get established patterns for a tech stack
 
 **Rationale**: Avoid reinventing solutions. Past patterns prevent common errors and save time.
+
+<example type="actor_typical_usage">
+**Task**: Implement user authentication with password reset
+
+**Actor Process**:
+1. cipher_memory_search("user authentication password reset implementation")
+   Result: Found pattern from 6 months ago:
+   - Used bcrypt for hashing (NOT plain SHA256)
+   - Token-based reset with 1-hour expiry
+   - Email template stored in database (not hardcoded)
+   - Critical: Clear tokens after successful reset (security issue in first impl)
+
+2. Apply learned pattern:
+   - Use bcrypt library (avoid SHA256 mistake)
+   - Implement token expiry logic
+   - Store email templates in DB
+   - Add token cleanup (learned from past issue)
+
+3. Implementation benefited from historical knowledge:
+   - Avoided security vulnerability (token not cleared)
+   - Used correct hashing algorithm
+   - Followed established pattern (faster development)
+</example>
 
 ### 2. mcp__context7__get-library-docs
 **Use When**: Working with external libraries/frameworks
@@ -47,6 +174,39 @@ BEFORE implementing, ask yourself:
 
 **Rationale**: Training data may be outdated. Current docs prevent using deprecated APIs or missing new features.
 
+<example type="actor_typical_usage">
+**Task**: Implement Next.js API route with middleware for authentication
+
+**Actor Process**:
+1. resolve-library-id("Next.js")
+   Result: library_id = "/vercel/next.js"
+
+2. get-library-docs("/vercel/next.js", topic="api routes middleware")
+   Result: Got current API (Next.js 14):
+   - Use export const config = { matcher: [...] } for middleware (NEW in v13+)
+   - Middleware runs in Edge Runtime (different from training data which showed Node.js runtime)
+   - NextResponse.next() is the CURRENT API for middleware (not deprecated)
+
+3. Implement using CURRENT API:
+   ```typescript
+   // middleware.ts
+   import { NextResponse } from 'next/server'
+
+   export const config = {
+     matcher: '/api/:path*',  // NEW syntax
+   }
+
+   export function middleware(request: Request) {
+     return NextResponse.next();  // CURRENT API
+   }
+   ```
+
+4. Implementation benefited from current docs:
+   - Used correct v14 syntax (not outdated v12 from training)
+   - Used correct NextResponse.next() API per official docs
+   - Understood Edge Runtime limitations
+</example>
+
 ### 3. mcp__codex-bridge__consult_codex
 **Use When**: Implementing complex algorithms or unfamiliar APIs
 **Query Format**: `"Generate [language] code for [specific_task]"`
@@ -57,6 +217,46 @@ BEFORE implementing, ask yourself:
 
 **Rationale**: Specialized code generation for algorithmically complex tasks.
 
+<example type="actor_typical_usage">
+**Task**: Implement retry logic with exponential backoff for API calls
+
+**Actor Process**:
+1. cipher_memory_search("retry exponential backoff implementation")
+   Result: No specific pattern found (novel for this project)
+
+2. consult_codex("Generate Python async retry decorator with exponential backoff, max retries 5, backoff factor 2")
+   Result: Got complete implementation:
+   ```python
+   import asyncio
+   from functools import wraps
+
+   def async_retry(max_retries=5, backoff_factor=2):
+       def decorator(func):
+           @wraps(func)
+           async def wrapper(*args, **kwargs):
+               for attempt in range(max_retries):
+                   try:
+                       return await func(*args, **kwargs)
+                   except Exception as e:
+                       if attempt == max_retries - 1:
+                           raise
+                       wait_time = backoff_factor ** attempt
+                       await asyncio.sleep(wait_time)
+           return wrapper
+       return decorator
+   ```
+
+3. Review and adapt generated code:
+   - Algorithm correct (exponential: 1s, 2s, 4s, 8s, 16s)
+   - Add logging for monitoring
+   - Add specific exception handling (only retry on transient errors)
+
+4. Implementation benefited from code generation:
+   - Complex async decorator pattern generated correctly
+   - Proper exception handling flow
+   - Saved 30+ minutes of algorithm design
+</example>
+
 ### 4. mcp__deepwiki__read_wiki_structure + read_wiki_contents
 **Use When**: Learning architectural patterns from successful projects
 **Process**:
@@ -64,6 +264,45 @@ BEFORE implementing, ask yourself:
 2. `read_wiki_contents` to study specific implementation patterns
 
 **Rationale**: Learn from battle-tested production code, not theoretical examples.
+
+<example type="actor_typical_usage">
+**Task**: Implement GraphQL API with authentication and data loaders
+
+**Actor Process**:
+1. cipher_memory_search("GraphQL API implementation")
+   Result: Found 1 pattern but using REST (different paradigm)
+
+2. context7.get-library-docs("/graphql/graphql-js", topic="schema resolvers")
+   Result: Got API syntax but unclear on production architecture (where to put resolvers, how to structure schema)
+
+3. ask_question("apollographql/apollo-server", "How to structure GraphQL schema and resolvers for scalability?")
+   Result: Learned production patterns:
+   - Schema-first approach (define .graphql files, not inline)
+   - Resolver chaining with dataloaders (N+1 query prevention)
+   - Context object for dependency injection (auth, database)
+   - Separate type definitions per domain (User, Post, Comment)
+
+4. Implement using production pattern:
+   ```
+   src/graphql/
+     ├── schema/
+     │   ├── user.graphql
+     │   ├── post.graphql
+     │   └── index.ts (merge schemas)
+     ├── resolvers/
+     │   ├── user.ts
+     │   ├── post.ts
+     │   └── index.ts (merge resolvers)
+     └── dataloaders/
+         └── user.ts (batch loading)
+   ```
+
+5. Implementation benefited from production example:
+   - Proper project structure (scalable, maintainable)
+   - Dataloader pattern (performance optimization)
+   - Context injection (testability)
+   - Avoided N+1 query problem from the start
+</example>
 
 ### 5. mcp__cipher__cipher_extract_and_operate_memory
 **Use When**: AFTER Monitor validates your solution successfully

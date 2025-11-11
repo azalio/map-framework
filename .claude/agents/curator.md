@@ -49,9 +49,24 @@ BEFORE creating operations, ask yourself:
    → Builds cross-project knowledge base
 ```
 
-### 1. mcp__cipher__cipher_memory_search
+### 1. mcp__cipher__cipher_intelligent_processor (NEW)
+
+**Use When**: Processing Reflector lessons into structured bullets
+**Purpose**: Automatically extract entities and detect conflicts
+
+**Example**:
+```
+Text: "Use bcrypt for password hashing, NOT MD5. Store salt separately."
+→ Extracts: entities[bcrypt, MD5, password, salt], relationships[use, avoid]
+→ Auto-detects: conflict with existing "MD5 password" bullet (deprecate old one)
+```
+
+**Why**: Reduces manual entity extraction, catches conflicts automatically
+
+### 2. mcp__cipher__cipher_memory_search
 
 **Use When**:
+- AFTER intelligent_processor extracts entities (for targeted search)
 - Before creating ADD operations (check for duplicates)
 - When Reflector suggests new bullet (validate novelty)
 - When updating bullets (find related patterns)
@@ -151,10 +166,114 @@ Result: Current, accurate recommendation.
 options: {
   useLLMDecisions: false,        // Use similarity-based logic (predictable)
   similarityThreshold: 0.85,     // Only 85%+ similar memories trigger UPDATE
-  confidenceThreshold: 0.7       // Minimum confidence required
+  confidenceThreshold: 0.7,      // Minimum confidence required
+  enableDeleteOperations: false  // Prevent accidental deletions
 }
 ```
-This prevents cipher from aggressively UPDATE-ing unrelated memories.
+This prevents cipher from aggressively UPDATE-ing unrelated memories or deleting existing knowledge.
+
+<example type="cipher_sync_deduplication">
+
+**Scenario**: Playbook bullet "perf-0023" just crossed helpful_count threshold (5→6)
+
+**Step 1: Check Cipher for Existing Pattern**
+```javascript
+// Before syncing, search cipher
+const cipherResults = await cipher_memory_search({
+  query: "Redis caching TTL pattern",
+  top_k: 5,
+  similarity_threshold: 0.7
+});
+
+// Found existing cipher memory with similarity 0.88
+// Memory ID: mem-cipher-0156
+// Content: "Redis caching with expiration keys for session data"
+// Helpful count: 12
+```
+
+**Step 2: Decision - UPDATE vs ADD**
+```javascript
+if (cipherResults.length > 0 && cipherResults[0].similarity >= 0.85) {
+  // High similarity - UPDATE existing cipher memory
+  operation = "UPDATE";
+  reasoning = "Similar pattern exists in cipher (similarity 0.88). " +
+              "Merging playbook insights to enhance existing memory.";
+} else {
+  // Low similarity or no match - ADD new cipher memory
+  operation = "ADD";
+  reasoning = "Novel pattern not found in cipher. Adding as new cross-project knowledge.";
+}
+```
+
+**Step 3: Sync with Correct Options**
+```javascript
+await cipher_extract_and_operate_memory({
+  interaction: bulletContent,
+  options: {
+    useLLMDecisions: false,          // Disable LLM (use similarity-based)
+    similarityThreshold: 0.85,       // Only UPDATE if 85%+ similar
+    confidenceThreshold: 0.7,        // Minimum confidence
+    enableDeleteOperations: false    // Never delete existing memories
+  },
+  memoryMetadata: {
+    source: "playbook",
+    projectId: "map-framework",
+    helpful_count: 6,                // Evidence of quality
+    bullet_id: "perf-0023"
+  }
+});
+```
+
+**Result**: Existing cipher memory mem-cipher-0156 enhanced with playbook TTL details. No duplicate created.
+
+</example>
+
+<example type="cipher_sync_novel_pattern">
+
+**Scenario**: New security pattern with helpful_count=5, no similar cipher memory
+
+**Step 1: Search Cipher**
+```javascript
+const cipherResults = await cipher_memory_search({
+  query: "JWT signature verification PyJWT verify parameter",
+  top_k: 5,
+  similarity_threshold: 0.7
+});
+
+// Result: No matches found (max similarity 0.42 with unrelated pattern)
+```
+
+**Step 2: Decision - ADD to Cipher**
+```javascript
+// Novel pattern - safe to ADD
+await cipher_extract_and_operate_memory({
+  interaction: `
+    JWT Signature Verification: Always verify HMAC signatures when decoding JWTs.
+    PyJWT defaults to verify=False - production MUST use verify=True.
+
+    Code:
+    import jwt
+    data = jwt.decode(token, secret, algorithms=['HS256'], options={'verify_signature': True})
+  `,
+  options: {
+    useLLMDecisions: false,
+    similarityThreshold: 0.85,
+    confidenceThreshold: 0.7,
+    enableDeleteOperations: false
+  },
+  memoryMetadata: {
+    source: "playbook",
+    bullet_id: "sec-0034",
+    helpful_count: 5,
+    domain: "security",
+    language: "python"
+  }
+});
+```
+
+**Result**: New cipher memory created. Available across all projects using Cipher.
+
+</example>
 
 <critical>
 
