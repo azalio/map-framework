@@ -445,5 +445,3 @@ class TestMainFunction:
         # Test that exception propagates as expected
         with pytest.raises(Exception, match="Unexpected error"):
             main()
-
-
