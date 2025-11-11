@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2025-11-11
+
 ### Changed
 - **Agent Optimization**: Optimized MAP agent prompts with stable prefix positioning and concrete quality rubrics for more consistent output (d5b76b0)
 - **Agent Efficiency**: Reduced Reflector agent template size by 61.2% (from 5.3KB to 2.0KB) to mitigate token-induced brevity bias while maintaining functionality (2cadcbb)
