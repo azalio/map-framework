@@ -93,7 +93,7 @@ mcp__cipher__cipher_memory_search(
 
 | Task | Correct Tool | Wrong Approach |
 |------|-------------|----------------|
-| **Read playbook** | `mapify playbook query` | Reading .claude/playbook.json |
+| **Read playbook** | `mapify playbook query` | Reading .claude/playbook.db |
 | **Search patterns** | `mapify playbook query` + `cipher_memory_search` (MCP) | Using `--mode hybrid` flag |
 | **Update playbook** | Curator agent → `mapify playbook apply-delta` | Direct sqlite3 commands |
 | **Add new bullet** | Curator agent → ADD operation | Manually editing JSON/DB |

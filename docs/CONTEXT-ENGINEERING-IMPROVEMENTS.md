@@ -49,7 +49,7 @@ MAP Framework уже реализует многие передовые прак
 
 **Текущее состояние в MAP:**
 - ✅ Интеграция с MCP-серверами (cipher, deepwiki, context7)
-- ✅ Playbook хранится в `.claude/playbook.json`
+- ✅ Playbook хранится в `.claude/playbook.db`
 - ⚠️ Нет механизма сохранения промежуточных артефактов на диск
 
 **Рекомендации:**
@@ -305,11 +305,11 @@ Generating JWT tokens with expiration, using HS256 algorithm
 
 #### 1.3 Ограничение паттернов из playbook - ✅ COMPLETE
 - [x] Изменить `PlaybookManager.get_relevant_bullets()` → `top_k=5`
-- [x] Параметр конфигурации в `.claude/playbook.json` (metadata.top_k)
+- [x] Параметр конфигурации в `.claude/playbook.db` (metadata.top_k)
 - [x] Документировать в README
 
 **Результаты:**
-- **Playbook configuration**: `top_k=5` установлен в `.claude/playbook.json:10`
+- **Playbook configuration**: `top_k=5` установлен в `.claude/playbook.db:10`
 - **Benefit**: Prevents context distraction by limiting to 5 most relevant patterns
 - **Evidence**: Current playbook has 11 bullets, Actor receives only top 5 per query
 

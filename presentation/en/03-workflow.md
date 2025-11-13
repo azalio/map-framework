@@ -61,7 +61,7 @@ The **Orchestrator** is NOT a separate agent template; it is the coordination lo
 **PROHIBITED:**
 
 - ❌ “Apply Reflector insights to playbook yourself”
-- ❌ “Edit `.claude/playbook.json` manually”
+- ❌ “Edit `.claude/playbook.db` manually”
 - ❌ “Skip playbook updates for small changes”
 
 **REQUIRED:**
@@ -95,7 +95,7 @@ MAP uses **TWO knowledge storage systems**:
 
 ### 1. Playbook (Project Memory)
 
-- **Location:** `.claude/playbook.json`
+- **Location:** `.claude/playbook.db`
 - **Purpose:** Structured, categorized patterns for THIS project
 - **Format:** Bullets with code examples, tags, helpful/harmful counts
 - **Scope:** Single project
@@ -227,7 +227,7 @@ Before completing any MAP workflow subtask the orchestrator **MUST** check 4 que
 
 ### Top-K Playbook Filtering
 
-- **Config:** `.claude/playbook.json` → `metadata.top_k = 5`
+- **Config:** `.claude/playbook.db` → `metadata.top_k = 5`
 - **Mechanism:** For every subtask, Actor receives only the 5 most relevant bullets
 - **Benefit:** With 25 bullets total, top-5 filtering prevents context distraction
 

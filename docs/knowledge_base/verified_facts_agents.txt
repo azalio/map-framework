@@ -346,7 +346,7 @@
 - {{feedback}} — previous curation feedback
 
 **Input Context:**
-- Current playbook (.claude/playbook.json)
+- Current playbook (.claude/playbook.db)
 - Reflector insights and suggested bullets
 
 **Output JSON Structure:**
@@ -654,8 +654,8 @@ Last error: [error message from Monitor]
 
 [✓ VERIFIED]
 **Fact:** Playbook has 9 pattern categories with top_k=5 limit
-**Source:** .claude/playbook.json
-**Verification:** cat playbook.json | python -c "import json, sys; d=json.load(sys.stdin); print(len(d['patterns']))" → 9
+**Source:** .claude/playbook.db
+**Verification:** mapify playbook stats → shows 9 sections
 
 **Pattern Categories:**
 1. ARCHITECTURE_PATTERNS

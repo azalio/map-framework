@@ -173,7 +173,7 @@ grep '"event_type": "error"' .map/logs/workflow_feat_auth_123.log
 
 **Change:** Configure PlaybookManager to return only top-5 most relevant patterns per query.
 
-**Configuration File:** `.claude/playbook.json` (line 10)
+**Configuration File:** `.claude/playbook.db` (line 10)
 
 ```json
 {
@@ -267,8 +267,8 @@ grep '"event_type": "error"' .map/logs/workflow_feat_auth_123.log
 **Symptom:** Actor receives 10+ patterns instead of top-5
 
 **Solutions:**
-1. Check config: `jq '.metadata.top_k' .claude/playbook.json`
-2. Should be 5, update if needed
+1. Check config: `mapify playbook stats` (shows top_k in metadata)
+2. Should be 5, update if needed via PlaybookManager
 
 ### Issue 5: Progress Markers Not Updating
 
@@ -354,7 +354,11 @@ Users on versions before 2025-10-18 (pre-Phase-1).
 
 Check your version:
 ```bash
+# For old JSON-based playbook (pre-migration):
 grep '"version"' .claude/playbook.json
+
+# For new SQLite-based playbook:
+sqlite3 .claude/playbook.db "SELECT value FROM metadata WHERE key='version';"
 ```
 
 ### Migration Steps
@@ -370,11 +374,12 @@ ls -l src/mapify_cli/workflow_logger.py     # Should exist (246 lines)
 #### Step 2: Update Playbook Configuration
 
 ```bash
-# Backup existing playbook
+# For JSON-based playbook (will be auto-migrated to SQLite on next mapify init):
 cp .claude/playbook.json .claude/playbook.json.backup
-
-# Update metadata (add top_k if missing)
 jq '.metadata.top_k = 5' .claude/playbook.json > tmp.json && mv tmp.json .claude/playbook.json
+
+# For SQLite-based playbook (current):
+# Use mapify CLI commands - direct SQLite modification not recommended
 ```
 
 #### Step 3: Create .map Directory Structure

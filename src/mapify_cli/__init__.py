@@ -2067,10 +2067,10 @@ def init(
         console.print("[yellow]Please check directory permissions[/yellow]")
         raise typer.Exit(1)
     except json.JSONDecodeError as e:
-        tracker.error("init-playbook", "invalid JSON")
-        console.print(f"[red]Error:[/red] Corrupted playbook.json file: {e}")
+        tracker.error("init-playbook", "migration error")
+        console.print(f"[red]Error:[/red] Failed to migrate legacy playbook.json: {e}")
         console.print(
-            "[yellow]Suggestion: Rename or delete .claude/playbook.json and try again[/yellow]"
+            "[yellow]Suggestion: Delete corrupted .claude/playbook.json and run 'mapify init' again[/yellow]"
         )
         raise typer.Exit(1)
 

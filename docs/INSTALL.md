@@ -299,7 +299,7 @@ mapify playbook search "JWT authentication"
 mapify playbook sync
 ```
 
-The playbook is stored in `.claude/playbook.json` and grows as you use MAP commands.
+The playbook is stored in `.claude/playbook.db` and grows as you use MAP commands.
 
 ## MCP Server Setup
 
@@ -375,7 +375,7 @@ The MAP Framework includes an ACE-style playbook that learns from every task:
 
 - **Reflector agent**: Extracts lessons from successes and failures
 - **Curator agent**: Maintains structured knowledge base with delta updates
-- **Playbook storage**: `.claude/playbook.json` with 9 pattern categories:
+- **Playbook storage**: `.claude/playbook.db` with 9 pattern categories:
   - ARCHITECTURE_PATTERNS
   - IMPLEMENTATION_PATTERNS
   - SECURITY_PATTERNS
@@ -533,7 +533,7 @@ To remove MAP Framework:
 rm -rf .claude/agents/
 rm -rf .claude/commands/
 rm .claude/mcp_config.json
-rm .claude/playbook.json
+rm .claude/playbook.db
 rm -rf .claude/embeddings_cache/
 
 # Uninstall mapify CLI

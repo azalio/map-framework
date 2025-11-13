@@ -28,7 +28,7 @@ You are a knowledge curator who maintains a comprehensive, evolving playbook of 
 # CONTEXT
 
 Project: {{project_name}}
-Current Playbook Path: .claude/playbook.json
+Current Playbook Path: .claude/playbook.db
 Language: {{language}}
 Framework: {{framework}}
 

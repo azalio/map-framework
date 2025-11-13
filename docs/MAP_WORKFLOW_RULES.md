@@ -49,7 +49,7 @@
 
 **NEVER:**
 - ❌ "Apply Reflector insights to playbook yourself"
-- ❌ "Manually Edit .claude/playbook.json"
+- ❌ "Manually Edit .claude/playbook.db"
 - ❌ "Skip playbook update for small changes"
 
 **ALWAYS:**
@@ -99,7 +99,7 @@ Before completing any MAP workflow subtask, orchestrator must verify:
 MAP framework uses a dual memory architecture:
 
 ### Playbook (Project-Specific)
-- **Location**: `.claude/playbook.json`
+- **Location**: `.claude/playbook.db`
 - **Purpose**: Structured, categorized patterns for THIS project
 - **Format**: Bullets with code examples, tags, helpful/harmful counts
 - **Scope**: Single project
@@ -202,7 +202,7 @@ For regular tasks (simple bug fixes, documentation updates), orchestrator can wo
 ## Related Documentation
 
 - Agent Templates: `.claude/agents/reflector.md`, `.claude/agents/curator.md`
-- Playbook: `.claude/playbook.json`
+- Playbook: `.claude/playbook.db`
 - Cipher MCP: Check MCP server configuration for `mcp__cipher__*` tools
 - Investigation Findings: `docs/INCOMPLETE_PLAN_BEHAVIOR_FINDINGS.md` (example of lessons that should be in cipher)
 

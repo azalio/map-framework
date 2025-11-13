@@ -176,7 +176,7 @@
 
 #### ⏳ 1.3 Ограничение паттернов playbook
 - [ ] PlaybookManager.get_relevant_bullets() → top_k=5
-- [ ] Параметр в `.claude/playbook.json`
+- [ ] Параметр в `.claude/playbook.db`
 - [ ] Тесты и документация
 
 #### ⏳ 1.4 Оптимизация verbose выводов

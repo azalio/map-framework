@@ -573,7 +573,7 @@ def hybrid_search(query: str, top_k: int = 5):
 **Acceptance Criteria:**
 - ✅ Hybrid search returns more relevant patterns than pure semantic
 - ✅ Keyword filter reduces off-topic results
-- ✅ Weights configurable in `.claude/playbook.json`
+- ✅ Weights configurable in `.claude/playbook.db`
 
 ---
 

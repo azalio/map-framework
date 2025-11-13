@@ -65,7 +65,7 @@ mapify init .
 
 - Automatic project structure setup
 - Copies all 8 agents and 4 slash commands
-- Creates `.claude/playbook.json` with a starter structure
+- Creates `.claude/playbook.db` with a starter structure
 - Best choice for new projects
 
 ### 2. Clone Repository
@@ -155,7 +155,7 @@ Comprehensive technical documentation review for completeness and correctness.
 
 ### Playbook Structure
 
-Installation creates `.claude/playbook.json` with a starter structure:
+Installation creates `.claude/playbook.db` with a starter structure:
 
 **Metadata:**
 
@@ -234,7 +234,7 @@ After installation:
 
 3. **Review results:**
    - Check `.map/logs/workflow_*.log` for event tracking
-   - Open `.claude/playbook.json` for automatically extracted patterns
+   - Open `.claude/playbook.db` for automatically extracted patterns
 
 4. **Configure MCP servers:**
    - Connect cipher for cross-project knowledge

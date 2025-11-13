@@ -386,7 +386,7 @@
       "purpose": "Git ignore patterns for generated files, caches, user data",
       "content_summary": "67 lines covering Python artifacts, coverage files, user playbooks, MCP configs, verification files, docs submodules",
       "dependencies": {
-        "protects": [".coverage", "htmlcov/", "coverage.json", "mapify_cli_verification_*.json", ".claude/playbook.json"]
+        "protects": [".coverage", "htmlcov/", "coverage.json", "mapify_cli_verification_*.json", ".claude/playbook.db"]
       },
       "recommendation": "KEEP",
       "rationale": "Essential Git configuration",
