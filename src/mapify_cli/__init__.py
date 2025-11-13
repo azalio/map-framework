@@ -1863,10 +1863,10 @@ def init(
     project_name: Optional[str] = typer.Argument(
         None, help="Name for your new project directory (use '.' for current directory)"
     ),
-    mcp: Optional[str] = typer.Option(
-        None,
+    mcp: str = typer.Option(
+        "all",
         "--mcp",
-        help="MCP servers to enable: all, essential, docs, none, or comma-separated list",
+        help="MCP server installation (default: all). Options: all, essential, docs, none, or comma-separated list (e.g. cipher,context7)",
     ),
     no_git: bool = typer.Option(
         False, "--no-git", help="Skip git repository initialization"
@@ -1889,12 +1889,14 @@ def init(
     This command will:
     1. Check that required tools are installed
     2. Create MCP configuration files
-    3. Create MAP agents and commands
-    4. Initialize a git repository (optional)
+    3. Install MCP servers (defaults to all available servers)
+    4. Create MAP agents and commands
+    5. Initialize a git repository (optional)
 
     Examples:
-        mapify init my-project
-        mapify init my-project --mcp all
+        mapify init my-project              # Installs all MCP servers
+        mapify init my-project --mcp none   # Skip MCP installation
+        mapify init my-project --mcp essential
         mapify init my-project --mcp "cipher,context7"
         mapify init .
         mapify init . --force  # Force init in non-empty current directory
@@ -1993,29 +1995,14 @@ def init(
         selected_mcp_servers = ["context7", "deepwiki"]
     elif mcp == "none":
         selected_mcp_servers = []
-    elif mcp:
-        # Parse comma-separated list
-        selected_mcp_servers = [
-            s.strip() for s in mcp.split(",") if s.strip() in INDIVIDUAL_MCP_SERVERS
-        ]
     else:
-        # Interactive selection
-        mcp_choice = select_with_arrows(
-            MCP_SERVER_CHOICES, "Choose MCP configuration:", "essential"
-        )
-
-        if mcp_choice == "all":
-            selected_mcp_servers = list(INDIVIDUAL_MCP_SERVERS.keys())
-        elif mcp_choice == "essential":
-            selected_mcp_servers = ["cipher", "claude-reviewer", "sequential-thinking"]
-        elif mcp_choice == "docs":
-            selected_mcp_servers = ["context7", "deepwiki"]
-        elif mcp_choice == "custom":
-            selected_mcp_servers = select_multiple_with_arrows(
-                INDIVIDUAL_MCP_SERVERS, "Select MCP servers:"
-            )
-        else:
-            selected_mcp_servers = []
+        # Parse comma-separated list
+        requested = [s.strip() for s in mcp.split(",") if s.strip()]
+        invalid = [s for s in requested if s not in INDIVIDUAL_MCP_SERVERS]
+        if invalid:
+            click.echo(f"Warning: Unrecognized MCP servers ignored: {', '.join(invalid)}", err=True)
+            click.echo(f"Valid servers: {', '.join(INDIVIDUAL_MCP_SERVERS.keys())}", err=True)
+        selected_mcp_servers = [s for s in requested if s in INDIVIDUAL_MCP_SERVERS]
 
     tracker.complete("mcp-select", f"{len(selected_mcp_servers)} servers")
 

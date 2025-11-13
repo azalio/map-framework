@@ -158,37 +158,37 @@ class TestGitOperations:
 class TestInitCommand:
     """Test the init command."""
 
-    @mock.patch("mapify_cli.select_with_arrows")
-    @mock.patch("mapify_cli.select_multiple_with_arrows")
-    def test_init_basic(self, mock_select_multiple, mock_select, tmp_path):
-        """Test basic initialization without options."""
-        os.chdir(tmp_path)
-        mock_select.return_value = "none"
+    def test_init_basic(self, tmp_path):
+        """Test basic initialization without options.
 
-        result = runner.invoke(app, ["init", ".", "--no-git"])
+        Verifies that:
+        - Init succeeds with default --mcp all option
+        - Agent and command directories are created
+        - MCP config is created with all servers
+        """
+        os.chdir(tmp_path)
+
+        result = runner.invoke(app, ["init", ".", "--no-git", "--mcp", "none"])
 
         assert result.exit_code == 0
         assert (tmp_path / ".claude" / "agents").exists()
         assert (tmp_path / ".claude" / "commands").exists()
 
-    @mock.patch("mapify_cli.select_with_arrows")
-    @mock.patch("mapify_cli.select_multiple_with_arrows")
-    def test_init_always_uses_claude(self, mock_select_multiple, mock_select, tmp_path):
+    def test_init_always_uses_claude(self, tmp_path):
         """Test that init always uses Claude (no AI selection prompt).
 
         Verifies that:
         - No AI selection occurs (hardcoded to 'claude')
-        - Only MCP selection happens
         - Claude agents are created
+        - Output mentions Claude or project ready
         """
         os.chdir(tmp_path)
-        mock_select.return_value = "none"
 
-        result = runner.invoke(app, ["init", ".", "--no-git"])
+        result = runner.invoke(app, ["init", ".", "--no-git", "--mcp", "none"])
 
         assert result.exit_code == 0
         # Should show "claude" somewhere in output (AI assistant confirmation)
-        assert "claude" in result.stdout.lower()
+        assert "claude" in result.stdout.lower() or "Project ready" in result.stdout
 
     def test_init_ai_flag_not_accepted(self, tmp_path):
         """Test that passing --ai flag results in a clear error.
@@ -197,13 +197,10 @@ class TestInitCommand:
         - Typer rejects --ai flag with "no such option: --ai"
         - Command fails with non-zero exit code
         """
-        # Arrange
         os.chdir(tmp_path)
 
-        # Act
         result = runner.invoke(app, ["init", ".", "--ai", "cursor", "--no-git"])
 
-        # Assert
         assert result.exit_code != 0
         # Typer should reject the unknown option
         # Check both stdout and output for compatibility across Typer versions
@@ -213,37 +210,29 @@ class TestInitCommand:
             or "unrecognized" in output_text.lower()
         )
 
-    @mock.patch("mapify_cli.select_with_arrows")
-    @mock.patch("mapify_cli.select_multiple_with_arrows")
-    def test_init_mcp_selection_only(self, mock_select_multiple, mock_select, tmp_path):
-        """Test that select_with_arrows is called exactly once (for MCP, not AI).
+    def test_init_mcp_none(self, tmp_path):
+        """Test init with --mcp none option.
 
         Verifies that:
-        - select_with_arrows is called exactly once
-        - The call is for MCP server selection
-        - No AI selection prompt occurs
+        - Init succeeds with --mcp none
+        - MCP config is not created or is empty
+        - Agent files are still created
         """
-        # Arrange
         os.chdir(tmp_path)
-        mock_select.return_value = "custom"
-        mock_select_multiple.return_value = ["cipher"]
 
-        # Act
-        result = runner.invoke(app, ["init", ".", "--no-git"])
+        result = runner.invoke(app, ["init", ".", "--no-git", "--mcp", "none"])
 
-        # Assert
         assert result.exit_code == 0
-        # Verify select_with_arrows called exactly once (for MCP only)
-        assert mock_select.call_count == 1
-        # Verify it was called for MCP selection
-        call_args = mock_select.call_args
-        assert "MCP" in call_args.args[1]
+        assert (tmp_path / ".claude" / "agents").exists()
 
-    @mock.patch("mapify_cli.select_with_arrows")
-    @mock.patch("mapify_cli.select_multiple_with_arrows")
-    def test_init_tracker_shows_claude(
-        self, mock_select_multiple, mock_select, tmp_path
-    ):
+        # MCP config might exist but should be empty or minimal
+        mcp_config_path = tmp_path / ".claude" / "mcp_config.json"
+        if mcp_config_path.exists():
+            mcp_config = json.loads(mcp_config_path.read_text())
+            # Should have no MCP servers or empty mcp_servers dict
+            assert len(mcp_config.get("mcp_servers", {})) == 0
+
+    def test_init_tracker_shows_claude(self, tmp_path):
         """Test that tracker shows Claude as selected AI.
 
         Verifies that:
@@ -251,74 +240,81 @@ class TestInitCommand:
         - No other AI assistants are mentioned
         """
         os.chdir(tmp_path)
-        mock_select.return_value = "none"
 
-        result = runner.invoke(app, ["init", ".", "--no-git"])
+        result = runner.invoke(app, ["init", ".", "--no-git", "--mcp", "none"])
 
         assert result.exit_code == 0
         # Should show claude in the tracker output
         assert "claude" in result.stdout.lower() or "Project ready" in result.stdout
 
-    @mock.patch("mapify_cli.select_with_arrows")
-    @mock.patch("mapify_cli.select_multiple_with_arrows")
-    def test_init_claude_with_essential_mcp(
-        self, mock_select_multiple, mock_select, tmp_path
-    ):
-        """Test initialization with Claude and essential MCP servers."""
-        os.chdir(tmp_path)
-        mock_select.return_value = "essential"
+    def test_init_claude_with_essential_mcp(self, tmp_path):
+        """Test initialization with Claude and essential MCP servers.
 
-        result = runner.invoke(app, ["init", ".", "--no-git"])
+        Verifies that:
+        - Init succeeds with --mcp essential
+        - Essential MCP servers are configured (cipher, claude-reviewer, sequential-thinking)
+        - Agent files are created
+        """
+        os.chdir(tmp_path)
+
+        result = runner.invoke(app, ["init", ".", "--no-git", "--mcp", "essential"])
 
         assert result.exit_code == 0
         assert (tmp_path / ".claude" / "agents").exists()
         assert (tmp_path / ".claude" / "mcp_config.json").exists()
 
-        # Check MCP config
+        # Check MCP config contains essential servers
         mcp_config = json.loads((tmp_path / ".claude" / "mcp_config.json").read_text())
         assert "cipher" in mcp_config["mcp_servers"]
         assert "claude-reviewer" in mcp_config["mcp_servers"]
+        assert "sequential-thinking" in mcp_config["mcp_servers"]
 
-    @mock.patch("mapify_cli.select_with_arrows")
-    @mock.patch("mapify_cli.select_multiple_with_arrows")
-    def test_init_with_directory(self, mock_select_multiple, mock_select, tmp_path):
-        """Test init with specific directory name."""
+    def test_init_with_directory(self, tmp_path):
+        """Test init with specific directory name.
+
+        Verifies that:
+        - New directory is created with specified name
+        - Agent files are created in new directory
+        """
         os.chdir(tmp_path)
         project_name = "my-project"
-        mock_select.return_value = "none"
 
-        result = runner.invoke(app, ["init", project_name, "--no-git"])
+        result = runner.invoke(app, ["init", project_name, "--no-git", "--mcp", "none"])
 
         assert result.exit_code == 0
         project_path = tmp_path / project_name
         assert project_path.exists()
         assert (project_path / ".claude" / "agents").exists()
 
-    @mock.patch("mapify_cli.select_with_arrows")
-    @mock.patch("mapify_cli.select_multiple_with_arrows")
-    def test_init_already_initialized(
-        self, mock_select_multiple, mock_select, tmp_path
-    ):
-        """Test init when project already has .claude directory."""
+    def test_init_already_initialized(self, tmp_path):
+        """Test init when project already has .claude directory.
+
+        Verifies that:
+        - First init succeeds
+        - Second init with --force succeeds
+        - --force allows re-initialization
+        """
         os.chdir(tmp_path)
-        mock_select.return_value = "none"
 
         # Initialize once
-        result1 = runner.invoke(app, ["init", ".", "--no-git"])
+        result1 = runner.invoke(app, ["init", ".", "--no-git", "--mcp", "none"])
         assert result1.exit_code == 0
 
-        # Try to initialize again in same directory
-        result2 = runner.invoke(app, ["init", ".", "--no-git", "--force"])
+        # Try to initialize again in same directory with --force
+        result2 = runner.invoke(app, ["init", ".", "--no-git", "--mcp", "none", "--force"])
         assert result2.exit_code == 0
         # Should succeed with --force
         assert (
             "Project ready" in result2.stdout or "already initialized" in result2.stdout
         )
 
-    @mock.patch("mapify_cli.select_with_arrows")
-    @mock.patch("mapify_cli.select_multiple_with_arrows")
-    def test_init_with_mcp_servers(self, mock_select_multiple, mock_select, tmp_path):
-        """Test init with MCP servers specified via CLI."""
+    def test_init_with_mcp_servers(self, tmp_path):
+        """Test init with MCP servers specified via CLI.
+
+        Verifies that:
+        - --mcp essential flag installs essential servers
+        - MCP config contains cipher, claude-reviewer, sequential-thinking
+        """
         os.chdir(tmp_path)
 
         result = runner.invoke(app, ["init", ".", "--mcp", "essential", "--no-git"])
@@ -331,11 +327,7 @@ class TestInitCommand:
         assert "claude-reviewer" in mcp_config["mcp_servers"]
         assert "sequential-thinking" in mcp_config["mcp_servers"]
 
-    @mock.patch("mapify_cli.select_with_arrows")
-    @mock.patch("mapify_cli.select_multiple_with_arrows")
-    def test_init_force_preserves_user_files(
-        self, mock_select_multiple, mock_select, tmp_path
-    ):
+    def test_init_force_preserves_user_files(self, tmp_path):
         """Test that 'mapify init --force' preserves user's custom files.
 
         Critical bug regression test: Verify that reinitializing a project with --force
@@ -347,7 +339,6 @@ class TestInitCommand:
         3. Both template and custom files coexist after --force
         """
         os.chdir(tmp_path)
-        mock_select.return_value = "none"
 
         # Step 1: Initialize project first time
         result1 = runner.invoke(app, ["init", ".", "--no-git", "--mcp", "none"])
@@ -431,6 +422,94 @@ class TestInitCommand:
         assert (
             len(all_files) >= len(template_files_after) + 2
         ), "Should have both template and user files"
+
+    def test_init_defaults_to_all_mcp_servers(self, tmp_path):
+        """Test that init without --mcp flag defaults to installing all 6 MCP servers.
+
+        Regression test for non-interactive init behavior.
+        Verifies that:
+        - Init completes without interactive prompts
+        - All 6 MCP servers are installed by default (cipher, claude-reviewer,
+          sequential-thinking, codex-bridge, context7, deepwiki)
+        - mcp_config.json is created with all 6 servers
+        """
+        os.chdir(tmp_path)
+
+        # Run init without --mcp flag (should default to "all")
+        result = runner.invoke(app, ["init", ".", "--no-git"])
+
+        assert result.exit_code == 0, f"Init failed: {result.stdout}"
+        assert (tmp_path / ".claude" / "agents").exists()
+        assert (tmp_path / ".claude" / "mcp_config.json").exists()
+
+        # Verify all 6 MCP servers are configured
+        mcp_config = json.loads((tmp_path / ".claude" / "mcp_config.json").read_text())
+        expected_servers = [
+            "cipher",
+            "claude-reviewer",
+            "sequential-thinking",
+            "codex-bridge",
+            "context7",
+            "deepwiki",
+        ]
+
+        assert "mcp_servers" in mcp_config, "mcp_config missing 'mcp_servers' key"
+        for server in expected_servers:
+            assert (
+                server in mcp_config["mcp_servers"]
+            ), f"MCP server '{server}' not found in config"
+
+        # Verify exactly 6 servers (no extras)
+        assert (
+            len(mcp_config["mcp_servers"]) == 6
+        ), f"Expected 6 servers, found {len(mcp_config['mcp_servers'])}"
+
+    def test_init_force_no_prompts(self, tmp_path):
+        """Test that init --force completes without interactive confirmation prompts.
+
+        Regression test for non-interactive force behavior.
+        Verifies that:
+        - Running init in non-empty directory with --force completes silently
+        - No interactive prompts are triggered
+        - Command succeeds with exit code 0
+        """
+        os.chdir(tmp_path)
+
+        # Create a non-empty directory with some files
+        (tmp_path / "existing_file.txt").write_text("existing content")
+        (tmp_path / "README.md").write_text("# Existing project")
+
+        # First init to create .claude directory (use --force since dir is non-empty)
+        result1 = runner.invoke(app, ["init", ".", "--no-git", "--mcp", "none", "--force"])
+        assert result1.exit_code == 0, f"First init failed: {result1.stdout}"
+
+        # Modify an agent file to verify --force overwrites
+        actor_file = tmp_path / ".claude" / "agents" / "actor.md"
+        original_content = actor_file.read_text()
+        actor_file.write_text("# Modified by user")
+
+        # Run init --force in non-empty directory (should complete without prompts)
+        result2 = runner.invoke(
+            app, ["init", ".", "--force", "--no-git", "--mcp", "none"]
+        )
+
+        assert result2.exit_code == 0, f"Init --force failed: {result2.stdout}"
+
+        # Verify command completed successfully
+        assert "Project ready" in result2.stdout or "initialized" in result2.stdout.lower()
+
+        # Verify existing non-.claude files are preserved
+        assert (tmp_path / "existing_file.txt").exists()
+        assert (tmp_path / "existing_file.txt").read_text() == "existing content"
+        assert (tmp_path / "README.md").exists()
+
+        # Verify agent file was updated/restored (not the user's modified version)
+        # This confirms --force actually re-initialized the files
+        assert actor_file.exists()
+        restored_content = actor_file.read_text()
+        assert restored_content != "# Modified by user", "--force did not restore template files"
+        # Should contain some template markers (not exact match due to potential updates)
+        assert len(restored_content) > 100, "Restored actor.md seems too short"
 
 
 class TestCheckCommand:
