@@ -2070,7 +2070,7 @@ def init(
         tracker.error("init-playbook", "invalid JSON")
         console.print(f"[red]Error:[/red] Corrupted playbook.json file: {e}")
         console.print(
-            "[yellow]Suggestion: Rename or delete .claude/playbook.json and try again[/yellow]"
+            "[yellow]Suggestion: Rename or delete .claude/playbook.db and try again[/yellow]"
         )
         raise typer.Exit(1)
 

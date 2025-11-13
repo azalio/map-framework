@@ -7,7 +7,7 @@
 
 ## Executive Summary
 
-This specification defines a query API for `.claude/playbook.json` that enables efficient retrieval of relevant knowledge bullets without loading the entire file into memory. **This revision replaces the JSON-based architecture with SQLite** to address critical issues identified in Monitor review (iteration 1).
+This specification defines a query API for `.claude/playbook.db` that enables efficient retrieval of relevant knowledge bullets without loading the entire file into memory. **This revision replaces the JSON-based architecture with SQLite** to address critical issues identified in Monitor review (iteration 1).
 
 **Key Changes from v2.0 → v2.1:**
 - ✅ Fixed schema idempotency: All `CREATE TABLE` now use `IF NOT EXISTS`
@@ -436,7 +436,7 @@ During migration (first 8-12 weeks):
 ```python
 class PlaybookManager:
     def __init__(self, playbook_path: str):
-        self.json_path = playbook_path  # .claude/playbook.json
+        self.json_path = playbook_path  # .claude/playbook.db
         self.db_path = playbook_path.replace('.json', '.db')  # .claude/playbook.db
 
         # Migration check
@@ -1105,7 +1105,7 @@ def benchmark_concurrent_queries():
 **Scenario 1: Initial Migration**
 ```bash
 # Start with existing playbook.json (270KB)
-ls -lh .claude/playbook.json
+ls -lh .claude/playbook.db
 
 # Run mapify (should auto-migrate)
 mapify playbook search "JWT authentication"
@@ -1114,7 +1114,7 @@ mapify playbook search "JWT authentication"
 ls -lh .claude/playbook.db
 
 # Verify backup created
-ls -lh .claude/playbook.json.backup.*
+ls -lh .claude/playbook.db.backup.*
 
 # Query performance
 time mapify playbook search "database optimization"  # Should be <200ms
@@ -1123,14 +1123,14 @@ time mapify playbook search "database optimization"  # Should be <200ms
 **Scenario 2: JSON Export**
 ```bash
 # Export SQLite back to JSON (for git commit)
-mapify playbook export --output .claude/playbook.json
+mapify playbook export --output .claude/playbook.db
 
 # Verify JSON matches original structure
-jq '.metadata' .claude/playbook.json
-jq '.sections | keys' .claude/playbook.json
+jq '.metadata' .claude/playbook.db
+jq '.sections | keys' .claude/playbook.db
 
 # Diff with backup (should be minimal, only last_updated)
-diff .claude/playbook.json .claude/playbook.json.backup.*
+diff .claude/playbook.db .claude/playbook.db.backup.*
 ```
 
 **Scenario 3: Concurrent Access**

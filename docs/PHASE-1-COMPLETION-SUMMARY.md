@@ -173,7 +173,7 @@ grep '"event_type": "error"' .map/logs/workflow_feat_auth_123.log
 
 **Change:** Configure PlaybookManager to return only top-5 most relevant patterns per query.
 
-**Configuration File:** `.claude/playbook.json` (line 10)
+**Configuration File:** `.claude/playbook.db` (line 10)
 
 ```json
 {
@@ -267,7 +267,7 @@ grep '"event_type": "error"' .map/logs/workflow_feat_auth_123.log
 **Symptom:** Actor receives 10+ patterns instead of top-5
 
 **Solutions:**
-1. Check config: `jq '.metadata.top_k' .claude/playbook.json`
+1. Check config: `jq '.metadata.top_k' .claude/playbook.db`
 2. Should be 5, update if needed
 
 ### Issue 5: Progress Markers Not Updating
@@ -354,7 +354,7 @@ Users on versions before 2025-10-18 (pre-Phase-1).
 
 Check your version:
 ```bash
-grep '"version"' .claude/playbook.json
+grep '"version"' .claude/playbook.db
 ```
 
 ### Migration Steps
@@ -371,10 +371,10 @@ ls -l src/mapify_cli/workflow_logger.py     # Should exist (246 lines)
 
 ```bash
 # Backup existing playbook
-cp .claude/playbook.json .claude/playbook.json.backup
+cp .claude/playbook.db .claude/playbook.db.backup
 
 # Update metadata (add top_k if missing)
-jq '.metadata.top_k = 5' .claude/playbook.json > tmp.json && mv tmp.json .claude/playbook.json
+jq '.metadata.top_k = 5' .claude/playbook.db > tmp.json && mv tmp.json .claude/playbook.db
 ```
 
 #### Step 3: Create .map Directory Structure

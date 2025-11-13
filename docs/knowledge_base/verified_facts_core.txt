@@ -111,8 +111,8 @@
 ## ACE PLAYBOOK
 
 [✓ VERIFIED]
-**Fact:** Playbook stored in .claude/playbook.json with 9 pattern categories
-**Verification:** cat .claude/playbook.json | python -c ... → confirmed structure
+**Fact:** Playbook stored in .claude/playbook.db with 9 pattern categories
+**Verification:** cat .claude/playbook.db | python -c ... → confirmed structure
 **Categories Verified:**
 - ARCHITECTURE_PATTERNS
 - IMPLEMENTATION_PATTERNS
@@ -126,7 +126,7 @@
 
 [✓ VERIFIED]
 **Fact:** Playbook has metadata.top_k = 5 (limits pattern retrieval)
-**Verification:** grep "top_k" .claude/playbook.json → found "top_k": 5
+**Verification:** grep "top_k" .claude/playbook.db → found "top_k": 5
 **Purpose:** Reduces context distraction by returning only 5 most relevant patterns
 
 [✓ VERIFIED]

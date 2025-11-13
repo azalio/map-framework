@@ -80,7 +80,7 @@ This workflow adds Reflector + Curator for continuous learning from every subtas
 
 ```
 # Load comprehensive playbook context
-playbook = LOAD_PLAYBOOK(.claude/playbook.json)
+playbook = LOAD_PLAYBOOK(.claude/playbook.db)
 
 DECOMPOSE(goal)
 
@@ -148,7 +148,7 @@ SYNC_TO_CIPHER(playbook, helpful_count_threshold=5)
 
 ### Key Differences in ACE Workflow
 
-1. **Playbook Loading**: Load `.claude/playbook.json` at workflow start
+1. **Playbook Loading**: Load `.claude/playbook.db` at workflow start
 2. **Context Retrieval**: Before each Actor invocation, get relevant bullets
 3. **Continuous Learning**: After EVERY attempt (success or failure), run Reflector + Curator
 4. **Incremental Updates**: Apply delta operations to playbook, not full rewrites
@@ -168,14 +168,14 @@ SYNC_TO_CIPHER(playbook, helpful_count_threshold=5)
 
 - **REFLECT**: "Use the reflector subagent to extract structured lessons from this attempt. Provide: actor_code, monitor_results, predictor_analysis (if available), evaluator_scores (if available), execution_outcome. Output strict JSON with: reasoning, error_identification, root_cause_analysis, correct_approach, key_insight, bullet_updates, suggested_new_bullets."
 
-- **CURATE**: "Use the curator subagent to integrate Reflector insights into the playbook. Provide: current_playbook (from .claude/playbook.json), reflector_insights (JSON from Reflector). Output strict JSON with: reasoning, operations (ADD/UPDATE/DEPRECATE), deduplication_check, sync_to_cipher."
+- **CURATE**: "Use the curator subagent to integrate Reflector insights into the playbook. Provide: current_playbook (from .claude/playbook.db), reflector_insights (JSON from Reflector). Output strict JSON with: reasoning, operations (ADD/UPDATE/DEPRECATE), deduplication_check, sync_to_cipher."
 
 ### Playbook Management
 
 - **LOAD_PLAYBOOK**: Use Python PlaybookManager:
   ```python
   from mapify_cli.playbook_manager import PlaybookManager
-  manager = PlaybookManager(".claude/playbook.json")
+  manager = PlaybookManager(".claude/playbook.db")
   playbook = manager.playbook
   ```
 

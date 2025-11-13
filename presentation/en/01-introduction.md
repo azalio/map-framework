@@ -44,7 +44,7 @@ MAP uses **6 MCP servers** to extend capabilities:
 
 **Structure:**
 
-- Stored at [.claude/playbook.json](https://github.com/azalio/map-framework/blob/main/.claude/playbook.json)
+- Stored at [.claude/playbook.db](https://github.com/azalio/map-framework/blob/main/.claude/playbook.db)
 - **10 categories of patterns**: architecture, implementation, security, performance, errors, testing, code quality, tool usage, debugging, CLI tool patterns
 - **top_k = 5**: returns only the 5 most relevant patterns to reduce cognitive load
 - **Automatic learning**: Reflector extracts patterns from every task, Curator incrementally updates the playbook

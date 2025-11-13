@@ -4,7 +4,7 @@
 
 ### ❌ Mistake #1: Looking for playbook.json
 
-**Wrong mental model**: "I need to read .claude/playbook.json"
+**Wrong mental model**: "I need to read .claude/playbook.db"
 
 **Reality**: Playbook migrated to SQLite in 2024. The file `.claude/playbook.json` no longer exists.
 
@@ -93,7 +93,7 @@ mcp__cipher__cipher_memory_search(
 
 | Task | Correct Tool | Wrong Approach |
 |------|-------------|----------------|
-| **Read playbook** | `mapify playbook query` | Reading .claude/playbook.json |
+| **Read playbook** | `mapify playbook query` | Reading .claude/playbook.db |
 | **Search patterns** | `mapify playbook query` + `cipher_memory_search` (MCP) | Using `--mode hybrid` flag |
 | **Update playbook** | Curator agent → `mapify playbook apply-delta` | Direct sqlite3 commands |
 | **Add new bullet** | Curator agent → ADD operation | Manually editing JSON/DB |

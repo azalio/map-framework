@@ -1959,7 +1959,7 @@ All failures are non-blocking - hook returns `{"continue": true}` and logs error
 
 **Configuration:**
 
-File: `.claude/playbook.json`
+File: `.claude/playbook.db`
 ```json
 {
   "metadata": {

@@ -61,7 +61,7 @@ MAP предоставляет **4 специализированных workflow
 **ЗАПРЕЩЕНО:**
 
 - ❌ "Применить Reflector insights к playbook самостоятельно"
-- ❌ "Вручную редактировать `.claude/playbook.json`"
+- ❌ "Вручную редактировать `.claude/playbook.db`"
 - ❌ "Пропустить обновление playbook для мелких изменений"
 
 **ОБЯЗАТЕЛЬНО:**
@@ -95,7 +95,7 @@ MAP использует **ДВЕ системы хранения знаний**
 
 ### 1. Playbook (Проектная Memory)
 
-- **Локация:** `.claude/playbook.json`
+- **Локация:** `.claude/playbook.db`
 - **Назначение:** Структурированные, категоризованные паттерны для ЭТОГО проекта
 - **Формат:** Bullets с примерами кода, тегами, helpful/harmful counts
 - **Scope:** Один проект
@@ -245,7 +245,7 @@ MAP использует **6 core MCP tools** для расширения воз
 
 ### Top-K Playbook Filtering
 
-- **Конфигурация:** `.claude/playbook.json` → `metadata.top_k = 5`
+- **Конфигурация:** `.claude/playbook.db` → `metadata.top_k = 5`
 - **Механизм:** При каждом subtask Actor получает только 5 наиболее релевантных bullets
 - **Benefit:** С 25 bullets в базе, top-5 фильтрация предотвращает context distraction
 

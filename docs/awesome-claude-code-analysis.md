@@ -330,7 +330,7 @@ name: fix-github-issue
 allowed-tools:
   - Bash(git status)
   - Bash(gh issue view:*)
-  - Read(.claude/playbook.json)
+  - Read(.claude/playbook.db)
   - mapify(*)
 ---
 ```
