@@ -1105,7 +1105,7 @@ def benchmark_concurrent_queries():
 **Scenario 1: Initial Migration**
 ```bash
 # Start with existing playbook.json (270KB)
-ls -lh .claude/playbook.db
+ls -lh .claude/playbook.json
 
 # Run mapify (should auto-migrate)
 mapify playbook search "JWT authentication"
@@ -1113,8 +1113,8 @@ mapify playbook search "JWT authentication"
 # Verify SQLite created
 ls -lh .claude/playbook.db
 
-# Verify backup created
-ls -lh .claude/playbook.db.backup.*
+# Verify JSON backup created (migration backs up the JSON file)
+ls -lh .claude/playbook.json.backup.*
 
 # Query performance
 time mapify playbook search "database optimization"  # Should be <200ms
@@ -1123,14 +1123,14 @@ time mapify playbook search "database optimization"  # Should be <200ms
 **Scenario 2: JSON Export**
 ```bash
 # Export SQLite back to JSON (for git commit)
-mapify playbook export --output .claude/playbook.db
+mapify playbook export --output .claude/playbook.json
 
 # Verify JSON matches original structure
-jq '.metadata' .claude/playbook.db
-jq '.sections | keys' .claude/playbook.db
+jq '.metadata' .claude/playbook.json
+jq '.sections | keys' .claude/playbook.json
 
-# Diff with backup (should be minimal, only last_updated)
-diff .claude/playbook.db .claude/playbook.db.backup.*
+# Diff with JSON backup (should be minimal, only last_updated)
+diff .claude/playbook.json .claude/playbook.json.backup.*
 ```
 
 **Scenario 3: Concurrent Access**

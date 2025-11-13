@@ -112,7 +112,7 @@
 
 [✓ VERIFIED]
 **Fact:** Playbook stored in .claude/playbook.db with 9 pattern categories
-**Verification:** cat .claude/playbook.db | python -c ... → confirmed structure
+**Verification:** mapify playbook stats → confirmed structure
 **Categories Verified:**
 - ARCHITECTURE_PATTERNS
 - IMPLEMENTATION_PATTERNS
@@ -126,7 +126,7 @@
 
 [✓ VERIFIED]
 **Fact:** Playbook has metadata.top_k = 5 (limits pattern retrieval)
-**Verification:** grep "top_k" .claude/playbook.db → found "top_k": 5
+**Verification:** mapify playbook stats | grep "top_k" → found "top_k": 5
 **Purpose:** Reduces context distraction by returning only 5 most relevant patterns
 
 [✓ VERIFIED]

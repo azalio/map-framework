@@ -436,7 +436,7 @@ python -m mapify_cli.workflow_logger log workflow_end "$TASK_ID" "success"
 
 [✓ VERIFIED]
 **Fact:** PlaybookManager limits to top 5 most relevant bullets per query
-**Verification:** grep "top_k" .claude/playbook.db
+**Verification:** mapify playbook stats | grep "top_k"
 **Output:** Line 10: "top_k": 5
 **Implementation:** Completed per CONTEXT-ENGINEERING-IMPROVEMENTS.md Phase 1.3
 **Benefit:** With 25 total bullets, Actor receives only 5 most relevant → prevents context distraction
@@ -459,7 +459,7 @@ python -m mapify_cli.workflow_logger log workflow_end "$TASK_ID" "success"
 
 [✓ VERIFIED]
 **Fact:** .claude/playbook.db contains metadata.top_k configuration
-**Verification:** grep -B2 -A2 "top_k" .claude/playbook.db
+**Verification:** mapify playbook stats
 **Output:** Shows top_k: 5 in metadata section (line 10)
 **Configurability:** Can be adjusted per project needs
 

@@ -2,7 +2,7 @@
 Test that recitation_manager prefers playbook.db over playbook.json.
 
 This test verifies the fix for the issue where map-efficient was trying
-to read .claude/playbook.db even when .claude/playbook.db already existed.
+to read .claude/playbook.json even when .claude/playbook.db already existed.
 """
 
 from pathlib import Path
