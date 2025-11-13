@@ -79,14 +79,14 @@ FOR each subtask in plan:
 This workflow adds Reflector + Curator for continuous learning from every subtask.
 
 ```
-# Load comprehensive playbook context
-playbook = LOAD_PLAYBOOK(.claude/playbook.db)
+# Load comprehensive playbook context via CLI
+# Use: mapify playbook query "<subtask>" --limit 10
 
 DECOMPOSE(goal)
 
 FOR each subtask in plan:
-  # Retrieve relevant patterns for this subtask
-  relevant_bullets = GET_RELEVANT_BULLETS(playbook, subtask, limit=10)
+  # Retrieve relevant patterns for this subtask via CLI
+  relevant_bullets = EXEC("mapify playbook query '<subtask_description>' --limit 10")
 
   REPEAT up to N iterations:
     # Actor uses playbook context
@@ -183,24 +183,28 @@ Task(
 
 ### Playbook Management
 
-- **LOAD_PLAYBOOK**: Use Python PlaybookManager:
-  ```python
-  from mapify_cli.playbook_manager import PlaybookManager
-  manager = PlaybookManager(".claude/playbook.db")
-  playbook = manager.playbook
+- **QUERY_PLAYBOOK**: Use mapify CLI for pattern retrieval:
+  ```bash
+  # Query playbook using FTS5 full-text search
+  mapify playbook query "JWT authentication" --limit 10
+
+  # Search with semantic similarity
+  mapify playbook search "async error handling"
+
+  # Show playbook statistics
+  mapify playbook stats
   ```
 
-- **GET_RELEVANT_BULLETS**: Use PlaybookManager.get_relevant_bullets():
-  ```python
-  bullets = manager.get_relevant_bullets(
-      query=subtask_description,
-      limit=10,
-      min_quality_score=0
-  )
-  playbook_context = manager.export_for_actor(bullets)
+- **APPLY_DELTA**: Use mapify CLI for updates:
+  ```bash
+  # Apply delta operations from Curator
+  mapify playbook apply-delta curator_operations.json
+
+  # Or pipe JSON directly
+  echo '{"operations":[{"type":"ADD",...}]}' | mapify playbook apply-delta
   ```
 
-- **APPLY_DELTA**: Use PlaybookManager.apply_delta():
+- **PYTHON_API** (Advanced): For programmatic access:
   ```python
   summary = manager.apply_delta(curator_operations)
   # summary contains: {added, updated, deprecated, deduplicated, errors}
