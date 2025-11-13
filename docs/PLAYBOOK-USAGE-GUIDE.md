@@ -4,7 +4,7 @@
 
 ### ❌ Mistake #1: Looking for playbook.json
 
-**Wrong mental model**: "I need to read .claude/playbook.db"
+**Wrong mental model**: "I need to read .claude/playbook.json"
 
 **Reality**: Playbook migrated to SQLite in 2024. The file `.claude/playbook.json` no longer exists.
 
