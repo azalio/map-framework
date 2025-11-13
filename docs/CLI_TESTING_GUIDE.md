@@ -22,12 +22,14 @@ This guide documents best practices for developing and testing CLI tools discove
 **Scenario**: Implementing `mapify playbook sync` command that outputs JSON.
 
 **What Happened**:
+
 1. ✅ Unit tests passed with CliRunner
 2. ❌ CI failed: `TypeError: CliRunner.__init__() got an unexpected keyword argument 'mix_stderr'`
 3. ❌ Manual test revealed: JSON output polluted with diagnostic messages
 4. ❌ User command `mapify playbook sync | jq` failed due to mixed stdout/stderr
 
 **Root Causes**:
+
 - SemanticSearchEngine printed "Loading model..." to stdout during initialization
 - PlaybookManager printed "✓ Semantic search enabled" to stdout
 - Used `CliRunner(mix_stderr=False)` parameter not available in older Click versions
@@ -191,6 +193,7 @@ def create_cli_runner():
 ### Rule 1: Always Test Actual CLI Execution
 
 **Why**: CliRunner mocks environment. Real execution catches:
+
 - Import issues
 - Entry point configuration
 - Environment variable handling
@@ -472,6 +475,7 @@ mapify playbook sync 2>&1 >/dev/null  # Should show diagnostics
 5. **JSON Must Be Clean** - Test with `| jq` to verify
 
 **When in Doubt**:
+
 - Run the actual installed command
 - Pipe through `jq` to verify clean output
 - Test in isolated environment
