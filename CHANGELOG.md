@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Non-Interactive Init**: `mapify init` now defaults to non-interactive mode, installing all MCP servers without prompts for better CI/CD compatibility (1ad6dd6)
+- **Agent MCP Integration**: Integrated 18 Cipher MCP tools across all 8 MAP agents (task-decomposer, actor, monitor, predictor, evaluator, reflector, curator, documentation-reviewer) for enhanced knowledge management and reasoning capabilities (aaded8a)
+- **Release Validation**: Added CHANGELOG completeness validation to Gate 12 in release workflow, preventing releases with incomplete documentation (6541511)
+
+### Changed
+- **Playbook Migration**: Migrated all playbook.json references to playbook.db SQLite format throughout codebase, agents, documentation, and configuration (0332cdf)
+- **Agent Optimization**: Optimized actor.md template for better performance and fixed variable inconsistency (2bc4b52)
+- **Cleanup**: Removed unused files to reduce repository size (09a5b4d)
+
+### Fixed
+- **Pre-Release Validation**: Fixed undefined click references in init command, removed unused test variables, and resolved test isolation issue (f5cdb17)
+- **Documentation**: Corrected commands in docs to use playbook.json after export (not playbook.db) (0c9fb38)
+- **Documentation**: Fixed swapped filenames in playbook mistake example (5bfca90)
+- **Playbook Error**: Corrected error message for playbook.json migration failure (4834574)
+- **Agent Quality**: Addressed Copilot reviewer feedback improving code maintainability (c5a7dcc)
+
+### Documentation
+- **Playbook Access**: Updated documentation to use mapify CLI commands instead of Python API for playbook operations (ac56459)
+
 ## [1.4.0] - 2025-11-11
 
 ### Changed
