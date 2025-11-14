@@ -2000,8 +2000,10 @@ def init(
         requested = [s.strip() for s in mcp.split(",") if s.strip()]
         invalid = [s for s in requested if s not in INDIVIDUAL_MCP_SERVERS]
         if invalid:
-            click.echo(f"Warning: Unrecognized MCP servers ignored: {', '.join(invalid)}", err=True)
-            click.echo(f"Valid servers: {', '.join(INDIVIDUAL_MCP_SERVERS.keys())}", err=True)
+            console.print(
+                f"[yellow]Warning:[/yellow] Unrecognized MCP servers ignored: {', '.join(invalid)}"
+            )
+            console.print(f"Valid servers: {', '.join(INDIVIDUAL_MCP_SERVERS.keys())}")
         selected_mcp_servers = [s for s in requested if s in INDIVIDUAL_MCP_SERVERS]
 
     tracker.complete("mcp-select", f"{len(selected_mcp_servers)} servers")
