@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2025-11-14
+
 ### Added
 - **Non-Interactive Init**: `mapify init` now defaults to non-interactive mode, installing all MCP servers without prompts for better CI/CD compatibility (1ad6dd6)
 - **Agent MCP Integration**: Integrated 18 Cipher MCP tools across all 8 MAP agents (task-decomposer, actor, monitor, predictor, evaluator, reflector, curator, documentation-reviewer) for enhanced knowledge management and reasoning capabilities (aaded8a)
