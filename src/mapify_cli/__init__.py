@@ -685,9 +685,14 @@ def copy_schema_files(project_path: Path) -> None:
 
     # Get schemas from installed package
     import pkg_resources
+    import shutil
+
+    copied_count = 0
     try:
         # Try to get schemas from package data
         schema_files = pkg_resources.resource_listdir('mapify_cli', 'schemas')
+        console.print(f"[dim]Found {len(schema_files)} schema files in package[/dim]")
+
         for schema_file in schema_files:
             if schema_file.endswith('.json'):
                 schema_content = pkg_resources.resource_string(
@@ -695,16 +700,29 @@ def copy_schema_files(project_path: Path) -> None:
                 ).decode('utf-8')
                 dest_file = schemas_dir / schema_file
                 dest_file.write_text(schema_content)
-    except Exception:
+                copied_count += 1
+
+        console.print(f"[dim]Copied {copied_count} schema files from package[/dim]")
+    except Exception as e:
+        console.print(f"[yellow]pkg_resources failed ({e}), using fallback[/yellow]")
         # Fallback: copy from templates directory if package resources fail
         templates_dir = get_templates_dir()
         # Schemas might be in parent src/mapify_cli/schemas
         schemas_template_dir = templates_dir.parent / "schemas"
+
+        console.print(f"[dim]Checking schemas directory: {schemas_template_dir}[/dim]")
+
         if schemas_template_dir.exists():
-            import shutil
             for schema_file in schemas_template_dir.glob("*.json"):
                 dest_file = schemas_dir / schema_file.name
                 shutil.copy2(schema_file, dest_file)
+                copied_count += 1
+            console.print(f"[dim]Copied {copied_count} schema files from templates[/dim]")
+        else:
+            console.print(f"[red]Warning: Schema directory not found at {schemas_template_dir}[/red]")
+
+    if copied_count == 0:
+        console.print("[yellow]⚠ No schema files copied - validation may not work[/yellow]")
 
 
 def create_task_decomposer_content(mcp_servers: List[str]) -> str:
