@@ -2059,7 +2059,15 @@ def init(
     tracker.add("create-agents", "Create MAP agents")
     tracker.start("create-agents")
     create_agent_files(project_path, selected_mcp_servers)
-    copy_schema_files(project_path)  # Copy JSON Schema files for validation
+
+    # Copy schema files (must succeed for validation to work)
+    try:
+        copy_schema_files(project_path)
+    except Exception as e:
+        console.print(f"[red]ERROR: Failed to copy schema files: {e}[/red]")
+        import traceback
+        traceback.print_exc()
+
     tracker.complete("create-agents", "8 agents")
 
     tracker.add("create-commands", "Create slash commands")
