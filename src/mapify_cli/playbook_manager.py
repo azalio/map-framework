@@ -9,6 +9,7 @@ Based on research: Agentic Context Engineering (ACE) - arXiv:2510.04618v1
 
 import json
 import hashlib
+import os
 import sys
 import sqlite3
 import shutil
@@ -67,6 +68,9 @@ class PlaybookManager:
         db_path: Optional[str] = None,
         use_semantic_search: bool = True,
     ):
+        # Check DISABLE_SEMANTIC_SEARCH environment variable
+        if os.environ.get("DISABLE_SEMANTIC_SEARCH"):
+            use_semantic_search = False
         # Handle legacy playbook_path parameter
         if playbook_path is not None:
             self.playbook_path = Path(playbook_path)

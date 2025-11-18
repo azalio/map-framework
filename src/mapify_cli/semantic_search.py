@@ -35,13 +35,19 @@ from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 import numpy as np
 
+# Check if dependencies are available (without importing them yet)
+# This allows the module to be imported even if sentence-transformers is not installed
+# Actual imports are delayed until SemanticSearchEngine is instantiated
 try:
-    from sentence_transformers import SentenceTransformer
-    from sklearn.metrics.pairwise import cosine_similarity
-
-    SEMANTIC_SEARCH_AVAILABLE = True
-except ImportError:
+    import importlib.util
+    # Check module availability without importing (avoids mutex conflicts with Cipher MCP)
+    spec1 = importlib.util.find_spec("sentence_transformers")
+    spec2 = importlib.util.find_spec("sklearn")
+    SEMANTIC_SEARCH_AVAILABLE = spec1 is not None and spec2 is not None
+except (ImportError, ValueError):
     SEMANTIC_SEARCH_AVAILABLE = False
+
+if not SEMANTIC_SEARCH_AVAILABLE:
     print(
         "Warning: sentence-transformers not installed. Run: pip install -r requirements-semantic.txt",
         file=sys.stderr,
@@ -76,6 +82,9 @@ class SemanticSearchEngine:
                 "sentence-transformers not installed. "
                 "Run: pip install -r requirements-semantic.txt"
             )
+
+        # Import actual classes only when initializing (delayed import to avoid mutex conflicts)
+        from sentence_transformers import SentenceTransformer
 
         self.model_name = model_name
         self.cache_dir = Path(cache_dir)
@@ -225,7 +234,8 @@ class SemanticSearchEngine:
         bullet_texts = [b.get("content", "") for b in bullets]
         bullet_embeddings = self.encode_batch(bullet_texts)
 
-        # Calculate cosine similarity
+        # Calculate cosine similarity (delayed import to avoid mutex conflicts)
+        from sklearn.metrics.pairwise import cosine_similarity
         similarities = cosine_similarity([query_embedding], bullet_embeddings)[0]
 
         # Filter by threshold and sort
@@ -265,7 +275,8 @@ class SemanticSearchEngine:
         bullet_texts = [b.get("content", "") for b in bullets]
         embeddings = self.encode_batch(bullet_texts)
 
-        # Calculate pairwise similarities
+        # Calculate pairwise similarities (delayed import to avoid mutex conflicts)
+        from sklearn.metrics.pairwise import cosine_similarity
         similarities = cosine_similarity(embeddings)
 
         # Find duplicates (upper triangle of similarity matrix)
