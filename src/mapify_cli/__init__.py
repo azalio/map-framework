@@ -2967,6 +2967,176 @@ def validate_graph(
         raise typer.Exit(2)
 
 
+@validate_app.command("agent-input")
+def validate_agent_input_cmd(
+    agent_name: str = typer.Argument(..., help="Agent name (e.g., actor, monitor, predictor)"),
+    input_file: Path = typer.Argument(..., help="JSON file containing agent input"),
+    verbose: bool = typer.Option(False, "--verbose", help="Show detailed validation errors")
+):
+    """
+    Validate agent input against contract schema.
+
+    Example:
+        mapify validate agent-input actor /tmp/actor_input.json
+    """
+    from mapify_cli.validation.contract_validator import AgentContractValidator
+
+    if not input_file.exists():
+        console.print(f"[red]✗ Input file not found: {input_file}[/red]")
+        raise typer.Exit(1)
+
+    validator = AgentContractValidator()
+
+    try:
+        with open(input_file) as f:
+            input_data = json.load(f)
+    except json.JSONDecodeError as e:
+        console.print(f"[red]✗ Invalid JSON: {e}[/red]")
+        raise typer.Exit(1)
+
+    result = validator.validate_agent_input(agent_name, input_data)
+
+    if result.valid:
+        console.print(f"[green]✓ {agent_name} input validation passed[/green]")
+        return
+    else:
+        console.print(f"[red]✗ {agent_name} input validation failed[/red]")
+
+        if verbose or True:  # Always show errors
+            for error in result.errors:
+                console.print(f"[red]  - {error}[/red]")
+
+        if result.warnings:
+            console.print("[yellow]Warnings:[/yellow]")
+            for warning in result.warnings:
+                console.print(f"[yellow]  - {warning}[/yellow]")
+
+        raise typer.Exit(1)
+
+
+@validate_app.command("agent-output")
+def validate_agent_output_cmd(
+    agent_name: str = typer.Argument(..., help="Agent name"),
+    output_file: Path = typer.Argument(..., help="JSON file containing agent output"),
+    verbose: bool = typer.Option(False, "--verbose", help="Show detailed validation errors")
+):
+    """
+    Validate agent output against contract schema.
+
+    Example:
+        mapify validate agent-output monitor /tmp/monitor_output.json
+    """
+    from mapify_cli.validation.contract_validator import AgentContractValidator
+
+    if not output_file.exists():
+        console.print(f"[red]✗ Output file not found: {output_file}[/red]")
+        raise typer.Exit(1)
+
+    validator = AgentContractValidator()
+
+    try:
+        with open(output_file) as f:
+            output_data = json.load(f)
+    except json.JSONDecodeError as e:
+        console.print(f"[red]✗ Invalid JSON: {e}[/red]")
+        raise typer.Exit(1)
+
+    result = validator.validate_agent_output(agent_name, output_data)
+
+    if result.valid:
+        console.print(f"[green]✓ {agent_name} output validation passed[/green]")
+        return
+    else:
+        console.print(f"[red]✗ {agent_name} output validation failed[/red]")
+
+        for error in result.errors:
+            console.print(f"[red]  - {error}[/red]")
+
+        if result.warnings:
+            for warning in result.warnings:
+                console.print(f"[yellow]  - {warning}[/yellow]")
+
+        raise typer.Exit(1)
+
+
+@validate_app.command("workflow-logs")
+def validate_workflow_logs_cmd(
+    workflow_dir: Path = typer.Argument(..., help="Workflow log directory")
+):
+    """
+    Batch validate all agent I/O from workflow log directory.
+
+    Example:
+        mapify validate workflow-logs .map/workflow_logs/workflow_20250117/
+    """
+    from mapify_cli.validation.contract_validator import AgentContractValidator
+
+    if not workflow_dir.exists():
+        console.print(f"[red]✗ Workflow directory not found: {workflow_dir}[/red]")
+        raise typer.Exit(1)
+
+    validator = AgentContractValidator()
+
+    total = 0
+    passed = 0
+    failed = 0
+
+    # Find all agent input JSON files
+    for json_file in workflow_dir.glob("*_input.json"):
+        agent_name = json_file.stem.replace("_input", "")
+
+        try:
+            with open(json_file) as f:
+                data = json.load(f)
+        except json.JSONDecodeError:
+            console.print(f"[red]✗ {json_file.name} (invalid JSON)[/red]")
+            total += 1
+            failed += 1
+            continue
+
+        result = validator.validate_agent_input(agent_name, data)
+        total += 1
+
+        if result.valid:
+            passed += 1
+            console.print(f"[green]✓ {json_file.name}[/green]")
+        else:
+            failed += 1
+            console.print(f"[red]✗ {json_file.name}[/red]")
+            for error in result.errors[:3]:  # Show first 3 errors
+                console.print(f"[red]    {error}[/red]")
+
+    # Find all agent output JSON files
+    for json_file in workflow_dir.glob("*_output.json"):
+        agent_name = json_file.stem.replace("_output", "")
+
+        try:
+            with open(json_file) as f:
+                data = json.load(f)
+        except json.JSONDecodeError:
+            console.print(f"[red]✗ {json_file.name} (invalid JSON)[/red]")
+            total += 1
+            failed += 1
+            continue
+
+        result = validator.validate_agent_output(agent_name, data)
+        total += 1
+
+        if result.valid:
+            passed += 1
+            console.print(f"[green]✓ {json_file.name}[/green]")
+        else:
+            failed += 1
+            console.print(f"[red]✗ {json_file.name}[/red]")
+            for error in result.errors[:3]:
+                console.print(f"[red]    {error}[/red]")
+
+    console.print(f"\nSummary: {passed}/{total} passed, {failed}/{total} failed")
+
+    if failed > 0:
+        raise typer.Exit(1)
+
+
 def main():
     app()
 

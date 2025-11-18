@@ -11,7 +11,8 @@ dependencies = [
     "httpx>=0.25.0",
     "platformdirs>=4.0.0",
     "readchar>=4.0.0",
-    "questionary>=2.0.0"
+    "questionary>=2.0.0",
+    "jsonschema>=4.0.0"
 ]
 
 [project.optional-dependencies]

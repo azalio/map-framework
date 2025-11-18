@@ -70,10 +70,12 @@ cd your-project
 mapify init
 
 # Available commands
-mapify --help                     # Show all available commands
-mapify validate graph <file>      # Validate task dependency graphs
-mapify playbook search <query>    # Search playbook patterns
-mapify recitation get-context     # Get current task plan
+mapify --help                          # Show all available commands
+mapify validate graph <file>           # Validate task dependency graphs
+mapify validate agent-input <agent> <file>  # Validate agent input contracts
+mapify validate agent-output <agent> <file> # Validate agent output contracts
+mapify playbook search <query>         # Search playbook patterns
+mapify recitation get-context          # Get current task plan
 ```
 
 **Version Pinning:**
