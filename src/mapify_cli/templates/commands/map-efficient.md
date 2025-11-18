@@ -152,6 +152,24 @@ PLAN_CONTEXT=$(mapify recitation get-context)
 
 ### 3.2 Call Actor to Implement
 
+**Pre-Flight Validation:**
+
+```bash
+ACTOR_INPUT=$(mktemp)
+cat <<'ACTOR_INPUT_EOF' > "$ACTOR_INPUT"
+{
+  "subtask": "[description]",
+  "acceptance_criteria": "[criteria]",
+  "playbook_bullets": "$PLAYBOOK_BULLETS"
+}
+ACTOR_INPUT_EOF
+
+mapify validate agent-input actor "$ACTOR_INPUT" --non-blocking
+rm -f "$ACTOR_INPUT"
+```
+
+**Call Actor:**
+
 ```
 Task(
   subagent_type="general-purpose",
@@ -179,6 +197,18 @@ Output JSON with:
 
 Provide FULL file content for each change, not diffs."
 )
+```
+
+**Output Validation:**
+
+```bash
+ACTOR_OUTPUT=$(mktemp)
+cat <<'ACTOR_OUTPUT_EOF' > "$ACTOR_OUTPUT"
+[paste actor JSON output here]
+ACTOR_OUTPUT_EOF
+
+mapify validate agent-output actor "$ACTOR_OUTPUT" --non-blocking
+rm -f "$ACTOR_OUTPUT"
 ```
 
 ### 3.3 Call Monitor to Validate
@@ -328,6 +358,18 @@ Output JSON with:
 )
 ```
 
+**MCP Tool Verification (Reflector):**
+
+```bash
+REFLECTOR_OUTPUT=$(mktemp)
+cat <<'REFLECTOR_OUTPUT_EOF' > "$REFLECTOR_OUTPUT"
+[paste reflector full output here]
+REFLECTOR_OUTPUT_EOF
+
+mapify validate mcp-tools reflector "$REFLECTOR_OUTPUT" --non-blocking
+rm -f "$REFLECTOR_OUTPUT"
+```
+
 **Token Savings Note:** One batched reflection vs per-subtask reflection saves ~(N-1) * 3K tokens for N subtasks.
 
 ### 4.2 Batch Curator Update
@@ -350,6 +392,18 @@ Output JSON with:
 - deduplication_check: array of {new_bullet, similar_existing_bullets, action}
 - sync_to_cipher: array of {bullet_id, content, helpful_count} (REQUIRED if helpful_count >= 5)"
 )
+```
+
+**MCP Tool Verification (Curator):**
+
+```bash
+CURATOR_OUTPUT=$(mktemp)
+cat <<'CURATOR_OUTPUT_EOF' > "$CURATOR_OUTPUT"
+[paste curator full output here]
+CURATOR_OUTPUT_EOF
+
+mapify validate mcp-tools curator "$CURATOR_OUTPUT" --non-blocking
+rm -f "$CURATOR_OUTPUT"
 ```
 
 ### 4.3 Apply Curator Operations

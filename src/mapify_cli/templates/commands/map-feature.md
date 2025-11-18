@@ -180,6 +180,28 @@ The `PLAN_CONTEXT` will be included in the Actor prompt below.
 
 The Actor agent template (`.claude/agents/actor.md`) already has a `{{plan_context}}` template variable in the `<recitation_plan>` section. You just need to pass it:
 
+**Step A: Pre-Flight Validation (WARNING-ONLY):**
+
+Before calling Actor, validate input data to catch potential issues early:
+
+```bash
+# Pre-flight validation (non-blocking, uses mapify CLI)
+ACTOR_INPUT=$(mktemp)
+cat <<'ACTOR_INPUT_EOF' > "$ACTOR_INPUT"
+{
+  "subtask": "[description]",
+  "acceptance_criteria": "[criteria]",
+  "playbook_bullets": "$PLAYBOOK_BULLETS",
+  "plan_context": "$PLAN_CONTEXT"
+}
+ACTOR_INPUT_EOF
+
+mapify validate agent-input actor "$ACTOR_INPUT" --non-blocking
+rm -f "$ACTOR_INPUT"
+```
+
+**Step B: Call Actor:**
+
 ```
 Task(
   subagent_type="actor",
@@ -211,6 +233,21 @@ Provide FULL file content for each change, not diffs."
 ```
 
 **Note:** The Actor template will automatically format the plan_context in its `<recitation_plan>` section.
+
+**Step C: Output Validation (WARNING-ONLY):**
+
+After Actor completes, validate output structure to catch malformed responses:
+
+```bash
+# Output validation (non-blocking, uses mapify CLI)
+ACTOR_OUTPUT=$(mktemp)
+cat <<'ACTOR_OUTPUT_EOF' > "$ACTOR_OUTPUT"
+[paste actor JSON output here]
+ACTOR_OUTPUT_EOF
+
+mapify validate agent-output actor "$ACTOR_OUTPUT" --non-blocking
+rm -f "$ACTOR_OUTPUT"
+```
 
 ### 3.3 Call Monitor to Validate
 
@@ -380,6 +417,21 @@ Output JSON with:
 )
 ```
 
+**Post-Reflector MCP Tool Verification (WARNING-ONLY):**
+
+After Reflector completes, verify it used required MCP tools:
+
+```bash
+# MCP tool verification for Reflector (non-blocking)
+REFLECTOR_OUTPUT=$(mktemp)
+cat <<'REFLECTOR_OUTPUT_EOF' > "$REFLECTOR_OUTPUT"
+[paste reflector full output/conversation here]
+REFLECTOR_OUTPUT_EOF
+
+mapify validate mcp-tools reflector "$REFLECTOR_OUTPUT" --non-blocking
+rm -f "$REFLECTOR_OUTPUT"
+```
+
 ### 3.9 Call Curator to Update Playbook
 
 **⚠️ CRITICAL:** The Curator agent template (`.claude/agents/curator.md`) contains MANDATORY instructions to use MCP tools for deduplication and knowledge sharing.
@@ -411,6 +463,21 @@ Output JSON with:
 - deduplication_check: array of {new_bullet, similar_existing_bullets, action}
 - sync_to_cipher: array of {bullet_id, content, helpful_count} (REQUIRED if helpful_count >= 5)"
 )
+```
+
+**Post-Curator MCP Tool Verification (WARNING-ONLY):**
+
+After Curator completes, verify it used required MCP tools:
+
+```bash
+# MCP tool verification for Curator (non-blocking)
+CURATOR_OUTPUT=$(mktemp)
+cat <<'CURATOR_OUTPUT_EOF' > "$CURATOR_OUTPUT"
+[paste curator full output/conversation here]
+CURATOR_OUTPUT_EOF
+
+mapify validate mcp-tools curator "$CURATOR_OUTPUT" --non-blocking
+rm -f "$CURATOR_OUTPUT"
 ```
 
 ### 3.10 Apply Curator Operations

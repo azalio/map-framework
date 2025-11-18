@@ -2971,19 +2971,23 @@ def validate_graph(
 def validate_agent_input_cmd(
     agent_name: str = typer.Argument(..., help="Agent name (e.g., actor, monitor, predictor)"),
     input_file: Path = typer.Argument(..., help="JSON file containing agent input"),
-    verbose: bool = typer.Option(False, "--verbose", help="Show detailed validation errors")
+    verbose: bool = typer.Option(False, "--verbose", help="Show detailed validation errors"),
+    non_blocking: bool = typer.Option(False, "--non-blocking", help="Don't exit with error code on validation failure (warning-only mode)")
 ):
     """
     Validate agent input against contract schema.
 
     Example:
         mapify validate agent-input actor /tmp/actor_input.json
+        mapify validate agent-input actor /tmp/actor_input.json --non-blocking
     """
     from mapify_cli.validation.contract_validator import AgentContractValidator
 
     if not input_file.exists():
         console.print(f"[red]✗ Input file not found: {input_file}[/red]")
-        raise typer.Exit(1)
+        if not non_blocking:
+            raise typer.Exit(1)
+        return
 
     validator = AgentContractValidator()
 
@@ -2992,7 +2996,9 @@ def validate_agent_input_cmd(
             input_data = json.load(f)
     except json.JSONDecodeError as e:
         console.print(f"[red]✗ Invalid JSON: {e}[/red]")
-        raise typer.Exit(1)
+        if not non_blocking:
+            raise typer.Exit(1)
+        return
 
     result = validator.validate_agent_input(agent_name, input_data)
 
@@ -3000,37 +3006,42 @@ def validate_agent_input_cmd(
         console.print(f"[green]✓ {agent_name} input validation passed[/green]")
         return
     else:
-        console.print(f"[red]✗ {agent_name} input validation failed[/red]")
+        console.print(f"[yellow]⚠ {agent_name} input validation failed[/yellow]" if non_blocking else f"[red]✗ {agent_name} input validation failed[/red]")
 
         if verbose or True:  # Always show errors
             for error in result.errors:
-                console.print(f"[red]  - {error}[/red]")
+                console.print(f"[yellow]  - {error}[/yellow]" if non_blocking else f"[red]  - {error}[/red]")
 
         if result.warnings:
             console.print("[yellow]Warnings:[/yellow]")
             for warning in result.warnings:
                 console.print(f"[yellow]  - {warning}[/yellow]")
 
-        raise typer.Exit(1)
+        if not non_blocking:
+            raise typer.Exit(1)
 
 
 @validate_app.command("agent-output")
 def validate_agent_output_cmd(
     agent_name: str = typer.Argument(..., help="Agent name"),
     output_file: Path = typer.Argument(..., help="JSON file containing agent output"),
-    verbose: bool = typer.Option(False, "--verbose", help="Show detailed validation errors")
+    verbose: bool = typer.Option(False, "--verbose", help="Show detailed validation errors"),
+    non_blocking: bool = typer.Option(False, "--non-blocking", help="Don't exit with error code on validation failure (warning-only mode)")
 ):
     """
     Validate agent output against contract schema.
 
     Example:
         mapify validate agent-output monitor /tmp/monitor_output.json
+        mapify validate agent-output monitor /tmp/monitor_output.json --non-blocking
     """
     from mapify_cli.validation.contract_validator import AgentContractValidator
 
     if not output_file.exists():
         console.print(f"[red]✗ Output file not found: {output_file}[/red]")
-        raise typer.Exit(1)
+        if not non_blocking:
+            raise typer.Exit(1)
+        return
 
     validator = AgentContractValidator()
 
@@ -3039,7 +3050,9 @@ def validate_agent_output_cmd(
             output_data = json.load(f)
     except json.JSONDecodeError as e:
         console.print(f"[red]✗ Invalid JSON: {e}[/red]")
-        raise typer.Exit(1)
+        if not non_blocking:
+            raise typer.Exit(1)
+        return
 
     result = validator.validate_agent_output(agent_name, output_data)
 
@@ -3047,16 +3060,66 @@ def validate_agent_output_cmd(
         console.print(f"[green]✓ {agent_name} output validation passed[/green]")
         return
     else:
-        console.print(f"[red]✗ {agent_name} output validation failed[/red]")
+        console.print(f"[yellow]⚠ {agent_name} output validation failed[/yellow]" if non_blocking else f"[red]✗ {agent_name} output validation failed[/red]")
 
         for error in result.errors:
-            console.print(f"[red]  - {error}[/red]")
+            console.print(f"[yellow]  - {error}[/yellow]" if non_blocking else f"[red]  - {error}[/red]")
 
         if result.warnings:
             for warning in result.warnings:
                 console.print(f"[yellow]  - {warning}[/yellow]")
 
-        raise typer.Exit(1)
+        if not non_blocking:
+            raise typer.Exit(1)
+
+
+@validate_app.command("mcp-tools")
+def validate_mcp_tools_cmd(
+    agent_name: str = typer.Argument(..., help="Agent name (reflector or curator)"),
+    output_file: Path = typer.Argument(..., help="File containing agent output"),
+    non_blocking: bool = typer.Option(False, "--non-blocking", help="Don't exit with error code on validation failure (warning-only mode)")
+):
+    """
+    Verify MCP tool usage in Reflector/Curator output.
+
+    Example:
+        mapify validate mcp-tools reflector /tmp/reflector_output.txt
+        mapify validate mcp-tools curator /tmp/curator_output.txt --non-blocking
+    """
+    from mapify_cli.validation.mcp_tool_detector import verify_mcp_tools
+
+    if not output_file.exists():
+        console.print(f"[red]✗ Output file not found: {output_file}[/red]")
+        if not non_blocking:
+            raise typer.Exit(1)
+        return
+
+    try:
+        with open(output_file) as f:
+            agent_output = f.read()
+    except Exception as e:
+        console.print(f"[red]✗ Error reading file: {e}[/red]")
+        if not non_blocking:
+            raise typer.Exit(1)
+        return
+
+    result = verify_mcp_tools(agent_name, agent_output)
+
+    if result.verified:
+        console.print(f"[green]✓ {agent_name} MCP tools verified[/green]")
+        console.print(f"[green]  Found: {', '.join(result.detected_tools)}[/green]")
+        return
+    else:
+        console.print(f"[yellow]⚠ {agent_name} MCP tools verification failed[/yellow]" if non_blocking else f"[red]✗ {agent_name} MCP tools verification failed[/red]")
+
+        if result.missing_tools:
+            console.print(f"[yellow]  Missing required tools: {', '.join(result.missing_tools)}[/yellow]" if non_blocking else f"[red]  Missing required tools: {', '.join(result.missing_tools)}[/red]")
+
+        if result.detected_tools:
+            console.print(f"[green]  Found: {', '.join(result.detected_tools)}[/green]")
+
+        if not non_blocking:
+            raise typer.Exit(1)
 
 
 @validate_app.command("workflow-logs")

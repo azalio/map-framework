@@ -63,6 +63,23 @@ Each subtask must be:
 
 ### 2.1 Call Actor to Implement
 
+**Pre-Flight Validation:**
+
+```bash
+ACTOR_INPUT=$(mktemp)
+cat <<'ACTOR_INPUT_EOF' > "$ACTOR_INPUT"
+{
+  "subtask": "[description]",
+  "acceptance_criteria": "[criteria]"
+}
+ACTOR_INPUT_EOF
+
+mapify validate agent-input actor "$ACTOR_INPUT" --non-blocking
+rm -f "$ACTOR_INPUT"
+```
+
+**Call Actor:**
+
 ```
 Task(
   subagent_type="general-purpose",
@@ -80,6 +97,18 @@ Output JSON with:
 
 Provide FULL file content for each change, not diffs."
 )
+```
+
+**Output Validation:**
+
+```bash
+ACTOR_OUTPUT=$(mktemp)
+cat <<'ACTOR_OUTPUT_EOF' > "$ACTOR_OUTPUT"
+[paste actor JSON output here]
+ACTOR_OUTPUT_EOF
+
+mapify validate agent-output actor "$ACTOR_OUTPUT" --non-blocking
+rm -f "$ACTOR_OUTPUT"
 ```
 
 ### 2.2 Call Monitor to Validate
