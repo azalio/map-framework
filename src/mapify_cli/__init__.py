@@ -640,9 +640,13 @@ def create_agent_files(project_path: Path, mcp_servers: List[str]) -> None:
     agents_dir = project_path / ".claude" / "agents"
     agents_dir.mkdir(parents=True, exist_ok=True)
 
+    console.print(f"[dim]Creating agents in: {agents_dir}[/dim]")
+
     # Get templates directory
     templates_dir = get_templates_dir()
     agents_template_dir = templates_dir / "agents"
+
+    console.print(f"[dim]Using templates from: {agents_template_dir}[/dim]")
 
     if agents_template_dir.exists():
         # Copy original agent files from templates (preserves template variables!)
@@ -651,12 +655,16 @@ def create_agent_files(project_path: Path, mcp_servers: List[str]) -> None:
         # Files to exclude from agent directory (documentation, not agents)
         exclude_files = {"README.md", "CHANGELOG.md", "MCP-PATTERNS.md"}
 
+        copied_count = 0
         for agent_template in agents_template_dir.glob("*.md"):
             # Skip documentation files - they're not agents
             if agent_template.name in exclude_files:
                 continue
             dest_file = agents_dir / agent_template.name
             shutil.copy2(agent_template, dest_file)
+            copied_count += 1
+
+        console.print(f"[dim]Copied {copied_count} agent files[/dim]")
     else:
         # Fallback: generate simplified versions if templates not found
         # NOTE: orchestrator removed (moved to slash commands in production architecture)
