@@ -1,0 +1,75 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Predictor Agent Output Contract",
+  "description": "JSON schema defining expected output structure from predictor agent",
+  "type": "object",
+  "properties": {
+    "affected_files": {
+      "type": "array",
+      "description": "Files affected by changes",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "File path"
+          },
+          "change_type": {
+            "type": "string",
+            "enum": ["direct", "indirect", "dependency"],
+            "description": "Type of impact"
+          },
+          "impact_level": {
+            "type": "string",
+            "enum": ["low", "medium", "high"],
+            "description": "Impact severity"
+          }
+        },
+        "required": ["path", "change_type", "impact_level"]
+      },
+      "default": []
+    },
+    "breaking_changes": {
+      "type": "array",
+      "description": "Breaking changes identified",
+      "items": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["api", "schema", "behavior", "dependency"],
+            "description": "Type of breaking change"
+          },
+          "description": {
+            "type": "string",
+            "description": "What breaks"
+          },
+          "mitigation": {
+            "type": "string",
+            "description": "How to mitigate"
+          }
+        },
+        "required": ["type", "description", "mitigation"]
+      },
+      "default": []
+    },
+    "required_updates": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Required updates to other components",
+      "default": []
+    },
+    "risk_level": {
+      "type": "string",
+      "enum": ["low", "medium", "high"],
+      "description": "Overall risk level"
+    },
+    "rollback_plan": {
+      "type": "string",
+      "description": "How to rollback if needed",
+      "minLength": 10
+    }
+  },
+  "required": ["affected_files", "breaking_changes", "risk_level", "rollback_plan"],
+  "additionalProperties": false
+}

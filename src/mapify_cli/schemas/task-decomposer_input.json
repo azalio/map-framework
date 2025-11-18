@@ -1,0 +1,47 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Task-Decomposer Agent Input Contract",
+  "description": "JSON schema defining required inputs for task-decomposer agent",
+  "type": "object",
+  "properties": {
+    "language": {
+      "type": "string",
+      "description": "Programming language",
+      "examples": ["python", "javascript", "go", "typescript", "rust"]
+    },
+    "framework": {
+      "type": "string",
+      "description": "Framework/library",
+      "examples": ["django", "react", "gin", "fastapi", "nextjs"],
+      "default": ""
+    },
+    "project_name": {
+      "type": "string",
+      "description": "Project name",
+      "minLength": 1
+    },
+    "feature_request": {
+      "type": "string",
+      "description": "User's feature request to decompose into subtasks",
+      "minLength": 10
+    },
+    "playbook_bullets": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Relevant patterns from playbook (optional, from Curator search)",
+      "default": []
+    },
+    "feedback": {
+      "type": "string",
+      "description": "Feedback from previous decomposition attempt (optional, retry only)",
+      "default": ""
+    },
+    "subtask_description": {
+      "type": "string",
+      "description": "Additional context or specific subtask focus",
+      "default": ""
+    }
+  },
+  "required": ["language", "project_name", "feature_request"],
+  "additionalProperties": false
+}

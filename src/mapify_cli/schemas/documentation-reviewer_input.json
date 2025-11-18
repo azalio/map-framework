@@ -1,0 +1,53 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Documentation-Reviewer Agent Input Contract",
+  "description": "JSON schema defining required inputs for documentation-reviewer agent",
+  "type": "object",
+  "properties": {
+    "language": {
+      "type": "string",
+      "description": "Programming language",
+      "examples": ["python", "javascript", "go", "typescript", "rust"]
+    },
+    "project_name": {
+      "type": "string",
+      "description": "Project name",
+      "minLength": 1
+    },
+    "framework": {
+      "type": "string",
+      "description": "Framework/library used",
+      "default": ""
+    },
+    "document_path": {
+      "type": "string",
+      "description": "Path to document being reviewed",
+      "minLength": 1
+    },
+    "document_content": {
+      "type": "string",
+      "description": "Content of the document to review",
+      "minLength": 50
+    },
+    "document_type": {
+      "type": "string",
+      "description": "Type of documentation",
+      "enum": ["plan", "architecture", "api", "guide", "readme"],
+      "default": "plan"
+    },
+    "playbook_bullets": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Relevant documentation patterns",
+      "default": []
+    },
+    "review_focus": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Specific aspects to focus review on",
+      "default": ["completeness", "clarity", "accuracy"]
+    }
+  },
+  "required": ["language", "project_name", "document_path", "document_content"],
+  "additionalProperties": false
+}

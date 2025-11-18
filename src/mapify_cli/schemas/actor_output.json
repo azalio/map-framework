@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Actor Agent Output Contract",
+  "description": "JSON schema defining expected output structure from actor agent",
+  "type": "object",
+  "properties": {
+    "approach": {
+      "type": "string",
+      "description": "Implementation strategy and approach",
+      "minLength": 20
+    },
+    "code_changes": {
+      "type": "array",
+      "description": "List of code changes to apply",
+      "items": {
+        "type": "object",
+        "properties": {
+          "file_path": {
+            "type": "string",
+            "description": "Path to file being modified"
+          },
+          "change_type": {
+            "type": "string",
+            "enum": ["create", "modify", "delete"],
+            "description": "Type of change"
+          },
+          "content": {
+            "type": "string",
+            "description": "Full file content or changes"
+          },
+          "rationale": {
+            "type": "string",
+            "description": "Reason for this change"
+          }
+        },
+        "required": ["file_path", "change_type", "content", "rationale"]
+      },
+      "minItems": 1
+    },
+    "trade_offs": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Trade-offs and design decisions"
+    },
+    "testing_approach": {
+      "type": "string",
+      "description": "How to test this implementation",
+      "minLength": 10
+    },
+    "used_bullets": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Playbook bullet IDs that were helpful",
+      "default": []
+    }
+  },
+  "required": ["approach", "code_changes", "testing_approach"],
+  "additionalProperties": false
+}

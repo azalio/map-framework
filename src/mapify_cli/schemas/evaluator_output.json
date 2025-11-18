@@ -1,0 +1,70 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Evaluator Agent Output Contract",
+  "description": "JSON schema defining expected output structure from evaluator agent",
+  "type": "object",
+  "properties": {
+    "quality_scores": {
+      "type": "object",
+      "description": "Quality scores by dimension",
+      "properties": {
+        "correctness": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10,
+          "description": "Correctness score (0-10)"
+        },
+        "maintainability": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10,
+          "description": "Maintainability score (0-10)"
+        },
+        "performance": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10,
+          "description": "Performance score (0-10)"
+        },
+        "security": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10,
+          "description": "Security score (0-10)"
+        }
+      },
+      "required": ["correctness", "maintainability", "performance", "security"]
+    },
+    "overall_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 10,
+      "description": "Overall quality score (0-10)"
+    },
+    "strengths": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Implementation strengths",
+      "default": []
+    },
+    "weaknesses": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Implementation weaknesses",
+      "default": []
+    },
+    "recommendations": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Improvement recommendations",
+      "default": []
+    },
+    "verdict": {
+      "type": "string",
+      "enum": ["approved", "needs_improvement", "rejected"],
+      "description": "Final evaluation verdict"
+    }
+  },
+  "required": ["quality_scores", "overall_score", "verdict"],
+  "additionalProperties": false
+}

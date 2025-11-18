@@ -1,0 +1,70 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Task-Decomposer Agent Output Contract",
+  "description": "JSON schema defining expected output structure from task-decomposer agent",
+  "type": "object",
+  "properties": {
+    "analysis": {
+      "type": "object",
+      "description": "Task analysis results",
+      "properties": {
+        "complexity": {
+          "type": "string",
+          "enum": ["low", "medium", "high"],
+          "description": "Overall task complexity"
+        },
+        "estimated_hours": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Estimated hours to complete"
+        },
+        "risks": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Identified risks",
+          "default": []
+        }
+      },
+      "required": ["complexity", "estimated_hours", "risks"]
+    },
+    "subtasks": {
+      "type": "array",
+      "description": "Decomposed subtasks",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": ["integer", "string"],
+            "description": "Subtask ID"
+          },
+          "title": {
+            "type": "string",
+            "description": "Subtask title",
+            "minLength": 10
+          },
+          "description": {
+            "type": "string",
+            "description": "Detailed description",
+            "minLength": 20
+          },
+          "estimated_complexity": {
+            "type": "string",
+            "enum": ["low", "medium", "high"],
+            "description": "Subtask complexity"
+          },
+          "acceptance": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Acceptance criteria",
+            "minItems": 1
+          }
+        },
+        "required": ["id", "title", "description", "estimated_complexity", "acceptance"]
+      },
+      "minItems": 1,
+      "maxItems": 8
+    }
+  },
+  "required": ["analysis", "subtasks"],
+  "additionalProperties": false
+}

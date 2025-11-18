@@ -1,0 +1,46 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Curator Agent Input Contract",
+  "description": "JSON schema defining required inputs for curator agent",
+  "type": "object",
+  "properties": {
+    "language": {
+      "type": "string",
+      "description": "Programming language",
+      "examples": ["python", "javascript", "go", "typescript", "rust"]
+    },
+    "project_name": {
+      "type": "string",
+      "description": "Project name",
+      "minLength": 1
+    },
+    "framework": {
+      "type": "string",
+      "description": "Framework/library used",
+      "default": ""
+    },
+    "subtask_description": {
+      "type": "string",
+      "description": "Subtask context",
+      "minLength": 10
+    },
+    "reflector_insights": {
+      "type": "string",
+      "description": "Reflector's extracted insights",
+      "minLength": 50
+    },
+    "playbook_bullets": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Current playbook bullets for context",
+      "default": []
+    },
+    "previous_context": {
+      "type": "string",
+      "description": "Previous conversation context for updates",
+      "default": ""
+    }
+  },
+  "required": ["language", "project_name", "subtask_description", "reflector_insights"],
+  "additionalProperties": false
+}

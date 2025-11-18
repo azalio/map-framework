@@ -1,0 +1,63 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Monitor Agent Output Contract",
+  "description": "JSON schema defining expected output structure from monitor agent",
+  "type": "object",
+  "properties": {
+    "valid": {
+      "type": "boolean",
+      "description": "Whether implementation passes validation"
+    },
+    "issues": {
+      "type": "array",
+      "description": "List of issues found",
+      "items": {
+        "type": "object",
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["critical", "major", "minor", "info"],
+            "description": "Issue severity"
+          },
+          "category": {
+            "type": "string",
+            "enum": ["correctness", "security", "performance", "style", "testing"],
+            "description": "Issue category"
+          },
+          "description": {
+            "type": "string",
+            "description": "Detailed issue description"
+          },
+          "file_path": {
+            "type": "string",
+            "description": "Affected file path"
+          },
+          "line_range": {
+            "type": "string",
+            "description": "Line range (e.g., '10-15')",
+            "default": ""
+          }
+        },
+        "required": ["severity", "category", "description"]
+      },
+      "default": []
+    },
+    "verdict": {
+      "type": "string",
+      "enum": ["approved", "needs_revision", "rejected"],
+      "description": "Final validation verdict"
+    },
+    "feedback": {
+      "type": "string",
+      "description": "Actionable feedback for Actor",
+      "default": ""
+    },
+    "high_risk_detected": {
+      "type": "boolean",
+      "description": "Whether high-risk changes detected (triggers Predictor)",
+      "default": false
+    }
+  },
+  "required": ["valid", "issues", "verdict"],
+  "additionalProperties": false
+}

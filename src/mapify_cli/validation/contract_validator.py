@@ -40,11 +40,11 @@ class AgentContractValidator:
         Initialize validator with schema directory.
 
         Args:
-            schemas_dir: Path to schemas directory. If None, uses .map/schemas.
+            schemas_dir: Path to schemas directory. If None, uses packaged schemas.
         """
         if schemas_dir is None:
-            # Default to .map/schemas directory
-            schemas_dir = Path.cwd() / ".map" / "schemas"
+            # Default to packaged schemas in src/mapify_cli/schemas
+            schemas_dir = Path(__file__).parent.parent / "schemas"
 
         self.schemas_dir = schemas_dir
         self._input_schemas = self._load_all_schemas("input")

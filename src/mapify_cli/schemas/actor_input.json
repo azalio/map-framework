@@ -1,0 +1,68 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Actor Agent Input Contract",
+  "description": "JSON schema defining required inputs for actor agent",
+  "type": "object",
+  "properties": {
+    "language": {
+      "type": "string",
+      "description": "Programming language",
+      "examples": ["python", "javascript", "go", "typescript", "rust"]
+    },
+    "project_name": {
+      "type": "string",
+      "description": "Project name",
+      "minLength": 1
+    },
+    "framework": {
+      "type": "string",
+      "description": "Primary framework/library used in project",
+      "default": ""
+    },
+    "subtask_description": {
+      "type": "string",
+      "description": "Specific subtask to implement",
+      "minLength": 10
+    },
+    "playbook_bullets": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Relevant implementation patterns from playbook",
+      "default": []
+    },
+    "plan_context": {
+      "type": "string",
+      "description": "Context from recitation manager",
+      "default": ""
+    },
+    "feedback": {
+      "type": "string",
+      "description": "Corrections from Monitor (retry only)",
+      "default": ""
+    },
+    "standards_url": {
+      "type": "string",
+      "format": "uri",
+      "description": "URL to coding standards",
+      "default": ""
+    },
+    "branch": {
+      "type": "string",
+      "description": "Git branch name",
+      "default": ""
+    },
+    "related_files": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Related files for context",
+      "default": []
+    },
+    "allowed_scope": {
+      "type": "string",
+      "description": "Scope restrictions",
+      "default": ""
+    }
+  },
+  "required": ["language", "project_name", "subtask_description"],
+  "additionalProperties": false
+}

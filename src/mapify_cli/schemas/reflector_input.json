@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Reflector Agent Input Contract",
+  "description": "JSON schema defining required inputs for reflector agent",
+  "type": "object",
+  "properties": {
+    "language": {
+      "type": "string",
+      "description": "Programming language",
+      "examples": ["python", "javascript", "go", "typescript", "rust"]
+    },
+    "project_name": {
+      "type": "string",
+      "description": "Project name",
+      "minLength": 1
+    },
+    "framework": {
+      "type": "string",
+      "description": "Framework/library used",
+      "default": ""
+    },
+    "subtask_description": {
+      "type": "string",
+      "description": "Subtask being reflected upon",
+      "minLength": 10
+    },
+    "actor_output": {
+      "type": "string",
+      "description": "Actor's implementation output",
+      "minLength": 50
+    },
+    "monitor_results": {
+      "type": "string",
+      "description": "Monitor validation results",
+      "default": ""
+    },
+    "predictor_analysis": {
+      "type": "string",
+      "description": "Predictor impact analysis",
+      "default": ""
+    },
+    "evaluator_scores": {
+      "type": "string",
+      "description": "Evaluator quality scores",
+      "default": ""
+    },
+    "execution_outcome": {
+      "type": "string",
+      "description": "Execution outcome (success/failure)",
+      "enum": ["success", "failure", "partial"],
+      "default": "success"
+    },
+    "playbook_bullets": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Relevant reflection patterns",
+      "default": []
+    }
+  },
+  "required": ["language", "project_name", "subtask_description", "actor_output"],
+  "additionalProperties": false
+}

@@ -1,0 +1,67 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Monitor Agent Input Contract",
+  "description": "JSON schema defining required inputs for monitor agent",
+  "type": "object",
+  "properties": {
+    "language": {
+      "type": "string",
+      "description": "Programming language",
+      "examples": ["python", "javascript", "go", "typescript", "rust"]
+    },
+    "project_name": {
+      "type": "string",
+      "description": "Project name",
+      "minLength": 1
+    },
+    "framework": {
+      "type": "string",
+      "description": "Framework/library used",
+      "default": ""
+    },
+    "subtask_description": {
+      "type": "string",
+      "description": "Subtask being validated",
+      "minLength": 10
+    },
+    "solution": {
+      "type": "string",
+      "description": "Actor's implementation to validate",
+      "minLength": 50
+    },
+    "requirements": {
+      "type": "string",
+      "description": "Requirements to validate against",
+      "default": ""
+    },
+    "playbook_bullets": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Relevant validation patterns",
+      "default": []
+    },
+    "feedback": {
+      "type": "string",
+      "description": "Previous Monitor feedback (retry only)",
+      "default": ""
+    },
+    "actor_output": {
+      "type": "string",
+      "description": "Actor's complete output",
+      "default": ""
+    },
+    "acceptance_criteria": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Acceptance criteria to validate against",
+      "default": []
+    },
+    "test_strategy": {
+      "type": "string",
+      "description": "Testing strategy to validate",
+      "default": ""
+    }
+  },
+  "required": ["language", "project_name", "subtask_description", "solution"],
+  "additionalProperties": false
+}

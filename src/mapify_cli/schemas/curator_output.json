@@ -1,0 +1,94 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Curator Agent Output Contract",
+  "description": "JSON schema defining expected output structure from curator agent",
+  "type": "object",
+  "properties": {
+    "operations": {
+      "type": "array",
+      "description": "Playbook delta operations",
+      "items": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": ["ADD", "UPDATE", "DEPRECATE"],
+            "description": "Operation type"
+          },
+          "section": {
+            "type": "string",
+            "description": "Playbook section"
+          },
+          "bullet_id": {
+            "type": "string",
+            "description": "Bullet ID (for UPDATE/DEPRECATE)",
+            "default": ""
+          },
+          "content": {
+            "type": "string",
+            "description": "Bullet content",
+            "minLength": 30
+          },
+          "reason": {
+            "type": "string",
+            "description": "Reason for this operation"
+          }
+        },
+        "required": ["operation", "section", "content", "reason"]
+      },
+      "default": []
+    },
+    "deduplication_check": {
+      "type": "array",
+      "description": "Deduplication analysis results",
+      "items": {
+        "type": "object",
+        "properties": {
+          "new_bullet": {
+            "type": "string",
+            "description": "New bullet being checked"
+          },
+          "similar_existing_bullets": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Similar existing bullets found",
+            "default": []
+          },
+          "action": {
+            "type": "string",
+            "enum": ["add_new", "merge", "skip"],
+            "description": "Action taken"
+          }
+        },
+        "required": ["new_bullet", "similar_existing_bullets", "action"]
+      },
+      "default": []
+    },
+    "sync_to_cipher": {
+      "type": "array",
+      "description": "High-quality bullets to sync to Cipher (helpful_count >= 5)",
+      "items": {
+        "type": "object",
+        "properties": {
+          "bullet_id": {
+            "type": "string",
+            "description": "Bullet ID"
+          },
+          "content": {
+            "type": "string",
+            "description": "Bullet content"
+          },
+          "helpful_count": {
+            "type": "integer",
+            "minimum": 5,
+            "description": "Helpful count (must be >= 5)"
+          }
+        },
+        "required": ["bullet_id", "content", "helpful_count"]
+      },
+      "default": []
+    }
+  },
+  "required": ["operations", "deduplication_check"],
+  "additionalProperties": false
+}

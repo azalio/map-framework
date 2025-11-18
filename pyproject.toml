@@ -42,6 +42,7 @@ build-backend = "hatchling.build"
 include = [
     "src/**/*.py",
     "src/mapify_cli/templates/**/*",
+    "src/mapify_cli/schemas/**/*.json",
     "README.md",
 ]
 

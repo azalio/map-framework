@@ -1,12 +1,20 @@
 # MAP Agent Contracts Implementation Plan
 
-**Version:** 1.0
-**Date:** 2025-11-17
-**Status:** ✅ Critical Issues Fixed - Ready for Implementation
+**Version:** 1.1
+**Date:** 2025-11-18
+**Status:** 🚧 Phase 1-2 COMPLETE, Phase 3-5 PENDING
 
-**Previous Status:** ❌ BLOCKED (4 critical issues from MAP review)
-**Current Status:** ✅ All critical issues resolved (JSON Schema fixed, Gate 2 tests run, orchestrator integration redesigned)
-**Estimated Effort:** 20 hours (distributed across 8 subtasks)
+**Implementation Progress:**
+- ✅ **Phase 1 (Foundation):** COMPLETE - 16 schema files created and packaged
+- ✅ **Phase 2 (Validation Logic):** COMPLETE - contract_validator.py + mcp_tool_detector.py
+- ⏸️ **Phase 3 (Integration):** PENDING - Slash command integration (ST-006)
+- ✅ **Phase 4 (CLI Tools):** COMPLETE - 3 validation commands added
+- ⏸️ **Phase 5 (Testing):** PENDING - Comprehensive test suite (ST-007)
+- ⚠️ **Phase 6 (Documentation):** PARTIAL - README updated, full docs deferred
+
+**Commit:** `643f04d` on branch `feature/agent-contracts-implementation`
+**Subtasks Completed:** 6/8 (75%)
+**Estimated Effort Remaining:** 4-6 hours (Phase 3 integration + tests)
 
 ---
 
@@ -2286,29 +2294,29 @@ pytest tests/test_agent_contracts.py::TestMCPToolDetection -v
 
 ## Implementation Checklist
 
-### Phase 1: Foundation (Week 1)
+### Phase 1: Foundation (Week 1) ✅ COMPLETED
 
-- [ ] Create `docs/MAP_AGENT_CONTRACTS_PLAN.md` (this document)
-- [ ] Create `schemas/` directory
-- [ ] Define per-agent input schemas: `schemas/*_input.json` (8 files: actor, monitor, predictor, evaluator, reflector, curator, task-decomposer, documentation-reviewer)
-- [ ] Define per-agent output schemas: `schemas/*_output.json` (8 files)
-- [ ] Validate JSON schemas using `Draft7Validator.check_schema()`
-- [ ] Review schemas with team for accuracy
+- [x] Create `docs/MAP_AGENT_CONTRACTS_PLAN.md` (this document)
+- [x] Create `schemas/` directory → `src/mapify_cli/schemas/` (packaged with wheel)
+- [x] Define per-agent input schemas: `schemas/*_input.json` (8 files: actor, monitor, predictor, evaluator, reflector, curator, task-decomposer, documentation-reviewer)
+- [x] Define per-agent output schemas: `schemas/*_output.json` (8 files)
+- [x] Validate JSON schemas using `Draft7Validator.check_schema()`
+- [ ] Review schemas with team for accuracy (deferred to PR review)
 
-### Phase 2: Validation Logic (Week 2)
+### Phase 2: Validation Logic (Week 2) ✅ COMPLETED
 
-- [ ] Create `src/mapify_cli/validation/__init__.py`
-- [ ] Implement `contract_validator.py`
-  - [ ] `AgentContractValidator` class
-  - [ ] `validate_agent_input()` function
-  - [ ] `validate_agent_output()` function
-  - [ ] `ValidationResult` dataclass
-- [ ] Implement `mcp_tool_detector.py`
-  - [ ] `MCPToolSpec` dataclass
-  - [ ] `detect_mcp_tool_calls()` function
-  - [ ] `verify_mcp_tools()` function
-  - [ ] `MCPVerificationResult` dataclass
-- [ ] Add logging to validation modules
+- [x] Create `src/mapify_cli/validation/__init__.py`
+- [x] Implement `contract_validator.py`
+  - [x] `AgentContractValidator` class
+  - [x] `validate_agent_input()` function
+  - [x] `validate_agent_output()` function
+  - [x] `ValidationResult` dataclass
+- [x] Implement `mcp_tool_detector.py`
+  - [x] `MCPToolSpec` dataclass
+  - [x] `detect_mcp_tool_calls()` function
+  - [x] `verify_mcp_tools()` function
+  - [x] `MCPVerificationResult` dataclass
+- [x] Add logging to validation modules
 
 ### Phase 3: Integration (Week 3)
 
@@ -2323,14 +2331,14 @@ pytest tests/test_agent_contracts.py::TestMCPToolDetection -v
 - [ ] Create `.map/validation_logs/` directory
 - [ ] Add validation logging to workflows
 
-### Phase 4: CLI Tools (Week 3)
+### Phase 4: CLI Tools (Week 3) ✅ COMPLETED
 
-- [ ] Add `validate` command group to `cli.py`
-- [ ] Implement `validate agent-input` command
-- [ ] Implement `validate agent-output` command
-- [ ] Implement `validate workflow-logs` command
-- [ ] Update `docs/CLI_REFERENCE.json` with new commands
-- [ ] Add colored output (green/red) for validation results
+- [x] Add `validate` command group to `cli.py` (validate_app already existed)
+- [x] Implement `validate agent-input` command
+- [x] Implement `validate agent-output` command
+- [x] Implement `validate workflow-logs` command
+- [ ] Update `docs/CLI_REFERENCE.json` with new commands (deferred)
+- [x] Add colored output (green/red) for validation results
 
 ### Phase 5: Testing (Week 4)
 
@@ -2344,14 +2352,15 @@ pytest tests/test_agent_contracts.py::TestMCPToolDetection -v
 - [ ] Achieve >90% code coverage
 - [ ] Run full test suite: `pytest tests/test_agent_contracts.py -v --cov`
 
-### Phase 6: Documentation (Week 4)
+### Phase 6: Documentation (Week 4) ⚠️ PARTIAL
 
-- [ ] Update `README.md` with validation overview
-- [ ] Update `USAGE.md` with validation examples
-- [ ] Update `ARCHITECTURE.md` with contract system design
-- [ ] Create `docs/AGENT_CONTRACTS_GUIDE.md` for users
-- [ ] Document migration path for existing workflows
-- [ ] Add validation examples to each agent's template comments
+- [x] Update `README.md` with validation overview (CLI commands added)
+- [ ] Update `USAGE.md` with validation examples (deferred to Phase 3)
+- [ ] Update `ARCHITECTURE.md` with contract system design (deferred to Phase 3)
+- [ ] Create `docs/AGENT_CONTRACTS_GUIDE.md` for users (deferred to Phase 3)
+- [ ] Document migration path for existing workflows (deferred to Phase 3)
+- [ ] Add validation examples to each agent's template comments (deferred to Phase 3)
+- [x] Create `.map/validation_logs/` directory structure with README
 
 ### Phase 7: Rollout (Week 5)
 

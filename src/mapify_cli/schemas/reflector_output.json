@@ -1,0 +1,112 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Reflector Agent Output Contract",
+  "description": "JSON schema defining expected output structure from reflector agent",
+  "type": "object",
+  "properties": {
+    "key_insight": {
+      "type": "string",
+      "description": "One sentence takeaway from this subtask",
+      "minLength": 20
+    },
+    "patterns_used": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Patterns from playbook that were used",
+      "default": []
+    },
+    "patterns_discovered": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "New patterns discovered during implementation",
+      "default": []
+    },
+    "bullet_updates": {
+      "type": "array",
+      "description": "Updates to existing playbook bullets",
+      "items": {
+        "type": "object",
+        "properties": {
+          "bullet_id": {
+            "type": "string",
+            "description": "Bullet ID to update"
+          },
+          "new_helpful_count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Updated helpful count"
+          },
+          "new_harmful_count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Updated harmful count"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Reason for update"
+          }
+        },
+        "required": ["bullet_id", "reason"]
+      },
+      "default": []
+    },
+    "suggested_new_bullets": {
+      "type": "array",
+      "description": "New bullets to add to playbook",
+      "items": {
+        "type": "object",
+        "properties": {
+          "section": {
+            "type": "string",
+            "enum": ["implementation", "debugging", "testing", "security", "performance"],
+            "description": "Playbook section"
+          },
+          "content": {
+            "type": "string",
+            "description": "Bullet content",
+            "minLength": 30
+          },
+          "code_example": {
+            "type": "string",
+            "description": "Optional code example",
+            "default": ""
+          },
+          "initial_score": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 10,
+            "description": "Initial quality score",
+            "default": 5
+          }
+        },
+        "required": ["section", "content"]
+      },
+      "default": []
+    },
+    "workflow_efficiency": {
+      "type": "object",
+      "description": "Workflow efficiency analysis",
+      "properties": {
+        "total_iterations": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Total iteration count"
+        },
+        "avg_per_subtask": {
+          "type": "number",
+          "minimum": 1,
+          "description": "Average iterations per subtask"
+        },
+        "bottlenecks": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Identified bottlenecks",
+          "default": []
+        }
+      },
+      "required": ["total_iterations"]
+    }
+  },
+  "required": ["key_insight", "patterns_used", "patterns_discovered"],
+  "additionalProperties": false
+}

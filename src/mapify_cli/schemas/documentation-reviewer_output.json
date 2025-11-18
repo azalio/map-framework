@@ -1,0 +1,86 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Documentation-Reviewer Agent Output Contract",
+  "description": "JSON schema defining expected output structure from documentation-reviewer agent",
+  "type": "object",
+  "properties": {
+    "overall_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 10,
+      "description": "Overall documentation quality score (0-10)"
+    },
+    "completeness_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 10,
+      "description": "Completeness score (0-10)"
+    },
+    "clarity_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 10,
+      "description": "Clarity score (0-10)"
+    },
+    "accuracy_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 10,
+      "description": "Accuracy score (0-10)"
+    },
+    "issues": {
+      "type": "array",
+      "description": "Documentation issues found",
+      "items": {
+        "type": "object",
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["critical", "major", "minor", "info"],
+            "description": "Issue severity"
+          },
+          "category": {
+            "type": "string",
+            "enum": ["missing_info", "unclear", "inaccurate", "formatting", "external_dependency"],
+            "description": "Issue category"
+          },
+          "description": {
+            "type": "string",
+            "description": "Issue description"
+          },
+          "location": {
+            "type": "string",
+            "description": "Location in document (section, line)",
+            "default": ""
+          },
+          "suggestion": {
+            "type": "string",
+            "description": "How to fix",
+            "default": ""
+          }
+        },
+        "required": ["severity", "category", "description"]
+      },
+      "default": []
+    },
+    "strengths": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Documentation strengths",
+      "default": []
+    },
+    "recommendations": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Improvement recommendations",
+      "default": []
+    },
+    "verdict": {
+      "type": "string",
+      "enum": ["approved", "needs_revision", "rejected"],
+      "description": "Review verdict"
+    }
+  },
+  "required": ["overall_score", "completeness_score", "clarity_score", "accuracy_score", "issues", "verdict"],
+  "additionalProperties": false
+}
