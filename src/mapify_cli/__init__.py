@@ -678,6 +678,35 @@ def create_agent_files(project_path: Path, mcp_servers: List[str]) -> None:
             agent_file.write_text(content)
 
 
+def copy_schema_files(project_path: Path) -> None:
+    """Copy JSON Schema files to .map/schemas/"""
+    schemas_dir = project_path / ".map" / "schemas"
+    schemas_dir.mkdir(parents=True, exist_ok=True)
+
+    # Get schemas from installed package
+    import pkg_resources
+    try:
+        # Try to get schemas from package data
+        schema_files = pkg_resources.resource_listdir('mapify_cli', 'schemas')
+        for schema_file in schema_files:
+            if schema_file.endswith('.json'):
+                schema_content = pkg_resources.resource_string(
+                    'mapify_cli', f'schemas/{schema_file}'
+                ).decode('utf-8')
+                dest_file = schemas_dir / schema_file
+                dest_file.write_text(schema_content)
+    except Exception:
+        # Fallback: copy from templates directory if package resources fail
+        templates_dir = get_templates_dir()
+        # Schemas might be in parent src/mapify_cli/schemas
+        schemas_template_dir = templates_dir.parent / "schemas"
+        if schemas_template_dir.exists():
+            import shutil
+            for schema_file in schemas_template_dir.glob("*.json"):
+                dest_file = schemas_dir / schema_file.name
+                shutil.copy2(schema_file, dest_file)
+
+
 def create_task_decomposer_content(mcp_servers: List[str]) -> str:
     """Create task-decomposer agent content"""
     mcp_section = ""
@@ -2012,6 +2041,7 @@ def init(
     tracker.add("create-agents", "Create MAP agents")
     tracker.start("create-agents")
     create_agent_files(project_path, selected_mcp_servers)
+    copy_schema_files(project_path)  # Copy JSON Schema files for validation
     tracker.complete("create-agents", "8 agents")
 
     tracker.add("create-commands", "Create slash commands")
