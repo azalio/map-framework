@@ -18,7 +18,6 @@ import json
 import sys
 import unittest.mock
 from pathlib import Path
-from typing import Dict, Any
 
 import pytest
 from typer.testing import CliRunner
@@ -386,8 +385,7 @@ class TestMCPToolDetection:
         detected = detect_mcp_tool_calls(reflector_output_without_tools)
 
         # Should be empty (no tool calls, just mentions)
-        # FIXED: Changed OR to AND - both conditions must be true
-        assert len(detected) == 0 and "mcp__cipher__cipher_memory_search" not in str(detected)
+        assert len(detected) == 0
 
     def test_verify_reflector_tools_pass(self, reflector_output_with_tools):
         """Test Reflector MCP tool verification passes when tools are called."""
@@ -1309,14 +1307,14 @@ class TestAdditionalCoverage:
         contract_validator._validator = None
 
         # First call creates validator
-        result1 = validate_agent_input("actor", {
+        validate_agent_input("actor", {
             "language": "python",
             "project_name": "test",
             "subtask_description": "Test task"
         })
 
         # Second call reuses same validator
-        result2 = validate_agent_output("actor", {
+        validate_agent_output("actor", {
             "approach": "Implement feature X with Y approach",
             "code_changes": [{
                 "file_path": "test.py",

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List
 
-from jsonschema import Draft7Validator, ValidationError
+from jsonschema import Draft7Validator
 
 logger = logging.getLogger(__name__)
 
@@ -143,19 +143,8 @@ class AgentContractValidator:
                     f"Field '{field_path}': {error.message}"
                 )
 
-            # Additional validation warnings (not errors)
-            if not errors:
-                # Check for unexpected additional properties
-                if not schema.get('additionalProperties', True):
-                    expected_props = set(schema.get('properties', {}).keys())
-                    actual_props = set(input_data.keys())
-                    extra_props = actual_props - expected_props
-
-                    if extra_props:
-                        warnings.append(
-                            f"Unexpected properties: {', '.join(extra_props)}"
-                        )
-
+            # Note: jsonschema already validates additionalProperties: false
+            # No need for redundant manual checking here
             valid = len(errors) == 0
 
             if valid:

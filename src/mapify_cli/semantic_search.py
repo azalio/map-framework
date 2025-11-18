@@ -44,7 +44,7 @@ try:
     spec1 = importlib.util.find_spec("sentence_transformers")
     spec2 = importlib.util.find_spec("sklearn")
     SEMANTIC_SEARCH_AVAILABLE = spec1 is not None and spec2 is not None
-except (ImportError, ValueError):
+except ImportError:
     SEMANTIC_SEARCH_AVAILABLE = False
 
 if not SEMANTIC_SEARCH_AVAILABLE:

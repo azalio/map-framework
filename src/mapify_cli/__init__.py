@@ -3008,9 +3008,9 @@ def validate_agent_input_cmd(
     else:
         console.print(f"[yellow]⚠ {agent_name} input validation failed[/yellow]" if non_blocking else f"[red]✗ {agent_name} input validation failed[/red]")
 
-        if verbose or True:  # Always show errors
-            for error in result.errors:
-                console.print(f"[yellow]  - {error}[/yellow]" if non_blocking else f"[red]  - {error}[/red]")
+        # Always show errors for validation failures
+        for error in result.errors:
+            console.print(f"[yellow]  - {error}[/yellow]" if non_blocking else f"[red]  - {error}[/red]")
 
         if result.warnings:
             console.print("[yellow]Warnings:[/yellow]")
