@@ -49,6 +49,7 @@ class TestAssertionLogicTruthTable:
             pytest.fail("Should have failed - has cipher violations")
         except AssertionError:
             # Expected failure - assertion correctly detected violations
+            pass  # Required for except block
 
     def test_or_logic_bug_demonstration(self):
         """
