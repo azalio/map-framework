@@ -1,0 +1,7 @@
+# Ignore all validation log files
+*.json
+*.log
+
+# Keep this .gitignore
+!.gitignore
+!README.md
