@@ -158,6 +158,21 @@ Output JSON with:
 )
 ```
 
+**Output Validation (WARNING-ONLY):**
+
+After Actor completes refactoring, validate output structure:
+
+```bash
+# Output validation for refactoring (non-blocking)
+ACTOR_REFACTOR_OUTPUT=$(mktemp)
+cat <<'EOF' > "$ACTOR_REFACTOR_OUTPUT"
+[paste actor refactoring JSON output here]
+EOF
+
+mapify validate agent-output actor "$ACTOR_REFACTOR_OUTPUT" --non-blocking
+rm -f "$ACTOR_REFACTOR_OUTPUT"
+```
+
 ### Monitor: Validate No Behavior Changes
 
 ```
@@ -271,6 +286,23 @@ Output JSON with refactoring insights."
 )
 ```
 
+**Post-Reflector MCP Tool Verification (WARNING-ONLY):**
+
+After Reflector completes, verify it used required MCP tools:
+
+```bash
+# MCP tool verification for Reflector (non-blocking)
+REFLECTOR_OUTPUT=$(mktemp)
+cat <<'EOF' > "$REFLECTOR_OUTPUT"
+[paste reflector output here - full text, not just JSON]
+EOF
+
+mapify validate mcp-tools reflector "$REFLECTOR_OUTPUT" --non-blocking
+rm -f "$REFLECTOR_OUTPUT"
+```
+
+**Required MCP Tools:** Reflector MUST call `mcp__cipher__cipher_memory_search` to search for similar refactoring patterns before proposing new bullets.
+
 ### Update Playbook
 
 ```
@@ -289,6 +321,25 @@ Focus on:
 Output curator operations."
 )
 ```
+
+**Post-Curator MCP Tool Verification (WARNING-ONLY):**
+
+After Curator completes, verify it used required MCP tools:
+
+```bash
+# MCP tool verification for Curator (non-blocking)
+CURATOR_OUTPUT=$(mktemp)
+cat <<'EOF' > "$CURATOR_OUTPUT"
+[paste curator output here - full text, not just JSON]
+EOF
+
+mapify validate mcp-tools curator "$CURATOR_OUTPUT" --non-blocking
+rm -f "$CURATOR_OUTPUT"
+```
+
+**Required MCP Tools:** Curator MUST call:
+- `mcp__cipher__cipher_memory_search` - Check for duplicate bullets before adding
+- `mcp__cipher__cipher_extract_and_operate_memory` - Sync high-quality bullets to cipher
 
 ## Step 4: Final Verification
 

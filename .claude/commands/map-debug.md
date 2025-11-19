@@ -128,6 +128,21 @@ Use Read, Grep tools to analyze code. Do NOT make changes yet."
 )
 ```
 
+**Output Validation (WARNING-ONLY):**
+
+After Actor completes investigation, validate output structure:
+
+```bash
+# Output validation for investigation (non-blocking)
+ACTOR_INVESTIGATION_OUTPUT=$(mktemp)
+cat <<'EOF' > "$ACTOR_INVESTIGATION_OUTPUT"
+[paste actor investigation JSON output here]
+EOF
+
+mapify validate agent-output actor "$ACTOR_INVESTIGATION_OUTPUT" --non-blocking
+rm -f "$ACTOR_INVESTIGATION_OUTPUT"
+```
+
 ### Fix Steps
 
 For subtasks with `debug_type: 'fix'`:
@@ -150,6 +165,21 @@ Output JSON with:
 
 Provide FULL file content for changes."
 )
+```
+
+**Output Validation (WARNING-ONLY):**
+
+After Actor completes fix, validate output structure:
+
+```bash
+# Output validation for fix (non-blocking)
+ACTOR_FIX_OUTPUT=$(mktemp)
+cat <<'EOF' > "$ACTOR_FIX_OUTPUT"
+[paste actor fix JSON output here]
+EOF
+
+mapify validate agent-output actor "$ACTOR_FIX_OUTPUT" --non-blocking
+rm -f "$ACTOR_FIX_OUTPUT"
 ```
 
 ### Monitor Validation
@@ -267,6 +297,23 @@ Output JSON with:
 )
 ```
 
+**Post-Reflector MCP Tool Verification (WARNING-ONLY):**
+
+After Reflector completes, verify it used required MCP tools:
+
+```bash
+# MCP tool verification for Reflector (non-blocking)
+REFLECTOR_OUTPUT=$(mktemp)
+cat <<'EOF' > "$REFLECTOR_OUTPUT"
+[paste reflector output here - full text, not just JSON]
+EOF
+
+mapify validate mcp-tools reflector "$REFLECTOR_OUTPUT" --non-blocking
+rm -f "$REFLECTOR_OUTPUT"
+```
+
+**Required MCP Tools:** Reflector MUST call `mcp__cipher__cipher_memory_search` to search for similar debugging patterns before proposing new bullets.
+
 ### Update Playbook
 
 ```
@@ -296,6 +343,25 @@ echo '[Curator JSON output]' > curator_operations.json
 # Apply to playbook SQLite database
 mapify playbook apply-delta curator_operations.json
 ```
+
+**Post-Curator MCP Tool Verification (WARNING-ONLY):**
+
+After Curator completes, verify it used required MCP tools:
+
+```bash
+# MCP tool verification for Curator (non-blocking)
+CURATOR_OUTPUT=$(mktemp)
+cat <<'EOF' > "$CURATOR_OUTPUT"
+[paste curator output here - full text, not just JSON]
+EOF
+
+mapify validate mcp-tools curator "$CURATOR_OUTPUT" --non-blocking
+rm -f "$CURATOR_OUTPUT"
+```
+
+**Required MCP Tools:** Curator MUST call:
+- `mcp__cipher__cipher_memory_search` - Check for duplicate bullets before adding
+- `mcp__cipher__cipher_extract_and_operate_memory` - Sync high-quality bullets to cipher
 
 ## Step 4: Verification
 
