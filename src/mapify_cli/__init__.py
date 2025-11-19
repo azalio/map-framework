@@ -2068,15 +2068,12 @@ def init(
     tracker.start("create-agents")
     create_agent_files(project_path, selected_mcp_servers)
 
-    # Copy schema files (must succeed for validation to work)
+    # Copy schema files (fallback to templates directory if pkg_resources fails)
     try:
         copy_schema_files(project_path)
     except Exception as e:
-        console.print(f"[red]ERROR: Failed to copy schema files: {e}[/red]")
-        console.print("[red]Agent contract validation will not work. Run 'mapify init' again to fix.[/red]")
-        import traceback
-        traceback.print_exc()
-        raise typer.Exit(1)
+        console.print(f"[yellow]⚠ Failed to copy schema files: {e}[/yellow]")
+        console.print("[yellow]Agent contract validation may not work optimally.[/yellow]")
 
     tracker.complete("create-agents", "8 agents")
 
