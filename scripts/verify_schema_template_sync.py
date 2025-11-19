@@ -252,7 +252,7 @@ Examples:
         issues = verify_sync(agent, args.schema_dir, args.template_dir)
         results[agent] = issues
 
-        success = print_agent_status(agent, issues)
+        print_agent_status(agent, issues)
 
         # Verbose output
         if args.verbose and "error" not in issues:

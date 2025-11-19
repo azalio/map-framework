@@ -109,13 +109,13 @@ def detect_mcp_tool_calls(agent_output: str) -> Set[str]:
 
         # Require explicit call verb BEFORE tool name (stricter matching)
         # This prevents false positives from documentation mentions
-        # Flexible matching: allows space, colon, comma, newline, or backticks between verb and tool
+        # Require at least one whitespace character between verb and tool name
         tool_called = False
         for indicator in call_indicators:
             # Match patterns like:
-            # "invoked mcp__cipher__", "invoked: mcp__cipher__", "invoked,mcp__cipher__"
-            # "invoked `mcp__cipher__`", "invoked\nmcp__cipher__"
-            pattern = rf"{re.escape(indicator)}[\s:,`]*{re.escape(tool_name)}"
+            # "invoked mcp__cipher__", "invoked: mcp__cipher__", "called mcp__cipher__"
+            # Requires space/newline/tab between verb and tool (prevents "invokedmcp__")
+            pattern = rf"{re.escape(indicator)}\s+{re.escape(tool_name)}"
             if re.search(pattern, context, re.MULTILINE):
                 tool_called = True
                 break

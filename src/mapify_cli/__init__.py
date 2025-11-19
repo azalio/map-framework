@@ -2073,8 +2073,10 @@ def init(
         copy_schema_files(project_path)
     except Exception as e:
         console.print(f"[red]ERROR: Failed to copy schema files: {e}[/red]")
+        console.print("[red]Agent contract validation will not work. Run 'mapify init' again to fix.[/red]")
         import traceback
         traceback.print_exc()
+        raise typer.Exit(1)
 
     tracker.complete("create-agents", "8 agents")
 
@@ -3070,7 +3072,7 @@ def validate_agent_input_cmd(
         console.print(f"[green]✓ {agent_name} input validation passed[/green]")
         return
     else:
-        console.print(f"[yellow]⚠ {agent_name} input validation failed[/yellow]" if non_blocking else f"[red]✗ {agent_name} input validation failed[/red]")
+        console.print(f"[yellow]⚠ {agent_name} input validation warning (non-blocking)[/yellow]" if non_blocking else f"[red]✗ {agent_name} input validation failed[/red]")
 
         # Always show errors for validation failures
         for error in result.errors:
@@ -3124,7 +3126,7 @@ def validate_agent_output_cmd(
         console.print(f"[green]✓ {agent_name} output validation passed[/green]")
         return
     else:
-        console.print(f"[yellow]⚠ {agent_name} output validation failed[/yellow]" if non_blocking else f"[red]✗ {agent_name} output validation failed[/red]")
+        console.print(f"[yellow]⚠ {agent_name} output validation warning (non-blocking)[/yellow]" if non_blocking else f"[red]✗ {agent_name} output validation failed[/red]")
 
         for error in result.errors:
             console.print(f"[yellow]  - {error}[/yellow]" if non_blocking else f"[red]  - {error}[/red]")
@@ -3174,7 +3176,7 @@ def validate_mcp_tools_cmd(
         console.print(f"[green]  Found: {', '.join(result.detected_tools)}[/green]")
         return
     else:
-        console.print(f"[yellow]⚠ {agent_name} MCP tools verification failed[/yellow]" if non_blocking else f"[red]✗ {agent_name} MCP tools verification failed[/red]")
+        console.print(f"[yellow]⚠ {agent_name} MCP tools verification warning (non-blocking)[/yellow]" if non_blocking else f"[red]✗ {agent_name} MCP tools verification failed[/red]")
 
         if result.missing_tools:
             console.print(f"[yellow]  Missing required tools: {', '.join(result.missing_tools)}[/yellow]" if non_blocking else f"[red]  Missing required tools: {', '.join(result.missing_tools)}[/red]")

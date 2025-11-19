@@ -9,7 +9,7 @@ scikit-learn>=1.3.0          # Cosine similarity
 # TensorFlow version pinning (IMPORTANT: 2.20.0 has mutex deadlock bug on macOS ARM)
 tensorflow<2.20,>=2.15        # Pin to 2.19.x to avoid mutex deadlock
 tensorboard<2.20              # Match tensorflow version
-torch<2.7                     # Pin to 2.6.x (2.8.0 has compatibility issues)
+torch<2.7                     # Pin to <2.7 (avoid future 2.7+ compatibility issues, e.g. 2.8.0)
 
 # Keras compatibility fix (required for transformers library)
 tf-keras                     # Keras 2 (backwards-compatible with Keras 3)

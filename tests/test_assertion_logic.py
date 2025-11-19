@@ -38,7 +38,6 @@ class TestAssertionLogicTruthTable:
         except AssertionError as e:
             # Expected failure - assertion correctly detected non-empty list
             assert "list not empty" not in str(e)  # Our pytest.fail message
-            pass
 
     def test_no_violations_truth_table_case4(self):
         """Truth table case 4: empty=False, has_keyword=True → FAIL"""
@@ -50,7 +49,6 @@ class TestAssertionLogicTruthTable:
             pytest.fail("Should have failed - has cipher violations")
         except AssertionError:
             # Expected failure - assertion correctly detected violations
-            pass
 
     def test_or_logic_bug_demonstration(self):
         """
