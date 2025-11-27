@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2025-11-27
+
 ### Changed
 - **Agent Model Upgrades**: Upgraded `predictor.md` and `evaluator.md` from `haiku` to `sonnet` model
   - **Predictor** (v2.4.0 → v3.3.0): Impact analysis now uses sonnet for complex reasoning
