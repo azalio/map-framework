@@ -81,3 +81,5 @@ docs/claude-code-prompt-improver
 
 # macOS system files
 .DS_Store
+
+.worktrees
