@@ -12,7 +12,6 @@ When templates are out of sync:
 See .claude/CLAUDE.md for the template synchronization process.
 """
 
-import os
 import filecmp
 import pytest
 from pathlib import Path
@@ -59,8 +58,7 @@ class TestTemplateSynchronization:
             template_file = templates_agents_dir / agent
 
             assert claude_file.exists(), (
-                f"{agent} missing from .claude/agents/. "
-                f"Expected at: {claude_file}"
+                f"{agent} missing from .claude/agents/. " f"Expected at: {claude_file}"
             )
             assert template_file.exists(), (
                 f"{agent} missing from templates/agents/. "
@@ -74,7 +72,11 @@ class TestTemplateSynchronization:
         if not templates_agents_dir.exists():
             pytest.skip("Templates directory doesn't exist")
 
-        claude_files = {f.name for f in claude_agents_dir.glob("*.md")} if claude_agents_dir.exists() else set()
+        claude_files = (
+            {f.name for f in claude_agents_dir.glob("*.md")}
+            if claude_agents_dir.exists()
+            else set()
+        )
         template_files = {f.name for f in templates_agents_dir.glob("*.md")}
 
         orphaned = template_files - claude_files
@@ -91,7 +93,11 @@ class TestTemplateSynchronization:
             pytest.skip(".claude/agents/ directory doesn't exist")
 
         claude_files = {f.name for f in claude_agents_dir.glob("*.md")}
-        template_files = {f.name for f in templates_agents_dir.glob("*.md")} if templates_agents_dir.exists() else set()
+        template_files = (
+            {f.name for f in templates_agents_dir.glob("*.md")}
+            if templates_agents_dir.exists()
+            else set()
+        )
 
         missing = claude_files - template_files
         assert not missing, (
