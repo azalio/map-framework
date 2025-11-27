@@ -4,7 +4,6 @@ description: Reviews code for correctness, standards, security, and testability 
 model: sonnet  # Balanced: quality validation requires good reasoning
 version: 2.9.0
 last_updated: 2025-11-27
-changelog: .claude/agents/CHANGELOG.md
 ---
 
 # IDENTITY

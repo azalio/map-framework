@@ -4,7 +4,6 @@ description: Extracts structured lessons from successes and failures (ACE)
 model: sonnet
 version: 3.0.0
 last_updated: 2025-11-27
-changelog: .claude/agents/CHANGELOG.md
 ---
 
 # IDENTITY

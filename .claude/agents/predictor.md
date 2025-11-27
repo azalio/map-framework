@@ -4,7 +4,6 @@ description: Predicts consequences and dependency impact of changes (MAP)
 model: sonnet  # Impact analysis requires complex reasoning - upgraded from haiku
 version: 3.3.0
 last_updated: 2025-11-27
-changelog: .claude/agents/CHANGELOG.md
 ---
 
 # IDENTITY

@@ -4,7 +4,6 @@ description: Generates production-ready implementation proposals (MAP)
 model: sonnet  # Balanced: code generation quality is important
 version: 3.1.0
 last_updated: 2025-11-27
-changelog: .claude/agents/CHANGELOG.md
 ---
 
 # QUICK REFERENCE (Read First)

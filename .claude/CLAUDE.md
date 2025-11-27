@@ -46,63 +46,17 @@ git add src/mapify_cli/templates/
 
 ### Автоматическая проверка
 
-Скрипт для проверки синхронизации:
+Проверка синхронизации через pytest (запускается в CI):
 
 ```bash
-#!/bin/bash
-# scripts/check-template-sync.sh
+# Запуск тестов синхронизации
+pytest tests/test_template_sync.py -v
 
-echo "Checking template synchronization..."
-
-# Check agents
-for agent in task-decomposer actor monitor predictor evaluator reflector curator documentation-reviewer; do
-    source=".claude/agents/${agent}.md"
-    target="src/mapify_cli/templates/agents/${agent}.md"
-
-    if [ -f "$source" ] && [ -f "$target" ]; then
-        if ! diff -q "$source" "$target" > /dev/null; then
-            echo "❌ OUT OF SYNC: agents/${agent}.md"
-            echo "   Run: cp $source $target"
-        else
-            echo "✅ IN SYNC: agents/${agent}.md"
-        fi
-    else
-        echo "⚠️  MISSING: agents/${agent}.md (source or target not found)"
-    fi
-done
-
-# Check commands
-for command in map-feature map-debug map-refactor map-review map-efficient map-fast; do
-    source=".claude/commands/${command}.md"
-    target="src/mapify_cli/templates/commands/${command}.md"
-
-    if [ -f "$source" ] && [ -f "$target" ]; then
-        if ! diff -q "$source" "$target" > /dev/null; then
-            echo "❌ OUT OF SYNC: commands/${command}.md"
-            echo "   Run: cp $source $target"
-        else
-            echo "✅ IN SYNC: commands/${command}.md"
-        fi
-    else
-        echo "⚠️  MISSING: commands/${command}.md (source or target not found)"
-    fi
-done
-```
-
-### Git Pre-Commit Hook
-
-Добавь в `.claude/hooks/pre-commit.sh`:
-
-```bash
-# Check template synchronization
-echo "Checking agent template synchronization..."
-if ! bash scripts/check-template-sync.sh | grep -q "❌"; then
-    echo "✅ Templates in sync"
-else
-    echo "❌ ERROR: Templates out of sync!"
-    echo "Run: cp .claude/agents/*.md src/mapify_cli/templates/agents/"
-    exit 1
-fi
+# Тесты проверяют:
+# - Все файлы из .claude/agents/ существуют в templates/
+# - Нет orphaned файлов в templates/ без source
+# - Контент файлов идентичен
+# - Frontmatter не ссылается на удалённые файлы
 ```
 
 ## MAP Workflow Enforcement

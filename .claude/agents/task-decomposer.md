@@ -4,7 +4,6 @@ description: Breaks complex goals into atomic, testable subtasks (MAP)
 model: sonnet  # Balanced: requires good understanding of requirements
 version: 2.4.0
 last_updated: 2025-11-27
-changelog: .claude/agents/CHANGELOG.md
 ---
 
 # ===== STABLE PREFIX =====

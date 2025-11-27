@@ -1912,12 +1912,14 @@ Must handle 500 concurrent searches with <200ms response time.
 
 MAP Framework supports intelligent model selection per agent to balance capability and cost.
 
-### Model Distribution Strategy
+### Model Distribution Strategy (Updated Nov 2025)
+
+> **Note:** In v3.0+, Predictor and Evaluator were upgraded from `haiku` to `sonnet` for better analysis quality.
 
 | Agent | Model | Reason | Cost Impact |
 |-------|-------|--------|-------------|
-| **Predictor** | haiku | Fast analysis, simple dependency tracking | ⬇️⬇️⬇️ |
-| **Evaluator** | haiku | Scoring doesn't need complex reasoning | ⬇️⬇️⬇️ |
+| **Predictor** | sonnet | Impact analysis requires complex reasoning (upgraded from haiku) | ➡️ |
+| **Evaluator** | sonnet | Evaluation requires nuanced judgment (upgraded from haiku) | ➡️ |
 | **Actor** | sonnet | Code generation quality is critical | ➡️ |
 | **Monitor** | sonnet | Quality validation requires thoroughness | ➡️ |
 | **TaskDecomposer** | sonnet | Requires good understanding of requirements | ➡️ |
@@ -1925,48 +1927,59 @@ MAP Framework supports intelligent model selection per agent to balance capabili
 | **Curator** | sonnet | Knowledge management requires care | ➡️ |
 | **DocumentationReviewer** | sonnet | Documentation analysis needs thoroughness | ➡️ |
 
-### Cost Savings
+### Cost Impact of Model Upgrades
 
-Using this optimized distribution provides:
+The upgrade of Predictor and Evaluator from haiku to sonnet provides:
 
-- **40-60% cost reduction** vs using sonnet everywhere
-- **Maintains quality** for critical tasks (sonnet for actor/monitor/reflector)
-- **Fast execution** for analysis tasks (haiku for predictor/evaluator)
-- **Balanced performance** for code generation (sonnet for actor/monitor)
+- **Better analysis quality**: More accurate impact predictions and quality evaluations
+- **Higher costs**: ~12x increase per agent call for predictor/evaluator
+  - Input tokens: $0.25/1M (haiku) → $3/1M (sonnet)
+  - Output tokens: $1.25/1M (haiku) → $15/1M (sonnet)
+- **Per-workflow impact**: ~$0.03 → ~$0.36 for typical 4-subtask feature
+
+### Cost Mitigation Strategies
+
+**1. Use `/map-efficient` workflow (RECOMMENDED)**
+- Skips Evaluator per subtask (Monitor provides sufficient validation)
+- Conditional Predictor (only called for high-risk changes)
+- Batched Reflector/Curator at end
+- **Token savings: 30-40%**
+
+**2. Use `/map-fast` for throwaway code**
+- Minimal agent sequence: TaskDecomposer → Actor → Monitor
+- Skips: Predictor, Evaluator, Reflector, Curator
+- **Token savings: 40-50%** (but no learning!)
 
 ### How It Works
 
 Agents automatically use their configured model when invoked via slash commands:
 
 ```bash
-# Slash commands coordinate workflow and call agents with specific models
-/map-feature implement authentication  # Calls: sonnet (actor/monitor) → haiku (predictor/evaluator)
-/map-debug fix login bug              # Calls: sonnet (actor/monitor) → haiku (predictor/evaluator)
-```
+# Full workflow - all agents use sonnet
+/map-feature implement authentication
 
-To override model for specific agent:
+# Efficient workflow - conditional predictor, batched learning
+/map-efficient implement authentication  # Recommended for most tasks
 
-```bash
-# Use haiku for quick prototype
-claude --model haiku --agents '{"actor": {"prompt": "$(cat .claude/agents/actor.md)"}}'
-
-# Use opus for critical refactoring
-claude --model opus --agents '{"actor": {"prompt": "$(cat .claude/agents/actor.md)"}}'
+# Fast workflow - minimal agents, no learning
+/map-fast prototype quick API mockup     # Throwaway code only
 ```
 
 ### Cost Comparison Example
 
-**Scenario:** Implement a feature with 5 subtasks
+**Scenario:** Implement a feature with 4 subtasks
 
-| Approach | TaskDecomposer | Actor (5x) | Monitor (5x) | Predictor (5x) | Evaluator (5x) | Reflector (5x) | Curator (5x) | Total Cost* |
-|----------|----------------|------------|--------------|----------------|----------------|----------------|--------------|-------------|
-| All Opus | opus | opus | opus | opus | opus | opus | opus | ~$3.00 |
-| All Sonnet | sonnet | sonnet | sonnet | sonnet | sonnet | sonnet | sonnet | ~$0.60 |
-| **Optimized** | **sonnet** | **sonnet** | **sonnet** | **haiku** | **haiku** | **sonnet** | **sonnet** | **~$0.40** |
+| Workflow | TaskDecomposer | Actor (4x) | Monitor (4x) | Predictor | Evaluator | Reflector | Curator | Total Cost* |
+|----------|----------------|------------|--------------|-----------|-----------|-----------|---------|-------------|
+| `/map-feature` | sonnet | sonnet | sonnet | sonnet (4x) | sonnet (4x) | sonnet (4x) | sonnet (4x) | ~$0.36 |
+| `/map-efficient` | sonnet | sonnet | sonnet | sonnet (0-2x) | skip | sonnet (1x) | sonnet (1x) | ~$0.22 |
+| `/map-fast` | sonnet | sonnet | sonnet | skip | skip | skip | skip | ~$0.12 |
 
 *Approximate costs based on typical token usage
 
-**Savings: 33% vs all-sonnet, 87% vs all-opus**
+**Savings:**
+- `/map-efficient`: ~40% savings vs `/map-feature`, maintains learning
+- `/map-fast`: ~67% savings vs `/map-feature`, but NO playbook updates
 
 ---
 

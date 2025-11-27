@@ -4,7 +4,6 @@ description: Manages structured playbook with incremental delta updates (ACE)
 model: sonnet  # Balanced: knowledge management requires careful reasoning
 version: 3.1.0
 last_updated: 2025-11-27
-changelog: .claude/agents/CHANGELOG.md
 ---
 
 # IDENTITY
