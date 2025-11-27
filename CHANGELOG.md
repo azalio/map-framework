@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Agent Model Upgrades**: Upgraded `predictor.md` and `evaluator.md` from `haiku` to `sonnet` model
+  - **Predictor** (v2.4.0 → v3.3.0): Impact analysis now uses sonnet for complex reasoning
+  - **Evaluator** (v2.4.0 → v3.0.0): Quality evaluation now uses sonnet for nuanced judgment
+  - **Cost Impact**: ~12x increase per agent call ($0.25→$3/1M input tokens, $1.25→$15/1M output tokens)
+  - **Per-workflow impact**: ~$0.03 → ~$0.36 for typical 4-subtask feature
+  - **Mitigation**: Use `/map-efficient` workflow (conditional Predictor, 30-40% token savings)
+  - **Rationale**: Better analysis quality justifies cost for production code
+
+- **Agent Template Rewrites**: Major rewrites of all 8 agent templates with LLM Council validation
+  - **actor.md** (v2.5.0 → v3.1.0): Added Quick Reference box, enhanced MCP integration
+  - **monitor.md** (v2.5.0 → v2.9.0): Added execution workflow, template configuration
+  - **predictor.md** (v2.4.0 → v3.3.0): Added input schema, tool definitions, MAP integration
+  - **evaluator.md** (v2.4.0 → v3.0.0): New Six-Dimensional Quality Model, score calibration
+  - **curator.md** (v2.3.0 → v3.1.0): Simplified execution flow, canonical JSON shape
+  - **reflector.md** (v2.5.0 → v3.0.0): Quick start paths, framework execution order
+  - **task-decomposer.md**: Major rewrite with enhanced complexity scoring
+  - **documentation-reviewer.md** (v3.0.0 → v3.1.0): Improved review workflow
+
+### Removed
+- **Agent Documentation Files**: Removed `.claude/agents/CHANGELOG.md`, `MCP-PATTERNS.md`, `README.md`
+  - Version info now in agent frontmatter (`version:`, `last_updated:`)
+  - MCP patterns consolidated into individual agents
+
 ## [1.5.0] - 2025-11-14
 
 ### Added
