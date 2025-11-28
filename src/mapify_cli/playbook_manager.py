@@ -574,7 +574,7 @@ class PlaybookManager:
 
         conn.close()
 
-        # Create backup of JSON
+        # Create backup of JSON and remove original
         backup_path = (
             str(self.playbook_path)
             + f".backup.{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
@@ -586,6 +586,20 @@ class PlaybookManager:
             file=sys.stderr,
         )
         print(f"✅ JSON backup saved to {backup_path}", file=sys.stderr)
+
+        # Remove original playbook.json to avoid confusion
+        # The backup is always available if needed
+        try:
+            self.playbook_path.unlink()
+            print(
+                f"✅ Removed {self.playbook_path} (backup preserved)",
+                file=sys.stderr,
+            )
+        except OSError as e:
+            print(
+                f"⚠️ Could not remove {self.playbook_path}: {e}",
+                file=sys.stderr,
+            )
 
     def _load_playbook_from_db(self) -> Dict:
         """Load playbook structure from SQLite database for backward compatibility."""
