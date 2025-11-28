@@ -113,14 +113,12 @@ pytest tests/test_template_sync.py -v
 ❌ **NEVER DO THIS**:
 - ❌ `sqlite3 .claude/playbook.db "UPDATE bullets SET..."`  (direct SQL)
 - ❌ `Edit(.claude/playbook.db, ...)` (Edit tool on binary file)
-- ❌ Reading/writing playbook.json (doesn't exist anymore - migrated to SQLite)
 - ❌ Manually creating JSON and applying without Curator review
 
 **Why**:
 - Curator validates quality, checks duplicates, scores patterns
 - `apply-delta` maintains playbook integrity, handles transactions
 - Direct sqlite breaks schema, bypasses validation
-- playbook.json is legacy (removed in favor of playbook.db)
 
 ## Template Variable Protection
 

@@ -106,7 +106,7 @@ Copy selected components into an existing project:
 │   ├── map-debug.md
 │   ├── map-refactor.md
 │   └── map-review.md
-└── playbook.json     # ACE knowledge base
+└── playbook.db       # ACE knowledge base (SQLite)
 ```
 
 **Benefits:**

@@ -249,7 +249,6 @@ This section documents frequently encountered CLI command errors and their corre
 |------------------|-------------------|-----|
 | `sqlite3 .claude/playbook.db "UPDATE bullets SET..."` | `mapify playbook apply-delta ops.json` | Direct database access breaks integrity, bypasses validation, and corrupts FTS5 indexes. |
 | `Edit(.claude/playbook.db, ...)` | `mapify playbook apply-delta ops.json` | Cannot edit binary SQLite database. Generate delta operations JSON and apply via CLI. |
-| Reading/writing `playbook.json` | `mapify playbook query "..."` | `playbook.json` is deprecated (migrated to `playbook.db` in v2.2). Use CLI commands to interact with playbook. |
 
 ### Wrong Operation Field Name
 
@@ -334,7 +333,7 @@ Instead of treating playbook bullets as plain text, the KG:
 | USES | X uses Y as dependency | pytest USES Python |
 | DEPENDS_ON | X requires Y to function | retry-pattern DEPENDS_ON exponential-backoff |
 | CONTRADICTS | X conflicts with Y | generic-exception CONTRADICTS specific-exceptions |
-| SUPERSEDES | X replaces Y | playbook.db SUPERSEDES playbook.json |
+| SUPERSEDES | X replaces Y | SQLite SUPERSEDES JSON format |
 | IMPLEMENTS | X implements pattern Y | retry-logic IMPLEMENTS resilience-pattern |
 | CAUSES | X causes problem Y | race-condition CAUSES data-corruption |
 | PREVENTS | X prevents problem Y | mutex-lock PREVENTS race-condition |

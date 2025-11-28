@@ -586,6 +586,8 @@ class RecitationManager:
             from mapify_cli.playbook_manager import PlaybookManager
 
             playbook_db_path = self.project_root / ".claude" / "playbook.db"
+            # LEGACY: playbook_json_path is only used for backward compatibility
+            # to support migration from older versions. DO NOT use for new functionality.
             playbook_json_path = self.project_root / ".claude" / "playbook.json"
 
             # Check if playbook exists (prefer .db, fall back to .json for backward compatibility)

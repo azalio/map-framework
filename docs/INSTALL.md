@@ -232,7 +232,7 @@ If you prefer manual setup:
    │   │   ├── map-refactor.md       # Refactor workflow entry point
    │   │   └── map-review.md         # Review workflow entry point
    │   ├── mcp_config.json
-   │   └── playbook.json              # ACE: Knowledge base
+   │   └── playbook.db                # ACE: Knowledge base (SQLite)
    ```
 
 ## Verify Installation

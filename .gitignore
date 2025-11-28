@@ -37,8 +37,10 @@ htmlcov/
 
 # ACE Playbook - user-specific data
 .claude/embeddings_cache/
+# LEGACY: playbook.json entries for migration support (ignore old format files)
 .claude/playbook.json
 .claude/playbook.json.backup.*
+# Current format: SQLite database
 .claude/playbook.db
 .claude/playbook.db-shm
 .claude/playbook.db-wal

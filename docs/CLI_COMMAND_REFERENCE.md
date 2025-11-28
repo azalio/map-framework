@@ -204,7 +204,6 @@ mapify playbook apply-delta operations.json --dry-run
 ❌ **NEVER DO THIS**:
 - `sqlite3 .claude/playbook.db "UPDATE bullets SET..."`
 - `Edit(.claude/playbook.db, ...)`
-- Manually editing playbook.json (deprecated)
 
 ✅ **ALWAYS USE**: `mapify playbook apply-delta`
 
@@ -604,7 +603,6 @@ Updates agent templates in `.claude/agents/` to latest versions.
 |---------|-----------|-------------|
 | `sqlite3 .claude/playbook.db "UPDATE..."` | `mapify playbook apply-delta ops.json` | Direct DB access breaks integrity |
 | `Edit(.claude/playbook.db, ...)` | `mapify playbook apply-delta ops.json` | Cannot edit binary DB |
-| Reading `playbook.json` | `mapify playbook query "..."` | `playbook.json` is deprecated |
 
 ---
 

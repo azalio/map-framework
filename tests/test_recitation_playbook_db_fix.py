@@ -3,6 +3,14 @@ Test that recitation_manager prefers playbook.db over playbook.json.
 
 This test verifies the fix for the issue where map-efficient was trying
 to read .claude/playbook.json even when .claude/playbook.db already existed.
+
+IMPORTANT: This file intentionally contains references to playbook.json
+because it tests the LEGACY MIGRATION and backward compatibility behavior.
+These tests ensure that:
+1. When both .db and .json exist, the .db takes precedence
+2. When only .json exists, automatic migration to .db occurs
+
+DO NOT remove playbook.json references - they are part of migration tests.
 """
 
 from pathlib import Path

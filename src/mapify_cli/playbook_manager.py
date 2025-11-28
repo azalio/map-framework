@@ -81,9 +81,11 @@ class PlaybookManager:
                 self.db_path = Path(".claude/playbook.db")
             else:
                 self.db_path = Path(db_path)
-            self.playbook_path = (
-                self.db_path.parent / "playbook.json"
-            )  # For migration check only
+            # LEGACY: playbook.json path for migration support only.
+            # This allows users upgrading from older versions to have their
+            # playbook.json automatically migrated to playbook.db.
+            # DO NOT use playbook_path for new functionality.
+            self.playbook_path = self.db_path.parent / "playbook.json"
 
         # Check if DB exists, if not but JSON exists → migrate
         if not self.db_path.exists() and self.playbook_path.exists():
@@ -449,10 +451,17 @@ class PlaybookManager:
 
     def _migrate_json_to_sqlite(self) -> None:
         """
-        Migrate existing playbook.json to SQLite database.
+        LEGACY MIGRATION: Migrate existing playbook.json to SQLite database.
+
+        This method is intentionally preserved for backward compatibility.
+        It allows users upgrading from MAP Framework versions < 2.2 to have
+        their playbook.json automatically migrated to the new playbook.db format.
+
+        The references to playbook.json in this method are intentional and
+        should NOT be removed - they are part of the migration logic.
 
         Steps:
-        1. Load playbook.json
+        1. Load legacy playbook.json
         2. Create SQLite schema
         3. Insert all bullets into bullets table
         4. Insert metadata
