@@ -3,6 +3,14 @@ Unit tests for PlaybookManager SQLite migration functionality.
 
 Tests the automatic migration from JSON to SQLite storage and
 schema idempotency.
+
+IMPORTANT: This file intentionally contains references to playbook.json
+because it tests the LEGACY MIGRATION functionality. These tests ensure
+that users upgrading from older MAP Framework versions (< 2.2) can have
+their playbook.json files automatically migrated to playbook.db.
+
+DO NOT remove playbook.json references from this file - they are part
+of the migration test suite, not production code.
 """
 
 import json

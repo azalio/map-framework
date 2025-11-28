@@ -741,9 +741,9 @@
         "explanation": "Use apply-delta with JSON delta operations"
       },
       {
-        "category": "legacy_reference",
-        "mistake": "Reading playbook.json",
-        "reason": "playbook.json is deprecated (migrated to playbook.db)",
+        "category": "legacy_format",
+        "mistake": "Using legacy JSON format for playbook",
+        "reason": "Playbook uses SQLite database (playbook.db)",
         "correction": "mapify playbook query \"...\"",
         "explanation": "Use CLI commands to interact with playbook.db"
       }

@@ -913,7 +913,7 @@ Provenance:
 3. **Detects contradictions** with ContradictionDetector
 4. Decides: ADD/UPDATE/SKIP bullet based on conflicts
 5. **Inserts entities/relationships** into SQLite via PlaybookManager
-6. Updates playbook.json (backward compatibility)
+6. Updates playbook.db
 
 **Contradiction Detection Flow:**
 ```python
@@ -1063,7 +1063,7 @@ for entity in recent:
 - **USES**: X uses Y as dependency (pytest USES Python)
 - **DEPENDS_ON**: X requires Y to function (MAP-workflow DEPENDS_ON playbook.db)
 - **CONTRADICTS**: X conflicts with Y (generic-exception CONTRADICTS specific-exceptions)
-- **SUPERSEDES**: X replaces Y (playbook.db SUPERSEDES playbook.json)
+- **SUPERSEDES**: X replaces Y (SQLite SUPERSEDES JSON format)
 - **IMPLEMENTS**: X implements pattern Y (retry-logic IMPLEMENTS resilience-pattern)
 - **CAUSES**: X causes problem Y (race-condition CAUSES data-corruption)
 - **PREVENTS**: X prevents problem Y (mutex-lock PREVENTS race-condition)

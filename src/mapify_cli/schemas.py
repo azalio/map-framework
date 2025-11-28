@@ -98,7 +98,7 @@ CREATE TABLE IF NOT EXISTS relationships (
         'USES',          -- Entity A uses Entity B (e.g., 'pytest' USES 'Python')
         'DEPENDS_ON',    -- A depends on B (e.g., 'MAP-workflow' DEPENDS_ON 'playbook.db')
         'CONTRADICTS',   -- A contradicts B (e.g., 'generic-exception' CONTRADICTS 'specific-exceptions')
-        'SUPERSEDES',    -- A replaces B (e.g., 'playbook.db' SUPERSEDES 'playbook.json')
+        'SUPERSEDES',    -- A replaces B (e.g., 'SQLite' SUPERSEDES 'JSON-storage')
         'RELATED_TO',    -- Generic relationship (fallback)
         'IMPLEMENTS',    -- A implements pattern B (e.g., 'retry-logic' IMPLEMENTS 'resilience-pattern')
         'CAUSES',        -- A causes B (e.g., 'race-condition' CAUSES 'data-corruption')

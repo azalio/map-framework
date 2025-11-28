@@ -339,7 +339,7 @@ mapify playbook apply-delta operations.json --dry-run
 - ❌ `sqlite3 .claude/playbook.db "UPDATE bullets SET..."` → Direct SQL bypasses validation
 - ❌ `Edit(.claude/playbook.db, ...)` → Cannot edit binary database
 - ❌ Using "op" field → ✅ Correct field name is "type"
-- ❌ Reading/writing playbook.json → ✅ Migrated to playbook.db (SQLite)
+- ❌ Using legacy JSON format → ✅ Use playbook.db (SQLite)
 
 **Why apply-delta is mandatory**:
 - Validates operations before applying

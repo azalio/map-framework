@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Test suite for playbook.db initialization fix."""
+"""
+Test suite for playbook.db initialization fix.
+
+IMPORTANT: This file contains references to playbook.json for testing
+LEGACY MIGRATION functionality. These tests ensure backward compatibility
+for users upgrading from older MAP Framework versions (< 2.2).
+
+DO NOT remove playbook.json references - they are part of migration tests.
+"""
 
 import json
 import os

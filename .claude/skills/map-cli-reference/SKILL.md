@@ -124,9 +124,9 @@ mapify upgrade
 ✅ **CORRECT**: `mapify playbook apply-delta operations.json`
 📝 **Explanation**: Cannot edit binary SQLite database. Generate delta operations JSON and apply via CLI.
 
-❌ **WRONG**: Reading/writing `playbook.json`
+❌ **WRONG**: Using legacy JSON format for playbook
 ✅ **CORRECT**: `mapify playbook query "..."`
-📝 **Explanation**: `playbook.json` is deprecated (migrated to `playbook.db`). Use CLI commands to interact with playbook.
+📝 **Explanation**: Playbook uses SQLite database (`playbook.db`). Use CLI commands to interact with playbook.
 
 ---
 

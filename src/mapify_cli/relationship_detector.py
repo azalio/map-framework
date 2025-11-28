@@ -29,7 +29,7 @@ class RelationshipType(Enum):
     USES = "USES"  # A uses B (pytest USES Python)
     DEPENDS_ON = "DEPENDS_ON"  # A depends on B (MAP-workflow DEPENDS_ON playbook.db)
     CONTRADICTS = "CONTRADICTS"  # A contradicts B (generic-exception CONTRADICTS specific-exceptions)
-    SUPERSEDES = "SUPERSEDES"  # A replaces B (playbook.db SUPERSEDES playbook.json)
+    SUPERSEDES = "SUPERSEDES"  # A replaces B (SQLite SUPERSEDES JSON-storage)
     RELATED_TO = "RELATED_TO"  # Generic relationship (fallback)
 
     # Bonus 4 types (for comprehensive graph)
