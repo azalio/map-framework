@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Playbook Migration**: Fixed migration from `playbook.json` to `playbook.db` when using `mapify init --force`. The migration now properly detects and removes invalid/incomplete `playbook.db` files before attempting migration, and cleans up stale `playbook.json` files after successful migration (7cfa82e)
+- **Playbook References**: Removed all `playbook.json` references from codebase (except CHANGELOG history). Updated CLAUDE.md, agent templates, skills, and documentation to reference `playbook.db` only. Added clarifying comments to migration code and tests (fbe6bd3)
+
 ## [1.6.0] - 2025-11-27
 
 ### Changed
