@@ -2046,6 +2046,48 @@ def init(
         from mapify_cli.playbook_manager import PlaybookManager
 
         playbook_db_path = project_path / ".claude" / "playbook.db"
+        playbook_json_path = project_path / ".claude" / "playbook.json"
+
+        # When --force is used and playbook.json exists, handle migration scenarios
+        if force and playbook_json_path.exists() and playbook_db_path.exists():
+            # Check if the existing DB has valid schema (requires both bullets and metadata tables)
+            db_is_valid = False
+            try:
+                test_conn = sqlite3.connect(str(playbook_db_path))
+                cursor = test_conn.cursor()
+                # Check for required tables
+                cursor.execute(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('bullets', 'metadata')"
+                )
+                table_count = cursor.fetchone()[0]
+                test_conn.close()
+                db_is_valid = table_count == 2  # Both tables must exist
+            except sqlite3.Error:
+                db_is_valid = False
+
+            if not db_is_valid:
+                # DB is missing required schema or corrupted - remove it to allow migration
+                try:
+                    playbook_db_path.unlink()
+                    console.print(
+                        "[yellow]Removing incomplete playbook.db to migrate from playbook.json[/yellow]"
+                    )
+                except OSError:
+                    pass  # If we can't remove it, let PlaybookManager handle the error
+            else:
+                # DB is valid but playbook.json also exists - remove stale JSON to avoid confusion
+                # Create backup first in case user needs it
+                backup_path = str(playbook_json_path) + ".stale"
+                try:
+                    import shutil
+
+                    shutil.move(str(playbook_json_path), backup_path)
+                    console.print(
+                        f"[yellow]Moved stale playbook.json to {backup_path} (valid playbook.db already exists)[/yellow]"
+                    )
+                except OSError:
+                    pass  # If we can't move it, it's not critical
+
         manager = PlaybookManager(
             db_path=str(playbook_db_path), use_semantic_search=False
         )
