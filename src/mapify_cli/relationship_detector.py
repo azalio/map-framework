@@ -694,6 +694,9 @@ class RelationshipDetector:
         seen: Dict[Tuple[str, str, RelationshipType], Relationship] = {}
 
         for rel in relationships:
+            # Type annotation for consistent key typing across branches
+            key: Tuple[str, str, RelationshipType]
+
             # RELATED_TO is undirected: canonicalize (source, target) by sorting
             if rel.type == RelationshipType.RELATED_TO:
                 # Ensure consistent ordering for bidirectional relationships

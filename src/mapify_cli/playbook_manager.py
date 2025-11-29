@@ -14,7 +14,7 @@ import sqlite3
 import shutil
 import time
 from datetime import datetime, timezone
-from typing import List, Dict, Optional, Tuple
+from typing import Any, List, Dict, Optional, Tuple
 from pathlib import Path
 import re
 
@@ -37,7 +37,7 @@ try:
 except (ImportError, ValueError) as e:
     # Handle both ImportError and ValueError (e.g., Keras compatibility issues)
     SEMANTIC_SEARCH_AVAILABLE = False
-    SemanticSearchEngine = None  # Define placeholder
+    SemanticSearchEngine = None  # type: ignore[misc,assignment]  # Placeholder when unavailable
     # Debug: Print error if verbose mode
     import os
 
@@ -622,7 +622,7 @@ class PlaybookManager:
         """
         )
 
-        sections = {}
+        sections: Dict[str, Dict[str, Any]] = {}
         # Initialize all standard sections
         for section_name in [
             "ARCHITECTURE_PATTERNS",
@@ -699,7 +699,7 @@ class PlaybookManager:
                 {"type": "UPDATE", "bullet_id": "sec-0012", "increment_helpful": 1}
             ]
         """
-        summary = {"added": 0, "updated": 0, "deprecated": 0, "errors": []}
+        summary: Dict[str, Any] = {"added": 0, "updated": 0, "deprecated": 0, "errors": []}
 
         for op in operations:
             try:
@@ -750,9 +750,9 @@ class PlaybookManager:
         section: str,
         content: str,
         code_example: Optional[str] = None,
-        related_to: List[str] = None,
-        tags: List[str] = None,
-        executable_scripts: List[str] = None,
+        related_to: Optional[List[str]] = None,
+        tags: Optional[List[str]] = None,
+        executable_scripts: Optional[List[str]] = None,
     ) -> str:
         """Add new bullet to section (saves to SQLite)."""
         if section not in self.playbook["sections"]:
@@ -996,8 +996,8 @@ class PlaybookManager:
 
             else:
                 # Fallback: exact content hash matching
-                seen_content = {}
-                to_remove = []
+                seen_content: Dict[str, int] = {}
+                to_remove: List[int] = []
 
                 for i, bullet in enumerate(bullets):
                     content_hash = hashlib.md5(bullet["content"].encode()).hexdigest()
@@ -1270,7 +1270,7 @@ class PlaybookManager:
             },
         )
 
-    def _build_fts_query(self, params: PlaybookQuery, limit: int) -> Tuple[str, List]:
+    def _build_fts_query(self, params: PlaybookQuery, limit: int) -> Tuple[str, List[Any]]:
         """
         Build parameterized SQL query with FTS5 and filters.
 
@@ -1314,7 +1314,7 @@ class PlaybookManager:
             "JOIN bullets_fts fts ON b.rowid = fts.rowid",
             "WHERE fts.bullets_fts MATCH ?",
         ]
-        sql_params = [fts_query]
+        sql_params: List[Any] = [fts_query]
 
         # Section filter
         if params.sections:
@@ -1369,6 +1369,8 @@ class PlaybookManager:
         ]
 
         # Find semantically similar bullets
+        # Note: This method is only called when self.semantic_engine is not None
+        assert self.semantic_engine is not None, "semantic_engine must be available"
         similar_results = self.semantic_engine.find_similar(
             query=query,
             bullets=bullets,

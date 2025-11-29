@@ -18,7 +18,7 @@ Based on: src/mapify_cli/schemas.py (SCHEMA_V3_0_SQL)
 import sqlite3
 import json
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Dict, Any
+from typing import List, Optional, Set, Tuple, Dict, Any, Deque
 from collections import deque
 
 # Import Entity and Relationship data models
@@ -166,7 +166,7 @@ class KnowledgeGraphQuery:
 
         # BFS to find all paths
         # Queue entries: (current_entity_id, path_so_far, visited_entities)
-        queue = deque([(source_id, [], {source_id})])
+        queue: Deque[Tuple[str, List[Relationship], Set[str]]] = deque([(source_id, [], {source_id})])
         found_paths = []
 
         while queue:
@@ -471,7 +471,7 @@ class KnowledgeGraphQuery:
         """
         # Build filters
         filters = ["confidence >= ?"]
-        params = [min_confidence]
+        params: List[Any] = [min_confidence]
 
         if entity_type:
             filters.append("type = ?")
@@ -543,7 +543,7 @@ class KnowledgeGraphQuery:
         """
         # Build filters
         filters = ["confidence >= ?"]
-        params = [min_confidence]
+        params: List[Any] = [min_confidence]
 
         if relationship_type:
             filters.append("type = ?")

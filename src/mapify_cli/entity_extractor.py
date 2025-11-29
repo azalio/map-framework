@@ -620,7 +620,7 @@ class EntityExtractor:
         # Handle both Set and Dict
         if isinstance(keywords, dict):
             # Dict: keyword → canonical_name
-            keyword_items = keywords.items()
+            keyword_items = list(keywords.items())
         else:
             # Set: keyword is canonical name
             keyword_items = [(k, k) for k in keywords]

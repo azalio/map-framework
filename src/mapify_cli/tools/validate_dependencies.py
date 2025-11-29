@@ -24,7 +24,7 @@ Exit Codes:
 import sys
 import json
 import argparse
-from typing import Dict, List, Set
+from typing import Any, Dict, List, Optional, Set
 from collections import defaultdict, deque
 from enum import Enum
 
@@ -500,6 +500,8 @@ class ASCIIGraphRenderer:
             Formatted ASCII tree string
         """
         # Create instance-level color mapping to avoid mutating class attributes
+        # Use Any to allow either ANSIColors or NoColors
+        C: Any
         if use_colors:
             C = ANSIColors  # Use actual colors
         else:
@@ -647,7 +649,7 @@ class ASCIIGraphRenderer:
         return "".join(result)
 
 
-def load_input(file_path: str = None) -> dict:
+def load_input(file_path: Optional[str] = None) -> dict:
     """
     Load JSON input from file or stdin.
 

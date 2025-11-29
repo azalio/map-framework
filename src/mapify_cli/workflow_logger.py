@@ -21,8 +21,8 @@ class AgentInvocation:
 
     agent_name: str
     timestamp: str
-    prompt_preview: str  # Truncated prompt for readability
-    response_preview: str  # Truncated response
+    prompt_preview: Optional[str]  # Truncated prompt for readability (can be None)
+    response_preview: Optional[str]  # Truncated response (can be None)
     duration_ms: Optional[float] = None
     status: str = "success"  # 'success', 'error', 'timeout'
     error_message: Optional[str] = None

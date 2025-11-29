@@ -37,7 +37,7 @@ import numpy as np
 
 try:
     from sentence_transformers import SentenceTransformer
-    from sklearn.metrics.pairwise import cosine_similarity
+    from sklearn.metrics.pairwise import cosine_similarity  # type: ignore[import-untyped]
 
     SEMANTIC_SEARCH_AVAILABLE = True
 except ImportError:
@@ -156,7 +156,7 @@ class SemanticSearchEngine:
         Returns:
             Array of embeddings (N x 384)
         """
-        embeddings = []
+        embeddings: List[Optional[np.ndarray]] = []
 
         for text in texts:
             cache_key = self._get_cache_key(text)
@@ -305,7 +305,7 @@ class SemanticSearchEngine:
         Returns:
             Dict mapping cluster_id -> list of bullets
         """
-        from sklearn.cluster import KMeans
+        from sklearn.cluster import KMeans  # type: ignore[import-untyped]
 
         if len(bullets) < 2:
             return {0: bullets}
@@ -323,7 +323,7 @@ class SemanticSearchEngine:
         labels = kmeans.fit_predict(embeddings)
 
         # Group bullets by cluster
-        clusters = {}
+        clusters: Dict[int, List[Dict]] = {}
         for bullet, label in zip(bullets, labels):
             if label not in clusters:
                 clusters[label] = []

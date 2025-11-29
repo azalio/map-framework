@@ -326,7 +326,8 @@ def find_best_workflow(message: str, rules: Dict) -> Optional[Tuple[str, str, st
 
     # Return best match (workflow_id, description, reason)
     best = matches[0]
-    return best[0], best[1], best[2]
+    # Ensure reason is a string (never None) to match return type
+    return best[0], best[1], best[2] or ""
 
 
 def main():

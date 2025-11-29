@@ -1951,6 +1951,9 @@ def init(
                     console.print("[yellow]Operation cancelled[/yellow]")
                     raise typer.Exit(0)
     else:
+        # Type assertion: flow guarantees project_name is not None here
+        # (checked at line 1931, and not in use_current_dir branch)
+        assert project_name is not None, "project_name must be set in non-current-dir mode"
         project_path = Path(project_name).resolve()
         if project_path.exists():
             console.print(
@@ -2583,7 +2586,7 @@ def playbook_search(query: str, top_k: int = typer.Option(5, help="Number of res
                 "query": query,
                 "count": len(results),
                 "results": [
-                    {"id": b.get("id"), "content": b.get("content")[:100] + "..."}
+                    {"id": b.get("id"), "content": (b.get("content") or "")[:100] + "..."}
                     for b in results
                 ],
             }

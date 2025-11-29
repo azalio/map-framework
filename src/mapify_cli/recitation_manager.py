@@ -404,7 +404,9 @@ class RecitationManager:
                 formatted_criteria = self._format_acceptance_criteria(
                     current_st.acceptance_criteria
                 )
-                md_lines.extend(["**Acceptance Criteria:**", formatted_criteria, ""])
+                # Only extend if criteria formatting returned a non-None value
+                if formatted_criteria is not None:
+                    md_lines.extend(["**Acceptance Criteria:**", formatted_criteria, ""])
 
             if current_st.estimated_complexity:
                 md_lines.append(f"**Complexity:** {current_st.estimated_complexity}")
@@ -908,8 +910,8 @@ if __name__ == "__main__":
 
     elif command == "generate-tasks":
         try:
-            plan = manager.get_plan()
-            if not plan:
+            plan_result = manager.get_plan()
+            if not plan_result:
                 print(
                     json.dumps(
                         {
@@ -921,7 +923,7 @@ if __name__ == "__main__":
                 )
                 sys.exit(1)
 
-            manager._generate_tasks_md(plan)
+            manager._generate_tasks_md(plan_result)
             print(
                 json.dumps(
                     {
