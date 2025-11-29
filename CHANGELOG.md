@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **MAP Efficient Workflow**: Fixed incorrect `subagent_type` parameters in `/map-efficient` command template. Changed from deprecated `type` parameter to correct `subagent_type` for all Task tool invocations (reflector, curator, monitor, predictor, evaluator) (e05793a)
+
 ## [1.6.1] - 2025-11-28
 
 ### Fixed
