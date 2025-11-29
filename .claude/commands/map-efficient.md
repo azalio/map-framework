@@ -4,6 +4,34 @@ description: Optimized workflow with batched learning (RECOMMENDED for token-con
 
 # MAP Efficient Workflow
 
+**CRITICAL INSTRUCTION:** This is an **automated sequential workflow**. You MUST execute ALL steps from start to finish without stopping. After calling each subagent, IMMEDIATELY proceed to the next step in the workflow. DO NOT wait for user input between steps.
+
+**🚨 ABSOLUTELY FORBIDDEN 🚨**
+
+You are **STRICTLY PROHIBITED** from:
+
+❌ **"Optimizing" the workflow by skipping agents** - Each agent MUST be called
+❌ **"Using general-purpose instead of specialized agents"** - USE the correct subagent_type
+❌ **"Doing Reflector/Curator work manually"** - This breaks cipher integration
+❌ **"Combining steps to save time"** - Each agent MUST be called individually
+❌ **"Skipping batched reflection at end"** - MANDATORY for learning
+❌ **Any variation of "I'll optimize by..."** - NO ADDITIONAL OPTIMIZATION ALLOWED
+
+**IF YOU VIOLATE THESE RULES:**
+- cipher_memory_search won't be called → duplicate knowledge
+- cipher_extract_and_operate_memory won't be called → knowledge won't be shared
+- The ENTIRE PURPOSE of MAP Framework will be defeated
+
+**YOU MUST:**
+✅ Call task-decomposer FIRST (not general-purpose)
+✅ Call actor for EACH subtask (not general-purpose)
+✅ Call monitor after EACH actor (not general-purpose)
+✅ Call reflector at END for batched learning
+✅ Call curator at END for playbook update
+✅ Verify each agent used required MCP tools (check output)
+
+---
+
 **✅ RECOMMENDED: Best Balance of Speed and Quality**
 
 This workflow provides **intelligent token optimization (30-40% savings)** while **preserving MAP's core value**:
@@ -66,9 +94,11 @@ Use `mapify playbook query` or `mapify playbook search` to get relevant patterns
 
 ## Step 2: Task Decomposition
 
+Call the task-decomposer subagent (NOT general-purpose):
+
 ```
 Task(
-  subagent_type="general-purpose",
+  subagent_type="task-decomposer",
   description="Decompose task into subtasks",
   prompt="Break down this task into atomic subtasks (≤8):
 
@@ -152,9 +182,11 @@ PLAN_CONTEXT=$(mapify recitation get-context)
 
 ### 3.2 Call Actor to Implement
 
+**⚠️ MUST use subagent_type="actor"** (NOT general-purpose):
+
 ```
 Task(
-  subagent_type="general-purpose",
+  subagent_type="actor",
   description="Implement subtask [ID]",
   prompt="Implement this subtask:
 
@@ -183,9 +215,11 @@ Provide FULL file content for each change, not diffs."
 
 ### 3.3 Call Monitor to Validate
 
+**⚠️ MUST use subagent_type="monitor"** (NOT general-purpose):
+
 ```
 Task(
-  subagent_type="general-purpose",
+  subagent_type="monitor",
   description="Validate implementation",
   prompt="Review this implementation:
 
@@ -236,9 +270,11 @@ mapify recitation update "ST-001" in_progress "Monitor feedback: [error details]
 - `subtask.risk_level === 'low'` AND
 - `monitor.high_risk_detected === false`
 
+**⚠️ MUST use subagent_type="predictor"** (NOT general-purpose):
+
 ```
 Task(
-  subagent_type="general-purpose",
+  subagent_type="predictor",
   description="Analyze implementation impact",
   prompt="Analyze the impact of this implementation:
 
@@ -286,9 +322,11 @@ After ALL subtasks completed, perform batched reflection and curation:
 
 ### 4.1 Batch Reflector Analysis
 
+**⚠️ MUST use subagent_type="reflector"** (NOT general-purpose):
+
 ```
 Task(
-  subagent_type="general-purpose",
+  subagent_type="reflector",
   description="Extract lessons from all subtasks",
   prompt="Extract structured lessons from this ENTIRE workflow:
 
@@ -332,9 +370,11 @@ Output JSON with:
 
 ### 4.2 Batch Curator Update
 
+**⚠️ MUST use subagent_type="curator"** (NOT general-purpose):
+
 ```
 Task(
-  subagent_type="general-purpose",
+  subagent_type="curator",
   description="Update playbook with workflow learnings",
   prompt="Integrate batched learnings into playbook:
 
