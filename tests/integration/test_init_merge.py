@@ -85,7 +85,7 @@ class TestInitMerge:
         assert "SessionStart" in settings["hooks"], "Should have SessionStart hooks"
 
     def test_preserves_user_permissions(self, mock_project, user_custom_settings):
-        """Test that user's permissions section is preserved during merge."""
+        """Test that user's permissions are preserved and template permissions are merged."""
         # Setup: Create existing settings with custom permissions
         settings_file = mock_project / ".claude" / "settings.json"
         with open(settings_file, "w", encoding="utf-8") as f:
@@ -94,14 +94,35 @@ class TestInitMerge:
         # Run install_hooks
         install_hooks(mock_project, with_hooks=True)
 
-        # Verify permissions preserved
+        # Verify permissions preserved and merged
         with open(settings_file, "r", encoding="utf-8") as f:
             merged_settings = json.load(f)
 
         assert "permissions" in merged_settings, "Should preserve permissions section"
+
+        # User's original allow rules should be preserved
+        user_allow = user_custom_settings["permissions"]["allow"]
+        for rule in user_allow:
+            assert (
+                rule in merged_settings["permissions"]["allow"]
+            ), f"User's allow rule '{rule}' should be preserved"
+
+        # User's deny rules should be unchanged
         assert (
-            merged_settings["permissions"] == user_custom_settings["permissions"]
-        ), "Permissions should be unchanged"
+            merged_settings["permissions"]["deny"]
+            == user_custom_settings["permissions"]["deny"]
+        ), "Deny permissions should be unchanged"
+
+        # Template permissions should be added (additive merge)
+        # Check for some template permissions that should be added
+        template_rules = [
+            "mcp__cipher__cipher_memory_search",
+            "Bash(mapify playbook search:*)",
+        ]
+        for rule in template_rules:
+            assert (
+                rule in merged_settings["permissions"]["allow"]
+            ), f"Template rule '{rule}' should be added"
 
     def test_preserves_custom_hooks(self, mock_project, user_custom_settings):
         """Test that user's custom hooks are preserved during merge."""
