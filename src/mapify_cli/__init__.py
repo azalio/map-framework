@@ -214,7 +214,6 @@ INDIVIDUAL_MCP_SERVERS = {
     "cipher": "Knowledge management system",
     "claude-reviewer": "Professional code review",
     "sequential-thinking": "Chain-of-thought reasoning",
-    "codex-bridge": "AI code generation",
     "context7": "Library documentation",
     "deepwiki": "GitHub repository intelligence",
 }
@@ -739,9 +738,7 @@ Return a valid JSON document with subtasks, dependencies, and acceptance criteri
 def create_actor_content(mcp_servers: List[str]) -> str:
     """Create actor agent content"""
     mcp_section = ""
-    if any(
-        s in mcp_servers for s in ["cipher", "codex-bridge", "context7", "deepwiki"]
-    ):
+    if any(s in mcp_servers for s in ["cipher", "context7", "deepwiki"]):
         mcp_section = """
 # MCP INTEGRATION
 
@@ -753,21 +750,14 @@ def create_actor_content(mcp_servers: List[str]) -> str:
    - Query: "implementation pattern [feature_type]"
    - Store successful implementations after validation
 """
-        if "codex-bridge" in mcp_servers:
-            mcp_section += """
-2. **mcp__codex-bridge__consult_codex** - Generate optimized code solutions
-   - Use for complex algorithms or unfamiliar APIs
-   - NOTE: Set timeout=600 (10 minutes) for complex operations
-   - Example: consult_codex(query="...", directory=".", timeout=600)
-"""
         if "context7" in mcp_servers:
             mcp_section += """
-3. **mcp__context7__get-library-docs** - Get current library documentation
+2. **mcp__context7__get-library-docs** - Get current library documentation
    - Essential when using external libraries/frameworks
 """
         if "deepwiki" in mcp_servers:
             mcp_section += """
-4. **mcp__deepwiki__read_wiki_contents** - Study implementation patterns
+3. **mcp__deepwiki__read_wiki_contents** - Study implementation patterns
    - Learn from production code examples
 """
 
@@ -905,9 +895,7 @@ Return strictly valid JSON with validation results and specific issues.
 def create_predictor_content(mcp_servers: List[str]) -> str:
     """Create predictor agent content"""
     mcp_section = ""
-    if any(
-        s in mcp_servers for s in ["cipher", "codex-bridge", "deepwiki", "context7"]
-    ):
+    if any(s in mcp_servers for s in ["cipher", "deepwiki", "context7"]):
         mcp_section = """
 ## MCP Integration
 
@@ -919,21 +907,14 @@ def create_predictor_content(mcp_servers: List[str]) -> str:
    - Query: "impact analysis [change_type]"
    - Learn from past breaking changes
 """
-        if "codex-bridge" in mcp_servers:
-            mcp_section += """
-2. **mcp__codex-bridge__consult_codex** - Analyze complex dependency chains
-   - Use for deep code analysis and impact prediction
-   - NOTE: Set timeout=600 (10 minutes) for thorough analysis
-   - Example: consult_codex(query="analyze impact of...", directory=".", timeout=600)
-"""
         if "deepwiki" in mcp_servers:
             mcp_section += """
-3. **mcp__deepwiki__ask_question** - Check how repos handle similar changes
+2. **mcp__deepwiki__ask_question** - Check how repos handle similar changes
    - Ask: "What breaks when changing [component]?"
 """
         if "context7" in mcp_servers:
             mcp_section += """
-4. **mcp__context7__get-library-docs** - Check library compatibility
+3. **mcp__context7__get-library-docs** - Check library compatibility
    - Verify API changes against current documentation
 """
 
@@ -1593,15 +1574,6 @@ def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
                 "conflict_resolution": "manual",
             },
         },
-        "codex-bridge": {
-            "enabled": True,
-            "description": "AI code generation",
-            "config": {
-                "format": "json",
-                "timeout": 600,  # 10 minutes required for complex operations
-                "batch_size": 5,
-            },
-        },
         "context7": {
             "enabled": True,
             "description": "Up-to-date library documentation",
@@ -1639,11 +1611,6 @@ def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
         for agent in ["monitor", "evaluator", "orchestrator"]:
             if agent in config["agent_mcp_mappings"]:
                 config["agent_mcp_mappings"][agent].append("claude-reviewer")
-
-    if "codex-bridge" in mcp_servers:
-        for agent in ["actor", "predictor"]:
-            if agent in config["agent_mcp_mappings"]:
-                config["agent_mcp_mappings"][agent].append("codex-bridge")
 
     if "context7" in mcp_servers:
         for agent in config["agent_mcp_mappings"]:

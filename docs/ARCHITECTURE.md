@@ -312,7 +312,6 @@ See [USAGE.md - Workflow Variants](./USAGE.md#workflow-variants) for detailed de
 **MCP Tool Usage:**
 - `cipher_memory_search`: Find existing patterns before implementing
 - `context7__get-library-docs`: Get current library documentation
-- `codex-bridge__consult_codex`: Complex algorithm generation
 
 ### 3. Monitor
 
@@ -537,7 +536,6 @@ MAP uses MCP (Model Context Protocol) servers for enhanced capabilities beyond b
 | **cipher** | Knowledge base storage and retrieval | Reflector, Curator, Actor | Low latency (<200ms) |
 | **claude-reviewer** | Professional code review | Monitor | Medium latency (~2-5s) |
 | **sequential-thinking** | Chain-of-thought reasoning | Complex problem solving | Medium latency (~1-3s) |
-| **codex-bridge** | Code generation for algorithms | Actor (complex tasks) | ⚠️ Requires 10-minute timeout |
 | **context7** | Up-to-date library documentation | Actor (external libs) | Low latency (<500ms) |
 | **deepwiki** | GitHub repository analysis | Research phase | Medium latency (~3-7s) |
 
@@ -726,7 +724,6 @@ MCP servers are configured differently depending on the usage context:
 - sequential-thinking (reasoning)
 
 **May Require Installation:**
-- codex-bridge (separate installation via `uv tool install`)
 - context7 (check Claude Code documentation)
 - deepwiki (check Claude Code documentation)
 

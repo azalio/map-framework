@@ -235,7 +235,6 @@ MAP uses MCP (Model Context Protocol) servers for enhanced capabilities:
 - **claude-reviewer** - Professional code review with security analysis
 - **context7** - Up-to-date library documentation
 - **sequential-thinking** - Chain-of-thought reasoning for complex problems
-- **codex-bridge** - AI code generation (requires extended timeout)
 - **deepwiki** - GitHub repository intelligence
 
 Configuration files: `.claude/mcp_config.json` and `mcp_config.json`

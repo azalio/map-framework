@@ -54,18 +54,9 @@ IF analyzer_output provided → Cross-reference affected files
   - `cipher_search_graph`: Traverse dependency relationships
   - `cipher_get_neighbors`: Find direct callers/callees
 - **Best for**: Understanding semantic relationships, finding all usages
-- **Fallback if unavailable**: codex → grep
+- **Fallback if unavailable**: grep
 
-**2. codex (Symbol & Pattern Understanding)**
-- **Purpose**: Automated dependency analysis via AI code understanding
-- **Capabilities**:
-  - Find all usages of function/class/variable
-  - Analyze import chains
-  - Identify subclass hierarchies
-- **Best for**: Large codebases, complex inheritance
-- **Fallback if unavailable**: grep (with extended patterns)
-
-**3. grep (Fast Text Search)**
+**2. grep (Fast Text Search)**
 - **Purpose**: Pattern matching across repository files
 - **Always available**: Yes (baseline tool)
 - **Capabilities**:
@@ -87,15 +78,13 @@ TIER 1 (Minimal - 30 sec):
 
 TIER 2 (Standard - 1-2 min):
   ├── 1. cipher_memory_search (historical patterns)
-  ├── 2. codex (dependency analysis)
-  └── 3. grep (verification)
+  └── 2. grep (dependency analysis + verification)
       - Sequential execution
       - Cross-validate results
 
 TIER 3 (Deep - 3-5 min):
   ├── 1. cipher (all tools) ─┐
-  ├── 2. codex ──────────────┼── Parallel execution
-  └── 3. grep (extended) ────┘
+  └── 2. grep (extended) ────┘ Parallel execution
       - Cross-validate all results
       - Flag disagreements
 ```
@@ -105,7 +94,7 @@ TIER 3 (Deep - 3-5 min):
 ```
 MATCH (Category B: +0.15):
   All tools identify same core affected files (±2 file variance)
-  Example: cipher=12 files, codex=11 files, grep=13 files → MATCH
+  Example: cipher=12 files, grep=13 files → MATCH
 
 SINGLE TOOL (Category B: +0.05):
   Only one tool ran successfully, results appear complete
@@ -113,7 +102,7 @@ SINGLE TOOL (Category B: +0.05):
 
 CONFLICT (Category B: -0.10):
   >30% disagreement on affected components
-  Example: cipher=5 files, codex=15 files → CONFLICT
+  Example: cipher=5 files, grep=15 files → CONFLICT
   Action: Trust grep (most literal), cap confidence at 0.60
 ```
 
@@ -234,7 +223,7 @@ Before any analysis, classify the change to select appropriate depth:
 2. Classify risk (usually "low")
 3. Output JSON with confidence 0.9+
 
-**Skip**: cipher_memory_search, codex, deepwiki
+**Skip**: cipher_memory_search, deepwiki
 
 ### Tier 2: STANDARD Analysis (1-2 minutes)
 **When to use**:
@@ -246,11 +235,11 @@ Before any analysis, classify the change to select appropriate depth:
 
 **Process**:
 1. cipher_memory_search for patterns
-2. codex or grep for dependency analysis
+2. grep for dependency analysis
 3. Manual verification of edge cases
 4. Risk classification
 
-**Use**: cipher_memory_search + codex/grep
+**Use**: cipher_memory_search + grep
 
 ### Tier 3: DEEP Analysis (3-5 minutes)
 **When to use**:
@@ -426,7 +415,6 @@ Previous analysis identified these concerns:
 <rationale>
 Impact analysis is about pattern recognition. Similar changes have happened before—renaming APIs, refactoring modules, changing schemas. MCP tools let us learn from history:
 - cipher_memory_search finds past breaking changes and migration patterns
-- codex analyzes complex dependency graphs programmatically
 - deepwiki shows how mature projects handle similar changes
 - context7 validates library version compatibility
 
@@ -452,12 +440,6 @@ IF analyzing dependency chains:
      - query_graph: Custom impact analysis queries
      - search_graph: Find all components of type X
      - Example: Changed function → get_neighbors(in) → who calls it?
-
-IF complex codebase analysis:
-  3. THEN → consult_codex (automated dependency analysis)
-     - Query: "Find all usages of [function/class] in codebase"
-     - Query: "Analyze dependencies for [component]"
-     - Gets exhaustive list of affected code
 
 IF natural language impact statement:
   4. THEN → intelligent_processor (NEW)
@@ -505,19 +487,7 @@ Starting analysis with Grep immediately:
 - Under-predict breaking changes
 </example>
 
-### 2. mcp__codex-bridge__consult_codex
-**Use When**: Complex dependency graphs or large codebases
-**Purpose**: Automated, exhaustive dependency analysis
-
-**Query Patterns**:
-- `"Find all usages of [function_name] in codebase"`
-- `"Analyze dependencies for [module] in [language]"`
-- `"List all imports of [package_name]"`
-- `"Find all subclasses of [class_name]"`
-
-**Rationale**: Humans miss things. Codex doesn't. For widely-used functions or complex inheritance hierarchies, automated analysis is essential. Manual Grep can supplement, but codex is the foundation.
-
-### 3. mcp__context7__get-library-docs
+### 2. mcp__context7__get-library-docs
 **Use When**: Change involves external library or framework
 **Process**:
 1. `resolve-library-id` with library name
@@ -534,7 +504,7 @@ Upgrading Django 3.x → 4.x without checking migration guide:
 **ALWAYS** check library docs for version changes.
 </example>
 
-### 4. mcp__deepwiki__read_wiki_structure + ask_question
+### 3. mcp__deepwiki__read_wiki_structure + ask_question
 **Use When**: Architectural changes or unfamiliar patterns
 **Purpose**: Learn from mature projects' migration strategies
 
@@ -545,7 +515,7 @@ Upgrading Django 3.x → 4.x without checking migration guide:
 
 **Rationale**: Architectural changes have hidden complexity. How do you migrate thousands of database records? How do you version APIs without breaking clients? Mature projects have solved these problems—learn from them.
 
-### 5. Standard Tools (Read, Grep, Glob, Bash)
+### 4. Standard Tools (Read, Grep, Glob, Bash)
 **Use When**: Always—for verification and edge cases
 **Purpose**: Catch what automated tools miss
 
@@ -701,7 +671,7 @@ Thought 8: Assess deployment coordination needs and rollout timeline
    - Migration requirements
 
 ### Phase 3: Dependency Analysis
-5. **Automated dependency tracing** (mcp__codex-bridge__consult_codex)
+5. **Dependency tracing** (Grep/Glob + cipher graph tools)
    - All usages of modified functions/classes
    - All imports of modified modules
    - All subclasses/implementations
@@ -1101,8 +1071,8 @@ def get_weather(city: str, region: str) -> dict:
 - Query: "migration strategy required parameter"
 - Result: Common pattern: add with default first, then make required
 
-**Step 2: Automated dependency analysis** (consult_codex)
-- Query: "Find all usages of get_weather in codebase"
+**Step 2: Dependency analysis** (Grep)
+- Query: `grep -r "get_weather" --include="*.py"`
 - Result:
   ```
   src/services/weather_reporter.py:15: get_weather(user.city)
@@ -1138,7 +1108,7 @@ def get_weather(city: str, region: str) -> dict:
   "analysis_metadata": {
     "tier_selected": "2",
     "tier_rationale": "Internal function change with 5-10 affected files; standard analysis appropriate",
-    "tools_used": ["cipher_memory_search", "codex", "grep"],
+    "tools_used": ["cipher_memory_search", "grep"],
     "analysis_duration_seconds": 75
   },
   "predicted_state": {
@@ -1264,8 +1234,8 @@ def validate_email(email: str) -> bool:
 
 ### Analysis Process
 
-**Step 1: Automated dependency analysis** (consult_codex)
-- Query: "Find all usages of validate_email in codebase"
+**Step 1: Dependency analysis** (Grep)
+- Query: `grep -r "validate_email" --include="*.py"`
 - Result:
   ```
   src/auth/registration.py:12: if not validate_email(email):
@@ -1302,7 +1272,7 @@ def validate_email(email: str) -> bool:
   "analysis_metadata": {
     "tier_selected": "1",
     "tier_rationale": "Internal refactoring with backward-compatible wrapper; minimal analysis sufficient",
-    "tools_used": ["codex", "grep"],
+    "tools_used": ["grep"],
     "analysis_duration_seconds": 25
   },
   "predicted_state": {
@@ -1359,8 +1329,8 @@ Reason: Better naming consistency with existing text_processing.py module
 - Result: Past module renames required import updates + config updates + CI/CD fixes
 - Typical impact: 10-30 affected files
 
-**Step 2: Automated dependency analysis** (consult_codex)
-- Query: "Find all imports of string_helpers in codebase"
+**Step 2: Dependency analysis** (Grep)
+- Query: `grep -r "string_helpers" --include="*.py"`
 - Result:
   ```
   src/api/formatting.py:3: from utils.string_helpers import sanitize_input
@@ -1397,7 +1367,7 @@ Reason: Better naming consistency with existing text_processing.py module
   "analysis_metadata": {
     "tier_selected": "3",
     "tier_rationale": "Module rename affects >10 files; Phase 2 grep found many importers; deep analysis required",
-    "tools_used": ["cipher_memory_search", "codex", "grep"],
+    "tools_used": ["cipher_memory_search", "grep"],
     "analysis_duration_seconds": 180
   },
   "predicted_state": {
@@ -1718,7 +1688,7 @@ Return **ONLY** valid JSON in this exact structure:
   "analysis_metadata": {
     "tier_selected": "1|2|3",
     "tier_rationale": "Brief explanation of tier selection",
-    "tools_used": ["cipher_memory_search", "codex", "grep"],
+    "tools_used": ["cipher_memory_search", "grep"],
     "analysis_duration_seconds": 45
   },
   "predicted_state": {
@@ -1955,34 +1925,23 @@ TIER_1_MIN: 0.70 (if lower → escalate to Tier 2)
 
 ### If cipher_memory_search fails or returns no results:
 ```
-1. Proceed with analysis using codex + grep
+1. Proceed with analysis using grep
 2. Adjust confidence: -0.20
 3. Add to recommendation: "No historical data available for this change type"
 4. Be MORE conservative with risk assessment (err on higher risk)
 ```
 
-### If codex is unavailable or times out:
+### If cipher and grep results conflict:
 ```
-1. Use extensive grep/glob patterns:
-   - grep for function/class names
-   - grep for file imports
-   - grep for string references in configs
-2. Adjust confidence: -0.15
-3. Add to output: "Automated dependency analysis unavailable"
-4. Increase risk by one level (low→medium, medium→high)
-```
+Example: cipher graph finds 10 usages, grep finds 15
 
-### If codex and grep results conflict:
-```
-Example: Codex finds 10 usages, grep finds 15
-
-1. Trust manual verification (grep) over automated (codex)
+1. Trust manual verification (grep) over semantic tools
 2. Investigate discrepancy:
    - Check for dynamic imports
    - Check for generated code
    - Check for string-based references
 3. Report BOTH numbers in output:
-   "affected_components": ["15 files (codex: 10, grep: 15 - discrepancy noted)"]
+   "affected_components": ["15 files (cipher: 10, grep: 15 - discrepancy noted)"]
 4. Set confidence to max 0.60 (moderate uncertainty)
 ```
 
@@ -2027,7 +1986,7 @@ IF confidence < 0.30 after all adjustments:
 
 ### Catastrophic Tool Failure Protocol (All Tools Fail)
 
-**CRITICAL**: If ALL tools fail (cipher, codex, AND grep all error/timeout):
+**CRITICAL**: If ALL tools fail (cipher AND grep all error/timeout):
 
 ```
 1. DO NOT hallucinate results
@@ -2040,7 +1999,6 @@ IF confidence < 0.30 after all adjustments:
     "tools_used": [],
     "tool_failures": {
       "cipher": "timeout/error/unavailable",
-      "codex": "timeout/error/unavailable",
       "grep": "timeout/error/unavailable"
     },
     "catastrophic_failure": true

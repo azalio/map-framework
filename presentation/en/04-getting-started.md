@@ -196,7 +196,6 @@ MAP requires **6 MCP servers** for full functionality:
 **Optional (recommended):**
 
 - **sequential-thinking** — chains of thought for complex tasks
-- **codex-bridge** — code generation (requires 10-minute timeout)
 - **context7** — up-to-date library documentation
 - **deepwiki** — GitHub repository analysis
 

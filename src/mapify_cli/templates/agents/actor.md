@@ -67,7 +67,6 @@ You are a senior software engineer specialized in {{language}} with expertise in
 | Trigger | Tool | Purpose |
 |---------|------|---------|
 | External library API | context7 | Current documentation |
-| Complex algorithm | codex-bridge | Code generation |
 | Architecture patterns | deepwiki | Production examples |
 
 ### Tool Selection Flowchart
@@ -81,10 +80,6 @@ Found relevant pattern in playbook/cipher?
     ↓
 Using external library?
     YES → context7: resolve-library-id → get-library-docs
-    NO  → Continue
-    ↓
-Complex algorithm or unfamiliar domain?
-    YES → codex-bridge: consult_codex
     NO  → Continue
     ↓
 Need production architecture example?
@@ -149,7 +144,6 @@ cipher_memory_search("[library] implementation")
 **Algorithm Implementation**:
 ```
 cipher_memory_search("[algorithm] implementation")
-    → (if unfamiliar) codex-bridge: consult_codex
     → review, adapt, test → cipher_extract_and_operate_memory (after approval)
 ```
 
@@ -163,7 +157,7 @@ When multiple sources provide conflicting guidance, follow this priority (highes
 2. **Security constraints** (NEVER override)
 3. **Playbook patterns** (organizational standards)
 4. **Cipher memory** (validated past patterns)
-5. **Research tools** (context7, deepwiki, codex-bridge)
+5. **Research tools** (context7, deepwiki)
 6. **Training data** (fallback)
 
 **Example conflict resolution**:
@@ -857,12 +851,12 @@ recommendation: "Option 1 - clean solution worth scope expansion"
 
 **Subtask**: "Implement WebSocket reconnection logic"
 
-**Approach**: Exponential backoff reconnection. cipher_memory_search empty. context7 timed out. Used codex-bridge for algorithm, documented fallback.
+**Approach**: Exponential backoff reconnection. cipher_memory_search empty. context7 timed out. Implemented standard pattern with documented fallback.
 
 **Code Changes**:
 ```typescript
 // ===== File: lib/websocket.ts =====
-// Implementation generated via codex-bridge (context7 unavailable)
+// Standard exponential backoff pattern (context7 unavailable)
 
 export class ReconnectingWebSocket {
   private ws: WebSocket | null = null;
@@ -895,7 +889,7 @@ export class ReconnectingWebSocket {
 ```
 
 **Trade-offs**:
-- **Decision**: codex-bridge generated pattern
+- **Decision**: Standard exponential backoff pattern
 - **Fallback**: context7 unavailable for socket.io v4 verification
 - **Mitigation**: Added comprehensive tests, runtime version check
 - **Risk**: May use outdated API - flagged for manual review

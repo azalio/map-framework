@@ -46,21 +46,6 @@
       "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
     },
 
-    "codex-bridge": {
-      "_comment": "Codex Bridge - Connects AI assistants with OpenAI's Codex via official CLI",
-      "_install": "npm install -g @openai/codex-cli && codex (authenticate first)",
-      "_required_for": "AI code generation (optional but recommended)",
-      "_docs": "https://github.com/elyin/codex-bridge",
-      "_note": "Requires 10-minute timeout and Codex CLI authentication",
-      "type": "stdio",
-      "command": "uvx",
-      "args": ["codex-bridge"],
-      "env": {
-        "CODEX_TIMEOUT": "600"
-      },
-      "timeout": 600000
-    },
-
     "context7": {
       "_comment": "Context7 by Upstash - Up-to-date, version-specific library documentation",
       "_install": "Automatically installed via npx",
@@ -92,13 +77,11 @@
       "sequential-thinking - Essential for complex reasoning"
     ],
     "optional_servers": [
-      "codex-bridge - Recommended for enhanced AI code generation",
       "context7 - Recommended for library documentation",
       "deepwiki - Recommended for GitHub repository analysis"
     ],
     "alternative_installations": {
       "cipher": "Can also use Docker or build from source - see https://github.com/campfirein/cipher",
-      "codex-bridge": "Alternative: Configure with CODEX_SKIP_GIT_CHECK=true if not in a git repo",
       "deepwiki": "Alternative transport: https://mcp.deepwiki.com/mcp (Streamable HTTP)"
     }
   }

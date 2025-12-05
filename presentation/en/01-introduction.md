@@ -36,7 +36,6 @@ MAP uses **6 MCP servers** to extend capabilities:
 - **[cipher](https://github.com/campfirein/cipher)** — knowledge base for storing successful patterns
 - **[claude-reviewer](https://github.com/rsokolowski/mcp-claude-reviewer)** — professional code review with security analysis
 - **[sequential-thinking](https://github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking)** — chains of thought for complex tasks
-- **[codex-bridge](https://github.com/elyin/codex-bridge)** — code generation via chatgtp (requires 10-minute timeout)
 - **[context7](https://github.com/upstash/context7)** — up-to-date library documentation
 - **[deepwiki](https://docs.devin.ai/work-with-devin/deepwiki-mcp)** — GitHub repository analysis
 

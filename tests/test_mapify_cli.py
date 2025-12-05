@@ -429,14 +429,14 @@ class TestInitCommand:
         reason="Test isolation issue: passes in isolation but fails in full suite after 332 tests due to stdin/stdout state. TODO: Investigate and fix test infrastructure issue."
     )
     def test_init_defaults_to_all_mcp_servers(self, tmp_path, monkeypatch):
-        """Test that init without --mcp flag defaults to installing all 6 MCP servers.
+        """Test that init without --mcp flag defaults to installing all 5 MCP servers.
 
         Regression test for non-interactive init behavior.
         Verifies that:
         - Init completes without interactive prompts
-        - All 6 MCP servers are installed by default (cipher, claude-reviewer,
-          sequential-thinking, codex-bridge, context7, deepwiki)
-        - mcp_config.json is created with all 6 servers
+        - All 5 MCP servers are installed by default (cipher, claude-reviewer,
+          sequential-thinking, context7, deepwiki)
+        - mcp_config.json is created with all 5 servers
         """
         # Use fresh CliRunner to avoid state pollution from previous tests
         from typer.testing import CliRunner as FreshRunner
@@ -468,13 +468,12 @@ class TestInitCommand:
         assert (tmp_path / ".claude" / "agents").exists()
         assert (tmp_path / ".claude" / "mcp_config.json").exists()
 
-        # Verify all 6 MCP servers are configured
+        # Verify all 5 MCP servers are configured
         mcp_config = json.loads((tmp_path / ".claude" / "mcp_config.json").read_text())
         expected_servers = [
             "cipher",
             "claude-reviewer",
             "sequential-thinking",
-            "codex-bridge",
             "context7",
             "deepwiki",
         ]
@@ -485,10 +484,10 @@ class TestInitCommand:
                 server in mcp_config["mcp_servers"]
             ), f"MCP server '{server}' not found in config"
 
-        # Verify exactly 6 servers (no extras)
+        # Verify exactly 5 servers (no extras)
         assert (
-            len(mcp_config["mcp_servers"]) == 6
-        ), f"Expected 6 servers, found {len(mcp_config['mcp_servers'])}"
+            len(mcp_config["mcp_servers"]) == 5
+        ), f"Expected 5 servers, found {len(mcp_config['mcp_servers'])}"
 
     def test_init_force_no_prompts(self, tmp_path):
         """Test that init --force completes without interactive confirmation prompts.
