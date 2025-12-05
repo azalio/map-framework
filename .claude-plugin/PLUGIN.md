@@ -92,7 +92,6 @@ cp map-framework/.claude/settings.hooks.json your-project/.claude/
   - `sequential-thinking` — chain-of-thought reasoning
 
 **Recommended MCP Servers:**
-- `codex-bridge` — AI code generation
 - `context7` — library documentation
 - `deepwiki` — GitHub repository analysis
 

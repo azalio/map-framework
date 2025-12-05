@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **MCP Server: codex-bridge**: Removed codex-bridge MCP server from the framework
+  - Removed from `INDIVIDUAL_MCP_SERVERS` constant
+  - Removed from agent template generators (actor, predictor)
+  - Removed from `agent_mcp_mappings` configuration
+  - Updated all agent templates to remove codex-bridge references
+  - Updated documentation (README, ARCHITECTURE, presentations)
+  - Updated `.mcp.json.example` and plugin configuration
+  - Updated tests to expect 5 MCP servers instead of 6
+  - **Rationale**: Simplify MCP server dependencies; codex-bridge functionality can be achieved through other tools
+
 ## [1.6.2] - 2025-11-29
 
 ### Fixed

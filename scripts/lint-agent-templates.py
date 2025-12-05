@@ -239,7 +239,6 @@ class TemplateLinter:
         mcp_tools = {
             "cipher_memory_search": ["search", "pattern", "knowledge"],
             "context7": ["library", "documentation", "resolve-library-id"],
-            "codex-bridge": ["consult_codex", "generate", "code"],
             "deepwiki": ["wiki", "repository", "production"],
         }
 

@@ -383,7 +383,7 @@ Thought 8: Generate recommendation balancing dimensions
 **Thought Structure Example**:
 ```
 Thought 1: Identify knowledge gap areas (post-cutoff APIs, complex algorithms, security patterns)
-Thought 2: Check Actor output for research documentation (context7, deepwiki, codex-bridge citations)
+Thought 2: Check Actor output for research documentation (context7, deepwiki citations)
 Thought 3: Evaluate if research was appropriate (did gap require external knowledge?)
 Thought 4: Assess implementation correctness against research sources or known patterns
 Thought 5: Determine if research omission caused correctness issues (outdated API, wrong algorithm)
@@ -661,7 +661,7 @@ Untested code is broken code waiting to happen. Testability indicates design qua
 - [ ] Error handling complete?
 - [ ] Logging added for debugging?
 - [ ] Research performed when appropriate (unfamiliar libraries, complex algorithms)?
-  - IF subtask requires external knowledge (post-cutoff APIs, production patterns): Did Actor use research tools (context7/deepwiki/codex) OR document skip justification?
+  - IF subtask requires external knowledge (post-cutoff APIs, production patterns): Did Actor use research tools (context7/deepwiki) OR document skip justification?
   - IF research performed: Are sources cited in output (Approach/Trade-offs sections)?
   - Research completeness indicates thoroughness and reduces Monitor rejection risk
 - [ ] Deployment considerations addressed?

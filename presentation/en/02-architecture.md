@@ -27,11 +27,10 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 **Model:** sonnet
 **Purpose:** Senior software engineer; writes clean, efficient, production-ready code
 
-**MCP integrations (5 tools):**
+**MCP integrations (4 tools):**
 
 - `cipher_memory_search` — retrieve existing patterns (ALWAYS FIRST)
 - `context7__resolve-library-id + get-library-docs` — up-to-date library docs
-- `codex-bridge__consult_codex` — generate complex algorithms
 - `deepwiki__read_wiki_structure + read_wiki_contents` — learn from production code
 - `cipher__extract_and_operate_memory` — save successful patterns (ONLY AFTER Monitor approval)
 
@@ -62,10 +61,9 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 **Model:** haiku (cost-optimized)
 **Purpose:** Impact analysis specialist; predicts ripple effects BEFORE implementation
 
-**MCP integrations (4 tools):**
+**MCP integrations (3 tools):**
 
 - `cipher_memory_search` — search past breaking changes and migration patterns
-- `codex-bridge__consult_codex` — automated dependency graph analysis
 - `context7__get-library-docs` — check library version compatibility
 - `deepwiki__read_wiki_structure + ask_question` — study migration patterns
 
