@@ -1,6 +1,23 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
-  "description": "Claude Code hooks configuration for MAP Framework",
+  "description": "Claude Code settings for MAP Framework (hooks + auto-approval permissions)",
+  "permissions": {
+    "allow": [
+      "mcp__cipher__cipher_memory_search",
+      "mcp__cipher__cipher_search_reasoning_patterns",
+      "mcp__cipher__cipher_extract_and_operate_memory",
+      "mcp__tracker_mcp__GetIssue",
+      "mcp__sequential-thinking__sequentialthinking",
+      "Bash(mapify playbook search:*)",
+      "Bash(mapify playbook query:*)",
+      "Bash(mapify playbook show:*)",
+      "Bash(make lint:*)",
+      "Bash(pytest:*)",
+      "Bash(black:*)",
+      "Bash(ruff check:*)",
+      "Bash(mypy:*)"
+    ]
+  },
   "hooks": {
     "UserPromptSubmit": [
       {

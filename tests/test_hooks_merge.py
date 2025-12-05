@@ -304,18 +304,19 @@ class TestMergeHooksSettings:
         assert "permissions" in result  # Preserved
 
     def test_no_hooks_in_template_preserves_existing(self):
-        """If template has no hooks, existing hooks unchanged."""
+        """If template has no hooks, existing hooks unchanged but permissions merged."""
         existing = {
             "hooks": {"UserPromptSubmit": [{"matcher": "Test", "message": "User hook"}]}
         }
 
-        template = {"permissions": {"auto_approve": ["Write"]}}
+        template = {"permissions": {"allow": ["Write"]}}
 
         result = merge_hooks_settings(existing, template)
 
         assert result["hooks"] == existing["hooks"]
-        # Template permissions NOT added (function only merges hooks)
-        assert "permissions" not in result
+        # Template permissions ARE now merged (additive merge for permissions.allow)
+        assert "permissions" in result
+        assert "Write" in result["permissions"]["allow"]
 
     def test_hook_type_not_in_existing_adds_template_array(self, template_settings):
         """If user doesn't have specific hook type, template's entire array added."""
@@ -471,3 +472,86 @@ class TestMergeHooksSettings:
 
         # Template hook added
         assert len(result["hooks"]["UserPromptSubmit"]) == 2
+
+
+class TestPermissionsMerge:
+    """Tests for permissions.allow additive merging behavior."""
+
+    def test_merge_into_empty_permissions(self):
+        """Template permissions added when user has no permissions."""
+        existing = {"hooks": {}}
+        template = {"permissions": {"allow": ["Bash(test:*)", "mcp__cipher__search"]}}
+
+        result = merge_hooks_settings(existing, template)
+
+        assert "permissions" in result
+        assert "allow" in result["permissions"]
+        assert "Bash(test:*)" in result["permissions"]["allow"]
+        assert "mcp__cipher__search" in result["permissions"]["allow"]
+
+    def test_merge_preserves_existing_rules(self):
+        """User's existing allow rules preserved during merge."""
+        existing = {"permissions": {"allow": ["Bash(custom:*)", "Read(~/.zshrc)"]}}
+        template = {"permissions": {"allow": ["Bash(test:*)", "mcp__cipher__search"]}}
+
+        result = merge_hooks_settings(existing, template)
+
+        # User rules preserved
+        assert "Bash(custom:*)" in result["permissions"]["allow"]
+        assert "Read(~/.zshrc)" in result["permissions"]["allow"]
+        # Template rules added
+        assert "Bash(test:*)" in result["permissions"]["allow"]
+        assert "mcp__cipher__search" in result["permissions"]["allow"]
+
+    def test_merge_no_duplicates(self):
+        """Duplicate rules not added during merge."""
+        existing = {"permissions": {"allow": ["Bash(test:*)", "Bash(custom:*)"]}}
+        template = {"permissions": {"allow": ["Bash(test:*)", "mcp__cipher__search"]}}
+
+        result = merge_hooks_settings(existing, template)
+
+        # Should have 3 unique rules, not 4
+        assert len(result["permissions"]["allow"]) == 3
+        assert result["permissions"]["allow"].count("Bash(test:*)") == 1
+
+    def test_preserves_deny_rules(self):
+        """User's deny rules preserved unchanged."""
+        existing = {
+            "permissions": {
+                "allow": ["Bash(git:*)"],
+                "deny": ["Bash(rm:*)", "Read(.env)"],
+            }
+        }
+        template = {"permissions": {"allow": ["mcp__cipher__search"]}}
+
+        result = merge_hooks_settings(existing, template)
+
+        # Deny rules unchanged
+        assert result["permissions"]["deny"] == ["Bash(rm:*)", "Read(.env)"]
+        # Allow rules merged
+        assert "Bash(git:*)" in result["permissions"]["allow"]
+        assert "mcp__cipher__search" in result["permissions"]["allow"]
+
+    def test_malformed_allow_reset_with_warning(self, capsys):
+        """Malformed permissions.allow reset to empty list with warning."""
+        existing = {"permissions": {"allow": "not a list"}}  # Invalid - string
+        template = {"permissions": {"allow": ["mcp__cipher__search"]}}
+
+        result = merge_hooks_settings(existing, template)
+
+        # Should have template rule
+        assert "mcp__cipher__search" in result["permissions"]["allow"]
+        # Warning should be printed
+        captured = capsys.readouterr()
+        assert "malformed" in captured.out.lower() or len(result["permissions"]["allow"]) == 1
+
+    def test_no_permissions_in_template_preserves_existing(self):
+        """If template has no permissions, existing permissions unchanged."""
+        existing = {
+            "permissions": {"allow": ["Bash(custom:*)"], "deny": ["Bash(rm:*)"]}
+        }
+        template = {"hooks": {"UserPromptSubmit": []}}
+
+        result = merge_hooks_settings(existing, template)
+
+        assert result["permissions"] == existing["permissions"]
