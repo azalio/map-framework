@@ -2156,8 +2156,7 @@ def init(
     steps_lines.append("   • [cyan]/map-debug[/] - Debug issue using MAP analysis")
     steps_lines.append("   • [cyan]/map-refactor[/] - Refactor with impact analysis")
     steps_lines.append("   • [cyan]/map-review[/] - Full MAP review of changes")
-    steps_lines.append(f"{step_num + 1}. Or use orchestrator directly:")
-    steps_lines.append('   [cyan]"Use orchestrator agent to implement [feature]"[/]')
+
 
     steps_panel = Panel(
         "\n".join(steps_lines), title="Next Steps", border_style="cyan", padding=(1, 2)
