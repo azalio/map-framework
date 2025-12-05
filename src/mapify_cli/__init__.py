@@ -141,6 +141,9 @@ def merge_hooks_settings(
             if "allow" not in merged["permissions"]:
                 merged["permissions"]["allow"] = []
             elif not isinstance(merged["permissions"]["allow"], list):
+                console.print(
+                    "[yellow]Warning:[/yellow] Resetting malformed user permissions.allow"
+                )
                 merged["permissions"]["allow"] = []
 
             # Add template permissions that don't exist in user's settings
