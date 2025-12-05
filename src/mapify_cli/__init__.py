@@ -109,26 +109,47 @@ def load_settings_with_merge(settings_file: Path) -> Dict[str, Any]:
 def merge_hooks_settings(
     existing_settings: Dict[str, Any], template_settings: Dict[str, Any]
 ) -> Dict[str, Any]:
-    """Merge template hooks into existing settings preserving user customizations.
+    """Merge template settings into existing settings preserving user customizations.
 
     Follows the same merge philosophy as configure_global_permissions():
     - Preserves user's top-level keys (permissions, custom settings)
     - Merges hooks additively using matcher field for deduplication
+    - Merges permissions.allow additively (preserves user's existing rules)
     - Preserves user's custom hooks not in template
 
     Args:
         existing_settings: User's current settings (from load_settings_with_merge)
-        template_settings: Template settings with default hooks
+        template_settings: Template settings with default hooks and permissions
 
     Returns:
-        Merged settings dict with template hooks added, user customizations preserved
+        Merged settings dict with template hooks/permissions added, user customizations preserved
     """
     import copy
 
     # Deep copy to prevent mutation of original settings
     merged = copy.deepcopy(existing_settings)
 
-    # If template has no hooks section, nothing to merge
+    # Merge permissions.allow additively
+    if "permissions" in template_settings:
+        template_permissions = template_settings["permissions"]
+        if "allow" in template_permissions and isinstance(
+            template_permissions["allow"], list
+        ):
+            # Ensure merged has permissions structure
+            if "permissions" not in merged:
+                merged["permissions"] = {}
+            if "allow" not in merged["permissions"]:
+                merged["permissions"]["allow"] = []
+            elif not isinstance(merged["permissions"]["allow"], list):
+                merged["permissions"]["allow"] = []
+
+            # Add template permissions that don't exist in user's settings
+            existing_allow = set(merged["permissions"]["allow"])
+            for rule in template_permissions["allow"]:
+                if rule not in existing_allow:
+                    merged["permissions"]["allow"].append(rule)
+
+    # If template has no hooks section, return after permissions merge
     if "hooks" not in template_settings:
         return merged
 
@@ -1422,7 +1443,7 @@ def install_hooks(project_path: Path, with_hooks: bool = True) -> int:
             with open(settings_dest, "w", encoding="utf-8") as f:
                 json.dump(merged_settings, f, indent=2, ensure_ascii=False)
             console.print(
-                "[green]✓[/green] Merged hooks settings into .claude/settings.json"
+                "[green]✓[/green] Merged hooks and permissions into .claude/settings.json"
             )
         except OSError as e:
             console.print(
