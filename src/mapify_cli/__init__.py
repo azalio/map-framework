@@ -1218,44 +1218,48 @@ def create_command_files(project_path: Path) -> None:
     if not commands_template_dir.exists():
         # Fallback to inline generation if templates not found
         commands = {
-            "map-feature": """---
-description: Implement new feature using full MAP workflow
+            "map-efficient": """---
+description: Implement features with optimized workflow (recommended)
 ---
 
-Use the orchestrator agent to implement the following feature:
+Implement the following with efficient MAP workflow:
 
 $ARGUMENTS
 
-Start with task decomposition, then iterate through actor-monitor-predictor-evaluator for each subtask.
-Store successful patterns in knowledge base for future reuse.
+Start with task decomposition (task-decomposer), then iterate through actor-monitor for each subtask.
+Predictor is called conditionally for high-risk subtasks only.
+Run /map-learn after workflow if you want to preserve lessons learned.
 """,
             "map-debug": """---
 description: Debug issue using MAP analysis
 ---
 
-Use the orchestrator agent to debug the following issue:
+Debug the following issue using MAP workflow:
 
 $ARGUMENTS
 
-Decompose the debugging process, implement fixes, validate with monitor, and assess impact.
+Decompose the debugging process (task-decomposer), implement fixes (actor), validate with monitor, and assess impact (predictor).
 """,
-            "map-refactor": """---
-description: Refactor code with MAP impact analysis
+            "map-fast": """---
+description: Quick implementation with minimal validation
 ---
 
-Use the orchestrator agent to refactor:
+Use minimal workflow to implement:
 
 $ARGUMENTS
 
-Use predictor to analyze all dependencies, actor to refactor, and evaluator to ensure quality.
+Implement quickly with basic monitor validation only. No learning, no predictor.
+Use for throwaway code, prototypes, or low-risk changes.
 """,
-            "map-review": """---
-description: Comprehensive MAP review of changes
+            "map-learn": """---
+description: Extract lessons from completed workflows
 ---
 
-Use monitor, predictor, and evaluator agents to review current changes.
+Extract and preserve lessons from recent workflow:
 
-Provide detailed analysis of code quality, potential impacts, and quality scores.
+$ARGUMENTS
+
+Call Reflector to extract patterns, then Curator to update playbook.
 """,
         }
 
@@ -1827,10 +1831,11 @@ This directory contains custom slash commands for Claude Code.
 
 ## Available Commands
 
-- `/map-review` - Comprehensive review of changes using MAP framework
-- `/map-refactor` - Refactor code with MAP impact analysis
+- `/map-efficient` - Implement features with optimized workflow (recommended)
 - `/map-debug` - Debug issues using MAP analysis
-- `/map-feature` - Implement new features using full MAP workflow
+- `/map-fast` - Quick implementation with minimal validation
+- `/map-learn` - Extract lessons from completed workflows
+- `/map-release` - Execute MAP Framework package release workflow
 
 ## Creating Custom Commands
 
@@ -2151,11 +2156,11 @@ def init(
 
     steps_lines.append(f"{step_num}. Start using MAP commands with Claude Code:")
     steps_lines.append(
-        "   • [cyan]/map-feature[/] - Implement new feature with MAP workflow"
+        "   • [cyan]/map-efficient[/] - Implement features with optimized workflow (recommended)"
     )
     steps_lines.append("   • [cyan]/map-debug[/] - Debug issue using MAP analysis")
-    steps_lines.append("   • [cyan]/map-refactor[/] - Refactor with impact analysis")
-    steps_lines.append("   • [cyan]/map-review[/] - Full MAP review of changes")
+    steps_lines.append("   • [cyan]/map-fast[/] - Quick implementation with minimal validation")
+    steps_lines.append("   • [cyan]/map-learn[/] - Extract lessons from completed workflows")
 
 
     steps_panel = Panel(
@@ -2414,7 +2419,7 @@ def recitation_checkpoint():
         console.print("[yellow]⚠️  No active MAP workflow found[/yellow]")
         console.print("\nThe `.map/` directory doesn't exist yet.")
         console.print(
-            "Start a MAP workflow with: [cyan]/map-feature[/cyan], [cyan]/map-debug[/cyan], or [cyan]/map-refactor[/cyan]"
+            "Start a MAP workflow with: [cyan]/map-efficient[/cyan], [cyan]/map-debug[/cyan], or [cyan]/map-fast[/cyan]"
         )
         raise typer.Exit(0)
 
