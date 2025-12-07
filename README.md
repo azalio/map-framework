@@ -17,23 +17,20 @@ Implementation of **Modular Agentic Planner (MAP)** — a cognitive architecture
 ### Inside Claude Code (Recommended)
 
 ```bash
-# Feature development (full quality - 8 agents)
-/map-feature implement user authentication with JWT tokens
-
-# ⭐ RECOMMENDED: Efficient workflow (30-40% token savings, preserves learning)
+# ⭐ RECOMMENDED: Efficient workflow (40-50% token savings)
 /map-efficient implement user profile page with avatar upload
 
 # Debugging
 /map-debug fix the API 500 error on login endpoint
 
-# Refactoring
-/map-refactor refactor UserService class with dependency injection
-
-# Code review
-/map-review review the recent changes in auth.py
-
 # ⚠️ Fast workflow (40-50% savings, NO learning - throwaway code only)
 /map-fast prototype a quick API endpoint mockup
+
+# 📚 Optional: Preserve learnings from any workflow
+/map-learn [paste workflow summary to extract patterns]
+
+# 📦 Release workflow (for package maintainers)
+/map-release patch  # or: minor, major
 ```
 
 ### Command Line Usage
@@ -46,7 +43,7 @@ cd your-project
 claude
 
 # Use slash commands inside Claude Code
-/map-feature implement user authentication with JWT tokens
+/map-efficient implement user authentication with JWT tokens
 ```
 
 **Note:** Direct `claude --agents` syntax is not applicable to MAP Framework, as the orchestration logic is implemented in slash command prompts (`.claude/commands/map-*.md`), not as a separate agent file.
@@ -110,33 +107,39 @@ pip install -e .
 
 ## 🔀 Workflow Variants
 
-MAP Framework offers three workflow variants optimized for different scenarios:
+MAP Framework offers workflow variants optimized for different scenarios:
 
 | Command | Token Usage | Learning | Quality Gates | Best For |
 |---------|-------------|----------|---------------|----------|
-| **`/map-feature`** | 100% (baseline) | ✅ Full (per-subtask) | ✅ All 8 agents | Critical features, first-time implementations, maximum QA |
-| **`/map-efficient`** ⭐ | **60-70%** | ✅ Full (batched) | ✅ Essential agents | **RECOMMENDED: Most production tasks** |
-| **`/map-fast`** ⚠️ | 50-60% | ❌ None | ⚠️ Basic only | Throwaway prototypes, experiments (NOT production) |
+| **`/map-efficient`** ⭐ | **50-60%** | Optional via `/map-learn` | ✅ Essential agents | **RECOMMENDED: Most production tasks** |
+| **`/map-debug`** | 50-60% | Optional via `/map-learn` | ✅ Essential agents | Bug fixes and debugging |
+| **`/map-fast`** ⚠️ | 40-50% | ❌ None | ⚠️ Basic only | Throwaway prototypes, experiments (NOT production) |
+| **`/map-learn`** | ~5-8K tokens | ✅ Full | Reflector + Curator | Capture patterns after any workflow |
+| **`/map-release`** | Variable | Optional via `/map-learn` | 12 validation gates | Package releases |
 
 ### Which Workflow Should You Use?
 
 **Use `/map-efficient` (RECOMMENDED) when:**
 - ✅ Building production features where token costs matter
 - ✅ Well-understood tasks with low to medium risk
-- ✅ You want learning without excessive token usage
 - ✅ Iterative development with frequent workflows
+- ✅ Run `/map-learn` afterward if you want to preserve patterns
 
-**Use `/map-feature` (full workflow) when:**
-- 🔒 Implementing security-critical functionality
-- 🔒 First-time complex features requiring maximum validation
-- 🔒 High-risk changes affecting many files
-- 🔒 You need complete quality assurance and impact analysis
+**Use `/map-debug` when:**
+- 🔧 Fixing bugs or investigating errors
+- 🔧 Root cause analysis needed
+- 🔧 Systematic debugging approach required
 
 **Use `/map-fast` (minimal) ONLY when:**
 - 🗑️ Creating throwaway prototypes you'll discard
 - 🗑️ Quick experiments where quality doesn't matter
 - 🗑️ Learning/tutorial contexts where failure is acceptable
 - ⚠️ **NEVER for production code** - no learning, quality risks
+
+**Use `/map-learn` after any workflow:**
+- 📚 To preserve valuable patterns discovered during work
+- 📚 When implementation approach could help future tasks
+- 📚 To update playbook and cross-project cipher knowledge
 
 ### 🎯 Auto-Activation System
 
@@ -147,10 +150,10 @@ Just describe your task naturally - no need to remember slash commands:
 | Your Request | MAP Suggests | Why |
 |--------------|--------------|-----|
 | "Fix the failing tests" | `/map-debug` | Keywords: fix, failing test |
-| "Implement user login" | `/map-feature` | Keywords: implement, feature |
+| "Implement user login" | `/map-efficient` | Keywords: implement, feature |
 | "Optimize database queries" | `/map-efficient` | Keywords: optimize |
-| "Restructure auth module" | `/map-refactor` | Keywords: restructure |
 | "Quick prototype for testing" | `/map-fast` | Keywords: quick, prototype |
+| "Save patterns from last task" | `/map-learn` | Keywords: save, patterns, learn |
 
 **How it works:**
 1. Start typing your request normally
@@ -166,17 +169,21 @@ Edit `.claude/workflow-rules.json` to add project-specific trigger words and pat
 
 **`/map-efficient` optimizations:**
 - **Conditional Predictor**: Only called for high-risk tasks (security, breaking changes)
-- **Batched Learning**: Reflector/Curator run once at end (vs per-subtask)
 - **Evaluator Skipped**: Monitor provides sufficient validation for most tasks
-- **Result**: 30-40% token savings while preserving learning and essential quality gates
+- **Learning Optional**: Run `/map-learn` separately to capture patterns
+- **Result**: 40-50% token savings with essential quality gates
 
 **`/map-fast` limitations:**
 - ❌ No impact analysis (Predictor skipped)
 - ❌ No quality scoring (Evaluator skipped)
 - ❌ No learning (Reflector/Curator skipped)
-- ❌ Playbook never improves
-- ❌ Cipher knowledge never accumulates
-- ⚠️ **Defeats MAP's core purpose of continuous improvement**
+- 💡 Can add learning retroactively via `/map-learn`
+
+**`/map-learn` benefits:**
+- ✅ Calls Reflector to extract patterns from workflow
+- ✅ Calls Curator to update playbook
+- ✅ Syncs high-quality bullets to cipher (cross-project knowledge)
+- ✅ Run after any workflow when patterns are worth preserving
 
 **See [USAGE.md](docs/USAGE.md#workflow-variants) for detailed decision guide and real-world token usage examples.**
 
@@ -189,7 +196,7 @@ MAP includes interactive skills that provide specialized guidance:
 **Auto-suggested when you ask:**
 - "Which workflow should I use?"
 - "What's the difference between workflows?"
-- "When to use /map-efficient vs /map-feature?"
+- "When to use /map-efficient vs /map-fast?"
 
 **What you get:**
 - Quick decision tree (5 questions → recommended workflow)
@@ -244,14 +251,15 @@ Configuration files: `.claude/mcp_config.json` and `mcp_config.json`
 ## 📚 Usage Examples
 
 ```bash
-# Feature development
-/map-feature implement user profile page with avatar upload
+# Feature development (recommended)
+/map-efficient implement user profile page with avatar upload
 
 # Bug fixing
 /map-debug debug why payment processing fails for amounts over $1000
 
-# Refactoring
-/map-refactor refactor OrderService to use dependency injection
+# After completing work, optionally preserve learnings
+/map-learn Implemented user profile with avatar. Files: profile.py, upload.py.
+           Used pre-signed S3 URLs. Iterations: 2.
 ```
 
 **See [USAGE.md](docs/USAGE.md) for:**
@@ -262,13 +270,15 @@ Configuration files: `.claude/mcp_config.json` and `mcp_config.json`
 
 ## 🎓 ACE Playbook
 
-Built-in learning system that improves with each task:
+Built-in learning system that improves when you run `/map-learn`:
 
 - **Reflector** extracts patterns from successes and failures
 - **Curator** maintains structured knowledge base with quality tracking
 - **Semantic search** (optional) finds patterns by meaning, not keywords
 - **Dependency validation** ensures valid task graphs before execution
-- Automatically grows high-quality pattern library
+- High-quality patterns sync to cipher for cross-project reuse
+
+**Note:** Learning is optional and triggered via `/map-learn` command after workflows.
 
 ### Playbook Commands
 
@@ -319,7 +329,7 @@ Error: Slash command not recognized
 
 **Solution:**
 - Ensure you're in a directory with `.claude/commands/` containing `map-*.md` files
-- Use `/map-feature`, `/map-debug`, `/map-refactor`, or `/map-review`
+- Available commands: `/map-efficient`, `/map-debug`, `/map-fast`, `/map-learn`, `/map-release`
 - Run `/help` to see available commands
 
 ### Agent Not Found

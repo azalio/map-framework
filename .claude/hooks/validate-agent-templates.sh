@@ -11,16 +11,9 @@ set -euo pipefail
 # Read JSON input from Claude Code
 INPUT=$(cat)
 
-# Validate JSON input before processing
-if ! jq empty <<< "$INPUT" 2>/dev/null; then
-    echo "[validate-agent-templates] ⚠️  WARNING: Received malformed JSON input" >&2
-    echo '{"decision": "allow"}'
-    exit 0
-fi
-
-# Extract tool name and file path from JSON (using heredoc to avoid echo issues with multiline content)
-TOOL=$(jq -r '.tool // empty' <<< "$INPUT")
-FILE_PATH=$(jq -r '.parameters.file_path // empty' <<< "$INPUT")
+# Extract tool name and file path from JSON
+TOOL=$(echo "$INPUT" | jq -r '.tool // empty')
+FILE_PATH=$(echo "$INPUT" | jq -r '.parameters.file_path // empty')
 
 # Only validate agent files
 if [[ ! "$FILE_PATH" =~ \.claude/agents/.*\.md$ ]]; then
@@ -29,8 +22,8 @@ if [[ ! "$FILE_PATH" =~ \.claude/agents/.*\.md$ ]]; then
     exit 0
 fi
 
-# Get the new content that will be written (using heredoc to avoid echo issues with multiline content)
-NEW_CONTENT=$(jq -r '.parameters.content // .parameters.new_string // empty' <<< "$INPUT")
+# Get the new content that will be written
+NEW_CONTENT=$(echo "$INPUT" | jq -r '.parameters.content // .parameters.new_string // empty')
 
 if [ -z "$NEW_CONTENT" ]; then
     # No content to validate - allow (might be a read operation)
@@ -72,8 +65,8 @@ if [ ${#MISSING_PATTERNS[@]} -gt 0 ]; then
     MESSAGE+="\\nTo bypass this check (NOT recommended):\\n"
     MESSAGE+="  Disable the PreToolUse hook in .claude/settings.hooks.json"
 
-    # Return blocking decision with message using jq for proper JSON escaping
-    jq -n --arg msg "$MESSAGE" '{decision: "block", message: $msg}'
+    # Return blocking decision with message
+    echo "{\"decision\": \"block\", \"message\": \"$MESSAGE\"}"
     exit 1
 fi
 
@@ -91,8 +84,7 @@ if [ -f "$FILE_PATH" ]; then
         MESSAGE+="This might include critical Handlebars templates or instructions.\\n"
         MESSAGE+="\\nIf this is intentional, proceed. Otherwise, review the changes carefully."
 
-        # Return allow decision with warning message using jq for proper JSON escaping
-        jq -n --arg msg "$MESSAGE" '{decision: "allow", message: $msg}'
+        echo "{\"decision\": \"allow\", \"message\": \"$MESSAGE\"}"
         exit 0
     fi
 fi

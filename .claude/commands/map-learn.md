@@ -7,11 +7,8 @@ description: Extract and preserve lessons from completed workflows (OPTIONAL lea
 **Purpose:** Standalone command to extract and preserve lessons AFTER completing any MAP workflow.
 
 **When to use:**
-- After `/map-efficient` completes (if you skipped batched learning)
-- After `/map-feature` completes (to batch learnings from multiple subtasks)
+- After `/map-efficient` completes (to preserve patterns from the workflow)
 - After `/map-debug` completes (to preserve debugging patterns)
-- After `/map-refactor` completes (to capture refactoring insights)
-- After `/map-review` completes (to save review patterns)
 - After `/map-fast` completes (to retroactively add learning to throwaway code)
 
 **What it does:**

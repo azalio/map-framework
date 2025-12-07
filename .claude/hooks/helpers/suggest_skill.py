@@ -322,7 +322,8 @@ def find_best_skill(message: str, rules: Dict) -> Optional[Tuple[str, str, str]]
 
     # Return best match (skill_id, description, reason)
     best = matches[0]
-    return best[0], best[1], best[2]
+    # Ensure reason is a string (never None) to match return type
+    return best[0], best[1], best[2] or ""
 
 
 def main():

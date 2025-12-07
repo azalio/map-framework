@@ -926,34 +926,37 @@ class PlaybookManager:
         # Extract prefix from section name (first 4 chars, lowercase)
         prefix = re.sub(r"[^a-z]", "", section.lower())[:4]
 
-        # Find max existing ID number in section from SQLite (source of truth)
+        # Find max existing NUMERIC ID in section from SQLite
+        # Pattern: prefix-NNNN where NNNN is digits only
         cursor = self.db_conn.cursor()
         cursor.execute(
             """
             SELECT id FROM bullets
-            WHERE section = ? AND id LIKE ?
+            WHERE section = ? AND id GLOB ?
             ORDER BY id DESC LIMIT 1
         """,
-            (section, f"{prefix}-%"),
+            (section, f"{prefix}-[0-9][0-9][0-9][0-9]"),
         )
 
         result = cursor.fetchone()
         if result:
             # Extract number from ID like "impl-0042" -> 42
             last_id = result[0]
-            try:
-                last_num = int(last_id.split("-")[1])
-                next_num = last_num + 1
-            except (IndexError, ValueError):
-                # Fallback to count if ID format is unexpected
-                cursor.execute(
-                    "SELECT COUNT(*) FROM bullets WHERE section = ?", (section,)
-                )
-                next_num = cursor.fetchone()[0]
+            last_num = int(last_id.split("-")[1])
+            next_num = last_num + 1
         else:
+            # No numeric IDs found, start from 0
             next_num = 0
 
-        return f"{prefix}-{next_num:04d}"
+        # Ensure unique by checking if ID exists (handle gaps)
+        while True:
+            new_id = f"{prefix}-{next_num:04d}"
+            cursor.execute("SELECT 1 FROM bullets WHERE id = ?", (new_id,))
+            if not cursor.fetchone():
+                break
+            next_num += 1
+
+        return new_id
 
     def _deduplicate(self, threshold: float = 0.9) -> Dict:
         """
