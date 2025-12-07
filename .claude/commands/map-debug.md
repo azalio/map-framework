@@ -8,23 +8,16 @@ description: Debug issue using MAP analysis
 
 You are **STRICTLY PROHIBITED** from:
 
-❌ **"Optimizing" the workflow due to token limits** - Token constraints are NOT a valid reason to skip agents
+❌ **"Optimizing" the workflow by skipping agents** - Each agent MUST be called
+❌ **"Using general-purpose instead of specialized agents"** - USE the correct subagent_type
 ❌ **"Combining steps to save time"** - Each agent MUST be called individually
-❌ **"Doing Reflector/Curator work manually"** - This breaks cipher integration
-❌ **"Creating a comprehensive document instead"** - This is NOT the MAP workflow
-❌ **"Skipping reflection for simple tasks"** - EVERY subtask requires Reflector + Curator
-❌ **Any variation of "I'll optimize by..."** - NO OPTIMIZATION ALLOWED
-
-**IF YOU VIOLATE THESE RULES:**
-- cipher_memory_search won't be called → duplicate knowledge
-- cipher_extract_and_operate_memory won't be called → knowledge won't be shared
-- The ENTIRE PURPOSE of MAP Framework will be defeated
+❌ **Any variation of "I'll optimize by..."** - NO ADDITIONAL OPTIMIZATION ALLOWED
 
 **YOU MUST:**
-✅ Call EVERY agent in sequence for EVERY subtask
+✅ Call task-decomposer FIRST (not general-purpose)
+✅ Call actor for EACH subtask (not general-purpose)
+✅ Call monitor after EACH actor (not general-purpose)
 ✅ Verify each agent used required MCP tools (check output)
-✅ Complete the FULL workflow even if it takes 100K+ tokens
-✅ Ask user to continue if you hit token limit, but NEVER skip agents
 
 Debug the following issue using the MAP framework:
 
@@ -41,7 +34,8 @@ Debugging workflow focuses on analysis before implementation:
    4. VALIDATE → monitor (check fix correctness)
    5. PREDICT → predictor (assess impact of fix)
    6. EVALUATE → evaluator (verify fix quality)
-   7. REFLECT + CURATE → learn from the debugging process
+   7. Apply fix
+3. DONE → Suggest /map-learn if user wants to preserve patterns
 ```
 
 ## Step 1: Analyze the Issue
@@ -240,63 +234,6 @@ If evaluator recommends proceeding:
 - Run tests to verify fix
 - Check that original issue is resolved
 
-### Reflect on Debugging Process
-
-```
-Task(
-  subagent_type="reflector",
-  description="Extract debugging lessons",
-  prompt="Extract lessons from this debugging process:
-
-**Original Issue:** [description]
-**Root Cause:** [identified cause]
-**Fix Applied:** [actor output]
-**Outcome:** success
-
-Analyze:
-- What was the key insight that led to the solution?
-- What debugging techniques were effective?
-- What could prevent similar issues in the future?
-- What patterns should be remembered?
-
-Output JSON with:
-- key_insight: string
-- effective_techniques: array of strings
-- prevention_strategies: array of strings
-- suggested_new_bullets: array of {section, content, code_example}"
-)
-```
-
-### Update Playbook
-
-```
-Task(
-  subagent_type="curator",
-  description="Update playbook with debugging patterns",
-  prompt="Integrate debugging lessons into playbook:
-
-**Reflector Insights:** [paste reflector JSON]
-
-Focus on:
-- Common error patterns
-- Debugging techniques
-- Prevention strategies
-- Similar issue detection
-
-Output JSON with curator operations."
-)
-```
-
-Apply curator operations using CLI:
-
-```bash
-# Save Curator output to file
-echo '[Curator JSON output]' > curator_operations.json
-
-# Apply to playbook SQLite database
-mapify playbook apply-delta curator_operations.json
-```
-
 ## Step 4: Verification
 
 After all fixes applied:
@@ -306,13 +243,19 @@ After all fixes applied:
 3. **Check predictor's similar_issues** - fix those too if relevant
 4. **Create commit** with clear description of fix and root cause
 
-## Step 5: Store Debugging Pattern
+---
+
+## 💡 Optional: Preserve Debugging Lessons
+
+**If you want to save debugging patterns for future use:**
 
 ```
-mcp__cipher__cipher_extract_and_operate_memory({
-  "interaction": "Debugged issue: [description]. Root cause: [cause]. Fix: [summary]. Prevention: [strategies]"
-})
+/map-learn Debugged [issue description]. Root cause: [cause].
+Fix: [summary]. Prevention strategies: [list].
+Files changed: [files]. Iterations: [count].
 ```
+
+This is **completely optional**. Run it when debugging patterns are valuable for future reference.
 
 ## MCP Tools for Debugging
 
@@ -339,7 +282,6 @@ You should:
 4. For investigation steps: Task(subagent_type="actor") to analyze
 5. For fix steps: actor → monitor → predictor → evaluator → apply
 6. Run tests, verify fix
-7. Reflect + curate lessons
-8. Store pattern in cipher
+7. Done! Optionally run `/map-learn` to preserve debugging patterns
 
 Begin debugging now.
