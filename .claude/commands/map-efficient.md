@@ -12,22 +12,13 @@ You are **STRICTLY PROHIBITED** from:
 
 ❌ **"Optimizing" the workflow by skipping agents** - Each agent MUST be called
 ❌ **"Using general-purpose instead of specialized agents"** - USE the correct subagent_type
-❌ **"Doing Reflector/Curator work manually"** - This breaks cipher integration
 ❌ **"Combining steps to save time"** - Each agent MUST be called individually
-❌ **"Skipping batched reflection at end"** - MANDATORY for learning
 ❌ **Any variation of "I'll optimize by..."** - NO ADDITIONAL OPTIMIZATION ALLOWED
-
-**IF YOU VIOLATE THESE RULES:**
-- cipher_memory_search won't be called → duplicate knowledge
-- cipher_extract_and_operate_memory won't be called → knowledge won't be shared
-- The ENTIRE PURPOSE of MAP Framework will be defeated
 
 **YOU MUST:**
 ✅ Call task-decomposer FIRST (not general-purpose)
 ✅ Call actor for EACH subtask (not general-purpose)
 ✅ Call monitor after EACH actor (not general-purpose)
-✅ Call reflector at END for batched learning
-✅ Call curator at END for playbook update
 ✅ Verify each agent used required MCP tools (check output)
 
 ---
@@ -38,15 +29,13 @@ This workflow provides **intelligent token optimization (30-40% savings)** while
 
 ✅ **Impact Analysis** (Predictor) → Conditional on risk level
 ✅ **Basic Validation** (Monitor) → Always enforced
-✅ **Learning Preserved** (Reflector/Curator) → Batched at end
-✅ **Playbook Updates** → Single update after all subtasks
-✅ **Cipher Integration** → Cross-project knowledge maintained
+✅ **Learning** → OPTIONAL via `/map-learn` command after workflow
 
 **Token Savings vs Full Workflow:**
 - Skip Evaluator per subtask: ~8-12% savings
 - Conditional Predictor: ~5-10% savings
-- Batched Reflector/Curator: ~10-15% savings
-- **Total: 30-40% token reduction**
+- Optional learning (not automatic): ~15-20% savings
+- **Total: 40-50% token reduction**
 
 **When to use /map-efficient:**
 - Production code where token costs matter
@@ -68,7 +57,7 @@ Implement the following with efficient workflow:
 
 ## Workflow Overview
 
-Optimized agent sequence (batched learning, conditional analysis):
+Optimized agent sequence (no automatic learning):
 
 ```
 1. DECOMPOSE → task-decomposer
@@ -78,15 +67,13 @@ Optimized agent sequence (batched learning, conditional analysis):
    5. If invalid: provide feedback, go to step 3 (max 3-5 iterations)
    6. If high_risk: ANALYZE → predictor
    7. ACCEPT and apply changes
-8. BATCH REFLECT → reflector (analyze ALL subtasks together)
-9. BATCH CURATE → curator (single playbook update)
+8. DONE → Suggest /map-learn if user wants to preserve lessons
 ```
 
 **Key Optimizations:**
 - **Evaluator skipped** → Monitor provides sufficient validation for most tasks
 - **Predictor conditional** → Only called when Monitor flags high risk
-- **Reflector batched** → Analyzes all subtasks at end (more holistic insights)
-- **Curator batched** → Single playbook update (vs per-subtask updates)
+- **Learning optional** → User runs `/map-learn` separately if desired
 
 ## Step 1: Load Playbook Context
 
@@ -314,107 +301,7 @@ mapify recitation update "ST-001" completed
 
 Repeat steps 3.1-3.6 for each remaining subtask.
 
-**Note:** We are NOT calling Reflector/Curator per subtask. They will be batched at the end (Step 4).
-
-## Step 4: Batched Learning (Key Optimization)
-
-After ALL subtasks completed, perform batched reflection and curation:
-
-### 4.1 Batch Reflector Analysis
-
-**⚠️ MUST use subagent_type="reflector"** (NOT general-purpose):
-
-```
-Task(
-  subagent_type="reflector",
-  description="Extract lessons from all subtasks",
-  prompt="Extract structured lessons from this ENTIRE workflow:
-
-**All Subtask Outputs:**
-[Paste Actor outputs for ALL subtasks]
-
-**All Monitor Results:**
-[Paste Monitor outputs for ALL subtasks]
-
-**All Predictor Analyses (if any):**
-[Paste Predictor outputs where called]
-
-**Workflow Summary:**
-- Total subtasks: [N]
-- High-risk subtasks: [count]
-- Iterations required: [total across all subtasks]
-- Files changed: [list]
-
-**MANDATORY FIRST STEP:**
-1. Call mcp__cipher__cipher_memory_search to check if similar patterns already exist
-2. Only suggest new bullets if pattern is genuinely novel
-3. Reference existing cipher patterns in your analysis
-
-Analyze holistically:
-- What patterns emerged across multiple subtasks?
-- What worked well consistently?
-- What could be improved for future similar tasks?
-- What knowledge should be preserved?
-
-Output JSON with:
-- key_insight: string (one sentence takeaway for entire workflow)
-- patterns_used: array of strings
-- patterns_discovered: array of strings
-- bullet_updates: array of {bullet_id, new_helpful_count, new_harmful_count, reason}
-- suggested_new_bullets: array of {section, content, code_example, initial_score}
-- workflow_efficiency: {total_iterations, avg_per_subtask, bottlenecks: array}"
-)
-```
-
-**Token Savings Note:** One batched reflection vs per-subtask reflection saves ~(N-1) * 3K tokens for N subtasks.
-
-### 4.2 Batch Curator Update
-
-**⚠️ MUST use subagent_type="curator"** (NOT general-purpose):
-
-```
-Task(
-  subagent_type="curator",
-  description="Update playbook with workflow learnings",
-  prompt="Integrate batched learnings into playbook:
-
-**Reflector Insights:** [paste reflector JSON from step 4.1]
-
-**MANDATORY STEPS:**
-1. BEFORE creating ADD operations: call mcp__cipher__cipher_memory_search to check duplicates
-2. Create delta operations (ADD/UPDATE/DEPRECATE) for playbook
-3. AFTER applying operations: IF any bullet has helpful_count >= 5, MUST call mcp__cipher__cipher_extract_and_operate_memory to sync to cross-project knowledge base
-
-Output JSON with:
-- operations: array of {operation: 'ADD'|'UPDATE'|'DEPRECATE', section, bullet_id, content, reason}
-- deduplication_check: array of {new_bullet, similar_existing_bullets, action}
-- sync_to_cipher: array of {bullet_id, content, helpful_count} (REQUIRED if helpful_count >= 5)"
-)
-```
-
-### 4.3 Apply Curator Operations
-
-Apply Curator delta operations using the CLI command:
-
-```bash
-# Save Curator output to file
-echo '[Curator JSON output]' > curator_operations.json
-
-# Apply to playbook SQLite database
-mapify playbook apply-delta curator_operations.json
-```
-
-- **If `sync_to_cipher` array has entries:**
-  ```
-  mcp__cipher__cipher_extract_and_operate_memory(
-    interaction: [bullet content],
-    memoryMetadata: {"projectId": "map-framework", "source": "curator"}
-  )
-  ```
-
-**Token Savings Note:** One batched curator vs per-subtask curator saves ~(N-1) * 2K tokens.
-
-## Step 5: Final Summary
+## Step 4: Final Summary
 
 ```bash
 mapify recitation stats  # Get workflow metrics
@@ -423,16 +310,35 @@ mapify recitation stats  # Get workflow metrics
 Run tests (if applicable), create commit, and summarize:
 - Features implemented
 - Files changed
-- Playbook bullets added
 - Overall quality
 - **Token efficiency:**
   - Predictor calls: [count] / [total_subtasks] subtasks ([X]% saved)
-  - Batched learning: [N-1] reflection cycles saved
-  - Estimated token savings: ~[X]% vs /map-feature
+  - Learning skipped: ~15-20% additional savings
+  - Estimated token savings: ~40-50% vs /map-feature
 
 ```bash
 mapify recitation clear
 ```
+
+---
+
+## 💡 Optional: Preserve Lessons Learned
+
+**If you want to save patterns from this workflow for future use:**
+
+```
+/map-learn [workflow summary with actor outputs, monitor results, files changed]
+```
+
+This is **completely optional**. Run it when:
+- You discovered valuable patterns worth preserving
+- The implementation approach could help future similar tasks
+- You want to update the playbook with new insights
+
+Skip `/map-learn` when:
+- The task was routine with no novel patterns
+- You're iterating quickly and learning overhead isn't worth it
+- Token budget is constrained
 
 ## MCP Tools Available
 
@@ -448,19 +354,18 @@ mapify recitation clear
 |---------|---------------------|----------------------|---------------------|
 | **Validation** | Monitor + Evaluator | Monitor only | Monitor only |
 | **Impact Analysis** | Always (Predictor) | Conditional | Never |
-| **Learning** | Per-subtask | Batched (end) | None |
+| **Learning** | Per-subtask | Optional (/map-learn) | None |
 | **Quality Gates** | All agents | Essential agents | Basic only |
-| **Token Usage** | 100% (baseline) | **60-70%** | 50-60% |
+| **Token Usage** | 100% (baseline) | **50-60%** | 40-50% |
 | **Production Safe** | ✅ Maximum | ✅ Yes | ❌ No |
-| **Knowledge Growth** | ✅ Full | ✅ Full | ❌ None |
+| **Knowledge Growth** | ✅ Full | 🔸 On-demand | ❌ None |
 | **Best For** | Critical features | **Most tasks** | Throwaway only |
 
 ## Critical Constraints
 
 - **Predictor conditional** on risk level (saves tokens for low-risk tasks)
 - **Evaluator skipped** (Monitor provides sufficient validation)
-- **Reflector/Curator batched** (single learning cycle at end)
-- **Learning preserved** (playbook and cipher still updated)
+- **Learning optional** — run `/map-learn` after workflow if desired
 - **MAX 5 iterations** per subtask
 - **Use /map-feature** if you need maximum quality assurance
 
@@ -475,24 +380,20 @@ This workflow will:
    - Monitor validates
    - Predictor called only if high risk (e.g., database migration)
    - Apply changes
-3. After all subtasks:
-   - Batch Reflector analyzes entire feature
-   - Batch Curator updates playbook once
-   - Cipher receives high-quality patterns
+3. Done! Optionally run `/map-learn` to preserve patterns
 
-**Token savings**: ~35% vs /map-feature, while maintaining:
-- Full learning (playbook + cipher updated)
+**Token savings**: ~40-50% vs /map-feature, while maintaining:
 - Essential quality gates (Monitor, conditional Predictor)
 - Production readiness
+- On-demand learning via `/map-learn`
 
 ---
 
 **Why /map-efficient is RECOMMENDED:**
 
-✅ **Preserves MAP's core value** (continuous learning)
-✅ **Significant token savings** (30-40%)
+✅ **Maximum token savings** (40-50% vs /map-feature)
 ✅ **Production-ready** (essential quality gates maintained)
-✅ **Holistic insights** (batched reflection sees patterns across subtasks)
-✅ **Best balance** of speed, quality, and learning
+✅ **Learning on-demand** (run /map-learn only when needed)
+✅ **Best balance** of speed and quality
 
 Begin now with efficient workflow.

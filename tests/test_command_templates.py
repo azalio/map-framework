@@ -96,12 +96,11 @@ class TestCommandTemplates:
     def test_all_command_templates_exist(self, templates_commands_dir):
         """Test that all expected command template files exist."""
         expected_commands = [
-            "map-feature.md",
+            "map-efficient.md",  # Recommended workflow
             "map-debug.md",
-            "map-refactor.md",
-            "map-review.md",
-            "map-efficient.md",  # New
-            "map-fast.md",  # New
+            "map-fast.md",  # Minimal workflow
+            "map-learn.md",  # Optional learning
+            "map-release.md",  # Release workflow
         ]
 
         for command in expected_commands:
@@ -128,20 +127,18 @@ class TestCommandTemplates:
         ), "Should indicate learning is skipped"
 
     def test_map_efficient_workflow_structure(self, templates_commands_dir):
-        """Test that map-efficient.md has correct workflow structure (batched learning)."""
+        """Test that map-efficient.md has correct workflow structure (optional learning)."""
         map_efficient = templates_commands_dir / "map-efficient.md"
         content = map_efficient.read_text()
 
-        # Should mention all key agents
+        # Should mention key agents
         assert "TaskDecomposer" in content or "task-decomposer" in content
         assert "Actor" in content or "actor" in content
         assert "Monitor" in content or "monitor" in content
         assert "Predictor" in content or "predictor" in content
-        assert "Reflector" in content or "reflector" in content
-        assert "Curator" in content or "curator" in content
 
-        # Should mention batching
-        assert "batch" in content.lower() or "batched" in content.lower()
+        # Should mention /map-learn as optional
+        assert "/map-learn" in content, "Should reference optional /map-learn command"
 
         # Should mention conditional Predictor
         assert "conditional" in content.lower()

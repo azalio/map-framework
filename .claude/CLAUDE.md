@@ -30,12 +30,11 @@ cp .claude/agents/curator.md src/mapify_cli/templates/agents/
 cp .claude/agents/documentation-reviewer.md src/mapify_cli/templates/agents/
 
 # 3. Синхронизируй команды
-cp .claude/commands/map-feature.md src/mapify_cli/templates/commands/
-cp .claude/commands/map-debug.md src/mapify_cli/templates/commands/
-cp .claude/commands/map-refactor.md src/mapify_cli/templates/commands/
-cp .claude/commands/map-review.md src/mapify_cli/templates/commands/
 cp .claude/commands/map-efficient.md src/mapify_cli/templates/commands/
+cp .claude/commands/map-debug.md src/mapify_cli/templates/commands/
 cp .claude/commands/map-fast.md src/mapify_cli/templates/commands/
+cp .claude/commands/map-learn.md src/mapify_cli/templates/commands/
+cp .claude/commands/map-release.md src/mapify_cli/templates/commands/
 
 # 4. Проверь что файлы скопировались
 git status src/mapify_cli/templates/
@@ -61,7 +60,7 @@ pytest tests/test_template_sync.py -v
 
 ## MAP Workflow Enforcement
 
-При работе с MAP Framework slash commands (`/map-feature`, `/map-debug`, `/map-refactor`):
+При работе с MAP Framework slash commands (`/map-efficient`, `/map-debug`, `/map-fast`):
 
 ### Обязательная последовательность агентов
 
@@ -70,36 +69,29 @@ pytest tests/test_template_sync.py -v
 ```
 1. Actor (implement)
 2. Monitor (validate) → If invalid: return to Actor with feedback
-3. Predictor (analyze impact)
-4. Evaluator (score quality) → If not approved: return to Actor
-5. Reflector (extract lessons) ← ОБЯЗАТЕЛЬНО
-6. Curator (update playbook) ← ОБЯЗАТЕЛЬНО
+3. Predictor (analyze impact) ← условно, для high-risk subtasks
+4. Apply changes
 ```
 
-### НИКОГДА не делай работу агентов самостоятельно
+### Learning is OPTIONAL via /map-learn
 
-❌ **ПЛОХО**:
-- "Я сам проанализирую успех и напишу lessons learned"
-- "Я сам обновлю playbook напрямую" (через sqlite3 или Edit)
-- "Пропущу Reflector для простой задачи"
+Reflector и Curator теперь вызываются ТОЛЬКО через отдельную команду `/map-learn`:
 
-✅ **ХОРОШО**:
-- Всегда вызывай `Task(subagent_type="reflector", ...)`
-- Всегда вызывай `Task(subagent_type="curator", ...)`
-- Проверяй что Reflector использовал `cipher_memory_search`
-- Проверяй что Curator использовал `cipher_memory_search` для дедупликации
+✅ **НОВЫЙ ПОДХОД**:
+- Workflows (map-efficient, map-debug, map-fast) НЕ включают автоматический learning
+- После завершения workflow предлагай пользователю: "Если хотите сохранить паттерны — запустите `/map-learn`"
+- `/map-learn` вызывает Reflector → Curator → playbook update → cipher sync
 
-### Почему это важно?
+❌ **Не добавляй learning в workflows**:
+- Не вызывай Reflector/Curator автоматически в map-efficient, map-debug
+- Не делай работу Reflector/Curator самостоятельно
 
-**Двойная система памяти**:
-- **Playbook** (`.claude/playbook.db` SQLite) - проектные паттерны
-- **Cipher** (MCP tool) - кросс-проектные знания
+### Когда рекомендовать /map-learn
 
-Когда пропускаешь агентов:
-- ✅ Playbook обновляется (ты делаешь вручную)
-- ❌ Cipher НЕ обновляется (MCP tools не вызываются)
-- ❌ Знания не дедуплицируются (cipher_memory_search не вызывается)
-- ❌ Будущие workflows не получают преимуществ
+Предлагай `/map-learn` если:
+- Были найдены новые паттерны решения
+- Debugging выявил нестандартные проблемы
+- Несколько итераций Actor→Monitor (>3)
 
 ## Playbook Update Rules
 
