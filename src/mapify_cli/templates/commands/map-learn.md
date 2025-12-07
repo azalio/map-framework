@@ -31,8 +31,7 @@ Use /map-learn when:
 - You want to manually trigger learning for custom workflows
 
 **Do NOT use this command:**
-- During active /map-feature, /map-debug, /map-refactor, /map-review (they handle learning internally)
-- During /map-efficient (it includes batched learning in Step 4)
+- During active workflow execution (run after workflow completes)
 - If no meaningful patterns emerged from the workflow
 
 ---
@@ -50,7 +49,7 @@ Check that $ARGUMENTS contains workflow summary:
 
 **Example valid input:**
 ```
-Workflow: /map-feature "Add user authentication"
+Workflow: /map-efficient "Add user authentication"
 Subtasks completed: 3
 Files changed: api/auth.py, models/user.py, tests/test_auth.py
 Iterations: 5 total (Actor→Monitor loops)
@@ -424,39 +423,25 @@ Curator creates:
 
 ## Integration with Other Commands
 
-### After /map-efficient (optional)
+### After /map-efficient (recommended)
 
-/map-efficient includes batched learning in Step 4. Use /map-learn only if:
-- You manually skipped Step 4 due to time constraints
-- You want to add additional context not captured during workflow
-
-### After /map-feature (recommended for multi-subtask features)
-
-/map-feature learns per-subtask. Use /map-learn to:
-- Extract cross-subtask patterns
-- Batch similar learnings into single playbook entry
-- Reduce playbook bloat from redundant per-subtask bullets
+/map-efficient does NOT include automatic learning. Use /map-learn to:
+- Extract patterns from completed implementation
+- Preserve successful approaches for future reference
+- Document any edge cases discovered
 
 ### After /map-debug (recommended)
 
-/map-debug learns per debugging step. Use /map-learn to:
+/map-debug does NOT include automatic learning. Use /map-learn to:
 - Capture holistic debugging strategy
 - Preserve error investigation patterns
 - Document root cause analysis approach
 
-### After /map-refactor (recommended)
+### After /map-fast (optional)
 
-/map-refactor learns per refactoring step. Use /map-learn to:
-- Document refactoring strategy
-- Preserve code transformation patterns
-- Capture testing approach for refactors
-
-### After /map-review (optional)
-
-/map-review learns from code review. Use /map-learn to:
-- Batch review feedback patterns
-- Document recurring code quality issues
-- Preserve reviewer insights
+/map-fast is for throwaway code. Use /map-learn only if:
+- The prototype revealed unexpected patterns worth preserving
+- You want to retroactively capture learnings
 
 ---
 
@@ -465,7 +450,6 @@ Curator creates:
 **This command is OPTIONAL.** You are not required to run it after every workflow.
 
 **When to skip /map-learn:**
-- Workflow already included learning (map-feature, map-debug, map-refactor, map-review default behavior)
 - No meaningful patterns emerged
 - Throwaway code with no reusable insights
 - Time constraints (learning can happen later)
