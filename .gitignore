@@ -85,3 +85,8 @@ docs/claude-code-prompt-improver
 .DS_Store
 
 .worktrees
+
+# Local tool configs
+.mcp.json
+.chunkhound.json
+.chunkhound/
