@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2025-12-08
+
 ### Added
 - **Optional Learning Command**: Added `/map-learn` command for optional post-workflow learning. Reflector and Curator agents are now invoked on-demand rather than automatically in workflows (cdc7e4e)
 - **Auto-Approval Permissions**: `mapify init` now configures auto-approval rules for common readonly operations (cipher memory search, tracker queries, sequential-thinking) to reduce permission prompts (18f9532)
