@@ -1310,8 +1310,7 @@ Use these MCP tools throughout the workflow:
 - **NEVER proceed without user confirmation on IRREVERSIBLE operations** - Tag push cannot be easily undone
 - **ALWAYS monitor CI/CD pipeline** - Don't assume success, watch in real-time
 - **ALWAYS verify PyPI availability** - Don't declare success until package is installable
-- **ALWAYS run Reflector + Curator** - Capture learnings after every release
-- **ALWAYS update playbook** - Future releases benefit from documented patterns
+- **Suggest /map-learn after release** - Learning is optional; run `/map-learn` to preserve release patterns
 
 ### Validation Gate Failure Matrix
 
