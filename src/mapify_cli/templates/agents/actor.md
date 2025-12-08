@@ -522,32 +522,6 @@ output:
 </task>
 
 
-<recitation_plan>
-
-## Current Task Plan
-
-{{#if plan_context}}
-
-{{plan_context}}
-
-**Navigation**:
-- ✓ = completed (outputs available)
-- → = current (your focus)
-- ☐ = pending (don't implement yet)
-
-**Before implementing**: Verify ✓ prerequisites are complete
-**During**: Stay scoped to → current subtask only
-**If blocked**: Flag dependency issue, don't guess
-
-{{/if}}
-
-{{#unless plan_context}}
-*Standalone task - no multi-step plan context*
-{{/unless}}
-
-</recitation_plan>
-
-
 <playbook_context>
 
 ## Available Patterns (ACE Learning)

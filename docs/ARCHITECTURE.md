@@ -1541,16 +1541,11 @@ MAP Framework applies cutting-edge context engineering principles for AI agents,
 
 **Implementation:**
 
-- Class: `RecitationManager` (482 lines)
-- Location: `scripts/utils/recitation_manager.py`
-- API:
-  ```python
-  manager = RecitationManager(task_id="feat_auth", goal="...")
-  manager.add_subtask(subtask_id, description, status="pending")
-  manager.mark_current(subtask_id)
-  manager.mark_completed(subtask_id)
-  plan_context = manager.format_for_prompt()  # Injected into Actor
-  ```
+Workflow state is managed through file-based persistence in `.map/` directory:
+- `.map/current_plan.json` - Structured plan data
+- `.map/current_plan.md` - Human-readable plan for injection
+- `.map/dev_docs/context.md` - Project context
+- `.map/dev_docs/tasks.md` - Task checklist
 
 **Benefits:**
 - ✅ +20-30% success rate on complex tasks (5+ subtasks)
@@ -1562,7 +1557,7 @@ MAP Framework applies cutting-edge context engineering principles for AI agents,
 
 **Problem:** Context compaction (conversation history clearing) would normally lose workflow state, forcing restart from scratch.
 
-**Solution:** File-based persistence architecture where all recitation state persists to disk, surviving compaction.
+**Solution:** File-based persistence architecture where all workflow state persists to disk, surviving compaction.
 
 **Architecture:**
 
@@ -1589,37 +1584,11 @@ Filesystem (persists forever)           Conversation Memory (clears on compactio
 
 **Persistence Mechanism:**
 
-1. **Automatic Saves** (every recitation update):
-   ```python
-   # Every time status changes, both files update
-   manager.update_subtask_status(2, "in_progress")
-   # → Writes to .map/current_plan.json (structured)
-   # → Writes to .map/current_plan.md (readable)
-   ```
+1. **Automatic Saves** (every workflow step):
+   - Status changes automatically update `.map/current_plan.json` and `.map/current_plan.md`
+   - SessionStart hook injects checkpoint on new sessions
 
-2. **Checkpoint Command** (user-facing):
-   ```bash
-   $ mapify recitation checkpoint
-
-   ✅ Progress Checkpointed
-
-   Task: feat_auth_1730000000
-   Progress: 3/5 subtasks completed
-   Current Subtask: 4
-
-   Files persisted:
-     • .map/current_plan.md
-     • .map/dev_docs/context.md
-     • .map/dev_docs/tasks.md
-
-   To resume after compaction:
-     Reference these files in new session:
-     @.map/current_plan.md
-     @.map/dev_docs/context.md
-     @.map/dev_docs/tasks.md
-   ```
-
-3. **Recovery Workflow** (after compaction):
+2. **Recovery Workflow** (after compaction):
    ```
    User: continue MAP workflow
          @.map/current_plan.md
@@ -1652,12 +1621,10 @@ Filesystem (persists forever)           Conversation Memory (clears on compactio
 - ✅ **Automatic** - No manual checkpointing required
 - ✅ **Always current** - Files update on every status change
 - ✅ **Cross-session** - Resume in any new conversation
-- ✅ **Observable** - Checkpoint command shows recovery paths
 
 **Implementation:**
-- Class: `RecitationManager._save_plan()` (line 238-261)
 - Files: `.map/current_plan.json`, `.map/current_plan.md`
-- CLI: `mapify recitation checkpoint` command
+- Hook: `.claude/hooks/session-start.sh` (auto-injection)
 
 ### Automatic Recovery (Phase 2)
 
@@ -1830,8 +1797,8 @@ Phase 1: User-Driven Recovery          Phase 2: Hook-Driven Recovery
 ─────────────────────────────          ──────────────────────────────
 .map/current_plan.md                   .map/current_plan.md
         ↓                                      ↓
-User runs: mapify recitation           SessionStart hook (automatic)
-checkpoint                                     ↓
+User locates .map/ files               SessionStart hook (automatic)
+manually                                       ↓
         ↓                              Validator validates (4 layers)
 Output shows file paths:                       ↓
   @.map/current_plan.md                Auto-injects to context
@@ -1883,7 +1850,6 @@ All failures are non-blocking - hook returns `{"continue": true}` and logs error
 
 **References:**
 
-- Design document: `docs/recitation-compaction-resilience-review.md`
 - User research: Reddit feedback analysis showing 60% manual recovery confusion rate
 - Implementation: Phase 2 addresses Monitor finding: "Missing compaction recovery workflow docs"
 
