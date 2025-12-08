@@ -543,7 +543,10 @@ class TestPermissionsMerge:
         assert "mcp__cipher__search" in result["permissions"]["allow"]
         # Warning should be printed
         captured = capsys.readouterr()
-        assert "malformed" in captured.out.lower() or len(result["permissions"]["allow"]) == 1
+        assert (
+            "malformed" in captured.out.lower()
+            or len(result["permissions"]["allow"]) == 1
+        )
 
     def test_no_permissions_in_template_preserves_existing(self):
         """If template has no permissions, existing permissions unchanged."""

@@ -166,7 +166,9 @@ class KnowledgeGraphQuery:
 
         # BFS to find all paths
         # Queue entries: (current_entity_id, path_so_far, visited_entities)
-        queue: Deque[Tuple[str, List[Relationship], Set[str]]] = deque([(source_id, [], {source_id})])
+        queue: Deque[Tuple[str, List[Relationship], Set[str]]] = deque(
+            [(source_id, [], {source_id})]
+        )
         found_paths = []
 
         while queue:

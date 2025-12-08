@@ -1944,7 +1944,9 @@ def init(
     else:
         # Type assertion: flow guarantees project_name is not None here
         # (checked at line 1931, and not in use_current_dir branch)
-        assert project_name is not None, "project_name must be set in non-current-dir mode"
+        assert (
+            project_name is not None
+        ), "project_name must be set in non-current-dir mode"
         project_path = Path(project_name).resolve()
         if project_path.exists():
             console.print(
@@ -2154,9 +2156,12 @@ def init(
         "   • [cyan]/map-efficient[/] - Implement features with optimized workflow (recommended)"
     )
     steps_lines.append("   • [cyan]/map-debug[/] - Debug issue using MAP analysis")
-    steps_lines.append("   • [cyan]/map-fast[/] - Quick implementation with minimal validation")
-    steps_lines.append("   • [cyan]/map-learn[/] - Extract lessons from completed workflows")
-
+    steps_lines.append(
+        "   • [cyan]/map-fast[/] - Quick implementation with minimal validation"
+    )
+    steps_lines.append(
+        "   • [cyan]/map-learn[/] - Extract lessons from completed workflows"
+    )
 
     steps_panel = Panel(
         "\n".join(steps_lines), title="Next Steps", border_style="cyan", padding=(1, 2)
@@ -2295,7 +2300,10 @@ def playbook_search(query: str, top_k: int = typer.Option(5, help="Number of res
                 "query": query,
                 "count": len(results),
                 "results": [
-                    {"id": b.get("id"), "content": (b.get("content") or "")[:100] + "..."}
+                    {
+                        "id": b.get("id"),
+                        "content": (b.get("content") or "")[:100] + "...",
+                    }
                     for b in results
                 ],
             }

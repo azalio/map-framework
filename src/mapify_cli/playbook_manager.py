@@ -699,7 +699,12 @@ class PlaybookManager:
                 {"type": "UPDATE", "bullet_id": "sec-0012", "increment_helpful": 1}
             ]
         """
-        summary: Dict[str, Any] = {"added": 0, "updated": 0, "deprecated": 0, "errors": []}
+        summary: Dict[str, Any] = {
+            "added": 0,
+            "updated": 0,
+            "deprecated": 0,
+            "errors": [],
+        }
 
         for op in operations:
             try:
@@ -1273,7 +1278,9 @@ class PlaybookManager:
             },
         )
 
-    def _build_fts_query(self, params: PlaybookQuery, limit: int) -> Tuple[str, List[Any]]:
+    def _build_fts_query(
+        self, params: PlaybookQuery, limit: int
+    ) -> Tuple[str, List[Any]]:
         """
         Build parameterized SQL query with FTS5 and filters.
 

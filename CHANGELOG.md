@@ -7,8 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Optional Learning Command**: Added `/map-learn` command for optional post-workflow learning. Reflector and Curator agents are now invoked on-demand rather than automatically in workflows (cdc7e4e)
+- **Auto-Approval Permissions**: `mapify init` now configures auto-approval rules for common readonly operations (cipher memory search, tracker queries, sequential-thinking) to reduce permission prompts (18f9532)
+
+### Changed
+- **Workflow Simplification**: Removed unused workflow commands (`/map-feature`, `/map-refactor`) to reduce maintenance burden. Use `/map-efficient` for feature work (cdc7e4e)
+- **Permissions Merge**: Settings permissions now use additive merge strategy to preserve user-defined rules (b585173, 1978af8)
+
+### Fixed
+- **Map-Review Command**: Restored `/map-review` command that was accidentally removed and updated stale agent references (1394935)
+- **Stop Hook**: Restored malformed JSON handling in `stop.sh` quality gates hook for robustness (41b96c9)
+- **README Accuracy**: Updated README to reflect actual available commands, fixed playbook bullet ID generation for consistent identifiers (af2d5d3)
+- **Documentation Consistency**: Fixed Next Steps sections across commands to show actual available commands (c0a257d)
+- **Map-Learn References**: Removed stale references to deleted commands in `/map-learn` template (3fcf8fc)
+- **Agent Instructions**: Removed misleading 'orchestrator directly' instruction from agent templates (ea75b21)
+- **Type Safety**: Resolved 39 mypy type errors across 11 files, improving code quality (fe474dd)
+
 ### Removed
-- **MCP Server: codex-bridge**: Removed codex-bridge MCP server from the framework
+- **Recitation Functionality**: Removed `mapify recitation` commands and related functionality. This feature was underutilized and added maintenance complexity (a1be4f8)
+- **MCP Server: codex-bridge**: Removed codex-bridge MCP server from the framework (7a7e363)
   - Removed from `INDIVIDUAL_MCP_SERVERS` constant
   - Removed from agent template generators (actor, predictor)
   - Removed from `agent_mcp_mappings` configuration
