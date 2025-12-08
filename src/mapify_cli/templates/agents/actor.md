@@ -209,7 +209,7 @@ Task(
    - Line ranges help you find the right place
 
 3. Read full code only if signatures aren't enough:
-   - Use Read(path, offset=line_start, limit=line_count)
+   - Use Read(path, offset=lines[0], limit=lines[1]-lines[0]+1)  # lines = [start, end], inclusive
    - Don't read all locations — only what you actually need
 
 ## Skip Research If

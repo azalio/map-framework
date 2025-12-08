@@ -62,13 +62,14 @@ Optimized agent sequence (no automatic learning):
 ```
 1. DECOMPOSE → task-decomposer
 2. FOR each subtask:
-   2.5. RESEARCH (optional) → research-agent if existing code understanding needed
-   3. IMPLEMENT → actor
-   4. VALIDATE → monitor
-   5. If invalid: provide feedback, go to step 3 (max 3-5 iterations)
-   6. If high_risk: ANALYZE → predictor
-   7. ACCEPT and apply changes
-8. DONE → Suggest /map-learn if user wants to preserve lessons
+   2.1. PLAYBOOK → get context
+   2.2. RESEARCH (optional) → research-agent if existing code understanding needed
+   2.3. IMPLEMENT → actor
+   2.4. VALIDATE → monitor
+   2.5. If invalid: provide feedback, go to step 2.3 (max 3-5 iterations)
+   2.6. If high_risk: ANALYZE → predictor
+   2.7. ACCEPT and apply changes
+3. DONE → Suggest /map-learn if user wants to preserve lessons
 ```
 
 **Key Optimizations:**
@@ -80,7 +81,7 @@ Optimized agent sequence (no automatic learning):
 
 Use `mapify playbook query` or `mapify playbook search` to get relevant patterns from the playbook SQLite database.
 
-## Step 2: Task Decomposition
+## Step 1.1: Task Decomposition
 
 Call the task-decomposer subagent (NOT general-purpose):
 
@@ -106,9 +107,9 @@ Risk level determines if Predictor is called (high/medium = yes, low = no)."
 )
 ```
 
-## Step 3: For Each Subtask - Efficient Loop
+## Step 2: For Each Subtask - Efficient Loop
 
-### 3.1 Get Relevant Playbook Context
+### Step 2.1: Get Relevant Playbook Context
 
 **Step A: Query Local Playbook**:
 
@@ -133,7 +134,7 @@ mcp__cipher__cipher_memory_search(
 - Quality-scored results
 - Cipher adds cross-project validated patterns
 
-### 3.1.5 Research Phase (Context Isolation)
+### Step 2.2: Research Phase (Context Isolation)
 
 IF subtask requires understanding existing code patterns:
 - Refactoring or extending existing code
@@ -168,9 +169,9 @@ IF research.status == "DEGRADED_MODE":
   → Note in Actor prompt that search was limited
   → Actor should verify findings more carefully
 
-**Then proceed to step 3.2 (Actor)**
+**Then proceed to step 2.3 (Actor)**
 
-### 3.2 Call Actor to Implement
+### Step 2.3: Call Actor to Implement
 
 **⚠️ MUST use subagent_type="actor"** (NOT general-purpose):
 
@@ -198,7 +199,7 @@ Provide FULL file content for each change, not diffs."
 )
 ```
 
-### 3.3 Call Monitor to Validate
+### Step 2.4: Call Monitor to Validate
 
 **⚠️ MUST use subagent_type="monitor"** (NOT general-purpose):
 
@@ -232,16 +233,16 @@ Output JSON with:
 )
 ```
 
-### 3.4 Decision Point
+### Step 2.5: Decision Point
 
 **If monitor.valid === false:**
 - Provide feedback to actor
-- Go back to step 3.2 (max 3-5 iterations)
+- Go back to step 2.3 (max 3-5 iterations)
 
 **If monitor.valid === true:**
-- Continue to step 3.5
+- Continue to step 2.6
 
-### 3.5 Conditional Predictor (Token Optimization)
+### Step 2.6: Conditional Predictor (Token Optimization)
 
 **Only call Predictor if:**
 - `monitor.high_risk_detected === true`, OR
@@ -281,16 +282,16 @@ Output JSON with:
 
 **Token Savings Note:** Skipping Predictor for low-risk tasks saves ~2-3K tokens per subtask.
 
-### 3.6 Apply Changes
+### Step 2.7: Apply Changes
 
 - Apply code changes using Write/Edit tools
 - Mark subtask completed
 
-### 3.7 Move to Next Subtask
+### Step 2.8: Move to Next Subtask
 
-Repeat steps 3.1-3.6 for each remaining subtask.
+Repeat steps 2.1-2.7 for each remaining subtask.
 
-## Step 4: Final Summary
+## Step 3: Final Summary
 
 Run tests (if applicable), create commit, and summarize:
 - Features implemented

@@ -76,7 +76,7 @@ You receive a research query with:
 1. **MAX 5 locations** - prioritize by relevance_score
 2. **MAX 10 patterns** - consolidate similar patterns, prioritize by frequency
 3. **ALWAYS include confidence** - Actor uses this for fallback decisions
-4. **Signatures over code** - function headers often enough
+4. **Signatures over code** - function headers often suffice
 5. **Include path + line range** - Actor can Read() full code if needed
 
 # SEARCH STRATEGY
@@ -138,10 +138,12 @@ Research Agent returns **pointers**, not full code:
 Actor uses standard Read tool with the pointer:
 
 ```
+# To read lines 45–67 inclusive (as in the pointer [45, 67]):
+# limit = end_line - start_line + 1 = 67 - 45 + 1 = 23
 Read(
   file_path="src/auth/service.py",
   offset=45,
-  limit=22
+  limit=23
 )
 ```
 
