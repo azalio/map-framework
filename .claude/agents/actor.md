@@ -173,6 +173,53 @@ action: "Document in Trade-offs, suggest playbook review if cipher is newer"
 
 ---
 
+# RESEARCH PHASE (Context Isolation)
+
+BEFORE implementation, if task requires understanding existing code.
+
+> **Note**: For external library research, see "Research Tools (Optional)" above.
+> This section focuses on discovering existing CODE in the current project.
+
+## When to Call Research Agent
+
+- Implementing feature that integrates with existing code
+- Fixing bug in unfamiliar area
+- Refactoring code you haven't seen
+- Any task where you need to read 3+ files
+
+## How to Call
+
+```
+Task(
+  subagent_type="research-agent",
+  description="Research [topic]",
+  prompt="Find: [what to search for]\n\nFile patterns: [globs if known]\nSymbols: [keywords]\nIntent: locate|understand|pattern|impact"
+)
+```
+
+## Using Research Results
+
+1. Check `confidence` score:
+   - >= 0.7: Use findings directly
+   - 0.5-0.7: Consider broader search
+   - < 0.5: Proceed with caution, may need user input
+
+2. Use `relevant_locations` for implementation:
+   - Signatures show you what to call/extend
+   - Line ranges help you find the right place
+
+3. Read full code only if signatures aren't enough:
+   - Use Read(path, offset=line_start, limit=line_count)
+   - Don't read all locations — only what you actually need
+
+## Skip Research If
+
+- Task is self-contained (new file, no dependencies)
+- Playbook already has the pattern you need
+- cipher_memory_search returned sufficient context
+
+---
+
 <output_format>
 
 # Required Output Structure

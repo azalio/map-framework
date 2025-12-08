@@ -62,6 +62,7 @@ Optimized agent sequence (no automatic learning):
 ```
 1. DECOMPOSE → task-decomposer
 2. FOR each subtask:
+   2.5. RESEARCH (optional) → research-agent if existing code understanding needed
    3. IMPLEMENT → actor
    4. VALIDATE → monitor
    5. If invalid: provide feedback, go to step 3 (max 3-5 iterations)
@@ -131,6 +132,43 @@ mcp__cipher__cipher_memory_search(
 - FTS5 full-text search with relevance ranking
 - Quality-scored results
 - Cipher adds cross-project validated patterns
+
+### 3.1.5 Research Phase (Context Isolation)
+
+IF subtask requires understanding existing code patterns:
+- Refactoring or extending existing code
+- Bug fixes requiring code comprehension
+- Adapting patterns from other modules
+- Any task touching 3+ files
+
+**Skip research for:** new standalone features, documentation, configuration updates
+
+**Call research-agent:**
+
+```
+Task(
+  subagent_type="research-agent",
+  description="Research for subtask [ID]",
+  prompt="Query: [subtask description]\nFile patterns: [relevant globs from task-decomposer]\nSymbols: [keywords from subtask]\nIntent: locate\nMax tokens: 1500"
+)
+```
+
+**Handle results:**
+
+IF research.confidence >= 0.7:
+  → Pass research.executive_summary to Actor
+  → Pass research.relevant_locations to Actor
+  → Actor can Read() full code by path:lines if needed
+
+IF research.confidence < 0.7:
+  → Consider broadening search
+  → Or proceed with warning to Actor
+
+IF research.status == "DEGRADED_MODE":
+  → Note in Actor prompt that search was limited
+  → Actor should verify findings more carefully
+
+**Then proceed to step 3.2 (Actor)**
 
 ### 3.2 Call Actor to Implement
 
