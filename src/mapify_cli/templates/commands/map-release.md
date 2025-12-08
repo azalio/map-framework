@@ -59,9 +59,6 @@ Phase 7: Final Summary and Cleanup
 
 **⚠️ IMPORTANT:** After Phase 4 (tag push), the release workflow is triggered automatically. You CANNOT stop the CI/CD pipeline once started. All validation MUST happen before Phase 4.
 
-**🔄 Recitation Plan Integration:**
-This workflow creates a recitation plan to track progress and maintain context across phases. If context compaction occurs, recovery files are available in `.map/release_plan.md`.
-
 ---
 
 ## Phase 1: Pre-Release Validation
@@ -87,32 +84,7 @@ mcp__cipher__cipher_memory_search(
 )
 ```
 
-### 1.2 Create Recitation Plan for Release Tracking
-
-Create release plan to track validation gates and phases:
-
-```bash
-# Define release phases as subtasks
-RELEASE_PHASES='[
-  {"id": 1, "description": "Pre-release validation (12 gates)", "acceptance_criteria": "All gates pass", "estimated_complexity": "medium"},
-  {"id": 2, "description": "Version determination", "acceptance_criteria": "User confirms version bump type", "estimated_complexity": "low"},
-  {"id": 3, "description": "Execute version bump script", "acceptance_criteria": "Commit and tag created locally", "estimated_complexity": "low"},
-  {"id": 4, "description": "Push commit and tag (IRREVERSIBLE)", "acceptance_criteria": "Tag pushed to origin", "estimated_complexity": "low"},
-  {"id": 5, "description": "GitHub release and CI/CD monitoring", "acceptance_criteria": "Release created, CI passes", "estimated_complexity": "high"},
-  {"id": 6, "description": "Post-release verification", "acceptance_criteria": "Package on PyPI, installs successfully", "estimated_complexity": "medium"},
-  {"id": 7, "description": "Final summary and cleanup", "acceptance_criteria": "Release documented", "estimated_complexity": "low"}
-]'
-
-TASK_ID="release_$(date +%s)"
-
-# Create release plan
-mapify recitation create "$TASK_ID" "Release MAP Framework: $ARGUMENTS" "$RELEASE_PHASES"
-
-# Mark Phase 1 as in_progress
-mapify recitation update 1 in_progress
-```
-
-### 1.3 Validation Gates (12 Required)
+### 1.2 Validation Gates (12 Required)
 
 Execute all validation gates in parallel where possible:
 
@@ -315,17 +287,9 @@ fi
 
 **Gap tolerance:** ±2 commits (accounts for chore commits, merge commits, etc.)
 
-### 1.4 Mark Phase 1 Complete
+### 1.3 Phase 1 Complete
 
-If all 12 gates pass:
-
-```bash
-# Mark validation phase complete
-mapify recitation update 1 completed
-
-# Get current plan context
-PLAN_CONTEXT=$(mapify recitation get-context)
-```
+If all 12 gates pass, proceed to Phase 2.
 
 **If any gate failed:** Do NOT proceed to Phase 2. Fix issues and re-run Phase 1.
 
@@ -335,13 +299,7 @@ PLAN_CONTEXT=$(mapify recitation get-context)
 
 **Purpose:** Determine version bump type based on semantic versioning rules and get user confirmation.
 
-### 2.1 Mark Phase 2 in Progress
-
-```bash
-mapify recitation update 2 in_progress
-```
-
-### 2.2 Analyze Changes for Semantic Versioning
+### 2.1 Analyze Changes for Semantic Versioning
 
 Read CHANGELOG.md [Unreleased] section to determine bump type:
 
@@ -358,7 +316,7 @@ UNRELEASED_CHANGES=$(awk '/## \[Unreleased\]/,/## \[/' CHANGELOG.md | sed '$d')
 - **PATCH (x.y.Z)**: Bug fixes and minor improvements
   - Look for: "Fixed", "bug fix", "patch", "minor improvement"
 
-### 2.3 Get Current Version
+### 2.2 Get Current Version
 
 ```bash
 # Get current version from pyproject.toml
@@ -367,7 +325,7 @@ CURRENT_VERSION=$(grep -E '^version = ' pyproject.toml | head -1 | sed -E 's/ver
 echo "Current version: $CURRENT_VERSION"
 ```
 
-### 2.4 Ask User for Version Bump Type
+### 2.3 Ask User for Version Bump Type
 
 Use AskUserQuestion to get user decision on version bump:
 
@@ -424,25 +382,13 @@ else
 fi
 ```
 
-### 2.5 Mark Phase 2 Complete
-
-```bash
-mapify recitation update 2 completed
-```
-
 ---
 
 ## Phase 3: Execute Version Bump Script
 
 **Purpose:** Use `scripts/bump-version.sh` to update version, CHANGELOG.md, create commit and tag.
 
-### 3.1 Mark Phase 3 in Progress
-
-```bash
-mapify recitation update 3 in_progress
-```
-
-### 3.2 Review What Will Happen
+### 3.1 Review What Will Happen
 
 Display what the script will do:
 
@@ -461,7 +407,7 @@ echo "    You will review before pushing in Phase 4."
 echo ""
 ```
 
-### 3.3 Execute Version Bump Script
+### 3.2 Execute Version Bump Script
 
 ```bash
 # Run bump-version.sh script
@@ -484,7 +430,7 @@ echo ""
 
 **Script includes built-in validation gates** (from Gate 1-4 above).
 
-### 3.4 Verify Script Success
+### 3.3 Verify Script Success
 
 ```bash
 # Verify commit created
@@ -543,7 +489,7 @@ echo "✅ All version fields match (pyproject.toml, __init__.py, git tag)"
 
 **If verification fails:** Do NOT proceed to Phase 4. Investigate issue.
 
-### 3.5 Show Changes for Review
+### 3.4 Show Changes for Review
 
 ```bash
 # Show commit details
@@ -559,25 +505,13 @@ echo "Tag annotation:"
 git tag -l -n50 "$LAST_TAG"
 ```
 
-### 3.6 Mark Phase 3 Complete
-
-```bash
-mapify recitation update 3 completed
-```
-
 ---
 
 ## Phase 4: Push Commit and Tag (IRREVERSIBLE)
 
 **⚠️ CRITICAL PHASE:** This phase is IRREVERSIBLE. Once tag is pushed, the release workflow triggers immediately and publishes to PyPI.
 
-### 4.1 Mark Phase 4 in Progress
-
-```bash
-mapify recitation update 4 in_progress
-```
-
-### 4.2 Pre-Push Safety Verification
+### 4.1 Pre-Push Safety Verification
 
 Re-verify critical conditions before pushing:
 
@@ -609,7 +543,7 @@ fi
 echo "✅ Pre-push safety checks passed"
 ```
 
-### 4.3 Get Explicit User Confirmation
+### 4.2 Get Explicit User Confirmation
 
 **MANDATORY:** Ask user to confirm IRREVERSIBLE operation.
 
@@ -682,7 +616,7 @@ esac
 
 **If user aborts:** Stop workflow, exit gracefully.
 
-### 4.4 Push Commit to Main
+### 4.3 Push Commit to Main
 
 ```bash
 echo "Pushing commit to origin/main..."
@@ -697,7 +631,7 @@ fi
 echo "✅ Commit pushed to origin/main"
 ```
 
-### 4.5 Push Tag (IRREVERSIBLE)
+### 4.4 Push Tag (IRREVERSIBLE)
 
 ```bash
 echo ""
@@ -723,18 +657,12 @@ echo "✅ Tag pushed to origin: $LAST_TAG"
 echo "✅ Release workflow triggered"
 ```
 
-### 4.6 Record Push Timestamp
+### 4.5 Record Push Timestamp
 
 ```bash
 # Record when tag was pushed (for verification timing)
 PUSH_TIMESTAMP=$(date +%s)
 echo "Tag pushed at: $(date)"
-```
-
-### 4.7 Mark Phase 4 Complete
-
-```bash
-mapify recitation update 4 completed
 ```
 
 ---
@@ -743,13 +671,7 @@ mapify recitation update 4 completed
 
 **Purpose:** Create GitHub release and monitor CI/CD pipeline until completion.
 
-### 5.1 Mark Phase 5 in Progress
-
-```bash
-mapify recitation update 5 in_progress
-```
-
-### 5.2 Wait for CI/CD Workflow to Start
+### 5.1 Wait for CI/CD Workflow to Start
 
 ```bash
 echo "Waiting for release workflow to start..."
@@ -771,7 +693,7 @@ fi
 echo "✅ Release workflow started: Run ID $RUN_ID"
 ```
 
-### 5.3 Monitor CI/CD Pipeline in Real-Time
+### 5.2 Monitor CI/CD Pipeline in Real-Time
 
 ```bash
 echo ""
@@ -793,7 +715,7 @@ echo "Workflow Status: $FINAL_STATUS"
 echo "════════════════════════════════════════════════════════"
 ```
 
-### 5.4 Verify Workflow Success
+### 5.3 Verify Workflow Success
 
 ```bash
 if [[ "$FINAL_STATUS" != "success" ]]; then
@@ -808,7 +730,7 @@ fi
 echo "✅ Release workflow completed successfully"
 ```
 
-### 5.5 Create GitHub Release
+### 5.4 Create GitHub Release
 
 Extract changelog excerpt and create GitHub release:
 
@@ -838,25 +760,13 @@ RELEASE_URL=$(gh release view "$LAST_TAG" --json url --jq '.url')
 echo "Release URL: $RELEASE_URL"
 ```
 
-### 5.6 Mark Phase 5 Complete
-
-```bash
-mapify recitation update 5 completed
-```
-
 ---
 
 ## Phase 6: Post-Release Verification
 
 **Purpose:** Verify package is available on PyPI and can be installed successfully.
 
-### 6.1 Mark Phase 6 in Progress
-
-```bash
-mapify recitation update 6 in_progress
-```
-
-### 6.2 Wait for PyPI Processing
+### 6.1 Wait for PyPI Processing
 
 ```bash
 echo ""
@@ -870,7 +780,7 @@ sleep 120
 echo "Checking PyPI availability..."
 ```
 
-### 6.3 Verify Package on PyPI
+### 6.2 Verify Package on PyPI
 
 ```bash
 # Check package page exists
@@ -904,7 +814,7 @@ while [[ $RETRY_COUNT -lt $MAX_RETRIES ]]; do
 done
 ```
 
-### 6.4 Verify Package Metadata
+### 6.3 Verify Package Metadata
 
 ```bash
 # Check package versions available
@@ -920,7 +830,7 @@ else
 fi
 ```
 
-### 6.5 Installation Test (Clean Environment)
+### 6.4 Installation Test (Clean Environment)
 
 ```bash
 echo ""
@@ -970,30 +880,15 @@ deactivate
 rm -rf .venv-release-test
 ```
 
-### 6.6 Mark Phase 6 Complete
-
-```bash
-mapify recitation update 6 completed
-```
-
 ---
 
 ## Phase 7: Final Summary and Cleanup
 
 **Purpose:** Provide comprehensive release summary and clean up temporary files.
 
-### 7.1 Mark Phase 7 in Progress
+### 7.1 Generate Release Statistics
 
 ```bash
-mapify recitation update 7 in_progress
-```
-
-### 7.2 Generate Release Statistics
-
-```bash
-# Get recitation statistics
-RECITATION_STATS=$(mapify recitation stats)
-
 echo ""
 echo "════════════════════════════════════════════════════════"
 echo "RELEASE SUMMARY"
@@ -1012,14 +907,9 @@ echo ""
 echo "Installation Test: ✅ PASSED"
 echo "Package Available: ✅ YES"
 echo ""
-echo "════════════════════════════════════════════════════════"
-echo "WORKFLOW STATISTICS"
-echo "════════════════════════════════════════════════════════"
-echo "$RECITATION_STATS"
-echo ""
 ```
 
-### 7.3 Suggest /map-learn (Optional)
+### 7.2 Suggest /map-learn (Optional)
 
 If the release had notable issues or learnings worth preserving:
 
@@ -1034,7 +924,7 @@ Files changed: [version files, CHANGELOG]
 
 Skip if the release was routine with no novel patterns.
 
-### 7.4 List Next Steps for Users
+### 7.3 List Next Steps for Users
 
 ```bash
 echo "════════════════════════════════════════════════════════"
@@ -1057,22 +947,7 @@ echo "   - Triage issues for next milestone"
 echo ""
 ```
 
-### 7.5 Clean Up Recitation Plan
-
-```bash
-# Clean up release plan
-mapify recitation clear
-
-echo "✅ Recitation plan cleared"
-```
-
-### 7.6 Mark Phase 7 Complete
-
-```bash
-mapify recitation update 7 completed
-```
-
-### 7.7 Final Success Message
+### 7.4 Final Success Message
 
 ```bash
 echo ""
@@ -1310,8 +1185,7 @@ Use these MCP tools throughout the workflow:
 - **NEVER proceed without user confirmation on IRREVERSIBLE operations** - Tag push cannot be easily undone
 - **ALWAYS monitor CI/CD pipeline** - Don't assume success, watch in real-time
 - **ALWAYS verify PyPI availability** - Don't declare success until package is installable
-- **ALWAYS run Reflector + Curator** - Capture learnings after every release
-- **ALWAYS update playbook** - Future releases benefit from documented patterns
+- **Suggest /map-learn after release** - Learning is optional; run `/map-learn` to preserve release patterns
 
 ### Validation Gate Failure Matrix
 
@@ -1345,8 +1219,6 @@ You should:
 1. **Phase 1 - Pre-Release Validation:**
    ```bash
    mapify playbook query "release validation PyPI" --limit 10
-   # Create recitation plan
-   mapify recitation create release_1699999999 "Release MAP Framework: patch" '[...]'
    # Run all 12 validation gates
    pytest tests/ && black --check src/ && ruff check src/ && mypy src/ && ...
    # Verify CI passed on main
@@ -1399,12 +1271,9 @@ You should:
 
 7. **Phase 7 - Summary:**
    ```bash
-   mapify recitation stats
    # Display final summary
    echo "✅ RELEASE COMPLETE: MAP Framework v1.0.1"
    # Optionally: /map-learn to capture release learnings
-   # Clean up
-   mapify recitation clear
    ```
 
 Begin now with the release request above.

@@ -1,6 +1,6 @@
 ---
 name: map-cli-reference
-description: Use when encountering mapify CLI command errors (no such option, no such command, parameter not found) or need quick reference for correct command syntax. Provides mapify playbook/recitation/validate command corrections and common mistake patterns.
+description: Use when encountering mapify CLI command errors (no such option, no such command, parameter not found) or need quick reference for correct command syntax. Provides mapify playbook/validate command corrections and common mistake patterns.
 ---
 
 # MAP CLI Quick Reference
@@ -32,29 +32,6 @@ echo '{"operations":[...]}' | mapify playbook apply-delta
 # Statistics and sync
 mapify playbook stats
 mapify playbook sync --threshold 5
-```
-
-### Recitation Commands (MAP Workflows)
-
-```bash
-# Create execution plan
-mapify recitation create task-001 "Goal" '[{"id":"...","description":"..."}]'
-
-# Update subtask status
-mapify recitation update subtask-1 completed
-mapify recitation update subtask-2 failed "Error message"
-
-# Check workflow state
-mapify recitation checkpoint
-mapify recitation stats
-mapify recitation get-context
-
-# Generate dev docs
-mapify recitation generate-context
-mapify recitation generate-tasks
-
-# Clear plan
-mapify recitation clear
 ```
 
 ### Validate Commands

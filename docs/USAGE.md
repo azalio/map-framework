@@ -1099,30 +1099,12 @@ See [validate_checkpoint_file.py](.claude/hooks/helpers/validate_checkpoint_file
 
 **Steps:**
 
-1. **Generate checkpoint display** (optional - files auto-save already):
+1. **Locate checkpoint files** (auto-saved during workflow):
 
-   ```bash
-   mapify recitation checkpoint
    ```
-
-   Output:
-   ```
-   ✅ Progress Checkpointed
-
-   Task: feat_auth_1730000000
-   Progress: 3/5 subtasks completed
-   Current Subtask: 4
-
-   Files persisted:
-     • .map/current_plan.md
-     • .map/dev_docs/context.md
-     • .map/dev_docs/tasks.md
-
-   To resume after compaction:
-     Reference these files in new session:
-     @.map/current_plan.md
-     @.map/context.md
-     @.map/tasks.md
+   .map/current_plan.md     - Human-readable plan
+   .map/dev_docs/context.md - Project context
+   .map/dev_docs/tasks.md   - Task checklist
    ```
 
 2. **After compaction**, manually reference files:
@@ -1143,8 +1125,8 @@ See [validate_checkpoint_file.py](.claude/hooks/helpers/validate_checkpoint_file
 | Phase 1 (Manual) | Phase 2 (Automatic) ✨ |
 |------------------|----------------------|
 | Notice context getting low | No monitoring needed |
-| Run `mapify recitation checkpoint` | Automatic on every update |
-| Copy file paths from output | No action required |
+| Check `.map/` files manually | Automatic on every update |
+| Copy file paths | No action required |
 | Paste paths with `@` prefix in new session | Hook auto-injects checkpoint |
 | Claude reads files manually | Claude receives context automatically |
 | **User action required** | **Zero user action** |
@@ -1154,7 +1136,7 @@ See [validate_checkpoint_file.py](.claude/hooks/helpers/validate_checkpoint_file
 **Phase 1 (Manual):**
 ```
 [Context gets low]
-User: mapify recitation checkpoint
+[Check .map/ files exist]
 [Compaction happens]
 [New session starts]
 User: continue MAP workflow
@@ -1219,7 +1201,7 @@ Claude: [already has context] Continuing subtask 4...
 | Hook not executing | Hooks not enabled in Claude Code | Check Claude Code settings |
 | File too large | Checkpoint >256KB | Reduce plan verbosity, split into subtasks |
 | Path traversal error | Checkpoint outside `.map/` | Move checkpoint to `.map/current_plan.md` |
-| UTF-8 decoding error | Binary or corrupted file | Regenerate checkpoint with `mapify recitation update` |
+| UTF-8 decoding error | Binary or corrupted file | Delete and let workflow regenerate checkpoint |
 
 **Fallback:**
 
@@ -1349,16 +1331,16 @@ After `mapify init`:
 ### Key Points
 
 - ✅ **Automatic restoration** - SessionStart hook injects checkpoint on every new session
-- ✅ **Progress auto-saves** - Every `mapify recitation update` saves to disk
+- ✅ **Progress auto-saves** - Every workflow step saves to disk
 - ✅ **Secure by design** - 4-layer validation (path, size, UTF-8, sanitization)
 - ✅ **No manual checkpointing required** - Files update automatically during workflow
 - ✅ **Files persist forever** - They're on your filesystem, not in conversation memory
 - ✅ **Cross-session recovery** - Resume in any new conversation seamlessly
-- ✅ **Manual fallback available** - Use `mapify recitation checkpoint` if needed
+- ✅ **Manual fallback available** - Reference `.map/` files directly if needed
 
 ### Architecture
 
-MAP's recitation system uses file-based persistence with automatic injection:
+MAP uses file-based persistence with automatic injection:
 
 **Files:**
 - `.map/current_plan.json` - Structured plan data

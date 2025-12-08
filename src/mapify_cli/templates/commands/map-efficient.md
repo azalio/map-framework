@@ -105,33 +105,6 @@ Risk level determines if Predictor is called (high/medium = yes, low = no)."
 )
 ```
 
-## Step 2.5: Create Recitation Plan
-
-```bash
-SUBTASKS_JSON='[TaskDecomposer output JSON array]'
-TASK_ID="feat_$(date +%s)"
-
-mapify recitation create "$TASK_ID" "$ARGUMENTS" "$SUBTASKS_JSON"
-```
-
-### 🔄 Handling Context Compaction
-
-> **IMPORTANT:** If context compaction occurs during workflow, your plan survives on filesystem!
->
-> **Recovery Steps:**
-> 1. Run `mapify recitation checkpoint` to see current state
-> 2. Copy the @-mention paths shown in output
-> 3. Paste recovery message to Claude:
->    ```
->    Continue MAP workflow from checkpoint:
->    @.map/current_plan.md
->    @.map/dev_docs/context.md
->    @.map/dev_docs/tasks.md
->    ```
-> 4. Resume from current subtask (all progress preserved)
->
-> Files in `.map/` directory persist forever—conversation memory clears but filesystem doesn't.
-
 ## Step 3: For Each Subtask - Efficient Loop
 
 ### 3.1 Get Relevant Playbook Context
@@ -159,14 +132,6 @@ mcp__cipher__cipher_memory_search(
 - Quality-scored results
 - Cipher adds cross-project validated patterns
 
-### 3.1.5 Update Recitation Plan
-
-```bash
-# Use the string ID from JSON subtasks (e.g., "ST-001", "ST-002", etc.)
-mapify recitation update "ST-001" in_progress
-PLAN_CONTEXT=$(mapify recitation get-context)
-```
-
 ### 3.2 Call Actor to Implement
 
 **⚠️ MUST use subagent_type="actor"** (NOT general-purpose):
@@ -183,11 +148,6 @@ Task(
 
 **Relevant Playbook Context:**
 [Include 3-5 relevant bullets from playbook]
-
-**Plan Context:**
-```
-[Insert output from: mapify recitation get-context]
-```
 
 Output JSON with:
 - approach: string (implementation strategy)
@@ -237,10 +197,6 @@ Output JSON with:
 ### 3.4 Decision Point
 
 **If monitor.valid === false:**
-```bash
-# Use the same subtask ID that was marked as in_progress earlier
-mapify recitation update "ST-001" in_progress "Monitor feedback: [error details]"
-```
 - Provide feedback to actor
 - Go back to step 3.2 (max 3-5 iterations)
 
@@ -290,22 +246,13 @@ Output JSON with:
 ### 3.6 Apply Changes
 
 - Apply code changes using Write/Edit tools
-- Mark subtask completed:
-
-```bash
-# Mark the current subtask as completed (use its string ID from JSON)
-mapify recitation update "ST-001" completed
-```
+- Mark subtask completed
 
 ### 3.7 Move to Next Subtask
 
 Repeat steps 3.1-3.6 for each remaining subtask.
 
 ## Step 4: Final Summary
-
-```bash
-mapify recitation stats  # Get workflow metrics
-```
 
 Run tests (if applicable), create commit, and summarize:
 - Features implemented
@@ -315,10 +262,6 @@ Run tests (if applicable), create commit, and summarize:
   - Predictor calls: [count] / [total_subtasks] subtasks ([X]% saved)
   - Learning skipped: ~15-20% additional savings
   - Estimated token savings: ~40-50% vs /map-feature
-
-```bash
-mapify recitation clear
-```
 
 ---
 

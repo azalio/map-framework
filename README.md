@@ -70,7 +70,6 @@ mapify init
 mapify --help                     # Show all available commands
 mapify validate graph <file>      # Validate task dependency graphs
 mapify playbook search <query>    # Search playbook patterns
-mapify recitation get-context     # Get current task plan
 ```
 
 **Version Pinning:**
