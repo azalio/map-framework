@@ -243,7 +243,11 @@ MAP uses MCP (Model Context Protocol) servers for enhanced capabilities:
 - **sequential-thinking** - Chain-of-thought reasoning for complex problems
 - **deepwiki** - GitHub repository intelligence
 
-Configuration files: `.claude/mcp_config.json` and `mcp_config.json`
+During `mapify init`, two configuration files are created:
+- **`.mcp.json`** - Project-level Claude Code MCP server registration (standard format)
+- **`.claude/mcp_config.json`** - Internal MAP Framework agent-to-MCP mappings
+
+If `.mcp.json` already exists, `mapify init` will merge new servers without overwriting your existing configuration.
 
 **See [ARCHITECTURE.md](docs/ARCHITECTURE.md#mcp-integration) for complete setup and usage patterns**
 

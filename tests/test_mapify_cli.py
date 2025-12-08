@@ -16,15 +16,20 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from mapify_cli import (
     app,
+    build_standard_mcp_servers,
     create_agent_files,
     create_command_files,
     create_commands_dir,
+    create_or_merge_project_mcp_json,
     create_ssl_context,
     get_latest_release,
     get_templates_dir,
     init_git_repo,
     is_command,
     is_git_repo,
+    merge_mcp_json,
+    read_project_mcp_json,
+    write_project_mcp_json,
 )
 
 runner = CliRunner()
@@ -962,3 +967,210 @@ class TestPlaybookSubcommands:
         output = json.loads(result.stdout)
         assert output["status"] == "error"
         assert "not found" in output["message"].lower()
+
+
+class TestMcpJsonConfig:
+    """Test .mcp.json creation and merging functionality."""
+
+    def test_build_standard_mcp_servers_returns_all_servers(self):
+        """Test that build_standard_mcp_servers returns all expected servers."""
+        servers = build_standard_mcp_servers()
+
+        expected_servers = [
+            "sequential-thinking",
+            "context7",
+            "deepwiki",
+        ]
+        for server in expected_servers:
+            assert server in servers, f"Missing server: {server}"
+
+    def test_build_standard_mcp_servers_correct_types(self):
+        """Test that servers have correct transport types."""
+        servers = build_standard_mcp_servers()
+
+        # stdio servers should have 'command' key
+        for server_name in ["sequential-thinking"]:
+            assert "command" in servers[server_name], f"{server_name} missing command"
+            assert "args" in servers[server_name], f"{server_name} missing args"
+
+        # http servers should have 'type' and 'url' keys
+        for server_name in ["context7", "deepwiki"]:
+            assert (
+                servers[server_name].get("type") == "http"
+            ), f"{server_name} should be http"
+            assert "url" in servers[server_name], f"{server_name} missing url"
+
+    def test_read_project_mcp_json_missing_file(self, tmp_path):
+        """Test reading non-existent .mcp.json returns None."""
+        mcp_file = tmp_path / ".mcp.json"
+        result = read_project_mcp_json(mcp_file)
+        assert result is None
+
+    def test_read_project_mcp_json_valid_file(self, tmp_path):
+        """Test reading valid .mcp.json returns parsed content."""
+        mcp_file = tmp_path / ".mcp.json"
+        config = {"mcpServers": {"test": {"command": "test"}}}
+        mcp_file.write_text(json.dumps(config))
+
+        result = read_project_mcp_json(mcp_file)
+        assert result == config
+
+    def test_read_project_mcp_json_invalid_json(self, tmp_path):
+        """Test reading invalid JSON returns None and creates backup."""
+        import re
+
+        mcp_file = tmp_path / ".mcp.json"
+        mcp_file.write_text("{ invalid json }")
+
+        result = read_project_mcp_json(mcp_file)
+
+        assert result is None
+        # Check that backup was created with correct naming pattern
+        backup_files = list(tmp_path.glob(".mcp.backup.*.json"))
+        assert len(backup_files) == 1
+
+        # Verify backup filename matches expected format: YYYYMMDD_HHMMSS_XXXXXXXX (8 hex chars)
+        backup_name = backup_files[0].name
+        assert re.match(
+            r"\.mcp\.backup\.\d{8}_\d{6}_[a-f0-9]{8}\.json$", backup_name
+        ), f"Backup name doesn't match expected format: {backup_name}"
+
+    def test_write_project_mcp_json_creates_file(self, tmp_path):
+        """Test writing .mcp.json creates file with correct format."""
+        mcp_file = tmp_path / ".mcp.json"
+        config = {"mcpServers": {"test": {"command": "test"}}}
+
+        write_project_mcp_json(mcp_file, config)
+
+        assert mcp_file.exists()
+        content = mcp_file.read_text()
+        assert content.endswith("\n")  # Should have trailing newline
+        parsed = json.loads(content)
+        assert parsed == config
+
+    def test_write_project_mcp_json_permission_error(self, tmp_path):
+        """Test write_project_mcp_json raises OSError on permission denied."""
+        mcp_file = tmp_path / ".mcp.json"
+        mcp_file.touch()
+        mcp_file.chmod(0o444)  # Read-only
+
+        config = {"mcpServers": {"test": {"command": "test"}}}
+
+        with pytest.raises(OSError):
+            write_project_mcp_json(mcp_file, config)
+
+        # Cleanup: restore permissions so tmp_path cleanup works
+        mcp_file.chmod(0o644)
+
+    def test_merge_mcp_json_preserves_existing(self):
+        """Test that merge preserves existing servers."""
+        existing = {
+            "mcpServers": {
+                "user-server": {"command": "user-cmd"},
+            }
+        }
+        new_servers = {
+            "context7": {"type": "http", "url": "https://mcp.context7.com/mcp"},
+        }
+
+        result = merge_mcp_json(existing, new_servers)
+
+        assert "user-server" in result["mcpServers"]
+        assert "context7" in result["mcpServers"]
+        assert result["mcpServers"]["user-server"]["command"] == "user-cmd"
+
+    def test_merge_mcp_json_does_not_overwrite(self):
+        """Test that merge does not overwrite existing servers with same name."""
+        existing = {
+            "mcpServers": {
+                "context7": {"type": "http", "url": "https://custom.url"},  # User's custom
+            }
+        }
+        new_servers = {
+            "context7": {"type": "http", "url": "https://mcp.context7.com/mcp"},  # Standard
+        }
+
+        result = merge_mcp_json(existing, new_servers)
+
+        # User's custom config should be preserved
+        assert result["mcpServers"]["context7"]["url"] == "https://custom.url"
+
+    def test_merge_mcp_json_adds_mcpservers_key(self):
+        """Test that merge adds mcpServers key if missing."""
+        existing = {"other_key": "value"}
+        new_servers = {"context7": {"type": "http", "url": "https://mcp.context7.com/mcp"}}
+
+        result = merge_mcp_json(existing, new_servers)
+
+        assert "mcpServers" in result
+        assert "context7" in result["mcpServers"]
+        assert "other_key" in result  # Other keys preserved
+
+    def test_create_or_merge_new_file(self, tmp_path):
+        """Test creating new .mcp.json when file doesn't exist."""
+        create_or_merge_project_mcp_json(tmp_path, ["deepwiki", "context7"])
+
+        mcp_file = tmp_path / ".mcp.json"
+        assert mcp_file.exists()
+
+        config = json.loads(mcp_file.read_text())
+        assert "mcpServers" in config
+        assert "deepwiki" in config["mcpServers"]
+        assert "context7" in config["mcpServers"]
+        assert len(config["mcpServers"]) == 2
+
+    def test_create_or_merge_existing_file(self, tmp_path):
+        """Test merging into existing .mcp.json."""
+        # Create existing file with user's server
+        mcp_file = tmp_path / ".mcp.json"
+        existing_config = {
+            "mcpServers": {
+                "ChunkHound": {"command": "chunkhound", "args": ["mcp"]},
+            }
+        }
+        mcp_file.write_text(json.dumps(existing_config))
+
+        # Run merge
+        create_or_merge_project_mcp_json(tmp_path, ["deepwiki"])
+
+        # Verify merge
+        config = json.loads(mcp_file.read_text())
+        assert "ChunkHound" in config["mcpServers"]  # User's server preserved
+        assert "deepwiki" in config["mcpServers"]  # New server added
+
+    def test_create_or_merge_empty_servers_list(self, tmp_path):
+        """Test that empty servers list doesn't create file."""
+        create_or_merge_project_mcp_json(tmp_path, [])
+
+        mcp_file = tmp_path / ".mcp.json"
+        assert not mcp_file.exists()
+
+    def test_create_or_merge_filters_unknown_servers(self, tmp_path):
+        """Test that unknown server names are ignored."""
+        create_or_merge_project_mcp_json(
+            tmp_path, ["deepwiki", "unknown-server", "context7"]
+        )
+
+        mcp_file = tmp_path / ".mcp.json"
+        config = json.loads(mcp_file.read_text())
+
+        assert "deepwiki" in config["mcpServers"]
+        assert "context7" in config["mcpServers"]
+        assert "unknown-server" not in config["mcpServers"]
+
+    def test_init_creates_mcp_json(self, tmp_path):
+        """Test that mapify init creates .mcp.json file."""
+        os.chdir(tmp_path)
+
+        result = runner.invoke(app, ["init", ".", "--force", "--mcp", "docs"])
+
+        # Allow exit code 0 or initialization messages
+        mcp_file = tmp_path / ".mcp.json"
+        assert (
+            mcp_file.exists()
+        ), f"Expected .mcp.json to be created. Output: {result.output}"
+
+        config = json.loads(mcp_file.read_text())
+        assert "mcpServers" in config
+        # docs = context7 + deepwiki
+        assert "context7" in config["mcpServers"] or "deepwiki" in config["mcpServers"]
