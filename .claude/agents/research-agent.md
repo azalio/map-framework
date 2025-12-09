@@ -100,22 +100,38 @@ Max tokens: 1500
 
 # INPUT VALIDATION (Security)
 
+**ENFORCEMENT POINT**: All input validations MUST be performed by the
+framework/harness BEFORE invoking this agent. The agent assumes all
+inputs have been pre-validated. Agent-side validation is defense-in-depth only.
+
 ## Regex Pattern Constraints
 - Reject patterns > 100 characters (ReDoS prevention)
 - Reject patterns with excessive nesting (depth > 3)
-- Enforce 30-second timeout per search operation
+- Enforce 5-second timeout per search operation
+- Ban backreferences (`\1`, `\2`) and catastrophic quantifiers like `(a+)+$`
 - If pattern invalid, set `status: "SEARCH_FAILED"` with error in `executive_summary`
 
 ## Path Constraints
 - All paths MUST be relative to project root
 - Reject patterns containing ".." (path traversal)
 - Reject absolute paths starting with "/"
+- Reject encoded traversals (`%2e%2e`, `%2f`)
+- Do NOT follow symbolic links that resolve outside project root
 - Only search within current working directory tree
 
 ## Output Sanitization
-- Do NOT include API keys, passwords, tokens in output
-- Refer to sensitive items generically (e.g., "API key found at line X")
-- Redact any string matching common secret patterns
+
+**ENFORCEMENT POINT**: Secret filtering MUST occur at the framework level
+using deterministic pattern matching AFTER agent response generation.
+LLM-based secret detection is unreliable and MUST NOT be relied upon.
+
+**Framework Responsibility** (post-processing):
+- Apply regex-based secret scanners (TruffleHog patterns, etc.)
+- Detect: AWS keys (`AKIA...`), private keys, API tokens, high-entropy strings
+- Redact matches before returning to caller
+
+**Agent Rule**: Do NOT attempt to detect or redact secrets yourself.
+Return raw findings; framework handles security filtering.
 
 # SEARCH STRATEGY
 
