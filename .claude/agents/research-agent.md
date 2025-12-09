@@ -55,6 +55,11 @@ Max tokens: 1500
   "confidence": 0.85,
   "status": "OK",
   "search_method": "chunkhound_semantic",
+  "search_stats": {
+    "files_scanned": 50,
+    "total_matches_found": 23,
+    "results_truncated": true
+  },
   "executive_summary": "One paragraph summary (max 100 words)",
   "relevant_locations": [
     {
@@ -67,6 +72,11 @@ Max tokens: 1500
   ],
   "patterns_discovered": ["JWT with HS256", "decorator-based auth"]
 }
+
+**search_stats fields:**
+- `files_scanned`: Total files examined during search
+- `total_matches_found`: All matches before truncation to MAX 5
+- `results_truncated`: true if more results exist than returned
 
 **Status values:**
 - `"OK"` - Search completed successfully with ChunkHound MCP
@@ -86,6 +96,26 @@ Max tokens: 1500
 3. **ALWAYS include confidence** - Actor uses this for fallback decisions
 4. **Signatures over code** - function headers often suffice
 5. **Include path + line range** - Actor can Read() full code if needed
+6. **NO raw file contents** - return signatures and metadata only, never large code blocks
+
+# INPUT VALIDATION (Security)
+
+## Regex Pattern Constraints
+- Reject patterns > 100 characters (ReDoS prevention)
+- Reject patterns with excessive nesting (depth > 3)
+- Enforce 30-second timeout per search operation
+- If pattern invalid, set `status: "SEARCH_FAILED"` with error in `executive_summary`
+
+## Path Constraints
+- All paths MUST be relative to project root
+- Reject patterns containing ".." (path traversal)
+- Reject absolute paths starting with "/"
+- Only search within current working directory tree
+
+## Output Sanitization
+- Do NOT include API keys, passwords, tokens in output
+- Refer to sensitive items generically (e.g., "API key found at line X")
+- Redact any string matching common secret patterns
 
 # SEARCH STRATEGY
 
