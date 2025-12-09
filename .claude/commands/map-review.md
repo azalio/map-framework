@@ -27,7 +27,9 @@ git diff HEAD
 git status
 ```
 
-## Step 3: Call Monitor Agent
+## Step 3: Invoke All Review Agents in Parallel
+
+**IMPORTANT**: Call Monitor, Predictor, and Evaluator simultaneously by invoking all three Task calls in a single message. These agents operate independently on the same git diff without shared state.
 
 ```
 Task(
@@ -54,11 +56,7 @@ Output JSON with:
 - verdict: 'approved' | 'needs_revision' | 'rejected'
 - summary: string"
 )
-```
 
-## Step 4: Call Predictor Agent
-
-```
 Task(
   subagent_type="predictor",
   description="Analyze change impact",
@@ -67,14 +65,15 @@ Task(
 **Changes:**
 [paste git diff output]
 
-**Monitor Results:**
-[paste monitor output]
+**Playbook Context:**
+[paste relevant playbook bullets]
 
 Analyze:
 - Affected files and modules
 - Breaking changes (API, schema, behavior)
 - Dependencies that need updates
 - Risk assessment
+- Integration points affected
 
 Output JSON with:
 - affected_files: array of {path, change_type, impact_level}
@@ -83,11 +82,7 @@ Output JSON with:
 - risk_level: 'low' | 'medium' | 'high'
 - recommendations: array of strings"
 )
-```
 
-## Step 5: Call Evaluator Agent
-
-```
 Task(
   subagent_type="evaluator",
   description="Score change quality",
@@ -96,11 +91,8 @@ Task(
 **Changes:**
 [paste git diff output]
 
-**Monitor Results:**
-[paste monitor output]
-
-**Predictor Results:**
-[paste predictor output]
+**Playbook Context:**
+[paste relevant playbook bullets]
 
 Provide quality assessment:
 - Code quality score (0-100)
@@ -118,20 +110,59 @@ Output JSON with:
 )
 ```
 
-## Step 6: Summary Report
+**How Parallel Execution Works:**
+1. Claude Code will invoke all three agents simultaneously
+2. Each agent analyzes the git diff independently
+3. Wait for all three Task calls to complete before proceeding
+4. Collect results from Monitor, Predictor, and Evaluator outputs
 
-Present combined findings:
+## Step 4: Aggregate and Present Results
+
+Once all three agents have completed, combine their findings:
 
 ### Review Summary
-- **Monitor Verdict:** [verdict]
-- **Predictor Risk Level:** [risk_level]
-- **Evaluator Score:** [overall]/100
 
-### Issues Found
-[List issues by severity]
+**Monitor Analysis:**
+- Verdict: [monitor.verdict]
+- Issues Found: [count by severity]
+- Valid: [monitor.valid]
+
+**Predictor Analysis:**
+- Risk Level: [predictor.risk_level]
+- Breaking Changes: [predictor.breaking_changes.length]
+- Affected Files: [predictor.affected_files.length]
+
+**Evaluator Assessment:**
+- Overall Score: [evaluator.scores.overall]/100
+- Code Quality: [evaluator.scores.code_quality]/100
+- Test Coverage: [evaluator.scores.test_coverage]/100
+- Verdict: [evaluator.verdict]
+
+### Critical Issues (High Severity)
+
+[List high-severity issues from Monitor]
+
+### Breaking Changes
+
+[List breaking changes from Predictor]
 
 ### Recommendations
-[Actionable next steps]
+
+**From Monitor:**
+[List Monitor suggestions for critical issues]
+
+**From Predictor:**
+[List Predictor recommendations]
+
+**From Evaluator:**
+[List Evaluator improvements needed]
+
+### Final Verdict
+
+Based on combined analysis:
+- **Proceed if:** Monitor verdict = 'approved' AND Evaluator verdict = 'excellent'|'good'|'acceptable'
+- **Revise if:** Monitor verdict = 'needs_revision' OR Evaluator verdict = 'needs_work'
+- **Block if:** Monitor verdict = 'rejected' OR Evaluator verdict = 'reject' OR Predictor risk_level = 'high' with unmitigated breaking changes
 
 ---
 

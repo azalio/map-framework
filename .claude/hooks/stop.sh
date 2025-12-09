@@ -19,13 +19,6 @@ INPUT=$(cat)
 # Debug logging to stderr
 echo "[stop/quality-gates] Hook triggered" >&2
 
-# Validate JSON input before using jq
-if ! echo "$INPUT" | jq empty > /dev/null 2>&1; then
-    echo "[stop/quality-gates] ⚠️  Malformed JSON input, skipping checks" >&2
-    echo '{"continue": true}'
-    exit 0
-fi
-
 # Check if quality gates are enabled
 if [ "$QUALITY_GATES_ENABLED" != "true" ]; then
     echo "[stop/quality-gates] Quality gates disabled via QUALITY_GATES_ENABLED" >&2
