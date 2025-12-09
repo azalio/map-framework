@@ -19,10 +19,9 @@ INPUT=$(cat)
 # Debug logging to stderr
 echo "[stop/quality-gates] Hook triggered" >&2
 
-# Validate JSON input before processing
-if ! echo "$INPUT" | jq empty 2>/dev/null; then
-    echo "[stop/quality-gates] ⚠️  WARNING: Received malformed JSON input" >&2
-    echo "[stop/quality-gates] Skipping quality gates (non-blocking)" >&2
+# Validate JSON input before using jq
+if ! echo "$INPUT" | jq empty > /dev/null 2>&1; then
+    echo "[stop/quality-gates] ⚠️  Malformed JSON input, skipping checks" >&2
     echo '{"continue": true}'
     exit 0
 fi
