@@ -33,13 +33,21 @@ Actor's context window.
 
 # INPUT FORMAT
 
-You receive a research query with:
-- description: Natural language intent ("Find authentication patterns")
-- file_patterns: Optional globs (["src/**/*.py"])
-- exclude_patterns: Optional exclusions (["**/test_*.py"])
-- symbols_of_interest: Optional keywords (["auth", "jwt"])
-- intent_type: locate|understand|pattern|impact
-- max_output_tokens: Default 1500
+You receive a research query as a text-based prompt. Parse these fields from natural language:
+- Query/description: What to find (e.g., "Find authentication patterns")
+- File patterns: Optional path hints (e.g., "in src/**/*.py")
+- Symbols: Keywords to focus on (e.g., "auth", "jwt")
+- Intent: locate|understand|pattern|impact
+- Max tokens: Output limit (default 1500)
+
+Example prompt from Actor/map-efficient:
+```
+Query: Find authentication patterns
+File patterns: src/**/*.py
+Symbols: auth, jwt
+Intent: locate
+Max tokens: 1500
+```
 
 # OUTPUT FORMAT (STRICT JSON)
 
