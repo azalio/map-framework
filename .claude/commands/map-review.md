@@ -111,7 +111,7 @@ Output JSON with:
 ```
 
 **How Parallel Execution Works:**
-1. Claude Code will invoke all three agents simultaneously
+1. Claude Code will process all three Task calls from the same message
 2. Each agent analyzes the git diff independently
 3. Wait for all three Task calls to complete before proceeding
 4. Collect results from Monitor, Predictor, and Evaluator outputs
@@ -162,7 +162,7 @@ Once all three agents have completed, combine their findings:
 Based on combined analysis:
 - **Proceed if:** Monitor verdict = 'approved' AND Evaluator verdict = 'excellent'|'good'|'acceptable'
 - **Revise if:** Monitor verdict = 'needs_revision' OR Evaluator verdict = 'needs_work'
-- **Block if:** Monitor verdict = 'rejected' OR Evaluator verdict = 'reject' OR Predictor risk_level = 'high' with unmitigated breaking changes
+- **Block if:** Monitor verdict = 'rejected' OR Evaluator verdict = 'reject' OR (Predictor risk_level = 'high' AND breaking_changes.length > 0)
 
 ---
 
