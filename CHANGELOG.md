@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2025-12-15
+
+### BREAKING CHANGES
+
+#### Hooks System Removed
+
+The Claude Code hooks system has been completely removed from MAP Framework.
+
+**Rationale:**
+- Hooks added complexity without proportional value
+- Core MAP workflows (`/map-efficient`, `/map-debug`, `/map-fast`) operate independently of hooks
+- Maintenance burden outweighed benefits
+
+**What was removed:**
+- `.claude/hooks/` directory (13 hook scripts)
+- `src/mapify_cli/__init__.py` functions: `load_settings_with_merge()`, `merge_hooks_settings()`, `install_hooks()`
+- `src/mapify_cli/templates/hooks/` directory
+- CLI option: `--with-hooks/--no-hooks` from `mapify init`
+- 59 test cases (test_hooks_*.py, test_init_merge.py, test_inject_playbook_bullets.py)
+
+**Migration guide:**
+
+For existing projects with hooks installed:
+
+1. **Hooks are now user-managed** - The `.claude/hooks/` directory (if present) will be ignored by MAP Framework
+2. **No action required** - Your existing hooks will continue to work as Claude Code hooks
+3. **Optional cleanup** - You can safely remove `.claude/hooks/` if you don't use custom hooks
+
+**What continues to work:**
+- ✅ All MAP workflows (`/map-efficient`, `/map-debug`, `/map-fast`, `/map-learn`, `/map-release`, `/map-review`)
+- ✅ Agent orchestration via Task tool
+- ✅ Playbook management via `mapify playbook` commands
+- ✅ MCP server integration (cipher, context7, deepwiki, etc.)
+
+**What no longer works:**
+- ❌ `mapify init --with-hooks` / `--no-hooks` options (removed from CLI)
+- ❌ Automatic hooks installation via `mapify init`
+- ❌ Hooks template synchronization
+
+**Upgrade path:**
+
+```bash
+# Upgrade MAP Framework to v2.0.0
+uv tool upgrade mapify-cli
+
+# (Optional) Remove hooks directory if you don't use custom hooks
+rm -rf .claude/hooks/
+```
+
 ## [1.7.0] - 2025-12-08
 
 ### Added
