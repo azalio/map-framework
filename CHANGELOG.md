@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Parallelize Monitor, Predictor, Evaluator agents in `/map-review` workflow for improved performance
+- Auto-create `.mcp.json` during `mapify init` for better MCP server integration
+
+### Fixed
+- Remove hooks-related CI job and test after hooks system removal
+- Restore JSON validation in stop.sh hook for malformed input handling
+- Address Copilot and LLM Council security review findings
+- Clarify enforcement points and framework-level secret handling in documentation
+- Handle malformed JSON in stop.sh hook with updated INPUT FORMAT docs
+- Address PR #56 review comments
+- Fix black formatting issues
+
+### Added
+- New research-agent for context isolation during research tasks
+
 ## [2.0.0] - 2025-12-15
 
 ### BREAKING CHANGES
