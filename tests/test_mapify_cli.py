@@ -987,11 +987,17 @@ class TestMcpJsonConfig:
         """Test that merge does not overwrite existing servers with same name."""
         existing = {
             "mcpServers": {
-                "context7": {"type": "http", "url": "https://custom.url"},  # User's custom
+                "context7": {
+                    "type": "http",
+                    "url": "https://custom.url",
+                },  # User's custom
             }
         }
         new_servers = {
-            "context7": {"type": "http", "url": "https://mcp.context7.com/mcp"},  # Standard
+            "context7": {
+                "type": "http",
+                "url": "https://mcp.context7.com/mcp",
+            },  # Standard
         }
 
         result = merge_mcp_json(existing, new_servers)
@@ -1002,7 +1008,9 @@ class TestMcpJsonConfig:
     def test_merge_mcp_json_adds_mcpservers_key(self):
         """Test that merge adds mcpServers key if missing."""
         existing = {"other_key": "value"}
-        new_servers = {"context7": {"type": "http", "url": "https://mcp.context7.com/mcp"}}
+        new_servers = {
+            "context7": {"type": "http", "url": "https://mcp.context7.com/mcp"}
+        }
 
         result = merge_mcp_json(existing, new_servers)
 
