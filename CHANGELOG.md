@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2025-12-15
+
 ### Changed
 - Parallelize Monitor, Predictor, Evaluator agents in `/map-review` workflow for improved performance
 - Auto-create `.mcp.json` during `mapify init` for better MCP server integration
@@ -22,8 +24,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - New research-agent for context isolation during research tasks
-
-## [2.0.0] - 2025-12-15
 
 ### BREAKING CHANGES
 
