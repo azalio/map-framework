@@ -51,6 +51,31 @@ This workflow provides **intelligent token optimization (30-40% savings)** while
 
 ---
 
+## Self-MoA Configuration (Optional)
+
+**Self-MoA** (Self-Mixture of Agents) generates 3 implementation variants and **synthesizes** the best parts into an optimal combined solution.
+
+**Activation:**
+- **Explicit:** User includes `--self-moa` flag: `/map-efficient --self-moa "task"`
+- **Auto:** TaskDecomposer marks subtask as `complexity: high` OR `security_critical: true`
+
+**Token Cost:**
+- ~4x standard per subtask (3 Actors + 3 Monitors + Synthesizer + Final Monitor)
+- Use only for critical subtasks where quality improvement justifies cost
+
+**When to use Self-MoA:**
+- Security-critical implementations (authentication, authorization, data validation)
+- Complex algorithms where multiple approaches could work
+- Tasks where you want the best of security, performance, AND simplicity
+
+**When NOT to use Self-MoA:**
+- Simple CRUD operations
+- Configuration changes
+- Documentation updates
+- When token budget is constrained
+
+---
+
 Implement the following with efficient workflow:
 
 **Task:** $ARGUMENTS
@@ -63,10 +88,21 @@ Optimized agent sequence (no automatic learning):
 1. DECOMPOSE → task-decomposer
 2. FOR each subtask:
    2.1. PLAYBOOK → get context
+   2.1a. ELIGIBILITY → check Self-MoA activation
    2.2. RESEARCH (optional) → research-agent if existing code understanding needed
-   2.3. IMPLEMENT → actor
-   2.4. VALIDATE → monitor
-   2.5. If invalid: provide feedback, go to step 2.3 (max 3-5 iterations)
+
+   ┌─── IF Self-MoA ENABLED ───────────────────────────────┐
+   │ 2.3a. PARALLEL ACTORS → 3 variants (security, perf, simplicity)
+   │ 2.3b. PARALLEL MONITORS → validate each variant
+   │ 2.3c. SYNTHESIZER → combine best parts
+   │ 2.3d. FINAL MONITOR → validate synthesized code
+   └───────────────────────────────────────────────────────┘
+   ┌─── ELSE (Standard Path) ─────────────────────────────┐
+   │ 2.3. IMPLEMENT → actor
+   │ 2.4. VALIDATE → monitor
+   └───────────────────────────────────────────────────────┘
+
+   2.5. If invalid: provide feedback, retry (max 3-5 iterations)
    2.6. If high_risk: ANALYZE → predictor
    2.7. ACCEPT and apply changes
 3. DONE → Suggest /map-learn if user wants to preserve lessons
@@ -169,7 +205,198 @@ IF research.status == "DEGRADED_MODE":
   → Note in Actor prompt that search was limited
   → Actor should verify findings more carefully
 
-**Then proceed to step 2.3 (Actor)**
+**Then proceed to step 2.1a (Self-MoA Check) or 2.3 (Actor)**
+
+### Step 2.1a: Self-MoA Eligibility Check
+
+**Check if Self-MoA should be activated:**
+
+```python
+self_moa_enabled = (
+    "--self-moa" in user_command OR
+    subtask.complexity == "high" OR
+    subtask.security_critical == True
+)
+```
+
+**If Self-MoA enabled:** Execute Steps 2.3a-2.3d (Self-MoA Path)
+**If Self-MoA disabled:** Execute Steps 2.3-2.4 (Standard Path)
+
+---
+
+## Self-MoA Path (Steps 2.3a-2.3d)
+
+### Step 2.3a: Parallel Actor Generation
+
+Call Actor 3 times with different optimization focuses:
+
+```
+# Actor Variant 1: Security Focus
+Task(
+  subagent_type="actor",
+  description="Implement subtask [ID] - Security Focus (v1)",
+  prompt="Implement this subtask with SECURITY focus:
+
+**Subtask:** [description]
+**Acceptance Criteria:** [criteria]
+**approach_focus:** security
+**self_moa_mode:** true
+**variant_id:** v1
+
+Focus on:
+- Input validation and sanitization
+- OWASP compliance
+- Defensive coding patterns
+- Parameterized queries
+
+Output JSON with:
+- approach, code_changes, trade_offs, testing_approach, used_bullets
+- **decisions_made:** array of {category, statement, rationale, priority_class}"
+)
+
+# Actor Variant 2: Performance Focus
+Task(
+  subagent_type="actor",
+  description="Implement subtask [ID] - Performance Focus (v2)",
+  prompt="... approach_focus: performance, variant_id: v2
+Focus on: Algorithm efficiency, caching, async patterns, minimal allocations"
+)
+
+# Actor Variant 3: Simplicity Focus
+Task(
+  subagent_type="actor",
+  description="Implement subtask [ID] - Simplicity Focus (v3)",
+  prompt="... approach_focus: simplicity, variant_id: v3
+Focus on: Readability, standard patterns, clear structure, explicit over clever"
+)
+```
+
+**Execute all 3 Actor calls in parallel** to minimize latency.
+
+### Step 2.3b: Parallel Monitor Validation
+
+Validate each variant independently:
+
+```
+# Monitor for Variant 1
+Task(
+  subagent_type="monitor",
+  description="Validate v1 (security focus)",
+  prompt="Review variant v1:
+**Actor Output:** [v1 output]
+**variant_id:** v1
+**self_moa_mode:** true
+
+Output JSON with:
+- valid, issues, verdict, feedback
+- **decisions_identified:** array of Decision objects
+- **compatibility_features:** {error_paradigm, concurrency_model, state_management, type_strictness, naming_convention, imports_used}
+- **contract_compliant:** boolean
+- **strengths:** array, **weaknesses:** array
+- **recommended_as_base:** boolean"
+)
+
+# Monitor for Variant 2 and 3 (parallel)
+Task(subagent_type="monitor", ... variant_id: v2)
+Task(subagent_type="monitor", ... variant_id: v3)
+```
+
+**Execute all 3 Monitor calls in parallel.**
+
+### Step 2.3c: Synthesizer - Combine Best Parts
+
+**Compute compatibility score** (orchestrator deterministic calculation):
+
+```python
+# Use Monitor's compatibility_features for pairwise scoring
+WEIGHTS = {
+    "error_paradigm": 2.0,      # CRITICAL
+    "concurrency_model": 2.0,   # CRITICAL
+    "state_management": 1.5,
+    "type_strictness": 1.0,
+    "naming_convention": 0.5,
+}
+
+def pairwise_score(m1, m2):
+    total = 0
+    for dim, weight in WEIGHTS.items():
+        if m1.compatibility_features[dim] == m2.compatibility_features[dim]:
+            total += weight
+    return total / sum(WEIGHTS.values())
+
+compatibility_score = min(
+    pairwise_score(m1, m2),
+    pairwise_score(m1, m3),
+    pairwise_score(m2, m3)
+)
+```
+
+**Call Synthesizer:**
+
+```
+Task(
+  subagent_type="synthesizer",
+  description="Synthesize best implementation",
+  prompt="Synthesize the best parts from 3 variants:
+
+**Variants:**
+- v1: [Actor v1 output]
+- v2: [Actor v2 output]
+- v3: [Actor v3 output]
+
+**Monitor Results:**
+- m1: [Monitor v1 output with decisions_identified, compatibility_features]
+- m2: [Monitor v2 output]
+- m3: [Monitor v3 output]
+
+**Compatibility Score:** [computed score]
+**Priority Policy:** [correctness, maintainability, security, performance]
+
+Extract decisions, resolve conflicts, generate unified code.
+
+Output JSON with:
+- code: complete synthesized implementation
+- decisions_implemented: array of decision IDs
+- decisions_rejected: array of [ID, reason]
+- strategy_used: 'base_enhance' | 'fresh_generation'
+- conflict_resolutions: array
+- confidence: float"
+)
+```
+
+### Step 2.3d: Validate Synthesized Solution
+
+**Call Monitor to validate final code:**
+
+```
+Task(
+  subagent_type="monitor",
+  description="Validate synthesized implementation",
+  prompt="Review synthesized implementation:
+
+**Synthesizer Output:** [synthesizer output]
+**variant_id:** synthesized
+
+Check for:
+- All decisions properly implemented
+- No conflicting patterns introduced
+- Code coherence and consistency
+- Contract compliance
+
+Output standard Monitor JSON (valid, issues, verdict, feedback)"
+)
+```
+
+**If monitor.valid === false:**
+- Provide feedback to Synthesizer
+- Retry synthesis (max 2 iterations)
+
+**If monitor.valid === true:**
+- Continue to Step 2.6 (Predictor if high_risk) or Step 2.7 (Apply)
+
+---
+
+## Standard Path (Steps 2.3-2.4)
 
 ### Step 2.3: Call Actor to Implement
 
