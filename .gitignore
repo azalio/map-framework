@@ -58,7 +58,10 @@ coverage.json
 .claude/sessions/
 .claude/metrics/
 .claude/cache/
-.map/
+
+# MAP runtime files (but keep static-analysis scripts)
+.map/*
+!.map/static-analysis/
 
 # Temporary verification files
 mapify_cli_verification_*.json
