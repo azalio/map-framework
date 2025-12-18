@@ -25,7 +25,7 @@ ALL_FINDINGS="[]"
 # Run ruff (if available)
 if command -v ruff &> /dev/null; then
     TOOLS_RUN+=("ruff")
-    RUFF_OUT=$(timeout 30 ruff check --output-format=json $FILES 2>/dev/null || echo "[]")
+    RUFF_OUT=$(timeout 30 ruff check --output-format=json "$FILES" 2>/dev/null || echo "[]")
 
     # Normalize ruff output to standard format
     if [[ "$RUFF_OUT" != "[]" && -n "$RUFF_OUT" ]]; then
@@ -47,7 +47,7 @@ fi
 # Run mypy (if available)
 if command -v mypy &> /dev/null; then
     TOOLS_RUN+=("mypy")
-    MYPY_OUT=$(timeout 30 mypy --no-color-output --no-error-summary $FILES 2>&1 || true)
+    MYPY_OUT=$(timeout 30 mypy --no-color-output --no-error-summary "$FILES" 2>&1 || true)
 
     # Parse mypy text output to JSON
     if [[ -n "$MYPY_OUT" ]]; then
@@ -73,8 +73,12 @@ ERROR_COUNT=$(echo "$ALL_FINDINGS" | jq '[.[] | select(.severity=="error")] | le
 WARNING_COUNT=$(echo "$ALL_FINDINGS" | jq '[.[] | select(.severity=="warning")] | length')
 TOTAL_COUNT=$(echo "$ALL_FINDINGS" | jq 'length')
 
-# Convert tools array to JSON
-TOOLS_JSON=$(printf '%s\n' "${TOOLS_RUN[@]}" | jq -R . | jq -s .)
+# Convert tools array to JSON (handle empty array safely)
+if [[ ${#TOOLS_RUN[@]} -gt 0 ]]; then
+    TOOLS_JSON=$(printf '%s\n' "${TOOLS_RUN[@]}" | jq -R . | jq -s .)
+else
+    TOOLS_JSON="[]"
+fi
 
 # Output normalized JSON
 jq -n \

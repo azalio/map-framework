@@ -30,7 +30,7 @@ if command -v eslint &> /dev/null || [[ -x "./node_modules/.bin/eslint" ]]; then
     fi
 
     TOOLS_RUN+=("eslint")
-    ESLINT_OUT=$(timeout 60 $ESLINT_CMD --format json $FILES 2>/dev/null || echo "[]")
+    ESLINT_OUT=$(timeout 60 "$ESLINT_CMD" --format json "$FILES" 2>/dev/null || echo "[]")
 
     if [[ "$ESLINT_OUT" != "[]" && -n "$ESLINT_OUT" ]]; then
         ESLINT_NORM=$(echo "$ESLINT_OUT" | jq -c '[.[] | .filePath as $file | .messages[] | {
@@ -55,9 +55,9 @@ if [[ -f "tsconfig.json" ]]; then
         TSC_CMD="./node_modules/.bin/tsc"
     fi
 
-    if command -v $TSC_CMD &> /dev/null || [[ -x "./node_modules/.bin/tsc" ]]; then
+    if command -v "$TSC_CMD" &> /dev/null || [[ -x "./node_modules/.bin/tsc" ]]; then
         TOOLS_RUN+=("tsc")
-        TSC_OUT=$(timeout 60 $TSC_CMD --noEmit --pretty false 2>&1 || true)
+        TSC_OUT=$(timeout 60 "$TSC_CMD" --noEmit --pretty false 2>&1 || true)
 
         if [[ -n "$TSC_OUT" ]]; then
             TSC_NORM=$(echo "$TSC_OUT" | grep -E "^[^(]+\([0-9]+,[0-9]+\):" | while read -r line; do

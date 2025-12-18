@@ -25,7 +25,7 @@ ALL_FINDINGS="[]"
 # Run go vet
 if command -v go &> /dev/null; then
     TOOLS_RUN+=("go vet")
-    VET_OUT=$(timeout 30 go vet $FILES 2>&1 || true)
+    VET_OUT=$(timeout 30 go vet "$FILES" 2>&1 || true)
 
     if [[ -n "$VET_OUT" ]]; then
         VET_NORM=$(echo "$VET_OUT" | grep -E "^[^:]+:[0-9]+:" | while IFS=: read -r file line rest; do
@@ -44,22 +44,19 @@ if command -v gofmt &> /dev/null; then
     TOOLS_RUN+=("gofmt")
     # gofmt -l lists files that need formatting
     if [[ "$FILES" == "./..." ]]; then
-        FMT_FILES=$(find . -name "*.go" -not -path "./vendor/*" 2>/dev/null || true)
+        # Use null-delimited output from find to safely handle filenames with spaces
+        FMT_OUT=$(find . -name "*.go" -not -path "./vendor/*" -print0 2>/dev/null | xargs -0 gofmt -l 2>/dev/null || true)
     else
-        FMT_FILES="$FILES"
+        FMT_OUT=$(gofmt -l "$FILES" 2>/dev/null || true)
     fi
 
-    if [[ -n "$FMT_FILES" ]]; then
-        FMT_OUT=$(echo "$FMT_FILES" | xargs gofmt -l 2>/dev/null || true)
+    if [[ -n "$FMT_OUT" ]]; then
+        FMT_NORM=$(echo "$FMT_OUT" | while read -r file; do
+            echo "{\"tool\":\"gofmt\",\"file\":\"$file\",\"line\":1,\"column\":0,\"severity\":\"warning\",\"code\":\"format\",\"message\":\"File needs formatting\",\"fixable\":true}"
+        done | jq -s '.' 2>/dev/null || echo "[]")
 
-        if [[ -n "$FMT_OUT" ]]; then
-            FMT_NORM=$(echo "$FMT_OUT" | while read -r file; do
-                echo "{\"tool\":\"gofmt\",\"file\":\"$file\",\"line\":1,\"column\":0,\"severity\":\"warning\",\"code\":\"format\",\"message\":\"File needs formatting\",\"fixable\":true}"
-            done | jq -s '.' 2>/dev/null || echo "[]")
-
-            if [[ -n "$FMT_NORM" && "$FMT_NORM" != "null" ]]; then
-                ALL_FINDINGS=$(echo "$ALL_FINDINGS $FMT_NORM" | jq -s 'add // []')
-            fi
+        if [[ -n "$FMT_NORM" && "$FMT_NORM" != "null" ]]; then
+            ALL_FINDINGS=$(echo "$ALL_FINDINGS $FMT_NORM" | jq -s 'add // []')
         fi
     fi
 fi
@@ -67,10 +64,12 @@ fi
 # Run staticcheck (if available)
 if command -v staticcheck &> /dev/null; then
     TOOLS_RUN+=("staticcheck")
-    SC_OUT=$(timeout 60 staticcheck -f json $FILES 2>/dev/null || echo "")
+    SC_OUT=$(timeout 60 staticcheck -f json "$FILES" 2>/dev/null || echo "")
 
     if [[ -n "$SC_OUT" ]]; then
-        SC_NORM=$(echo "$SC_OUT" | jq -c '{
+        # staticcheck outputs NDJSON (one JSON object per line)
+        # Use jq -s to slurp all objects into an array, then transform each
+        SC_NORM=$(echo "$SC_OUT" | jq -s '[.[] | {
             tool: "staticcheck",
             file: .location.file,
             line: .location.line,
@@ -79,7 +78,7 @@ if command -v staticcheck &> /dev/null; then
             code: .code,
             message: .message,
             fixable: false
-        }' 2>/dev/null | jq -s '.' || echo "[]")
+        }]' 2>/dev/null || echo "[]")
 
         if [[ -n "$SC_NORM" && "$SC_NORM" != "null" && "$SC_NORM" != "[]" ]]; then
             ALL_FINDINGS=$(echo "$ALL_FINDINGS $SC_NORM" | jq -s 'add // []')
@@ -92,8 +91,12 @@ ERROR_COUNT=$(echo "$ALL_FINDINGS" | jq '[.[] | select(.severity=="error")] | le
 WARNING_COUNT=$(echo "$ALL_FINDINGS" | jq '[.[] | select(.severity=="warning")] | length')
 TOTAL_COUNT=$(echo "$ALL_FINDINGS" | jq 'length')
 
-# Convert tools array to JSON
-TOOLS_JSON=$(printf '%s\n' "${TOOLS_RUN[@]}" | jq -R . | jq -s .)
+# Convert tools array to JSON (handle empty array safely)
+if [[ ${#TOOLS_RUN[@]} -gt 0 ]]; then
+    TOOLS_JSON=$(printf '%s\n' "${TOOLS_RUN[@]}" | jq -R . | jq -s .)
+else
+    TOOLS_JSON="[]"
+fi
 
 # Output normalized JSON
 jq -n \
