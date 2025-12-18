@@ -1,6 +1,6 @@
 # MAP Framework for Claude Code
 
-Implementation of **Modular Agentic Planner (MAP)** — a cognitive architecture for AI agents inspired by prefrontal cortex functions. Orchestrates 8 specialized agents for development with automatic quality validation.
+Implementation of **Modular Agentic Planner (MAP)** — a cognitive architecture for AI agents inspired by prefrontal cortex functions. Orchestrates 10 specialized agents for development with automatic quality validation.
 
 > **Based on:** [Nature Communications research (2025)](https://github.com/Shanka123/MAP) — 74% improvement in planning tasks
 > **Enhanced with:** [ACE (Agentic Context Engineering)](https://arxiv.org/abs/2510.04618v1) — continuous learning from experience
@@ -216,7 +216,7 @@ MAP includes interactive skills that provide specialized guidance:
 
 ## 🏗️ Architecture
 
-MAP Framework orchestrates 8 specialized agents through slash commands:
+MAP Framework orchestrates 10 specialized agents through slash commands:
 
 - **TaskDecomposer** breaks goals into subtasks
 - **Actor** generates code, **Monitor** validates quality

@@ -1401,7 +1401,8 @@ Do NOT invent issues to justify review effort. Empty `issues` array is valid.
   "description": "Complete output schema for Monitor agent code review",
   "type": "object",
   "required": ["valid", "summary", "issues", "passed_checks", "failed_checks", "feedback_for_actor", "estimated_fix_time", "mcp_tools_used"],
-  "additionalProperties": false,
+  "additionalProperties": true,
+  "description_note": "additionalProperties: true allows Self-MoA extension fields (variant_id, decisions_identified, compatibility_features, etc.) - see Self-MoA Output Extension section",
   "properties": {
     "valid": {
       "type": "boolean",
@@ -1616,6 +1617,93 @@ IF recovery_mode == "manual_only":
 - **feedback_for_actor** (string): Clear, actionable guidance (explain HOW to fix)
 - **estimated_fix_time** (string): Realistic estimate
 - **mcp_tools_used** (array): Tools used for debugging
+
+### Self-MoA Output Extension
+
+When reviewing code in Self-MoA mode (variant validation), include additional fields to support Synthesizer:
+
+```json
+{
+  "variant_id": "v1",
+  "self_moa_mode": true,
+
+  "decisions_identified": [
+    {
+      "id": "dec-001",
+      "category": "performance",
+      "statement": "Use list comprehension for data transformation",
+      "rationale": "Better performance for this use case",
+      "source_variant": "v1",
+      "priority_class": "performance",
+      "conflicts_with": [],
+      "code_location": "process_data:45",
+      "confidence": 0.9
+    },
+    {
+      "id": "dec-002",
+      "category": "error_handling",
+      "statement": "Return Result type for explicit error handling",
+      "rationale": "Makes error cases visible in type system",
+      "source_variant": "v1",
+      "priority_class": "correctness",
+      "conflicts_with": ["dec-003"],
+      "code_location": "process_data:12",
+      "confidence": 0.85
+    }
+  ],
+
+  "compatibility_features": {
+    "error_paradigm": "Result",
+    "concurrency_model": "sync",
+    "state_management": "stateless",
+    "type_strictness": "strict",
+    "naming_convention": "snake_case",
+    "imports_used": ["typing", "dataclasses", "logging"]
+  },
+
+  "contract_compliant": true,
+  "contract_violations": [],
+
+  "strengths": [
+    "Excellent input validation",
+    "Clear error messages"
+  ],
+  "weaknesses": [
+    "O(n²) algorithm in main loop"
+  ],
+
+  "recommended_as_base": true
+}
+```
+
+**Self-MoA Field Descriptions:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `variant_id` | string | Identifier matching Actor's variant_id ("v1", "v2", "v3") |
+| `self_moa_mode` | boolean | Must be `true` when in Self-MoA mode |
+| `decisions_identified` | array | 3-8 key design decisions extracted from variant code |
+| `compatibility_features` | object | Features for orchestrator's deterministic compatibility scoring |
+| `contract_compliant` | boolean | Whether variant follows SpecificationContract (if provided) |
+| `contract_violations` | array | List of contract violations (empty if compliant) |
+| `strengths` | array | Notable positive aspects of the variant |
+| `weaknesses` | array | Areas where variant is suboptimal |
+| `recommended_as_base` | boolean | True if variant has good structure for base_enhance strategy |
+
+**Decision Extraction Guidelines:**
+
+1. Extract 3-8 key decisions per variant (not every line of code)
+2. Focus on architectural and algorithmic choices
+3. Include explicit `conflicts_with` if decision contradicts common alternatives
+4. Set `confidence` based on clarity of decision in code (0.0-1.0)
+5. Use `priority_class` to categorize decision importance
+
+**Compatibility Features Purpose:**
+
+Monitor outputs FEATURES, orchestrator computes SCORES. This separation ensures:
+- Deterministic scoring (no LLM randomness in compatibility calculation)
+- Auditable decisions (features are inspectable)
+- Consistent pairwise comparison across variants
 
 </output_format>
 

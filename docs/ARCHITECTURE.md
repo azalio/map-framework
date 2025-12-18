@@ -20,7 +20,7 @@ Deep technical documentation for MAP (Modular Agentic Planner) implementation.
 
 ### High-Level Design
 
-MAP Framework implements cognitive architecture inspired by prefrontal cortex functions, orchestrating 8 specialized agents for software development with automatic quality validation.
+MAP Framework implements cognitive architecture inspired by prefrontal cortex functions, orchestrating 10 specialized agents for software development with automatic quality validation.
 
 ```
 ┌──────────────────────────────────────────┐

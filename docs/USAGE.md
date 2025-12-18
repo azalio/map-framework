@@ -10,6 +10,11 @@ Complete usage examples, best practices, and optimization strategies for the MAP
   - [Refactoring](#refactoring)
   - [Library Integration](#library-integration)
   - [Learning from Open Source](#learning-from-open-source)
+- [Self-MoA: Solution Synthesis](#self-moa-solution-synthesis)
+  - [How Self-MoA Works](#how-self-moa-works)
+  - [When to Use Self-MoA](#when-to-use-self-moa)
+  - [Example Synthesis](#example-synthesis)
+  - [Token Cost Considerations](#token-cost-considerations)
 - [Playbook Commands](#playbook-commands)
 - [Common CLI Mistakes](#-common-cli-mistakes)
   - [Wrong Command Names](#wrong-command-names)
@@ -81,6 +86,84 @@ Use context7 to get latest Stripe docs.
 /map-feature implement rate limiter.
 Study express-rate-limit via deepwiki, then create optimized version.
 ```
+
+---
+
+## 🧬 Self-MoA: Solution Synthesis
+
+**Self-MoA** (Self-Mixture of Agents) is an advanced pattern that generates 3 implementation variants and **synthesizes** the best parts into an optimal combined solution.
+
+### How Self-MoA Works
+
+1. **Actor×3** generates variants with different optimization focuses:
+   - **V1 (Security)**: Input validation, OWASP compliance, defensive coding
+   - **V2 (Performance)**: Algorithm efficiency, caching, async patterns
+   - **V3 (Simplicity)**: Readability, standard patterns, clear structure
+
+2. **Monitor×3** validates each variant and extracts:
+   - Key design decisions (3-8 per variant)
+   - Compatibility features (error handling, concurrency model, etc.)
+   - Strengths and weaknesses
+
+3. **Synthesizer** combines the best parts:
+   - Extracts all decisions from viable variants
+   - Resolves conflicts using priority precedence
+   - Generates **fresh unified code** (not copy-paste)
+
+4. **Final Monitor** validates the synthesized solution
+
+### Activation
+
+**Explicit activation:**
+```bash
+/map-efficient --self-moa implement JWT authentication with refresh tokens
+```
+
+**Automatic activation:** When TaskDecomposer marks a subtask as:
+- `complexity: high`
+- `security_critical: true`
+
+### When to Use Self-MoA
+
+**Use Self-MoA for:**
+- Security-critical implementations (auth, data validation, encryption)
+- Complex algorithms with multiple valid approaches
+- Tasks requiring balance of security, performance, and maintainability
+- High-risk features where quality justifies higher token cost
+
+**Skip Self-MoA for:**
+- Simple CRUD operations
+- Configuration changes
+- Documentation updates
+- Token-constrained workflows
+
+### Example Synthesis
+
+```
+Input Variants:
+  V1 (security): Strong input validation, comprehensive error handling
+  V2 (performance): Efficient O(n) algorithm, smart caching
+  V3 (simplicity): Clean structure, readable code
+
+Synthesis Result:
+  - Structure: from V3 (clearest separation of concerns)
+  - Validation: from V1 (OWASP-compliant input checks)
+  - Algorithm: from V2 (O(n) instead of O(n²))
+
+Output: Clean, secure, AND fast (better than any single variant)
+```
+
+### Token Cost Considerations
+
+Self-MoA uses ~4x tokens per subtask:
+- 3 Actor calls (parallel)
+- 3 Monitor calls (parallel)
+- 1 Synthesizer call
+- 1 Final Monitor call
+
+**Recommendation:** Use Self-MoA selectively for critical subtasks, not for every task. The `/map-efficient` workflow automatically determines eligibility based on subtask complexity and security flags.
+
+---
 
 ## 🛠️ Playbook Commands
 

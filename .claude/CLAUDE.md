@@ -28,6 +28,8 @@ cp .claude/agents/evaluator.md src/mapify_cli/templates/agents/
 cp .claude/agents/reflector.md src/mapify_cli/templates/agents/
 cp .claude/agents/curator.md src/mapify_cli/templates/agents/
 cp .claude/agents/documentation-reviewer.md src/mapify_cli/templates/agents/
+cp .claude/agents/research-agent.md src/mapify_cli/templates/agents/
+cp .claude/agents/synthesizer.md src/mapify_cli/templates/agents/
 
 # 3. Синхронизируй команды
 cp .claude/commands/map-efficient.md src/mapify_cli/templates/commands/
@@ -35,6 +37,7 @@ cp .claude/commands/map-debug.md src/mapify_cli/templates/commands/
 cp .claude/commands/map-fast.md src/mapify_cli/templates/commands/
 cp .claude/commands/map-learn.md src/mapify_cli/templates/commands/
 cp .claude/commands/map-release.md src/mapify_cli/templates/commands/
+cp .claude/commands/map-review.md src/mapify_cli/templates/commands/
 
 # 4. Проверь что файлы скопировались
 git status src/mapify_cli/templates/
