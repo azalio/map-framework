@@ -37,12 +37,12 @@ if [[ -z "$LANGUAGE" || "$LANGUAGE" == "auto" ]]; then
     elif [[ -f "Cargo.toml" ]]; then
         LANGUAGE="rust"
     else
-        # Try to detect from file extensions
-        if ls *.py 2>/dev/null | head -1 >/dev/null; then
+        # Try to detect from file extensions using safer pattern checks
+        if compgen -G "*.py" > /dev/null; then
             LANGUAGE="python"
-        elif ls *.go 2>/dev/null | head -1 >/dev/null; then
+        elif compgen -G "*.go" > /dev/null; then
             LANGUAGE="go"
-        elif ls *.ts 2>/dev/null | head -1 >/dev/null; then
+        elif compgen -G "*.ts" > /dev/null; then
             LANGUAGE="typescript"
         else
             LANGUAGE="unknown"

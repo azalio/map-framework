@@ -56,7 +56,7 @@ if command -v gofmt &> /dev/null; then
     fi
 
     if [[ -n "$FMT_OUT" ]]; then
-        FMT_NORM=$(echo "$FMT_OUT" | while read -r file; do
+        FMT_NORM=$(echo "$FMT_OUT" | while IFS= read -r file; do
             file=$(json_escape "$file")
             echo "{\"tool\":\"gofmt\",\"file\":\"$file\",\"line\":1,\"column\":0,\"severity\":\"warning\",\"code\":\"format\",\"message\":\"File needs formatting\",\"fixable\":true}"
         done | jq -s '.' 2>/dev/null || echo "[]")

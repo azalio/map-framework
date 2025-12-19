@@ -57,7 +57,7 @@ if [[ -f "tsconfig.json" ]]; then
         TSC_CMD="./node_modules/.bin/tsc"
     fi
 
-    if command -v "$TSC_CMD" &> /dev/null || [[ -x "./node_modules/.bin/tsc" ]]; then
+    if [[ -x "./node_modules/.bin/tsc" ]] || command -v tsc &> /dev/null; then
         TOOLS_RUN+=("tsc")
         TSC_OUT=$(timeout 60 "$TSC_CMD" --noEmit --pretty false 2>&1 || true)
 

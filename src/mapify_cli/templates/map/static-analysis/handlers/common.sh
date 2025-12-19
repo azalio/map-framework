@@ -79,7 +79,7 @@ json_escape() {
 }
 
 # Parse tool output line with robust handling of colons in filenames
-# Usage: parse_line "file:line:col:message" -> sets FILE, LINE, COL, MESSAGE
+# Usage: parse_colon_delimited "file:line:col:message" -> sets FILE, LINE, COL, MESSAGE
 parse_colon_delimited() {
     local input="$1"
     local -n out_file="$2"

@@ -1176,6 +1176,25 @@ class TestCreateMapTools:
         # Should return 0 when no map templates exist
         assert count == 0
 
+    @mock.patch("mapify_cli.get_templates_dir")
+    def test_create_map_tools_map_exists_but_no_static_analysis(
+        self, mock_get_templates, tmp_path
+    ):
+        """Test when templates_dir/map exists but static-analysis subdirectory doesn't."""
+        # Create templates/map without static-analysis
+        mock_templates = tmp_path / "templates"
+        mock_templates.mkdir()
+        (mock_templates / "map").mkdir()
+        # Don't create static-analysis subdirectory
+        mock_get_templates.return_value = mock_templates
+
+        count = create_map_tools(tmp_path)
+
+        # Should return 0 when static-analysis doesn't exist
+        assert count == 0
+        # .map directory should still be created
+        assert (tmp_path / ".map").exists()
+
     def test_create_map_tools_preserves_other_map_contents(self, tmp_path):
         """Test that other files in .map are preserved."""
         # Create .map with other content
