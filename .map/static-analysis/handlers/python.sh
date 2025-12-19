@@ -3,6 +3,9 @@
 # Tools: ruff (linting), mypy (type checking)
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/common.sh"
+
 FILES=""
 CONFIG="{}"
 
@@ -20,7 +23,6 @@ if [[ -z "$FILES" ]]; then
 fi
 
 TOOLS_RUN=()
-ALL_FINDINGS="[]"
 
 # Run ruff (if available)
 if command -v ruff &> /dev/null; then
@@ -40,7 +42,7 @@ if command -v ruff &> /dev/null; then
             fixable: (.fix != null)
         }]' 2>/dev/null || echo "[]")
 
-        ALL_FINDINGS=$(echo "$ALL_FINDINGS $RUFF_NORM" | jq -s 'add // []')
+        add_findings "$RUFF_NORM"
     fi
 fi
 
@@ -49,53 +51,30 @@ if command -v mypy &> /dev/null; then
     TOOLS_RUN+=("mypy")
     MYPY_OUT=$(timeout 30 mypy --no-color-output --no-error-summary "$FILES" 2>&1 || true)
 
-    # Parse mypy text output to JSON
+    # Parse mypy text output to JSON using robust parsing
     if [[ -n "$MYPY_OUT" ]]; then
-        MYPY_NORM=$(echo "$MYPY_OUT" | grep -E "^[^:]+:[0-9]+:" | while IFS=: read -r file line col rest; do
-            # Determine severity from message
-            if echo "$rest" | grep -q "error:"; then
-                severity="error"
-            else
-                severity="warning"
+        MYPY_NORM=$(echo "$MYPY_OUT" | while IFS= read -r line; do
+            local file lineno col msg
+            if parse_colon_delimited "$line" file lineno col msg; then
+                # Determine severity from message
+                local severity="warning"
+                if [[ "$msg" == *"error:"* ]]; then
+                    severity="error"
+                fi
+                # Clean up message
+                msg="${msg# }"
+                msg="${msg#error: }"
+                msg="${msg#note: }"
+                msg=$(json_escape "$msg")
+                file=$(json_escape "$file")
+
+                echo "{\"tool\":\"mypy\",\"file\":\"$file\",\"line\":$lineno,\"column\":$col,\"severity\":\"$severity\",\"code\":\"mypy\",\"message\":\"$msg\",\"fixable\":false}"
             fi
-            message=$(echo "$rest" | sed 's/^ *error: //' | sed 's/^ *note: //' | sed 's/"/\\"/g')
-            echo "{\"tool\":\"mypy\",\"file\":\"$file\",\"line\":$line,\"column\":${col:-0},\"severity\":\"$severity\",\"code\":\"mypy\",\"message\":\"$message\",\"fixable\":false}"
         done | jq -s '.' 2>/dev/null || echo "[]")
 
-        if [[ -n "$MYPY_NORM" && "$MYPY_NORM" != "null" ]]; then
-            ALL_FINDINGS=$(echo "$ALL_FINDINGS $MYPY_NORM" | jq -s 'add // []')
-        fi
+        add_findings "$MYPY_NORM"
     fi
 fi
 
-# Calculate summary
-ERROR_COUNT=$(echo "$ALL_FINDINGS" | jq '[.[] | select(.severity=="error")] | length')
-WARNING_COUNT=$(echo "$ALL_FINDINGS" | jq '[.[] | select(.severity=="warning")] | length')
-TOTAL_COUNT=$(echo "$ALL_FINDINGS" | jq 'length')
-
-# Convert tools array to JSON (handle empty array safely)
-if [[ ${#TOOLS_RUN[@]} -gt 0 ]]; then
-    TOOLS_JSON=$(printf '%s\n' "${TOOLS_RUN[@]}" | jq -R . | jq -s .)
-else
-    TOOLS_JSON="[]"
-fi
-
-# Output normalized JSON
-jq -n \
-    --argjson findings "$ALL_FINDINGS" \
-    --argjson errors "$ERROR_COUNT" \
-    --argjson warnings "$WARNING_COUNT" \
-    --argjson total "$TOTAL_COUNT" \
-    --argjson tools "$TOOLS_JSON" \
-    '{
-        success: true,
-        language: "python",
-        summary: {
-            total: $total,
-            errors: $errors,
-            warnings: $warnings,
-            pass: ($errors == 0)
-        },
-        findings: $findings,
-        tools_run: $tools
-    }'
+# Generate output using common function
+generate_output "python"

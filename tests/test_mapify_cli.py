@@ -20,6 +20,7 @@ from mapify_cli import (
     create_agent_files,
     create_command_files,
     create_commands_dir,
+    create_map_tools,
     create_or_merge_project_mcp_json,
     create_ssl_context,
     get_latest_release,
@@ -1086,3 +1087,109 @@ class TestMcpJsonConfig:
         assert "mcpServers" in config
         # docs = context7 + deepwiki
         assert "context7" in config["mcpServers"] or "deepwiki" in config["mcpServers"]
+
+
+class TestCreateMapTools:
+    """Test create_map_tools() function for static analysis tools."""
+
+    def test_create_map_tools_creates_directory(self, tmp_path):
+        """Test that create_map_tools creates .map directory with static-analysis."""
+        count = create_map_tools(tmp_path)
+
+        map_dir = tmp_path / ".map"
+        static_analysis_dir = map_dir / "static-analysis"
+
+        assert map_dir.exists()
+        assert static_analysis_dir.exists()
+        assert count > 0  # Should have created some scripts
+
+    def test_create_map_tools_copies_scripts(self, tmp_path):
+        """Test that static analysis scripts are copied correctly."""
+        create_map_tools(tmp_path)
+
+        static_analysis_dir = tmp_path / ".map" / "static-analysis"
+        handlers_dir = static_analysis_dir / "handlers"
+
+        # Verify main script exists
+        assert (static_analysis_dir / "analyze.sh").exists()
+
+        # Verify handlers exist
+        assert handlers_dir.exists()
+        assert (handlers_dir / "python.sh").exists()
+        assert (handlers_dir / "go.sh").exists()
+        assert (handlers_dir / "typescript.sh").exists()
+        assert (handlers_dir / "common.sh").exists()
+
+    def test_create_map_tools_makes_scripts_executable(self, tmp_path):
+        """Test that scripts are made executable."""
+        create_map_tools(tmp_path)
+
+        static_analysis_dir = tmp_path / ".map" / "static-analysis"
+        handlers_dir = static_analysis_dir / "handlers"
+
+        # Check main script is executable
+        analyze_script = static_analysis_dir / "analyze.sh"
+        assert analyze_script.stat().st_mode & 0o111  # Has execute bit
+
+        # Check handler scripts are executable
+        for script in handlers_dir.glob("*.sh"):
+            assert script.stat().st_mode & 0o111, f"{script.name} should be executable"
+
+    def test_create_map_tools_overwrites_existing(self, tmp_path):
+        """Test that existing static-analysis directory is replaced."""
+        # Create existing .map structure with a marker file
+        map_dir = tmp_path / ".map" / "static-analysis"
+        map_dir.mkdir(parents=True)
+        marker_file = map_dir / "old_marker.txt"
+        marker_file.write_text("old content")
+
+        # Run create_map_tools
+        create_map_tools(tmp_path)
+
+        # Marker file should be gone (directory was replaced)
+        assert not marker_file.exists()
+
+        # New scripts should exist
+        assert (tmp_path / ".map" / "static-analysis" / "analyze.sh").exists()
+
+    def test_create_map_tools_returns_script_count(self, tmp_path):
+        """Test that function returns correct count of scripts."""
+        count = create_map_tools(tmp_path)
+
+        # Count actual .sh files created
+        static_analysis_dir = tmp_path / ".map" / "static-analysis"
+        actual_count = len(list(static_analysis_dir.rglob("*.sh")))
+
+        assert count == actual_count
+        assert count >= 5  # analyze.sh + common.sh + python.sh + go.sh + typescript.sh
+
+    @mock.patch("mapify_cli.get_templates_dir")
+    def test_create_map_tools_no_templates(self, mock_get_templates, tmp_path):
+        """Test handling when templates directory doesn't have map subdirectory."""
+        # Mock empty templates directory
+        mock_templates = tmp_path / "empty_templates"
+        mock_templates.mkdir()
+        mock_get_templates.return_value = mock_templates
+
+        count = create_map_tools(tmp_path)
+
+        # Should return 0 when no map templates exist
+        assert count == 0
+
+    def test_create_map_tools_preserves_other_map_contents(self, tmp_path):
+        """Test that other files in .map are preserved."""
+        # Create .map with other content
+        map_dir = tmp_path / ".map"
+        map_dir.mkdir()
+        other_file = map_dir / "other_data.json"
+        other_file.write_text('{"key": "value"}')
+
+        # Run create_map_tools
+        create_map_tools(tmp_path)
+
+        # Other file should still exist
+        assert other_file.exists()
+        assert other_file.read_text() == '{"key": "value"}'
+
+        # New scripts should also exist
+        assert (map_dir / "static-analysis" / "analyze.sh").exists()

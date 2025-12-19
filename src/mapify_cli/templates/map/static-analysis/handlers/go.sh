@@ -3,6 +3,9 @@
 # Tools: go vet, gofmt, staticcheck (if available)
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/common.sh"
+
 FILES=""
 CONFIG="{}"
 
@@ -20,7 +23,6 @@ if [[ -z "$FILES" ]]; then
 fi
 
 TOOLS_RUN=()
-ALL_FINDINGS="[]"
 
 # Run go vet
 if command -v go &> /dev/null; then
@@ -28,14 +30,17 @@ if command -v go &> /dev/null; then
     VET_OUT=$(timeout 30 go vet "$FILES" 2>&1 || true)
 
     if [[ -n "$VET_OUT" ]]; then
-        VET_NORM=$(echo "$VET_OUT" | grep -E "^[^:]+:[0-9]+:" | while IFS=: read -r file line rest; do
-            message=$(echo "$rest" | sed 's/"/\\"/g' | xargs)
-            echo "{\"tool\":\"go vet\",\"file\":\"$file\",\"line\":$line,\"column\":0,\"severity\":\"error\",\"code\":\"vet\",\"message\":\"$message\",\"fixable\":false}"
+        VET_NORM=$(echo "$VET_OUT" | while IFS= read -r line; do
+            local file lineno col msg
+            if parse_colon_delimited "$line" file lineno col msg; then
+                msg="${msg# }"
+                msg=$(json_escape "$msg")
+                file=$(json_escape "$file")
+                echo "{\"tool\":\"go vet\",\"file\":\"$file\",\"line\":$lineno,\"column\":$col,\"severity\":\"error\",\"code\":\"vet\",\"message\":\"$msg\",\"fixable\":false}"
+            fi
         done | jq -s '.' 2>/dev/null || echo "[]")
 
-        if [[ -n "$VET_NORM" && "$VET_NORM" != "null" ]]; then
-            ALL_FINDINGS=$(echo "$ALL_FINDINGS $VET_NORM" | jq -s 'add // []')
-        fi
+        add_findings "$VET_NORM"
     fi
 fi
 
@@ -52,12 +57,11 @@ if command -v gofmt &> /dev/null; then
 
     if [[ -n "$FMT_OUT" ]]; then
         FMT_NORM=$(echo "$FMT_OUT" | while read -r file; do
+            file=$(json_escape "$file")
             echo "{\"tool\":\"gofmt\",\"file\":\"$file\",\"line\":1,\"column\":0,\"severity\":\"warning\",\"code\":\"format\",\"message\":\"File needs formatting\",\"fixable\":true}"
         done | jq -s '.' 2>/dev/null || echo "[]")
 
-        if [[ -n "$FMT_NORM" && "$FMT_NORM" != "null" ]]; then
-            ALL_FINDINGS=$(echo "$ALL_FINDINGS $FMT_NORM" | jq -s 'add // []')
-        fi
+        add_findings "$FMT_NORM"
     fi
 fi
 
@@ -80,40 +84,9 @@ if command -v staticcheck &> /dev/null; then
             fixable: false
         }]' 2>/dev/null || echo "[]")
 
-        if [[ -n "$SC_NORM" && "$SC_NORM" != "null" && "$SC_NORM" != "[]" ]]; then
-            ALL_FINDINGS=$(echo "$ALL_FINDINGS $SC_NORM" | jq -s 'add // []')
-        fi
+        add_findings "$SC_NORM"
     fi
 fi
 
-# Calculate summary
-ERROR_COUNT=$(echo "$ALL_FINDINGS" | jq '[.[] | select(.severity=="error")] | length')
-WARNING_COUNT=$(echo "$ALL_FINDINGS" | jq '[.[] | select(.severity=="warning")] | length')
-TOTAL_COUNT=$(echo "$ALL_FINDINGS" | jq 'length')
-
-# Convert tools array to JSON (handle empty array safely)
-if [[ ${#TOOLS_RUN[@]} -gt 0 ]]; then
-    TOOLS_JSON=$(printf '%s\n' "${TOOLS_RUN[@]}" | jq -R . | jq -s .)
-else
-    TOOLS_JSON="[]"
-fi
-
-# Output normalized JSON
-jq -n \
-    --argjson findings "$ALL_FINDINGS" \
-    --argjson errors "$ERROR_COUNT" \
-    --argjson warnings "$WARNING_COUNT" \
-    --argjson total "$TOTAL_COUNT" \
-    --argjson tools "$TOOLS_JSON" \
-    '{
-        success: true,
-        language: "go",
-        summary: {
-            total: $total,
-            errors: $errors,
-            warnings: $warnings,
-            pass: ($errors == 0)
-        },
-        findings: $findings,
-        tools_run: $tools
-    }'
+# Generate output using common function
+generate_output "go"
