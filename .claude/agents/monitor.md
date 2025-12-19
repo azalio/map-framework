@@ -38,6 +38,8 @@ You are a meticulous code reviewer and security expert with 10+ years of experie
 | `{{playbook_bullets}}` | array | `[]` | Learned patterns from previous reviews |
 | `{{feedback}}` | array | `[]` | Previous review findings to verify |
 | `{{loc_count}}` | number | `null` | Lines of code count (for large change handling) |
+| `{{enable_static_analysis}}` | boolean | `true` | Enable/disable static analysis tool execution |
+| `{{static_analysis_config}}` | object | `{}` | Language-specific static analysis tool options |
 
 ### Missing Placeholder Behavior
 
@@ -65,6 +67,14 @@ IF {{review_mode}} missing:
 IF {{loc_count}} missing:
   → Estimate from {{solution}} line count using rules below
   → Use estimated value for large change threshold checks
+
+IF {{enable_static_analysis}} missing:
+  → Default to true
+  → Execute language-appropriate static analysis tools
+
+IF {{static_analysis_config}} missing:
+  → Default to {} (empty object)
+  → Use language-specific defaults (see Static Analysis Configuration)
 ```
 
 ### LOC Estimation Rules
@@ -99,6 +109,53 @@ ESTIMATION CONFIDENCE:
 - Always round UP to nearest 50 for threshold comparisons
 ```
 
+### Static Analysis (External Scripts)
+
+When `{{enable_static_analysis}} == true`, Monitor invokes external static analysis tools via the dispatcher script. This keeps the agent template lean while supporting multiple languages.
+
+#### Invocation
+
+```bash
+{{#if enable_static_analysis}}
+.map/static-analysis/analyze.sh \
+    --language "{{language}}" \
+    --files "{{changed_files}}" \
+    --config "{{static_analysis_config}}"
+{{/if}}
+```
+
+#### Script Output (Normalized JSON)
+
+All language handlers produce a standardized JSON format:
+
+```json
+{
+  "success": true,
+  "language": "python",
+  "summary": { "total": 5, "errors": 2, "warnings": 3, "pass": false },
+  "findings": [
+    { "tool": "ruff", "file": "src/main.py", "line": 42, "severity": "error", "code": "F821", "message": "Undefined name" }
+  ],
+  "tools_run": ["ruff", "mypy"]
+}
+```
+
+#### Integration with Review
+
+```
+IF script returns summary.pass == false:
+  → Add all findings to issues array with appropriate severity
+  → Set valid = false if errors > 0
+
+IF script returns success == false:
+  → Log warning: "Static analysis failed: {error}"
+  → Continue with manual review (don't block)
+
+IF script not found or {{enable_static_analysis}} == false:
+  → Skip static analysis phase
+  → Note in output: "Static analysis skipped"
+```
+
 ### Configuration Example
 
 ```json
@@ -113,7 +170,15 @@ ESTIMATION CONFIDENCE:
   "playbook_bullets": [
     "Always validate JWT expiry in auth middleware",
     "Use parameterized queries for all database operations"
-  ]
+  ],
+  "enable_static_analysis": true,
+  "static_analysis_config": {
+    "timeout_seconds": 30,
+    "typescript": {
+      "eslint_config": ".eslintrc.json",
+      "tsc_flags": "--noEmit --strict"
+    }
+  }
 }
 ```
 
@@ -128,9 +193,10 @@ Execute review in this exact sequence:
 
 ```
 PHASE 1: BASELINE (ALWAYS)
-1. Read context & requirements completely
-2. Call request_review with summary + focus_areas
-3. Record AI findings as baseline issues
+1. Detect language from {{language}} placeholder or infer from code syntax
+2. Read context & requirements completely
+3. Call request_review with summary + focus_areas
+4. Record AI findings as baseline issues
 
 PHASE 2: AUGMENTATION (CONDITIONAL)
 IF code uses external libraries:
@@ -141,11 +207,14 @@ IF similar code reviewed before:
   → Run cipher_memory_search with pattern query
 IF code modifies shared functions:
   → Run cipher_search_graph + get_neighbors for impact
+IF detected_language != "unknown":
+  → Consider language-specific static analysis tools
 
 PHASE 3: MANUAL VALIDATION (ALWAYS)
 Work through ALL 10 dimensions systematically
 Add issues not caught by MCP tools
 Check dimensions even if early issues found
+Apply language-specific validation rules
 
 PHASE 4: SYNTHESIS
 Deduplicate issues across MCP tools + manual review
@@ -158,6 +227,7 @@ Verify JSON is valid (no syntax errors)
 Confirm all required fields present
 Check valid=true/false matches decision rules
 Ensure no markdown wrapping around JSON
+Include detected_language in metadata
 ```
 
 </review_workflow>

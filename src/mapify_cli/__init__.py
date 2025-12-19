@@ -1163,6 +1163,39 @@ def create_skill_files(project_path: Path) -> int:
     return count
 
 
+def create_map_tools(project_path: Path) -> int:
+    """Create .map/ directory with static analysis tools."""
+    import shutil
+
+    map_dir = project_path / ".map"
+    map_dir.mkdir(parents=True, exist_ok=True)
+
+    # Get templates directory
+    templates_dir = get_templates_dir()
+    map_template_dir = templates_dir / "map"
+
+    count = 0
+    if map_template_dir.exists():
+        # Copy static-analysis directory
+        static_analysis_src = map_template_dir / "static-analysis"
+        if static_analysis_src.exists():
+            static_analysis_dest = map_dir / "static-analysis"
+            if static_analysis_dest.exists():
+                try:
+                    shutil.rmtree(static_analysis_dest)
+                except (OSError, PermissionError) as e:
+                    # Log warning but continue - old scripts may be in use
+                    import sys
+                    print(f"Warning: Could not remove existing {static_analysis_dest}: {e}", file=sys.stderr)
+            shutil.copytree(static_analysis_src, static_analysis_dest, dirs_exist_ok=True)
+            # Make scripts executable
+            for script in static_analysis_dest.rglob("*.sh"):
+                script.chmod(script.stat().st_mode | 0o755)
+                count += 1
+
+    return count
+
+
 def configure_global_permissions() -> None:
     """Configure global Claude Code permissions for read-only commands"""
     claude_dir = Path.home() / ".claude"
@@ -1934,6 +1967,12 @@ def init(
     skill_count = create_skill_files(project_path)
     skill_word = "skill" if skill_count == 1 else "skills"
     tracker.complete("create-skills", f"{skill_count} {skill_word}")
+
+    tracker.add("create-map-tools", "Create MAP tools")
+    tracker.start("create-map-tools")
+    tool_count = create_map_tools(project_path)
+    tool_word = "script" if tool_count == 1 else "scripts"
+    tracker.complete("create-map-tools", f"{tool_count} {tool_word}")
 
     if selected_mcp_servers:
         # Create internal MCP config (for MAP Framework agent mappings)
