@@ -50,6 +50,16 @@ if [[ -z "$LANGUAGE" || "$LANGUAGE" == "auto" ]]; then
     fi
 fi
 
+# Validate language against whitelist to prevent path traversal
+case "$LANGUAGE" in
+    python|go|javascript|typescript|rust|unknown)
+        # allowed values
+        ;;
+    *)
+        LANGUAGE="unknown"
+        ;;
+esac
+
 # Check if handler exists
 HANDLER="${HANDLERS_DIR}/${LANGUAGE}.sh"
 if [[ ! -x "$HANDLER" ]]; then
