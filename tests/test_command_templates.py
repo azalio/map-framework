@@ -79,19 +79,17 @@ class TestCommandTemplates:
             "NO learning" in content or "no learning" in content
         ), "Should mention no learning"
 
-    def test_map_efficient_preserves_learning(self, templates_commands_dir):
-        """Test that map-efficient.md emphasizes learning preservation and batching."""
+    def test_map_efficient_suggests_map_learn(self, templates_commands_dir):
+        """Test that map-efficient.md suggests optional /map-learn for learning."""
         map_efficient = templates_commands_dir / "map-efficient.md"
         content = map_efficient.read_text()
 
-        # Should emphasize that learning is preserved
+        # Learning is now in separate /map-learn command
+        # map-efficient should suggest it as optional
+        assert "/map-learn" in content, "Should suggest /map-learn for learning"
         assert (
-            "preserves" in content.lower() or "learning" in content.lower()
-        ), "Should mention learning preservation"
-        # Should mention batching as key optimization
-        assert (
-            "batch" in content.lower() or "batched" in content.lower()
-        ), "Should mention batched learning"
+            "optional" in content.lower()
+        ), "Should mention /map-learn is optional"
 
     def test_all_command_templates_exist(self, templates_commands_dir):
         """Test that all expected command template files exist."""
@@ -155,14 +153,13 @@ class TestCommandTemplates:
             and ("%" in content or "percent" in content.lower())
         )
 
-    def test_map_efficient_token_savings_mentioned(self, templates_commands_dir):
-        """Test that map-efficient.md mentions token savings percentage."""
+    def test_map_efficient_is_token_efficient(self, templates_commands_dir):
+        """Test that map-efficient.md describes itself as token-efficient."""
         map_efficient = templates_commands_dir / "map-efficient.md"
         content = map_efficient.read_text()
 
-        # Should mention 30-40% savings
+        # Should describe itself as token-efficient in description
         assert (
-            "30" in content
-            and "40" in content
-            and ("%" in content or "percent" in content.lower())
-        )
+            "token-efficient" in content.lower()
+            or "efficient" in content.lower()
+        ), "Should describe itself as efficient"

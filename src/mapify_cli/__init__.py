@@ -1058,6 +1058,31 @@ Return valid=false if:
 """
 
 
+def create_reference_files(project_path: Path) -> int:
+    """Create MAP reference files in .claude/references/
+
+    Returns:
+        Number of reference files installed
+    """
+    references_dir = project_path / ".claude" / "references"
+    references_dir.mkdir(parents=True, exist_ok=True)
+
+    # Get templates directory
+    templates_dir = get_templates_dir()
+    references_template_dir = templates_dir / "references"
+
+    count = 0
+    if references_template_dir.exists():
+        import shutil
+
+        for ref_file in references_template_dir.glob("*.md"):
+            dest_file = references_dir / ref_file.name
+            shutil.copy2(ref_file, dest_file)
+            count += 1
+
+    return count
+
+
 def create_command_files(project_path: Path) -> None:
     """Create MAP slash commands in .claude/commands/"""
     commands_dir = project_path / ".claude" / "commands"
@@ -1967,6 +1992,12 @@ def init(
     skill_count = create_skill_files(project_path)
     skill_word = "skill" if skill_count == 1 else "skills"
     tracker.complete("create-skills", f"{skill_count} {skill_word}")
+
+    tracker.add("create-references", "Create reference files")
+    tracker.start("create-references")
+    ref_count = create_reference_files(project_path)
+    ref_word = "file" if ref_count == 1 else "files"
+    tracker.complete("create-references", f"{ref_count} {ref_word}")
 
     tracker.add("create-map-tools", "Create MAP tools")
     tracker.start("create-map-tools")
