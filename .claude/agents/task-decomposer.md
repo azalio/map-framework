@@ -97,7 +97,7 @@ IF MCP tool FAILS (timeout/unavailable):
   → Add "Decomposition lacks historical validation" to risks
 
 Note: Uncertainty adjustments modify the Risk factor in the formula,
-applied BEFORE the cap at 10. Example: Base(1)+Novelty(+1)+Deps(+1)+Scope(+2)+Risk(+1 uncertainty)=6
+applied BEFORE the cap at 10. Example: Base(1)+Novelty(+1)+Deps(+1)+Scope(+2)+Risk(+0→+1 uncertainty)=6
 ```
 
 For detailed MCP usage examples, see: `.claude/references/mcp-usage-examples.md`
@@ -169,7 +169,7 @@ Return **ONLY** valid JSON in this exact structure:
 **subtasks[].id**: Namespaced string ID (e.g., "ST-001", "ST-002") - prevents collision across blueprints
 **subtasks[].title**: Action-oriented, specific (e.g., "Add validateToken() to AuthService", NOT "update auth")
 **subtasks[].description**: Specific instruction: WHAT to do, WHERE (file/component), WHY (context)
-**subtasks[].dependencies**: Array of subtask IDs (strings) that must be completed first ([] if none)
+**subtasks[].dependencies**: Array of subtask IDs matching `subtasks[].id` format (e.g., ["ST-001", "ST-002"]) that must be completed first; use [] if none
 **subtasks[].risk_level**: Risk assessment - "low" | "medium" | "high"
   - high: Security-sensitive, breaking changes, multi-file modifications
   - medium: Moderate complexity, some dependencies
