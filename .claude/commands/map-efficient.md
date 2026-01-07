@@ -56,7 +56,7 @@ risk_level assignment:
 
 ## Step 2: Subtask Loop
 
-### 2.1 Get Context
+### 2.1 Get Context + Re-rank
 
 ```bash
 # Query playbook (project-specific patterns)
@@ -65,6 +65,23 @@ mapify playbook query "[subtask description]" --limit 5
 # Optional: cross-project patterns
 mcp__cipher__cipher_memory_search(query="[concept]", top_k=5)
 ```
+
+**Re-rank retrieved patterns** by relevance to current subtask:
+
+```
+FOR each pattern in retrieved_patterns:
+  relevance_score = evaluate:
+    - Domain match: Does pattern's domain match subtask? (+2)
+    - Technology overlap: Same language/framework? (+1)
+    - Recency: Created within 30 days? (+1)
+    - Success indicator: Marked validated/production? (+1)
+    - Complexity alignment: Similar complexity_score? (+1)
+
+  SORT patterns by relevance_score DESC
+  PASS top 3 patterns to Actor as "context_patterns"
+```
+
+Pass `context_patterns` with relevance scores to Actor for informed decision-making.
 
 ### 2.2 Research (Conditional)
 
@@ -185,7 +202,7 @@ Provide FULL file content for each change."
 )
 ```
 
-### 2.4 Monitor
+### 2.4 Monitor (with Contract Validation)
 
 ```
 Task(
@@ -193,11 +210,16 @@ Task(
   description="Validate implementation",
   prompt="Review:
 **Actor Output:** [actor output]
+**Validation Contracts:** [validation_criteria from task-decomposer]
 
 Check: correctness, security, standards, tests.
 Flag high_risk_detected if: security issues, breaking changes, >3 files.
 
-Output JSON: {valid, issues, verdict, feedback, high_risk_detected}"
+**Contract Validation**: Verify each validation_criterion as testable contract.
+
+Output JSON: {valid, issues, verdict, feedback, high_risk_detected,
+  contract_compliance: {total_contracts, passed, failed, details[]},
+  contract_compliant: boolean}"
 )
 ```
 

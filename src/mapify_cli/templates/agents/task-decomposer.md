@@ -83,6 +83,24 @@ You are a software architect who translates high-level feature goals into clear,
 
 **Skip MCP when**: complexity_score ≤ 2, trivial change, clear internal pattern exists
 
+### Re-rank Retrieved Patterns
+
+After cipher_memory_search, re-rank results by relevance to current decomposition:
+
+```
+FOR each pattern in results:
+  relevance_score = 0
+  IF pattern.feature_type matches goal_type: relevance_score += 2
+  IF pattern.language == {{language}}: relevance_score += 1
+  IF pattern.success_rate > 0.8: relevance_score += 2
+  IF pattern.subtask_count in [5..8]: relevance_score += 1  # optimal range
+  IF pattern.created_at > (now - 60_days): relevance_score += 1
+
+SORT by relevance_score DESC
+USE top 2 patterns as decomposition reference
+DOCUMENT: "Referenced patterns: [IDs] with relevance scores [X, Y]"
+```
+
 ### MCP Fallback Procedures
 
 ```
@@ -136,6 +154,13 @@ Return **ONLY** valid JSON in this exact structure:
           "Another specific, verifiable outcome",
           "Edge case handled: [specific case]"
         ],
+        "contracts": [
+          {
+            "type": "precondition|postcondition|invariant",
+            "assertion": "Executable assertion pattern (e.g., 'response.status == 401 WHEN token.expired')",
+            "scope": "function|endpoint|module"
+          }
+        ],
         "implementation_hint": "Optional: key approach for non-obvious tasks (e.g., 'Use existing RateLimiter middleware')",
         "test_strategy": {
           "unit": "Specific unit tests (function/method level)",
@@ -186,6 +211,12 @@ Return **ONLY** valid JSON in this exact structure:
   - REQUIRED: 2-4 specific, verifiable outcomes
   - Good: "Returns 401 for expired token", "Creates audit log entry with user_id"
   - Bad: "Works correctly", "Handles errors"
+**subtasks[].contracts**: Array of **executable assertion patterns** (optional but recommended for complexity_score ≥ 5)
+  - `type`: "precondition" | "postcondition" | "invariant"
+  - `assertion`: Executable pattern (e.g., "response.status == 401 WHEN token.expired")
+  - `scope`: "function" | "endpoint" | "module"
+  - Include when: security_critical OR complexity_score ≥ 5 OR API contracts
+  - Omit when: simple CRUD, internal helpers, complexity_score < 5
 **subtasks[].implementation_hint**: Optional guidance for non-obvious implementations
   - RECOMMENDED when: complexity_score >= 5 OR security_critical OR dependencies.length >= 2
   - OMIT when: standard pattern with obvious implementation
@@ -481,6 +512,41 @@ Include `implementation_hint` when ANY:
 
 Omit for standard patterns with obvious implementation.
 
+### contracts Decision
+
+Include `contracts` array when ANY:
+- `security_critical == true` (always document auth/crypto contracts)
+- `complexity_score >= 5` (help Monitor validate complex logic)
+- API endpoint with response contract (define status codes, body structure)
+- State machine or workflow (define invariants)
+
+**Contract Types**:
+| Type | When to Use | Example |
+|------|-------------|---------|
+| **precondition** | Input validation | `"user_id IS NOT NULL"` |
+| **postcondition** | Expected outcome | `"response.status == 201 AND user.created_at IS SET"` |
+| **invariant** | Always-true condition | `"balance >= 0 ALWAYS"` |
+
+**Contract Syntax** (lightweight pseudo-assertions):
+```
+# Basic comparison
+response.status == 401
+
+# Conditional
+response.status == 401 WHEN token.expired
+
+# Existence check
+audit_log.entry EXISTS WITH user_id == request.user_id
+
+# State transition
+user.state: PENDING -> ACTIVE AFTER email_verified
+
+# Invariant
+account.balance >= 0 ALWAYS
+```
+
+Omit for simple CRUD, internal helpers, obvious logic.
+
 </decision_matrices>
 
 <decomposition_phases>
@@ -583,6 +649,11 @@ For detailed examples and anti-patterns, see: `.claude/references/decomposition-
           "POST /projects/{id}/unarchive returns 200 + active project JSON",
           "Non-owner receives 403 Forbidden",
           "Invalid ID returns 404 Not Found"
+        ],
+        "contracts": [
+          {"type": "postcondition", "assertion": "response.status == 200 AND project.archived_at IS SET WHEN valid_owner", "scope": "endpoint"},
+          {"type": "postcondition", "assertion": "response.status == 403 WHEN NOT project.owner_id == request.user_id", "scope": "endpoint"},
+          {"type": "postcondition", "assertion": "response.status == 404 WHEN project NOT EXISTS", "scope": "endpoint"}
         ],
         "implementation_hint": "Use existing @require_project_owner decorator",
         "test_strategy": {
