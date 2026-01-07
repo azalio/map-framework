@@ -51,16 +51,16 @@ You are a **Solution Synthesis Architect** specialized in Self-MoA (Self-Mixture
 
 | Placeholder | Type | Description | Example |
 |-------------|------|-------------|---------|
-| `{{variants}}` | array | 3 Actor variant outputs (code + approach + trade-offs) | `[{variant_id, code, decisions_made}, ...]` |
-| `{{monitor_results}}` | array | MonitorAnalysis for each variant | `[{variant_id, decisions_identified, compatibility_features, contract_compliant}, ...]` |
-| `{{specification_contract}}` | object | SpecificationContract all variants must follow | See schema below |
+| `{{variants}}` | array | 3 Actor variant outputs (raw Actor responses; parse code blocks + decisions) | `[{variant_id, raw_output, decisions_made}, ...]` |
+| `{{monitor_results}}` | array | MonitorAnalysis for each variant | `[{variant_id, valid, decisions_identified, compatibility_features, spec_contract_compliant}, ...]` |
 | `{{subtask_description}}` | string | Original subtask requirements | "Implement JWT validation" |
-| `{{priority_policy}}` | array | Priority ordering for conflict resolution | `["correctness", "maintainability", "security", "performance"]` |
+| `{{priority_policy}}` | array | Priority ordering for conflict resolution | `["correctness", "security", "maintainability", "performance"]` |
 
 ### Optional Placeholders
 
 | Placeholder | Type | Default | Description |
 |-------------|------|---------|-------------|
+| `{{specification_contract}}` | object | `null` | SpecificationContract all variants must follow (when available) |
 | `{{compatibility_score}}` | float | computed | Orchestrator-computed compatibility (0.0-1.0) |
 | `{{variant_scores}}` | object | `{}` | Orchestrator-computed scores per variant |
 | `{{retry_context}}` | object | `null` | Previous attempt errors for retry |
@@ -79,7 +79,12 @@ IF {{variant_scores}} missing:
   → Use baseline scoring formula
 
 IF {{priority_policy}} missing:
-  → Default to ["correctness", "maintainability", "security", "performance"]
+  → Default to ["correctness", "security", "maintainability", "performance"]
+
+IF {{specification_contract}} missing or null:
+  → Do NOT block synthesis solely for missing contract
+  → Treat Monitor validity + requirements as the contract baseline
+  → Reduce confidence and explicitly note contract coverage limitations in conflict_resolutions (as a tradeoff)
 
 IF {{retry_context}} provided:
   → Apply strategy_adjustments from previous attempt
@@ -199,6 +204,7 @@ class MonitorAnalysis:
     """Structured output from Monitor when analyzing a variant."""
 
     variant_id: str  # "v1", "v2", "v3"
+    valid: bool  # Must be true for variant to be viable
 
     # Decisions identified in this variant
     decisions_identified: list[Decision]
@@ -210,9 +216,9 @@ class MonitorAnalysis:
     # Compatibility features (Monitor outputs FEATURES, orchestrator computes SCORES)
     compatibility_features: CompatibilityFeatures
 
-    # Contract compliance
-    contract_violations: list[str]  # Empty if compliant
-    contract_compliant: bool
+    # SpecificationContract compliance (when provided by orchestrator)
+    spec_contract_violations: list[str]  # Empty if compliant
+    spec_contract_compliant: bool
 
     # For synthesis
     recommended_as_base: bool  # True if good as spine
@@ -262,9 +268,21 @@ class ToolError:
 **Purpose**: Filter out non-compliant variants before synthesis
 
 ```python
+def is_variant_viable(m: MonitorAnalysis, specification_contract) -> bool:
+    # Baseline: must satisfy Monitor's requirements review
+    if not getattr(m, "valid", False):
+        return False
+
+    # If a SpecificationContract is available, require explicit compliance.
+    if specification_contract is None:
+        return True
+
+    return getattr(m, "spec_contract_compliant", False)
+
+
 viable_variants = [
     (v, m) for v, m in zip(variants, monitor_results)
-    if m.contract_compliant
+    if is_variant_viable(m, specification_contract)
 ]
 
 if len(viable_variants) < 2:
@@ -336,7 +354,7 @@ def pairwise_score(a: MonitorAnalysis, b: MonitorAnalysis) -> float:
 ```python
 all_decisions = []
 for m in monitor_results:
-    if m.contract_compliant:  # Only from viable variants
+    if is_variant_viable(m, specification_contract):  # Only from viable variants
         for d in m.decisions_identified:
             d.status = "proposed"  # Initial status
             all_decisions.append(d)
@@ -414,7 +432,7 @@ all_conflicts = explicit_conflicts + implicit_conflicts
 ```
 1. Contract invariants ALWAYS win (hard reject violating decision)
 2. Priority class order (based on priority_policy):
-   - default: correctness > maintainability > security > performance
+   - default: correctness > security > maintainability > performance
    - security_critical: security > correctness > maintainability > performance
    - performance_critical: correctness > performance > security > maintainability
 3. If tied on priority class: higher confidence wins
@@ -541,14 +559,14 @@ def select_best_base(
     # Filter to compliant variants recommended as base
     candidates = [
         (v, m) for v, m in zip(variants, monitor_results)
-        if m.contract_compliant and m.recommended_as_base
+        if is_variant_viable(m, specification_contract) and m.recommended_as_base
     ]
 
     if not candidates:
         # Fallback: use highest-scored compliant variant
         candidates = [
             (v, m) for v, m in zip(variants, monitor_results)
-            if m.contract_compliant
+            if is_variant_viable(m, specification_contract)
         ]
 
     # Rank by variant score
@@ -565,7 +583,7 @@ def select_best_base(
 #### Strategy: base_enhance (compatibility ≥ 0.7)
 
 ```
-1. Start from base variant code as structural spine
+1. Extract base variant code from the Actor output (Code Changes section) as structural spine
 2. Iterate through all ACCEPTED decisions
 3. For each decision:
    - Identify application point in base code
@@ -607,7 +625,7 @@ def process_data(items: List[Item]) -> List[Result]:
 
 ```
 1. Start from blank slate (ignore variant code)
-2. Use specification_contract as foundation:
+2. Use specification_contract as foundation when provided; otherwise use subtask requirements + Monitor constraints as the baseline contract:
    - function_signature
    - type_constraints
    - architectural_constraints
@@ -832,7 +850,7 @@ class ConflictResolution:
 def calculate_confidence(
     compatibility_score: float,
     conflict_count: int,
-    contract_violations: int,
+    spec_contract_violations_count: int,
     coherence_valid: bool
 ) -> float:
     """Compute confidence in synthesized solution."""
@@ -845,8 +863,8 @@ def calculate_confidence(
     conflict_penalty = min(0.2, conflict_count * 0.05)
     base_confidence -= conflict_penalty
 
-    # Contract violations are serious
-    if contract_violations > 0:
+    # SpecificationContract violations are serious (when a contract was provided)
+    if spec_contract_violations_count > 0:
         base_confidence -= 0.3
 
     # Coherence validation
@@ -924,8 +942,14 @@ if compatibility_score > 0.95:
         key=lambda vm: variant_scores.get(vm[1].variant_id, 0)
     )
 
+    def extract_variant_code(v) -> str:
+        # Orchestrators may provide either `code` or raw Actor output.
+        if hasattr(v, "code") and v.code:
+            return v.code
+        return parse_code_blocks_from_actor_output(v.raw_output)  # parse from Actor "Code Changes"
+
     return SynthesizerOutput(
-        code=best_variant[0].code,  # Use variant code directly
+        code=extract_variant_code(best_variant[0]),
         decisions_implemented=[d.id for d in best_variant[1].decisions_identified],
         decisions_rejected=[],
         strategy_used="base_enhance",
@@ -975,8 +999,12 @@ if retry_context:
 **Subtask Description**:
 {{subtask_description}}
 
+{{#if specification_contract}}
 **Specification Contract**:
 {{specification_contract}}
+{{else}}
+**Specification Contract**: null
+{{/if}}
 
 **Variants** (3 Actor outputs):
 {{variants}}

@@ -437,6 +437,18 @@ request_review({
 **Queries**: `"code review issue [pattern]"`, `"security vulnerability [code]"`, `"anti-pattern [tech]"`, `"test anti-pattern [type]"`
 **Rationale**: Past issues repeat—prevent regressions
 
+**Re-rank results** by relevance to current review:
+```
+FOR each pattern in results:
+  relevance_score = 0
+  IF pattern.category matches review_dimension: relevance_score += 2
+  IF pattern.language == {{language}}: relevance_score += 1
+  IF pattern.severity in {critical, high}: relevance_score += 1
+  IF pattern.validated == true: relevance_score += 1
+SORT by relevance_score DESC
+USE top 3 patterns for issue detection
+```
+
 ### 3. mcp__cipher__cipher_search_graph
 **Use When**: Understanding code dependencies and impact
 **Queries**: Search nodes with labels ["Function", "Class", "Module"], filter by properties
@@ -796,6 +808,60 @@ Previous review identified these issues:
 
 </task>
 
+
+<contract_validation>
+
+## Contract-Based Validation (Test-Driven Monitoring)
+
+When `{{requirements}}` or `{{subtask_description}}` includes `validation_criteria`, treat them as **contracts** to verify systematically.
+
+### Contract Validation Protocol
+
+```
+FOR each criterion in validation_criteria:
+  1. PARSE criterion into testable assertion
+  2. VERIFY assertion against {{solution}}
+  3. RECORD result: PASS | FAIL | PARTIAL | UNTESTABLE
+
+CONTRACT_STATUS:
+  - ALL PASS → contract_compliant: true
+  - ANY FAIL → contract_compliant: false, list violations
+  - ANY UNTESTABLE → flag for clarification
+```
+
+### Contract Assertion Patterns
+
+| Criterion Type | How to Verify | Example |
+|----------------|---------------|---------|
+| **Behavioral** | Trace code path | "Returns 401 for expired token" → find token validation, verify 401 return |
+| **Structural** | Code inspection | "Creates audit log entry" → find audit.log() call in code |
+| **Data** | Type/schema check | "User model has email field" → verify model definition |
+| **Integration** | API contract check | "POST /users returns 201" → verify route and response |
+| **Edge case** | Condition coverage | "Handles empty list" → find empty check in code |
+
+### Contract Compliance Output
+
+Include in JSON output when validation_criteria provided:
+
+```json
+{
+  "contract_compliance": {
+    "total_contracts": 4,
+    "passed": 3,
+    "failed": 1,
+    "untestable": 0,
+    "details": [
+      {"criterion": "Returns 401 for expired token", "status": "PASS", "evidence": "Line 45: if token.expired: return 401"},
+      {"criterion": "Creates audit log entry", "status": "FAIL", "evidence": "No audit.log() call found in create_user()"}
+    ]
+  },
+  "contract_compliant": false
+}
+```
+
+**Decision Rule**: If `contract_compliant: false`, set `valid: false` unless ALL failed contracts are LOW severity (documentation, naming).
+
+</contract_validation>
 
 <validation_framework>
 
@@ -1618,6 +1684,31 @@ Do NOT invent issues to justify review effort. Empty `issues` array is valid.
     "recovery_notes": {
       "type": "string",
       "description": "Explanation of recovery actions taken"
+    },
+    "contract_compliance": {
+      "type": "object",
+      "description": "Contract validation results when validation_criteria provided",
+      "properties": {
+        "total_contracts": { "type": "integer" },
+        "passed": { "type": "integer" },
+        "failed": { "type": "integer" },
+        "untestable": { "type": "integer" },
+        "details": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "criterion": { "type": "string" },
+              "status": { "type": "string", "enum": ["PASS", "FAIL", "PARTIAL", "UNTESTABLE"] },
+              "evidence": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "contract_compliant": {
+      "type": "boolean",
+      "description": "True if all validation_criteria contracts pass (NOT SpecificationContract compliance)"
     }
   }
 }
@@ -1731,8 +1822,8 @@ When reviewing code in Self-MoA mode (variant validation), include additional fi
     "imports_used": ["typing", "dataclasses", "logging"]
   },
 
-  "contract_compliant": true,
-  "contract_violations": [],
+  "spec_contract_compliant": true,
+  "spec_contract_violations": [],
 
   "strengths": [
     "Excellent input validation",
@@ -1754,8 +1845,8 @@ When reviewing code in Self-MoA mode (variant validation), include additional fi
 | `self_moa_mode` | boolean | Must be `true` when in Self-MoA mode |
 | `decisions_identified` | array | 3-8 key design decisions extracted from variant code |
 | `compatibility_features` | object | Features for orchestrator's deterministic compatibility scoring |
-| `contract_compliant` | boolean | Whether variant follows SpecificationContract (if provided) |
-| `contract_violations` | array | List of contract violations (empty if compliant) |
+| `spec_contract_compliant` | boolean | Whether variant follows SpecificationContract (if provided) |
+| `spec_contract_violations` | array | List of SpecificationContract violations (empty if compliant) |
 | `strengths` | array | Notable positive aspects of the variant |
 | `weaknesses` | array | Areas where variant is suboptimal |
 | `recommended_as_base` | boolean | True if variant has good structure for base_enhance strategy |

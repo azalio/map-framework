@@ -1,608 +1,377 @@
 ---
-description: Optimized workflow with batched learning (RECOMMENDED for token-conscious production work)
+description: Token-efficient MAP workflow with conditional optimizations
 ---
 
 # MAP Efficient Workflow
 
-**CRITICAL INSTRUCTION:** This is an **automated sequential workflow**. You MUST execute ALL steps from start to finish without stopping. After calling each subagent, IMMEDIATELY proceed to the next step in the workflow. DO NOT wait for user input between steps.
+## Execution Rules
 
-**🚨 ABSOLUTELY FORBIDDEN 🚨**
-
-You are **STRICTLY PROHIBITED** from:
-
-❌ **"Optimizing" the workflow by skipping agents** - Each agent MUST be called
-❌ **"Using general-purpose instead of specialized agents"** - USE the correct subagent_type
-❌ **"Combining steps to save time"** - Each agent MUST be called individually
-❌ **Any variation of "I'll optimize by..."** - NO ADDITIONAL OPTIMIZATION ALLOWED
-
-**YOU MUST:**
-✅ Call task-decomposer FIRST (not general-purpose)
-✅ Call actor for EACH subtask (not general-purpose)
-✅ Call monitor after EACH actor (not general-purpose)
-✅ Verify each agent used required MCP tools (check output)
-
----
-
-**✅ RECOMMENDED: Best Balance of Speed and Quality**
-
-This workflow provides **intelligent token optimization (30-40% savings)** while **preserving MAP's core value**:
-
-✅ **Impact Analysis** (Predictor) → Conditional on risk level
-✅ **Basic Validation** (Monitor) → Always enforced
-✅ **Learning** → OPTIONAL via `/map-learn` command after workflow
-
-**Token Savings vs Full Workflow:**
-- Skip Evaluator per subtask: ~8-12% savings
-- Conditional Predictor: ~5-10% savings
-- Optional learning (not automatic): ~15-20% savings
-- **Total: 40-50% token reduction**
-
-**When to use /map-efficient:**
-- Production code where token costs matter
-- Well-understood tasks with low risk
-- Iterative development with frequent workflows
-- Any task where /map-fast feels too risky but /map-feature too expensive
-
-**When to use /map-feature instead:**
-- First time implementing critical functionality
-- High-risk changes (security, authentication, data handling)
-- Complex refactoring across many files
-- When maximum quality assurance is required
-
----
-
-## Self-MoA Configuration (Optional)
-
-**Self-MoA** (Self-Mixture of Agents) generates 3 implementation variants and **synthesizes** the best parts into an optimal combined solution.
-
-**Activation:**
-- **Explicit:** User includes `--self-moa` flag: `/map-efficient --self-moa "task"`
-- **Auto:** TaskDecomposer marks subtask as `complexity: high` OR `security_critical: true`
-
-**Token Cost:**
-- ~4x standard per subtask (3 Actors + 3 Monitors + Synthesizer + Final Monitor)
-- Use only for critical subtasks where quality improvement justifies cost
-
-**When to use Self-MoA:**
-- Security-critical implementations (authentication, authorization, data validation)
-- Complex algorithms where multiple approaches could work
-- Tasks where you want the best of security, performance, AND simplicity
-
-**When NOT to use Self-MoA:**
-- Simple CRUD operations
-- Configuration changes
-- Documentation updates
-- When token budget is constrained
-
----
-
-Implement the following with efficient workflow:
+1. Execute steps in order without pausing; only ask user if (a) `task-decomposer` returns blocking `analysis.open_questions` with no subtasks OR (b) Monitor sets `escalation_required === true` (sub-steps explicitly marked "parallel" may run concurrently)
+2. Use exact `subagent_type` specified — never substitute `general-purpose`
+3. Call each agent individually — no combining or skipping steps
+4. Max 5 retry iterations per subtask
 
 **Task:** $ARGUMENTS
 
 ## Workflow Overview
 
-Optimized agent sequence (no automatic learning):
-
 ```
 1. DECOMPOSE → task-decomposer
 2. FOR each subtask:
-   2.1. PLAYBOOK → get context
-   2.1a. ELIGIBILITY → check Self-MoA activation
-   2.2. RESEARCH (optional) → research-agent if existing code understanding needed
-
-   ┌─── IF Self-MoA ENABLED ───────────────────────────────┐
-   │ 2.3a. PARALLEL ACTORS → 3 variants (security, perf, simplicity)
-   │ 2.3b. PARALLEL MONITORS → validate each variant
-   │ 2.3c. SYNTHESIZER → combine best parts
-   │ 2.3d. FINAL MONITOR → validate synthesized code
-   └───────────────────────────────────────────────────────┘
-   ┌─── ELSE (Standard Path) ─────────────────────────────┐
-   │ 2.3. IMPLEMENT → actor
-   │ 2.4. VALIDATE → monitor
-   └───────────────────────────────────────────────────────┘
-
-   2.5. If invalid: provide feedback, retry (max 3-5 iterations)
-   2.6. If high_risk: ANALYZE → predictor
-   2.7. ACCEPT and apply changes
-3. DONE → Suggest /map-learn if user wants to preserve lessons
+   a. CONTEXT → playbook query (Actor will run `cipher_memory_search` per protocol; orchestrator MAY run extra cipher search to augment context)
+   b. RESEARCH → if existing code understanding needed
+   c. IF Self-MoA (--self-moa OR risk_level:high OR complexity_score>=7 OR security_critical:true):
+      → 3 Actors (security/performance/simplicity)
+      → 3 Monitors → Synthesizer → Final Monitor
+   ELSE:
+      → Actor → Monitor
+   d. If invalid: retry with feedback (max 5)
+   e. If risk_level ∈ {high, medium} OR escalation_required === true: → Predictor
+   f. Apply changes
+3. SUMMARY → optionally suggest /map-learn
 ```
 
-**Key Optimizations:**
-- **Evaluator skipped** → Monitor provides sufficient validation for most tasks
-- **Predictor conditional** → Only called when Monitor flags high risk
-- **Learning optional** → User runs `/map-learn` separately if desired
-
-## Step 1: Load Playbook Context
-
-Use `mapify playbook query` or `mapify playbook search` to get relevant patterns from the playbook SQLite database.
-
-## Step 1.1: Task Decomposition
-
-Call the task-decomposer subagent (NOT general-purpose):
+## Step 1: Task Decomposition
 
 ```
 Task(
   subagent_type="task-decomposer",
   description="Decompose task into subtasks",
-  prompt="Break down this task into atomic subtasks (≤8):
+  prompt="Break down into ≤8 atomic subtasks and RETURN ONLY JSON matching task-decomposer schema v2.0 (schema_version, analysis, blueprint{subtasks[]}).
 
 Task: $ARGUMENTS
 
-Output JSON with:
-- subtasks: array of {id, description, acceptance_criteria, estimated_complexity, risk_level, depends_on}
-- total_subtasks: number
-- estimated_duration: string
-
-**IMPORTANT**: Assign risk_level ('low'|'medium'|'high') to each subtask based on:
-- 'high': Security-sensitive, breaking changes, multi-file modifications
-- 'medium': Moderate complexity, some dependencies
-- 'low': Simple, isolated changes
-
-Risk level determines if Predictor is called (high/medium = yes, low = no)."
+Hard requirements:
+- Use `blueprint.subtasks[].validation_criteria` (2-4 testable, verifiable outcomes)
+- Use `blueprint.subtasks[].dependencies` (array of subtask IDs) and order subtasks by dependency
+- Include `blueprint.subtasks[].complexity_score` (1-10) and `risk_level` (low|medium|high)
+- Include `blueprint.subtasks[].security_critical` (true for auth/crypto/validation/data access)
+- Include `blueprint.subtasks[].test_strategy` with unit/integration/e2e keys"
 )
 ```
 
-## Step 2: For Each Subtask - Efficient Loop
+## Step 2: Subtask Loop
 
-### Step 2.1: Get Relevant Playbook Context
+### 2.0 Build AI-Friendly Subtask Packet (XML Anchors)
 
-**Step A: Query Local Playbook**:
+Before calling any agents for the subtask, build a single **AI Packet** with unique XML-like tags (NO attributes).
+
+**Rule:** Use the subtask ID as the anchor name. Convert `-` to `_` for XML tag safety:
+- `ST-001` → `ST_001`
+
+**AI Packet template:**
+
+```xml
+<SUBTASK_ST_001>
+  <SUBTASK_ST_001__ID>ST-001</SUBTASK_ST_001__ID>
+  <SUBTASK_ST_001__TITLE>...</SUBTASK_ST_001__TITLE>
+  <SUBTASK_ST_001__DESCRIPTION>...</SUBTASK_ST_001__DESCRIPTION>
+  <SUBTASK_ST_001__RISK_LEVEL>low|medium|high</SUBTASK_ST_001__RISK_LEVEL>
+  <SUBTASK_ST_001__SECURITY_CRITICAL>true|false</SUBTASK_ST_001__SECURITY_CRITICAL>
+  <SUBTASK_ST_001__COMPLEXITY_SCORE>1-10</SUBTASK_ST_001__COMPLEXITY_SCORE>
+
+  <SUBTASK_ST_001__AFFECTED_FILES>path1;path2;...</SUBTASK_ST_001__AFFECTED_FILES>
+  <SUBTASK_ST_001__VALIDATION_CRITERIA>...</SUBTASK_ST_001__VALIDATION_CRITERIA>
+  <SUBTASK_ST_001__CONTRACTS>...</SUBTASK_ST_001__CONTRACTS>
+  <SUBTASK_ST_001__TEST_STRATEGY>...</SUBTASK_ST_001__TEST_STRATEGY>
+
+  <SUBTASK_ST_001__CONTEXT_PATTERNS>...</SUBTASK_ST_001__CONTEXT_PATTERNS>
+  <SUBTASK_ST_001__RESEARCH_SUMMARY>...</SUBTASK_ST_001__RESEARCH_SUMMARY>
+</SUBTASK_ST_001>
+```
+
+Pass this packet verbatim to Actor/Monitor/Predictor/Synthesizer. Do NOT rename tags mid-flow.
+
+### 2.1 Get Context + Re-rank
 
 ```bash
-# Query playbook using FTS5 (project-specific patterns)
-PLAYBOOK_BULLETS=$(mapify playbook query "[subtask description]" --limit 5)
+# Query playbook (project-specific patterns)
+mapify playbook query "[subtask description]" --limit 5
+
+# Optional: cross-project patterns (Actor still runs its own `cipher_memory_search` per Actor protocol)
+mcp__cipher__cipher_memory_search(query="[concept]", top_k=5)
 ```
 
-**Step B: Search Cipher** (optional but recommended):
+**Re-rank retrieved patterns** by relevance to current subtask:
 
 ```
-# Get cross-project patterns via MCP tool
-mcp__cipher__cipher_memory_search(
-  query="[subtask concept]",
-  top_k=5
-)
+FOR each pattern in retrieved_patterns:
+  relevance_score = evaluate:
+    - Domain match: Does pattern's domain match subtask? (+2)
+    - Technology overlap: Same language/framework? (+1)
+    - Recency: Created within 30 days? (+1)
+    - Success indicator: Marked validated/production? (+1)
+    - Complexity alignment: Similar complexity_score? (+1)
+
+  SORT patterns by relevance_score DESC
+  PASS top 3 patterns to Actor as "context_patterns"
 ```
 
-**Benefits over grep/read:**
-- Works with large playbooks (>256KB)
-- FTS5 full-text search with relevance ranking
-- Quality-scored results
-- Cipher adds cross-project validated patterns
+Pass `context_patterns` with relevance scores to Actor for informed decision-making.
 
-### Step 2.2: Research Phase (Context Isolation)
+### 2.2 Research (Conditional)
 
-IF subtask requires understanding existing code patterns:
-- Refactoring or extending existing code
-- Bug fixes requiring code comprehension
-- Adapting patterns from other modules
-- Any task touching 3+ files
-
-**Skip research for:** new standalone features, documentation, configuration updates
-
-**Call research-agent:**
+**Call if:** refactoring, bug fixes, extending existing code, touching 3+ files
+**Skip for:** new standalone features, docs, config
 
 ```
 Task(
   subagent_type="research-agent",
   description="Research for subtask [ID]",
-  prompt="Query: [subtask description]\nFile patterns: [relevant globs from task-decomposer]\nSymbols: [keywords from subtask]\nIntent: locate\nMax tokens: 1500"
+  prompt="Query: [subtask description]
+File patterns: [relevant globs]
+Symbols: [optional keywords]
+Intent: locate
+Max tokens: 1500"
 )
 ```
 
-**Handle results:**
+Pass `executive_summary` to Actor if `confidence >= 0.7`.
 
-IF research.confidence >= 0.7:
-  → Pass research.executive_summary to Actor
-  → Pass research.relevant_locations to Actor
-  → Actor can Read() full code by path:lines if needed
-
-IF research.confidence < 0.7:
-  → Consider broadening search
-  → Or proceed with warning to Actor
-
-IF research.status == "DEGRADED_MODE":
-  → Note in Actor prompt that search was limited
-  → Actor should verify findings more carefully
-
-**Then proceed to step 2.1a (Self-MoA Check) or 2.3 (Actor)**
-
-### Step 2.1a: Self-MoA Eligibility Check
-
-**Check if Self-MoA should be activated:**
+### 2.3 Self-MoA Check
 
 ```python
 self_moa_enabled = (
     "--self-moa" in user_command OR
-    subtask.complexity == "high" OR
-    subtask.security_critical == True
+    subtask.risk_level == "high" OR
+    subtask.security_critical == true OR
+    subtask.complexity_score >= 7
 )
 ```
 
-**If Self-MoA enabled:** Execute Steps 2.3a-2.3d (Self-MoA Path)
-**If Self-MoA disabled:** Execute Steps 2.3-2.4 (Standard Path)
+**If Self-MoA enabled:** Execute Self-MoA Path
+**Else:** Execute Standard Path
 
 ---
 
-## Self-MoA Path (Steps 2.3a-2.3d)
+## Self-MoA Path
 
-### Step 2.3a: Parallel Actor Generation
+### 2.3a Parallel Actors
 
-Call Actor 3 times with different optimization focuses:
+Call 3 Actors in parallel with different focuses:
 
 ```
-# Actor Variant 1: Security Focus
+# Variant 1: Security Focus
 Task(
   subagent_type="actor",
-  description="Implement subtask [ID] - Security Focus (v1)",
-  prompt="Implement this subtask with SECURITY focus:
-
-**Subtask:** [description]
-**Acceptance Criteria:** [criteria]
-**approach_focus:** security
-**self_moa_mode:** true
-**variant_id:** v1
-
-Focus on:
-- Input validation and sanitization
-- OWASP compliance
-- Defensive coding patterns
-- Parameterized queries
-
-Output JSON with:
-- approach, code_changes, trade_offs, testing_approach, used_bullets
-- **decisions_made:** array of {category, statement, rationale, priority_class}"
+  description="Implement subtask [ID] - Security (v1)",
+  prompt="Implement with SECURITY focus:
+**AI Packet (XML):** [paste <SUBTASK_ST_XXX>...</SUBTASK_ST_XXX>]
+**Playbook Context:** [top context_patterns + relevance_score]
+approach_focus: security, variant_id: v1, self_moa_mode: true
+Follow the Actor agent protocol output format. Ensure `decisions_made` is included for Synthesizer."
 )
 
-# Actor Variant 2: Performance Focus
+# Variant 2: Performance Focus
 Task(
   subagent_type="actor",
-  description="Implement subtask [ID] - Performance Focus (v2)",
-  prompt="... approach_focus: performance, variant_id: v2
-Focus on: Algorithm efficiency, caching, async patterns, minimal allocations"
+  description="Implement subtask [ID] - Performance (v2)",
+  prompt="Implement with PERFORMANCE focus:
+**AI Packet (XML):** [paste <SUBTASK_ST_XXX>...</SUBTASK_ST_XXX>]
+**Playbook Context:** [top context_patterns + relevance_score]
+approach_focus: performance, variant_id: v2, self_moa_mode: true
+Follow the Actor agent protocol output format. Ensure `decisions_made` is included for Synthesizer."
 )
 
-# Actor Variant 3: Simplicity Focus
+# Variant 3: Simplicity Focus
 Task(
   subagent_type="actor",
-  description="Implement subtask [ID] - Simplicity Focus (v3)",
-  prompt="... approach_focus: simplicity, variant_id: v3
-Focus on: Readability, standard patterns, clear structure, explicit over clever"
+  description="Implement subtask [ID] - Simplicity (v3)",
+  prompt="Implement with SIMPLICITY focus:
+**AI Packet (XML):** [paste <SUBTASK_ST_XXX>...</SUBTASK_ST_XXX>]
+**Playbook Context:** [top context_patterns + relevance_score]
+approach_focus: simplicity, variant_id: v3, self_moa_mode: true
+Follow the Actor agent protocol output format. Ensure `decisions_made` is included for Synthesizer."
 )
 ```
 
-**Execute all 3 Actor calls in parallel** to minimize latency.
+### 2.3b Parallel Monitors
 
-### Step 2.3b: Parallel Monitor Validation
-
-Validate each variant independently:
+Validate each variant:
 
 ```
-# Monitor for Variant 1
 Task(
   subagent_type="monitor",
-  description="Validate v1 (security focus)",
-  prompt="Review variant v1:
-**Actor Output:** [v1 output]
-**variant_id:** v1
-**self_moa_mode:** true
+  description="Validate v1",
+  prompt="Review variant v1 against requirements:
+**AI Packet (XML):** [paste <SUBTASK_ST_XXX>...</SUBTASK_ST_XXX>]
+**Proposed Solution:** [paste v1 Actor output]
+**Specification Contract (optional):** [SpecificationContract JSON or null]
+variant_id: v1, self_moa_mode: true
 
-Output JSON with:
-- valid, issues, verdict, feedback
-- **decisions_identified:** array of Decision objects
-- **compatibility_features:** {error_paradigm, concurrency_model, state_management, type_strictness, naming_convention, imports_used}
-- **contract_compliant:** boolean
-- **strengths:** array, **weaknesses:** array
-- **recommended_as_base:** boolean"
-)
-
-# Monitor for Variant 2 and 3 (parallel)
-Task(subagent_type="monitor", ... variant_id: v2)
-Task(subagent_type="monitor", ... variant_id: v3)
-```
-
-**Execute all 3 Monitor calls in parallel.**
-
-### Step 2.3c: Synthesizer - Combine Best Parts
-
-**Compute compatibility score** (orchestrator deterministic calculation):
-
-```python
-# Use Monitor's compatibility_features for pairwise scoring
-WEIGHTS = {
-    "error_paradigm": 2.0,      # CRITICAL
-    "concurrency_model": 2.0,   # CRITICAL
-    "state_management": 1.5,
-    "type_strictness": 1.0,
-    "naming_convention": 0.5,
-}
-
-def pairwise_score(m1, m2):
-    total = 0
-    for dim, weight in WEIGHTS.items():
-        if m1.compatibility_features[dim] == m2.compatibility_features[dim]:
-            total += weight
-    return total / sum(WEIGHTS.values())
-
-compatibility_score = min(
-    pairwise_score(m1, m2),
-    pairwise_score(m1, m3),
-    pairwise_score(m2, m3)
+Return ONLY valid JSON following MonitorReviewOutput schema.
+When in Self-MoA mode, include extension fields: variant_id, self_moa_mode, decisions_identified, compatibility_features, strengths, weaknesses, recommended_as_base.
+If `validation_criteria` present: include `contract_compliance` + `contract_compliant`.
+If a SpecificationContract is provided: include `spec_contract_compliant` + `spec_contract_violations`."
 )
 ```
 
-**Call Synthesizer:**
+### 2.3c Synthesizer
 
 ```
 Task(
   subagent_type="synthesizer",
   description="Synthesize best implementation",
-  prompt="Synthesize the best parts from 3 variants:
+  prompt="Combine best parts from v1, v2, v3:
 
-**Variants:**
-- v1: [Actor v1 output]
-- v2: [Actor v2 output]
-- v3: [Actor v3 output]
+**AI Packet (XML):** [paste <SUBTASK_ST_XXX>...</SUBTASK_ST_XXX>]
+**Variants (raw Actor outputs):**
+<ACTOR_V1_ST_XXX>
+[paste v1 Actor output]
+</ACTOR_V1_ST_XXX>
+<ACTOR_V2_ST_XXX>
+[paste v2 Actor output]
+</ACTOR_V2_ST_XXX>
+<ACTOR_V3_ST_XXX>
+[paste v3 Actor output]
+</ACTOR_V3_ST_XXX>
+**Monitor Results (MonitorReviewOutput JSON):**
+<MONITOR_V1_ST_XXX>
+[paste v1 Monitor output JSON]
+</MONITOR_V1_ST_XXX>
+<MONITOR_V2_ST_XXX>
+[paste v2 Monitor output JSON]
+</MONITOR_V2_ST_XXX>
+<MONITOR_V3_ST_XXX>
+[paste v3 Monitor output JSON]
+</MONITOR_V3_ST_XXX>
+**Specification Contract (optional):** [SpecificationContract JSON or null]
+**Priority Policy:** [\"correctness\", \"security\", \"maintainability\", \"performance\"]
 
-**Monitor Results:**
-- m1: [Monitor v1 output with decisions_identified, compatibility_features]
-- m2: [Monitor v2 output]
-- m3: [Monitor v3 output]
-
-**Compatibility Score:** [computed score]
-**Priority Policy:** [correctness, maintainability, security, performance]
-
-Extract decisions, resolve conflicts, generate unified code.
-
-Output JSON with:
-- code: complete synthesized implementation
-- decisions_implemented: array of decision IDs
-- decisions_rejected: array of [ID, reason]
-- strategy_used: 'base_enhance' | 'fresh_generation'
-- conflict_resolutions: array
-- confidence: float"
+Return ONLY valid JSON following SynthesizerOutput schema."
 )
 ```
 
-### Step 2.3d: Validate Synthesized Solution
+### 2.3d Final Monitor
 
-**Call Monitor to validate final code:**
-
-```
-Task(
-  subagent_type="monitor",
-  description="Validate synthesized implementation",
-  prompt="Review synthesized implementation:
-
-**Synthesizer Output:** [synthesizer output]
-**variant_id:** synthesized
-
-Check for:
-- All decisions properly implemented
-- No conflicting patterns introduced
-- Code coherence and consistency
-- Contract compliance
-
-Output standard Monitor JSON (valid, issues, verdict, feedback)"
-)
-```
-
-**If monitor.valid === false:**
-- Provide feedback to Synthesizer
-- Retry synthesis (max 2 iterations)
-
-**If monitor.valid === true:**
-- Continue to Step 2.6 (Predictor if high_risk) or Step 2.7 (Apply)
+Validate synthesized code. If invalid: retry synthesis (max 2 iterations).
 
 ---
 
-## Standard Path (Steps 2.3-2.4)
+## Standard Path
 
-### Step 2.3: Call Actor to Implement
-
-**⚠️ MUST use subagent_type="actor"** (NOT general-purpose):
+### 2.3 Actor
 
 ```
 Task(
   subagent_type="actor",
   description="Implement subtask [ID]",
-  prompt="Implement this subtask:
+  prompt="Implement:
+**AI Packet (XML):** [paste <SUBTASK_ST_XXX>...</SUBTASK_ST_XXX>]
+**Risk Level:** [risk_level]
+**Playbook Context:** [top context_patterns + relevance_score]
 
-**Subtask:** [description]
-**Acceptance Criteria:** [criteria]
-**Risk Level:** [risk_level from TaskDecomposer]
-
-**Relevant Playbook Context:**
-[Include 3-5 relevant bullets from playbook]
-
-Output JSON with:
-- approach: string (implementation strategy)
-- code_changes: array of {file_path, change_type, content, rationale}
-- trade_offs: array of strings
-- testing_approach: string
-- used_bullets: array of bullet IDs that were helpful
-
-Provide FULL file content for each change, not diffs."
+Follow the Actor agent protocol output format."
 )
 ```
 
-### Step 2.4: Call Monitor to Validate
-
-**⚠️ MUST use subagent_type="monitor"** (NOT general-purpose):
+### 2.4 Monitor (with Contract Validation)
 
 ```
 Task(
   subagent_type="monitor",
   description="Validate implementation",
-  prompt="Review this implementation:
+  prompt="Review against requirements:
+**AI Packet (XML):** [paste <SUBTASK_ST_XXX>...</SUBTASK_ST_XXX>]
+**Proposed Solution:** [paste Actor output]
+**Specification Contract (optional):** [SpecificationContract JSON or null]
 
-**Actor Output:** [paste actor JSON]
+Check: correctness, security, standards, tests.
+If human review is required, set `escalation_required` + `escalation_reason` (per Monitor escalation protocol).
 
-Check for:
-- Code correctness
-- Security issues
-- Basic performance concerns
-- Test coverage
-- Standards compliance
+**Contract Validation**: Verify each validation_criterion as testable contract.
 
-**RISK ASSESSMENT**: Flag if:
-- Security vulnerabilities detected
-- Breaking API changes likely
-- Multiple files modified (>3)
-- Complex dependencies involved
-
-Output JSON with:
-- valid: boolean
-- issues: array of {severity, category, description, file_path, line_range}
-- verdict: 'approved' | 'needs_revision' | 'rejected'
-- feedback: string (actionable guidance)
-- **high_risk_detected**: boolean (if true, Predictor will be called)"
+Return ONLY valid JSON following MonitorReviewOutput schema.
+If validation_criteria present, include contract_compliance + contract_compliant fields."
 )
 ```
 
-### Step 2.5: Decision Point
+### 2.5 Retry Loop
 
-**If monitor.valid === false:**
-- Provide feedback to actor
-- Go back to step 2.3 (max 3-5 iterations)
+If `valid === false`: provide feedback, retry Actor (max 5 iterations).
 
-**If monitor.valid === true:**
-- Continue to step 2.6
+### 2.5b Escalation Gate (AskUserQuestion)
 
-### Step 2.6: Conditional Predictor (Token Optimization)
+If Monitor returns `escalation_required === true`, you MUST ask user for confirmation before proceeding (Predictor and/or Apply).
 
-**Only call Predictor if:**
-- `monitor.high_risk_detected === true`, OR
-- `subtask.risk_level === 'high'` or `'medium'`
+```
+AskUserQuestion(
+  questions: [
+    {
+      header: "Escalation Required",
+      question: "⚠️ Human review requested by Monitor.\n\nSubtask: [ST-XXX]\nReason: [escalation_reason]\n\nProceed anyway?",
+      multiSelect: false,
+      options: [
+        { label: "YES - Proceed Anyway", description: "Continue (run Predictor if required, then apply changes)." },
+        { label: "REVIEW - Show Details", description: "Show Actor output + Monitor JSON + affected files, then ask again." },
+        { label: "NO - Abort Subtask", description: "Do not apply changes; wait for human review." }
+      ]
+    }
+  ]
+)
+```
 
-**Skip Predictor if:**
-- `subtask.risk_level === 'low'` AND
-- `monitor.high_risk_detected === false`
+### 2.6 Conditional Predictor
 
-**⚠️ MUST use subagent_type="predictor"** (NOT general-purpose):
+**Call if:** `risk_level ∈ {high, medium}` OR `escalation_required === true`
 
 ```
 Task(
   subagent_type="predictor",
-  description="Analyze implementation impact",
-  prompt="Analyze the impact of this implementation:
+  description="Analyze impact",
+  prompt="Analyze impact using Predictor input schema.
 
-**Actor Output:** [paste actor JSON]
-**Monitor Verdict:** approved
-**Risk Trigger:** [why Predictor was called: subtask.risk_level or monitor flag]
+**AI Packet (XML):** [paste <SUBTASK_ST_XXX>...</SUBTASK_ST_XXX>]
 
-Analyze:
-- Affected files and modules
-- Breaking changes (API, schema, behavior)
-- Dependencies that need updates
-- Migration requirements
-- Rollback strategy
+Required inputs:
+- change_description: [1-3 sentence summary of what the Actor change does]
+- files_changed: [list of paths inferred from Actor output OR actual modified files]
+- diff_content: [unified diff; if not available pre-apply, provide best-effort diff derived from proposed changes, and cap confidence]
 
-Output JSON with:
-- affected_files: array of {path, change_type, impact_level}
-- breaking_changes: array of {type, description, mitigation}
-- required_updates: array of strings
-- risk_level: 'low' | 'medium' | 'high'
-- rollback_plan: string"
+Optional inputs:
+- analyzer_output: [Actor output]
+- user_context: [subtask requirements + risk trigger]
+
+Return ONLY valid JSON following Predictor schema."
 )
 ```
 
-**Token Savings Note:** Skipping Predictor for low-risk tasks saves ~2-3K tokens per subtask.
+### 2.7 Apply Changes
 
-### Step 2.7: Apply Changes
+Apply via Write/Edit tools. Proceed to next subtask.
 
-- Apply code changes using Write/Edit tools
-- Mark subtask completed
+### 2.8 Gate 2: Tests Available / Run
 
-### Step 2.8: Move to Next Subtask
+After applying changes for a subtask, run tests if available (do NOT install dependencies during this gate).
 
-Repeat steps 2.1-2.7 for each remaining subtask.
+**Prefer** the commands implied by `<SUBTASK_...__TEST_STRATEGY>`. Otherwise:
+- If `pytest` project: run `pytest` (or targeted tests if known)
+- If `package.json` present: run `npm test` / `pnpm test` / `yarn test` (whichever is used in repo)
+- If `go.mod` present: run `go test ./...`
+- If `Cargo.toml` present: run `cargo test`
 
-## Step 3: Final Summary
+If no tests found: mark gate as skipped and proceed.
 
-Run tests (if applicable), create commit, and summarize:
-- Features implemented
-- Files changed
-- Overall quality
-- **Token efficiency:**
-  - Predictor calls: [count] / [total_subtasks] subtasks ([X]% saved)
-  - Learning skipped: ~15-20% additional savings
-  - Estimated token savings: ~40-50% vs /map-feature
+### 2.9 Gate 3: Formatter / Linter
 
----
+After tests gate, run formatter/linter checks if available (do NOT install dependencies during this gate).
 
-## 💡 Optional: Preserve Lessons Learned
+Prefer repo-standard commands first (e.g., `make lint`, `make fmt`, `make check`). Otherwise:
+- Python: `ruff check`, `black --check`, `mypy` (if configured)
+- JS/TS: `eslint`, `prettier -c` (if configured)
+- Go: `gofmt` check + `golangci-lint run` (if configured)
+- Rust: `cargo fmt --check`, `cargo clippy`
 
-**If you want to save patterns from this workflow for future use:**
-
-```
-/map-learn [workflow summary with actor outputs, monitor results, files changed]
-```
-
-This is **completely optional**. Run it when:
-- You discovered valuable patterns worth preserving
-- The implementation approach could help future similar tasks
-- You want to update the playbook with new insights
-
-Skip `/map-learn` when:
-- The task was routine with no novel patterns
-- You're iterating quickly and learning overhead isn't worth it
-- Token budget is constrained
-
-## MCP Tools Available
-
-- `mcp__cipher__cipher_memory_search` - Search past implementations
-- `mcp__cipher__cipher_extract_and_operate_memory` - Store successful patterns
-- `mcp__sequential-thinking__sequentialthinking` - Complex decision making
-- `mcp__context7__get-library-docs` - Get library documentation
-- `mcp__claude-reviewer__request_review` - Request code review
-
-## Comparison: /map-efficient vs Alternatives
-
-| Feature | /map-feature (Full) | /map-efficient (YOU) | /map-fast (Minimal) |
-|---------|---------------------|----------------------|---------------------|
-| **Validation** | Monitor + Evaluator | Monitor only | Monitor only |
-| **Impact Analysis** | Always (Predictor) | Conditional | Never |
-| **Learning** | Per-subtask | Optional (/map-learn) | None |
-| **Quality Gates** | All agents | Essential agents | Basic only |
-| **Token Usage** | 100% (baseline) | **50-60%** | 40-50% |
-| **Production Safe** | ✅ Maximum | ✅ Yes | ❌ No |
-| **Knowledge Growth** | ✅ Full | 🔸 On-demand | ❌ None |
-| **Best For** | Critical features | **Most tasks** | Throwaway only |
-
-## Critical Constraints
-
-- **Predictor conditional** on risk level (saves tokens for low-risk tasks)
-- **Evaluator skipped** (Monitor provides sufficient validation)
-- **Learning optional** — run `/map-learn` after workflow if desired
-- **MAX 5 iterations** per subtask
-- **Use /map-feature** if you need maximum quality assurance
-
-## Example
-
-User says: `/map-efficient implement user profile editing feature`
-
-This workflow will:
-1. Decompose into subtasks (e.g., API endpoint, database update, frontend form)
-2. For each subtask:
-   - Actor implements
-   - Monitor validates
-   - Predictor called only if high risk (e.g., database migration)
-   - Apply changes
-3. Done! Optionally run `/map-learn` to preserve patterns
-
-**Token savings**: ~40-50% vs /map-feature, while maintaining:
-- Essential quality gates (Monitor, conditional Predictor)
-- Production readiness
-- On-demand learning via `/map-learn`
+If none found: mark gate as skipped and proceed.
 
 ---
 
-**Why /map-efficient is RECOMMENDED:**
+## Step 3: Summary
 
-✅ **Maximum token savings** (40-50% vs /map-feature)
-✅ **Production-ready** (essential quality gates maintained)
-✅ **Learning on-demand** (run /map-learn only when needed)
-✅ **Best balance** of speed and quality
+- Run tests if applicable
+- Create commit (if requested)
+- Report: features implemented, files changed
+
+**Optional:** Run `/map-learn [summary]` to preserve valuable patterns for future workflows.
 
 Begin now with efficient workflow.

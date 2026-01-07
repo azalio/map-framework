@@ -136,15 +136,30 @@ Monitor approval received?
 
 ### cipher_memory_search Results
 
+**Re-rank retrieved patterns** before use:
+```
+FOR each pattern in results:
+  relevance_score = 0
+  IF pattern.domain matches subtask_domain: relevance_score += 2
+  IF pattern.language == {{language}}: relevance_score += 1
+  IF pattern.created_at > (now - 30_days): relevance_score += 1
+  IF pattern.metadata.validated == true: relevance_score += 1
+  IF abs(pattern.complexity - subtask.complexity) <= 2: relevance_score += 1
+
+SORT by relevance_score DESC
+USE top 3 patterns (discard low-relevance noise)
+```
+
 **Multiple patterns found**:
-- Prefer most recent (check timestamps if available)
+- Apply re-ranking algorithm above
+- Prefer highest relevance_score (not just most recent)
 - Prefer patterns marked "validated" or "production"
 - Document selection rationale in Trade-offs
 
 **Conflicting patterns**:
 ```yaml
 conflict: "Pattern A says X, Pattern B says Y"
-resolution: "Using Pattern A (more recent, better rationale)"
+resolution: "Using Pattern A (higher relevance score: domain match + validated)"
 action: "Document conflict in Trade-offs for Monitor review"
 ```
 
