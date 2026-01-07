@@ -1211,8 +1211,14 @@ def create_map_tools(project_path: Path) -> int:
                 except (OSError, PermissionError) as e:
                     # Log warning but continue - old scripts may be in use
                     import sys
-                    print(f"Warning: Could not remove existing {static_analysis_dest}: {e}", file=sys.stderr)
-            shutil.copytree(static_analysis_src, static_analysis_dest, dirs_exist_ok=True)
+
+                    print(
+                        f"Warning: Could not remove existing {static_analysis_dest}: {e}",
+                        file=sys.stderr,
+                    )
+            shutil.copytree(
+                static_analysis_src, static_analysis_dest, dirs_exist_ok=True
+            )
             # Make scripts executable
             for script in static_analysis_dest.rglob("*.sh"):
                 script.chmod(script.stat().st_mode | 0o755)

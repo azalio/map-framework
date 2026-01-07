@@ -87,9 +87,7 @@ class TestCommandTemplates:
         # Learning is now in separate /map-learn command
         # map-efficient should suggest it as optional
         assert "/map-learn" in content, "Should suggest /map-learn for learning"
-        assert (
-            "optional" in content.lower()
-        ), "Should mention /map-learn is optional"
+        assert "optional" in content.lower(), "Should mention /map-learn is optional"
 
     def test_all_command_templates_exist(self, templates_commands_dir):
         """Test that all expected command template files exist."""
@@ -160,6 +158,5 @@ class TestCommandTemplates:
 
         # Should describe itself as token-efficient in description
         assert (
-            "token-efficient" in content.lower()
-            or "efficient" in content.lower()
+            "token-efficient" in content.lower() or "efficient" in content.lower()
         ), "Should describe itself as efficient"
