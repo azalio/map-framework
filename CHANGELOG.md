@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- External static analysis scripts for Monitor agent (`analyze.sh`, `lint-go.sh`, `lint-python.sh`)
+- LLM Council recommended improvements to MAP workflow (context7 integration, parallel execution)
+
+### Changed
+- Optimize task-decomposer template with references to mapify init
+- Extract common functions to shared module with tests
+- Update README and sync templates with map-efficient improvements
+
+### Fixed
+- Security hardening per Copilot review
+- Improve clarity per Copilot review comments (multiple rounds)
+- Fix agent count documentation (8→10) and update template sync
+- Fix black formatting issues
+
+### Documentation
+- Document map-efficient command template
+- Sync map-efficient.md documentation with source template
+
 ## [2.0.0] - 2025-12-15
 
 ### Changed
