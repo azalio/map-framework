@@ -29,6 +29,9 @@ Implementation of **Modular Agentic Planner (MAP)** — a cognitive architecture
 # 📚 Optional: Preserve learnings from any workflow
 /map-learn [paste workflow summary to extract patterns]
 
+# 🔍 Code review (parallel Monitor + Predictor + Evaluator)
+/map-review  # Review staged/unstaged changes before commit
+
 # 📦 Release workflow (for package maintainers)
 /map-release patch  # or: minor, major
 ```
@@ -112,6 +115,7 @@ MAP Framework offers workflow variants optimized for different scenarios:
 |---------|-------------|----------|---------------|----------|
 | **`/map-efficient`** ⭐ | **50-60%** | Optional via `/map-learn` | ✅ Essential agents | **RECOMMENDED: Most production tasks** |
 | **`/map-debug`** | 50-60% | Optional via `/map-learn` | ✅ Essential agents | Bug fixes and debugging |
+| **`/map-review`** | 30-40% | Optional via `/map-learn` | Monitor + Predictor + Evaluator | Pre-commit code review |
 | **`/map-fast`** ⚠️ | 40-50% | ❌ None | ⚠️ Basic only | Throwaway prototypes, experiments (NOT production) |
 | **`/map-learn`** | ~5-8K tokens | ✅ Full | Reflector + Curator | Capture patterns after any workflow |
 | **`/map-release`** | Variable | Optional via `/map-learn` | 12 validation gates | Package releases |
@@ -135,6 +139,11 @@ MAP Framework offers workflow variants optimized for different scenarios:
 - 🗑️ Learning/tutorial contexts where failure is acceptable
 - ⚠️ **NEVER for production code** - no learning, quality risks
 
+**Use `/map-review` when:**
+- 🔍 Reviewing changes before committing
+- 🔍 Pre-PR quality check (security, impact, code quality)
+- 🔍 Parallel analysis with Monitor + Predictor + Evaluator
+
 **Use `/map-learn` after any workflow:**
 - 📚 To preserve valuable patterns discovered during work
 - 📚 When implementation approach could help future tasks
@@ -151,6 +160,7 @@ Just describe your task naturally - no need to remember slash commands:
 | "Fix the failing tests" | `/map-debug` | Keywords: fix, failing test |
 | "Implement user login" | `/map-efficient` | Keywords: implement, feature |
 | "Optimize database queries" | `/map-efficient` | Keywords: optimize |
+| "Review my changes" | `/map-review` | Keywords: review, changes, check |
 | "Quick prototype for testing" | `/map-fast` | Keywords: quick, prototype |
 | "Save patterns from last task" | `/map-learn` | Keywords: save, patterns, learn |
 
@@ -221,6 +231,8 @@ MAP Framework orchestrates 10 specialized agents through slash commands:
 - **TaskDecomposer** breaks goals into subtasks
 - **Actor** generates code, **Monitor** validates quality
 - **Predictor** analyzes impact, **Evaluator** scores solutions
+- **ResearchAgent** gathers codebase context before implementation
+- **Synthesizer** combines multiple solution variants (Self-MoA)
 - **Reflector/Curator** enable continuous learning via ACE playbook
 
 The orchestration logic lives in `.claude/commands/map-*.md` prompts, coordinating agents via the Task tool.
@@ -237,10 +249,9 @@ The orchestration logic lives in `.claude/commands/map-*.md` prompts, coordinati
 
 MAP uses MCP (Model Context Protocol) servers for enhanced capabilities:
 
-- **cipher** - Knowledge base for storing and retrieving successful patterns
-- **claude-reviewer** - Professional code review with security analysis
-- **context7** - Up-to-date library documentation
+- **cipher** - Knowledge base for storing and retrieving successful patterns (optional)
 - **sequential-thinking** - Chain-of-thought reasoning for complex problems
+- **context7** - Up-to-date library documentation
 - **deepwiki** - GitHub repository intelligence
 
 During `mapify init`, two configuration files are created:
@@ -289,8 +300,14 @@ Built-in learning system that improves when you run `/map-learn`:
 # View statistics
 mapify playbook stats
 
-# Search patterns
+# Search patterns (FTS5 full-text search)
 mapify playbook search "JWT authentication"
+
+# Query patterns with filters and modes
+mapify playbook query "error handling" --limit 5 --mode local
+
+# Apply curator delta operations (ADD/UPDATE/DEPRECATE)
+mapify playbook apply-delta curator_operations.json
 
 # View high-quality patterns
 mapify playbook sync
@@ -332,7 +349,7 @@ Error: Slash command not recognized
 
 **Solution:**
 - Ensure you're in a directory with `.claude/commands/` containing `map-*.md` files
-- Available commands: `/map-efficient`, `/map-debug`, `/map-fast`, `/map-learn`, `/map-release`
+- Available commands: `/map-efficient`, `/map-debug`, `/map-review`, `/map-fast`, `/map-learn`, `/map-release`
 - Run `/help` to see available commands
 
 ### Agent Not Found
@@ -341,7 +358,7 @@ Error: Slash command not recognized
 Error: Agent file not found
 ```
 
-**Solution:** Ensure `.claude/agents/` directory contains all 8 agent files (task-decomposer.md, actor.md, monitor.md, predictor.md, evaluator.md, reflector.md, curator.md, documentation-reviewer.md)
+**Solution:** Ensure `.claude/agents/` directory contains all 10 agent files (task-decomposer.md, actor.md, monitor.md, predictor.md, evaluator.md, reflector.md, curator.md, documentation-reviewer.md, research-agent.md, synthesizer.md)
 
 ### Semantic Search Warning
 

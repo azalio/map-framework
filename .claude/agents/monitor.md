@@ -1708,7 +1708,7 @@ Do NOT invent issues to justify review effort. Empty `issues` array is valid.
     },
     "contract_compliant": {
       "type": "boolean",
-      "description": "True if all validation_criteria contracts pass"
+      "description": "True if all validation_criteria contracts pass (NOT SpecificationContract compliance)"
     }
   }
 }
@@ -1822,8 +1822,8 @@ When reviewing code in Self-MoA mode (variant validation), include additional fi
     "imports_used": ["typing", "dataclasses", "logging"]
   },
 
-  "contract_compliant": true,
-  "contract_violations": [],
+  "spec_contract_compliant": true,
+  "spec_contract_violations": [],
 
   "strengths": [
     "Excellent input validation",
@@ -1845,8 +1845,8 @@ When reviewing code in Self-MoA mode (variant validation), include additional fi
 | `self_moa_mode` | boolean | Must be `true` when in Self-MoA mode |
 | `decisions_identified` | array | 3-8 key design decisions extracted from variant code |
 | `compatibility_features` | object | Features for orchestrator's deterministic compatibility scoring |
-| `contract_compliant` | boolean | Whether variant follows SpecificationContract (if provided) |
-| `contract_violations` | array | List of contract violations (empty if compliant) |
+| `spec_contract_compliant` | boolean | Whether variant follows SpecificationContract (if provided) |
+| `spec_contract_violations` | array | List of SpecificationContract violations (empty if compliant) |
 | `strengths` | array | Notable positive aspects of the variant |
 | `weaknesses` | array | Areas where variant is suboptimal |
 | `recommended_as_base` | boolean | True if variant has good structure for base_enhance strategy |
