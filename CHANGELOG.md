@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-01-07
+
 ### Added
 - External static analysis scripts for Monitor agent (`analyze.sh`, `lint-go.sh`, `lint-python.sh`)
 - LLM Council recommended improvements to MAP workflow (context7 integration, parallel execution)
