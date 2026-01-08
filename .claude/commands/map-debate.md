@@ -9,7 +9,7 @@ description: Debate-based MAP workflow with Opus arbiter for multi-variant synth
 1. Execute steps in order without pausing; only ask user if (a) `task-decomposer` returns blocking `analysis.open_questions` with no subtasks OR (b) Monitor sets `escalation_required === true`
 2. Use exact `subagent_type` specified — never substitute `general-purpose`
 3. Call each agent individually — no combining or skipping steps
-4. Max 5 retry iterations per subtask
+4. Max 5 Actor→Monitor retry iterations per subtask (separate from debate-arbiter retries in 2.7)
 5. **ALWAYS generate 3 variants** — no conditional check (unlike map-efficient Self-MoA)
 6. Use **debate-arbiter with model=opus** for synthesis
 

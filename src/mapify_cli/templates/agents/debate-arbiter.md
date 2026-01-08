@@ -707,7 +707,7 @@ def validate_and_calculate_confidence(
       ],
       "winner_source": "v1",
       "selection_reasoning": "Result type provides explicit error handling...",
-      "tradeoff_accepted": "Slightly more verbose than exceptions",
+      "tradeoff_accepted": "Increased code verbosity",
       "confidence": 0.9
     }
   ],

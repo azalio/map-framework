@@ -1677,7 +1677,7 @@ MAP Framework offers four workflow variants with different trade-offs between to
 | Feature | /map-feature | /map-efficient ⭐ | /map-debate | /map-fast ⚠️ |
 |---------|--------------|-------------------|-------------|--------------|
 | **Agents Used** | 8 (full pipeline) | 5-6 (optimized) | 7 (multi-variant) | 3 (minimal) |
-| **Token Savings** | 0% (baseline) | **30-40%** | -200% (3x cost) | 40-50% |
+| **Token Savings** | 0% (baseline) | **30-40%** | +200% (3x cost) | 40-50% |
 | **Learning Enabled** | ✅ Per-subtask | ✅ Batched at end | ✅ Batched | ❌ None |
 | **Quality Gates** | All agents | Essential agents | Opus arbiter | Basic only |
 | **Impact Analysis** | ✅ Always (Predictor) | ✅ Conditional | ✅ Conditional | ❌ Never |
@@ -1794,7 +1794,7 @@ MAP Framework offers four workflow variants with different trade-offs between to
     {"source_variant": "v3", "statement": "Return tuple", "why_rejected": "Less type-safe"}
   ],
   "selection_reasoning": "Result type provides explicit error handling that caller cannot ignore...",
-  "tradeoff_accepted": "Slightly more verbose than exceptions, but explicitness is worth it"
+  "tradeoff_accepted": "Increased code verbosity"
 }
 ```
 
