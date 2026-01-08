@@ -1670,22 +1670,24 @@ Summary:
 
 ## 🔀 Workflow Variants
 
-MAP Framework offers three workflow variants with different trade-offs between token usage, quality assurance, and learning:
+MAP Framework offers four workflow variants with different trade-offs between token usage, quality assurance, and learning:
 
 ### Comparison Table
 
-| Feature | /map-feature | /map-efficient ⭐ | /map-fast ⚠️ |
-|---------|--------------|-------------------|--------------|
-| **Agents Used** | 8 (full pipeline) | 5-6 (optimized) | 3 (minimal) |
-| **Token Savings** | 0% (baseline) | **30-40%** | 40-50% |
-| **Learning Enabled** | ✅ Per-subtask | ✅ Batched at end | ❌ None |
-| **Quality Gates** | All agents | Essential agents | Basic only |
-| **Impact Analysis** | ✅ Always (Predictor) | ✅ Conditional | ❌ Never |
-| **Quality Scoring** | ✅ Yes (Evaluator) | ❌ Skipped | ❌ Never |
-| **Playbook Updates** | ✅ Per-subtask | ✅ End of workflow | ❌ None |
-| **Cipher Integration** | ✅ Per-subtask | ✅ End of workflow | ❌ None |
-| **Best For** | Critical features | **Most tasks** | Throwaway only |
-| **Production Ready** | ✅ Maximum QA | ✅ Yes | ❌ NO |
+| Feature | /map-feature | /map-efficient ⭐ | /map-debate | /map-fast ⚠️ |
+|---------|--------------|-------------------|-------------|--------------|
+| **Agents Used** | 8 (full pipeline) | 5-6 (optimized) | 7 (multi-variant) | 3 (minimal) |
+| **Token Savings** | 0% (baseline) | **30-40%** | -200% (3x cost) | 40-50% |
+| **Learning Enabled** | ✅ Per-subtask | ✅ Batched at end | ✅ Batched | ❌ None |
+| **Quality Gates** | All agents | Essential agents | Opus arbiter | Basic only |
+| **Impact Analysis** | ✅ Always (Predictor) | ✅ Conditional | ✅ Conditional | ❌ Never |
+| **Quality Scoring** | ✅ Yes (Evaluator) | ❌ Skipped | ✅ Via arbiter | ❌ Never |
+| **Multi-Variant** | ❌ Single | ⚠️ Conditional (Self-MoA) | ✅ **Always 3 variants** | ❌ Never |
+| **Synthesis Model** | N/A | Synthesizer (sonnet) | **debate-arbiter (opus)** | N/A |
+| **Playbook Updates** | ✅ Per-subtask | ✅ End of workflow | ✅ End of workflow | ❌ None |
+| **Cipher Integration** | ✅ Per-subtask | ✅ End of workflow | ✅ End of workflow | ❌ None |
+| **Best For** | Critical features | **Most tasks** | **Reasoning transparency** | Throwaway only |
+| **Production Ready** | ✅ Maximum QA | ✅ Yes | ✅ Yes (expensive) | ❌ NO |
 
 ### Decision Guide: Which Workflow Should I Use?
 
@@ -1743,6 +1745,60 @@ MAP Framework offers three workflow variants with different trade-offs between t
 # High-risk refactoring
 /map-refactor migrate entire codebase from REST to GraphQL
 ```
+
+#### Use `/map-debate` (Multi-Variant with Reasoning)
+
+**When:**
+- 🧠 Decisions require explicit trade-off analysis
+- 🧠 You need to understand WHY a solution was chosen
+- 🧠 Stakeholders need documented reasoning for code review
+- 🧠 Complex architectural decisions with multiple valid approaches
+- 🧠 High-value features where reasoning transparency justifies cost
+
+**What makes it different:**
+- **ALWAYS generates 3 variants** (security/performance/simplicity focus)
+- **Uses Opus model** for debate-arbiter (deeper reasoning than Sonnet)
+- **Outputs explicit trade-offs** — what you gain AND what you lose
+- **Produces comparison matrix** — scores each variant on 4 dimensions
+- **Reasoning trace** — 8-step visible thinking process
+
+**Key outputs:**
+- `comparison_matrix` — variant × dimension scores (1-10)
+- `decision_rationales` — for each decision: alternatives, winner, trade-off accepted
+- `synthesis_reasoning` — step-by-step explanation of synthesis
+
+**Cost consideration:**
+- ~3-5x more expensive than `/map-efficient`
+- Uses Opus model (higher reasoning capability, higher cost)
+- Worth it when reasoning transparency is critical
+
+**Example use cases:**
+```bash
+# Architectural decision with stakeholder review
+/map-debate implement caching strategy for user sessions
+
+# Complex algorithm with multiple valid approaches
+/map-debate design rate limiting system for API endpoints
+
+# Decision requiring documented justification
+/map-debate implement authentication - JWT vs sessions vs OAuth
+```
+
+**Output example (decision_rationale):**
+```json
+{
+  "decision_id": "dec-v1-001",
+  "decision_statement": "Use Result type for explicit error handling",
+  "alternatives_evaluated": [
+    {"source_variant": "v2", "statement": "Raise exceptions", "why_rejected": "Less explicit"},
+    {"source_variant": "v3", "statement": "Return tuple", "why_rejected": "Less type-safe"}
+  ],
+  "selection_reasoning": "Result type provides explicit error handling that caller cannot ignore...",
+  "tradeoff_accepted": "Slightly more verbose than exceptions, but explicitness is worth it"
+}
+```
+
+---
 
 #### Use `/map-fast` (Minimal) ⚠️
 
@@ -1844,6 +1900,10 @@ START: I need to implement a feature
   |
   ├─ Is it security-critical or first-time complex feature?
   |    └─ YES → /map-feature (maximum QA)
+  |    └─ NO → Continue
+  |
+  ├─ Do stakeholders need documented reasoning for decisions?
+  |    └─ YES → /map-debate (explicit trade-offs, Opus reasoning)
   |    └─ NO → Continue
   |
   ├─ Do I care about token costs?
