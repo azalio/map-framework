@@ -1,0 +1,63 @@
+{
+  "verdict": "APPROVE",
+  "findings": [],
+  "summary": {
+    "total_findings": 0,
+    "blocking_issues": 0,
+    "warnings": 0,
+    "suggestions": 0,
+    "chunks_reviewed": 1,
+    "chunks_failed": 0
+  },
+  "usage": {
+    "input_tokens": 31064,
+    "output_tokens": 80,
+    "total_tokens": 31144,
+    "input_cost_usd": 0.0047,
+    "output_cost_usd": 0.0,
+    "total_cost_usd": 0.0047,
+    "model": "gemini-3-flash-preview",
+    "duration_seconds": 5.35
+  },
+  "cross_chunk_concerns": [],
+  "needs_deep_review": [],
+  "errors": null,
+  "metadata": {
+    "total_files": 10,
+    "files_reviewed": 6,
+    "files_skipped": 4,
+    "chunks_created": 1,
+    "model_stats": {
+      "deepseek-v3-2": {
+        "chunks": 1,
+        "input_tokens": 31064,
+        "output_tokens": 80,
+        "total_tokens": 31144,
+        "reasons": [
+          "low_risk"
+        ],
+        "cost_usd": 0.0
+      }
+    },
+    "model_usage": {
+      "deepseek-v3-2": 1
+    }
+  },
+  "memory": {
+    "enabled": false,
+    "known_issues": 0,
+    "new_issues": 0,
+    "duplicates_filtered": 0,
+    "false_positives_filtered": 0,
+    "stale_fp_warnings": 0,
+    "fp_circuit_breaker_triggered": false
+  },
+  "domain": {
+    "enabled": false,
+    "facts_available": 0,
+    "findings_validated": 0,
+    "contradictions_detected": 0,
+    "findings_flagged": 0
+  },
+  "suppressed_findings": []
+}

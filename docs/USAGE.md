@@ -56,7 +56,7 @@ Complete usage examples, best practices, and optimization strategies for the MAP
 ### Feature Development
 
 ```bash
-/map-feature implement user profile page with avatar upload.
+/map-efficient implement user profile page with avatar upload.
 Include validation, error handling, and tests.
 ```
 
@@ -76,14 +76,14 @@ Maintain all existing functionality.
 ### Library Integration
 
 ```bash
-/map-feature integrate Stripe payment processing.
+/map-efficient integrate Stripe payment processing.
 Use context7 to get latest Stripe docs.
 ```
 
 ### Learning from Open Source
 
 ```bash
-/map-feature implement rate limiter.
+/map-efficient implement rate limiter.
 Study express-rate-limit via deepwiki, then create optimized version.
 ```
 
@@ -276,7 +276,7 @@ echo '{"operations": [{"type": "UPDATE", "bullet_id": "impl-0001", "increment_he
 
 **When to Use:**
 
-- ✅ **After Curator agent** in MAP workflows (/map-feature, /map-debug, etc.)
+- ✅ **After Curator agent** in MAP workflows (/map-efficient, /map-debug, etc.)
 - ✅ **Batch updates** from CI/CD pipelines
 - ✅ **Automated playbook maintenance**
 
@@ -1386,7 +1386,7 @@ After `mapify init`:
 
 1. **Create a test task:**
    ```bash
-   /map-feature "add test function to app.py"
+   /map-efficient "add test function to app.py"
    ```
 
 2. **Wait for first subtask completion** - Checkpoint should be created at `.map/current_plan.md`
@@ -1555,7 +1555,7 @@ Validate TaskDecomposer output before starting workflow:
 
 ```bash
 # Step 1: Decompose task
-/map-feature implement user authentication
+/map-efficient implement user authentication
 
 # Step 2: Review TaskDecomposer output
 # (orchestrator saves to .claude/decomposer-output.json)
@@ -1674,18 +1674,19 @@ MAP Framework offers three workflow variants with different trade-offs between t
 
 ### Comparison Table
 
-| Feature | /map-feature | /map-efficient ⭐ | /map-fast ⚠️ |
-|---------|--------------|-------------------|--------------|
-| **Agents Used** | 8 (full pipeline) | 5-6 (optimized) | 3 (minimal) |
-| **Token Savings** | 0% (baseline) | **30-40%** | 40-50% |
-| **Learning Enabled** | ✅ Per-subtask | ✅ Batched at end | ❌ None |
-| **Quality Gates** | All agents | Essential agents | Basic only |
-| **Impact Analysis** | ✅ Always (Predictor) | ✅ Conditional | ❌ Never |
-| **Quality Scoring** | ✅ Yes (Evaluator) | ❌ Skipped | ❌ Never |
-| **Playbook Updates** | ✅ Per-subtask | ✅ End of workflow | ❌ None |
-| **Cipher Integration** | ✅ Per-subtask | ✅ End of workflow | ❌ None |
-| **Best For** | Critical features | **Most tasks** | Throwaway only |
-| **Production Ready** | ✅ Maximum QA | ✅ Yes | ❌ NO |
+| Feature | /map-efficient ⭐ | /map-debate | /map-fast ⚠️ |
+|---------|-------------------|-------------|--------------|
+| **Agents Used** | 5-6 (optimized) | 7 (multi-variant) | 3 (minimal) |
+| **Token Cost** | **Baseline** | 3x (Opus model) | 40-50% less |
+| **Learning** | Via `/map-learn` | Via `/map-learn` | ❌ None |
+| **Quality Gates** | Essential agents | Opus arbiter | Basic only |
+| **Impact Analysis** | ✅ Conditional | ✅ Conditional | ❌ Never |
+| **Multi-Variant** | ⚠️ Conditional (Self-MoA) | ✅ **Always 3 variants** | ❌ Never |
+| **Synthesis Model** | Synthesizer (sonnet) | **debate-arbiter (opus)** | N/A |
+| **Playbook Updates** | Via `/map-learn` | Via `/map-learn` | ❌ None |
+| **Cipher Integration** | Via `/map-learn` | Via `/map-learn` | ❌ None |
+| **Best For** | **Most tasks** | **Reasoning transparency** | Throwaway only |
+| **Production Ready** | ✅ Yes | ✅ Yes (expensive) | ❌ NO |
 
 ### Decision Guide: Which Workflow Should I Use?
 
@@ -1716,33 +1717,80 @@ MAP Framework offers three workflow variants with different trade-offs between t
 /map-efficient build responsive navigation menu with mobile support
 ```
 
-#### Use `/map-feature` (Full Workflow)
+#### Use `/map-efficient --self-moa` (High-Quality Mode)
 
 **When:**
 - 🔒 Security-critical functionality (authentication, authorization)
-- 🔒 First-time implementation of complex features
+- 🔒 Complex features with multiple valid approaches
 - 🔒 High-risk changes affecting many files/modules
-- 🔒 Database schema migrations
-- 🔒 Breaking API changes
-- 🔒 You need maximum quality assurance
 
-**Why it's worth the extra tokens:**
-- Evaluator scores quality across 6 dimensions
-- Predictor always analyzes breaking changes
-- Per-subtask learning captures more nuanced patterns
-- Maximum safety for critical code
+**What `--self-moa` adds:**
+- Generates 3 variants (security/performance/simplicity focus)
+- Synthesizes best parts from each variant
+- Higher quality for critical code
 
 **Example use cases:**
 ```bash
 # Security-critical
-/map-feature implement JWT authentication with refresh tokens
+/map-efficient --self-moa implement JWT authentication with refresh tokens
 
-# Complex first-time feature
-/map-feature build real-time chat system with WebSocket support
-
-# High-risk refactoring
-/map-refactor migrate entire codebase from REST to GraphQL
+# Complex feature
+/map-efficient --self-moa build real-time chat system with WebSocket support
 ```
+
+#### Use `/map-debate` (Multi-Variant with Reasoning)
+
+**When:**
+- 🧠 Decisions require explicit trade-off analysis
+- 🧠 You need to understand WHY a solution was chosen
+- 🧠 Stakeholders need documented reasoning for code review
+- 🧠 Complex architectural decisions with multiple valid approaches
+- 🧠 High-value features where reasoning transparency justifies cost
+
+**What makes it different:**
+- **ALWAYS generates 3 variants** (security/performance/simplicity focus)
+- **Uses Opus model** for debate-arbiter (deeper reasoning than Sonnet)
+- **Outputs explicit trade-offs** — what you gain AND what you lose
+- **Produces comparison matrix** — scores each variant on 4 dimensions
+- **Reasoning trace** — 8-step visible thinking process
+
+**Key outputs:**
+- `comparison_matrix` — variant × dimension scores (1-10)
+- `decision_rationales` — for each decision: alternatives, winner, trade-off accepted
+- `synthesis_reasoning` — step-by-step explanation of synthesis
+
+**Cost consideration:**
+- ~3-5x more expensive than `/map-efficient`
+- Uses Opus model (higher reasoning capability, higher cost)
+- Worth it when reasoning transparency is critical
+
+**Example use cases:**
+```bash
+# Architectural decision with stakeholder review
+/map-debate implement caching strategy for user sessions
+
+# Complex algorithm with multiple valid approaches
+/map-debate design rate limiting system for API endpoints
+
+# Decision requiring documented justification
+/map-debate implement authentication - JWT vs sessions vs OAuth
+```
+
+**Output example (decision_rationale):**
+```json
+{
+  "decision_id": "dec-v1-001",
+  "decision_statement": "Use Result type for explicit error handling",
+  "alternatives_evaluated": [
+    {"source_variant": "v2", "statement": "Raise exceptions", "why_rejected": "Less explicit"},
+    {"source_variant": "v3", "statement": "Return tuple", "why_rejected": "Less type-safe"}
+  ],
+  "selection_reasoning": "Result type provides explicit error handling that caller cannot ignore...",
+  "tradeoff_accepted": "Increased code verbosity"
+}
+```
+
+---
 
 #### Use `/map-fast` (Minimal) ⚠️
 
@@ -1779,32 +1827,35 @@ MAP Framework offers three workflow variants with different trade-offs between t
 ### Real-World Token Usage Examples
 
 **Small Task (1-2 subtasks):**
-- `/map-feature`: ~20-30K tokens
-- `/map-efficient`: ~12-20K tokens (40% savings)
-- `/map-fast`: ~10-15K tokens (50% savings)
+- `/map-efficient`: ~12-20K tokens (baseline)
+- `/map-efficient --self-moa`: ~25-35K tokens (3 variants)
+- `/map-debate`: ~40-60K tokens (Opus arbiter)
+- `/map-fast`: ~8-12K tokens (minimal)
 
 **Medium Task (3-5 subtasks):**
-- `/map-feature`: ~75-100K tokens
-- `/map-efficient`: ~45-60K tokens (40% savings)
-- `/map-fast`: ~30-40K tokens (60% savings)
+- `/map-efficient`: ~45-60K tokens (baseline)
+- `/map-efficient --self-moa`: ~100-130K tokens (3 variants)
+- `/map-debate`: ~150-200K tokens (Opus arbiter)
+- `/map-fast`: ~25-35K tokens (minimal)
 
 **Large Task (6-8 subtasks):**
-- `/map-feature`: ~150-200K tokens
-- `/map-efficient`: ~90-120K tokens (40% savings)
-- `/map-fast`: ~60-80K tokens (60% savings)
+- `/map-efficient`: ~90-120K tokens (baseline)
+- `/map-efficient --self-moa`: ~200-260K tokens (3 variants)
+- `/map-debate`: ~300-400K tokens (Opus arbiter)
+- `/map-fast`: ~50-70K tokens (minimal)
 
-**Cost at $3/M input, $15/M output (Claude Sonnet 3.5):**
+**Cost at $3/M input, $15/M output (Claude Sonnet) + Opus for debate:**
 
-| Task Size | /map-feature | /map-efficient | Savings |
-|-----------|--------------|----------------|---------|
-| Small | $0.30-0.45 | $0.18-0.30 | $0.12-0.15 |
-| Medium | $1.13-1.50 | $0.68-0.90 | $0.45-0.60 |
-| Large | $2.25-3.00 | $1.35-1.80 | $0.90-1.20 |
+| Task Size | /map-efficient | /map-debate | /map-fast |
+|-----------|----------------|-------------|-----------|
+| Small | $0.18-0.30 | $0.60-0.90 | $0.12-0.18 |
+| Medium | $0.68-0.90 | $2.25-3.00 | $0.38-0.53 |
+| Large | $1.35-1.80 | $4.50-6.00 | $0.75-1.05 |
 
-**For teams running 10 workflows/day:**
-- /map-feature: ~$22.50/day
-- /map-efficient: ~$13.50/day
-- **Monthly savings: $270** (12 fewer dollars/day × 30 days)
+**For teams running 10 workflows/day with /map-efficient:**
+- Daily cost: ~$13.50
+- /map-fast would save ~40% but loses learning
+- /map-debate costs ~3x more but provides reasoning transparency
 
 ### How /map-efficient Works
 
@@ -1843,33 +1894,33 @@ START: I need to implement a feature
   |    └─ NO → Continue
   |
   ├─ Is it security-critical or first-time complex feature?
-  |    └─ YES → /map-feature (maximum QA)
+  |    └─ YES → /map-efficient (maximum QA)
+  |    └─ NO → Continue
+  |
+  ├─ Do stakeholders need documented reasoning for decisions?
+  |    └─ YES → /map-debate (explicit trade-offs, Opus reasoning)
   |    └─ NO → Continue
   |
   ├─ Do I care about token costs?
-  |    └─ NO → /map-feature (best quality)
+  |    └─ NO → /map-efficient (best quality)
   |    └─ YES → /map-efficient ⭐ (RECOMMENDED)
 ```
 
-### Migration Guide
+### When to Use `--self-moa` Flag
 
-**Switching from /map-feature to /map-efficient:**
-
-No code changes needed! Just use `/map-efficient` instead:
-
-```bash
-# Old
-/map-feature implement user dashboard
-
-# New (saves 30-40% tokens, same learning)
-/map-efficient implement user dashboard
-```
-
-**When to keep using /map-feature:**
+**Add `--self-moa` to /map-efficient for:**
 - First implementation of authentication/authorization
 - Database migrations affecting multiple tables
 - Breaking API changes
 - Any feature where failure is costly
+
+```bash
+# Standard feature
+/map-efficient implement user dashboard
+
+# High-risk feature (use --self-moa for 3-variant synthesis)
+/map-efficient --self-moa implement user dashboard with role-based access
+```
 
 ### Common Misconceptions
 
@@ -1943,10 +1994,10 @@ Break large features into phases to maintain focus and quality:
 
 ```bash
 # Phase 1: Core implementation
-/map-feature implement basic user authentication with login/logout
+/map-efficient implement basic user authentication with login/logout
 
 # Phase 2: Enhanced security
-/map-feature add password reset and email verification to authentication
+/map-efficient add password reset and email verification to authentication
 
 # Phase 3: Performance tuning
 /map-refactor optimize authentication to use Redis session caching
@@ -1966,7 +2017,7 @@ Always specify relevant project context to improve solution quality:
 **Example:**
 
 ```bash
-/map-feature implement product search using Elasticsearch.
+/map-efficient implement product search using Elasticsearch.
 Stack: Node.js + Express + PostgreSQL.
 Follow existing repository pattern in ProductRepository.
 Must handle 500 concurrent searches with <200ms response time.
@@ -2020,7 +2071,7 @@ Agents automatically use their configured model when invoked via slash commands:
 
 ```bash
 # Full workflow - all agents use sonnet
-/map-feature implement authentication
+/map-efficient implement authentication
 
 # Efficient workflow - conditional predictor, batched learning
 /map-efficient implement authentication  # Recommended for most tasks
@@ -2033,17 +2084,20 @@ Agents automatically use their configured model when invoked via slash commands:
 
 **Scenario:** Implement a feature with 4 subtasks
 
-| Workflow | TaskDecomposer | Actor (4x) | Monitor (4x) | Predictor | Evaluator | Reflector | Curator | Total Cost* |
-|----------|----------------|------------|--------------|-----------|-----------|-----------|---------|-------------|
-| `/map-feature` | sonnet | sonnet | sonnet | sonnet (4x) | sonnet (4x) | sonnet (4x) | sonnet (4x) | ~$0.36 |
-| `/map-efficient` | sonnet | sonnet | sonnet | sonnet (0-2x) | skip | sonnet (1x) | sonnet (1x) | ~$0.22 |
-| `/map-fast` | sonnet | sonnet | sonnet | skip | skip | skip | skip | ~$0.12 |
+| Workflow | TaskDecomposer | Actor | Monitor | Predictor | Synthesizer | Total Cost* |
+|----------|----------------|-------|---------|-----------|-------------|-------------|
+| `/map-efficient` | sonnet | sonnet (4x) | sonnet (4x) | sonnet (0-2x) | skip | ~$0.22 |
+| `/map-efficient --self-moa` | sonnet | sonnet (12x) | sonnet (12x) | sonnet (0-2x) | sonnet (4x) | ~$0.45 |
+| `/map-debate` | sonnet | sonnet (12x) | sonnet (12x) | sonnet (0-2x) | opus (4x) | ~$0.75 |
+| `/map-fast` | sonnet | sonnet (4x) | sonnet (4x) | skip | skip | ~$0.12 |
 
-*Approximate costs based on typical token usage
+*Approximate costs based on typical token usage. Learning via `/map-learn` adds ~$0.05-0.10.
 
-**Savings:**
-- `/map-efficient`: ~40% savings vs `/map-feature`, maintains learning
-- `/map-fast`: ~67% savings vs `/map-feature`, but NO playbook updates
+**Key differences:**
+- `/map-efficient`: Standard workflow, conditional Self-MoA
+- `/map-efficient --self-moa`: Forces 3-variant generation + synthesis
+- `/map-debate`: 3 variants + Opus arbiter with explicit reasoning
+- `/map-fast`: Minimal, NO learning support
 
 ---
 
@@ -2120,7 +2174,7 @@ Skills follow the 500-line rule:
 **Workflow deep-dives:**
 - `map-fast-deep-dive.md` - Skip conditions, when to avoid
 - `map-efficient-deep-dive.md` - Optimization strategy, recommended default
-- `map-feature-deep-dive.md` - Full validation, critical features
+- `map-debate-deep-dive.md` - Multi-variant synthesis, Opus reasoning
 - `map-debug-deep-dive.md` - Debugging strategies, error analysis
 - `map-refactor-deep-dive.md` - Dependency analysis, breaking changes
 
