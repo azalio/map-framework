@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `/map-debate` command: Debate-based MAP workflow with Opus arbiter for multi-variant synthesis. Generates 3 Actor variants in parallel (security/performance/simplicity focus), validates with parallel Monitors, then uses `debate-arbiter` (Opus model) to cross-evaluate and synthesize optimal solution
+
+### Changed
+- Documentation cleanup: Remove deprecated `/map-feature` references, update learning workflow info
+
+### Fixed
+- Address reviewer feedback on map-debate documentation
+
 ## [2.1.0] - 2026-01-07
 
 ### Added
