@@ -104,12 +104,17 @@ Validation:
 ```
 
 **Why required:**
-- PreToolUse hook shows current focus before each Write/Edit/Bash
-- Stop hook validates all phases reach terminal state
 - Enables resumption after context reset
 - Prevents goal drift in long workflows
+- Provides explicit state tracking for orchestrator
 
 ## Step 2: Subtask Loop
+
+**Before each subtask**: Read current plan to prevent goal drift:
+```bash
+PLAN_PATH=$(.claude/skills/map-planning/scripts/get-plan-path.sh)
+# Read Goal and current in_progress phase from $PLAN_PATH
+```
 
 ### 2.0 Build AI-Friendly Subtask Packet (XML Anchors)
 
