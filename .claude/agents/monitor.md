@@ -1709,6 +1709,30 @@ Do NOT invent issues to justify review effort. Empty `issues` array is valid.
     "contract_compliant": {
       "type": "boolean",
       "description": "True if all validation_criteria contracts pass (NOT SpecificationContract compliance)"
+    },
+    "status_update": {
+      "type": "object",
+      "description": "Plan file update when subtask validation succeeds (map-planning integration)",
+      "properties": {
+        "subtask_id": {
+          "type": "string",
+          "description": "Subtask identifier (e.g., 'ST-001')"
+        },
+        "new_status": {
+          "type": "string",
+          "enum": ["complete", "blocked", "won't_do", "superseded"],
+          "description": "New status for the subtask"
+        },
+        "completed_criteria": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of validation criteria that were satisfied"
+        },
+        "next_subtask_id": {
+          "type": "string",
+          "description": "ID of next subtask to mark as in_progress (optional)"
+        }
+      }
     }
   }
 }
@@ -1740,6 +1764,10 @@ IF ≥1 MCP tool failed:
 
 IF recovery_mode == "manual_only":
   → recovery_notes MUST explain limitations
+
+IF map-planning workflow active AND valid === true:
+  → status_update SHOULD be present with subtask_id and new_status
+  → Orchestrator uses this to update task_plan file (Single-Writer Governance)
 ```
 
 **Required Structure**:

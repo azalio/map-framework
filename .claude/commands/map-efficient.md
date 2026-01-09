@@ -17,6 +17,7 @@ description: Token-efficient MAP workflow with conditional optimizations
 
 ```
 1. DECOMPOSE → task-decomposer
+1.5. INIT PLANNING → generate .map/task_plan_<branch>.md from blueprint
 2. FOR each subtask:
    a. CONTEXT → playbook query (Actor will run `cipher_memory_search` per protocol; orchestrator MAY run extra cipher search to augment context)
    b. RESEARCH → if existing code understanding needed
@@ -50,7 +51,70 @@ Hard requirements:
 )
 ```
 
+## Step 1.5: Initialize Planning Session
+
+**REQUIRED**: Generate persistent plan file from task-decomposer blueprint.
+
+```bash
+# 1. Create .map/ directory and planning files
+.claude/skills/map-planning/scripts/init-session.sh
+```
+
+```
+# 2. Generate task_plan from blueprint JSON
+# Get branch-scoped plan path
+PLAN_PATH=$(.claude/skills/map-planning/scripts/get-plan-path.sh)
+
+# Write plan content from blueprint:
+# - Header: blueprint.summary as Goal
+# - For each subtask: ## ST-XXX section with **Status:** pending
+# - First subtask: **Status:** in_progress
+# - Terminal State: **Status:** pending
+```
+
+**Plan file format** (`.map/task_plan_<branch>.md`):
+
+```markdown
+# Task Plan: [blueprint.summary]
+
+## Goal
+[blueprint.summary]
+
+## Current Phase
+ST-001
+
+## Phases
+
+### ST-001: [subtask.title]
+**Status:** in_progress
+Risk: [risk_level]
+Complexity: [complexity_score]
+Files: [affected_files]
+
+Validation:
+- [ ] [validation_criteria[0]]
+- [ ] [validation_criteria[1]]
+
+### ST-002: [subtask.title]
+**Status:** pending
+...
+
+## Terminal State
+**Status:** pending
+```
+
+**Why required:**
+- Enables resumption after context reset
+- Prevents goal drift in long workflows
+- Provides explicit state tracking for orchestrator
+
 ## Step 2: Subtask Loop
+
+**Before each subtask**: Read current plan to prevent goal drift:
+```bash
+PLAN_PATH=$(.claude/skills/map-planning/scripts/get-plan-path.sh)
+# Read Goal and current in_progress phase from $PLAN_PATH
+```
 
 ### 2.0 Build AI-Friendly Subtask Packet (XML Anchors)
 
@@ -114,6 +178,11 @@ Pass `context_patterns` with relevance scores to Actor for informed decision-mak
 **Call if:** refactoring, bug fixes, extending existing code, touching 3+ files
 **Skip for:** new standalone features, docs, config
 
+```bash
+# Get findings file path for map-planning integration
+FINDINGS_PATH=$(.claude/skills/map-planning/scripts/get-plan-path.sh | sed 's/task_plan/findings/')
+```
+
 ```
 Task(
   subagent_type="research-agent",
@@ -122,7 +191,8 @@ Task(
 File patterns: [relevant globs]
 Symbols: [optional keywords]
 Intent: locate
-Max tokens: 1500"
+Max tokens: 1500
+Findings file: [FINDINGS_PATH]"
 )
 ```
 
@@ -286,9 +356,58 @@ If validation_criteria present, include contract_compliance + contract_compliant
 )
 ```
 
-### 2.5 Retry Loop
+### 2.5 Retry Loop (3-Strike Protocol)
 
 If `valid === false`: provide feedback, retry Actor (max 5 iterations).
+
+**3-Strike Protocol** (for persistent failures):
+
+```bash
+# Get progress file path
+PROGRESS_PATH=$(.claude/skills/map-planning/scripts/get-plan-path.sh | sed 's/task_plan/progress/')
+```
+
+```
+FOR attempt = 1 to 5:
+  IF attempt >= 3:
+    # Log to progress file
+    Append to PROGRESS_PATH:
+    | Timestamp | Subtask | Attempt | Error | Resolution |
+    |-----------|---------|---------|-------|------------|
+    | [ISO-8601] | [ST-XXX] | [attempt] | [Monitor feedback summary] | [pending] |
+
+  Call Actor with Monitor feedback
+  Call Monitor to validate
+
+  IF valid === true:
+    Update progress log: Resolution = "Fixed on attempt [N]"
+    BREAK
+
+  IF attempt === 3:
+    # Escalate after 3 failed attempts
+    AskUserQuestion(
+      questions: [{
+        header: "3-Strike Limit",
+        question: "Subtask [ST-XXX] failed 3 attempts.\n\nLast error: [Monitor feedback]\n\nHow to proceed?",
+        multiSelect: false,
+        options: [
+          { label: "CONTINUE", description: "Try 2 more attempts (max 5 total)" },
+          { label: "SKIP", description: "Mark subtask as blocked, move to next" },
+          { label: "ABORT", description: "Stop workflow, await manual fix" }
+        ]
+      }]
+    )
+
+    IF user selects "SKIP":
+      Update task_plan: **Status:** blocked
+      Update progress log: Resolution = "Marked blocked after 3 attempts"
+      CONTINUE to next subtask
+
+    IF user selects "ABORT":
+      Update task_plan: **Status:** blocked
+      Update Terminal State: **Status:** blocked
+      EXIT workflow
+```
 
 ### 2.5b Escalation Gate (AskUserQuestion)
 
@@ -338,7 +457,21 @@ Return ONLY valid JSON following Predictor schema."
 
 ### 2.7 Apply Changes
 
-Apply via Write/Edit tools. Proceed to next subtask.
+Apply via Write/Edit tools.
+
+### 2.7.1 Update Plan Status
+
+After Monitor returns `valid === true`:
+
+```
+1. Read current task_plan from PLAN_PATH
+2. Update current subtask: **Status:** in_progress → **Status:** complete
+3. Check validation criteria checkboxes [x]
+4. Set next pending subtask to **Status:** in_progress
+5. Update "Current Phase" to next subtask ID
+```
+
+Proceed to next subtask.
 
 ### 2.8 Gate 2: Tests Available / Run
 
@@ -369,6 +502,12 @@ If none found: mark gate as skipped and proceed.
 ## Step 3: Summary
 
 - Run tests if applicable
+- **Update Terminal State** in task_plan:
+  ```markdown
+  ## Terminal State
+  **Status:** complete
+  Reason: All [N] subtasks implemented and validated.
+  ```
 - Create commit (if requested)
 - Report: features implemented, files changed
 

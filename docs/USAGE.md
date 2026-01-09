@@ -2117,6 +2117,50 @@ MAP includes interactive skills to help you navigate workflows and understand th
 
 ### Available Skills
 
+#### map-planning
+
+Persistent session state for MAP workflows using file-based planning.
+
+**How it works:**
+- Creates `.map/` directory with branch-scoped plan files
+- Files: `task_plan_<branch>.md`, `findings_<branch>.md`, `progress_<branch>.md`
+- Prevents goal drift in long workflows (50+ tool calls)
+- Enables resumption after context reset
+
+**Initialization:**
+```bash
+.claude/skills/map-planning/scripts/init-session.sh
+```
+
+**Plan file structure:**
+```markdown
+# Task Plan: [goal]
+
+## Goal
+[One sentence describing end state]
+
+## Current Phase
+ST-001
+
+## Phases
+
+### ST-001: [title]
+**Status:** in_progress
+Risk: low|medium|high
+Complexity: 1-10
+Files: [paths]
+
+Validation:
+- [ ] [criterion]
+
+## Terminal State
+**Status:** pending
+```
+
+**Terminal states:** `complete`, `blocked`, `won't_do`, `superseded`
+
+**Note:** MAP workflows (`/map-efficient`, etc.) automatically use this skill. The `.map/` directory is gitignored.
+
 #### map-workflows-guide
 
 Get help choosing the right workflow for your task.

@@ -180,6 +180,47 @@ IF ChunkHound tools fail or timeout:
 | 0.3-0.5 | Weak match | Actor proceeds with caution |
 | <0.3 | No good match | Escalate to user |
 
+# MAP-PLANNING INTEGRATION (Optional)
+
+When orchestrator provides `findings_file` path in prompt, append research results:
+
+**Input Signal** (from orchestrator):
+```
+Findings file: .map/findings_feature-auth.md
+```
+
+**Action**:
+1. After completing search, format findings as Markdown
+2. Append to findings file using Write tool (append mode via reading + concatenating)
+
+**Findings Format** (append to file):
+```markdown
+---
+
+## Research: [query summary]
+**Timestamp:** [ISO-8601]
+**Confidence:** [0.0-1.0]
+**Search Method:** [chunkhound_semantic|glob_grep_fallback|...]
+
+### Summary
+[executive_summary from JSON output]
+
+### Key Locations
+| Path | Lines | Signature | Relevance |
+|------|-------|-----------|-----------|
+| src/auth/service.py | 45-67 | `def validate_token(...)` | Core JWT validation |
+
+### Patterns Discovered
+- Pattern 1
+- Pattern 2
+```
+
+**Rules**:
+- Only append if `findings_file` provided in prompt
+- Always prepend `---` separator for append safety
+- Include timestamp for chronological tracking
+- Keep append content under 500 tokens
+
 # ON-DEMAND CODE READING
 
 Research Agent returns **pointers**, not full code:
