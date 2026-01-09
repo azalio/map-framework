@@ -30,23 +30,18 @@ echo "=== Task Completion Check ==="
 echo "Plan: $PLAN_FILE"
 echo ""
 
-# Count phases by status (using -F for fixed string matching)
-TOTAL=$(grep -c "^## " "$PLAN_FILE" 2>/dev/null | head -1 || echo "0")
-COMPLETE=$(grep -cF "**Status:** complete" "$PLAN_FILE" 2>/dev/null || echo "0")
-BLOCKED=$(grep -cF "**Status:** blocked" "$PLAN_FILE" 2>/dev/null || echo "0")
-WONT_DO=$(grep -cF "**Status:** won't_do" "$PLAN_FILE" 2>/dev/null || echo "0")
-SUPERSEDED=$(grep -cF "**Status:** superseded" "$PLAN_FILE" 2>/dev/null || echo "0")
-IN_PROGRESS=$(grep -cF "**Status:** in_progress" "$PLAN_FILE" 2>/dev/null || echo "0")
-PENDING=$(grep -cF "**Status:** pending" "$PLAN_FILE" 2>/dev/null || echo "0")
+# Count phases by status
+# NOTE: grep -c outputs "0" but exits 1 on no matches, causing || to trigger
+# Use: VAR=$(grep ...) || VAR=0 pattern to avoid double output
+COMPLETE=$(grep -cF "**Status:** complete" "$PLAN_FILE" 2>/dev/null) || COMPLETE=0
+BLOCKED=$(grep -cF "**Status:** blocked" "$PLAN_FILE" 2>/dev/null) || BLOCKED=0
+WONT_DO=$(grep -cF "**Status:** won't_do" "$PLAN_FILE" 2>/dev/null) || WONT_DO=0
+SUPERSEDED=$(grep -cF "**Status:** superseded" "$PLAN_FILE" 2>/dev/null) || SUPERSEDED=0
+IN_PROGRESS=$(grep -cF "**Status:** in_progress" "$PLAN_FILE" 2>/dev/null) || IN_PROGRESS=0
+PENDING=$(grep -cF "**Status:** pending" "$PLAN_FILE" 2>/dev/null) || PENDING=0
 
-# Default to 0 if empty
-: "${TOTAL:=0}"
-: "${COMPLETE:=0}"
-: "${BLOCKED:=0}"
-: "${WONT_DO:=0}"
-: "${SUPERSEDED:=0}"
-: "${IN_PROGRESS:=0}"
-: "${PENDING:=0}"
+# TOTAL = sum of all status lines (not all ## headers, which includes Goal, Decisions, etc.)
+TOTAL=$((COMPLETE + BLOCKED + WONT_DO + SUPERSEDED + IN_PROGRESS + PENDING))
 
 # Calculate terminal states (complete + blocked + won't_do + superseded)
 TERMINAL=$((COMPLETE + BLOCKED + WONT_DO + SUPERSEDED))
