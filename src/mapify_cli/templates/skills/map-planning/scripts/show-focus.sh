@@ -25,20 +25,29 @@ PLAN_FILE=$("$SCRIPT_DIR/get-plan-path.sh")
 # Extract goal (line after "## Goal")
 GOAL=$(awk '/^## Goal/{getline; if(!/^#/ && !/^$/) print; exit}' "$PLAN_FILE")
 
-# Extract the in_progress section: from ### header to next ### or ## header
-# This captures the phase title, status, files, validation criteria
-IN_PROGRESS_SECTION=$(awk '
-    /^### .*/ {
-        if (in_section) exit
-        section = $0
-        in_section = 0
-    }
-    /\*\*Status:\*\* in_progress/ {
-        in_section = 1
-        print section
-    }
-    in_section && !/^### / && !/^## / { print }
-' "$PLAN_FILE")
+# Extract ONLY the current in_progress phase section.
+# Stop at the next phase (###) OR next top-level section (##) to avoid token bloat.
+# Cap output by lines as a simple proxy for token budget.
+FOCUS_MAX_LINES="${FOCUS_MAX_LINES:-40}"
+IN_PROGRESS_SECTION=$(
+    awk '
+        /^### / {
+            if (in_section) exit
+            header = $0
+            next
+        }
+        /^## / {
+            if (in_section) exit
+        }
+        /\*\*Status:\*\* in_progress/ {
+            in_section = 1
+            if (header != "") print header
+            print
+            next
+        }
+        in_section { print }
+    ' "$PLAN_FILE" | head -n "$FOCUS_MAX_LINES"
+)
 
 # Only output if we found an in_progress section
 if [ -n "$IN_PROGRESS_SECTION" ]; then

@@ -201,6 +201,7 @@ Edit `.claude/workflow-rules.json` to add project-specific trigger words and pat
 MAP includes interactive skills that provide specialized guidance:
 
 **map-workflows-guide** - Helps you choose the right workflow
+**map-planning** - Persistent file-based plans for long `/map-efficient` sessions (`.map/task_plan_<branch>.md`)
 
 **Auto-suggested when you ask:**
 - "Which workflow should I use?"
@@ -213,7 +214,7 @@ MAP includes interactive skills that provide specialized guidance:
 - 8 detailed resource guides (progressive disclosure)
 
 **Skills vs Agents:**
-- **Skills** = Passive documentation (guidance)
+- **Skills** = Optional modules (guidance and/or workflow automation via hooks)
 - **Agents** = Active execution (code generation)
 
 **See [docs/USAGE.md](docs/USAGE.md#skills-system) for full details.**

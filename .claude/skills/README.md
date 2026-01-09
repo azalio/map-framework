@@ -2,9 +2,9 @@
 
 ## What are Skills?
 
-**Skills** = Passive documentation modules (NOT agents!)
+**Skills** = Opt-in modules (NOT agents!)
 
-Skills provide specialized guidance without executing code. They help users understand MAP Framework concepts and make informed decisions.
+Most skills provide specialized guidance (passive documentation). Some skills may also include optional workflow automation (e.g., hooks + scripts) when explicitly loaded.
 
 ## Skills vs Agents
 
@@ -56,6 +56,21 @@ MAP: [Shows decision tree and comparison matrix]
 - `agent-architecture.md` - How 8 agents orchestrate
 - `playbook-system.md` - Knowledge storage and search
 - `cipher-integration.md` - Cross-project learning
+
+---
+
+### map-planning
+
+**Purpose:** Persistent session state for long MAP workflows using file-based planning in `.map/`.
+
+**What it provides:**
+- Branch-scoped files: `task_plan_<branch>.md`, `findings_<branch>.md`, `progress_<branch>.md`
+- Optional hooks (PreToolUse + Stop) to reduce goal drift and prevent premature stop
+
+**How to use:**
+```bash
+.claude/skills/map-planning/scripts/init-session.sh
+```
 
 ---
 
