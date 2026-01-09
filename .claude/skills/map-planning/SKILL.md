@@ -102,8 +102,11 @@ Creates `.map/` directory and skeleton files for current branch.
 - Update **Status:** in_progress → **Status:** complete as phases finish
 - Check validation criteria checkboxes [x] when done
 
-### 3-Attempt Error Protocol
-Log errors to `progress_<branch>.md`. After 3 failed attempts → mark phase `blocked` and request user input.
+### 3-Strike Error Protocol
+Log errors to `progress_<branch>.md` after attempt 3+. After 3 failed attempts:
+1. Escalate to user (CONTINUE/SKIP/ABORT options)
+2. If SKIP: mark phase `blocked`, move to next subtask
+3. If ABORT: mark workflow `blocked`, exit
 
 ### Terminal State
 Update `## Terminal State` with final status before exiting. Stop hook validates this.
@@ -114,10 +117,25 @@ When `/map-efficient` runs:
 1. `init-session.sh` creates `.map/` skeleton
 2. task-decomposer populates phases from blueprint
 3. Actor implements → PreToolUse hook shows focus
-4. Monitor validates → marks phase complete
-5. Stop hook validates terminal state before exit
+4. Monitor validates → outputs `status_update` field
+5. Orchestrator updates task_plan using Monitor's status_update
+6. Stop hook validates terminal state before exit
 
 `/map-fast` skips planning — hooks are no-op if plan missing.
+
+## Single-Writer Governance
+
+Only Monitor agent updates task_plan status (via `status_update` output field).
+
+| Agent | Read task_plan | Write task_plan |
+|-------|----------------|-----------------|
+| task-decomposer | No | Yes (creates) |
+| Actor | Yes | No |
+| Monitor | Yes | Yes (status only) |
+| Predictor | Yes | No |
+| Orchestrator | Yes | No (applies Monitor output) |
+
+**Why**: Prevents race conditions, ensures consistent state, clear ownership.
 
 ## Best Practices
 

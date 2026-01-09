@@ -178,6 +178,11 @@ Pass `context_patterns` with relevance scores to Actor for informed decision-mak
 **Call if:** refactoring, bug fixes, extending existing code, touching 3+ files
 **Skip for:** new standalone features, docs, config
 
+```bash
+# Get findings file path for map-planning integration
+FINDINGS_PATH=$(.claude/skills/map-planning/scripts/get-plan-path.sh | sed 's/task_plan/findings/')
+```
+
 ```
 Task(
   subagent_type="research-agent",
@@ -186,7 +191,8 @@ Task(
 File patterns: [relevant globs]
 Symbols: [optional keywords]
 Intent: locate
-Max tokens: 1500"
+Max tokens: 1500
+Findings file: [FINDINGS_PATH]"
 )
 ```
 
@@ -350,9 +356,58 @@ If validation_criteria present, include contract_compliance + contract_compliant
 )
 ```
 
-### 2.5 Retry Loop
+### 2.5 Retry Loop (3-Strike Protocol)
 
 If `valid === false`: provide feedback, retry Actor (max 5 iterations).
+
+**3-Strike Protocol** (for persistent failures):
+
+```bash
+# Get progress file path
+PROGRESS_PATH=$(.claude/skills/map-planning/scripts/get-plan-path.sh | sed 's/task_plan/progress/')
+```
+
+```
+FOR attempt = 1 to 5:
+  IF attempt >= 3:
+    # Log to progress file
+    Append to PROGRESS_PATH:
+    | Timestamp | Subtask | Attempt | Error | Resolution |
+    |-----------|---------|---------|-------|------------|
+    | [ISO-8601] | [ST-XXX] | [attempt] | [Monitor feedback summary] | [pending] |
+
+  Call Actor with Monitor feedback
+  Call Monitor to validate
+
+  IF valid === true:
+    Update progress log: Resolution = "Fixed on attempt [N]"
+    BREAK
+
+  IF attempt === 3:
+    # Escalate after 3 failed attempts
+    AskUserQuestion(
+      questions: [{
+        header: "3-Strike Limit",
+        question: "Subtask [ST-XXX] failed 3 attempts.\n\nLast error: [Monitor feedback]\n\nHow to proceed?",
+        multiSelect: false,
+        options: [
+          { label: "CONTINUE", description: "Try 2 more attempts (max 5 total)" },
+          { label: "SKIP", description: "Mark subtask as blocked, move to next" },
+          { label: "ABORT", description: "Stop workflow, await manual fix" }
+        ]
+      }]
+    )
+
+    IF user selects "SKIP":
+      Update task_plan: **Status:** blocked
+      Update progress log: Resolution = "Marked blocked after 3 attempts"
+      CONTINUE to next subtask
+
+    IF user selects "ABORT":
+      Update task_plan: **Status:** blocked
+      Update Terminal State: **Status:** blocked
+      EXIT workflow
+```
 
 ### 2.5b Escalation Gate (AskUserQuestion)
 
