@@ -17,6 +17,7 @@ description: Token-efficient MAP workflow with conditional optimizations
 
 ```
 1. DECOMPOSE → task-decomposer
+1.5. INIT PLANNING → generate .map/task_plan_<branch>.md from blueprint
 2. FOR each subtask:
    a. CONTEXT → playbook query (Actor will run `cipher_memory_search` per protocol; orchestrator MAY run extra cipher search to augment context)
    b. RESEARCH → if existing code understanding needed
@@ -49,6 +50,64 @@ Hard requirements:
 - Include `blueprint.subtasks[].test_strategy` with unit/integration/e2e keys"
 )
 ```
+
+## Step 1.5: Initialize Planning Session
+
+**REQUIRED**: Generate persistent plan file from task-decomposer blueprint.
+
+```bash
+# 1. Create .map/ directory and planning files
+.claude/skills/map-planning/scripts/init-session.sh
+```
+
+```
+# 2. Generate task_plan from blueprint JSON
+# Get branch-scoped plan path
+PLAN_PATH=$(.claude/skills/map-planning/scripts/get-plan-path.sh)
+
+# Write plan content from blueprint:
+# - Header: blueprint.summary as Goal
+# - For each subtask: ## ST-XXX section with **Status:** pending
+# - First subtask: **Status:** in_progress
+# - Terminal State: **Status:** pending
+```
+
+**Plan file format** (`.map/task_plan_<branch>.md`):
+
+```markdown
+# Task Plan: [blueprint.summary]
+
+## Goal
+[blueprint.summary]
+
+## Current Phase
+ST-001
+
+## Phases
+
+### ST-001: [subtask.title]
+**Status:** in_progress
+Risk: [risk_level]
+Complexity: [complexity_score]
+Files: [affected_files]
+
+Validation:
+- [ ] [validation_criteria[0]]
+- [ ] [validation_criteria[1]]
+
+### ST-002: [subtask.title]
+**Status:** pending
+...
+
+## Terminal State
+**Status:** pending
+```
+
+**Why required:**
+- PreToolUse hook shows current focus before each Write/Edit/Bash
+- Stop hook validates all phases reach terminal state
+- Enables resumption after context reset
+- Prevents goal drift in long workflows
 
 ## Step 2: Subtask Loop
 
@@ -338,7 +397,21 @@ Return ONLY valid JSON following Predictor schema."
 
 ### 2.7 Apply Changes
 
-Apply via Write/Edit tools. Proceed to next subtask.
+Apply via Write/Edit tools.
+
+### 2.7.1 Update Plan Status
+
+After Monitor returns `valid === true`:
+
+```
+1. Read current task_plan from PLAN_PATH
+2. Update current subtask: **Status:** in_progress → **Status:** complete
+3. Check validation criteria checkboxes [x]
+4. Set next pending subtask to **Status:** in_progress
+5. Update "Current Phase" to next subtask ID
+```
+
+Proceed to next subtask.
 
 ### 2.8 Gate 2: Tests Available / Run
 
@@ -369,6 +442,12 @@ If none found: mark gate as skipped and proceed.
 ## Step 3: Summary
 
 - Run tests if applicable
+- **Update Terminal State** in task_plan:
+  ```markdown
+  ## Terminal State
+  **Status:** complete
+  Reason: All [N] subtasks implemented and validated.
+  ```
 - Create commit (if requested)
 - Report: features implemented, files changed
 
