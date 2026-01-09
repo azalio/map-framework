@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-01-10
+
 ### Added
 - `/map-planning` skill: File-based planning for MAP Framework workflows with branch-scoped task tracking in `.map/` directory
 - Single-Writer Governance and 3-Strike Protocol for plan modification control
