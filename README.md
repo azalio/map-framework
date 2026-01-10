@@ -1,9 +1,17 @@
 # MAP Framework for Claude Code
 
-Implementation of **Modular Agentic Planner (MAP)** — a cognitive architecture for AI agents inspired by prefrontal cortex functions. Orchestrates 10 specialized agents for development with automatic quality validation.
+[![PyPI version](https://badge.fury.io/py/mapify-cli.svg)](https://pypi.org/project/mapify-cli/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+
+Implementation of **Modular Agentic Planner (MAP)** — a cognitive architecture for AI agents inspired by prefrontal cortex functions. Orchestrates 11 specialized agents for development with automatic quality validation.
 
 > **Based on:** [Nature Communications research (2025)](https://github.com/Shanka123/MAP) — 74% improvement in planning tasks
 > **Enhanced with:** [ACE (Agentic Context Engineering)](https://arxiv.org/abs/2510.04618v1) — continuous learning from experience
+
+**What's New in v2.3.0:**
+- `/map-planning` skill for file-based workflow planning with branch-scoped task tracking
+- `/map-debate` command (v2.2.0) for multi-variant synthesis with Opus arbiter
+- See [CHANGELOG.md](CHANGELOG.md) for full release history
 
 ## 📖 Documentation Structure
 
@@ -17,13 +25,13 @@ Implementation of **Modular Agentic Planner (MAP)** — a cognitive architecture
 ### Inside Claude Code (Recommended)
 
 ```bash
-# ⭐ RECOMMENDED: Efficient workflow (40-50% token savings)
+# ⭐ RECOMMENDED: Efficient workflow (40-50% cost savings vs full MAP)
 /map-efficient implement user profile page with avatar upload
 
 # Debugging
 /map-debug fix the API 500 error on login endpoint
 
-# ⚠️ Fast workflow (40-50% savings, NO learning - throwaway code only)
+# ⚠️ Fast workflow (50-60% cost savings, NO learning - throwaway code only)
 /map-fast prototype a quick API endpoint mockup
 
 # 📚 Optional: Preserve learnings from any workflow
@@ -31,6 +39,9 @@ Implementation of **Modular Agentic Planner (MAP)** — a cognitive architecture
 
 # 🔍 Code review (parallel Monitor + Predictor + Evaluator)
 /map-review  # Review staged/unstaged changes before commit
+
+# 🎯 Multi-variant debate (complex decisions with trade-offs)
+/map-debate design authentication system architecture
 
 # 📦 Release workflow (for package maintainers)
 /map-release patch  # or: minor, major
@@ -111,12 +122,13 @@ pip install -e .
 
 MAP Framework offers workflow variants optimized for different scenarios:
 
-| Command | Token Usage | Learning | Quality Gates | Best For |
-|---------|-------------|----------|---------------|----------|
+| Command | Cost (% of baseline) | Learning | Quality Gates | Best For |
+|---------|---------------------|----------|---------------|----------|
 | **`/map-efficient`** ⭐ | **50-60%** | Optional via `/map-learn` | ✅ Essential agents | **RECOMMENDED: Most production tasks** |
 | **`/map-debug`** | 50-60% | Optional via `/map-learn` | ✅ Essential agents | Bug fixes and debugging |
 | **`/map-review`** | 30-40% | Optional via `/map-learn` | Monitor + Predictor + Evaluator | Pre-commit code review |
-| **`/map-fast`** ⚠️ | 40-50% | ❌ None | ⚠️ Basic only | Throwaway prototypes, experiments (NOT production) |
+| **`/map-debate`** | 80-100% | Optional via `/map-learn` | 3 Actor variants + Opus arbiter | Architecture decisions with trade-offs |
+| **`/map-fast`** ⚠️ | 40-50% | ❌ None | ⚠️ Basic only | Throwaway prototypes (NOT production) |
 | **`/map-learn`** | ~5-8K tokens | ✅ Full | Reflector + Curator | Capture patterns after any workflow |
 | **`/map-release`** | Variable | Optional via `/map-learn` | 12 validation gates | Package releases |
 
@@ -144,35 +156,15 @@ MAP Framework offers workflow variants optimized for different scenarios:
 - 🔍 Pre-PR quality check (security, impact, code quality)
 - 🔍 Parallel analysis with Monitor + Predictor + Evaluator
 
+**Use `/map-debate` when:**
+- 🎯 Multiple valid approaches exist with different trade-offs
+- 🎯 Architecture decisions need cross-evaluation (security vs performance vs simplicity)
+- 🎯 Complex tasks benefit from parallel variant generation with Opus arbiter synthesis
+
 **Use `/map-learn` after any workflow:**
 - 📚 To preserve valuable patterns discovered during work
 - 📚 When implementation approach could help future tasks
 - 📚 To update playbook and cross-project cipher knowledge
-
-### 🎯 Auto-Activation System
-
-**Don't remember which workflow to use?** MAP automatically suggests the right workflow based on your request!
-
-Just describe your task naturally - no need to remember slash commands:
-
-| Your Request | MAP Suggests | Why |
-|--------------|--------------|-----|
-| "Fix the failing tests" | `/map-debug` | Keywords: fix, failing test |
-| "Implement user login" | `/map-efficient` | Keywords: implement, feature |
-| "Optimize database queries" | `/map-efficient` | Keywords: optimize |
-| "Review my changes" | `/map-review` | Keywords: review, changes, check |
-| "Quick prototype for testing" | `/map-fast` | Keywords: quick, prototype |
-| "Save patterns from last task" | `/map-learn` | Keywords: save, patterns, learn |
-
-**How it works:**
-1. Start typing your request normally
-2. MAP analyzes keywords and intent patterns
-3. Suggests the most appropriate workflow
-4. You can accept the suggestion or proceed with your request
-
-**Customization:**
-Edit `.claude/workflow-rules.json` to add project-specific trigger words and patterns.
-
 
 ### Key Differences
 
@@ -202,6 +194,7 @@ MAP includes interactive skills that provide specialized guidance:
 
 **map-workflows-guide** - Helps you choose the right workflow
 **map-planning** - Persistent file-based plans for long `/map-efficient` sessions (`.map/task_plan_<branch>.md`)
+**map-cli-reference** - CLI command corrections and syntax reference for mapify commands
 
 **Auto-suggested when you ask:**
 - "Which workflow should I use?"
@@ -227,13 +220,14 @@ MAP includes interactive skills that provide specialized guidance:
 
 ## 🏗️ Architecture
 
-MAP Framework orchestrates 10 specialized agents through slash commands:
+MAP Framework orchestrates 11 specialized agents through slash commands:
 
 - **TaskDecomposer** breaks goals into subtasks
 - **Actor** generates code, **Monitor** validates quality
 - **Predictor** analyzes impact, **Evaluator** scores solutions
 - **ResearchAgent** gathers codebase context before implementation
 - **Synthesizer** combines multiple solution variants (Self-MoA)
+- **DebateArbiter** (Opus model) cross-evaluates Actor variants in `/map-debate`
 - **Reflector/Curator** enable continuous learning via ACE playbook
 
 The orchestration logic lives in `.claude/commands/map-*.md` prompts, coordinating agents via the Task tool.
@@ -325,14 +319,15 @@ python scripts/validate-dependencies.py decomposer-output.json --visualize
 
 ## 💰 Cost Optimization
 
-MAP Framework uses intelligent model selection per agent:
+MAP Framework optimizes costs through workflow selection, not model switching:
 
-- **Predictor & Evaluator** use **haiku** (fast analysis) → ⬇️⬇️⬇️ cost
-- **Actor, Monitor, Reflector, Curator** use **sonnet** (quality-critical) → balanced cost
+- **All agents use sonnet** for consistent quality (upgraded in v1.6.0)
+- **Cost savings come from workflow choice:**
+  - `/map-efficient` skips Evaluator, conditionally calls Predictor → **40-50% savings**
+  - `/map-fast` skips Predictor, Evaluator, Reflector, Curator → **50-60% savings**
+  - `/map-review` runs agents in parallel → faster turnaround
 
-**Result:** 40-60% cost reduction vs all-sonnet while maintaining code quality.
-
-**See [USAGE.md](docs/USAGE.md#cost-optimization) for detailed cost breakdown and model override strategies**
+**See [USAGE.md](docs/USAGE.md#cost-optimization) for detailed cost breakdown and workflow selection strategies**
 
 ## 🔗 Hooks Integration
 
@@ -350,7 +345,7 @@ Error: Slash command not recognized
 
 **Solution:**
 - Ensure you're in a directory with `.claude/commands/` containing `map-*.md` files
-- Available commands: `/map-efficient`, `/map-debug`, `/map-review`, `/map-fast`, `/map-learn`, `/map-release`
+- Available commands: `/map-efficient`, `/map-debug`, `/map-review`, `/map-debate`, `/map-fast`, `/map-learn`, `/map-release`
 - Run `/help` to see available commands
 
 ### Agent Not Found
@@ -359,7 +354,7 @@ Error: Slash command not recognized
 Error: Agent file not found
 ```
 
-**Solution:** Ensure `.claude/agents/` directory contains all 10 agent files (task-decomposer.md, actor.md, monitor.md, predictor.md, evaluator.md, reflector.md, curator.md, documentation-reviewer.md, research-agent.md, synthesizer.md)
+**Solution:** Ensure `.claude/agents/` directory contains all 11 agent files (task-decomposer.md, actor.md, monitor.md, predictor.md, evaluator.md, reflector.md, curator.md, documentation-reviewer.md, research-agent.md, synthesizer.md, debate-arbiter.md)
 
 ### Semantic Search Warning
 
