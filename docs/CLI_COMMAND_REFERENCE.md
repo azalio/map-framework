@@ -504,8 +504,6 @@ Checks both local playbook and cipher before extracting new patterns.
 
 - **Machine-readable spec**: [CLI_REFERENCE.json](./CLI_REFERENCE.json)
 - **Usage examples**: [USAGE.md](./USAGE.md)
-- **Playbook guide**: [PLAYBOOK-USAGE-GUIDE.md](./PLAYBOOK-USAGE-GUIDE.md)
-- **Testing guide**: [CLI_TESTING_GUIDE.md](./CLI_TESTING_GUIDE.md)
 - **Architecture**: [ARCHITECTURE.md](./ARCHITECTURE.md)
 
 ---
@@ -513,7 +511,7 @@ Checks both local playbook and cipher before extracting new patterns.
 ## Version Information
 
 **Generated from**: `src/mapify_cli/__init__.py`
-**Framework version**: Based on map-framework {{VERSION}}
+**Framework version**: Based on map-framework 2.3.0
 **Last updated**: 2025-11-07
 
 For the most up-to-date command definitions, see the source code decorators:

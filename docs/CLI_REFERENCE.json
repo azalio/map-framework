@@ -614,12 +614,12 @@
       "@playbook_app.command() decorators",
       "@validate_app.command() decorators"
     ],
-    "version": "Based on map-framework {{VERSION}}",
+    "version": "Based on map-framework 2.3.0",
     "last_updated": "2025-11-07",
     "related_docs": [
       "docs/USAGE.md",
-      "docs/PLAYBOOK-USAGE-GUIDE.md",
-      "docs/CLI_TESTING_GUIDE.md"
+      "docs/ARCHITECTURE.md",
+      "docs/INSTALL.md"
     ]
   }
 }
