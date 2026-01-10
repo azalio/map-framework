@@ -147,8 +147,8 @@ mapify init my-project
 This will:
 
 - ✅ Create project directory
-- ✅ Install 9 MAP agents (including ACE Reflector & Curator)
-- ✅ Add 4 slash commands
+- ✅ Install 11 MAP agents (including ACE Reflector & Curator, Synthesizer, DebateArbiter, ResearchAgent)
+- ✅ Add 7 slash commands (/map-efficient, /map-debug, /map-fast, /map-learn, /map-review, /map-debate, /map-release)
 - ✅ Configure essential MCP servers
 - ✅ Initialize git repository
 - ✅ Create ACE playbook structure
@@ -218,19 +218,26 @@ If you prefer manual setup:
    ```
    your-project/
    ├── .claude/
-   │   ├── agents/
-   │   │   ├── task-decomposer.md
-   │   │   ├── actor.md
-   │   │   ├── monitor.md
-   │   │   ├── predictor.md
-   │   │   ├── evaluator.md
-   │   │   ├── reflector.md          # ACE: Extracts lessons
-   │   │   └── curator.md            # ACE: Manages playbook
-   │   ├── commands/
-   │   │   ├── map-feature.md        # Main workflow entry point
-   │   │   ├── map-debug.md          # Debug workflow entry point
-   │   │   ├── map-refactor.md       # Refactor workflow entry point
-   │   │   └── map-review.md         # Review workflow entry point
+   │   ├── agents/                    # 11 specialized agents
+   │   │   ├── task-decomposer.md     # Decomposes tasks into subtasks
+   │   │   ├── actor.md               # Implements code
+   │   │   ├── monitor.md             # Validates implementations
+   │   │   ├── predictor.md           # Analyzes impact and risks
+   │   │   ├── evaluator.md           # Scores solution quality
+   │   │   ├── reflector.md           # ACE: Extracts lessons
+   │   │   ├── curator.md             # ACE: Manages playbook
+   │   │   ├── synthesizer.md         # Self-MoA: Merges variants
+   │   │   ├── debate-arbiter.md      # Opus: Cross-evaluates variants
+   │   │   ├── research-agent.md      # Isolated codebase research
+   │   │   └── documentation-reviewer.md  # Reviews technical docs
+   │   ├── commands/                  # 7 slash commands
+   │   │   ├── map-efficient.md       # Optimized workflow (recommended)
+   │   │   ├── map-debate.md          # Multi-variant with Opus reasoning
+   │   │   ├── map-debug.md           # Debug workflow
+   │   │   ├── map-fast.md            # Minimal workflow (throwaway only)
+   │   │   ├── map-learn.md           # Extract and save lessons
+   │   │   ├── map-review.md          # Review workflow
+   │   │   └── map-release.md         # Release workflow
    │   ├── mcp_config.json
    │   └── playbook.db                # ACE: Knowledge base (SQLite)
    ```
@@ -260,27 +267,35 @@ After installation, you can use MAP commands in Claude Code:
 ### Slash Commands
 
 ```bash
-# Implement a new feature
-/map-feature Add user authentication with JWT tokens
+# Standard production workflow (RECOMMENDED)
+/map-efficient Add user authentication with JWT tokens
+
+# Multi-variant with explicit reasoning (complex decisions)
+/map-debate Design caching strategy for user sessions
 
 # Debug an issue
 /map-debug Fix API timeout on large file uploads
 
-# Refactor code
-/map-refactor Convert callbacks to async/await
+# Quick prototype (throwaway code only!)
+/map-fast Prototype a dashboard layout
 
 # Review changes
 /map-review
+
+# Extract lessons after workflow completion
+/map-learn
 ```
 
 ### Workflow Architecture
 
 MAP Framework uses **slash commands** as entry points that coordinate specialized agents in the main Claude Code context:
 
-- **`/map-feature`** - Orchestrates task-decomposer → actor → monitor → predictor → evaluator → reflector → curator
-- **`/map-debug`** - Orchestrates diagnostic and fix workflows with agent coordination
-- **`/map-refactor`** - Orchestrates refactoring workflows with impact analysis
+- **`/map-efficient`** ⭐ - Optimized workflow (5-6 agents): task-decomposer → actor → monitor → predictor (conditional)
+- **`/map-debate`** - Multi-variant with Opus arbiter (7 agents): 3 Actor variants → debate-arbiter synthesis
+- **`/map-debug`** - Diagnostic and fix workflows with agent coordination
+- **`/map-fast`** - Minimal workflow (3 agents) — **throwaway code only!**
 - **`/map-review`** - Comprehensive review with MAP analysis
+- **`/map-learn`** - Extract lessons: reflector → curator → playbook update
 
 **Note:** Agents are invoked automatically by slash commands. Direct agent invocation is not the recommended approach—use the slash commands above for proper workflow orchestration.
 

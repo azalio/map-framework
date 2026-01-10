@@ -69,7 +69,7 @@ Include validation, error handling, and tests.
 ### Refactoring
 
 ```bash
-/map-refactor refactor OrderService to use dependency injection.
+/map-efficient refactor OrderService to use dependency injection.
 Maintain all existing functionality.
 ```
 
@@ -1995,7 +1995,7 @@ Break large features into phases to maintain focus and quality:
 /map-efficient add password reset and email verification to authentication
 
 # Phase 3: Performance tuning
-/map-refactor optimize authentication to use Redis session caching
+/map-efficient optimize authentication to use Redis session caching
 ```
 
 ### 3. Provide Context
@@ -2065,11 +2065,11 @@ The upgrade of Predictor and Evaluator from haiku to sonnet provides:
 Agents automatically use their configured model when invoked via slash commands:
 
 ```bash
-# Full workflow - all agents use sonnet
-/map-efficient implement authentication
-
-# Efficient workflow - conditional predictor, batched learning
+# Standard workflow - conditional predictor, optional learning via /map-learn
 /map-efficient implement authentication  # Recommended for most tasks
+
+# Multi-variant with explicit reasoning
+/map-debate design caching strategy      # Complex decisions
 
 # Fast workflow - minimal agents, no learning
 /map-fast prototype quick API mockup     # Throwaway code only
@@ -2113,6 +2113,18 @@ MAP includes interactive skills to help you navigate workflows and understand th
 #### map-planning
 
 Persistent session state for MAP workflows using file-based planning.
+
+**When to use planning:**
+- 📋 **Long workflows** — Tasks with 50+ tool calls where context may reset
+- 📋 **Multi-phase projects** — Work spanning multiple sessions or days
+- 📋 **Complex features** — 5+ subtasks that need explicit tracking
+- 📋 **Team handoffs** — When another person may need to continue your work
+- 📋 **Compliance/audit** — When you need documented decision trail
+
+**When NOT to use:**
+- Quick bug fixes (1-3 subtasks)
+- Single-session tasks that complete in <30 minutes
+- Exploratory work where the goal may change frequently
 
 **How it works:**
 - Creates `.map/` directory with branch-scoped plan files
@@ -2213,10 +2225,11 @@ Skills follow the 500-line rule:
 - `map-efficient-deep-dive.md` - Optimization strategy, recommended default
 - `map-debate-deep-dive.md` - Multi-variant synthesis, Opus reasoning
 - `map-debug-deep-dive.md` - Debugging strategies, error analysis
-- `map-refactor-deep-dive.md` - Dependency analysis, breaking changes
+- `map-learn-deep-dive.md` - Lesson extraction, playbook updates
+- `map-release-deep-dive.md` - Release workflow, validation gates
 
 **System architecture:**
-- `agent-architecture.md` - How 8 agents orchestrate
+- `agent-architecture.md` - How 11 agents orchestrate
 - `playbook-system.md` - Knowledge storage, quality scoring
 - `cipher-integration.md` - Cross-project learning
 
