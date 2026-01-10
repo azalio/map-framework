@@ -512,7 +512,7 @@ Checks both local playbook and cipher before extracting new patterns.
 
 **Generated from**: `src/mapify_cli/__init__.py`
 **Framework version**: Based on map-framework 2.3.0
-**Last updated**: 2025-11-07
+**Last updated**: 2026-01-11
 
 For the most up-to-date command definitions, see the source code decorators:
 - `@app.command()` - Root commands

@@ -20,38 +20,69 @@ Deep technical documentation for MAP (Modular Agentic Planner) implementation.
 
 ### High-Level Design
 
-MAP Framework implements cognitive architecture inspired by prefrontal cortex functions, orchestrating 10 specialized agents for software development with automatic quality validation.
+MAP Framework implements cognitive architecture inspired by prefrontal cortex functions, orchestrating 11 specialized agents for software development with automatic quality validation.
 
 ```
-┌──────────────────────────────────────────┐
-│       SLASH COMMANDS                     │
-│   /map-feature /map-debug /map-refactor │
-│   (orchestrate workflow via prompts)    │
-└───────────────┬──────────────────────────┘
-                │
-    ┌───────────▼────────────┐
-    │   TASK DECOMPOSER      │
-    │   (breaks into tasks)   │
-    └───────────┬────────────┘
-                │
-    ┌───────────▼─────────────────────┐
-    │   For each subtask:             │
-    │                                  │
-    │  ┌──────────────────────┐       │
-    │  │  ACTOR ←→ MONITOR    │       │
-    │  │  (code ←→ validate)  │       │
-    │  └──────────┬───────────┘       │
-    │             │                    │
-    │  ┌──────────▼───────────┐       │
-    │  │ PREDICTOR→EVALUATOR  │       │
-    │  │ (impact → quality)   │       │
-    │  └──────────┬───────────┘       │
-    │             │                    │
-    │  ┌──────────▼───────────┐       │
-    │  │ REFLECTOR → CURATOR  │       │
-    │  │ (learn → knowledge)  │       │
-    │  └──────────────────────┘       │
-    └──────────────────────────────────┘
+┌───────────────────────────────────────────────────────┐
+│              SLASH COMMANDS                           │
+│   /map-feature /map-debug /map-efficient /map-debate │
+│         (orchestrate workflow via prompts)            │
+└───────────────────┬───────────────────────────────────┘
+                    │
+       ┌────────────▼─────────────┐
+       │   TASK DECOMPOSER        │
+       │   (breaks into tasks)    │
+       └────────────┬─────────────┘
+                    │
+       ┌────────────▼──────────────────────────┐
+       │   For each subtask:                   │
+       │                                        │
+       │   STANDARD WORKFLOW:                  │
+       │   ┌──────────────────────┐            │
+       │   │  ACTOR ←→ MONITOR    │            │
+       │   │  (code ←→ validate)  │            │
+       │   └──────────┬───────────┘            │
+       │              │                         │
+       │   ┌──────────▼───────────┐            │
+       │   │ PREDICTOR→EVALUATOR  │            │
+       │   │ (impact → quality)   │            │
+       │   └──────────┬───────────┘            │
+       │              │                         │
+       │   ┌──────────▼───────────┐            │
+       │   │ REFLECTOR → CURATOR  │            │
+       │   │ (learn → knowledge)  │            │
+       │   └──────────────────────┘            │
+       │                                        │
+       │   DEBATE WORKFLOW (/map-debate):      │
+       │   ┌─────────────────────────────────┐ │
+       │   │ 3×ACTOR (parallel variants)     │ │
+       │   │ (security/perf/simplicity)      │ │
+       │   └─────────┬───────────────────────┘ │
+       │             │                          │
+       │   ┌─────────▼───────────────────────┐ │
+       │   │ 3×MONITOR (parallel validation) │ │
+       │   └─────────┬───────────────────────┘ │
+       │             │                          │
+       │   ┌─────────▼───────────────────────┐ │
+       │   │ DEBATE-ARBITER (Opus)           │ │
+       │   │ (cross-evaluate + decide)       │ │
+       │   └─────────┬───────────────────────┘ │
+       │             │                          │
+       │   ┌─────────▼───────────────────────┐ │
+       │   │ SYNTHESIZER                     │ │
+       │   │ (merge best solutions)          │ │
+       │   └─────────┬───────────────────────┘ │
+       │             │                          │
+       │   ┌─────────▼───────────────────────┐ │
+       │   │ MONITOR → PREDICTOR             │ │
+       │   └─────────────────────────────────┘ │
+       │                                        │
+       │   RESEARCH WORKFLOW:                  │
+       │   ┌─────────────────────────────────┐ │
+       │   │ RESEARCH-AGENT                  │ │
+       │   │ (context isolation)             │ │
+       │   └─────────────────────────────────┘ │
+       └────────────────────────────────────────┘
 ```
 
 ### Orchestration Model
@@ -206,6 +237,102 @@ update_playbook(curator_output)
 - Tutorial/learning contexts
 - **NEVER for production code**
 
+#### 4. `/map-debate` - Debate-Based Multi-Variant (11 Agents)
+
+**Agent Sequence:** TaskDecomposer → (3×Actor parallel → 3×Monitor parallel → DebateArbiter → Synthesizer → Monitor → Predictor) per subtask
+
+**Multi-Variant Architecture:**
+
+1. **Parallel Actor Variants** (3 simultaneous implementations)
+   - Variant 1: Security-focused approach
+   - Variant 2: Performance-focused approach
+   - Variant 3: Simplicity-focused approach
+   - Each variant gets `approach_focus` parameter
+   - All variants solve same subtask with different optimization priorities
+
+2. **Parallel Monitor Validation** (3 validations)
+   - Each Actor variant validated independently
+   - Failures fed back to respective Actor for iteration
+   - Continue until all 3 variants pass validation
+
+3. **Debate-Arbiter Cross-Evaluation** (Opus model)
+   - Receives all 3 validated variants
+   - Extracts decision points from each variant
+   - Cross-evaluates trade-offs with explicit reasoning
+   - Uses Claude Opus 4.5 for high-quality analysis
+   - Provides synthesis guidance to Synthesizer
+
+4. **Synthesizer Integration**
+   - Merges best elements from all variants
+   - Resolves conflicting decisions using arbiter guidance
+   - Produces single unified solution
+   - Validated by Monitor before proceeding
+
+**Token Usage:** 80-100% of baseline
+**Learning:** Optional via `/map-learn` (same as other workflows)
+**Quality Gates:** All agents (maximum variant exploration)
+
+**Key Features:**
+- **Opus-powered arbiter**: Higher reasoning quality for complex trade-off analysis
+- **Explicit decision tracking**: Each variant documents decisions made
+- **Multi-perspective synthesis**: Best-of-all-worlds solution
+- **Parallel execution**: 3 Actor/Monitor pairs run simultaneously
+
+**Use for:**
+- Architecture decisions with significant trade-offs
+- Complex features where optimal approach is unclear
+- Security-critical code requiring multiple review perspectives
+- Performance-sensitive implementations
+- Learning optimal patterns (arbiter reasoning becomes playbook content)
+- Situations where you want to explore solution space thoroughly
+
+**Technical Details:**
+
+```python
+# Debate Workflow Orchestrator Logic
+for subtask in subtasks:
+    # Phase 1: Generate 3 variants in parallel
+    variants = parallel_execute([
+        call_actor(subtask, approach_focus="security"),
+        call_actor(subtask, approach_focus="performance"),
+        call_actor(subtask, approach_focus="simplicity")
+    ])
+
+    # Phase 2: Validate all variants in parallel
+    validations = parallel_execute([
+        call_monitor(variants[0]),
+        call_monitor(variants[1]),
+        call_monitor(variants[2])
+    ])
+
+    # Phase 3: Debate-Arbiter cross-evaluation (Opus)
+    arbiter_output = call_debate_arbiter(
+        variants=variants,
+        validations=validations,
+        model="claude-opus-4-5"
+    )
+
+    # Phase 4: Synthesizer merges solutions
+    synthesized = call_synthesizer(
+        variants=variants,
+        arbiter_guidance=arbiter_output
+    )
+
+    # Phase 5: Final validation and impact analysis
+    final_monitor = call_monitor(synthesized)
+    if final_monitor.valid:
+        predictor_output = call_predictor(synthesized)
+        apply_code_changes(synthesized)
+```
+
+**Trade-offs:**
+- **Pro:** Maximum solution quality through variant exploration
+- **Pro:** Discovers optimal patterns for playbook
+- **Pro:** Arbiter reasoning provides learning material
+- **Con:** Higher token cost (3× Actor + Opus arbiter)
+- **Con:** Longer execution time (parallel but still 3× work)
+- **Con:** Complexity in synthesis (conflicting decisions must be resolved)
+
 #### Token Breakdown by Agent
 
 Typical token consumption per subtask (estimated):
@@ -217,18 +344,23 @@ Typical token consumption per subtask (estimated):
 | Monitor | 1.5K | 1K | 2.5K | Always included |
 | Predictor | 1.5K | 1K | 2.5K | Conditional in /map-efficient |
 | Evaluator | 2K | 1K | 3K | Skipped in /map-efficient |
-| Reflector | 2K | 1K | 3K | Batched in /map-efficient |
-| Curator | 1.5K | 0.5K | 2K | Batched in /map-efficient |
+| Reflector | 2K | 1K | 3K | Batched in /map-efficient, optional via /map-learn |
+| Curator | 1.5K | 0.5K | 2K | Batched in /map-efficient, optional via /map-learn |
+| DebateArbiter | 3K | 2K | 5K | Opus model, /map-debate only |
+| Synthesizer | 2K | 3K | 5K | /map-debate only, merges 3 variants |
+| ResearchAgent | 2K | 4K | 6K | Heavy codebase reading, on-demand |
 
 **Per-subtask totals:**
 - /map-feature: ~15-20K tokens
 - /map-efficient: ~9-12K tokens (40% savings)
 - /map-fast: ~8-10K tokens (50% savings)
+- /map-debate: ~30-40K tokens (3× Actor variants + Arbiter + Synthesizer)
 
 **For 5-subtask workflow:**
 - /map-feature: ~75-100K tokens
 - /map-efficient: ~45-60K tokens (batched learning saves (5-1)×5K = 20K additional)
 - /map-fast: ~40-50K tokens (but no learning)
+- /map-debate: ~150-200K tokens (3× variants + Opus analysis)
 
 #### Workflow Variant Selection
 
@@ -520,6 +652,159 @@ See [USAGE.md - Workflow Variants](./USAGE.md#workflow-variants) for detailed de
 - ✅ Error codes and responses documented
 - ✅ Configuration options explained
 - ✅ Examples match actual code behavior
+
+### 9. Synthesizer
+
+**Responsibility:** Merge best elements from multiple Actor variants in Self-MoA (Mixture of Agents) workflows.
+
+**Input:** Multiple Actor variants (typically 3) with different optimization focuses + DebateArbiter guidance
+
+**Output:**
+```json
+{
+  "synthesized_solution": {
+    "approach": "Hybrid approach combining security validation from v1, performance optimization from v2, and clear structure from v3",
+    "code_changes": "// Complete merged implementation",
+    "trade_offs": "Decision points resolved based on arbiter analysis",
+    "testing_considerations": "Merged test cases covering all variants' scenarios",
+    "decisions_resolved": [
+      {
+        "decision": "Error handling strategy",
+        "variants": {
+          "v1_security": "Comprehensive validation with detailed errors",
+          "v2_performance": "Fast-fail with minimal overhead",
+          "v3_simplicity": "Standard try-catch blocks"
+        },
+        "chosen": "v1_security with v2_performance optimizations",
+        "rationale": "Arbiter recommended comprehensive validation is critical; optimized by caching validation results"
+      }
+    ]
+  }
+}
+```
+
+**Key Behaviors:**
+- Analyzes decision points from all variants
+- Resolves conflicts using DebateArbiter guidance
+- Preserves best practices from each variant
+- Creates coherent unified solution (not patchwork)
+- Documents synthesis rationale for learning
+
+**Model Used:** Sonnet (requires strong reasoning for synthesis)
+
+**Usage Context:** Only invoked in `/map-debate` workflow after DebateArbiter completes cross-evaluation
+
+### 10. DebateArbiter
+
+**Responsibility:** Cross-evaluate multiple Actor variants with explicit reasoning, identify best approaches for each decision point.
+
+**Input:** 3 Actor variants (security/performance/simplicity-focused) + Monitor validations
+
+**Output:**
+```json
+{
+  "cross_evaluation": {
+    "decision_points": [
+      {
+        "category": "algorithm",
+        "description": "Data structure choice for caching",
+        "variants_analysis": {
+          "v1_security": {
+            "approach": "HashMap with TTL tracking",
+            "pros": ["O(1) lookup", "Automatic expiration"],
+            "cons": ["Memory overhead for TTL metadata"],
+            "security_score": 9,
+            "performance_score": 7
+          },
+          "v2_performance": {
+            "approach": "LRU cache with size limit",
+            "pros": ["Bounded memory", "Fast eviction"],
+            "cons": ["No time-based expiration"],
+            "security_score": 6,
+            "performance_score": 10
+          },
+          "v3_simplicity": {
+            "approach": "Simple dictionary",
+            "pros": ["Minimal code", "Easy to understand"],
+            "cons": ["No eviction", "Unbounded growth"],
+            "security_score": 4,
+            "performance_score": 5
+          }
+        },
+        "recommendation": {
+          "best_variant": "v2_performance",
+          "reasoning": "LRU cache provides bounded memory (critical for production) with excellent performance. Add time-based expiration as enhancement.",
+          "synthesis_guidance": "Use v2's LRU implementation, add v1's TTL concept as optional feature"
+        }
+      }
+    ],
+    "synthesis_strategy": "Performance foundation with security enhancements"
+  }
+}
+```
+
+**Key Behaviors:**
+- Extracts decision points from variant outputs
+- Compares approaches across multiple dimensions
+- Uses Opus model for high-quality reasoning
+- Provides explicit synthesis guidance
+- Documents trade-off analysis for playbook
+
+**Model Used:** Opus 4.5 (highest reasoning quality for complex analysis)
+
+**Usage Context:** Only invoked in `/map-debate` workflow after all variants validated
+
+**MCP Tool Usage:**
+- `sequential-thinking`: Multi-step reasoning for complex trade-off analysis
+
+### 11. ResearchAgent
+
+**Responsibility:** Heavy codebase reading with context isolation and compressed output for Actor/Monitor consumption.
+
+**Input:**
+```json
+{
+  "research_goal": "Find all authentication implementations",
+  "file_patterns": ["**/*auth*.py", "**/*login*.js"],
+  "symbols": ["authenticate", "login", "verify_token"],
+  "intent": "locate|understand|pattern|impact"
+}
+```
+
+**Output:**
+```json
+{
+  "relevant_locations": [
+    {
+      "file": "app/auth/jwt.py",
+      "lines": [45, 67],
+      "signatures": ["def verify_token(token: str) -> User"],
+      "description": "JWT token validation with expiration check"
+    }
+  ],
+  "patterns_found": [
+    "All auth functions use bcrypt for password hashing",
+    "Token refresh logic in separate module (app/auth/refresh.py)"
+  ],
+  "confidence": 0.85
+}
+```
+
+**Key Behaviors:**
+- Reads multiple files without polluting Actor context
+- Compresses findings to essential information
+- Provides file locations and signatures (not full code)
+- Returns confidence score for search completeness
+- Enables Actor to Read() only necessary files
+
+**Model Used:** Sonnet (requires understanding code semantics)
+
+**Usage Context:** Called by Actor when implementing features that integrate with existing code
+
+**Performance:**
+- Reads 10-50 files per invocation
+- Outputs compressed summary (<2K tokens)
+- Prevents Actor context bloat (would be 20-50K tokens if Actor read directly)
 
 ---
 
@@ -1167,12 +1452,17 @@ MAP Framework uses intelligent model selection to balance quality and cost.
 
 | Agent | Model | Rationale |
 |-------|-------|-----------|
+| TaskDecomposer | sonnet-4-5 | Quality-critical: task planning |
 | Actor | sonnet-4-5 | Quality-critical: code generation |
 | Monitor | sonnet-4-5 | Quality-critical: validation |
 | Predictor | haiku-3-5 | Fast analysis, non-critical |
 | Evaluator | haiku-3-5 | Fast scoring, structured output |
 | Reflector | sonnet-4-5 | Quality-critical: pattern extraction |
 | Curator | sonnet-4-5 | Quality-critical: knowledge management |
+| DocumentationReviewer | sonnet-4-5 | Quality-critical: doc validation |
+| Synthesizer | sonnet-4-5 | Quality-critical: variant synthesis |
+| DebateArbiter | opus-4-5 | Highest quality: cross-variant reasoning |
+| ResearchAgent | sonnet-4-5 | Quality-critical: codebase understanding |
 
 **Override Model Per Agent:**
 
@@ -1185,11 +1475,14 @@ model: claude-sonnet-4-5  # or claude-haiku-3-5
 ```
 
 **Cost vs Quality Trade-offs:**
-- **All Sonnet:** Highest quality, 2.5x cost
+- **All Sonnet/Opus:** Highest quality, 3-4x cost (Opus for DebateArbiter)
 - **Mixed (current):** Balanced, 40-60% cost reduction
 - **All Haiku:** Lowest cost, risk of quality degradation in code generation
 
-**Recommended:** Keep Actor, Monitor, Reflector, Curator on Sonnet. Predictor and Evaluator can safely use Haiku.
+**Recommended:**
+- Keep on Sonnet: TaskDecomposer, Actor, Monitor, Reflector, Curator, DocumentationReviewer, Synthesizer, ResearchAgent
+- Keep on Opus: DebateArbiter (cross-variant reasoning requires highest quality)
+- Safe to use Haiku: Predictor, Evaluator (fast analysis, structured output)
 
 ### Adding Custom Agents
 

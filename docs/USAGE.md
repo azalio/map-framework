@@ -2114,6 +2114,18 @@ MAP includes interactive skills to help you navigate workflows and understand th
 
 Persistent session state for MAP workflows using file-based planning.
 
+**When to use planning:**
+- 📋 **Long workflows** — Tasks with 50+ tool calls where context may reset
+- 📋 **Multi-phase projects** — Work spanning multiple sessions or days
+- 📋 **Complex features** — 5+ subtasks that need explicit tracking
+- 📋 **Team handoffs** — When another person may need to continue your work
+- 📋 **Compliance/audit** — When you need documented decision trail
+
+**When NOT to use:**
+- Quick bug fixes (1-3 subtasks)
+- Single-session tasks that complete in <30 minutes
+- Exploratory work where the goal may change frequently
+
 **How it works:**
 - Creates `.map/` directory with branch-scoped plan files
 - Files: `task_plan_<branch>.md`, `findings_<branch>.md`, `progress_<branch>.md`
