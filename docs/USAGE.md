@@ -207,8 +207,6 @@ mapify playbook query "testing strategies" --format json
 2. Separately call `mcp__cipher__cipher_memory_search` (cross-project via MCP tool)
 3. Agent combines both sources
 
-See [PLAYBOOK-CIPHER-INTEGRATION.md](PLAYBOOK-CIPHER-INTEGRATION.md) for details.
-
 **Why use `query` instead of `search`:**
 - ✅ **Works with large playbooks** - Handles >256KB (current playbook: 270KB)
 - ✅ **FTS5 full-text search** - 10x faster than grep
@@ -650,7 +648,7 @@ search_results = conn.execute("""
 - KG tables start empty (entities extracted incrementally via MAP workflows)
 - All v2.1 queries continue to work
 
-**See:** [Migration Guide](./knowledge_graph/MIGRATION_V2.1_TO_V3.0.md) for details.
+Migration is handled automatically by the framework.
 
 ### Opt-Out (If Needed)
 
@@ -675,10 +673,7 @@ pm.db_conn.commit()
 
 ### Documentation
 
-- **API Reference**: [`docs/knowledge_graph/API_REFERENCE.md`](./knowledge_graph/API_REFERENCE.md)
-- **Schema ERD**: [`docs/knowledge_graph/ERD_v3.0.md`](./knowledge_graph/ERD_v3.0.md)
-- **Architecture**: [ARCHITECTURE.md#knowledge-graph-layer](./ARCHITECTURE.md#knowledge-graph-layer)
-- **Migration Guide**: [`docs/knowledge_graph/MIGRATION_V2.1_TO_V3.0.md`](./knowledge_graph/MIGRATION_V2.1_TO_V3.0.md)
+- **Architecture**: [ARCHITECTURE.md](./ARCHITECTURE.md) — Technical architecture including Knowledge Graph layer
 
 ---
 
@@ -2103,11 +2098,9 @@ Agents automatically use their configured model when invoked via slash commands:
 
 ## Additional Resources
 
-- **[README.md](README.md)** — Project overview and installation
+- **[README.md](../README.md)** — Project overview and installation
 - **[INSTALL.md](INSTALL.md)** — Detailed installation instructions
-- **[Sequential Thinking Integration Guide](docs/SEQUENTIAL_THINKING_GUIDE.md)** — When and how MAP agents use structured reasoning for complex analysis
-- **[Context Engineering Improvements](docs/CONTEXT-ENGINEERING-IMPROVEMENTS.md)** — Advanced optimization techniques
-- **[Agent Customization](.claude/agents/README.md)** — Customizing agent behavior
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** — Technical architecture details
 
 ---
 

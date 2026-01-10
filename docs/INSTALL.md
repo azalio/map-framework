@@ -412,11 +412,11 @@ pip install -r requirements-semantic.txt
 
 **Fallback:** If not installed, MAP uses keyword matching automatically.
 
-**Troubleshooting:** See [SEMANTIC_SEARCH_SETUP.md](SEMANTIC_SEARCH_SETUP.md) for:
+**Troubleshooting:** Common issues include:
 
-- HuggingFace authentication issues
-- Keras 3 compatibility fixes
-- Model download problems
+- HuggingFace authentication issues (set `HF_TOKEN` if needed)
+- Keras 3 compatibility (update to latest sentence-transformers)
+- Model download problems (check network connectivity)
 
 ## Updating MAP Framework
 
@@ -521,8 +521,6 @@ python -c "from mapify_cli.playbook_manager import PlaybookManager; m = Playbook
 ```
 
 Should output `✓ Semantic search enabled`.
-
-For detailed troubleshooting, see [SEMANTIC_SEARCH_SETUP.md](SEMANTIC_SEARCH_SETUP.md).
 
 ## Uninstalling
 

@@ -978,7 +978,7 @@ Migration is **automatic** (runs on PlaybookManager initialization):
 
 **Migration Time:** <1 second (idempotent, safe to run multiple times)
 
-**Rollback:** See [`docs/knowledge_graph/MIGRATION_ROLLBACK.md`](./knowledge_graph/MIGRATION_ROLLBACK.md)
+**Rollback:** To rollback, delete the KG tables and reset schema_version.
 
 ### API Usage Examples
 
@@ -1077,12 +1077,12 @@ for entity in recent:
   - 0.6-0.8: Implicit patterns ("X with Y")
   - 0.4-0.6: Proximity-based
 
-### Documentation
+### Additional Notes
 
-- **API Reference**: [`docs/knowledge_graph/API_REFERENCE.md`](./knowledge_graph/API_REFERENCE.md)
-- **Schema ERD**: [`docs/knowledge_graph/ERD_v3.0.md`](./knowledge_graph/ERD_v3.0.md)
-- **Migration Guide**: [`docs/knowledge_graph/MIGRATION_V2.1_TO_V3.0.md`](./knowledge_graph/MIGRATION_V2.1_TO_V3.0.md)
-- **Design Rationale**: [`docs/knowledge_graph/DESIGN_RATIONALE.md`](./knowledge_graph/DESIGN_RATIONALE.md)
+The Knowledge Graph layer is an embedded SQLite extension and does not require external services. API details are documented inline in the source code modules:
+- `mapify_cli/entity_extractor.py` - Entity extraction logic
+- `mapify_cli/relationship_detector.py` - Relationship detection
+- `mapify_cli/kg_query.py` - Query interface
 
 ---
 
@@ -1404,7 +1404,7 @@ changelog: .claude/agents/CHANGELOG.md
 
 **Changelog:**
 
-See [.claude/agents/CHANGELOG.md](.claude/agents/CHANGELOG.md) for full version history.
+Agent template changes are tracked in the project's main CHANGELOG.md.
 
 **Example entry:**
 ```markdown
@@ -1424,9 +1424,7 @@ See [.claude/agents/CHANGELOG.md](.claude/agents/CHANGELOG.md) for full version 
 
 ### MCP Patterns Reference
 
-**Centralized MCP guidance:**
-
-File: [.claude/agents/MCP-PATTERNS.md](.claude/agents/MCP-PATTERNS.md)
+**Centralized MCP guidance** is embedded directly in agent templates:
 
 **Contents:**
 - Common MCP tool usage patterns
@@ -1992,11 +1990,6 @@ relevant_bullets = get_relevant_bullets(
 
 **Phase 3-4:** Parallelism, auto-testing, temperature per agent
 
-**Detailed Plans:**
-- [Context Engineering Improvements](docs/CONTEXT-ENGINEERING-IMPROVEMENTS.md) — Full roadmap
-- [Phase 1 Completion Summary](docs/PHASE-1-COMPLETION-SUMMARY.md) — Metrics, architecture, troubleshooting
-- [Recitation Integration Verification](docs/RECITATION-INTEGRATION-VERIFICATION.md) — Detailed integration verification
-
 **Research Foundation:**
 - ["Context Engineering for AI Agents" (Manus.im, 2025)](https://manus.im/blog/Context-Engineering-for-AI-Agents-Lessons-from-Building-Manus)
 
@@ -2031,4 +2024,4 @@ cat .map/workflow_logs/feat_auth_20251023_143022.json | jq '.subtasks[].agents.e
 ---
 
 **For usage examples and best practices, see [USAGE.md](USAGE.md).**
-**For installation and setup, see [README.md](README.md).**
+**For installation and setup, see [README.md](../README.md).**
