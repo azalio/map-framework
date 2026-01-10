@@ -23,11 +23,12 @@ Deep technical documentation for MAP (Modular Agentic Planner) implementation.
 MAP Framework implements cognitive architecture inspired by prefrontal cortex functions, orchestrating 11 specialized agents for software development with automatic quality validation.
 
 ```
-┌───────────────────────────────────────────────────────┐
-│              SLASH COMMANDS                           │
-│   /map-feature /map-debug /map-efficient /map-debate │
-│         (orchestrate workflow via prompts)            │
-└───────────────────┬───────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                     SLASH COMMANDS                               │
+│  /map-efficient /map-debate /map-debug /map-fast /map-review    │
+│  /map-learn /map-release                                         │
+│              (orchestrate workflow via prompts)                  │
+└───────────────────┬─────────────────────────────────────────────┘
                     │
        ┌────────────▼─────────────┐
        │   TASK DECOMPOSER        │
@@ -90,7 +91,7 @@ MAP Framework implements cognitive architecture inspired by prefrontal cortex fu
 **Command-Driven Workflow:**
 - Orchestration logic implemented in slash command prompts (`.claude/commands/map-*.md`)
 - NOT a separate agent file
-- When you run `/map-feature`, the command prompt coordinates the workflow by calling agents sequentially via the Task tool
+- When you run `/map-efficient`, the command prompt coordinates the workflow by calling agents sequentially via the Task tool
 
 **Workflow Stages:**
 
@@ -139,46 +140,34 @@ MAP Framework implements cognitive architecture inspired by prefrontal cortex fu
 
 ### Workflow Variants
 
-MAP Framework provides three workflow variants with different agent orchestration strategies:
+MAP Framework provides multiple workflow variants with different agent orchestration strategies:
 
-#### 1. `/map-feature` - Full Pipeline (8 Agents)
+#### 1. `/map-efficient` - Optimized Pipeline (3-5 Agents) ⭐ RECOMMENDED
 
-**Agent Sequence:** TaskDecomposer → (Actor → Monitor → Predictor → Evaluator → Reflector → Curator) per subtask
+**Agent Sequence:** TaskDecomposer → (Actor → Monitor → conditional Predictor) per subtask
 
-**Token Usage:** Baseline (100%)
-**Learning:** Per-subtask reflection and curation
-**Quality Gates:** All agents (maximum QA)
-
-**Use for:**
-- Security-critical features
-- First-time complex implementations
-- High-risk refactoring
-- Maximum quality assurance required
-
-#### 2. `/map-efficient` - Optimized Pipeline (5-6 Agents) ⭐ RECOMMENDED
-
-**Agent Sequence:** TaskDecomposer → (Actor → Monitor → conditional Predictor) per subtask → batch Reflector → batch Curator
+**With Self-MoA** (--self-moa flag OR high risk/complexity):
+TaskDecomposer → (3×Actor parallel → 3×Monitor parallel → Synthesizer → final Monitor → conditional Predictor) per subtask
 
 **Optimizations:**
 
-1. **Conditional Predictor** (5-10% token savings)
+1. **Conditional Predictor** (token savings)
    - Only called if TaskDecomposer assigns `risk_level='high'/'medium'`
-   - OR if Monitor sets `high_risk_detected=true`
+   - OR if Monitor sets `escalation_required=true`
    - Low-risk subtasks (simple CRUD, UI updates) skip impact analysis
 
-2. **Evaluator Skipped** (8-12% token savings)
+2. **Evaluator Skipped** (token savings)
    - Monitor provides sufficient validation for most tasks
    - Evaluator's 6-dimension scoring rarely changes proceed/reject decision
    - Quality still ensured by Monitor's comprehensive checks
 
-3. **Batched Learning** (10-15% token savings)
-   - Reflector analyzes ALL subtask outputs at end (vs per-subtask)
-   - Curator makes single playbook update (vs N updates for N subtasks)
-   - More holistic insights (sees patterns across entire workflow)
-   - Saves (N-1) × 3K tokens for N subtasks
+3. **Learning is OPTIONAL via /map-learn**
+   - Workflow does NOT include Reflector/Curator
+   - At completion, suggests running `/map-learn` if patterns worth saving
+   - Separation keeps workflows fast, learning intentional
 
-**Token Usage:** 60-70% of baseline
-**Learning:** Batched at end (full Reflector/Curator cycle preserved)
+**Token Usage:** Baseline for production workflows
+**Learning:** Optional via `/map-learn` command
 **Quality Gates:** Essential agents (Monitor, conditional Predictor)
 
 **Technical Details:**
@@ -192,25 +181,22 @@ for subtask in subtasks:
     if monitor_output.valid:
         # Only call Predictor if high risk
         if (subtask.risk_level in ['high', 'medium'] or
-            monitor_output.high_risk_detected):
+            monitor_output.escalation_required):
             predictor_output = call_predictor(actor_output)
         # Apply changes
         apply_code_changes(actor_output)
 
-# Batched Learning (after all subtasks)
-all_outputs = collect_all_subtask_outputs()
-reflector_output = call_reflector(all_outputs)  # Batch analysis
-curator_output = call_curator(reflector_output)  # Single update
-update_playbook(curator_output)
+# At end: suggest /map-learn if valuable patterns discovered
+print("Consider running /map-learn to save patterns")
 ```
 
 **Use for:**
 - Production code where token costs matter (RECOMMENDED)
 - Well-understood features (standard CRUD, APIs, UI)
 - Iterative development with frequent workflows
-- Any task where /map-fast feels too risky but /map-feature too expensive
+- Any task where /map-fast feels too risky but /map-debate too expensive
 
-#### 3. `/map-fast` - Minimal Pipeline (3 Agents) ⚠️
+#### 2. `/map-fast` - Minimal Pipeline (3 Agents) ⚠️
 
 **Agent Sequence:** TaskDecomposer → (Actor → Monitor) per subtask
 
@@ -237,7 +223,7 @@ update_playbook(curator_output)
 - Tutorial/learning contexts
 - **NEVER for production code**
 
-#### 4. `/map-debate` - Debate-Based Multi-Variant (11 Agents)
+#### 3. `/map-debate` - Debate-Based Multi-Variant (7 Agents)
 
 **Agent Sequence:** TaskDecomposer → (3×Actor parallel → 3×Monitor parallel → DebateArbiter → Synthesizer → Monitor → Predictor) per subtask
 
@@ -351,15 +337,13 @@ Typical token consumption per subtask (estimated):
 | ResearchAgent | 2K | 4K | 6K | Heavy codebase reading, on-demand |
 
 **Per-subtask totals:**
-- /map-feature: ~15-20K tokens
-- /map-efficient: ~9-12K tokens (40% savings)
-- /map-fast: ~8-10K tokens (50% savings)
+- /map-efficient: ~9-12K tokens (baseline)
+- /map-fast: ~8-10K tokens (minimal, no learning)
 - /map-debate: ~30-40K tokens (3× Actor variants + Arbiter + Synthesizer)
 
 **For 5-subtask workflow:**
-- /map-feature: ~75-100K tokens
-- /map-efficient: ~45-60K tokens (batched learning saves (5-1)×5K = 20K additional)
-- /map-fast: ~40-50K tokens (but no learning)
+- /map-efficient: ~45-60K tokens (learning optional via /map-learn)
+- /map-fast: ~40-50K tokens (no learning support)
 - /map-debate: ~150-200K tokens (3× variants + Opus analysis)
 
 #### Workflow Variant Selection
@@ -1544,7 +1528,7 @@ model: claude-sonnet-4-5  # or claude-haiku-3-5
    ```
 
 6. **Update orchestration:**
-   Edit `.claude/commands/map-feature.md` to call new agent:
+   Edit `.claude/commands/map-efficient.md` to call new agent:
    ```markdown
    ## After Evaluator approves:
 
@@ -1769,7 +1753,7 @@ See [MCP-PATTERNS.md](MCP-PATTERNS.md#actor-patterns) for:
    ```
 
 5. **Test:**
-   - Run `/map-feature` on known task
+   - Run `/map-efficient` on known task
    - Compare metrics before/after
    - Ensure no regressions
 
