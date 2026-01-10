@@ -41,7 +41,7 @@ Break down the task into subtasks:
 
 ```
 Task(
-  subagent_type="general-purpose",
+  subagent_type="task-decomposer",
   description="Decompose task into subtasks",
   prompt="Break down this task into atomic subtasks (≤8):
 
@@ -65,7 +65,7 @@ Each subtask must be:
 
 ```
 Task(
-  subagent_type="general-purpose",
+  subagent_type="actor",
   description="Implement subtask [ID]",
   prompt="Implement this subtask:
 
@@ -86,7 +86,7 @@ Provide FULL file content for each change, not diffs."
 
 ```
 Task(
-  subagent_type="general-purpose",
+  subagent_type="monitor",
   description="Validate implementation",
   prompt="Review this implementation:
 

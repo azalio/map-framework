@@ -22,68 +22,93 @@ Deep technical documentation for MAP (Modular Agentic Planner) implementation.
 
 MAP Framework implements cognitive architecture inspired by prefrontal cortex functions, orchestrating 11 specialized agents for software development with automatic quality validation.
 
+**Key Design Principle:** Each slash command has its own unique workflow with different agent sequences. There is no single "standard" workflow — the orchestration logic is defined in `.claude/commands/map-*.md` files.
+
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                     SLASH COMMANDS                               │
-│  /map-efficient /map-debate /map-debug /map-fast /map-review    │
-│  /map-learn /map-release                                         │
-│              (orchestrate workflow via prompts)                  │
+│  Each command orchestrates its own unique agent sequence        │
 └───────────────────┬─────────────────────────────────────────────┘
                     │
-       ┌────────────▼─────────────┐
-       │   TASK DECOMPOSER        │
-       │   (breaks into tasks)    │
-       └────────────┬─────────────┘
-                    │
-       ┌────────────▼──────────────────────────┐
-       │   For each subtask:                   │
-       │                                        │
-       │   STANDARD WORKFLOW:                  │
-       │   ┌──────────────────────┐            │
-       │   │  ACTOR ←→ MONITOR    │            │
-       │   │  (code ←→ validate)  │            │
-       │   └──────────┬───────────┘            │
-       │              │                         │
-       │   ┌──────────▼───────────┐            │
-       │   │ PREDICTOR→EVALUATOR  │            │
-       │   │ (impact → quality)   │            │
-       │   └──────────┬───────────┘            │
-       │              │                         │
-       │   ┌──────────▼───────────┐            │
-       │   │ REFLECTOR → CURATOR  │            │
-       │   │ (learn → knowledge)  │            │
-       │   └──────────────────────┘            │
-       │                                        │
-       │   DEBATE WORKFLOW (/map-debate):      │
-       │   ┌─────────────────────────────────┐ │
-       │   │ 3×ACTOR (parallel variants)     │ │
-       │   │ (security/perf/simplicity)      │ │
-       │   └─────────┬───────────────────────┘ │
-       │             │                          │
-       │   ┌─────────▼───────────────────────┐ │
-       │   │ 3×MONITOR (parallel validation) │ │
-       │   └─────────┬───────────────────────┘ │
-       │             │                          │
-       │   ┌─────────▼───────────────────────┐ │
-       │   │ DEBATE-ARBITER (Opus)           │ │
-       │   │ (cross-evaluate + decide)       │ │
-       │   └─────────┬───────────────────────┘ │
-       │             │                          │
-       │   ┌─────────▼───────────────────────┐ │
-       │   │ SYNTHESIZER                     │ │
-       │   │ (merge best solutions)          │ │
-       │   └─────────┬───────────────────────┘ │
-       │             │                          │
-       │   ┌─────────▼───────────────────────┐ │
-       │   │ MONITOR → PREDICTOR             │ │
-       │   └─────────────────────────────────┘ │
-       │                                        │
-       │   RESEARCH WORKFLOW:                  │
-       │   ┌─────────────────────────────────┐ │
-       │   │ RESEARCH-AGENT                  │ │
-       │   │ (context isolation)             │ │
-       │   └─────────────────────────────────┘ │
-       └────────────────────────────────────────┘
+    ┌───────────────┼───────────────────────────────────────┐
+    │               │               │               │        │
+    ▼               ▼               ▼               ▼        ▼
+┌────────┐    ┌────────┐    ┌────────┐    ┌────────┐  ┌────────┐
+│EFFICIENT│    │ DEBUG  │    │ DEBATE │    │ REVIEW │  │  FAST  │
+└────┬────┘    └────┬────┘   └────┬────┘   └────┬────┘  └────┬────┘
+     │              │             │              │            │
+     ▼              ▼             ▼              ▼            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                   WORKFLOW-SPECIFIC SEQUENCES                    │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  /map-efficient (⭐ RECOMMENDED):                                │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ TaskDecomposer → For each subtask:                       │   │
+│  │   ├─ Standard: Actor → Monitor → [Predictor if risky]    │   │
+│  │   └─ Self-MoA: 3×Actor → 3×Monitor → Synthesizer → Mon.  │   │
+│  │ No Evaluator. Learning via /map-learn (optional)         │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                                                                  │
+│  /map-debug (debugging-specific):                               │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ TaskDecomposer → For each step:                          │   │
+│  │   Investigation: Actor (analyze) → Monitor               │   │
+│  │   Fix: Actor → Monitor → Predictor → Evaluator           │   │
+│  │ Includes both investigation AND implementation phases     │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                                                                  │
+│  /map-debate (multi-variant with Opus arbiter):                 │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ TaskDecomposer → For each subtask:                       │   │
+│  │   3×Actor (parallel: security/perf/simplicity)           │   │
+│  │   → 3×Monitor (parallel validation)                      │   │
+│  │   → DebateArbiter (Opus) → Monitor → [Predictor if risky]│   │
+│  │ Uses Claude Opus for cross-evaluation and synthesis      │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                                                                  │
+│  /map-review (parallel analysis):                               │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ Query playbook → Get git diff                            │   │
+│  │ → [Monitor + Predictor + Evaluator] (all 3 in parallel)  │   │
+│  │ → Aggregate results → Final verdict                      │   │
+│  │ No TaskDecomposer. Reviews current branch changes        │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                                                                  │
+│  /map-fast (⚠️ minimal, throwaway only):                        │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ TaskDecomposer → Actor → Monitor                         │   │
+│  │ No Predictor, no Evaluator, no learning                  │   │
+│  │ Max 3 iterations. ⚠️ NEVER for production code           │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                                                                  │
+│  /map-release (7-phase release workflow):                       │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ Phase 1: 12 validation gates (tests, lint, CI, etc.)     │   │
+│  │ Phase 2: Version determination (user decides bump type)  │   │
+│  │ Phase 3: Execute bump-version.sh                         │   │
+│  │ Phase 4: Push tag (⚠️ IRREVERSIBLE)                      │   │
+│  │ Phase 5: Monitor CI/CD, create GitHub release            │   │
+│  │ Phase 6: Verify PyPI availability + installation test    │   │
+│  │ Phase 7: Summary                                         │   │
+│  │ No agents. Bash scripts + GitHub CLI orchestration       │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                                                                  │
+│  /map-learn (post-workflow learning):                           │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ Reflector → Curator → Apply delta → Sync to cipher       │   │
+│  │ Standalone command. Run AFTER any workflow completes.    │   │
+│  │ Extracts patterns and updates playbook/cipher.           │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                                                                  │
+│  RESEARCH-AGENT (on-demand in any workflow):                    │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ Heavy codebase reading with compressed output            │   │
+│  │ Called conditionally when context gathering needed       │   │
+│  │ Runs in isolation to avoid polluting main context        │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ### Orchestration Model
@@ -223,9 +248,9 @@ print("Consider running /map-learn to save patterns")
 - Tutorial/learning contexts
 - **NEVER for production code**
 
-#### 3. `/map-debate` - Debate-Based Multi-Variant (7 Agents)
+#### 3. `/map-debate` - Debate-Based Multi-Variant (6 Agents)
 
-**Agent Sequence:** TaskDecomposer → (3×Actor parallel → 3×Monitor parallel → DebateArbiter → Synthesizer → Monitor → Predictor) per subtask
+**Agent Sequence:** TaskDecomposer → (3×Actor parallel → 3×Monitor parallel → DebateArbiter (Opus) → Monitor → [Predictor if risky]) per subtask
 
 **Multi-Variant Architecture:**
 
@@ -241,18 +266,17 @@ print("Consider running /map-learn to save patterns")
    - Failures fed back to respective Actor for iteration
    - Continue until all 3 variants pass validation
 
-3. **Debate-Arbiter Cross-Evaluation** (Opus model)
-   - Receives all 3 validated variants
-   - Extracts decision points from each variant
-   - Cross-evaluates trade-offs with explicit reasoning
+3. **Debate-Arbiter Cross-Evaluation + Synthesis** (Opus model)
+   - Receives all 3 validated variants AND their Monitor outputs
+   - Cross-evaluates trade-offs with explicit reasoning matrix
+   - **Synthesizes unified solution directly** (no separate Synthesizer agent)
    - Uses Claude Opus 4.5 for high-quality analysis
-   - Provides synthesis guidance to Synthesizer
+   - Outputs: comparison_matrix, decision_rationales, synthesis_reasoning, synthesized code
 
-4. **Synthesizer Integration**
-   - Merges best elements from all variants
-   - Resolves conflicting decisions using arbiter guidance
-   - Produces single unified solution
-   - Validated by Monitor before proceeding
+4. **Final Validation**
+   - Final Monitor validates the synthesized code
+   - Conditional Predictor for medium/high risk subtasks
+   - Max 2 DebateArbiter retries if Monitor fails
 
 **Token Usage:** 80-100% of baseline
 **Learning:** Optional via `/map-learn` (same as other workflows)
@@ -291,33 +315,120 @@ for subtask in subtasks:
         call_monitor(variants[2])
     ])
 
-    # Phase 3: Debate-Arbiter cross-evaluation (Opus)
+    # Phase 3: Debate-Arbiter cross-evaluation + synthesis (Opus)
+    # DebateArbiter both evaluates AND synthesizes in single call
     arbiter_output = call_debate_arbiter(
         variants=variants,
         validations=validations,
         model="claude-opus-4-5"
     )
+    # arbiter_output includes: comparison_matrix, decision_rationales,
+    # synthesis_reasoning, and synthesized code
 
-    # Phase 4: Synthesizer merges solutions
-    synthesized = call_synthesizer(
-        variants=variants,
-        arbiter_guidance=arbiter_output
-    )
-
-    # Phase 5: Final validation and impact analysis
-    final_monitor = call_monitor(synthesized)
+    # Phase 4: Final validation and impact analysis
+    final_monitor = call_monitor(arbiter_output.synthesized_code)
     if final_monitor.valid:
-        predictor_output = call_predictor(synthesized)
-        apply_code_changes(synthesized)
+        if subtask.risk_level in ['high', 'medium']:
+            predictor_output = call_predictor(arbiter_output)
+        apply_code_changes(arbiter_output.synthesized_code)
 ```
 
 **Trade-offs:**
 - **Pro:** Maximum solution quality through variant exploration
 - **Pro:** Discovers optimal patterns for playbook
-- **Pro:** Arbiter reasoning provides learning material
+- **Pro:** Arbiter reasoning provides detailed decision documentation
 - **Con:** Higher token cost (3× Actor + Opus arbiter)
 - **Con:** Longer execution time (parallel but still 3× work)
-- **Con:** Complexity in synthesis (conflicting decisions must be resolved)
+
+#### 4. `/map-debug` - Debugging Workflow (5 Agents)
+
+**Agent Sequence:** TaskDecomposer → For each step: Actor → Monitor → Predictor → Evaluator
+
+**Debugging-Specific Features:**
+
+1. **Pre-Analysis Phase**
+   - Query playbook for ERROR_PATTERNS and DEBUGGING_TECHNIQUES
+   - Search cipher for similar past debugging sessions
+   - Identify affected files via Grep/Glob
+
+2. **Step Types** (defined by TaskDecomposer):
+   - `investigation`: Analyze code, logs, reproduce issue (Actor read-only)
+   - `fix`: Implement solution (Actor generates code changes)
+   - `verification`: Test fix, check for regressions
+
+3. **Full Agent Pipeline for Fixes**
+   - Unlike /map-efficient, debugging fixes go through ALL agents
+   - Predictor checks for similar issues elsewhere in codebase
+   - Evaluator verifies fix quality and edge case coverage
+
+**Token Usage:** 70-80% of baseline
+**Learning:** Optional via `/map-learn`
+**Quality Gates:** All agents for fixes, reduced for investigation
+
+**Use for:**
+- Bug fixes and issue resolution
+- Root cause analysis
+- Regression debugging
+
+#### 5. `/map-review` - Code Review Workflow (3 Agents)
+
+**Agent Sequence:** Playbook query → git diff → [Monitor + Predictor + Evaluator] (parallel) → Aggregate verdict
+
+**Review-Specific Features:**
+
+1. **No TaskDecomposer** - Reviews current branch changes as-is
+2. **Parallel Agent Execution** - All 3 agents run simultaneously on same diff
+3. **Aggregated Verdict Logic:**
+   - Proceed if: Monitor approved AND Evaluator excellent/good/acceptable
+   - Revise if: Monitor needs_revision OR Evaluator needs_work
+   - Block if: Monitor rejected OR Evaluator reject OR (Predictor high risk + breaking changes)
+
+**Token Usage:** 50-60% of baseline (single diff, no implementation)
+**Learning:** Optional via `/map-learn`
+**Quality Gates:** All 3 review agents
+
+**Use for:**
+- Pre-commit code review
+- PR review automation
+- Quality gate before merge
+
+#### 6. `/map-release` - Release Workflow (No Agents)
+
+**Workflow:** 7 sequential phases with validation gates (no AI agents)
+
+**Phases:**
+1. Pre-release validation (12 gates: tests, lint, CI, security, CHANGELOG)
+2. Version determination (user chooses bump type)
+3. Execute bump-version.sh (updates pyproject.toml, CHANGELOG, creates tag)
+4. Push tag (⚠️ IRREVERSIBLE - triggers CI/CD)
+5. Monitor CI/CD, create GitHub release
+6. Verify PyPI availability + installation test
+7. Summary
+
+**Unique Characteristics:**
+- **No AI agents** - bash scripts + GitHub CLI orchestration
+- **User confirmation required** before irreversible tag push
+- **Rollback procedures documented** for each failure scenario
+
+**Use for:**
+- Package releases to PyPI
+- Version bumping with full validation
+
+#### 7. `/map-learn` - Post-Workflow Learning (2 Agents)
+
+**Agent Sequence:** Reflector → Curator → Apply delta → Sync to cipher
+
+**Standalone Learning:**
+- Run AFTER any workflow completes (not during)
+- Extracts patterns from Actor/Monitor/Predictor outputs
+- Updates playbook SQLite database via `mapify playbook apply-delta`
+- Syncs high-quality bullets (helpful_count >= 5) to cipher for cross-project sharing
+
+**Token Usage:** 5-8K tokens (depends on workflow size)
+**When to use:**
+- After /map-efficient completes with valuable patterns
+- After /map-debug reveals debugging techniques
+- Retroactively for /map-fast workflows
 
 #### Token Breakdown by Agent
 
@@ -328,21 +439,24 @@ Typical token consumption per subtask (estimated):
 | TaskDecomposer | 1.5K | 1K | 2.5K | One-time (not per subtask) |
 | Actor | 2K | 3-4K | 5-6K | Largest consumer (full file content) |
 | Monitor | 1.5K | 1K | 2.5K | Always included |
-| Predictor | 1.5K | 1K | 2.5K | Conditional in /map-efficient |
-| Evaluator | 2K | 1K | 3K | Skipped in /map-efficient |
-| Reflector | 2K | 1K | 3K | Batched in /map-efficient, optional via /map-learn |
-| Curator | 1.5K | 0.5K | 2K | Batched in /map-efficient, optional via /map-learn |
-| DebateArbiter | 3K | 2K | 5K | Opus model, /map-debate only |
-| Synthesizer | 2K | 3K | 5K | /map-debate only, merges 3 variants |
-| ResearchAgent | 2K | 4K | 6K | Heavy codebase reading, on-demand |
+| Predictor | 1.5K | 1K | 2.5K | Conditional in /map-efficient, always in /map-debug |
+| Evaluator | 2K | 1K | 3K | Only in /map-debug, /map-review |
+| Reflector | 2K | 1K | 3K | Only via /map-learn |
+| Curator | 1.5K | 0.5K | 2K | Only via /map-learn |
+| DebateArbiter | 3K | 2K | 5K | Opus model, /map-debate only (includes synthesis) |
+| Synthesizer | 2K | 3K | 5K | /map-efficient Self-MoA only (DebateArbiter handles this in /map-debate) |
+| ResearchAgent | 2K | 4K | 6K | Heavy codebase reading, on-demand in any workflow |
 
 **Per-subtask totals:**
-- /map-efficient: ~9-12K tokens (baseline)
+- /map-efficient (standard): ~9-12K tokens (baseline)
+- /map-efficient (Self-MoA): ~25-30K tokens (3× Actor + Synthesizer)
 - /map-fast: ~8-10K tokens (minimal, no learning)
-- /map-debate: ~30-40K tokens (3× Actor variants + Arbiter + Synthesizer)
+- /map-debug: ~15-20K tokens (full pipeline with Evaluator)
+- /map-review: ~8-10K tokens (parallel agents on single diff)
+- /map-debate: ~30-40K tokens (3× Actor + Opus DebateArbiter)
 
 **For 5-subtask workflow:**
-- /map-efficient: ~45-60K tokens (learning optional via /map-learn)
+- /map-efficient: ~45-60K tokens (learning optional via /map-learn: +5-8K)
 - /map-fast: ~40-50K tokens (no learning support)
 - /map-debate: ~150-200K tokens (3× variants + Opus analysis)
 
