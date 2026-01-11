@@ -510,8 +510,12 @@ def get_templates_dir() -> Path:
     raise RuntimeError("Templates directory not found. Please reinstall mapify-cli.")
 
 
-def create_agent_files(project_path: Path, mcp_servers: List[str]) -> None:
-    """Create MAP agent files in .claude/agents/"""
+def create_agent_files(project_path: Path, mcp_servers: List[str]) -> int:
+    """Create MAP agent files in .claude/agents/
+
+    Returns:
+        Number of agent files installed
+    """
     agents_dir = project_path / ".claude" / "agents"
     agents_dir.mkdir(parents=True, exist_ok=True)
 
@@ -526,12 +530,15 @@ def create_agent_files(project_path: Path, mcp_servers: List[str]) -> None:
         # Files to exclude from agent directory (documentation, not agents)
         exclude_files = {"README.md", "CHANGELOG.md", "MCP-PATTERNS.md"}
 
+        count = 0
         for agent_template in agents_template_dir.glob("*.md"):
             # Skip documentation files - they're not agents
             if agent_template.name in exclude_files:
                 continue
             dest_file = agents_dir / agent_template.name
             shutil.copy2(agent_template, dest_file)
+            count += 1
+        return count
     else:
         # Fallback: generate simplified versions if templates not found
         # NOTE: orchestrator removed (moved to slash commands in production architecture)
@@ -551,6 +558,7 @@ def create_agent_files(project_path: Path, mcp_servers: List[str]) -> None:
         for name, content in agents.items():
             agent_file = agents_dir / f"{name}.md"
             agent_file.write_text(content)
+        return len(agents)
 
 
 def create_task_decomposer_content(mcp_servers: List[str]) -> str:
@@ -1083,8 +1091,12 @@ def create_reference_files(project_path: Path) -> int:
     return count
 
 
-def create_command_files(project_path: Path) -> None:
-    """Create MAP slash commands in .claude/commands/"""
+def create_command_files(project_path: Path) -> int:
+    """Create MAP slash commands in .claude/commands/
+
+    Returns:
+        Number of command files installed
+    """
     commands_dir = project_path / ".claude" / "commands"
     commands_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1138,18 +1150,48 @@ $ARGUMENTS
 
 Call Reflector to extract patterns, then Curator to update playbook.
 """,
+            "map-review": """---
+description: Comprehensive MAP review of changes
+---
+
+Review current git changes using Monitor, Predictor, and Evaluator:
+
+$ARGUMENTS
+""",
+            "map-debate": """---
+description: Debate-based multi-variant synthesis (advanced)
+---
+
+Use multi-variant debate workflow for:
+
+$ARGUMENTS
+""",
+            "map-release": """---
+description: Package release runbook (maintainers)
+---
+
+Follow the release checklist for:
+
+$ARGUMENTS
+""",
         }
 
+        count = 0
         for name, content in commands.items():
             command_file = commands_dir / f"{name}.md"
             command_file.write_text(content)
+            count += 1
+        return count
     else:
         # Copy templates from bundled directory
         import shutil
 
+        count = 0
         for command_template in commands_template_dir.glob("*.md"):
             dest_file = commands_dir / command_template.name
             shutil.copy2(command_template, dest_file)
+            count += 1
+        return count
 
 
 def create_skill_files(project_path: Path) -> int:
@@ -1800,6 +1842,9 @@ def create_commands_dir(project_path: Path) -> None:
     commands_dir.mkdir(parents=True, exist_ok=True)
 
     readme = commands_dir / "README.md"
+    if readme.exists():
+        return
+
     readme.write_text(
         """# Claude Code Commands
 
@@ -1810,8 +1855,10 @@ This directory contains custom slash commands for Claude Code.
 - `/map-efficient` - Implement features with optimized workflow (recommended)
 - `/map-debug` - Debug issues using MAP analysis
 - `/map-fast` - Quick implementation with minimal validation
-- `/map-learn` - Extract lessons from completed workflows
-- `/map-release` - Execute MAP Framework package release workflow
+- `/map-review` - Review changes (Monitor + Predictor + Evaluator)
+- `/map-learn` - Extract lessons from completed workflows (optional)
+- `/map-debate` - Multi-variant with Opus arbiter (advanced)
+- `/map-release` - MAP Framework package release workflow (maintainers)
 
 ## Creating Custom Commands
 
@@ -1985,13 +2032,14 @@ def init(
     # Create MAP files
     tracker.add("create-agents", "Create MAP agents")
     tracker.start("create-agents")
-    create_agent_files(project_path, selected_mcp_servers)
-    tracker.complete("create-agents", "8 agents")
+    agent_count = create_agent_files(project_path, selected_mcp_servers)
+    tracker.complete("create-agents", f"{agent_count} agents")
 
     tracker.add("create-commands", "Create slash commands")
     tracker.start("create-commands")
-    create_command_files(project_path)
-    tracker.complete("create-commands", "4 commands")
+    create_commands_dir(project_path)
+    command_count = create_command_files(project_path)
+    tracker.complete("create-commands", f"{command_count} commands")
 
     tracker.add("create-skills", "Create skills")
     tracker.start("create-skills")
@@ -2141,16 +2189,16 @@ def init(
         step_num = 2
 
     steps_lines.append(f"{step_num}. Start using MAP commands with Claude Code:")
-    steps_lines.append(
-        "   • [cyan]/map-efficient[/] - Implement features with optimized workflow (recommended)"
+    installed = sorted(
+        p.stem
+        for p in (project_path / ".claude" / "commands").glob("*.md")
+        if p.name != "README.md"
     )
-    steps_lines.append("   • [cyan]/map-debug[/] - Debug issue using MAP analysis")
-    steps_lines.append(
-        "   • [cyan]/map-fast[/] - Quick implementation with minimal validation"
-    )
-    steps_lines.append(
-        "   • [cyan]/map-learn[/] - Extract lessons from completed workflows"
-    )
+    if not installed:
+        steps_lines.append("   • [yellow](no slash commands installed)[/yellow]")
+    else:
+        for cmd in installed:
+            steps_lines.append(f"   • [cyan]/{cmd}[/]")
 
     steps_panel = Panel(
         "\n".join(steps_lines), title="Next Steps", border_style="cyan", padding=(1, 2)

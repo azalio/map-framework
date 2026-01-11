@@ -10,6 +10,17 @@ Minimal agent sequence (40-50% token savings). Skips: Predictor, Evaluator, Refl
 
 **Consequences:** No impact analysis, no quality scoring, no learning, playbook never improves.
 
+## Safety Guardrails (Keep It Cheap, Avoid Disasters)
+
+If the task involves ANY of the following, STOP and use `/map-efficient` instead (or `/map-efficient --self-moa` for security-critical work):
+
+- auth/session/JWT/OAuth/passwords/permissions
+- payments/billing/invoicing/PCI
+- secrets/crypto/encryption/signing/keys
+- data migrations/schema changes
+- infra/CI/CD/deploy/release changes (use `/map-release` for mapify-cli itself)
+- anything where a bug is expensive
+
 Implement the following:
 
 **Task:** $ARGUMENTS
@@ -43,7 +54,7 @@ Break down the task into subtasks:
 Task(
   subagent_type="task-decomposer",
   description="Decompose task into subtasks",
-  prompt="Break down this task into atomic subtasks (≤8):
+  prompt="Break down this task into atomic subtasks (≤4). If you need more than 4, recommend switching to /map-efficient:
 
 Task: $ARGUMENTS
 
@@ -74,11 +85,13 @@ Task(
 
 Output JSON with:
 - approach: string (implementation strategy)
-- code_changes: array of {file_path, change_type, content, rationale}
+- code_changes: array of {file_path, change_type, patch_or_snippet, rationale}
 - trade_offs: array of strings
 - testing_approach: string
 
-Provide FULL file content for each change, not diffs."
+Keep it token-cheap:
+- Prefer minimal patch/snippet over FULL file content
+- Only include FULL file content when creating a new file or when the file is very small"
 )
 ```
 
@@ -120,8 +133,8 @@ Output JSON with:
 After all subtasks completed:
 
 1. Run basic tests (if applicable)
-2. Create commit with message
-3. Summarize what was implemented
+2. Summarize what was implemented
+3. If this is no longer throwaway: rerun with `/map-efficient` and optionally `/map-learn`
 
 **Note:** No playbook updates, no cipher patterns stored (learning disabled).
 
