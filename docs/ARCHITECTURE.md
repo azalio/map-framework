@@ -69,7 +69,7 @@ MAP Framework implements cognitive architecture inspired by prefrontal cortex fu
 │                                                                  │
 │  /map-review (parallel analysis):                               │
 │  ┌──────────────────────────────────────────────────────────┐   │
-│  │ Query playbook → Get git diff                            │   │
+│  │ Query mem0 patterns → Get git diff                       │   │
 │  │ → [Monitor + Predictor + Evaluator] (all 3 in parallel)  │   │
 │  │ → Aggregate results → Final verdict                      │   │
 │  │ No TaskDecomposer. Reviews current branch changes        │   │
@@ -96,9 +96,9 @@ MAP Framework implements cognitive architecture inspired by prefrontal cortex fu
 │                                                                  │
 │  /map-learn (post-workflow learning):                           │
 │  ┌──────────────────────────────────────────────────────────┐   │
-│  │ Reflector → Curator → Apply delta → Sync to cipher       │   │
+│  │ Reflector → Curator → mem0 storage → Verification        │   │
 │  │ Standalone command. Run AFTER any workflow completes.    │   │
-│  │ Extracts patterns and updates playbook/cipher.           │   │
+│  │ Extracts patterns and stores via mem0 MCP tools.         │   │
 │  └──────────────────────────────────────────────────────────┘   │
 │                                                                  │
 │  RESEARCH-AGENT (on-demand in any workflow):                    │
@@ -1138,26 +1138,28 @@ MCP servers are configured differently depending on the usage context:
 
 ### Overview
 
-The Knowledge Graph (KG) layer transforms implicit playbook knowledge into an explicit, queryable semantic graph. Instead of storing patterns as unstructured text bullets, the KG extracts entities (tools, patterns, concepts) and relationships (uses, depends-on, contradicts) for advanced querying and analysis.
+The Knowledge Graph (KG) layer transforms implicit knowledge into an explicit, queryable semantic graph. Instead of storing patterns as unstructured text, the KG extracts entities (tools, patterns, concepts) and relationships (uses, depends-on, contradicts) for advanced querying and analysis.
+
+> **Note:** As of v4.0, pattern storage has migrated from playbook.db to mem0 MCP with tiered namespaces (branch → project → org). The Knowledge Graph functionality described below is now provided via mem0's semantic search and the cipher MCP tools.
 
 **Key Capabilities:**
-- **Entity Extraction**: Automatically identifies 7 entity types from playbook bullets
+- **Entity Extraction**: Automatically identifies 7 entity types from stored patterns
 - **Relationship Detection**: Discovers 9 typed relationships between entities
 - **Graph Queries**: BFS path finding, neighbor traversal, temporal queries
 - **Contradiction Detection**: Identifies conflicting patterns with severity levels and resolution suggestions
-- **Provenance Tracking**: Traces each entity/relationship back to source bullets
+- **Provenance Tracking**: Traces each entity/relationship back to source patterns
 
-### Architecture
+### Architecture (Legacy Reference)
 
 ```
 ┌────────────────────────────────────────────────────────┐
-│  PLAYBOOK MANAGER (playbook.db schema v3.0)           │
+│  MEM0 MCP (Tiered Knowledge Storage)                  │
 │  ┌──────────────┐     ┌─────────────────────────┐    │
-│  │  bullets     │     │   Knowledge Graph       │    │
-│  │  (v2.1)      │────→│   ┌───────────────┐     │    │
+│  │  patterns    │     │   Knowledge Graph       │    │
+│  │  (tiered)    │────→│   ┌───────────────┐     │    │
 │  │              │     │   │   entities    │     │    │
 │  │ - content    │     │   │ - TOOL        │     │    │
-│  │ - section    │     │   │ - PATTERN     │     │    │
+│  │ - section_id │     │   │ - PATTERN     │     │    │
 │  │ - helpful_   │     │   │ - CONCEPT     │     │    │
 │  │   count      │     │   │ - ERROR_TYPE  │     │    │
 │  └──────────────┘     │   │ - TECHNOLOGY  │     │    │
@@ -1178,7 +1180,7 @@ The Knowledge Graph (KG) layer transforms implicit playbook knowledge into an ex
 │                       │           │             │    │
 │                       │   ┌───────▼───────┐     │    │
 │                       │   │ provenance    │     │    │
-│                       │   │ (bullet src)  │     │    │
+│                       │   │ (pattern src) │     │    │
 │                       │   └───────────────┘     │    │
 │                       └─────────────────────────┘    │
 └────────────────────────────────────────────────────────┘
