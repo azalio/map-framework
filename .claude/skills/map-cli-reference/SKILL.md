@@ -5,6 +5,8 @@ description: Use when encountering mapify CLI command errors (no such option, no
 
 # MAP CLI Quick Reference
 
+> **Note (v4.0+):** Pattern storage has migrated from playbook.db to mem0 MCP. Playbook commands below are retained for legacy compatibility. For pattern storage/retrieval, use mem0 MCP tools: `mcp__mem0__map_tiered_search`, `mcp__mem0__map_add_pattern`, `mcp__mem0__map_archive_pattern`.
+
 Fast lookup for mapify commands, parameters, and common error corrections.
 
 **For comprehensive documentation**, see:
@@ -91,19 +93,19 @@ mapify upgrade
 
 ---
 
-### Error 3: Wrong Approach (CRITICAL)
+### Error 3: Wrong Approach (CRITICAL) - v4.0+ uses mem0 MCP
 
 ❌ **WRONG**: `sqlite3 .claude/playbook.db "UPDATE bullets SET..."`
-✅ **CORRECT**: `mapify playbook apply-delta operations.json`
-📝 **Explanation**: Direct database access breaks integrity and bypasses validation. ALWAYS use `apply-delta`.
+✅ **CORRECT**: `mcp__mem0__map_add_pattern` via Curator agent
+📝 **Explanation**: Pattern storage migrated to mem0 MCP. Use Curator agent to store patterns.
 
-❌ **WRONG**: `Edit(.claude/playbook.db, ...)`
-✅ **CORRECT**: `mapify playbook apply-delta operations.json`
-📝 **Explanation**: Cannot edit binary SQLite database. Generate delta operations JSON and apply via CLI.
+❌ **WRONG**: Direct playbook updates without Curator
+✅ **CORRECT**: `Task(subagent_type="curator", ...)`
+📝 **Explanation**: Curator validates quality, checks duplicates via `mcp__mem0__map_tiered_search`.
 
-❌ **WRONG**: Using legacy JSON format for playbook
-✅ **CORRECT**: `mapify playbook query "..."`
-📝 **Explanation**: Playbook uses SQLite database (`playbook.db`). Use CLI commands to interact with playbook.
+❌ **WRONG**: Using legacy playbook for new patterns
+✅ **CORRECT**: mem0 MCP tools
+📝 **Explanation**: As of v4.0, patterns stored in mem0 with tiered namespaces (branch → project → org).
 
 ---
 
@@ -153,16 +155,26 @@ mapify playbook query "NEAR(JWT token, 5)"  # within 5 tokens
 
 ---
 
-### Playbook Search Modes
+### Pattern Search (v4.0+ - mem0 MCP)
 
 ```bash
-# Local only (fast, default)
+# Tiered search across namespaces (recommended)
+mcp__mem0__map_tiered_search("pattern query")
+
+# Add new patterns via Curator
+mcp__mem0__map_add_pattern(content="...", category="implementation", tier="project")
+
+# Archive outdated patterns
+mcp__mem0__map_archive_pattern(pattern_id="impl-0042", reason="...")
+```
+
+### Legacy Playbook Search Modes
+
+```bash
+# Local only (fast, default) - LEGACY
 mapify playbook query "pattern" --mode local
 
-# Cipher only (cross-project, requires MCP)
-mapify playbook query "pattern" --mode cipher
-
-# Hybrid (both local + cipher)
+# Hybrid mode - LEGACY
 mapify playbook query "pattern" --mode hybrid
 ```
 
@@ -214,24 +226,22 @@ mapify playbook query "pattern" --mode hybrid
 
 ---
 
-## Integration with MAP Workflows
+## Integration with MAP Workflows (v4.0+)
 
 ### Curator Agent
 
-**Role**: Updates playbook via delta operations
+**Role**: Stores patterns in mem0 MCP
 
 **Workflow**:
 1. Curator analyzes reflector insights
-2. Generates delta operations (ADD/UPDATE/DEPRECATE)
-3. Outputs JSON to file
-4. Main agent runs: `mapify playbook apply-delta operations.json`
+2. Checks for duplicates via `mcp__mem0__map_tiered_search`
+3. Stores new patterns via `mcp__mem0__map_add_pattern`
+4. Archives outdated patterns via `mcp__mem0__map_archive_pattern`
 
-**Critical Rule**: Curator must NEVER:
-- ❌ Run `sqlite3` commands directly
-- ❌ Use `Edit` tool on playbook.db
-- ❌ Manually create/modify playbook files
-
-**Always**: Generate delta JSON → Apply via CLI
+**Critical Rule**: Curator must:
+- ✅ Use `mcp__mem0__map_tiered_search` to check duplicates first
+- ✅ Use `mcp__mem0__map_add_pattern` to store patterns
+- ✅ Use `mcp__mem0__map_archive_pattern` to deprecate patterns
 
 ---
 
@@ -240,13 +250,13 @@ mapify playbook query "pattern" --mode hybrid
 **Role**: Searches for existing patterns before extracting new ones
 
 **Workflow**:
-1. Search cipher for similar patterns: `mapify playbook query "..." --mode cipher`
-2. Search local playbook: `mapify playbook query "..." --mode local`
-3. Extract only novel patterns (deduplicate)
+1. Search mem0 for similar patterns: `mcp__mem0__map_tiered_search("query")`
+2. Searches across tiers: branch → project → org
+3. Extract only novel patterns (deduplicate via fingerprint)
 
-**Commands used**:
+**MCP tool used**:
 ```bash
-mapify playbook query "error handling" --mode hybrid --limit 10
+mcp__mem0__map_tiered_search("error handling")
 ```
 
 ---
@@ -273,14 +283,14 @@ mapify playbook query "error handling" --mode hybrid --limit 10
 
 ---
 
-### Playbook Update Failed
+### Pattern Storage Issues (v4.0+)
 
-**Issue**: Direct database modification corrupted playbook
+**Issue**: Patterns not being stored correctly
 
 **Solution**:
-1. Never use `sqlite3` or `Edit` tool directly
-2. Always use `mapify playbook apply-delta`
-3. Restore from git if corrupted: `git restore .claude/playbook.db`
+1. Use mem0 MCP tools via Curator agent
+2. Check for duplicates with `mcp__mem0__map_tiered_search`
+3. Use `mcp__mem0__map_add_pattern` to store new patterns
 
 ---
 

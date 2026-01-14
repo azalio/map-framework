@@ -328,8 +328,10 @@ This section documents frequently encountered CLI command errors and their corre
 
 | ❌ NEVER DO THIS | ✅ ALWAYS USE THIS | Why |
 |------------------|-------------------|-----|
-| `sqlite3 .claude/playbook.db "UPDATE bullets SET..."` | `mapify playbook apply-delta ops.json` | Direct database access breaks integrity, bypasses validation, and corrupts FTS5 indexes. |
-| `Edit(.claude/playbook.db, ...)` | `mapify playbook apply-delta ops.json` | Cannot edit binary SQLite database. Generate delta operations JSON and apply via CLI. |
+| Direct mem0 MCP calls without Curator | `Task(subagent_type="curator", ...)` | Curator validates quality, checks duplicates via tiered search |
+| Manually creating patterns | `mcp__mem0__map_add_pattern` via Curator | Fingerprint-based deduplication prevents duplicates |
+
+> **Note (v4.0+):** Pattern storage migrated from playbook.db to mem0 MCP. Use mem0 tools: `mcp__mem0__map_tiered_search`, `mcp__mem0__map_add_pattern`, `mcp__mem0__map_archive_pattern`.
 
 ### Wrong Operation Field Name
 
@@ -423,12 +425,14 @@ Instead of treating playbook bullets as plain text, the KG:
 
 ### Querying the Knowledge Graph (Python API)
 
+> **Note (v4.0+):** As of v4.0, primary pattern storage has migrated to mem0 MCP. The Knowledge Graph API below is retained for entity/relationship queries on legacy data. For pattern retrieval, use `mcp__mem0__map_tiered_search`.
+
 ```python
 from mapify_cli.playbook_manager import PlaybookManager
 from mapify_cli.entity_extractor import EntityType
 from mapify_cli.relationship_detector import RelationshipType
 
-# Initialize (auto-migrates to KG schema v3.0 if needed)
+# Initialize Knowledge Graph for entity queries (LEGACY - patterns now in mem0)
 pm = PlaybookManager(db_path=".claude/playbook.db")
 kg = pm.kg_query
 

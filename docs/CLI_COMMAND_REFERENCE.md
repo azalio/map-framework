@@ -2,6 +2,8 @@
 
 > **Machine-readable specification**: See [CLI_REFERENCE.json](./CLI_REFERENCE.json) for complete JSON schema
 
+> **IMPORTANT (v4.0+):** Pattern storage has migrated from playbook.db to mem0 MCP. The playbook commands below are retained for legacy compatibility and Knowledge Graph queries. For pattern storage and retrieval, use mem0 MCP tools: `mcp__mem0__map_tiered_search`, `mcp__mem0__map_add_pattern`, `mcp__mem0__map_archive_pattern`.
+
 Complete reference for all mapify CLI commands with correct syntax, parameters, and common error corrections.
 
 ## Table of Contents
@@ -191,11 +193,13 @@ mapify playbook apply-delta operations.json --dry-run
 
 ⚠️ **This is the ONLY correct way to update playbook**
 
-❌ **NEVER DO THIS**:
+❌ **NEVER DO THIS** (LEGACY):
 - `sqlite3 .claude/playbook.db "UPDATE bullets SET..."`
 - `Edit(.claude/playbook.db, ...)`
 
-✅ **ALWAYS USE**: `mapify playbook apply-delta`
+✅ **ALWAYS USE** (LEGACY): `mapify playbook apply-delta`
+
+> **Note (v4.0+):** For pattern storage, use mem0 MCP via Curator agent instead of playbook.db commands.
 
 **Why?**
 - Maintains database integrity
@@ -413,12 +417,12 @@ Updates agent templates in `.claude/agents/` to latest versions.
 | `mapify playbook search --limit 3` | `mapify playbook search "query" --top-k 3` | `search` uses `--top-k` |
 | `mapify playbook query --bullet-id test-0016` | `mapify playbook query "test-0016"` | No `--bullet-id` option |
 
-### 3. Wrong Approach
+### 3. Wrong Approach (LEGACY - v4.0+ uses mem0 MCP)
 
 | ❌ Wrong | ✅ Correct | Explanation |
 |---------|-----------|-------------|
-| `sqlite3 .claude/playbook.db "UPDATE..."` | `mapify playbook apply-delta ops.json` | Direct DB access breaks integrity |
-| `Edit(.claude/playbook.db, ...)` | `mapify playbook apply-delta ops.json` | Cannot edit binary DB |
+| `sqlite3 .claude/playbook.db "UPDATE..."` | `mcp__mem0__map_add_pattern` via Curator | Direct DB access breaks integrity; patterns now in mem0 |
+| `Edit(.claude/playbook.db, ...)` | `Task(subagent_type="curator", ...)` | Cannot edit binary DB; use Curator agent |
 
 ---
 
@@ -474,29 +478,29 @@ Need semantic/conceptual search?
 
 ## Integration with MAP Workflow
 
-### Curator Agent Usage
+### Curator Agent Usage (v4.0+)
 
 ```bash
-# Curator generates delta operations
-# Then main agent applies them:
-mapify playbook apply-delta curator_operations.json
+# Curator stores patterns via mem0 MCP:
+mcp__mem0__map_add_pattern(content="...", category="implementation", tier="project")
+
+# Archive outdated patterns:
+mcp__mem0__map_archive_pattern(pattern_id="impl-0042", reason="Superseded")
 ```
 
-**Critical Rule**: Curator must NEVER:
-- Run `sqlite3` commands directly
-- Use `Edit` tool on playbook.db
-- Manually create/modify playbook files
+**Critical Rule**: Curator must:
+- Use `mcp__mem0__map_tiered_search` to check for duplicates first
+- Use `mcp__mem0__map_add_pattern` to store new patterns
+- Use `mcp__mem0__map_archive_pattern` to deprecate patterns
 
-**Always**: Generate delta JSON → Apply via CLI
-
-### Reflector Agent Usage
+### Reflector Agent Usage (v4.0+)
 
 ```bash
-# Reflector searches for existing patterns
-mapify playbook query "error handling" --mode hybrid --limit 10
+# Reflector searches for existing patterns via mem0:
+mcp__mem0__map_tiered_search("error handling")
 ```
 
-Checks both local playbook and cipher before extracting new patterns.
+Searches across tiers (branch → project → org) before extracting new patterns.
 
 ---
 

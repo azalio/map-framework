@@ -238,9 +238,10 @@ If you prefer manual setup:
    │   │   ├── map-learn.md           # Extract and save lessons
    │   │   ├── map-review.md          # Review workflow
    │   │   └── map-release.md         # Release workflow
-   │   ├── mcp_config.json
-   │   └── playbook.db                # ACE: Knowledge base (SQLite)
+   │   └── mcp_config.json
    ```
+
+> **Note (v4.0+):** Pattern storage migrated from playbook.db to mem0 MCP with tiered namespaces (branch → project → org).
 
 ## Verify Installation
 
@@ -295,70 +296,45 @@ MAP Framework uses **slash commands** as entry points that coordinate specialize
 - **`/map-debug`** - Diagnostic and fix workflows with agent coordination
 - **`/map-fast`** - Minimal workflow (3 agents) — **throwaway code only!**
 - **`/map-review`** - Comprehensive review with MAP analysis
-- **`/map-learn`** - Extract lessons: reflector → curator → playbook update
+- **`/map-learn`** - Extract lessons: reflector → curator → mem0 storage
 
 **Note:** Agents are invoked automatically by slash commands. Direct agent invocation is not the recommended approach—use the slash commands above for proper workflow orchestration.
 
-### Learning System (ACE Playbook)
+### Learning System (mem0 MCP)
 
-MAP automatically learns from your work through the ACE (Agentic Context Engineering) playbook:
+MAP automatically learns from your work through the mem0 tiered memory system:
 
 ```bash
-# View playbook statistics
-mapify playbook stats
+# Search for relevant patterns via mem0 MCP
+# In Claude Code, Curator agent calls:
+mcp__mem0__map_tiered_search("JWT authentication")
 
-# Search for relevant patterns
-mapify playbook search "JWT authentication"
-
-# View high-quality patterns ready for sync
-mapify playbook sync
+# Add new patterns via Curator agent
+mcp__mem0__map_add_pattern(content="...", category="security", tier="project")
 ```
 
-The playbook is stored in `.claude/playbook.db` and grows as you use MAP commands.
+> **Note (v4.0+):** Pattern storage migrated from playbook.db to mem0 MCP with tiered namespaces (branch → project → org).
 
 ## MCP Server Setup
 
 If you selected MCP servers during installation, ensure they're configured:
 
-### Cipher (Knowledge Management)
+### mem0 (Knowledge Management) - RECOMMENDED
 
 **Overview:**
 
-- Stores successful patterns and solutions
-- Retrieves relevant past implementations
-- Builds institutional knowledge over time
-- Enables cross-project learning through semantic search
+- Tiered pattern storage (branch → project → org)
+- Semantic search across all tiers
+- Fingerprint-based deduplication
+- Enables cross-project learning
 
-**Quick Setup:**
+**Setup:**
 
-```bash
-# Install Cipher globally
-npm install -g @byterover/cipher
+See mem0 MCP server documentation for installation instructions.
 
-# Verify installation
-cipher --version
-```
+### Cipher (LEGACY)
 
-**Backend Infrastructure (Optional but Recommended):**
-
-Cipher can work with in-memory storage, but for production use we recommend setting up persistent backends:
-
-- **Qdrant**: Vector database for semantic search
-- **PostgreSQL**: Relational database for structured memory data
-
-**📚 Full Installation Guide:**
-For complete setup instructions including Qdrant + PostgreSQL backend, configuration examples for different LLM providers, troubleshooting, and integration with MAP Framework:
-
-→ **[MCP Cipher + Qdrant + PostgreSQL Setup Guide](QUICKSTART-CIPHER.md)**
-
-This comprehensive guide includes:
-
-- Docker infrastructure setup
-- Cipher installation and configuration
-- Claude Code MCP integration
-- Verification checklist
-- Troubleshooting guide
-- Performance optimization tips
+> **DEPRECATED (v4.0+):** Cipher has been replaced by mem0 MCP. See [QUICKSTART-CIPHER.md](QUICKSTART-CIPHER.md) for legacy documentation.
 
 ### Claude-Reviewer (Professional Review)
 
@@ -384,24 +360,21 @@ This comprehensive guide includes:
 - Analyze architectural patterns
 - Learn from production implementations
 
-## ACE Playbook (Knowledge Management)
+## ACE Learning (Knowledge Management)
 
-The MAP Framework includes an ACE-style playbook that learns from every task:
+The MAP Framework includes an ACE-style learning system via mem0 MCP:
 
 - **Reflector agent**: Extracts lessons from successes and failures
-- **Curator agent**: Maintains structured knowledge base with delta updates
-- **Playbook storage**: `.claude/playbook.db` with 9 pattern categories:
-  - ARCHITECTURE_PATTERNS
-  - IMPLEMENTATION_PATTERNS
-  - SECURITY_PATTERNS
-  - PERFORMANCE_PATTERNS
-  - ERROR_PATTERNS
-  - TESTING_STRATEGIES
-  - CODE_QUALITY_RULES
-  - TOOL_USAGE
-  - DEBUGGING_TECHNIQUES
+- **Curator agent**: Maintains structured knowledge base via mem0 MCP
+- **mem0 tiered storage**: Patterns stored across namespaces (branch → project → org) with categories:
+  - implementation
+  - security
+  - architecture
+  - debugging
+  - testing
+  - performance
 
-The playbook automatically grows as you use MAP commands and validates patterns with helpful/harmful counters.
+> **Note (v4.0+):** Pattern storage migrated from playbook.db to mem0 MCP. The system automatically grows as you use MAP commands with fingerprint-based deduplication.
 
 ## Optional: Semantic Search
 
@@ -546,8 +519,8 @@ To remove MAP Framework:
 rm -rf .claude/agents/
 rm -rf .claude/commands/
 rm .claude/mcp_config.json
-rm .claude/playbook.db
 rm -rf .claude/embeddings_cache/
+# Note: mem0 data is managed by mem0 MCP server, not local files
 
 # Uninstall mapify CLI
 uv tool uninstall mapify-cli
