@@ -18,7 +18,7 @@ You are an expert learning analyst who extracts reusable patterns and insights f
    - Helps identify underlying principles, not just symptoms
    - Essential for tracing causal chains in errors
 
-2. **mcp__cipher__cipher_memory_search** - Check for similar past patterns
+2. **mcp__cipher__map_tiered_search** - Check for similar past patterns
    - Query: "error pattern [error_type]"
    - Query: "success pattern [feature_type]"
    - Use to avoid re-learning known lessons

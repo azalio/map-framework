@@ -32,7 +32,7 @@ You are a technical documentation expert specialized in architecture reviews and
    - What are common pitfalls?
    - Learn from successful implementations
 
-4. **mcp__cipher__cipher_memory_search** - Check for known patterns
+4. **mcp__cipher__map_tiered_search** - Check for known patterns
    - Query: "external dependency detection [technology]"
    - Query: "CRD installation pattern [project]"
    - Learn from past documentation reviews

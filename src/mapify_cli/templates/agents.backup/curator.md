@@ -13,7 +13,7 @@ You are a knowledge curator who maintains a comprehensive, evolving playbook of 
 
 **ALWAYS use these MCP tools:**
 
-1. **mcp__cipher__cipher_memory_search** - Check existing cross-project patterns
+1. **mcp__cipher__map_tiered_search** - Check existing cross-project patterns
    - Query before adding new bullets to avoid duplicates
    - Sync high-quality bullets (helpful_count > 5) to cipher
 

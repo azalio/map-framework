@@ -1,324 +1,269 @@
-# Cipher Integration
+# mem0 Integration
 
-Cipher is MAP's cross-project knowledge system. While playbook stores project-specific patterns, cipher stores universal knowledge shared across all your projects.
+> **MIGRATION NOTE:** As of v4.0, pattern storage has migrated from cipher to mem0 MCP. This document describes the new mem0-based system.
 
-## What is Cipher?
+mem0 is MAP's tiered knowledge system. It stores patterns across namespaces (branch → project → org) for both project-specific and cross-project knowledge sharing.
 
-**Cipher** = MCP (Model Context Protocol) server for semantic memory
+## What is mem0?
+
+**mem0** = MCP (Model Context Protocol) server for tiered pattern storage
 
 **Key Features:**
-- **Cross-project knowledge** - Learn once, apply everywhere
-- **Semantic search** - Find patterns by meaning, not keywords
-- **Automatic deduplication** - Prevents storing duplicate knowledge
+- **Tiered namespaces** - L1 (branch), L2 (project), L3 (org)
+- **Semantic search** - Find patterns by meaning via tiered search
+- **Fingerprint deduplication** - Prevents storing exact duplicates
 - **Persistent storage** - Knowledge survives across sessions
 
 ---
 
-## Dual Memory System
+## Tiered Memory System
 
-### Playbook vs Cipher
+### Tier Overview
 
-| Aspect | Playbook | Cipher |
-|--------|----------|--------|
-| **Scope** | Project-specific | Cross-project |
-| **Storage** | `.claude/playbook.db` (SQLite) | MCP server (external) |
-| **Search** | FTS5 + embeddings | Semantic embeddings |
-| **Size** | Hundreds of bullets | Thousands of memories |
-| **Updates** | Curator agent | MCP tool calls |
-| **When to use** | Project patterns | Universal patterns |
+| Tier | Namespace | Scope | Use Case |
+|------|-----------|-------|----------|
+| **L1 (Recent)** | Branch-scoped | Current work session | Patterns specific to current feature |
+| **L2 (Frequent)** | Project-scoped | All project patterns | Shared project knowledge |
+| **L3 (Semantic)** | Org-scoped | Cross-project patterns | Organizational best practices |
 
-### Example Split
+### Search Flow
 
-**Playbook** (project-specific):
+Tiered search queries tiers in order: L1 → L2 → L3
+
+```
+mcp__mem0__map_tiered_search("async implementation")
+  ↓
+L1 (branch): Check recent patterns from current feature branch
+  ↓
+L2 (project): Check project-level patterns
+  ↓
+L3 (org): Check organizational patterns
+  ↓
+Return merged results (most specific first)
+```
+
+### Example Pattern Distribution
+
+**L1 (Branch-specific):**
+- "Using new auth middleware pattern for this feature"
+- "This branch uses beta API version 2.1"
+
+**L2 (Project-specific):**
 - "Use FastAPI with uvicorn for this API service"
 - "JWT secret stored in .env file (JWT_SECRET)"
 - "Database migrations via Alembic in migrations/ folder"
 
-**Cipher** (universal):
+**L3 (Org-wide):**
 - "Use async/await for I/O operations to avoid blocking"
 - "Validate JWT tokens before processing requests"
 - "Database schema changes require migration scripts"
 
 ---
 
-## Sync Conditions
+## MCP Tools
 
-### When Bullets Sync to Cipher
+### 1. mcp__mem0__map_tiered_search
 
-Playbook bullets sync to cipher when **ALL** conditions met:
-
-1. **Quality threshold:** `helpful_count >= 5`
-2. **Curator decision:** Marked in `sync_to_cipher` array
-3. **Uniqueness check:** Not already in cipher (similarity < 0.85)
-
-### Curator Sync Process
-
-```
-Curator evaluates bullet quality
-  ↓
-If helpful_count >= 5:
-  ↓
-  Call cipher_memory_search(bullet_content)
-  ↓
-  If no similar memories (similarity < 0.85):
-    ↓
-    Add to sync_to_cipher array
-  ↓
-mapify playbook apply-delta reads sync_to_cipher
-  ↓
-For each entry:
-  Call cipher_extract_and_operate_memory(content, metadata)
-```
-
----
-
-## MCP Tools Used
-
-### 1. cipher_memory_search
-
-**Purpose:** Find existing knowledge before adding duplicates
+**Purpose:** Find existing patterns before implementing
 
 **Used by:**
-- Reflector (before suggesting new bullets)
+- Actor (before implementing)
+- Reflector (before suggesting new patterns)
 - Curator (before creating ADD operations)
 
 **Example call:**
 ```python
-mcp__cipher__cipher_memory_search(
+mcp__mem0__map_tiered_search(
   query="JWT token validation best practices",
-  top_k=5,
-  similarity_threshold=0.3
+  category="security"  # optional filter
 )
 ```
 
 **Returns:**
 ```json
 {
-  "results": [
+  "patterns": [
     {
-      "id": "mem-12345",
-      "text": "Always verify JWT signature before trusting claims",
-      "score": 0.89,
-      "metadata": {"projectId": "map-framework", "helpful_count": 8}
+      "id": "impl-0042",
+      "content": "Always verify JWT signature before trusting claims",
+      "tier": "project",
+      "relevance": 0.89
     }
-  ]
+  ],
+  "tiers_searched": ["branch", "project", "org"]
 }
 ```
 
-### 2. cipher_extract_and_operate_memory
+### 2. mcp__mem0__map_add_pattern
 
-**Purpose:** Store new knowledge in cipher
+**Purpose:** Store new patterns
 
 **Used by:**
-- `mapify playbook apply-delta` (after applying Curator operations)
+- Curator (after validating patterns)
 
 **Example call:**
 ```python
-mcp__cipher__cipher_extract_and_operate_memory(
-  interaction="Use async/await for I/O operations",
-  memoryMetadata={
-    "projectId": "map-framework",
-    "source": "curator",
-    "helpful_count": 5,
-    "tags": ["python", "async", "performance"]
-  }
+mcp__mem0__map_add_pattern(
+  content="Use async/await for I/O operations",
+  category="implementation",
+  tier="project"  # default: project
 )
 ```
 
-**Operation:** Extracts knowledge, creates embedding, stores in cipher database
+**Returns:**
+```json
+{
+  "created": true,
+  "pattern_id": "impl-0043",
+  "fingerprint": "abc123..."
+}
+```
+
+**If duplicate exists:**
+```json
+{
+  "created": false,
+  "existing_id": "impl-0012",
+  "reason": "Duplicate fingerprint"
+}
+```
+
+### 3. mcp__mem0__map_archive_pattern
+
+**Purpose:** Deprecate outdated patterns
+
+**Used by:**
+- Curator (when patterns become obsolete)
+
+**Example call:**
+```python
+mcp__mem0__map_archive_pattern(
+  pattern_id="impl-0042",
+  reason="Superseded by new auth approach"
+)
+```
 
 ---
 
 ## Deduplication Strategy
 
-### Why Deduplication Matters
+### Fingerprint-Based Deduplication
 
-Without deduplication:
-- Playbook grows indefinitely with redundant bullets
-- Cipher accumulates duplicate memories
-- Search results have redundant entries
-- Knowledge management becomes chaotic
+Each pattern has a fingerprint (content hash). When adding:
 
-### How Deduplication Works
-
-**Step 1: Reflector checks cipher**
 ```
-Reflector: "I noticed we used async/await successfully"
+Curator tries to add pattern
   ↓
-Call cipher_memory_search("async await I/O operations")
+map_add_pattern computes fingerprint
   ↓
-Found similar memory: "Use async for I/O" (similarity: 0.91)
+Check if fingerprint exists in target tier
   ↓
-Reflector: "Pattern already exists, skip new bullet"
+If exists: Return created=false with existing_id
+If not: Create new pattern, return created=true
 ```
 
-**Step 2: Curator double-checks**
-```
-Curator receives Reflector insights
-  ↓
-Before ADD operation:
-  Call cipher_memory_search(proposed_content)
-  ↓
-If similarity > 0.85 with existing memory:
-  ↓
-  Skip ADD or UPDATE existing bullet instead
-```
+### Why Fingerprint vs Similarity
 
-**Step 3: Sync check**
-```
-Bullet reaches helpful_count = 5
-  ↓
-Curator considers syncing to cipher
-  ↓
-Call cipher_memory_search(bullet_content)
-  ↓
-If no close match (similarity < 0.85):
-  ↓
-  Add to sync_to_cipher array
-```
+| Approach | Pros | Cons |
+|----------|------|------|
+| Fingerprint (exact) | Fast, deterministic | Only catches exact duplicates |
+| Similarity (semantic) | Catches near-duplicates | Slower, requires embeddings |
 
-### Similarity Thresholds
-
-- **< 0.3** - Unrelated knowledge
-- **0.3 - 0.7** - Related but distinct patterns
-- **0.7 - 0.85** - Similar patterns (consider merging)
-- **> 0.85** - Duplicate (skip ADD)
+**MAP choice:** Fingerprint for deduplication (fast), semantic for search (smart)
 
 ---
 
 ## Knowledge Flow
 
-### Project → Cipher (Learning)
+### Adding New Patterns
 
 ```
 1. Subtask completed successfully
-2. Reflector extracts pattern
-3. Reflector searches cipher (check if exists)
-4. Curator validates pattern
-5. Curator searches cipher again (double-check)
-6. Pattern added to playbook (helpful_count = 1)
-7. Pattern applied successfully multiple times (helpful_count → 5)
-8. Curator marks for cipher sync
-9. mapify apply-delta calls cipher_extract_and_operate_memory
-10. Pattern now in cipher for all projects
+2. Run /map-learn to trigger learning
+3. Reflector extracts patterns
+4. Reflector searches mem0 (check if similar exists)
+5. Curator validates patterns
+6. Curator calls map_add_pattern for each new pattern
+7. Pattern stored in appropriate tier
 ```
 
-### Cipher → Project (Applying)
+### Searching Patterns
 
 ```
-1. New subtask starts in different project
-2. Actor searches playbook (finds local patterns)
-3. Reflector searches cipher (finds cross-project patterns)
-4. Combined context: local + universal knowledge
-5. Implementation uses best of both
+1. New subtask starts
+2. Actor calls map_tiered_search(subtask_description)
+3. Results from L1 → L2 → L3 merged
+4. Actor applies most relevant patterns
+5. Implementation benefits from accumulated knowledge
 ```
 
 ---
 
-## Configuration
+## Tier Promotion
 
-### Cipher MCP Server Setup
+Patterns can be promoted from project to org tier when:
 
-**Location:** `.mcp/settings.json` or similar (project-specific)
+1. Pattern used successfully across multiple projects
+2. Manual review confirms universal applicability
+3. Admin uses `mcp__mem0__map_promote_pattern`
 
-**Example config:**
-```json
-{
-  "mcpServers": {
-    "cipher": {
-      "command": "node",
-      "args": ["/path/to/cipher-mcp/dist/index.js"],
-      "env": {
-        "CIPHER_DB_PATH": "~/.cipher/memory.db"
-      }
-    }
-  }
-}
-```
-
-### Metadata Fields
-
-When syncing to cipher, include:
-```json
-{
-  "projectId": "map-framework",
-  "source": "curator",
-  "helpful_count": 5,
-  "tags": ["python", "async"],
-  "created_at": "2025-11-03T10:30:00"
-}
+```python
+mcp__mem0__map_promote_pattern(
+  pattern_id="impl-0042",
+  from_tier="project",
+  to_tier="org"
+)
 ```
 
 ---
 
 ## Benefits
 
-### 1. Accelerated Learning
+### 1. Scoped Knowledge
 
-**Without cipher:**
-- Project A learns: "Use async for I/O"
-- Project B starts from scratch
-- Same pattern learned twice
+- Branch patterns don't pollute project scope
+- Project patterns don't pollute org scope
+- Clear boundaries for different concerns
 
-**With cipher:**
-- Project A learns: "Use async for I/O" → synced to cipher
-- Project B: Reflector finds pattern in cipher immediately
-- Instant knowledge transfer
+### 2. Fast Local Access
 
-### 2. Consistency
+- L1 (branch) = fastest access
+- Most relevant patterns found first
+- Cross-project patterns available when needed
 
-All projects benefit from validated patterns:
-- Security best practices
-- Performance optimizations
-- Architecture decisions
+### 3. Quality Through Tiers
 
-### 3. Quality Filtering
-
-Only high-quality patterns sync (`helpful_count >= 5`):
-- Experimental patterns stay local
-- Proven patterns go global
-- Noise filtered out
+- Experimental patterns stay in branch tier
+- Validated patterns promote to project tier
+- Universal patterns reach org tier
 
 ---
 
 ## Troubleshooting
 
-### Cipher not receiving updates
+### Patterns not found in search
 
 **Check:**
-1. MCP server running: `ps aux | grep cipher`
-2. Correct path in config: `.mcp/settings.json`
-3. Curator output has `sync_to_cipher` entries
-4. `mapify playbook apply-delta` executed successfully
+1. Pattern exists in correct tier: Use `mcp__mem0__get_memories` to list
+2. Query matches pattern content: Try more specific query
+3. Category filter isn't too restrictive
 
-**Debug:**
-```bash
-# Check Curator output
-cat curator_output.json | jq '.sync_to_cipher'
+### Duplicate patterns appearing
 
-# Verify MCP connection
-# (Test cipher_memory_search manually)
-```
-
-### Duplicate memories in cipher
-
-**Cause:** Deduplication threshold too low
+**Check:**
+1. Content differs slightly (different fingerprints)
+2. Patterns in different tiers (L1 vs L2)
 
 **Solution:**
-- Increase similarity threshold to 0.9
-- Manually clean cipher database
-- Improve pattern wording to be more distinct
+- Archive older duplicate
+- Standardize pattern wording
 
-### Playbook bullets not syncing
+### Pattern not saving
 
 **Check:**
-1. `helpful_count >= 5` for bullet
-2. Curator marked bullet in `sync_to_cipher`
-3. `mapify playbook apply-delta` called after Curator
-
-**Fix:**
-- Manually increment helpful_count: `mapify playbook update <id> --increment-helpful`
-- Re-run Curator workflow
+1. `created: false` in response = duplicate
+2. Check `existing_id` to find the duplicate
+3. Decide whether to update existing or archive it
 
 ---
 
@@ -326,21 +271,21 @@ cat curator_output.json | jq '.sync_to_cipher'
 
 ### For Workflows
 
-1. **Always search cipher first** - Reflector should check cipher before suggesting new bullets
-2. **Sync selectively** - Only high-quality patterns (`helpful_count >= 5`)
-3. **Include rich metadata** - Tags, project context, helpful_count help future searches
-4. **Validate before sync** - Double-check similarity to avoid duplicates
+1. **Always search before implementing** - Actor should search mem0 first
+2. **Use appropriate tier** - Branch for experimental, project for validated
+3. **Archive instead of delete** - Preserve history for auditing
+4. **Include category** - Helps filtering and organization
 
 ### For Users
 
-1. **Review cipher periodically** - Understand what universal patterns exist
-2. **Trust quality scoring** - Patterns with `helpful_count >= 5` are battle-tested
-3. **Don't bypass deduplication** - Let Reflector/Curator check cipher first
-4. **Query cipher for new projects** - Start with universal knowledge, add project-specific
+1. **Run /map-learn after workflows** - Extracts and stores patterns
+2. **Review archived patterns periodically** - May have valuable history
+3. **Promote good patterns** - Move validated patterns to higher tiers
+4. **Query across tiers** - Don't limit to single tier
 
 ---
 
 **See also:**
-- [Playbook System](playbook-system.md) - How project knowledge is structured
+- [Playbook System (Legacy)](playbook-system.md) - Historical reference
 - [Agent Architecture](agent-architecture.md) - Reflector/Curator roles
 - [map-efficient Deep Dive](map-efficient-deep-dive.md) - Batched learning workflow

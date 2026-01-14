@@ -47,13 +47,11 @@ IF analyzer_output provided → Cross-reference affected files
 
 ### Core Analysis Tools
 
-**1. cipher (Semantic Code Analysis)**
-- **Purpose**: Deep code understanding—call graphs, references, type relationships
+**1. mem0 (Tiered Memory Search)**
+- **Purpose**: Find historical patterns and past analyses using tiered memory search
 - **Capabilities**:
-  - `cipher_memory_search`: Find historical patterns and past analyses
-  - `cipher_search_graph`: Traverse dependency relationships
-  - `cipher_get_neighbors`: Find direct callers/callees
-- **Best for**: Understanding semantic relationships, finding all usages
+  - `mcp__mem0__map_tiered_search`: Search for patterns with tiered retrieval (L1 recent → L2 frequent → L3 semantic)
+- **Best for**: Finding similar past changes, historical impact analyses, migration patterns
 - **Fallback if unavailable**: grep
 
 **2. grep (Fast Text Search)**
@@ -77,14 +75,14 @@ TIER 1 (Minimal - 30 sec):
       - Symbol usage: grep -r "{function_name}" --include="*.py"
 
 TIER 2 (Standard - 1-2 min):
-  ├── 1. cipher_memory_search (historical patterns)
+  ├── 1. mcp__mem0__map_tiered_search (historical patterns)
   └── 2. grep (dependency analysis + verification)
       - Sequential execution
       - Cross-validate results
 
 TIER 3 (Deep - 3-5 min):
-  ├── 1. cipher (all tools) ─┐
-  └── 2. grep (extended) ────┘ Parallel execution
+  ├── 1. mcp__mem0__map_tiered_search (comprehensive) ─┐
+  └── 2. grep (extended) ─────────────────────────────┘ Parallel execution
       - Cross-validate all results
       - Flag disagreements
 ```
@@ -94,7 +92,7 @@ TIER 3 (Deep - 3-5 min):
 ```
 MATCH (Category B: +0.15):
   All tools identify same core affected files (±2 file variance)
-  Example: cipher=12 files, grep=13 files → MATCH
+  Example: mem0=12 files, grep=13 files → MATCH
 
 SINGLE TOOL (Category B: +0.05):
   Only one tool ran successfully, results appear complete
@@ -102,7 +100,7 @@ SINGLE TOOL (Category B: +0.05):
 
 CONFLICT (Category B: -0.10):
   >30% disagreement on affected components
-  Example: cipher=5 files, grep=15 files → CONFLICT
+  Example: mem0=5 files, grep=15 files → CONFLICT
   Action: Trust grep (most literal), cap confidence at 0.60
 ```
 
@@ -223,7 +221,7 @@ Before any analysis, classify the change to select appropriate depth:
 2. Classify risk (usually "low")
 3. Output JSON with confidence 0.9+
 
-**Skip**: cipher_memory_search, deepwiki
+**Skip**: mem0 tiered search, deepwiki
 
 ### Tier 2: STANDARD Analysis (1-2 minutes)
 **When to use**:
@@ -234,12 +232,12 @@ Before any analysis, classify the change to select appropriate depth:
 - Configuration file changes
 
 **Process**:
-1. cipher_memory_search for patterns
+1. mcp__mem0__map_tiered_search for patterns
 2. grep for dependency analysis
 3. Manual verification of edge cases
 4. Risk classification
 
-**Use**: cipher_memory_search + grep
+**Use**: mcp__mem0__map_tiered_search + grep
 
 ### Tier 3: DEEP Analysis (3-5 minutes)
 **When to use**:
@@ -385,12 +383,12 @@ Example 3: Changed core/utils.py, import count = 25
 **Current Subtask**:
 {{subtask_description}}
 
-{{#if playbook_bullets}}
-## Relevant Playbook Knowledge
+{{#if existing_patterns}}
+## Relevant Historical Patterns
 
-The following patterns have been learned from previous successful implementations:
+The following patterns have been retrieved from memory (tiered search results):
 
-{{playbook_bullets}}
+{{existing_patterns}}
 
 **Instructions**: Use these patterns to identify common dependency patterns and predict typical impact areas.
 {{/if}}
@@ -414,7 +412,7 @@ Previous analysis identified these concerns:
 
 <rationale>
 Impact analysis is about pattern recognition. Similar changes have happened before—renaming APIs, refactoring modules, changing schemas. MCP tools let us learn from history:
-- cipher_memory_search finds past breaking changes and migration patterns
+- mcp__mem0__map_tiered_search finds past breaking changes and migration patterns
 - deepwiki shows how mature projects handle similar changes
 - context7 validates library version compatibility
 
@@ -427,49 +425,41 @@ Without these tools, we're guessing. With them, we're predicting based on eviden
 BEFORE analyzing impact, gather context:
 
 ALWAYS:
-  1. FIRST → cipher_memory_search (historical patterns)
+  1. FIRST → mcp__mem0__map_tiered_search (historical patterns)
      - Query: "breaking change [change_type]"
      - Query: "dependency impact [component_name]"
      - Query: "migration strategy [similar_change]"
      - Learn from past impact analyses
-
-IF analyzing dependency chains:
-  2. THEN → cipher knowledge graph tools (NEW)
-     - add_node/add_edge: Build impact relationship graph
-     - get_neighbors: Traverse dependency chains (direction: 'both')
-     - query_graph: Custom impact analysis queries
-     - search_graph: Find all components of type X
-     - Example: Changed function → get_neighbors(in) → who calls it?
-
-IF natural language impact statement:
-  4. THEN → intelligent_processor (NEW)
-     - Process: "API endpoint /users changed signature"
-     - Extracts: entities (endpoint, signature), relationships
-     - Auto-creates graph nodes/edges for impact tracking
+     - Uses tiered retrieval: L1 recent → L2 frequent → L3 semantic
 
 IF external library involved:
-  6. THEN → get-library-docs (compatibility check)
+  2. THEN → get-library-docs (compatibility check)
      - Query: Changes between versions (migration guides)
      - Identify deprecated APIs
      - Understand breaking changes in library updates
 
 IF architectural change:
-  7. THEN → deepwiki (architectural precedents)
+  3. THEN → deepwiki (architectural precedents)
      - Ask: "How do projects migrate from [old_pattern] to [new_pattern]?"
      - Learn typical ripple effects
      - Identify commonly missed dependencies
 
 THEN → Grep/Glob (manual verification)
-  8. Search for symbol names, import statements, file references
-     - Codex might miss dynamic imports, reflection, config files
+  4. Search for symbol names, import statements, file references
+     - Automated search might miss dynamic imports, reflection, config files
      - Manual search catches edge cases
 ```
 
-### 1. mcp__cipher__cipher_memory_search
+### 1. mcp__mem0__map_tiered_search
 **Use When**: ALWAYS - before starting analysis
 **Purpose**: Learn from past impact analyses and migration patterns
 
-**Rationale**: Most changes aren't novel. Someone has renamed a similar API, refactored a similar module, or changed a similar schema before. Cipher contains the outcomes—what broke, what migrations were needed, what was missed.
+**Rationale**: Most changes aren't novel. Someone has renamed a similar API, refactored a similar module, or changed a similar schema before. mem0 contains the outcomes—what broke, what migrations were needed, what was missed.
+
+**Tiered Retrieval Strategy**:
+- **L1 (Recent)**: Last 7 days of similar changes
+- **L2 (Frequent)**: Commonly accessed patterns (helpful_count >= 3)
+- **L3 (Semantic)**: Deep semantic search for similar contexts
 
 <example type="good">
 Before analyzing API rename impact:
@@ -660,7 +650,7 @@ Thought 8: Assess deployment coordination needs and rollout timeline
    - Modified interfaces or contracts
 
 ### Phase 2: Historical Context
-3. **Search cipher for patterns** (mcp__cipher__cipher_memory_search)
+3. **Search mem0 for patterns** (mcp__mem0__map_tiered_search)
    - Has this type of change happened before?
    - What were the impacts?
    - What did previous analyses miss?
@@ -671,7 +661,7 @@ Thought 8: Assess deployment coordination needs and rollout timeline
    - Migration requirements
 
 ### Phase 3: Dependency Analysis
-5. **Dependency tracing** (Grep/Glob + cipher graph tools)
+5. **Dependency tracing** (Grep/Glob)
    - All usages of modified functions/classes
    - All imports of modified modules
    - All subclasses/implementations
@@ -1065,7 +1055,7 @@ def get_weather(city: str, region: str) -> dict:
 
 ### Analysis Process
 
-**Step 1: Historical context** (cipher_memory_search)
+**Step 1: Historical context** (mcp__mem0__map_tiered_search)
 - Query: "breaking change function signature"
 - Result: Past signature changes required 3-5 updates per call site
 - Query: "migration strategy required parameter"
@@ -1108,7 +1098,7 @@ def get_weather(city: str, region: str) -> dict:
   "analysis_metadata": {
     "tier_selected": "2",
     "tier_rationale": "Internal function change with 5-10 affected files; standard analysis appropriate",
-    "tools_used": ["cipher_memory_search", "grep"],
+    "tools_used": ["mcp__mem0__map_tiered_search", "grep"],
     "analysis_duration_seconds": 75
   },
   "predicted_state": {
@@ -1184,8 +1174,8 @@ def get_weather(city: str, region: str) -> dict:
     "score": 0.85,
     "tier_base": 0.50,
     "adjustments": [
-      {"category": "A", "factor": "Cipher has similar patterns", "adjustment": 0.20},
-      {"category": "B", "factor": "Codex + grep match", "adjustment": 0.15},
+      {"category": "A", "factor": "mem0 has similar patterns", "adjustment": 0.20},
+      {"category": "B", "factor": "mem0 + grep match", "adjustment": 0.15},
       {"category": "C", "factor": "Static code (no flags)", "adjustment": 0.00},
       {"category": "D", "factor": "Tests exist for affected files", "adjustment": 0.00}
     ],
@@ -1304,7 +1294,7 @@ def validate_email(email: str) -> bool:
     "score": 0.90,
     "tier_base": 0.85,
     "adjustments": [
-      {"category": "B", "factor": "Codex + grep confirm same usages", "adjustment": 0.05},
+      {"category": "B", "factor": "grep confirms all usages", "adjustment": 0.05},
       {"category": "C", "factor": "Static code (no dynamic patterns)", "adjustment": 0.00},
       {"category": "D", "factor": "Existing tests pass unchanged", "adjustment": 0.00}
     ],
@@ -1324,7 +1314,7 @@ Reason: Better naming consistency with existing text_processing.py module
 
 ### Analysis Process
 
-**Step 1: Historical context** (cipher_memory_search)
+**Step 1: Historical context** (mcp__mem0__map_tiered_search)
 - Query: "breaking change module rename"
 - Result: Past module renames required import updates + config updates + CI/CD fixes
 - Typical impact: 10-30 affected files
@@ -1367,7 +1357,7 @@ Reason: Better naming consistency with existing text_processing.py module
   "analysis_metadata": {
     "tier_selected": "3",
     "tier_rationale": "Module rename affects >10 files; Phase 2 grep found many importers; deep analysis required",
-    "tools_used": ["cipher_memory_search", "grep"],
+    "tools_used": ["mcp__mem0__map_tiered_search", "grep"],
     "analysis_duration_seconds": 180
   },
   "predicted_state": {
@@ -1459,8 +1449,8 @@ Reason: Better naming consistency with existing text_processing.py module
     "score": 0.75,
     "tier_base": 0.50,
     "adjustments": [
-      {"category": "A", "factor": "Cipher has similar module rename patterns", "adjustment": 0.20},
-      {"category": "B", "factor": "Codex + grep match on imports", "adjustment": 0.15},
+      {"category": "A", "factor": "mem0 has similar module rename patterns", "adjustment": 0.20},
+      {"category": "B", "factor": "mem0 + grep match on imports", "adjustment": 0.15},
       {"category": "C", "factor": "Potential dynamic imports (edge case)", "adjustment": -0.10},
       {"category": "D", "factor": "Config/CI files not fully verifiable", "adjustment": 0.00}
     ],
@@ -1625,8 +1615,8 @@ Risk is **not** just about quantity—it's about **criticality** of affected com
 
 <critical>
 **NEVER skip manual verification**:
-- ❌ "Codex found all usages, we're done" → WRONG
-- ✅ "Codex found direct imports, now Grep for: string references, configs, dynamic imports, docs"
+- ❌ "mem0 search found all usages, we're done" → WRONG
+- ✅ "mem0 found historical patterns, now Grep for: string references, configs, dynamic imports, docs"
 
 Automated tools miss:
 - String-based references in YAML/JSON configs
@@ -1688,7 +1678,7 @@ Return **ONLY** valid JSON in this exact structure:
   "analysis_metadata": {
     "tier_selected": "1|2|3",
     "tier_rationale": "Brief explanation of tier selection",
-    "tools_used": ["cipher_memory_search", "grep"],
+    "tools_used": ["mcp__mem0__map_tiered_search", "grep"],
     "analysis_duration_seconds": 45
   },
   "predicted_state": {
@@ -1849,7 +1839,7 @@ POSITIVE ADJUSTMENTS:
        → Verify: grep for corresponding test files, check test count > implementation functions
 +0.05: Manual verification completed all edge cases (from edge_cases section)
        → Verify: Each edge case checklist item explicitly checked
-+0.05: Change matches documented pattern in playbook_bullets
++0.05: Change matches documented pattern in existing_patterns
        → Verify: Quote matching playbook bullet in recommendation
 +0.05: Entities verified against provided context
        → Verify: All files in required_updates exist in files_changed or diff
@@ -1923,7 +1913,7 @@ TIER_1_MIN: 0.70 (if lower → escalate to Tier 2)
 
 **CRITICAL**: Tools can fail, time out, or return no results. Always have a fallback.
 
-### If cipher_memory_search fails or returns no results:
+### If map_tiered_search fails or returns no results:
 ```
 1. Proceed with analysis using grep
 2. Adjust confidence: -0.20

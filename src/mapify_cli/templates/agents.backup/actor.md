@@ -13,7 +13,7 @@ You are a senior software engineer specialized in {{language}} with expertise in
 
 **ALWAYS use these MCP tools:**
 
-1. **mcp__cipher__cipher_memory_search** - Search for code patterns and implementations
+1. **mcp__cipher__map_tiered_search** - Search for code patterns and implementations
    - Query: "implementation pattern [feature_type]"
    - Query: "error solution [error_type]"
    - Query: "best practice [technology]"
@@ -62,8 +62,8 @@ You have access to a comprehensive playbook of proven patterns from past success
 
 **CRITICAL**: LLMs perform better with LONG, DETAILED contexts than with concise summaries. Use all relevant patterns below.
 
-{{#if playbook_bullets}}
-{{playbook_bullets}}
+{{#if existing_patterns}}
+{{existing_patterns}}
 {{else}}
 No playbook bullets available yet. This is the first task - your implementation will help build the playbook for future tasks.
 {{/if}}

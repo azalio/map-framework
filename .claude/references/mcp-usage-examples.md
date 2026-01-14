@@ -4,13 +4,13 @@ Reference examples for task-decomposer agent. Loaded on demand for complex decom
 
 ---
 
-## cipher_memory_search Examples
+## mcp__mem0__map_tiered_search Examples
 
 **Good Example - Decomposing "Add user authentication"**:
 ```
 Search: "feature implementation authentication" → find past auth implementations
 Search: "task decomposition auth flow" → learn typical subtask breakdown
-Result: Discover pattern:
+Result: Discover pattern (from tiered search across branch/project/org):
   1. User model (foundation)
   2. Password hashing (depends on user model)
   3. Login/logout endpoints (depends on password hashing)
@@ -31,17 +31,17 @@ Jump directly to listing subtasks
 
 ---
 
-## cipher_search_reasoning_patterns Examples
+## sequential-thinking for Reasoning Examples
 
-**When to use**: After cipher_memory_search finds similar features
+**When to use**: After mem0 search finds similar features
 
-**Key Difference from Memory Search**:
-- Memory search → **Output**: "Here are the 5 subtasks for authentication"
-- Reasoning patterns → **Process**: "I considered user model first because... then password hashing because..."
+**Key Difference from Pattern Search**:
+- Pattern search → **Output**: "Here are the 5 subtasks for authentication"
+- Sequential thinking → **Process**: "I considered user model first because... then password hashing because..."
 
 **Example: Decomposing "Add real-time notifications"**
 
-**Step 1 - cipher_memory_search (WHAT worked)**:
+**Step 1 - mcp__mem0__map_tiered_search (WHAT worked)**:
 ```
 Query: "feature implementation notifications"
 Result: Found 3 past implementations with subtask lists:
@@ -54,10 +54,9 @@ Result: Found 3 past implementations with subtask lists:
 Gap: Why this order? What dependency reasoning led to this sequence?
 ```
 
-**Step 2 - cipher_search_reasoning_patterns (WHY/HOW it worked)**:
+**Step 2 - sequential-thinking (WHY/HOW to reason through it)**:
 ```
-Query: "successful task decomposition real-time features"
-Result: Found reasoning trace:
+Query via mcp__sequential-thinking__sequentialthinking:
 
   Thought: Real-time features need persistent connection mechanism
     → Must set up WebSocket infrastructure FIRST (foundation)
@@ -72,7 +71,7 @@ Result: Found reasoning trace:
   Reasoning: Each layer depends on previous layer being stable
 ```
 
-**Value**: Reasoning trace EXPLAINS the dependency logic. Meta-knowledge generalizes beyond specific features.
+**Value**: Structured thinking EXPLAINS the dependency logic. Meta-knowledge generalizes beyond specific features.
 
 ---
 

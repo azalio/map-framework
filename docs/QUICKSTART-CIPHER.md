@@ -1,4 +1,6 @@
-# Cipher MCP Quick Start
+# Cipher MCP Quick Start (DEPRECATED)
+
+> **⚠️ DEPRECATED:** As of v4.0, pattern storage has migrated from Cipher to mem0 MCP. This guide is retained for historical reference only. For current implementation, mem0 MCP is used directly via the mem0 MCP server.
 
 Краткая инструкция для запуска Cipher MCP с Qdrant + PostgreSQL + Neo4j на основе работающей установки.
 

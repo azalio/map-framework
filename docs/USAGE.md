@@ -204,7 +204,7 @@ mapify playbook query "testing strategies" --format json
 
 **Correct approach for MAP workflows:**
 1. Use `mapify playbook query` (local playbook via Bash)
-2. Separately call `mcp__cipher__cipher_memory_search` (cross-project via MCP tool)
+2. Separately call `mcp__mem0__map_tiered_search` (cross-project via MCP tool)
 3. Agent combines both sources
 
 **Why use `query` instead of `search`:**
@@ -1945,7 +1945,7 @@ The Actor agent now includes a 10-item Quality Checklist for self-review before 
 2. Explicit error handling (no silent failures)
 3. Security review (SQL injection, XSS, sensitive data)
 4. Test case identification (happy path + edge cases)
-5. MCP tools usage (cipher_memory_search, context7)
+5. MCP tools usage (mcp__mem0__map_tiered_search, context7)
 6. Template variable preservation (orchestration compatibility)
 7. Trade-offs documentation (decision rationale)
 8. Playbook bullet tracking (ACE feedback loop)

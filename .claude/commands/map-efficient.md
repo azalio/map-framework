@@ -11,42 +11,6 @@ description: Token-efficient MAP workflow with conditional optimizations
 3. Call each agent individually — no combining or skipping steps
 4. Max 5 retry iterations per subtask
 
-## ⛔ WORKFLOW ENFORCEMENT (Read Every Subtask)
-
-**CRITICAL ANTI-DRIFT RULE:**
-
-Before writing ANY implementation code, you MUST verify:
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  ⚠️  SELF-CHECK: Am I about to write code myself?               │
-│                                                                  │
-│  If YES → STOP! You are violating workflow.                     │
-│           Use Task(subagent_type="actor") instead.              │
-│                                                                  │
-│  If calling Task tool → Continue.                               │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-**BEFORE each Agent call, output this checkpoint:**
-```
-CHECKPOINT: Calling [agent_name] for ST-XXX
-```
-
-**VIOLATION INDICATORS (If you see yourself doing these, STOP):**
-- Writing code blocks without calling Actor first
-- Describing implementation approach without Actor
-- Saying "Let me implement..." without Task tool
-- Writing function/class definitions directly
-
-**CORRECT PATTERN:**
-1. Output: `CHECKPOINT: Calling actor for ST-001`
-2. Call: `Task(subagent_type="actor", ...)`
-3. Wait for Actor output
-4. Output: `CHECKPOINT: Calling monitor for ST-001`
-5. Call: `Task(subagent_type="monitor", ...)`
-6. Wait for Monitor output
-
 **Task:** $ARGUMENTS
 
 ## Workflow Overview
@@ -55,7 +19,7 @@ CHECKPOINT: Calling [agent_name] for ST-XXX
 1. DECOMPOSE → task-decomposer
 1.5. INIT PLANNING → generate .map/task_plan_<branch>.md from blueprint
 2. FOR each subtask:
-   a. CONTEXT → playbook query (Actor will run `cipher_memory_search` per protocol; orchestrator MAY run extra cipher search to augment context)
+   a. CONTEXT → playbook query (Actor will run `mcp__mem0__map_tiered_search` per protocol; orchestrator MAY run extra cipher search to augment context)
    b. RESEARCH → if existing code understanding needed
    c. IF Self-MoA (--self-moa OR risk_level:high OR complexity_score>=7 OR security_critical:true):
       → 3 Actors (security/performance/simplicity)
@@ -188,8 +152,8 @@ Pass this packet verbatim to Actor/Monitor/Predictor/Synthesizer. Do NOT rename 
 # Query playbook (project-specific patterns)
 mapify playbook query "[subtask description]" --limit 5
 
-# Optional: cross-project patterns (Actor still runs its own `cipher_memory_search` per Actor protocol)
-mcp__cipher__cipher_memory_search(query="[concept]", top_k=5)
+# Optional: cross-project patterns (Actor still runs its own `mcp__mem0__map_tiered_search` per Actor protocol)
+mcp__mem0__map_tiered_search(query="[concept]", top_k=5)
 ```
 
 **Re-rank retrieved patterns** by relevance to current subtask:
@@ -356,20 +320,7 @@ Validate synthesized code. If invalid: retry synthesis (max 2 iterations).
 
 ## Standard Path
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│  ⚠️ REMINDER: You are the ORCHESTRATOR, not the implementer.    │
-│                                                                   │
-│  DO NOT write implementation code yourself.                       │
-│  DO call Task(subagent_type="actor") to get implementation.      │
-│                                                                   │
-│  This reminder appears because drift commonly occurs here.        │
-└──────────────────────────────────────────────────────────────────┘
-```
-
 ### 2.3 Actor
-
-**PRE-STEP:** Output `CHECKPOINT: Calling actor for ST-XXX`
 
 ```
 Task(
@@ -385,8 +336,6 @@ Follow the Actor agent protocol output format."
 ```
 
 ### 2.4 Monitor (with Contract Validation)
-
-**PRE-STEP:** Output `CHECKPOINT: Calling monitor for ST-XXX`
 
 ```
 Task(
@@ -408,8 +357,6 @@ If validation_criteria present, include contract_compliance + contract_compliant
 ```
 
 ### 2.5 Retry Loop (3-Strike Protocol)
-
-**⚠️ ANTI-DRIFT CHECKPOINT:** On retry, you MUST still call Task(actor), NOT implement yourself!
 
 If `valid === false`: provide feedback, retry Actor (max 5 iterations).
 

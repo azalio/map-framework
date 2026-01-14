@@ -1,12 +1,17 @@
-# Playbook System
+# Playbook System (LEGACY)
 
-The playbook is MAP's project-specific knowledge base. It stores patterns, gotchas, and best practices learned during development.
+> **DEPRECATED:** As of v4.0, pattern storage has migrated from playbook.db to mem0 MCP with tiered namespaces. This document is retained for historical reference. For current implementation, use mem0 MCP tools:
+> - `mcp__mem0__map_tiered_search` - Search patterns
+> - `mcp__mem0__map_add_pattern` - Store patterns
+> - `mcp__mem0__map_archive_pattern` - Deprecate patterns
 
-## Structure
+The playbook was MAP's project-specific knowledge base. It stored patterns, gotchas, and best practices learned during development.
 
-### Database Schema
+## Structure (Legacy)
 
-**Location:** `.claude/playbook.db` (SQLite)
+### Database Schema (Legacy)
+
+**Location:** `.claude/playbook.db` (SQLite) - **NO LONGER USED IN v4.0+**
 
 **Tables:**
 - `bullets` - Individual knowledge items
@@ -214,7 +219,7 @@ Bullets sync to cipher when:
 ### Deduplication
 
 **Before ADD:**
-1. Curator calls `cipher_memory_search` with new bullet content
+1. Curator calls `map_tiered_search` with new bullet content
 2. If similar patterns exist (similarity > 0.85) → skip ADD or merge
 3. Prevents duplicate knowledge in playbook
 
@@ -231,7 +236,7 @@ Subtask completed successfully
   ↓
 Reflector analyzes: What worked? What patterns emerged?
   ↓
-Calls cipher_memory_search: Does this pattern already exist?
+Calls map_tiered_search: Does this pattern already exist?
   ↓
 Suggests new bullets or updates to existing ones
 ```
@@ -243,7 +248,7 @@ Reflector insights
   ↓
 Curator checks: Is this genuinely novel?
   ↓
-Calls cipher_memory_search again (double-check)
+Calls map_tiered_search again (double-check)
   ↓
 Creates ADD/UPDATE operations
 ```

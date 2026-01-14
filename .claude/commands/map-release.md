@@ -77,7 +77,7 @@ PLAYBOOK_BULLETS=$(mapify playbook query "release validation PyPI CI/CD" --limit
 **Also search Cipher** for cross-project release patterns:
 
 ```
-mcp__cipher__cipher_memory_search(
+mcp__mem0__map_tiered_search(
   query="package release validation PyPI deployment best practices",
   top_k=5,
   similarity_threshold=0.3
@@ -1173,8 +1173,8 @@ pip index versions mapify-cli
 
 Use these MCP tools throughout the workflow:
 
-- **`mcp__cipher__cipher_memory_search`** - Search for release patterns from past projects
-- **`mcp__cipher__cipher_extract_and_operate_memory`** - Store release learnings cross-project
+- **`mcp__mem0__map_tiered_search`** - Search for release patterns from past projects
+- **`mcp__mem0__map_add_pattern`** - Store release learnings cross-project
 - **`mcp__sequential-thinking__sequentialthinking`** - Complex decision making for version bump
 - **`AskUserQuestion`** - Get explicit confirmation for IRREVERSIBLE operations
 

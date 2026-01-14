@@ -289,17 +289,17 @@ Read(
 
 ## Available Patterns (ACE Learning)
 
-{{#if playbook_bullets}}
+{{#if existing_patterns}}
 
 **Relevant patterns from playbook:**
 
-{{playbook_bullets}}
+{{existing_patterns}}
 
 **Usage**: Reference these patterns in your search to find similar implementations.
 
 {{/if}}
 
-{{#unless playbook_bullets}}
+{{#unless existing_patterns}}
 *No playbook patterns available. Search results will help seed the playbook.*
 {{/unless}}
 

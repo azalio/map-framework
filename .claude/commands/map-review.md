@@ -176,5 +176,5 @@ If the review revealed valuable patterns or common issues worth preserving:
 
 ## MCP Tools Available
 
-- `mcp__cipher__cipher_memory_search` - Search past review patterns
+- `mcp__mem0__map_tiered_search` - Search past review patterns
 - `mcp__sequential-thinking__sequentialthinking` - Complex analysis decisions

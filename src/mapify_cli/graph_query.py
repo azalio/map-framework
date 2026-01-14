@@ -1,8 +1,12 @@
 """
 Knowledge Graph Query Interface for MAP Framework.
 
+NOTE: This is a LEGACY module retained for backward compatibility.
+As of v4.0, pattern storage has migrated to mem0 MCP.
+New code should use mcp__mem0__map_tiered_search for pattern retrieval.
+
 Provides efficient graph traversal and query operations on the Knowledge Graph
-stored in playbook.db (entities, relationships, provenance tables).
+stored in SQLite (entities, relationships, provenance tables).
 
 Performance targets:
 - find_paths(): <100ms for depth ≤3

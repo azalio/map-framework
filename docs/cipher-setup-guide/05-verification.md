@@ -1,4 +1,6 @@
-# Verification
+# Verification (DEPRECATED)
+
+> **⚠️ DEPRECATED:** As of v4.0, pattern storage has migrated from Cipher to mem0 MCP. This guide is retained for historical reference only.
 
 Verify all components are working correctly.
 

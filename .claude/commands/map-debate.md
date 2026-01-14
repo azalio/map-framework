@@ -90,7 +90,7 @@ Pass this packet verbatim to Actor/Monitor/debate-arbiter/Predictor. Do NOT rena
 mapify playbook query "[subtask description]" --limit 5
 
 # Cross-project patterns
-mcp__cipher__cipher_memory_search(query="[concept]", top_k=5)
+mcp__mem0__map_tiered_search(query="[concept]", top_k=5)
 ```
 
 **Re-rank retrieved patterns** by relevance to current subtask:

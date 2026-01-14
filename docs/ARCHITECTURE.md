@@ -347,8 +347,8 @@ for subtask in subtasks:
 **Debugging-Specific Features:**
 
 1. **Pre-Analysis Phase**
-   - Query playbook for ERROR_PATTERNS and DEBUGGING_TECHNIQUES
-   - Search cipher for similar past debugging sessions
+   - Query mem0 for ERROR_PATTERNS and DEBUGGING_TECHNIQUES
+   - Search mem0 for similar past debugging sessions via tiered search
    - Identify affected files via Grep/Glob
 
 2. **Step Types** (defined by TaskDecomposer):
@@ -372,7 +372,7 @@ for subtask in subtasks:
 
 #### 5. `/map-review` - Code Review Workflow (3 Agents)
 
-**Agent Sequence:** Playbook query → git diff → [Monitor + Predictor + Evaluator] (parallel) → Aggregate verdict
+**Agent Sequence:** mem0 pattern query → git diff → [Monitor + Predictor + Evaluator] (parallel) → Aggregate verdict
 
 **Review-Specific Features:**
 
@@ -416,13 +416,13 @@ for subtask in subtasks:
 
 #### 7. `/map-learn` - Post-Workflow Learning (2 Agents)
 
-**Agent Sequence:** Reflector → Curator → Apply delta → Sync to cipher
+**Agent Sequence:** Reflector → Curator → mem0 storage → Verification
 
 **Standalone Learning:**
 - Run AFTER any workflow completes (not during)
 - Extracts patterns from Actor/Monitor/Predictor outputs
-- Updates playbook SQLite database via `mapify playbook apply-delta`
-- Syncs high-quality bullets (helpful_count >= 5) to cipher for cross-project sharing
+- Stores patterns in mem0 via `mcp__mem0__map_add_pattern`
+- Uses tiered namespaces (branch → project → org) for pattern organization
 
 **Token Usage:** 5-8K tokens (depends on workflow size)
 **When to use:**
@@ -520,7 +520,7 @@ See [USAGE.md - Workflow Variants](./USAGE.md#workflow-variants) for detailed de
   "subtask_description": "Implement /login endpoint with JWT generation",
   "language": "Python",
   "framework": "Flask",
-  "playbook_bullets": ["impl-0042: Use bcrypt for password hashing"],
+  "existing_patterns": ["impl-0042: Use bcrypt for password hashing"],
   "feedback": "Missing error handling for invalid credentials"
 }
 ```
@@ -530,17 +530,17 @@ See [USAGE.md - Workflow Variants](./USAGE.md#workflow-variants) for detailed de
 2. **Code Changes** (complete implementations, no ellipsis)
 3. **Trade-offs** (alternatives considered, decisions made)
 4. **Testing Considerations** (critical test cases)
-5. **Used Bullets** (playbook IDs applied)
+5. **Used Patterns** (pattern IDs applied)
 
 **Key Behaviors:**
-- ALWAYS searches cipher MCP for existing patterns first
+- ALWAYS searches mem0 MCP for existing patterns first
 - Fetches current docs for external libraries (via context7)
 - Explicit error handling required (no silent failures)
 - Complete code, not sketches or placeholders
 - Security-first approach for auth/data access
 
 **MCP Tool Usage:**
-- `cipher_memory_search`: Find existing patterns before implementing
+- `mcp__mem0__map_tiered_search`: Find existing patterns before implementing
 - `context7__get-library-docs`: Get current library documentation
 
 ### 3. Monitor
@@ -665,65 +665,60 @@ See [USAGE.md - Workflow Variants](./USAGE.md#workflow-variants) for detailed de
 ```
 
 **Key Behaviors:**
-- MUST search cipher MCP for existing patterns first (avoid duplicates)
+- MUST search mem0 MCP for existing patterns first (avoid duplicates)
 - Extracts both successful patterns and failure lessons
 - Contextualizes lessons (when to apply, when to avoid)
 - Links to specific workflow outcomes
 
 **MCP Tool Usage:**
-- `cipher_memory_search`: Check for existing similar patterns
-- `cipher_extract_reasoning_steps`: Extract reasoning from workflow
-- `cipher_evaluate_reasoning`: Assess pattern quality
+- `mcp__mem0__map_tiered_search`: Check for existing similar patterns
+- `mcp__sequential-thinking__sequentialthinking`: Structure reasoning process
 
 ### 7. Curator
 
-**Responsibility:** Manage knowledge base (playbook) with incremental updates.
+**Responsibility:** Manage knowledge base (mem0) with incremental updates.
 
 **Input:** Reflector's extracted patterns
 
 **Output:**
 ```json
 {
-  "operations": [
+  "patterns_to_add": [
     {
-      "type": "ADD",
-      "bullet_id": "impl-0008",
+      "pattern_id": "impl-0008",
       "content": "Use bcrypt for password hashing with work factor 12",
       "category": "implementation",
-      "tags": ["security", "authentication", "passwords"]
-    },
+      "tags": ["security", "authentication", "passwords"],
+      "tier": "project"
+    }
+  ],
+  "patterns_to_update": [
     {
-      "type": "UPDATE",
-      "bullet_id": "impl-0003",
-      "content": "Updated JWT signature algorithm from HS256 to RS256",
+      "pattern_id": "impl-0003",
+      "updates": {"content": "Updated JWT signature algorithm from HS256 to RS256"},
       "reason": "Security improvement based on recent OWASP guidelines"
     }
   ],
-  "sync_to_cipher": [
-    {
-      "bullet_id": "impl-0008",
-      "content": "...",
-      "helpful_count": 5
-    }
-  ]
+  "patterns_to_archive": []
 }
 ```
 
 **Operations:**
-- **ADD:** New pattern not in playbook
+- **ADD:** New pattern not in mem0 (via `mcp__mem0__map_add_pattern`)
 - **UPDATE:** Improve existing pattern
-- **DEPRECATE:** Mark pattern as outdated
+- **ARCHIVE:** Mark pattern as deprecated (via `mcp__mem0__map_archive_pattern`)
 - **NONE:** No changes needed
 
 **Key Behaviors:**
-- MUST search cipher MCP for duplicates before adding
-- Semantic deduplication (>90% similarity threshold)
-- Syncs high-quality patterns (helpful_count >= 5) to cipher
+- MUST search mem0 MCP for duplicates before adding
+- Fingerprint-based deduplication (exact match prevention)
+- Uses tiered storage (branch → project → org namespaces)
 - Incremental updates only (no full rewrites)
 
 **MCP Tool Usage:**
-- `cipher_memory_search`: Deduplication check
-- `cipher_extract_and_operate_memory`: Store successful patterns
+- `mcp__mem0__map_tiered_search`: Deduplication check
+- `mcp__mem0__map_add_pattern`: Store new patterns
+- `mcp__mem0__map_archive_pattern`: Deprecate outdated patterns
 
 ### 8. DocumentationReviewer
 
@@ -916,7 +911,7 @@ MAP uses MCP (Model Context Protocol) servers for enhanced capabilities beyond b
 
 | MCP Server | Purpose | Required For | Performance Notes |
 |------------|---------|--------------|-------------------|
-| **cipher** | Knowledge base storage and retrieval | Reflector, Curator, Actor | Low latency (<200ms) |
+| **mem0** | Tiered pattern storage and retrieval | Reflector, Curator, Actor | Low latency (<200ms) |
 | **claude-reviewer** | Professional code review | Monitor | Medium latency (~2-5s) |
 | **sequential-thinking** | Chain-of-thought reasoning | Complex problem solving | Medium latency (~1-3s) |
 | **context7** | Up-to-date library documentation | Actor (external libs) | Low latency (<500ms) |
@@ -933,13 +928,12 @@ MCP servers are configured differently depending on the usage context:
 ```json
 {
   "mcp_servers": {
-    "cipher": {
+    "mem0": {
       "enabled": true,
-      "description": "Knowledge management system",
+      "description": "Tiered pattern storage with semantic search",
       "config": {
-        "auto_store": true,
         "retrieval_limit": 5,
-        "similarity_threshold": 0.85
+        "tiers": ["branch", "project", "org"]
       }
     },
     "claude-reviewer": {
@@ -960,11 +954,10 @@ MCP servers are configured differently depending on the usage context:
 ```json
 {
   "mcp_servers": {
-    "cipher": {
+    "mem0": {
       "enabled": true,
-      "description": "Advanced knowledge and reasoning memory system",
+      "description": "Tiered memory system for pattern storage",
       "config": {
-        "auto_store": true,
         "retrieval_limit": 5
       }
     }
@@ -979,14 +972,15 @@ MCP servers are configured differently depending on the usage context:
 ```markdown
 **BEFORE implementing any solution:**
 
-1. Search cipher for existing patterns:
+1. Search mem0 for existing patterns via tiered search:
    - Query: "implementation pattern [feature_type]"
    - Example: "implementation pattern JWT authentication"
+   - Tiers searched: L1 (recent) → L2 (frequent) → L3 (semantic)
 
 2. If relevant patterns found:
    - Review code snippets and trade-offs
    - Adapt to current context
-   - Track which patterns used (bullet IDs)
+   - Track which patterns used (pattern IDs)
 
 3. If no patterns found:
    - Proceed with fresh implementation
@@ -998,18 +992,17 @@ MCP servers are configured differently depending on the usage context:
 ```markdown
 **BEFORE adding new patterns:**
 
-1. Reflector searches cipher:
+1. Reflector searches mem0:
    - Query: Pattern description
-   - Threshold: >0.85 similarity
+   - Uses fingerprint-based exact match
 
 2. If similar pattern exists:
    - Compare quality scores
    - Decide: update existing or create new variant
 
 3. Curator confirms:
-   - Final deduplication check
-   - Semantic similarity analysis
-   - Operation: ADD vs UPDATE vs NONE
+   - Final deduplication check via `map_add_pattern` (returns created=false if duplicate)
+   - Operation: ADD vs UPDATE vs ARCHIVE vs NONE
 ```
 
 #### Pattern 3: Current Documentation (Actor)
@@ -1052,26 +1045,20 @@ MCP servers are configured differently depending on the usage context:
 
 ### Configuration Options
 
-#### Cipher Configuration
+#### mem0 Configuration
 
-```json
-{
-  "cipher": {
-    "config": {
-      "auto_store": true,              // Auto-save patterns after modifications
-      "retrieval_limit": 5,            // Max patterns returned per search
-      "similarity_threshold": 0.85,    // Deduplication threshold (0.0-1.0)
-      "confidence_threshold": 0.7,     // Minimum confidence for operations
-      "useLLMDecisions": false         // Use similarity logic (predictable)
-    }
-  }
-}
-```
+mem0 MCP server configuration is managed externally. Key parameters for MAP tools:
 
-**Key Parameters:**
-- `similarity_threshold`: Higher = stricter deduplication (0.85 recommended)
-- `useLLMDecisions`: `false` = predictable similarity-based logic, `true` = LLM-based (less predictable)
-- `confidence_threshold`: Minimum confidence score for UPDATE operations
+**Tiered Search Parameters:**
+- `query`: Search string for pattern matching
+- `category`: Optional filter by section (e.g., "implementation", "debugging")
+- Tiers: L1 (recent/branch) → L2 (frequent/project) → L3 (semantic/org)
+
+**Add Pattern Parameters:**
+- `content`: Pattern text to store
+- `category`: Section classification
+- `fingerprint`: Auto-generated for deduplication
+- `tier`: Target namespace (branch/project/org)
 
 #### Context7 Configuration
 
@@ -1102,7 +1089,7 @@ MCP servers are configured differently depending on the usage context:
 ### MCP Server Availability
 
 **Commonly Available:**
-- cipher (knowledge base)
+- mem0 (tiered pattern storage)
 - claude-reviewer (code review)
 - sequential-thinking (reasoning)
 
@@ -1119,13 +1106,13 @@ MCP servers are configured differently depending on the usage context:
 ### Performance Considerations
 
 **Latency Budget (per subtask):**
-- cipher searches: ~200ms each (Actor: 2-3 searches = ~600ms)
+- mem0 searches: ~200ms each (Actor: 2-3 searches = ~600ms)
 - context7 docs: ~500ms per fetch (Actor: 1-2 fetches = ~1s)
 - claude-reviewer: ~2-5s per review (Monitor: 1 review)
 - Total overhead: ~2-7s per subtask
 
 **Optimization Strategies:**
-- Cache cipher results (embeddings cache in `.claude/embeddings_cache/`)
+- Use tiered search to get most relevant patterns first
 - Batch similar searches where possible
 - Use `retrieval_limit` to control context size
 - Enable MCP caching when available (Phase 2 roadmap)
@@ -1140,7 +1127,7 @@ MCP servers are configured differently depending on the usage context:
 
 The Knowledge Graph (KG) layer transforms implicit knowledge into an explicit, queryable semantic graph. Instead of storing patterns as unstructured text, the KG extracts entities (tools, patterns, concepts) and relationships (uses, depends-on, contradicts) for advanced querying and analysis.
 
-> **Note:** As of v4.0, pattern storage has migrated from playbook.db to mem0 MCP with tiered namespaces (branch → project → org). The Knowledge Graph functionality described below is now provided via mem0's semantic search and the cipher MCP tools.
+> **Note:** As of v4.0, pattern storage has migrated from playbook.db to mem0 MCP with tiered namespaces (branch → project → org). The Knowledge Graph functionality described below is now provided via mem0's semantic search capabilities.
 
 **Key Capabilities:**
 - **Entity Extraction**: Automatically identifies 7 entity types from stored patterns
@@ -1216,19 +1203,22 @@ The Knowledge Graph (KG) layer transforms implicit knowledge into an explicit, q
     └──────────────────────────┘
 ```
 
-### Dual Memory System
+### Memory System (v4.0)
 
-MAP Framework now operates with **two complementary memory layers**:
+> **Note:** As of v4.0, the dual memory system (playbook.db + cipher) has been replaced with mem0 MCP. This section describes the legacy architecture for reference.
 
-| Layer | Storage | Structure | Query Method | Purpose |
-|-------|---------|-----------|--------------|---------|
-| **Playbook** | SQLite bullets table | Unstructured text | FTS5 full-text search | Human-readable best practices |
-| **Knowledge Graph** | SQLite entities/relationships | Semantic graph | BFS, SQL queries | Machine-queryable knowledge |
+MAP Framework now operates with **mem0 MCP tiered storage**:
 
-**Relationship:**
-- Playbook bullets are **source of truth** for content
-- KG entities/relationships are **derived** from bullets (via extraction)
-- Both updated simultaneously by Curator during MAP workflows
+| Tier | Namespace | Scope | Use Case |
+|------|-----------|-------|----------|
+| **L1 (Recent)** | Branch-scoped | Current work session | Patterns specific to current feature |
+| **L2 (Frequent)** | Project-scoped | All project patterns | Shared project knowledge |
+| **L3 (Semantic)** | Org-scoped | Cross-project patterns | Organizational best practices |
+
+**Search Flow:**
+- Tiered search queries L1 → L2 → L3 automatically
+- Most specific patterns surface first
+- Deduplication via fingerprint-based exact match
 
 **Example:**
 
@@ -1290,25 +1280,27 @@ Provenance:
 **When:** After Reflector completes analysis
 
 **What Curator does:**
-1. Receives Reflector's lessons + extracted entities/relationships
-2. **Queries KG** for existing knowledge (`find_entity_contradictions`)
-3. **Detects contradictions** with ContradictionDetector
-4. Decides: ADD/UPDATE/SKIP bullet based on conflicts
-5. **Inserts entities/relationships** into SQLite via PlaybookManager
-6. Updates playbook.db
+1. Receives Reflector's lessons + extracted patterns
+2. **Queries mem0** for existing patterns via `mcp__mem0__map_tiered_search`
+3. **Checks duplicates** via fingerprint in `mcp__mem0__map_add_pattern`
+4. Decides: ADD/UPDATE/ARCHIVE based on deduplication result
+5. **Stores patterns** in mem0 with appropriate tier
 
-**Contradiction Detection Flow:**
+**Deduplication Flow:**
 ```python
-# Curator checks new pattern for conflicts
-new_pattern = "Use generic exception handling for simplicity"
-entities = extractor.extract_entities(new_pattern)
-conflicts = detector.check_new_pattern_conflicts(db_conn, new_pattern, entities)
+# Curator checks new pattern for duplicates
+new_pattern = "Use retry logic with exponential backoff for API calls"
 
-if conflicts:
-    # HIGH severity conflict found
-    curator_decision = "REJECT"
-    reasoning = conflicts[0].resolution_suggestion
-    # "Consider deprecating 'generic-exception' in favor of 'specific-exceptions' (higher confidence, newer pattern)"
+# map_add_pattern returns created=false if duplicate exists
+result = mcp__mem0__map_add_pattern(
+    content=new_pattern,
+    category="implementation",
+    tier="project"
+)
+
+if not result.created:
+    # Duplicate found - consider updating existing
+    curator_decision = "UPDATE" if result.existing_id else "NONE"
 ```
 
 ### Extraction Pipeline Performance
@@ -1344,90 +1336,52 @@ All KG queries target <100ms latency:
 - Composite indexes for bidirectional relationship queries
 - Foreign key indexes for CASCADE deletes
 
-### Schema Migration
+### Schema Migration (Legacy Reference)
+
+> **Note:** This section documents the legacy Knowledge Graph schema. As of v4.0, pattern storage uses mem0 MCP instead.
 
 **From v2.1 to v3.0:**
 
-Migration is **automatic** (runs on PlaybookManager initialization):
-- Checks `metadata.schema_version`
-- If `< 3.0`, executes `schemas.SCHEMA_V3_0_SQL`
-- Adds 4 new tables: `entities`, `relationships`, `provenance`, `entities_fts`
-- Updates `schema_version` to `'3.0'`
-- Sets `kg_enabled = '1'`
-
-**Backward Compatibility:**
-- ✅ Existing `bullets` table unchanged
-- ✅ All v2.1 queries continue to work
-- ✅ FTS5 search on bullets unaffected
-- ✅ Playbook JSON export still functions
+Migration was **automatic** (ran on PlaybookManager initialization):
+- Checked `metadata.schema_version`
+- If `< 3.0`, executed `schemas.SCHEMA_V3_0_SQL`
+- Added 4 new tables: `entities`, `relationships`, `provenance`, `entities_fts`
+- Updated `schema_version` to `'3.0'`
+- Set `kg_enabled = '1'`
 
 **Migration Time:** <1 second (idempotent, safe to run multiple times)
 
-**Rollback:** To rollback, delete the KG tables and reset schema_version.
+### API Usage Examples (Legacy Reference)
 
-### API Usage Examples
+> **Note:** The following examples show the legacy Knowledge Graph API. For v4.0+, use mem0 MCP tools instead.
 
-#### Basic Entity/Relationship Queries
+#### mem0 MCP Tools (Current)
 
 ```python
-from mapify_cli.playbook_manager import PlaybookManager
+# Search for patterns
+mcp__mem0__map_tiered_search(query="JWT authentication pattern")
+
+# Add new pattern
+mcp__mem0__map_add_pattern(
+    content="Use bcrypt for password hashing",
+    category="implementation",
+    tier="project"
+)
+
+# Archive outdated pattern
+mcp__mem0__map_archive_pattern(pattern_id="impl-0042")
+```
+
+#### Legacy Knowledge Graph Queries (Deprecated)
+
+```python
+# Legacy API - no longer maintained
+from mapify_cli.graph_query import KnowledgeGraphQuery
 from mapify_cli.entity_extractor import EntityType
 from mapify_cli.relationship_detector import RelationshipType
 
-# Initialize (auto-migrates to v3.0 if needed)
-pm = PlaybookManager(db_path=".claude/playbook.db")
-kg = pm.kg_query
-
-# Find all tools
-tools = kg.query_entities(entity_type=EntityType.TOOL, min_confidence=0.8)
-print(f"High-confidence tools: {[t.name for t in tools]}")
-
-# Find dependencies
-deps = kg.query_relationships(relationship_type=RelationshipType.DEPENDS_ON)
-for dep in deps:
-    print(f"{dep.source_entity_id} depends on {dep.target_entity_id}")
-
-# Find path between entities
-paths = kg.find_paths('ent-pytest', 'ent-python', max_depth=3)
-for path in paths:
-    print(f"Path: {' -> '.join(path.entities())} (length: {path.length})")
-```
-
-#### Contradiction Detection
-
-```python
-from mapify_cli.contradiction_detector import ContradictionDetector
-
-detector = ContradictionDetector()
-
-# Detect all contradictions
-contradictions = detector.detect_contradictions(pm.db_conn, min_confidence=0.7)
-
-for contra in contradictions:
-    if contra.severity == 'high':
-        print(f"⚠️  HIGH SEVERITY CONFLICT:")
-        print(f"   {contra.entity_a.name} vs {contra.entity_b.name}")
-        print(f"   {contra.description}")
-        print(f"   → {contra.resolution_suggestion}\n")
-
-# Check specific entity for conflicts
-conflicts = detector.find_entity_contradictions(pm.db_conn, 'ent-generic-exception')
-if conflicts:
-    print(f"{len(conflicts)} conflicts found for this pattern")
-```
-
-#### Temporal Queries
-
-```python
-from datetime import datetime, timedelta, timezone
-
-# Get entities created in last 24 hours
-cutoff = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
-recent = kg.entities_since(cutoff, min_confidence=0.7)
-
-print(f"New entities (last 24h): {len(recent)}")
-for entity in recent:
-    print(f"  - {entity.name} ({entity.type.value}, conf: {entity.confidence:.2f})")
+# These classes remain for backward compatibility
+# but are not used in v4.0+ workflows
 ```
 
 ### Data Model
@@ -1443,7 +1397,7 @@ for entity in recent:
 
 **Relationship Types (9):**
 - **USES**: X uses Y as dependency (pytest USES Python)
-- **DEPENDS_ON**: X requires Y to function (MAP-workflow DEPENDS_ON playbook.db)
+- **DEPENDS_ON**: X requires Y to function (MAP-workflow DEPENDS_ON mem0)
 - **CONTRADICTS**: X conflicts with Y (generic-exception CONTRADICTS specific-exceptions)
 - **SUPERSEDES**: X replaces Y (SQLite SUPERSEDES JSON format)
 - **IMPLEMENTS**: X implements pattern Y (retry-logic IMPLEMENTS resilience-pattern)
@@ -1503,9 +1457,9 @@ Agent prompts are located in `.claude/agents/*.md` and use **Handlebars template
 
 ❌ **You CANNOT remove:**
 - Template variables: `{{language}}`, `{{project_name}}`, `{{framework}}`
-- Conditional blocks: `{{#if playbook_bullets}}...{{/if}}`
+- Conditional blocks: `{{#if existing_patterns}}...{{/if}}`
 - Context sections: `{{subtask_description}}`, `{{feedback}}`
-- ACE learning sections: playbook bullets, used_bullets tracking
+- ACE learning sections: existing patterns, used_patterns tracking
 
 **Why they're critical:**
 - Orchestrator fills these at runtime with project context
@@ -1525,7 +1479,7 @@ Agent prompts are located in `.claude/agents/*.md` and use **Handlebars template
 **Actor-specific:**
 ```handlebars
 {{subtask_description}}    # From TaskDecomposer
-{{playbook_bullets}}       # Relevant patterns from Curator
+{{existing_patterns}}      # Relevant patterns from mem0
 {{#if feedback}}           # Monitor feedback (retry loop)
   {{feedback}}
 {{/if}}
@@ -1619,7 +1573,7 @@ model: claude-sonnet-4-5  # or claude-haiku-3-5
    ```markdown
    ## MCP INTEGRATION
 
-   **CRITICAL**: ALWAYS use cipher_memory_search before auditing:
+   **CRITICAL**: ALWAYS use mcp__mem0__map_tiered_search before auditing:
    - Query: "security vulnerability [component_type]"
    - Check for past security issues and fixes
    ```
@@ -1766,7 +1720,7 @@ Located at: `.git/hooks/pre-commit`
 File: .claude/agents/actor.md
 Missing templates:
   - {{language}}
-  - {{#if playbook_bullets}}
+  - {{#if existing_patterns}}
 
 These template variables are used by Orchestrator for context injection.
 See .claude/agents/README.md for details.
@@ -1801,15 +1755,15 @@ Agent template changes are tracked in the project's main CHANGELOG.md.
 
 **Example entry:**
 ```markdown
-## [2.0.0] - 2025-10-17
+## [4.0.0] - 2025-01-14
 
 ### Breaking Changes
-- Actor: Changed output format to include `used_bullets` array
-- Monitor: Now requires `claude-reviewer` MCP tool
+- Actor: Changed output format to include `used_patterns` array
+- All agents: Migrated from cipher to mem0 MCP tools
 
 ### Added
-- Actor: MCP integration section with tool usage patterns
-- Reflector: Cipher deduplication checks before pattern extraction
+- Actor: MCP integration section with mem0 tool usage patterns
+- Reflector: mem0 deduplication checks before pattern extraction
 
 ### Fixed
 - Monitor: Clarified validation criteria for error handling
@@ -1831,7 +1785,7 @@ Agent template changes are tracked in the project's main CHANGELOG.md.
 # In agent templates, reference patterns:
 
 See [MCP-PATTERNS.md](MCP-PATTERNS.md#actor-patterns) for:
-- How to search cipher before implementing
+- How to search mem0 before implementing
 - When to fetch library docs
 - Batch search optimization
 ```
@@ -2156,7 +2110,7 @@ Claude Code hooks run in subprocess with restricted capabilities:
 
 | Capability | Available? | Workaround |
 |-----------|-----------|-----------|
-| MCP tool access | ❌ No | Hooks can't call `cipher_memory_search`, `sequential-thinking` |
+| MCP tool access | ❌ No | Hooks can't call `mcp__mem0__map_tiered_search`, `sequential-thinking` |
 | Python imports | ❌ No | Must call separate Python script via subprocess |
 | Async operations | ❌ No | Synchronous execution only (5s timeout) |
 | External scripts | ✅ Yes | Can call `python3`, `jq`, bash utilities |
@@ -2305,37 +2259,27 @@ All failures are non-blocking - hook returns `{"continue": true}` and logs error
 - ✅ Audit trail for compliance
 - ✅ Metrics dashboard input
 
-### Playbook Top-K Limiting (Phase 1.3)
+### Pattern Top-K Limiting (Phase 1.3)
 
-**Problem:** Too many playbook patterns distract model, reduce focus on most relevant patterns.
+**Problem:** Too many patterns distract model, reduce focus on most relevant patterns.
 
-**Solution:** Limit patterns retrieved to `top_k=5` (configurable).
-
-**Configuration:**
-
-File: `.claude/playbook.db`
-```json
-{
-  "metadata": {
-    "top_k": 5
-  }
-}
-```
+**Solution:** Limit patterns retrieved to `top_k=5` (configurable via tiered search).
 
 **Behavior:**
 
 ```python
 # In Actor agent context injection:
-relevant_bullets = get_relevant_bullets(
-    query=subtask_description,
-    limit=metadata.get("top_k", 5)  # Default 5
+# mem0 tiered search returns limited results automatically
+result = mcp__mem0__map_tiered_search(
+    query=subtask_description
+    # Returns up to 5 patterns by default
 )
 ```
 
 **Benefits:**
 - ✅ ~15% token reduction in Actor prompts
 - ✅ Improved focus on best patterns
-- ✅ Faster retrieval (fewer embeddings to compare)
+- ✅ Faster retrieval via tiered caching
 
 **Customization:**
 - `top_k=3`: Simple tasks, minimal context needed
@@ -2366,20 +2310,19 @@ relevant_bullets = get_relevant_bullets(
 **Phase 1 ✅ COMPLETED** (2025-10-18):
 - [x] **RecitationManager** (482 lines): Recitation Pattern for focus
 - [x] **MapWorkflowLogger** (246 lines): Detailed workflow logging
-- [x] **Playbook top_k=5**: Limit playbook patterns
+- [x] **Pattern top_k=5**: Limit retrieved patterns
 - [x] **Template Optimization**: Optimize verbose outputs (-9.6% tokens)
 
 **Phase 1 Results:**
 - ✅ 9.6% reduction in token usage (Monitor, Evaluator templates)
-- ✅ 267% playbook growth (3 → 11 patterns)
-- ✅ 728 lines of new infrastructure
 - ✅ Documentation-driven orchestration architecture
+- ✅ 728 lines of new infrastructure
 
 **Phase 2** (Prioritized):
 1. **Checkpoints** (high impact) — Workflow resumption after interruption
-2. **MCP caching** (medium-high) — Latency reduction for cipher/context7
+2. **MCP caching** (medium-high) — Latency reduction for mem0/context7
 3. **Keyword+semantic search** (medium) — Hybrid retrieval accuracy
-4. **Playbook variation** (low-medium) — Few-shot bias reduction
+4. **Pattern variation** (low-medium) — Few-shot bias reduction
 
 **Phase 3-4:** Parallelism, auto-testing, temperature per agent
 

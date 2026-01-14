@@ -19,7 +19,7 @@ description: Token-efficient MAP workflow with conditional optimizations
 1. DECOMPOSE → task-decomposer
 1.5. INIT PLANNING → generate .map/task_plan_<branch>.md from blueprint
 2. FOR each subtask:
-   a. CONTEXT → playbook query (Actor will run `cipher_memory_search` per protocol; orchestrator MAY run extra cipher search to augment context)
+   a. CONTEXT → playbook query (Actor will run `mcp__mem0__map_tiered_search` per protocol; orchestrator MAY run extra cipher search to augment context)
    b. RESEARCH → if existing code understanding needed
    c. IF Self-MoA (--self-moa OR risk_level:high OR complexity_score>=7 OR security_critical:true):
       → 3 Actors (security/performance/simplicity)
@@ -152,8 +152,8 @@ Pass this packet verbatim to Actor/Monitor/Predictor/Synthesizer. Do NOT rename 
 # Query playbook (project-specific patterns)
 mapify playbook query "[subtask description]" --limit 5
 
-# Optional: cross-project patterns (Actor still runs its own `cipher_memory_search` per Actor protocol)
-mcp__cipher__cipher_memory_search(query="[concept]", top_k=5)
+# Optional: cross-project patterns (Actor still runs its own `mcp__mem0__map_tiered_search` per Actor protocol)
+mcp__mem0__map_tiered_search(query="[concept]", top_k=5)
 ```
 
 **Re-rank retrieved patterns** by relevance to current subtask:

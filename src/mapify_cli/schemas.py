@@ -1,5 +1,9 @@
 """
-SQLite schema definitions for MAP Framework playbook database.
+SQLite schema definitions for MAP Framework Knowledge Graph.
+
+NOTE: This is a LEGACY module retained for backward compatibility.
+As of v4.0, pattern storage has migrated to mem0 MCP.
+These schemas remain for the Knowledge Graph entity/relationship layer.
 
 These schemas are embedded in code to ensure they're available
 in packaged installations (uv tool install, pip install).
