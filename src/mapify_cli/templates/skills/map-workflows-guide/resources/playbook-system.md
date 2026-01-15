@@ -258,10 +258,10 @@ Pattern becomes cross-project knowledge
 
 ### For Workflows
 
-1. **Always query playbook** - TaskDecomposer and Actor should always search playbook
-2. **Track bullet usage** - Actor's `used_bullets` field enables quality scoring
-3. **Batch operations** - Curator should batch multiple operations in single `apply-delta` call
-4. **Validate before sync** - Only sync high-quality bullets (`helpful_count >= 5`) to cipher
+1. **Always search mem0** - Agents should retrieve patterns via `mcp__mem0__map_tiered_search`
+2. **Track pattern usage** - Workflow should record which patterns were applied
+3. **Batch operations** - Curator should batch mem0 writes when possible
+4. **Promote proven patterns** - Use tier promotion rules to broaden reuse
 
 ---
 
