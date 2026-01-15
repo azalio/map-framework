@@ -180,6 +180,19 @@ class TestInitCommand:
         assert (tmp_path / ".claude" / "agents").exists()
         assert (tmp_path / ".claude" / "commands").exists()
 
+        # Project-level approvals should be created
+        settings_local = tmp_path / ".claude" / "settings.local.json"
+        assert settings_local.exists()
+        settings = json.loads(settings_local.read_text())
+        allow = settings.get("permissions", {}).get("allow", [])
+        assert "Bash(go test:*)" in allow
+        assert "Bash(go vet :*)" in allow
+        assert "Bash(go mod tidy:*)" in allow
+        assert (
+            'Bash(openssl req -x509 -newkey rsa:512 -keyout /dev/null -out /dev/stdout -days 365 -nodes -subj "/CN=test" 2>/dev/null)'
+            in allow
+        )
+
     def test_init_always_uses_claude(self, tmp_path):
         """Test that init always uses Claude (no AI selection prompt).
 
@@ -390,14 +403,14 @@ class TestInitCommand:
 
         assert "mcp_servers" in mcp_config, "mcp_config missing 'mcp_servers' key"
         for server in expected_servers:
-            assert (
-                server in mcp_config["mcp_servers"]
-            ), f"MCP server '{server}' not found in config"
+            assert server in mcp_config["mcp_servers"], (
+                f"MCP server '{server}' not found in config"
+            )
 
         # Verify exactly 5 servers (no extras)
-        assert (
-            len(mcp_config["mcp_servers"]) == 5
-        ), f"Expected 5 servers, found {len(mcp_config['mcp_servers'])}"
+        assert len(mcp_config["mcp_servers"]) == 5, (
+            f"Expected 5 servers, found {len(mcp_config['mcp_servers'])}"
+        )
 
     def test_init_force_no_prompts(self, tmp_path):
         """Test that init --force completes without interactive confirmation prompts.
@@ -445,9 +458,9 @@ class TestInitCommand:
         # This confirms --force actually re-initialized the files
         assert actor_file.exists()
         restored_content = actor_file.read_text()
-        assert (
-            restored_content != "# Modified by user"
-        ), "--force did not restore template files"
+        assert restored_content != "# Modified by user", (
+            "--force did not restore template files"
+        )
         # Should contain some template markers (not exact match due to potential updates)
         assert len(restored_content) > 100, "Restored actor.md seems too short"
 
@@ -614,9 +627,9 @@ class TestAgentCreation:
 
             # Verify MCP integration for cipher-enabled agents
             if any(name in agent_file for name in ["reflector", "curator"]):
-                assert (
-                    "cipher" in content.lower() or "mcp" in content.lower()
-                ), f"Agent {agent_file} missing MCP integration section"
+                assert "cipher" in content.lower() or "mcp" in content.lower(), (
+                    f"Agent {agent_file} missing MCP integration section"
+                )
 
 
 class TestCommandCreation:
@@ -696,9 +709,9 @@ class TestMcpJsonConfig:
 
         # http servers should have 'type' and 'url' keys
         for server_name in ["context7", "deepwiki"]:
-            assert (
-                servers[server_name].get("type") == "http"
-            ), f"{server_name} should be http"
+            assert servers[server_name].get("type") == "http", (
+                f"{server_name} should be http"
+            )
             assert "url" in servers[server_name], f"{server_name} missing url"
 
     def test_read_project_mcp_json_missing_file(self, tmp_path):
@@ -875,9 +888,9 @@ class TestMcpJsonConfig:
 
         # Allow exit code 0 or initialization messages
         mcp_file = tmp_path / ".mcp.json"
-        assert (
-            mcp_file.exists()
-        ), f"Expected .mcp.json to be created. Output: {result.output}"
+        assert mcp_file.exists(), (
+            f"Expected .mcp.json to be created. Output: {result.output}"
+        )
 
         config = json.loads(mcp_file.read_text())
         assert "mcpServers" in config

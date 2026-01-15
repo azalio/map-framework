@@ -115,9 +115,9 @@ class StepTracker:
 
     def __init__(self, title: str):
         self.title = title
-        self.steps: List[Dict[str, Any]] = (
-            []
-        )  # list of dicts: {key, label, status, detail}
+        self.steps: List[
+            Dict[str, Any]
+        ] = []  # list of dicts: {key, label, status, detail}
         self._refresh_cb = None
 
     def attach_refresh(self, cb):
@@ -1308,6 +1308,65 @@ def configure_global_permissions() -> None:
     )
 
 
+def create_or_merge_project_settings_local(project_path: Path) -> None:
+    """Create/merge .claude/settings.local.json with safe project allowlist.
+
+    Claude Code supports per-project approvals via `.claude/settings.local.json`.
+    This file is user-local (should not be committed) and is merged by Claude Code
+    with global settings from `~/.claude/settings.json`.
+
+    We keep this allowlist intentionally narrow and focused on common safe actions
+    for local development workflows.
+    """
+
+    settings_file = project_path / ".claude" / "settings.local.json"
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+
+    default_permissions: Dict[str, Any] = {
+        "allow": [
+            # Common safe Go workflows (project-scoped)
+            "Bash(go test:*)",
+            "Bash(go test -c:*)",
+            "Bash(go vet :*)",
+            "Bash(go build:*)",
+            "Bash(go mod download:*)",
+            "Bash(go mod tidy:*)",
+            "Bash(gofmt -l :*)",
+            "Bash(gofmt -d :*)",
+            # Used by some test/dev scripts to produce throwaway certs
+            'Bash(openssl req -x509 -newkey rsa:512 -keyout /dev/null -out /dev/stdout -days 365 -nodes -subj "/CN=test" 2>/dev/null)',
+        ],
+        "deny": [],
+        "ask": [],
+    }
+
+    # Load existing settings if present
+    if settings_file.exists():
+        try:
+            existing_settings = json.loads(settings_file.read_text())
+        except json.JSONDecodeError:
+            console.print(
+                f"[yellow]Warning:[/yellow] Corrupted {settings_file}, will recreate"
+            )
+            existing_settings = {}
+    else:
+        existing_settings = {}
+
+    existing_settings.setdefault("permissions", {})
+    permissions = existing_settings["permissions"]
+
+    # Merge allowlist (preserve user customizations)
+    existing_allow = set(permissions.get("allow", []))
+    for entry in default_permissions["allow"]:
+        if entry not in existing_allow:
+            permissions.setdefault("allow", []).append(entry)
+
+    permissions.setdefault("deny", permissions.get("deny", []))
+    permissions.setdefault("ask", permissions.get("ask", []))
+
+    settings_file.write_text(json.dumps(existing_settings, indent=2) + "\n")
+
+
 def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
     """Create MCP configuration file"""
     config: Dict[str, Any] = {
@@ -1920,9 +1979,9 @@ def init(
     else:
         # Type assertion: flow guarantees project_name is not None here
         # (checked at line 1931, and not in use_current_dir branch)
-        assert (
-            project_name is not None
-        ), "project_name must be set in non-current-dir mode"
+        assert project_name is not None, (
+            "project_name must be set in non-current-dir mode"
+        )
         project_path = Path(project_name).resolve()
         if project_path.exists():
             console.print(
@@ -2033,6 +2092,11 @@ def init(
                 tracker.complete("git", "initialized")
             else:
                 tracker.error("git", "failed")
+
+    tracker.add("project-permissions", "Configure project approvals")
+    tracker.start("project-permissions")
+    create_or_merge_project_settings_local(project_path)
+    tracker.complete("project-permissions", ".claude/settings.local.json")
 
     tracker.add("finalize", "Finalize")
     tracker.complete("finalize", "project ready")
