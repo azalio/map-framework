@@ -49,21 +49,21 @@ MAP Framework orchestrates 8 specialized agents in a coordinated workflow.
 **6. Reflector**
 - **Role:** Extracts patterns and lessons learned
 - **Input:** All agent outputs for subtask(s)
-- **Output:** Insights, patterns discovered, bullet updates
+- **Output:** Insights, patterns discovered, pattern updates
 - **When it runs:**
   - /map-feature: Per subtask
   - /map-efficient, /map-debug, /map-refactor: Batched (once at end)
   - /map-fast: Never (skipped)
-- **MCP Tool:** Uses `cipher_memory_search` to check for existing patterns
+- **MCP Tool:** Uses `mcp__mem0__map_tiered_search` to check for existing patterns
 
 **7. Curator**
-- **Role:** Updates playbook with validated patterns
+- **Role:** Updates memory with validated patterns
 - **Input:** Reflector insights
-- **Output:** Delta operations (ADD/UPDATE/DEPRECATE bullets)
+- **Output:** Delta operations (ADD/UPDATE/ARCHIVE patterns)
 - **When it runs:** After Reflector
-- **MCP Tools:** 
-  - `cipher_memory_search` to deduplicate
-  - `cipher_extract_and_operate_memory` to sync high-quality bullets (helpful_count ≥ 5)
+- **MCP Tools:**
+  - `mcp__mem0__map_tiered_search` to deduplicate
+  - `mcp__mem0__map_add_pattern` to store new patterns
 
 ### Optional
 

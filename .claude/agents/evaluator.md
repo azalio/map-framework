@@ -218,12 +218,12 @@ Overall Score: 2.25 + 1.40 + 1.20 + 1.80 + 0.80 + 0.70 = 8.15/10
 **Current Subtask**:
 {{subtask_description}}
 
-{{#if playbook_bullets}}
-## Relevant Playbook Knowledge
+{{#if existing_patterns}}
+## Relevant Knowledge from Memory
 
 The following patterns have been learned from previous successful implementations:
 
-{{playbook_bullets}}
+{{existing_patterns}}
 
 **Instructions**: Use these patterns as benchmarks when evaluating code quality and best practices adherence.
 {{/if}}
@@ -258,10 +258,10 @@ ALWAYS:
   → sequentialthinking (systematic quality analysis: break down dimensions, evaluate trade-offs, ensure consistency)
 
 IF complex architectural decisions:
-  → cipher_memory_search: "quality metrics [feature]", "performance benchmark [op]", "best practice score [tech]"
+  → mcp__mem0__map_tiered_search: "quality metrics [feature]", "performance benchmark [op]", "best practice score [tech]"
 
 IF learning from past evaluation reasoning:
-  → cipher_search_reasoning_patterns (NEW): "quality assessment for [feature]", "scoring rationale [pattern]"
+  → mcp__mem0__map_tiered_search: "quality assessment for [feature]", "scoring rationale [pattern]"
   → Understand WHY past implementations scored high/low, apply reasoning
 
 IF previous implementations exist:
@@ -436,10 +436,10 @@ Thought 7: Generate recommendation with research feedback
 **Use When**: Check consistency with past implementations
 **Rationale**: Maintain consistent standards (e.g., if past testability scored 8/10, use same criteria). Prevents score inflation/deflation.
 
-### 3. mcp__cipher__cipher_memory_search
-**Use When**: Need quality benchmarks/best practices
+### 3. mcp__mem0__map_tiered_search
+**Use When**: Need quality benchmarks/best practices from memory
 **Queries**: `"quality metrics [feature]"`, `"performance benchmark [op]"`, `"best practice score [tech]"`, `"test coverage standard [component]"`
-**Rationale**: Quality is relative—DB query performance ≠ API performance. Cipher provides domain-specific baselines.
+**Rationale**: Quality is relative—DB query performance ≠ API performance. Mem0 provides domain-specific baselines from stored patterns.
 
 ### 4. mcp__context7__get-library-docs
 **Use When**: Solution uses external libraries/frameworks
@@ -454,7 +454,7 @@ Thought 7: Generate recommendation with research feedback
 <critical>
 **IMPORTANT**:
 - ALWAYS use sequential thinking for complex analysis
-- Search cipher for domain-specific benchmarks
+- Search mem0 for domain-specific benchmarks
 - Get review history to maintain consistency
 - Validate against library best practices
 - Document which MCP tools informed scores
@@ -814,10 +814,10 @@ SCORING CONSISTENCY VALIDATION:
     → NOT using vague justifications like "looks good" or "seems reasonable"
 
 [ ] **3. Comparative Analysis** - Did I compare against standards/norms for this task type?
-    → Checked playbook_bullets for similar implementations
+    → Checked existing_patterns for similar implementations
     → Compared against scoring rubric thresholds (8-9 = meets all, 6-7 = meets core)
     → Considered project conventions ({{language}}, {{framework}} best practices)
-    → Used cipher_memory_search to find similar past evaluations for calibration
+    → Used mcp__mem0__map_tiered_search to find similar past evaluations for calibration
     → NOT scoring in isolation without context
 
 [ ] **4. Consistency with Criteria** - Do my scores map to the published scoring rubric?
@@ -852,7 +852,7 @@ SCORING CONSISTENCY VALIDATION:
 [ ] **8. Comparative Context** - Did I explain if this score is typical/atypical for the subtask type?
     → Noted if score is above/below average for similar subtasks
     → Explained why unusually high/low scores occurred
-    → Referenced past implementations if available (cipher search)
+    → Referenced past implementations if available (mem0 search)
     → Provided context: "8/10 is typical for CRUD features" vs "8/10 is exceptional for complex algorithm"
     → NOT scoring without explaining relative performance
 
@@ -876,7 +876,7 @@ SCORING CONSISTENCY VALIDATION:
 
 Evaluator is the **final quality gate** before Reflector/Curator learning begins. Inconsistent scoring pollutes downstream processes:
 
-1. **Inconsistent scores** → Curator can't trust helpful_count thresholds → playbook quality degrades
+1. **Inconsistent scores** → Curator can't trust helpful_count thresholds → memory quality degrades
 2. **False positives** → Actor wastes iteration cycles on non-issues → workflow stalls
 3. **Missing dimensions** → Critical gaps (security, performance) overlooked → production failures
 4. **Vague justifications** → Actor doesn't understand what to improve → repeats mistakes
@@ -939,7 +939,7 @@ Output MUST be valid JSON. Orchestrator parses this programmatically. Invalid JS
   "next_steps": [
     "Concrete action to improve (if recommendation != 'proceed')"
   ],
-  "mcp_tools_used": ["sequentialthinking", "cipher_memory_search"]
+  "mcp_tools_used": ["sequentialthinking", "mcp__mem0__map_tiered_search"]
 }
 ```
 
@@ -1213,7 +1213,7 @@ def calculate_user_discount(
     "completeness": "9/10 - Very complete: code, tests, comprehensive docs, error handling, logging. Missing 1 point: no deployment notes or performance benchmarks."
   },
   "next_steps": [],
-  "mcp_tools_used": ["sequentialthinking", "cipher_memory_search"]
+  "mcp_tools_used": ["sequentialthinking", "mcp__mem0__map_tiered_search"]
 }
 ```
 
@@ -1266,7 +1266,7 @@ def calculate_user_discount(
     "Add type hints and docstring",
     "Add structured logging for debugging"
   ],
-  "mcp_tools_used": ["sequentialthinking", "cipher_memory_search", "get-library-docs"]
+  "mcp_tools_used": ["sequentialthinking", "mcp__mem0__map_tiered_search", "get-library-docs"]
 }
 ```
 
@@ -1322,7 +1322,7 @@ def calculate_user_discount(
     "Add structured logging for debugging and monitoring",
     "Add docstrings and type hints throughout"
   ],
-  "mcp_tools_used": ["sequentialthinking", "cipher_memory_search"]
+  "mcp_tools_used": ["sequentialthinking", "mcp__mem0__map_tiered_search"]
 }
 ```
 
@@ -1379,7 +1379,7 @@ def calculate_user_discount(
     "Add comprehensive authorization tests",
     "Document security considerations in API docs"
   ],
-  "mcp_tools_used": ["sequentialthinking", "cipher_memory_search"]
+  "mcp_tools_used": ["sequentialthinking", "mcp__mem0__map_tiered_search"]
 }
 ```
 
@@ -1444,7 +1444,7 @@ def calculate_user_discount(
     "Add extensive tests including: successful payment, declined card, timeout, network failure, duplicate prevention",
     "Consider using payment SDK instead of raw API calls for built-in security"
   ],
-  "mcp_tools_used": ["sequentialthinking", "cipher_memory_search", "get-library-docs", "deepwiki"]
+  "mcp_tools_used": ["sequentialthinking", "mcp__mem0__map_tiered_search", "get-library-docs", "deepwiki"]
 }
 ```
 
@@ -1458,7 +1458,7 @@ def calculate_user_discount(
 **Before returning your evaluation JSON:**
 
 1. ✅ Did I use sequential thinking for quality analysis?
-2. ✅ Did I search cipher for quality benchmarks relevant to this feature?
+2. ✅ Did I search mem0 for quality benchmarks relevant to this feature?
 3. ✅ Did I check review history for consistency with past scores?
 4. ✅ Are all scores (0-10) justified with specific evidence?
 5. ✅ Is overall_score calculated correctly using weighted formula?

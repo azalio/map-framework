@@ -13,9 +13,13 @@ description: Extract and preserve lessons from completed workflows (OPTIONAL lea
 
 **What it does:**
 1. Calls Reflector agent to analyze workflow outputs and extract patterns
-2. Calls Curator agent to create playbook delta operations (with deduplication)
-3. Applies Curator operations to `.claude/playbook.db`
-4. Syncs high-quality bullets (helpful_count >= 5) to cipher for cross-project sharing
+2. Calls Curator agent to store patterns directly via mem0 MCP tools
+3. Verifies patterns stored via `mcp__mem0__map_tiered_search`
+
+**Storage Architecture:**
+- Branch tier: `run_id="proj:PROJECT:branch:BRANCH"` (experiment-specific patterns)
+- Project tier: `run_id="proj:PROJECT"` (shared across branches)
+- Org tier: `user_id="org:ORG"` only (shared across all projects)
 
 **Workflow Summary Input:** $ARGUMENTS
 
@@ -81,9 +85,13 @@ Task(
 $ARGUMENTS
 
 **MANDATORY FIRST STEP:**
-1. Call mcp__cipher__cipher_memory_search to check if similar patterns already exist in cross-project knowledge base
-2. Only suggest new bullets if pattern is genuinely novel (not already in cipher)
-3. Reference existing cipher patterns in your analysis
+1. Call mcp__mem0__map_tiered_search to check if similar patterns already exist across tiers
+2. Only suggest new bullets if pattern is genuinely novel (not found in any tier)
+3. Reference existing patterns with their tier context in your analysis
+
+**Tier Search Parameters:**
+- user_id: 'org:ORG_NAME' (for org-level context)
+- run_id: 'proj:PROJECT_NAME:branch:BRANCH_NAME' (for branch context with inheritance)
 
 **Analysis Instructions:**
 
@@ -91,7 +99,7 @@ Analyze holistically across ALL subtasks:
 - What patterns emerged consistently?
 - What worked well that should be repeated?
 - What could be improved for future similar tasks?
-- What knowledge should be preserved in playbook?
+- What knowledge should be preserved?
 - What trade-offs were made and why?
 
 **Focus areas:**
@@ -103,155 +111,106 @@ Analyze holistically across ALL subtasks:
 
 **Output JSON with:**
 - key_insight: string (one sentence takeaway for entire workflow)
-- patterns_used: array of strings (existing patterns applied successfully)
+- patterns_used: array of strings (existing patterns applied successfully, with tier labels)
 - patterns_discovered: array of strings (new patterns worth preserving)
-- bullet_updates: array of {bullet_id, new_helpful_count, new_harmful_count, reason}
-- suggested_new_bullets: array of {section, content, code_example, initial_score, rationale}
+- bullet_updates: array of {bullet_id, tag: 'helpful'|'harmful', reason}
+- suggested_new_bullets: array of {section, content, code_example, rationale}
 - workflow_efficiency: {total_iterations, avg_per_subtask, bottlenecks: array of strings}
-- cipher_duplicates_found: array of {pattern, existing_cipher_entry} (from cipher_memory_search results)"
+- mem0_duplicates_found: array of {pattern, tier, memory_id} (from tiered search results)"
 )
 ```
 
-**Verification:** Check Reflector output contains evidence of `cipher_memory_search` call:
-- Should show: "Perfect! I found highly relevant existing knowledge. The cipher search revealed..."
-- Or: "No similar patterns found in cipher. This appears to be a novel pattern."
+**Verification:** Check Reflector output contains evidence of `mcp__mem0__map_tiered_search` call:
+- Should show: "mem0 tiered search found existing patterns in [tier]..."
+- Or: "No similar patterns found in any tier. This appears to be a novel pattern."
 
-**If cipher_memory_search was NOT called:** Reflector did not follow instructions. Flag this as critical issue.
+**If tiered search was NOT called:** Reflector did not follow instructions. Flag this as critical issue.
 
 ---
 
-## Step 3: Curator Update
+## Step 3: Curator Storage
 
 **⚠️ MUST use subagent_type="curator"** (NOT general-purpose):
 
 ```
 Task(
   subagent_type="curator",
-  description="Create playbook operations from workflow learnings",
-  prompt="Integrate Reflector insights into playbook:
+  description="Store workflow learnings via mem0 MCP tools",
+  prompt="Store Reflector insights using mem0 MCP tools directly:
 
 **Reflector Insights:**
 [paste Reflector JSON output from Step 2]
 
-**MANDATORY STEPS:**
-1. BEFORE creating ADD operations: call mcp__cipher__cipher_memory_search to verify no duplicates exist in playbook
-2. Create delta operations (ADD/UPDATE/DEPRECATE) for playbook
-3. AFTER operations defined: IF any bullet has helpful_count >= 5, MUST prepare sync_to_cipher entries
+**MANDATORY: Curator now calls mem0 MCP tools directly (NO JSON delta output)**
 
-**Deduplication Rules:**
-- If Reflector found cipher duplicates: DO NOT create ADD operations, reference existing knowledge instead
-- If playbook already has similar bullet: CREATE UPDATE operation with incremented helpful_count
-- If pattern is genuinely novel: CREATE ADD operation with initial helpful_count=1
+**Curator will:**
+1. Call mcp__mem0__map_tiered_search to verify no duplicates exist
+2. Call mcp__mem0__map_add_pattern for each new pattern
+3. Call mcp__mem0__map_promote_pattern for patterns with helpful_count >= 3
 
-**Bullet Scoring:**
-- Set helpful_count=1 for new patterns (will increment over time)
-- Set helpful_count=+1 for existing patterns that proved useful again
-- Set harmful_count=+1 for patterns that caused issues
+**Tier Selection:**
+- Branch tier: run_id='proj:PROJECT:branch:BRANCH' (for experimental patterns)
+- Project tier: run_id='proj:PROJECT' (for proven patterns)
+- Org tier: user_id='org:ORG' only (for cross-project patterns)
 
-**Output JSON with:**
-- operations: array of {operation: 'ADD'|'UPDATE'|'DEPRECATE', section, bullet_id, content, code_example, reason}
-- deduplication_check: array of {new_bullet_pattern, similar_existing_bullets, action_taken, reason}
-- sync_to_cipher: array of {bullet_id, content, helpful_count, section} (REQUIRED if helpful_count >= 5)
-- summary: {total_adds, total_updates, total_deprecates, bullets_synced_to_cipher}"
+**Deduplication via Fingerprinting:**
+- Each pattern has SHA256 fingerprint of normalized content
+- mcp__mem0__map_add_pattern returns {created: false} if duplicate exists
+- Reference existing pattern ID instead of creating duplicate
+
+**Promotion Criteria:**
+- helpful_count >= 3: Eligible for promotion to higher tier
+- helpful_count >= 5: Auto-promote to project tier
+- helpful_count >= 10 with cross-project usage: Promote to org tier"
 )
 ```
 
-**Verification:** Check Curator output contains:
-- `deduplication_check` array (proves cipher_memory_search was called)
-- `sync_to_cipher` array (may be empty if no bullets reach helpful_count >= 5)
+**Verification:** Curator will:
+- Show tool calls to `mcp__mem0__map_tiered_search` for deduplication
+- Show tool calls to `mcp__mem0__map_add_pattern` for new patterns
+- Report patterns stored with their tier and memory_id
 
-**If deduplication_check is missing:** Curator did not follow instructions. Flag this as critical issue.
+**If Curator outputs JSON instead of calling tools:** Curator did not follow updated instructions. Flag this as critical issue.
 
 ---
 
-## Step 4: Apply Curator Operations
+## Step 4: Verify Storage
 
-Apply Curator delta operations to playbook database:
+Verify patterns were stored correctly using mem0 tiered search:
 
-```bash
-# Save Curator output to temporary file
-cat > /tmp/curator_operations.json <<'EOF'
-[paste Curator JSON output from Step 3]
-EOF
-
-# Apply to playbook SQLite database
-mapify playbook apply-delta /tmp/curator_operations.json
-
-# Verify operations applied
-echo "Applied operations:"
-mapify playbook query "" --limit 5
+```
+mcp__mem0__map_tiered_search(
+  query="[pattern content from Reflector]",
+  user_id="org:ORG_NAME",
+  run_id="proj:PROJECT:branch:BRANCH",
+  include_archived=false
+)
 ```
 
 **Expected output:**
-```
-Applying delta operations...
-✓ Added 2 bullets
-✓ Updated 1 bullet
-✓ Deprecated 0 bullets
-Playbook updated successfully.
-```
-
-**If apply-delta fails:** Check JSON format, ensure bullet_ids are valid, verify .claude/playbook.db exists.
-
----
-
-## Step 5: Sync High-Quality Bullets to Cipher
-
-**Only if Curator output contains `sync_to_cipher` entries:**
-
-For each bullet with helpful_count >= 5, sync to cross-project knowledge base:
-
-```
-FOR each entry in sync_to_cipher array:
-  mcp__cipher__cipher_extract_and_operate_memory(
-    interaction: [bullet content + code_example],
-    memoryMetadata: {
-      "projectId": "map-framework",
-      "source": "curator",
-      "section": [bullet section],
-      "helpful_count": [bullet helpful_count]
-    },
-    options: {
-      "useLLMDecisions": false,
-      "similarityThreshold": 0.85,
-      "enableBatchProcessing": true
+```json
+{
+  "results": [
+    {
+      "memory_id": "mem-abc123",
+      "text": "Pattern content...",
+      "tier": "branch",
+      "metadata": {
+        "section_id": "IMPLEMENTATION_PATTERNS",
+        "helpful_count": 1,
+        "created_at": "2025-01-12T..."
+      }
     }
-  )
+  ],
+  "total": 1
+}
 ```
 
-**Example:**
-```
-mcp__cipher__cipher_extract_and_operate_memory(
-  interaction: "Error Handling Pattern: Always wrap external API calls with try/except blocks. Log errors with context (service name, request ID). Return sanitized error messages to users.",
-  memoryMetadata: {
-    "projectId": "map-framework",
-    "source": "curator",
-    "section": "ERROR_HANDLING_PATTERNS",
-    "helpful_count": 6
-  },
-  options: {
-    "useLLMDecisions": false,
-    "similarityThreshold": 0.85
-  }
-)
-```
-
-**Verification:**
-```bash
-# Verify sync succeeded by searching cipher
-mcp__cipher__cipher_memory_search(
-  query: [bullet content],
-  top_k: 1
-)
-```
-
-**Expected:** Search should return the newly synced knowledge entry.
-
-**If sync_to_cipher array is empty:** This is normal if no bullets reached helpful_count >= 5 yet. Skip this step.
+**If patterns not found:** Check Curator tool call outputs for errors. Retry storage if needed.
 
 ---
 
-## Step 6: Summary Report
+## Step 5: Summary Report
 
 Provide learning summary:
 
@@ -264,79 +223,92 @@ Provide learning summary:
 
 ### Reflector Insights
 - **Key Insight:** [key_insight from Reflector]
-- **Patterns Used:** [count] existing patterns applied successfully
+- **Patterns Used:** [count] existing patterns applied successfully (with tier labels)
 - **Patterns Discovered:** [count] new patterns identified
-- **Cipher Duplicates Found:** [count] (avoided duplication)
+- **mem0 Duplicates Found:** [count] (avoided duplication via fingerprint)
 
-### Curator Operations
-- **Added:** [N] new bullets to playbook
-- **Updated:** [N] existing bullets (incremented helpful_count)
-- **Deprecated:** [N] outdated bullets
-- **Synced to Cipher:** [N] high-quality bullets (helpful_count >= 5)
+### Curator Storage Results
+- **Stored:** [N] new patterns via mcp__mem0__map_add_pattern
+- **Skipped (duplicates):** [N] patterns already exist
+- **Promoted:** [N] patterns to higher tiers
 
-### Playbook Impact
-- **Total Bullets After Update:** [query playbook for count]
-- **Sections Modified:** [list sections]
-- **Knowledge Shared Cross-Project:** [N bullets synced to cipher]
+### Tier Distribution
+- **Branch tier:** [N] patterns (run_id=proj:PROJECT:branch:BRANCH)
+- **Project tier:** [N] patterns (run_id=proj:PROJECT)
+- **Org tier:** [N] patterns (user_id=org:ORG only)
 
 ### Next Steps
-- Review new bullets: `mapify playbook query "[pattern]" --section [SECTION]`
-- Validate in next workflow: Apply new patterns and increment helpful_count if successful
-- Monitor harmful_count: Deprecate patterns if harmful_count exceeds helpful_count
+- Review new patterns: `mcp__mem0__map_tiered_search(query="[pattern]", ...)`
+- Validate in next workflow: Apply patterns and increment helpful_count if successful
+- Promote proven patterns: Use mcp__mem0__map_promote_pattern for patterns with helpful_count >= 3
 
-**Learning cycle complete. Playbook and cipher updated.**
+**Learning cycle complete. Patterns stored in mem0.**
 ```
 
 ---
 
 ## Troubleshooting
 
-### Issue: Reflector didn't call cipher_memory_search
+### Issue: Reflector didn't call mcp__mem0__map_tiered_search
 
-**Symptom:** Reflector output has no mention of "cipher search revealed" or "no similar patterns in cipher".
+**Symptom:** Reflector output has no mention of "mem0 tiered search found" or tier labels.
 
 **Cause:** Reflector agent template not followed.
 
 **Fix:**
-1. Re-run Reflector with explicit instruction: "FIRST STEP: Call mcp__cipher__cipher_memory_search"
-2. Verify output shows search results
+1. Re-run Reflector with explicit instruction: "FIRST STEP: Call mcp__mem0__map_tiered_search"
+2. Verify output shows search results with tier labels
 3. Proceed to Curator only after verification
 
-### Issue: Curator created duplicates
+### Issue: Curator output JSON instead of calling tools
 
-**Symptom:** apply-delta succeeds but playbook now has redundant bullets.
+**Symptom:** Curator returns JSON delta operations instead of calling mem0 MCP tools directly.
 
-**Cause:** Curator didn't properly deduplicate against existing playbook.
-
-**Fix:**
-1. Query playbook for duplicates: `mapify playbook query "[pattern]"`
-2. Manually deprecate duplicates: Create delta JSON with DEPRECATE operations
-3. Re-run Curator with explicit deduplication instruction
-
-### Issue: cipher sync failed
-
-**Symptom:** mcp__cipher__cipher_extract_and_operate_memory returns error.
-
-**Cause:** MCP server unavailable or malformed input.
+**Cause:** Curator using outdated workflow (pre-mem0 migration).
 
 **Fix:**
-1. Check MCP server status: Test with simple cipher_memory_search
-2. Verify JSON format of interaction parameter
-3. Retry with exponential backoff
-4. If persistent failure: Skip cipher sync, document in playbook comments
+1. Ensure Curator agent template is version 4.0.0+
+2. Re-run Curator with explicit instruction: "Call mem0 MCP tools directly, DO NOT output JSON"
+3. Verify Curator shows mcp__mem0__map_add_pattern calls in output
 
-### Issue: apply-delta fails with schema error
+### Issue: mcp__mem0__map_add_pattern returns duplicate error
 
-**Symptom:** "Invalid operation format" or "Missing required field".
+**Symptom:** `{created: false, existing_memory_id: "..."}` returned.
 
-**Cause:** Curator output doesn't match expected delta schema.
+**Cause:** Pattern with same fingerprint already exists.
+
+**This is expected behavior!** Fingerprint-based deduplication working correctly.
+
+**Action:**
+1. Reference the existing memory_id instead of creating new
+2. If pattern needs update, use mcp__mem0__update_memory
+3. If pattern should be promoted, use mcp__mem0__map_promote_pattern
+
+### Issue: mem0 MCP server unavailable
+
+**Symptom:** Tool calls fail with connection error.
+
+**Cause:** mem0-mcp server not running or misconfigured.
 
 **Fix:**
-1. Validate Curator JSON against schema:
-   - `operations` array required
-   - Each operation needs: `operation`, `section`, `bullet_id`, `content`
-2. Manually fix JSON if minor format issue
-3. Re-run Curator if major structural problem
+1. Check mem0-mcp server status
+2. Verify MCP configuration in Claude Code settings
+3. Restart mem0-mcp server if needed
+4. If persistent failure: Document patterns manually, retry later
+
+### Issue: Patterns stored in wrong tier
+
+**Symptom:** Branch-specific patterns stored at org level, or vice versa.
+
+**Cause:** Incorrect namespace parameters to mcp__mem0__map_add_pattern.
+
+**Fix:**
+1. Verify namespace format:
+   - Branch: `run_id="proj:PROJECT:branch:BRANCH"` + `user_id="org:ORG"`
+   - Project: `run_id="proj:PROJECT"` + `user_id="org:ORG"`
+   - Org: `user_id="org:ORG"` only (no run_id)
+2. Use mcp__mem0__map_promote_pattern to move to correct tier
+3. Archive incorrectly placed pattern with mcp__mem0__map_archive_pattern
 
 ---
 
@@ -344,16 +316,15 @@ Provide learning summary:
 
 **Typical /map-learn execution:**
 - Reflector: ~3K tokens (depends on workflow size)
-- Curator: ~2K tokens
-- Apply operations: <100 tokens (bash)
-- Cipher sync: ~500 tokens per bullet
-- **Total:** 5-8K tokens for standard workflow
+- Curator: ~2K tokens (direct tool calls, no JSON processing)
+- Verification: ~500 tokens (tiered search)
+- **Total:** 5-6K tokens for standard workflow
 
 **Large workflow (8+ subtasks):**
 - Reflector: ~6K tokens
-- Curator: ~3K tokens
-- Cipher sync: ~2K tokens (multiple bullets)
-- **Total:** 10-15K tokens
+- Curator: ~4K tokens (multiple pattern storage calls)
+- Verification: ~1K tokens
+- **Total:** 10-12K tokens
 
 **Compared to per-subtask learning:** /map-learn saves ~(N-1) * 5K tokens for N subtasks.
 
@@ -380,14 +351,30 @@ Key implementation:
 ```
 
 Reflector extracts:
+- mem0 tiered search found no similar patterns in any tier
 - Pattern: WebSocket reconnection logic
 - Pattern: Optimistic UI updates
 
-Curator creates:
-- ADD impl-0042: WebSocket exponential backoff pattern
-- ADD frontend-0008: Optimistic UI update pattern
+Curator stores via mem0 MCP tools:
+```
+mcp__mem0__map_add_pattern(
+  text="WebSocket exponential backoff: Start with 1s delay, double on each retry (max 30s)...",
+  user_id="org:myorg",
+  run_id="proj:dashboard:branch:feature-ws",
+  metadata={section_id: "IMPLEMENTATION_PATTERNS", helpful_count: 1}
+)
+→ {created: true, memory_id: "mem-abc123", tier: "branch"}
 
-### Example 2: Batched learning from multiple workflows
+mcp__mem0__map_add_pattern(
+  text="Optimistic UI: Update local state immediately, revert on server error...",
+  user_id="org:myorg",
+  run_id="proj:dashboard:branch:feature-ws",
+  metadata={section_id: "FRONTEND_PATTERNS", helpful_count: 1}
+)
+→ {created: true, memory_id: "mem-def456", tier: "branch"}
+```
+
+### Example 2: Batched learning with promotion
 
 User completed 3 separate debugging sessions, wants to batch-learn:
 
@@ -410,14 +397,30 @@ Common theme: Concurrency issues"
 ```
 
 Reflector extracts:
-- Common pattern: Concurrency control
-- Specific patterns: DB locks, connection pooling, timezone handling
+- mem0 tiered search found "concurrency control" in project tier (helpful_count: 4)
+- Common pattern: Concurrency control (UPDATE existing)
+- New patterns: DB locks, connection pooling, timezone handling
 
-Curator creates:
-- ADD err-0023: Database transaction lock pattern
-- ADD perf-0015: Connection pooling pattern
-- ADD impl-0056: UTC-everywhere timezone pattern
-- UPDATE arch-0009: Concurrency patterns section (increments helpful_count)
+Curator stores and promotes:
+```
+# Update existing pattern (increment helpful_count)
+mcp__mem0__update_memory(
+  memory_id="mem-existing-concurrency",
+  text="Updated concurrency control pattern with 3 new use cases..."
+)
+
+# Store new patterns at branch tier
+mcp__mem0__map_add_pattern(text="Database transaction locks...", ...)
+mcp__mem0__map_add_pattern(text="Connection pooling with limits...", ...)
+mcp__mem0__map_add_pattern(text="UTC-everywhere timezone pattern...", ...)
+
+# Promote existing pattern to org tier (helpful_count now 5)
+mcp__mem0__map_promote_pattern(
+  memory_id="mem-existing-concurrency",
+  target_user_id="org:myorg"
+)
+→ {promoted: true, new_memory_id: "mem-org-xyz", new_tier: "org"}
+```
 
 ---
 
@@ -455,9 +458,15 @@ Curator creates:
 - Time constraints (learning can happen later)
 
 **When to use /map-learn:**
-- Batching multiple workflows to reduce playbook bloat
+- Batching multiple workflows for efficient pattern extraction
 - Retroactively adding learning to /map-fast workflows
 - Capturing holistic patterns across subtasks
 - Custom workflows that didn't include learning
+
+**Storage Architecture Benefits:**
+- **Fingerprint deduplication:** Prevents duplicate patterns automatically
+- **Tiered inheritance:** Branch patterns inherit from project, project from org
+- **Quality-driven promotion:** Proven patterns automatically bubble up to higher tiers
+- **Soft delete:** Archived patterns preserved for audit, excluded from search
 
 **Remember:** The goal is to build organizational knowledge, not to learn from every single task. Quality over quantity.

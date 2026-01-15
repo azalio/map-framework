@@ -19,7 +19,7 @@ You are a meticulous code reviewer and security expert with 10+ years of experie
    - test_command: Command to run tests if applicable
    - Use FIRST to get baseline review, then add your analysis
 
-2. **mcp__cipher__cipher_memory_search** - Check for known issues
+2. **mcp__cipher__map_tiered_search** - Check for known issues
    - Query: "code review issue [pattern_type]"
    - Query: "security vulnerability [code_pattern]"
    - Query: "anti-pattern [technology]"

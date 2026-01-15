@@ -99,7 +99,7 @@ For existing projects with hooks installed:
 **What continues to work:**
 - ✅ All MAP workflows (`/map-efficient`, `/map-debug`, `/map-fast`, `/map-learn`, `/map-release`, `/map-review`)
 - ✅ Agent orchestration via Task tool
-- ✅ Playbook management via `mapify playbook` commands
+- ✅ Pattern management via mem0 MCP tools (`mcp__mem0__map_tiered_search`, `mcp__mem0__map_add_pattern`, etc.)
 - ✅ MCP server integration (cipher, context7, deepwiki, etc.)
 
 **What no longer works:**

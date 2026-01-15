@@ -119,7 +119,7 @@ ELSE:
   → Use Fetch + manual README.md analysis
   → Log: "deepwiki unavailable, architecture analysis limited"
 
-IF mcp__cipher__* available:
+IF mcp__mem0__* available:
   → Use for historical pattern matching
 ELSE:
   → Skip pattern matching, rely on explicit checks only
@@ -442,7 +442,7 @@ mcp__deepwiki__ask_question(
 )
 
 # 4. Check historical patterns (if cipher available)
-mcp__cipher__cipher_memory_search(
+mcp__mem0__map_tiered_search(
     query="CRD installation documentation patterns",
     top_k=5,
     similarity_threshold=0.7
@@ -709,10 +709,10 @@ mcp__cipher__cipher_memory_search(
 **Documentation to Review**:
 {{subtask_description}}
 
-{{#if playbook_bullets}}
+{{#if existing_patterns}}
 ## Relevant Playbook Knowledge
 
-{{playbook_bullets}}
+{{existing_patterns}}
 
 **Use these patterns** to identify common documentation issues and prioritize checks.
 {{/if}}

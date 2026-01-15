@@ -51,23 +51,23 @@ MAP предоставляет **4 специализированных workflow
 **ОБЯЗАТЕЛЬНО:**
 
 - ✅ Вызвать `Task(subagent_type="reflector", ...)`
-- ✅ Верифицировать использование `cipher_memory_search` в output
+- ✅ Верифицировать использование `mcp__mem0__map_tiered_search` в output
 - ✅ Позволить Reflector извлечь паттерны из agent outputs
 
-**Почему:** Шаблон Reflector содержит инструкции по поиску в cipher. При ручной работе `cipher_memory_search` не вызывается → дублируется knowledge.
+**Почему:** Шаблон Reflector содержит инструкции по поиску в cipher. При ручной работе `mcp__mem0__map_tiered_search` не вызывается → дублируется knowledge.
 
 ### Правило 2: Обязательный вызов Curator
 
 **ЗАПРЕЩЕНО:**
 
 - ❌ "Применить Reflector insights к playbook самостоятельно"
-- ❌ "Вручную редактировать `.claude/playbook.db`"
+- ❌ "Вручную редактировать `.claude/mem0 MCP`"
 - ❌ "Пропустить обновление playbook для мелких изменений"
 
 **ОБЯЗАТЕЛЬНО:**
 
 - ✅ Вызвать `Task(subagent_type="curator", ...)`
-- ✅ Верифицировать использование `cipher_memory_search` для дедупликации
+- ✅ Верифицировать использование `mcp__mem0__map_tiered_search` для дедупликации
 - ✅ Применить delta операции Curator (ADD/UPDATE/DEPRECATE)
 - ✅ Вызвать `cipher_extract_and_operate_memory` если есть `sync_to_cipher` записи
 
@@ -79,12 +79,12 @@ MAP предоставляет **4 специализированных workflow
 
 **Reflector Output должен показывать:**
 
-- Ссылки на вызов `cipher_memory_search` (tool logs, JSON, или narrative text с результатами поиска)
+- Ссылки на вызов `mcp__mem0__map_tiered_search` (tool logs, JSON, или narrative text с результатами поиска)
 - Подтверждение, что результаты поиска учтены в reasoning (формулировка может варьироваться)
 
 **Curator Output должен показывать:**
 
-- Reasoning о deduplication через `cipher_memory_search`
+- Reasoning о deduplication через `mcp__mem0__map_tiered_search`
 - Массив `sync_to_cipher` **только когда** bullets достигли helpful_count ≥ 5 (может отсутствовать или быть пустым)
 
 **Если отсутствует:** Агент пропустил обязательные MCP calls → исследовать причину (skip tools, mis-report, template updates).
@@ -95,7 +95,7 @@ MAP использует **ДВЕ системы хранения знаний**
 
 ### 1. Playbook (Проектная Memory)
 
-- **Локация:** `.claude/playbook.db`
+- **Локация:** `.claude/mem0 MCP`
 - **Назначение:** Структурированные, категоризованные паттерны для ЭТОГО проекта
 - **Формат:** Bullets с примерами кода, тегами, helpful/harmful counts
 - **Scope:** Один проект
@@ -188,7 +188,7 @@ Actor → Monitor (iteration 1)
 
 MAP использует **6 core MCP tools** для расширения возможностей workflow:
 
-1. **`cipher_memory_search`** — поиск похожих паттернов в семантической базе
+1. **`mcp__mem0__map_tiered_search`** — поиск похожих паттернов в семантической базе
 2. **`cipher_extract_and_operate_memory`** — сохранение успешных паттернов
 3. **`sequential-thinking`** — сложные цепочки рассуждений
 4. **`context7 (resolve-library-id + get-library-docs)`** — актуальная документация библиотек
@@ -245,7 +245,7 @@ MAP использует **6 core MCP tools** для расширения воз
 
 ### Top-K Playbook Filtering
 
-- **Конфигурация:** `.claude/playbook.db` → `metadata.top_k = 5`
+- **Конфигурация:** `.claude/mem0 MCP` → `metadata.top_k = 5`
 - **Механизм:** При каждом subtask Actor получает только 5 наиболее релевантных bullets
 - **Benefit:** С 25 bullets в базе, top-5 фильтрация предотвращает context distraction
 

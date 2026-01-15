@@ -47,7 +47,7 @@ Generate comprehensive test suites for code produced by the Actor agent. Create 
 ## cipher (Knowledge Base)
 ```python
 # Retrieve successful test patterns
-mcp__cipher__cipher_memory_search(
+mcp__cipher__map_tiered_search(
     query="pytest unit test patterns for API endpoints",
     top_k=5
 )

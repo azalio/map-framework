@@ -83,7 +83,7 @@ Reflector и Curator теперь вызываются ТОЛЬКО через �
 ✅ **НОВЫЙ ПОДХОД**:
 - Workflows (map-efficient, map-debug, map-fast) НЕ включают автоматический learning
 - После завершения workflow предлагай пользователю: "Если хотите сохранить паттерны — запустите `/map-learn`"
-- `/map-learn` вызывает Reflector → Curator → playbook update → cipher sync
+- `/map-learn` вызывает Reflector → Curator → mem0 storage
 
 ❌ **Не добавляй learning в workflows**:
 - Не вызывай Reflector/Curator автоматически в map-efficient, map-debug
@@ -96,30 +96,29 @@ Reflector и Curator теперь вызываются ТОЛЬКО через �
 - Debugging выявил нестандартные проблемы
 - Несколько итераций Actor→Monitor (>3)
 
-## Playbook Update Rules
+## Pattern Storage Rules
 
-**CRITICAL: How to Update Playbook**
+**CRITICAL: How to Store Patterns (v4.0+)**
 
 ✅ **CORRECT WAY (via Curator agent)**:
 1. Call `Task(subagent_type="curator", ...)`
-2. Curator outputs JSON delta operations
-3. Apply via: `mapify playbook apply-delta curator_operations.json`
+2. Curator calls `mcp__mem0__map_add_pattern` for new patterns
+3. Curator calls `mcp__mem0__map_archive_pattern` for deprecated patterns
 
 ❌ **NEVER DO THIS**:
-- ❌ `sqlite3 .claude/playbook.db "UPDATE bullets SET..."`  (direct SQL)
-- ❌ `Edit(.claude/playbook.db, ...)` (Edit tool on binary file)
-- ❌ Manually creating JSON and applying without Curator review
+- ❌ Directly calling mem0 tools without Curator review
+- ❌ Manually creating patterns without deduplication check
 
 **Why**:
-- Curator validates quality, checks duplicates, scores patterns
-- `apply-delta` maintains playbook integrity, handles transactions
-- Direct sqlite breaks schema, bypasses validation
+- Curator validates quality, checks duplicates via tiered search
+- Fingerprint-based deduplication prevents duplicates
+- Tiered storage (branch/project/org) keeps patterns organized
 
 ## Template Variable Protection
 
 **НИКОГДА не удаляй** template variables из agent files:
 - `{{language}}`
-- `{{#if playbook_bullets}}...{{/if}}`
+- `{{#if existing_patterns}}...{{/if}}`
 - `{{feedback}}`
 - `{{code}}`
 - и т.д.

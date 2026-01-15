@@ -15,7 +15,7 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 
 **MCP integrations (4 tools):**
 
-- `cipher_memory_search` — find similar decompositions from the past
+- `mcp__mem0__map_tiered_search` — find similar decompositions from the past
 - `sequential-thinking` — iterative clarification of complex requirements
 - `context7__get-library-docs` — understand library-specific implementation order
 - `deepwiki__read_wiki_structure + ask_question` — study architectural precedents
@@ -29,14 +29,14 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 
 **MCP integrations (4 tools):**
 
-- `cipher_memory_search` — retrieve existing patterns (ALWAYS FIRST)
+- `mcp__mem0__map_tiered_search` — retrieve existing patterns (ALWAYS FIRST)
 - `context7__resolve-library-id + get-library-docs` — up-to-date library docs
 - `deepwiki__read_wiki_structure + read_wiki_contents` — learn from production code
 - `cipher__extract_and_operate_memory` — save successful patterns (ONLY AFTER Monitor approval)
 
 **Critical protocol:** ALWAYS search cipher BEFORE implementation; ONLY save patterns AFTER Monitor approval
 
-**Inputs:** {{playbook_bullets}} (top_k=5), {{plan_context}} (recitation pattern), {{feedback}} (if retry)
+**Inputs:** {{existing_patterns}} (top_k=5), {{plan_context}} (recitation pattern), {{feedback}} (if retry)
 
 ### 3. Monitor (908 lines)
 
@@ -46,7 +46,7 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 **MCP integrations (6 tools — most):**
 
 - `claude-reviewer__request_review` — AI baseline review (ALWAYS FIRST for code)
-- `cipher_memory_search` — check known issues/anti-patterns
+- `mcp__mem0__map_tiered_search` — check known issues/anti-patterns
 - `sequential-thinking` — analyze complex logic (workflows, race conditions)
 - `context7__get-library-docs` — verify library best practices
 - `deepwiki__ask_question` — validate security/architecture patterns
@@ -63,7 +63,7 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 
 **MCP integrations (3 tools):**
 
-- `cipher_memory_search` — search past breaking changes and migration patterns
+- `mcp__mem0__map_tiered_search` — search past breaking changes and migration patterns
 - `context7__get-library-docs` — check library version compatibility
 - `deepwiki__read_wiki_structure + ask_question` — study migration patterns
 
@@ -78,7 +78,7 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 
 - `sequential-thinking` — systematic quality analysis (ALWAYS for methodical assessment)
 - `claude-reviewer__get_review_history` — consistency with prior implementations
-- `cipher_memory_search` — retrieve quality benchmarks and best practices
+- `mcp__mem0__map_tiered_search` — retrieve quality benchmarks and best practices
 - `context7__get-library-docs` — verify adherence to library best practices
 - `deepwiki__ask_question` — compare against industry-standard metrics
 
@@ -94,13 +94,13 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 **MCP integrations (4 tools):**
 
 - `sequential-thinking` — deep root-cause analysis for complex failures
-- `cipher_memory_search` — check similar past patterns (MANDATORY before proposing new bullets)
+- `mcp__mem0__map_tiered_search` — check similar past patterns (MANDATORY before proposing new bullets)
 - `context7__resolve-library-id + get-library-docs` — verify library API usage patterns
 - `deepwiki__read_wiki_structure + ask_question` — learn from production systems
 
 **Critical protocol:**
 
-- MANDATORY: cipher_memory_search BEFORE extracting patterns (prevents duplicates)
+- MANDATORY: mcp__mem0__map_tiered_search BEFORE extracting patterns (prevents duplicates)
 - map-feature.md lines 263–273 enforce cipher search verification
 - Extract patterns, not solutions (focus on “why”, not “what”)
 
@@ -113,7 +113,7 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 
 **MCP integrations (4 tools):**
 
-- `cipher_memory_search` — check cross-project duplicates BEFORE ADD operations (MANDATORY)
+- `mcp__mem0__map_tiered_search` — check cross-project duplicates BEFORE ADD operations (MANDATORY)
 - `context7__resolve-library-id + get-library-docs` — verify current API syntax
 - `deepwiki__read_wiki_structure + ask_question` — ground advice in battle-tested code
 - `cipher__extract_and_operate_memory` — sync high-quality bullets (helpful_count >= 5) to cipher
@@ -138,7 +138,7 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 - `Fetch` — MANDATORY: verify EVERY external URL in docs
 - `deepwiki__ask_question` — get architecture details from external projects
 - `context7__resolve_library_id + get-library-docs` — verify API/integration details
-- `cipher_memory_search` — check known documentation anti-patterns
+- `mcp__mem0__map_tiered_search` — check known documentation anti-patterns
 
 **Critical constraints (NEVER violate):**
 
@@ -174,7 +174,7 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 
 **MANDATORY agent invocation:**
 
-- NEVER skip Reflector: `cipher_memory_search` runs ONLY when the agent is properly invoked
+- NEVER skip Reflector: `mcp__mem0__map_tiered_search` runs ONLY when the agent is properly invoked
 - NEVER skip Curator: playbook-to-cipher sync happens ONLY through the Curator template
 - ALWAYS verify MCP tool usage in agent outputs
 - Manual extraction/curation bypasses MCP tools → knowledge won’t deduplicate → lessons won’t be learned
@@ -186,7 +186,7 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 **All agents use:**
 
 - YAML frontmatter: name, description, model (sonnet/haiku), version 2.2.0
-- Handlebars variables: {{project_name}}, {{language}}, {{framework}}, {{subtask_description}}, {{playbook_bullets}}, {{feedback}}
+- Handlebars variables: {{project_name}}, {{language}}, {{framework}}, {{subtask_description}}, {{existing_patterns}}, {{feedback}}
 - Standard sections: IDENTITY, context, mcp_integration, rationale, critical/constraints, examples, output_format
 
 <!-- TestGenerator removed from presentation scope per request -->

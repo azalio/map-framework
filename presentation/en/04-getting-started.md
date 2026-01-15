@@ -65,7 +65,7 @@ mapify init .
 
 - Automatic project structure setup
 - Copies all 8 agents and 4 slash commands
-- Creates `.claude/playbook.db` with a starter structure
+- Creates `.claude/mem0 MCP` with a starter structure
 - Best choice for new projects
 
 ### 2. Clone Repository
@@ -106,7 +106,7 @@ Copy selected components into an existing project:
 │   ├── map-debug.md
 │   ├── map-refactor.md
 │   └── map-review.md
-└── playbook.db       # ACE knowledge base (SQLite)
+└── mem0 MCP       # ACE knowledge base (SQLite)
 ```
 
 **Benefits:**
@@ -155,7 +155,7 @@ Comprehensive technical documentation review for completeness and correctness.
 
 ### Playbook Structure
 
-Installation creates `.claude/playbook.db` with a starter structure:
+Installation creates `.claude/mem0 MCP` with a starter structure:
 
 **Metadata:**
 
@@ -211,7 +211,7 @@ Create `.claude/mcp_config.json` (or configure via Claude Code settings) to conn
 - `{{language}}` — programming language of the project
 - `{{project_name}}` — project name
 - `{{framework}}` — framework in use
-- `{{#if playbook_bullets}}` — playbook integration
+- `{{#if existing_patterns}}` — playbook integration
 - `{{#if feedback}}` — retry loop integration
 - `{{subtask_description}}` — description of the current subtask
 
@@ -233,7 +233,7 @@ After installation:
 
 3. **Review results:**
    - Check `.map/logs/workflow_*.log` for event tracking
-   - Open `.claude/playbook.db` for automatically extracted patterns
+   - Open `.claude/mem0 MCP` for automatically extracted patterns
 
 4. **Configure MCP servers:**
    - Connect cipher for cross-project knowledge

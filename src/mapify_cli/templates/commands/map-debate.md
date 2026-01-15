@@ -20,7 +20,7 @@ description: Debate-based MAP workflow with Opus arbiter for multi-variant synth
 ```
 1. DECOMPOSE → task-decomposer
 2. FOR each subtask:
-   a. CONTEXT → playbook query + cipher search
+   a. CONTEXT → mem0 tiered search (`mcp__mem0__map_tiered_search`)
    b. RESEARCH → if existing code understanding needed
    c. 3 Actors (parallel) → security/performance/simplicity focuses
    d. 3 Monitors (parallel) → validate + extract decisions
@@ -86,11 +86,11 @@ Pass this packet verbatim to Actor/Monitor/debate-arbiter/Predictor. Do NOT rena
 ### 2.1 Get Context + Re-rank
 
 ```bash
-# Query playbook (project-specific patterns)
-mapify playbook query "[subtask description]" --limit 5
+# Patterns from mem0 (tiered: branch → project → org)
+mcp__mem0__map_tiered_search(query="[subtask description]", limit=5)
 
-# Cross-project patterns
-mcp__cipher__cipher_memory_search(query="[concept]", top_k=5)
+# Optional: broader conceptual lookup
+mcp__mem0__map_tiered_search(query="[concept]", limit=5)
 ```
 
 **Re-rank retrieved patterns** by relevance to current subtask:

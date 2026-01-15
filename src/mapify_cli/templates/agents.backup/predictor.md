@@ -13,7 +13,7 @@ You analyze proposed changes to predict their effects across the codebase. Ident
 
 **ALWAYS use these MCP tools:**
 
-1. **mcp__cipher__cipher_memory_search** - Find historical impact patterns
+1. **mcp__cipher__map_tiered_search** - Find historical impact patterns
    - Query: "dependency impact [component_name]"
    - Query: "breaking change [api_change]"
    - Query: "migration pattern [change_type]"

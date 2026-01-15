@@ -115,9 +115,9 @@ class StepTracker:
 
     def __init__(self, title: str):
         self.title = title
-        self.steps: List[Dict[str, Any]] = (
-            []
-        )  # list of dicts: {key, label, status, detail}
+        self.steps: List[
+            Dict[str, Any]
+        ] = []  # list of dicts: {key, label, status, detail}
         self._refresh_cb = None
 
     def attach_refresh(self, cb):
@@ -393,10 +393,8 @@ app = typer.Typer(
 )
 
 # Create subcommand groups
-playbook_app = typer.Typer(name="playbook", help="Manage and search playbook patterns")
 validate_app = typer.Typer(name="validate", help="Validate task dependency graphs")
 
-app.add_typer(playbook_app, name="playbook")
 app.add_typer(validate_app, name="validate")
 
 
@@ -1310,6 +1308,74 @@ def configure_global_permissions() -> None:
     )
 
 
+def create_or_merge_project_settings_local(project_path: Path) -> None:
+    """Create/merge .claude/settings.local.json with safe project allowlist.
+
+    Claude Code supports per-project approvals via `.claude/settings.local.json`.
+    This file is user-local (should not be committed) and is merged by Claude Code
+    with global settings from `~/.claude/settings.json`.
+
+    We keep this allowlist intentionally narrow and focused on common safe actions
+    for local development workflows.
+    """
+
+    settings_file = project_path / ".claude" / "settings.local.json"
+    settings_file.parent.mkdir(parents=True, exist_ok=True)
+
+    default_permissions: Dict[str, Any] = {
+        "allow": [
+            # Allow all mem0 MCP tools (project-scoped)
+            "mcp__mem0__*",
+            # SourceCraft MCP helpers (project-scoped)
+            "mcp__sourcecraft__list_pull_request_comments",
+            # Common safe Go workflows (project-scoped)
+            "Bash(go test:*)",
+            "Bash(go test -c:*)",
+            "Bash(go vet :*)",
+            "Bash(go build:*)",
+            "Bash(go mod download:*)",
+            "Bash(go mod tidy:*)",
+            "Bash(gofmt -l :*)",
+            "Bash(gofmt -d :*)",
+            # Common safe Make targets
+            "Bash(make generate manifests)",
+            "Bash(make manifests)",
+            # Common git workflows
+            "Bash(git worktree add:*)",
+            # Used by some test/dev scripts to produce throwaway certs
+            'Bash(openssl req -x509 -newkey rsa:512 -keyout /dev/null -out /dev/stdout -days 365 -nodes -subj "/CN=test" 2>/dev/null)',
+        ],
+        "deny": [],
+        "ask": [],
+    }
+
+    # Load existing settings if present
+    if settings_file.exists():
+        try:
+            existing_settings = json.loads(settings_file.read_text())
+        except json.JSONDecodeError:
+            console.print(
+                f"[yellow]Warning:[/yellow] Corrupted {settings_file}, will recreate"
+            )
+            existing_settings = {}
+    else:
+        existing_settings = {}
+
+    existing_settings.setdefault("permissions", {})
+    permissions = existing_settings["permissions"]
+
+    # Merge allowlist (preserve user customizations)
+    existing_allow = set(permissions.get("allow", []))
+    for entry in default_permissions["allow"]:
+        if entry not in existing_allow:
+            permissions.setdefault("allow", []).append(entry)
+
+    permissions.setdefault("deny", permissions.get("deny", []))
+    permissions.setdefault("ask", permissions.get("ask", []))
+
+    settings_file.write_text(json.dumps(existing_settings, indent=2) + "\n")
+
+
 def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
     """Create MCP configuration file"""
     config: Dict[str, Any] = {
@@ -1922,9 +1988,9 @@ def init(
     else:
         # Type assertion: flow guarantees project_name is not None here
         # (checked at line 1931, and not in use_current_dir branch)
-        assert (
-            project_name is not None
-        ), "project_name must be set in non-current-dir mode"
+        assert project_name is not None, (
+            "project_name must be set in non-current-dir mode"
+        )
         project_path = Path(project_name).resolve()
         if project_path.exists():
             console.print(
@@ -2024,85 +2090,6 @@ def init(
         create_or_merge_project_mcp_json(project_path, selected_mcp_servers)
         tracker.complete("mcp-project", "Claude Code MCP config")
 
-    # Initialize playbook database
-    tracker.add("init-playbook", "Initialize playbook database")
-    tracker.start("init-playbook")
-    try:
-        from mapify_cli.playbook_manager import PlaybookManager
-
-        playbook_db_path = project_path / ".claude" / "playbook.db"
-        playbook_json_path = project_path / ".claude" / "playbook.json"
-
-        # When --force is used and playbook.json exists, handle migration scenarios
-        if force and playbook_json_path.exists() and playbook_db_path.exists():
-            # Check if the existing DB has valid schema (requires both bullets and metadata tables)
-            db_is_valid = False
-            try:
-                test_conn = sqlite3.connect(str(playbook_db_path))
-                cursor = test_conn.cursor()
-                # Check for required tables
-                cursor.execute(
-                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('bullets', 'metadata')"
-                )
-                table_count = cursor.fetchone()[0]
-                test_conn.close()
-                db_is_valid = table_count == 2  # Both tables must exist
-            except sqlite3.Error:
-                db_is_valid = False
-
-            if not db_is_valid:
-                # DB is missing required schema or corrupted - remove it to allow migration
-                try:
-                    playbook_db_path.unlink()
-                    console.print(
-                        "[yellow]Removing incomplete playbook.db to migrate from playbook.json[/yellow]"
-                    )
-                except OSError:
-                    pass  # If we can't remove it, let PlaybookManager handle the error
-            else:
-                # DB is valid but playbook.json also exists - remove stale JSON to avoid confusion
-                # Create backup first in case user needs it
-                backup_path = str(playbook_json_path) + ".stale"
-                try:
-                    import shutil
-
-                    shutil.move(str(playbook_json_path), backup_path)
-                    console.print(
-                        f"[yellow]Moved stale playbook.json to {backup_path} (valid playbook.db already exists)[/yellow]"
-                    )
-                except OSError:
-                    pass  # If we can't move it, it's not critical
-
-        manager = PlaybookManager(
-            db_path=str(playbook_db_path), use_semantic_search=False
-        )
-        manager.close()
-        tracker.complete("init-playbook", "database created")
-    except sqlite3.Error as e:
-        tracker.error("init-playbook", "database error")
-        console.print(f"[red]Error:[/red] Failed to initialize playbook database: {e}")
-        console.print("[yellow]Please check disk space and permissions[/yellow]")
-        raise typer.Exit(1)
-    except PermissionError as e:
-        tracker.error("init-playbook", "permission denied")
-        console.print(f"[red]Error:[/red] Permission denied creating playbook: {e}")
-        console.print(
-            "[yellow]Run with appropriate permissions or choose a different directory[/yellow]"
-        )
-        raise typer.Exit(1)
-    except OSError as e:
-        tracker.error("init-playbook", "filesystem error")
-        console.print(f"[red]Error:[/red] Could not create playbook directory: {e}")
-        console.print("[yellow]Please check directory permissions[/yellow]")
-        raise typer.Exit(1)
-    except json.JSONDecodeError as e:
-        tracker.error("init-playbook", "migration error")
-        console.print(f"[red]Error:[/red] Failed to migrate legacy playbook.json: {e}")
-        console.print(
-            "[yellow]Suggestion: Delete corrupted .claude/playbook.json and run 'mapify init' again[/yellow]"
-        )
-        raise typer.Exit(1)
-
     # Initialize git
     if not no_git and git_available:
         tracker.add("git", "Initialize git repository")
@@ -2114,6 +2101,11 @@ def init(
                 tracker.complete("git", "initialized")
             else:
                 tracker.error("git", "failed")
+
+    tracker.add("project-permissions", "Configure project approvals")
+    tracker.start("project-permissions")
+    create_or_merge_project_settings_local(project_path)
+    tracker.complete("project-permissions", ".claude/settings.local.json")
 
     tracker.add("finalize", "Finalize")
     tracker.complete("finalize", "project ready")
@@ -2228,417 +2220,6 @@ def upgrade():
 
     console.print("[yellow]Upgrade feature coming soon![/yellow]")
     console.print("For now, run: [cyan]mapify init . --force[/cyan] to update agents")
-
-
-# Playbook commands
-
-
-@playbook_app.command("stats")
-def playbook_stats():
-    """Show playbook statistics"""
-    from mapify_cli.playbook_manager import PlaybookManager
-
-    playbook_db_path = Path.cwd() / ".claude" / "playbook.db"
-    playbook_json_path = Path.cwd() / ".claude" / "playbook.json"
-
-    # Check for playbook.db first (primary storage)
-    if not playbook_db_path.exists():
-        # Backward compatibility: check if old playbook.json exists
-        if playbook_json_path.exists():
-            console.print_json(
-                data={
-                    "error": "Found legacy playbook.json. Run 'mapify init' to migrate to playbook.db"
-                }
-            )
-        else:
-            console.print_json(
-                data={"error": "Playbook not found. Initialize with 'mapify init'"}
-            )
-        raise typer.Exit(1)
-
-    # Use PlaybookManager with db_path (SQLite backend)
-    manager = PlaybookManager(db_path=str(playbook_db_path))
-    total = sum(
-        len(section["bullets"])
-        for section in manager.playbook.get("sections", {}).values()
-    )
-    stats = {
-        "total_bullets": total,
-        "sections": len(manager.playbook.get("sections", {})),
-        "metadata": manager.playbook.get("metadata", {}),
-    }
-    console.print_json(data=stats)
-
-
-@playbook_app.command("search")
-def playbook_search(query: str, top_k: int = typer.Option(5, help="Number of results")):
-    """Search playbook for relevant patterns"""
-    from mapify_cli.playbook_manager import PlaybookManager
-
-    playbook_db_path = Path.cwd() / ".claude" / "playbook.db"
-    if not playbook_db_path.exists():
-        console.print("No patterns found (playbook not initialized)")
-        return
-    manager = PlaybookManager(db_path=str(playbook_db_path))
-    results = manager.get_relevant_bullets(query, limit=top_k)
-    if not results:
-        console.print("No patterns found matching your query")
-    else:
-        console.print_json(
-            data={
-                "query": query,
-                "count": len(results),
-                "results": [
-                    {
-                        "id": b.get("id"),
-                        "content": (b.get("content") or "")[:100] + "...",
-                    }
-                    for b in results
-                ],
-            }
-        )
-
-
-@playbook_app.command("sync")
-def playbook_sync(threshold: int = typer.Option(5, help="Minimum helpful count")):
-    """Show high-quality patterns ready for cross-project sync"""
-    from mapify_cli.playbook_manager import PlaybookManager
-
-    playbook_db_path = Path.cwd() / ".claude" / "playbook.db"
-    playbook_json_path = Path.cwd() / ".claude" / "playbook.json"
-
-    # Check for playbook.db first (primary storage)
-    if not playbook_db_path.exists():
-        # Backward compatibility: check if old playbook.json exists
-        if playbook_json_path.exists():
-            console.print_json(
-                data={
-                    "status": "error",
-                    "message": "Found legacy playbook.json. Run 'mapify init' to migrate to playbook.db",
-                }
-            )
-        else:
-            console.print_json(
-                data={
-                    "status": "error",
-                    "message": "Playbook not found. Initialize with 'mapify init'",
-                }
-            )
-        raise typer.Exit(1)
-
-    manager = PlaybookManager(db_path=str(playbook_db_path))
-    patterns = manager.get_bullets_for_sync(threshold=threshold)
-    console.print_json(
-        data={
-            "threshold": threshold,
-            "count": len(patterns),
-            "patterns": [
-                {"id": p.get("id"), "helpful_count": p.get("helpful_count")}
-                for p in patterns
-            ],
-        }
-    )
-
-
-@playbook_app.command("query")
-def playbook_query(
-    query_text: str = typer.Argument(..., help="Search query"),
-    sections: List[str] = typer.Option(
-        [], "--section", help="Filter by section (can specify multiple)"
-    ),
-    limit: int = typer.Option(5, "--limit", help="Maximum results to return"),
-    mode: str = typer.Option(
-        "local", "--mode", help="Search mode: local, cipher, or hybrid"
-    ),
-    format_output: str = typer.Option(
-        "markdown", "--format", help="Output format: markdown or json"
-    ),
-    min_quality: int = typer.Option(
-        0, "--min-quality", help="Minimum quality score (helpful - harmful)"
-    ),
-):
-    """Query playbook using FTS5 full-text search with optional cipher integration
-
-    Examples:
-        mapify playbook query "JWT authentication" --limit 5
-        mapify playbook query "error handling" --mode hybrid --limit 10
-        mapify playbook query "API design" --section ARCHITECTURE_PATTERNS --section IMPLEMENTATION_PATTERNS
-    """
-    from mapify_cli.playbook_manager import PlaybookManager
-    from mapify_cli.playbook_query import PlaybookQuery, SearchMode
-
-    playbook_db_path = Path.cwd() / ".claude" / "playbook.db"
-    playbook_json_path = Path.cwd() / ".claude" / "playbook.json"
-
-    # Check for playbook.db first (primary storage)
-    if not playbook_db_path.exists():
-        # Backward compatibility: check if old playbook.json exists
-        if playbook_json_path.exists():
-            console.print(
-                "[yellow]Warning:[/yellow] Found legacy playbook.json. Run 'mapify init' to migrate to playbook.db"
-            )
-        else:
-            console.print(
-                "[yellow]Warning:[/yellow] Playbook not found. Initialize with 'mapify init'"
-            )
-        raise typer.Exit(1)
-
-    try:
-        # Map mode string to SearchMode enum
-        mode_map = {
-            "local": SearchMode.PLAYBOOK_ONLY,
-            "cipher": SearchMode.CIPHER_ONLY,
-            "hybrid": SearchMode.HYBRID,
-        }
-        search_mode = mode_map.get(mode.lower(), SearchMode.PLAYBOOK_ONLY)
-
-        # Create query
-        query = PlaybookQuery(
-            query=query_text,
-            sections=list(sections) if sections else None,
-            limit=limit,
-            search_mode=search_mode,
-            min_quality_score=min_quality,
-        )
-
-        # Execute query
-        manager = PlaybookManager(db_path=str(playbook_db_path))
-        response = manager.query(query)
-
-        # Format output
-        if format_output == "json":
-            # JSON output
-            results_json = {
-                "query": query_text,
-                "metadata": response.metadata,
-                "results": [
-                    {
-                        "id": r.id,
-                        "section": r.section,
-                        "content": r.content,
-                        "code_example": r.code_example,
-                        "quality_score": r.quality_score,
-                        "relevance_score": r.relevance_score,
-                        "combined_score": r.combined_score,
-                        "source": r.source,
-                    }
-                    for r in response.results
-                ],
-            }
-            console.print_json(data=results_json)
-        else:
-            # Markdown output (default)
-            if not response.results:
-                console.print("[yellow]No results found[/yellow]")
-                return
-
-            console.print(f"# Query Results: {query_text}\n")
-            console.print(
-                f"**Found {len(response.results)} results in {response.metadata['total_time_ms']}ms**\n"
-            )
-            console.print(f"*Search method: {response.metadata['search_method']}*\n")
-
-            for i, result in enumerate(response.results, 1):
-                console.print(
-                    f"## {i}. [{result.id}] Score: {result.combined_score:.2f}\n"
-                )
-                console.print(f"**Section:** {result.section}\n")
-                console.print(
-                    f"**Quality:** {result.quality_score} | **Relevance:** {result.relevance_score:.2f} | **Source:** {result.source}\n"
-                )
-                console.print(f"{result.content}\n")
-
-                if result.code_example:
-                    console.print("```")
-                    console.print(result.code_example)
-                    console.print("```\n")
-
-                console.print("---\n")
-
-    except ValueError as e:
-        console.print(f"[red]Error:[/red] {str(e)}")
-        raise typer.Exit(1)
-    except Exception as e:
-        console.print(f"[red]Unexpected error:[/red] {str(e)}")
-        raise typer.Exit(1)
-
-
-@playbook_app.command("apply-delta")
-def playbook_apply_delta(
-    input_file: Optional[Path] = typer.Argument(
-        None, help="JSON file containing delta operations (or use stdin)"
-    ),
-    dry_run: bool = typer.Option(
-        False, "--dry-run", help="Preview changes without applying them"
-    ),
-):
-    """Apply delta operations to playbook (ADD, UPDATE, DEPRECATE)
-
-    Accepts JSON from file or stdin with structure:
-    {
-      "operations": [
-        {
-          "type": "ADD",
-          "section": "IMPLEMENTATION_PATTERNS",
-          "content": "Pattern description...",
-          "code_example": "code here",
-          "helpful_count": 1,
-          "harmful_count": 0
-        },
-        {
-          "type": "UPDATE",
-          "bullet_id": "impl-0042",
-          "increment_helpful": 1,
-          "increment_harmful": 0
-        },
-        {
-          "type": "DEPRECATE",
-          "bullet_id": "impl-0099",
-          "reason": "Superseded by impl-0105"
-        }
-      ]
-    }
-
-    Examples:
-        mapify playbook apply-delta operations.json
-        mapify playbook apply-delta operations.json --dry-run
-        cat operations.json | mapify playbook apply-delta
-        echo '{"operations": [{"type": "UPDATE", "bullet_id": "impl-0001", "increment_helpful": 1}]}' | mapify playbook apply-delta
-
-    Exit codes:
-        0 - Operations applied successfully (or dry-run preview completed)
-        1 - Validation error or application failure
-    """
-    from mapify_cli.tools.validate_dependencies import load_input
-    from mapify_cli.playbook_manager import PlaybookManager
-
-    playbook_db_path = Path.cwd() / ".claude" / "playbook.db"
-    playbook_json_path = Path.cwd() / ".claude" / "playbook.json"
-
-    # Check for playbook.db first (primary storage)
-    if not playbook_db_path.exists():
-        # Backward compatibility: check if old playbook.json exists
-        if playbook_json_path.exists():
-            console.print(
-                "[red]Error:[/red] Found legacy playbook.json. Run 'mapify init' to migrate to playbook.db"
-            )
-        else:
-            console.print(
-                "[red]Error:[/red] Playbook not found. Initialize with 'mapify init'"
-            )
-        raise typer.Exit(1)
-
-    try:
-        # Load input from file or stdin
-        data = load_input(str(input_file) if input_file else None)
-
-        # Validate structure
-        if not isinstance(data, dict):
-            raise ValueError("Input must be a JSON object")
-
-        if "operations" not in data:
-            raise ValueError("Missing required field: 'operations'")
-
-        operations = data["operations"]
-        if not isinstance(operations, list):
-            raise ValueError("'operations' must be an array")
-
-        # Validate each operation
-        for i, op in enumerate(operations):
-            if not isinstance(op, dict):
-                raise ValueError(f"Operation {i} must be a JSON object")
-
-            op_type = op.get("type")
-            if not op_type:
-                raise ValueError(f"Operation {i} missing required field: 'type'")
-
-            if op_type not in ["ADD", "UPDATE", "DEPRECATE"]:
-                raise ValueError(
-                    f"Operation {i} has invalid type: {op_type} (must be ADD, UPDATE, or DEPRECATE)"
-                )
-
-            # Validate type-specific required fields
-            if op_type == "ADD":
-                required = ["section", "content"]
-                missing = [f for f in required if f not in op]
-                if missing:
-                    raise ValueError(
-                        f"ADD operation {i} missing required fields: {', '.join(missing)}"
-                    )
-
-            elif op_type == "UPDATE":
-                if "bullet_id" not in op:
-                    raise ValueError(
-                        f"UPDATE operation {i} missing required field: 'bullet_id'"
-                    )
-                if "increment_helpful" not in op and "increment_harmful" not in op:
-                    raise ValueError(
-                        f"UPDATE operation {i} must specify at least one of: increment_helpful, increment_harmful"
-                    )
-
-            elif op_type == "DEPRECATE":
-                required = ["bullet_id", "reason"]
-                missing = [f for f in required if f not in op]
-                if missing:
-                    raise ValueError(
-                        f"DEPRECATE operation {i} missing required fields: {', '.join(missing)}"
-                    )
-
-        # Dry-run mode: preview without applying
-        if dry_run:
-            # Count operations by type
-            add_count = sum(1 for op in operations if op.get("type") == "ADD")
-            update_count = sum(1 for op in operations if op.get("type") == "UPDATE")
-            deprecate_count = sum(
-                1 for op in operations if op.get("type") == "DEPRECATE"
-            )
-
-            console.print_json(
-                data={
-                    "status": "dry_run",
-                    "message": "DRY RUN - No changes applied",
-                    "would_apply": {
-                        "total_operations": len(operations),
-                        "add": add_count,
-                        "update": update_count,
-                        "deprecate": deprecate_count,
-                    },
-                    "operations": operations,
-                }
-            )
-            return
-
-        # Apply operations
-        manager = PlaybookManager(db_path=str(playbook_db_path))
-        summary = manager.apply_delta(operations)
-
-        # Output JSON summary
-        console.print_json(
-            data={
-                "status": "success",
-                "message": "Delta operations applied successfully",
-                "summary": summary,
-            }
-        )
-
-    except ValueError as e:
-        console.print_json(
-            data={
-                "status": "error",
-                "error_type": "validation_error",
-                "message": str(e),
-            }
-        )
-        raise typer.Exit(1)
-    except Exception as e:
-        console.print_json(
-            data={
-                "status": "error",
-                "error_type": "unexpected_error",
-                "message": str(e),
-            }
-        )
-        raise typer.Exit(1)
 
 
 # Validate commands

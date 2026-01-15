@@ -51,23 +51,23 @@ The **Orchestrator** is NOT a separate agent template; it is the coordination lo
 **REQUIRED:**
 
 - ✅ Call `Task(subagent_type="reflector", ...)`
-- ✅ Verify `cipher_memory_search` usage in the output
+- ✅ Verify `mcp__mem0__map_tiered_search` usage in the output
 - ✅ Let Reflector extract patterns from agent outputs
 
-**Why:** The Reflector template contains instructions to search cipher. Manual work won’t call `cipher_memory_search` → knowledge gets duplicated.
+**Why:** The Reflector template contains instructions to search cipher. Manual work won’t call `mcp__mem0__map_tiered_search` → knowledge gets duplicated.
 
 ### Rule 2: Mandatory Curator invocation
 
 **PROHIBITED:**
 
 - ❌ “Apply Reflector insights to playbook yourself”
-- ❌ “Edit `.claude/playbook.db` manually”
+- ❌ “Edit `.claude/mem0 MCP` manually”
 - ❌ “Skip playbook updates for small changes”
 
 **REQUIRED:**
 
 - ✅ Call `Task(subagent_type="curator", ...)`
-- ✅ Verify `cipher_memory_search` is used for deduplication
+- ✅ Verify `mcp__mem0__map_tiered_search` is used for deduplication
 - ✅ Apply Curator delta operations (ADD/UPDATE/DEPRECATE)
 - ✅ Call `cipher_extract_and_operate_memory` if there are `sync_to_cipher` entries
 
@@ -79,12 +79,12 @@ After invoking Reflector or Curator, the orchestrator **MUST VERIFY** MCP tool u
 
 **Reflector output must show:**
 
-- Evidence of `cipher_memory_search` calls (tool logs, JSON, or narrative with search results)
+- Evidence of `mcp__mem0__map_tiered_search` calls (tool logs, JSON, or narrative with search results)
 - Confirmation that search results informed the reasoning (phrasing may vary)
 
 **Curator output must show:**
 
-- Reasoning about deduplication via `cipher_memory_search`
+- Reasoning about deduplication via `mcp__mem0__map_tiered_search`
 - An array `sync_to_cipher` only when bullets reached helpful_count ≥ 5 (may be missing or empty)
 
 **If missing:** The agent skipped mandatory MCP calls → investigate (skip tools, mis-reporting, template updates).
@@ -95,7 +95,7 @@ MAP uses **TWO knowledge storage systems**:
 
 ### 1. Playbook (Project Memory)
 
-- **Location:** `.claude/playbook.db`
+- **Location:** `.claude/mem0 MCP`
 - **Purpose:** Structured, categorized patterns for THIS project
 - **Format:** Bullets with code examples, tags, helpful/harmful counts
 - **Scope:** Single project
@@ -170,7 +170,7 @@ Actor → Monitor (iteration 1)
 
 MAP uses **6 core MCP tools** to extend workflow capabilities:
 
-1. **`cipher_memory_search`** — search similar patterns in a semantic memory base
+1. **`mcp__mem0__map_tiered_search`** — search similar patterns in a semantic memory base
 2. **`cipher_extract_and_operate_memory`** — persist successful patterns
 3. **`sequential-thinking`** — complex chains of reasoning
 4. **`context7 (resolve-library-id + get-library-docs)`** — up-to-date library documentation
@@ -227,7 +227,7 @@ Before completing any MAP workflow subtask the orchestrator **MUST** check 4 que
 
 ### Top-K Playbook Filtering
 
-- **Config:** `.claude/playbook.db` → `metadata.top_k = 5`
+- **Config:** `.claude/mem0 MCP` → `metadata.top_k = 5`
 - **Mechanism:** For every subtask, Actor receives only the 5 most relevant bullets
 - **Benefit:** With 25 bullets total, top-5 filtering prevents context distraction
 

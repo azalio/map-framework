@@ -180,6 +180,24 @@ class TestInitCommand:
         assert (tmp_path / ".claude" / "agents").exists()
         assert (tmp_path / ".claude" / "commands").exists()
 
+        # Project-level approvals should be created
+        settings_local = tmp_path / ".claude" / "settings.local.json"
+        assert settings_local.exists()
+        settings = json.loads(settings_local.read_text())
+        allow = settings.get("permissions", {}).get("allow", [])
+        assert "Bash(go test:*)" in allow
+        assert "Bash(go vet :*)" in allow
+        assert "Bash(go mod tidy:*)" in allow
+        assert "mcp__mem0__*" in allow
+        assert "mcp__sourcecraft__list_pull_request_comments" in allow
+        assert "Bash(make generate manifests)" in allow
+        assert "Bash(make manifests)" in allow
+        assert "Bash(git worktree add:*)" in allow
+        assert (
+            'Bash(openssl req -x509 -newkey rsa:512 -keyout /dev/null -out /dev/stdout -days 365 -nodes -subj "/CN=test" 2>/dev/null)'
+            in allow
+        )
+
     def test_init_always_uses_claude(self, tmp_path):
         """Test that init always uses Claude (no AI selection prompt).
 
@@ -390,14 +408,14 @@ class TestInitCommand:
 
         assert "mcp_servers" in mcp_config, "mcp_config missing 'mcp_servers' key"
         for server in expected_servers:
-            assert (
-                server in mcp_config["mcp_servers"]
-            ), f"MCP server '{server}' not found in config"
+            assert server in mcp_config["mcp_servers"], (
+                f"MCP server '{server}' not found in config"
+            )
 
         # Verify exactly 5 servers (no extras)
-        assert (
-            len(mcp_config["mcp_servers"]) == 5
-        ), f"Expected 5 servers, found {len(mcp_config['mcp_servers'])}"
+        assert len(mcp_config["mcp_servers"]) == 5, (
+            f"Expected 5 servers, found {len(mcp_config['mcp_servers'])}"
+        )
 
     def test_init_force_no_prompts(self, tmp_path):
         """Test that init --force completes without interactive confirmation prompts.
@@ -445,9 +463,9 @@ class TestInitCommand:
         # This confirms --force actually re-initialized the files
         assert actor_file.exists()
         restored_content = actor_file.read_text()
-        assert (
-            restored_content != "# Modified by user"
-        ), "--force did not restore template files"
+        assert restored_content != "# Modified by user", (
+            "--force did not restore template files"
+        )
         # Should contain some template markers (not exact match due to potential updates)
         assert len(restored_content) > 100, "Restored actor.md seems too short"
 
@@ -614,9 +632,9 @@ class TestAgentCreation:
 
             # Verify MCP integration for cipher-enabled agents
             if any(name in agent_file for name in ["reflector", "curator"]):
-                assert (
-                    "cipher" in content.lower() or "mcp" in content.lower()
-                ), f"Agent {agent_file} missing MCP integration section"
+                assert "cipher" in content.lower() or "mcp" in content.lower(), (
+                    f"Agent {agent_file} missing MCP integration section"
+                )
 
 
 class TestCommandCreation:
@@ -670,210 +688,6 @@ class TestHelperFunctions:
         assert result["tag_name"] == "v1.0.0"
 
 
-class TestPlaybookSubcommands:
-    """Test mapify playbook subcommands."""
-
-    def test_playbook_stats(self, tmp_path):
-        """Test getting playbook statistics."""
-        os.chdir(tmp_path)
-
-        # Create minimal playbook structure using PlaybookManager
-        playbook_dir = tmp_path / ".claude"
-        playbook_dir.mkdir()
-        playbook_db = playbook_dir / "playbook.db"
-
-        # Import here to avoid circular imports
-        from mapify_cli.playbook_manager import PlaybookManager
-
-        # Create playbook database with test data
-        manager = PlaybookManager(db_path=str(playbook_db), use_semantic_search=False)
-        try:
-            manager._add_bullet("IMPLEMENTATION_PATTERNS", "Test pattern 1")
-            manager._add_bullet("IMPLEMENTATION_PATTERNS", "Test pattern 2")
-            manager._add_bullet("DEBUGGING_TECHNIQUES", "Debug pattern 1")
-        finally:
-            manager.close()
-
-        result = runner.invoke(app, ["playbook", "stats"])
-
-        assert result.exit_code == 0
-        # Extract JSON from output (may contain migration messages)
-        json_lines = []
-        in_json = False
-        for line in result.stdout.split("\n"):
-            if line.strip().startswith("{"):
-                in_json = True
-            if in_json:
-                json_lines.append(line)
-        output = json.loads("\n".join(json_lines))
-        assert output["total_bullets"] == 3
-        # SQLite backend creates all 10 default sections, not just 2
-        assert output["sections"] >= 2
-
-    def test_playbook_stats_not_found(self, tmp_path):
-        """Test stats when playbook doesn't exist."""
-        os.chdir(tmp_path)
-
-        result = runner.invoke(app, ["playbook", "stats"])
-
-        assert result.exit_code == 1
-        output = json.loads(result.stdout)
-        assert "error" in output  # Returns {"error": "..."}
-        assert "not found" in output["error"].lower()
-
-    def test_playbook_search(self, tmp_path):
-        """Test searching playbook patterns."""
-        os.chdir(tmp_path)
-
-        # Create minimal playbook structure using PlaybookManager
-        playbook_dir = tmp_path / ".claude"
-        playbook_dir.mkdir()
-        playbook_db = playbook_dir / "playbook.db"
-
-        from mapify_cli.playbook_manager import PlaybookManager
-
-        # Create playbook database with test data
-        manager = PlaybookManager(db_path=str(playbook_db), use_semantic_search=False)
-        manager._add_bullet("IMPLEMENTATION_PATTERNS", "JWT authentication pattern")
-        manager._add_bullet("IMPLEMENTATION_PATTERNS", "Database migration pattern")
-        manager.close()
-
-        result = runner.invoke(app, ["playbook", "search", "authentication"])
-
-        assert result.exit_code == 0
-        # Should find the JWT authentication pattern
-        assert "impl" in result.stdout
-        assert "authentication" in result.stdout.lower()
-
-    def test_playbook_search_no_results(self, tmp_path):
-        """Test search with no matching results."""
-        os.chdir(tmp_path)
-
-        # Create minimal playbook structure
-        playbook_dir = tmp_path / ".claude"
-        playbook_dir.mkdir()
-        playbook_file = playbook_dir / "playbook.json"
-
-        playbook_data = {
-            "metadata": {"project": "test"},
-            "sections": {
-                "IMPLEMENTATION_PATTERNS": {
-                    "bullets": [
-                        {
-                            "id": "impl-0001",
-                            "content": "JWT authentication pattern",
-                            "deprecated": False,
-                            "helpful_count": 0,
-                            "harmful_count": 0,
-                        }
-                    ]
-                }
-            },
-        }
-        playbook_file.write_text(json.dumps(playbook_data))
-
-        # Use a very specific query unlikely to match
-        result = runner.invoke(
-            app, ["playbook", "search", "xyzzy123nonexistent456plugh"]
-        )
-
-        assert result.exit_code == 0
-        # PlaybookManager may use fuzzy matching, so accept both no results and found results
-        # The important part is that the command executes successfully
-        assert result.stdout  # Should have some output
-
-    def test_playbook_search_with_top_k(self, tmp_path):
-        """Test search with top_k limit."""
-        os.chdir(tmp_path)
-
-        # Create playbook with multiple patterns
-        playbook_dir = tmp_path / ".claude"
-        playbook_dir.mkdir()
-        playbook_file = playbook_dir / "playbook.json"
-
-        playbook_data = {
-            "metadata": {"project": "test"},
-            "sections": {
-                "IMPLEMENTATION_PATTERNS": {
-                    "bullets": [
-                        {
-                            "id": f"impl-{i:04d}",
-                            "content": f"Test authentication pattern {i}",
-                            "deprecated": False,
-                            "helpful_count": 0,
-                            "harmful_count": 0,
-                        }
-                        for i in range(1, 11)  # 10 patterns
-                    ]
-                }
-            },
-        }
-        playbook_file.write_text(json.dumps(playbook_data))
-
-        result = runner.invoke(
-            app, ["playbook", "search", "authentication", "--top-k", "3"]
-        )
-
-        assert result.exit_code == 0
-        # Output should be either JSON with results or "No patterns found" message
-        output = result.stdout.strip()
-        # Test should pass regardless of whether search finds results or not
-        # This is acceptable because PlaybookManager's search behavior may vary
-        if output and output.startswith("{"):
-            # If JSON output, verify it's valid and respects top_k
-            data = json.loads(output)
-            assert "count" in data
-            assert data["count"] <= 3  # Should respect top_k limit
-
-    def test_playbook_sync(self, tmp_path):
-        """Test syncing playbook to cipher."""
-        os.chdir(tmp_path)
-
-        # Create minimal playbook structure using PlaybookManager
-        playbook_dir = tmp_path / ".claude"
-        playbook_dir.mkdir()
-        playbook_db = playbook_dir / "playbook.db"
-
-        from mapify_cli.playbook_manager import PlaybookManager
-
-        # Create playbook database with high-quality bullet
-        manager = PlaybookManager(db_path=str(playbook_db), use_semantic_search=False)
-        bullet_id = manager._add_bullet("IMPLEMENTATION_PATTERNS", "Test pattern")
-        # Update to make it high quality (helpful_count >= 5)
-        manager._update_bullet(bullet_id, increment_helpful=5)
-        manager.close()
-
-        result = runner.invoke(app, ["playbook", "sync"])
-
-        # Sync command is implemented and returns JSON
-        assert result.exit_code == 0
-        # Should return JSON with threshold, count, and patterns
-        # Extract JSON from output (may contain diagnostic messages from semantic search)
-        # Find the JSON object by looking for the opening brace
-        stdout = result.stdout
-        json_start = stdout.find("{")
-        if json_start == -1:
-            pytest.fail(f"No JSON found in output: {stdout[:200]}")
-        json_str = stdout[json_start:]
-        data = json.loads(json_str)
-        assert "threshold" in data
-        assert "count" in data
-        assert "patterns" in data
-        # Should find the high-quality pattern (helpful_count=5 >= threshold=5)
-        assert data["count"] >= 1
-
-    def test_playbook_sync_not_found(self, tmp_path):
-        """Test sync when playbook doesn't exist."""
-        os.chdir(tmp_path)
-
-        result = runner.invoke(app, ["playbook", "sync"])
-
-        assert result.exit_code == 1
-        output = json.loads(result.stdout)
-        assert output["status"] == "error"
-        assert "not found" in output["message"].lower()
-
-
 class TestMcpJsonConfig:
     """Test .mcp.json creation and merging functionality."""
 
@@ -900,9 +714,9 @@ class TestMcpJsonConfig:
 
         # http servers should have 'type' and 'url' keys
         for server_name in ["context7", "deepwiki"]:
-            assert (
-                servers[server_name].get("type") == "http"
-            ), f"{server_name} should be http"
+            assert servers[server_name].get("type") == "http", (
+                f"{server_name} should be http"
+            )
             assert "url" in servers[server_name], f"{server_name} missing url"
 
     def test_read_project_mcp_json_missing_file(self, tmp_path):
@@ -1079,9 +893,9 @@ class TestMcpJsonConfig:
 
         # Allow exit code 0 or initialization messages
         mcp_file = tmp_path / ".mcp.json"
-        assert (
-            mcp_file.exists()
-        ), f"Expected .mcp.json to be created. Output: {result.output}"
+        assert mcp_file.exists(), (
+            f"Expected .mcp.json to be created. Output: {result.output}"
+        )
 
         config = json.loads(mcp_file.read_text())
         assert "mcpServers" in config

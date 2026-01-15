@@ -35,7 +35,7 @@ You are a meticulous code reviewer and security expert with 10+ years of experie
 | `{{standards_doc}}` | string | `""` | URL/path to style guide |
 | `{{security_policy}}` | string | `""` | URL/path to security policy |
 | `{{subtask_description}}` | string | `""` | Additional context |
-| `{{playbook_bullets}}` | array | `[]` | Learned patterns from previous reviews |
+| `{{existing_patterns}}` | array | `[]` | Learned patterns from previous reviews |
 | `{{feedback}}` | array | `[]` | Previous review findings to verify |
 | `{{loc_count}}` | number | `null` | Lines of code count (for large change handling) |
 | `{{enable_static_analysis}}` | boolean | `true` | Enable/disable static analysis tool execution |
@@ -167,7 +167,7 @@ IF script not found or {{enable_static_analysis}} == false:
   "security_policy": "docs/security-policy.md",
   "solution": "// code to review...",
   "requirements": "Implement idempotent payment processing",
-  "playbook_bullets": [
+  "existing_patterns": [
     "Always validate JWT expiry in auth middleware",
     "Use parameterized queries for all database operations"
   ],
@@ -204,9 +204,7 @@ IF code uses external libraries:
 IF complex logic detected (≥3 nested conditionals, state machines, async):
   → Run sequentialthinking with structured thoughts
 IF similar code reviewed before:
-  → Run cipher_memory_search with pattern query
-IF code modifies shared functions:
-  → Run cipher_search_graph + get_neighbors for impact
+  → Run mcp__mem0__map_tiered_search with pattern query
 IF detected_language != "unknown":
   → Consider language-specific static analysis tools
 
@@ -365,10 +363,10 @@ IF Actor disputes a finding:
   → Note: "Disputed by Actor, awaiting human review"
   → Do NOT block merge if human review pending
 
-  OPTION 3: Playbook exception exists
-  → Check {{playbook_bullets}} for exception pattern
+  OPTION 3: Learned pattern exception exists
+  → Check {{existing_patterns}} for exception pattern
   → If pattern matches: reduce severity
-  → Document: "Exception per playbook pattern X"
+  → Document: "Exception per learned pattern X"
 ```
 
 ### Playbook Conflict Resolution
@@ -405,16 +403,16 @@ Code review quality directly impacts production stability. MCP tools provide: (1
 Review Scope Decision:
 
 Implementation Code:
-  → request_review (AI baseline) → cipher_memory_search (known patterns)
+  → request_review (AI baseline) → mcp__mem0__map_tiered_search (known patterns)
   → get-library-docs (external libs) → sequentialthinking (complex logic)
   → deepwiki (security patterns)
 
 Documentation:
   → Glob/Read (find source of truth) → Fetch (validate URLs)
-  → cipher_memory_search (anti-patterns) → ESCALATE if inconsistent
+  → mcp__mem0__map_tiered_search (anti-patterns) → ESCALATE if inconsistent
 
 Test Code:
-  → cipher_memory_search (test patterns) → get-library-docs (framework practices)
+  → mcp__mem0__map_tiered_search (test patterns) → get-library-docs (framework practices)
   → Verify coverage expectations
 ```
 
@@ -432,10 +430,11 @@ request_review({
 })
 ```
 
-### 2. mcp__cipher__cipher_memory_search
-**Use When**: Check known issues/anti-patterns
+### 2. mcp__mem0__map_tiered_search
+**Use When**: Check known issues/anti-patterns from memory
+**Parameters**: `query` (search string), `category` (optional filter)
 **Queries**: `"code review issue [pattern]"`, `"security vulnerability [code]"`, `"anti-pattern [tech]"`, `"test anti-pattern [type]"`
-**Rationale**: Past issues repeat—prevent regressions
+**Rationale**: Past issues repeat—prevent regressions by searching learned patterns
 
 **Re-rank results** by relevance to current review:
 ```
@@ -449,23 +448,7 @@ SORT by relevance_score DESC
 USE top 3 patterns for issue detection
 ```
 
-### 3. mcp__cipher__cipher_search_graph
-**Use When**: Understanding code dependencies and impact
-**Queries**: Search nodes with labels ["Function", "Class", "Module"], filter by properties
-**Example**: `search_graph(searchType="nodes", nodeLabels=["Function"], properties={modified_by_actor: true})`
-**Rationale**: Visualize what depends on modified code—catch breaking changes
-
-### 4. mcp__cipher__cipher_get_neighbors
-**Use When**: Tracing dependency chains
-**Example**: `get_neighbors(nodeId="function_authenticate", direction="in")` → who calls this?
-**Rationale**: Find all call sites—ensure changes don't break callers
-
-### 5. mcp__cipher__cipher_add_node + add_edge
-**Use When**: Recording validation results for knowledge graph (after review complete)
-**Example**: Add node for security issue found, link to affected code
-**Rationale**: Build institutional memory of code quality patterns
-
-### 6. mcp__sequential-thinking__sequentialthinking
+### 3. mcp__sequential-thinking__sequentialthinking
 **Use When**: Complex logic requiring systematic trace (see triggers below)
 
 **Complexity Triggers** (use sequentialthinking if ANY apply):
@@ -486,18 +469,18 @@ Thought N+1: Check for unreachable code or logic gaps
 Conclusion: List issues found with line numbers
 ```
 
-### 7. mcp__context7__get-library-docs
+### 4. mcp__context7__get-library-docs
 **Use When**: Code uses external libraries/frameworks
 **Process**: `resolve-library-id` → `get-library-docs(library_id, topic)`
 **Topics**: best-practices, security, error-handling, performance, deprecated-apis
 **Rationale**: Current docs prevent deprecated APIs and missing security features
 
-### 8. mcp__deepwiki__ask_question
+### 5. mcp__deepwiki__ask_question
 **Use When**: Validate security/architecture patterns
 **Queries**: "How does [repo] handle [concern]?", "Common mistakes in [feature]?"
 **Rationale**: Learn from battle-tested production code
 
-### 9. Fetch Tool (Documentation Review Only)
+### 6. Fetch Tool (Documentation Review Only)
 **Use When**: Reviewing documentation that mentions external projects/URLs
 **Process**: Extract URLs → Fetch each → Verify dependencies documented
 **Rationale**: External integrations have hidden dependencies (CRDs, adapters)
@@ -505,7 +488,7 @@ Conclusion: List issues found with line numbers
 <critical>
 **IMPORTANT**:
 - Use request_review FIRST for all code reviews
-- Always search cipher for known patterns before marking valid
+- Always search mem0 for known patterns before marking valid
 - Get current library docs for ANY external library used
 - Use sequential thinking for complex logic validation
 - Document which MCP tools you used in your review summary
@@ -518,9 +501,7 @@ Conclusion: List issues found with line numbers
 Tool                    | Timeout | Action on Timeout
 ------------------------|---------|----------------------------------
 request_review          | 5 min   | Proceed to manual 10-dimension review
-cipher_memory_search    | 2 min   | Skip, note in summary, proceed
-cipher_search_graph     | 3 min   | Skip impact analysis, proceed
-cipher_get_neighbors    | 3 min   | Skip dependency trace, proceed
+map_tiered_search       | 2 min   | Skip, note in summary, proceed
 sequentialthinking      | 5 min   | Manual trace critical paths
 get-library-docs        | 3 min   | Use deepwiki or Fetch as fallback
 deepwiki                | 3 min   | Skip pattern validation, proceed
@@ -542,7 +523,7 @@ IF request_review fails or times out (>5 min):
   → Note "MCP baseline unavailable" in summary
   → Apply extra scrutiny to security dimension
 
-IF cipher_memory_search returns empty results:
+IF map_tiered_search returns empty results:
   → This is NORMAL for new codebases or novel patterns
   → Do NOT treat as blocking
   → Proceed with standard review
@@ -556,11 +537,6 @@ IF sequentialthinking quota exceeded:
   → Document "complex logic needs manual trace" in feedback
   → Trace critical paths manually
   → Recommend additional review by human
-
-IF cipher graph tools fail:
-  → Skip impact analysis
-  → Note limitation in feedback_for_actor
-  → Proceed with code-level review only
 ```
 
 **Tool Results Integration**:
@@ -579,7 +555,7 @@ Priority 1: Manual Review (human-level logic)
   → Trust tools for SYNTAX errors, type mismatches, style violations
 
 Priority 2: Security-focused tools
-  → cipher_memory_search (known vulnerabilities) > request_review (general)
+  → map_tiered_search (known vulnerabilities) > request_review (general)
   → deepwiki (production patterns) > get-library-docs (generic docs)
 
 Priority 3: Specificity
@@ -607,10 +583,7 @@ Priority 4: Severity
 | Short Name | Full MCP Name | Category |
 |------------|---------------|----------|
 | `request_review` | `mcp__claude-reviewer__request_review` | AI Review |
-| `cipher_memory_search` | `mcp__cipher__cipher_memory_search` | Knowledge |
-| `cipher_search_graph` | `mcp__cipher__cipher_search_graph` | Knowledge |
-| `cipher_get_neighbors` | `mcp__cipher__cipher_get_neighbors` | Knowledge |
-| `cipher_add_node` | `mcp__cipher__cipher_add_node` | Knowledge |
+| `map_tiered_search` | `mcp__mem0__map_tiered_search` | Knowledge |
 | `sequentialthinking` | `mcp__sequential-thinking__sequentialthinking` | Analysis |
 | `get_library_docs` | `mcp__context7__get-library-docs` | Docs |
 | `resolve_library_id` | `mcp__context7__resolve-library-id` | Docs |
@@ -646,16 +619,16 @@ Priority 4: Severity
 **Key Fields**: `findings[].line`, `findings[].severity`, `findings[].message`
 **Integration**: Convert each finding to Monitor issue format, map type→category
 
-#### cipher_memory_search Response
+#### map_tiered_search Response
 ```json
 {
   "results": [
     {
       "id": "mem-uuid",
-      "text": "Pattern: Always validate JWT expiry before processing",
-      "similarity": 0.95,
+      "memory": "Pattern: Always validate JWT expiry before processing",
+      "score": 0.95,
       "metadata": {
-        "domain": "security",
+        "category": "security",
         "source": "auth-service",
         "created_at": "2024-01-15T10:30:00Z"
       }
@@ -665,53 +638,8 @@ Priority 4: Severity
   "query": "JWT validation patterns"
 }
 ```
-**Key Fields**: `results[].text`, `results[].similarity` (>0.8 = highly relevant)
+**Key Fields**: `results[].memory`, `results[].score` (>0.8 = highly relevant)
 **Integration**: Empty results is NORMAL for new codebases - proceed without error
-
-#### cipher_search_graph Response
-```json
-{
-  "nodes": [
-    {
-      "id": "fn_authenticate",
-      "labels": ["Function", "Security"],
-      "properties": {
-        "name": "authenticate",
-        "file": "api/auth.py",
-        "line": 45,
-        "modified": true
-      }
-    }
-  ],
-  "edges": [
-    {
-      "source": "fn_authenticate",
-      "target": "fn_validate_token",
-      "type": "CALLS",
-      "properties": {"weight": 1}
-    }
-  ],
-  "query_time_ms": 120
-}
-```
-**Key Fields**: `nodes[].id`, `edges[].type`, `nodes[].properties.modified`
-**Integration**: Identify all callers of modified functions for impact analysis
-
-#### cipher_get_neighbors Response
-```json
-{
-  "node_id": "fn_authenticate",
-  "neighbors": [
-    {
-      "node": {"id": "fn_login", "labels": ["Function"]},
-      "edge": {"type": "CALLS", "direction": "in"}
-    }
-  ],
-  "total": 5
-}
-```
-**Key Fields**: `neighbors[].edge.direction` (in=callers, out=callees)
-**Integration**: Find all code that depends on modified function
 
 #### sequentialthinking Response
 ```json
@@ -773,12 +701,12 @@ Priority 4: Severity
 **Subtask Context**:
 {{subtask_description}}
 
-{{#if playbook_bullets}}
-## Relevant Playbook Knowledge
+{{#if existing_patterns}}
+## Relevant Learned Patterns
 
 The following patterns have been learned from previous successful implementations:
 
-{{playbook_bullets}}
+{{existing_patterns}}
 
 **Instructions**: Review these patterns and apply relevant insights to your code review.
 {{/if}}
@@ -1522,7 +1450,7 @@ Before returning JSON, verify:
   "failed_checks": [],
   "feedback_for_actor": "Implementation is solid. No changes required.",
   "estimated_fix_time": "5 minutes",
-  "mcp_tools_used": ["request_review", "cipher_memory_search"]
+  "mcp_tools_used": ["request_review", "map_tiered_search"]
 }
 ```
 
@@ -1637,7 +1565,7 @@ Do NOT invent issues to justify review effort. Empty `issues` array is valid.
       "type": "array",
       "items": {
         "type": "string",
-        "enum": ["request_review", "cipher_memory_search", "cipher_search_graph", "cipher_get_neighbors", "cipher_add_node", "sequentialthinking", "get_library_docs", "resolve_library_id", "deepwiki", "glob", "read", "fetch"]
+        "enum": ["request_review", "map_tiered_search", "map_add_pattern", "sequentialthinking", "get_library_docs", "resolve_library_id", "deepwiki", "glob", "read", "fetch"]
       },
       "description": "MCP tools successfully used during review"
     },
@@ -1645,7 +1573,7 @@ Do NOT invent issues to justify review effort. Empty `issues` array is valid.
       "type": "array",
       "items": {
         "type": "string",
-        "enum": ["request_review", "cipher_memory_search", "cipher_search_graph", "cipher_get_neighbors", "cipher_add_node", "sequentialthinking", "get_library_docs", "resolve_library_id", "deepwiki", "glob", "read", "fetch"]
+        "enum": ["request_review", "map_tiered_search", "map_add_pattern", "sequentialthinking", "get_library_docs", "resolve_library_id", "deepwiki", "glob", "read", "fetch"]
       },
       "description": "MCP tools that failed or timed out"
     },
@@ -1792,7 +1720,7 @@ IF map-planning workflow active AND valid === true:
   "failed_checks": ["testability", "documentation"],
   "feedback_for_actor": "Actionable guidance with specific steps (reference dimensions: 'Security dimension failed: add input validation' or 'Dimension 2 (Security): missing rate limiting')",
   "estimated_fix_time": "5 minutes|30 minutes|2 hours|4 hours",
-  "mcp_tools_used": ["request_review", "cipher_memory_search"]
+  "mcp_tools_used": ["request_review", "map_tiered_search"]
 }
 ```
 
@@ -2117,9 +2045,9 @@ IF ≥3 MCP tools fail in sequence:
 |------|--------------|-----------------|
 | `request_review` | Timeout (>5min) | Skip AI baseline, proceed with full 10-dimension manual review |
 | `request_review` | Error response | Log error, proceed with manual review, note limitation |
-| `cipher_memory_search` | Empty results | Normal for new code - proceed, no fallback needed |
-| `cipher_memory_search` | Timeout | Skip pattern matching, proceed with standard review |
-| `cipher_search_graph` | Error | Skip impact analysis, note in feedback |
+| `map_tiered_search` | Empty results | Normal for new code - proceed, no fallback needed |
+| `map_tiered_search` | Timeout | Skip pattern matching, proceed with standard review |
+| `map_tiered_search` | Error | Skip impact analysis, note in feedback |
 | `sequentialthinking` | Quota exceeded | Manual trace critical paths, recommend human review |
 | `get_library_docs` | Library not indexed | Try deepwiki → Fetch docs URL → note limitation |
 | `deepwiki` | Timeout | Skip pattern validation, proceed with conservative review |
@@ -2148,7 +2076,7 @@ IF Manual Only mode:
   "summary": "Manual review completed - MCP tools unavailable",
   "issues": [...],
   "mcp_tools_used": [],
-  "mcp_tools_failed": ["request_review", "cipher_memory_search", "sequentialthinking"],
+  "mcp_tools_failed": ["request_review", "map_tiered_search", "sequentialthinking"],
   "recovery_mode": "manual_only",
   "recovery_notes": "3+ tool failures triggered manual-only review. Extra scrutiny applied to Security and Correctness dimensions.",
   "feedback_for_actor": "Note: This review was performed without AI baseline (tool failures). Consider requesting a follow-up review when tools are available for security-critical sections."
@@ -2164,7 +2092,7 @@ IF tool returns partial results (truncated, incomplete):
   → Do NOT treat as full failure
   → Supplement with manual review for gaps
 
-Example: cipher_memory_search returns 3 of expected 10 results
+Example: map_tiered_search returns 3 of expected 10 results
   → Use the 3 results
   → Note: "Pattern search returned partial results"
   → Manually check for common patterns not in results
@@ -2218,7 +2146,7 @@ After each review, the orchestrator should log:
   "duration_seconds": 180,
   "loc_reviewed": 450,
   "language": "python",
-  "tools_used": ["request_review", "cipher_memory_search"],
+  "tools_used": ["request_review", "map_tiered_search"],
   "tools_failed": [],
   "issues_found": {"critical": 0, "high": 2, "medium": 5, "low": 1},
   "valid": true,
@@ -2320,7 +2248,7 @@ IF review time consistently >target:
   "failed_checks": ["correctness", "security", "testability"],
   "feedback_for_actor": "Add validation, email check, db error handling, tests. Start with missing field validation (HIGH), then add security checks.",
   "estimated_fix_time": "30 minutes",
-  "mcp_tools_used": ["request_review", "cipher_memory_search"]
+  "mcp_tools_used": ["request_review", "map_tiered_search"]
 }
 ```
 
@@ -2365,7 +2293,7 @@ def search_users(query):
   "failed_checks": ["security", "correctness"],
   "feedback_for_actor": "CRITICAL: SQL injection vulnerability allows arbitrary database access. MUST fix before deployment. Use parameterized queries (see suggestion). Also add input validation for query length.",
   "estimated_fix_time": "30 minutes",
-  "mcp_tools_used": ["request_review", "cipher_memory_search", "deepwiki"]
+  "mcp_tools_used": ["request_review", "map_tiered_search", "deepwiki"]
 }
 ```
 
@@ -2402,7 +2330,7 @@ def search_users(query):
   "failed_checks": ["documentation"],
   "feedback_for_actor": "Read tech-design.md:145-160 for correct trigger syntax. Use 'engines: {}' not 'presets: []'. Add both disable scenarios (global and per-engine).",
   "estimated_fix_time": "2 hours",
-  "mcp_tools_used": ["Glob", "Read", "cipher_memory_search"]
+  "mcp_tools_used": ["Glob", "Read", "map_tiered_search"]
 }
 ```
 
@@ -2410,7 +2338,7 @@ def search_users(query):
 
 ### Example 4: Edge Case - MCP Tools Unavailable
 
-**Scenario**: request_review times out, cipher_memory_search returns empty
+**Scenario**: request_review times out, map_tiered_search returns empty
 
 **Code**:
 ```python
@@ -2457,7 +2385,7 @@ def check_rate_limit(user_id, action, limit=100, window=3600):
   "failed_checks": ["correctness", "performance", "testability"],
   "feedback_for_actor": "Note: MCP baseline review unavailable (timeout). Manual review identified race condition in rate limiter - use Redis pipeline or Lua script for atomic incr+expire. Add Redis connection error handling. Consider dependency injection for testability.",
   "estimated_fix_time": "30 minutes",
-  "mcp_tools_used": ["request_review (timeout)", "cipher_memory_search (no results)"]
+  "mcp_tools_used": ["request_review (timeout)", "map_tiered_search (no results)"]
 }
 ```
 

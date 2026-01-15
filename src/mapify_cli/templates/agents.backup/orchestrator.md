@@ -13,7 +13,7 @@ Coordinate TaskDecomposer → Actor ↔ Monitor → Predictor → Evaluator to a
 
 **ALWAYS use these MCP tools:**
 
-1. **mcp__cipher__cipher_memory_search** - Start every workflow
+1. **mcp__cipher__map_tiered_search** - Start every workflow
    - Query: "workflow pattern [task_type]"
    - Query: "orchestration strategy [complexity_level]"
    - Use to select optimal workflow patterns

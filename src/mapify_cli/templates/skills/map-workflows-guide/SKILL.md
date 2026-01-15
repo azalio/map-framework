@@ -68,8 +68,8 @@ Answer these 5 questions to find your workflow:
 
 **Trade-offs:**
 - Saves 50-60% tokens vs /map-feature
-- Playbook never improves (no patterns stored)
-- Cipher knowledge never accumulates
+- mem0 never improves (no patterns stored)
+- Knowledge never accumulates
 - Minimal quality gates (only basic checks)
 - Cannot reuse learned patterns in future tasks
 
@@ -136,7 +136,7 @@ Despite token optimization, preserves:
 - Per-subtask validation (Monitor always checks)
 - Complete implementation feedback loops
 - Full learning (batched, not skipped)
-- Playbook growth from all tasks
+- mem0 pattern growth from all tasks
 
 **See also:** [resources/map-efficient-deep-dive.md](resources/map-efficient-deep-dive.md)
 
@@ -294,8 +294,8 @@ MAP workflows orchestrate **8 specialized agents**, each with specific responsib
 **Actor** — Writes code and implements
 - Generates implementation
 - Makes file changes
-- Uses playbook patterns
-- Queries cipher for relevant knowledge
+- Uses existing patterns from mem0
+- Queries mem0 for relevant knowledge
 
 **Monitor** — Validates correctness
 - Checks implementation against criteria
@@ -323,15 +323,15 @@ MAP workflows orchestrate **8 specialized agents**, each with specific responsib
 **Reflector** — Pattern extraction
 - Analyzes what worked and failed
 - Extracts reusable patterns
-- Searches cipher for existing knowledge
+- Searches mem0 for existing knowledge via `mcp__mem0__map_tiered_search`
 - Prevents duplicate pattern storage
 - **Batched in /map-efficient** (runs once at end)
 - **Per-subtask in /map-feature** (extracts frequently)
 
 **Curator** — Knowledge management
-- Updates playbook with new patterns
-- Deduplicates against cipher
-- Syncs high-quality patterns (helpful_count ≥ 5)
+- Stores patterns in mem0 via `mcp__mem0__map_add_pattern`
+- Deduplicates via tiered search
+- Archives outdated patterns via `mcp__mem0__map_archive_pattern`
 - Maintains pattern metadata
 - **Batched in /map-efficient** (runs once at end)
 
@@ -451,21 +451,26 @@ Predictor runs if:
 - High complexity estimated
 - Multiple files affected
 
-**Q: What's the difference between playbook and cipher?**
+**Q: How does the mem0 tiered memory system work?**
 
-A: Dual memory system:
+A: mem0 MCP provides tiered pattern storage:
 
-**Playbook** (`.claude/playbook.db`)
-- Project-specific patterns and code snippets
-- Structured bullets with examples
-- Full-text search + semantic embeddings
-- Updated by Curator agent after each workflow
+**L1 (Branch-scoped)**
+- Patterns specific to current feature branch
+- Experimental patterns for current work
+- Fastest access
 
-**Cipher** (Cross-project MCP tool)
-- Knowledge shared across all projects
-- High-quality patterns (helpful_count ≥ 5)
-- Prevents duplicate patterns across projects
-- Used by Reflector/Curator for deduplication
+**L2 (Project-scoped)**
+- Shared project knowledge
+- Validated patterns used across branches
+- Standard access
+
+**L3 (Org-scoped)**
+- Cross-project patterns
+- Organizational best practices
+- Broadest scope
+
+Search flows: L1 → L2 → L3 (most specific first)
 
 ---
 
@@ -482,8 +487,8 @@ For detailed information on each workflow:
 Agent & system details:
 
 - **[Agent Architecture](resources/agent-architecture.md)** — How agents orchestrate and coordinate
-- **[Playbook System](resources/playbook-system.md)** — Pattern storage and retrieval
-- **[Cipher Integration](resources/cipher-integration.md)** — Cross-project knowledge sharing
+- **[Playbook System (LEGACY)](resources/playbook-system.md)** — Historical pattern storage
+- **[mem0 Integration](resources/cipher-integration.md)** — Tiered pattern storage (v4.0+)
 
 ---
 
@@ -555,10 +560,10 @@ MAP: 📚 Loads this skill for context
 1. **Default to /map-efficient** — It's the recommended choice for 80% of tasks
 2. **Use /map-fast sparingly** — Only for truly throwaway code, never production
 3. **Reserve /map-feature for critical paths** — Don't overuse, save for auth/payments/security
-4. **Monitor playbook growth** — Run `mapify playbook stats` to see learning improving
+4. **Monitor pattern growth** — Use mem0 search to see learning improving
 5. **Trust the optimization** — /map-efficient preserves quality while cutting token usage
 6. **Review deep dives** — When in doubt, check the appropriate deep-dive resource
-7. **Combine with playbook** — Leverage stored patterns from previous tasks
+7. **Leverage mem0 patterns** — Stored patterns from previous tasks via tiered search
 
 ---
 
@@ -568,7 +573,7 @@ MAP: 📚 Loads this skill for context
 2. **Have a critical feature?** See [map-feature-deep-dive.md](resources/map-feature-deep-dive.md)
 3. **Debugging an issue?** See [map-debug-deep-dive.md](resources/map-debug-deep-dive.md)
 4. **Understanding agents?** See [Agent Architecture](resources/agent-architecture.md)
-5. **Learning about playbook?** See [Playbook System](resources/playbook-system.md)
+5. **Learning about mem0?** See [mem0 Integration](resources/cipher-integration.md)
 
 ---
 

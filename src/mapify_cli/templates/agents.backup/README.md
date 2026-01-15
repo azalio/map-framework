@@ -16,7 +16,7 @@ Agent files use **Handlebars templating** (`{{variable}}`, `{{#if}}...{{/if}}`) 
 └────────┬────────┘
          │ {{language}} = "python"
          │ {{project_name}} = "my-api"
-         │ {{#if playbook_bullets}} = [patterns from Curator]
+         │ {{#if existing_patterns}} = [patterns from Curator]
          │ {{#if feedback}} = [corrections from Monitor]
          ↓
 ┌─────────────────┐
@@ -39,7 +39,7 @@ Agent files use **Handlebars templating** (`{{variable}}`, `{{#if}}...{{/if}}`) 
 - `{{allowed_scope}}` - Files/directories Actor is allowed to modify
 
 #### ACE Learning System (Curator → Actor)
-- `{{#if playbook_bullets}}...{{/if}}` - Proven patterns from past successes
+- `{{#if existing_patterns}}...{{/if}}` - Proven patterns from past successes
 - This is how the system learns and improves over time
 - Curator analyzes successful implementations and adds to playbook
 - Actor gets relevant patterns automatically injected
@@ -55,7 +55,7 @@ Agent files use **Handlebars templating** (`{{variable}}`, `{{#if}}...{{/if}}`) 
 |---------|--------|----------|
 | `{{language}}` | Actor doesn't know what language to use | 🔴 Critical |
 | `{{project_name}}` | Generic code, doesn't match project style | 🟡 Major |
-| `{{#if playbook_bullets}}` | **Breaks ACE learning system** | 🔴 Critical |
+| `{{#if existing_patterns}}` | **Breaks ACE learning system** | 🔴 Critical |
 | `{{#if feedback}}` | **Breaks Monitor → Actor retry** | 🔴 Critical |
 | `{{subtask_description}}` | Actor doesn't know what to implement | 🔴 Critical |
 
@@ -87,7 +87,7 @@ Agent files use **Handlebars templating** (`{{variable}}`, `{{#if}}...{{/if}}`) 
 -{{project_name}}  # DON'T DO THIS
 
 # ❌ Removing conditional blocks
--{{#if playbook_bullets}}  # DON'T DO THIS
+-{{#if existing_patterns}}  # DON'T DO THIS
 -{{/if}}
 
 # ❌ Simplifying "verbose" sections
@@ -101,7 +101,7 @@ A pre-commit hook at `.git/hooks/pre-commit` validates that critical template va
 **Required patterns checked:**
 - `{{language}}`
 - `{{project_name}}`
-- `{{#if playbook_bullets}}`
+- `{{#if existing_patterns}}`
 - `{{#if feedback}}`
 - `{{subtask_description}}`
 

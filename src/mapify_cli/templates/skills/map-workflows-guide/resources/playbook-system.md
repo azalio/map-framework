@@ -1,12 +1,17 @@
-# Playbook System
+# Playbook System (LEGACY)
 
-The playbook is MAP's project-specific knowledge base. It stores patterns, gotchas, and best practices learned during development.
+> **DEPRECATED:** As of v4.0, pattern storage has migrated from playbook.db to mem0 MCP with tiered namespaces. This document is retained for historical reference. For current implementation, use mem0 MCP tools:
+> - `mcp__mem0__map_tiered_search` - Search patterns
+> - `mcp__mem0__map_add_pattern` - Store patterns
+> - `mcp__mem0__map_archive_pattern` - Deprecate patterns
 
-## Structure
+The playbook was MAP's project-specific knowledge base. It stored patterns, gotchas, and best practices learned during development.
 
-### Database Schema
+## Structure (Legacy)
 
-**Location:** `.claude/playbook.db` (SQLite)
+### Database Schema (Legacy)
+
+**Location:** `.claude/playbook.db` (SQLite) - **NO LONGER USED IN v4.0+**
 
 **Tables:**
 - `bullets` - Individual knowledge items
@@ -89,45 +94,36 @@ quality_score = helpful_count - harmful_count
 
 ## Search Capabilities
 
-### 1. FTS5 Full-Text Search (Fast)
+### 1. Tiered Search (mem0 MCP)
 
 **Command:**
 ```bash
-mapify playbook query "JWT authentication" --limit 5
+mcp__mem0__map_tiered_search(query="JWT authentication", limit=5)
 ```
 
 **How it works:**
-- Tokenizes query into terms
-- Searches `content`, `code_example`, `tags` columns
-- Ranks by BM25 relevance score
-- Returns top N matches
-
-**Speed:** ~10-50ms for playbooks up to 1MB
+- Searches semantically similar patterns
+- Searches across tiers (branch → project → org)
+- Returns top matches ranked by relevance
 
 **Use when:**
-- Exact keyword matching needed
-- Speed is critical
-- Playbook is large (>256KB)
+- You need relevant patterns quickly
+- You want project-local patterns first, with org fallback
 
-### 2. Semantic Search (Comprehensive)
+### 2. Semantic Search (mem0 MCP)
 
 **Command:**
 ```bash
-mapify playbook query "error handling patterns" --mode hybrid
+mcp__mem0__map_tiered_search(query="error handling patterns", limit=10)
 ```
 
 **How it works:**
-- Generates embedding for query (sentence-transformers)
-- Computes cosine similarity against all bullet embeddings
-- Ranks by semantic similarity
-- Combines with FTS5 results (hybrid mode)
-
-**Speed:** ~200-500ms (model load + embedding generation + similarity)
+- Uses semantic search under the hood
+- Returns conceptually similar patterns (not just keyword matches)
 
 **Use when:**
-- Conceptual matching needed ("error handling" matches "exception management")
+- You want conceptual matches ("error handling" matches "exception management")
 - Query doesn't match exact keywords
-- High-quality results more important than speed
 
 ---
 
@@ -176,49 +172,24 @@ Curator updates playbook via delta operations:
 
 ---
 
-## Applying Delta Operations
+## Applying Changes (mem0 MCP)
 
-**Command:**
-```bash
-mapify playbook apply-delta curator_output.json
-```
-
-**Curator output format:**
-```json
-{
-  "operations": [
-    {"type": "ADD", "section": "...", "content": "...", ...},
-    {"type": "UPDATE", "bullet_id": "...", "increment_helpful": 1}
-  ],
-  "sync_to_cipher": [
-    {"bullet_id": "impl-0042", "content": "...", "helpful_count": 5}
-  ]
-}
-```
+As of v4.0, Curator applies changes directly via mem0 MCP tools (no `apply-delta` step).
 
 **Process:**
-1. Apply operations to `.claude/playbook.db`
-2. Regenerate embeddings for new/updated bullets
-3. If `sync_to_cipher` has entries → call `cipher_extract_and_operate_memory`
+1. Curator searches for duplicates via `mcp__mem0__map_tiered_search`
+2. Curator stores new patterns via `mcp__mem0__map_add_pattern`
+3. Curator archives outdated patterns via `mcp__mem0__map_archive_pattern`
 
 ---
 
-## Cipher Integration
+## Promotion Across Scopes (mem0 MCP)
 
-### Sync Conditions
+High-quality patterns can be promoted across tiers:
+- branch → project
+- project → org
 
-Bullets sync to cipher when:
-- `helpful_count >= 5` (high-quality threshold)
-- Content is sufficiently unique (not duplicating existing cipher knowledge)
-
-### Deduplication
-
-**Before ADD:**
-1. Curator calls `cipher_memory_search` with new bullet content
-2. If similar patterns exist (similarity > 0.85) → skip ADD or merge
-3. Prevents duplicate knowledge in playbook
-
-**Benefit:** Cleaner playbook, no redundant bullets
+Curator uses `mcp__mem0__map_promote_pattern` (or the workflow’s promotion rules) to broaden reuse.
 
 ---
 
@@ -231,7 +202,7 @@ Subtask completed successfully
   ↓
 Reflector analyzes: What worked? What patterns emerged?
   ↓
-Calls cipher_memory_search: Does this pattern already exist?
+Calls map_tiered_search: Does this pattern already exist?
   ↓
 Suggests new bullets or updates to existing ones
 ```
@@ -243,7 +214,7 @@ Reflector insights
   ↓
 Curator checks: Is this genuinely novel?
   ↓
-Calls cipher_memory_search again (double-check)
+Calls map_tiered_search again (double-check)
   ↓
 Creates ADD/UPDATE operations
 ```
@@ -253,7 +224,7 @@ Creates ADD/UPDATE operations
 ```
 New subtask started
   ↓
-Query playbook: "mapify playbook query '[subtask description]'"
+Query mem0: `mcp__mem0__map_tiered_search(query="[subtask description]", limit=5)`
   ↓
 Actor receives top 3-5 relevant bullets
   ↓
@@ -280,17 +251,17 @@ Pattern becomes cross-project knowledge
 
 ### For Users
 
-1. **Query before implementing** - Run `mapify playbook query` to find relevant patterns
-2. **Review playbook growth** - Run `mapify playbook stats` periodically
-3. **Curate manually** - Remove obsolete bullets: `mapify playbook deprecate <id>`
-4. **Backup regularly** - `.claude/playbook.db` is your project knowledge
+1. **Search before implementing** - Run `mcp__mem0__map_tiered_search` to find relevant patterns
+2. **Prefer Curator for writes** - Use `Task(subagent_type="curator", ...)` to add/archive patterns
+3. **Treat mem0 as source of truth** - Patterns are stored outside the repo via MCP
+4. **Keep queries descriptive** - Include technology + intent for best relevance
 
 ### For Workflows
 
-1. **Always query playbook** - TaskDecomposer and Actor should always search playbook
-2. **Track bullet usage** - Actor's `used_bullets` field enables quality scoring
-3. **Batch operations** - Curator should batch multiple operations in single `apply-delta` call
-4. **Validate before sync** - Only sync high-quality bullets (`helpful_count >= 5`) to cipher
+1. **Always search mem0** - Agents should retrieve patterns via `mcp__mem0__map_tiered_search`
+2. **Track pattern usage** - Workflow should record which patterns were applied
+3. **Batch operations** - Curator should batch mem0 writes when possible
+4. **Promote proven patterns** - Use tier promotion rules to broaden reuse
 
 ---
 

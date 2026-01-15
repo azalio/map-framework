@@ -1,37 +1,29 @@
----
 name: map-cli-reference
-description: Use when encountering mapify CLI command errors (no such option, no such command, parameter not found) or need quick reference for correct command syntax. Provides mapify playbook/validate command corrections and common mistake patterns.
+description: Use when encountering mapify CLI or MCP usage errors (no such command, no such option, parameter not found). Provides mem0 MCP and validate command corrections with common mistake patterns.
 ---
 
 # MAP CLI Quick Reference
 
-Fast lookup for mapify commands, parameters, and common error corrections.
+> **Note (v4.0+):** Pattern storage and retrieval uses mem0 MCP (tiered namespaces). Legacy playbook subcommands are not the source of truth for patterns.
+
+Fast lookup for commands, parameters, and common error corrections.
 
 **For comprehensive documentation**, see:
-- [CLI_REFERENCE.json](../../../docs/CLI_REFERENCE.json) - Complete JSON schema
-- [CLI_COMMAND_REFERENCE.md](../../../docs/CLI_COMMAND_REFERENCE.md) - Full guide with examples
+- [CLI_REFERENCE.json](../../../docs/CLI_REFERENCE.json)
+- [CLI_COMMAND_REFERENCE.md](../../../docs/CLI_COMMAND_REFERENCE.md)
 
 ---
 
 ## Quick Command Index
 
-### Playbook Commands
+### Pattern Search (mem0 MCP)
 
 ```bash
-# Fast keyword search (FTS5)
-mapify playbook query "JWT AND authentication" --limit 5
-mapify playbook query "test-0016"  # Search by bullet ID
+# Tiered search across namespaces (branch → project → org)
+mcp__mem0__map_tiered_search(query="JWT authentication", limit=5)
 
-# Semantic search (slower, conceptual)
-mapify playbook search "authentication patterns" --top-k 10
-
-# Apply delta operations (ONLY correct way to update playbook)
-mapify playbook apply-delta operations.json
-echo '{"operations":[...]}' | mapify playbook apply-delta
-
-# Statistics and sync
-mapify playbook stats
-mapify playbook sync --threshold 5
+# Use section_filter when you know the category
+mcp__mem0__map_tiered_search(query="input validation", section_filter="SECURITY_PATTERNS", limit=10)
 ```
 
 ### Validate Commands
@@ -67,220 +59,63 @@ mapify upgrade
 
 ## Common Errors & Corrections
 
-### Error 1: Wrong Command Name
+### Error 1: Using Deprecated Playbook Commands
 
-❌ **WRONG**: `mapify playbook list --sections`
-✅ **CORRECT**: `mapify playbook stats`
-📝 **Explanation**: Command `list` doesn't exist. Use `stats` to see section overview.
+**Issue**: `Error: No such command 'playbook'` or docs/examples mention `mapify playbook ...`
 
-❌ **WRONG**: `mapify playbook get docu-0005`
-✅ **CORRECT**: `mapify playbook query "docu-0005"`
-📝 **Explanation**: Command `get` doesn't exist. Use `query` with bullet ID as search text.
+**Solution**:
+- For pattern retrieval: use `mcp__mem0__map_tiered_search`
+- For pattern writes: use `Task(subagent_type="curator", ...)`
 
 ---
 
-### Error 2: Wrong Parameter Name
+### Error 2: MCP Tool Not Available
 
-❌ **WRONG**: `mapify playbook search --limit 3`
-✅ **CORRECT**: `mapify playbook search "query text" --top-k 3`
-📝 **Explanation**: `search` command uses `--top-k`, not `--limit` (different from `query` command).
+**Issue**: mem0 calls return empty results or tool invocation fails.
 
-❌ **WRONG**: `mapify playbook query --bullet-id test-0016`
-✅ **CORRECT**: `mapify playbook query "test-0016"`
-📝 **Explanation**: Option `--bullet-id` doesn't exist. Use bullet ID as query text argument.
+**Solution**:
+- Verify mem0 MCP is configured and enabled in `.claude/mcp_config.json` (or Claude settings)
+- Confirm the org/project/branch namespaces match your workflow conventions
 
 ---
 
 ### Error 3: Wrong Approach (CRITICAL)
 
-❌ **WRONG**: `sqlite3 .claude/playbook.db "UPDATE bullets SET..."`
-✅ **CORRECT**: `mapify playbook apply-delta operations.json`
-📝 **Explanation**: Direct database access breaks integrity and bypasses validation. ALWAYS use `apply-delta`.
+❌ **WRONG**: Writing patterns directly (ad-hoc scripts / manual storage)
 
-❌ **WRONG**: `Edit(.claude/playbook.db, ...)`
-✅ **CORRECT**: `mapify playbook apply-delta operations.json`
-📝 **Explanation**: Cannot edit binary SQLite database. Generate delta operations JSON and apply via CLI.
-
-❌ **WRONG**: Using legacy JSON format for playbook
-✅ **CORRECT**: `mapify playbook query "..."`
-📝 **Explanation**: Playbook uses SQLite database (`playbook.db`). Use CLI commands to interact with playbook.
-
----
-
-### Error 4: Missing Query Text
-
-❌ **WRONG**: `mapify playbook search --top-k 3` (no query)
-✅ **CORRECT**: `mapify playbook search "authentication patterns" --top-k 3`
-📝 **Explanation**: Query text is a required positional argument, not optional.
-
----
-
-## Quick Parameter Reference
-
-### Query vs Search
-
-**When to use `query`**:
-- ✅ Fast keyword search (indexed FTS5)
-- ✅ Known exact terms
-- ✅ Boolean operators (AND, OR, NOT)
-- ✅ Large playbooks (>100 bullets)
-
-**When to use `search`**:
-- ✅ Semantic/conceptual search
-- ✅ Natural language queries
-- ✅ Finding similar patterns
-- ⚠️ Slower (requires embeddings)
-
----
-
-### FTS5 Query Syntax (for `query` command)
+✅ **CORRECT**: Use Curator agent:
 
 ```bash
-# Boolean operators
-mapify playbook query "JWT AND authentication"
-mapify playbook query "error OR exception OR failure"
-mapify playbook query "testing NOT integration"
-
-# Phrase matching
-mapify playbook query '"error handling"'
-
-# Prefix matching
-mapify playbook query "auth*"  # matches auth, authentication, authorize
-
-# Proximity search
-mapify playbook query "NEAR(JWT token, 5)"  # within 5 tokens
+Task(subagent_type="curator", ...)
 ```
+
+Curator must:
+- Search duplicates first via `mcp__mem0__map_tiered_search`
+- Store new patterns via `mcp__mem0__map_add_pattern`
+- Archive outdated patterns via `mcp__mem0__map_archive_pattern`
 
 ---
 
-### Playbook Search Modes
-
-```bash
-# Local only (fast, default)
-mapify playbook query "pattern" --mode local
-
-# Cipher only (cross-project, requires MCP)
-mapify playbook query "pattern" --mode cipher
-
-# Hybrid (both local + cipher)
-mapify playbook query "pattern" --mode hybrid
-```
-
----
-
-## Apply-Delta Operation Format
-
-**ADD Operation**:
-```json
-{
-  "type": "ADD",
-  "section": "IMPLEMENTATION_PATTERNS",
-  "content": "Pattern description",
-  "code_example": "optional code snippet",
-  "tags": ["tag1", "tag2"],
-  "related_to": ["impl-0001"]
-}
-```
-
-**UPDATE Operation** (increments counters only):
-```json
-{
-  "type": "UPDATE",
-  "bullet_id": "impl-0042",
-  "increment_helpful": 1,
-  "increment_harmful": 0
-}
-```
-
-**DEPRECATE Operation**:
-```json
-{
-  "type": "DEPRECATE",
-  "bullet_id": "impl-0001",
-  "reason": "Pattern obsolete due to library update"
-}
-```
-
-**Complete example**:
-```json
-{
-  "operations": [
-    {"type": "ADD", "section": "SECURITY_PATTERNS", "content": "..."},
-    {"type": "UPDATE", "bullet_id": "sec-0012", "increment_helpful": 1},
-    {"type": "DEPRECATE", "bullet_id": "impl-0001", "reason": "..."}
-  ]
-}
-```
-
----
-
-## Integration with MAP Workflows
+## Integration with MAP Workflows (v4.0+)
 
 ### Curator Agent
 
-**Role**: Updates playbook via delta operations
+**Role**: Stores patterns in mem0 MCP
 
 **Workflow**:
 1. Curator analyzes reflector insights
-2. Generates delta operations (ADD/UPDATE/DEPRECATE)
-3. Outputs JSON to file
-4. Main agent runs: `mapify playbook apply-delta operations.json`
-
-**Critical Rule**: Curator must NEVER:
-- ❌ Run `sqlite3` commands directly
-- ❌ Use `Edit` tool on playbook.db
-- ❌ Manually create/modify playbook files
-
-**Always**: Generate delta JSON → Apply via CLI
-
----
+2. Checks for duplicates via `mcp__mem0__map_tiered_search`
+3. Stores new patterns via `mcp__mem0__map_add_pattern`
+4. Archives outdated patterns via `mcp__mem0__map_archive_pattern`
 
 ### Reflector Agent
 
 **Role**: Searches for existing patterns before extracting new ones
 
-**Workflow**:
-1. Search cipher for similar patterns: `mapify playbook query "..." --mode cipher`
-2. Search local playbook: `mapify playbook query "..." --mode local`
-3. Extract only novel patterns (deduplicate)
-
-**Commands used**:
+**MCP tool used**:
 ```bash
-mapify playbook query "error handling" --mode hybrid --limit 10
+mcp__mem0__map_tiered_search(query="error handling", limit=5)
 ```
-
----
-
-## Troubleshooting Tips
-
-### Command Not Found
-
-**Issue**: `Error: No such command 'list'`
-
-**Solution**: Check [Quick Command Index](#quick-command-index) for correct command names. Common mistakes:
-- `list` → use `stats`
-- `get` → use `query`
-
----
-
-### Parameter Mismatch
-
-**Issue**: `Error: No such option: '--limit'` (in `search` command)
-
-**Solution**: Different commands use different parameter names:
-- `query` uses `--limit`
-- `search` uses `--top-k`
-
----
-
-### Playbook Update Failed
-
-**Issue**: Direct database modification corrupted playbook
-
-**Solution**:
-1. Never use `sqlite3` or `Edit` tool directly
-2. Always use `mapify playbook apply-delta`
-3. Restore from git if corrupted: `git restore .claude/playbook.db`
 
 ---
 
@@ -294,20 +129,14 @@ mapify playbook query "error handling" --mode hybrid --limit 10
 
 ## See Also
 
-**Comprehensive Documentation**:
-- [CLI_REFERENCE.json](../../../docs/CLI_REFERENCE.json) - Complete machine-readable spec
-- [CLI_COMMAND_REFERENCE.md](../../../docs/CLI_COMMAND_REFERENCE.md) - Full guide with examples
-- [PLAYBOOK-USAGE-GUIDE.md](../../../docs/PLAYBOOK-USAGE-GUIDE.md) - Playbook workflows
-- [CLI_TESTING_GUIDE.md](../../../docs/CLI_TESTING_GUIDE.md) - Testing reference
-
 **Related Skills**:
-- [map-workflows-guide](../map-workflows-guide/SKILL.md) - Choose right MAP workflow
+- [map-workflows-guide](../map-workflows-guide/SKILL.md)
 
 **Source Code**:
-- `src/mapify_cli/__init__.py` - Command definitions
+- `src/mapify_cli/__init__.py`
 
 ---
 
-**Version**: 1.0
-**Last Updated**: 2025-11-07
-**Lines**: ~250 (follows 500-line skill rule)
+**Version**: 1.1
+**Last Updated**: 2026-01-15
+**Lines**: ~200 (follows 500-line skill rule)

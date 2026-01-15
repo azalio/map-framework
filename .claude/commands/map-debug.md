@@ -44,11 +44,11 @@ Before calling task-decomposer, gather context and query playbook:
 
 ```bash
 # Search for similar debugging patterns
-PLAYBOOK_CONTEXT=$(mapify playbook query "debug [issue type]" --limit 5 --section ERROR_PATTERNS --section DEBUGGING_TECHNIQUES)
+PATTERN_CONTEXT=$(mcp__mem0__map_tiered_search(query="debug [issue type]", section_filter="DEBUGGING_TECHNIQUES", limit=5))
 ```
 
 1. **Read error logs/stack traces** (if provided in $ARGUMENTS)
-2. **Search cipher for similar issues**: `mcp__cipher__cipher_memory_search("debug pattern [error_type]")`
+2. **Search cipher for similar issues**: `mcp__mem0__map_tiered_search("debug pattern [error_type]")`
 3. **Identify affected files**: Use Grep/Glob to find relevant code
 4. **Reproduce the issue** (if possible): Read test files or run commands
 
@@ -241,7 +241,7 @@ This is **completely optional**. Run it when debugging patterns are valuable for
 
 ## MCP Tools for Debugging
 
-- `mcp__cipher__cipher_memory_search` - Find similar past debugging sessions
+- `mcp__mem0__map_tiered_search` - Find similar past debugging sessions
 - `mcp__sequential-thinking__sequentialthinking` - Complex root cause analysis
 - `mcp__context7__get-library-docs` - Check library documentation for known issues
 - `mcp__deepwiki__ask_question` - Learn from how others solved similar issues
