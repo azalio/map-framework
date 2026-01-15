@@ -1324,6 +1324,8 @@ def create_or_merge_project_settings_local(project_path: Path) -> None:
 
     default_permissions: Dict[str, Any] = {
         "allow": [
+            # Allow all mem0 MCP tools (project-scoped)
+            "mcp__mem0__*",
             # Common safe Go workflows (project-scoped)
             "Bash(go test:*)",
             "Bash(go test -c:*)",

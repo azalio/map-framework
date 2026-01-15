@@ -188,6 +188,7 @@ class TestInitCommand:
         assert "Bash(go test:*)" in allow
         assert "Bash(go vet :*)" in allow
         assert "Bash(go mod tidy:*)" in allow
+        assert "mcp__mem0__*" in allow
         assert (
             'Bash(openssl req -x509 -newkey rsa:512 -keyout /dev/null -out /dev/stdout -days 365 -nodes -subj "/CN=test" 2>/dev/null)'
             in allow
