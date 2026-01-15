@@ -1326,6 +1326,8 @@ def create_or_merge_project_settings_local(project_path: Path) -> None:
         "allow": [
             # Allow all mem0 MCP tools (project-scoped)
             "mcp__mem0__*",
+            # SourceCraft MCP helpers (project-scoped)
+            "mcp__sourcecraft__list_pull_request_comments",
             # Common safe Go workflows (project-scoped)
             "Bash(go test:*)",
             "Bash(go test -c:*)",
@@ -1335,6 +1337,10 @@ def create_or_merge_project_settings_local(project_path: Path) -> None:
             "Bash(go mod tidy:*)",
             "Bash(gofmt -l :*)",
             "Bash(gofmt -d :*)",
+            # Common safe Make targets
+            "Bash(make generate manifests)",
+            # Common git workflows
+            "Bash(git worktree add:*)",
             # Used by some test/dev scripts to produce throwaway certs
             'Bash(openssl req -x509 -newkey rsa:512 -keyout /dev/null -out /dev/stdout -days 365 -nodes -subj "/CN=test" 2>/dev/null)',
         ],
