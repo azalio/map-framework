@@ -1339,6 +1339,7 @@ def create_or_merge_project_settings_local(project_path: Path) -> None:
             "Bash(gofmt -d :*)",
             # Common safe Make targets
             "Bash(make generate manifests)",
+            "Bash(make manifests)",
             # Common git workflows
             "Bash(git worktree add:*)",
             # Used by some test/dev scripts to produce throwaway certs

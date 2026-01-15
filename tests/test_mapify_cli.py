@@ -191,6 +191,7 @@ class TestInitCommand:
         assert "mcp__mem0__*" in allow
         assert "mcp__sourcecraft__list_pull_request_comments" in allow
         assert "Bash(make generate manifests)" in allow
+        assert "Bash(make manifests)" in allow
         assert "Bash(git worktree add:*)" in allow
         assert (
             'Bash(openssl req -x509 -newkey rsa:512 -keyout /dev/null -out /dev/stdout -days 365 -nodes -subj "/CN=test" 2>/dev/null)'
