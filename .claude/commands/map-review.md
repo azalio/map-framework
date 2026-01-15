@@ -12,11 +12,11 @@ Review current changes using MAP agents for comprehensive quality analysis.
 2. **Predictor** - Analyzes impact on codebase, breaking changes, dependencies
 3. **Evaluator** - Scores overall quality and provides actionable feedback
 
-## Step 1: Query Playbook for Review Patterns
+## Step 1: Query mem0 for Review Patterns
 
 ```bash
 # Get review best practices
-REVIEW_PATTERNS=$(mapify playbook query "code review" --limit 5)
+REVIEW_PATTERNS=$(mcp__mem0__map_tiered_search(query="code review", limit=5))
 ```
 
 ## Step 2: Get Current Changes

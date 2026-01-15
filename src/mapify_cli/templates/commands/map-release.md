@@ -70,8 +70,8 @@ Phase 7: Final Summary and Cleanup
 Query playbook for release-related patterns and past release issues:
 
 ```bash
-# Query local playbook for release patterns
-PLAYBOOK_BULLETS=$(mapify playbook query "release validation PyPI CI/CD" --limit 10)
+# Fetch release-related patterns from mem0
+RELEASE_PATTERNS=$(mcp__mem0__map_tiered_search(query="release validation PyPI CI/CD", limit=10))
 ```
 
 **Also search Cipher** for cross-project release patterns:
@@ -1218,7 +1218,7 @@ You should:
 
 1. **Phase 1 - Pre-Release Validation:**
    ```bash
-   mapify playbook query "release validation PyPI" --limit 10
+   mcp__mem0__map_tiered_search(query="release validation PyPI", limit=10)
    # Run all 12 validation gates
    pytest tests/ && black --check src/ && ruff check src/ && mypy src/ && ...
    # Verify CI passed on main

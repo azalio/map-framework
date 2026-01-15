@@ -54,10 +54,9 @@ if command -v mypy &> /dev/null; then
     # Parse mypy text output to JSON using robust parsing
     if [[ -n "$MYPY_OUT" ]]; then
         MYPY_NORM=$(echo "$MYPY_OUT" | while IFS= read -r line; do
-            local file lineno col msg
             if parse_colon_delimited "$line" file lineno col msg; then
                 # Determine severity from message
-                local severity="warning"
+                severity="warning"
                 if [[ "$msg" == *"error:"* ]]; then
                     severity="error"
                 fi

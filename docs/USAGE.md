@@ -165,141 +165,34 @@ Self-MoA uses ~4x tokens per subtask:
 
 ---
 
-## 🛠️ Playbook Commands
+## 🧠 Pattern Storage & Retrieval (mem0 MCP)
 
-The playbook manager CLI provides tools to analyze and manage learned patterns:
+As of v4.0, patterns are stored and retrieved via the mem0 MCP server. There is no local playbook CLI workflow for pattern search/update.
 
-### Querying Playbook (NEW - FTS5 Full-Text Search)
+### Tiered Pattern Search
 
-**Recommended:** Use `mapify playbook query` instead of `mapify playbook search` for better performance with large playbooks.
-
-```bash
-# Basic query (local playbook only)
-mapify playbook query "JWT authentication" --limit 5
-
-# With cipher integration (broader knowledge)
-mapify playbook query "error handling patterns" --mode hybrid --limit 10
-
-# Filter by sections
-mapify playbook query "API design" --section ARCHITECTURE_PATTERNS --section IMPLEMENTATION_PATTERNS
-
-# Minimum quality filter
-mapify playbook query "security patterns" --min-quality 3
-
-# JSON output (for scripts)
-mapify playbook query "testing strategies" --format json
-```
-
-**Query modes:**
-- `--mode local` (default) - Search local playbook only (fast, <50ms)
-- `--mode hybrid` - Intended for future standalone mode (in workflows, gracefully degrades to local-only search)
-- `--mode cipher` - Reserved for future cipher backend
-
-**IMPORTANT for MAP Workflows:**
-
-⚠️ The `--mode hybrid` flag **does not work** in MAP workflows because:
-- `mapify playbook query` runs as separate bash process
-- Separate processes cannot invoke Claude MCP tools
-- Cipher search returns empty list (graceful degradation)
-
-**Correct approach for MAP workflows:**
-1. Use `mapify playbook query` (local playbook via Bash)
-2. Separately call `mcp__mem0__map_tiered_search` (cross-project via MCP tool)
-3. Agent combines both sources
-
-**Why use `query` instead of `search`:**
-- ✅ **Works with large playbooks** - Handles >256KB (current playbook: 270KB)
-- ✅ **FTS5 full-text search** - 10x faster than grep
-- ✅ **Relevance ranking** - Best patterns first
-- ✅ **Quality scoring** - Prioritizes proven patterns (helpful_count - harmful_count)
-
-### Apply Delta Operations (MAP Workflow Integration)
-
-**Purpose:** Apply Curator agent output to update the playbook database.
+Use `mcp__mem0__map_tiered_search` to search across scopes (branch → project → org):
 
 ```bash
-# Apply operations from file
-mapify playbook apply-delta curator_output.json
+# Basic search
+mcp__mem0__map_tiered_search(query="JWT authentication", limit=5)
 
-# Preview changes without applying (dry-run)
-mapify playbook apply-delta operations.json --dry-run
-
-# Pipe from Curator agent (recommended in MAP workflows)
-cat curator_output.json | mapify playbook apply-delta
-echo '{"operations": [{"type": "UPDATE", "bullet_id": "impl-0001", "increment_helpful": 1}]}' | mapify playbook apply-delta
+# Narrow search by section (example)
+mcp__mem0__map_tiered_search(query="error handling", section_filter="ERROR_HANDLING_PATTERNS", limit=10)
 ```
 
-**Operation Types:**
+### Adding / Archiving Patterns
 
-1. **ADD** - Add new bullet to playbook
-   ```json
-   {
-     "type": "ADD",
-     "section": "IMPLEMENTATION_PATTERNS",
-     "content": "Use async/await for I/O operations",
-     "code_example": "async def fetch(): ...",
-     "tags": ["python", "async"]
-   }
-   ```
-
-2. **UPDATE** - Increment helpful/harmful counters
-   ```json
-   {
-     "type": "UPDATE",
-     "bullet_id": "impl-0042",
-     "increment_helpful": 1
-   }
-   ```
-
-3. **DEPRECATE** - Mark bullet as deprecated
-   ```json
-   {
-     "type": "DEPRECATE",
-     "bullet_id": "impl-0099",
-     "reason": "Superseded by impl-0105"
-   }
-   ```
-
-**Input Format:**
-
-```json
-{
-  "operations": [
-    {"type": "ADD", "section": "...", "content": "..."},
-    {"type": "UPDATE", "bullet_id": "...", "increment_helpful": 1},
-    {"type": "DEPRECATE", "bullet_id": "...", "reason": "..."}
-  ]
-}
-```
-
-**When to Use:**
-
-- ✅ **After Curator agent** in MAP workflows (/map-efficient, /map-debug, etc.)
-- ✅ **Batch updates** from CI/CD pipelines
-- ✅ **Automated playbook maintenance**
-
-**Exit Codes:**
-- `0` - Success (operations applied or dry-run completed)
-- `1` - Validation error or application failure
-
-### Statistics
+Patterns should be written through the Curator agent (deduplication + fingerprinting):
 
 ```bash
-# Statistics
-mapify playbook stats
+Task(subagent_type="curator", ...)
 
-# High-quality patterns ready for sync
-mapify playbook sync
+# Curator uses mem0 MCP tools:
+# - mcp__mem0__map_add_pattern
+# - mcp__mem0__map_archive_pattern
+# - mcp__mem0__map_promote_pattern
 ```
-
-### Legacy Search (deprecated for large playbooks)
-
-```bash
-# Search patterns (works for small playbooks <256KB)
-mapify playbook search "JWT authentication"
-```
-
-**Note:** `search` command uses simple keyword matching and may fail on large playbooks. Use `query` instead.
 
 ---
 
@@ -310,19 +203,12 @@ This section documents frequently encountered CLI command errors and their corre
 - E2E tests (`tests/test_agent_cli_correctness.py`)
 - Agent template CLI reference sections
 
-### Wrong Command Names
+### Common Mistakes (v4.0+)
 
 | ❌ Incorrect | ✅ Correct | Explanation |
 |-------------|-----------|-------------|
-| `mapify playbook list --sections` | `mapify playbook stats` | Command `list` doesn't exist. Use `stats` to see section overview. |
-| `mapify playbook get docu-0005` | `mapify playbook query "docu-0005"` | Command `get` doesn't exist. Use `query` with bullet ID as search text. |
-
-### Wrong Parameter Names
-
-| ❌ Incorrect | ✅ Correct | Explanation |
-|-------------|-----------|-------------|
-| `mapify playbook search --limit 3` | `mapify playbook search "query" --top-k 3` | `search` command uses `--top-k`, not `--limit` (different from `query` command). |
-| `mapify playbook query --bullet-id test-0016` | `mapify playbook query "test-0016"` | Option `--bullet-id` doesn't exist. Use bullet ID as query text argument. |
+| Using legacy playbook commands (`mapify playbook ...`) | Use `mcp__mem0__map_tiered_search` | Playbook CLI is not used for patterns in v4.0+ |
+| Calling mem0 tools directly from workflow docs | Use `Task(subagent_type="curator", ...)` for writes | Curator handles dedupe + quality scoring |
 
 ### Wrong Approach (CRITICAL)
 
@@ -341,7 +227,7 @@ This section documents frequently encountered CLI command errors and their corre
 | `{"op": "UPDATE", "bullet_id": "..."}` | `{"type": "UPDATE", "bullet_id": "..."}` |
 | `{"op": "DEPRECATE", "bullet_id": "..."}` | `{"type": "DEPRECATE", "bullet_id": "..."}` |
 
-**Explanation:** Delta operations use the field name `"type"`, not `"op"`. This is validated by `mapify playbook apply-delta` and enforced in agent templates.
+**Explanation:** Delta operations use the field name `"type"`, not `"op"`. This is enforced in agent templates and validated by workflow contracts.
 
 ### Quick Reference Resources
 
@@ -428,13 +314,15 @@ Instead of treating playbook bullets as plain text, the KG:
 > **Note (v4.0+):** As of v4.0, primary pattern storage has migrated to mem0 MCP. The Knowledge Graph API below is retained for entity/relationship queries on legacy data. For pattern retrieval, use `mcp__mem0__map_tiered_search`.
 
 ```python
-from mapify_cli.playbook_manager import PlaybookManager
+import sqlite3
+
+from mapify_cli.graph_query import KnowledgeGraphQuery
 from mapify_cli.entity_extractor import EntityType
 from mapify_cli.relationship_detector import RelationshipType
 
 # Initialize Knowledge Graph for entity queries (LEGACY - patterns now in mem0)
-pm = PlaybookManager(db_path=".claude/playbook.db")
-kg = pm.kg_query
+db_conn = sqlite3.connect(".claude/playbook.db")
+kg = KnowledgeGraphQuery(db_conn)
 
 # Example 1: Find all tools with high confidence
 tools = kg.query_entities(entity_type=EntityType.TOOL, min_confidence=0.8)
@@ -616,8 +504,8 @@ search_results = conn.execute("""
 - Auditing antipatterns and their alternatives
 
 ❌ **Don't use KG when:**
-- Searching for specific code examples (use playbook FTS5 search instead)
-- Looking for human-readable best practices (use `mapify playbook query`)
+- Searching for human-readable best practices (use mem0 pattern search instead)
+- You need semantic patterns rather than entities/relationships (use `mcp__mem0__map_tiered_search`)
 - You need exact text matches (KG extracts semantic entities, not full text)
 
 #### Confidence Thresholds
@@ -681,388 +569,26 @@ pm.db_conn.commit()
 
 ---
 
-## 🔍 FTS5 Query Format Guidelines
+## 🔍 Pattern Search Tips (mem0 MCP)
 
-The `mapify playbook query` command uses SQLite's FTS5 (Full-Text Search version 5) for fast, accurate pattern matching. Understanding how FTS5 tokenizes and matches queries helps you write effective searches.
+As of v4.0, pattern search is provided by mem0 MCP. Unlike the legacy FTS5-based playbook search, mem0 search is semantic and works best with descriptive queries.
 
-### How FTS5 Tokenization Works
+### Practical Query Guidelines
 
-**Key Concept:** FTS5 splits text into tokens (words) using the **porter unicode61** tokenizer. This tokenizer:
-- Splits on whitespace, punctuation, and special characters
-- **Applies Porter stemming** (e.g., "authentication" → "authent", matches "authenticate", "authenticated")
-- **Splits hyphenated terms** into separate tokens (e.g., "auto-activation" → ["auto", "activation"])
-- Normalizes Unicode characters (e.g., "café" → "cafe")
-- Removes control characters
-
-**Example Tokenization:**
-
-| Original Text | Tokens Created |
-|--------------|----------------|
-| `auto-activation` | `["auto", "activation"]` |
-| `session-start hook` | `["session", "start", "hook"]` |
-| `multi-subtask workflow` | `["multi", "subtask", "workflow"]` |
-| `FTS5 query builder` | `["FTS5", "query", "builder"]` |
-
-### Query Format Best Practices
-
-#### 1. Hyphenated Terms
-
-**✨ Automatic Conversion (v2.1+):** The system automatically replaces hyphens with spaces in your queries, so both `"session-start"` and `"session start"` work identically. Understanding this behavior helps explain why hyphenated searches work seamlessly.
-
-**Background:** FTS5 tokenizer splits hyphens at index time (e.g., "auto-activation" → ["auto", "activation"]), so queries are automatically converted to match.
+- Include the concrete technology and intent (e.g. "JWT refresh tokens", "Go error handling")
+- Add qualifiers when results are too broad (e.g. "PostgreSQL", "FastAPI", "rate limiting")
+- Prefer natural language for conceptual lookups (e.g. "how to handle retries with jitter")
 
 ```bash
-# Both formats work (automatic conversion)
-mapify playbook query "auto-activation"  # ✅ Auto-converted to "auto activation"
-mapify playbook query "auto activation"  # ✅ Direct space-separated query
+# Basic search (tiered: branch → project → org)
+mcp__mem0__map_tiered_search(query="JWT authentication", limit=5)
 
-# Also matches variations:
-# - "auto activation feature"
-# - "automatic activation"
-# - "auto-activation" (stored in content, tokenized as "auto" + "activation")
+# More specific query
+mcp__mem0__map_tiered_search(query="retry with exponential backoff and jitter", limit=5)
+
+# Section-filtered search (when you know the category)
+mcp__mem0__map_tiered_search(query="input validation", section_filter="SECURITY_PATTERNS", limit=10)
 ```
-
-**More Examples:**
-
-```bash
-# Hyphenated terms
-mapify playbook query "session start"        # ✅ finds "session-start hook"
-mapify playbook query "multi subtask"        # ✅ finds "multi-subtask workflow"
-mapify playbook query "context compaction"   # ✅ finds "context-compaction resilience"
-
-# Technical terms
-mapify playbook query "error handling"       # ✅ finds "error-handling patterns"
-mapify playbook query "rate limiting"        # ✅ finds "rate-limiting algorithm"
-```
-
-#### 2. Phrase Matching
-
-**Use quotes for exact phrases:**
-
-```bash
-# Match exact phrase (all words in order)
-mapify playbook query '"JWT authentication"'
-
-# Match phrase with spaces instead of hyphens
-mapify playbook query '"session start hook"'  # Matches "session-start hook"
-```
-
-**Without quotes (matches any order):**
-
-```bash
-# Matches bullets containing both "JWT" and "authentication" (any order)
-mapify playbook query "JWT authentication"
-
-# Matches "authentication with JWT", "JWT-based authentication", etc.
-```
-
-#### 3. Boolean Operators
-
-**AND (implicit by default):**
-
-```bash
-# Matches bullets containing both "error" AND "handling"
-mapify playbook query "error handling"
-
-# Explicit AND (same result)
-mapify playbook query "error AND handling"
-```
-
-**OR (for alternatives):**
-
-```bash
-# Matches bullets containing "JWT" OR "OAuth"
-mapify playbook query "JWT OR OAuth"
-
-# Multiple alternatives
-mapify playbook query "authentication OR authorization OR security"
-```
-
-**NOT (exclude terms):**
-
-```bash
-# Matches "authentication" but excludes results containing "OAuth"
-mapify playbook query "authentication NOT OAuth"
-
-# Exclude multiple terms
-mapify playbook query "database NOT (PostgreSQL OR MySQL)"
-```
-
-#### 4. Prefix Matching
-
-**Use `*` for wildcard suffix:**
-
-```bash
-# Matches "auth", "authentication", "authorize", "authorized"
-mapify playbook query "auth*"
-
-# Matches "test", "testing", "tester"
-mapify playbook query "test*"
-
-# Combined with other terms
-mapify playbook query "auto* activation"  # Matches "auto", "automatic", "automated"
-```
-
-**Note:** FTS5 does NOT support infix or suffix wildcards (e.g., `*auth` or `te*st`).
-
-#### 5. Complex Queries
-
-**Combine operators for precise searches:**
-
-```bash
-# Authentication patterns excluding OAuth
-mapify playbook query '(JWT OR session) AND authentication NOT OAuth'
-
-# Error handling for specific languages
-mapify playbook query 'error handling AND (Python OR Go)'
-
-# Find caching patterns but not Redis-specific
-mapify playbook query 'caching AND performance NOT Redis'
-```
-
-### Common Pitfalls and Solutions
-
-#### Pitfall 1: Special Characters in Queries
-
-**Problem:** FTS5 treats special characters as token separators.
-
-```bash
-# ❌ BAD: Hyphen splits query
-mapify playbook query "session-start"
-
-# ✅ GOOD: Replace with space
-mapify playbook query "session start"
-```
-
-**Affected characters:** `-`, `.`, `,`, `/`, `@`, `#`, etc.
-
-#### Pitfall 2: Case Sensitivity
-
-**FTS5 is case-insensitive by default:**
-
-```bash
-# All equivalent (case doesn't matter)
-mapify playbook query "JWT"
-mapify playbook query "jwt"
-mapify playbook query "Jwt"
-```
-
-#### Pitfall 3: Stop Words
-
-**FTS5 does NOT remove stop words by default** (unlike some search engines).
-
-```bash
-# These words ARE indexed and searchable:
-mapify playbook query "the authentication flow"  # "the" is included
-mapify playbook query "a guide to testing"        # "a" and "to" are included
-```
-
-**Why this matters:** More precise matching, but longer queries may be less flexible.
-
-#### Pitfall 4: Order Matters (without quotes)
-
-**Without quotes, order doesn't matter:**
-
-```bash
-# These are equivalent:
-mapify playbook query "JWT authentication"
-mapify playbook query "authentication JWT"
-```
-
-**With quotes, order matters:**
-
-```bash
-# ✅ Matches: "JWT authentication flow"
-mapify playbook query '"JWT authentication"'
-
-# ❌ Does NOT match: "JWT authentication flow"
-mapify playbook query '"authentication JWT"'
-```
-
-### Troubleshooting FTS5 Query Errors
-
-#### Error: "fts5: syntax error near '-'"
-
-**Cause:** Query contains hyphen, which FTS5 interprets as boolean NOT operator.
-
-**Solution:** ✨ **As of v2.1, hyphens are automatically replaced with spaces to prevent this error.** If you still encounter this error, it may be from other special characters like unbalanced quotes or parentheses.
-
-```bash
-# Modern behavior (v2.1+) - both work
-mapify playbook query "auto-activation"  # ✅ Auto-converted
-mapify playbook query "auto activation"  # ✅ Also works
-
-# If you still get this error, check for:
-mapify playbook query "auto-(activation"  # ❌ Unbalanced parenthesis
-mapify playbook query "auto \"activation"  # ❌ Unbalanced quote
-```
-
-**Root Cause:** FTS5 tokenizer splits "auto-activation" → ["auto", "activation"] at index time. The automatic hyphen replacement (v2.1+) prevents syntax errors for hyphenated terms.
-
-#### Error: "no such column"
-
-**Cause:** Query references column that doesn't exist in FTS5 index.
-
-**Solution:** Use standard FTS5 query syntax (no column filters).
-
-```bash
-# ❌ ERROR: no such column: title
-mapify playbook query "title:authentication"
-
-# ✅ FIXED: Search all indexed columns
-mapify playbook query "authentication"
-```
-
-**Note:** `mapify playbook query` searches all indexed columns (`content`, `code_example`, `tags`) automatically.
-
-#### Error: "fts5: syntax error near '('"
-
-**Cause:** Unmatched parentheses in boolean query.
-
-**Solution:** Balance parentheses or remove them.
-
-```bash
-# ❌ ERROR: fts5: syntax error near '('
-mapify playbook query "(JWT OR OAuth"
-
-# ✅ FIXED: Balanced parentheses
-mapify playbook query "(JWT OR OAuth)"
-
-# ✅ ALTERNATIVE: Remove parentheses
-mapify playbook query "JWT OR OAuth"
-```
-
-#### No Results Found (but pattern exists)
-
-**Possible Causes:**
-
-1. **Hyphen in query:**
-   ```bash
-   # ❌ No results
-   mapify playbook query "session-start"
-
-   # ✅ Fixed
-   mapify playbook query "session start"
-   ```
-
-2. **Typo or misspelling:**
-   ```bash
-   # ❌ No results (typo: "authetication")
-   mapify playbook query "authetication"
-
-   # ✅ Fixed
-   mapify playbook query "authentication"
-   ```
-
-3. **Too specific query:**
-   ```bash
-   # ❌ No results (too many required terms)
-   mapify playbook query "JWT authentication with refresh tokens and Redis caching"
-
-   # ✅ Broader query
-   mapify playbook query "JWT refresh tokens"
-   ```
-
-4. **Pattern not in playbook:**
-   ```bash
-   # Verify pattern exists
-   mapify playbook stats  # Check total bullets
-
-   # Search with broader term
-   mapify playbook query "authentication"  # Find related patterns
-   ```
-
-### Query Examples by Use Case
-
-#### Finding Authentication Patterns
-
-```bash
-# Broad search
-mapify playbook query "authentication"
-
-# Specific technology
-mapify playbook query "JWT authentication"
-mapify playbook query "OAuth flow"
-mapify playbook query "session management"
-
-# With error handling
-mapify playbook query "authentication error handling"
-```
-
-#### Finding Performance Optimizations
-
-```bash
-# General optimization
-mapify playbook query "performance optimization"
-
-# Specific techniques
-mapify playbook query "caching strategy"
-mapify playbook query "database query optimization"
-mapify playbook query "async concurrency"
-
-# Language-specific
-mapify playbook query "Python async performance"
-```
-
-#### Finding Error Handling Patterns
-
-```bash
-# General error handling
-mapify playbook query "error handling"
-
-# Specific contexts
-mapify playbook query "API error handling"
-mapify playbook query "retry logic"
-mapify playbook query "exponential backoff"
-
-# Language-specific
-mapify playbook query "Python exception handling"
-mapify playbook query "Go error handling"
-```
-
-#### Finding Testing Patterns
-
-```bash
-# General testing
-mapify playbook query "testing patterns"
-
-# Specific test types
-mapify playbook query "unit test"
-mapify playbook query "integration test"
-mapify playbook query "end to end test"
-
-# Test automation
-mapify playbook query "test automation CI CD"
-```
-
-### Best Practices Summary
-
-✅ **DO:**
-- Replace hyphens with spaces in queries
-- Use quotes for exact phrase matching
-- Use prefix wildcards (`auth*`) for variations
-- Combine boolean operators for precise searches
-- Start broad, refine if too many results
-
-❌ **DON'T:**
-- Use hyphens in queries (causes syntax errors)
-- Expect infix/suffix wildcards (`*auth`, `te*st`)
-- Use column filters (`title:auth`) - not supported
-- Forget to balance parentheses in boolean queries
-- Make queries too specific (may miss relevant results)
-
-### Quick Reference
-
-| Query Pattern | Example | Matches |
-|--------------|---------|---------|
-| Simple term | `authentication` | Bullets with "authentication" |
-| Multiple terms (AND) | `JWT authentication` | Bullets with both "JWT" AND "authentication" |
-| Exact phrase | `"JWT authentication"` | Exact phrase "JWT authentication" |
-| OR operator | `JWT OR OAuth` | Bullets with "JWT" OR "OAuth" |
-| NOT operator | `auth NOT OAuth` | "auth" but NOT "OAuth" |
-| Prefix wildcard | `auth*` | "auth", "authentication", "authorize" |
-| Complex boolean | `(JWT OR session) AND auth NOT OAuth` | "JWT" or "session", with "auth", without "OAuth" |
-| Hyphenated terms | `session start` (not `session-start`) | Matches "session-start hook" |
 
 ## 🔄 Handling Context Compaction
 

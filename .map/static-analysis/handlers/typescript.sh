@@ -65,12 +65,12 @@ if [[ -f "tsconfig.json" ]]; then
             # Parse format: file(line,col): error TSxxxx: message
             TSC_NORM=$(echo "$TSC_OUT" | while IFS= read -r line; do
                 if [[ "$line" =~ ^(.+)\(([0-9]+),([0-9]+)\):\ error\ (TS[0-9]+):\ (.*)$ ]]; then
-                    local file="${BASH_REMATCH[1]}"
-                    local linenum="${BASH_REMATCH[2]}"
-                    local col="${BASH_REMATCH[3]}"
-                    local code="${BASH_REMATCH[4]}"
-                    local message="${BASH_REMATCH[5]}"
-
+                    file="${BASH_REMATCH[1]}"
+                    linenum="${BASH_REMATCH[2]}"
+                    col="${BASH_REMATCH[3]}"
+                    code="${BASH_REMATCH[4]}"
+                    message="${BASH_REMATCH[5]}"
+ 
                     file=$(json_escape "$file")
                     message=$(json_escape "$message")
 

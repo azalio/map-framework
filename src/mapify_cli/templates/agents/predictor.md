@@ -912,12 +912,12 @@ Before marking analysis complete, verify:
 - Hidden risk: SemanticSearchEngine prints to stdout during init
 - Test impact: CliRunner tests saw mixed output but passed locally
 - CI impact: Different Click version → CliRunner(mix_stderr=False) failed
-- User impact: `mapify playbook sync | jq` broke due to stdout pollution
+- User impact: JSON parsing of pattern outputs broke due to stdout pollution
 
 **Prediction should have flagged**:
 1. HIGH: Library prints to stdout → suggest stderr
 2. HIGH: Using mix_stderr parameter → check Click version
-3. MEDIUM: Need manual CLI test → suggest `mapify sync` outside pytest
+3. MEDIUM: Need manual CLI test → suggest running `mapify check` outside pytest
 </example>
 
 ## Breaking Change Identification

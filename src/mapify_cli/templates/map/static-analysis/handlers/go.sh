@@ -31,7 +31,6 @@ if command -v go &> /dev/null; then
 
     if [[ -n "$VET_OUT" ]]; then
         VET_NORM=$(echo "$VET_OUT" | while IFS= read -r line; do
-            local file lineno col msg
             if parse_colon_delimited "$line" file lineno col msg; then
                 msg="${msg# }"
                 msg=$(json_escape "$msg")

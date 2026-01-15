@@ -86,11 +86,11 @@ Pass this packet verbatim to Actor/Monitor/debate-arbiter/Predictor. Do NOT rena
 ### 2.1 Get Context + Re-rank
 
 ```bash
-# Query playbook (project-specific patterns)
-mapify playbook query "[subtask description]" --limit 5
+# Patterns from mem0 (tiered: branch → project → org)
+mcp__mem0__map_tiered_search(query="[subtask description]", limit=5)
 
-# Cross-project patterns
-mcp__mem0__map_tiered_search(query="[concept]", top_k=5)
+# Optional: broader conceptual lookup
+mcp__mem0__map_tiered_search(query="[concept]", limit=5)
 ```
 
 **Re-rank retrieved patterns** by relevance to current subtask:

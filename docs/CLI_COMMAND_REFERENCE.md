@@ -25,239 +25,32 @@ Complete reference for all mapify CLI commands with correct syntax, parameters, 
 
 ---
 
-## Playbook Commands
+## Pattern Storage (mem0 MCP)
 
-Manage and search playbook patterns.
+As of v4.0, pattern storage and retrieval is handled by the mem0 MCP server (tiered namespaces: branch → project → org). The legacy playbook CLI is not the source of truth for patterns.
 
-### `mapify playbook query`
-
-**Fast FTS5 full-text search** (recommended for most cases)
+### Search Patterns
 
 ```bash
-mapify playbook query [QUERY_TEXT] [OPTIONS]
+# Tiered search (recommended)
+mcp__mem0__map_tiered_search(query="JWT authentication", limit=5)
+
+# Use section_filter when you know the category
+mcp__mem0__map_tiered_search(query="input validation", section_filter="SECURITY_PATTERNS", limit=10)
 ```
 
-**Parameters:**
-- `QUERY_TEXT` (required): Search query (supports FTS5 syntax)
-- `--section TEXT`: Filter by section (repeatable)
-- `--limit INT`: Maximum results (default: 5)
-- `--mode [local|cipher|hybrid]`: Search mode (default: local)
-- `--format [markdown|json]`: Output format (default: markdown)
-- `--min-quality INT`: Minimum quality score (default: 0)
+### Store / Deprecate Patterns
 
-**Examples:**
+Patterns should be written through Curator:
 
 ```bash
-# Basic query
-mapify playbook query "JWT authentication" --limit 5
+Task(subagent_type="curator", ...)
 
-# Hybrid search (playbook + cipher)
-mapify playbook query "error handling" --mode hybrid --limit 10
-
-# Filter by section
-mapify playbook query "API design" --section ARCHITECTURE_PATTERNS
-
-# Minimum quality filter
-mapify playbook query "security patterns" --min-quality 3
-
-# JSON output
-mapify playbook query "testing strategies" --format json
+# Curator uses:
+# - mcp__mem0__map_add_pattern
+# - mcp__mem0__map_archive_pattern
+# - mcp__mem0__map_promote_pattern
 ```
-
-**FTS5 Query Syntax:**
-
-```bash
-# Boolean operators
-mapify playbook query "JWT AND authentication"
-mapify playbook query "error OR exception"
-mapify playbook query "testing NOT integration"
-
-# Phrase matching
-mapify playbook query "\"error handling\""
-
-# Prefix matching
-mapify playbook query "auth*"  # matches auth, authentication, authorize
-
-# Proximity search
-mapify playbook query "NEAR(JWT token, 5)"  # within 5 tokens
-```
-
-**Common Mistakes:**
-
-❌ **WRONG**: `mapify playbook query --bullet-id test-0016`
-✅ **CORRECT**: `mapify playbook query "test-0016"`
-📝 Use bullet ID as query text, not as option
-
-❌ **WRONG**: `mapify playbook get docu-0005`
-✅ **CORRECT**: `mapify playbook query "docu-0005"`
-📝 `get` command doesn't exist
-
----
-
-### `mapify playbook search`
-
-**Semantic search** using embeddings (slower but conceptual)
-
-```bash
-mapify playbook search [QUERY] [OPTIONS]
-```
-
-**Parameters:**
-- `QUERY` (required): Natural language search query
-- `--top-k INT`: Number of results (default: 5)
-
-**Examples:**
-
-```bash
-# Semantic search
-mapify playbook search "authentication patterns" --top-k 10
-
-# Natural language query
-mapify playbook search "how to handle errors in async code"
-```
-
-**Common Mistakes:**
-
-❌ **WRONG**: `mapify playbook search --limit 3`
-✅ **CORRECT**: `mapify playbook search "query" --top-k 3`
-📝 Use `--top-k`, not `--limit` (different from `query` command)
-
-**When to use query vs search:**
-- **Use `query`**: Fast keyword search, known terms, exact matches
-- **Use `search`**: Conceptual search, semantic similarity, synonyms
-
----
-
-### `mapify playbook apply-delta`
-
-**Apply delta operations to playbook** (ADD, UPDATE, DEPRECATE)
-
-```bash
-mapify playbook apply-delta [FILE] [OPTIONS]
-```
-
-**Parameters:**
-- `FILE` (optional): JSON file with operations (or use stdin)
-- `--dry-run`: Preview changes without applying
-
-**Input Format:**
-
-```json
-{
-  "operations": [
-    {
-      "type": "ADD",
-      "section": "IMPLEMENTATION_PATTERNS",
-      "content": "New pattern description",
-      "code_example": "optional code snippet",
-      "tags": ["tag1", "tag2"],
-      "related_to": ["impl-0001"],
-      "executable_scripts": ["optional runnable examples"]
-    },
-    {
-      "type": "UPDATE",
-      "bullet_id": "impl-0042",
-      "increment_helpful": 1,
-      "increment_harmful": 0
-    },
-    {
-      "type": "DEPRECATE",
-      "bullet_id": "impl-0001",
-      "reason": "Pattern is obsolete"
-    }
-  ]
-}
-```
-
-**Operation Fields:**
-
-- **ADD**: `type`, `section`, `content` (required); `code_example`, `tags`, `related_to`, `executable_scripts` (optional)
-- **UPDATE**: `type`, `bullet_id` (required); `increment_helpful`, `increment_harmful` (optional)
-  - **Note**: UPDATE increments counters, does NOT change content
-- **DEPRECATE**: `type`, `bullet_id` (required); `reason` (optional)
-
-**Examples:**
-
-```bash
-# Apply from file
-mapify playbook apply-delta operations.json
-
-# Apply from stdin
-echo '{"operations":[...]}' | mapify playbook apply-delta
-
-# Preview changes
-mapify playbook apply-delta operations.json --dry-run
-```
-
-**Critical Rules:**
-
-⚠️ **This is the ONLY correct way to update playbook**
-
-❌ **NEVER DO THIS** (LEGACY):
-- `sqlite3 .claude/playbook.db "UPDATE bullets SET..."`
-- `Edit(.claude/playbook.db, ...)`
-
-✅ **ALWAYS USE** (LEGACY): `mapify playbook apply-delta`
-
-> **Note (v4.0+):** For pattern storage, use mem0 MCP via Curator agent instead of playbook.db commands.
-
-**Why?**
-- Maintains database integrity
-- Validates operations
-- Updates FTS5 indexes
-- Handles transactions correctly
-
----
-
-### `mapify playbook stats`
-
-**Show playbook statistics**
-
-```bash
-mapify playbook stats
-```
-
-No parameters. Displays:
-- Total bullets by section
-- Quality metrics (helpful/harmful counts)
-- Most active sections
-
-**Example:**
-
-```bash
-mapify playbook stats
-```
-
-**Common Mistakes:**
-
-❌ **WRONG**: `mapify playbook list --sections`
-✅ **CORRECT**: `mapify playbook stats`
-📝 `list` command doesn't exist
-
----
-
-### `mapify playbook sync`
-
-**Show high-quality patterns ready for cross-project sync**
-
-```bash
-mapify playbook sync [OPTIONS]
-```
-
-**Parameters:**
-- `--threshold INT`: Minimum helpful count (default: 5)
-
-**Examples:**
-
-```bash
-# Default (helpful_count >= 5)
-mapify playbook sync
-
-# Higher quality threshold
-mapify playbook sync --threshold 10
-```
-
-**Use Case:** Identify patterns that should be synced to cipher for cross-project reuse.
 
 ---
 
@@ -403,19 +196,17 @@ Updates agent templates in `.claude/agents/` to latest versions.
 
 ## Common Mistakes
 
-### 1. Wrong Command Name
+### 1. Using Legacy Playbook Commands
 
 | ❌ Wrong | ✅ Correct | Explanation |
 |---------|-----------|-------------|
-| `mapify playbook list --sections` | `mapify playbook stats` | `list` doesn't exist |
-| `mapify playbook get docu-0005` | `mapify playbook query "docu-0005"` | `get` doesn't exist |
+| `mapify playbook ...` | `mcp__mem0__map_tiered_search` | In v4.0+, patterns are stored/retrieved via mem0 MCP |
 
-### 2. Wrong Parameter Name
+### 2. Writing Patterns Without Curator
 
 | ❌ Wrong | ✅ Correct | Explanation |
 |---------|-----------|-------------|
-| `mapify playbook search --limit 3` | `mapify playbook search "query" --top-k 3` | `search` uses `--top-k` |
-| `mapify playbook query --bullet-id test-0016` | `mapify playbook query "test-0016"` | No `--bullet-id` option |
+| Direct mem0 writes from ad-hoc scripts | `Task(subagent_type="curator", ...)` | Curator handles deduplication + quality scoring |
 
 ### 3. Wrong Approach (LEGACY - v4.0+ uses mem0 MCP)
 
@@ -426,52 +217,19 @@ Updates agent templates in `.claude/agents/` to latest versions.
 
 ---
 
-## Query Syntax Guide
+## Pattern Search Guide (mem0 MCP)
 
-### FTS5 Query Operators (for `mapify playbook query`)
-
-| Operator | Syntax | Example | Description |
-|----------|--------|---------|-------------|
-| AND | `term1 AND term2` | `JWT AND authentication` | Both terms required |
-| OR | `term1 OR term2` | `error OR exception` | Either term required |
-| NOT | `term1 NOT term2` | `testing NOT integration` | First yes, second no |
-| Phrase | `"exact phrase"` | `"error handling"` | Exact phrase match |
-| Prefix | `term*` | `auth*` | Matches auth, authentication, etc. |
-| Proximity | `NEAR(term1 term2, N)` | `NEAR(JWT token, 5)` | Within N tokens |
-
-### Example Queries
+mem0 search is semantic. Use descriptive queries and include the technology and intent.
 
 ```bash
-# Find JWT authentication patterns
-mapify playbook query "JWT AND authentication"
+# Broad query
+mcp__mem0__map_tiered_search(query="JWT authentication", limit=5)
 
-# Find error-related patterns
-mapify playbook query "error OR exception OR failure"
+# More specific query
+mcp__mem0__map_tiered_search(query="retry with exponential backoff and jitter", limit=5)
 
-# Find testing patterns (exclude integration tests)
-mapify playbook query "test* AND NOT integration"
-
-# Find REST API design patterns
-mapify playbook query "\"API design\" AND REST"
-
-# Find patterns about async error handling
-mapify playbook query "NEAR(async error, 10)"
-```
-
-### Query vs Search Decision Tree
-
-```
-Need exact keyword match?
-  YES → Use `mapify playbook query`
-  NO ↓
-
-Large playbook (>100 bullets)?
-  YES → Use `mapify playbook query`
-  NO ↓
-
-Need semantic/conceptual search?
-  YES → Use `mapify playbook search`
-  NO → Use `mapify playbook query` (faster)
+# Narrow by section when possible
+mcp__mem0__map_tiered_search(query="input validation", section_filter="SECURITY_PATTERNS", limit=10)
 ```
 
 ---

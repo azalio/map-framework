@@ -1565,7 +1565,7 @@ Do NOT invent issues to justify review effort. Empty `issues` array is valid.
       "type": "array",
       "items": {
         "type": "string",
-        "enum": ["request_review", "map_tiered_search", "map_tiered_search", "map_tiered_search", "map_add_pattern", "sequentialthinking", "get_library_docs", "resolve_library_id", "deepwiki", "glob", "read", "fetch"]
+        "enum": ["request_review", "map_tiered_search", "map_add_pattern", "sequentialthinking", "get_library_docs", "resolve_library_id", "deepwiki", "glob", "read", "fetch"]
       },
       "description": "MCP tools successfully used during review"
     },
@@ -1573,7 +1573,7 @@ Do NOT invent issues to justify review effort. Empty `issues` array is valid.
       "type": "array",
       "items": {
         "type": "string",
-        "enum": ["request_review", "map_tiered_search", "map_tiered_search", "map_tiered_search", "map_add_pattern", "sequentialthinking", "get_library_docs", "resolve_library_id", "deepwiki", "glob", "read", "fetch"]
+        "enum": ["request_review", "map_tiered_search", "map_add_pattern", "sequentialthinking", "get_library_docs", "resolve_library_id", "deepwiki", "glob", "read", "fetch"]
       },
       "description": "MCP tools that failed or timed out"
     },

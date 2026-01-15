@@ -773,15 +773,17 @@ for operation in delta_operations:
 **Step 2: Check for Conflicts**
 
 ```python
+import sqlite3
+
 from mapify_cli.contradiction_detector import check_new_pattern_conflicts
-from mapify_cli.playbook_manager import PlaybookManager
 
-# Get database connection
-pm = PlaybookManager()
+# Legacy Knowledge Graph database (patterns are stored in mem0 as of v4.0)
+DB_PATH = ".claude/playbook.db"
+db_conn = sqlite3.connect(DB_PATH)
 
-# Check for conflicts with existing knowledge
+# Check for conflicts with existing knowledge graph data
 conflicts = check_new_pattern_conflicts(
-    db_conn=pm.db_conn,
+    db_conn=db_conn,
     pattern_text=bullet_content,
     entities=entities,
     min_confidence=0.7  # Only high-confidence conflicts

@@ -495,20 +495,16 @@ ls ~/.claude/local/claude
 
 Check that MCP servers are properly configured in your Claude Code settings. The configuration file is at `.claude/mcp_config.json`.
 
-### Issue: Semantic search not working
+### Issue: Pattern search not working (mem0 MCP)
 
-```bash
-# Check if dependencies are installed
-pip list | grep sentence-transformers
+As of v4.0, pattern storage and retrieval is handled by the mem0 MCP server (not local semantic search).
 
-# Install if missing
-pip install -r requirements-semantic.txt
+Verify that:
 
-# Verify installation
-python -c "from mapify_cli.playbook_manager import PlaybookManager; m = PlaybookManager(); print('✓' if m.semantic_engine else '✗')"
-```
+- mem0 MCP is enabled in your Claude Code MCP configuration (`.claude/mcp_config.json` or Claude settings)
+- the mem0 MCP server is reachable from Claude Code
 
-Should output `✓ Semantic search enabled`.
+If mem0 is misconfigured, you may see missing context in workflows that call `mcp__mem0__map_tiered_search`.
 
 ## Uninstalling
 

@@ -44,7 +44,7 @@ Before calling task-decomposer, gather context and query playbook:
 
 ```bash
 # Search for similar debugging patterns
-PLAYBOOK_CONTEXT=$(mapify playbook query "debug [issue type]" --limit 5 --section ERROR_PATTERNS --section DEBUGGING_TECHNIQUES)
+PATTERN_CONTEXT=$(mcp__mem0__map_tiered_search(query="debug [issue type]", section_filter="DEBUGGING_TECHNIQUES", limit=5))
 ```
 
 1. **Read error logs/stack traces** (if provided in $ARGUMENTS)
