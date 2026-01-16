@@ -74,7 +74,7 @@ CHECKPOINT: Calling [agent_name] for ST-XXX
 Task(
   subagent_type="task-decomposer",
   description="Decompose task into subtasks",
-  prompt="Break down into ≤8 atomic subtasks and RETURN ONLY JSON matching task-decomposer schema v2.0 (schema_version, analysis, blueprint{subtasks[]}).
+  prompt="Break down into ≤20 atomic subtasks and RETURN ONLY JSON matching task-decomposer schema v2.0 (schema_version, analysis, blueprint{subtasks[]}).
 
 Task: $ARGUMENTS
 
@@ -411,6 +411,21 @@ If validation_criteria present, include contract_compliance + contract_compliant
 
 If `valid === false`: provide feedback, retry Actor (max 5 iterations).
 
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  ⛔ CRITICAL: NEVER APPLY CHANGES WHEN valid === false                      │
+│                                                                              │
+│  Even if contract_compliant === true, you MUST NOT apply changes.           │
+│  Even if "most issues are minor", you MUST NOT apply changes.               │
+│  Even if you think "I'll note issues for later", you MUST NOT apply.        │
+│                                                                              │
+│  The ONLY condition for applying changes: valid === true                    │
+│                                                                              │
+│  If valid === false → retry Actor with Monitor feedback                     │
+│  If 5 retries exhausted → escalate to user, do NOT apply partial solution   │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
 **3-Strike Protocol** (for persistent failures):
 
 ```bash
@@ -507,6 +522,13 @@ Return ONLY valid JSON following Predictor schema."
 ```
 
 ### 2.7 Apply Changes
+
+**GATE CHECK (mandatory before applying):**
+```
+IF Monitor.valid !== true:
+    → DO NOT PROCEED. Return to Actor with feedback.
+    → This is a HARD BLOCK, not a suggestion.
+```
 
 Apply via Write/Edit tools.
 

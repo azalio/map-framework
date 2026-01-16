@@ -1771,6 +1771,231 @@ See `.claude/skills/README.md` for:
 
 ---
 
+## 🔒 Security Model: Three-Layer Defense
+
+MAP Framework implements defense-in-depth security via three complementary layers.
+
+### Layer 1: Behavioral Rules (CLAUDE.md)
+
+Guidelines in `.claude/CLAUDE.md` that guide agent behavior:
+- NEVER skip mem0 deduplication checks
+- NEVER write code as orchestrator
+- NEVER commit .env files
+
+**Enforcement:** Soft (relies on agent compliance)
+
+### Layer 2: Permissions (settings.json)
+
+Access control rules in `.claude/settings.json`:
+
+```json
+{
+  "permissions": {
+    "deny": [
+      "Write(./.env*)",
+      "Write(**/*credentials*)",
+      "Write(**/*secret*)",
+      "Bash(rm:-rf)",
+      "Bash(git:push:--force:origin:main)"
+    ],
+    "allow": [
+      "Bash(mapify:*)",
+      "Bash(pytest:*)",
+      "Bash(make:lint)"
+    ]
+  }
+}
+```
+
+**Enforcement:** Medium (tool-level blocking with bypass risk)
+
+### Layer 3: Hooks (Deterministic Enforcement)
+
+PreToolUse and Stop hooks that run before/after tool execution:
+
+| Hook | Type | Purpose |
+|------|------|---------|
+| `block-secrets.py` | PreToolUse | Blocks access to .env, credentials, private keys |
+| `block-dangerous.sh` | PreToolUse | Blocks rm -rf, force push to main, git reset --hard |
+| `end-of-turn.sh` | Stop | Lints code, scans for secrets in staging |
+
+**Enforcement:** Hard (deterministic exit codes)
+
+### How the Layers Work Together
+
+```
+User: "Edit .env file"
+
+Layer 1 (CLAUDE.md): Agent should know not to edit .env
+    ↓ (but agent might miss this)
+Layer 2 (settings.json): permissions.deny blocks Edit(./.env*)
+    ↓ (but might be bypassed via path traversal)
+Layer 3 (block-secrets.py): Hook intercepts, returns exit 2
+    → BLOCKED with clear error message
+```
+
+### Security Hooks in Detail
+
+#### block-secrets.py (PreToolUse)
+
+Blocks Read/Edit/Write operations on sensitive files:
+
+**Blocked patterns:**
+- `.env`, `.env.local`, `.env.production`
+- `credentials.json`, `secrets.yaml`
+- Private keys (`id_rsa`, `*_private.key`)
+- AWS credentials, GCP service accounts
+
+**Example:**
+```bash
+# Attempting to read .env
+Read('.env')
+→ Exit 2: "Blocked: sensitive file detected (.env)"
+```
+
+#### block-dangerous.sh (PreToolUse)
+
+Blocks dangerous Bash commands:
+
+**Blocked patterns:**
+- `rm -rf /` or `rm -rf *`
+- `git push --force origin main`
+- `git push --force origin master`
+- `git reset --hard`
+
+**Allowed:**
+- `rm -rf ./node_modules` (scoped deletion)
+- `git push --force origin feature-branch` (non-main branch)
+- `git reset --soft` (non-hard reset)
+
+#### end-of-turn.sh (Stop)
+
+Quality gate that runs after Claude finishes responding:
+
+**Checks performed:**
+1. **Language-specific linting:**
+   - Python: runs `ruff` if available
+   - Node.js: runs `npm run lint` if available
+   - Go: runs `go vet` and `staticcheck`
+   - Rust: runs `cargo clippy`
+
+2. **Secret scanning:** Detects hardcoded secrets in staged files
+3. **.env check:** Warns if .env files are staged for commit
+
+**Exit codes:**
+- `0` = No issues
+- `1` = Warnings (non-blocking)
+- `2` = Critical issues (blocks and feeds to Claude)
+
+### Customizing Security
+
+**Per-project customization:**
+
+Edit `.claude/settings.json` for project-specific rules:
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker:*)",  // Allow docker commands
+      "Edit(./config/*)" // Allow editing config
+    ]
+  }
+}
+```
+
+**User overrides:**
+
+Create `.claude/settings.local.json` (gitignored) for personal overrides.
+
+---
+
+## ⏸️ Workflow Recovery: /map-resume
+
+Resume interrupted MAP workflows from the last checkpoint.
+
+### When to Use
+
+- After context window exhaustion mid-workflow
+- After accidental session termination
+- After `/clear` that interrupted a workflow
+- When returning to an unfinished task
+
+### How It Works
+
+1. **Detects checkpoint:** Checks for `.map/progress.md`
+2. **Shows progress:** Displays completed and remaining subtasks
+3. **Asks confirmation:** "Resume from last checkpoint?"
+4. **Continues workflow:** Resumes Actor→Monitor loop
+
+### Usage Example
+
+```bash
+/map-resume
+```
+
+**Output:**
+```markdown
+## Found Incomplete Workflow
+
+**Task:** Implement user authentication with JWT tokens
+**Current Phase:** implementation
+**Turn Count:** 12
+
+### Progress Overview
+3/5 subtasks completed (60%)
+
+### Completed Subtasks ✅
+- [x] **ST-001**: Create User model with SQLite schema
+- [x] **ST-002**: Implement password hashing with bcrypt
+- [x] **ST-003**: Create login API endpoint
+
+### Remaining Subtasks 📋
+- [ ] **ST-004**: Implement JWT token generation
+- [ ] **ST-005**: Add logout and token refresh endpoints
+
+How would you like to proceed?
+[Continue (Recommended)] [View Details] [Abandon]
+```
+
+### Auto-Checkpointing
+
+MAP workflows automatically save progress to `.map/progress.md`:
+
+- After decomposition phase
+- After each subtask completion
+- Before each Actor call
+
+**Checkpoint format:**
+```yaml
+---
+task_plan: "Implement authentication"
+current_phase: implementation
+turn_count: 12
+completed_subtasks:
+  - ST-001
+  - ST-002
+subtasks:
+  - id: ST-001
+    description: Create User model
+    status: complete
+  - id: ST-003
+    description: Create login endpoint
+    status: in_progress
+---
+
+# MAP Workflow Progress
+[Human-readable markdown body]
+```
+
+### Integration with /clear
+
+If you run `/clear` during a workflow:
+- Checkpoint is preserved in `.map/progress.md`
+- Fresh context starts from checkpoint state
+- Use `/map-resume` to continue
+
+---
+
 ## 🔌 Hooks System
 
 MAP Framework uses Claude Code hooks to enhance your workflow experience.
@@ -1868,12 +2093,17 @@ If you prefer direct execution without clarification:
 
 ### Other Active Hooks
 
-MAP Framework includes additional hooks:
+MAP Framework includes additional hooks for security and quality:
 
-- **SessionStart** - Auto-injects checkpoint after compaction (see [Compaction Resilience](#-compaction-resilience))
-- **PreToolUse** - Validates agent templates before modifications
-- **Stop** - Quality gates after code modifications
+| Hook | Event | Purpose |
+|------|-------|---------|
+| `improve-prompt.py` | UserPromptSubmit | Prompt clarification and enhancement |
+| `block-secrets.py` | PreToolUse | Block access to sensitive files |
+| `block-dangerous.sh` | PreToolUse | Block dangerous shell commands |
+| `end-of-turn.sh` | Stop | Quality gates (linting, secret scanning) |
 
-See `.claude/hooks/README.md` for implementation details.
+**Configuration:** See `.claude/settings.hooks.json` for hook configuration.
+
+**Security hooks:** See [Security Model: Three-Layer Defense](#-security-model-three-layer-defense) for details.
 
 ---

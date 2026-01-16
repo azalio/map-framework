@@ -4,41 +4,53 @@
   "hooks": {
     "UserPromptSubmit": [
       {
-        "description": "Auto-inject relevant playbook bullets into user prompts",
+        "description": "Improve user prompts with contextual evaluation",
         "hooks": [
           {
             "type": "command",
-            "command": ".claude/hooks/user-prompt-submit.sh",
+            "command": ".claude/hooks/improve-prompt.py",
             "timeout": 5,
-            "description": "Enhances prompts with contextually relevant patterns from playbook"
+            "description": "Evaluates prompts and adds clarification workflow if needed"
           }
         ]
       }
     ],
     "PreToolUse": [
       {
-        "matcher": "Edit|Write",
-        "description": "Validate agent template integrity before modifications",
+        "matcher": "Read|Edit|Write",
+        "description": "Block access to sensitive files (credentials, secrets, env files)",
         "hooks": [
           {
             "type": "command",
-            "command": ".claude/hooks/validate-agent-templates.sh",
+            "command": ".claude/hooks/block-secrets.py",
             "timeout": 5,
-            "description": "Prevents accidental removal of {{template}} variables from agents"
+            "description": "Prevents access to .env, credentials, private keys"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "description": "Block dangerous shell commands",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/block-dangerous.sh",
+            "timeout": 5,
+            "description": "Prevents rm -rf, force push to main, git reset --hard"
           }
         ]
       }
     ],
     "Stop": [
       {
-        "matcher": "Write|Edit",
-        "description": "Quality gates - run automated checks after code modifications",
+        "matcher": "*",
+        "description": "Quality gates - run automated checks at end of turn",
         "hooks": [
           {
             "type": "command",
-            "command": ".claude/hooks/stop.sh",
+            "command": ".claude/hooks/end-of-turn.sh",
             "timeout": 30,
-            "description": "Catches syntax errors and test failures before response submission"
+            "description": "Runs linters, checks for secrets in staging, warns about .env commits"
           }
         ]
       }
