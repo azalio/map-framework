@@ -9,7 +9,7 @@ MAP Framework uses a **strictly sequential orchestration** that begins with Task
 ```mermaid
 flowchart TD
     Start([Task Start]) --> Decompose[0. TaskDecomposer<br/>Create subtasks]
-    Decompose --> Plan[2.5 Recitation Plan<br/>Create current_plan.md]
+    Decompose --> Plan[2.5 Checkpoint<br/>Create progress.md]
     Plan --> Actor[1. Actor<br/>Implement subtask]
     Actor --> Monitor[2. Monitor<br/>Quality validation]
 
@@ -234,7 +234,7 @@ Before completing any MAP workflow subtask the orchestrator **MUST** check 4 que
 ### Principles of Context Engineering
 
 1. **Append-Only Context** — NEVER edit previous messages in history (preserves KV-cache efficiency)
-2. **External Storage as Context Extension** — `.map/current_plan.md` as external memory
+2. **External Storage as Context Extension** — `.map/progress.md` as external memory
 3. **Focusing Attention (“Beacon” pattern)** — keeps goals “fresh” in recent tokens via recitation
 
 ## Exception: Non-MAP Tasks

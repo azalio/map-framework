@@ -26,7 +26,7 @@ description: Resume incomplete MAP workflow from checkpoint
 Check if checkpoint file exists:
 
 ```bash
-test -f .map/progress.md && echo "Checkpoint found" || echo "No checkpoint"
+test -f .map/progress.md && echo "Found incomplete workflow" || echo "No checkpoint"
 ```
 
 **If no checkpoint exists:**
@@ -90,38 +90,16 @@ Parse the YAML frontmatter and display:
 
 **⚠️ CRITICAL: Always ask for user confirmation before resuming.**
 
-Present options to the user:
-
-```markdown
-### Resume Options
-
-1. **Continue** - Resume workflow from last checkpoint (recommended)
-2. **View Details** - Show full task plan before deciding
-3. **Abandon** - Clear checkpoint and start fresh
-```
-
-Use AskUserQuestion tool:
+Ask a simple yes/no question:
 
 ```
-AskUserQuestion(
-  questions=[{
-    "question": "How would you like to proceed with this incomplete workflow?",
-    "header": "Action",
-    "options": [
-      {"label": "Continue (Recommended)", "description": "Resume workflow from last checkpoint, continuing with remaining subtasks"},
-      {"label": "View Details", "description": "Read the full task plan before deciding"},
-      {"label": "Abandon", "description": "Clear checkpoint and start fresh with a new workflow"}
-    ],
-    "multiSelect": false
-  }]
-)
+Resume from last checkpoint? [Y/n]
 ```
 
 **Handle user response:**
 
-- **Continue:** Proceed to Step 4
-- **View Details:** Read and display `.map/task_plan_*.md`, then ask again
-- **Abandon:** Delete checkpoint file and exit
+- **Y or y or Enter (default):** Proceed to Step 4 (resume workflow)
+- **n or N:** Delete checkpoint file and exit with message "Checkpoint cleared. Start fresh with /map-efficient."
 
 ---
 
@@ -274,18 +252,17 @@ Claude: ## Found Incomplete Workflow
 - [ ] **ST-004**: Implement JWT token generation
 - [ ] **ST-005**: Add logout and token refresh endpoints
 
-How would you like to proceed?
-[Continue (Recommended)] [View Details] [Abandon]
+Resume from last checkpoint? [Y/n]
 
-User: Continue
+User: Y
 
 Claude: Resuming workflow from ST-004...
 [Continues Actor→Monitor loop for remaining subtasks]
 ```
 
-### Example 2: Resume with Validation
+### Example 2: User Abandons Checkpoint
 
-User wants to review before continuing:
+User decides to start fresh:
 
 ```
 User: /map-resume
@@ -293,21 +270,11 @@ User: /map-resume
 Claude: ## Found Incomplete Workflow
 [Shows progress summary]
 
-User: View Details
+Resume from last checkpoint? [Y/n]
 
-Claude: [Reads and displays full task plan]
+User: n
 
-## Task Plan: Implement user authentication
-[Full decomposition with validation criteria]
-
-### Now ready to resume
-
-How would you like to proceed?
-[Continue] [Abandon]
-
-User: Continue
-
-Claude: Resuming workflow...
+Claude: Checkpoint cleared. Start fresh with /map-efficient.
 ```
 
 ### Example 3: No Checkpoint

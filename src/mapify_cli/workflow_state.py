@@ -102,16 +102,17 @@ class WorkflowState:
             frontmatter_lines.append(f"branch_name: {self.branch_name}")
 
         # Completed subtasks as YAML list
-        frontmatter_lines.append("completed_subtasks:")
         if self.completed_subtasks:
+            frontmatter_lines.append("completed_subtasks:")
             for subtask_id in self.completed_subtasks:
                 frontmatter_lines.append(f"  - {self._escape_yaml(subtask_id)}")
         else:
-            frontmatter_lines.append("  []")
+            # Use inline format for empty list
+            frontmatter_lines.append("completed_subtasks: []")
 
         # Subtasks list
-        frontmatter_lines.append("subtasks:")
         if self.subtasks:
+            frontmatter_lines.append("subtasks:")
             for subtask in self.subtasks:
                 frontmatter_lines.append(f"  - id: {self._escape_yaml(subtask.id)}")
                 frontmatter_lines.append(f"    description: {self._escape_yaml(subtask.description)}")
@@ -119,7 +120,8 @@ class WorkflowState:
                 if subtask.completed_at:
                     frontmatter_lines.append(f"    completed_at: {subtask.completed_at}")
         else:
-            frontmatter_lines.append("  []")
+            # Use inline format for empty list
+            frontmatter_lines.append("subtasks: []")
 
         frontmatter_lines.append("---")
         frontmatter = "\n".join(frontmatter_lines)

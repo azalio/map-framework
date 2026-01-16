@@ -599,60 +599,61 @@ Context compaction occurs when Claude's conversation memory reaches its limit. W
 - But your work files on disk remain intact
 - MAP **automatically restores your workflow state** in the new session
 
-### Automatic Recovery (Phase 2) ✨ NEW
+### Checkpoint Recovery with /map-resume
 
 **How it works:**
 
-MAP Framework uses a **SessionStart hook** that automatically injects your checkpoint at the beginning of each new session. When you start a conversation:
+MAP Framework uses a `/map-resume` command to recover interrupted workflows. When you start a new session after context exhaustion:
 
-1. **Hook triggers automatically** - No user action required
-2. **Validates checkpoint file** - 4-layer security validation (see Security section below)
-3. **Injects context seamlessly** - Claude receives your plan with a restoration header
+1. **Run `/map-resume`** - Simple command to check for incomplete workflow
+2. **View progress summary** - Shows completed and remaining subtasks
+3. **Confirm Y/n** - Resume workflow or clear checkpoint and start fresh
 
 **What you'll see:**
 
-When starting a new session with an existing checkpoint (`.map/current_plan.md`), Claude will display:
+When running `/map-resume` with an existing checkpoint (`.map/progress.md`):
 
 ```markdown
-# 🔄 MAP Workflow Context Restored
+## Found Incomplete Workflow
 
-This context was automatically restored from your previous session's checkpoint.
-The plan below reflects your current task progress and helps maintain workflow
-continuity after context compaction.
+**Task:** Implement JWT authentication
+**Current Phase:** implementation
+**Turn Count:** 12
 
----
+### Progress Overview
+3/5 subtasks completed (60%)
 
-# Current Task: feat_auth_1730000000
-## Goal: Implement JWT authentication
-## Progress: 3/5 subtasks completed
+### Completed Subtasks ✅
+- [x] **ST-001**: Create User model
+- [x] **ST-002**: Implement login endpoint
+- [x] **ST-003**: Add token validation middleware
 
-- [✓] 1/5: Create User model
-- [✓] 2/5: Implement login endpoint
-- [✓] 3/5: Add token validation middleware
-- [→] 4/5: Add refresh token logic (CURRENT)
-- [☐] 5/5: Write integration tests
+### Remaining Subtasks 📋
+- [ ] **ST-004**: Add refresh token logic
+- [ ] **ST-005**: Write integration tests
+
+Resume from last checkpoint? [Y/n]
 ```
 
-**Zero cognitive load** - You can immediately continue with:
+**Simple recovery** - Press Y to continue:
 
 ```
-User: continue with the current subtask
+User: Y
 
-Claude: [already has context from auto-injected checkpoint]
-        Continuing subtask 4: "Add refresh token logic"
-        [implements solution]
+Claude: Resuming workflow from ST-004...
+        [continues Actor→Monitor loop for remaining subtasks]
 ```
 
 **Benefits:**
 
-- ✅ **Invisible recovery** - No manual file references needed
-- ✅ **Always current** - Checkpoint auto-updates on every status change
-- ✅ **Secure by design** - 4-layer validation prevents malicious files
-- ✅ **Cross-session continuity** - Start new session, pick up exactly where you left off
+- ✅ **Explicit recovery** - User controls when to resume
+- ✅ **Progress visibility** - See exactly what's done and remaining
+- ✅ **Simple Y/n prompt** - No complex options
+- ✅ **Cross-session continuity** - Resume in any new conversation
 
-### Security Validations
+### Security Design
 
-The SessionStart hook implements **defense-in-depth security** with 4 validation layers:
+The checkpoint format (`.map/progress.md`) is designed with security in mind:
 
 1. **Path Traversal Prevention**
    - Only allows files within `.map/` directory
@@ -681,26 +682,20 @@ The SessionStart hook implements **defense-in-depth security** with 4 validation
 - **Control character injection** - Terminal escape codes could manipulate Claude's output
 - **Encoding exploits** - Binary data could contain executable payloads
 
-**Implementation:**
+**Mitigation:**
 
-```python
-# .claude/hooks/helpers/validate_checkpoint_file.py
-# All checks use AND logic - file must pass ALL layers to be valid
-
-validate_path_security()      # Layer 1: .map/ only
-validate_file_size()           # Layer 2: <256KB
-read_and_validate_content()   # Layer 3: UTF-8
-sanitize_content()             # Layer 4: Strip control chars
-```
-
-See [validate_checkpoint_file.py](.claude/hooks/helpers/validate_checkpoint_file.py) for implementation details.
+The checkpoint format (`.map/progress.md`) is designed with security in mind:
+- YAML frontmatter with simple key-value pairs (no code execution)
+- Human-readable markdown body (can be visually inspected)
+- Small file sizes (workflow state only, not code)
+- `/map-resume` command validates checkpoint before resuming
 
 ### Manual Recovery (Fallback)
 
 **When to use manual recovery:**
 
-- **Hook fails** - SessionStart hook not working (see Troubleshooting)
-- **Debugging** - Want to verify checkpoint contents before injecting
+- **Corrupted checkpoint** - `/map-resume` can't parse checkpoint
+- **Debugging** - Want to verify checkpoint contents before resuming
 - **Explicit control** - Prefer to manually reference files
 
 **Steps:**
@@ -708,18 +703,16 @@ See [validate_checkpoint_file.py](.claude/hooks/helpers/validate_checkpoint_file
 1. **Locate checkpoint files** (auto-saved during workflow):
 
    ```
-   .map/current_plan.md     - Human-readable plan
-   .map/dev_docs/context.md - Project context
-   .map/dev_docs/tasks.md   - Task checklist
+   .map/progress.md         - Workflow state (YAML frontmatter + markdown)
+   .map/task_plan_*.md      - Task decomposition with validation criteria
    ```
 
 2. **After compaction**, manually reference files:
 
    ```
    User: continue MAP workflow
-         @.map/current_plan.md
-         @.map/dev_docs/context.md
-         @.map/dev_docs/tasks.md
+         @.map/progress.md
+         @.map/task_plan_map-to-enchance.md
 
    Claude: [reads files]
            Resuming subtask 4: "Add refresh token logic"
@@ -728,90 +721,82 @@ See [validate_checkpoint_file.py](.claude/hooks/helpers/validate_checkpoint_file
 
 ### Before/After Comparison
 
-| Phase 1 (Manual) | Phase 2 (Automatic) ✨ |
-|------------------|----------------------|
-| Notice context getting low | No monitoring needed |
-| Check `.map/` files manually | Automatic on every update |
-| Copy file paths | No action required |
-| Paste paths with `@` prefix in new session | Hook auto-injects checkpoint |
-| Claude reads files manually | Claude receives context automatically |
-| **User action required** | **Zero user action** |
+| Without MAP Recovery | With /map-resume ✨ |
+|---------------------|---------------------|
+| Lose all workflow context | Context preserved in checkpoint |
+| Start over from scratch | Resume from last completed subtask |
+| Copy file paths manually | Single command recovery |
+| Paste paths with `@` prefix | Simple Y/n confirmation |
+| **Workflow abandoned** | **Workflow continues** |
 
 **Example Workflow:**
 
-**Phase 1 (Manual):**
+**Without MAP Recovery:**
 ```
 [Context gets low]
-[Check .map/ files exist]
 [Compaction happens]
 [New session starts]
-User: continue MAP workflow
-      @.map/current_plan.md
-      @.map/dev_docs/context.md
-      @.map/dev_docs/tasks.md
-Claude: [reads files] Resuming...
+User: what was I working on?
+Claude: I don't have context from your previous session...
+[User has to explain everything again]
 ```
 
-**Phase 2 (Automatic):**
+**With /map-resume:**
 ```
 [Context gets low]
 [Compaction happens]
-[New session starts - hook triggers automatically]
-Claude: # 🔄 MAP Workflow Context Restored
-        [checkpoint injected automatically]
-User: continue with current subtask
-Claude: [already has context] Continuing subtask 4...
+[New session starts]
+User: /map-resume
+Claude: ## Found Incomplete Workflow
+        3/5 subtasks completed (60%)
+        Resume from last checkpoint? [Y/n]
+User: Y
+Claude: Resuming workflow from ST-004...
+        [continues Actor→Monitor loop]
 ```
 
 ### Troubleshooting
 
-#### Hook not working?
+#### /map-resume not working?
 
 **Symptoms:**
-- New session starts WITHOUT checkpoint restoration header
-- No "🔄 MAP Workflow Context Restored" message
+- `/map-resume` says "No Workflow in Progress"
+- Checkpoint exists but won't load
 
 **Diagnosis:**
 
 1. **Check if checkpoint file exists:**
    ```bash
-   ls -lh .map/current_plan.md
+   ls -lh .map/progress.md
    ```
    - If missing: No checkpoint to restore (expected for new projects)
    - If exists: Proceed to step 2
 
-2. **Check hook is installed:**
+2. **Check checkpoint file contents:**
    ```bash
-   ls -l .claude/hooks/session-start.sh
+   head -20 .map/progress.md
    ```
-   - If missing: Run `mapify init` to install hooks
-   - If exists: Proceed to step 3
+   - Should contain valid YAML frontmatter with `task_plan:`, `current_phase:`, etc.
+   - If malformed: Delete and start fresh with `/map-efficient`
 
-3. **Check hook logs** (Claude Code stderr):
-   - Look for: `[session-start] SessionStart hook triggered`
-   - Look for: `[session-start] ✅ Successfully validated checkpoint`
-   - If error: Check validation failure reason
-
-4. **Manual validation test:**
+3. **Resume workflow:**
    ```bash
-   python3 .claude/hooks/helpers/validate_checkpoint_file.py \
-       --file .map/current_plan.md
+   /map-resume
    ```
-   - Should output: `{"valid": true, ...}`
-   - If `valid: false`: Check error message for reason
+   - Shows progress summary and asks for confirmation
+   - Y to resume, n to clear checkpoint and start fresh
 
 **Common issues:**
 
 | Issue | Cause | Solution |
 |-------|-------|----------|
-| Hook not executing | Hooks not enabled in Claude Code | Check Claude Code settings |
-| File too large | Checkpoint >256KB | Reduce plan verbosity, split into subtasks |
-| Path traversal error | Checkpoint outside `.map/` | Move checkpoint to `.map/current_plan.md` |
-| UTF-8 decoding error | Binary or corrupted file | Delete and let workflow regenerate checkpoint |
+| No checkpoint found | Workflow not started or completed | Start new workflow with `/map-efficient` |
+| YAML parse error | Corrupted checkpoint | Delete `.map/progress.md` and start fresh |
+| Missing task plan | Task plan file deleted | Delete checkpoint and restart workflow |
 
 **Fallback:**
 
-If hook continues to fail, use [Manual Recovery](#manual-recovery-fallback) workflow.
+If `/map-resume` continues to fail, use [Manual Recovery](#manual-recovery-fallback) workflow.
 
 #### Safe re-initialization with merge behavior
 
@@ -881,16 +866,8 @@ After `mapify init`:
         "matcher": "",  // ✅ MAP Framework hook added
         "description": "Enhance prompts with clarification and playbook context",
         "hooks": [
-          {"type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/improve-prompt.py"},
-          {"type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/user-prompt-submit.sh"}
+          {"type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/improve-prompt.py"}
         ]
-      }
-    ],
-    "SessionStart": [  // ✅ MAP Framework hook added
-      {
-        "matcher": "",
-        "description": "Auto-inject MAP workflow context from checkpoint",
-        "hooks": [{"type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/session-start.sh"}]
       }
     ]
   }
@@ -912,36 +889,36 @@ After `mapify init`:
    /map-efficient "add test function to app.py"
    ```
 
-2. **Wait for first subtask completion** - Checkpoint should be created at `.map/current_plan.md`
+2. **Wait for first subtask completion** - Checkpoint should be created at `.map/progress.md`
 
 3. **Start NEW conversation** (simulate compaction):
    - Open new chat or use "Clear conversation" (if available)
 
-4. **Verify restoration:**
-   - Look for "🔄 MAP Workflow Context Restored" header
-   - Check plan shows correct progress (e.g., "1/3 completed")
+4. **Run recovery command:**
+   ```bash
+   /map-resume
+   ```
 
-5. **Continue workflow:**
-   ```
-   User: continue MAP workflow
-   Claude: [should immediately continue from saved state]
-   ```
+5. **Verify restoration:**
+   - Look for "Found Incomplete Workflow" header
+   - Check plan shows correct progress (e.g., "1/3 completed")
+   - Press Y to continue
 
 **Expected behavior:**
 
-- ✅ Hook triggers automatically on new session
-- ✅ Checkpoint injected with restoration header
-- ✅ Plan shows accurate progress (completed/current/pending subtasks)
-- ✅ Can continue workflow immediately without manual file references
+- ✅ `/map-resume` detects checkpoint file
+- ✅ Progress summary shows completed/remaining subtasks
+- ✅ Y/n prompt allows user control
+- ✅ Workflow continues from last incomplete subtask
 
 ### Key Points
 
-- ✅ **Automatic restoration** - SessionStart hook injects checkpoint on every new session
+- ✅ **Explicit recovery** - `/map-resume` command to restore workflow state
 - ✅ **Progress auto-saves** - Every workflow step saves to disk
-- ✅ **Secure by design** - 4-layer validation (path, size, UTF-8, sanitization)
+- ✅ **Simple checkpoint format** - YAML frontmatter + markdown body
 - ✅ **No manual checkpointing required** - Files update automatically during workflow
 - ✅ **Files persist forever** - They're on your filesystem, not in conversation memory
-- ✅ **Cross-session recovery** - Resume in any new conversation seamlessly
+- ✅ **Cross-session recovery** - Resume in any new conversation with `/map-resume`
 - ✅ **Manual fallback available** - Reference `.map/` files directly if needed
 
 ### Architecture
@@ -949,22 +926,21 @@ After `mapify init`:
 MAP uses file-based persistence with automatic injection:
 
 **Files:**
-- `.map/current_plan.json` - Structured plan data
-- `.map/current_plan.md` - Human-readable plan (auto-injected by SessionStart hook)
+- `.map/progress.md` - Workflow checkpoint with YAML frontmatter (machine-readable) + markdown body (human-readable)
+- `.map/task_plan_*.md` - Task decomposition with validation criteria
 - `.map/dev_docs/context.md` - Project context
 - `.map/dev_docs/tasks.md` - Task checklist
 
-**Hooks:**
-- `.claude/hooks/session-start.sh` - SessionStart hook (auto-injection logic)
-- `.claude/hooks/helpers/validate_checkpoint_file.py` - Security validation
+**Recovery command:**
+- `/map-resume` - Detects checkpoint and offers to resume incomplete workflow
 
 These files survive compaction because they're stored on disk, not in conversation memory.
 
 **Technical Details:**
 
-For implementation details on SessionStart hook, security validation, and compaction resilience architecture, see:
+For implementation details on checkpoint format and compaction resilience architecture, see:
 - [ARCHITECTURE.md - Context Engineering](ARCHITECTURE.md#context-engineering) - Recitation Pattern and Compaction Resilience
-- [ARCHITECTURE.md - Context Engineering Roadmap](ARCHITECTURE.md#context-engineering-roadmap) - Phase 2 checkpoint implementation
+- `src/mapify_cli/workflow_state.py` - WorkflowState class with auto-checkpointing
 
 ## 🔍 Dependency Validation
 
@@ -2054,7 +2030,7 @@ MAP uses **multiple UserPromptSubmit hooks** that run in parallel:
 
 > **Note:** Claude Code executes all matching hooks in parallel. Each hook's `additionalContext` output is concatenated and added to the prompt. The order is not guaranteed, but both enhancements are applied.
 
-> **Implementation detail:** Workflow and skill suggestions are handled within the Playbook Injection hook (`.claude/hooks/user-prompt-submit.sh`), not as separate hooks.
+> **Implementation detail:** Prompt improvement, playbook injection, and workflow suggestions are handled within the `improve-prompt.py` hook (`.claude/hooks/improve-prompt.py`).
 
 **Benefits:**
 - Both hooks enhance the prompt with different types of context
@@ -2078,11 +2054,11 @@ If you prefer direct execution without clarification:
     "UserPromptSubmit": [
       // Comment out or remove Prompt-Improver hook
       {
-        "description": "Step 2: Inject playbook patterns and suggest workflows",
+        "description": "Enhance prompts with clarification and playbook context",
         "hooks": [
           {
             "type": "command",
-            "command": ".claude/hooks/user-prompt-submit.sh"
+            "command": "python3 .claude/hooks/improve-prompt.py"
           }
         ]
       }

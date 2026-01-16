@@ -327,6 +327,80 @@ class TestEdgeCases:
             loaded = WorkflowState.load(Path(tmpdir))
             assert loaded.subtasks == []
 
+    def test_empty_lists_use_inline_yaml_format(self):
+        """Empty lists must use inline YAML format: 'key: []' not 'key:\\n  []'."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = WorkflowState(task_plan="Task with empty lists")
+            # Don't add any subtasks - both lists should be empty
+            state.save_checkpoint(Path(tmpdir))
+
+            content = (Path(tmpdir) / ".map" / "progress.md").read_text()
+
+            # Must use inline format (single line)
+            assert "completed_subtasks: []" in content, \
+                "Empty completed_subtasks must use inline format 'completed_subtasks: []'"
+            assert "subtasks: []" in content, \
+                "Empty subtasks must use inline format 'subtasks: []'"
+
+            # Must NOT use multi-line format
+            assert "completed_subtasks:\n  []" not in content, \
+                "Must not use multi-line format for empty completed_subtasks"
+            assert "subtasks:\n  []" not in content, \
+                "Must not use multi-line format for empty subtasks"
+
+    def test_non_empty_lists_use_multiline_yaml_format(self):
+        """Non-empty lists must use multi-line YAML format with proper indentation."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = WorkflowState(task_plan="Task with items")
+            state.add_subtask("ST-001", "First subtask")
+            state.mark_subtask_complete("ST-001")
+            state.save_checkpoint(Path(tmpdir))
+
+            content = (Path(tmpdir) / ".map" / "progress.md").read_text()
+
+            # completed_subtasks should be multi-line with items
+            assert "completed_subtasks:" in content
+            assert "  - ST-001" in content, \
+                "Non-empty completed_subtasks must use multi-line format"
+
+            # subtasks should be multi-line with object items
+            assert "subtasks:" in content
+            assert "  - id: ST-001" in content, \
+                "Non-empty subtasks must use multi-line format"
+
+    def test_yaml_format_round_trip(self):
+        """Save → Load → Save should produce consistent YAML format."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # First save with empty lists
+            state1 = WorkflowState(task_plan="Round trip test")
+            state1.save_checkpoint(Path(tmpdir))
+            content1 = (Path(tmpdir) / ".map" / "progress.md").read_text()
+
+            # Load and save again
+            state2 = WorkflowState.load(Path(tmpdir))
+            state2.save_checkpoint(Path(tmpdir))
+            content2 = (Path(tmpdir) / ".map" / "progress.md").read_text()
+
+            # Extract YAML frontmatter only (between --- markers), excluding timestamps
+            def get_frontmatter_without_timestamps(content):
+                import re
+                match = re.match(r'^---\n(.*?)\n---', content, re.DOTALL)
+                if not match:
+                    return ""
+                frontmatter = match.group(1)
+                # Remove timestamp lines
+                lines = [
+                    line for line in frontmatter.split('\n')
+                    if not any(ts in line for ts in ['started_at:', 'updated_at:'])
+                ]
+                return '\n'.join(lines)
+
+            fm1 = get_frontmatter_without_timestamps(content1)
+            fm2 = get_frontmatter_without_timestamps(content2)
+
+            assert fm1 == fm2, \
+                f"Round-trip should produce identical frontmatter.\nFirst:\n{fm1}\n\nSecond:\n{fm2}"
+
     def test_multiple_saves(self):
         """Multiple saves update the file correctly."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -390,10 +464,17 @@ branch_name: 'single quotes'"""
         result = WorkflowState._parse_yaml_frontmatter(text)
         assert result["completed_subtasks"] == ["ST-001", "ST-002"]
 
-    def test_parse_empty_list(self):
-        """Parse empty list."""
+    def test_parse_empty_list_multiline(self):
+        """Parse empty list in multi-line format (legacy)."""
         text = """completed_subtasks:
   []"""
+
+        result = WorkflowState._parse_yaml_frontmatter(text)
+        assert result["completed_subtasks"] == []
+
+    def test_parse_empty_list_inline(self):
+        """Parse empty list in inline format (new standard)."""
+        text = """completed_subtasks: []"""
 
         result = WorkflowState._parse_yaml_frontmatter(text)
         assert result["completed_subtasks"] == []

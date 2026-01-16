@@ -159,7 +159,8 @@ MAP Framework implements cognitive architecture inspired by prefrontal cortex fu
 - Graceful degradation if agent fails
 
 **State Management:**
-- Current plan stored in `.map/current_plan.md` (Recitation Pattern)
+- Workflow checkpoint stored in `.map/progress.md` (YAML frontmatter + markdown)
+- Task plan stored in `.map/task_plan_*.md`
 - Workflow logs in `.map/workflow_logs/`
 - Metrics tracked in `.claude/metrics/agent_metrics.jsonl`
 
@@ -1847,7 +1848,7 @@ MAP Framework applies cutting-edge context engineering principles for AI agents,
 
 **Problem:** On long tasks (5+ subtasks), models lose focus and forget goals as context window fills.
 
-**Solution:** Attention focus mechanism — `.map/current_plan.md` is updated before each step, keeping goals "fresh" in the context window.
+**Solution:** Attention focus mechanism — `.map/progress.md` is updated before each step, keeping goals "fresh" in the context window.
 
 **Mechanism:**
 
@@ -1887,8 +1888,8 @@ MAP Framework applies cutting-edge context engineering principles for AI agents,
 **Implementation:**
 
 Workflow state is managed through file-based persistence in `.map/` directory:
-- `.map/current_plan.json` - Structured plan data
-- `.map/current_plan.md` - Human-readable plan for injection
+- `.map/progress.md` - Workflow checkpoint (YAML frontmatter + markdown body)
+- `.map/task_plan_*.md` - Task decomposition with validation criteria
 - `.map/dev_docs/context.md` - Project context
 - `.map/dev_docs/tasks.md` - Task checklist
 
@@ -1919,8 +1920,12 @@ Filesystem (persists forever)           Conversation Memory (clears on compactio
 │   │   └── depends_on[]
 │   └── current_subtask_id
 │
-├── current_plan.md                     ← Human-readable format
-│   └── Formatted for Claude to read    ← Injected after compaction
+├── progress.md                         ← Workflow checkpoint
+│   ├── YAML frontmatter (machine state)
+│   └── Markdown body (human-readable)
+│
+├── task_plan_*.md                      ← Task decomposition
+│   └── Subtasks with validation criteria
 │
 └── dev_docs/
     ├── context.md                      ← Project-specific context
@@ -1930,22 +1935,21 @@ Filesystem (persists forever)           Conversation Memory (clears on compactio
 **Persistence Mechanism:**
 
 1. **Automatic Saves** (every workflow step):
-   - Status changes automatically update `.map/current_plan.json` and `.map/current_plan.md`
-   - SessionStart hook injects checkpoint on new sessions
+   - Status changes automatically update `.map/progress.md`
+   - WorkflowState class handles serialization/deserialization
 
 2. **Recovery Workflow** (after compaction):
    ```
-   User: continue MAP workflow
-         @.map/current_plan.md
-         @.map/dev_docs/context.md
-         @.map/dev_docs/tasks.md
+   User: /map-resume
 
-   Claude: [reads files from disk]
-           Resuming from saved state...
-           Current task: feat_auth_1730000000
+   Claude: ## Found Incomplete Workflow
            Progress: 3/5 completed
-           Current subtask: 4 - Add error handling
-           [continues implementation]
+           Resume from last checkpoint? [Y/n]
+
+   User: Y
+
+   Claude: Resuming workflow from ST-004...
+           [continues Actor→Monitor loop]
    ```
 
 **Why This Works:**
@@ -1968,63 +1972,62 @@ Filesystem (persists forever)           Conversation Memory (clears on compactio
 - ✅ **Cross-session** - Resume in any new conversation
 
 **Implementation:**
-- Files: `.map/current_plan.json`, `.map/current_plan.md`
-- Hook: `.claude/hooks/session-start.sh` (auto-injection)
+- Checkpoint: `.map/progress.md` (YAML frontmatter + markdown body)
+- Task plan: `.map/task_plan_*.md` (subtask decomposition with validation criteria)
+- Recovery: `/map-resume` command (detects checkpoint and offers to resume)
 
 ### Automatic Recovery (Phase 2)
 
 **Problem:** Manual recovery (Phase 1) requires users to reference checkpoint files after compaction, adding cognitive load and causing 60% workflow abandonment rate.
 
-**Solution:** SessionStart hook automatically injects `.map/current_plan.md` on session start, providing seamless zero-touch recovery.
+**Solution:** `/map-resume` command detects `.map/progress.md` checkpoint and offers to resume incomplete workflow with a simple Y/n prompt.
 
 **Architecture:**
 
 ```
-SessionStart Event (Claude Code)
+User runs /map-resume command
         ↓
-.claude/hooks/session-start.sh (94 lines)
+Command checks .map/progress.md existence
         ↓
-    [Check .map/current_plan.md exists?]
+    [Checkpoint exists?]
         ↓ Yes
-    Call validator helper
+    Parse YAML frontmatter for workflow state
         ↓
-.claude/hooks/helpers/validate_checkpoint_file.py (350 lines)
+    Display progress summary:
+    - Task plan
+    - Completed subtasks (with checkmarks)
+    - Remaining subtasks
         ↓
-    [4-Layer Security Validation]
-    ├─ Layer 1: Path Traversal Prevention
-    ├─ Layer 2: Size Bomb Protection (256KB limit)
-    ├─ Layer 3: UTF-8 Validation
-    └─ Layer 4: Content Sanitization
+    Prompt: "Resume from last checkpoint? [Y/n]"
         ↓
-    [All layers pass?]
+    [User confirms?]
         ↓ Yes
-    Return JSON: {valid: true, sanitized_content: "..."}
+    Load task plan from .map/task_plan_*.md
         ↓
-Hook injects content with restoration header
+    Continue Actor→Monitor loop for remaining subtasks
         ↓
-Claude receives context automatically
-        ↓
-[Workflow continues from checkpoint]
+    [Workflow continues from checkpoint]
 ```
 
 **Implementation:**
 
-| Component | Location | Size | Purpose |
-|-----------|----------|------|---------|
-| Hook script | `.claude/hooks/session-start.sh` | 94 lines | Orchestrates validation and injection |
-| Validator helper | `.claude/hooks/helpers/validate_checkpoint_file.py` | 350 lines | 4-layer security validation |
-| Unit tests | `tests/hooks/test_validate_checkpoint_file.py` | 41 tests | Validation logic coverage |
-| Integration tests | `tests/hooks/test_session_start_integration.py` | 23 tests | End-to-end hook behavior |
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| Resume command | `.claude/commands/map-resume.md` | User-facing recovery workflow |
+| WorkflowState class | `src/mapify_cli/workflow_state.py` | Checkpoint serialization/deserialization |
+| Checkpoint file | `.map/progress.md` | YAML frontmatter + markdown progress |
+| Task plan | `.map/task_plan_*.md` | Subtask decomposition with validation |
+| Unit tests | `tests/test_workflow_state.py` | WorkflowState logic coverage |
 
 **Execution Flow:**
 
-1. **SessionStart event triggers** - Claude Code detects new conversation session
-2. **Hook checks checkpoint existence** - Tests if `.map/current_plan.md` exists
-3. **Validator performs security checks** - Python helper runs 4-layer validation (see below)
-4. **Sanitization applied** - Control characters stripped, UTF-8 verified
-5. **Injection with header** - Hook returns JSON with `additionalContext` field
-6. **Claude receives context** - Checkpoint content appears in conversation memory automatically
-7. **Workflow resumes** - No user action required, seamless continuation
+1. **User runs `/map-resume`** - Explicit recovery command (no auto-injection)
+2. **Command checks checkpoint** - Tests if `.map/progress.md` exists
+3. **YAML frontmatter parsed** - WorkflowState.load() extracts machine state
+4. **Progress summary displayed** - Shows completed/remaining subtasks
+5. **User confirms Y/n** - Simple prompt, Y resumes, n clears checkpoint
+6. **Task plan loaded** - Full decomposition with validation criteria
+7. **Workflow resumes** - Actor→Monitor loop continues from last incomplete subtask
 
 **Security Validation (Defense-in-Depth):**
 
@@ -2135,26 +2138,24 @@ Claude Code hooks run in subprocess with restricted capabilities:
 
 **Integration with .map/ Persistence:**
 
-**Phase 1 (Manual)** vs **Phase 2 (Automatic)**:
+**Without Recovery** vs **With /map-resume**:
 
 ```
-Phase 1: User-Driven Recovery          Phase 2: Hook-Driven Recovery
-─────────────────────────────          ──────────────────────────────
-.map/current_plan.md                   .map/current_plan.md
+Without Recovery                       With /map-resume
+────────────────                       ────────────────
+Context exhausted                      Context exhausted
         ↓                                      ↓
-User locates .map/ files               SessionStart hook (automatic)
-manually                                       ↓
-        ↓                              Validator validates (4 layers)
-Output shows file paths:                       ↓
-  @.map/current_plan.md                Auto-injects to context
+Workflow state lost                    .map/progress.md persists
         ↓                                      ↓
-User copies paths manually             Claude has context immediately
+Start over from scratch                User runs /map-resume
         ↓                                      ↓
-User pastes in new session             [Workflow continues automatically]
-        ↓
-Claude reads from context
-        ↓
-Workflow continues
+Re-explain everything                  Checkpoint parsed
+        ↓                                      ↓
+[Workflow abandoned]                   Progress summary shown
+                                               ↓
+                                       User confirms Y/n
+                                               ↓
+                                       [Workflow continues]
 ```
 
 **Key Differences:**

@@ -71,7 +71,7 @@ Using the Task tool for agent invocation provides:
 
 **Recitation Pattern:**
 
-- The **Orchestrator** creates `.map/current_plan.md` with visual progress markers (✓, →, ☐, ✗)
+- The **Orchestrator** creates `.map/progress.md` with visual progress markers (✓, →, ☐, ✗)
 - Keeps goals “fresh” in context on long-running tasks
 
 ### Installation
