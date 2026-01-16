@@ -258,8 +258,8 @@ class WorkflowState:
             if not stripped:
                 continue
 
-            # Check for top-level key
-            if line[0] not in (" ", "\t") and ":" in stripped:
+            # Check for top-level key (line is guaranteed non-empty here due to stripped check above)
+            if line and line[0] not in (" ", "\t") and ":" in stripped:
                 # Save previous list/object if any
                 if current_list is not None and current_key:
                     if current_object:

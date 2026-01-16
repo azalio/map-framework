@@ -68,7 +68,9 @@ run_check() {
 # -----------------------------------------------------------------------------
 
 is_python() {
-    [[ -f "pyproject.toml" ]] || [[ -f "setup.py" ]] || [[ -f "requirements.txt" ]] || ls *.py &>/dev/null
+    # Require a project marker file, not just .py files presence
+    # Running linters on arbitrary .py files without project config causes false positives
+    [[ -f "pyproject.toml" ]] || [[ -f "setup.py" ]] || [[ -f "requirements.txt" ]]
 }
 
 is_nodejs() {

@@ -17,7 +17,7 @@ description: Token-efficient MAP workflow with conditional optimizations
 
 Before writing ANY implementation code, you MUST verify:
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │  ⚠️  SELF-CHECK: Am I about to write code myself?               │
 │                                                                  │
@@ -29,7 +29,7 @@ Before writing ANY implementation code, you MUST verify:
 ```
 
 **BEFORE each Agent call, output this checkpoint:**
-```
+```text
 CHECKPOINT: Calling [agent_name] for ST-XXX
 ```
 
@@ -51,7 +51,7 @@ CHECKPOINT: Calling [agent_name] for ST-XXX
 
 ## Workflow Overview
 
-```
+```text
 1. DECOMPOSE → task-decomposer
 1.5. INIT PLANNING → generate .map/task_plan_<branch>.md from blueprint
 2. FOR each subtask:
@@ -70,7 +70,7 @@ CHECKPOINT: Calling [agent_name] for ST-XXX
 
 ## Step 1: Task Decomposition
 
-```
+```python
 Task(
   subagent_type="task-decomposer",
   description="Decompose task into subtasks",
@@ -96,7 +96,7 @@ Hard requirements:
 .claude/skills/map-planning/scripts/init-session.sh
 ```
 
-```
+```bash
 # 2. Generate task_plan from blueprint JSON
 # Get branch-scoped plan path
 PLAN_PATH=$(.claude/skills/map-planning/scripts/get-plan-path.sh)
@@ -192,7 +192,7 @@ mcp__mem0__map_tiered_search(query="[subtask description]", top_k=5)
 
 **Re-rank retrieved patterns** by relevance to current subtask:
 
-```
+```text
 FOR each pattern in retrieved_patterns:
   relevance_score = evaluate:
     - Domain match: Does pattern's domain match subtask? (+2)
@@ -217,7 +217,7 @@ Pass `context_patterns` with relevance scores to Actor for informed decision-mak
 FINDINGS_PATH=$(.claude/skills/map-planning/scripts/get-plan-path.sh | sed 's/task_plan/findings/')
 ```
 
-```
+```python
 Task(
   subagent_type="research-agent",
   description="Research for subtask [ID]",
@@ -254,7 +254,7 @@ self_moa_enabled = (
 
 Call 3 Actors in parallel with different focuses:
 
-```
+```python
 # Variant 1: Security Focus
 Task(
   subagent_type="actor",
@@ -293,7 +293,7 @@ Follow the Actor agent protocol output format. Ensure `decisions_made` is includ
 
 Validate each variant:
 
-```
+```python
 Task(
   subagent_type="monitor",
   description="Validate v1",
@@ -312,7 +312,7 @@ If a SpecificationContract is provided: include `spec_contract_compliant` + `spe
 
 ### 2.3c Synthesizer
 
-```
+```python
 Task(
   subagent_type="synthesizer",
   description="Synthesize best implementation",
@@ -354,7 +354,7 @@ Validate synthesized code. If invalid: retry synthesis (max 2 iterations).
 
 ## Standard Path
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────────┐
 │  ⚠️ REMINDER: You are the ORCHESTRATOR, not the implementer.    │
 │                                                                   │
@@ -369,7 +369,7 @@ Validate synthesized code. If invalid: retry synthesis (max 2 iterations).
 
 **PRE-STEP:** Output `CHECKPOINT: Calling actor for ST-XXX`
 
-```
+```python
 Task(
   subagent_type="actor",
   description="Implement subtask [ID]",
@@ -386,7 +386,7 @@ Follow the Actor agent protocol output format."
 
 **PRE-STEP:** Output `CHECKPOINT: Calling monitor for ST-XXX`
 
-```
+```python
 Task(
   subagent_type="monitor",
   description="Validate implementation",
@@ -411,7 +411,7 @@ If validation_criteria present, include contract_compliance + contract_compliant
 
 If `valid === false`: provide feedback, retry Actor (max 5 iterations).
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │  ⛔ CRITICAL: NEVER APPLY CHANGES WHEN valid === false                      │
 │                                                                              │
@@ -433,7 +433,7 @@ If `valid === false`: provide feedback, retry Actor (max 5 iterations).
 PROGRESS_PATH=$(.claude/skills/map-planning/scripts/get-plan-path.sh | sed 's/task_plan/progress/')
 ```
 
-```
+```python
 FOR attempt = 1 to 5:
   IF attempt >= 3:
     # Log to progress file
@@ -479,7 +479,7 @@ FOR attempt = 1 to 5:
 
 If Monitor returns `escalation_required === true`, you MUST ask user for confirmation before proceeding (Predictor and/or Apply).
 
-```
+```python
 AskUserQuestion(
   questions: [
     {
@@ -500,7 +500,7 @@ AskUserQuestion(
 
 **Call if:** `risk_level ∈ {high, medium}` OR `escalation_required === true`
 
-```
+```python
 Task(
   subagent_type="predictor",
   description="Analyze impact",
@@ -524,7 +524,7 @@ Return ONLY valid JSON following Predictor schema."
 ### 2.7 Apply Changes
 
 **GATE CHECK (mandatory before applying):**
-```
+```text
 IF Monitor.valid !== true:
     → DO NOT PROCEED. Return to Actor with feedback.
     → This is a HARD BLOCK, not a suggestion.
@@ -536,7 +536,7 @@ Apply via Write/Edit tools.
 
 After Monitor returns `valid === true`:
 
-```
+```text
 1. Read current task_plan from PLAN_PATH
 2. Update current subtask: **Status:** in_progress → **Status:** complete
 3. Check validation criteria checkboxes [x]

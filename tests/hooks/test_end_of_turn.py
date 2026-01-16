@@ -8,8 +8,6 @@ import tempfile
 import os
 from pathlib import Path
 
-import pytest
-
 # Path to the hook script
 HOOK_PATH = Path(__file__).parent.parent.parent / ".claude" / "hooks" / "end-of-turn.sh"
 

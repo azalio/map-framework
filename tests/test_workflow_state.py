@@ -6,9 +6,7 @@ Tests all validation criteria from ST-006.
 import tempfile
 from pathlib import Path
 
-import pytest
-
-from mapify_cli.workflow_state import WorkflowState, WorkflowPhase, Subtask
+from mapify_cli.workflow_state import WorkflowState, WorkflowPhase
 
 
 # =============================================================================
