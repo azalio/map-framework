@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-01-16
+
 ### Changed (BREAKING)
 - **Memory layer migration**: Migrate from `playbook.db`/cipher to mem0 MCP for all pattern storage. This is a breaking change that requires mem0 MCP server configuration.
 
