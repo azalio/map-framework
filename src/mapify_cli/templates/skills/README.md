@@ -96,18 +96,17 @@ version: 1.0
 
 ## Integration with Auto-Activation
 
-Skills work seamlessly with P0 auto-activation system:
+Skills work seamlessly with the prompt improvement system:
 
 **How it works:**
-1. User prompt analyzed by `user-prompt-submit.sh` hook
-2. Hook checks `skill-rules.json` for matching triggers
-3. If match found: Suggests skill to user
+1. User prompt analyzed by `improve-prompt.py` hook
+2. Hook evaluates prompt clarity and context
+3. If skill-related keywords found: Suggests relevant skill
 4. User can load skill for detailed guidance
 
 **Configuration:**
 - **Trigger definitions:** `.claude/skills/skill-rules.json`
-- **Auto-activation hook:** `.claude/hooks/user-prompt-submit.sh`
-- **Helper script:** `.claude/hooks/helpers/suggest_skill.py`
+- **Prompt improvement hook:** `.claude/hooks/improve-prompt.py`
 
 ---
 

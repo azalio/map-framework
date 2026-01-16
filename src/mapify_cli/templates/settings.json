@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "description": "MAP Framework project-level settings with security guardrails",
+  "permissions": {
+    "deny": [
+      "Write(./.env*)",
+      "Write(**/*credentials*)",
+      "Write(**/*secret*)",
+      "Edit(./.env*)",
+      "Edit(**/*credentials*)",
+      "Edit(**/*secret*)",
+      "Bash(rm:-rf)",
+      "Bash(rm -rf)",
+      "Bash(git:push:--force:origin:main)",
+      "Bash(git:push:--force:origin:master)",
+      "Bash(git:reset:--hard)"
+    ],
+    "allow": [
+      "Bash(mapify:*)",
+      "Bash(pytest:*)",
+      "Bash(make:lint)",
+      "Bash(make:test)",
+      "Bash(sqlite3:.claude/playbook.db:*)",
+      "Bash(ruff:*)",
+      "Bash(black:*)",
+      "Bash(git:status)",
+      "Bash(git:diff)",
+      "Bash(git:log)",
+      "Bash(git:branch)",
+      "Bash(git:add)",
+      "Bash(git:commit)"
+    ]
+  }
+}

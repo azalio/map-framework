@@ -227,8 +227,8 @@ After installation:
    /map-feature Implement hello world endpoint
    ```
 
-2. **Inspect the generated plan:**
-   - Open `.map/current_plan.md`
+2. **Inspect the generated checkpoint:**
+   - Open `.map/progress.md`
    - Watch progress markers
 
 3. **Review results:**

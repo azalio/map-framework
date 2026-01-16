@@ -45,7 +45,7 @@ htmlcov/
 .claude/playbook.db-shm
 .claude/playbook.db-wal
 .claude/mcp_config.json
-.claude/settings.json
+.claude/settings.local.json
 
 # Agent template backups
 src/mapify_cli/templates/agents.backup/

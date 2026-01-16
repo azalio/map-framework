@@ -9,7 +9,7 @@ MAP Framework использует **строго последовательну
 ```mermaid
 flowchart TD
     Start([Начало задачи]) --> Decompose[0. TaskDecomposer<br/>Декомпозиция]
-    Decompose --> Plan[2.5 Recitation Plan<br/>Создать current_plan.md]
+    Decompose --> Plan[2.5 Checkpoint<br/>Создать progress.md]
     Plan --> Actor[1. Actor<br/>Реализация подзадачи]
     Actor --> Monitor[2. Monitor<br/>Валидация качества]
 
@@ -123,8 +123,8 @@ MAP использует **ДВЕ системы хранения знаний**
 
 **Файлы:**
 
-- `.map/current_plan.md` — human-readable progress tracker
-- `.map/current_plan.json` — machine-readable state
+- `.map/progress.md` — workflow checkpoint (YAML frontmatter + markdown body)
+- `.map/task_plan_*.md` — task decomposition with validation criteria
 
 **Жизненный цикл:**
 
@@ -252,7 +252,7 @@ MAP использует **6 core MCP tools** для расширения воз
 ### Принципы Context Engineering
 
 1. **Append-Only Context** — НИКОГДА не редактируй предыдущие сообщения в истории (preserves KV-cache efficiency)
-2. **External Storage as Context Extension** — `.map/current_plan.md` как внешняя память
+2. **External Storage as Context Extension** — `.map/progress.md` как внешняя память
 3. **Focusing Attention ("Маяк" pattern)** — держит цели "свежими" в recent tokens через recitation
 
 ## Exception: Non-MAP Tasks
