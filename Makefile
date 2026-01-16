@@ -1,4 +1,4 @@
-.PHONY: help test install clean build release dev-install lint format check
+.PHONY: help test install clean build release dev-install lint format check sync-templates
 
 # Default target
 help:
@@ -13,6 +13,7 @@ help:
 	@echo "  build        Build distribution packages"
 	@echo "  release      Create a new release"
 	@echo "  check        Run all checks (lint + test)"
+	@echo "  sync-templates Sync .claude/ into src/ templates"
 
 # Installation
 install:
@@ -41,6 +42,9 @@ format:
 	ruff check --fix src/ tests/
 
 check: lint test
+
+sync-templates:
+	./scripts/sync-templates.sh
 
 # Build and release
 clean:
