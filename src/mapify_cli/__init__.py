@@ -31,7 +31,6 @@ import subprocess
 import sys
 import shutil
 import json
-import sqlite3
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -115,9 +114,9 @@ class StepTracker:
 
     def __init__(self, title: str):
         self.title = title
-        self.steps: List[
-            Dict[str, Any]
-        ] = []  # list of dicts: {key, label, status, detail}
+        self.steps: List[Dict[str, Any]] = (
+            []
+        )  # list of dicts: {key, label, status, detail}
         self._refresh_cb = None
 
     def attach_refresh(self, cb):
@@ -1988,9 +1987,9 @@ def init(
     else:
         # Type assertion: flow guarantees project_name is not None here
         # (checked at line 1931, and not in use_current_dir branch)
-        assert project_name is not None, (
-            "project_name must be set in non-current-dir mode"
-        )
+        assert (
+            project_name is not None
+        ), "project_name must be set in non-current-dir mode"
         project_path = Path(project_name).resolve()
         if project_path.exists():
             console.print(

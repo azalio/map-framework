@@ -10,20 +10,19 @@ from pathlib import Path
 import pytest
 
 # Path to the hook script
-HOOK_PATH = Path(__file__).parent.parent.parent / ".claude" / "hooks" / "block-dangerous.sh"
+HOOK_PATH = (
+    Path(__file__).parent.parent.parent / ".claude" / "hooks" / "block-dangerous.sh"
+)
 
 
 def run_hook(command: str) -> tuple[int, str, str]:
     """Execute the hook with given bash command."""
-    input_data = {
-        "tool_name": "Bash",
-        "tool_input": {"command": command}
-    }
+    input_data = {"tool_name": "Bash", "tool_input": {"command": command}}
     result = subprocess.run(
         ["bash", str(HOOK_PATH)],
         input=json.dumps(input_data),
         capture_output=True,
-        text=True
+        text=True,
     )
     return result.returncode, result.stdout, result.stderr
 
@@ -31,6 +30,7 @@ def run_hook(command: str) -> tuple[int, str, str]:
 # =============================================================================
 # Validation Criteria Tests
 # =============================================================================
+
 
 class TestValidationCriteria:
     """Tests for the validation criteria from task decomposition."""
@@ -68,19 +68,23 @@ class TestValidationCriteria:
 # rm -rf Blocking Tests
 # =============================================================================
 
+
 class TestRmRfBlocking:
     """Test rm -rf and variants are blocked."""
 
-    @pytest.mark.parametrize("command", [
-        "rm -rf /",
-        "rm -rf ~",
-        "rm -rf .",
-        "rm -rf /home/user",
-        "rm -rf ./src",
-        "rm -fr /",         # reversed flags
-        "rm -r -f /tmp",    # separated flags
-        "rm -f -r /tmp",
-    ])
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "rm -rf /",
+            "rm -rf ~",
+            "rm -rf .",
+            "rm -rf /home/user",
+            "rm -rf ./src",
+            "rm -fr /",  # reversed flags
+            "rm -r -f /tmp",  # separated flags
+            "rm -f -r /tmp",
+        ],
+    )
     def test_rm_rf_variants_blocked(self, command):
         exit_code, _, stderr = run_hook(command)
         assert exit_code == 2, f"'{command}' should be blocked"
@@ -101,31 +105,38 @@ class TestRmRfBlocking:
 # Git Force Push Blocking Tests
 # =============================================================================
 
+
 class TestGitForcePushBlocking:
     """Test git force push to main/master is blocked."""
 
-    @pytest.mark.parametrize("command", [
-        "git push --force origin main",
-        "git push -f origin main",
-        "git push --force origin master",
-        "git push -f origin master",
-        "git push origin main --force",
-        "git push origin master -f",
-        "git push --force upstream main",
-        "git push -f upstream master",
-    ])
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "git push --force origin main",
+            "git push -f origin main",
+            "git push --force origin master",
+            "git push -f origin master",
+            "git push origin main --force",
+            "git push origin master -f",
+            "git push --force upstream main",
+            "git push -f upstream master",
+        ],
+    )
     def test_force_push_protected_blocked(self, command):
         exit_code, _, stderr = run_hook(command)
         assert exit_code == 2, f"'{command}' should be blocked"
         assert "Blocked" in stderr
 
-    @pytest.mark.parametrize("command", [
-        "git push --force origin feature-branch",
-        "git push -f origin my-feature",
-        "git push --force origin fix/bug-123",
-        "git push origin develop --force",
-        "git push --force origin dev",
-    ])
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "git push --force origin feature-branch",
+            "git push -f origin my-feature",
+            "git push --force origin fix/bug-123",
+            "git push origin develop --force",
+            "git push --force origin dev",
+        ],
+    )
     def test_force_push_feature_allowed(self, command):
         exit_code, _, _ = run_hook(command)
         assert exit_code == 0, f"'{command}' should be allowed"
@@ -140,27 +151,34 @@ class TestGitForcePushBlocking:
 # Git Reset Hard Blocking Tests
 # =============================================================================
 
+
 class TestGitResetHardBlocking:
     """Test git reset --hard is blocked."""
 
-    @pytest.mark.parametrize("command", [
-        "git reset --hard",
-        "git reset --hard HEAD",
-        "git reset --hard HEAD~1",
-        "git reset --hard origin/main",
-        "git reset --hard abc123",
-    ])
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "git reset --hard",
+            "git reset --hard HEAD",
+            "git reset --hard HEAD~1",
+            "git reset --hard origin/main",
+            "git reset --hard abc123",
+        ],
+    )
     def test_reset_hard_variants_blocked(self, command):
         exit_code, _, stderr = run_hook(command)
         assert exit_code == 2, f"'{command}' should be blocked"
         assert "Blocked" in stderr
 
-    @pytest.mark.parametrize("command", [
-        "git reset --soft HEAD~1",
-        "git reset --mixed HEAD~1",
-        "git reset HEAD~1",
-        "git reset HEAD -- file.txt",
-    ])
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "git reset --soft HEAD~1",
+            "git reset --mixed HEAD~1",
+            "git reset HEAD~1",
+            "git reset HEAD -- file.txt",
+        ],
+    )
     def test_reset_soft_allowed(self, command):
         exit_code, _, _ = run_hook(command)
         assert exit_code == 0, f"'{command}' should be allowed"
@@ -170,30 +188,34 @@ class TestGitResetHardBlocking:
 # Legitimate Commands Tests
 # =============================================================================
 
+
 class TestLegitimateCommands:
     """Test that safe commands are allowed."""
 
-    @pytest.mark.parametrize("command", [
-        "pytest",
-        "pytest -v tests/",
-        "python -m pytest",
-        "make lint",
-        "make test",
-        "npm install",
-        "npm run build",
-        "go test ./...",
-        "cargo build",
-        "git status",
-        "git diff",
-        "git log --oneline",
-        "git add .",
-        "git commit -m 'test'",
-        "git push origin feature",
-        "ls -la",
-        "cat file.txt",
-        "echo hello",
-        "cd /tmp && ls",
-    ])
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "pytest",
+            "pytest -v tests/",
+            "python -m pytest",
+            "make lint",
+            "make test",
+            "npm install",
+            "npm run build",
+            "go test ./...",
+            "cargo build",
+            "git status",
+            "git diff",
+            "git log --oneline",
+            "git add .",
+            "git commit -m 'test'",
+            "git push origin feature",
+            "ls -la",
+            "cat file.txt",
+            "echo hello",
+            "cd /tmp && ls",
+        ],
+    )
     def test_safe_commands_allowed(self, command):
         exit_code, _, stderr = run_hook(command)
         assert exit_code == 0, f"'{command}' should be allowed. stderr: {stderr}"
@@ -203,20 +225,18 @@ class TestLegitimateCommands:
 # Tool Interception Tests
 # =============================================================================
 
+
 class TestToolInterception:
     """Test that only Bash tool is intercepted."""
 
     def test_non_bash_tool_allowed(self):
         """Non-Bash tools should pass through."""
-        input_data = {
-            "tool_name": "Read",
-            "tool_input": {"file_path": "rm -rf /"}
-        }
+        input_data = {"tool_name": "Read", "tool_input": {"file_path": "rm -rf /"}}
         result = subprocess.run(
             ["bash", str(HOOK_PATH)],
             input=json.dumps(input_data),
             capture_output=True,
-            text=True
+            text=True,
         )
         assert result.returncode == 0, "Non-Bash tools should be allowed"
 
@@ -224,6 +244,7 @@ class TestToolInterception:
 # =============================================================================
 # Error Handling Tests
 # =============================================================================
+
 
 class TestErrorHandling:
     """Test edge cases and error handling."""
@@ -240,7 +261,7 @@ class TestErrorHandling:
             ["bash", str(HOOK_PATH)],
             input=json.dumps(input_data),
             capture_output=True,
-            text=True
+            text=True,
         )
         assert result.returncode == 0
 
@@ -249,13 +270,17 @@ class TestErrorHandling:
 # Additional Dangerous Commands Tests
 # =============================================================================
 
+
 class TestAdditionalDangerousCommands:
     """Test additional dangerous commands are blocked."""
 
-    @pytest.mark.parametrize("command", [
-        "chmod -R 777 /",
-        "chown -R root:root /",
-    ])
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "chmod -R 777 /",
+            "chown -R root:root /",
+        ],
+    )
     def test_recursive_permissions_on_root_blocked(self, command):
         exit_code, _, _ = run_hook(command)
         assert exit_code == 2, f"'{command}' should be blocked"
@@ -274,6 +299,7 @@ class TestAdditionalDangerousCommands:
 # =============================================================================
 # Output Format Tests
 # =============================================================================
+
 
 class TestOutputFormat:
     """Test that error output follows expected JSON structure."""

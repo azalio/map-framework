@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+- **Memory layer migration**: Migrate from `playbook.db`/cipher to mem0 MCP for all pattern storage. This is a breaking change that requires mem0 MCP server configuration.
+
+### Added
+- P0 foundation implementation: security hooks, permissions system, workflow recovery
+- mem0 MCP integration for tiered pattern storage (branch → project → org scopes)
+- Project settings allowlist extensions for worktree, sourcecraft, mem0 MCP tools
+
+### Fixed
+- Address PR #70 review feedback for P0 foundation
+- Align documentation with actual implementation
+- Workflow enforcement to prevent Actor→Monitor cycle skip
+- Documentation fixes: ARCHITECTURE.md workflow diagrams, deprecated /map-feature /map-refactor references
+- Code quality: Black formatting, ruff linting, mypy type errors
+
+### Documentation
+- Complete migration of playbook.db/cipher references to mem0 MCP across all docs and templates
+- Comprehensive documentation update to v2.3.0 standards
+- README optimization (418→93 lines) for improved conversion
+
 ## [2.3.0] - 2026-01-10
 
 ### Added

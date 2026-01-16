@@ -39,20 +39,24 @@ from pathlib import Path
 
 # Sensitive file patterns (PRE-COMPILED for performance)
 SENSITIVE_PATTERNS = [
-    re.compile(r'\.env.*', re.IGNORECASE),                           # .env, .env.local, .env.production, etc.
-    re.compile(r'.*credentials.*', re.IGNORECASE),                   # credentials.json, aws-credentials, etc.
-    re.compile(r'.*secret.*', re.IGNORECASE),                        # secrets.yaml, secret-key.txt, etc.
-    re.compile(r'.*\.pem$', re.IGNORECASE),                          # Private key files
-    re.compile(r'.*_(private|secret|rsa|dsa|ecdsa)\.key$', re.IGNORECASE),  # Specific private key files only
-    re.compile(r'.*_rsa$', re.IGNORECASE),                           # SSH keys without extension
-    re.compile(r'.*_dsa$', re.IGNORECASE),                           # DSA keys
-    re.compile(r'.*_ecdsa$', re.IGNORECASE),                         # ECDSA keys
-    re.compile(r'.*_ed25519$', re.IGNORECASE),                       # Ed25519 keys
-    re.compile(r'.*\.p12$', re.IGNORECASE),                          # PKCS#12 certificate files
-    re.compile(r'.*\.pfx$', re.IGNORECASE),                          # PKCS#12 certificate files (Windows)
-    re.compile(r'.*\.keystore$', re.IGNORECASE),                     # Java keystores
-    re.compile(r'.*\.jks$', re.IGNORECASE),                          # Java keystores
-    re.compile(r'.*\.ppk$', re.IGNORECASE),                          # PuTTY private keys
+    re.compile(r"\.env.*", re.IGNORECASE),  # .env, .env.local, .env.production, etc.
+    re.compile(
+        r".*credentials.*", re.IGNORECASE
+    ),  # credentials.json, aws-credentials, etc.
+    re.compile(r".*secret.*", re.IGNORECASE),  # secrets.yaml, secret-key.txt, etc.
+    re.compile(r".*\.pem$", re.IGNORECASE),  # Private key files
+    re.compile(
+        r".*_(private|secret|rsa|dsa|ecdsa)\.key$", re.IGNORECASE
+    ),  # Specific private key files only
+    re.compile(r".*_rsa$", re.IGNORECASE),  # SSH keys without extension
+    re.compile(r".*_dsa$", re.IGNORECASE),  # DSA keys
+    re.compile(r".*_ecdsa$", re.IGNORECASE),  # ECDSA keys
+    re.compile(r".*_ed25519$", re.IGNORECASE),  # Ed25519 keys
+    re.compile(r".*\.p12$", re.IGNORECASE),  # PKCS#12 certificate files
+    re.compile(r".*\.pfx$", re.IGNORECASE),  # PKCS#12 certificate files (Windows)
+    re.compile(r".*\.keystore$", re.IGNORECASE),  # Java keystores
+    re.compile(r".*\.jks$", re.IGNORECASE),  # Java keystores
+    re.compile(r".*\.ppk$", re.IGNORECASE),  # PuTTY private keys
 ]
 
 
@@ -79,7 +83,7 @@ def block_access(file_path: str, tool_name: str):
             "hookEventName": "PreToolUse",
             "error": f"Blocked: Access to sensitive file '{file_path}' is prohibited",
             "details": f"Tool '{tool_name}' attempted to access a protected file. Sensitive files include: .env*, *credentials*, *secret*, private keys (*.pem, *.key, *_rsa, etc.)",
-            "suggestion": "If you need to work with sensitive data, use environment variables or a secrets management system instead of reading raw credential files."
+            "suggestion": "If you need to work with sensitive data, use environment variables or a secrets management system instead of reading raw credential files.",
         }
     }
     print(json.dumps(error_output), file=sys.stderr)

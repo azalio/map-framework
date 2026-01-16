@@ -13,6 +13,7 @@ from mapify_cli.workflow_state import WorkflowState, WorkflowPhase
 # Validation Criteria Tests
 # =============================================================================
 
+
 class TestValidationCriteria:
     """Tests for the validation criteria from task decomposition."""
 
@@ -53,7 +54,7 @@ class TestValidationCriteria:
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create and save state
             original = WorkflowState(
-                task_plan="Test task with quotes: \"example\"",
+                task_plan='Test task with quotes: "example"',
                 branch_name="feat/test",
             )
             original.add_subtask("ST-001", "First subtask")
@@ -134,6 +135,7 @@ class TestValidationCriteria:
 # WorkflowState Creation Tests
 # =============================================================================
 
+
 class TestWorkflowStateCreation:
     """Test WorkflowState initialization."""
 
@@ -167,6 +169,7 @@ class TestWorkflowStateCreation:
 # =============================================================================
 # Subtask Management Tests
 # =============================================================================
+
 
 class TestSubtaskManagement:
     """Test subtask operations."""
@@ -232,6 +235,7 @@ class TestSubtaskManagement:
 # Phase and Turn Management Tests
 # =============================================================================
 
+
 class TestPhaseManagement:
     """Test phase and turn operations."""
 
@@ -262,6 +266,7 @@ class TestPhaseManagement:
 # =============================================================================
 # Checkpoint Load Tests
 # =============================================================================
+
 
 class TestCheckpointLoad:
     """Test loading from checkpoint."""
@@ -299,13 +304,14 @@ class TestCheckpointLoad:
 # Edge Cases Tests
 # =============================================================================
 
+
 class TestEdgeCases:
     """Test edge cases and special characters."""
 
     def test_task_plan_with_special_chars(self):
         """Task plan with special characters."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            special_task = "Task with: colon, \"quotes\", and newline\\n"
+            special_task = 'Task with: colon, "quotes", and newline\\n'
             state = WorkflowState(task_plan=special_task)
             state.save_checkpoint(Path(tmpdir))
 
@@ -335,16 +341,20 @@ class TestEdgeCases:
             content = (Path(tmpdir) / ".map" / "progress.md").read_text()
 
             # Must use inline format (single line)
-            assert "completed_subtasks: []" in content, \
-                "Empty completed_subtasks must use inline format 'completed_subtasks: []'"
-            assert "subtasks: []" in content, \
-                "Empty subtasks must use inline format 'subtasks: []'"
+            assert (
+                "completed_subtasks: []" in content
+            ), "Empty completed_subtasks must use inline format 'completed_subtasks: []'"
+            assert (
+                "subtasks: []" in content
+            ), "Empty subtasks must use inline format 'subtasks: []'"
 
             # Must NOT use multi-line format
-            assert "completed_subtasks:\n  []" not in content, \
-                "Must not use multi-line format for empty completed_subtasks"
-            assert "subtasks:\n  []" not in content, \
-                "Must not use multi-line format for empty subtasks"
+            assert (
+                "completed_subtasks:\n  []" not in content
+            ), "Must not use multi-line format for empty completed_subtasks"
+            assert (
+                "subtasks:\n  []" not in content
+            ), "Must not use multi-line format for empty subtasks"
 
     def test_non_empty_lists_use_multiline_yaml_format(self):
         """Non-empty lists must use multi-line YAML format with proper indentation."""
@@ -358,13 +368,15 @@ class TestEdgeCases:
 
             # completed_subtasks should be multi-line with items
             assert "completed_subtasks:" in content
-            assert "  - ST-001" in content, \
-                "Non-empty completed_subtasks must use multi-line format"
+            assert (
+                "  - ST-001" in content
+            ), "Non-empty completed_subtasks must use multi-line format"
 
             # subtasks should be multi-line with object items
             assert "subtasks:" in content
-            assert "  - id: ST-001" in content, \
-                "Non-empty subtasks must use multi-line format"
+            assert (
+                "  - id: ST-001" in content
+            ), "Non-empty subtasks must use multi-line format"
 
     def test_yaml_format_round_trip(self):
         """Save → Load → Save should produce consistent YAML format."""
@@ -382,22 +394,25 @@ class TestEdgeCases:
             # Extract YAML frontmatter only (between --- markers), excluding timestamps
             def get_frontmatter_without_timestamps(content):
                 import re
-                match = re.match(r'^---\n(.*?)\n---', content, re.DOTALL)
+
+                match = re.match(r"^---\n(.*?)\n---", content, re.DOTALL)
                 if not match:
                     return ""
                 frontmatter = match.group(1)
                 # Remove timestamp lines
                 lines = [
-                    line for line in frontmatter.split('\n')
-                    if not any(ts in line for ts in ['started_at:', 'updated_at:'])
+                    line
+                    for line in frontmatter.split("\n")
+                    if not any(ts in line for ts in ["started_at:", "updated_at:"])
                 ]
-                return '\n'.join(lines)
+                return "\n".join(lines)
 
             fm1 = get_frontmatter_without_timestamps(content1)
             fm2 = get_frontmatter_without_timestamps(content2)
 
-            assert fm1 == fm2, \
-                f"Round-trip should produce identical frontmatter.\nFirst:\n{fm1}\n\nSecond:\n{fm2}"
+            assert (
+                fm1 == fm2
+            ), f"Round-trip should produce identical frontmatter.\nFirst:\n{fm1}\n\nSecond:\n{fm2}"
 
     def test_multiple_saves(self):
         """Multiple saves update the file correctly."""
@@ -429,6 +444,7 @@ class TestEdgeCases:
 # =============================================================================
 # YAML Parsing Tests
 # =============================================================================
+
 
 class TestYamlParsing:
     """Test YAML frontmatter parsing."""

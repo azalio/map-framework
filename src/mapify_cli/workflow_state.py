@@ -115,10 +115,14 @@ class WorkflowState:
             frontmatter_lines.append("subtasks:")
             for subtask in self.subtasks:
                 frontmatter_lines.append(f"  - id: {self._escape_yaml(subtask.id)}")
-                frontmatter_lines.append(f"    description: {self._escape_yaml(subtask.description)}")
+                frontmatter_lines.append(
+                    f"    description: {self._escape_yaml(subtask.description)}"
+                )
                 frontmatter_lines.append(f"    status: {subtask.status}")
                 if subtask.completed_at:
-                    frontmatter_lines.append(f"    completed_at: {subtask.completed_at}")
+                    frontmatter_lines.append(
+                        f"    completed_at: {subtask.completed_at}"
+                    )
         else:
             # Use inline format for empty list
             frontmatter_lines.append("subtasks: []")
@@ -145,7 +149,9 @@ class WorkflowState:
 
         if total_subtasks > 0:
             progress_pct = (completed_count / total_subtasks) * 100
-            body_lines.append(f"Progress: {completed_count}/{total_subtasks} ({progress_pct:.0f}%)")
+            body_lines.append(
+                f"Progress: {completed_count}/{total_subtasks} ({progress_pct:.0f}%)"
+            )
             body_lines.append("")
 
             # Subtask list with checkmarks
@@ -153,19 +159,25 @@ class WorkflowState:
                 if subtask.status == "complete":
                     body_lines.append(f"- [x] **{subtask.id}**: {subtask.description}")
                 elif subtask.status == "in_progress":
-                    body_lines.append(f"- [ ] **{subtask.id}**: {subtask.description} *(in progress)*")
+                    body_lines.append(
+                        f"- [ ] **{subtask.id}**: {subtask.description} *(in progress)*"
+                    )
                 elif subtask.status == "failed":
-                    body_lines.append(f"- [ ] **{subtask.id}**: {subtask.description} *(failed)*")
+                    body_lines.append(
+                        f"- [ ] **{subtask.id}**: {subtask.description} *(failed)*"
+                    )
                 else:
                     body_lines.append(f"- [ ] **{subtask.id}**: {subtask.description}")
         else:
             body_lines.append("No subtasks defined yet.")
 
-        body_lines.extend([
-            "",
-            "---",
-            f"*Last updated: {self.updated_at}*",
-        ])
+        body_lines.extend(
+            [
+                "",
+                "---",
+                f"*Last updated: {self.updated_at}*",
+            ]
+        )
 
         body = "\n".join(body_lines)
 
@@ -217,12 +229,14 @@ class WorkflowState:
         subtasks = []
         for st_dict in state_dict.get("subtasks", []):
             if isinstance(st_dict, dict):
-                subtasks.append(Subtask(
-                    id=st_dict.get("id", ""),
-                    description=st_dict.get("description", ""),
-                    status=st_dict.get("status", "pending"),
-                    completed_at=st_dict.get("completed_at"),
-                ))
+                subtasks.append(
+                    Subtask(
+                        id=st_dict.get("id", ""),
+                        description=st_dict.get("description", ""),
+                        status=st_dict.get("status", "pending"),
+                        completed_at=st_dict.get("completed_at"),
+                    )
+                )
 
         return cls(
             task_plan=state_dict["task_plan"],
@@ -272,7 +286,7 @@ class WorkflowState:
                 key = key.strip()
                 value = value.strip()
                 current_key = key
-                in_subtasks = (key == "subtasks")
+                in_subtasks = key == "subtasks"
 
                 if value == "[]":
                     result[key] = []
@@ -350,11 +364,13 @@ class WorkflowState:
             return '""'
 
         # Check if quoting is needed
-        needs_quotes = any(c in value for c in [':', '#', '"', "'", '\n', '[', ']', '{', '}'])
+        needs_quotes = any(
+            c in value for c in [":", "#", '"', "'", "\n", "[", "]", "{", "}"]
+        )
 
         if needs_quotes:
             # Escape double quotes and wrap in double quotes
-            escaped = value.replace('\\', '\\\\').replace('"', '\\"')
+            escaped = value.replace("\\", "\\\\").replace('"', '\\"')
             return f'"{escaped}"'
 
         return value
@@ -371,7 +387,7 @@ class WorkflowState:
             Unescaped string
         """
         # Unescape backslash sequences
-        return value.replace('\\"', '"').replace('\\\\', '\\')
+        return value.replace('\\"', '"').replace("\\\\", "\\")
 
     def mark_subtask_complete(self, subtask_id: str) -> None:
         """
@@ -506,17 +522,21 @@ if __name__ == "__main__":
             print(f"Phase: {loaded_state.current_phase.value}")
             print(f"Turn: {loaded_state.turn_count}")
             print(f"Completed: {loaded_state.completed_subtasks}")
-            print(f"Remaining: {[st.id for st in loaded_state.get_remaining_subtasks()]}")
+            print(
+                f"Remaining: {[st.id for st in loaded_state.get_remaining_subtasks()]}"
+            )
 
     elif command == "show":
-        state = WorkflowState.load(project_root)
-        if state:
-            print(f"Task: {state.task_plan}")
-            print(f"Phase: {state.current_phase.value}")
-            print(f"Turn: {state.turn_count}")
-            print(f"Completed: {len(state.completed_subtasks)}/{len(state.subtasks)}")
-            print(f"\nRemaining subtasks:")
-            for st in state.get_remaining_subtasks():
+        loaded_state = WorkflowState.load(project_root)
+        if loaded_state:
+            print(f"Task: {loaded_state.task_plan}")
+            print(f"Phase: {loaded_state.current_phase.value}")
+            print(f"Turn: {loaded_state.turn_count}")
+            print(
+                f"Completed: {len(loaded_state.completed_subtasks)}/{len(loaded_state.subtasks)}"
+            )
+            print("\nRemaining subtasks:")
+            for st in loaded_state.get_remaining_subtasks():
                 print(f"  - {st.id}: {st.description} ({st.status})")
         else:
             print("No workflow in progress")
