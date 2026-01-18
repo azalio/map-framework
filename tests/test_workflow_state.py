@@ -442,6 +442,173 @@ class TestEdgeCases:
 
 
 # =============================================================================
+# WONT_DO Terminal Status Tests (ST-005)
+# =============================================================================
+
+
+class TestWontDoTerminalStatus:
+    """Test won't_do terminal status functionality from ST-005."""
+
+    def test_wont_do_phase_in_enum(self):
+        """WorkflowPhase enum includes WONT_DO value."""
+        assert hasattr(WorkflowPhase, "WONT_DO")
+        assert WorkflowPhase.WONT_DO.value == "won't_do"
+
+    def test_mark_ended_early_sets_phase(self):
+        """mark_ended_early() sets current_phase to WONT_DO."""
+        state = WorkflowState(task_plan="Test task")
+        state.add_subtask("ST-001", "First subtask")
+        state.add_subtask("ST-002", "Second subtask")
+
+        state.mark_ended_early(reason="User cancelled workflow", subtask_id="ST-001")
+
+        assert state.current_phase == WorkflowPhase.WONT_DO
+
+    def test_mark_ended_early_populates_ended_early(self):
+        """mark_ended_early() populates ended_early with all required fields."""
+        state = WorkflowState(task_plan="Test task")
+        state.add_subtask("ST-001", "First subtask")
+
+        state.mark_ended_early(
+            reason="Requirements changed, feature no longer needed",
+            subtask_id="ST-001",
+        )
+
+        assert state.ended_early is not None
+        assert state.ended_early["by_user"] is True
+        assert (
+            state.ended_early["reason"]
+            == "Requirements changed, feature no longer needed"
+        )
+        assert state.ended_early["at_subtask_id"] == "ST-001"
+
+    def test_mark_ended_early_without_subtask_id(self):
+        """mark_ended_early() works without subtask_id."""
+        state = WorkflowState(task_plan="Test task")
+
+        state.mark_ended_early(reason="Project cancelled")
+
+        assert state.current_phase == WorkflowPhase.WONT_DO
+        assert state.ended_early is not None
+        assert state.ended_early["by_user"] is True
+        assert state.ended_early["reason"] == "Project cancelled"
+        assert state.ended_early["at_subtask_id"] == ""
+
+    def test_save_checkpoint_includes_ended_early(self):
+        """save_checkpoint() writes ended_early to YAML frontmatter."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = WorkflowState(task_plan="Test task")
+            state.add_subtask("ST-001", "First subtask")
+            state.mark_ended_early(
+                reason="User requested cancellation", subtask_id="ST-001"
+            )
+
+            checkpoint_path = state.save_checkpoint(Path(tmpdir))
+            content = checkpoint_path.read_text()
+
+            # Check YAML frontmatter contains ended_early
+            assert "ended_early:" in content
+            assert "by_user: true" in content
+            assert "reason:" in content
+            assert "User requested cancellation" in content
+            assert "at_subtask_id:" in content
+            assert "ST-001" in content
+
+    def test_load_restores_ended_early(self):
+        """load() restores ended_early from YAML frontmatter."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create and save state with ended_early
+            original = WorkflowState(task_plan="Test task")
+            original.add_subtask("ST-001", "First subtask")
+            original.add_subtask("ST-002", "Second subtask")
+            original.mark_subtask_in_progress("ST-002")
+            original.mark_ended_early(
+                reason="Blocking dependency unavailable", subtask_id="ST-002"
+            )
+            original.save_checkpoint(Path(tmpdir))
+
+            # Load and verify
+            loaded = WorkflowState.load(Path(tmpdir))
+
+            assert loaded is not None
+            assert loaded.current_phase == WorkflowPhase.WONT_DO
+            assert loaded.ended_early is not None
+            assert loaded.ended_early["by_user"] is True
+            assert loaded.ended_early["reason"] == "Blocking dependency unavailable"
+            assert loaded.ended_early["at_subtask_id"] == "ST-002"
+
+    def test_ended_early_with_special_characters(self):
+        """ended_early handles special characters in reason."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = WorkflowState(task_plan="Test task")
+            state.mark_ended_early(
+                reason='User said: "This is no longer needed"', subtask_id="ST-001"
+            )
+
+            state.save_checkpoint(Path(tmpdir))
+            loaded = WorkflowState.load(Path(tmpdir))
+
+            assert loaded.ended_early is not None
+            assert loaded.ended_early["reason"] == 'User said: "This is no longer needed"'
+
+    def test_ended_early_round_trip(self):
+        """ended_early persists correctly through save/load cycle."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create state with ended_early
+            state1 = WorkflowState(task_plan="Round trip test")
+            state1.add_subtask("ST-001", "First")
+            state1.add_subtask("ST-002", "Second")
+            state1.mark_subtask_complete("ST-001")
+            state1.mark_ended_early(
+                reason="Test cancellation with: special chars", subtask_id="ST-002"
+            )
+            state1.save_checkpoint(Path(tmpdir))
+
+            # Load and save again
+            state2 = WorkflowState.load(Path(tmpdir))
+            state2.save_checkpoint(Path(tmpdir))
+
+            # Load final state
+            state3 = WorkflowState.load(Path(tmpdir))
+
+            # Verify all fields preserved
+            assert state3.current_phase == WorkflowPhase.WONT_DO
+            assert state3.ended_early is not None
+            assert state3.ended_early["by_user"] is True
+            assert state3.ended_early["reason"] == state1.ended_early["reason"]
+            assert state3.ended_early["at_subtask_id"] == "ST-002"
+
+    def test_state_without_ended_early(self):
+        """State without ended_early loads correctly (backward compatibility)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create normal state without ended_early
+            state = WorkflowState(task_plan="Normal workflow")
+            state.add_subtask("ST-001", "First")
+            state.set_phase(WorkflowPhase.IMPLEMENTATION)
+            state.save_checkpoint(Path(tmpdir))
+
+            # Verify no ended_early in saved file
+            content = (Path(tmpdir) / ".map" / "progress.md").read_text()
+            assert "ended_early:" not in content
+
+            # Load and verify
+            loaded = WorkflowState.load(Path(tmpdir))
+            assert loaded is not None
+            assert loaded.current_phase == WorkflowPhase.IMPLEMENTATION
+            assert loaded.ended_early is None
+
+    def test_wont_do_phase_saves_and_loads(self):
+        """WONT_DO phase can be saved and loaded directly."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = WorkflowState(task_plan="Test")
+            state.set_phase(WorkflowPhase.WONT_DO)
+            state.save_checkpoint(Path(tmpdir))
+
+            loaded = WorkflowState.load(Path(tmpdir))
+            assert loaded.current_phase == WorkflowPhase.WONT_DO
+
+
+# =============================================================================
 # YAML Parsing Tests
 # =============================================================================
 

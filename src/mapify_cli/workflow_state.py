@@ -25,6 +25,7 @@ class WorkflowPhase(Enum):
     VALIDATION = "validation"
     COMPLETE = "complete"
     FAILED = "failed"
+    WONT_DO = "won't_do"
 
 
 @dataclass
@@ -61,6 +62,7 @@ class WorkflowState:
     updated_at: Optional[str] = None
     subtasks: List[Subtask] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
+    ended_early: Optional[Dict[str, Any]] = None
 
     def __post_init__(self):
         """Initialize timestamps if not set."""
@@ -126,6 +128,19 @@ class WorkflowState:
         else:
             # Use inline format for empty list
             frontmatter_lines.append("subtasks: []")
+
+        # Early termination metadata
+        if self.ended_early:
+            frontmatter_lines.append("ended_early:")
+            frontmatter_lines.append(
+                f"  by_user: {str(self.ended_early.get('by_user', True)).lower()}"
+            )
+            frontmatter_lines.append(
+                f"  reason: {self._escape_yaml(self.ended_early.get('reason', ''))}"
+            )
+            frontmatter_lines.append(
+                f"  at_subtask_id: {self._escape_yaml(self.ended_early.get('at_subtask_id', ''))}"
+            )
 
         frontmatter_lines.append("---")
         frontmatter = "\n".join(frontmatter_lines)
@@ -238,6 +253,20 @@ class WorkflowState:
                     )
                 )
 
+        # Parse ended_early if present
+        ended_early = None
+        ended_early_dict = state_dict.get("ended_early")
+        if ended_early_dict and isinstance(ended_early_dict, dict):
+            # Convert 'true'/'false' strings to boolean
+            by_user = ended_early_dict.get("by_user", "true")
+            if isinstance(by_user, str):
+                by_user = by_user.lower() == "true"
+            ended_early = {
+                "by_user": by_user,
+                "reason": ended_early_dict.get("reason", ""),
+                "at_subtask_id": ended_early_dict.get("at_subtask_id", ""),
+            }
+
         return cls(
             task_plan=state_dict["task_plan"],
             completed_subtasks=state_dict.get("completed_subtasks", []),
@@ -247,6 +276,7 @@ class WorkflowState:
             started_at=state_dict.get("started_at"),
             updated_at=state_dict.get("updated_at"),
             subtasks=subtasks,
+            ended_early=ended_early,
         )
 
     @classmethod
@@ -265,6 +295,7 @@ class WorkflowState:
         current_list: Optional[List[Any]] = None
         current_object: Optional[Dict[str, Any]] = None
         in_subtasks: bool = False
+        in_ended_early: bool = False
 
         for line in text.split("\n"):
             stripped = line.strip()
@@ -281,16 +312,23 @@ class WorkflowState:
                         current_object = None
                     result[current_key] = current_list
                     current_list = None
+                elif in_ended_early and current_object and current_key:
+                    # Save ended_early object
+                    result[current_key] = current_object
+                    current_object = None
 
                 key, _, value = stripped.partition(":")
                 key = key.strip()
                 value = value.strip()
                 current_key = key
                 in_subtasks = key == "subtasks"
+                in_ended_early = key == "ended_early"
 
                 if value == "[]":
                     result[key] = []
                     current_key = None
+                    in_subtasks = False
+                    in_ended_early = False
                 elif value:
                     # Handle quoted strings
                     if value.startswith('"') and value.endswith('"'):
@@ -298,9 +336,15 @@ class WorkflowState:
                     elif value.startswith("'") and value.endswith("'"):
                         value = value[1:-1]
                     result[key] = value
+                    current_key = None
+                    in_subtasks = False
+                    in_ended_early = False
                 else:
-                    # Start of list or empty value
-                    current_list = []
+                    # Start of list or object
+                    if in_ended_early:
+                        current_object = {}
+                    else:
+                        current_list = []
 
             # Check for list item
             elif stripped.startswith("- ") and current_list is not None:
@@ -346,6 +390,8 @@ class WorkflowState:
             if current_object:
                 current_list.append(current_object)
             result[current_key] = current_list
+        elif in_ended_early and current_object and current_key:
+            result[current_key] = current_object
 
         return result
 
@@ -459,6 +505,23 @@ class WorkflowState:
         if not self.subtasks:
             return False
         return all(st.status == "complete" for st in self.subtasks)
+
+    def mark_ended_early(self, reason: str, subtask_id: str = "") -> None:
+        """
+        Mark the workflow as ended early (won't complete).
+
+        Sets current_phase to WONT_DO and records termination metadata.
+
+        Args:
+            reason: Explanation for why the workflow ended early
+            subtask_id: ID of subtask where workflow stopped (optional)
+        """
+        self.current_phase = WorkflowPhase.WONT_DO
+        self.ended_early = {
+            "by_user": True,
+            "reason": reason,
+            "at_subtask_id": subtask_id,
+        }
 
     @classmethod
     def exists(cls, project_root: Path) -> bool:

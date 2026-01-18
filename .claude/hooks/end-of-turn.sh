@@ -47,18 +47,68 @@ add_critical() {
     CRITICAL_ISSUES+=("$1")
 }
 
+get_branch_name() {
+    # Extract current git branch name, default to 'default' if not in git repo
+    if git rev-parse --git-dir &>/dev/null; then
+        git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "default"
+    else
+        echo "default"
+    fi
+}
+
+call_verification_recorder() {
+    # Record verification result to .map/verification_results_<branch>.json
+    # Non-blocking: failures don't stop the hook
+    #
+    # Args:
+    #   $1: recipe_id (e.g., "check_ruff", "check_secrets")
+    #   $2: status (pass|fail|skipped)
+    #   $3: summary (human-readable description)
+    #   $4: duration_ms (optional, milliseconds)
+
+    local recipe_id="$1"
+    local status="$2"
+    local summary="$3"
+    local duration_ms="${4:-}"
+
+    local branch
+    branch=$(get_branch_name)
+
+    # Build command args
+    local cmd_args=("$branch" "$recipe_id" "$status" "$summary")
+    if [[ -n "$duration_ms" ]]; then
+        cmd_args+=("$duration_ms")
+    fi
+
+    # Call verification recorder (non-blocking)
+    # Use || true to prevent hook failure if recorder fails
+    python -m mapify_cli.verification_recorder "${cmd_args[@]}" 2>/dev/null || true
+}
+
 run_check() {
     local name="$1"
     local cmd="$2"
-    
+    local recipe_id="${3:-check_${name// /_}}"  # Default: sanitize name to recipe_id
+
     log "Running: $name"
-    
+
+    # Measure duration using bash SECONDS variable
+    SECONDS=0
+
     if timeout "$TIMEOUT" bash -c "$cmd" 2>/dev/null; then
+        local duration=$((SECONDS * 1000))
         log "✓ $name passed"
+
+        # Record success
+        call_verification_recorder "$recipe_id" "pass" "$name passed" "$duration"
         return 0
     else
+        local duration=$((SECONDS * 1000))
         log "✗ $name failed (non-blocking)"
         add_warning "$name failed"
+
+        # Record failure
+        call_verification_recorder "$recipe_id" "fail" "$name failed" "$duration"
         return 0  # Don't fail the hook, just log
     fi
 }
@@ -95,72 +145,72 @@ is_rust() {
 
 check_python() {
     log "Detected Python project"
-    
+
     # Ruff (fast Python linter)
     if command -v ruff &>/dev/null; then
-        run_check "ruff" "ruff check . --quiet"
+        run_check "ruff" "ruff check . --quiet" "check_ruff"
     fi
-    
+
     # Black (formatter check)
     if command -v black &>/dev/null; then
-        run_check "black" "black --check --quiet . 2>/dev/null"
+        run_check "black" "black --check --quiet . 2>/dev/null" "check_black"
     fi
-    
+
     # MyPy (type checker) - only if configured
     if command -v mypy &>/dev/null && [[ -f "mypy.ini" || -f "pyproject.toml" ]]; then
-        run_check "mypy" "mypy . --ignore-missing-imports --no-error-summary 2>/dev/null"
+        run_check "mypy" "mypy . --ignore-missing-imports --no-error-summary 2>/dev/null" "check_mypy"
     fi
 }
 
 check_nodejs() {
     log "Detected Node.js project"
-    
+
     # Check if node_modules exists
     if [[ ! -d "node_modules" ]]; then
         log "node_modules missing, skipping npm checks"
         return 0
     fi
-    
+
     # Run lint if available
     if grep -q '"lint"' package.json 2>/dev/null; then
-        run_check "npm lint" "npm run lint --silent 2>/dev/null"
+        run_check "npm lint" "npm run lint --silent 2>/dev/null" "check_npm_lint"
     fi
-    
+
     # Run typecheck if TypeScript
     if is_typescript; then
         if grep -q '"typecheck"' package.json 2>/dev/null; then
-            run_check "typecheck" "npm run typecheck --silent 2>/dev/null"
+            run_check "typecheck" "npm run typecheck --silent 2>/dev/null" "check_typecheck"
         elif command -v tsc &>/dev/null; then
-            run_check "tsc" "tsc --noEmit 2>/dev/null"
+            run_check "tsc" "tsc --noEmit 2>/dev/null" "check_tsc"
         fi
     fi
 }
 
 check_go() {
     log "Detected Go project"
-    
+
     # Go vet
     if command -v go &>/dev/null; then
-        run_check "go vet" "go vet ./... 2>/dev/null"
+        run_check "go vet" "go vet ./... 2>/dev/null" "check_go_vet"
     fi
-    
+
     # Staticcheck
     if command -v staticcheck &>/dev/null; then
-        run_check "staticcheck" "staticcheck ./... 2>/dev/null"
+        run_check "staticcheck" "staticcheck ./... 2>/dev/null" "check_staticcheck"
     fi
 }
 
 check_rust() {
     log "Detected Rust project"
-    
+
     # Cargo check (fast type checking)
     if command -v cargo &>/dev/null; then
-        run_check "cargo check" "cargo check --quiet 2>/dev/null"
+        run_check "cargo check" "cargo check --quiet 2>/dev/null" "check_cargo_check"
     fi
-    
+
     # Clippy (linter)
     if command -v cargo &>/dev/null; then
-        run_check "clippy" "cargo clippy --quiet -- -D warnings 2>/dev/null"
+        run_check "clippy" "cargo clippy --quiet -- -D warnings 2>/dev/null" "check_clippy"
     fi
 }
 
@@ -170,38 +220,59 @@ check_rust() {
 
 check_secrets() {
     log "Checking for exposed secrets in staged files"
-    
+
     # Only check if in git repo
     if ! git rev-parse --git-dir &>/dev/null; then
         return 0
     fi
-    
+
+    SECONDS=0
+
     local staged_files
     staged_files=$(git diff --cached --name-only 2>/dev/null || true)
-    
+
     if [[ -z "$staged_files" ]]; then
+        local duration=$((SECONDS * 1000))
+        call_verification_recorder "check_secrets" "skipped" "No staged files to check" "$duration"
         return 0
     fi
-    
+
     # Check for hardcoded secrets (simplified pattern)
     local secret_patterns='(API_KEY|SECRET|TOKEN|PASSWORD|PRIVATE_KEY)\s*[=:]\s*["\x27][A-Za-z0-9_\-]{8,}'
-    
+    local found_secrets=false
+
     while IFS= read -r file; do
         if [[ -f "$file" ]] && grep -qE "$secret_patterns" "$file" 2>/dev/null; then
             add_critical "Possible hardcoded secret in staged file: $file"
+            found_secrets=true
         fi
     done <<< "$staged_files"
+
+    local duration=$((SECONDS * 1000))
+
+    if [[ "$found_secrets" == "true" ]]; then
+        call_verification_recorder "check_secrets" "fail" "Hardcoded secrets found in staged files" "$duration"
+    else
+        call_verification_recorder "check_secrets" "pass" "No secrets found in staged files" "$duration"
+    fi
 }
 
 check_env_committed() {
     log "Checking .env not staged"
-    
+
     if ! git rev-parse --git-dir &>/dev/null; then
         return 0
     fi
-    
+
+    SECONDS=0
+
     if git diff --cached --name-only 2>/dev/null | grep -q "^\.env"; then
+        local duration=$((SECONDS * 1000))
         add_critical ".env file is staged for commit!"
+        call_verification_recorder "check_env_committed" "fail" ".env file is staged" "$duration"
+    else
+        local duration=$((SECONDS * 1000))
+        call_verification_recorder "check_env_committed" "pass" ".env not staged" "$duration"
     fi
 }
 

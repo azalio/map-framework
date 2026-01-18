@@ -8,6 +8,7 @@ Deep technical documentation for MAP (Modular Agentic Planner) implementation.
 ## Table of Contents
 
 - [Architecture Overview](#architecture-overview)
+  - [.map/ Artifact Specifications](#map-artifact-specifications)
 - [Agent Specifications](#agent-specifications)
 - [MCP Integration](#mcp-integration)
 - [Customization Guide](#customization-guide)
@@ -163,6 +164,180 @@ MAP Framework implements cognitive architecture inspired by prefrontal cortex fu
 - Task plan stored in `.map/task_plan_*.md`
 - Workflow logs in `.map/workflow_logs/`
 - Metrics tracked in `.claude/metrics/agent_metrics.jsonl`
+
+### .map/ Artifact Specifications
+
+MAP Framework stores workflow artifacts in the `.map/` directory. All artifacts follow JSON schemas defined in `src/mapify_cli/schemas.py`.
+
+#### 1. State Artifact (`state_<branch>.json`)
+
+**Purpose:** Track workflow state including terminal status and early termination.
+
+**Written by:** `src/mapify_cli/workflow_state.py` (WorkflowState class)
+
+**Schema:** `STATE_ARTIFACT_SCHEMA` in `src/mapify_cli/schemas.py`
+
+**Example:**
+```json
+{
+  "workflow": "map-efficient",
+  "terminal_status": "complete",
+  "ended_early": null,
+  "subtasks": [
+    {
+      "id": "ST-001",
+      "title": "Create User model",
+      "status": "complete",
+      "validation_criteria": [
+        "Model includes email field",
+        "Password hashing implemented"
+      ]
+    },
+    {
+      "id": "ST-002",
+      "title": "Implement login endpoint",
+      "status": "complete",
+      "validation_criteria": []
+    }
+  ]
+}
+```
+
+**Early Termination Example:**
+```json
+{
+  "workflow": "map-efficient",
+  "terminal_status": "won't_do",
+  "ended_early": {
+    "by_user": true,
+    "reason": "User requested early termination",
+    "at_subtask_id": "ST-003"
+  },
+  "subtasks": [
+    {
+      "id": "ST-001",
+      "title": "Create User model",
+      "status": "complete",
+      "validation_criteria": []
+    },
+    {
+      "id": "ST-002",
+      "title": "Implement login endpoint",
+      "status": "won't_do",
+      "validation_criteria": []
+    }
+  ]
+}
+```
+
+**Terminal Status Values:**
+| Status | Description |
+|--------|-------------|
+| `pending` | Workflow not started or in progress |
+| `complete` | All subtasks completed successfully |
+| `blocked` | Workflow blocked by unresolved issue |
+| `won't_do` | Workflow terminated early by user |
+| `superseded` | Workflow replaced by newer workflow |
+
+#### 2. Verification Results Artifact (`verification_results_<branch>.json`)
+
+**Purpose:** Machine-readable record of hook verification checks for CI/CD integration.
+
+**Written by:** `src/mapify_cli/verification_recorder.py` (record_verification_result function)
+
+**Schema:** `VERIFICATION_RESULTS_SCHEMA` in `src/mapify_cli/schemas.py`
+
+**Example:**
+```json
+{
+  "overall": "pass",
+  "recipes": [
+    {
+      "id": "check_ruff",
+      "status": "pass",
+      "summary": "ruff passed",
+      "duration_ms": 1200
+    },
+    {
+      "id": "check_secrets",
+      "status": "skipped",
+      "summary": "No staged files to check",
+      "duration_ms": 50,
+      "skip_reason": "No files were staged for commit"
+    },
+    {
+      "id": "check_mypy",
+      "status": "fail",
+      "summary": "mypy failed",
+      "duration_ms": 3500
+    }
+  ]
+}
+```
+
+**Overall Status Aggregation:**
+| Condition | Overall Status |
+|-----------|----------------|
+| ANY recipe is `fail` | `fail` |
+| ALL recipes are `pass` | `pass` |
+| Otherwise | `unknown` |
+
+**Recipe Status Values:**
+| Status | Description |
+|--------|-------------|
+| `pass` | Check completed successfully |
+| `fail` | Check found problems |
+| `skipped` | Check intentionally skipped (see `skip_reason`) |
+
+#### 3. Repo Insight Artifact (`repo_insight_<branch>.json`)
+
+**Purpose:** Project metadata for language detection and suggested checks.
+
+**Written by:** `src/mapify_cli/repo_insight.py` (create_repo_insight function)
+
+**Schema:** `REPO_INSIGHT_SCHEMA` in `src/mapify_cli/schemas.py`
+
+**Example:**
+```json
+{
+  "language": "python",
+  "suggested_checks": [
+    "make check",
+    "pytest tests/test_template_sync.py -v",
+    "make sync-templates"
+  ],
+  "key_dirs": [
+    "src",
+    "tests",
+    ".claude"
+  ]
+}
+```
+
+**Language Values:**
+| Language | Detection Marker |
+|----------|------------------|
+| `python` | `pyproject.toml`, `setup.py`, `requirements.txt` |
+| `typescript` | `tsconfig.json` (takes precedence over `package.json`) |
+| `javascript` | `package.json` |
+| `go` | `go.mod` |
+| `rust` | `Cargo.toml` |
+| `unknown` | No marker files found |
+
+**Constraints:**
+- `key_dirs` maximum 5 entries
+- All `key_dirs` paths are relative (no leading `/`)
+- `suggested_checks` filtered based on available tools (e.g., `make` commands only if `Makefile` exists)
+
+#### Schema Cross-Reference
+
+All JSON schemas are defined in `src/mapify_cli/schemas.py`:
+
+| Schema Constant | Artifact File | JSON Schema Draft |
+|----------------|---------------|-------------------|
+| `STATE_ARTIFACT_SCHEMA` | `state_<branch>.json` | 2020-12 |
+| `VERIFICATION_RESULTS_SCHEMA` | `verification_results_<branch>.json` | 2020-12 |
+| `REPO_INSIGHT_SCHEMA` | `repo_insight_<branch>.json` | 2020-12 |
 
 ### Workflow Variants
 
