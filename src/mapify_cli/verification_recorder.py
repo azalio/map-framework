@@ -14,6 +14,24 @@ from typing import Optional
 # VERIFICATION_RESULTS_SCHEMA is referenced in docstrings but not directly used in code
 
 
+def _sanitize_branch_name(branch: str) -> str:
+    """Sanitize branch name for use in filenames.
+
+    Replaces characters that could cause path issues (like '/') with underscores.
+
+    Args:
+        branch: Git branch name (e.g., 'feature/foo', 'main')
+
+    Returns:
+        Sanitized branch name safe for filenames (e.g., 'feature_foo', 'main')
+    """
+    # Replace forward slashes (common in feature/bugfix branches) with underscores
+    sanitized = branch.replace("/", "_")
+    # Also handle backslashes just in case
+    sanitized = sanitized.replace("\\", "_")
+    return sanitized
+
+
 def record_verification_result(
     project_root: Path,
     branch: str,
@@ -77,7 +95,9 @@ def record_verification_result(
     map_dir = project_root / ".map"
     map_dir.mkdir(exist_ok=True)
 
-    results_path = map_dir / f"verification_results_{branch}.json"
+    # Sanitize branch name to avoid nested paths (e.g., feature/foo -> feature_foo)
+    safe_branch = _sanitize_branch_name(branch)
+    results_path = map_dir / f"verification_results_{safe_branch}.json"
 
     # Load existing results or create new structure
     if results_path.exists():

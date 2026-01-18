@@ -336,7 +336,7 @@ STATE_ARTIFACT_SCHEMA = {
                 "language": {
                     "type": ["string", "null"],
                     "description": "Primary programming language detected (e.g., 'python', 'javascript', 'go', 'rust')",
-                    "examples": ["python", "javascript", "go", "rust", "typescript", None]
+                    "examples": ["python", "javascript", "go", "rust", "typescript", "unknown"]
                 },
                 "suggested_checks": {
                     "type": "array",
@@ -424,7 +424,7 @@ REPO_INSIGHT_SCHEMA = {
         "language": {
             "type": ["string", "null"],
             "description": "Primary programming language detected by marker files (e.g., pyproject.toml -> 'python', package.json -> 'javascript', go.mod -> 'go', Cargo.toml -> 'rust')",
-            "examples": ["python", "javascript", "go", "rust", "typescript", "java", "kotlin", None]
+            "examples": ["python", "javascript", "go", "rust", "typescript", "java", "kotlin", "unknown"]
         },
         "suggested_checks": {
             "type": "array",
