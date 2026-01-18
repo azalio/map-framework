@@ -1991,11 +1991,15 @@ Checks return `skipped` when they cannot run due to missing prerequisites:
 
 When a user decides to end a workflow early (before all subtasks complete), MAP Framework uses the `won't_do` terminal status.
 
-**Trigger phrases (Russian and English):**
+**Trigger phrases (Russian):**
 - "закончили" (finished)
 - "остановимся" (let's stop)
 - "хватит" (enough)
 - "дальше не делай" (don't continue)
+- "прекращай" (stop it)
+- "закрываем" (we're closing)
+
+> **Note:** Currently only Russian trigger phrases are implemented in `intent_detector.py`. English equivalents are planned for a future release.
 
 **What happens:**
 1. All `pending` and `in_progress` subtasks are marked `won't_do`

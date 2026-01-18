@@ -98,7 +98,7 @@ class TestDetectFinishIntent:
         """Test that partial phrases don't match (word boundaries)."""
         # These contain the letters but not as whole words
         assert detect_finish_intent("незакончили") is False
-        assert detect_finish_intent("прекращайте") is False  # Different word form
+        assert detect_finish_intent("прекращайте") is False  # Contains 'прекращай' as substring but should not match due to word boundaries
 
     # ========================================================================
     # Edge Case Tests

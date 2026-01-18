@@ -5,6 +5,7 @@ with atomic writes to prevent concurrent write corruption.
 """
 
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -215,8 +216,12 @@ def _atomic_write_json(file_path: Path, data: dict) -> None:
     )
 
     try:
+        # Close the file descriptor from mkstemp before opening by path
+        # This avoids resource leaks and is more portable
+        os.close(temp_fd)
+
         # Write JSON to temp file
-        with open(temp_fd, "w", encoding="utf-8") as f:
+        with open(temp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
 
         # Atomic rename (overwrites target on same filesystem)
