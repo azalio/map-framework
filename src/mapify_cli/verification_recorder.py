@@ -9,9 +9,27 @@ import os
 import sys
 import tempfile
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TypedDict, List
 
-# VERIFICATION_RESULTS_SCHEMA is referenced in docstrings but not directly used in code
+# Maximum number of recipes to retain (older entries are trimmed)
+MAX_RECIPES = 1000
+
+
+class RecipeResult(TypedDict, total=False):
+    """Type definition for a verification recipe result."""
+
+    id: str  # Required
+    status: str  # Required: 'pass', 'fail', or 'skipped'
+    summary: str  # Required
+    duration_ms: int  # Optional
+    skip_reason: str  # Optional
+
+
+class VerificationResults(TypedDict):
+    """Type definition for verification results file."""
+
+    overall: str  # 'pass', 'fail', or 'unknown'
+    recipes: List[RecipeResult]
 
 
 def _sanitize_branch_name(branch: str) -> str:
@@ -30,6 +48,15 @@ def _sanitize_branch_name(branch: str) -> str:
     # Also handle backslashes just in case
     sanitized = sanitized.replace("\\", "_")
     return sanitized
+
+
+def _log_warning(message: str) -> None:
+    """Log a warning message to stderr.
+
+    Args:
+        message: Warning message to log
+    """
+    print(f"[verification_recorder] WARNING: {message}", file=sys.stderr)
 
 
 def record_verification_result(
@@ -52,7 +79,7 @@ def record_verification_result(
     - overall = 'unknown' otherwise (pending, mixed pass/skipped, or no recipes)
 
     Uses atomic write pattern (write to .tmp, rename) to prevent concurrent
-    write corruption.
+    write corruption. Limits recipes to MAX_RECIPES entries (oldest trimmed).
 
     Args:
         project_root: Path to project root directory
@@ -75,8 +102,8 @@ def record_verification_result(
     if status not in valid_statuses:
         raise ValueError(f"Invalid status '{status}'. Must be one of: {valid_statuses}")
 
-    # Build recipe object (type: ignore to allow dict with mixed value types)
-    recipe: dict = {
+    # Build recipe object with proper typing
+    recipe: RecipeResult = {
         "id": recipe_id,
         "status": status,
         "summary": summary,
@@ -100,12 +127,20 @@ def record_verification_result(
     results_path = map_dir / f"verification_results_{safe_branch}.json"
 
     # Load existing results or create new structure
+    results_data: VerificationResults
     if results_path.exists():
         try:
             with results_path.open("r", encoding="utf-8") as f:
                 results_data = json.load(f)
-        except (json.JSONDecodeError, OSError):
-            # If file is corrupted, start fresh
+        except json.JSONDecodeError as e:
+            # Log warning about corruption, start fresh
+            _log_warning(
+                f"Corrupted JSON in {results_path}, starting fresh. Error: {e}"
+            )
+            results_data = {"overall": "unknown", "recipes": []}
+        except OSError as e:
+            # Log warning about read error, start fresh
+            _log_warning(f"Could not read {results_path}, starting fresh. Error: {e}")
             results_data = {"overall": "unknown", "recipes": []}
     else:
         # Create new results file
@@ -113,6 +148,12 @@ def record_verification_result(
 
     # Append new recipe result (preserving existing entries)
     results_data["recipes"].append(recipe)
+
+    # Trim old recipes if exceeding limit (keep most recent)
+    if len(results_data["recipes"]) > MAX_RECIPES:
+        trimmed_count = len(results_data["recipes"]) - MAX_RECIPES
+        results_data["recipes"] = results_data["recipes"][-MAX_RECIPES:]
+        _log_warning(f"Trimmed {trimmed_count} old recipes to stay under {MAX_RECIPES} limit")
 
     # Update overall status based on aggregation rules
     results_data["overall"] = _compute_overall_status(results_data["recipes"])
@@ -126,7 +167,7 @@ def record_verification_result(
     return results_path
 
 
-def _compute_overall_status(recipes: list) -> str:
+def _compute_overall_status(recipes: List[RecipeResult]) -> str:
     """Compute overall verification status from recipe list.
 
     Contract enforcement:
@@ -157,7 +198,7 @@ def _compute_overall_status(recipes: list) -> str:
     return "unknown"
 
 
-def _validate_verification_results_schema(data: dict) -> None:
+def _validate_verification_results_schema(data: VerificationResults) -> None:
     """Validate data against VERIFICATION_RESULTS_SCHEMA.
 
     Args:
@@ -216,11 +257,12 @@ def _validate_verification_results_schema(data: dict) -> None:
                     )
 
 
-def _atomic_write_json(file_path: Path, data: dict) -> None:
+def _atomic_write_json(file_path: Path, data: VerificationResults) -> None:
     """Write JSON data to file atomically using temp file + rename pattern.
 
     Prevents concurrent write corruption by writing to a temporary file first,
-    then atomically renaming it to the target path.
+    then atomically renaming it to the target path. Uses os.fdopen to avoid
+    race conditions between close and reopen.
 
     Args:
         file_path: Target file path
@@ -236,12 +278,9 @@ def _atomic_write_json(file_path: Path, data: dict) -> None:
     )
 
     try:
-        # Close the file descriptor from mkstemp before opening by path
-        # This avoids resource leaks and is more portable
-        os.close(temp_fd)
-
-        # Write JSON to temp file
-        with open(temp_path, "w", encoding="utf-8") as f:
+        # Use os.fdopen to wrap the file descriptor directly
+        # This avoids the race condition of close + reopen by path
+        with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
 
         # Atomic rename (overwrites target on same filesystem)
@@ -287,7 +326,18 @@ def main() -> int:
     recipe_id = sys.argv[2]
     status = sys.argv[3]
     summary = sys.argv[4]
-    duration_ms: Optional[int] = int(sys.argv[5]) if len(sys.argv) > 5 else None
+
+    # Parse optional duration_ms with validation
+    duration_ms: Optional[int] = None
+    if len(sys.argv) > 5:
+        try:
+            duration_ms = int(sys.argv[5])
+        except ValueError:
+            print(
+                f"Error: duration_ms must be an integer, got '{sys.argv[5]}'",
+                file=sys.stderr,
+            )
+            return 1
 
     try:
         # Project root is current working directory

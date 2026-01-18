@@ -177,9 +177,9 @@ class TestActiveSubtaskDetection:
 
         result = finalize_workflow(state, reason="Early termination")
 
-        # No active subtask, should be empty string
+        # No active subtask, should be None
         assert result.ended_early is not None
-        assert result.ended_early["at_subtask_id"] == ""
+        assert result.ended_early["at_subtask_id"] is None
 
     def test_first_in_progress_selected_when_multiple(self):
         """Should select first in_progress subtask if multiple exist."""
@@ -250,7 +250,7 @@ class TestMixedSubtaskStatuses:
         assert result.subtasks == []
         assert result.current_phase == WorkflowPhase.WONT_DO
         assert result.ended_early is not None
-        assert result.ended_early["at_subtask_id"] == ""
+        assert result.ended_early["at_subtask_id"] is None
 
 
 # =============================================================================

@@ -492,7 +492,7 @@ class TestWontDoTerminalStatus:
         assert state.ended_early is not None
         assert state.ended_early["by_user"] is True
         assert state.ended_early["reason"] == "Project cancelled"
-        assert state.ended_early["at_subtask_id"] == ""
+        assert state.ended_early["at_subtask_id"] is None
 
     def test_save_checkpoint_includes_ended_early(self):
         """save_checkpoint() writes ended_early to YAML frontmatter."""

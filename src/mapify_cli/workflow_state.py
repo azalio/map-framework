@@ -506,7 +506,12 @@ class WorkflowState:
             return False
         return all(st.status == "complete" for st in self.subtasks)
 
-    def mark_ended_early(self, reason: str, subtask_id: str = "") -> None:
+    def mark_ended_early(
+        self,
+        reason: str,
+        subtask_id: Optional[str] = None,
+        by_user: bool = True,
+    ) -> None:
         """
         Mark the workflow as ended early (won't complete).
 
@@ -514,11 +519,12 @@ class WorkflowState:
 
         Args:
             reason: Explanation for why the workflow ended early
-            subtask_id: ID of subtask where workflow stopped (optional)
+            subtask_id: ID of subtask where workflow stopped (None if no active subtask)
+            by_user: Whether termination was user-initiated (default True)
         """
         self.current_phase = WorkflowPhase.WONT_DO
         self.ended_early = {
-            "by_user": True,
+            "by_user": by_user,
             "reason": reason,
             "at_subtask_id": subtask_id,
         }

@@ -547,8 +547,8 @@ def test_atomic_write_cleans_up_on_error(temp_project_root):
     with patch("tempfile.mkstemp") as mock_mkstemp:
         mock_mkstemp.return_value = (temp_fd, temp_path)
 
-        # Force an error during write
-        with patch("builtins.open", side_effect=OSError("Write failed")):
+        # Force an error during write (os.fdopen is used now, not open)
+        with patch("os.fdopen", side_effect=OSError("Write failed")):
             with pytest.raises(OSError, match="Write failed"):
                 _atomic_write_json(target_path, data)
 

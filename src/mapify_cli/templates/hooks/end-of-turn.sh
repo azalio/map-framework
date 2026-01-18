@@ -47,6 +47,21 @@ add_critical() {
     CRITICAL_ISSUES+=("$1")
 }
 
+get_time_ms() {
+    # Get current time in milliseconds (POSIX-compatible)
+    # Uses python as fallback if date doesn't support %N
+    if date +%s%3N 2>/dev/null | grep -qE '^[0-9]+$'; then
+        date +%s%3N
+    elif command -v python3 &>/dev/null; then
+        python3 -c 'import time; print(int(time.time() * 1000))'
+    elif command -v python &>/dev/null; then
+        python -c 'import time; print(int(time.time() * 1000))'
+    else
+        # Fallback: seconds * 1000 (less precise)
+        echo $(($(date +%s) * 1000))
+    fi
+}
+
 get_branch_name() {
     # Extract current git branch name, default to 'default' if not in git repo
     if git rev-parse --git-dir &>/dev/null; then
@@ -92,18 +107,23 @@ run_check() {
 
     log "Running: $name"
 
-    # Measure duration using bash SECONDS variable
-    SECONDS=0
+    # Measure duration using POSIX-compatible timing
+    local start_ms
+    start_ms=$(get_time_ms)
 
     if timeout "$TIMEOUT" bash -c "$cmd" 2>/dev/null; then
-        local duration=$((SECONDS * 1000))
+        local end_ms
+        end_ms=$(get_time_ms)
+        local duration=$((end_ms - start_ms))
         log "✓ $name passed"
 
         # Record success
         call_verification_recorder "$recipe_id" "pass" "$name passed" "$duration"
         return 0
     else
-        local duration=$((SECONDS * 1000))
+        local end_ms
+        end_ms=$(get_time_ms)
+        local duration=$((end_ms - start_ms))
         log "✗ $name failed (non-blocking)"
         add_warning "$name failed"
 
@@ -226,13 +246,16 @@ check_secrets() {
         return 0
     fi
 
-    SECONDS=0
+    local start_ms
+    start_ms=$(get_time_ms)
 
     local staged_files
     staged_files=$(git diff --cached --name-only 2>/dev/null || true)
 
     if [[ -z "$staged_files" ]]; then
-        local duration=$((SECONDS * 1000))
+        local end_ms
+        end_ms=$(get_time_ms)
+        local duration=$((end_ms - start_ms))
         call_verification_recorder "check_secrets" "skipped" "No staged files to check" "$duration"
         return 0
     fi
@@ -248,7 +271,9 @@ check_secrets() {
         fi
     done <<< "$staged_files"
 
-    local duration=$((SECONDS * 1000))
+    local end_ms
+    end_ms=$(get_time_ms)
+    local duration=$((end_ms - start_ms))
 
     if [[ "$found_secrets" == "true" ]]; then
         call_verification_recorder "check_secrets" "fail" "Hardcoded secrets found in staged files" "$duration"
@@ -264,14 +289,19 @@ check_env_committed() {
         return 0
     fi
 
-    SECONDS=0
+    local start_ms
+    start_ms=$(get_time_ms)
 
     if git diff --cached --name-only 2>/dev/null | grep -q "^\.env"; then
-        local duration=$((SECONDS * 1000))
+        local end_ms
+        end_ms=$(get_time_ms)
+        local duration=$((end_ms - start_ms))
         add_critical ".env file is staged for commit!"
         call_verification_recorder "check_env_committed" "fail" ".env file is staged" "$duration"
     else
-        local duration=$((SECONDS * 1000))
+        local end_ms
+        end_ms=$(get_time_ms)
+        local duration=$((end_ms - start_ms))
         call_verification_recorder "check_env_committed" "pass" ".env not staged" "$duration"
     fi
 }

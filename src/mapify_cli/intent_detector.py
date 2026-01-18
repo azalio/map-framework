@@ -5,8 +5,7 @@ Detects user intent to finish/stop the current workflow based on Russian phrases
 """
 
 import re
-from typing import Optional
-
+from typing import Optional, Pattern
 
 # Russian finish-intent phrases (case-insensitive)
 FINISH_PHRASES = [
@@ -18,11 +17,27 @@ FINISH_PHRASES = [
     r"закрываем",
 ]
 
-# Compile regex pattern for all finish phrases
-_FINISH_PATTERN = re.compile(
-    r"\b(" + "|".join(FINISH_PHRASES) + r")\b",
-    re.IGNORECASE | re.UNICODE,
-)
+# Lazily compiled regex pattern (compiled on first use)
+_finish_pattern_cache: Optional[Pattern[str]] = None
+
+
+def _get_finish_pattern() -> Pattern[str]:
+    """
+    Get the compiled finish pattern, compiling lazily on first call.
+
+    This avoids regex compilation at module import time, reducing startup
+    overhead when the module is imported but not used.
+
+    Returns:
+        Compiled regex pattern for finish phrases.
+    """
+    global _finish_pattern_cache
+    if _finish_pattern_cache is None:
+        _finish_pattern_cache = re.compile(
+            r"\b(" + "|".join(FINISH_PHRASES) + r")\b",
+            re.IGNORECASE | re.UNICODE,
+        )
+    return _finish_pattern_cache
 
 
 def detect_finish_intent(text: Optional[str]) -> bool:
@@ -50,4 +65,5 @@ def detect_finish_intent(text: Optional[str]) -> bool:
     if not text:
         return False
 
-    return bool(_FINISH_PATTERN.search(text))
+    pattern = _get_finish_pattern()
+    return bool(pattern.search(text))
