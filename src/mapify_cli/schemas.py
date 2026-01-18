@@ -228,7 +228,7 @@ STATE_ARTIFACT_SCHEMA = {
         "active_subtask_id": {
             "type": ["string", "null"],
             "description": "ID of currently active subtask, or null if no subtask is active",
-            "examples": ["ST-001", "ST-042", None]
+            "examples": ["ST-001", "ST-042"]
         },
         "subtasks": {
             "type": "array",
@@ -280,7 +280,7 @@ STATE_ARTIFACT_SCHEMA = {
                 "at_subtask_id": {
                     "type": ["string", "null"],
                     "description": "ID of subtask where workflow was terminated, or null if terminated before any subtask",
-                    "examples": ["ST-003", None]
+                    "examples": ["ST-003"]
                 }
             },
             "required": ["by_user", "reason"],
