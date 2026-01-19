@@ -45,6 +45,13 @@ Complete usage examples, best practices, and optimization strategies for the MAP
   - [Sequential Hook Processing](#sequential-hook-processing)
   - [Disabling Prompt-Improver](#disabling-prompt-improver)
   - [Other Active Hooks](#other-active-hooks)
+- [Verification Results and Early Termination](#-verification-results-and-early-termination)
+  - [Verification Results Tracking](#verification-results-tracking)
+  - [Recipe Status Values](#recipe-status-values)
+  - [Skipped Status Explained](#skipped-status-explained)
+  - [Hooks Contract: When Hooks Block](#hooks-contract-when-hooks-block)
+  - [Early Termination with won't_do](#early-termination-with-wont_do-status)
+  - [Troubleshooting Verification Issues](#troubleshooting-verification-issues)
 - [Additional Resources](#additional-resources)
 
 ---
@@ -1882,6 +1889,187 @@ Edit `.claude/settings.json` for project-specific rules:
 **User overrides:**
 
 Create `.claude/settings.local.json` (gitignored) for personal overrides.
+
+---
+
+## 📊 Verification Results and Early Termination
+
+MAP Framework tracks verification results from hooks and supports early workflow termination with the `won't_do` status.
+
+### Verification Results Tracking
+
+The end-of-turn hook (`end-of-turn.sh`) records verification results to `.map/verification_results_<branch>.json`. This provides machine-readable verification status for CI/CD integration.
+
+**File location:** `.map/verification_results_<branch>.json`
+
+**Example content:**
+```json
+{
+  "overall": "pass",
+  "recipes": [
+    {
+      "id": "check_ruff",
+      "status": "pass",
+      "summary": "ruff passed",
+      "duration_ms": 1200
+    },
+    {
+      "id": "check_secrets",
+      "status": "skipped",
+      "summary": "No staged files to check",
+      "duration_ms": 50,
+      "skip_reason": "No staged files"
+    },
+    {
+      "id": "check_mypy",
+      "status": "fail",
+      "summary": "mypy failed",
+      "duration_ms": 3500
+    }
+  ]
+}
+```
+
+### Recipe Status Values
+
+| Status | Meaning | Example |
+|--------|---------|---------|
+| `pass` | Check completed successfully | Linter found no issues |
+| `fail` | Check found problems | Type errors detected |
+| `skipped` | Check was intentionally skipped | No staged files to scan |
+
+### Overall Status Aggregation
+
+The `overall` field follows strict aggregation rules:
+
+| Condition | Overall Status |
+|-----------|----------------|
+| ANY recipe is `fail` | `fail` |
+| ALL recipes are `pass` | `pass` |
+| Otherwise (mixed, empty, all skipped) | `unknown` |
+
+### Skipped Status Explained
+
+Checks return `skipped` when they cannot run due to missing prerequisites:
+
+**Common skip scenarios:**
+- `check_secrets`: No staged files to check
+- `check_mypy`: No mypy configuration found
+- `npm lint`: `node_modules` directory missing
+- `cargo clippy`: Not in a Rust project
+
+**Example skipped result:**
+```json
+{
+  "id": "check_secrets",
+  "status": "skipped",
+  "summary": "No staged files to check",
+  "duration_ms": 50,
+  "skip_reason": "No files were staged for commit"
+}
+```
+
+### Hooks Contract: When Hooks Block
+
+**Critical:** Hooks only return exit code 2 (blocking) for **security-critical issues**:
+
+| Blocking (Exit 2) | Non-Blocking (Exit 0-1) |
+|-------------------|-------------------------|
+| Hardcoded secrets in staged files | Linting failures |
+| `.env` file staged for commit | Type errors |
+| Dangerous commands (rm -rf /, force push main) | Formatting issues |
+| Access to credential files | Test failures |
+
+**Why this matters:**
+- Exit 2 stops Claude and feeds stderr back for correction
+- Exit 1 shows warning but continues
+- Exit 0 passes silently
+
+**Design principle:** Quality checks (linting, types) should inform, not block. Only security violations warrant blocking.
+
+### Early Termination with `won't_do` Status
+
+When a user decides to end a workflow early (before all subtasks complete), MAP Framework uses the `won't_do` terminal status.
+
+**Trigger phrases (Russian):**
+- "закончили" (finished)
+- "остановимся" (let's stop)
+- "хватит" (enough)
+- "дальше не делай" (don't continue)
+- "прекращай" (stop it)
+- "закрываем" (we're closing)
+
+> **Note:** Currently only Russian trigger phrases are implemented in `intent_detector.py`. English equivalents are planned for a future release.
+
+**What happens:**
+1. All `pending` and `in_progress` subtasks are marked `won't_do`
+2. Workflow state records `ended_early` metadata
+3. Completed subtasks remain `complete`
+
+### ended_early Structure
+
+When a workflow terminates early, the state file includes:
+
+```json
+{
+  "terminal_status": "won't_do",
+  "ended_early": {
+    "by_user": true,
+    "reason": "User requested early termination",
+    "at_subtask_id": "ST-004"
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `by_user` | boolean | Whether user initiated termination |
+| `reason` | string | Human-readable reason for termination |
+| `at_subtask_id` | string | ID of subtask that was active when terminated |
+
+### Troubleshooting Verification Issues
+
+#### Enable Verbose Hook Logging
+
+```bash
+export CLAUDE_HOOK_VERBOSE=true
+```
+
+This enables detailed logging from hooks, showing:
+- Which checks are running
+- Pass/fail status of each check
+- Duration of each check
+- Skip reasons for skipped checks
+
+#### Artifact Locations
+
+| Artifact | Path | Purpose |
+|----------|------|---------|
+| Verification results | `.map/verification_results_<branch>.json` | Machine-readable check results |
+| Workflow state | `.map/state_<branch>.json` | Current workflow status |
+| Repo insight | `.map/repo_insight_<branch>.json` | Project language and suggested checks |
+| Task plan | `.map/task_plan_<branch>.md` | Subtask breakdown with validation |
+| Progress checkpoint | `.map/progress.md` | Resume checkpoint for context recovery |
+
+#### Common Issues
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| Hook not recording results | verification_recorder not installed | Run `pip install mapify-cli` |
+| Missing duration_ms | SECONDS variable not working | Ensure bash 4.0+ |
+| Wrong branch in filename | Git not initialized | Initialize git or results go to `_default.json` |
+| `overall: unknown` unexpectedly | All checks skipped | Run checks manually to verify setup |
+
+#### Manual Verification Recording
+
+For testing or debugging, you can record results manually:
+
+```bash
+python -m mapify_cli.verification_recorder <branch> <recipe_id> <status> <summary> [duration_ms]
+
+# Example:
+python -m mapify_cli.verification_recorder main check_custom pass "Custom check passed" 1500
+```
 
 ---
 
