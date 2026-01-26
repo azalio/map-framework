@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Ralph Wiggum Loop Integration**: Continuous iteration pattern to prevent premature completion and hallucinated success
+  - State machine with 10 phases (INIT → DECOMPOSITION → EXECUTION → FINAL_VERIFICATION → COMPLETE/RE_DECOMPOSITION/ESCALATE/HARD_STOP/RECOVERY/WONT_DO)
+  - Circuit breaker with configurable limits (max 50 tool calls, 5 same-file edits, 60 min wall time)
+  - Final verification step in map-efficient.md (Step 3.5) with re-decomposition on failure
+  - Thrashing detection (oscillation detection via net_progress and confidence_variance)
+  - Recovery path via RESET_LIMITS marker file
+- **New Agent**: `final-verifier.md` - Adversarial verifier with Root Cause Analysis for Ralph Loop
+- **New Hooks**:
+  - `ralph-circuit-breaker.py` (PreToolUse): Enforces iteration limits, blocks at thresholds
+  - `ralph-iteration-logger.py` (PostToolUse): Logs metrics, detects thrashing patterns
+  - `ralph-context-pruner.py` (PreCompact): Archives old logs, truncates large files
+- **New Python Modules**:
+  - `src/mapify_cli/ralph_state.py`: State machine, circuit breaker config, verification types, thrashing detection
+  - `src/mapify_cli/dependency_graph.py`: Cascade invalidation for subtask dependencies
+- **New Configuration**: `.claude/ralph-loop-config.json` - Single source of truth for Ralph Loop limits
+- **New Reference**: `.claude/references/escalation-matrix.md` - Escalation decision rules
+
+### Changed
+- **task-decomposer.md**: Enhanced with Acceptance Criteria table format, re-decomposition mode, dependency enforcement
+- **map-efficient.md**: Added Step 3.5 Final Verification with circuit breaker check, final-verifier invocation, re-decomposition logic
+- **settings.hooks.json**: Added PreToolUse, PostToolUse, and PreCompact hook entries for Ralph Loop
+
+### Documentation
+- Branch-scoped artifacts stored in `.map/<sanitized-branch>/` directory
+- Branch name sanitization (e.g., `feature/foo` → `feature-foo`) for safe filesystem paths
+
 ## [3.0.0] - 2026-01-16
 
 ### Changed (BREAKING)

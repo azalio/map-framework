@@ -233,6 +233,31 @@ Subtasks should be ordered by dependency:
 
 **CRITICAL**: If subtask B depends on subtask A, A must appear BEFORE B in the array.
 
+### Acceptance Criteria Section (Ralph Loop Integration)
+
+When writing task plans to `.map/task_plan_<branch>.md`, the orchestrator generates an Acceptance Criteria section from subtask validation_criteria. The format is:
+
+```markdown
+## Acceptance Criteria
+
+| ID | Description | Verification | Status |
+|----|-------------|--------------|--------|
+| AC-001 | User can log in with valid credentials | `pytest tests/test_auth.py::test_login_success` | [ ] |
+| AC-002 | Invalid credentials return 401 error | `pytest tests/test_auth.py::test_login_failure` | [ ] |
+| AC-003 | Session expires after 24 hours | `pytest tests/test_auth.py::test_session_expiry` | [ ] |
+```
+
+**Column definitions:**
+- **ID**: Unique identifier `AC-NNN` (3-digit number, zero-padded)
+- **Description**: Human-readable criterion (verb + object + condition)
+- **Verification**: Executable command from `test_strategy` OR `manual: <description>`
+- **Status**: `[ ]` unchecked or `[x]` checked (updated by final-verifier)
+
+**Derivation rules:**
+- Primary source: `subtasks[].validation_criteria`
+- Verification column: Use executable command from `test_strategy.unit`/`test_strategy.integration`/`test_strategy.e2e` when available
+- Otherwise: `manual: <short description>`
+
 ### Ambiguous Goal Output Format
 
 When goal is too ambiguous to decompose, return this structure:
@@ -257,6 +282,76 @@ When goal is too ambiguous to decompose, return this structure:
 ```
 
 **When to use**: Goal lacks critical information needed for meaningful decomposition. Better to ask than guess wrong.
+
+### Re-Decomposition Mode (Ralph Loop)
+
+When invoked with `mode: "re_decomposition"` from the orchestrator, you receive additional context about previous failures and must preserve working subtasks.
+
+**Input Context** (provided by orchestrator):
+
+```json
+{
+  "mode": "re_decomposition",
+  "original_goal": "Original task description",
+  "previous_blueprint": { /* previous decomposition */ },
+  "failure_summary": "Condensed summary of previous failures",
+  "root_cause": {
+    "unmet_requirements": ["Requirement X not implemented"],
+    "invalidated_subtasks": ["ST-002", "ST-003"],
+    "fix_type": "code_fix|plan_change|both"
+  },
+  "iteration": 2
+}
+```
+
+**Re-Decomposition Rules:**
+
+1. **PRESERVE Working Code**: Subtasks NOT in `root_cause.invalidated_subtasks` MUST be preserved with same ST-IDs
+2. **CHECK Dependencies**: If invalidated subtask has dependents, they may need re-verification
+3. **TARGET Failures**: New subtasks MUST directly address `root_cause.unmet_requirements`
+4. **NO Duplicate Work**: Don't recreate subtasks that already pass
+5. **ADD Verification**: Include explicit test criteria for previously failed aspects
+
+**Output Format** (extends standard schema):
+
+```json
+{
+  "schema_version": "2.0",
+  "mode": "re_decomposition",
+  "analysis": {
+    "assumptions": [...],
+    "open_questions": [...]
+  },
+  "blueprint": {
+    "id": "feature-short-name-v2",
+    "summary": "Re-decomposition addressing [failure reason]",
+    "preserved_subtasks": ["ST-001", "ST-004"],
+    "invalidated_subtasks": ["ST-002", "ST-003"],
+    "subtasks": [
+      /* Preserved subtasks with same ST-IDs */
+      {
+        "id": "ST-001",
+        "title": "Original title (preserved)",
+        /* ... unchanged fields ... */
+      },
+      /* New/modified subtasks with new ST-IDs */
+      {
+        "id": "ST-005",
+        "title": "New subtask addressing unmet requirement",
+        "dependencies": ["ST-001"],
+        /* ... */
+      }
+    ]
+  }
+}
+```
+
+**Critical Constraints:**
+- `preserved_subtasks` MUST list ALL subtask IDs that are kept unchanged
+- `invalidated_subtasks` MUST match `root_cause.invalidated_subtasks` from input
+- Preserved subtasks MUST keep their original ST-IDs
+- New subtasks MUST use new ST-IDs (continue numbering from max existing)
+- Dependencies array MUST be present on ALL subtasks (use `[]` if none)
 
 </output_format>
 

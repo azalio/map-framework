@@ -39,6 +39,46 @@
             "description": "Prevents rm -rf, force push to main, git reset --hard"
           }
         ]
+      },
+      {
+        "matcher": "Edit|Write|Bash",
+        "description": "Ralph Loop Circuit Breaker - detect thrashing and enforce limits",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/ralph-circuit-breaker.py",
+            "timeout": 5,
+            "description": "Tracks tool calls, blocks at limits, enables recovery via reset marker"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|Bash|Task",
+        "description": "Ralph Loop Iteration Logger - track metrics and detect patterns",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/ralph-iteration-logger.py",
+            "timeout": 5,
+            "description": "Logs iteration metrics, detects thrashing patterns"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "*",
+        "description": "Ralph Loop Context Pruner - archive old logs before compaction",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/ralph-context-pruner.py",
+            "timeout": 10,
+            "description": "Archives and truncates log files to preserve token budget"
+          }
+        ]
       }
     ],
     "Stop": [

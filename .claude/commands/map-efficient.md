@@ -572,17 +572,229 @@ If none found: mark gate as skipped and proceed.
 
 ---
 
-## Step 3: Summary
+## Step 3: Pre-Completion Checks
 
 - Run tests if applicable
+- Verify all subtasks marked complete in task_plan
+
+---
+
+## Step 3.5: Final Verification (Ralph Loop)
+
+**REQUIRED**: After all subtasks complete, verify the ENTIRE task goal is achieved before marking as complete.
+
+### 3.5a Circuit Breaker Check
+
+```python
+# Circuit breaker check MUST be concrete and self-contained (no mapify_cli imports).
+# Use only:
+# - `.claude/ralph-loop-config.json` (single source of truth)
+# - `.map/<branch>/.tool_history.jsonl` (canonical tool call count)
+# - `.map/<branch>/ralph_state.json` (started_at / plan_iteration)
+
+# 1) Determine sanitized branch name (same sanitizer as hooks)
+branch = Bash("python3 - <<'PY'\nimport re, subprocess\n\ntry:\n    raw = subprocess.run(['git','rev-parse','--abbrev-ref','HEAD'], capture_output=True, text=True).stdout.strip()\nexcept Exception:\n    raw = 'default'\n\ns = raw.replace('/', '-')\ns = re.sub(r'[^a-zA-Z0-9_.-]', '-', s)\ns = re.sub(r'-+', '-', s).strip('-')\nif '..' in s or s.startswith('.'): s = 'default'\nprint(s or 'default')\nPY").strip()
+
+# 2) Compute limits + counters (prints JSON)
+cb_json = Bash(f"python3 - <<'PY'\nimport json\nfrom datetime import datetime\nfrom pathlib import Path\n\nbranch = {branch!r}\nstate_file = Path(f'.map/{branch}/ralph_state.json')\nhistory_file = Path(f'.map/{branch}/.tool_history.jsonl')\nalerts_file = Path(f'.map/{branch}/thrashing_alerts.jsonl')\nconfig_file = Path('.claude/ralph-loop-config.json')\n\ncfg = {}\nif config_file.exists():\n    try:\n        cfg = json.loads(config_file.read_text(encoding='utf-8'))\n    except Exception:\n        cfg = {}\n\nrl = cfg.get('ralph_loop', {})\ncb = rl.get('circuit_breaker', {})\nredecomp = rl.get('re_decomposition', {})\n\nmax_iterations = int(cb.get('max_total_iterations', 50))\nmax_wall = int(cb.get('max_wall_time_minutes', 60))\nmax_redecomp = int(redecomp.get('max_iterations', 3))\n\n# Ensure state exists with started_at
+state = {'plan_iteration': 1}\nif state_file.exists():\n    try:\n        state = json.loads(state_file.read_text(encoding='utf-8'))\n    except Exception:\n        state = {'plan_iteration': 1}\n\nif 'started_at' not in state:\n    state['started_at'] = datetime.now().isoformat()\n    state_file.parent.mkdir(parents=True, exist_ok=True)\n    state_file.write_text(json.dumps(state, indent=2, ensure_ascii=True), encoding='utf-8')\n\nplan_iteration = int(state.get('plan_iteration', 1))\n\n# Canonical tool call count from history JSONL
+tool_count = 0\nif history_file.exists():\n    try:\n        tool_count = sum(1 for line in history_file.read_text(encoding='utf-8').splitlines() if line.strip())\n    except Exception:\n        tool_count = 0\n\n# Wall time from started_at
+elapsed_minutes = 0.0\ntry:\n    started = datetime.fromisoformat(state['started_at'])\n    elapsed_minutes = (datetime.now() - started).total_seconds() / 60\nexcept Exception:\n    elapsed_minutes = 0.0\n\n# Thrashing (hook-level): any alerts in the last window
+thrashing_detected = False\ntry:\n    if alerts_file.exists():\n        recent = [ln for ln in alerts_file.read_text(encoding='utf-8').splitlines() if ln.strip()][-3:]\n        thrashing_detected = len(recent) > 0\nexcept Exception:\n    thrashing_detected = False\n\nprint(json.dumps({\n  'branch': branch,\n  'tool_count': tool_count,\n  'max_iterations': max_iterations,\n  'elapsed_minutes': elapsed_minutes,\n  'max_wall_time_minutes': max_wall,\n  'plan_iteration': plan_iteration,\n  'max_redecompositions': max_redecomp,\n  'thrashing_detected': thrashing_detected\n}, ensure_ascii=True))\nPY").strip()
+
+# 3) cb_json is now a JSON string. Explicit parsing happens in Step 3.5c.
+#    See Step 3.5c for:
+#    - json.loads(cb_json) to extract tool_count, max_iterations, elapsed_minutes, etc.
+#    - Circuit breaker limit checks
+#    - AskUserQuestion for RESET_LIMITS / ABORT if limits breached
+```
+
+### 3.5a.1 Universal Recovery on Hook Blocks
+
+If ANY tool call (Edit/Write/Bash) is blocked by the Ralph circuit breaker hook (exit code 2, stderr JSON includes `hookSpecificOutput` with message containing `RESET_LIMITS`), you MUST:
+- AskUserQuestion with options: `RESET_LIMITS (Recommended)` / `ABORT`
+- If `RESET_LIMITS`: `Write(.map/<branch>/.ralph_reset_limits, "reset\n")` and retry the blocked tool ONCE
+- If still blocked after retry: ABORT (do not loop)
+
+### 3.5b Run Final Verifier Agent
+
+```python
+Task(
+    subagent_type="final-verifier",
+    description="Final verification of entire goal",
+    prompt=f"""Verify that the ORIGINAL GOAL is fully achieved.
+
+**Original Goal:** {original_goal_from_task_plan}
+**Validation Criteria:** {validation_criteria_from_decomposition}
+**Completed Subtasks:** {list_of_completed_subtask_ids}
+**Branch:** {branch}
+
+You MUST:
+1. Run available tests (pytest, npm test, etc.)
+2. Check MCP tools for ground-truth if available
+3. Verify integration between subtasks
+4. If FAILED: Provide Root Cause Analysis JSON
+
+Write results to:
+- .map/{branch}/final_verification.json (structured)
+- .map/progress_{branch}.md (human-readable section)
+"""
+)
+```
+
+### 3.5c Evaluate Results and Decide
+
+```python
+# STEP 1: Parse circuit breaker data from cb_json (output of Step 3.5a)
+# cb_json is JSON string - parse it into usable variables
+cb_data = json.loads(cb_json)
+
+# Extract all values explicitly (no mental parsing)
+branch = cb_data["branch"]
+tool_count = cb_data["tool_count"]
+max_iterations = cb_data["max_iterations"]
+elapsed_minutes = cb_data["elapsed_minutes"]
+max_wall_time_minutes = cb_data["max_wall_time_minutes"]
+plan_iteration = cb_data["plan_iteration"]
+max_redecompositions = cb_data["max_redecompositions"]
+thrashing_detected = cb_data["thrashing_detected"]
+
+# STEP 2: Check circuit breaker limits BEFORE continuing
+circuit_breaker_triggered = False
+circuit_breaker_reason = None
+
+if tool_count >= max_iterations:
+    circuit_breaker_triggered = True
+    circuit_breaker_reason = f"Tool call limit ({max_iterations}) reached"
+elif elapsed_minutes >= max_wall_time_minutes:
+    circuit_breaker_triggered = True
+    circuit_breaker_reason = f"Wall time limit ({max_wall_time_minutes} min) reached"
+
+if circuit_breaker_triggered:
+    # Ask user for recovery action
+    user_choice = AskUserQuestion(
+        questions: [{
+            header: "Circuit Breaker",
+            question: f"{circuit_breaker_reason}.\n\nHow to proceed?",
+            multiSelect: false,
+            options: [
+                { label: "RESET_LIMITS", description: "(Recommended) Reset limits and continue" },
+                { label: "ABORT", description: "Mark as hard_stop and exit" }
+            ]
+        }]
+    )
+
+    if user_choice == "RESET_LIMITS":
+        Write(file_path=f".map/{branch}/.ralph_reset_limits", content="reset\n")
+        # Re-run Step 3.5a to get fresh cb_json after reset
+        Go to Step 3.5a
+    else:
+        # ABORT - mark as hard_stop
+        Update Terminal State: **Status:** hard_stop
+        EXIT workflow
+
+# STEP 3: Read verification result (after circuit breaker check passes)
+verification_file = Path(f".map/{branch}/final_verification.json")
+verification = json.loads(verification_file.read_text())
+
+# STEP 4: Decision logic with explicit variable usage
+IF verification["passed"] AND verification["confidence"] >= 0.7:
+    # SUCCESS - Complete workflow
+    Update Terminal State: **Status:** complete
+    Generate success summary
+    **Optional:** Run `/map-learn` to preserve patterns
+    EXIT workflow
+
+ELSE IF thrashing_detected from cb_json is true:
+    # Thrashing detected - escalate
+    AskUserQuestion(
+        questions: [{
+            header: "Thrashing Detected",
+            question: "Oscillation detected across iterations.\n\nHow to proceed?",
+            multiSelect: false,
+            options: [
+                { label: "FORCE_COMPLETE", description: "Accept current state as done" },
+                { label: "CONTINUE", description: "Try one more re-decomposition" },
+                { label: "ABORT", description: "Stop for manual review" }
+            ]
+        }]
+    )
+
+ELSE IF plan_iteration < max_redecompositions:
+    # Can retry - go to re-decomposition
+    Go to Step 3.5d
+
+ELSE:
+    # Max iterations reached - escalate
+    AskUserQuestion(
+        questions: [{
+            header: "Max Iterations",
+            question: f"Reached max re-decompositions ({max_redecompositions}).\n\nRoot cause: {verification.get('root_cause', {}).get('suggested_action', 'Unknown')}\n\nHow to proceed?",
+            multiSelect: false,
+            options: [
+                { label: "RESET_LIMITS", description: "Reset limits and try again" },
+                { label: "ABORT", description: "Mark as blocked" }
+            ]
+        }]
+    )
+
+    IF user_choice == "RESET_LIMITS":
+        Write(file_path=f".map/{branch}/.ralph_reset_limits", content="reset\n")
+        Go to Step 3.5a
+```
+
+### 3.5d Re-Decomposition
+
+When Final Verification fails and retries remain:
+
+```python
+# Summarize previous failure for context pruning
+failure_summary = f"Iteration {plan_iteration}: Failed. Root cause: {verification['root_cause']['fix_type']}. Issues: {verification['issues'][:3]}"
+
+Task(
+    subagent_type="task-decomposer",
+    description="Re-decompose after verification failure",
+    prompt=f"""MODE: re_decomposition
+
+**Original Goal:** {original_goal}
+**Previous Failure Summary:** {failure_summary}
+**Root Cause Analysis:** {json.dumps(verification['root_cause'])}
+**Iteration:** {plan_iteration + 1}
+
+RULES:
+1. PRESERVE subtasks NOT in root_cause.invalidated_subtasks (keep same ST-IDs)
+2. CREATE new subtasks targeting root_cause.unmet_requirements
+3. ADD verification criteria for previously failed aspects
+4. UPDATE dependency graph if needed
+
+Return JSON with:
+- preserved_subtasks: [ST-IDs to keep]
+- invalidated_subtasks: [ST-IDs to redo]
+- new_subtasks: [new subtask definitions]
+"""
+)
+
+# Update state
+state["plan_iteration"] = plan_iteration + 1
+state["failure_summaries"] = state.get("failure_summaries", []) + [failure_summary]
+Write(file_path=state_file, content=json.dumps(state, indent=2))
+
+# Update task_plan with new subtasks
+# Go back to Step 2 (Subtask Loop) with updated plan
+```
+
+---
+
+## Step 4: Summary
+
 - **Update Terminal State** in task_plan:
   ```markdown
   ## Terminal State
   **Status:** complete
-  Reason: All [N] subtasks implemented and validated.
+  Reason: All [N] subtasks implemented and validated. Final verification passed.
   ```
 - Create commit (if requested)
-- Report: features implemented, files changed
+- Report: features implemented, files changed, verification confidence
 
 **Optional:** Run `/map-learn [summary]` to preserve valuable patterns for future workflows.
 
