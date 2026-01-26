@@ -1895,6 +1895,73 @@ The filename becomes the command name (without the `.md` extension).
     )
 
 
+def create_hook_files(project_path: Path) -> int:
+    """Create MAP hook files in .claude/hooks/
+
+    Returns:
+        Number of hook files installed
+    """
+    hooks_dir = project_path / ".claude" / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+
+    # Get templates directory
+    templates_dir = get_templates_dir()
+    hooks_template_dir = templates_dir / "hooks"
+
+    count = 0
+    if hooks_template_dir.exists():
+        import shutil
+
+        for hook_file in hooks_template_dir.iterdir():
+            if hook_file.is_file():
+                dest_file = hooks_dir / hook_file.name
+                shutil.copy2(hook_file, dest_file)
+                # Preserve executable permissions
+                if hook_file.suffix in (".sh", ".py"):
+                    dest_file.chmod(0o755)
+                count += 1
+
+    return count
+
+
+def create_config_files(project_path: Path) -> int:
+    """Create MAP config files in .claude/
+
+    Copies configuration files:
+    - settings.json
+    - settings.hooks.json
+    - ralph-loop-config.json
+    - workflow-rules.json
+
+    Returns:
+        Number of config files installed
+    """
+    claude_dir = project_path / ".claude"
+    claude_dir.mkdir(parents=True, exist_ok=True)
+
+    # Get templates directory
+    templates_dir = get_templates_dir()
+
+    config_files = [
+        "settings.json",
+        "settings.hooks.json",
+        "ralph-loop-config.json",
+        "workflow-rules.json",
+    ]
+
+    count = 0
+    import shutil
+
+    for config_file in config_files:
+        template_file = templates_dir / config_file
+        if template_file.exists():
+            dest_file = claude_dir / config_file
+            shutil.copy2(template_file, dest_file)
+            count += 1
+
+    return count
+
+
 @app.command()
 def init(
     project_name: Optional[str] = typer.Argument(
@@ -2075,6 +2142,18 @@ def init(
     tool_count = create_map_tools(project_path)
     tool_word = "script" if tool_count == 1 else "scripts"
     tracker.complete("create-map-tools", f"{tool_count} {tool_word}")
+
+    tracker.add("create-hooks", "Create MAP hooks")
+    tracker.start("create-hooks")
+    hook_count = create_hook_files(project_path)
+    hook_word = "hook" if hook_count == 1 else "hooks"
+    tracker.complete("create-hooks", f"{hook_count} {hook_word}")
+
+    tracker.add("create-configs", "Create config files")
+    tracker.start("create-configs")
+    config_count = create_config_files(project_path)
+    config_word = "file" if config_count == 1 else "files"
+    tracker.complete("create-configs", f"{config_count} {config_word}")
 
     if selected_mcp_servers:
         # Create internal MCP config (for MAP Framework agent mappings)
