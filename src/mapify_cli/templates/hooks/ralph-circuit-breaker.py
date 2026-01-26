@@ -42,6 +42,7 @@ def load_limits(project_dir: Path) -> Tuple[int, int, int]:
                 defaults[2],
             )
         except Exception:
+            # Ignore invalid or unreadable config and fall back to default limits
             pass
 
     # Override via env vars if present
@@ -79,6 +80,7 @@ def get_branch_name() -> str:
         if result.returncode == 0:
             return sanitize_branch_name(result.stdout.strip())
     except Exception:
+        # If git is unavailable or not a repo, fall back to default branch name
         pass
     return "default"
 
@@ -150,12 +152,14 @@ def perform_reset_limits() -> None:
             try:
                 p.unlink()
             except Exception:
+                # Best-effort cleanup: ignore failures to delete archived files
                 pass
 
     # Best-effort: remove marker
     try:
         marker.unlink()
     except Exception:
+        # Best-effort cleanup: ignore failures to remove marker file
         pass
 
 
@@ -171,9 +175,10 @@ def load_history() -> list:
         if not history_file.exists():
             return []
         lines = history_file.read_text().strip().split("\n")
-        # Keep only last 100 entries for performance
+        # Keep enough history to honor configured limits (dynamic cap)
+        max_entries = max(100, MAX_TOTAL_ITERATIONS, MAX_SAME_FILE_EDITS)
         entries = []
-        for line in lines[-100:]:
+        for line in lines[-max_entries:]:
             if not line.strip():
                 continue
             try:
@@ -194,6 +199,7 @@ def save_entry(entry: dict) -> None:
         with open(history_file, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=True) + "\n")
     except IOError:
+        # Best-effort logging: failures to persist history must not block tool execution
         pass
 
 
@@ -208,7 +214,7 @@ def check_limits(tool_name: str, tool_input: dict) -> dict:
         or tool_input.get("path", "")
     )
 
-    result = {"blocked": False, "reason": None, "warning": None}
+    result: dict[str, bool | str | None] = {"blocked": False, "reason": None, "warning": None}
 
     # Check 1: Same file edited too many times
     if file_path and tool_name in ("Edit", "Write"):

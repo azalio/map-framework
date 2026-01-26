@@ -24,6 +24,11 @@ if [[ -d .claude/skills ]]; then
         rm -rf "$templates_root/skills"
         cp -a .claude/skills "$templates_root/skills"
     fi
+else
+    # If source directory is removed, clean up templates directory
+    if [[ -d "$templates_root/skills" ]]; then
+        rm -rf "$templates_root/skills"
+    fi
 fi
 
 echo "✅ Synced .claude/* → $templates_root/"

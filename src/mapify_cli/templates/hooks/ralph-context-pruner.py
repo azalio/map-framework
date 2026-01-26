@@ -65,6 +65,7 @@ def get_branch_name() -> str:
         if result.returncode == 0:
             return sanitize_branch_name(result.stdout.strip())
     except Exception:
+        # Intentionally ignore all errors (e.g., missing git, not a repo) and fall back to default
         pass
     return "default"
 
@@ -140,6 +141,7 @@ def main() -> None:
     try:
         json.load(sys.stdin)
     except json.JSONDecodeError:
+        # Malformed or non-JSON stdin is ignored: this hook doesn't rely on input contents
         pass
 
     # Skip if no .map directory

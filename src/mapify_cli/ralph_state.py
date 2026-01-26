@@ -384,12 +384,19 @@ class FinalVerificationResult:
     @classmethod
     def from_json_file(cls, path: Path) -> "FinalVerificationResult":
         """Load from .map/<branch>/final_verification.json"""
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
+        passed = data["passed"]
         root_cause = None
         if data.get("root_cause"):
             root_cause = RootCauseAnalysis(**data["root_cause"])
+        # Enforce contract: root_cause is REQUIRED when passed=false
+        if not passed and root_cause is None:
+            raise ValueError(
+                "root_cause is required when passed=false "
+                f"(file: {path})"
+            )
         return cls(
-            passed=data["passed"],
+            passed=passed,
             verification_method=data["verification_method"],
             timestamp=data.get("timestamp", datetime.now().isoformat()),
             issues=data.get("issues", []),

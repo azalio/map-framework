@@ -3,7 +3,7 @@ name: final-verifier
 description: Adversarial verifier with Root Cause Analysis (Ralph Loop)
 model: sonnet
 version: 1.0.0
-last_updated: 2025-01-26
+last_updated: 2026-01-26
 ---
 
 # IDENTITY

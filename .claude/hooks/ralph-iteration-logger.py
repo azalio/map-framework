@@ -45,12 +45,16 @@ def load_thrashing_config(project_dir: Path) -> tuple[int, int, float]:
                 float(td.get("effectiveness_threshold", defaults[2])),
             )
         except (json.JSONDecodeError, KeyError, ValueError, TypeError):
+            # Ignore invalid config and fall back to default thrashing detection settings
             pass
 
     # Override via env vars if present (for tests)
-    window_size = int(os.environ.get("RALPH_THRASHING_WINDOW", str(defaults[0])))
-    same_file_threshold = int(
-        os.environ.get("RALPH_SAME_FILE_THRESHOLD", str(defaults[1]))
+    # Clamp to minimum 1 to prevent division by zero and always-true conditions
+    window_size = max(
+        1, int(os.environ.get("RALPH_THRASHING_WINDOW", str(defaults[0])))
+    )
+    same_file_threshold = max(
+        1, int(os.environ.get("RALPH_SAME_FILE_THRESHOLD", str(defaults[1])))
     )
     effectiveness_threshold = float(
         os.environ.get("RALPH_EFFECTIVENESS_THRESHOLD", str(defaults[2]))
@@ -89,6 +93,7 @@ def get_branch_name() -> str:
         if result.returncode == 0:
             return sanitize_branch_name(result.stdout.strip())
     except Exception:
+        # If git is unavailable or not a repo, fall back to default branch name
         pass
     return "default"
 
@@ -263,6 +268,7 @@ def main() -> None:
         with open(log_file, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=True) + "\n")
     except IOError:
+        # Best-effort logging: failures must not block tool execution
         pass
 
     # Check for thrashing
@@ -279,6 +285,7 @@ def main() -> None:
             with open(alerts_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(alert, ensure_ascii=True) + "\n")
         except IOError:
+            # Best-effort alerting: failures must not block tool execution
             pass
 
         # Output warning to stderr (informational only)
