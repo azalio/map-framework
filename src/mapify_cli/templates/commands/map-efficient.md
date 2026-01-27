@@ -37,11 +37,6 @@ State machine enforces sequencing, Python validates completion, hooks inject rem
 │  State Machine (map_orchestrator.py)                        │
 │  Determines WHAT step to execute based on current state     │
 └─────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────┐
-│  Workflow Gate (workflow-gate.py)                           │
-│  BLOCKS Edit/Write until actor+monitor completed            │
-└─────────────────────────────────────────────────────────────┘
 ```
 
 **Task:** $ARGUMENTS
@@ -163,10 +158,13 @@ Findings file: .map/findings_{branch}.md"""
 Task(
   subagent_type="actor",
   description="Implement subtask [ID]",
-  prompt=f"""Implement:
+  prompt=f"""Implement and APPLY CODE with Edit/Write tools:
 **AI Packet (XML):** [paste from .map/<branch>/current_packet.xml]
 **Risk Level:** [risk_level]
 **Playbook Context:** [top context_patterns from mem0 + relevance_score]
+
+⚠️  REQUIRED: Use Edit/Write tools to apply code directly.
+Monitor will validate the written code by running tests.
 
 Follow Actor agent protocol output format."""
 )
@@ -177,14 +175,20 @@ Follow Actor agent protocol output format."""
 ```python
 Task(
   subagent_type="monitor",
-  description="Validate implementation",
-  prompt=f"""Review against requirements:
+  description="Validate written code",
+  prompt=f"""Review WRITTEN CODE against requirements:
 **AI Packet (XML):** [paste from .map/<branch>/current_packet.xml]
-**Proposed Solution:** [paste Actor output]
+**Written Files:** [list files modified by Actor]
 **Specification Contract:** [SpecificationContract JSON or null]
 
-Check: correctness, security, standards, tests.
-If human review required: set `escalation_required` + `escalation_reason`.
+⚠️  IMPORTANT: Actor already applied code with Edit/Write.
+Validate the ACTUAL written code, not proposals.
+
+Validation steps:
+1. Read modified files to verify correctness
+2. Run tests (pytest/npm test/go test/cargo test)
+3. Check security, standards, error handling
+4. If issues found: provide specific feedback for Actor to fix
 
 Return ONLY valid JSON following MonitorReviewOutput schema.
 If validation_criteria present: include contract_compliance + contract_compliant."""
@@ -195,6 +199,7 @@ if monitor_output["valid"] == false:
     # Increment retry counter
     if retry_count < 5:
         # Go back to Phase: ACTOR with Monitor feedback
+        # Actor will fix issues and re-apply code
     else:
         # Escalate to user (3-strike protocol)
         AskUserQuestion: CONTINUE / SKIP / ABORT
@@ -215,15 +220,14 @@ Optional: analyzer_output, user_context"""
     )
 ```
 
-### Phase: APPLY_CHANGES (2.7)
+### Phase: UPDATE_STATE (2.7)
 
 ```bash
-# GATE CHECK: Monitor.valid === true (enforced by workflow-gate.py hook)
-# Apply changes using Edit/Write tools
-# Hook will BLOCK if actor+monitor not in completed_steps
+# Code already applied by Actor, validated by Monitor
+# Update workflow state to mark subtask progress
 
-# After applying:
-python3 scripts/map_step_runner.py update_workflow_state "ST-XXX" "changes_applied" "CHANGES_APPLIED"
+python3 scripts/map_step_runner.py update_workflow_state "ST-XXX" "validated" "VALIDATED"
+python3 scripts/map_step_runner.py update_plan_status "ST-XXX" "in_progress"
 ```
 
 ### Phase: TESTS_GATE (2.8)

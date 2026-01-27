@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - State file: `.map/<branch>/step_state.json` - Tracks current step phase for hook injection
   - Token efficiency: 54K → 9.25K per workflow (83% reduction despite hook overhead)
   - **Migration**: Run `mapify init` to update project structure with new hooks and scripts
+- **Simplified Workflow**: Removed workflow-gate.py enforcement hook
+  - Actor now applies code directly with Edit/Write tools (no gate blocking)
+  - Monitor validates WRITTEN code by running tests, not proposals
+  - Simpler flow: Actor writes → Monitor tests → If issues, Actor fixes → Repeat
+  - Phase 2.7 renamed: APPLY_CHANGES → UPDATE_STATE (code already applied by Actor)
 
 ### Added
 - **Ralph Wiggum Loop Integration**: Continuous iteration pattern to prevent premature completion and hallucinated success

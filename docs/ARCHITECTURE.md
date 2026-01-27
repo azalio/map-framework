@@ -675,12 +675,6 @@ See [USAGE.md - Workflow Variants](./USAGE.md#workflow-variants) for detailed de
 │  • Enforces: Sequential execution, no step skipping         │
 │  • CLI: get_next_step, validate_step, initialize            │
 └─────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────┐
-│  Workflow Gate (workflow-gate.py) - UNCHANGED               │
-│  • BLOCKS Edit/Write until actor+monitor completed          │
-│  • Reads: .map/<branch>/workflow_state.json                 │
-└─────────────────────────────────────────────────────────────┘
 ```
 
 #### Key Innovation: Constant Reminders

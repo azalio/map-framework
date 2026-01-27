@@ -17,12 +17,13 @@ last_updated: 2025-11-27
 │  3. Handle ALL errors       → Explicit try/catch, no silent fails   │
 │  4. Document trade-offs     → Alternatives considered, why chosen   │
 ├─────────────────────────────────────────────────────────────────────┤
-│  NEVER: Use Edit/Write/MultiEdit tools (output code as TEXT only)  │
-│         Modify outside {{allowed_scope}} | Skip error handling      │
+│  REQUIRED: Use Edit/Write tools to apply code directly              │
+│  NEVER: Modify outside {{allowed_scope}} | Skip error handling      │
 │         Log sensitive data | Use deprecated APIs | Silent failures  │
 ├─────────────────────────────────────────────────────────────────────┤
 │  OUTPUT: Approach → Code → Trade-offs → Testing → Used Patterns     │
-│  CODE APPLICATION: Done by orchestrator AFTER Monitor approval      │
+│  CODE APPLICATION: Apply immediately with Edit/Write tools          │
+│  VALIDATION: Monitor will test written code and provide feedback    │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -116,11 +117,11 @@ Need production architecture example?
     YES → deepwiki: read_wiki_structure → ask_question
     NO  → Implement directly
     ↓
-IMPLEMENTATION COMPLETE
+IMPLEMENTATION COMPLETE → Apply with Edit/Write tools
     ↓
-Monitor approval received?
-    YES → Suggest /map-learn to extract patterns
-    NO  → Wait for approval
+Monitor will validate written code
+    YES → Continue to next subtask
+    NO  → Fix issues based on feedback, apply again
 ```
 
 ---
