@@ -51,6 +51,18 @@
             "description": "Tracks tool calls, blocks at limits, enables recovery via reset marker"
           }
         ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "description": "Workflow Enforcement Gate - enforce MAP workflow adherence",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/workflow-gate.py",
+            "timeout": 5,
+            "description": "Blocks Edit/Write until Actor+Monitor steps completed in workflow_state.json"
+          }
+        ]
       }
     ],
     "PostToolUse": [

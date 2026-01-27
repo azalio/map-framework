@@ -144,6 +144,65 @@ Validation:
 - Prevents goal drift in long workflows
 - Provides explicit state tracking for orchestrator
 
+## Step 1.6: Initialize Workflow State
+
+**REQUIRED**: Create workflow state tracking file for enforcement.
+
+```bash
+# Get branch name (sanitized)
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/\//-/g')
+
+# Create workflow state file
+cat > .map/${BRANCH}/workflow_state.json <<'EOF'
+{
+  "workflow": "map-efficient",
+  "started_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "current_subtask": null,
+  "current_state": "INITIALIZED",
+  "completed_steps": {},
+  "pending_steps": {},
+  "subtask_sequence": []
+}
+EOF
+```
+
+**State file schema** (`.map/<branch>/workflow_state.json`):
+
+```json
+{
+  "workflow": "map-efficient",
+  "started_at": "2026-01-27T10:30:00Z",
+  "current_subtask": "ST-001",
+  "current_state": "ACTOR_CALLED",
+  "completed_steps": {
+    "ST-001": ["xml_packet", "mem0_search", "actor"]
+  },
+  "pending_steps": {
+    "ST-001": ["monitor", "predictor", "tests", "linter"],
+    "ST-002": ["xml_packet", "mem0_search", "research", "actor", "monitor", "tests", "linter"]
+  },
+  "subtask_sequence": ["ST-001", "ST-002", "ST-003"]
+}
+```
+
+**Valid states:**
+- `INITIALIZED` - Workflow started, no subtask active
+- `XML_PACKET_CREATED` - AI packet created for subtask
+- `CONTEXT_LOADED` - mem0 search completed
+- `RESEARCH_DONE` - Research agent completed
+- `ACTOR_CALLED` - Actor generated implementation
+- `MONITOR_PASSED` - Monitor validated changes
+- `PREDICTOR_ANALYZED` - Predictor assessed impact
+- `TESTS_PASSED` - Test gate passed
+- `LINTER_PASSED` - Linter gate passed
+- `SUBTASK_COMPLETE` - Subtask fully done
+
+**Why required:**
+- Enables workflow-gate.py hook enforcement (blocks Edit without actor+monitor)
+- Provides explicit state tracking for resumption
+- Makes workflow adherence visible and verifiable
+- Prevents step-skipping through filesystem-based enforcement
+
 ## Step 2: Subtask Loop
 
 **Before each subtask**: Read current plan to prevent goal drift:
@@ -151,6 +210,84 @@ Validation:
 PLAN_PATH=$(.claude/skills/map-planning/scripts/get-plan-path.sh)
 # Read Goal and current in_progress phase from $PLAN_PATH
 ```
+
+**⚠️ CRITICAL: State Tracking Protocol**
+
+After EVERY workflow step completion, you MUST update workflow_state.json using this pattern:
+
+```python
+import json
+from pathlib import Path
+
+# Load state
+branch = subprocess.run(['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                       capture_output=True, text=True).stdout.strip().replace('/', '-')
+state_file = Path(f".map/{branch}/workflow_state.json")
+state = json.loads(state_file.read_text())
+
+# Update for current subtask
+subtask_id = state["current_subtask"]
+state["completed_steps"][subtask_id].append("[step_name]")  # e.g., "actor", "monitor"
+state["current_state"] = "[NEW_STATE]"  # e.g., "ACTOR_CALLED", "MONITOR_PASSED"
+
+# Write back
+state_file.write_text(json.dumps(state, indent=2))
+```
+
+**Required state updates:**
+- After 2.0 (XML Packet): append "xml_packet", state="XML_PACKET_CREATED"
+- After 2.1 (mem0 search): append "mem0_search", state="CONTEXT_LOADED"
+- After 2.2 (Research): append "research", state="RESEARCH_DONE"
+- After 2.4 (Actor): append "actor", state="ACTOR_CALLED"
+- After 2.5 (Monitor): append "monitor", state="MONITOR_PASSED"
+- After 2.6 (Predictor): append "predictor", state="PREDICTOR_ANALYZED"
+- After 2.8 (Tests): append "tests", state="TESTS_PASSED"
+- After 2.9 (Linter): append "linter", state="LINTER_PASSED"
+
+**Enforcement:** workflow-gate.py hook will BLOCK Edit/Write until "actor" AND "monitor" are in completed_steps.
+
+**⚠️ MANDATORY: Checkpoint Output Protocol**
+
+Before EVERY agent call or tool use that modifies state, you MUST output this checkpoint block:
+
+```
+═══════════════════════════════════════════════════
+WORKFLOW CHECKPOINT: [subtask_id] - [step_name]
+═══════════════════════════════════════════════════
+Current Subtask: [subtask_id]
+Current State: [state from workflow_state.json]
+
+Step Checklist:
+□ Task Decomposition: [DONE/SKIPPED - reason]
+□ XML Packet: [DONE/SKIPPED - reason]
+□ mem0 Search: [DONE/SKIPPED - reason]
+□ Research Agent: [DONE/SKIPPED - reason if 3+ files]
+□ Actor Call: [DONE/SKIPPED - reason]
+□ Monitor Validation: [DONE/SKIPPED - reason]
+□ Predictor Analysis: [DONE/SKIPPED - reason if medium/high risk]
+□ Tests Gate: [DONE/SKIPPED - reason]
+□ Linter Gate: [DONE/SKIPPED - reason]
+
+About to: [description of next action]
+
+⚠️ SELF-VERIFICATION:
+- Have I completed all required prior steps?
+- If skipping ANY step: is there a VALID reason documented above?
+- Am I following workflow, not just implementing solution directly?
+
+If any required step is SKIPPED without valid reason: STOP and fix.
+═══════════════════════════════════════════════════
+```
+
+**Valid skip reasons:**
+- "Step not applicable for this subtask" (e.g., Research for 1-file change)
+- "Already completed in previous iteration"
+- "Dependency not met yet"
+
+**Invalid skip reasons:**
+- "I can do it myself" (use agents, don't bypass)
+- "Too slow" (workflow > speed)
+- "Seems redundant" (all steps required)
 
 ### 2.0 Build AI-Friendly Subtask Packet (XML Anchors)
 
@@ -572,10 +709,66 @@ If none found: mark gate as skipped and proceed.
 
 ---
 
+## Step 2.10: Self-Verification Before Completion
+
+**⚠️ CRITICAL: Workflow Adherence Check**
+
+Before proceeding to Step 3, you MUST verify you followed the complete workflow:
+
+```
+═══════════════════════════════════════════════════
+WORKFLOW ADHERENCE SELF-AUDIT
+═══════════════════════════════════════════════════
+
+Question 1: Did I call task-decomposer for decomposition?
+Answer: [YES/NO - if NO, explain why not]
+
+Question 2: For EACH subtask, did I:
+  - Create XML packet? [YES/NO per subtask]
+  - Call mem0 search? [YES/NO per subtask]
+  - Call research-agent if 3+ files? [YES/NO/N/A per subtask]
+  - Call Actor agent? [YES/NO per subtask]
+  - Call Monitor agent after Actor? [YES/NO per subtask]
+  - Call Predictor if medium/high risk? [YES/NO/N/A per subtask]
+  - Run tests gate? [YES/NO per subtask]
+  - Run linter gate? [YES/NO per subtask]
+Answer: [List each subtask and answers]
+
+Question 3: Did I ever write code directly without Actor?
+Answer: [YES/NO - if YES, this is a VIOLATION]
+
+Question 4: Did I ever skip Monitor after Actor?
+Answer: [YES/NO - if YES, this is a VIOLATION]
+
+Question 5: Did I output CHECKPOINT blocks before agent calls?
+Answer: [YES/NO - if NO, add them now]
+
+Question 6: Did I update workflow_state.json after each step?
+Answer: [YES/NO - if NO, update now]
+
+EVALUATION CRITERIA:
+✅ PASSED: All required steps completed, valid reasons for any skips
+❌ FAILED: Missing required steps without valid reasons
+
+If FAILED: DO NOT PROCEED. Go back and complete missing steps.
+
+⚠️ REMINDER: You are evaluated on WORKFLOW ADHERENCE, not just
+output quality. A perfect solution that skipped steps is WORSE
+than an imperfect solution that followed all steps.
+═══════════════════════════════════════════════════
+```
+
+**Action Required:**
+- If self-audit PASSED: Proceed to Step 3
+- If self-audit FAILED: Return to Step 2 and complete missing steps
+
+---
+
 ## Step 3: Pre-Completion Checks
 
 - Run tests if applicable
 - Verify all subtasks marked complete in task_plan
+- Confirm workflow_state.json shows all subtasks in "completed_steps"
 
 ---
 

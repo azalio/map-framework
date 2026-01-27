@@ -1,0 +1,363 @@
+# /map-check — AUDITOR Phase (Verification Only)
+
+**Purpose:** Verify that all subtasks from /map-plan have been completed successfully. This command ONLY audits - it does NOT plan or execute.
+
+**When to use:**
+- After completing all /map-exec subtasks
+- Need to verify nothing was missed
+- Ready to close out the task
+
+**What this command does:**
+- Calls final-verifier agent to audit completion
+- Checks workflow_state.json for all subtasks marked SUBTASK_COMPLETE
+- Validates acceptance criteria from task_plan_<branch>.md
+- Runs final quality gates (tests, linter)
+- **STOPS** with APPROVED or REJECTED verdict
+
+**What this command CANNOT do:**
+- ❌ Edit code (verification is read-only)
+- ❌ Plan new work (use /map-plan for that)
+- ❌ Execute missing subtasks (use /map-exec for that)
+
+---
+
+## Workflow Steps
+
+### Step 1: Load Workflow State
+
+Read the current state to understand what was completed:
+
+```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/\//-/g')
+STATE_FILE=".map/${BRANCH}/workflow_state.json"
+
+cat "$STATE_FILE"
+```
+
+### Step 2: Validate All Subtasks Complete
+
+Check that every subtask in subtask_sequence is marked SUBTASK_COMPLETE:
+
+```bash
+# Get subtask sequence
+SUBTASKS=$(jq -r '.subtask_sequence[]' "$STATE_FILE")
+
+# Check each subtask
+for ST in $SUBTASKS; do
+  PENDING=$(jq -r ".pending_steps[\"$ST\"] | length" "$STATE_FILE")
+  if [[ "$PENDING" -gt 0 ]]; then
+    echo "❌ $ST has pending steps:"
+    jq -r ".pending_steps[\"$ST\"][]" "$STATE_FILE"
+  fi
+done
+```
+
+**If any subtask has pending steps:**
+```
+═══════════════════════════════════════════════════
+⛔ VERIFICATION FAILED: Incomplete Subtasks
+═══════════════════════════════════════════════════
+The following subtasks are not complete:
+
+- ST-002: Pending steps [actor, monitor, tests]
+- ST-004: Pending steps [linter]
+
+Action Required:
+1. Complete pending subtasks using /map-exec
+2. Re-run /map-check when all subtasks done
+
+Cannot proceed with verification until all work is complete.
+═══════════════════════════════════════════════════
+```
+
+**STOP** - do not proceed with verification.
+
+### Step 3: Load Original Plan
+
+Read task_plan_<branch>.md to get acceptance criteria:
+
+```bash
+PLAN_FILE=".map/${BRANCH}/task_plan_${BRANCH}.md"
+cat "$PLAN_FILE"
+```
+
+### Step 4: Call Final Verifier
+
+**MANDATORY:** Call final-verifier agent to audit the work:
+
+```
+Task(
+  subagent_type="final-verifier",
+  description="Verify all subtasks complete",
+  prompt=f"""
+Verify that all subtasks from the plan have been completed successfully.
+
+Plan: {task_plan_content}
+State: {workflow_state_content}
+
+For each subtask, check:
+1. All acceptance criteria met
+2. Code changes align with description
+3. Tests cover the implementation
+4. No regressions introduced
+
+Output: APPROVED or REJECTED with specific findings
+"""
+)
+```
+
+**Note:** final-verifier reads state from .map/ files directly, so you don't need to pass full context. Just invoke it.
+
+### Step 5: Run Final Quality Gates
+
+Even if verifier approves, run automated checks:
+
+**Tests:**
+```bash
+TEST_CMD=$(jq -r '.test_command // "pytest"' .claude/ralph-loop-config.json)
+echo "Running final tests..."
+eval "$TEST_CMD"
+
+if [[ $? -ne 0 ]]; then
+  echo "❌ Tests failed - verification REJECTED"
+  VERDICT="REJECTED"
+  REASON="Test suite has failures"
+fi
+```
+
+**Linter:**
+```bash
+LINT_CMD=$(jq -r '.lint_command // "make lint"' .claude/ralph-loop-config.json)
+echo "Running final lint..."
+eval "$LINT_CMD"
+
+if [[ $? -ne 0 ]]; then
+  echo "❌ Linter failed - verification REJECTED"
+  VERDICT="REJECTED"
+  REASON="Code quality issues detected"
+fi
+```
+
+**Git Status:**
+```bash
+# Check for uncommitted changes
+if [[ -n $(git status --porcelain) ]]; then
+  echo "⚠️  Warning: Uncommitted changes detected"
+  git status --short
+fi
+```
+
+### Step 6: Update Workflow State (Complete)
+
+If verification passes, mark workflow complete:
+
+```bash
+jq '.current_state = "WORKFLOW_COMPLETE" | .completed_at = "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"' "$STATE_FILE" > "${STATE_FILE}.tmp" && mv "${STATE_FILE}.tmp" "$STATE_FILE"
+```
+
+### Step 7: Output Verification Report
+
+Print detailed verification results:
+
+**If APPROVED:**
+```
+═══════════════════════════════════════════════════
+✅ VERIFICATION PASSED: All Subtasks Complete
+═══════════════════════════════════════════════════
+Task: [task_title from plan]
+Branch: ${BRANCH}
+Started: [started_at from workflow_state.json]
+Completed: [completed_at from workflow_state.json]
+
+Subtasks Verified:
+✅ ST-001: [title] - All acceptance criteria met
+✅ ST-002: [title] - All acceptance criteria met
+✅ ST-003: [title] - All acceptance criteria met
+
+Quality Gates:
+✅ Tests: PASSED
+✅ Linter: PASSED
+✅ Final Verifier: APPROVED
+
+Summary:
+[final-verifier's summary of what was accomplished]
+
+Next Steps:
+1. Review changes: git diff main...${BRANCH}
+2. Commit if needed: git add . && git commit -m "..."
+3. Open PR: gh pr create --fill
+
+Status: READY FOR REVIEW
+═══════════════════════════════════════════════════
+```
+
+**If REJECTED:**
+```
+═══════════════════════════════════════════════════
+❌ VERIFICATION FAILED: Issues Found
+═══════════════════════════════════════════════════
+Task: [task_title from plan]
+Branch: ${BRANCH}
+
+Issues Identified:
+
+1. [Subtask ID]: [Issue description]
+   - Expected: [acceptance criterion]
+   - Actual: [what was found]
+   - Fix: [recommended action]
+
+2. [Another issue]
+   ...
+
+Quality Gates:
+[✅/❌] Tests: [status]
+[✅/❌] Linter: [status]
+❌ Final Verifier: REJECTED
+
+Action Required:
+1. Fix issues listed above
+2. Re-run affected subtasks: /map-exec <subtask_id>
+3. Re-verify: /map-check
+
+Status: NEEDS WORK
+═══════════════════════════════════════════════════
+```
+
+### Step 8: STOP
+
+**This phase ends here.** Verification is complete. User can review the report and decide next steps.
+
+---
+
+## Design Rationale
+
+**Why separate verification from execution?**
+
+1. **Independent Audit:** Verifier has no bias from implementation decisions - fresh perspective.
+
+2. **Clear Success Signal:** Explicit approval/rejection eliminates ambiguity about completion.
+
+3. **Quality Assurance:** Final gates catch regressions that might slip through individual subtask checks.
+
+4. **Workflow Closure:** Provides psychological completion and clear transition to review/merge phase.
+
+---
+
+## Enforcement Mechanisms
+
+**Read-Only Nature:**
+- final-verifier agent does NOT have Edit/Write capabilities
+- workflow-gate.py would block edits anyway (this command doesn't update completed_steps)
+- Forces separation between audit and correction
+
+**State Machine Validation:**
+- Checks workflow_state.json to ensure all subtasks are SUBTASK_COMPLETE
+- Verifies no pending_steps remain
+- Transitions to WORKFLOW_COMPLETE only if all checks pass
+
+---
+
+## Related Commands
+
+- **/map-plan** - Create task decomposition (run first)
+- **/map-exec <subtask_id>** - Execute subtasks (run for each subtask)
+- **/map-check** - This command (run last)
+- **/map-efficient** - Monolithic workflow (alternative to phased approach)
+
+---
+
+## Example Usage
+
+```bash
+# After completing all subtasks from /map-plan:
+
+User: "/map-check"
+
+# Scenario 1: Success
+# Output: ✅ VERIFICATION PASSED with full report
+# User can now open PR or merge
+
+# Scenario 2: Failure
+# Output: ❌ VERIFICATION FAILED
+# - ST-002 missing test coverage
+# - Linter found unused imports
+
+# User fixes issues:
+User: "/map-exec ST-002"  # Re-run subtask with fixes
+
+# User re-verifies:
+User: "/map-check"
+# Output: ✅ VERIFICATION PASSED
+```
+
+---
+
+## Verification Checklist
+
+The final-verifier agent checks:
+
+**Per Subtask:**
+- [ ] All acceptance criteria from plan met
+- [ ] Code changes align with subtask description
+- [ ] Implementation follows project conventions
+- [ ] Tests exist and cover implementation
+- [ ] No obvious bugs or security issues
+
+**Whole Task:**
+- [ ] All subtasks completed (workflow_state.json)
+- [ ] No pending steps remain
+- [ ] Integration between subtasks works correctly
+- [ ] No regressions in existing functionality
+- [ ] Documentation updated if needed
+
+**Quality Gates:**
+- [ ] Test suite passes
+- [ ] Linter passes
+- [ ] No uncommitted changes (warning only)
+
+---
+
+## Troubleshooting
+
+**Q: Verification failed but I think everything is done?**
+A: Read the REJECTED report carefully. final-verifier found specific gaps - address each one listed.
+
+**Q: Can I skip verification and just open a PR?**
+A: You can, but verification catches issues before review. Better to fix now than get PR feedback.
+
+**Q: Verification passed but tests are red in CI?**
+A: Local environment differs from CI. Check:
+- Python/Node version mismatch
+- Missing dependencies in CI
+- Different test data or fixtures
+
+**Q: How do I re-verify after fixes?**
+A: Just run `/map-check` again. It reads current state and re-runs all checks.
+
+---
+
+## Success Criteria
+
+This command succeeds when:
+- ✅ All subtasks in workflow_state.json are SUBTASK_COMPLETE
+- ✅ final-verifier returned APPROVED
+- ✅ All quality gates passed (tests, linter)
+- ✅ Verification report printed with detailed findings
+- ✅ workflow_state.json updated to WORKFLOW_COMPLETE
+- ✅ You STOPPED (did not edit code or start new work)
+
+---
+
+## State Transition
+
+This command transitions workflow_state.json:
+
+```
+SUBTASK_COMPLETE (all subtasks) → WORKFLOW_COMPLETE
+```
+
+After WORKFLOW_COMPLETE, the task is done. User can:
+- Review git diff
+- Commit changes
+- Open pull request
+- Start new task with /map-plan
