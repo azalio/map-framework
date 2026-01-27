@@ -1390,13 +1390,11 @@ def create_or_merge_project_settings_local(project_path: Path) -> None:
     permissions.setdefault("deny", permissions.get("deny", []))
     permissions.setdefault("ask", permissions.get("ask", []))
 
-    # Merge hooks configuration (preserve user customizations)
-    # Only add hooks if they don't already exist in user's settings
+    # Replace hooks configuration from template
+    # Always use template hooks to ensure correct $CLAUDE_PROJECT_DIR paths
+    # User customizations should be done by editing the template or post-init
     if hooks_config:
-        existing_hooks = existing_settings.get("hooks", {})
-        for hook_event, hook_list in hooks_config.items():
-            if hook_event not in existing_hooks:
-                existing_settings.setdefault("hooks", {})[hook_event] = hook_list
+        existing_settings["hooks"] = hooks_config
 
     settings_file.write_text(json.dumps(existing_settings, indent=2) + "\n")
 
