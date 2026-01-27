@@ -9,6 +9,7 @@ This module is SEPARATE from workflow_state.py to:
 State persisted to .map/<branch>/ralph_state.json
 Circuit breaker config source: .claude/ralph-loop-config.json
 """
+
 import json
 import re
 from dataclasses import dataclass, field
@@ -392,8 +393,7 @@ class FinalVerificationResult:
         # Enforce contract: root_cause is REQUIRED when passed=false
         if not passed and root_cause is None:
             raise ValueError(
-                "root_cause is required when passed=false "
-                f"(file: {path})"
+                "root_cause is required when passed=false " f"(file: {path})"
             )
         return cls(
             passed=passed,

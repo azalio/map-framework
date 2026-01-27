@@ -5,6 +5,7 @@ Run with: pytest tests/test_ralph_hooks.py -v
 
 IMPORTANT: Tests use branch-scoped paths (.map/<branch>/) matching hook implementation.
 """
+
 import json
 import os
 import subprocess
@@ -25,9 +26,7 @@ class TestCircuitBreaker:
 
     HOOK_PATH = REPO_ROOT / ".claude/hooks/ralph-circuit-breaker.py"
 
-    def run_hook(
-        self, input_data: dict, tmp_path: Path
-    ) -> Tuple[int, str, str]:
+    def run_hook(self, input_data: dict, tmp_path: Path) -> Tuple[int, str, str]:
         """Run hook with given input and return (exit_code, stdout, stderr)."""
         env = os.environ.copy()
         env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
@@ -88,8 +87,8 @@ class TestCircuitBreaker:
         assert result.returncode == 2  # Blocked
         # Error output goes to stderr (following block-secrets.py pattern)
         stderr_json = json.loads(result.stderr.strip())
-        assert (
-            "Circuit Breaker" in stderr_json.get("hookSpecificOutput", {}).get("error", "")
+        assert "Circuit Breaker" in stderr_json.get("hookSpecificOutput", {}).get(
+            "error", ""
         )
 
     def test_outputs_valid_json_on_error(self, tmp_path: Path) -> None:
@@ -215,9 +214,7 @@ class TestIterationLogger:
 
     HOOK_PATH = REPO_ROOT / ".claude/hooks/ralph-iteration-logger.py"
 
-    def run_hook(
-        self, input_data: dict, tmp_path: Path
-    ) -> Tuple[int, str, str]:
+    def run_hook(self, input_data: dict, tmp_path: Path) -> Tuple[int, str, str]:
         """Run hook with given input."""
         env = os.environ.copy()
         env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
@@ -261,8 +258,12 @@ class TestIterationLogger:
 
         # Create history with low effectiveness using atomic appends
         with open(log_file, "a", encoding="utf-8") as f:
-            f.write(json.dumps({"effectiveness": 0.3, "tool": "Edit", "file": ""}) + "\n")
-            f.write(json.dumps({"effectiveness": 0.3, "tool": "Edit", "file": ""}) + "\n")
+            f.write(
+                json.dumps({"effectiveness": 0.3, "tool": "Edit", "file": ""}) + "\n"
+            )
+            f.write(
+                json.dumps({"effectiveness": 0.3, "tool": "Edit", "file": ""}) + "\n"
+            )
 
         code, _, stderr = self.run_hook(
             {
@@ -312,9 +313,7 @@ class TestContextPruner:
 
     HOOK_PATH = REPO_ROOT / ".claude/hooks/ralph-context-pruner.py"
 
-    def run_hook(
-        self, tmp_path: Path, input_data: dict = None
-    ) -> Tuple[int, str, str]:
+    def run_hook(self, tmp_path: Path, input_data: dict = None) -> Tuple[int, str, str]:
         """Run hook with given input."""
         env = os.environ.copy()
         env["CLAUDE_PROJECT_DIR"] = str(tmp_path)

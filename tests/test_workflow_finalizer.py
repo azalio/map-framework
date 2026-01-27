@@ -313,9 +313,7 @@ class TestIntegrationWithCheckpoint:
             state.mark_subtask_complete("ST-001")
             state.mark_subtask_in_progress("ST-002")
 
-            finalized = finalize_workflow(
-                state, reason="Testing save/load integration"
-            )
+            finalized = finalize_workflow(state, reason="Testing save/load integration")
 
             # Save checkpoint
             finalized.save_checkpoint(Path(tmpdir))

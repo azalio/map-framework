@@ -549,7 +549,9 @@ class TestWontDoTerminalStatus:
             loaded = WorkflowState.load(Path(tmpdir))
 
             assert loaded.ended_early is not None
-            assert loaded.ended_early["reason"] == 'User said: "This is no longer needed"'
+            assert (
+                loaded.ended_early["reason"] == 'User said: "This is no longer needed"'
+            )
 
     def test_ended_early_round_trip(self):
         """ended_early persists correctly through save/load cycle."""

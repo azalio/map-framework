@@ -6,6 +6,7 @@ Run with: pytest tests/test_workflow_gate.py -v
 This hook enforces MAP Framework workflow adherence by blocking Edit/Write/MultiEdit
 until required workflow steps (actor + monitor) are completed.
 """
+
 import json
 import subprocess
 from pathlib import Path
@@ -81,11 +82,14 @@ class TestWorkflowGate:
         # Switch to target branch if different
         if current_branch != branch:
             # Check if branch exists
-            branch_exists = subprocess.run(
-                ["git", "rev-parse", "--verify", branch],
-                cwd=tmp_path,
-                capture_output=True,
-            ).returncode == 0
+            branch_exists = (
+                subprocess.run(
+                    ["git", "rev-parse", "--verify", branch],
+                    cwd=tmp_path,
+                    capture_output=True,
+                ).returncode
+                == 0
+            )
 
             if branch_exists:
                 # Switch to existing branch
@@ -148,16 +152,23 @@ class TestWorkflowGate:
         map_dir = tmp_path / ".map" / "master"
         map_dir.mkdir(parents=True)
         state_file = map_dir / "workflow_state.json"
-        state_file.write_text(json.dumps({
-            "workflow": "map-efficient",
-            "current_subtask": "ST-001",
-            "completed_steps": {
-                "ST-001": ["xml_packet", "mem0_search"]  # Missing actor and monitor
-            },
-            "pending_steps": {
-                "ST-001": ["actor", "monitor", "tests", "linter"]
-            }
-        }))
+        state_file.write_text(
+            json.dumps(
+                {
+                    "workflow": "map-efficient",
+                    "current_subtask": "ST-001",
+                    "completed_steps": {
+                        "ST-001": [
+                            "xml_packet",
+                            "mem0_search",
+                        ]  # Missing actor and monitor
+                    },
+                    "pending_steps": {
+                        "ST-001": ["actor", "monitor", "tests", "linter"]
+                    },
+                }
+            )
+        )
 
         code, _, stderr = self.run_hook(
             {
@@ -178,16 +189,22 @@ class TestWorkflowGate:
         map_dir = tmp_path / ".map" / "master"
         map_dir.mkdir(parents=True)
         state_file = map_dir / "workflow_state.json"
-        state_file.write_text(json.dumps({
-            "workflow": "map-efficient",
-            "current_subtask": "ST-001",
-            "completed_steps": {
-                "ST-001": ["xml_packet", "mem0_search", "actor"]  # Missing monitor
-            },
-            "pending_steps": {
-                "ST-001": ["monitor", "tests", "linter"]
-            }
-        }))
+        state_file.write_text(
+            json.dumps(
+                {
+                    "workflow": "map-efficient",
+                    "current_subtask": "ST-001",
+                    "completed_steps": {
+                        "ST-001": [
+                            "xml_packet",
+                            "mem0_search",
+                            "actor",
+                        ]  # Missing monitor
+                    },
+                    "pending_steps": {"ST-001": ["monitor", "tests", "linter"]},
+                }
+            )
+        )
 
         code, _, stderr = self.run_hook(
             {
@@ -207,16 +224,18 @@ class TestWorkflowGate:
         map_dir = tmp_path / ".map" / "master"
         map_dir.mkdir(parents=True)
         state_file = map_dir / "workflow_state.json"
-        state_file.write_text(json.dumps({
-            "workflow": "map-efficient",
-            "current_subtask": "ST-001",
-            "completed_steps": {
-                "ST-001": ["xml_packet", "mem0_search", "actor", "monitor"]
-            },
-            "pending_steps": {
-                "ST-001": ["tests", "linter"]
-            }
-        }))
+        state_file.write_text(
+            json.dumps(
+                {
+                    "workflow": "map-efficient",
+                    "current_subtask": "ST-001",
+                    "completed_steps": {
+                        "ST-001": ["xml_packet", "mem0_search", "actor", "monitor"]
+                    },
+                    "pending_steps": {"ST-001": ["tests", "linter"]},
+                }
+            )
+        )
 
         code, stdout, _ = self.run_hook(
             {
@@ -235,16 +254,16 @@ class TestWorkflowGate:
         map_dir = tmp_path / ".map" / "master"
         map_dir.mkdir(parents=True)
         state_file = map_dir / "workflow_state.json"
-        state_file.write_text(json.dumps({
-            "workflow": "map-efficient",
-            "current_subtask": "ST-001",
-            "completed_steps": {
-                "ST-001": ["xml_packet"]
-            },
-            "pending_steps": {
-                "ST-001": ["actor", "monitor"]
-            }
-        }))
+        state_file.write_text(
+            json.dumps(
+                {
+                    "workflow": "map-efficient",
+                    "current_subtask": "ST-001",
+                    "completed_steps": {"ST-001": ["xml_packet"]},
+                    "pending_steps": {"ST-001": ["actor", "monitor"]},
+                }
+            )
+        )
 
         code, _, stderr = self.run_hook(
             {
@@ -263,16 +282,16 @@ class TestWorkflowGate:
         map_dir = tmp_path / ".map" / "master"
         map_dir.mkdir(parents=True)
         state_file = map_dir / "workflow_state.json"
-        state_file.write_text(json.dumps({
-            "workflow": "map-efficient",
-            "current_subtask": "ST-001",
-            "completed_steps": {
-                "ST-001": []
-            },
-            "pending_steps": {
-                "ST-001": ["actor", "monitor"]
-            }
-        }))
+        state_file.write_text(
+            json.dumps(
+                {
+                    "workflow": "map-efficient",
+                    "current_subtask": "ST-001",
+                    "completed_steps": {"ST-001": []},
+                    "pending_steps": {"ST-001": ["actor", "monitor"]},
+                }
+            )
+        )
 
         code, _, stderr = self.run_hook(
             {
@@ -291,12 +310,16 @@ class TestWorkflowGate:
         map_dir = tmp_path / ".map" / "master"
         map_dir.mkdir(parents=True)
         state_file = map_dir / "workflow_state.json"
-        state_file.write_text(json.dumps({
-            "workflow": "map-efficient",
-            "current_subtask": None,  # No active subtask
-            "completed_steps": {},
-            "pending_steps": {}
-        }))
+        state_file.write_text(
+            json.dumps(
+                {
+                    "workflow": "map-efficient",
+                    "current_subtask": None,  # No active subtask
+                    "completed_steps": {},
+                    "pending_steps": {},
+                }
+            )
+        )
 
         code, _, stderr = self.run_hook(
             {
@@ -350,16 +373,18 @@ class TestWorkflowGate:
         map_dir = tmp_path / ".map" / "feature-foo"
         map_dir.mkdir(parents=True)
         state_file = map_dir / "workflow_state.json"
-        state_file.write_text(json.dumps({
-            "workflow": "map-efficient",
-            "current_subtask": "ST-001",
-            "completed_steps": {
-                "ST-001": ["actor", "monitor"]  # Complete on feature-foo
-            },
-            "pending_steps": {
-                "ST-001": []
-            }
-        }))
+        state_file.write_text(
+            json.dumps(
+                {
+                    "workflow": "map-efficient",
+                    "current_subtask": "ST-001",
+                    "completed_steps": {
+                        "ST-001": ["actor", "monitor"]  # Complete on feature-foo
+                    },
+                    "pending_steps": {"ST-001": []},
+                }
+            )
+        )
 
         # Try to edit on master branch (should allow - no state file for master)
         code, stdout, _ = self.run_hook(
@@ -380,18 +405,19 @@ class TestWorkflowGate:
         map_dir = tmp_path / ".map" / "master"
         map_dir.mkdir(parents=True)
         state_file = map_dir / "workflow_state.json"
-        state_file.write_text(json.dumps({
-            "workflow": "map-efficient",
-            "current_subtask": "ST-002",  # Working on ST-002
-            "completed_steps": {
-                "ST-001": ["actor", "monitor"],  # ST-001 complete
-                "ST-002": ["xml_packet"]  # ST-002 incomplete
-            },
-            "pending_steps": {
-                "ST-001": [],
-                "ST-002": ["actor", "monitor"]
-            }
-        }))
+        state_file.write_text(
+            json.dumps(
+                {
+                    "workflow": "map-efficient",
+                    "current_subtask": "ST-002",  # Working on ST-002
+                    "completed_steps": {
+                        "ST-001": ["actor", "monitor"],  # ST-001 complete
+                        "ST-002": ["xml_packet"],  # ST-002 incomplete
+                    },
+                    "pending_steps": {"ST-001": [], "ST-002": ["actor", "monitor"]},
+                }
+            )
+        )
 
         # Should block because ST-002 (current) is incomplete
         code, _, stderr = self.run_hook(
@@ -412,16 +438,16 @@ class TestWorkflowGate:
         map_dir = tmp_path / ".map" / "master"
         map_dir.mkdir(parents=True)
         state_file = map_dir / "workflow_state.json"
-        state_file.write_text(json.dumps({
-            "workflow": "map-efficient",
-            "current_subtask": "ST-001",
-            "completed_steps": {
-                "ST-001": []
-            },
-            "pending_steps": {
-                "ST-001": ["actor", "monitor"]
-            }
-        }))
+        state_file.write_text(
+            json.dumps(
+                {
+                    "workflow": "map-efficient",
+                    "current_subtask": "ST-001",
+                    "completed_steps": {"ST-001": []},
+                    "pending_steps": {"ST-001": ["actor", "monitor"]},
+                }
+            )
+        )
 
         code, _, stderr = self.run_hook(
             {
@@ -441,12 +467,15 @@ class TestWorkflowGate:
         assert "Task(subagent_type='actor')" in error_msg
         assert "Task(subagent_type='monitor')" in error_msg
 
-    @pytest.mark.parametrize("branch_name,sanitized", [
-        ("feature/authentication", "feature-authentication"),
-        ("feat/add-users", "feat-add-users"),
-        ("main", "main"),
-        ("bugfix/issue-123", "bugfix-issue-123"),
-    ])
+    @pytest.mark.parametrize(
+        "branch_name,sanitized",
+        [
+            ("feature/authentication", "feature-authentication"),
+            ("feat/add-users", "feat-add-users"),
+            ("main", "main"),
+            ("bugfix/issue-123", "bugfix-issue-123"),
+        ],
+    )
     def test_branch_name_sanitization(
         self, tmp_path: Path, branch_name: str, sanitized: str
     ) -> None:
@@ -455,16 +484,16 @@ class TestWorkflowGate:
         map_dir = tmp_path / ".map" / sanitized
         map_dir.mkdir(parents=True)
         state_file = map_dir / "workflow_state.json"
-        state_file.write_text(json.dumps({
-            "workflow": "map-efficient",
-            "current_subtask": "ST-001",
-            "completed_steps": {
-                "ST-001": ["actor", "monitor"]
-            },
-            "pending_steps": {
-                "ST-001": []
-            }
-        }))
+        state_file.write_text(
+            json.dumps(
+                {
+                    "workflow": "map-efficient",
+                    "current_subtask": "ST-001",
+                    "completed_steps": {"ST-001": ["actor", "monitor"]},
+                    "pending_steps": {"ST-001": []},
+                }
+            )
+        )
 
         # Hook should find state using sanitized branch name
         code, stdout, _ = self.run_hook(

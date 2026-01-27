@@ -222,6 +222,7 @@ def get_branch_name() -> str:
             if ".." in sanitized or sanitized.startswith("."):
                 return "default"
             return sanitized or "default"
+        return "default"
     except Exception:
         return "default"
 

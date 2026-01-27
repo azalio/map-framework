@@ -61,16 +61,19 @@ class TestAgentFrontmatter:
             - If failed: (None, error_message)
         """
         try:
-            content = file_path.read_text(encoding='utf-8')
+            content = file_path.read_text(encoding="utf-8")
         except Exception as e:
             return None, f"Failed to read file: {e}"
 
         # Match frontmatter: ^---\n(content)\n---
         # Using DOTALL to match across newlines
-        match = re.match(r'^---\n(.*?)\n---', content, re.DOTALL)
+        match = re.match(r"^---\n(.*?)\n---", content, re.DOTALL)
 
         if not match:
-            return None, "No frontmatter found (expected '---' delimiters at start of file)"
+            return (
+                None,
+                "No frontmatter found (expected '---' delimiters at start of file)",
+            )
 
         return match.group(1), None
 
@@ -98,13 +101,19 @@ class TestAgentFrontmatter:
                 continue
 
             errors = []
-            name_registry = {}  # Maps name -> file_path for duplicate detection within this directory
+            name_registry = (
+                {}
+            )  # Maps name -> file_path for duplicate detection within this directory
 
             for agent_file in agent_files:
-                file_path_str = str(agent_file.relative_to(agent_file.parent.parent.parent))
+                file_path_str = str(
+                    agent_file.relative_to(agent_file.parent.parent.parent)
+                )
 
                 # Step 1: Extract frontmatter
-                frontmatter_content, extract_error = self.extract_frontmatter(agent_file)
+                frontmatter_content, extract_error = self.extract_frontmatter(
+                    agent_file
+                )
                 if extract_error:
                     errors.append(f"{file_path_str}: {extract_error}")
                     continue
@@ -113,9 +122,7 @@ class TestAgentFrontmatter:
                 try:
                     frontmatter_data = yaml.safe_load(frontmatter_content)
                 except yaml.YAMLError as e:
-                    errors.append(
-                        f"{file_path_str}: YAML parsing failed - {e}"
-                    )
+                    errors.append(f"{file_path_str}: YAML parsing failed - {e}")
                     continue
 
                 # Ensure frontmatter parsed to a dict
@@ -127,13 +134,13 @@ class TestAgentFrontmatter:
                     continue
 
                 # Step 3: Validate 'name' field exists
-                if 'name' not in frontmatter_data:
+                if "name" not in frontmatter_data:
                     errors.append(
                         f"{file_path_str}: Missing required 'name' field in frontmatter"
                     )
                     continue
 
-                name_value = frontmatter_data['name']
+                name_value = frontmatter_data["name"]
 
                 # Step 4: Validate 'name' is non-empty string
                 if not isinstance(name_value, str) or not name_value.strip():
@@ -148,7 +155,9 @@ class TestAgentFrontmatter:
                 # Step 5: Check for duplicate names within this directory
                 if name_normalized in name_registry:
                     previous_file = name_registry[name_normalized]
-                    previous_path = str(previous_file.relative_to(previous_file.parent.parent.parent))
+                    previous_path = str(
+                        previous_file.relative_to(previous_file.parent.parent.parent)
+                    )
                     errors.append(
                         f"{file_path_str}: Duplicate 'name' value '{name_normalized}' "
                         f"already used in {previous_path}"
@@ -179,7 +188,7 @@ description: Test description
 
 # Content here
 """
-        match = re.match(r'^---\n(.*?)\n---', valid_content, re.DOTALL)
+        match = re.match(r"^---\n(.*?)\n---", valid_content, re.DOTALL)
         assert match is not None
         frontmatter = match.group(1)
         assert "name: test-agent" in frontmatter
@@ -190,7 +199,7 @@ description: Test description
 
 Some content
 """
-        match = re.match(r'^---\n(.*?)\n---', no_frontmatter, re.DOTALL)
+        match = re.match(r"^---\n(.*?)\n---", no_frontmatter, re.DOTALL)
         assert match is None
 
         # Malformed frontmatter (only one delimiter)
@@ -198,5 +207,5 @@ Some content
 name: test
 # Missing closing delimiter
 """
-        match = re.match(r'^---\n(.*?)\n---', malformed, re.DOTALL)
+        match = re.match(r"^---\n(.*?)\n---", malformed, re.DOTALL)
         assert match is None

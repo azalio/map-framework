@@ -68,12 +68,14 @@ def get_branch_name() -> str:
             branch = result.stdout.strip()
             # Sanitize for filesystem (same as ralph_state.py)
             import re
+
             sanitized = branch.replace("/", "-")
             sanitized = re.sub(r"[^a-zA-Z0-9_.-]", "-", sanitized)
             sanitized = re.sub(r"-+", "-", sanitized).strip("-")
             if ".." in sanitized or sanitized.startswith("."):
                 return "default"
             return sanitized or "default"
+        return "default"
     except Exception:
         return "default"
 
@@ -177,7 +179,7 @@ def main():
     try:
         # Read tool call from stdin
         tool_call = json.load(sys.stdin)
-        tool_name = tool_call.get("tool_name", "")
+        _tool_name = tool_call.get("tool_name", "")  # noqa: F841
 
         # Get current branch
         branch = get_branch_name()
@@ -195,12 +197,7 @@ def main():
 
         # Inject context via appended_text (added to system prompt)
         # Always allow tool to proceed (non-blocking)
-        print(
-            json.dumps({
-                "allow": True,
-                "appended_text": context
-            })
-        )
+        print(json.dumps({"allow": True, "appended_text": context}))
         sys.exit(0)
 
     except Exception as e:

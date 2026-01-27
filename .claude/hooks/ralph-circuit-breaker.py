@@ -214,7 +214,11 @@ def check_limits(tool_name: str, tool_input: dict) -> dict:
         or tool_input.get("path", "")
     )
 
-    result: dict[str, bool | str | None] = {"blocked": False, "reason": None, "warning": None}
+    result: dict[str, bool | str | None] = {
+        "blocked": False,
+        "reason": None,
+        "warning": None,
+    }
 
     # Check 1: Same file edited too many times
     if file_path and tool_name in ("Edit", "Write"):

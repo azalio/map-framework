@@ -24,7 +24,9 @@ class TestGetDependentsImmediate:
 
         # ST-001 has immediate dependent ST-002, but NOT ST-003 or ST-004
         dependents = graph.get_dependents("ST-001")
-        assert dependents == ["ST-002"], f"Expected only immediate dependent ST-002, got {dependents}"
+        assert dependents == [
+            "ST-002"
+        ], f"Expected only immediate dependent ST-002, got {dependents}"
 
     def test_get_dependents_multiple_immediate(self):
         """get_dependents() returns all immediate dependents (multiple children)."""

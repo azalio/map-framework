@@ -178,7 +178,12 @@ check_python() {
 
     # MyPy (type checker) - only if configured
     if command -v mypy &>/dev/null && [[ -f "mypy.ini" || -f "pyproject.toml" ]]; then
-        run_check "mypy" "mypy . --ignore-missing-imports --no-error-summary 2>/dev/null" "check_mypy"
+        # Check src/ directory if it exists, otherwise check current directory
+        if [[ -d "src" ]]; then
+            run_check "mypy" "mypy src/ --ignore-missing-imports --no-error-summary 2>/dev/null" "check_mypy"
+        else
+            run_check "mypy" "mypy . --ignore-missing-imports --no-error-summary 2>/dev/null" "check_mypy"
+        fi
     fi
 }
 

@@ -57,6 +57,7 @@ def get_branch_name() -> str:
     """Get current git branch name (sanitized for filesystem)."""
     try:
         import subprocess
+
         result = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
             capture_output=True,
@@ -151,11 +152,8 @@ def main():
             sys.exit(0)
         else:
             print(
-                json.dumps({
-                    "decision": "block",
-                    "reason": error_message
-                }),
-                file=sys.stderr
+                json.dumps({"decision": "block", "reason": error_message}),
+                file=sys.stderr,
             )
             sys.exit(2)
 

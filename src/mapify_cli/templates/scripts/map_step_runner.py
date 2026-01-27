@@ -28,7 +28,6 @@ TESTING:
 """
 import json
 import re
-from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -52,6 +51,7 @@ def get_branch_name() -> str:
             if ".." in sanitized or sanitized.startswith("."):
                 return "default"
             return sanitized or "default"
+        return "default"
     except Exception:
         return "default"
 

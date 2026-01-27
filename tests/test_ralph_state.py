@@ -3,6 +3,7 @@ Tests for Ralph Loop State Management.
 
 Run with: pytest tests/test_ralph_state.py -v
 """
+
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -536,7 +537,12 @@ class TestSummarizeFailure:
             iteration=1,
             root_cause=RootCauseAnalysis(
                 unmet_requirements=["Req 1", "Req 2", "Req 3"],
-                error_files=["src/a.py:10", "src/b.py:20", "src/c.py:30", "src/d.py:40"],
+                error_files=[
+                    "src/a.py:10",
+                    "src/b.py:20",
+                    "src/c.py:30",
+                    "src/d.py:40",
+                ],
                 fix_type="code_fix",
                 invalidated_subtasks=["ST-002"],
                 suggested_action="Fix bug",
