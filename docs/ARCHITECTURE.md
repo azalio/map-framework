@@ -642,6 +642,131 @@ See [USAGE.md - Workflow Variants](./USAGE.md#workflow-variants) for detailed de
 
 ---
 
+### Hook-Based Context Injection (v2.0.0+)
+
+**Problem:** Long command files (995 lines, ~5.4K tokens) cause attention dilution → Claude skips critical workflow steps like mem0 search and self-audit (20% compliance rate).
+
+**Solution:** State-machine orchestration + PreToolUse hook injection
+
+#### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  PreToolUse Hook (workflow-context-injector.py)             │
+│  • Reads: .map/<branch>/step_state.json                     │
+│  • Injects: ~150 token reminder before EVERY tool call      │
+│  • Shows: Current step, progress, mandatory next action     │
+│  • Non-blocking: Always allows tool execution               │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│  map-efficient.md (~1.75K tokens, down from ~5.4K)          │
+│  1. Get next step instruction (map_orchestrator.py)         │
+│  2. Route to executor (Actor/Monitor/mem0/etc)              │
+│  3. Execute step                                            │
+│  4. Validate completion → Update state                      │
+│  5. Recurse if more steps; else complete                    │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│  State Machine (scripts/map_orchestrator.py)                │
+│  • 14 step phases (DECOMPOSE → VERIFY_ADHERENCE)            │
+│  • State file: .map/<branch>/step_state.json                │
+│  • Enforces: Sequential execution, no step skipping         │
+│  • CLI: get_next_step, validate_step, initialize            │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│  Workflow Gate (workflow-gate.py) - UNCHANGED               │
+│  • BLOCKS Edit/Write until actor+monitor completed          │
+│  • Reads: .map/<branch>/workflow_state.json                 │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### Key Innovation: Constant Reminders
+
+**Pattern borrowed from ralph-loop's `build_loop_context()`:** Inject small, frequent reminders rather than upfront instructions.
+
+**Hook Output Example:**
+```
+╔═══════════════════════════════════════════════════════════╗
+║ MAP WORKFLOW CHECKPOINT                                   ║
+╠═══════════════════════════════════════════════════════════╣
+║ Current Step:  2.1 - MEM0_SEARCH
+║ Progress:      Subtask 1/5
+║ Completed:     1.0_DECOMPOSE, 1.5_INIT_PLAN, 2.0_XML_PACKET
+║
+║ ⚠️  MANDATORY NEXT ACTION:
+║    Call mcp__mem0__map_tiered_search BEFORE Actor
+╚═══════════════════════════════════════════════════════════╝
+```
+
+**Injected into system prompt before EVERY tool call** → Claude cannot "forget" the current step.
+
+#### Results
+
+| Metric | Before (v1.x) | After (v2.0.0) |
+|--------|---------------|----------------|
+| **Step compliance** | ~20% | ~85% (predicted) |
+| **Command file tokens** | ~5,400 | ~1,750 |
+| **mem0 search skip rate** | 80% | ~5% (predicted) |
+| **Self-audit skip rate** | 90% | ~10% (predicted) |
+| **User interventions** | ~3 per workflow | ~0.3 (predicted) |
+| **Hook latency** | N/A | <100ms |
+
+#### Token Economics
+
+- **Before:** 5,400 tokens per invocation × 10 invocations = 54,000 tokens
+- **After:** 1,750 tokens + (150 hook tokens × 50 tool calls) = 9,250 tokens
+- **Net savings:** ~83% reduction despite hook overhead
+
+#### Implementation Details
+
+**14 Step Phases:**
+1. `1.0 DECOMPOSE` - task-decomposer agent
+2. `1.5 INIT_PLAN` - Generate task_plan.md
+3. `1.6 INIT_STATE` - Create workflow_state.json
+4. `2.0 XML_PACKET` - Build AI-friendly subtask packet
+5. `2.1 MEM0_SEARCH` - Tiered memory search
+6. `2.2 RESEARCH` - research-agent (conditional)
+7. `2.3 ACTOR` - Actor agent implementation
+8. `2.4 MONITOR` - Monitor validation
+9. `2.5 RETRY_LOOP` - Retry on Monitor failure (not shown in linear flow)
+10. `2.6 PREDICTOR` - Impact analysis (conditional)
+11. `2.7 APPLY_CHANGES` - Write/Edit tools
+12. `2.8 TESTS_GATE` - Run tests
+13. `2.9 LINTER_GATE` - Run linter
+14. `2.10 VERIFY_ADHERENCE` - Self-audit checkpoint
+
+**State Files:**
+- `step_state.json` - Hook injection source (current step phase)
+- `workflow_state.json` - Gate enforcement source (actor+monitor completed)
+
+**Why Two State Files?**
+- Separation of concerns: step sequencing vs. gate enforcement
+- Independent evolution: hook system can change without breaking gates
+- Performance: Hook reads minimal state (~200 bytes), gates read full state
+
+#### Migration Guide (v1.x → v2.0.0)
+
+**Breaking Change:** /map-efficient now requires Python state machine.
+
+**User Action:**
+```bash
+# Update MAP Framework installation
+mapify init  # Regenerates .claude/ with new hooks and scripts
+
+# Existing workflows continue automatically
+# No manual migration needed for in-progress workflows
+```
+
+**For Custom Workflows:**
+If you modified `.claude/commands/map-efficient.md`, you must manually integrate state machine calls:
+- Replace monolithic step logic with `map_orchestrator.py` CLI calls
+- See template: `src/mapify_cli/templates/commands/map-efficient.md`
+
+---
+
 ## Agent Specifications
 
 ### 1. TaskDecomposer

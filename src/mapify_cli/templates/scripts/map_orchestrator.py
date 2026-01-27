@@ -1,0 +1,460 @@
+#!/usr/bin/env python3
+"""
+MAP Workflow State Machine Orchestrator
+
+Manages workflow step sequencing and state transitions for /map-efficient command.
+This is the "OS" that coordinates agents (the "applications").
+
+DESIGN PRINCIPLE:
+  "State-Gated Prompting" - Each workflow invocation should see exactly ONE
+  clear next action. State machine enforces sequencing, Python validates
+  completion, hooks inject reminders.
+
+ARCHITECTURE:
+  ┌─────────────────────────────────────────────────────────────┐
+  │  map-efficient.md (150 lines)                               │
+  │  ├─> 1. Call get_next_step() → returns step instruction    │
+  │  ├─> 2. Execute step (Actor/Monitor/mem0/etc)              │
+  │  ├─> 3. Call validate_step() → checks completion           │
+  │  ├─> 4. If more steps: recurse with fresh context          │
+  │  └─> 5. Else: complete workflow                            │
+  └─────────────────────────────────────────────────────────────┘
+
+STATE FILE:
+  Location: .map/<branch>/step_state.json
+  Schema:
+    {
+      "workflow": "map-efficient",
+      "started_at": "2026-01-27T10:30:00Z",
+      "current_subtask_id": "ST-001",
+      "subtask_index": 0,
+      "subtask_sequence": ["ST-001", "ST-002", "ST-003"],
+      "current_step_id": "2.1",
+      "current_step_phase": "MEM0_SEARCH",
+      "completed_steps": ["1.0_DECOMPOSE", "1.5_INIT_PLAN", "2.0_XML_PACKET"],
+      "pending_steps": ["2.1_MEM0_SEARCH", "2.3_ACTOR", "2.4_MONITOR", ...]
+    }
+
+STEP PHASES (14 total):
+  1.0  DECOMPOSE          - task-decomposer agent
+  1.5  INIT_PLAN          - Generate task_plan.md
+  1.6  INIT_STATE         - Create workflow_state.json
+  2.0  XML_PACKET         - Build AI-friendly subtask packet
+  2.1  MEM0_SEARCH        - Tiered memory search
+  2.2  RESEARCH           - research-agent (conditional)
+  2.3  ACTOR              - Actor agent implementation
+  2.4  MONITOR            - Monitor validation
+  2.5  RETRY_LOOP         - Retry on Monitor failure
+  2.6  PREDICTOR          - Impact analysis (conditional)
+  2.7  APPLY_CHANGES      - Write/Edit tools
+  2.8  TESTS_GATE         - Run tests
+  2.9  LINTER_GATE        - Run linter
+  2.10 VERIFY_ADHERENCE   - Self-audit checkpoint
+
+CLI INTERFACE:
+  python3 map_orchestrator.py get_next_step [--branch BRANCH]
+    → Returns JSON with next step instruction
+
+  python3 map_orchestrator.py validate_step STEP_ID [--branch BRANCH]
+    → Returns JSON with validation result
+
+  python3 map_orchestrator.py initialize TASK [--branch BRANCH]
+    → Creates initial step_state.json
+
+USAGE FROM map-efficient.md:
+  ```bash
+  # Get next step
+  NEXT_STEP=$(python3 scripts/map_orchestrator.py get_next_step)
+  STEP_ID=$(echo "$NEXT_STEP" | jq -r '.step_id')
+  INSTRUCTION=$(echo "$NEXT_STEP" | jq -r '.instruction')
+
+  # Execute step based on phase...
+
+  # Validate completion
+  python3 scripts/map_orchestrator.py validate_step "$STEP_ID"
+  ```
+
+TESTING:
+  # Initialize
+  python3 map_orchestrator.py initialize "Add user authentication"
+
+  # Get first step
+  python3 map_orchestrator.py get_next_step
+  # → {"step_id": "1.0", "phase": "DECOMPOSE", "instruction": "..."}
+
+  # Mark step complete and get next
+  python3 map_orchestrator.py validate_step "1.0"
+  python3 map_orchestrator.py get_next_step
+  # → {"step_id": "1.5", "phase": "INIT_PLAN", "instruction": "..."}
+"""
+import argparse
+import json
+import subprocess
+import sys
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional
+
+# Step phase definitions with execution order
+STEP_PHASES = {
+    "1.0": "DECOMPOSE",
+    "1.5": "INIT_PLAN",
+    "1.6": "INIT_STATE",
+    "2.0": "XML_PACKET",
+    "2.1": "MEM0_SEARCH",
+    "2.2": "RESEARCH",
+    "2.3": "ACTOR",
+    "2.4": "MONITOR",
+    "2.5": "RETRY_LOOP",
+    "2.6": "PREDICTOR",
+    "2.7": "APPLY_CHANGES",
+    "2.8": "TESTS_GATE",
+    "2.9": "LINTER_GATE",
+    "2.10": "VERIFY_ADHERENCE",
+}
+
+# Step execution order
+STEP_ORDER = [
+    "1.0",
+    "1.5",
+    "1.6",
+    "2.0",
+    "2.1",
+    "2.2",
+    "2.3",
+    "2.4",
+    "2.6",
+    "2.7",
+    "2.8",
+    "2.9",
+    "2.10",
+]
+
+
+@dataclass
+class StepState:
+    """Workflow step state tracking."""
+
+    workflow: str = "map-efficient"
+    started_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    current_subtask_id: Optional[str] = None
+    subtask_index: int = 0
+    subtask_sequence: List[str] = field(default_factory=list)
+    current_step_id: str = "1.0"
+    current_step_phase: str = "DECOMPOSE"
+    completed_steps: List[str] = field(default_factory=list)
+    pending_steps: List[str] = field(default_factory=lambda: STEP_ORDER.copy())
+    retry_count: int = 0
+    max_retries: int = 5
+
+    def to_dict(self) -> dict:
+        """Serialize to dictionary."""
+        return {
+            "workflow": self.workflow,
+            "started_at": self.started_at,
+            "current_subtask_id": self.current_subtask_id,
+            "subtask_index": self.subtask_index,
+            "subtask_sequence": self.subtask_sequence,
+            "current_step_id": self.current_step_id,
+            "current_step_phase": self.current_step_phase,
+            "completed_steps": self.completed_steps,
+            "pending_steps": self.pending_steps,
+            "retry_count": self.retry_count,
+            "max_retries": self.max_retries,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "StepState":
+        """Deserialize from dictionary."""
+        return cls(
+            workflow=data.get("workflow", "map-efficient"),
+            started_at=data.get("started_at", datetime.now().isoformat()),
+            current_subtask_id=data.get("current_subtask_id"),
+            subtask_index=data.get("subtask_index", 0),
+            subtask_sequence=data.get("subtask_sequence", []),
+            current_step_id=data.get("current_step_id", "1.0"),
+            current_step_phase=data.get("current_step_phase", "DECOMPOSE"),
+            completed_steps=data.get("completed_steps", []),
+            pending_steps=data.get("pending_steps", STEP_ORDER.copy()),
+            retry_count=data.get("retry_count", 0),
+            max_retries=data.get("max_retries", 5),
+        )
+
+    @classmethod
+    def load(cls, state_file: Path) -> "StepState":
+        """Load state from file."""
+        if not state_file.exists():
+            return cls()
+        try:
+            data = json.loads(state_file.read_text(encoding="utf-8"))
+            return cls.from_dict(data)
+        except (json.JSONDecodeError, KeyError):
+            return cls()
+
+    def save(self, state_file: Path) -> None:
+        """Save state to file."""
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        tmp_file = state_file.with_suffix(".tmp")
+        tmp_file.write_text(
+            json.dumps(self.to_dict(), indent=2, ensure_ascii=True),
+            encoding="utf-8",
+        )
+        tmp_file.replace(state_file)
+
+
+def get_branch_name() -> str:
+    """Get sanitized git branch name."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=1,
+        )
+        if result.returncode == 0:
+            branch = result.stdout.strip()
+            import re
+
+            sanitized = branch.replace("/", "-")
+            sanitized = re.sub(r"[^a-zA-Z0-9_.-]", "-", sanitized)
+            sanitized = re.sub(r"-+", "-", sanitized).strip("-")
+            if ".." in sanitized or sanitized.startswith("."):
+                return "default"
+            return sanitized or "default"
+    except Exception:
+        return "default"
+
+
+def get_step_instruction(step_id: str, state: StepState) -> str:
+    """
+    Get instruction for executing a specific step.
+
+    Args:
+        step_id: Step identifier (e.g., "2.1")
+        state: Current workflow state
+
+    Returns:
+        Instruction string for the step
+    """
+    phase = STEP_PHASES.get(step_id, "UNKNOWN")
+    instructions = {
+        "1.0": (
+            "Call Task(subagent_type='task-decomposer') to break down the task "
+            "into ≤20 atomic subtasks with validation criteria."
+        ),
+        "1.5": (
+            "Generate .map/task_plan_<branch>.md from decomposer blueprint. "
+            "Include Goal, Current Phase, and status for each subtask."
+        ),
+        "1.6": (
+            "Create .map/<branch>/workflow_state.json with initial state. "
+            "Required for workflow-gate.py enforcement."
+        ),
+        "2.0": (
+            f"Build XML packet for subtask {state.current_subtask_id}. "
+            "Include ID, title, description, risk_level, affected_files, "
+            "validation_criteria, and test_strategy."
+        ),
+        "2.1": (
+            "Call mcp__mem0__map_tiered_search to retrieve relevant patterns. "
+            "Re-rank by relevance and pass top 3 to Actor."
+        ),
+        "2.2": (
+            "Call Task(subagent_type='research-agent') if refactoring or "
+            "touching 3+ files. Pass findings to Actor."
+        ),
+        "2.3": (
+            f"Call Task(subagent_type='actor') to implement subtask "
+            f"{state.current_subtask_id}. Pass XML packet and context patterns."
+        ),
+        "2.4": (
+            "Call Task(subagent_type='monitor') to validate Actor output. "
+            "Check correctness, security, standards, and tests."
+        ),
+        "2.6": (
+            "Call Task(subagent_type='predictor') for impact analysis "
+            "(required for medium/high risk subtasks)."
+        ),
+        "2.7": (
+            "Apply Actor's changes using Edit/Write tools. "
+            "GATE: Only allowed if Monitor.valid === true."
+        ),
+        "2.8": (
+            "Run tests using pytest/npm test/go test/cargo test. "
+            "Skip if no tests available."
+        ),
+        "2.9": (
+            "Run linter using ruff/eslint/golangci-lint/cargo clippy. "
+            "Skip if not configured."
+        ),
+        "2.10": (
+            "Output workflow adherence self-audit. "
+            "Verify all required steps completed before marking subtask done."
+        ),
+    }
+
+    return instructions.get(step_id, f"Execute step {step_id} ({phase})")
+
+
+def get_next_step(branch: str) -> Dict:
+    """
+    Determine next step in workflow.
+
+    Args:
+        branch: Git branch name (sanitized)
+
+    Returns:
+        Dict with step_id, phase, instruction, is_complete
+    """
+    state_file = Path(f".map/{branch}/step_state.json")
+    state = StepState.load(state_file)
+
+    # Check if workflow complete
+    if not state.pending_steps:
+        # Check if more subtasks remain
+        if state.subtask_index + 1 < len(state.subtask_sequence):
+            # Move to next subtask, reset steps
+            state.subtask_index += 1
+            state.current_subtask_id = state.subtask_sequence[state.subtask_index]
+            state.current_step_id = "2.0"
+            state.current_step_phase = "XML_PACKET"
+            # Reset to subtask-level steps (skip global setup steps)
+            state.pending_steps = STEP_ORDER[3:]  # Start from 2.0
+            state.completed_steps = []
+            state.retry_count = 0
+            state.save(state_file)
+        else:
+            return {
+                "step_id": "COMPLETE",
+                "phase": "COMPLETE",
+                "instruction": "All subtasks complete. Run final verification.",
+                "is_complete": True,
+            }
+
+    # Get next pending step
+    next_step_id = state.pending_steps[0]
+    phase = STEP_PHASES.get(next_step_id, "UNKNOWN")
+    instruction = get_step_instruction(next_step_id, state)
+
+    # Update current step in state
+    state.current_step_id = next_step_id
+    state.current_step_phase = phase
+    state.save(state_file)
+
+    return {
+        "step_id": next_step_id,
+        "phase": phase,
+        "instruction": instruction,
+        "is_complete": False,
+        "current_subtask": state.current_subtask_id,
+        "subtask_progress": f"{state.subtask_index + 1}/{len(state.subtask_sequence)}",
+    }
+
+
+def validate_step(step_id: str, branch: str) -> Dict:
+    """
+    Validate step completion and update state.
+
+    Args:
+        step_id: Step identifier to validate
+        branch: Git branch name (sanitized)
+
+    Returns:
+        Dict with valid: bool, message: str
+    """
+    state_file = Path(f".map/{branch}/step_state.json")
+    state = StepState.load(state_file)
+
+    # Check if step is current
+    if state.current_step_id != step_id:
+        return {
+            "valid": False,
+            "message": f"Step mismatch: expected {state.current_step_id}, got {step_id}",
+        }
+
+    # Mark step complete
+    state.completed_steps.append(step_id)
+    if step_id in state.pending_steps:
+        state.pending_steps.remove(step_id)
+
+    # Save updated state
+    state.save(state_file)
+
+    return {
+        "valid": True,
+        "message": f"Step {step_id} completed successfully",
+        "next_step": state.pending_steps[0] if state.pending_steps else "COMPLETE",
+    }
+
+
+def initialize_workflow(task: str, branch: str) -> Dict:
+    """
+    Initialize workflow state for new task.
+
+    Args:
+        task: Task description
+        branch: Git branch name (sanitized)
+
+    Returns:
+        Dict with status and state_file path
+    """
+    state_file = Path(f".map/{branch}/step_state.json")
+
+    # Create fresh state
+    state = StepState()
+    state.save(state_file)
+
+    return {
+        "status": "initialized",
+        "state_file": str(state_file),
+        "task": task,
+        "branch": branch,
+    }
+
+
+def main():
+    """CLI entry point."""
+    parser = argparse.ArgumentParser(
+        description="MAP Workflow State Machine Orchestrator"
+    )
+    parser.add_argument(
+        "command",
+        choices=["get_next_step", "validate_step", "initialize"],
+        help="Command to execute",
+    )
+    parser.add_argument("task_or_step", nargs="?", help="Task description or step ID")
+    parser.add_argument("--branch", help="Git branch (auto-detected if omitted)")
+
+    args = parser.parse_args()
+
+    # Get branch
+    branch = args.branch if args.branch else get_branch_name()
+
+    try:
+        if args.command == "get_next_step":
+            result = get_next_step(branch)
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "validate_step":
+            if not args.task_or_step:
+                print(
+                    json.dumps({"error": "step_id required for validate_step"}),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            result = validate_step(args.task_or_step, branch)
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "initialize":
+            task = args.task_or_step or "MAP workflow task"
+            result = initialize_workflow(task, branch)
+            print(json.dumps(result, indent=2))
+
+    except Exception as e:
+        print(json.dumps({"error": str(e)}), file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
