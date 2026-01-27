@@ -357,7 +357,8 @@ main() {
         done
         exit 1  # Show warning to user
     fi
-    
+
+    echo '{}'
     exit 0
 }
 

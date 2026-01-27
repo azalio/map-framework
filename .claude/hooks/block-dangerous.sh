@@ -33,11 +33,13 @@ COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null || ec
 
 # Only intercept Bash tool
 if [[ "$TOOL_NAME" != "Bash" ]]; then
+    echo '{}'
     exit 0
 fi
 
 # If no command, allow
 if [[ -z "$COMMAND" ]]; then
+    echo '{}'
     exit 0
 fi
 
@@ -108,4 +110,5 @@ fi
 # =============================================================================
 # All checks passed - allow command
 # =============================================================================
+echo '{}'
 exit 0

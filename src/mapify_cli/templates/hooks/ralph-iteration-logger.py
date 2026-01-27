@@ -214,6 +214,7 @@ def main() -> None:
     try:
         input_data = json.load(sys.stdin)
     except json.JSONDecodeError:
+        print("{}")
         sys.exit(0)
 
     # Debug mode: log raw input for schema verification
@@ -302,6 +303,7 @@ def main() -> None:
                 file=sys.stderr,
             )
 
+    print("{}")
     sys.exit(0)
 
 

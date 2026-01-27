@@ -104,6 +104,7 @@ def main():
 
     # Only intercept Read, Edit, Write tools
     if tool_name not in ["Read", "Edit", "Write"]:
+        print("{}")
         sys.exit(0)  # Allow other tools
 
     # Extract file_path from tool_input
@@ -111,6 +112,7 @@ def main():
 
     # If no file_path, allow (shouldn't happen for Read/Edit/Write, but be safe)
     if not file_path:
+        print("{}")
         sys.exit(0)
 
     # Check if file is sensitive
@@ -118,6 +120,7 @@ def main():
         block_access(file_path, tool_name)
 
     # Allow non-sensitive files
+    print("{}")
     sys.exit(0)
 
 

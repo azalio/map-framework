@@ -287,6 +287,7 @@ def main() -> None:
     try:
         input_data = json.load(sys.stdin)
     except json.JSONDecodeError:
+        print("{}")
         sys.exit(0)  # Allow on parse error
 
     # Debug mode: log raw input for schema verification
@@ -314,6 +315,7 @@ def main() -> None:
     # Allow reset marker write to always pass (recovery must be possible).
     marker_path = str(get_reset_marker_file().resolve())
     if tool_name in ("Write", "Edit") and normalized_file_path == marker_path:
+        print("{}")
         sys.exit(0)
 
     # If reset marker exists, perform reset before enforcing limits.
@@ -321,6 +323,7 @@ def main() -> None:
 
     # Only check Edit, Write, Bash tools
     if tool_name not in ("Edit", "Write", "Bash"):
+        print("{}")
         sys.exit(0)
 
     # Check limits BEFORE logging
@@ -364,6 +367,7 @@ def main() -> None:
         }
     )
 
+    print("{}")
     sys.exit(0)  # Allow
 
 
