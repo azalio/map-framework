@@ -40,6 +40,20 @@ class TestWorkflowGate:
                 check=True,
             )
 
+            # Configure git user for CI environments
+            subprocess.run(
+                ["git", "config", "user.email", "test@example.com"],
+                cwd=tmp_path,
+                capture_output=True,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "config", "user.name", "Test User"],
+                cwd=tmp_path,
+                capture_output=True,
+                check=True,
+            )
+
             # Create initial commit (required for branch to exist)
             (tmp_path / "README.md").write_text("test\n")
             subprocess.run(
