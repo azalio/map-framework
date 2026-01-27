@@ -161,7 +161,7 @@ def main():
 
     except Exception as e:
         # On hook failure, approve (fail-open to avoid blocking work)
-        print(json.dumps({"decision": "approve"}), file=sys.stderr)
+        print(json.dumps({"decision": "approve"}))
         if os.environ.get("DEBUG_WORKFLOW_GATE"):
             print(f"[workflow-gate] ERROR: {e}", file=sys.stderr)
         sys.exit(0)
