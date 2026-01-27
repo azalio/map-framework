@@ -44,7 +44,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 # Tools that require workflow enforcement
 EDITING_TOOLS = {"Edit", "Write", "MultiEdit"}
