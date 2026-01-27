@@ -133,11 +133,18 @@ Return **ONLY** valid JSON in this exact structure:
   "schema_version": "2.0",
   "analysis": {
     "assumptions": ["Assumption that could affect implementation"],
-    "open_questions": ["Question requiring clarification before proceeding"]
+    "open_questions": ["Question requiring clarification before proceeding"],
+    "scope_vs_quality_decision": "When facing constraints, reduce SCOPE (defer features), NOT QUALITY (accept technical debt). Document which features are deferred vs which quality standards are maintained."
   },
   "blueprint": {
     "id": "feature-short-name",
     "summary": "Brief architectural approach description",
+    "quality_requirements": {
+      "min_security_score": 7,
+      "min_functionality_score": 7,
+      "error_handling_required": true,
+      "rationale": "Production deployment to critical infrastructure requires non-negotiable quality thresholds"
+    },
     "subtasks": [
       {
         "id": "ST-001",
@@ -187,9 +194,24 @@ Return **ONLY** valid JSON in this exact structure:
 **analysis.open_questions**: Array of questions requiring clarification before proceeding
   - If critical questions exist and goal is too ambiguous → return empty subtasks array
   - Example: "Which authentication method: JWT or session?", "Required response time SLA?"
+**analysis.scope_vs_quality_decision**: String documenting the scope-vs-quality trade-off policy
+  - Purpose: Explicit commitment to quality over feature completeness
+  - Default: "When facing constraints, reduce SCOPE (defer features), NOT QUALITY (accept technical debt). Document which features are deferred vs which quality standards are maintained."
+  - Rationale: Technical debt compounds; deferred features can be added later without refactoring
 
 **blueprint.id**: Short identifier for the feature (e.g., "user-auth", "project-archive")
 **blueprint.summary**: Brief architectural approach description (1-2 sentences)
+**blueprint.quality_requirements**: Object defining non-negotiable quality thresholds for the entire blueprint
+  - **min_security_score**: Numeric 1-10, minimum acceptable security score (default: 7)
+    - Applies to: subtasks with security_critical=true
+    - Score <7 triggers mandatory security review before merge
+  - **min_functionality_score**: Numeric 1-10, minimum acceptable functionality score (default: 7)
+    - Measured by: validation_criteria coverage, error handling completeness, edge case handling
+    - Score <7 requires additional validation criteria or scope reduction
+  - **error_handling_required**: Boolean, whether explicit error handling is mandatory (default: true)
+    - Enforced in: Actor quality checklist, Monitor validation
+  - **rationale**: String explaining why these thresholds are set
+    - Example: "Production deployment to critical infrastructure requires non-negotiable quality thresholds"
 
 **subtasks[].id**: Namespaced string ID (e.g., "ST-001", "ST-002") - prevents collision across blueprints
 **subtasks[].title**: Action-oriented, specific (e.g., "Add validateToken() to AuthService", NOT "update auth")
@@ -674,11 +696,18 @@ For detailed examples and anti-patterns, see: `.claude/references/decomposition-
   "schema_version": "2.0",
   "analysis": {
     "assumptions": ["Project model exists with standard CRUD operations"],
-    "open_questions": []
+    "open_questions": [],
+    "scope_vs_quality_decision": "Full feature scope implemented with non-negotiable quality standards. No scope reductions needed for this standard CRUD extension."
   },
   "blueprint": {
     "id": "project-archive",
     "summary": "Add soft-delete archiving to projects via archived_at timestamp field with API endpoints and filtered listings",
+    "quality_requirements": {
+      "min_security_score": 7,
+      "min_functionality_score": 7,
+      "error_handling_required": true,
+      "rationale": "Standard CRUD operations require robust error handling and data validation"
+    },
     "subtasks": [
       {
         "id": "ST-001",

@@ -1080,15 +1080,19 @@ Evaluator provides data for decision-making, not the decision itself. Think of i
 - Provide actionable feedback (what to improve, not just "it's bad")
 - Keep output strictly in JSON format (no markdown, no extra text)
 - Be consistent with scoring rubric across evaluations
-- Consider project context (MVP vs production, prototype vs refactor)
+- Consider project context (prototype vs production, refactor vs new feature)
 
 **Scoring Context Adjustments**:
 
 <decision_framework>
-IF task is MVP/prototype:
-  → Completeness expectations lower (docs can wait)
-  → Functionality and security still critical
-  → Performance optimization less critical
+IF task is prototype/exploratory:
+  → SCOPE may be reduced (implement subset of features)
+  → QUALITY standards REMAIN UNCHANGED:
+    • Security score MUST be ≥ 7 (non-negotiable)
+    • Functionality score MUST be ≥ 7 (non-negotiable)
+    • All implemented features MUST have error handling
+  → "Prototype" = learning/experimenting, NOT lower quality
+  → Document scope reductions explicitly (what's deferred vs delivered)
 
 ELSE IF task is production feature:
   → All dimensions weighted equally
@@ -1474,7 +1478,7 @@ def calculate_user_discount(
 - **Consistency**: Use rubric uniformly across evaluations
 - **Actionability**: Explain what's needed to improve each score
 - **Objectivity**: Base scores on standards and benchmarks, not preferences
-- **Context**: Adjust expectations based on task type (MVP vs production)
+- **Context**: Adjust scope (not quality) based on task type (prototype vs production)
 
 **Scoring Formula (Verify)**:
 ```

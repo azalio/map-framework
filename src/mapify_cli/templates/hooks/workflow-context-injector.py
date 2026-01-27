@@ -148,10 +148,10 @@ def build_context_injection(state: Dict) -> str:
     # Get step-specific reminder
     reminder = get_step_reminder(phase)
 
-    # Build compact context block
+    # Build compact context block with production quality context
     context = f"""
 ╔═══════════════════════════════════════════════════════════╗
-║ MAP WORKFLOW CHECKPOINT                                   ║
+║ MAP WORKFLOW - CRITICAL INFRASTRUCTURE DEPLOYMENT         ║
 ╠═══════════════════════════════════════════════════════════╣
 ║ Current Step:  {current_step} - {phase}
 ║ Progress:      Subtask {subtask_idx + 1}/{total_subtasks}
@@ -159,6 +159,9 @@ def build_context_injection(state: Dict) -> str:
 ║
 ║ ⚠️  MANDATORY NEXT ACTION:
 ║    {reminder}
+║
+║ 🔴 QUALITY STANDARDS (Non-Negotiable):
+║    Security ≥7 | Functionality ≥7 | Error handling required
 ╚═══════════════════════════════════════════════════════════╝
 """.strip()
 

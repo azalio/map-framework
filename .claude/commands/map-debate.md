@@ -127,7 +127,39 @@ Max tokens: 1500"
 
 Pass `executive_summary` to Actor if `confidence >= 0.7`.
 
-### 2.3 Parallel Actors (3 Variants)
+### 2.3 Quality-Stakes Assessment
+
+**Purpose:** Determine deployment context and set minimum quality thresholds before launching Actor variants.
+
+**Assessment Logic:**
+```
+# Determine deployment risk level based on goal content
+deployment_risk_level = assess_deployment_context(goal):
+  IF goal contains "hospital" OR "healthcare" OR "patient" OR "medical":
+    → risk_level = "critical", min_security = 8, min_functionality = 8
+  ELIF goal contains "government" OR "financial" OR "banking" OR "critical infrastructure":
+    → risk_level = "high", min_security = 8, min_functionality = 7
+  ELIF goal contains "production" OR "enterprise" OR "customer-facing":
+    → risk_level = "medium", min_security = 7, min_functionality = 7
+  ELIF goal contains "prototype" OR "experiment" OR "POC" OR "learning":
+    → risk_level = "low", min_security = 6, min_functionality = 6
+  ELSE:
+    → risk_level = "medium", min_security = 7, min_functionality = 7  # safe default
+
+# Build quality context for Actor variants
+quality_context = {
+  "deployment_risk_level": risk_level,
+  "min_security_score": min_security,
+  "min_functionality_score": min_functionality,
+  "quality_enforcement": "All Actor variants MUST meet minimum thresholds regardless of focus area"
+}
+```
+
+**Pass to Actors:** Include `quality_context` in each Actor variant prompt.
+
+**Rationale:** Prevents quality erosion in debate by establishing non-negotiable baselines before variants propose solutions.
+
+### 2.4 Parallel Actors (3 Variants)
 
 **ALWAYS call 3 Actors in parallel with different focuses:**
 
@@ -139,6 +171,8 @@ Task(
   prompt="Implement with SECURITY focus:
 **AI Packet (XML):** [paste <SUBTASK_ST_XXX>...</SUBTASK_ST_XXX>]
 **Playbook Context:** [top context_patterns + relevance_score]
+**Quality Context:** deployment_risk_level={risk_level}, min_security={min_security}, min_functionality={min_functionality}
+⚠️  Your variant MUST meet minimum quality thresholds. Quality is non-negotiable regardless of security focus.
 approach_focus: security, variant_id: v1, self_moa_mode: true
 Follow the Actor agent protocol output format. Ensure `decisions_made` is included for debate-arbiter."
 )
@@ -150,6 +184,8 @@ Task(
   prompt="Implement with PERFORMANCE focus:
 **AI Packet (XML):** [paste <SUBTASK_ST_XXX>...</SUBTASK_ST_XXX>]
 **Playbook Context:** [top context_patterns + relevance_score]
+**Quality Context:** deployment_risk_level={risk_level}, min_security={min_security}, min_functionality={min_functionality}
+⚠️  Your variant MUST meet minimum quality thresholds. Quality is non-negotiable regardless of performance focus.
 approach_focus: performance, variant_id: v2, self_moa_mode: true
 Follow the Actor agent protocol output format. Ensure `decisions_made` is included for debate-arbiter."
 )
@@ -161,12 +197,14 @@ Task(
   prompt="Implement with SIMPLICITY focus:
 **AI Packet (XML):** [paste <SUBTASK_ST_XXX>...</SUBTASK_ST_XXX>]
 **Playbook Context:** [top context_patterns + relevance_score]
+**Quality Context:** deployment_risk_level={risk_level}, min_security={min_security}, min_functionality={min_functionality}
+⚠️  Your variant MUST meet minimum quality thresholds. Quality is non-negotiable regardless of simplicity focus.
 approach_focus: simplicity, variant_id: v3, self_moa_mode: true
 Follow the Actor agent protocol output format. Ensure `decisions_made` is included for debate-arbiter."
 )
 ```
 
-### 2.4 Parallel Monitors (3 Validations)
+### 2.5 Parallel Monitors (3 Validations)
 
 Validate each variant in parallel:
 
@@ -189,7 +227,7 @@ If a SpecificationContract is provided: include `spec_contract_compliant` + `spe
 
 Repeat for v2 and v3 in parallel.
 
-### 2.5 debate-arbiter (Opus)
+### 2.6 debate-arbiter (Opus)
 
 ```
 Task(
@@ -228,7 +266,7 @@ Include: comparison_matrix, decision_rationales, synthesis_reasoning (8 steps)."
 )
 ```
 
-### 2.6 Final Monitor
+### 2.7 Final Monitor
 
 Validate synthesized code:
 
@@ -246,7 +284,7 @@ Return ONLY valid JSON following MonitorReviewOutput schema."
 )
 ```
 
-### 2.7 Retry Loop
+### 2.8 Retry Loop
 
 If Final Monitor returns `valid === false`:
 1. Provide feedback including arbiter's synthesis_reasoning
@@ -262,7 +300,7 @@ retry_context = {
 }
 ```
 
-### 2.8 Escalation Gate (AskUserQuestion)
+### 2.9 Escalation Gate (AskUserQuestion)
 
 If Monitor returns `escalation_required === true`, ask user:
 
@@ -283,7 +321,7 @@ AskUserQuestion(
 )
 ```
 
-### 2.9 Conditional Predictor
+### 2.10 Conditional Predictor
 
 **Call if:** `risk_level ∈ {high, medium}` OR `escalation_required === true`
 
@@ -308,11 +346,11 @@ Return ONLY valid JSON following Predictor schema."
 )
 ```
 
-### 2.10 Apply Changes
+### 2.11 Apply Changes
 
 Apply synthesized code via Write/Edit tools. Proceed to next subtask.
 
-### 2.11 Gate 2: Tests Available / Run
+### 2.12 Gate 2: Tests Available / Run
 
 After applying changes, run tests if available.
 
@@ -324,7 +362,7 @@ After applying changes, run tests if available.
 
 If no tests found: mark gate as skipped and proceed.
 
-### 2.12 Gate 3: Formatter / Linter
+### 2.13 Gate 3: Formatter / Linter
 
 After tests gate, run formatter/linter checks if available.
 
