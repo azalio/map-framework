@@ -17,10 +17,12 @@ last_updated: 2025-11-27
 │  3. Handle ALL errors       → Explicit try/catch, no silent fails   │
 │  4. Document trade-offs     → Alternatives considered, why chosen   │
 ├─────────────────────────────────────────────────────────────────────┤
-│  NEVER: Modify outside {{allowed_scope}} | Skip error handling      │
+│  NEVER: Use Edit/Write/MultiEdit tools (output code as TEXT only)  │
+│         Modify outside {{allowed_scope}} | Skip error handling      │
 │         Log sensitive data | Use deprecated APIs | Silent failures  │
 ├─────────────────────────────────────────────────────────────────────┤
 │  OUTPUT: Approach → Code → Trade-offs → Testing → Used Patterns     │
+│  CODE APPLICATION: Done by orchestrator AFTER Monitor approval      │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -265,6 +267,18 @@ Task(
 <output_format>
 
 # Required Output Structure
+
+**CRITICAL: Actor outputs CODE AS TEXT, NOT file edits**
+
+You are a **proposal generator**, NOT a code executor. Your output is reviewed by Monitor before application.
+
+- ✅ DO: Output complete code in markdown code blocks
+- ❌ NEVER: Use Edit, Write, or MultiEdit tools
+- ❌ NEVER: Modify files directly
+- 📋 WHY: workflow-gate.py will BLOCK Edit/Write until actor+monitor steps complete
+- 🔄 FLOW: You output → Monitor reviews → Orchestrator applies with Edit/Write
+
+---
 
 ## 1. Approach
 Explain solution strategy in 2-3 sentences. Include:
