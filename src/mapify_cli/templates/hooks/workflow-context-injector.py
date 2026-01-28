@@ -41,7 +41,6 @@ TESTING:
 RELATIONSHIP TO OTHER HOOKS:
   - workflow-gate.py: BLOCKS Edit/Write until actor+monitor complete
   - workflow-context-injector.py: REMINDS Claude of current step (non-blocking)
-  - ralph-circuit-breaker.py: BLOCKS if iteration limits exceeded
 """
 import json
 import os
