@@ -65,13 +65,31 @@ log "Changes detected, running lightweight checks"
 # Get Changed Files
 # -----------------------------------------------------------------------------
 
-# Get both staged and unstaged changes
-CHANGED_FILES=$(git diff --name-only HEAD 2>/dev/null || git diff --name-only 2>/dev/null || true)
+# Get changed files: staged + unstaged + untracked
+CHANGED_FILES=""
 
-if [[ -z "$CHANGED_FILES" ]]; then
-    # Maybe only untracked files
-    CHANGED_FILES=$(git ls-files --others --exclude-standard 2>/dev/null || true)
+# Staged files (works even with no commits)
+STAGED=$(git diff --cached --name-only 2>/dev/null || true)
+if [[ -n "$STAGED" ]]; then
+    CHANGED_FILES="$STAGED"
 fi
+
+# Unstaged changes (only if HEAD exists)
+if git rev-parse HEAD &>/dev/null; then
+    UNSTAGED=$(git diff --name-only HEAD 2>/dev/null || true)
+    if [[ -n "$UNSTAGED" ]]; then
+        CHANGED_FILES="$CHANGED_FILES"$'\n'"$UNSTAGED"
+    fi
+fi
+
+# Untracked files
+UNTRACKED=$(git ls-files --others --exclude-standard 2>/dev/null || true)
+if [[ -n "$UNTRACKED" ]]; then
+    CHANGED_FILES="$CHANGED_FILES"$'\n'"$UNTRACKED"
+fi
+
+# Remove empty lines and duplicates
+CHANGED_FILES=$(echo "$CHANGED_FILES" | grep -v '^$' | sort -u || true)
 
 if [[ -z "$CHANGED_FILES" ]]; then
     log "No specific files to check"

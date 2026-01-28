@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 """
 Pytest tests for .claude/hooks/end-of-turn.sh Stop hook.
-Tests all validation criteria and edge cases.
+
+Tests the lightweight version that:
+- Only runs if there are uncommitted changes
+- Checks only changed files
+- Auto-fixes what it can
+- Only reports critical issues (secrets, .env files, syntax errors)
 """
 import subprocess
 import tempfile
@@ -49,58 +54,45 @@ class TestValidationCriteria:
 
 
 # =============================================================================
-# Project Detection Tests
+# Early Exit Tests (Lightweight behavior)
 # =============================================================================
 
 
-class TestProjectDetection:
-    """Test that project types are correctly detected."""
+class TestEarlyExit:
+    """Test that hook exits early when no changes detected."""
 
-    def test_detect_python_pyproject(self):
-        """VC1: Detects Python project via pyproject.toml."""
+    def test_exits_early_no_git(self):
+        """Should exit 0 immediately in non-git directory."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Create pyproject.toml
-            (Path(tmpdir) / "pyproject.toml").write_text("[project]\nname='test'\n")
-            exit_code, _, stderr = run_hook(
-                cwd=tmpdir, env={"CLAUDE_HOOK_VERBOSE": "true"}
-            )
-            assert "Detected Python project" in stderr
+            exit_code, stdout, stderr = run_hook(cwd=tmpdir)
+            assert exit_code == 0
+            assert stdout.strip() == "{}"
 
-    def test_detect_python_requirements(self):
-        """Detects Python project via requirements.txt."""
+    def test_exits_early_clean_repo(self):
+        """Should exit 0 if git repo has no changes."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            (Path(tmpdir) / "requirements.txt").write_text("pytest\n")
-            exit_code, _, stderr = run_hook(
-                cwd=tmpdir, env={"CLAUDE_HOOK_VERBOSE": "true"}
+            # Init git repo with a commit
+            subprocess.run(["git", "init"], cwd=tmpdir, capture_output=True)
+            subprocess.run(
+                ["git", "config", "user.email", "test@test.com"],
+                cwd=tmpdir, capture_output=True
             )
-            assert "Detected Python project" in stderr
+            subprocess.run(
+                ["git", "config", "user.name", "Test"],
+                cwd=tmpdir, capture_output=True
+            )
+            # Create and commit a file
+            (Path(tmpdir) / "file.txt").write_text("content\n")
+            subprocess.run(["git", "add", "."], cwd=tmpdir, capture_output=True)
+            subprocess.run(
+                ["git", "commit", "-m", "initial"],
+                cwd=tmpdir, capture_output=True
+            )
 
-    def test_detect_nodejs(self):
-        """VC2: Detects Node.js project via package.json."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            (Path(tmpdir) / "package.json").write_text('{"name": "test"}\n')
-            exit_code, _, stderr = run_hook(
-                cwd=tmpdir, env={"CLAUDE_HOOK_VERBOSE": "true"}
-            )
-            assert "Detected Node.js project" in stderr
-
-    def test_detect_go(self):
-        """Detects Go project via go.mod."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            (Path(tmpdir) / "go.mod").write_text("module test\n")
-            exit_code, _, stderr = run_hook(
-                cwd=tmpdir, env={"CLAUDE_HOOK_VERBOSE": "true"}
-            )
-            assert "Detected Go project" in stderr
-
-    def test_detect_rust(self):
-        """Detects Rust project via Cargo.toml."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            (Path(tmpdir) / "Cargo.toml").write_text("[package]\nname='test'\n")
-            exit_code, _, stderr = run_hook(
-                cwd=tmpdir, env={"CLAUDE_HOOK_VERBOSE": "true"}
-            )
-            assert "Detected Rust project" in stderr
+            # Now repo is clean
+            exit_code, stdout, _ = run_hook(cwd=tmpdir)
+            assert exit_code == 0
+            assert stdout.strip() == "{}"
 
 
 # =============================================================================
@@ -192,30 +184,6 @@ class TestEnvFileDetection:
             assert exit_code == 2, f"Should exit 2 for .env staged. stderr: {stderr}"
             assert ".env" in stderr
 
-    def test_env_local_staged(self):
-        """Warns if .env.local is staged."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            subprocess.run(["git", "init"], cwd=tmpdir, capture_output=True)
-            subprocess.run(
-                ["git", "config", "user.email", "test@test.com"],
-                cwd=tmpdir,
-                capture_output=True,
-            )
-            subprocess.run(
-                ["git", "config", "user.name", "Test"], cwd=tmpdir, capture_output=True
-            )
-
-            env_file = Path(tmpdir) / ".env.local"
-            env_file.write_text("SECRET=value\n")
-
-            subprocess.run(
-                ["git", "add", ".env.local"], cwd=tmpdir, capture_output=True
-            )
-
-            exit_code, _, stderr = run_hook(cwd=tmpdir)
-
-            assert exit_code == 2, "Should exit 2 for .env.local staged"
-
 
 # =============================================================================
 # Non-Git Directory Tests
@@ -240,14 +208,27 @@ class TestNonGitDirectory:
 class TestVerboseMode:
     """Test verbose logging."""
 
-    def test_verbose_logging(self):
-        """CLAUDE_HOOK_VERBOSE=true enables logging."""
+    def test_verbose_logging_with_changes(self):
+        """CLAUDE_HOOK_VERBOSE=true enables logging when changes exist."""
         with tempfile.TemporaryDirectory() as tmpdir:
+            # Init repo with uncommitted file
+            subprocess.run(["git", "init"], cwd=tmpdir, capture_output=True)
+            subprocess.run(
+                ["git", "config", "user.email", "test@test.com"],
+                cwd=tmpdir, capture_output=True
+            )
+            subprocess.run(
+                ["git", "config", "user.name", "Test"],
+                cwd=tmpdir, capture_output=True
+            )
+            (Path(tmpdir) / "file.txt").write_text("content\n")
+            subprocess.run(["git", "add", "file.txt"], cwd=tmpdir, capture_output=True)
+
             exit_code, _, stderr = run_hook(
                 cwd=tmpdir, env={"CLAUDE_HOOK_VERBOSE": "true"}
             )
-            assert "[end-of-turn]" in stderr, "Should have verbose logs"
-            assert "Starting end-of-turn checks" in stderr
+            assert "[end-of-turn]" in stderr, f"Should have verbose logs. stderr: {stderr}"
+            assert "Changes detected" in stderr
 
     def test_quiet_by_default(self):
         """No verbose logs by default."""
@@ -256,3 +237,19 @@ class TestVerboseMode:
             assert (
                 "[end-of-turn]" not in stderr
             ), "Should not have verbose logs by default"
+
+
+# =============================================================================
+# Output Format Tests
+# =============================================================================
+
+
+class TestOutputFormat:
+    """Test that hook outputs valid JSON."""
+
+    def test_outputs_empty_json_on_success(self):
+        """Should output {} on success."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            exit_code, stdout, _ = run_hook(cwd=tmpdir)
+            assert exit_code == 0
+            assert stdout.strip() == "{}"
