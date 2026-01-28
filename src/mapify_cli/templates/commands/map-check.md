@@ -1,6 +1,87 @@
-# /map-check — AUDITOR Phase (Verification Only)
+# /map-check — Quality Gates & Verification
 
-**Purpose:** Verify that all subtasks from /map-plan have been completed successfully. This command ONLY audits - it does NOT plan or execute.
+**Purpose:** Run code quality checks (linters, type checkers, tests) and/or verify MAP workflow completion.
+
+**Two Modes:**
+
+## Mode 1: Standalone Quality Check (No MAP workflow)
+
+If no `.map/<branch>/workflow_state.json` exists, run full quality suite:
+
+```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/\//-/g')
+STATE_FILE=".map/${BRANCH}/workflow_state.json"
+
+if [[ ! -f "$STATE_FILE" ]]; then
+    echo "🔬 Running full quality checks (standalone mode)..."
+    # Continue with quality checks below
+fi
+```
+
+### Quality Checks by Language
+
+**Python (if pyproject.toml/setup.py/requirements.txt exists):**
+```bash
+echo "=== Python Checks ==="
+# Ruff (fast linter + formatter)
+ruff check . && ruff format --check . && echo "✅ Ruff OK"
+# MyPy (type checker)
+mypy src/ --ignore-missing-imports && echo "✅ MyPy OK"
+# Tests
+pytest -x && echo "✅ Tests OK"
+```
+
+**Go (if go.mod exists):**
+```bash
+echo "=== Go Checks ==="
+# Vet
+go vet ./... && echo "✅ go vet OK"
+# Staticcheck
+staticcheck ./... && echo "✅ staticcheck OK"
+# Tests
+go test ./... -short && echo "✅ Tests OK"
+```
+
+**TypeScript/Node (if package.json exists):**
+```bash
+echo "=== TypeScript/Node Checks ==="
+npm run lint && echo "✅ Lint OK"
+npm run typecheck 2>/dev/null || tsc --noEmit && echo "✅ Types OK"
+npm test && echo "✅ Tests OK"
+```
+
+**Rust (if Cargo.toml exists):**
+```bash
+echo "=== Rust Checks ==="
+cargo check && echo "✅ cargo check OK"
+cargo clippy -- -D warnings && echo "✅ Clippy OK"
+cargo test && echo "✅ Tests OK"
+```
+
+### Output (Standalone Mode)
+
+```
+🔬 Running full quality checks (standalone mode)...
+
+=== Python Checks ===
+✅ Ruff OK
+✅ MyPy OK
+✅ Tests OK
+
+=== Security ===
+✅ No secrets in staged files
+✅ No .env files staged
+
+Summary: All checks passed!
+```
+
+**STOP after standalone checks.** No MAP workflow to verify.
+
+---
+
+## Mode 2: MAP Workflow Verification
+
+If `.map/<branch>/workflow_state.json` exists, verify subtask completion.
 
 **When to use:**
 - After completing all /map-exec subtasks
