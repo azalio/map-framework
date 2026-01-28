@@ -1,68 +1,43 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
-  "description": "Claude Code hooks configuration for MAP Framework",
+  "description": "Claude Code hooks configuration for MAP Framework (Tiered)",
   "hooks": {
-    "UserPromptSubmit": [
-      {
-        "description": "Improve user prompts with contextual evaluation",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/improve-prompt.py",
-            "timeout": 5,
-            "description": "Evaluates prompts and adds clarification workflow if needed"
-          }
-        ]
-      }
-    ],
     "PreToolUse": [
       {
-        "matcher": "Read|Edit|Write",
-        "description": "Block access to sensitive files (credentials, secrets, env files)",
+        "matcher": "Edit|Write|Read|Bash",
+        "description": "Safety Guardrails - block sensitive files and dangerous commands",
         "hooks": [
           {
             "type": "command",
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/block-secrets.py",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/safety-guardrails.py",
             "timeout": 5,
-            "description": "Prevents access to .env, credentials, private keys"
+            "description": "Blocks .env, credentials, private keys, and dangerous bash commands"
           }
         ]
       },
       {
-        "matcher": "Bash",
-        "description": "Block dangerous shell commands",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/block-dangerous.sh",
-            "timeout": 5,
-            "description": "Prevents rm -rf, force push to main, git reset --hard"
-          }
-        ]
-      },
-      {
-        "matcher": "*",
-        "description": "Workflow Context Injection - inject step reminders before every tool",
+        "matcher": "Edit|Write|Bash",
+        "description": "Workflow Context Injection (Tiered) - inject reminders for significant operations",
         "hooks": [
           {
             "type": "command",
             "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/workflow-context-injector.py",
             "timeout": 1,
-            "description": "Injects current workflow step context to prevent forgetting mandatory steps"
+            "description": "Injects workflow context only for Edit/Write and significant Bash commands"
           }
         ]
       }
     ],
     "PostToolUse": [
       {
-        "matcher": "Edit|Write|Bash|Task",
-        "description": "Ralph Loop Iteration Logger - track metrics and detect patterns",
+        "matcher": "Edit|Write|MultiEdit",
+        "description": "Post-Edit Reminder - lightweight test reminder after code changes",
         "hooks": [
           {
             "type": "command",
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/ralph-iteration-logger.py",
-            "timeout": 5,
-            "description": "Logs iteration metrics, detects thrashing patterns"
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/post-edit-reminder.py",
+            "timeout": 1,
+            "description": "Reminds to run tests after Edit/Write (only when MAP workflow active)"
           }
         ]
       }
@@ -70,13 +45,13 @@
     "PreCompact": [
       {
         "matcher": "*",
-        "description": "Ralph Loop Context Pruner - archive old logs before compaction",
+        "description": "Anti-Amnesia Hook - save state and prune logs before compaction",
         "hooks": [
           {
             "type": "command",
             "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/ralph-context-pruner.py",
             "timeout": 10,
-            "description": "Archives and truncates log files to preserve token budget"
+            "description": "Saves workflow restore point and prunes old logs"
           }
         ]
       }
@@ -84,13 +59,13 @@
     "Stop": [
       {
         "matcher": "*",
-        "description": "Quality gates - run automated checks at end of turn",
+        "description": "Lightweight quality gates - only critical issues",
         "hooks": [
           {
             "type": "command",
             "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/end-of-turn.sh",
             "timeout": 30,
-            "description": "Runs linters, checks for secrets in staging, warns about .env commits"
+            "description": "Auto-fixes silently, only reports secrets/syntax errors"
           }
         ]
       }

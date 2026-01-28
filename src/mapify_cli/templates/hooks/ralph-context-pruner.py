@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 """
-Ralph Loop Context Pruner - PreCompact Hook.
+Ralph Loop Context Pruner + Anti-Amnesia Hook - PreCompact Hook.
 
-Archives old logs before context compaction to preserve token budget.
+Before context compaction:
+1. SAVES current workflow state to restore_point.json (Anti-Amnesia)
+2. Injects ~300 char recovery message with full workflow context
+3. Archives old logs to preserve token budget
 
-FOLLOWS EXISTING PATTERN from block-secrets.py:
-- Always exit 0 (PreCompact hooks don't block)
-- Output JSON to stdout
+This ensures Claude can restore workflow context after compaction.
 
 Exit codes:
   0 - Always (PreCompact hooks don't block)
+
+Output:
+  hookSpecificOutput.appended_text - Recovery message injected into context
 """
 import json
 import os
@@ -19,7 +23,7 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 # Configuration
 MAX_LINES = 100
@@ -135,6 +139,76 @@ def prune_file(file_path: Path, archive_dir: Path) -> Optional[str]:
         return None
 
 
+def load_workflow_state(branch: str) -> Optional[Dict[str, Any]]:
+    """Load workflow state from .map/<branch>/workflow_state.json."""
+    state_file = MAP_DIR / branch / "workflow_state.json"
+    if not state_file.exists():
+        return None
+    try:
+        with open(state_file) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError):
+        return None
+
+
+def save_restore_point(branch: str, state: Dict[str, Any]) -> bool:
+    """Save workflow state to restore_point.json for post-compaction recovery."""
+    branch_dir = MAP_DIR / branch
+    branch_dir.mkdir(parents=True, exist_ok=True)
+    restore_file = branch_dir / "restore_point.json"
+
+    restore_data = {
+        "saved_at": datetime.now().isoformat(),
+        "reason": "pre_compaction",
+        "workflow_state": state,
+    }
+
+    try:
+        with open(restore_file, "w") as f:
+            json.dump(restore_data, f, indent=2)
+        return True
+    except IOError:
+        return False
+
+
+def format_recovery_message(state: Dict[str, Any], branch: str) -> str:
+    """Format ~300 char recovery message for post-compaction context."""
+    workflow = state.get("workflow", "unknown")
+
+    # Handle different state formats
+    current_step = state.get("current_step", {})
+    if current_step:
+        phase = current_step.get("phase", "unknown")
+        task = current_step.get("task", "unknown")
+    else:
+        # Alternative format: current_state + current_subtask
+        phase = state.get("current_state", "unknown")
+        task = state.get("current_subtask") or "none"
+
+    mandatory = state.get("mandatory_next_action", "")
+
+    # Get recent completed tasks (last 2) - handle both list and dict formats
+    completed = state.get("completed_steps", {})
+    if isinstance(completed, dict):
+        # Dict format: {"ST-001": "complete", ...}
+        completed_keys = list(completed.keys())
+        recent = ", ".join(completed_keys[-2:]) if completed_keys else "none"
+    elif isinstance(completed, list):
+        # List format: ["step1", "step2", ...]
+        recent = ", ".join(completed[-2:]) if completed else "none"
+    else:
+        recent = "none"
+
+    msg = f"""[MAP] CONTEXT RESTORED after compaction
+Workflow: {workflow}
+Phase: {phase} | Task: {task}
+Done: {recent}
+NEXT: {mandatory if mandatory else 'Continue current task'}
+State: .map/{branch}/workflow_state.json"""
+
+    return msg
+
+
 def main() -> None:
     """Main hook execution logic."""
     # Read stdin (required by hook protocol)
@@ -144,10 +218,26 @@ def main() -> None:
         # Malformed or non-JSON stdin is ignored: this hook doesn't rely on input contents
         pass
 
+    output: Dict[str, Any] = {}
+
     # Skip if no .map directory
     if not MAP_DIR.exists():
-        print("{}")
+        print(json.dumps(output))
         sys.exit(0)
+
+    # Get current branch for Anti-Amnesia
+    branch = get_branch_name()
+
+    # ANTI-AMNESIA: Save restore point and inject recovery message
+    state = load_workflow_state(branch)
+    if state:
+        # Save restore point
+        if save_restore_point(branch, state):
+            print(f"[ralph-pruner] Saved restore_point for branch: {branch}", file=sys.stderr)
+
+        # Inject recovery message into context
+        recovery_msg = format_recovery_message(state, branch)
+        output["hookSpecificOutput"] = {"appended_text": recovery_msg}
 
     # Prune log files in ALL branch directories
     actions = []
@@ -161,7 +251,7 @@ def main() -> None:
     if actions:
         print(f"[ralph-pruner] Pruned: {', '.join(actions)}", file=sys.stderr)
 
-    print("{}")
+    print(json.dumps(output))
     sys.exit(0)
 
 

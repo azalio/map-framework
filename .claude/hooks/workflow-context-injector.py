@@ -1,210 +1,153 @@
 #!/usr/bin/env python3
 """
-Claude Code PreToolUse Hook: Workflow Context Injection
+Workflow Context Injector - PreToolUse Hook (Tiered)
 
-Injects current workflow step context into Claude's prompt before EVERY tool call
-to prevent "forgetting" mandatory steps like mem0 search and self-audit.
+Injects workflow state reminders ONLY for significant operations:
+- Edit/Write/MultiEdit: Always inject (~150 chars)
+- Bash: Only for significant commands (tests, builds, git commits)
 
-DESIGN PATTERN:
-  Borrowed from ralph-loop's build_loop_context() approach: inject ~300 char
-  reminder via appended_text to keep current step top-of-mind without bloating
-  the command file.
+Does NOT inject for read-only operations (ls, cat, grep, etc.)
 
-KEY INSIGHT:
-  Problem: Long prompts (995 lines) cause attention dilution → Claude skips steps
-  Solution: Small, frequent reminders (every tool call) > big upfront instructions
-
-USAGE:
-  This hook runs automatically before EVERY tool call during MAP workflows.
-  No manual invocation needed - Claude Code handles hook execution.
-
-INJECTION BEHAVIOR:
-  - Reads .map/<branch>/step_state.json to determine current step
-  - Injects ~300 char context block via appended_text (system prompt injection)
-  - Shows: current step phase, completed checkpoints, mandatory next action
-  - Always allows tool to proceed (non-blocking, unlike workflow-gate.py)
-
-HOOK INTERFACE:
-  - Input: JSON on stdin with tool_name, parameters
-  - Output: JSON on stdout with appended_text, allow=true
-  - Exit code: Always 0 (never blocks tools)
-
-PERFORMANCE:
-  Target: <100ms per invocation
-  Design: Minimal I/O (single file read), fast JSON parsing, cached reminders
-
-TESTING:
-  echo '{"tool_name": "Task", "parameters": {"subagent_type": "actor"}}' | \\
-    python3 workflow-context-injector.py
-  # Expected: Exit 0, JSON with appended_text field
-
-RELATIONSHIP TO OTHER HOOKS:
-  - workflow-gate.py: BLOCKS Edit/Write until actor+monitor complete
-  - workflow-context-injector.py: REMINDS Claude of current step (non-blocking)
+Trigger: Edit|Write|Bash
+Exit codes: Always 0 (non-blocking, just adds context)
 """
+
 import json
 import os
+import re
 import sys
 from pathlib import Path
-from typing import Dict, Optional
 
-# Maximum length of injected context (to prevent token bloat)
-MAX_CONTEXT_LENGTH = 500
+# Bash commands that don't need workflow reminders
+READONLY_COMMANDS = {
+    "ls", "cat", "head", "tail", "grep", "rg", "find", "pwd",
+    "echo", "wc", "diff", "tree", "file", "which", "type",
+    "env", "printenv", "date", "whoami", "id", "uname",
+    "less", "more", "stat", "du", "df", "free",
+}
+
+# Bash commands that ARE significant and need reminders
+SIGNIFICANT_PATTERNS = [
+    r"pytest", r"go\s+test", r"npm\s+test", r"cargo\s+test", r"make\s+test",
+    r"git\s+commit", r"git\s+push", r"git\s+merge", r"git\s+rebase",
+    r"npm\s+install", r"pip\s+install", r"go\s+mod",
+    r"make\b", r"docker\b", r"kubectl\b",
+    r"\brm\s", r"\bmv\s", r"\bcp\s+-r",
+]
 
 
 def get_branch_name() -> str:
-    """Get current git branch name (sanitized for filesystem)."""
+    """Get current git branch name."""
+    import subprocess
     try:
-        import subprocess
-
         result = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=1,
+            capture_output=True, text=True, timeout=2
         )
         if result.returncode == 0:
-            branch = result.stdout.strip()
-            # Sanitize for filesystem (same as ralph_state.py)
-            import re
-
-            sanitized = branch.replace("/", "-")
-            sanitized = re.sub(r"[^a-zA-Z0-9_.-]", "-", sanitized)
-            sanitized = re.sub(r"-+", "-", sanitized).strip("-")
-            if ".." in sanitized or sanitized.startswith("."):
-                return "default"
-            return sanitized or "default"
-        return "default"
+            return result.stdout.strip().replace("/", "-")
     except Exception:
-        return "default"
+        pass
+    return "default"
 
 
-def load_step_state(branch: str) -> Optional[Dict]:
-    """
-    Load current step state from .map/<branch>/step_state.json
-
-    Returns:
-        Dict with step state or None if no active workflow
-    """
-    state_file = Path(f".map/{branch}/step_state.json")
+def load_workflow_state(branch: str) -> dict | None:
+    """Load workflow state from .map/<branch>/workflow_state.json."""
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+    state_file = project_dir / ".map" / branch / "workflow_state.json"
 
     if not state_file.exists():
         return None
 
     try:
-        with open(state_file, "r", encoding="utf-8") as f:
+        with open(state_file) as f:
             return json.load(f)
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, IOError):
         return None
 
 
-def get_step_reminder(phase: str) -> str:
-    """
-    Get step-specific reminder for current phase.
+def should_inject_for_bash(command: str) -> bool:
+    """Determine if Bash command needs workflow reminder."""
+    if not command:
+        return False
 
-    Args:
-        phase: Current step phase (e.g., "MEM0_SEARCH", "ACTOR_CALL")
+    # Extract first word of command
+    cmd_parts = command.strip().split()
+    if not cmd_parts:
+        return False
 
-    Returns:
-        Concise reminder text for the phase
-    """
-    reminders = {
-        "INITIALIZED": "Start workflow: read plan, begin first subtask",
-        "XML_PACKET_CREATED": "Packet ready → proceed to mem0 search",
-        "MEM0_SEARCH": "⚠️ MANDATORY: Call mcp__mem0__map_tiered_search BEFORE Actor",
-        "CONTEXT_LOADED": "Context ready → call research agent if 3+ files",
-        "RESEARCH_DONE": "Research complete → call Actor agent",
-        "ACTOR_CALL": "⚠️ MANDATORY: Launch Task(subagent_type='actor')",
-        "ACTOR_COMPLETE": "Actor done → validate with Monitor agent",
-        "MONITOR_VALIDATE": "⚠️ MANDATORY: Launch Task(subagent_type='monitor')",
-        "MONITOR_PASSED": "Monitor approved → apply changes with Edit/Write",
-        "PREDICTOR_ANALYZE": "Launch Task(subagent_type='predictor') for impact",
-        "APPLY_CHANGES": "Apply Actor's changes using Edit/Write tools",
-        "CHANGES_APPLIED": "Changes applied → run tests gate",
-        "TESTS_PASSED": "Tests passed → run linter gate",
-        "LINTER_PASSED": "Linter passed → proceed to self-audit",
-        "VERIFY_ADHERENCE": "⚠️ MANDATORY: Output self-audit before marking complete",
-        "SUBTASK_COMPLETE": "Subtask done → update plan, proceed to next",
-    }
+    first_word = cmd_parts[0].split("/")[-1]  # Handle full paths
 
-    return reminders.get(phase, "Execute current step as instructed")
+    # Skip read-only commands
+    if first_word in READONLY_COMMANDS:
+        return False
+
+    # Check for significant patterns
+    for pattern in SIGNIFICANT_PATTERNS:
+        if re.search(pattern, command, re.IGNORECASE):
+            return True
+
+    # Default: inject for unknown commands (safer)
+    return False
 
 
-def build_context_injection(state: Dict) -> str:
-    """
-    Build workflow context block to inject into system prompt.
+def format_reminder(state: dict) -> str | None:
+    """Format terse workflow reminder (~150 chars)."""
+    if not state:
+        return None
 
-    Args:
-        state: Step state dictionary from step_state.json
+    current_step = state.get("current_step", {})
+    phase = current_step.get("phase", "")
+    task = current_step.get("task", "")
+    mandatory = state.get("mandatory_next_action")
 
-    Returns:
-        Context block string (~300 chars)
-    """
-    current_step = state.get("current_step_id", "UNKNOWN")
-    phase = state.get("current_step_phase", "INITIALIZED")
-    subtask_idx = state.get("subtask_index", 0)
-    total_subtasks = len(state.get("subtask_sequence", []))
-    completed = state.get("completed_steps", [])[-3:]  # Last 3 for brevity
+    if not phase and not task:
+        return None
 
-    # Get step-specific reminder
-    reminder = get_step_reminder(phase)
-
-    # Build compact context block with production quality context
-    context = f"""
-╔═══════════════════════════════════════════════════════════╗
-║ MAP WORKFLOW - CRITICAL INFRASTRUCTURE DEPLOYMENT         ║
-╠═══════════════════════════════════════════════════════════╣
-║ Current Step:  {current_step} - {phase}
-║ Progress:      Subtask {subtask_idx + 1}/{total_subtasks}
-║ Completed:     {', '.join(completed) if completed else 'none'}
-║
-║ ⚠️  MANDATORY NEXT ACTION:
-║    {reminder}
-║
-║ 🔴 QUALITY STANDARDS (Non-Negotiable):
-║    Security ≥7 | Functionality ≥7 | Error handling required
-╚═══════════════════════════════════════════════════════════╝
-""".strip()
-
-    # Enforce max length (truncate if needed, should rarely happen)
-    if len(context) > MAX_CONTEXT_LENGTH:
-        context = context[:MAX_CONTEXT_LENGTH] + "..."
-
-    return context
+    if mandatory:
+        return f"[MAP] Phase: {phase} | Task: {task} | REQUIRED: {mandatory}"
+    return f"[MAP] Phase: {phase} | Task: {task}"
 
 
-def main():
-    """Main hook entry point."""
+def main() -> None:
     try:
-        # Read tool call from stdin
-        tool_call = json.load(sys.stdin)
-        _tool_name = tool_call.get("tool_name", "")  # noqa: F841
-
-        # Get current branch
-        branch = get_branch_name()
-
-        # Load step state
-        state = load_step_state(branch)
-
-        # If no workflow active, don't inject context (allows normal work)
-        if state is None:
-            print(json.dumps({"allow": True}))
-            sys.exit(0)
-
-        # Build context injection
-        context = build_context_injection(state)
-
-        # Inject context via appended_text (added to system prompt)
-        # Always allow tool to proceed (non-blocking)
-        print(json.dumps({"allow": True, "appended_text": context}))
+        input_data = json.load(sys.stdin)
+    except json.JSONDecodeError:
+        print("{}")
         sys.exit(0)
 
-    except Exception as e:
-        # On hook failure, allow tool (fail-open to avoid blocking work)
-        print(json.dumps({"allow": True}))
-        if os.environ.get("DEBUG_WORKFLOW_CONTEXT"):
-            print(f"[workflow-context-injector] ERROR: {e}", file=sys.stderr)
+    tool_name = input_data.get("tool_name", "")
+    tool_input = input_data.get("tool_input", {})
+
+    # Determine if we should inject
+    should_inject = False
+
+    if tool_name in ("Edit", "Write", "MultiEdit"):
+        should_inject = True
+    elif tool_name == "Bash":
+        command = tool_input.get("command", "")
+        should_inject = should_inject_for_bash(command)
+
+    if not should_inject:
+        print("{}")
         sys.exit(0)
+
+    # Load and format workflow state
+    branch = get_branch_name()
+    state = load_workflow_state(branch)
+
+    if not state:
+        print("{}")
+        sys.exit(0)
+
+    reminder = format_reminder(state)
+    if reminder:
+        output = {"hookSpecificOutput": {"appended_text": reminder}}
+        print(json.dumps(output))
+    else:
+        print("{}")
+
+    sys.exit(0)
 
 
 if __name__ == "__main__":
