@@ -379,13 +379,22 @@ def validate_step(step_id: str, branch: str) -> Dict:
     if step_id in state.pending_steps:
         state.pending_steps.remove(step_id)
 
+    # Advance current_step_id to next pending step
+    if state.pending_steps:
+        next_id = state.pending_steps[0]
+        state.current_step_id = next_id
+        state.current_step_phase = STEP_PHASES.get(next_id, "UNKNOWN")
+    else:
+        state.current_step_id = "COMPLETE"
+        state.current_step_phase = "COMPLETE"
+
     # Save updated state
     state.save(state_file)
 
     return {
         "valid": True,
         "message": f"Step {step_id} completed successfully",
-        "next_step": state.pending_steps[0] if state.pending_steps else "COMPLETE",
+        "next_step": state.current_step_id,
     }
 
 
