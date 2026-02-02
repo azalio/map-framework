@@ -84,7 +84,7 @@ Summary: All checks passed!
 If `.map/<branch>/workflow_state.json` exists, verify subtask completion.
 
 **When to use:**
-- After completing all /map-exec subtasks
+- After completing all subtasks
 - Need to verify nothing was missed
 - Ready to close out the task
 
@@ -98,7 +98,7 @@ If `.map/<branch>/workflow_state.json` exists, verify subtask completion.
 **What this command CANNOT do:**
 - ❌ Edit code (verification is read-only)
 - ❌ Plan new work (use /map-plan for that)
-- ❌ Execute missing subtasks (use /map-exec for that)
+- ❌ Execute missing subtasks
 
 ---
 
@@ -144,7 +144,7 @@ The following subtasks are not complete:
 - ST-004: Pending steps [linter]
 
 Action Required:
-1. Complete pending subtasks using /map-exec
+1. Complete pending subtasks
 2. Re-run /map-check when all subtasks done
 
 Cannot proceed with verification until all work is complete.
@@ -297,7 +297,7 @@ Quality Gates:
 
 Action Required:
 1. Fix issues listed above
-2. Re-run affected subtasks: /map-exec <subtask_id>
+2. Re-run affected subtasks
 3. Re-verify: /map-check
 
 Status: NEEDS WORK
@@ -341,7 +341,6 @@ Status: NEEDS WORK
 ## Related Commands
 
 - **/map-plan** - Create task decomposition (run first)
-- **/map-exec <subtask_id>** - Execute subtasks (run for each subtask)
 - **/map-check** - This command (run last)
 - **/map-efficient** - Monolithic workflow (alternative to phased approach)
 
@@ -364,7 +363,7 @@ User: "/map-check"
 # - Linter found unused imports
 
 # User fixes issues:
-User: "/map-exec ST-002"  # Re-run subtask with fixes
+# User fixes ST-002 issues directly
 
 # User re-verifies:
 User: "/map-check"

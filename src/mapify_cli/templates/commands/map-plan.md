@@ -14,7 +14,7 @@
 - **STOPS** after planning (forces context flush)
 
 **What this command CANNOT do:**
-- ❌ Execute implementation (use /map-exec for that)
+- ❌ Execute implementation
 - ❌ Verify completion (use /map-check for that)
 - ❌ Edit code directly
 
@@ -215,9 +215,7 @@ WORKFLOW CHECKPOINT: PLAN PHASE COMPLETE
 
 Next Steps:
 1. Review the plan in task_plan_${BRANCH}.md
-2. If approved, execute first subtask:
-   /map-exec ST-001
-
+2. If approved, start executing subtasks sequentially
 3. After completing all subtasks, verify:
    /map-check
 
@@ -229,7 +227,7 @@ Next Steps:
 
 ### Step 8: STOP
 
-**This phase ends here.** Do NOT proceed to execution. The context should be flushed, and the next phase (/map-exec) will start fresh with focused attention on a single subtask.
+**This phase ends here.** Do NOT proceed to execution. The context should be flushed, and execution will start fresh with focused attention on individual subtasks.
 
 ---
 
@@ -257,7 +255,6 @@ Next Steps:
 
 ## Related Commands
 
-- **/map-exec <subtask_id>** - Execute a single subtask from the plan
 - **/map-check** - Verify all subtasks completed successfully
 - **/map-efficient** - Monolithic workflow (all phases in one command)
 
@@ -271,9 +268,9 @@ This command transitions workflow_state.json through these states:
 (none) → INITIALIZED
 ```
 
-Subsequent /map-exec calls will transition:
+Subtask execution will transition:
 ```
-INITIALIZED → XML_PACKET_CREATED → CONTEXT_LOADED → ... → SUBTASK_COMPLETE
+INITIALIZED → IN_PROGRESS → ... → SUBTASK_COMPLETE
 ```
 
 Final /map-check will transition:
@@ -304,8 +301,7 @@ User: "Add JWT authentication with refresh tokens"
 #   ST-004: Implement refresh token rotation
 #   ST-005: Add integration tests
 
-# After planning phase completes, execution begins:
-User: "/map-exec ST-001"
+# After planning phase completes, user reviews and starts execution
 ```
 
 ---
@@ -314,9 +310,6 @@ User: "/map-exec ST-001"
 
 **Q: Task-decomposer created too many subtasks (10+)?**
 A: Subtasks are too granular. Ask task-decomposer to group related work into larger chunks (aim for 3-7 subtasks).
-
-**Q: Can I skip /map-plan and go straight to /map-exec?**
-A: No. workflow_state.json must exist with subtask_sequence defined. /map-plan creates this.
 
 **Q: User changed requirements after planning?**
 A: Re-run /map-plan. It will overwrite task_plan_<branch>.md and reset workflow_state.json.
