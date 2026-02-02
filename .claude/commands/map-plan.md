@@ -22,23 +22,103 @@
 
 ## Workflow Steps
 
-### Step 1: Understand the Request
+### Step 1: Assess Scope and Decide Interview Depth
 
-Read the user's requirements carefully. If unclear:
-- Ask clarifying questions
-- Request examples or references
-- Confirm scope boundaries
+Read the user's requirements and decide if deep interview is needed.
 
-### Step 2: Create Branch Directory
+**Interview REQUIRED when:**
+- Large increment: 2+ features in one request
+- Vague product idea without clear technical approach
+- New project (stack + features undefined)
+- Batch of bugs/issues to fix together
+- User's requirements have obvious gaps or unstated assumptions
+
+**Interview SKIPPED when:**
+- Task is already well-defined with clear acceptance criteria
+- Small isolated change (single bug fix, test update)
+- User explicitly provided a spec or detailed description
+
+If interview is not needed, skip to Step 3.
+
+### Step 2: Deep Interview (Spec Discovery)
+
+Use AskUserQuestionTool to systematically interview the user. The goal is to surface non-obvious decisions and tradeoffs BEFORE planning.
+
+**Rules:**
+- Questions must be NON-OBVIOUS (don't ask what the user already stated)
+- Cover all dimensions: technical implementation, UI/UX, risks, tradeoffs, edge cases, data model, performance, security
+- Ask in batches of 2-4 questions (use AskUserQuestionTool's multi-question support)
+- Continue iterating until all critical decisions are captured
+- After each round, assess: are there still unresolved architectural decisions?
+
+**Interview dimensions checklist:**
+1. **Technical:** Stack choices, data model, API contracts, state management
+2. **UX:** User flows, error states, edge cases, accessibility
+3. **Tradeoffs:** Performance vs simplicity, flexibility vs speed, build vs buy
+4. **Risks:** What can break? What's the blast radius? Rollback strategy?
+5. **Scope:** What's explicitly OUT of scope? MVP vs full version?
+6. **Integration:** How does this interact with existing code? Migration needed?
+
+**Example AskUserQuestionTool call:**
+```
+AskUserQuestionTool(questions=[
+  {
+    "question": "Should refresh tokens be stored server-side (Redis/DB) or stateless (signed JWT)?",
+    "header": "Token store",
+    "options": [
+      {"label": "Server-side (Redis)", "description": "More secure, revocable, but adds infra dependency"},
+      {"label": "Stateless JWT", "description": "No infra needed, but harder to revoke"},
+      {"label": "Hybrid", "description": "Access=stateless, Refresh=server-side"}
+    ],
+    "multiSelect": false
+  },
+  {
+    "question": "What happens when a user's session expires mid-action (e.g., filling a form)?",
+    "header": "Session UX",
+    "options": [
+      {"label": "Silent refresh", "description": "Auto-refresh token in background, user doesn't notice"},
+      {"label": "Modal prompt", "description": "Show re-login dialog, preserve form state"},
+      {"label": "Redirect", "description": "Redirect to login, lose form state"}
+    ],
+    "multiSelect": false
+  }
+])
+```
+
+**After interview is complete**, write the spec to `.map/<branch>/spec_<branch>.md`:
+
+```markdown
+# Spec: [Title]
+
+**Date:** $(date -u +%Y-%m-%d)
+**Branch:** ${BRANCH}
+
+## Decisions Made
+
+| # | Question | Decision | Rationale |
+|---|----------|----------|-----------|
+| 1 | Token storage | Server-side (Redis) | Need revocation support |
+| 2 | Session expiry UX | Silent refresh | Better UX, no data loss |
+
+## Out of Scope
+
+- [Explicitly excluded items]
+
+## Open Questions
+
+- [Anything still unresolved]
+```
+
+### Step 3: Create Branch Directory
 
 ```bash
 BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/\//-/g')
 mkdir -p .map/${BRANCH}
 ```
 
-### Step 3: Call Task Decomposer
+### Step 4: Call Task Decomposer
 
-Use the task-decomposer agent to break down the work:
+Use the task-decomposer agent to break down the work. If a spec was written in Step 2, include it as context:
 
 ```
 Task(
@@ -49,6 +129,8 @@ Break down this task into atomic, testable subtasks:
 
 {user_requirements}
 
+{"Spec with decisions: .map/<branch>/spec_<branch>.md" if spec_exists else ""}
+
 Output format:
 - Each subtask should be completable in one focused session
 - Include acceptance criteria for each
@@ -58,7 +140,7 @@ Output format:
 )
 ```
 
-### Step 4: Initialize Workflow State
+### Step 5: Initialize Workflow State
 
 Create `workflow_state.json` with the decomposition results:
 
@@ -79,7 +161,7 @@ EOF
 
 **IMPORTANT:** Replace the subtask_sequence array with actual IDs from the decomposition.
 
-### Step 5: Create Human-Readable Plan
+### Step 6: Create Human-Readable Plan
 
 Write the plan to `.map/<branch>/task_plan_<branch>.md`:
 
@@ -117,7 +199,7 @@ Write the plan to `.map/<branch>/task_plan_<branch>.md`:
 [Any important context, gotchas, or design decisions]
 ```
 
-### Step 6: Output Checkpoint
+### Step 7: Output Checkpoint
 
 Print a clear checkpoint showing the plan is complete:
 
@@ -125,6 +207,8 @@ Print a clear checkpoint showing the plan is complete:
 ═══════════════════════════════════════════════════
 WORKFLOW CHECKPOINT: PLAN PHASE COMPLETE
 ═══════════════════════════════════════════════════
+✅ Deep interview completed (N decisions captured)
+✅ Spec written to .map/${BRANCH}/spec_${BRANCH}.md
 ✅ Task decomposed into N subtasks
 ✅ workflow_state.json initialized
 ✅ Plan written to .map/${BRANCH}/task_plan_${BRANCH}.md
@@ -141,13 +225,23 @@ Next Steps:
 ═══════════════════════════════════════════════════
 ```
 
-### Step 7: STOP
+**Note:** If interview was skipped (small/well-defined task), the spec line will not appear.
+
+### Step 8: STOP
 
 **This phase ends here.** Do NOT proceed to execution. The context should be flushed, and the next phase (/map-exec) will start fresh with focused attention on a single subtask.
 
 ---
 
 ## Design Rationale
+
+**Why deep interview before decomposition?**
+
+1. **Surface Hidden Decisions:** Users often have unstated assumptions. Non-obvious questions force these to the surface before code is written.
+
+2. **Self-Checklist Effect:** The interview benefits the user as much as the AI — it's a structured walkthrough of factors that are easy to forget.
+
+3. **Reduce Rework:** Decisions made during interview prevent costly pivots mid-implementation.
 
 **Why separate planning from execution?**
 
@@ -232,6 +326,7 @@ A: Re-run /map-plan. It will overwrite task_plan_<branch>.md and reset workflow_
 ## Success Criteria
 
 This command succeeds when:
+- ✅ Deep interview completed (if scope warranted it) with spec_<branch>.md written
 - ✅ task_plan_<branch>.md exists and is readable
 - ✅ workflow_state.json exists with valid subtask_sequence
 - ✅ CHECKPOINT shows subtask count and IDs
