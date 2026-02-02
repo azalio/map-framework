@@ -1185,41 +1185,48 @@ def create_skill_files(project_path: Path) -> int:
     return count
 
 
-def create_map_tools(project_path: Path) -> int:
-    """Create .map/ directory with static analysis tools."""
+def _copy_map_subdir(
+    map_template_dir: Path, map_dir: Path, subdir: str, executable_glob: str
+) -> int:
+    """Copy a subdirectory from map templates to .map/ and make scripts executable."""
     import shutil
 
+    src = map_template_dir / subdir
+    if not src.exists():
+        return 0
+
+    dest = map_dir / subdir
+    if dest.exists():
+        try:
+            shutil.rmtree(dest)
+        except (OSError, PermissionError) as e:
+            import sys
+
+            print(
+                f"Warning: Could not remove existing {dest}: {e}",
+                file=sys.stderr,
+            )
+    shutil.copytree(src, dest, dirs_exist_ok=True)
+
+    count = 0
+    for script in dest.rglob(executable_glob):
+        script.chmod(script.stat().st_mode | 0o755)
+        count += 1
+    return count
+
+
+def create_map_tools(project_path: Path) -> int:
+    """Create .map/ directory with static analysis tools and orchestrator scripts."""
     map_dir = project_path / ".map"
     map_dir.mkdir(parents=True, exist_ok=True)
 
-    # Get templates directory
     templates_dir = get_templates_dir()
     map_template_dir = templates_dir / "map"
 
     count = 0
     if map_template_dir.exists():
-        # Copy static-analysis directory
-        static_analysis_src = map_template_dir / "static-analysis"
-        if static_analysis_src.exists():
-            static_analysis_dest = map_dir / "static-analysis"
-            if static_analysis_dest.exists():
-                try:
-                    shutil.rmtree(static_analysis_dest)
-                except (OSError, PermissionError) as e:
-                    # Log warning but continue - old scripts may be in use
-                    import sys
-
-                    print(
-                        f"Warning: Could not remove existing {static_analysis_dest}: {e}",
-                        file=sys.stderr,
-                    )
-            shutil.copytree(
-                static_analysis_src, static_analysis_dest, dirs_exist_ok=True
-            )
-            # Make scripts executable
-            for script in static_analysis_dest.rglob("*.sh"):
-                script.chmod(script.stat().st_mode | 0o755)
-                count += 1
+        count += _copy_map_subdir(map_template_dir, map_dir, "static-analysis", "*.sh")
+        count += _copy_map_subdir(map_template_dir, map_dir, "scripts", "*.py")
 
     return count
 

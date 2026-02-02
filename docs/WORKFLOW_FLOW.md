@@ -30,7 +30,7 @@
                    ↓
 ┌─────────────────────────────────────────────────────┐
 │ map-efficient.md вызывает:                          │
-│ $ python3 scripts/map_orchestrator.py initialize   │
+│ $ python3 .map/scripts/map_orchestrator.py initialize   │
 │                                                     │
 │ Создает: .map/ralf/step_state.json                 │
 │ {                                                   │
@@ -43,7 +43,7 @@
                    ↓
 ┌─────────────────────────────────────────────────────┐
 │ map-efficient.md вызывает:                          │
-│ $ python3 scripts/map_orchestrator.py get_next_step│
+│ $ python3 .map/scripts/map_orchestrator.py get_next_step│
 │                                                     │
 │ Возвращает:                                         │
 │ {                                                   │
@@ -86,7 +86,7 @@
                    ↓
 ┌─────────────────────────────────────────────────────┐
 │ map-efficient.md вызывает:                          │
-│ $ python3 scripts/map_orchestrator.py validate_step "1.0"
+│ $ python3 .map/scripts/map_orchestrator.py validate_step "1.0"
 │                                                     │
 │ Обновляет step_state.json:                         │
 │ {                                                   │
@@ -380,7 +380,7 @@ Applying modifications...
 cat .map/$(git branch --show-current | sed 's/\//-/g')/step_state.json
 
 # Получить следующий шаг вручную
-python3 scripts/map_orchestrator.py get_next_step
+python3 .map/scripts/map_orchestrator.py get_next_step
 
 # Проверить workflow state (для gate)
 cat .map/$(git branch --show-current | sed 's/\//-/g')/workflow_state.json
@@ -403,7 +403,7 @@ DEBUG_WORKFLOW_CONTEXT=1 /map-efficient "..."
 ## 📚 Дополнительные ресурсы
 
 - **Детали архитектуры:** `docs/ARCHITECTURE.md` - секция "Hook-Based Context Injection"
-- **Код state machine:** `scripts/map_orchestrator.py`
+- **Код state machine:** `.map/scripts/map_orchestrator.py`
 - **Код hook:** `.claude/hooks/workflow-context-injector.py`
 - **История изменений:** `CHANGELOG.md` - секция "Unreleased"
 - **Сводка реализации:** `IMPLEMENTATION_SUMMARY.md`

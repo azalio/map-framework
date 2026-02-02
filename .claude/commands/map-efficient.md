@@ -45,7 +45,7 @@ State machine enforces sequencing, Python validates completion, hooks inject rem
 
 ```bash
 # Get next step from state machine
-NEXT_STEP=$(python3 scripts/map_orchestrator.py get_next_step)
+NEXT_STEP=$(python3 .map/scripts/map_orchestrator.py get_next_step)
 STEP_ID=$(echo "$NEXT_STEP" | jq -r '.step_id')
 PHASE=$(echo "$NEXT_STEP" | jq -r '.phase')
 INSTRUCTION=$(echo "$NEXT_STEP" | jq -r '.instruction')
@@ -81,7 +81,7 @@ Hard requirements:
 )
 
 # After decomposer returns: extract subtask sequence, save to state
-# Update state: python3 scripts/map_orchestrator.py validate_step "1.0"
+# Update state: python3 .map/scripts/map_orchestrator.py validate_step "1.0"
 ```
 
 ### Phase: INIT_PLAN (1.5)
@@ -303,7 +303,7 @@ After executing step, validate and update state:
 
 ```bash
 # Validate step completion
-python3 scripts/map_orchestrator.py validate_step "$STEP_ID"
+python3 .map/scripts/map_orchestrator.py validate_step "$STEP_ID"
 
 # Update plan status if subtask complete
 if [ "$PHASE" = "VERIFY_ADHERENCE" ]; then
@@ -315,7 +315,7 @@ fi
 
 ```bash
 # Get next step
-NEXT_STEP=$(python3 scripts/map_orchestrator.py get_next_step)
+NEXT_STEP=$(python3 .map/scripts/map_orchestrator.py get_next_step)
 IS_COMPLETE=$(echo "$NEXT_STEP" | jq -r '.is_complete')
 
 if [ "$IS_COMPLETE" = "true" ]; then
@@ -335,7 +335,7 @@ fi
 
 ```bash
 # Get circuit breaker status
-CB_DATA=$(python3 scripts/map_orchestrator.py check_circuit_breaker)
+CB_DATA=$(python3 .map/scripts/map_orchestrator.py check_circuit_breaker)
 TOOL_COUNT=$(echo "$CB_DATA" | jq -r '.tool_count')
 MAX_ITERATIONS=$(echo "$CB_DATA" | jq -r '.max_iterations')
 

@@ -669,7 +669,7 @@ See [USAGE.md - Workflow Variants](./USAGE.md#workflow-variants) for detailed de
 └─────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────┐
-│  State Machine (scripts/map_orchestrator.py)                │
+│  State Machine (.map/scripts/map_orchestrator.py)                │
 │  • 14 step phases (DECOMPOSE → VERIFY_ADHERENCE)            │
 │  • State file: .map/<branch>/step_state.json                │
 │  • Enforces: Sequential execution, no step skipping         │

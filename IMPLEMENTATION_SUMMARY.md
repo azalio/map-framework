@@ -24,14 +24,14 @@
   - Pattern borrowed from ralph-loop's `build_loop_context()`
 
 #### 2. State Machine
-- **`scripts/map_orchestrator.py`** (~400 lines)
+- **`.map/scripts/map_orchestrator.py`** (~400 lines)
   - CLI interface: `get_next_step`, `validate_step`, `initialize`
   - Manages 14 workflow step phases (DECOMPOSE → VERIFY_ADHERENCE)
   - State file: `.map/<branch>/step_state.json`
   - Enforces sequential execution, prevents step skipping
 
 #### 3. Utilities
-- **`scripts/map_step_runner.py`** (~300 lines)
+- **`.map/scripts/map_step_runner.py`** (~300 lines)
   - Deterministic step executors for mechanical operations
   - Functions: update_workflow_state, update_plan_status, validate_checkpoint, create_xml_packet
   - Separates file I/O from LLM reasoning
@@ -153,14 +153,14 @@ Instead of a 995-line command file that Claude "compresses" mentally, inject ~30
 │   ├── map-efficient.md (OPTIMIZED - 995→394 lines)
 │   └── map-efficient.md.backup (BACKUP)
 
-scripts/
+.map/scripts/
 ├── map_orchestrator.py (NEW)
 └── map_step_runner.py (NEW)
 
 src/mapify_cli/templates/
 ├── hooks/workflow-context-injector.py (SYNCED)
 ├── commands/map-efficient.md (SYNCED)
-├── scripts/
+├── map/scripts/
 │   ├── map_orchestrator.py (SYNCED)
 │   └── map_step_runner.py (SYNCED)
 └── settings.hooks.json (SYNCED)

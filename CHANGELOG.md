@@ -13,8 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Solution**: State-machine + PreToolUse hook injection → 85% predicted compliance
   - Command file reduced: 995 → 394 lines (5.4K → 1.75K tokens, 68% reduction)
   - New hook: `workflow-context-injector.py` - Injects step reminders before every tool call
-  - New state machine: `scripts/map_orchestrator.py` - Enforces 14-phase workflow sequencing
-  - New utilities: `scripts/map_step_runner.py` - Deterministic step executors
+  - New state machine: `.map/scripts/map_orchestrator.py` - Enforces 14-phase workflow sequencing
+  - New utilities: `.map/scripts/map_step_runner.py` - Deterministic step executors
   - State file: `.map/<branch>/step_state.json` - Tracks current step phase for hook injection
   - Token efficiency: 54K → 9.25K per workflow (83% reduction despite hook overhead)
   - **Migration**: Run `mapify init` to update project structure with new hooks and scripts

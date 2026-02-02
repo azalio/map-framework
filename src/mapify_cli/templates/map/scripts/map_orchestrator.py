@@ -64,14 +64,14 @@ CLI INTERFACE:
 USAGE FROM map-efficient.md:
   ```bash
   # Get next step
-  NEXT_STEP=$(python3 scripts/map_orchestrator.py get_next_step)
+  NEXT_STEP=$(python3 .map/scripts/map_orchestrator.py get_next_step)
   STEP_ID=$(echo "$NEXT_STEP" | jq -r '.step_id')
   INSTRUCTION=$(echo "$NEXT_STEP" | jq -r '.instruction')
 
   # Execute step based on phase...
 
   # Validate completion
-  python3 scripts/map_orchestrator.py validate_step "$STEP_ID"
+  python3 .map/scripts/map_orchestrator.py validate_step "$STEP_ID"
   ```
 
 TESTING:
