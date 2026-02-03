@@ -156,13 +156,12 @@ Skills work seamlessly with the prompt improvement system:
 
 **Check:**
 1. `skill-rules.json` has correct triggers
-2. Hook reads `skill-rules.json` successfully
-3. Test keyword matching manually:
-   ```bash
-   echo "which workflow should I use" | .claude/hooks/helpers/suggest_skill.py --rules .claude/skills/skill-rules.json
-   ```
+2. `improve-prompt.py` hook is enabled in `settings.hooks.json`
+3. Hook processes UserPromptSubmit events
 
-**Fix:** Update trigger patterns in `skill-rules.json`
+**Fix:**
+- Update trigger patterns in `skill-rules.json`
+- Verify hook configuration in `.claude/settings.hooks.json`
 
 ### Skill content too long
 

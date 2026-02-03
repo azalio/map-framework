@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Ralph Loop configuration for MAP Framework",
+  "ralph_loop": {
+    "enabled": true,
+    "circuit_breaker": {
+      "max_total_iterations": 50,
+      "max_same_file_edits": 5,
+      "max_wall_time_minutes": 60,
+      "behavior_on_breach": "hard_stop"
+    },
+    "final_verification": {
+      "enabled": true,
+      "confidence_threshold": 0.7,
+      "methods": ["tests", "mcp_tool", "manual"]
+    },
+    "thrashing_detection": {
+      "enabled": true,
+      "window_size": 3,
+      "effectiveness_threshold": 0.5,
+      "same_file_repeat_threshold": 3
+    },
+    "re_decomposition": {
+      "max_iterations": 3,
+      "preserve_completed": true,
+      "require_root_cause": true
+    },
+    "context_pruning": {
+      "max_failure_summaries": 3,
+      "summarize_after": 2
+    }
+  }
+}

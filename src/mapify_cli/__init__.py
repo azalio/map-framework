@@ -1185,41 +1185,48 @@ def create_skill_files(project_path: Path) -> int:
     return count
 
 
-def create_map_tools(project_path: Path) -> int:
-    """Create .map/ directory with static analysis tools."""
+def _copy_map_subdir(
+    map_template_dir: Path, map_dir: Path, subdir: str, executable_glob: str
+) -> int:
+    """Copy a subdirectory from map templates to .map/ and make scripts executable."""
     import shutil
 
+    src = map_template_dir / subdir
+    if not src.exists():
+        return 0
+
+    dest = map_dir / subdir
+    if dest.exists():
+        try:
+            shutil.rmtree(dest)
+        except (OSError, PermissionError) as e:
+            import sys
+
+            print(
+                f"Warning: Could not remove existing {dest}: {e}",
+                file=sys.stderr,
+            )
+    shutil.copytree(src, dest, dirs_exist_ok=True)
+
+    count = 0
+    for script in dest.rglob(executable_glob):
+        script.chmod(script.stat().st_mode | 0o755)
+        count += 1
+    return count
+
+
+def create_map_tools(project_path: Path) -> int:
+    """Create .map/ directory with static analysis tools and orchestrator scripts."""
     map_dir = project_path / ".map"
     map_dir.mkdir(parents=True, exist_ok=True)
 
-    # Get templates directory
     templates_dir = get_templates_dir()
     map_template_dir = templates_dir / "map"
 
     count = 0
     if map_template_dir.exists():
-        # Copy static-analysis directory
-        static_analysis_src = map_template_dir / "static-analysis"
-        if static_analysis_src.exists():
-            static_analysis_dest = map_dir / "static-analysis"
-            if static_analysis_dest.exists():
-                try:
-                    shutil.rmtree(static_analysis_dest)
-                except (OSError, PermissionError) as e:
-                    # Log warning but continue - old scripts may be in use
-                    import sys
-
-                    print(
-                        f"Warning: Could not remove existing {static_analysis_dest}: {e}",
-                        file=sys.stderr,
-                    )
-            shutil.copytree(
-                static_analysis_src, static_analysis_dest, dirs_exist_ok=True
-            )
-            # Make scripts executable
-            for script in static_analysis_dest.rglob("*.sh"):
-                script.chmod(script.stat().st_mode | 0o755)
-                count += 1
+        count += _copy_map_subdir(map_template_dir, map_dir, "static-analysis", "*.sh")
+        count += _copy_map_subdir(map_template_dir, map_dir, "scripts", "*.py")
 
     return count
 
@@ -1308,11 +1315,15 @@ def configure_global_permissions() -> None:
 
 
 def create_or_merge_project_settings_local(project_path: Path) -> None:
-    """Create/merge .claude/settings.local.json with safe project allowlist.
+    """Create/merge .claude/settings.local.json with safe project allowlist and hooks.
 
     Claude Code supports per-project approvals via `.claude/settings.local.json`.
     This file is user-local (should not be committed) and is merged by Claude Code
     with global settings from `~/.claude/settings.json`.
+
+    IMPORTANT: Claude Code only reads hooks from `settings.json` or `settings.local.json`.
+    The separate `settings.hooks.json` file is NOT read by Claude Code. Therefore, this
+    function merges hooks from the template `settings.hooks.json` into `settings.local.json`.
 
     We keep this allowlist intentionally narrow and focused on common safe actions
     for local development workflows.
@@ -1348,6 +1359,20 @@ def create_or_merge_project_settings_local(project_path: Path) -> None:
         "ask": [],
     }
 
+    # Load hooks from template settings.hooks.json
+    # Claude Code doesn't read hooks from settings.hooks.json, so we merge them here
+    hooks_config: Dict[str, Any] = {}
+    templates_dir = get_templates_dir()
+    hooks_template_file = templates_dir / "settings.hooks.json"
+    if hooks_template_file.exists():
+        try:
+            hooks_data = json.loads(hooks_template_file.read_text(encoding="utf-8"))
+            hooks_config = hooks_data.get("hooks", {})
+        except (json.JSONDecodeError, OSError) as e:
+            console.print(
+                f"[yellow]Warning:[/yellow] Could not read hooks template: {e}"
+            )
+
     # Load existing settings if present
     if settings_file.exists():
         try:
@@ -1371,6 +1396,12 @@ def create_or_merge_project_settings_local(project_path: Path) -> None:
 
     permissions.setdefault("deny", permissions.get("deny", []))
     permissions.setdefault("ask", permissions.get("ask", []))
+
+    # Replace hooks configuration from template
+    # Always use template hooks to ensure correct $CLAUDE_PROJECT_DIR paths
+    # User customizations should be done by editing the template or post-init
+    if hooks_config:
+        existing_settings["hooks"] = hooks_config
 
     settings_file.write_text(json.dumps(existing_settings, indent=2) + "\n")
 
@@ -1895,6 +1926,73 @@ The filename becomes the command name (without the `.md` extension).
     )
 
 
+def create_hook_files(project_path: Path) -> int:
+    """Create MAP hook files in .claude/hooks/
+
+    Returns:
+        Number of hook files installed
+    """
+    hooks_dir = project_path / ".claude" / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+
+    # Get templates directory
+    templates_dir = get_templates_dir()
+    hooks_template_dir = templates_dir / "hooks"
+
+    count = 0
+    if hooks_template_dir.exists():
+        import shutil
+
+        for hook_file in hooks_template_dir.iterdir():
+            if hook_file.is_file():
+                dest_file = hooks_dir / hook_file.name
+                shutil.copy2(hook_file, dest_file)
+                # Preserve executable permissions
+                if hook_file.suffix in (".sh", ".py"):
+                    dest_file.chmod(0o755)
+                count += 1
+
+    return count
+
+
+def create_config_files(project_path: Path) -> int:
+    """Create MAP config files in .claude/
+
+    Copies configuration files:
+    - settings.json
+    - settings.hooks.json
+    - ralph-loop-config.json
+    - workflow-rules.json
+
+    Returns:
+        Number of config files installed
+    """
+    claude_dir = project_path / ".claude"
+    claude_dir.mkdir(parents=True, exist_ok=True)
+
+    # Get templates directory
+    templates_dir = get_templates_dir()
+
+    config_files = [
+        "settings.json",
+        "settings.hooks.json",
+        "ralph-loop-config.json",
+        "workflow-rules.json",
+    ]
+
+    count = 0
+    import shutil
+
+    for config_file in config_files:
+        template_file = templates_dir / config_file
+        if template_file.exists():
+            dest_file = claude_dir / config_file
+            shutil.copy2(template_file, dest_file)
+            count += 1
+
+    return count
+
+
 @app.command()
 def init(
     project_name: Optional[str] = typer.Argument(
@@ -2075,6 +2173,18 @@ def init(
     tool_count = create_map_tools(project_path)
     tool_word = "script" if tool_count == 1 else "scripts"
     tracker.complete("create-map-tools", f"{tool_count} {tool_word}")
+
+    tracker.add("create-hooks", "Create MAP hooks")
+    tracker.start("create-hooks")
+    hook_count = create_hook_files(project_path)
+    hook_word = "hook" if hook_count == 1 else "hooks"
+    tracker.complete("create-hooks", f"{hook_count} {hook_word}")
+
+    tracker.add("create-configs", "Create config files")
+    tracker.start("create-configs")
+    config_count = create_config_files(project_path)
+    config_word = "file" if config_count == 1 else "files"
+    tracker.complete("create-configs", f"{config_count} {config_word}")
 
     if selected_mcp_servers:
         # Create internal MCP config (for MAP Framework agent mappings)

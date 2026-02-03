@@ -153,7 +153,9 @@ def record_verification_result(
     if len(results_data["recipes"]) > MAX_RECIPES:
         trimmed_count = len(results_data["recipes"]) - MAX_RECIPES
         results_data["recipes"] = results_data["recipes"][-MAX_RECIPES:]
-        _log_warning(f"Trimmed {trimmed_count} old recipes to stay under {MAX_RECIPES} limit")
+        _log_warning(
+            f"Trimmed {trimmed_count} old recipes to stay under {MAX_RECIPES} limit"
+        )
 
     # Update overall status based on aggregation rules
     results_data["overall"] = _compute_overall_status(results_data["recipes"])

@@ -37,7 +37,8 @@ def output_json(text):
 # 3. Memorize feature (# prefix)
 if prompt.startswith("*") or prompt.startswith("/") or prompt.startswith("#"):
     # User bypassed improvement - don't add evaluation wrapper
-    # Exit without output so hook doesn't modify the prompt
+    # Output empty JSON to signal success without modification
+    print("{}")
     sys.exit(0)
 
 # Build the improvement wrapper

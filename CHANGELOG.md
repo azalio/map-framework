@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+- **Hook-Based Context Injection**: Optimize /map-efficient workflow with state-machine orchestration
+  - **Problem**: 995-line command file (5.4K tokens) caused attention dilution → 20% step compliance
+  - **Solution**: State-machine + PreToolUse hook injection → 85% predicted compliance
+  - Command file reduced: 995 → 394 lines (5.4K → 1.75K tokens, 68% reduction)
+  - New hook: `workflow-context-injector.py` - Injects step reminders before every tool call
+  - New state machine: `.map/scripts/map_orchestrator.py` - Enforces 14-phase workflow sequencing
+  - New utilities: `.map/scripts/map_step_runner.py` - Deterministic step executors
+  - State file: `.map/<branch>/step_state.json` - Tracks current step phase for hook injection
+  - Token efficiency: 54K → 9.25K per workflow (83% reduction despite hook overhead)
+  - **Migration**: Run `mapify init` to update project structure with new hooks and scripts
+- **Simplified Workflow**: Removed workflow-gate.py enforcement hook
+  - Actor now applies code directly with Edit/Write tools (no gate blocking)
+  - Monitor validates WRITTEN code by running tests, not proposals
+  - Simpler flow: Actor writes → Monitor tests → If issues, Actor fixes → Repeat
+  - Phase 2.7 renamed: APPLY_CHANGES → UPDATE_STATE (code already applied by Actor)
+
+### Added
+- **Ralph Wiggum Loop Integration**: Continuous iteration pattern to prevent premature completion and hallucinated success
+  - State machine with 10 phases (INIT → DECOMPOSITION → EXECUTION → FINAL_VERIFICATION → COMPLETE/RE_DECOMPOSITION/ESCALATE/HARD_STOP/RECOVERY/WONT_DO)
+  - Circuit breaker with configurable limits (max 50 tool calls, 5 same-file edits, 60 min wall time)
+  - Final verification step in map-efficient.md (Step 3.5) with re-decomposition on failure
+  - Thrashing detection (oscillation detection via net_progress and confidence_variance)
+  - Recovery path via RESET_LIMITS marker file
+- **New Agent**: `final-verifier.md` - Adversarial verifier with Root Cause Analysis for Ralph Loop
+- **New Hooks**:
+  - `ralph-circuit-breaker.py` (PreToolUse): Enforces iteration limits, blocks at thresholds
+  - `ralph-iteration-logger.py` (PostToolUse): Logs metrics, detects thrashing patterns
+  - `ralph-context-pruner.py` (PreCompact): Archives old logs, truncates large files
+- **New Python Modules**:
+  - `src/mapify_cli/ralph_state.py`: State machine, circuit breaker config, verification types, thrashing detection
+  - `src/mapify_cli/dependency_graph.py`: Cascade invalidation for subtask dependencies
+- **New Configuration**: `.claude/ralph-loop-config.json` - Single source of truth for Ralph Loop limits
+- **New Reference**: `.claude/references/escalation-matrix.md` - Escalation decision rules
+
+### Changed
+- **task-decomposer.md**: Enhanced with Acceptance Criteria table format, re-decomposition mode, dependency enforcement
+- **map-efficient.md**: Added Step 3.5 Final Verification with circuit breaker check, final-verifier invocation, re-decomposition logic
+- **settings.hooks.json**: Added PreToolUse, PostToolUse, and PreCompact hook entries for Ralph Loop
+
+### Documentation
+- Branch-scoped artifacts stored in `.map/<sanitized-branch>/` directory
+- Branch name sanitization (e.g., `feature/foo` → `feature-foo`) for safe filesystem paths
+
 ## [3.0.0] - 2026-01-16
 
 ### Changed (BREAKING)

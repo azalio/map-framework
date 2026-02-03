@@ -98,7 +98,9 @@ class TestDetectFinishIntent:
         """Test that partial phrases don't match (word boundaries)."""
         # These contain the letters but not as whole words
         assert detect_finish_intent("незакончили") is False
-        assert detect_finish_intent("прекращайте") is False  # Contains 'прекращай' as substring but should not match due to word boundaries
+        assert (
+            detect_finish_intent("прекращайте") is False
+        )  # Contains 'прекращай' as substring but should not match due to word boundaries
 
     # ========================================================================
     # Edge Case Tests
@@ -128,9 +130,7 @@ class TestDetectFinishIntent:
 
     def test_finish_phrase_in_sentence(self):
         """Test finish phrase embedded in longer sentence."""
-        assert (
-            detect_finish_intent("я думаю мы закончили эту задачу сегодня") is True
-        )
+        assert detect_finish_intent("я думаю мы закончили эту задачу сегодня") is True
         assert detect_finish_intent("давайте остановимся на этом моменте") is True
         assert detect_finish_intent("ну хватит уже на сегодня") is True
 
@@ -176,9 +176,7 @@ class TestDetectFinishIntent:
 
         for phrase in finish_phrases:
             # Direct phrase
-            assert (
-                detect_finish_intent(phrase) is True
-            ), f"Failed for phrase: {phrase}"
+            assert detect_finish_intent(phrase) is True, f"Failed for phrase: {phrase}"
 
             # Phrase in sentence
             assert (
@@ -202,9 +200,7 @@ class TestDetectFinishIntent:
         ]
 
         for text in non_finish_texts:
-            assert (
-                detect_finish_intent(text) is False
-            ), f"False positive for: {text}"
+            assert detect_finish_intent(text) is False, f"False positive for: {text}"
 
     # ========================================================================
     # Integration Tests
@@ -238,9 +234,7 @@ class TestDetectFinishIntent:
         ]
 
         for msg in continue_messages:
-            assert (
-                detect_finish_intent(msg) is False
-            ), f"False positive for: {msg}"
+            assert detect_finish_intent(msg) is False, f"False positive for: {msg}"
 
     # ========================================================================
     # Performance Test

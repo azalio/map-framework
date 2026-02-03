@@ -28,7 +28,9 @@
       "Bash(git:log)",
       "Bash(git:branch)",
       "Bash(git:add)",
-      "Bash(git:commit)"
+      "Bash(git:commit)",
+      "Bash(helm:template:*)",
+      "Bash(go:vet:*)"
     ]
   }
 }
