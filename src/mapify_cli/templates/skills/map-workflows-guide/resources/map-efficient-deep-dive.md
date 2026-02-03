@@ -72,7 +72,7 @@ Result: 1 × Reflector/Curator cycle
 
 ❌ **Don't use for:**
 - Critical infrastructure (use /map-feature)
-- Throwaway prototypes (use /map-fast)
+- Small, low-risk changes (use /map-fast)
 - Simple bug fixes (use /map-debug)
 
 ---

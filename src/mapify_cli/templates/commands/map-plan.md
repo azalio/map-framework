@@ -86,7 +86,7 @@ Use AskUserQuestionTool to systematically interview the user. The goal is to sur
 2. **UX:** User flows, error states, edge cases, accessibility
 3. **Tradeoffs:** Performance vs simplicity, flexibility vs speed, build vs buy
 4. **Risks:** What can break? What's the blast radius? Rollback strategy?
-5. **Scope:** What's explicitly OUT of scope? MVP vs full version?
+5. **Scope:** What's explicitly OUT of scope? Minimal scope vs extended scope?
 6. **Integration:** How does this interact with existing code? Migration needed?
 
 **Example AskUserQuestionTool call:**

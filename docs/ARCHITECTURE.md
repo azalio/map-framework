@@ -76,11 +76,11 @@ MAP Framework implements cognitive architecture inspired by prefrontal cortex fu
 │  │ No TaskDecomposer. Reviews current branch changes        │   │
 │  └──────────────────────────────────────────────────────────┘   │
 │                                                                  │
-│  /map-fast (⚠️ minimal, throwaway only):                        │
+│  /map-fast (⚠️ minimal, low-risk only):                        │
 │  ┌──────────────────────────────────────────────────────────┐   │
 │  │ TaskDecomposer → Actor → Monitor                         │   │
 │  │ No Predictor, no Evaluator, no learning                  │   │
-│  │ Max 3 iterations. ⚠️ NEVER for production code           │   │
+│  │ Max 3 iterations. Use only for small, low-risk changes   │   │
 │  └──────────────────────────────────────────────────────────┘   │
 │                                                                  │
 │  /map-release (7-phase release workflow):                       │
@@ -419,10 +419,13 @@ print("Consider running /map-learn to save patterns")
 - Same mistakes repeated (no Reflector)
 
 **Use ONLY for:**
-- Throwaway prototypes
-- Quick experiments
-- Tutorial/learning contexts
-- **NEVER for production code**
+- Small, low-risk changes with clear acceptance criteria
+- Localized fixes with minimal blast radius
+
+**Avoid for:**
+- Security-sensitive functionality
+- Broad refactors or multi-module changes
+- High uncertainty requirements
 
 #### 3. `/map-debate` - Debate-Based Multi-Variant (6 Agents)
 

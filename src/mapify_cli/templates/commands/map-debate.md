@@ -141,8 +141,6 @@ deployment_risk_level = assess_deployment_context(goal):
     → risk_level = "high", min_security = 8, min_functionality = 7
   ELIF goal contains "production" OR "enterprise" OR "customer-facing":
     → risk_level = "medium", min_security = 7, min_functionality = 7
-  ELIF goal contains "prototype" OR "experiment" OR "POC" OR "learning":
-    → risk_level = "low", min_security = 6, min_functionality = 6
   ELSE:
     → risk_level = "medium", min_security = 7, min_functionality = 7  # safe default
 

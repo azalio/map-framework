@@ -67,7 +67,7 @@ Choose the appropriate tier based on pattern scope:
 
 **Examples**:
 ```
-# Branch-scoped (experimental)
+# Branch-scoped (unvalidated)
 user_id: "org:acme-corp"
 run_id: "proj:my-app:branch:feat-auth"
 

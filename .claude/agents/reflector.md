@@ -409,7 +409,7 @@ IF mcp__mem0__map_tiered_search returns > 10 results:
 IF mem0 returns contradictory patterns across tiers:
   → Note conflict in reasoning with tier context
   → Higher tiers (org) are generally more vetted
-  → Lower tiers (branch) may have newer/experimental patterns
+  → Lower tiers (branch) may have newer/unvalidated patterns
   → Suggest pattern update to resolve ambiguity via Curator
 ```
 

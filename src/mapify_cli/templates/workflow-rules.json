@@ -88,20 +88,19 @@
     },
     "map-fast": {
       "priority": "low",
-      "description": "Quick prototypes, throwaway code (NO learning)",
+      "description": "Small, low-risk changes with reduced analysis (NO learning)",
       "promptTriggers": {
         "keywords": [
           "quick",
-          "prototype",
-          "throwaway",
-          "experiment",
-          "test idea",
-          "spike"
+          "small change",
+          "minor",
+          "low risk",
+          "simple"
         ],
         "intentPatterns": [
-          "(quick|fast).*?(prototype|test|experiment)",
-          "throwaway.*?(code|implementation)",
-          "(spike|experiment).*?(idea|approach)"
+          "(quick|fast).*?(fix|change|update)",
+          "(small|minor).*?(fix|change|update)",
+          "low\s+risk.*?(fix|change|update)"
         ]
       }
     }

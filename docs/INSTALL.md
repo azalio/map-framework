@@ -234,7 +234,7 @@ If you prefer manual setup:
    │   │   ├── map-efficient.md       # Optimized workflow (recommended)
    │   │   ├── map-debate.md          # Multi-variant with Opus reasoning
    │   │   ├── map-debug.md           # Debug workflow
-   │   │   ├── map-fast.md            # Minimal workflow (throwaway only)
+   │   │   ├── map-fast.md            # Minimal workflow (low-risk only)
    │   │   ├── map-learn.md           # Extract and save lessons
    │   │   ├── map-review.md          # Review workflow
    │   │   └── map-release.md         # Release workflow
@@ -277,8 +277,8 @@ After installation, you can use MAP commands in Claude Code:
 # Debug an issue
 /map-debug Fix API timeout on large file uploads
 
-# Quick prototype (throwaway code only!)
-/map-fast Prototype a dashboard layout
+# Quick low-risk change
+/map-fast Implement a small UI tweak
 
 # Review changes
 /map-review
@@ -294,7 +294,7 @@ MAP Framework uses **slash commands** as entry points that coordinate specialize
 - **`/map-efficient`** ⭐ - Optimized workflow (5-6 agents): task-decomposer → actor → monitor → predictor (conditional)
 - **`/map-debate`** - Multi-variant with Opus arbiter (7 agents): 3 Actor variants → debate-arbiter synthesis
 - **`/map-debug`** - Diagnostic and fix workflows with agent coordination
-- **`/map-fast`** - Minimal workflow (3 agents) — **throwaway code only!**
+- **`/map-fast`** - Minimal workflow (3 agents) — small, low-risk changes (reduced analysis)
 - **`/map-review`** - Comprehensive review with MAP analysis
 - **`/map-learn`** - Extract lessons: reflector → curator → mem0 storage
 

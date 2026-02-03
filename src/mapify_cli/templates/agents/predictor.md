@@ -1518,7 +1518,7 @@ Go: reflect package usage
 ### Configuration-Driven Behavior
 
 **Detection checklist**:
-- [ ] Feature flags: Search for `feature_flag`, `toggle`, `experiment`, `canary`
+- [ ] Feature flags: Search for `feature_flag`, `toggle`, `canary`
 - [ ] Environment variables: New env vars required? Old ones removed?
 - [ ] Config files: YAML/JSON/TOML referencing code paths or module names
 - [ ] Dependency injection: Bean definitions, wire files, service locators
