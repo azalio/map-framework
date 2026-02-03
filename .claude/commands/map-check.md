@@ -199,6 +199,16 @@ TEST_CMD=$(jq -r '.test_command // "pytest"' .claude/ralph-loop-config.json)
 echo "Running final tests..."
 eval "$TEST_CMD"
 
+# Optional (structured diagnostics):
+# If tests fail and you want a durable artifact for follow-up/debugging,
+# re-run capturing output and parse to .map/<branch>/diagnostics.json:
+#
+# BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/\//-/g')
+# LOG_FILE=".map/${BRANCH}/tests.log"
+# mkdir -p ".map/${BRANCH}"
+# ( $TEST_CMD ) >"$LOG_FILE" 2>&1
+# python3 .map/scripts/diagnostics.py parse --tool tests --log "$LOG_FILE" --command "$TEST_CMD" --exit-code $?
+
 if [[ $? -ne 0 ]]; then
   echo "❌ Tests failed - verification REJECTED"
   VERDICT="REJECTED"
@@ -211,6 +221,13 @@ fi
 LINT_CMD=$(jq -r '.lint_command // "make lint"' .claude/ralph-loop-config.json)
 echo "Running final lint..."
 eval "$LINT_CMD"
+
+# Optional (structured diagnostics):
+# BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/\//-/g')
+# LOG_FILE=".map/${BRANCH}/lint.log"
+# mkdir -p ".map/${BRANCH}"
+# ( $LINT_CMD ) >"$LOG_FILE" 2>&1
+# python3 .map/scripts/diagnostics.py parse --tool lint --log "$LOG_FILE" --command "$LINT_CMD" --exit-code $?
 
 if [[ $? -ne 0 ]]; then
   echo "❌ Linter failed - verification REJECTED"

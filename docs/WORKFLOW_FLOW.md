@@ -204,12 +204,14 @@
 
 ---
 
-## 🎯 14 Фаз workflow
+## 🎯 17 фаз workflow
 
 | Step | Фаза | Описание | Обязательно? |
 |------|------|----------|--------------|
 | **1.0** | DECOMPOSE | task-decomposer разбивает задачу | ✅ Да |
 | **1.5** | INIT_PLAN | Создание task_plan.md | ✅ Да |
+| **1.55** | REVIEW_PLAN | Явное одобрение плана пользователем | ✅ Да |
+| **1.56** | CHOOSE_MODE | Выбор режима выполнения (step_by_step\|batch) | ✅ Да |
 | **1.6** | INIT_STATE | Создание workflow_state.json | ✅ Да |
 | **2.0** | XML_PACKET | Построение AI-friendly пакета | ✅ Да (для каждого ST) |
 | **2.1** | MEM0_SEARCH | Поиск паттернов в mem0 | ✅ Да (для каждого ST) |
@@ -222,6 +224,7 @@
 | **2.8** | TESTS_GATE | Запуск тестов | 🔶 Условно (если есть) |
 | **2.9** | LINTER_GATE | Запуск линтера | 🔶 Условно (если есть) |
 | **2.10** | VERIFY_ADHERENCE | Self-audit checkpoint | ✅ Да (для каждого ST) |
+| **2.11** | SUBTASK_APPROVAL | Пауза между ST в режиме step_by_step | 🔶 Условно |
 
 ---
 
