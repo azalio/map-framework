@@ -92,6 +92,66 @@ Generate `.map/task_plan_<branch>.md` from blueprint:
 - First subtask: **Status:** in_progress
 - Terminal State: **Status:** pending
 
+### Phase: REVIEW_PLAN (1.55)
+
+Present the generated plan and require explicit user approval before any execution state is initialized.
+
+1. Read the plan: `.map/task_plan_<branch>.md`
+2. Show a short summary in this format:
+
+```text
+═══════════════════════════════════════════════════
+PLAN REVIEW CHECKPOINT
+═══════════════════════════════════════════════════
+Goal: <one line>
+Subtasks:
+  - ST-001: <title> (risk: <low|medium|high>)
+  - ST-002: <title> (risk: <low|medium|high>)
+Notes:
+  - <top 1-3 risks/unknowns>
+═══════════════════════════════════════════════════
+```
+
+3. Ask for approval using AskUserQuestionTool (example):
+
+```
+AskUserQuestionTool(questions=[
+  {
+    "question": "Approve this plan and start execution?",
+    "header": "Plan approval",
+    "options": [
+      {"label": "Approve (recommended)", "description": "Proceed with chosen mode and start executing subtasks"},
+      {"label": "Revise plan", "description": "Go back and adjust decomposition/plan before any code changes"},
+      {"label": "Abort", "description": "Stop and do nothing"}
+    ],
+    "multiSelect": false
+  }
+])
+```
+
+If approved, persist it:
+
+```bash
+python3 .map/scripts/map_orchestrator.py set_plan_approved true
+```
+
+If not approved, stop (do not proceed).
+
+### Phase: CHOOSE_MODE (1.56)
+
+Ask the user how to run the workflow:
+
+1. `step_by_step` - pause between subtasks for confirmation
+2. `batch` - run through all subtasks without pausing
+
+Persist choice:
+
+```bash
+python3 .map/scripts/map_orchestrator.py set_execution_mode step_by_step  # or batch
+```
+
+Note: In `batch` mode the orchestrator auto-skips the pause step (2.11).
+
 ### Phase: INIT_STATE (1.6)
 
 ```bash
@@ -297,6 +357,14 @@ If FAILED: DO NOT PROCEED. Go back and complete missing steps.
 ═══════════════════════════════════════════════════
 ```
 
+### Phase: SUBTASK_APPROVAL (2.11)
+
+Only used when execution_mode is `step_by_step`.
+
+- Show a brief completion checkpoint for the current subtask.
+- Ask the user whether to continue to the next subtask.
+- If execution_mode is `batch`, the orchestrator auto-skips this step.
+
 ## Step 2.5: Validate Step Completion
 
 After executing step, validate and update state:
@@ -318,16 +386,18 @@ fi
 NEXT_STEP=$(python3 .map/scripts/map_orchestrator.py get_next_step)
 IS_COMPLETE=$(echo "$NEXT_STEP" | jq -r '.is_complete')
 
-if [ "$IS_COMPLETE" = "true" ]; then
-  echo "All subtasks complete. Proceeding to final verification."
-  # Go to Step 3
-else
+ if [ "$IS_COMPLETE" = "true" ]; then
+   echo "All subtasks complete. Proceeding to final verification."
+   # Go to Step 3
+ else
   # Recurse: Launch new Task(subagent_type="map-efficient-step") for next step
   # This provides fresh context and prevents token bloat
   echo "Next step: $(echo "$NEXT_STEP" | jq -r '.step_id')"
   # Continue with Step 1 (fresh invocation)
-fi
+ fi
 ```
+
+In `step_by_step` mode, the state machine inserts a pause step (2.11) between subtasks.
 
 ## Step 3: Final Verification (Ralph Loop)
 

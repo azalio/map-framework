@@ -8,9 +8,10 @@
 - Want to establish clear task boundaries before execution
 
 **What this command does:**
-- Calls task-decomposer agent to break down the user's request
+- Optionally runs a short discovery pass (research-agent) to identify key files/patterns
+- Calls task-decomposer agent to break down the user's request into subtasks
 - Creates `.map/<branch>/task_plan_<branch>.md` with subtask list
-- Initializes `workflow_state.json` with subtask sequence
+- Initializes `.map/<branch>/workflow_state.json` with subtask sequence
 - **STOPS** after planning (forces context flush)
 
 **What this command CANNOT do:**
@@ -21,6 +22,35 @@
 ---
 
 ## Workflow Steps
+
+### Step 0: Quick Discovery (Optional but Recommended)
+
+If the request touches an existing codebase (most do), do a short discovery pass to avoid planning in a vacuum.
+
+Use research-agent to find:
+- the most relevant files/dirs
+- existing patterns to follow
+- obvious integration points and risks
+
+Example:
+
+```
+Task(
+  subagent_type="research-agent",
+  description="Quick discovery for planning",
+  prompt=f"""
+Locate the most relevant code for this request and return:
+- 5-15 key file paths (with 1-line why each matters)
+- any existing similar implementations/patterns
+- risks/unknowns and what to verify
+
+User request:
+{user_requirements}
+"""
+)
+```
+
+If discovery is not needed (new greenfield code or already-provided spec), skip to Step 1.
 
 ### Step 1: Assess Scope and Decide Interview Depth
 
@@ -47,7 +77,7 @@ Use AskUserQuestionTool to systematically interview the user. The goal is to sur
 **Rules:**
 - Questions must be NON-OBVIOUS (don't ask what the user already stated)
 - Cover all dimensions: technical implementation, UI/UX, risks, tradeoffs, edge cases, data model, performance, security
-- Ask in batches of 2-4 questions (use AskUserQuestionTool's multi-question support)
+- Ask in small rounds (1-2 high-signal questions; up to 2-4 if needed) using AskUserQuestionTool
 - Continue iterating until all critical decisions are captured
 - After each round, assess: are there still unresolved architectural decisions?
 
@@ -116,9 +146,15 @@ BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/\//-/g')
 mkdir -p .map/${BRANCH}
 ```
 
-### Step 4: Call Task Decomposer
+### Step 4: Explore Approaches (Only If Needed)
 
-Use the task-decomposer agent to break down the work. If a spec was written in Step 2, include it as context:
+If there are multiple valid designs (and the user didn't specify the approach), propose 2-3 approaches with tradeoffs and capture the chosen direction before decomposition.
+
+Skip this step if the approach is obvious or the task is a clear bug fix with a known solution.
+
+### Step 5: Call Task Decomposer
+
+Use the task-decomposer agent to break down the work. If a spec was written in Step 2 and/or discovery was done in Step 0, include that context:
 
 ```
 Task(
@@ -131,41 +167,25 @@ Break down this task into atomic, testable subtasks:
 
 {"Spec with decisions: .map/<branch>/spec_<branch>.md" if spec_exists else ""}
 
+{"Discovery notes from research-agent are available in this chat" if discovery_done else ""}
+
 Output format:
 - Each subtask should be completable in one focused session
 - Include acceptance criteria for each
+- Each subtask should include an explicit verification approach (tests/commands)
 - Identify dependencies between subtasks
 - Estimate complexity (low/medium/high)
 """
 )
 ```
 
-### Step 5: Initialize Workflow State
-
-Create `workflow_state.json` with the decomposition results:
-
-```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/\//-/g')
-cat > .map/${BRANCH}/workflow_state.json <<'EOF'
-{
-  "workflow": "map-plan",
-  "started_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "current_subtask": null,
-  "current_state": "INITIALIZED",
-  "completed_steps": {},
-  "pending_steps": {},
-  "subtask_sequence": ["ST-001", "ST-002", "ST-003"]
-}
-EOF
-```
-
-**IMPORTANT:** Replace the subtask_sequence array with actual IDs from the decomposition.
-
 ### Step 6: Create Human-Readable Plan
 
 Write the plan to `.map/<branch>/task_plan_<branch>.md`:
 
-```markdown
+```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/\//-/g')
+cat > .map/${BRANCH}/task_plan_${BRANCH}.md <<EOF
 # Task Plan: [Brief Title]
 
 **Created:** $(date -u +%Y-%m-%d)
@@ -185,6 +205,9 @@ Write the plan to `.map/<branch>/task_plan_<branch>.md`:
 - **Acceptance Criteria:**
   - [ ] Criterion 1
   - [ ] Criterion 2
+- **Verification:**
+  - [ ] Tests added/updated for new/changed behavior
+  - [ ] Test command(s) to run: [e.g., pytest -k ...]
 
 ### ST-002: [Next Subtask]
 ...
@@ -197,9 +220,34 @@ Write the plan to `.map/<branch>/task_plan_<branch>.md`:
 ## Notes
 
 [Any important context, gotchas, or design decisions]
+EOF
 ```
 
-### Step 7: Output Checkpoint
+### Step 7: Initialize Workflow State (Do This Last)
+
+Create `.map/<branch>/workflow_state.json` with the decomposition results.
+
+Do this AFTER writing `task_plan_<branch>.md` so planning artifacts are created before the state gate becomes active.
+
+```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/\//-/g')
+STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+cat > .map/${BRANCH}/workflow_state.json <<EOF
+{
+  "workflow": "map-plan",
+  "started_at": "${STARTED_AT}",
+  "current_subtask": null,
+  "current_state": "INITIALIZED",
+  "completed_steps": {},
+  "pending_steps": {},
+  "subtask_sequence": ["ST-001", "ST-002", "ST-003"]
+}
+EOF
+```
+
+**IMPORTANT:** Replace the subtask_sequence array with actual IDs from the decomposition.
+
+### Step 8: Output Checkpoint
 
 Print a clear checkpoint showing the plan is complete:
 
@@ -282,7 +330,11 @@ SUBTASK_COMPLETE (all subtasks) → WORKFLOW_COMPLETE
 
 ## Hook Enforcement
 
-workflow-gate.py hook does NOT apply during /map-plan because no Edit/Write operations occur in this phase.
+workflow-gate.py is designed to prevent code edits during execution phases until required steps are complete.
+
+/map-plan should:
+- avoid editing repo code (outside `.map/`)
+- finish writing planning artifacts (spec/task_plan) before creating `workflow_state.json`
 
 ---
 
