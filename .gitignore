@@ -92,7 +92,5 @@ docs/claude-code-prompt-improver
 
 # Local tool configs
 .mcp.json
-.chunkhound.json
-.chunkhound/
 docs/planning-with-files.txt
 docs/research/

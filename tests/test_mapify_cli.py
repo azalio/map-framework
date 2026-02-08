@@ -852,7 +852,7 @@ class TestMcpJsonConfig:
         mcp_file = tmp_path / ".mcp.json"
         existing_config = {
             "mcpServers": {
-                "ChunkHound": {"command": "chunkhound", "args": ["mcp"]},
+                "my-custom-server": {"command": "my-server", "args": ["mcp"]},
             }
         }
         mcp_file.write_text(json.dumps(existing_config))
@@ -862,7 +862,7 @@ class TestMcpJsonConfig:
 
         # Verify merge
         config = json.loads(mcp_file.read_text())
-        assert "ChunkHound" in config["mcpServers"]  # User's server preserved
+        assert "my-custom-server" in config["mcpServers"]  # User's server preserved
         assert "deepwiki" in config["mcpServers"]  # New server added
 
     def test_create_or_merge_empty_servers_list(self, tmp_path):

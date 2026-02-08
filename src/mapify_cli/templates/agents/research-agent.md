@@ -12,7 +12,7 @@ last_updated: 2025-12-08
 │           COMPRESSED CONTEXT ACQUISITION PROTOCOL                    │
 ├─────────────────────────────────────────────────────────────────────┤
 │  1. Parse AAG contract → Extract Actor/Action/Goal keywords          │
-│  2. Search codebase    → ChunkHound MCP or FALLBACK-SEQUENCE-04      │
+│  2. Search codebase    → Glob + Grep + Read (built-in tools)         │
 │  3. AAG-filter results → Boost relevance for contract-matching code  │
 │  4. Intent-inspect     → Check for # Intent: comments per location   │
 │  5. Compress output    → MAX 1500 tokens, signatures + line ranges   │
@@ -57,7 +57,7 @@ Max tokens: 1500
 {
   "confidence": 0.85,
   "status": "OK",
-  "search_method": "chunkhound_semantic",
+  "search_method": "glob_grep",
   "search_stats": {
     "files_scanned": 50,
     "total_matches_found": 23,
@@ -83,15 +83,14 @@ Max tokens: 1500
 - `results_truncated`: true if more results exist than returned
 
 **Status values:**
-- `"OK"` - Search completed successfully with ChunkHound MCP
-- `"DEGRADED_MODE"` - Fallback to Glob/Grep/Read due to MCP unavailability
+- `"OK"` - Search completed successfully
 - `"PARTIAL_RESULTS"` - Some searches succeeded, some failed
 - `"NO_RESULTS"` - Search completed but found nothing relevant
 - `"SEARCH_FAILED"` - All search attempts failed
 
 **Search method values:**
-- `"chunkhound_semantic"` | `"chunkhound_regex"` | `"chunkhound_research"` - MCP tools
-- `"glob_grep_fallback"` - Built-in tools used
+- `"glob_grep"` - Glob for file discovery + Grep for content matching
+- `"grep_read"` - Grep for matches + Read for signature extraction
 
 # RULES
 
@@ -140,42 +139,28 @@ Return raw findings; framework handles security filtering.
 
 # SEARCH STRATEGY
 
-## Primary: ChunkHound MCP Tools
+## Tools
 
 | Tool | When to Use |
 |------|-------------|
-| `mcp__ChunkHound__search_semantic` | Conceptual queries: "Find auth patterns" |
-| `mcp__ChunkHound__search_regex` | Exact matches: function names, imports |
-| `mcp__ChunkHound__code_research` | Complex queries needing multi-hop exploration |
+| `Glob` | Find files by name/path pattern (e.g., `src/**/*.py`) |
+| `Grep` | Search file contents by regex (exact matches, imports, symbols) |
+| `Read` | Extract function signatures and line ranges from matched files |
 
-**Search flow (execute in order):**
-1. Parse AAG contract from prompt (if provided) — extract Actor, Action, Goal keywords
-2. Query intent clear? → search_regex (fast, exact)
-3. Query conceptual? → search_semantic (semantic matching)
-4. Results insufficient? → code_research (deep exploration)
-5. **AAG-filter**: Re-rank results by proximity to AAG keywords (Actor class, Action method, Goal type). Boost `relevance_score` by +0.1 for results matching AAG terms.
-
-## Fallback Protocol (Degradation Sequence)
-
-IF ChunkHound tools fail or timeout, EXECUTE this protocol in order:
+## Search Protocol (execute in order)
 
 ```
-FALLBACK-SEQUENCE-04:
-  STEP 1: Set status = "DEGRADED_MODE", search_method = "glob_grep_fallback"
+SEARCH-PROTOCOL-01:
+  STEP 1: Parse AAG contract from prompt (if provided) — extract Actor, Action, Goal keywords
   STEP 2: Execute Glob with file patterns from query → collect file list
-  STEP 3: Execute Grep with AAG keywords (Actor, Action, Goal terms) → collect matches
-  STEP 4: For top 10 matches by line count: Read signature (first 5 lines of function)
-  STEP 5: Set confidence *= 0.7 (precision penalty)
-  STEP 6: IF confidence < 0.5 → add to executive_summary:
-          "Low confidence in degraded mode. Consider manual review."
-  STEP 7: Apply AAG-filter and intent-inspection (same as primary path)
-  STEP 8: Return JSON with same schema — output format is invariant
+  STEP 3: Execute Grep with query symbols + AAG keywords → collect matches
+  STEP 4: For top 10 matches: Read signature (first 5 lines of function/class)
+  STEP 5: AAG-filter — re-rank by proximity to AAG keywords (Actor class, Action method, Goal type). Boost relevance_score by +0.1 for matches
+  STEP 6: Intent-inspect — check for # Intent: comments in each location
+  STEP 7: IF confidence < 0.5 → add to executive_summary:
+          "Low confidence results. Consider manual review."
+  STEP 8: Return JSON (output format is invariant)
 ```
-
-**Tools used in fallback:**
-- `Glob` → find files by pattern
-- `Grep` → search content by regex
-- `Read` → get file contents (signatures only, not full files)
 
 # CONFIDENCE SCORING
 
