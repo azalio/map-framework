@@ -88,6 +88,7 @@ Use AskUserQuestionTool to systematically interview the user. The goal is to sur
 4. **Risks:** What can break? What's the blast radius? Rollback strategy?
 5. **Scope:** What's explicitly OUT of scope? Minimal scope vs extended scope?
 6. **Integration:** How does this interact with existing code? Migration needed?
+7. **Contract Clarity:** Are ALL goals stated as outcomes (not processes)? Reject "improve auth" — require "AuthService returns 401 for expired tokens". Every goal must be verifiable.
 
 **Example AskUserQuestionTool call:**
 ```
@@ -146,15 +147,33 @@ BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/\//-/g')
 mkdir -p .map/${BRANCH}
 ```
 
-### Step 4: Explore Approaches (Only If Needed)
+### Step 4: Explore Approaches + Architecture Graph
 
 If there are multiple valid designs (and the user didn't specify the approach), propose 2-3 approaches with tradeoffs and capture the chosen direction before decomposition.
 
-Skip this step if the approach is obvious or the task is a clear bug fix with a known solution.
+Skip approach exploration if the approach is obvious or the task is a clear bug fix with a known solution.
+
+**Architecture Graph (REQUIRED for complexity >= 3):**
+Before calling the decomposer, write a brief architecture graph to `spec_<branch>.md` (append if spec exists, create if not). This gives the decomposer a "skeleton" to attach subtasks to.
+
+```markdown
+## Architecture Graph
+
+```
+UserModel -[has_many]-> Project -[has_one]-> ArchiveState
+ProjectService -[calls]-> ProjectModel.update()
+api/routes/projects.py -[uses]-> ProjectService
+GET /projects -[filters_by]-> archived_at
+```
+
+Format: `ClassA -[relationship]-> ClassB` (arrow notation)
+Relationships: has_many, has_one, calls, extends, uses, creates
+Keep under 200 tokens — only include nodes touched by the feature.
+```
 
 ### Step 5: Call Task Decomposer
 
-Use the task-decomposer agent to break down the work. If a spec was written in Step 2 and/or discovery was done in Step 0, include that context:
+Use the task-decomposer agent to break down the work. Pass spec, discovery, and architecture graph as context:
 
 ```
 Task(
@@ -165,31 +184,33 @@ Break down this task into atomic, testable subtasks:
 
 {user_requirements}
 
-{"Spec with decisions: .map/<branch>/spec_<branch>.md" if spec_exists else ""}
+{"Spec with decisions + Architecture Graph: .map/<branch>/spec_<branch>.md" if spec_exists else ""}
 
 {"Discovery notes from research-agent are available in this chat" if discovery_done else ""}
 
-Output format:
-- Each subtask should be completable in one focused session
+Output requirements:
+- Each subtask MUST include an aag_contract: "Actor -> Action(params) -> Goal"
+- Each subtask should be completable within ~4000 tokens (SFT comfort zone)
 - Include acceptance criteria for each
 - Each subtask should include an explicit verification approach (tests/commands)
 - Identify dependencies between subtasks
 - Estimate complexity (low/medium/high)
+- Use architecture_graph_summary to map subtasks to affected modules
 """
 )
 ```
 
 ### Step 6: Create Human-Readable Plan
 
-Write the plan to `.map/<branch>/task_plan_<branch>.md`:
+Write the plan to `.map/<branch>/task_plan_<branch>.md`. Wrap content in `<MAP_Plan_v1_0>` semantic brackets for machine-parseable handoff to executors:
 
 ```bash
 BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/\//-/g')
 cat > .map/${BRANCH}/task_plan_${BRANCH}.md <<EOF
+<MAP_Plan_v1_0 branch="${BRANCH}" created="$(date -u +%Y-%m-%d)">
+
 # Task Plan: [Brief Title]
 
-**Created:** $(date -u +%Y-%m-%d)
-**Branch:** ${BRANCH}
 **Workflow:** map-plan
 
 ## Overview
@@ -199,6 +220,7 @@ cat > .map/${BRANCH}/task_plan_${BRANCH}.md <<EOF
 ## Subtasks
 
 ### ST-001: [Subtask Title]
+- **AAG Contract:** `Actor -> Action(params) -> Goal`
 - **Complexity:** [low/medium/high]
 - **Dependencies:** [none | ST-XXX, ST-YYY]
 - **Description:** [What needs to be done]
@@ -220,12 +242,16 @@ cat > .map/${BRANCH}/task_plan_${BRANCH}.md <<EOF
 ## Notes
 
 [Any important context, gotchas, or design decisions]
+
+</MAP_Plan_v1_0>
 EOF
 ```
 
+**AAG Contract is REQUIRED** for every subtask. Copy directly from task-decomposer output's `aag_contract` field. This is the primary handoff to the Actor agent — without it, the Actor reasons instead of compiles.
+
 ### Step 7: Initialize Workflow State (Do This Last)
 
-Create `.map/<branch>/workflow_state.json` with the decomposition results.
+Create `.map/<branch>/workflow_state.json` with the decomposition results. Wrap in `<MAP_State_v1_0>` comment for executor parsing.
 
 Do this AFTER writing `task_plan_<branch>.md` so planning artifacts are created before the state gate becomes active.
 
@@ -234,18 +260,25 @@ BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/\//-/g')
 STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 cat > .map/${BRANCH}/workflow_state.json <<EOF
 {
+  "_semantic_tag": "MAP_State_v1_0",
   "workflow": "map-plan",
   "started_at": "${STARTED_AT}",
   "current_subtask": null,
   "current_state": "INITIALIZED",
   "completed_steps": {},
   "pending_steps": {},
-  "subtask_sequence": ["ST-001", "ST-002", "ST-003"]
+  "subtask_sequence": ["ST-001", "ST-002", "ST-003"],
+  "aag_contracts": {
+    "ST-001": "Actor -> Action(params) -> Goal",
+    "ST-002": "Actor -> Action(params) -> Goal"
+  }
 }
 EOF
 ```
 
-**IMPORTANT:** Replace the subtask_sequence array with actual IDs from the decomposition.
+**IMPORTANT:**
+- Replace `subtask_sequence` with actual IDs from the decomposition
+- Populate `aag_contracts` map with each subtask's AAG contract from the decomposer output — executors read this to set context for each subtask
 
 ### Step 8: Output Checkpoint
 
@@ -256,10 +289,11 @@ Print a clear checkpoint showing the plan is complete:
 WORKFLOW CHECKPOINT: PLAN PHASE COMPLETE
 ═══════════════════════════════════════════════════
 ✅ Deep interview completed (N decisions captured)
-✅ Spec written to .map/${BRANCH}/spec_${BRANCH}.md
-✅ Task decomposed into N subtasks
-✅ workflow_state.json initialized
+✅ Architecture graph written to spec_${BRANCH}.md
+✅ Task decomposed into N subtasks with AAG contracts
+✅ workflow_state.json initialized (with aag_contracts map)
 ✅ Plan written to .map/${BRANCH}/task_plan_${BRANCH}.md
+✅ Context distilled (plan files ≤4000 tokens per subtask)
 
 Next Steps:
 1. Review the plan in task_plan_${BRANCH}.md
@@ -273,7 +307,20 @@ Next Steps:
 
 **Note:** If interview was skipped (small/well-defined task), the spec line will not appear.
 
-### Step 8: STOP
+### Step 8: Context Distillation + STOP
+
+**Before stopping, verify the distilled state is self-contained.** The next session starts fresh — it will ONLY see files, not this conversation. Ensure these files contain everything needed:
+
+```
+DISTILLATION CHECKLIST:
+  [x] task_plan_<branch>.md — has AAG contracts for every subtask
+  [x] workflow_state.json   — has aag_contracts map + subtask_sequence
+  [x] spec_<branch>.md      — has architecture graph + decisions (if interview was done)
+  [x] findings_<branch>.md  — has research pointers (if discovery was done)
+
+TARGET: Executor reads ≤4000 tokens of distilled state to start any subtask.
+If plan files exceed this, condense — remove redundant descriptions, keep AAG contracts + criteria.
+```
 
 **This phase ends here.** Do NOT proceed to execution. The context should be flushed, and execution will start fresh with focused attention on individual subtasks.
 
@@ -346,12 +393,18 @@ User: "Add JWT authentication with refresh tokens"
 
 # You call /map-plan (this command)
 # Result:
-# - .map/main/task_plan_main.md created with 5 subtasks:
+# - .map/main/spec_main.md with architecture graph + decisions
+# - .map/main/task_plan_main.md with 5 subtasks + AAG contracts:
 #   ST-001: Add JWT library dependency
+#     AAG: PackageConfig -> add_dependency(pyjwt) -> import succeeds
 #   ST-002: Implement token generation service
+#     AAG: TokenService -> generate(user_id, ttl) -> returns signed JWT
 #   ST-003: Add middleware for token validation
+#     AAG: AuthMiddleware -> validate(request) -> 401|passes with user_id
 #   ST-004: Implement refresh token rotation
+#     AAG: TokenService -> refresh(old_token) -> new access+refresh pair
 #   ST-005: Add integration tests
+#     AAG: TestSuite -> test_auth_flow() -> all 12 assertions pass
 
 # After planning phase completes, user reviews and starts execution
 ```
@@ -372,7 +425,9 @@ A: Re-run /map-plan. It will overwrite task_plan_<branch>.md and reset workflow_
 
 This command succeeds when:
 - ✅ Deep interview completed (if scope warranted it) with spec_<branch>.md written
-- ✅ task_plan_<branch>.md exists and is readable
-- ✅ workflow_state.json exists with valid subtask_sequence
+- ✅ Architecture graph written in spec_<branch>.md (for complexity >= 3)
+- ✅ task_plan_<branch>.md exists with AAG contracts for every subtask
+- ✅ workflow_state.json exists with valid subtask_sequence + aag_contracts map
 - ✅ CHECKPOINT shows subtask count and IDs
+- ✅ Context distilled (plan files self-contained for fresh session)
 - ✅ You STOPPED (did not proceed to execution)
