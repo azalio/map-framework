@@ -54,7 +54,7 @@ The **Orchestrator** is NOT a separate agent template; it is the coordination lo
 - ✅ Verify `mcp__mem0__map_tiered_search` usage in the output
 - ✅ Let Reflector extract patterns from agent outputs
 
-**Why:** The Reflector template contains instructions to search cipher. Manual work won’t call `mcp__mem0__map_tiered_search` → knowledge gets duplicated.
+**Why:** The Reflector template contains instructions to search for existing patterns. Manual work won't call `mcp__mem0__map_tiered_search` → knowledge gets duplicated.
 
 ### Rule 2: Mandatory Curator invocation
 
@@ -69,9 +69,7 @@ The **Orchestrator** is NOT a separate agent template; it is the coordination lo
 - ✅ Call `Task(subagent_type="curator", ...)`
 - ✅ Verify `mcp__mem0__map_tiered_search` is used for deduplication
 - ✅ Apply Curator delta operations (ADD/UPDATE/DEPRECATE)
-- ✅ Call `cipher_extract_and_operate_memory` if there are `sync_to_cipher` entries
-
-**Why:** The Curator template enforces searching cipher BEFORE adding bullets AND syncing high-quality bullets (helpful_count ≥ 5) back to cipher.
+**Why:** The Curator template enforces searching for duplicates BEFORE adding bullets.
 
 ### Rule 3: Verify MCP Tool Usage
 
@@ -85,26 +83,16 @@ After invoking Reflector or Curator, the orchestrator **MUST VERIFY** MCP tool u
 **Curator output must show:**
 
 - Reasoning about deduplication via `mcp__mem0__map_tiered_search`
-- An array `sync_to_cipher` only when bullets reached helpful_count ≥ 5 (may be missing or empty)
-
 **If missing:** The agent skipped mandatory MCP calls → investigate (skip tools, mis-reporting, template updates).
 
-## Dual Memory System
+## Memory System
 
-MAP uses **TWO knowledge storage systems**:
-
-### 1. Playbook (Project Memory)
+### Playbook (Project Memory)
 
 - **Location:** `.claude/mem0 MCP`
 - **Purpose:** Structured, categorized patterns for THIS project
 - **Format:** Bullets with code examples, tags, helpful/harmful counts
 - **Scope:** Single project
-
-### 2. Cipher (Cross-project Memory)
-
-- **Location:** MCP tool (external)
-- **Purpose:** Cross-project knowledge consolidation and reuse
-- **Flow:** Reflector extracts → Curator deduplicates and applies → high-quality bullets synced to cipher
 
 ## Recitation Pattern — Context Engineering
 
@@ -168,28 +156,24 @@ Actor → Monitor (iteration 1)
 
 ## MCP Integration in Workflow
 
-MAP uses **6 core MCP tools** to extend workflow capabilities:
+MAP uses **5 core MCP tools** to extend workflow capabilities:
 
 1. **`mcp__mem0__map_tiered_search`** — search similar patterns in a semantic memory base
-2. **`cipher_extract_and_operate_memory`** — persist successful patterns
-3. **`sequential-thinking`** — complex chains of reasoning
-4. **`context7 (resolve-library-id + get-library-docs)`** — up-to-date library documentation
-5. **`deepwiki (read_wiki_structure + ask_question)`** — learn from GitHub repositories
-6. **`claude-reviewer (request_review)`** — professional code review
+2. **`sequential-thinking`** — complex chains of reasoning
+3. **`context7 (resolve-library-id + get-library-docs)`** — up-to-date library documentation
+4. **`deepwiki (read_wiki_structure + ask_question)`** — learn from GitHub repositories
+5. **`claude-reviewer (request_review)`** — professional code review
 
 ## Self-Check Verification
 
-Before completing any MAP workflow subtask the orchestrator **MUST** check 4 questions:
+Before completing any MAP workflow subtask the orchestrator **MUST** check 2 questions:
 
-1. ❓ Did I call `Task(subagent_type="reflector", ...)` or “learn” manually?
+1. ❓ Did I call `Task(subagent_type="reflector", ...)` or "learn" manually?
 2. ❓ Did I call `Task(subagent_type="curator", ...)` or update the playbook manually?
-3. ❓ Did the Reflector output show that it searched cipher?
-4. ❓ Did the Curator output include `sync_to_cipher` operations?
 
 **Violations:**
 
-- If “Did it myself” on 1–2 → workflow violation; redo the subtask
-- If “No” on 3–4 → agents didn’t follow templates; investigate
+- If "Did it myself" on 1–2 → workflow violation; redo the subtask
 
 ## Workflow Logger — Observability
 

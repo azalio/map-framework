@@ -31,9 +31,8 @@ The **Orchestrator** is the workflow coordination logic implemented in slash com
 
 ### Integration with MCP Servers
 
-MAP uses **6 MCP servers** to extend capabilities:
+MAP uses **5 MCP servers** to extend capabilities:
 
-- **[cipher](https://github.com/campfirein/cipher)** — knowledge base for storing successful patterns
 - **[claude-reviewer](https://github.com/rsokolowski/mcp-claude-reviewer)** — professional code review with security analysis
 - **[sequential-thinking](https://github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking)** — chains of thought for complex tasks
 - **[context7](https://github.com/upstash/context7)** — up-to-date library documentation

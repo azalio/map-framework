@@ -28,7 +28,7 @@ MAP (Modular Agentic Planner) is a cognitive architecture that orchestrates 9 sp
 
 **5 Automated Hooks:**
 - `validate-agent-templates` — prevents accidental removal of template variables
-- `auto-store-knowledge` — automatically saves successful patterns to cipher
+- `auto-store-knowledge` — automatically saves successful patterns
 - `enrich-context` — enriches prompts with relevant knowledge
 - `session-init` — loads ACE playbook at session start
 - `track-metrics` — tracks agent performance
@@ -41,7 +41,7 @@ MAP (Modular Agentic Planner) is a cognitive architecture that orchestrates 9 sp
 
 ### ACE Learning System
 
-- **Persistent Knowledge** — solutions saved and reused via cipher MCP
+- **Persistent Knowledge** — solutions saved and reused via mem0 MCP
 - **Semantic Search** — find patterns by meaning (optional)
 - **Quality Tracking** — monitor pattern effectiveness
 - **Continuous Learning** — each workflow improves future ones
@@ -87,7 +87,6 @@ cp map-framework/.claude/settings.hooks.json your-project/.claude/
 
 - **Claude Code CLI** — installed and configured
 - **MCP Servers** (essential):
-  - `cipher` — knowledge management
   - `claude-reviewer` — professional code review
   - `sequential-thinking` — chain-of-thought reasoning
 

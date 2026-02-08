@@ -123,7 +123,7 @@ IF mcp__mem0__* available:
   → Use for historical pattern matching
 ELSE:
   → Skip pattern matching, rely on explicit checks only
-  → Log: "cipher unavailable, no historical context"
+  → Log: "mem0 unavailable, no historical context"
 ```
 
 ## Fallback Protocol
@@ -441,7 +441,7 @@ mcp__deepwiki__ask_question(
     question="How does Gatekeeper handle CRD installation?"
 )
 
-# 4. Check historical patterns (if cipher available)
+# 4. Check historical patterns (if mem0 available)
 mcp__mem0__map_tiered_search(
     query="CRD installation documentation patterns",
     top_k=5,

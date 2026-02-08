@@ -1710,8 +1710,8 @@ Return **ONLY** valid JSON in this exact structure:
     "score": 0.85,
     "tier_base": 0.50,
     "adjustments": [
-      {"category": "A", "factor": "Cipher comprehensive data", "adjustment": 0.20},
-      {"category": "B", "factor": "Codex+grep match", "adjustment": 0.15}
+      {"category": "A", "factor": "mem0 comprehensive data", "adjustment": 0.20},
+      {"category": "B", "factor": "mem0+grep match", "adjustment": 0.15}
     ],
     "flags": ["MANUAL REVIEW REQUIRED"]
   },
@@ -1811,17 +1811,17 @@ Confidence is NOT a guess—calculate it using this formula with **tier-specific
 
 **Category A: Historical Data** (pick highest applicable)
 ```
-+0.20: Cipher returned comprehensive patterns for this change type
-+0.10: Cipher returned partial/similar patterns
++0.20: mem0 returned comprehensive patterns for this change type
++0.10: mem0 returned partial/similar patterns
 +0.00: No query made (default for Tier 1)
--0.15: Cipher queried but no relevant data found
+-0.15: mem0 queried but no relevant data found
 ```
 
 **Category B: Tool Agreement** (pick one)
 ```
-+0.15: Codex + grep results match (same usages found)
++0.15: mem0 + grep results match (same usages found)
 +0.05: Only one tool used, results clear
--0.10: Codex and grep conflict (investigate before proceeding)
+-0.10: mem0 and grep conflict (investigate before proceeding)
 ```
 
 **Category C: Code Analyzability** (pick lowest applicable)
@@ -1879,7 +1879,7 @@ TIER_1_MIN: 0.70 (if lower → escalate to Tier 2)
 | Factor | Category | Adjustment | Running Total |
 |--------|----------|------------|---------------|
 | Tier 2 base score | — | 0.50 | 0.50 |
-| Cipher has similar patterns | A | +0.20 | 0.70 |
+| mem0 has similar patterns | A | +0.20 | 0.70 |
 | Codex + grep match | B | +0.15 | 0.85 |
 | Static code (no flags) | C | +0.00 | 0.85 |
 | High test coverage | D | +0.10 | 0.95 |
@@ -1890,7 +1890,7 @@ TIER_1_MIN: 0.70 (if lower → escalate to Tier 2)
 | Factor | Category | Adjustment | Running Total |
 |--------|----------|------------|---------------|
 | Tier 3 base score | — | 0.50 | 0.50 |
-| Cipher queried, no data | A | -0.15 | 0.35 |
+| mem0 queried, no data | A | -0.15 | 0.35 |
 | Only grep used | B | +0.05 | 0.40 |
 | Reflection detected | C | -0.20 | 0.20 |
 | External API undocumented | D | -0.10 | 0.10 |
@@ -1921,9 +1921,9 @@ TIER_1_MIN: 0.70 (if lower → escalate to Tier 2)
 4. Be MORE conservative with risk assessment (err on higher risk)
 ```
 
-### If cipher and grep results conflict:
+### If mem0 and grep results conflict:
 ```
-Example: cipher graph finds 10 usages, grep finds 15
+Example: mem0 finds 10 usages, grep finds 15
 
 1. Trust manual verification (grep) over semantic tools
 2. Investigate discrepancy:
@@ -1931,7 +1931,7 @@ Example: cipher graph finds 10 usages, grep finds 15
    - Check for generated code
    - Check for string-based references
 3. Report BOTH numbers in output:
-   "affected_components": ["15 files (cipher: 10, grep: 15 - discrepancy noted)"]
+   "affected_components": ["15 files (mem0: 10, grep: 15 - discrepancy noted)"]
 4. Set confidence to max 0.60 (moderate uncertainty)
 ```
 
@@ -1976,7 +1976,7 @@ IF confidence < 0.30 after all adjustments:
 
 ### Catastrophic Tool Failure Protocol (All Tools Fail)
 
-**CRITICAL**: If ALL tools fail (cipher AND grep all error/timeout):
+**CRITICAL**: If ALL tools fail (mem0 AND grep all error/timeout):
 
 ```
 1. DO NOT hallucinate results
@@ -1988,7 +1988,7 @@ IF confidence < 0.30 after all adjustments:
     "tier_rationale": "All analysis tools failed - minimal analysis only",
     "tools_used": [],
     "tool_failures": {
-      "cipher": "timeout/error/unavailable",
+      "mem0": "timeout/error/unavailable",
       "grep": "timeout/error/unavailable"
     },
     "catastrophic_failure": true

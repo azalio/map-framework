@@ -1055,7 +1055,7 @@ export class ReconnectingWebSocket {
 3. test_reconnect_max_attempts_triggers_callback
 4. test_reconnect_handles_immediate_disconnect
 
-**Used Bullets**: `[]` (No similar patterns in cipher. Novel implementation.)
+**Used Bullets**: `[]` (No similar patterns in mem0. Novel implementation.)
 
 </Actor_Reference_Examples>
 

@@ -42,7 +42,6 @@
       "requirements": {
         "claude_code": ">=1.0.0",
         "mcp_servers": [
-          "cipher",
           "claude-reviewer",
           "sequential-thinking"
         ]

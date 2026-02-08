@@ -74,16 +74,6 @@ Query playbook for release-related patterns and past release issues:
 RELEASE_PATTERNS=$(mcp__mem0__map_tiered_search(query="release validation PyPI CI/CD", limit=10))
 ```
 
-**Also search Cipher** for cross-project release patterns:
-
-```
-mcp__mem0__map_tiered_search(
-  query="package release validation PyPI deployment best practices",
-  top_k=5,
-  similarity_threshold=0.3
-)
-```
-
 ### 1.2 Validation Gates (12 Required)
 
 Execute all validation gates in parallel where possible:

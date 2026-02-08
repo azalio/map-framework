@@ -186,11 +186,10 @@ Installation creates `.claude/mem0 MCP` with a starter structure:
 
 ### MCP Servers Integration
 
-MAP requires **6 MCP servers** for full functionality:
+MAP requires **5 MCP servers** for full functionality:
 
 **Required:**
 
-- **cipher** — knowledge base for storing successful patterns
 - **claude-reviewer** — professional code review with security analysis
 
 **Optional (recommended):**
@@ -236,7 +235,6 @@ After installation:
    - Open `.claude/mem0 MCP` for automatically extracted patterns
 
 4. **Configure MCP servers:**
-   - Connect cipher for cross-project knowledge
    - Add context7 for up-to-date library docs
 
 5. **Customize agents:**

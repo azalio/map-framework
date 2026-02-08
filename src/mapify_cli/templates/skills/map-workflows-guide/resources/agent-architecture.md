@@ -243,5 +243,4 @@ Create `.claude/commands/map-custom.md`:
 
 **See also:**
 - [Playbook System](playbook-system.md) - How knowledge is structured
-- [Cipher Integration](cipher-integration.md) - Cross-project learning
 - [map-efficient Deep Dive](map-efficient-deep-dive.md) - Conditional execution example

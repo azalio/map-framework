@@ -276,7 +276,7 @@ class TestInitCommand:
 
         Verifies that:
         - Init succeeds with --mcp essential
-        - Essential MCP servers are configured (cipher, claude-reviewer, sequential-thinking)
+        - Essential MCP servers are configured (claude-reviewer, sequential-thinking)
         - Agent files are created
         """
         os.chdir(tmp_path)
@@ -289,7 +289,6 @@ class TestInitCommand:
 
         # Check MCP config contains essential servers
         mcp_config = json.loads((tmp_path / ".claude" / "mcp_config.json").read_text())
-        assert "cipher" in mcp_config["mcp_servers"]
         assert "claude-reviewer" in mcp_config["mcp_servers"]
         assert "sequential-thinking" in mcp_config["mcp_servers"]
 
@@ -339,7 +338,7 @@ class TestInitCommand:
 
         Verifies that:
         - --mcp essential flag installs essential servers
-        - MCP config contains cipher, claude-reviewer, sequential-thinking
+        - MCP config contains claude-reviewer, sequential-thinking
         """
         os.chdir(tmp_path)
 
@@ -349,7 +348,6 @@ class TestInitCommand:
         assert (tmp_path / ".claude" / "mcp_config.json").exists()
 
         mcp_config = json.loads((tmp_path / ".claude" / "mcp_config.json").read_text())
-        assert "cipher" in mcp_config["mcp_servers"]
         assert "claude-reviewer" in mcp_config["mcp_servers"]
         assert "sequential-thinking" in mcp_config["mcp_servers"]
 
@@ -357,14 +355,14 @@ class TestInitCommand:
         reason="Test isolation issue: passes in isolation but fails in full suite after 332 tests due to stdin/stdout state. TODO: Investigate and fix test infrastructure issue."
     )
     def test_init_defaults_to_all_mcp_servers(self, tmp_path, monkeypatch):
-        """Test that init without --mcp flag defaults to installing all 5 MCP servers.
+        """Test that init without --mcp flag defaults to installing all 4 MCP servers.
 
         Regression test for non-interactive init behavior.
         Verifies that:
         - Init completes without interactive prompts
-        - All 5 MCP servers are installed by default (cipher, claude-reviewer,
+        - All 4 MCP servers are installed by default (claude-reviewer,
           sequential-thinking, context7, deepwiki)
-        - mcp_config.json is created with all 5 servers
+        - mcp_config.json is created with all 4 servers
         """
         # Use fresh CliRunner to avoid state pollution from previous tests
         from typer.testing import CliRunner as FreshRunner
@@ -396,10 +394,9 @@ class TestInitCommand:
         assert (tmp_path / ".claude" / "agents").exists()
         assert (tmp_path / ".claude" / "mcp_config.json").exists()
 
-        # Verify all 5 MCP servers are configured
+        # Verify all 4 MCP servers are configured
         mcp_config = json.loads((tmp_path / ".claude" / "mcp_config.json").read_text())
         expected_servers = [
-            "cipher",
             "claude-reviewer",
             "sequential-thinking",
             "context7",
@@ -412,9 +409,9 @@ class TestInitCommand:
                 f"MCP server '{server}' not found in config"
             )
 
-        # Verify exactly 5 servers (no extras)
-        assert len(mcp_config["mcp_servers"]) == 5, (
-            f"Expected 5 servers, found {len(mcp_config['mcp_servers'])}"
+        # Verify exactly 4 servers (no extras)
+        assert len(mcp_config["mcp_servers"]) == 4, (
+            f"Expected 4 servers, found {len(mcp_config['mcp_servers'])}"
         )
 
     def test_init_force_no_prompts(self, tmp_path):
@@ -574,7 +571,7 @@ class TestAgentCreation:
 
     def test_create_agent_files_with_templates(self, tmp_path):
         """Test creating agent files from templates."""
-        create_agent_files(tmp_path, ["cipher", "claude-reviewer"])
+        create_agent_files(tmp_path, ["claude-reviewer"])
 
         agents_dir = tmp_path / ".claude" / "agents"
         assert agents_dir.exists()
@@ -598,8 +595,8 @@ class TestAgentCreation:
         mock_templates_path.mkdir(parents=True, exist_ok=True)
         mock_get_templates.return_value = mock_templates_path
 
-        # Call create_agent_files with cipher MCP server
-        create_agent_files(tmp_path, ["cipher"])
+        # Call create_agent_files with MCP servers
+        create_agent_files(tmp_path, ["claude-reviewer"])
 
         agents_dir = tmp_path / ".claude" / "agents"
         assert agents_dir.exists()
@@ -630,9 +627,12 @@ class TestAgentCreation:
             )
             assert has_core_section, f"Agent {agent_file} missing core sections"
 
-            # Verify MCP integration for cipher-enabled agents
-            if any(name in agent_file for name in ["reflector", "curator"]):
-                assert "cipher" in content.lower() or "mcp" in content.lower(), (
+            # Verify MCP integration for agents that use MCP tools
+            if any(
+                name in agent_file
+                for name in ["task-decomposer", "actor", "monitor", "predictor"]
+            ):
+                assert "mcp" in content.lower() or "tool" in content.lower(), (
                     f"Agent {agent_file} missing MCP integration section"
                 )
 

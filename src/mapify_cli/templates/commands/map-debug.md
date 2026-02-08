@@ -48,9 +48,8 @@ PATTERN_CONTEXT=$(mcp__mem0__map_tiered_search(query="debug [issue type]", secti
 ```
 
 1. **Read error logs/stack traces** (if provided in $ARGUMENTS)
-2. **Search cipher for similar issues**: `mcp__mem0__map_tiered_search("debug pattern [error_type]")`
-3. **Identify affected files**: Use Grep/Glob to find relevant code
-4. **Reproduce the issue** (if possible): Read test files or run commands
+2. **Identify affected files**: Use Grep/Glob to find relevant code
+3. **Reproduce the issue** (if possible): Read test files or run commands
 
 ## Step 2: Decompose Debugging Process
 
@@ -65,7 +64,7 @@ Task(
 **Context:**
 - Error logs: [if available]
 - Affected files: [from analysis]
-- Similar past issues: [from cipher search]
+- Similar past issues: [from playbook search]
 
 Output JSON with:
 - subtasks: array of {id, description, debug_type: 'investigation'|'fix'|'verification', acceptance_criteria}
@@ -259,11 +258,10 @@ User says: `/map-debug TypeError in authentication middleware`
 
 You should:
 1. Gather context (read error logs, find middleware file)
-2. Search cipher for similar authentication errors
-3. Task(subagent_type="task-decomposer") → get investigation + fix steps
-4. For investigation steps: Task(subagent_type="actor") to analyze
-5. For fix steps: actor → monitor → predictor → evaluator → apply
-6. Run tests, verify fix
-7. Done! Optionally run `/map-learn` to preserve debugging patterns
+2. Task(subagent_type="task-decomposer") → get investigation + fix steps
+3. For investigation steps: Task(subagent_type="actor") to analyze
+4. For fix steps: actor → monitor → predictor → evaluator → apply
+5. Run tests, verify fix
+6. Done! Optionally run `/map-learn` to preserve debugging patterns
 
 Begin debugging now.

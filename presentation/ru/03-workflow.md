@@ -54,7 +54,7 @@ MAP предоставляет **4 специализированных workflow
 - ✅ Верифицировать использование `mcp__mem0__map_tiered_search` в output
 - ✅ Позволить Reflector извлечь паттерны из agent outputs
 
-**Почему:** Шаблон Reflector содержит инструкции по поиску в cipher. При ручной работе `mcp__mem0__map_tiered_search` не вызывается → дублируется knowledge.
+**Почему:** Шаблон Reflector содержит инструкции по поиску существующих паттернов. При ручной работе `mcp__mem0__map_tiered_search` не вызывается → дублируется knowledge.
 
 ### Правило 2: Обязательный вызов Curator
 
@@ -69,9 +69,7 @@ MAP предоставляет **4 специализированных workflow
 - ✅ Вызвать `Task(subagent_type="curator", ...)`
 - ✅ Верифицировать использование `mcp__mem0__map_tiered_search` для дедупликации
 - ✅ Применить delta операции Curator (ADD/UPDATE/DEPRECATE)
-- ✅ Вызвать `cipher_extract_and_operate_memory` если есть `sync_to_cipher` записи
-
-**Почему:** Шаблон Curator содержит инструкции по проверке cipher на дубликаты ПЕРЕД добавлением bullets И по синхронизации high-quality bullets (helpful_count >= 5) обратно в cipher.
+**Почему:** Шаблон Curator содержит инструкции по проверке на дубликаты ПЕРЕД добавлением bullets.
 
 ### Правило 3: Верификация MCP Tool Usage
 
@@ -85,33 +83,16 @@ MAP предоставляет **4 специализированных workflow
 **Curator Output должен показывать:**
 
 - Reasoning о deduplication через `mcp__mem0__map_tiered_search`
-- Массив `sync_to_cipher` **только когда** bullets достигли helpful_count ≥ 5 (может отсутствовать или быть пустым)
-
 **Если отсутствует:** Агент пропустил обязательные MCP calls → исследовать причину (skip tools, mis-report, template updates).
 
-## Dual Memory System
+## Memory System
 
-MAP использует **ДВЕ системы хранения знаний**:
-
-### 1. Playbook (Проектная Memory)
+### Playbook (Проектная Memory)
 
 - **Локация:** `.claude/mem0 MCP`
 - **Назначение:** Структурированные, категоризованные паттерны для ЭТОГО проекта
 - **Формат:** Bullets с примерами кода, тегами, helpful/harmful counts
 - **Scope:** Один проект
-
-### 2. Cipher (Кросс-проектная Memory)
-
-- **Локация:** MCP tool (внешняя семантическая БД)
-- **Назначение:** Общее knowledge для ВСЕХ проектов
-- **Формат:** Semantic embeddings для similarity search
-- **Scope:** Все проекты, использующие cipher
-
-**Интеграция:**
-
-- Reflector ищет в cipher похожие паттерны ПЕРЕД анализом
-- Curator проверяет cipher на дубликаты ПЕРЕД добавлением bullets
-- Curator синхронизирует high-quality bullets (helpful_count >= 5) обратно в cipher
 
 ## Recitation Pattern — Context Engineering
 
@@ -186,28 +167,24 @@ Actor → Monitor (iteration 1)
 
 ## MCP Integration в Workflow
 
-MAP использует **6 core MCP tools** для расширения возможностей workflow:
+MAP использует **5 core MCP tools** для расширения возможностей workflow:
 
 1. **`mcp__mem0__map_tiered_search`** — поиск похожих паттернов в семантической базе
-2. **`cipher_extract_and_operate_memory`** — сохранение успешных паттернов
-3. **`sequential-thinking`** — сложные цепочки рассуждений
-4. **`context7 (resolve-library-id + get-library-docs)`** — актуальная документация библиотек
-5. **`deepwiki (read_wiki_structure + ask_question)`** — обучение на GitHub репозиториях
-6. **`claude-reviewer (request_review)`** — профессиональный code review
+2. **`sequential-thinking`** — сложные цепочки рассуждений
+3. **`context7 (resolve-library-id + get-library-docs)`** — актуальная документация библиотек
+4. **`deepwiki (read_wiki_structure + ask_question)`** — обучение на GitHub репозиториях
+5. **`claude-reviewer (request_review)`** — профессиональный code review
 
 ## Self-Check Verification
 
-Перед завершением любого MAP workflow subtask orchestrator **ОБЯЗАН** проверить 4 вопроса:
+Перед завершением любого MAP workflow subtask orchestrator **ОБЯЗАН** проверить 2 вопроса:
 
 1. ❓ Вызвал ли я `Task(subagent_type="reflector", ...)` или извлекал уроки сам?
 2. ❓ Вызвал ли я `Task(subagent_type="curator", ...)` или обновлял playbook сам?
-3. ❓ Показал ли Reflector output, что он искал в cipher?
-4. ❓ Показал ли Curator output операции `sync_to_cipher`?
 
 **Нарушения:**
 
 - Если "Сделал сам" на вопросы 1-2 → нарушение workflow, переделать subtask
-- Если "Нет" на вопросы 3-4 → агенты не следовали шаблонам, исследовать причину
 
 ## Workflow Logger — Observability
 

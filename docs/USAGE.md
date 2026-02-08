@@ -1190,7 +1190,6 @@ MAP Framework offers three workflow variants with different trade-offs between t
 | **Multi-Variant** | ⚠️ Conditional (Self-MoA) | ✅ **Always 3 variants** | ❌ Never |
 | **Synthesis Model** | Synthesizer (sonnet) | **debate-arbiter (opus)** | N/A |
 | **Playbook Updates** | Via `/map-learn` | Via `/map-learn` | ❌ None |
-| **Cipher Integration** | Via `/map-learn` | Via `/map-learn` | ❌ None |
 | **Best For** | **Most tasks** | **Reasoning transparency** | Throwaway only |
 | **Production Ready** | ✅ Yes | ✅ Yes (expensive) | ❌ NO |
 
@@ -1315,7 +1314,7 @@ MAP Framework offers three workflow variants with different trade-offs between t
 - No impact analysis → Breaking changes undetected
 - No learning → Playbook stays empty, same mistakes repeated
 - No quality scoring → Security/performance issues missed
-- No cipher integration → Knowledge lost forever
+- No knowledge integration → Knowledge lost forever
 
 **Example use cases (acceptable):**
 ```bash
@@ -1385,7 +1384,7 @@ MAP Framework offers three workflow variants with different trade-offs between t
 **What's Preserved:**
 - ✅ Full learning cycle (Reflector + Curator)
 - ✅ Playbook updates (batched but complete)
-- ✅ Cipher integration (high-quality patterns stored)
+- ✅ mem0 integration (high-quality patterns stored)
 - ✅ Essential quality gates (Monitor validation)
 - ✅ Impact analysis (when needed)
 
@@ -1741,7 +1740,6 @@ Skills follow the 500-line rule:
 **System architecture:**
 - `agent-architecture.md` - How 11 agents orchestrate
 - `playbook-system.md` - Knowledge storage, quality scoring
-- `cipher-integration.md` - Cross-project learning
 
 ### Creating Custom Skills
 

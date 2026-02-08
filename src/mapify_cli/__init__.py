@@ -83,14 +83,13 @@ ssl_context = create_ssl_context()
 # Constants
 MCP_SERVER_CHOICES = {
     "all": "All available MCP servers",
-    "essential": "Essential (cipher, claude-reviewer, sequential-thinking)",
+    "essential": "Essential (claude-reviewer, sequential-thinking)",
     "docs": "Documentation (context7, deepwiki)",
     "custom": "Select individually",
     "none": "Skip MCP setup",
 }
 
 INDIVIDUAL_MCP_SERVERS = {
-    "cipher": "Knowledge management system",
     "claude-reviewer": "Professional code review",
     "sequential-thinking": "Chain-of-thought reasoning",
     "context7": "Library documentation",
@@ -555,32 +554,26 @@ def create_task_decomposer_content(mcp_servers: List[str]) -> str:
     mcp_section = ""
     if any(
         s in mcp_servers
-        for s in ["cipher", "sequential-thinking", "deepwiki", "context7"]
+        for s in ["sequential-thinking", "deepwiki", "context7"]
     ):
         mcp_section = """
 ## MCP Integration
 
 **ALWAYS use these MCP tools:**
 """
-        if "cipher" in mcp_servers:
-            mcp_section += """
-1. **mcp__cipher__cipher_memory_search** - Search for similar features/patterns
-   - Query: "feature implementation [feature_name]"
-   - Query: "task decomposition [similar_goal]"
-"""
         if "sequential-thinking" in mcp_servers:
             mcp_section += """
-2. **mcp__sequential-thinking__sequentialthinking** - For complex planning
+1. **mcp__sequential-thinking__sequentialthinking** - For complex planning
    - Use when goal is ambiguous or has many dependencies
 """
         if "deepwiki" in mcp_servers:
             mcp_section += """
-3. **mcp__deepwiki__ask_question** - Get insights from GitHub repositories
+2. **mcp__deepwiki__ask_question** - Get insights from GitHub repositories
    - Ask: "How does [repo] implement [feature]?"
 """
         if "context7" in mcp_servers:
             mcp_section += """
-4. **mcp__context7__get-library-docs** - Get up-to-date library documentation
+3. **mcp__context7__get-library-docs** - Get up-to-date library documentation
    - First use resolve-library-id to find the library
 """
 
@@ -611,26 +604,20 @@ Return a valid JSON document with subtasks, dependencies, and acceptance criteri
 def create_actor_content(mcp_servers: List[str]) -> str:
     """Create actor agent content"""
     mcp_section = ""
-    if any(s in mcp_servers for s in ["cipher", "context7", "deepwiki"]):
+    if any(s in mcp_servers for s in ["context7", "deepwiki"]):
         mcp_section = """
 # MCP INTEGRATION
 
 **ALWAYS use these MCP tools:**
 """
-        if "cipher" in mcp_servers:
-            mcp_section += """
-1. **mcp__cipher__cipher_memory_search** - Search for code patterns
-   - Query: "implementation pattern [feature_type]"
-   - Store successful implementations after validation
-"""
         if "context7" in mcp_servers:
             mcp_section += """
-2. **mcp__context7__get-library-docs** - Get current library documentation
+1. **mcp__context7__get-library-docs** - Get current library documentation
    - Essential when using external libraries/frameworks
 """
         if "deepwiki" in mcp_servers:
             mcp_section += """
-3. **mcp__deepwiki__read_wiki_contents** - Study implementation patterns
+2. **mcp__deepwiki__read_wiki_contents** - Study implementation patterns
    - Learn from production code examples
 """
 
@@ -768,26 +755,20 @@ Return strictly valid JSON with validation results and specific issues.
 def create_predictor_content(mcp_servers: List[str]) -> str:
     """Create predictor agent content"""
     mcp_section = ""
-    if any(s in mcp_servers for s in ["cipher", "deepwiki", "context7"]):
+    if any(s in mcp_servers for s in ["deepwiki", "context7"]):
         mcp_section = """
 ## MCP Integration
 
 **ALWAYS use these MCP tools:**
 """
-        if "cipher" in mcp_servers:
-            mcp_section += """
-1. **mcp__cipher__cipher_memory_search** - Find similar impact patterns
-   - Query: "impact analysis [change_type]"
-   - Learn from past breaking changes
-"""
         if "deepwiki" in mcp_servers:
             mcp_section += """
-2. **mcp__deepwiki__ask_question** - Check how repos handle similar changes
+1. **mcp__deepwiki__ask_question** - Check how repos handle similar changes
    - Ask: "What breaks when changing [component]?"
 """
         if "context7" in mcp_servers:
             mcp_section += """
-3. **mcp__context7__get-library-docs** - Check library compatibility
+2. **mcp__context7__get-library-docs** - Check library compatibility
    - Verify API changes against current documentation
 """
 
@@ -846,16 +827,6 @@ Return JSON with scores, strengths, weaknesses, and recommendation (proceed|impr
 def create_reflector_content(mcp_servers: List[str]) -> str:
     """Create reflector agent content"""
     mcp_section = ""
-    if "cipher" in mcp_servers:
-        mcp_section = """
-# MCP INTEGRATION
-
-**ALWAYS use cipher for knowledge management:**
-
-1. **mcp__cipher__cipher_memory_search** - Check existing patterns
-   - Query: "lesson learned [topic]"
-   - Avoid duplicating existing knowledge
-"""
 
     return f"""---
 name: reflector
@@ -890,15 +861,6 @@ Return JSON with:
 def create_curator_content(mcp_servers: List[str]) -> str:
     """Create curator agent content"""
     mcp_section = ""
-    if "cipher" in mcp_servers:
-        mcp_section = """
-# MCP INTEGRATION
-
-**Use cipher for deduplication:**
-
-1. **mcp__cipher__cipher_memory_search** - Check for duplicate patterns
-   - Prevents adding redundant playbook entries
-"""
 
     return f"""---
 name: curator
@@ -940,27 +902,21 @@ Return JSON with:
 def create_documentation_reviewer_content(mcp_servers: List[str]) -> str:
     """Create documentation-reviewer agent content"""
     mcp_section = ""
-    if any(s in mcp_servers for s in ["cipher", "context7", "deepwiki"]):
+    if any(s in mcp_servers for s in ["context7", "deepwiki"]):
         mcp_section = """
 # MCP INTEGRATION
 
 **ALWAYS use these tools for documentation review:**
 """
-        if "cipher" in mcp_servers:
-            mcp_section += """
-1. **mcp__cipher__cipher_memory_search** - Check for known patterns
-   - Query: "external dependency detection [technology]"
-   - Query: "CRD installation pattern [project]"
-"""
         if "context7" in mcp_servers:
             mcp_section += """
-2. **mcp__context7__get-library-docs** - Verify library requirements
+1. **mcp__context7__get-library-docs** - Verify library requirements
    - Check official docs for installation requirements
    - Validate version compatibility
 """
         if "deepwiki" in mcp_servers:
             mcp_section += """
-3. **mcp__deepwiki__ask_question** - Compare with similar projects
+2. **mcp__deepwiki__ask_question** - Compare with similar projects
    - Ask: "How do other projects handle [integration]?"
    - Learn from successful implementations
 """
@@ -1450,15 +1406,6 @@ def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
                 "hypothesis_verification": True,
             },
         },
-        "cipher": {
-            "enabled": True,
-            "description": "Knowledge management system",
-            "config": {
-                "auto_store": True,
-                "retrieval_limit": 5,
-                "conflict_resolution": "manual",
-            },
-        },
         "context7": {
             "enabled": True,
             "description": "Up-to-date library documentation",
@@ -1477,10 +1424,6 @@ def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
             config["mcp_servers"][server] = server_configs[server]
 
     # Update agent mappings based on selected servers
-    if "cipher" in mcp_servers:
-        for agent in config["agent_mcp_mappings"]:
-            config["agent_mcp_mappings"][agent].append("cipher")
-
     if "sequential-thinking" in mcp_servers:
         for agent in [
             "task-decomposer",
@@ -1646,7 +1589,7 @@ def create_or_merge_project_mcp_json(
 
     Args:
         project_path: Project root directory
-        mcp_servers: List of MCP server names to configure (e.g., ["cipher", "context7"])
+        mcp_servers: List of MCP server names to configure (e.g., ["context7", "deepwiki"])
 
     Behavior:
         - If mcp_servers is empty: No file created/modified (early return)
@@ -2001,7 +1944,7 @@ def init(
     mcp: str = typer.Option(
         "all",
         "--mcp",
-        help="MCP server installation (default: all). Options: all, essential, docs, none, or comma-separated list (e.g. cipher,context7)",
+        help="MCP server installation (default: all). Options: all, essential, docs, none, or comma-separated list (e.g. context7,deepwiki)",
     ),
     no_git: bool = typer.Option(
         False, "--no-git", help="Skip git repository initialization"
@@ -2029,7 +1972,7 @@ def init(
         mapify init my-project              # Installs all MCP servers
         mapify init my-project --mcp none   # Skip MCP installation
         mapify init my-project --mcp essential
-        mapify init my-project --mcp "cipher,context7"
+        mapify init my-project --mcp "context7,deepwiki"
         mapify init .
         mapify init . --force  # Force init in non-empty current directory
         mapify init --debug  # Enable workflow logging
@@ -2127,7 +2070,7 @@ def init(
     if mcp == "all":
         selected_mcp_servers = list(INDIVIDUAL_MCP_SERVERS.keys())
     elif mcp == "essential":
-        selected_mcp_servers = ["cipher", "claude-reviewer", "sequential-thinking"]
+        selected_mcp_servers = ["claude-reviewer", "sequential-thinking"]
     elif mcp == "docs":
         selected_mcp_servers = ["context7", "deepwiki"]
     elif mcp == "none":
