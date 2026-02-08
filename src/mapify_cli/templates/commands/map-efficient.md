@@ -77,10 +77,19 @@ Hard requirements:
 - Use `blueprint.subtasks[].dependencies` (array of subtask IDs)
 - Include `complexity_score` (1-10) and `risk_level` (low|medium|high)
 - Include `security_critical` (true for auth/crypto/validation)
-- Include `test_strategy` with unit/integration/e2e keys"""
+- Include `test_strategy` with unit/integration/e2e keys
+- Include `aag_contract` (one-line pseudocode: Actor -> Action -> Goal)
+
+AAG Contract format (REQUIRED per subtask):
+  "aag_contract": "AuthService -> validate(token) -> returns 401|200 with user_id"
+  "aag_contract": "ProjectModel -> add_field(archived_at: DateTime?) -> migration passes"
+  "aag_contract": "RateLimiter -> decorate(endpoint, 100/min) -> returns 429 when exceeded"
+
+Purpose: Actor compiles this line into code. Monitor verifies against it.
+This eliminates reasoning overhead — the contract IS the specification."""
 )
 
-# After decomposer returns: extract subtask sequence, save to state
+# After decomposer returns: extract subtask sequence + aag_contracts, save to state
 # Update state: python3 .map/scripts/map_orchestrator.py validate_step "1.0"
 ```
 
@@ -176,10 +185,12 @@ EOF
 # Load current subtask from state
 subtask = load_current_subtask()
 
-# Build XML packet
+# Build versioned, scoped XML packet with semantic brackets
+# Format: <MAP_Packet subtask="ST-XXX" v="1.0" risk="low|medium|high">
 xml_packet = create_xml_packet(subtask)
 
 # Save packet to .map/<branch>/current_packet.xml for agent access
+# Packet boundaries are unambiguous — agents parse by tag, not by heuristics
 ```
 
 ### Phase: MEM0_SEARCH (2.1)
@@ -208,7 +219,13 @@ if requires_research(subtask):
 File patterns: [relevant globs]
 Intent: locate
 Max tokens: 1500
-Findings file: .map/findings_{branch}.md"""
+Findings file: .map/findings_{branch}.md
+
+DISTILLATION RULE: Write ONLY actionable findings to the file:
+- file paths + line ranges + function signatures
+- NO raw search output, NO full file contents
+- Target: <1500 tokens in findings file
+This file is the SOLE research artifact passed to Actor and future steps."""
     )
 ```
 
@@ -218,15 +235,27 @@ Findings file: .map/findings_{branch}.md"""
 Task(
   subagent_type="actor",
   description="Implement subtask [ID]",
-  prompt=f"""Implement and APPLY CODE with Edit/Write tools:
-**AI Packet (XML):** [paste from .map/<branch>/current_packet.xml]
-**Risk Level:** [risk_level]
-**Playbook Context:** [top context_patterns from mem0 + relevance_score]
+  prompt=f"""Implement and APPLY CODE with Edit/Write tools.
 
-⚠️  REQUIRED: Use Edit/Write tools to apply code directly.
-Monitor will validate the written code by running tests.
+<MAP_Packet subtask="[ID]" v="1.0" risk="[risk_level]">
+[paste from .map/<branch>/current_packet.xml]
+</MAP_Packet>
 
-Follow Actor agent protocol output format."""
+<MAP_Context source="mem0" top_k="3">
+[top context_patterns from mem0 + relevance_score]
+</MAP_Context>
+
+<MAP_Contract>
+[AAG contract from decomposition: Actor -> Action -> Goal]
+</MAP_Contract>
+
+Protocol (execute in order):
+1. Parse MAP_Packet — extract scope, affected_files, validation_criteria
+2. Parse MAP_Contract — this is your compilation target
+3. Read affected files to understand current state
+4. Implement: translate MAP_Contract into code (no reasoning about WHAT, only HOW)
+5. Apply code with Edit/Write tools
+6. Output: approach + files_changed + trade-offs"""
 )
 ```
 
@@ -236,23 +265,32 @@ Follow Actor agent protocol output format."""
 Task(
   subagent_type="monitor",
   description="Validate written code",
-  prompt=f"""Review WRITTEN CODE against requirements:
-**AI Packet (XML):** [paste from .map/<branch>/current_packet.xml]
-**Written Files:** [list files modified by Actor]
-**Specification Contract:** [SpecificationContract JSON or null]
+  prompt=f"""Validate WRITTEN CODE (Actor already applied with Edit/Write).
 
-⚠️  IMPORTANT: Actor already applied code with Edit/Write.
-Validate the ACTUAL written code, not proposals.
+<MAP_Packet subtask="[ID]" v="1.0" risk="[risk_level]">
+[paste from .map/<branch>/current_packet.xml]
+</MAP_Packet>
 
-Validation steps:
-1. Read modified files to verify correctness
-2. Run tests (pytest/npm test/go test/cargo test)
-3. Check security, standards, error handling
-4. If issues found: provide specific feedback for Actor to fix
+<MAP_Written files="[count]">
+[list files modified by Actor]
+</MAP_Written>
 
-Return ONLY valid JSON following MonitorReviewOutput schema.
-If validation_criteria present: include contract_compliance + contract_compliant."""
+<MAP_Contract>
+[AAG contract from decomposition: Actor -> Action -> Goal]
+</MAP_Contract>
+
+Protocol (execute in order):
+1. Read each file in MAP_Written — verify code exists and compiles/parses
+2. Check MAP_Contract compliance — does implementation satisfy the AAG assertion?
+3. Run tests: pytest/npm test/go test/cargo test
+4. Check inline contracts: preconditions, postconditions, invariants from packet
+5. Verify: no silent failures, no bare except, no hardcoded secrets
+6. Output: ONLY valid JSON per MonitorReviewOutput schema
+   - If MAP_Contract violated: valid=false + specific contract breach
+   - If tests fail: valid=false + failure output
+   - If all pass: valid=true + contract_compliant=true"""
 )
+```
 
 # After Monitor returns:
 if monitor_output["valid"] == false:
@@ -274,7 +312,11 @@ if requires_predictor(subtask):
       subagent_type="predictor",
       description="Analyze impact",
       prompt=f"""Analyze impact using Predictor schema.
-**AI Packet (XML):** [paste]
+
+<MAP_Packet subtask="[ID]" v="1.0" risk="[risk_level]">
+[paste from .map/<branch>/current_packet.xml]
+</MAP_Packet>
+
 Required inputs: change_description, files_changed, diff_content
 Optional: analyzer_output, user_context"""
     )
@@ -379,22 +421,32 @@ if [ "$PHASE" = "VERIFY_ADHERENCE" ]; then
 fi
 ```
 
-## Step 2.6: Continue or Complete
+## Step 2.6: Continue or Complete (Context Distillation)
 
 ```bash
 # Get next step
 NEXT_STEP=$(python3 .map/scripts/map_orchestrator.py get_next_step)
 IS_COMPLETE=$(echo "$NEXT_STEP" | jq -r '.is_complete')
 
- if [ "$IS_COMPLETE" = "true" ]; then
-   echo "All subtasks complete. Proceeding to final verification."
-   # Go to Step 3
- else
-  # Recurse: Launch new Task(subagent_type="map-efficient-step") for next step
-  # This provides fresh context and prevents token bloat
+if [ "$IS_COMPLETE" = "true" ]; then
+  echo "All subtasks complete. Proceeding to final verification."
+  # Go to Step 3
+else
+  # CONTEXT DISTILLATION before recurse:
+  # Do NOT pass full RESEARCH logs, mem0 results, or Actor/Monitor transcripts.
+  # Pass ONLY the distilled state to keep new context in SFT comfort zone (~4k tokens):
+  #
+  # 1. findings.md       — distilled research output (not raw search logs)
+  # 2. workflow_state.json — current progress + completed subtask IDs
+  # 3. task_plan.md       — plan with updated statuses
+  # 4. aag_contract       — one-line contract for NEXT subtask only
+  #
+  # The fresh invocation reads these files — it never inherits conversation history.
+
+  # Recurse: Launch new context with minimal state transfer
   echo "Next step: $(echo "$NEXT_STEP" | jq -r '.step_id')"
-  # Continue with Step 1 (fresh invocation)
- fi
+  # Continue with Step 1 (fresh invocation via map-efficient-step)
+fi
 ```
 
 In `step_by_step` mode, the state machine inserts a pause step (2.11) between subtasks.
