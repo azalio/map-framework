@@ -34,7 +34,6 @@ machine-readable blueprint for the Actor/Monitor pipeline.
 │                                                                     │
 │ 3. GATHER CONTEXT (if complexity ≥ 3)                               │
 │    └─ ALWAYS: mcp__mem0__map_tiered_search (historical decompositions)      │
-│    └─ IF similar found: cipher_search_reasoning_patterns            │
 │    └─ IF ambiguous: sequentialthinking                              │
 │    └─ IF external lib: get-library-docs                             │
 │    └─ Handle fallbacks if tools fail/return empty                   │
@@ -83,7 +82,6 @@ machine-readable blueprint for the Actor/Monitor pipeline.
 | Condition | Tool | Query Pattern |
 |-----------|------|---------------|
 | **ALWAYS** (complexity ≥ 3) | mcp__mem0__map_tiered_search | `"feature implementation [type]"`, `"task decomposition [domain]"` |
-| Similar features found | cipher_search_reasoning_patterns | `"successful task decomposition [type]"`, `"dependency reasoning [domain]"` |
 | Ambiguous/complex goal | sequentialthinking | Iterative refinement of scope and dependencies |
 | External library | get-library-docs | Setup/quickstart guides for initialization order |
 | Unfamiliar domain | deepwiki | `"How does [repo] structure [feature]?"` |
@@ -473,7 +471,6 @@ When invoked with `mode: "re_decomposition"` from the orchestrator, you receive 
 
 **Analysis Completeness**:
 - [ ] Ran mcp__mem0__map_tiered_search for similar features
-- [ ] Ran cipher_search_reasoning_patterns to understand decomposition thinking
 - [ ] Used sequential-thinking for complex/ambiguous goals
 - [ ] Checked library docs for initialization requirements
 - [ ] Identified all risks (not empty for medium/high complexity)

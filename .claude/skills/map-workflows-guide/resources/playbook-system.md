@@ -68,7 +68,7 @@ High-level design decisions
 
 ### 6. PERFORMANCE_OPTIMIZATIONS
 Performance improvements and profiling
-- Example: "Batch cipher search queries to avoid N+1 problem"
+- Example: "Batch search queries to avoid N+1 problem"
 - Example: "FTS5 search 10x faster than grep for large playbooks"
 
 ---
@@ -87,7 +87,7 @@ quality_score = helpful_count - harmful_count
 ```
 
 **Usage:**
-- Bullets with `quality_score >= 5` are high-quality → synced to cipher
+- Bullets with `quality_score >= 5` are high-quality
 - Bullets with `quality_score < 0` are deprecated → soft-deleted
 
 ---
@@ -240,7 +240,7 @@ Actor marks bullets as helpful
   ↓
 Curator increments helpful_count
   ↓
-If helpful_count reaches 5 → sync to cipher
+If helpful_count reaches 5 → promote to higher tier
   ↓
 Pattern becomes cross-project knowledge
 ```
@@ -298,5 +298,4 @@ Pattern becomes cross-project knowledge
 
 **See also:**
 - [Agent Architecture](agent-architecture.md) - How Reflector/Curator work
-- [Cipher Integration](cipher-integration.md) - Cross-project knowledge sync
 - [map-efficient Deep Dive](map-efficient-deep-dive.md) - Batched Curator updates

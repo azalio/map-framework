@@ -237,7 +237,6 @@ class TemplateLinter:
         """Check MCP tool descriptions for consistency"""
         # Common MCP tools that should be consistently described
         mcp_tools = {
-            "cipher_memory_search": ["search", "pattern", "knowledge"],
             "context7": ["library", "documentation", "resolve-library-id"],
             "deepwiki": ["wiki", "repository", "production"],
         }

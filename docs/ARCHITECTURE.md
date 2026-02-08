@@ -413,7 +413,7 @@ print("Consider running /map-learn to save patterns")
 
 **Architectural Consequences:**
 - Playbook remains static (no continuous improvement)
-- Cipher knowledge base never grows
+- Knowledge base never grows
 - Breaking changes undetected (no Predictor)
 - Security/performance issues may slip through (no Evaluator)
 - Same mistakes repeated (no Reflector)
@@ -1506,7 +1506,7 @@ The Knowledge Graph (KG) layer transforms implicit knowledge into an explicit, q
 
 ### Memory System (v4.0)
 
-> **Note:** As of v4.0, the dual memory system (playbook.db + cipher) has been replaced with mem0 MCP. This section describes the legacy architecture for reference.
+> **Note:** As of v4.0, the legacy memory system (playbook.db) has been replaced with mem0 MCP. This section describes the legacy architecture for reference.
 
 MAP Framework now operates with **mem0 MCP tiered storage**:
 
@@ -2060,7 +2060,7 @@ Agent template changes are tracked in the project's main CHANGELOG.md.
 
 ### Breaking Changes
 - Actor: Changed output format to include `used_patterns` array
-- All agents: Migrated from cipher to mem0 MCP tools
+- All agents: Migrated to mem0 MCP tools
 
 ### Added
 - Actor: MCP integration section with mem0 tool usage patterns

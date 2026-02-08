@@ -1,5 +1,5 @@
 {
-  "reasoning": "Curator integrated 11 high-value patterns from Reflector's Reddit post implementation insights. Cipher search revealed existing related patterns (3-layer CLI testing, SQLite migration, quality gates) which were merged or linked via related_to. Novel patterns were created with high specificity and code examples: Bash/Python hook architecture (impl-0050), stderr/stdout stream discipline (cli-0010), event-driven documentation (arch-0021), cipher search pre-design pattern (tool-0008), Monitor integration validation value (err-0002), incremental reflection for multi-subtask (arch-0022), manual testing checklist (test-0017). All patterns grounded in specific technologies (Python, Bash, SQLite, Click/Typer), include code examples showing both incorrect and correct approaches, and reference existing playbook bullets via related_to for cross-linking. Deduplication strategy: 85%+ similarity with cipher patterns triggered UPDATE with helpful_count increment rather than ADD, preserving context budget.",
+  "reasoning": "Curator integrated 10 high-value patterns from Reflector's Reddit post implementation insights. Search revealed existing related patterns (3-layer CLI testing, SQLite migration, quality gates) which were merged or linked via related_to. Novel patterns were created with high specificity and code examples: Bash/Python hook architecture (impl-0050), stderr/stdout stream discipline (cli-0010), event-driven documentation (arch-0021), Monitor integration validation value (err-0002), incremental reflection for multi-subtask (arch-0022), manual testing checklist (test-0017). All patterns grounded in specific technologies (Python, Bash, SQLite, Click/Typer), include code examples showing both incorrect and correct approaches, and reference existing playbook bullets via related_to for cross-linking. Deduplication strategy: 85%+ similarity with existing patterns triggered UPDATE with helpful_count increment rather than ADD, preserving context budget.",
 
   "operations": [
     {
@@ -59,17 +59,6 @@
     },
     {
       "type": "ADD",
-      "section": "TOOL_USAGE",
-      "id": "tool-0008",
-      "content": "Cipher Search Before Design: When implementing new features, search cipher memory FIRST (before writing specifications) to discover existing patterns and proven solutions across projects. Prevents: reimplementing solved problems, introducing duplicate knowledge, building on flawed approaches already tried. Query cipher with feature keywords and pain points (e.g., 'SQLite schema migration', 'authentication pattern', 'error handling'). If existing pattern found with high quality (helpful_count >= 5), adopt it with local customization rather than designing new approach. If pattern not found or existing solution incomplete, use that gap as specification requirement. Pattern reduces design time by 30-50% and prevents solution thrashing.",
-      "code_example": "```python\n# ✅ CIPHER-FIRST DESIGN\nfrom mapify.cipher import CipherMemory\n\ndef design_feature(feature_name: str):\n    \"\"\"Search cipher before designing\"\"\"\n    cipher = CipherMemory()\n    \n    # Step 1: Search cipher for existing patterns\n    results = cipher.search(\n        f'{feature_name} pattern',\n        top_k=10,\n        quality_threshold=0.7\n    )\n    \n    if results:\n        best = results[0]\n        print(f'Found existing pattern: {best.id}')\n        print(f'Quality score: {best.helpful_count}')\n        print(f'Content: {best.text[:200]}...')\n        \n        # Use existing pattern as foundation\n        return {\n            'base_pattern': best.id,\n            'customization_needed': [\n                'Adapt to local error handling',\n                'Integrate with existing CLI',\n            ]\n        }\n    else:\n        # Gap in knowledge - this becomes design requirement\n        print(f'No existing pattern for {feature_name}')\n        return {\n            'new_pattern': True,\n            'gap_analysis': 'Document this pattern for cross-project reuse'\n        }\n\n# ❌ DESIGN-FIRST (no cipher check)\ndef design_without_cipher(feature_name: str):\n    # Immediately write spec without checking existing solutions\n    spec = write_specification()\n    implement(spec)\n    # Later discover: cipher had better solution, now have duplicate\n    # Or: approach in cipher proved problematic, we hit same issue\n```",
-      "related_to": ["tool-0001", "arch-0001"],
-      "tags": ["cipher", "knowledge-reuse", "design", "deduplication"],
-      "helpful_count": 0,
-      "harmful_count": 0
-    },
-    {
-      "type": "ADD",
       "section": "ERROR_PATTERNS",
       "id": "err-0002",
       "content": "Monitor Integration Validation Value: Monitor's role is not just to reject invalid work, but to catch systematic gaps in Actor's thinking. When Monitor finds issue (missing error handling, incomplete specification, unverified assumption), the issue reveals a pattern flaw, not a careless mistake. Pattern: invest time understanding WHY Monitor rejected work (what cognitive gap caused the mistake?). After fixing rejection, update Agent templates or playbook to prevent same gap recurring. Example: Specification missing error handling thresholds twice → add 'error handling requirements' mandatory checklist item to Monitor template. This shifts Monitor from reactive gatekeeper to proactive pattern learner.",
@@ -107,10 +96,10 @@
   ],
 
   "deduplication_check": {
-    "checked_sections": ["ARCHITECTURE_PATTERNS", "CLI_TOOL_PATTERNS", "TESTING_STRATEGIES", "TOOL_USAGE", "ERROR_PATTERNS", "IMPLEMENTATION_PATTERNS"],
+    "checked_sections": ["ARCHITECTURE_PATTERNS", "CLI_TOOL_PATTERNS", "TESTING_STRATEGIES", "ERROR_PATTERNS", "IMPLEMENTATION_PATTERNS"],
     "similar_bullets_found": [
-      "test-0016 (3-layer CLI testing - exists in cipher)",
-      "arch-0020 (SQLite migration - exists in cipher)",
+      "test-0016 (3-layer CLI testing - exists in knowledge base)",
+      "arch-0020 (SQLite migration - exists in knowledge base)",
       "arch-0001 (workflow context - already in playbook)"
     ],
     "similarity_scores": {
@@ -123,40 +112,18 @@
       "created_impl-0050_bash_python_hook_architecture_novel_pattern",
       "created_cli-0010_stderr_stdout_stream_discipline_novel_pattern",
       "created_arch-0021_event_driven_documentation_novel_pattern",
-      "created_tool-0008_cipher_search_before_design_novel_pattern",
       "created_err-0002_monitor_integration_validation_value_novel_pattern",
       "created_arch-0022_incremental_reflection_multi_subtask_novel_pattern",
       "created_test-0017_manual_testing_checklist_novel_pattern",
       "created_test-0018_batch_test_development_novel_pattern",
       "incremented_helpful_count_test-0016_and_arch-0001_due_to_validation_in_workflow"
     ],
-    "reasoning": "Cipher search found 3 related patterns (3-layer testing similarity 0.65, SQLite migration 0.71, workflow context 0.58). All scores below merge threshold (0.85), so created new bullets instead. New bullets are high-specificity (name functions, parameters, consequences), include 5+ line code examples showing incorrect + correct, and grounded in Python/Bash. Related_to links enable cross-referencing between new and existing bullets. Two existing bullets (test-0016, arch-0001) incremented for helpful_count based on validation in Reddit implementation."
+    "reasoning": "Search found 3 related patterns (3-layer testing similarity 0.65, SQLite migration 0.71, workflow context 0.58). All scores below merge threshold (0.85), so created new bullets instead. New bullets are high-specificity (name functions, parameters, consequences), include 5+ line code examples showing incorrect + correct, and grounded in Python/Bash. Related_to links enable cross-referencing between new and existing bullets. Two existing bullets (test-0016, arch-0001) incremented for helpful_count based on validation in Reddit implementation."
   },
 
-  "sync_to_cipher": [
-    {
-      "bullet_id": "impl-0050",
-      "current_helpful_count": 1,
-      "reason": "High-value reusable pattern for decoupling shell and Python in CLI tools. Generalizable across projects using git hooks, pre-commit handlers, CI integration points. Will reach threshold after 4 more uses.",
-      "sync_priority": "medium"
-    },
-    {
-      "bullet_id": "test-0016",
-      "current_helpful_count": 1,
-      "reason": "Already synced to cipher previously (confidence 0.85). Helpful_count incremented to 1. Re-verified quality via Reddit post implementation - 3-layer testing caught integration gaps. Monitor as pattern learner.",
-      "sync_priority": "high"
-    },
-    {
-      "bullet_id": "arch-0001",
-      "current_helpful_count": 1,
-      "reason": "Workflow-scoped learning context pattern validated by incremental reflection (arch-0022) in multi-subtask workflow. Demonstrated value: later subtasks benefit from earlier reflections.",
-      "sync_priority": "medium"
-    }
-  ],
-
   "quality_report": {
-    "operations_proposed": 11,
-    "operations_approved": 11,
+    "operations_proposed": 10,
+    "operations_approved": 10,
     "operations_rejected": 0,
     "rejection_reasons": [],
     "average_content_length": 248,
@@ -171,11 +138,10 @@
       "CLI_TOOL_PATTERNS (cli-0010)",
       "TESTING_STRATEGIES (test-0017, test-0018)",
       "ARCHITECTURE_PATTERNS (arch-0021, arch-0022)",
-      "TOOL_USAGE (tool-0008)",
       "ERROR_PATTERNS (err-0002)",
       "UPDATE: test-0016, arch-0001"
     ],
     "deduplication_effectiveness": "100% (0 duplicates created, 3 related bullets linked)",
-    "cipher_integration": "Identified 3 existing cipher patterns, chose CREATE_NEW over MERGE due to specificity differences. Planned 3 bullets for sync (test-0016, impl-0050, arch-0001) at next helpful_count threshold."
+    "knowledge_integration": "Identified 3 existing related patterns, chose CREATE_NEW over MERGE due to specificity differences."
   }
 }

@@ -55,7 +55,6 @@ MAP: [Shows decision tree and comparison matrix]
 - `map-refactor-deep-dive.md` - Dependency analysis
 - `agent-architecture.md` - How 8 agents orchestrate
 - `playbook-system.md` - Knowledge storage and search
-- `cipher-integration.md` - Cross-project learning
 
 ---
 
@@ -126,7 +125,6 @@ Skills work seamlessly with the prompt improvement system:
         ├── map-refactor-deep-dive.md
         ├── agent-architecture.md
         ├── playbook-system.md
-        └── cipher-integration.md
 ```
 
 ---

@@ -154,7 +154,7 @@ mapify init . --force
 mapify init my-project --no-git
 
 # Enable specific MCP servers
-mapify init . --mcp cipher,context7
+mapify init . --mcp context7,deepwiki
 ```
 
 ---

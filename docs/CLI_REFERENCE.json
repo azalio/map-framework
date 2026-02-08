@@ -8,7 +8,7 @@
       "description": "Manage and search playbook patterns",
       "subcommands": {
         "query": {
-          "description": "Query playbook using FTS5 full-text search with optional cipher integration",
+          "description": "Query playbook using FTS5 full-text search",
           "usage": "mapify playbook query [QUERY_TEXT] [OPTIONS]",
           "parameters": {
             "query_text": {
@@ -36,8 +36,8 @@
               "required": false,
               "flag": "--mode",
               "default": "local",
-              "enum": ["local", "cipher", "hybrid"],
-              "description": "Search mode: local (playbook only), cipher (cross-project), or hybrid (both)"
+              "enum": ["local"],
+              "description": "Search mode: local (playbook only)"
             },
             "format": {
               "type": "string",
@@ -59,10 +59,6 @@
             {
               "command": "mapify playbook query \"JWT authentication\" --limit 5",
               "description": "Basic query for JWT patterns"
-            },
-            {
-              "command": "mapify playbook query \"error handling\" --mode hybrid --limit 10",
-              "description": "Hybrid search (playbook + cipher)"
             },
             {
               "command": "mapify playbook query \"API design\" --section ARCHITECTURE_PATTERNS",
@@ -453,9 +449,7 @@
       "recommendation": "Use 'query' for most cases, 'search' for semantic similarity"
     },
     "playbook_modes": {
-      "local": "Search only project playbook (fast)",
-      "cipher": "Search only cross-project cipher memory (requires MCP)",
-      "hybrid": "Search both playbook and cipher (comprehensive)"
+      "local": "Search only project playbook (fast)"
     },
     "stdin_support": {
       "description": "Commands that accept stdin input",
@@ -589,22 +583,14 @@
       "reflector_agent": {
         "role": "Searches for existing patterns before extracting new ones",
         "workflow": [
-          "1. Search cipher for similar patterns",
+          "1. Search mem0 for similar patterns",
           "2. Search local playbook",
           "3. Extract only novel patterns"
         ],
         "uses_commands": [
-          "mapify playbook query \"...\" --mode hybrid"
+          "mapify playbook query \"...\""
         ]
       }
-    },
-    "cipher_mcp": {
-      "description": "Integration with cipher MCP server for cross-project memory",
-      "commands_using_cipher": [
-        "mapify playbook query --mode cipher",
-        "mapify playbook query --mode hybrid"
-      ],
-      "requirement": "Cipher MCP server must be configured in Claude Desktop config"
     }
   },
   "metadata": {

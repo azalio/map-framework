@@ -5,21 +5,6 @@
   "_warning": "Project-specific .mcp.json overrides global ~/.claude.json settings. Only use if you need project-specific MCP configuration.",
 
   "mcpServers": {
-    "cipher": {
-      "_comment": "Byterover Cipher - Memory-powered AI agent framework with dual memory layer",
-      "_install": "npm install -g @byterover/cipher",
-      "_required_for": "ACE learning system, knowledge management, reasoning memory",
-      "_docs": "https://docs.byterover.dev/cipher/overview",
-      "type": "stdio",
-      "command": "cipher",
-      "args": ["--mode", "mcp"],
-      "env": {
-        "MCP_SERVER_MODE": "aggregator",
-        "OPENAI_API_KEY": "${OPENAI_API_KEY}",
-        "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY}"
-      }
-    },
-
     "claude-reviewer": {
       "_comment": "Code review MCP server - provides professional code review with security analysis",
       "_note": "This example uses a community server. You may need to adjust the command for your setup.",
@@ -72,7 +57,6 @@
     "global_vs_local": "Most users should configure MCP servers in ~/.claude.json globally. Only use project-specific .mcp.json if you need different configurations per project.",
     "environment_variables": "Environment variables like ${OPENAI_API_KEY} are expanded from your shell environment or .env file.",
     "required_servers": [
-      "cipher - Essential for MAP ACE learning system",
       "claude-reviewer - Essential for code review features",
       "sequential-thinking - Essential for complex reasoning"
     ],
@@ -81,7 +65,6 @@
       "deepwiki - Recommended for GitHub repository analysis"
     ],
     "alternative_installations": {
-      "cipher": "Can also use Docker or build from source - see https://github.com/campfirein/cipher",
       "deepwiki": "Alternative transport: https://mcp.deepwiki.com/mcp (Streamable HTTP)"
     }
   }

@@ -54,7 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [3.0.0] - 2026-01-16
 
 ### Changed (BREAKING)
-- **Memory layer migration**: Migrate from `playbook.db`/cipher to mem0 MCP for all pattern storage. This is a breaking change that requires mem0 MCP server configuration.
+- **Memory layer migration**: Migrate from `playbook.db` to mem0 MCP for all pattern storage. This is a breaking change that requires mem0 MCP server configuration.
 
 ### Added
 - P0 foundation implementation: security hooks, permissions system, workflow recovery
@@ -69,7 +69,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Code quality: Black formatting, ruff linting, mypy type errors
 
 ### Documentation
-- Complete migration of playbook.db/cipher references to mem0 MCP across all docs and templates
+- Complete migration of playbook.db references to mem0 MCP across all docs and templates
 - Comprehensive documentation update to v2.3.0 standards
 - README optimization (418→93 lines) for improved conversion
 
@@ -166,7 +166,7 @@ For existing projects with hooks installed:
 - ✅ All MAP workflows (`/map-efficient`, `/map-debug`, `/map-fast`, `/map-learn`, `/map-release`, `/map-review`)
 - ✅ Agent orchestration via Task tool
 - ✅ Pattern management via mem0 MCP tools (`mcp__mem0__map_tiered_search`, `mcp__mem0__map_add_pattern`, etc.)
-- ✅ MCP server integration (cipher, context7, deepwiki, etc.)
+- ✅ MCP server integration (context7, deepwiki, etc.)
 
 **What no longer works:**
 - ❌ `mapify init --with-hooks` / `--no-hooks` options (removed from CLI)
@@ -187,7 +187,7 @@ rm -rf .claude/hooks/
 
 ### Added
 - **Optional Learning Command**: Added `/map-learn` command for optional post-workflow learning. Reflector and Curator agents are now invoked on-demand rather than automatically in workflows (cdc7e4e)
-- **Auto-Approval Permissions**: `mapify init` now configures auto-approval rules for common readonly operations (cipher memory search, tracker queries, sequential-thinking) to reduce permission prompts (18f9532)
+- **Auto-Approval Permissions**: `mapify init` now configures auto-approval rules for common readonly operations (tracker queries, sequential-thinking) to reduce permission prompts (18f9532)
 
 ### Changed
 - **Workflow Simplification**: Removed unused workflow commands (`/map-feature`, `/map-refactor`) to reduce maintenance burden. Use `/map-efficient` for feature work (cdc7e4e)
@@ -255,7 +255,7 @@ rm -rf .claude/hooks/
 
 ### Added
 - **Non-Interactive Init**: `mapify init` now defaults to non-interactive mode, installing all MCP servers without prompts for better CI/CD compatibility (1ad6dd6)
-- **Agent MCP Integration**: Integrated 18 Cipher MCP tools across all 8 MAP agents (task-decomposer, actor, monitor, predictor, evaluator, reflector, curator, documentation-reviewer) for enhanced knowledge management and reasoning capabilities (aaded8a)
+- **Agent MCP Integration**: Integrated MCP tools across all 8 MAP agents (task-decomposer, actor, monitor, predictor, evaluator, reflector, curator, documentation-reviewer) for enhanced knowledge management and reasoning capabilities (aaded8a)
 - **Release Validation**: Added CHANGELOG completeness validation to Gate 12 in release workflow, preventing releases with incomplete documentation (6541511)
 
 ### Changed
@@ -305,13 +305,6 @@ rm -rf .claude/hooks/
   - Added E2E tests for CLI command correctness validation
   - Updated documentation with CLI best practices
 
-- **Cipher Infrastructure Enhancements** (fd505ce, 30b0947, c7a3fa4, 59cbe7f)
-  - Added Neo4j to Cipher Docker Compose infrastructure for Knowledge Graph support
-  - Comprehensive Cipher + Qdrant + PostgreSQL setup documentation
-  - Knowledge Graph configuration documentation
-  - Refactored Cipher setup docs into modular quick-start guides (condensed from 76KB to ~15KB)
-  - Added infrastructure examples with docker-compose.yml and .env.example
-
 - **Claude Code Hooks Integration** (1ffedbc, d27bfb9, ba43d1b)
   - Integrated claude-code-prompt-improver with sequential hooks
   - Use CLAUDE_PROJECT_DIR for absolute hook paths
@@ -338,7 +331,7 @@ rm -rf .claude/hooks/
   - Restored SessionStart hook functionality
 
 - **Documentation Corrections** (d998100, cc572b0, 62f4626, 3b8b492, b62bea7, 5e5ee62)
-  - Fixed Claude Desktop → Claude Code references in Cipher setup
+  - Fixed Claude Desktop → Claude Code references in documentation
   - Addressed Copilot review comments across multiple PRs
   - Aligned with official Claude Code hooks documentation
 
@@ -351,7 +344,7 @@ rm -rf .claude/hooks/
 ### Removed
 
 - **Cleanup** (cd93cfe, 4c0602b, cf0573c)
-  - Removed obsolete Cipher example files and curator outputs
+  - Removed obsolete example files and curator outputs
   - Removed generated curator_output.json file
 
 ## [1.2.3] - 2025-11-05
@@ -368,7 +361,7 @@ rm -rf .claude/hooks/
     2. Explicit error handling (no silent failures)
     3. Security review (SQL injection, XSS, sensitive data logging)
     4. Test case identification (happy path + edge cases)
-    5. MCP tools usage (cipher_memory_search, context7)
+    5. MCP tools usage (mem0, context7)
     6. Template variable preservation (orchestration compatibility)
     7. Trade-offs documentation
     8. Playbook bullet tracking (ACE feedback loop)
@@ -573,7 +566,7 @@ rm -rf .claude/hooks/
     - Batched Reflector/Curator execution (once at end vs per-subtask)
     - Conditional Predictor (only for high-risk subtasks)
     - Skips Evaluator (Monitor provides sufficient validation)
-    - Maintains playbook updates and cipher integration
+    - Maintains playbook updates and knowledge integration
   - `/map-fast` (⚠️ low-risk only): 40-50% token savings, no learning
     - Minimal agent sequence: TaskDecomposer → Actor → Monitor
     - Skips: Predictor, Evaluator, Reflector, Curator

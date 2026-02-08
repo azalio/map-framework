@@ -206,7 +206,6 @@ ST-2: Authorization code flow
 
 **Knowledge captured:**
 - ✅ Playbook bullets created (N subtasks → N+ bullets)
-- ✅ High-quality bullets synced to cipher
 - ✅ Team can apply patterns immediately
 
 **Impact understood:**
@@ -224,7 +223,7 @@ ST-2: Authorization code flow
 
 **Issue:** Too many playbook bullets created
 **Cause:** Reflector suggesting redundant patterns
-**Solution:** Curator should check cipher more aggressively
+**Solution:** Curator should check for duplicates more aggressively
 
 **Issue:** Predictor always says "high risk"
 **Cause:** Overly conservative risk assessment

@@ -935,7 +935,7 @@ def divide(a, b):
 2. Verify parameterized queries (no string interpolation)
 3. Check command execution (no shell=True with user input)
 4. Validate file paths (no path traversal)
-5. Search cipher for known vulnerabilities: `"security vulnerability [language]"`
+5. Search mem0 for known vulnerabilities: `"security vulnerability [language]"`
 6. Use deepwiki to check production security patterns
 
 #### Pass Criteria
@@ -2236,7 +2236,7 @@ IF false positive rate >15%:
 IF bug catch rate <70%:
   → Expand dimension checklists
   → Add more MCP tool triggers
-  → Review missed patterns, add to cipher
+  → Review missed patterns, add to mem0
 
 IF review time consistently >target:
   → Optimize tool selection
@@ -2470,7 +2470,7 @@ def check_rate_limit(user_id, action, limit=100, window=3600):
 **Before returning your review JSON:**
 
 1. ✅ Did I use request_review for code implementations?
-2. ✅ Did I search cipher for known issue patterns?
+2. ✅ Did I search mem0 for known issue patterns?
 3. ✅ Did I check all 10 validation dimensions systematically?
 4. ✅ Did I verify documentation against source of truth (if applicable)?
 5. ✅ Are all issues specific with location and actionable suggestions?

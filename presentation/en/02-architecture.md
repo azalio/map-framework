@@ -27,14 +27,13 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 **Model:** sonnet
 **Purpose:** Senior software engineer; writes clean, efficient, production-ready code
 
-**MCP integrations (4 tools):**
+**MCP integrations (3 tools):**
 
 - `mcp__mem0__map_tiered_search` — retrieve existing patterns (ALWAYS FIRST)
 - `context7__resolve-library-id + get-library-docs` — up-to-date library docs
 - `deepwiki__read_wiki_structure + read_wiki_contents` — learn from production code
-- `cipher__extract_and_operate_memory` — save successful patterns (ONLY AFTER Monitor approval)
 
-**Critical protocol:** ALWAYS search cipher BEFORE implementation; ONLY save patterns AFTER Monitor approval
+**Critical protocol:** ALWAYS search for existing patterns BEFORE implementation; ONLY save patterns AFTER Monitor approval
 
 **Inputs:** {{existing_patterns}} (top_k=5), {{plan_context}} (recitation pattern), {{feedback}} (if retry)
 
@@ -101,8 +100,7 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 **Critical protocol:**
 
 - MANDATORY: mcp__mem0__map_tiered_search BEFORE extracting patterns (prevents duplicates)
-- map-feature.md lines 263–273 enforce cipher search verification
-- Extract patterns, not solutions (focus on “why”, not “what”)
+- Extract patterns, not solutions (focus on "why", not "what")
 
 **Output:** key_insight, patterns_used, patterns_discovered, bullet_updates (helpful/harmful count), suggested_new_bullets
 
@@ -111,22 +109,19 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 **Model:** sonnet
 **Purpose:** Knowledge curator; evolves the playbook without context collapse
 
-**MCP integrations (4 tools):**
+**MCP integrations (3 tools):**
 
 - `mcp__mem0__map_tiered_search` — check cross-project duplicates BEFORE ADD operations (MANDATORY)
 - `context7__resolve-library-id + get-library-docs` — verify current API syntax
 - `deepwiki__read_wiki_structure + ask_question` — ground advice in battle-tested code
-- `cipher__extract_and_operate_memory` — sync high-quality bullets (helpful_count >= 5) to cipher
 
 **Critical protocol:**
 
-- MANDATORY: Search cipher for duplicates before ADD
-- MANDATORY: Sync bullets with helpful_count >= 5 to cipher
-- map-feature.md lines 309–355 enforce cipher integration
+- MANDATORY: Search for duplicates before ADD
 - Quality > quantity: a playbook with 50 high-quality bullets > 500 generic
 - Only delta ops (ADD/UPDATE/DEPRECATE), never full overwrite
 
-**Output:** operations (ADD/UPDATE/DEPRECATE), deduplication_check, sync_to_cipher
+**Output:** operations (ADD/UPDATE/DEPRECATE), deduplication_check
 
 ### 8. DocumentationReviewer
 
@@ -167,7 +162,6 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 6. Reflector      → Extract lessons (MANDATORY)
 7. Curator        → Update playbook (MANDATORY)
 8. Apply Curator delta operations
-9. Sync to cipher if helpful_count >= 5
 ```
 
 ### Critical Rules Enforcement
@@ -175,9 +169,9 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 **MANDATORY agent invocation:**
 
 - NEVER skip Reflector: `mcp__mem0__map_tiered_search` runs ONLY when the agent is properly invoked
-- NEVER skip Curator: playbook-to-cipher sync happens ONLY through the Curator template
+- NEVER skip Curator: playbook updates happen ONLY through the Curator template
 - ALWAYS verify MCP tool usage in agent outputs
-- Manual extraction/curation bypasses MCP tools → knowledge won’t deduplicate → lessons won’t be learned
+- Manual extraction/curation bypasses MCP tools → knowledge won't deduplicate → lessons won't be learned
 
 **Enforcement source:** `.claude/commands/map-feature.md` lines 263–355 + MAP workflow enforcement rules
 

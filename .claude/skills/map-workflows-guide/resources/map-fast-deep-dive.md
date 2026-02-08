@@ -21,7 +21,7 @@
 **Why?** No learning means:
 - Patterns not captured → team doesn't learn
 - Playbook not updated → knowledge lost
-- Cipher not synced → other projects don't benefit
+- Patterns not synced → other projects don't benefit
 - Technical debt accumulates
 
 ---
@@ -42,7 +42,7 @@
 
 **Curator (Playbook Updates)**
 - No playbook bullets created
-- No cipher synchronization
+- No pattern synchronization
 - No cross-project learning
 
 ### What Remains

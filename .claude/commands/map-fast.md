@@ -123,7 +123,7 @@ After all subtasks completed:
 2. Create commit with message
 3. Summarize what was implemented
 
-**Note:** No playbook updates, no cipher patterns stored (learning disabled).
+**Note:** No playbook updates (learning disabled).
 
 ## Critical Constraints
 

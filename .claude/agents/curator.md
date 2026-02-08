@@ -125,7 +125,7 @@ run_id: "org:shared"
 - **Counter**: Increment helpful_count once (not per insight)
 
 ### Contradictory Insights (Opposite Recommendations)
-- **Action**: Check cipher for existing consensus (helpful_count scores)
+- **Action**: Check mem0 for existing consensus (helpful_count scores)
 - **Validate**: Use deepwiki to verify production patterns
 - **Output**: Create bullet with BOTH approaches + tradeoffs
 - **Flag**: Mark `metadata.manual_review_required = true`

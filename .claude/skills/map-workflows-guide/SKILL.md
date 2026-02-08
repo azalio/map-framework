@@ -485,7 +485,6 @@ Agent & system details:
 
 - **[Agent Architecture](resources/agent-architecture.md)** — How agents orchestrate and coordinate
 - **[Playbook System (LEGACY)](resources/playbook-system.md)** — Historical pattern storage
-- **[mem0 Integration](resources/cipher-integration.md)** — Tiered pattern storage (v4.0+)
 
 ---
 
@@ -570,8 +569,6 @@ MAP: 📚 Loads this skill for context
 2. **Have a critical feature?** See [map-feature-deep-dive.md](resources/map-feature-deep-dive.md)
 3. **Debugging an issue?** See [map-debug-deep-dive.md](resources/map-debug-deep-dive.md)
 4. **Understanding agents?** See [Agent Architecture](resources/agent-architecture.md)
-5. **Learning about mem0?** See [mem0 Integration](resources/cipher-integration.md)
-
 ---
 
 **Skill Version:** 1.0

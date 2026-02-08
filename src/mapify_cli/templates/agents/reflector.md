@@ -537,7 +537,7 @@ Skip if: trivial fix, no technical knowledge, no clear entities.
 - **correct_approach** (REQUIRED, ≥150 chars, 5+ lines): Incorrect + correct code, why works, principle, {{language}} syntax
 - **key_insight** (REQUIRED, ≥50 chars): "When X, always Y because Z", actionable, memorable
 - **bullet_updates** (OPTIONAL): Only if Actor used bullets, tag helpful/harmful with reason
-- **suggested_new_bullets** (OPTIONAL): Only if new (check cipher), meet quality framework, code_example for SECURITY/IMPL/PERF
+- **suggested_new_bullets** (OPTIONAL): Only if new (check mem0), meet quality framework, code_example for SECURITY/IMPL/PERF
 
 ## JSON Schema (For Validation)
 
@@ -608,7 +608,7 @@ Skip if: trivial fix, no technical knowledge, no clear entities.
     },
     "unverified_novelty": {
       "type": "boolean",
-      "description": "Set to true if cipher was unavailable during analysis"
+      "description": "Set to true if mem0 was unavailable during analysis"
     },
     "error": {
       "type": "boolean",

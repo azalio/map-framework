@@ -163,14 +163,14 @@ Choose which MCP servers to enable:
 # All available MCP servers
 mapify init my-project --mcp all
 
-# Essential servers only (cipher, claude-reviewer, sequential-thinking)
+# Essential servers only (claude-reviewer, sequential-thinking)
 mapify init my-project --mcp essential
 
 # Documentation servers (context7, deepwiki)
 mapify init my-project --mcp docs
 
 # Specific servers
-mapify init my-project --mcp "cipher,context7,deepwiki"
+mapify init my-project --mcp "context7,deepwiki"
 
 # No MCP servers
 mapify init my-project --mcp none
@@ -331,10 +331,6 @@ If you selected MCP servers during installation, ensure they're configured:
 **Setup:**
 
 See mem0 MCP server documentation for installation instructions.
-
-### Cipher (LEGACY)
-
-> **DEPRECATED (v4.0+):** Cipher has been replaced by mem0 MCP. See [QUICKSTART-CIPHER.md](QUICKSTART-CIPHER.md) for legacy documentation.
 
 ### Claude-Reviewer (Professional Review)
 
