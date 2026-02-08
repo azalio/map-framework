@@ -8,6 +8,8 @@ The `workflow_state.json` file tracks execution state for MAP Framework workflow
 - **Visibility:** Explicit tracking of what steps were completed
 - **Audit:** Verify workflow adherence
 
+**Related:** `step_state.json` tracks the state machine step and user checkpoints (approval/mode). See `step-state-schema.md`.
+
 ## Location
 
 ```

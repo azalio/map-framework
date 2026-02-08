@@ -30,7 +30,9 @@
       "Bash(git:add)",
       "Bash(git:commit)",
       "Bash(helm:template:*)",
-      "Bash(go:vet:*)"
+      "Bash(go:vet:*)",
+      "Bash(gofmt:*)",
+      "Bash(kubectl:get:*)"
     ]
   }
 }

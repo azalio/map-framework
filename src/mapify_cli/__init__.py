@@ -114,9 +114,9 @@ class StepTracker:
 
     def __init__(self, title: str):
         self.title = title
-        self.steps: List[Dict[str, Any]] = (
-            []
-        )  # list of dicts: {key, label, status, detail}
+        self.steps: List[
+            Dict[str, Any]
+        ] = []  # list of dicts: {key, label, status, detail}
         self._refresh_cb = None
 
     def attach_refresh(self, cb):
@@ -1123,7 +1123,7 @@ Use minimal workflow to implement:
 $ARGUMENTS
 
 Implement quickly with basic monitor validation only. No learning, no predictor.
-Use for throwaway code, prototypes, or low-risk changes.
+    Use for small, low-risk changes where speed matters.
 """,
             "map-learn": """---
 description: Extract lessons from completed workflows
@@ -1352,7 +1352,7 @@ def create_or_merge_project_settings_local(project_path: Path) -> None:
             "Bash(make manifests)",
             # Common git workflows
             "Bash(git worktree add:*)",
-            # Used by some test/dev scripts to produce throwaway certs
+            # Used by some test/dev scripts to produce temporary dev certs
             'Bash(openssl req -x509 -newkey rsa:512 -keyout /dev/null -out /dev/stdout -days 365 -nodes -subj "/CN=test" 2>/dev/null)',
         ],
         "deny": [],
@@ -2085,9 +2085,9 @@ def init(
     else:
         # Type assertion: flow guarantees project_name is not None here
         # (checked at line 1931, and not in use_current_dir branch)
-        assert (
-            project_name is not None
-        ), "project_name must be set in non-current-dir mode"
+        assert project_name is not None, (
+            "project_name must be set in non-current-dir mode"
+        )
         project_path = Path(project_name).resolve()
         if project_path.exists():
             console.print(

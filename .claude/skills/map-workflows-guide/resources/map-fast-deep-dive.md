@@ -4,15 +4,15 @@
 
 ### ✅ Acceptable Use Cases
 
-**ONLY for code you will throw away:**
-- Quick feasibility experiments ("Can this library do X?")
-- Spike solutions for architecture exploration
-- Throwaway scripts for one-time data migration
-- Prototypes for stakeholder demos (will be rewritten)
+**ONLY for small, low-risk changes:**
+- Localized bug fixes with clear acceptance criteria
+- Small UI/text tweaks
+- Narrow refactors confined to a single module/file
+- Maintenance changes where impact is easy to validate
 
 ### ❌ NEVER Use For
 
-**Production code:**
+**High-risk code paths:**
 - Features that will be maintained
 - Critical infrastructure
 - Security-sensitive functionality
@@ -47,10 +47,9 @@
 
 ### What Remains
 
-**Actor + Monitor + Evaluator:**
+**Actor + Monitor:**
 - Basic implementation ✅
 - Correctness validation ✅
-- Quality check ✅
 
 **Result:** Functional code, but zero learning
 
@@ -75,14 +74,14 @@
 
 ## Example: When map-fast Makes Sense
 
-**Scenario:** "Test if React Query works with our API"
+**Scenario:** "Fix a nil/None check in a request handler"
 
 **Why map-fast is acceptable:**
 ```
-Goal: Quick experiment, will be rewritten
-Timeline: 1 hour
-Outcome: Yes/no answer, not production code
-Next step: Use /map-efficient to implement properly
+Goal: Small, localized fix
+Timeline: Short
+Outcome: Production-quality fix with tests
+Next step: If scope grows, switch to /map-efficient
 ```
 
 **Execution:**
@@ -96,9 +95,9 @@ Done. No Reflector, no Curator, no patterns learned.
 ```
 
 **Appropriate because:**
-- Code will be thrown away (experiment only)
-- Not building on this implementation
-- Rapid answer is the goal
+- Low blast radius
+- Easy to verify with targeted tests
+- Requirements are clear
 
 ---
 
@@ -118,7 +117,7 @@ Risk: High (security, breaking changes)
 1. No Predictor → Breaking changes undetected
 2. No Reflector → Security patterns not learned
 3. No Curator → Team doesn't learn from mistakes
-4. High risk for throwaway mindset
+4. High risk for under-validation mindset
 
 **Correct choice:** `/map-feature` (critical infrastructure)
 
@@ -132,11 +131,11 @@ Risk: High (security, breaking changes)
 **Reality:** Technical debt accumulates
 **Solution:** Use /map-efficient from the start
 
-### Pitfall 2: "This is just a prototype"
+### Pitfall 2: "This is just a quick change"
 
-**Problem:** Prototypes become production
-**Reality:** "Temporary" code lasts years
-**Solution:** Assume code will be maintained
+**Problem:** Under-validated changes become long-lived
+**Reality:** "Quick" changes often stick around
+**Solution:** Default to production-quality standards
 
 ### Pitfall 3: "I don't need learning for simple tasks"
 
@@ -149,13 +148,13 @@ Risk: High (security, breaking changes)
 ## Decision Flowchart
 
 ```
-Will this code be rewritten?
+Is the change small and low-risk?
 │
-├─ YES, 100% certain → /map-fast acceptable
+├─ YES → /map-fast acceptable
 │   Examples:
-│   - Spike solution for RFC
-│   - One-time migration script
-│   - Feasibility experiment
+│   - Localized bug fix with existing tests
+│   - Small UI tweak
+│   - Narrow refactor within a single file
 │
 └─ NO, or uncertain → Use /map-efficient instead
     Why?
@@ -166,20 +165,14 @@ Will this code be rewritten?
 
 ---
 
-## Transitioning from Prototype to Production
+## When Scope Grows
 
-**If you used /map-fast and need production version:**
+If a task starts small but grows in scope or risk, switch to `/map-efficient` for the remainder.
 
-1. **Don't refactor in place** - Rewrite from scratch
-2. **Use /map-efficient** or /map-feature for rewrite
-3. **Document lessons learned** from prototype
-4. **Reference prototype** as "what not to do" example
-
-**Why rewrite?**
-- Fresh perspective
-- Proper validation (Predictor)
-- Knowledge captured (Reflector/Curator)
-- Clean architecture
+Why?
+- Impact analysis (conditional Predictor)
+- Learning preserved
+- Stronger guardrails for multi-file work
 
 ---
 
@@ -198,9 +191,8 @@ Will this code be rewritten?
 - Use when MAP overhead doesn't make sense
 
 **3. /map-feature**
-- For high-risk experiments
-- When prototype might become production
-- Security or infrastructure experiments
+- For high-risk changes
+- Security or infrastructure work
 
 ---
 
@@ -208,10 +200,10 @@ Will this code be rewritten?
 
 ### When using /map-fast:
 
-1. **Document it's throwaway** - Add comment: "// PROTOTYPE - DO NOT USE IN PRODUCTION"
-2. **Set deadline** - "This code expires on [date]"
-3. **Plan rewrite** - Schedule /map-efficient rewrite immediately
-4. **Review before deleting** - Extract any useful insights manually
+1. **Document reduced analysis** - Note that /map-fast was used and why
+2. **Run tests** - Ensure relevant unit/integration tests pass
+3. **Keep changes small** - Avoid scope creep; switch workflows if needed
+4. **Review critical paths** - Error handling, input validation, and security
 
 ### General guidance:
 
@@ -230,8 +222,8 @@ Will this code be rewritten?
 **Issue:** Team keeps using /map-fast for production
 **Solution:** Code review policy: Reject PRs with /map-fast code
 
-**Issue:** Prototypes becoming production code
-**Solution:** Require /map-efficient rewrite before production deployment
+**Issue:** Low-analysis workflow used for risky changes
+**Solution:** Team policy: use /map-efficient for anything beyond low-risk/localized
 
 **Issue:** No learning happening on the project
 **Solution:** Audit workflow usage, reduce /map-fast usage to <5%

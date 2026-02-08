@@ -272,7 +272,7 @@ mcp__mem0__map_promote_pattern(
 ### For Workflows
 
 1. **Always search before implementing** - Actor should search mem0 first
-2. **Use appropriate tier** - Branch for experimental, project for validated
+2. **Use appropriate tier** - Branch for unvalidated, project for validated
 3. **Archive instead of delete** - Preserve history for auditing
 4. **Include category** - Helps filtering and organization
 

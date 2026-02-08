@@ -1,10 +1,10 @@
 ---
-description: Minimal workflow for throwaway code (40-50% savings, NO learning)
+description: Minimal workflow for small, low-risk changes (40-50% savings, NO learning)
 ---
 
 # MAP Fast Workflow
 
-**⚠️ WARNING: For throwaway prototypes only - use /map-efficient for production**
+**⚠️ WARNING: Use for small, low-risk production changes only. Do not skip tests.**
 
 Minimal agent sequence (40-50% token savings). Skips: Predictor, Evaluator, Reflector, Curator.
 
@@ -16,7 +16,7 @@ Implement the following:
 
 ## Workflow Overview
 
-Minimal agent sequence (token-optimized, quality-compromised):
+Minimal agent sequence (token-optimized, reduced analysis depth):
 
 ```
 1. DECOMPOSE → task-decomposer
@@ -33,7 +33,7 @@ Minimal agent sequence (token-optimized, quality-compromised):
 - Reflector (no lesson extraction)
 - Curator (no playbook updates)
 
-**⚠️ CRITICAL:** This is NOT the full MAP workflow. You are bypassing the learning cycle.
+**⚠️ CRITICAL:** This is NOT the full MAP workflow. Learning and impact analysis are disabled.
 
 ## Step 1: Task Decomposition
 

@@ -13,7 +13,7 @@ This skill helps you choose the optimal MAP workflow for your development tasks.
 Answer these 5 questions to find your workflow:
 
 ```
-1. Is this throwaway code or a quick experiment?
+1. Is this a small, low-risk change with clear acceptance criteria?
    YES  → Use /map-fast (40-50% tokens, no learning)
    NO   → Continue to question 2
 
@@ -29,9 +29,9 @@ Answer these 5 questions to find your workflow:
    YES  → Use /map-feature (100% tokens, maximum validation)
    NO   → Continue to question 5
 
-5. Is this a production feature you'll maintain long-term?
+5. Is this a change you'll maintain long-term or that has non-trivial impact?
    YES  → Use /map-efficient (60-70% tokens, batched learning) ← RECOMMENDED
-   NO   → Re-evaluate based on specific constraints
+   NO   → If still low-risk and localized, /map-fast may be acceptable
 ```
 
 ---
@@ -44,20 +44,19 @@ Answer these 5 questions to find your workflow:
 | **Learning** | ❌ None | ✅ Batched | ✅ Per-subtask | ✅ Per-subtask | ✅ Per-subtask |
 | **Quality Gates** | Basic | Essential | All 8 agents | Focused | Focused |
 | **Impact Analysis** | ❌ Skipped | ⚠️ Conditional | ✅ Always | ✅ Yes | ✅ Yes |
-| **Best For** | Throwaway | **Production** | Critical | Bugs | Refactoring |
-| **Recommendation** | Never use | **DEFAULT** | High-risk | Issues | Changes |
+| **Best For** | Low-risk | **Production** | Critical | Bugs | Refactoring |
+| **Recommendation** | Use sparingly | **DEFAULT** | High-risk | Issues | Changes |
 
 ---
 
 ## Detailed Workflow Descriptions
 
-### 1. /map-fast — Quick Prototypes ⚡
+### 1. /map-fast — Low-Risk Changes ⚡
 
 **Use this when:**
-- Creating throwaway code you'll discard after testing
-- Running experiments to validate ideas
-- Spike solutions to explore feasibility
-- Non-critical helper scripts or utilities
+- Small, localized changes with minimal blast radius
+- Minor fixes and tweaks where speed matters
+- Low-risk maintenance work
 
 **What you get:**
 - ✅ Full implementation (Actor generates code)
@@ -74,9 +73,9 @@ Answer these 5 questions to find your workflow:
 - Cannot reuse learned patterns in future tasks
 
 **Example tasks:**
-- "Quick prototype for authentication approach"
-- "Spike solution to test performance impact"
-- "Throwaway script to explore API design"
+- "Fix a small validation edge case"
+- "Update error message wording"
+- "Add a small CLI option with tests"
 
 **Command syntax:**
 ```bash
@@ -84,10 +83,9 @@ Answer these 5 questions to find your workflow:
 ```
 
 **When to AVOID:**
-- ❌ Never for production code
-- ❌ Never for code you'll refactor later
-- ❌ Never for security-critical logic
-- ❌ Never to save tokens on important work
+- ❌ Security-critical logic
+- ❌ Wide refactors or multi-module changes
+- ❌ High uncertainty / unclear requirements
 
 **See also:** [resources/map-fast-deep-dive.md](resources/map-fast-deep-dive.md)
 
@@ -351,11 +349,10 @@ MAP workflows orchestrate **8 specialized agents**, each with specific responsib
 START: What type of development task?
 │
 ├─────────────────────────────────────┐
-│ Throwaway prototype or experiment?  │
-│ (Will discard after testing)        │
+│ Small, low-risk change?             │
+│ (Localized, clear acceptance)       │
 ├─────────────────────────────────────┘
 │ YES → /map-fast (40-50% tokens, no learning)
-│       ⚠️  WARNING: Never use for production
 │
 │ NO ↓
 │
@@ -403,15 +400,15 @@ A: **`/map-efficient`** for 80% of tasks.
 
 **Q: When is /map-fast actually acceptable?**
 
-A: Only for code you'll throw away:
-- Experiments to test feasibility
-- Quick prototypes for discussion
-- One-off scripts for temporary use
+A: When the change is small and low-risk:
+- Localized fixes with minimal blast radius
+- Small UI/text tweaks
+- Minor maintenance changes
 
-Never use for:
-- Production code (will cause problems later)
-- Features that will be maintained
+Avoid /map-fast for:
 - Security or critical infrastructure
+- Broad refactors or multi-module changes
+- High uncertainty requirements
 
 **Q: What's the practical difference between /map-feature and /map-efficient?**
 
@@ -558,7 +555,7 @@ MAP: 📚 Loads this skill for context
 ## Tips for Effective Workflow Selection
 
 1. **Default to /map-efficient** — It's the recommended choice for 80% of tasks
-2. **Use /map-fast sparingly** — Only for truly throwaway code, never production
+2. **Use /map-fast sparingly** — Only for small, low-risk changes with clear scope
 3. **Reserve /map-feature for critical paths** — Don't overuse, save for auth/payments/security
 4. **Monitor pattern growth** — Use mem0 search to see learning improving
 5. **Trust the optimization** — /map-efficient preserves quality while cutting token usage

@@ -1301,16 +1301,15 @@ MAP Framework offers three workflow variants with different trade-offs between t
 #### Use `/map-fast` (Minimal) ⚠️
 
 **ONLY when:**
-- 🗑️ Creating throwaway prototypes you'll discard
-- 🗑️ Quick experiments to test feasibility
-- 🗑️ Learning/tutorial contexts where failure is acceptable
-- 🗑️ Mockups for demonstrations
+- ✅ Small, low-risk changes with clear acceptance criteria
+- ✅ Localized fixes with minimal blast radius
+- ✅ Time-sensitive changes where you still require production-quality output
 
-**⚠️ NEVER use for:**
-- ❌ Production code
-- ❌ Code you'll commit to repository
-- ❌ Features that others will depend on
+**⚠️ AVOID for:**
 - ❌ Security-sensitive functionality
+- ❌ Broad refactors or multi-module changes
+- ❌ Ambiguous requirements or high uncertainty
+- ❌ Changes requiring careful impact analysis
 
 **Why it's dangerous:**
 - No impact analysis → Breaking changes undetected
@@ -1320,14 +1319,14 @@ MAP Framework offers three workflow variants with different trade-offs between t
 
 **Example use cases (acceptable):**
 ```bash
-# Quick prototype to show stakeholder
-/map-fast prototype a dashboard layout with mock data
+# Small UI tweak
+/map-fast Adjust button spacing in settings page
 
-# Feasibility experiment
-/map-fast test if library X can integrate with our stack
+# Localized bug fix
+/map-fast Fix nil check in request handler
 
-# Tutorial/learning
-/map-fast follow the React tutorial to learn hooks
+# Minor docs automation
+/map-fast Update CLI help text formatting
 ```
 
 ### Real-World Token Usage Examples
@@ -1395,8 +1394,8 @@ MAP Framework offers three workflow variants with different trade-offs between t
 ```
 START: I need to implement a feature
   |
-  ├─ Is it throwaway/prototype code?
-  |    └─ YES → /map-fast (but consider if learning would help)
+  ├─ Is it a small, low-risk change?
+  |    └─ YES → /map-fast
   |    └─ NO → Continue
   |
   ├─ Is it security-critical or first-time complex feature?
@@ -1566,7 +1565,7 @@ The upgrade of Predictor and Evaluator from haiku to sonnet provides:
 - Batched Reflector/Curator at end
 - **Token savings: 30-40%**
 
-**2. Use `/map-fast` for throwaway code**
+**2. Use `/map-fast` for small, low-risk changes**
 - Minimal agent sequence: TaskDecomposer → Actor → Monitor
 - Skips: Predictor, Evaluator, Reflector, Curator
 - **Token savings: 40-50%** (but no learning!)
@@ -1583,7 +1582,7 @@ Agents automatically use their configured model when invoked via slash commands:
 /map-debate design caching strategy      # Complex decisions
 
 # Fast workflow - minimal agents, no learning
-/map-fast prototype quick API mockup     # Throwaway code only
+/map-fast Update error message wording
 ```
 
 ### Cost Comparison Example

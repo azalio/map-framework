@@ -9,7 +9,7 @@ description: Extract and preserve lessons from completed workflows (OPTIONAL lea
 **When to use:**
 - After `/map-efficient` completes (to preserve patterns from the workflow)
 - After `/map-debug` completes (to preserve debugging patterns)
-- After `/map-fast` completes (to retroactively add learning to throwaway code)
+- After `/map-fast` completes (to retroactively add learning when learning was skipped)
 
 **What it does:**
 1. Calls Reflector agent to analyze workflow outputs and extract patterns
@@ -17,7 +17,7 @@ description: Extract and preserve lessons from completed workflows (OPTIONAL lea
 3. Verifies patterns stored via `mcp__mem0__map_tiered_search`
 
 **Storage Architecture:**
-- Branch tier: `run_id="proj:PROJECT:branch:BRANCH"` (experiment-specific patterns)
+- Branch tier: `run_id="proj:PROJECT:branch:BRANCH"` (branch-scoped patterns)
 - Project tier: `run_id="proj:PROJECT"` (shared across branches)
 - Org tier: `user_id="org:ORG"` only (shared across all projects)
 
@@ -149,7 +149,7 @@ Task(
 3. Call mcp__mem0__map_promote_pattern for patterns with helpful_count >= 3
 
 **Tier Selection:**
-- Branch tier: run_id='proj:PROJECT:branch:BRANCH' (for experimental patterns)
+- Branch tier: run_id='proj:PROJECT:branch:BRANCH' (for unvalidated patterns)
 - Project tier: run_id='proj:PROJECT' (for proven patterns)
 - Org tier: user_id='org:ORG' only (for cross-project patterns)
 
@@ -334,12 +334,12 @@ Provide learning summary:
 
 ### Example 1: Learning from /map-fast workflow
 
-User completed `/map-fast "Prototype real-time dashboard"` (no learning performed).
+User completed `/map-fast "Implement real-time dashboard"` (no learning performed).
 
 Now retroactively extract lessons:
 
 ```
-User: /map-learn "Workflow: /map-fast prototype dashboard
+User: /map-learn "Workflow: /map-fast real-time dashboard
 Subtasks: 4 (WebSocket setup, React components, state management, styling)
 Files: ws-server.js, Dashboard.jsx, useWebSocket.js, dashboard.css
 Iterations: 2 (minor Monitor feedback)
@@ -442,8 +442,8 @@ mcp__mem0__map_promote_pattern(
 
 ### After /map-fast (optional)
 
-/map-fast is for throwaway code. Use /map-learn only if:
-- The prototype revealed unexpected patterns worth preserving
+/map-fast is a reduced-analysis workflow. Use /map-learn only if:
+- The work revealed patterns worth preserving
 - You want to retroactively capture learnings
 
 ---

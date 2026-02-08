@@ -38,6 +38,8 @@ STATE FILE:
 STEP PHASES (14 total):
   1.0  DECOMPOSE          - task-decomposer agent
   1.5  INIT_PLAN          - Generate task_plan.md
+  1.55 REVIEW_PLAN        - User review + explicit approval checkpoint
+  1.56 CHOOSE_MODE        - Choose execution mode (step_by_step|batch)
   1.6  INIT_STATE         - Create workflow_state.json
   2.0  XML_PACKET         - Build AI-friendly subtask packet
   2.1  MEM0_SEARCH        - Tiered memory search
@@ -50,6 +52,7 @@ STEP PHASES (14 total):
   2.8  TESTS_GATE         - Run tests
   2.9  LINTER_GATE        - Run linter
   2.10 VERIFY_ADHERENCE   - Self-audit checkpoint
+  2.11 SUBTASK_APPROVAL   - Optional pause between subtasks (step_by_step)
 
 CLI INTERFACE:
   python3 map_orchestrator.py get_next_step [--branch BRANCH]
@@ -87,6 +90,7 @@ TESTING:
   python3 map_orchestrator.py get_next_step
   # → {"step_id": "1.5", "phase": "INIT_PLAN", "instruction": "..."}
 """
+
 import argparse
 import json
 import subprocess
@@ -100,6 +104,8 @@ from typing import Dict, List, Optional
 STEP_PHASES = {
     "1.0": "DECOMPOSE",
     "1.5": "INIT_PLAN",
+    "1.55": "REVIEW_PLAN",
+    "1.56": "CHOOSE_MODE",
     "1.6": "INIT_STATE",
     "2.0": "XML_PACKET",
     "2.1": "MEM0_SEARCH",
@@ -112,12 +118,15 @@ STEP_PHASES = {
     "2.8": "TESTS_GATE",
     "2.9": "LINTER_GATE",
     "2.10": "VERIFY_ADHERENCE",
+    "2.11": "SUBTASK_APPROVAL",
 }
 
 # Step execution order
 STEP_ORDER = [
     "1.0",
     "1.5",
+    "1.55",
+    "1.56",
     "1.6",
     "2.0",
     "2.1",
@@ -129,6 +138,7 @@ STEP_ORDER = [
     "2.8",
     "2.9",
     "2.10",
+    "2.11",
 ]
 
 
@@ -147,6 +157,8 @@ class StepState:
     pending_steps: List[str] = field(default_factory=lambda: STEP_ORDER.copy())
     retry_count: int = 0
     max_retries: int = 5
+    plan_approved: bool = False
+    execution_mode: str = "batch"  # batch|step_by_step
 
     def to_dict(self) -> dict:
         """Serialize to dictionary."""
@@ -162,6 +174,8 @@ class StepState:
             "pending_steps": self.pending_steps,
             "retry_count": self.retry_count,
             "max_retries": self.max_retries,
+            "plan_approved": self.plan_approved,
+            "execution_mode": self.execution_mode,
         }
 
     @classmethod
@@ -179,6 +193,8 @@ class StepState:
             pending_steps=data.get("pending_steps", STEP_ORDER.copy()),
             retry_count=data.get("retry_count", 0),
             max_retries=data.get("max_retries", 5),
+            plan_approved=data.get("plan_approved", False),
+            execution_mode=data.get("execution_mode", "batch"),
         )
 
     @classmethod
@@ -248,6 +264,17 @@ def get_step_instruction(step_id: str, state: StepState) -> str:
             "Generate .map/task_plan_<branch>.md from decomposer blueprint. "
             "Include Goal, Current Phase, and status for each subtask."
         ),
+        "1.55": (
+            "Present the generated plan to the user using a short standardized summary "
+            "(goal + subtask titles + risks) and get explicit approval to proceed. "
+            "Then persist approval in step_state.json: "
+            "python3 .map/scripts/map_orchestrator.py set_plan_approved true"
+        ),
+        "1.56": (
+            "Ask user to choose execution mode: step_by_step (pause between subtasks) "
+            "or batch (run through). Persist choice in step_state.json: "
+            "python3 .map/scripts/map_orchestrator.py set_execution_mode step_by_step|batch"
+        ),
         "1.6": (
             "Create .map/<branch>/workflow_state.json with initial state. "
             "Required for workflow-gate.py enforcement."
@@ -293,6 +320,11 @@ def get_step_instruction(step_id: str, state: StepState) -> str:
             "Output workflow adherence self-audit. "
             "Verify all required steps completed before marking subtask done."
         ),
+        "2.11": (
+            "If execution_mode == step_by_step: show a brief checkpoint for the completed subtask "
+            "and AskUserQuestion to continue to the next subtask or abort. "
+            "If execution_mode == batch: this step is auto-skipped by orchestrator."
+        ),
     }
 
     return instructions.get(step_id, f"Execute step {step_id} ({phase})")
@@ -310,6 +342,16 @@ def get_next_step(branch: str) -> Dict:
     """
     state_file = Path(f".map/{branch}/step_state.json")
     state = StepState.load(state_file)
+
+    # Auto-skip steps that are conditional in batch mode
+    while (
+        state.pending_steps
+        and state.pending_steps[0] == "2.11"
+        and state.execution_mode == "batch"
+    ):
+        state.completed_steps.append("2.11")
+        state.pending_steps.pop(0)
+        state.save(state_file)
 
     # Check if workflow complete
     if not state.pending_steps:
@@ -374,6 +416,18 @@ def validate_step(step_id: str, branch: str) -> Dict:
             "message": f"Step mismatch: expected {state.current_step_id}, got {step_id}",
         }
 
+    # Step-specific validation
+    if step_id == "1.55" and not state.plan_approved:
+        return {
+            "valid": False,
+            "message": "Plan not approved. Set approval first: python3 .map/scripts/map_orchestrator.py set_plan_approved true",
+        }
+    if step_id == "1.56" and state.execution_mode not in {"batch", "step_by_step"}:
+        return {
+            "valid": False,
+            "message": "Invalid execution_mode. Set mode first: python3 .map/scripts/map_orchestrator.py set_execution_mode step_by_step|batch",
+        }
+
     # Mark step complete
     state.completed_steps.append(step_id)
     if step_id in state.pending_steps:
@@ -423,6 +477,39 @@ def initialize_workflow(task: str, branch: str) -> Dict:
     }
 
 
+def set_plan_approved(value: str, branch: str) -> Dict:
+    """Persist explicit plan approval in step_state.json."""
+    state_file = Path(f".map/{branch}/step_state.json")
+    state = StepState.load(state_file)
+    normalized = (value or "").strip().lower()
+    if normalized in {"1", "true", "yes", "y"}:
+        state.plan_approved = True
+    elif normalized in {"0", "false", "no", "n"}:
+        state.plan_approved = False
+    else:
+        return {
+            "status": "error",
+            "message": f"Invalid value for plan approval: {value}",
+        }
+    state.save(state_file)
+    return {"status": "success", "plan_approved": state.plan_approved}
+
+
+def set_execution_mode(mode: str, branch: str) -> Dict:
+    """Persist execution mode in step_state.json."""
+    state_file = Path(f".map/{branch}/step_state.json")
+    state = StepState.load(state_file)
+    normalized = (mode or "").strip().lower()
+    if normalized not in {"batch", "step_by_step"}:
+        return {
+            "status": "error",
+            "message": f"Invalid execution_mode: {mode}. Use batch|step_by_step",
+        }
+    state.execution_mode = normalized
+    state.save(state_file)
+    return {"status": "success", "execution_mode": state.execution_mode}
+
+
 def main():
     """CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -430,10 +517,17 @@ def main():
     )
     parser.add_argument(
         "command",
-        choices=["get_next_step", "validate_step", "initialize"],
+        choices=[
+            "get_next_step",
+            "validate_step",
+            "initialize",
+            "set_plan_approved",
+            "set_execution_mode",
+        ],
         help="Command to execute",
     )
     parser.add_argument("task_or_step", nargs="?", help="Task description or step ID")
+    parser.add_argument("value", nargs="?", help="Optional value for setter commands")
     parser.add_argument("--branch", help="Git branch (auto-detected if omitted)")
 
     args = parser.parse_args()
@@ -459,6 +553,28 @@ def main():
         elif args.command == "initialize":
             task = args.task_or_step or "MAP workflow task"
             result = initialize_workflow(task, branch)
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "set_plan_approved":
+            value = args.task_or_step
+            if value is None:
+                print(
+                    json.dumps({"error": "value required for set_plan_approved"}),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            result = set_plan_approved(value, branch)
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "set_execution_mode":
+            mode = args.task_or_step
+            if mode is None:
+                print(
+                    json.dumps({"error": "mode required for set_execution_mode"}),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            result = set_execution_mode(mode, branch)
             print(json.dumps(result, indent=2))
 
     except Exception as e:

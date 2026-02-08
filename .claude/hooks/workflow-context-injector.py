@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""
+"""workflow-context-injector.py
+
 Workflow Context Injector - PreToolUse Hook (Tiered)
 
-Injects workflow state reminders ONLY for significant operations:
-- Edit/Write/MultiEdit: Always inject (~150 chars)
-- Bash: Only for significant commands (tests, builds, git commits)
+Injects a short MAP workflow reminder ONLY for significant operations:
+- Edit/Write/MultiEdit: always inject
+- Bash: inject for test/build/vcs commands
 
-Does NOT inject for read-only operations (ls, cat, grep, etc.)
+Source of truth: .map/<branch>/step_state.json
+(workflow_state.json is for enforcement gates only).
 
 Trigger: Edit|Write|Bash
 Exit codes: Always 0 (non-blocking, just adds context)
@@ -20,29 +22,68 @@ from pathlib import Path
 
 # Bash commands that don't need workflow reminders
 READONLY_COMMANDS = {
-    "ls", "cat", "head", "tail", "grep", "rg", "find", "pwd",
-    "echo", "wc", "diff", "tree", "file", "which", "type",
-    "env", "printenv", "date", "whoami", "id", "uname",
-    "less", "more", "stat", "du", "df", "free",
+    "ls",
+    "cat",
+    "head",
+    "tail",
+    "grep",
+    "rg",
+    "find",
+    "pwd",
+    "echo",
+    "wc",
+    "diff",
+    "tree",
+    "file",
+    "which",
+    "type",
+    "env",
+    "printenv",
+    "date",
+    "whoami",
+    "id",
+    "uname",
+    "less",
+    "more",
+    "stat",
+    "du",
+    "df",
+    "free",
 }
 
 # Bash commands that ARE significant and need reminders
 SIGNIFICANT_PATTERNS = [
-    r"pytest", r"go\s+test", r"npm\s+test", r"cargo\s+test", r"make\s+test",
-    r"git\s+commit", r"git\s+push", r"git\s+merge", r"git\s+rebase",
-    r"npm\s+install", r"pip\s+install", r"go\s+mod",
-    r"make\b", r"docker\b", r"kubectl\b",
-    r"\brm\s", r"\bmv\s", r"\bcp\s+-r",
+    r"pytest",
+    r"go\s+test",
+    r"npm\s+test",
+    r"cargo\s+test",
+    r"make\s+test",
+    r"git\s+commit",
+    r"git\s+push",
+    r"git\s+merge",
+    r"git\s+rebase",
+    r"npm\s+install",
+    r"pip\s+install",
+    r"go\s+mod",
+    r"make\b",
+    r"docker\b",
+    r"kubectl\b",
+    r"\brm\s",
+    r"\bmv\s",
+    r"\bcp\s+-r",
 ]
 
 
 def get_branch_name() -> str:
     """Get current git branch name."""
     import subprocess
+
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True, text=True, timeout=2
+            capture_output=True,
+            text=True,
+            timeout=2,
         )
         if result.returncode == 0:
             return result.stdout.strip().replace("/", "-")
@@ -51,16 +92,16 @@ def get_branch_name() -> str:
     return "default"
 
 
-def load_workflow_state(branch: str) -> dict | None:
-    """Load workflow state from .map/<branch>/workflow_state.json."""
+def load_step_state(branch: str) -> dict | None:
+    """Load step state from .map/<branch>/step_state.json."""
     project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
-    state_file = project_dir / ".map" / branch / "workflow_state.json"
+    state_file = project_dir / ".map" / branch / "step_state.json"
 
     if not state_file.exists():
         return None
 
     try:
-        with open(state_file) as f:
+        with open(state_file, encoding="utf-8") as f:
             return json.load(f)
     except (json.JSONDecodeError, IOError):
         return None
@@ -87,26 +128,76 @@ def should_inject_for_bash(command: str) -> bool:
         if re.search(pattern, command, re.IGNORECASE):
             return True
 
-    # Default: inject for unknown commands (safer)
+    # Default: don't inject for unknown commands
     return False
 
 
-def format_reminder(state: dict) -> str | None:
-    """Format terse workflow reminder (~150 chars)."""
+def required_action_for_step(step_id: str, step_phase: str, state: dict) -> str | None:
+    """Return a short required-next-action hint for common steps."""
+    mode = (state.get("execution_mode") or "").strip()
+
+    if step_id == "1.55":
+        return "Approve plan (set_plan_approved true)"
+    if step_id == "1.56":
+        return "Choose mode (set_execution_mode step_by_step|batch)"
+    if step_id == "2.1":
+        return "Run mem0 search before Actor"
+    if step_id == "2.3":
+        return "Run Actor"
+    if step_id == "2.4":
+        return "Run Monitor"
+    if step_id == "2.7":
+        return "Apply changes (Edit/Write)"
+    if step_id == "2.8":
+        return "Run tests"
+    if step_id == "2.9":
+        return "Run linter"
+    if step_id == "2.11" and mode == "step_by_step":
+        return "Confirm continue to next subtask"
+
+    # Fallback for unknown step ids
+    if step_phase:
+        return f"Complete phase {step_phase}"
+    return None
+
+
+def format_reminder(state: dict, branch: str) -> str | None:
+    """Format terse workflow reminder (aim: ~150-200 chars)."""
     if not state:
         return None
 
-    current_step = state.get("current_step", {})
-    phase = current_step.get("phase", "")
-    task = current_step.get("task", "")
-    mandatory = state.get("mandatory_next_action")
+    step_id = (state.get("current_step_id") or "").strip()
+    step_phase = (state.get("current_step_phase") or "").strip()
+    subtask_id = (state.get("current_subtask_id") or "-").strip() or "-"
 
-    if not phase and not task:
+    seq = state.get("subtask_sequence") or []
+    idx = state.get("subtask_index")
+    progress = "-"
+    if isinstance(idx, int) and seq:
+        progress = f"{min(idx + 1, len(seq))}/{len(seq)}"
+
+    plan_ok = "y" if state.get("plan_approved") else "n"
+    mode = (state.get("execution_mode") or "").strip() or "batch"
+
+    required = required_action_for_step(step_id, step_phase, state)
+
+    diag_hint = ""
+    diag_file = (
+        Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+        / ".map"
+        / branch
+        / "diagnostics.json"
+    )
+    if diag_file.exists():
+        diag_hint = " | Diag: diagnostics.json"
+
+    if not step_id and not step_phase:
         return None
 
-    if mandatory:
-        return f"[MAP] Phase: {phase} | Task: {task} | REQUIRED: {mandatory}"
-    return f"[MAP] Phase: {phase} | Task: {task}"
+    base = f"[MAP] {step_id} {step_phase} | ST: {subtask_id} ({progress}) | plan:{plan_ok} mode:{mode}{diag_hint}"
+    if required:
+        return f"{base} | REQUIRED: {required}"
+    return base
 
 
 def main() -> None:
@@ -132,15 +223,15 @@ def main() -> None:
         print("{}")
         sys.exit(0)
 
-    # Load and format workflow state
+    # Load and format workflow step state
     branch = get_branch_name()
-    state = load_workflow_state(branch)
+    state = load_step_state(branch)
 
     if not state:
         print("{}")
         sys.exit(0)
 
-    reminder = format_reminder(state)
+    reminder = format_reminder(state, branch)
     if reminder:
         output = {"hookSpecificOutput": {"appended_text": reminder}}
         print(json.dumps(output))

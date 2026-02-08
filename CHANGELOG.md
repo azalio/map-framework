@@ -574,10 +574,10 @@ rm -rf .claude/hooks/
     - Conditional Predictor (only for high-risk subtasks)
     - Skips Evaluator (Monitor provides sufficient validation)
     - Maintains playbook updates and cipher integration
-  - `/map-fast` (⚠️ throwaway code only): 40-50% token savings, no learning
+  - `/map-fast` (⚠️ low-risk only): 40-50% token savings, no learning
     - Minimal agent sequence: TaskDecomposer → Actor → Monitor
     - Skips: Predictor, Evaluator, Reflector, Curator
-    - Use only for temporary prototypes, not production code
+    - Use only for small, low-risk changes with clear acceptance criteria
 
 ### Changed
 - **Cleaner Command Templates**: Removed verbose marketing/educational content from slash commands
