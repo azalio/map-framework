@@ -75,18 +75,17 @@ class TestEarlyExit:
             subprocess.run(["git", "init"], cwd=tmpdir, capture_output=True)
             subprocess.run(
                 ["git", "config", "user.email", "test@test.com"],
-                cwd=tmpdir, capture_output=True
+                cwd=tmpdir,
+                capture_output=True,
             )
             subprocess.run(
-                ["git", "config", "user.name", "Test"],
-                cwd=tmpdir, capture_output=True
+                ["git", "config", "user.name", "Test"], cwd=tmpdir, capture_output=True
             )
             # Create and commit a file
             (Path(tmpdir) / "file.txt").write_text("content\n")
             subprocess.run(["git", "add", "."], cwd=tmpdir, capture_output=True)
             subprocess.run(
-                ["git", "commit", "-m", "initial"],
-                cwd=tmpdir, capture_output=True
+                ["git", "commit", "-m", "initial"], cwd=tmpdir, capture_output=True
             )
 
             # Now repo is clean
@@ -215,11 +214,11 @@ class TestVerboseMode:
             subprocess.run(["git", "init"], cwd=tmpdir, capture_output=True)
             subprocess.run(
                 ["git", "config", "user.email", "test@test.com"],
-                cwd=tmpdir, capture_output=True
+                cwd=tmpdir,
+                capture_output=True,
             )
             subprocess.run(
-                ["git", "config", "user.name", "Test"],
-                cwd=tmpdir, capture_output=True
+                ["git", "config", "user.name", "Test"], cwd=tmpdir, capture_output=True
             )
             (Path(tmpdir) / "file.txt").write_text("content\n")
             subprocess.run(["git", "add", "file.txt"], cwd=tmpdir, capture_output=True)
@@ -227,7 +226,9 @@ class TestVerboseMode:
             exit_code, _, stderr = run_hook(
                 cwd=tmpdir, env={"CLAUDE_HOOK_VERBOSE": "true"}
             )
-            assert "[end-of-turn]" in stderr, f"Should have verbose logs. stderr: {stderr}"
+            assert (
+                "[end-of-turn]" in stderr
+            ), f"Should have verbose logs. stderr: {stderr}"
             assert "Changes detected" in stderr
 
     def test_quiet_by_default(self):

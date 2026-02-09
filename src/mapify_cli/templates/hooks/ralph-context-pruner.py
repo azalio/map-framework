@@ -233,7 +233,10 @@ def main() -> None:
     if state:
         # Save restore point
         if save_restore_point(branch, state):
-            print(f"[ralph-pruner] Saved restore_point for branch: {branch}", file=sys.stderr)
+            print(
+                f"[ralph-pruner] Saved restore_point for branch: {branch}",
+                file=sys.stderr,
+            )
 
         # Inject recovery message into context
         recovery_msg = format_recovery_message(state, branch)
