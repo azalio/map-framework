@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-02-09
+
 ### Changed (BREAKING)
 - **Hook-Based Context Injection**: Optimize /map-efficient workflow with state-machine orchestration
   - **Problem**: 995-line command file (5.4K tokens) caused attention dilution → 20% step compliance
