@@ -143,7 +143,7 @@ Generate `.map/<branch>/task_plan_<branch>.md` from blueprint:
 
 Present the generated plan and require explicit user approval before any execution state is initialized.
 
-1. Read the plan: `.map/task_plan_<branch>.md`
+1. Read the plan: `.map/<branch>/task_plan_<branch>.md`
 2. Show a short summary in this format:
 
 ```text
@@ -337,7 +337,7 @@ if monitor_output["valid"] == false:
         # Go back to Phase: ACTOR with Monitor feedback
         # Actor will fix issues and re-apply code
     else:
-        # Escalate to user (3-strike protocol)
+        # Escalate to user (retry limit reached)
         AskUserQuestion(questions=[{"question": "Monitor retry limit reached. How to proceed?", "header": "Retry limit", "options": [{"label": "Continue", "description": "Reset retry counter and try again"}, {"label": "Skip", "description": "Skip this subtask and move to next"}, {"label": "Abort", "description": "Stop workflow"}], "multiSelect": false}])
 ```
 

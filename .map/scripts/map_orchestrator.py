@@ -490,15 +490,15 @@ def validate_step(step_id: str, branch: str) -> Dict:
                     ),
                 }
         # Validate subtask_id matches current subtask
-            if evidence_data.get("subtask_id") != subtask_id:
-                return {
-                    "valid": False,
-                    "message": (
-                        f"Evidence file subtask_id mismatch: "
-                        f"expected '{subtask_id}', "
-                        f"got '{evidence_data.get('subtask_id')}'."
-                    ),
-                }
+        if evidence_data.get("subtask_id") != subtask_id:
+            return {
+                "valid": False,
+                "message": (
+                    f"Evidence file subtask_id mismatch: "
+                    f"expected '{subtask_id}', "
+                    f"got '{evidence_data.get('subtask_id')}'."
+                ),
+            }
 
     # Mark step complete
     state.completed_steps.append(step_id)
@@ -590,6 +590,66 @@ def set_execution_mode(mode: str, branch: str) -> Dict:
     state.execution_mode = normalized
     state.save(state_file)
     return {"status": "success", "execution_mode": state.execution_mode}
+
+
+SKIPPABLE_STEPS = {"2.2", "2.6", "2.11"}
+
+
+def skip_step(step_id: str, branch: str) -> Dict:
+    """Skip a conditional step without executing it.
+
+    Only steps that are defined as conditional can be skipped:
+      - 2.2 (RESEARCH): conditional on refactoring or 3+ files
+      - 2.6 (PREDICTOR): conditional on medium/high risk
+      - 2.11 (SUBTASK_APPROVAL): conditional on step_by_step mode
+
+    Args:
+        step_id: Step identifier to skip
+        branch: Git branch name (sanitized)
+
+    Returns:
+        Dict with status and next step info
+    """
+    if step_id not in SKIPPABLE_STEPS:
+        return {
+            "status": "error",
+            "message": (
+                f"Step {step_id} cannot be skipped. "
+                f"Only conditional steps can be skipped: "
+                f"{', '.join(sorted(SKIPPABLE_STEPS))}"
+            ),
+        }
+
+    state_file = Path(f".map/{branch}/step_state.json")
+    state = StepState.load(state_file)
+
+    if state.current_step_id != step_id:
+        return {
+            "status": "error",
+            "message": f"Step mismatch: current is {state.current_step_id}, cannot skip {step_id}",
+        }
+
+    # Mark step as completed (skipped) and advance
+    state.completed_steps.append(step_id)
+    if step_id in state.pending_steps:
+        state.pending_steps.remove(step_id)
+
+    # Advance to next pending step
+    if state.pending_steps:
+        next_id = state.pending_steps[0]
+        state.current_step_id = next_id
+        state.current_step_phase = STEP_PHASES.get(next_id, "UNKNOWN")
+    else:
+        state.current_step_id = "COMPLETE"
+        state.current_step_phase = "COMPLETE"
+
+    state.save(state_file)
+
+    return {
+        "status": "success",
+        "message": f"Step {step_id} skipped",
+        "next_step": state.current_step_id,
+    }
 
 
 def check_circuit_breaker(branch: str) -> Dict:
@@ -737,6 +797,7 @@ def main():
             "initialize",
             "set_plan_approved",
             "set_execution_mode",
+            "skip_step",
             "set_subtasks",
             "resume_from_plan",
             "check_circuit_breaker",
@@ -796,6 +857,16 @@ def main():
                 )
                 sys.exit(1)
             result = set_execution_mode(mode, branch)
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "skip_step":
+            if not args.task_or_step:
+                print(
+                    json.dumps({"error": "step_id required for skip_step"}),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            result = skip_step(args.task_or_step, branch)
             print(json.dumps(result, indent=2))
 
         elif args.command == "set_subtasks":
