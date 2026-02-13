@@ -502,6 +502,29 @@ When assessing performance impact, use these as default baselines unless project
 
 **Protocol**: Document rationale → Add TODO if needed → Proceed
 
+### Evidence File (Artifact-Gated Validation)
+
+After applying all code changes, write an evidence file so the orchestrator can verify this step ran. Use Bash (not Write tool) to create the file:
+
+```bash
+cat > .map/<branch>/evidence/actor_<subtask_id>.json << 'EVIDENCE'
+{
+  "phase": "actor",
+  "subtask_id": "<subtask_id>",
+  "timestamp": "<ISO 8601 UTC>",
+  "summary": "<one-line description of what was implemented>",
+  "aag_contract": "<the AAG contract line>",
+  "files_changed": <number of files changed>,
+  "status": "applied"
+}
+EVIDENCE
+```
+
+**Required fields** (orchestrator validates these): `phase`, `subtask_id`, `timestamp`.
+Other fields are informational but recommended for audit trail.
+
+**CRITICAL**: Without this file, `validate_step("2.3")` will reject the step.
+
 </Actor_Quality_v3_1>
 
 ---

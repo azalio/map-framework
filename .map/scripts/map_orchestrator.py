@@ -139,6 +139,16 @@ STEP_ORDER = [
     "2.11",
 ]
 
+# Steps that require evidence files from agents before validation.
+# Format: step_id -> (agent_phase, always_required)
+# If always_required is False, evidence is only checked when the step
+# appears in pending_steps (i.e., it wasn't skipped).
+EVIDENCE_REQUIRED = {
+    "2.3": ("actor", True),      # Always required
+    "2.4": ("monitor", True),    # Always required
+    "2.6": ("predictor", False), # Only when 2.6 is in pending_steps
+}
+
 
 @dataclass
 class StepState:
@@ -292,15 +302,21 @@ def get_step_instruction(step_id: str, state: StepState) -> str:
         ),
         "2.3": (
             f"Call Task(subagent_type='actor') to implement subtask "
-            f"{state.current_subtask_id}. Pass XML packet and context patterns."
+            f"{state.current_subtask_id}. Pass XML packet and context patterns. "
+            f"Actor MUST write evidence file: "
+            f".map/<branch>/evidence/actor_{state.current_subtask_id}.json"
         ),
         "2.4": (
             "Call Task(subagent_type='monitor') to validate Actor output. "
-            "Check correctness, security, standards, and tests."
+            "Check correctness, security, standards, and tests. "
+            f"Monitor MUST write evidence file: "
+            f".map/<branch>/evidence/monitor_{state.current_subtask_id}.json"
         ),
         "2.6": (
             "Call Task(subagent_type='predictor') for impact analysis "
-            "(required for medium/high risk subtasks)."
+            "(required for medium/high risk subtasks). "
+            f"Predictor MUST write evidence file: "
+            f".map/<branch>/evidence/predictor_{state.current_subtask_id}.json"
         ),
         "2.7": (
             "Update workflow state to mark subtask progress. "
@@ -427,6 +443,63 @@ def validate_step(step_id: str, branch: str) -> Dict:
             "message": "Invalid execution_mode. Set mode first: python3 .map/scripts/map_orchestrator.py set_execution_mode step_by_step|batch",
         }
 
+    # Evidence-gated validation: require agent evidence files for key steps
+    if step_id in EVIDENCE_REQUIRED:
+        phase_name, always_required = EVIDENCE_REQUIRED[step_id]
+        evidence_dir = Path(f".map/{branch}/evidence")
+        if not evidence_dir.is_dir():
+            return {
+                "valid": False,
+                "message": (
+                    f"Evidence directory missing: {evidence_dir}. "
+                    f"Run initialize or resume_from_plan first."
+                ),
+            }
+        subtask_id = state.current_subtask_id or "unknown"
+        evidence_file = evidence_dir / f"{phase_name}_{subtask_id}.json"
+        if not evidence_file.exists():
+            return {
+                "valid": False,
+                "message": (
+                    f"Evidence file missing: {evidence_file}. "
+                    f"The {phase_name} agent must write this file before "
+                    f"validate_step can accept step {step_id}."
+                ),
+            }
+        # Validate JSON structure
+        try:
+            evidence_data = json.loads(
+                evidence_file.read_text(encoding="utf-8")
+            )
+        except (json.JSONDecodeError, OSError) as exc:
+            return {
+                "valid": False,
+                "message": (
+                    f"Evidence file {evidence_file} is not valid JSON: {exc}"
+                ),
+            }
+        # Check required fields
+        for required_field in ("phase", "subtask_id", "timestamp"):
+            if required_field not in evidence_data:
+                return {
+                    "valid": False,
+                    "message": (
+                        f"Evidence file {evidence_file} missing required "
+                        f"field: '{required_field}'. "
+                        f"Required fields: phase, subtask_id, timestamp."
+                    ),
+                }
+        # Validate subtask_id matches current subtask
+            if evidence_data.get("subtask_id") != subtask_id:
+                return {
+                    "valid": False,
+                    "message": (
+                        f"Evidence file subtask_id mismatch: "
+                        f"expected '{subtask_id}', "
+                        f"got '{evidence_data.get('subtask_id')}'."
+                    ),
+                }
+
     # Mark step complete
     state.completed_steps.append(step_id)
     if step_id in state.pending_steps:
@@ -473,6 +546,10 @@ def initialize_workflow(task: str, branch: str) -> Dict:
     # Create fresh state
     state = StepState()
     state.save(state_file)
+
+    # Create evidence directory for artifact-gated validation
+    evidence_dir = Path(f".map/{branch}/evidence")
+    evidence_dir.mkdir(parents=True, exist_ok=True)
 
     return {
         "status": "initialized",
@@ -632,6 +709,10 @@ def resume_from_plan(branch: str) -> Dict:
         plan_approved=True,
     )
     state.save(state_file)
+
+    # Create evidence directory for artifact-gated validation
+    evidence_dir = plan_dir / "evidence"
+    evidence_dir.mkdir(parents=True, exist_ok=True)
 
     return {
         "status": "success",

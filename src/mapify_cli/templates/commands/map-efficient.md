@@ -15,6 +15,9 @@ State machine enforces sequencing, Python validates completion, hooks inject rem
 2. Use exact `subagent_type` specified — never substitute
 3. Call each agent individually — no combining or skipping
 4. Max 5 retry iterations per subtask (note: /map-fast uses max 3)
+5. Agent phases (ACTOR 2.3, MONITOR 2.4, PREDICTOR 2.6) require evidence files.
+   Each agent writes `.map/<branch>/evidence/<phase>_<subtask_id>.json` after completing work.
+   `validate_step` rejects the step if evidence is missing or malformed.
 
 ## Intentional Agent Omissions
 

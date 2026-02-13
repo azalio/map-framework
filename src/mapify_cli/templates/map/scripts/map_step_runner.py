@@ -108,7 +108,7 @@ def update_workflow_state(
 
         return {
             "status": "success",
-            "message": f"Updated {subtask_id}: {step_name} → {new_state}",
+            "message": f"Updated {subtask_id}: {step_name} -> {new_state}",
             "completed_steps": state["completed_steps"][subtask_id],
         }
 

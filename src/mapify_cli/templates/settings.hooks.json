@@ -22,7 +22,7 @@
           {
             "type": "command",
             "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/workflow-context-injector.py",
-            "timeout": 1,
+            "timeout": 3,
             "description": "Injects workflow context only for Edit/Write and significant Bash commands"
           }
         ]
@@ -36,7 +36,7 @@
           {
             "type": "command",
             "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/post-edit-reminder.py",
-            "timeout": 1,
+            "timeout": 3,
             "description": "Reminds to run tests after Edit/Write (only when MAP workflow active)"
           }
         ]

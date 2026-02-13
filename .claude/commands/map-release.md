@@ -311,7 +311,7 @@ Use AskUserQuestion to get user decision on version bump:
 
 ```
 AskUserQuestion(
-  questions: [
+  questions=[
     {
       question: "What type of version bump should be performed for this release?",
       header: "Version Bump",
@@ -531,7 +531,7 @@ Use AskUserQuestion for explicit confirmation:
 
 ```
 AskUserQuestion(
-  questions: [
+  questions=[
     {
       question: "⚠️ IRREVERSIBLE OPERATION ⚠️\n\nPushing tag will immediately:\n1. Trigger GitHub Actions release workflow\n2. Build and publish package to PyPI\n3. Create public GitHub release\n\nVersion: $LAST_TAG\nTarget: origin/main\n\nDo you want to proceed with tag push?",
       header: "Confirm Push",

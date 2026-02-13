@@ -2494,3 +2494,27 @@ def check_rate_limit(user_id, action, limit=100, window=3600):
 - Only MEDIUM/LOW issues → valid=true (with feedback)
 
 </Monitor_Critical_Reminders>
+
+### Evidence File (Artifact-Gated Validation)
+
+**Exception to read-only rule**: Monitor writes evidence files to `.map/` artifacts directory via Bash (not Write tool). This does NOT violate the read-only-for-project-code rule — `.map/` is a workflow artifact directory, not project code.
+
+After completing validation, write an evidence file:
+
+```bash
+cat > .map/<branch>/evidence/monitor_<subtask_id>.json << 'EVIDENCE'
+{
+  "phase": "monitor",
+  "subtask_id": "<subtask_id>",
+  "timestamp": "<ISO 8601 UTC>",
+  "valid": true,
+  "issues_found": <number of issues>,
+  "recommendation": "approve|reject|revise"
+}
+EVIDENCE
+```
+
+**Required fields** (orchestrator validates these): `phase`, `subtask_id`, `timestamp`.
+Other fields are informational but recommended for audit trail.
+
+**CRITICAL**: Without this file, `validate_step("2.4")` will reject the step.

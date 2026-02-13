@@ -312,7 +312,7 @@ Next Steps:
 
 **Note:** If interview was skipped (small/well-defined task), the spec line will not appear.
 
-### Step 8: Context Distillation + STOP
+### Step 9: Context Distillation + STOP
 
 **Before stopping, verify the distilled state is self-contained.** The next session starts fresh — it will ONLY see files, not this conversation. Ensure these files contain everything needed:
 

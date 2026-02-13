@@ -24,7 +24,7 @@ def get_branch_name() -> str:
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
             capture_output=True,
             text=True,
-            timeout=2,
+            timeout=1,
         )
         if result.returncode == 0:
             return result.stdout.strip().replace("/", "-")
