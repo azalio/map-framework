@@ -36,7 +36,13 @@ def get_branch_name() -> str:
             check=False,
         )
         if result.returncode == 0:
-            return result.stdout.strip().replace("/", "-")
+            branch = result.stdout.strip()
+            sanitized = branch.replace("/", "-")
+            sanitized = re.sub(r"[^a-zA-Z0-9_.-]", "-", sanitized)
+            sanitized = re.sub(r"-+", "-", sanitized).strip("-")
+            if ".." in sanitized or sanitized.startswith("."):
+                return "default"
+            return sanitized or "default"
     except Exception:
         pass
     return "default"
