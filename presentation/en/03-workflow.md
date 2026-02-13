@@ -31,10 +31,10 @@ flowchart TD
 
 MAP provides **4 specialized workflow commands** for different scenarios:
 
-1. **`/map-feature`** — implement new features
+1. **`/map-efficient`** — implement features, refactor code, complex tasks
 2. **`/map-debug`** — debug issues
-3. **`/map-refactor`** — refactor code
-4. **`/map-review`** — review documentation
+3. **`/map-fast`** — small, low-risk changes
+4. **`/map-review`** — review changes
 
 The **Orchestrator** is NOT a separate agent template; it is the coordination logic implemented in these slash commands.
 
@@ -131,7 +131,7 @@ After invoking Reflector or Curator, the orchestrator **MUST VERIFY** MCP tool u
 - Display: “⚠️ Retry attempt 2 — review previous errors”
 - Implements patterns `qual-0001` (WHAT/WHERE/HOW/WHY) and `arch-0005` (three-failure threshold)
 
-**Sources:** `CONTEXT-ENGINEERING-IMPROVEMENTS.md` Phase 1.1 (lines 276–289), `.claude/commands/map-feature.md` lines 61–103
+**Sources:** `CONTEXT-ENGINEERING-IMPROVEMENTS.md` Phase 1.1 (lines 276–289), `.claude/commands/map-efficient.md`
 
 ## Actor–Monitor Retry Loop
 
@@ -225,9 +225,9 @@ Before completing any MAP workflow subtask the orchestrator **MUST** check 2 que
 
 These rules apply **ONLY** when using MAP framework commands:
 
-- `/map-feature`
+- `/map-efficient`
 - `/map-debug`
-- `/map-refactor`
+- `/map-fast`
 - `/map-review`
 
 For ordinary tasks (bug fixes, docs, simple changes) you can work directly without the full agent chain.

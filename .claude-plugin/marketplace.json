@@ -35,7 +35,7 @@
         "9 specialized agents (TaskDecomposer, Actor, Monitor, Predictor, Evaluator, Reflector, Curator, Orchestrator, DocumentationReviewer)",
         "ACE learning system with persistent knowledge base",
         "5 Claude Code hooks for automation",
-        "4 slash commands (/map-feature, /map-debug, /map-refactor, /map-review)",
+        "4 slash commands (/map-efficient, /map-debug, /map-fast, /map-review)",
         "Professional code review integration",
         "Cost optimization (40-60% savings)"
       ],

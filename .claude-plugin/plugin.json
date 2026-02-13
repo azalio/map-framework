@@ -37,7 +37,7 @@
     "9 specialized MAP agents (TaskDecomposer, Actor, Monitor, Predictor, Evaluator, Reflector, Curator, Orchestrator, DocumentationReviewer)",
     "ACE (Agentic Context Engineering) learning system with persistent knowledge base",
     "5 Claude Code hooks for automation (validate-agent-templates, auto-store-knowledge, enrich-context, session-init, track-metrics)",
-    "4 slash commands (/map-feature, /map-debug, /map-refactor, /map-review)",
+    "4 slash commands (/map-efficient, /map-debug, /map-fast, /map-review)",
     "Professional code review with claude-reviewer MCP",
     "Chain-of-thought reasoning with sequential-thinking MCP",
     "Semantic pattern search with embeddings cache",
@@ -70,9 +70,9 @@
       "documentation-reviewer"
     ],
     "commands": [
-      "map-feature",
+      "map-efficient",
       "map-debug",
-      "map-refactor",
+      "map-fast",
       "map-review"
     ],
     "hooks": [

@@ -31,10 +31,10 @@ flowchart TD
 
 MAP предоставляет **4 специализированных workflow команды** для различных сценариев:
 
-1. **`/map-feature`** — реализация новых функций
+1. **`/map-efficient`** — реализация фичей, рефакторинг, сложные задачи
 2. **`/map-debug`** — отладка проблем
-3. **`/map-refactor`** — рефакторинг кода
-4. **`/map-review`** — review документации
+3. **`/map-fast`** — небольшие низкорисковые изменения
+4. **`/map-review`** — review изменений
 
 **Orchestrator** — НЕ отдельный агент-шаблон, а логика координации, реализованная в этих slash-командах.
 
@@ -142,7 +142,7 @@ MAP предоставляет **4 специализированных workflow
 - Дисплей: "⚠️ Retry attempt 2 - review previous errors"
 - Реализует паттерны `qual-0001` (WHAT/WHERE/HOW/WHY) и `arch-0005` (three-failure threshold)
 
-**Источник:** `CONTEXT-ENGINEERING-IMPROVEMENTS.md` Phase 1.1 (lines 276-289), `.claude/commands/map-feature.md` lines 61-103
+**Источник:** `CONTEXT-ENGINEERING-IMPROVEMENTS.md` Phase 1.1 (lines 276-289), `.claude/commands/map-efficient.md`
 
 ## Actor-Monitor Retry Loop
 
@@ -236,9 +236,9 @@ MAP использует **5 core MCP tools** для расширения воз
 
 Эти правила **ТОЛЬКО** применяются при использовании MAP framework команд:
 
-- `/map-feature`
+- `/map-efficient`
 - `/map-debug`
-- `/map-refactor`
+- `/map-fast`
 - `/map-review`
 
 Для обычных задач (bug fixes, documentation, простые изменения) можно работать напрямую без полной agent chain.

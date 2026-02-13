@@ -34,9 +34,9 @@ MAP (Modular Agentic Planner) is a cognitive architecture that orchestrates 9 sp
 - `track-metrics` — tracks agent performance
 
 **4 Slash Commands:**
-- `/map-feature` — implement new features with full MAP workflow
+- `/map-efficient` — implement features, refactor code, complex tasks with full MAP workflow
 - `/map-debug` — debug issues using MAP analysis
-- `/map-refactor` — refactor code with impact analysis
+- `/map-fast` — small, low-risk changes with minimal overhead
 - `/map-review` — comprehensive review of changes
 
 ### ACE Learning System
@@ -97,14 +97,14 @@ cp map-framework/.claude/settings.hooks.json your-project/.claude/
 ## Quick Start
 
 ```bash
-# Feature development
-/map-feature implement user authentication with JWT tokens
+# Feature development / refactoring / complex tasks
+/map-efficient implement user authentication with JWT tokens
 
 # Debugging
 /map-debug fix the API 500 error on login endpoint
 
-# Refactoring
-/map-refactor refactor UserService class with dependency injection
+# Small, low-risk changes
+/map-fast add environment variable for API timeout
 
 # Code review
 /map-review review the recent changes in auth.py

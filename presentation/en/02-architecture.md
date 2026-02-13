@@ -4,7 +4,7 @@
 
 MAP Framework is built around **8 specialized agents**, coordinated by the Orchestrator.
 
-The **Orchestrator** is NOT an agent template. Workflow coordination logic lives in the slash commands `.claude/commands/map-*.md` (map-feature, map-debug, map-refactor, map-review).
+The **Orchestrator** is NOT an agent template. Workflow coordination logic lives in the slash commands `.claude/commands/map-*.md` (map-efficient, map-debug, map-fast, map-review).
 
 ## System Components
 
@@ -173,7 +173,7 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 - ALWAYS verify MCP tool usage in agent outputs
 - Manual extraction/curation bypasses MCP tools → knowledge won't deduplicate → lessons won't be learned
 
-**Enforcement source:** `.claude/commands/map-feature.md` lines 263–355 + MAP workflow enforcement rules
+**Enforcement source:** `.claude/commands/map-efficient.md` + MAP workflow enforcement rules
 
 ### Template Structure
 

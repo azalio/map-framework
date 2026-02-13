@@ -101,10 +101,10 @@ Copy selected components into an existing project:
 │   ├── reflector.md
 │   ├── curator.md
 │   └── documentation-reviewer.md
-├── commands/         # 4 slash commands
-│   ├── map-feature.md
+├── commands/         # Workflow slash commands
+│   ├── map-efficient.md
 │   ├── map-debug.md
-│   ├── map-refactor.md
+│   ├── map-fast.md
 │   └── map-review.md
 └── mem0 MCP       # ACE knowledge base (SQLite)
 ```
@@ -119,13 +119,13 @@ Copy selected components into an existing project:
 
 After installation, you have **4 core workflow commands**:
 
-### /map-feature — Implement New Features
+### /map-efficient — Full Workflow (Features, Refactoring, Complex Tasks)
 
 ```bash
-/map-feature Implement user authentication with JWT tokens
+/map-efficient Implement user authentication with JWT tokens
 ```
 
-Automatically decomposes the task, implements, validates, and extracts reusable patterns for future work.
+Automatically decomposes the task, implements, validates, and extracts reusable patterns for future work. Handles features, refactoring, and any complex development task.
 
 ### /map-debug — Debug Issues
 
@@ -135,21 +135,21 @@ Automatically decomposes the task, implements, validates, and extracts reusable 
 
 Diagnoses and fixes issues with detailed analysis and impact prediction.
 
-### /map-refactor — Refactor Code
+### /map-fast — Quick Changes
 
 ```bash
-/map-refactor Extract database queries into repository pattern
+/map-fast Add environment variable for API timeout
 ```
 
-Refactors with impact prediction and quality assessment.
+Minimal workflow for small, low-risk changes with 40-50% token savings.
 
-### /map-review — Review Documentation
+### /map-review — Review Changes
 
 ```bash
 /map-review Check API documentation for completeness
 ```
 
-Comprehensive technical documentation review for completeness and correctness.
+Comprehensive review of changes using Monitor, Predictor, and Evaluator agents.
 
 ## Configuration
 
@@ -223,11 +223,11 @@ After installation:
 1. **Run your first workflow:**
 
    ```bash
-   /map-feature Implement hello world endpoint
+   /map-efficient Implement hello world endpoint
    ```
 
 2. **Inspect the generated checkpoint:**
-   - Open `.map/progress.md`
+   - Open `.map/<branch>/progress.md`
    - Watch progress markers
 
 3. **Review results:**
