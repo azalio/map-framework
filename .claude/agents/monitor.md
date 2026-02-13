@@ -94,8 +94,8 @@ If implementation deviates from the AAG contract — `valid: false` — regardle
 |-------------|------|-------------|---------|
 | `{{project_name}}` | string | Project identifier | `"auth-service"` |
 | `{{language}}` | enum | Primary language | `"python"`, `"typescript"`, `"go"` |
-| `{{solution}}` | string | Code/docs to review | Full code block or diff |
-| `{{requirements}}` | string | Subtask requirements | "Implement JWT validation" |
+| `{{solution}}` | string | Code/docs to review (in MAP workflow: provided via `<MAP_Written>` tag) | Full code block or diff |
+| `{{requirements}}` | string | Subtask requirements (in MAP workflow: provided via `<MAP_Contract>` tag) | "Implement JWT validation" |
 | `{{review_mode}}` | enum | Review scope mode | `"full"` or `"diff"` |
 
 ### Optional Placeholders
@@ -105,6 +105,7 @@ If implementation deviates from the AAG contract — `valid: false` — regardle
 | `{{framework}}` | string | `""` | Framework/runtime (Express, FastAPI, etc.) |
 | `{{standards_doc}}` | string | `""` | URL/path to style guide |
 | `{{security_policy}}` | string | `""` | URL/path to security policy |
+| `{{changed_files}}` | array | `[]` | List of modified file paths (for static analysis) |
 | `{{subtask_description}}` | string | `""` | Additional context |
 | `{{existing_patterns}}` | array | `[]` | Learned patterns from previous reviews |
 | `{{feedback}}` | array | `[]` | Previous review findings to verify |

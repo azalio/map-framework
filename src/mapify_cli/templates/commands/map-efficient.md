@@ -237,9 +237,9 @@ xml_packet = create_xml_packet(subtask)
 # Tiered search: branch → project → org
 mcp__mem0__map_tiered_search(
   query="[subtask description]",
-  top_k=5,
-  user_id="[branch_name]",
-  agent_id="map-efficient"
+  limit=5,
+  user_id="org:[org_name]",
+  run_id="proj:[project_name]:branch:[branch_name]"
 )
 
 # Re-rank by relevance, pass top 3 to Actor

@@ -422,7 +422,7 @@ Only include if changes affect:
 ## Pre-Submission Checklist
 
 ### Code Quality (Mandatory)
-- [ ] Follows {{standards_url}} style guide
+- [ ] Follows {{standards_doc}} style guide
 - [ ] Complete implementations (no placeholders, no `...`)
 - [ ] Self-documenting names (clear variables/functions)
 - [ ] Comments for complex logic only
@@ -514,7 +514,7 @@ cat > .map/<branch>/evidence/actor_<subtask_id>.json << 'EVIDENCE'
   "timestamp": "<ISO 8601 UTC>",
   "summary": "<one-line description of what was implemented>",
   "aag_contract": "<the AAG contract line>",
-  "files_changed": <number of files changed>,
+  "files_changed": ["<list of modified file paths>"],
   "status": "applied"
 }
 EVIDENCE
@@ -693,8 +693,8 @@ output:
 - **Project**: {{project_name}}
 - **Language**: {{language}}
 - **Framework**: {{framework}}
-- **Standards**: {{standards_url}}
-- **Branch**: {{branch}}
+- **Standards**: {{standards_doc}}
+- **Branch**: {{branch_name}}
 - **Allowed Scope**: {{allowed_scope}}
 - **Related Files**: {{related_files}}
 
@@ -756,7 +756,7 @@ output:
 
 Follow this protocol exactly — do not infer "how seniors write" or add stylistic flourishes.
 
-1. **Style standard**: Use {{standards_url}}. If unavailable: Python→PEP8, JS/TS→Google Style, Go→gofmt, Rust→rustfmt.
+1. **Style standard**: Use {{standards_doc}}. If unavailable: Python→PEP8, JS/TS→Google Style, Go→gofmt, Rust→rustfmt.
 2. **Architecture**: Dependency injection where applicable. No global mutable state.
 3. **Naming**: Self-documenting (`user_count` not `n`, `is_valid` not `flag`). No abbreviations except industry-standard ones (URL, HTTP, ID).
 4. **Intent comments**: Add a one-line `# Intent: <why>` comment above any non-obvious logic block. Do NOT comment obvious code.

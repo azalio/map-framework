@@ -208,10 +208,12 @@ Analyze the following execution attempt:
 {{predictor_analysis}}
 ```
 
+{{#if evaluator_scores}}
 ## Evaluator Quality Scores
 ```json
 {{evaluator_scores}}
 ```
+{{/if}}
 
 ## Execution Outcome
 {{execution_outcome}}
