@@ -6,7 +6,7 @@ description: Minimal workflow for small, low-risk changes (40-50% savings, NO le
 
 **⚠️ WARNING: Use for small, low-risk production changes only. Do not skip tests.**
 
-Minimal agent sequence (40-50% token savings). Skips: Predictor, Evaluator, Reflector, Curator.
+Minimal agent sequence (40-50% token savings). Skips: Predictor, Reflector, Curator.
 
 **Consequences:** No impact analysis, no quality scoring, no learning, playbook never improves.
 
@@ -29,7 +29,6 @@ Minimal agent sequence (token-optimized, reduced analysis depth):
 
 **Agents INTENTIONALLY SKIPPED:**
 - Predictor (no impact analysis)
-- Evaluator (no quality scoring)
 - Reflector (no lesson extraction)
 - Curator (no playbook updates)
 
@@ -130,6 +129,6 @@ After all subtasks completed:
 - MAX 3 iterations per subtask
 - NO learning cycle (Reflector/Curator skipped)
 - NO impact analysis (Predictor skipped)
-- NO quality scoring (Evaluator skipped)
+- NO quality scoring
 
 Begin now with minimal workflow.

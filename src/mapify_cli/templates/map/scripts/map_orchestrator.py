@@ -12,7 +12,7 @@ DESIGN PRINCIPLE:
 
 ARCHITECTURE:
   ┌─────────────────────────────────────────────────────────────┐
-  │  map-efficient.md (150 lines)                               │
+  │  map-efficient.md (~540 lines)                               │
   │  ├─> 1. Call get_next_step() → returns step instruction    │
   │  ├─> 2. Execute step (Actor/Monitor/mem0/etc)              │
   │  ├─> 3. Call validate_step() → checks completion           │
@@ -35,7 +35,7 @@ STATE FILE:
       "pending_steps": ["2.1_MEM0_SEARCH", "2.3_ACTOR", "2.4_MONITOR", ...]
     }
 
-STEP PHASES (14 total):
+STEP PHASES (13 total):
   1.0  DECOMPOSE          - task-decomposer agent
   1.5  INIT_PLAN          - Generate task_plan.md
   1.55 REVIEW_PLAN        - User review + explicit approval checkpoint
@@ -46,9 +46,8 @@ STEP PHASES (14 total):
   2.2  RESEARCH           - research-agent (conditional)
   2.3  ACTOR              - Actor agent implementation
   2.4  MONITOR            - Monitor validation
-  2.5  RETRY_LOOP         - Retry on Monitor failure
   2.6  PREDICTOR          - Impact analysis (conditional)
-  2.7  APPLY_CHANGES      - Write/Edit tools
+  2.7  UPDATE_STATE       - Mark subtask progress
   2.8  TESTS_GATE         - Run tests
   2.9  LINTER_GATE        - Run linter
   2.10 VERIFY_ADHERENCE   - Self-audit checkpoint
@@ -112,7 +111,6 @@ STEP_PHASES = {
     "2.2": "RESEARCH",
     "2.3": "ACTOR",
     "2.4": "MONITOR",
-    "2.5": "RETRY_LOOP",
     "2.6": "PREDICTOR",
     "2.7": "UPDATE_STATE",
     "2.8": "TESTS_GATE",

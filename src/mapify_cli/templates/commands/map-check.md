@@ -112,7 +112,7 @@ Read the current state to understand what was completed:
 BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/\//-/g')
 STATE_FILE=".map/${BRANCH}/workflow_state.json"
 
-cat "$STATE_FILE"
+# Use Read tool to load the state file contents
 ```
 
 ### Step 2: Validate All Subtasks Complete
@@ -159,7 +159,7 @@ Read task_plan_<branch>.md to get acceptance criteria:
 
 ```bash
 PLAN_FILE=".map/${BRANCH}/task_plan_${BRANCH}.md"
-cat "$PLAN_FILE"
+# Use Read tool to load the plan file contents
 ```
 
 ### Step 4: Call Final Verifier
@@ -195,7 +195,7 @@ Even if verifier approves, run automated checks:
 
 **Tests:**
 ```bash
-TEST_CMD=$(jq -r '.test_command // "pytest"' .claude/ralph-loop-config.json)
+TEST_CMD="pytest"  # Default; override if project uses different test runner
 echo "Running final tests..."
 eval "$TEST_CMD"
 
@@ -218,7 +218,7 @@ fi
 
 **Linter:**
 ```bash
-LINT_CMD=$(jq -r '.lint_command // "make lint"' .claude/ralph-loop-config.json)
+LINT_CMD="make lint"  # Default; override if project uses different linter
 echo "Running final lint..."
 eval "$LINT_CMD"
 

@@ -81,21 +81,11 @@ Execute all validation gates in parallel where possible:
 #### Gate 1-4: Code Quality Checks
 
 ```bash
-# Run in parallel (all must succeed)
-pytest tests/ --cov=src/mapify_cli --cov-report=term-missing &
-PID_PYTEST=$!
-
-black src/ tests/ --check &
-PID_BLACK=$!
-
-ruff check src/ tests/ &
-PID_RUFF=$!
-
-mypy src/ &
-PID_MYPY=$!
-
-# Wait for all checks
-wait $PID_PYTEST && wait $PID_BLACK && wait $PID_RUFF && wait $PID_MYPY
+# Run checks sequentially (all must succeed)
+pytest tests/ --cov=src/mapify_cli --cov-report=term-missing && \
+black src/ tests/ --check && \
+ruff check src/ tests/ && \
+mypy src/
 ```
 
 **Expected Results:**
@@ -1166,6 +1156,8 @@ Use these MCP tools throughout the workflow:
 - **`mcp__mem0__map_tiered_search`** - Search for release patterns from past projects
 - **`mcp__mem0__map_add_pattern`** - Store release learnings cross-project
 - **`mcp__sequential-thinking__sequentialthinking`** - Complex decision making for version bump
+
+**Built-in Tools (not MCP):**
 - **`AskUserQuestion`** - Get explicit confirmation for IRREVERSIBLE operations
 
 ### Critical Constraints

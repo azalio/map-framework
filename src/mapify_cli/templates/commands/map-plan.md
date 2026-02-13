@@ -227,6 +227,7 @@ Then use the **Write** tool to create `.map/<branch>/task_plan_<branch>.md` with
 ## Subtasks
 
 ### ST-001: [Subtask Title]
+- **Status:** pending
 - **AAG Contract:** `Actor -> Action(params) -> Goal`
 - **Complexity:** [low/medium/high]
 - **Dependencies:** [none | ST-XXX, ST-YYY]

@@ -13,20 +13,27 @@ description: Resume incomplete MAP workflow from checkpoint
 - When returning to an unfinished task
 
 **What it does:**
-1. Detects `.map/progress.md` checkpoint file
-2. Displays workflow progress summary
-3. Shows completed and remaining subtasks
-4. Asks user confirmation before resuming
-5. Continues Actor→Monitor loop for remaining subtasks
+1. Detects `.map/<branch>/step_state.json` checkpoint (orchestrator canonical state)
+2. Cross-references `.map/<branch>/workflow_state.json` for subtask completion
+3. Displays workflow progress summary
+4. Shows completed and remaining subtasks
+5. Asks user confirmation before resuming
+6. Continues from the last incomplete step via the state machine
+
+**State files used:**
+- **`step_state.json`** — Orchestrator canonical state. Source of truth for resumption. Tracks current step, retry counts, circuit breaker status.
+- **`workflow_state.json`** — Enforcement gates. Tracks subtask completion for workflow-gate.py hook.
+- **`task_plan_<branch>.md`** — Full task decomposition with validation criteria and AAG contracts.
 
 ---
 
 ## Step 1: Detect Checkpoint
 
-Check if checkpoint file exists:
+Check if state files exist for the current branch:
 
 ```bash
-test -f .map/progress.md && echo "Found incomplete workflow" || echo "No checkpoint"
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/\//-/g')
+test -f ".map/${BRANCH}/step_state.json" && echo "Found incomplete workflow" || echo "No checkpoint"
 ```
 
 **If no checkpoint exists:**
@@ -36,12 +43,12 @@ Display message and exit:
 ```markdown
 ## No Workflow in Progress
 
-No checkpoint file found at `.map/progress.md`.
+No checkpoint file found at `.map/<branch>/step_state.json`.
 
 **To start a new workflow, use:**
 - `/map-efficient "task description"` - Standard implementation workflow
 - `/map-debug "issue description"` - Debugging workflow
-- `/map-fast "task description"` - Throwaway code workflow
+- `/map-fast "task description"` - Minimal workflow
 
 No recovery needed.
 ```
@@ -52,35 +59,40 @@ No recovery needed.
 
 ## Step 2: Load and Display Progress
 
-Read checkpoint file and display progress summary:
+Read both state files and the task plan to display progress summary:
 
 ```bash
-cat .map/progress.md
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/\//-/g')
+
+# Read state files using the Read tool
+# .map/${BRANCH}/step_state.json — current orchestrator state
+# .map/${BRANCH}/workflow_state.json — subtask completion status
+# .map/${BRANCH}/task_plan_${BRANCH}.md — full plan with AAG contracts
 ```
 
-Parse the YAML frontmatter and display:
+Parse the state and display:
 
 ```markdown
 ## Found Incomplete Workflow
 
-**Task:** [task_plan from frontmatter]
-**Current Phase:** [current_phase]
-**Turn Count:** [turn_count]
-**Started:** [started_at]
-**Last Updated:** [updated_at]
+**Task:** [goal from task_plan]
+**Branch:** ${BRANCH}
+**Current Step:** [current_step from step_state.json]
+**Current Phase:** [phase name from step_state.json]
+**Started:** [started_at from workflow_state.json]
 
 ### Progress Overview
 
 [X/N] subtasks completed ([percentage]%)
 
-### Completed Subtasks ✅
-- [x] **ST-001**: [description] (completed at [timestamp])
-- [x] **ST-002**: [description] (completed at [timestamp])
+### Completed Subtasks
+- [x] **ST-001**: [description] (complete)
+- [x] **ST-002**: [description] (complete)
 ...
 
-### Remaining Subtasks 📋
-- [ ] **ST-003**: [description]
-- [ ] **ST-004**: [description]
+### Remaining Subtasks
+- [ ] **ST-003**: [description] — currently at phase: [phase]
+- [ ] **ST-004**: [description] — pending
 ...
 ```
 
@@ -88,65 +100,73 @@ Parse the YAML frontmatter and display:
 
 ## Step 3: User Confirmation
 
-**⚠️ CRITICAL: Always ask for user confirmation before resuming.**
-
-Ask a simple yes/no question:
+**CRITICAL: Always ask for user confirmation before resuming.**
 
 ```
-Resume from last checkpoint? [Y/n]
+AskUserQuestion(questions=[
+  {
+    "question": "Resume workflow from last checkpoint?",
+    "header": "Resume",
+    "options": [
+      {"label": "Resume (recommended)", "description": "Continue from last checkpoint step"},
+      {"label": "Start fresh", "description": "Delete state files and start over with /map-efficient"},
+      {"label": "Abort", "description": "Do nothing, keep state files intact"}
+    ],
+    "multiSelect": false
+  }
+])
 ```
 
 **Handle user response:**
 
-- **Y or y or Enter (default):** Proceed to Step 4 (resume workflow)
-- **n or N:** Delete checkpoint file and exit with message "Checkpoint cleared. Start fresh with /map-efficient."
+- **Resume:** Proceed to Step 4 (resume workflow)
+- **Start fresh:** Delete `.map/<branch>/step_state.json` and `.map/<branch>/workflow_state.json`, exit with "State cleared. Start fresh with /map-efficient."
+- **Abort:** Exit without changes
 
 ---
 
 ## Step 4: Resume Workflow
 
-Load remaining subtasks from checkpoint and continue Actor→Monitor loop.
+Use the orchestrator to determine the next step and continue execution.
 
 **Important context loading:**
 
 Before resuming, read:
-1. `.map/progress.md` - current state
-2. `.map/task_plan_*.md` - full task decomposition with validation criteria
+1. `.map/<branch>/step_state.json` — current orchestrator state
+2. `.map/<branch>/workflow_state.json` — subtask completion
+3. `.map/<branch>/task_plan_<branch>.md` — full task decomposition with AAG contracts
+
+**Resume via orchestrator:**
+
+```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/\//-/g')
+
+# Get next step from orchestrator (reads step_state.json internally)
+NEXT_STEP=$(python3 .map/scripts/map_orchestrator.py get_next_step)
+STEP_ID=$(echo "$NEXT_STEP" | jq -r '.step_id')
+PHASE=$(echo "$NEXT_STEP" | jq -r '.phase')
+IS_COMPLETE=$(echo "$NEXT_STEP" | jq -r '.is_complete')
+```
+
+**Then follow the same phase routing as /map-efficient:**
+
+For each step, route to the appropriate executor based on `$PHASE` (ACTOR, MONITOR, PREDICTOR, TESTS_GATE, etc.) following the exact same phase handlers documented in map-efficient.md.
 
 **For each remaining subtask:**
 
-1. **Mark subtask in_progress:**
-   - Update `.map/progress.md` with current subtask status
+1. **Get next step** from orchestrator
+2. **Execute phase** (Actor → Monitor → Predictor → etc.)
+3. **Validate step** via `map_orchestrator.py validate_step`
+4. **Update state** automatically via orchestrator
+5. **Continue** to next step until workflow complete
 
-2. **Call Actor:**
-   ```
-   Task(
-     subagent_type="actor",
-     description="Implement [subtask_id]: [description]",
-     prompt="[Actor prompt with subtask details and validation criteria from task plan]"
-   )
-   ```
+**If Monitor returns `valid: false`:**
+- Retry Actor with feedback (max 5 iterations, tracked in step_state.json)
+- State is saved after each iteration
 
-3. **Call Monitor:**
-   ```
-   Task(
-     subagent_type="monitor",
-     description="Validate [subtask_id] implementation",
-     prompt="[Monitor prompt with Actor output and validation criteria]"
-   )
-   ```
-
-4. **If Monitor returns `valid: false`:**
-   - Retry Actor with feedback (max 5 iterations)
-   - Update progress checkpoint after each iteration
-
-5. **If Monitor returns `valid: true`:**
-   - Apply changes
-   - Mark subtask complete in `.map/progress.md`
-   - Continue to next subtask
-
-6. **Update checkpoint after each subtask:**
-   - Save updated state to `.map/progress.md`
+**If Monitor returns `valid: true`:**
+- Changes already applied by Actor
+- Continue to next phase
 
 ---
 
@@ -155,15 +175,15 @@ Before resuming, read:
 After all subtasks complete:
 
 ```markdown
-## Workflow Resumed and Completed ✅
+## Workflow Resumed and Completed
 
-**Task:** [task_plan]
+**Task:** [task from plan]
+**Branch:** ${BRANCH}
 **Total Subtasks:** [N]
 **Subtasks Completed This Session:** [M]
-**Total Actor→Monitor Iterations:** [count]
 
 ### Completion Summary
-[List of all completed subtasks with timestamps]
+[List of all completed subtasks]
 
 ### Files Modified
 [List of files changed during this session]
@@ -172,6 +192,7 @@ After all subtasks complete:
 
 **Optional next steps:**
 - Run `/map-learn` to extract and preserve patterns from this workflow
+- Run `/map-check` to verify all acceptance criteria
 - Run tests to verify implementation
 - Create a commit with your changes
 ```
@@ -180,44 +201,44 @@ After all subtasks complete:
 
 ## Error Handling
 
-### Checkpoint File Corrupted
+### State File Corrupted
 
-If YAML frontmatter parsing fails:
+If `step_state.json` or `workflow_state.json` parsing fails:
 
 ```markdown
-## Checkpoint File Corrupted
+## State File Corrupted
 
-The checkpoint file at `.map/progress.md` could not be parsed.
+The state file at `.map/<branch>/step_state.json` could not be parsed.
 
 **Options:**
 1. View raw file contents and attempt manual recovery
-2. Delete checkpoint and start fresh
+2. Delete state files and start fresh
 
-Would you like me to show the raw checkpoint contents?
+Would you like me to show the raw state contents?
 ```
 
 ### Task Plan File Missing
 
-If `.map/task_plan_*.md` referenced in checkpoint doesn't exist:
+If `.map/<branch>/task_plan_<branch>.md` doesn't exist but state files do:
 
 ```markdown
 ## Task Plan File Missing
 
-The checkpoint references a task plan file that no longer exists.
+State files exist but the task plan is missing.
 
-**Checkpoint:** .map/progress.md
-**Expected task plan:** .map/task_plan_[branch].md
+**State:** .map/<branch>/step_state.json
+**Expected plan:** .map/<branch>/task_plan_<branch>.md
 
 **Options:**
-1. Create a new task plan based on checkpoint information
-2. Clear checkpoint and start fresh workflow
+1. Create a new task plan based on state information
+2. Clear state files and start fresh workflow
 ```
 
 ### Actor/Monitor Agent Failure
 
 If subagent fails during resume:
 
-1. Save current progress to checkpoint
+1. State is preserved in step_state.json (orchestrator saves after each step)
 2. Display error message with last successful state
 3. Suggest retry or escalation to user
 
@@ -235,34 +256,34 @@ User: /map-resume
 Claude: ## Found Incomplete Workflow
 
 **Task:** Implement user authentication with JWT tokens
-**Current Phase:** implementation
-**Turn Count:** 12
-**Started:** 2025-01-15T10:30:00
-**Last Updated:** 2025-01-15T14:45:00
+**Branch:** feat-user-auth
+**Current Step:** 2.3
+**Current Phase:** ACTOR
+**Started:** 2025-01-15T10:30:00Z
 
 ### Progress Overview
 3/5 subtasks completed (60%)
 
-### Completed Subtasks ✅
+### Completed Subtasks
 - [x] **ST-001**: Create User model with SQLite schema
 - [x] **ST-002**: Implement password hashing with bcrypt
 - [x] **ST-003**: Create login API endpoint
 
-### Remaining Subtasks 📋
-- [ ] **ST-004**: Implement JWT token generation
-- [ ] **ST-005**: Add logout and token refresh endpoints
+### Remaining Subtasks
+- [ ] **ST-004**: Implement JWT token generation — currently at phase: ACTOR
+- [ ] **ST-005**: Add logout and token refresh endpoints — pending
 
-Resume from last checkpoint? [Y/n]
+Resume workflow from last checkpoint?
 
-User: Y
+User: Resume
 
-Claude: Resuming workflow from ST-004...
-[Continues Actor→Monitor loop for remaining subtasks]
+Claude: Resuming workflow from ST-004 (phase: ACTOR)...
+[Continues state machine execution for remaining subtasks]
 ```
 
-### Example 2: User Abandons Checkpoint
+### Example 2: User Starts Fresh
 
-User decides to start fresh:
+User decides to abandon current progress:
 
 ```
 User: /map-resume
@@ -270,11 +291,11 @@ User: /map-resume
 Claude: ## Found Incomplete Workflow
 [Shows progress summary]
 
-Resume from last checkpoint? [Y/n]
+Resume workflow from last checkpoint?
 
-User: n
+User: Start fresh
 
-Claude: Checkpoint cleared. Start fresh with /map-efficient.
+Claude: State cleared. Start fresh with /map-efficient.
 ```
 
 ### Example 3: No Checkpoint
@@ -286,12 +307,12 @@ User: /map-resume
 
 Claude: ## No Workflow in Progress
 
-No checkpoint file found at `.map/progress.md`.
+No checkpoint file found at `.map/feat-auth/step_state.json`.
 
 To start a new workflow, use:
 - `/map-efficient "task description"` - Standard implementation
 - `/map-debug "issue description"` - Debugging
-- `/map-fast "task description"` - Throwaway code
+- `/map-fast "task description"` - Minimal workflow
 
 No recovery needed.
 ```
@@ -303,18 +324,15 @@ No recovery needed.
 ### After `/clear`
 
 If user runs `/clear` during a workflow:
-- Checkpoint is preserved in `.map/progress.md`
+- State is preserved in `.map/<branch>/step_state.json` and `workflow_state.json`
 - User can resume with `/map-resume`
 - Fresh context starts from checkpoint state
 
 ### With `/map-efficient`
 
-`/map-efficient` automatically saves checkpoints:
-- After decomposition phase
-- After each subtask completion
-- Before each Actor call
-
-`/map-resume` can continue from any of these checkpoints.
+`/map-efficient` uses `map_orchestrator.py` which maintains `step_state.json`:
+- State is updated after each step validation
+- `/map-resume` reads this state to determine where to continue
 
 ### With `/map-learn`
 
@@ -326,53 +344,55 @@ After `/map-resume` completes a workflow:
 
 ## Technical Notes
 
-### Checkpoint File Format
+### State File Format
 
-The `.map/progress.md` file uses YAML frontmatter:
+The `.map/<branch>/step_state.json` is managed by `map_orchestrator.py`:
 
-```yaml
----
-task_plan: "Task description"
-current_phase: implementation
-turn_count: 12
-started_at: 2025-01-15T10:30:00
-updated_at: 2025-01-15T14:45:00
-branch_name: feat/user-auth
-completed_subtasks:
-  - ST-001
-  - ST-002
-  - ST-003
-subtasks:
-  - id: ST-001
-    description: Create User model
-    status: complete
-    completed_at: 2025-01-15T11:00:00
-  - id: ST-002
-    description: Implement password hashing
-    status: complete
-    completed_at: 2025-01-15T12:30:00
-  - id: ST-004
-    description: Implement JWT generation
-    status: pending
----
+```json
+{
+  "current_step": "2.3",
+  "current_subtask": "ST-004",
+  "subtask_sequence": ["ST-001", "ST-002", "ST-003", "ST-004", "ST-005"],
+  "completed_subtasks": ["ST-001", "ST-002", "ST-003"],
+  "retry_count": 0,
+  "max_retries": 5,
+  "execution_mode": "step_by_step",
+  "plan_approved": true,
+  "circuit_breaker": {
+    "tool_count": 42,
+    "max_iterations": 200
+  }
+}
+```
 
-# MAP Workflow Progress
-[Human-readable markdown body]
+The `.map/<branch>/workflow_state.json` tracks enforcement gates:
+
+```json
+{
+  "workflow": "map-efficient",
+  "started_at": "2025-01-15T10:30:00Z",
+  "current_subtask": "ST-004",
+  "current_state": "IN_PROGRESS",
+  "completed_steps": {"ST-001": [...], "ST-002": [...], "ST-003": [...]},
+  "pending_steps": {"ST-004": [...], "ST-005": [...]},
+  "subtask_sequence": ["ST-001", "ST-002", "ST-003", "ST-004", "ST-005"]
+}
 ```
 
 ### State Restoration
 
 When resuming:
-1. Parse YAML frontmatter for machine state
-2. Use human-readable body for context summary
-3. Load full task plan from referenced file
-4. Continue from last incomplete subtask
+1. Read `step_state.json` for orchestrator position (current step + subtask)
+2. Read `workflow_state.json` for completed/pending subtask list
+3. Read `task_plan_<branch>.md` for AAG contracts and validation criteria
+4. Call `map_orchestrator.py get_next_step` to determine next action
+5. Continue phase-based execution from that point
 
 ### Context Efficiency
 
 Resume is designed for context efficiency:
-- Only loads necessary state, not full conversation history
-- Checkpoint contains enough context to continue
+- Only loads necessary state files, not full conversation history
+- State files contain enough context to continue
 - Fresh agent calls don't carry previous context pollution
 
 ---
@@ -393,25 +413,25 @@ Resume is designed for context efficiency:
 
 ### Issue: Checkpoint shows wrong subtask status
 
-**Symptom:** Checkpoint says ST-003 is complete, but code shows incomplete implementation.
+**Symptom:** step_state.json says ST-003 is complete, but code shows incomplete implementation.
 
-**Cause:** Session crashed between code application and checkpoint update.
+**Cause:** Session crashed between code application and state update.
 
 **Fix:**
 1. Manually verify each subtask's actual completion status
-2. Update checkpoint to match reality
+2. Update step_state.json to match reality
 3. Resume from corrected state
 
 ### Issue: Resume loads but doesn't continue
 
-**Symptom:** Progress displayed, user confirms Continue, but nothing happens.
+**Symptom:** Progress displayed, user confirms Resume, but nothing happens.
 
 **Cause:** Task plan file missing or invalid.
 
 **Fix:**
-1. Check for `.map/task_plan_*.md` file
+1. Check for `.map/<branch>/task_plan_<branch>.md` file
 2. Recreate task plan if missing
-3. Ensure validation criteria are present for remaining subtasks
+3. Ensure AAG contracts are present for remaining subtasks
 
 ### Issue: Actor context missing after resume
 
@@ -421,3 +441,14 @@ Resume is designed for context efficiency:
 1. Read recent git diff for changed files
 2. Load relevant source files for remaining subtasks
 3. Provide context summary in Actor prompt
+
+### Issue: step_state.json and workflow_state.json out of sync
+
+**Symptom:** step_state.json shows ST-004 in progress, but workflow_state.json shows ST-003 pending.
+
+**Cause:** Crash between orchestrator update and workflow state update.
+
+**Fix:**
+1. Trust `step_state.json` as the canonical source
+2. Update `workflow_state.json` to match
+3. Resume from corrected state

@@ -303,20 +303,18 @@ retry_context = {
 If Monitor returns `escalation_required === true`, ask user:
 
 ```
-AskUserQuestion(
-  questions: [
-    {
-      header: "Escalation Required",
-      question: "⚠️ Human review requested by Monitor.\n\nSubtask: [ST-XXX]\nReason: [escalation_reason]\nArbiter Confidence: [confidence]\n\nProceed anyway?",
-      multiSelect: false,
-      options: [
-        { label: "YES - Proceed Anyway", description: "Continue (run Predictor if required, then apply changes)." },
-        { label: "REVIEW - Show Details", description: "Show synthesis_reasoning + comparison_matrix, then ask again." },
-        { label: "NO - Abort Subtask", description: "Do not apply changes; wait for human review." }
-      ]
-    }
-  ]
-)
+AskUserQuestion(questions=[
+  {
+    "header": "Escalation",
+    "question": "Human review requested by Monitor.\n\nSubtask: [ST-XXX]\nReason: [escalation_reason]\nArbiter Confidence: [confidence]\n\nProceed anyway?",
+    "multiSelect": false,
+    "options": [
+      {"label": "YES - Proceed", "description": "Continue (run Predictor if required, then apply changes)."},
+      {"label": "REVIEW - Details", "description": "Show synthesis_reasoning + comparison_matrix, then ask again."},
+      {"label": "NO - Abort", "description": "Do not apply changes; wait for human review."}
+    ]
+  }
+])
 ```
 
 ### 2.10 Conditional Predictor
@@ -389,9 +387,9 @@ If none found: mark gate as skipped and proceed.
 
 | Aspect | map-efficient | map-debate |
 |--------|---------------|------------|
-| Variant generation | Conditional (Self-MoA check) | Always |
-| Synthesis agent | synthesizer (sonnet) | debate-arbiter (opus) |
-| Output | conflict_resolutions | comparison_matrix + decision_rationales + synthesis_reasoning |
+| Variant generation | Single variant (one Actor) | Always 3 variants |
+| Synthesis agent | N/A (single Actor) | debate-arbiter (opus) |
+| Output | Direct implementation | comparison_matrix + decision_rationales + synthesis_reasoning |
 | Cost | Lower | ~3-5x higher (opus model) |
 | Use case | Efficiency | Reasoning transparency |
 

@@ -14,7 +14,24 @@ State machine enforces sequencing, Python validates completion, hooks inject rem
 1. Execute steps in order using state machine guidance
 2. Use exact `subagent_type` specified — never substitute
 3. Call each agent individually — no combining or skipping
-4. Max 5 retry iterations per subtask
+4. Max 5 retry iterations per subtask (note: /map-fast uses max 3)
+
+## Intentional Agent Omissions
+
+/map-efficient does NOT use these agents (by design):
+- **Evaluator** — quality scoring not needed; Monitor validates correctness directly
+- **Reflector** — lesson extraction is a separate step via `/map-learn`
+- **Curator** — pattern storage is a separate step via `/map-learn`
+
+This is NOT a violation of MAP agent rules. Learning is decoupled into `/map-learn` (optional, run after workflow completes) to reduce token usage during execution.
+
+## Dual State Files
+
+/map-efficient uses two state files in `.map/<branch>/`:
+- **`step_state.json`** — Orchestrator canonical state. Tracks current step, retry counts, circuit breaker. Written/read by `map_orchestrator.py`. This is the source of truth for workflow resumption.
+- **`workflow_state.json`** — Enforcement gates. Tracks subtask completion for `workflow-gate.py` hook validation. Written by `map_step_runner.py`.
+
+Both files must stay in sync. The orchestrator updates `step_state.json` on every step; `workflow_state.json` is updated at phase boundaries (INIT_STATE, UPDATE_STATE).
 
 ## Architecture Overview
 
@@ -25,7 +42,7 @@ State machine enforces sequencing, Python validates completion, hooks inject rem
 └─────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────┐
-│  map-efficient.md (THIS FILE - ~150 lines)                  │
+│  map-efficient.md (THIS FILE - ~540 lines)                  │
 │  1. Load state → Get next step instruction                  │
 │  2. Route to appropriate executor based on step phase       │
 │  3. Execute step (Actor/Monitor/mem0/tests/etc)             │
@@ -49,6 +66,7 @@ Before starting the state machine, check if `/map-plan` already produced artifac
 BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/\//-/g')
 if [ -f ".map/${BRANCH}/task_plan_${BRANCH}.md" ] && [ ! -f ".map/${BRANCH}/step_state.json" ]; then
   # Plan exists but execution hasn't started — resume from plan
+  # step_state.json is the orchestrator's canonical state (see "Dual State Files" above)
   python3 .map/scripts/map_orchestrator.py resume_from_plan
 fi
 ```
@@ -112,11 +130,11 @@ This eliminates reasoning overhead — the contract IS the specification."""
 
 ### Phase: INIT_PLAN (1.5)
 
-Generate `.map/task_plan_<branch>.md` from blueprint:
+Generate `.map/<branch>/task_plan_<branch>.md` from blueprint:
 - Header: Goal from blueprint.summary
-- For each subtask: ## ST-XXX section with **Status:** pending
-- First subtask: **Status:** in_progress
-- Terminal State: **Status:** pending
+- For each subtask: ### ST-XXX section with `- **Status:** pending`
+- First subtask: `- **Status:** in_progress`
+- Terminal State: `- **Status:** pending`
 
 ### Phase: REVIEW_PLAN (1.55)
 
@@ -236,7 +254,7 @@ if requires_research(subtask):
 File patterns: [relevant globs]
 Intent: locate
 Max tokens: 1500
-Findings file: .map/findings_{branch}.md
+Findings file: .map/{branch}/findings_{branch}.md
 
 DISTILLATION RULE: Write ONLY actionable findings to the file:
 - file paths + line ranges + function signatures
@@ -317,7 +335,7 @@ if monitor_output["valid"] == false:
         # Actor will fix issues and re-apply code
     else:
         # Escalate to user (3-strike protocol)
-        AskUserQuestion: CONTINUE / SKIP / ABORT
+        AskUserQuestion(questions=[{"question": "Monitor retry limit reached. How to proceed?", "header": "Retry limit", "options": [{"label": "Continue", "description": "Reset retry counter and try again"}, {"label": "Skip", "description": "Skip this subtask and move to next"}, {"label": "Abort", "description": "Stop workflow"}], "multiSelect": false}])
 ```
 
 ### Phase: PREDICTOR (2.6)
@@ -424,7 +442,7 @@ Only used when execution_mode is `step_by_step`.
 - Ask the user whether to continue to the next subtask.
 - If execution_mode is `batch`, the orchestrator auto-skips this step.
 
-## Step 2.5: Validate Step Completion
+## Step 2a: Validate Step Completion
 
 After executing step, validate and update state:
 
@@ -438,7 +456,7 @@ if [ "$PHASE" = "VERIFY_ADHERENCE" ]; then
 fi
 ```
 
-## Step 2.6: Continue or Complete (Context Distillation)
+## Step 2b: Continue or Complete (Context Distillation)
 
 ```bash
 # Get next step
@@ -479,7 +497,8 @@ TOOL_COUNT=$(echo "$CB_DATA" | jq -r '.tool_count')
 MAX_ITERATIONS=$(echo "$CB_DATA" | jq -r '.max_iterations')
 
 if [ "$TOOL_COUNT" -ge "$MAX_ITERATIONS" ]; then
-  AskUserQuestion: "Circuit breaker triggered. RESET_LIMITS or ABORT?"
+  # Ask user how to proceed
+  AskUserQuestion(questions=[{"question": "Circuit breaker triggered. How to proceed?", "header": "Circuit breaker", "options": [{"label": "Reset limits", "description": "Reset counters and continue workflow"}, {"label": "Abort", "description": "Stop workflow immediately"}], "multiSelect": false}])
 fi
 ```
 
@@ -516,16 +535,21 @@ if verification["passed"] and verification["confidence"] >= 0.7:
     update_terminal_state("complete")
     print("✅ Workflow complete! Optional: Run /map-learn to preserve patterns.")
 
-elif thrashing_detected():
-    AskUserQuestion: "Thrashing detected. FORCE_COMPLETE / CONTINUE / ABORT?"
+# NOTE: The conditions below are pseudocode representing orchestrator-level
+# logic. The actual implementation uses check_circuit_breaker and retry_count
+# from step_state.json to detect these conditions.
 
-elif plan_iteration < max_redecompositions:
-    # Re-decomposition
-    Task(subagent_type="task-decomposer", mode="re_decomposition", ...)
+elif verification["retry_count"] > verification["max_retries"]:
+    # Thrashing detected - too many retries without progress
+    AskUserQuestion(questions=[{"question": "Thrashing detected (repeated failures). How to proceed?", "header": "Thrashing", "options": [{"label": "Force complete", "description": "Mark as complete despite failures"}, {"label": "Continue", "description": "Reset retry counter and try again"}, {"label": "Abort", "description": "Stop workflow"}], "multiSelect": false}])
+
+elif check_circuit_breaker()["triggered"] == false:
+    # Re-decomposition: break remaining work into new subtasks
+    Task(subagent_type="task-decomposer", description="Re-decompose remaining work", prompt="...")
 
 else:
     # Max iterations reached
-    AskUserQuestion: "Max iterations reached. RESET_LIMITS / ABORT?"
+    AskUserQuestion(questions=[{"question": "Max iterations reached. How to proceed?", "header": "Max iterations", "options": [{"label": "Reset limits", "description": "Reset counters and continue"}, {"label": "Abort", "description": "Stop workflow"}], "multiSelect": false}])
 ```
 
 ## Step 4: Summary
