@@ -89,6 +89,7 @@ def get_branch_name() -> str:
             capture_output=True,
             text=True,
             cwd=PROJECT_DIR,
+            timeout=1,
         )
         if result.returncode == 0:
             return sanitize_branch_name(result.stdout.strip())

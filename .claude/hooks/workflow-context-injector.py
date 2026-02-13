@@ -74,6 +74,16 @@ SIGNIFICANT_PATTERNS = [
 ]
 
 
+def sanitize_branch_name(branch: str) -> str:
+    """Sanitize branch name for safe filesystem paths."""
+    sanitized = branch.replace("/", "-")
+    sanitized = re.sub(r"[^a-zA-Z0-9_.-]", "-", sanitized)
+    sanitized = re.sub(r"-+", "-", sanitized).strip("-")
+    if ".." in sanitized or sanitized.startswith("."):
+        return "default"
+    return sanitized or "default"
+
+
 def get_branch_name() -> str:
     """Get current git branch name."""
     import subprocess
@@ -86,7 +96,7 @@ def get_branch_name() -> str:
             timeout=1,
         )
         if result.returncode == 0:
-            return result.stdout.strip().replace("/", "-")
+            return sanitize_branch_name(result.stdout.strip())
     except Exception:
         pass
     return "default"
