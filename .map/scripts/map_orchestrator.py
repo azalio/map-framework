@@ -433,6 +433,12 @@ def validate_step(step_id: str, branch: str) -> Dict:
     if step_id in state.pending_steps:
         state.pending_steps.remove(step_id)
 
+    # When transitioning from init phases to execution phases,
+    # ensure the first subtask is selected
+    if step_id == "1.6" and state.subtask_sequence and not state.current_subtask_id:
+        state.current_subtask_id = state.subtask_sequence[0]
+        state.subtask_index = 0
+
     # Advance current_step_id to next pending step
     if state.pending_steps:
         next_id = state.pending_steps[0]
@@ -510,6 +516,107 @@ def set_execution_mode(mode: str, branch: str) -> Dict:
     return {"status": "success", "execution_mode": state.execution_mode}
 
 
+def set_subtasks(subtask_ids: List[str], branch: str) -> Dict:
+    """Set subtask sequence after decomposition and select the first subtask.
+
+    Args:
+        subtask_ids: List of subtask IDs (e.g., ["ST-001", "ST-002", "ST-003"])
+        branch: Git branch name (sanitized)
+
+    Returns:
+        Dict with status and subtask info
+    """
+    state_file = Path(f".map/{branch}/step_state.json")
+    state = StepState.load(state_file)
+
+    if not subtask_ids:
+        return {"status": "error", "message": "At least one subtask ID is required"}
+
+    state.subtask_sequence = subtask_ids
+    state.current_subtask_id = subtask_ids[0]
+    state.subtask_index = 0
+    state.save(state_file)
+
+    return {
+        "status": "success",
+        "subtask_sequence": subtask_ids,
+        "current_subtask_id": subtask_ids[0],
+    }
+
+
+def resume_from_plan(branch: str) -> Dict:
+    """Resume workflow from an existing /map-plan output, skipping init phases.
+
+    Detects task_plan_<branch>.md and workflow_state.json created by /map-plan.
+    Extracts subtask IDs from the plan, marks init phases as completed, and
+    starts execution from CHOOSE_MODE (user still picks step_by_step vs batch).
+
+    Args:
+        branch: Git branch name (sanitized)
+
+    Returns:
+        Dict with status and skipped phases
+    """
+    plan_dir = Path(f".map/{branch}")
+    plan_file = plan_dir / f"task_plan_{branch}.md"
+    workflow_state_file = plan_dir / "workflow_state.json"
+
+    # Verify plan artifacts exist
+    if not plan_file.exists():
+        return {
+            "status": "error",
+            "message": f"No plan found at {plan_file}. Run /map-plan first.",
+        }
+
+    # Extract subtask IDs from plan file (ST-XXX pattern)
+    import re
+
+    plan_content = plan_file.read_text(encoding="utf-8")
+    subtask_ids = re.findall(r"###\s+(ST-\d+)", plan_content)
+
+    if not subtask_ids:
+        return {
+            "status": "error",
+            "message": f"No subtask IDs (ST-XXX) found in {plan_file}.",
+        }
+
+    # Extract AAG contracts if present in workflow_state.json
+    aag_contracts = {}
+    if workflow_state_file.exists():
+        try:
+            ws_data = json.loads(workflow_state_file.read_text(encoding="utf-8"))
+            aag_contracts = ws_data.get("aag_contracts", {})
+        except (json.JSONDecodeError, KeyError):
+            pass
+
+    # Create state that skips DECOMPOSE, INIT_PLAN, REVIEW_PLAN (plan already approved)
+    # Start from CHOOSE_MODE so user can still pick execution mode
+    skipped_phases = ["1.0", "1.5", "1.55"]
+    execution_start = [s for s in STEP_ORDER if s not in skipped_phases]
+
+    state_file = plan_dir / "step_state.json"
+    state = StepState(
+        current_subtask_id=subtask_ids[0],
+        subtask_index=0,
+        subtask_sequence=subtask_ids,
+        current_step_id="1.56",
+        current_step_phase="CHOOSE_MODE",
+        completed_steps=skipped_phases,
+        pending_steps=execution_start,
+        plan_approved=True,
+    )
+    state.save(state_file)
+
+    return {
+        "status": "success",
+        "message": "Resumed from /map-plan. Skipped DECOMPOSE, INIT_PLAN, REVIEW_PLAN.",
+        "subtask_sequence": subtask_ids,
+        "current_subtask_id": subtask_ids[0],
+        "aag_contracts_found": len(aag_contracts),
+        "next_phase": "CHOOSE_MODE",
+    }
+
+
 def main():
     """CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -523,11 +630,17 @@ def main():
             "initialize",
             "set_plan_approved",
             "set_execution_mode",
+            "set_subtasks",
+            "resume_from_plan",
         ],
         help="Command to execute",
     )
-    parser.add_argument("task_or_step", nargs="?", help="Task description or step ID")
-    parser.add_argument("value", nargs="?", help="Optional value for setter commands")
+    parser.add_argument(
+        "task_or_step", nargs="?", help="Task description, step ID, or subtask IDs"
+    )
+    parser.add_argument(
+        "extra_args", nargs="*", help="Additional arguments (e.g., more subtask IDs)"
+    )
     parser.add_argument("--branch", help="Git branch (auto-detected if omitted)")
 
     args = parser.parse_args()
@@ -575,6 +688,26 @@ def main():
                 )
                 sys.exit(1)
             result = set_execution_mode(mode, branch)
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "set_subtasks":
+            if not args.task_or_step:
+                print(
+                    json.dumps(
+                        {
+                            "error": "At least one subtask ID required. "
+                            "Usage: set_subtasks ST-001 ST-002 ST-003"
+                        }
+                    ),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            subtask_ids = [args.task_or_step] + (args.extra_args or [])
+            result = set_subtasks(subtask_ids, branch)
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "resume_from_plan":
+            result = resume_from_plan(branch)
             print(json.dumps(result, indent=2))
 
     except Exception as e:

@@ -50,6 +50,8 @@ User request:
 )
 ```
 
+**Save discovery results:** The research-agent returns findings inline. Use the **Write** tool to save them to `.map/<branch>/findings_<branch>.md` so they persist across sessions. Include key file paths, patterns found, and risks.
+
 If discovery is not needed (new greenfield code or already-provided spec), skip to Step 1.
 
 ### Step 1: Assess Scope and Decide Interview Depth
@@ -72,12 +74,12 @@ If interview is not needed, skip to Step 3.
 
 ### Step 2: Deep Interview (Spec Discovery)
 
-Use AskUserQuestionTool to systematically interview the user. The goal is to surface non-obvious decisions and tradeoffs BEFORE planning.
+Use AskUserQuestion to systematically interview the user. The goal is to surface non-obvious decisions and tradeoffs BEFORE planning.
 
 **Rules:**
 - Questions must be NON-OBVIOUS (don't ask what the user already stated)
 - Cover all dimensions: technical implementation, UI/UX, risks, tradeoffs, edge cases, data model, performance, security
-- Ask in small rounds (1-2 high-signal questions; up to 2-4 if needed) using AskUserQuestionTool
+- Ask in small rounds (1-2 high-signal questions; up to 2-4 if needed) using AskUserQuestion
 - Continue iterating until all critical decisions are captured
 - After each round, assess: are there still unresolved architectural decisions?
 
@@ -90,9 +92,9 @@ Use AskUserQuestionTool to systematically interview the user. The goal is to sur
 6. **Integration:** How does this interact with existing code? Migration needed?
 7. **Contract Clarity:** Are ALL goals stated as outcomes (not processes)? Reject "improve auth" — require "AuthService returns 401 for expired tokens". Every goal must be verifiable.
 
-**Example AskUserQuestionTool call:**
+**Example AskUserQuestion call:**
 ```
-AskUserQuestionTool(questions=[
+AskUserQuestion(questions=[
   {
     "question": "Should refresh tokens be stored server-side (Redis/DB) or stateless (signed JWT)?",
     "header": "Token store",
@@ -202,12 +204,17 @@ Output requirements:
 
 ### Step 6: Create Human-Readable Plan
 
-Write the plan to `.map/<branch>/task_plan_<branch>.md`. Wrap content in `<MAP_Plan_v1_0>` semantic brackets for machine-parseable handoff to executors:
+Write the plan to `.map/<branch>/task_plan_<branch>.md` using the **Write** tool. Wrap content in `<MAP_Plan_v1_0>` semantic brackets for machine-parseable handoff to executors.
 
+First, get the branch name:
 ```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/\//-/g')
-cat > .map/${BRANCH}/task_plan_${BRANCH}.md <<EOF
-<MAP_Plan_v1_0 branch="${BRANCH}" created="$(date -u +%Y-%m-%d)">
+git rev-parse --abbrev-ref HEAD | sed 's/\//-/g'
+```
+
+Then use the **Write** tool to create `.map/<branch>/task_plan_<branch>.md` with this structure:
+
+```markdown
+<MAP_Plan_v1_0 branch="<branch>" created="YYYY-MM-DD">
 
 # Task Plan: [Brief Title]
 
@@ -244,25 +251,23 @@ cat > .map/${BRANCH}/task_plan_${BRANCH}.md <<EOF
 [Any important context, gotchas, or design decisions]
 
 </MAP_Plan_v1_0>
-EOF
 ```
 
 **AAG Contract is REQUIRED** for every subtask. Copy directly from task-decomposer output's `aag_contract` field. This is the primary handoff to the Actor agent — without it, the Actor reasons instead of compiles.
 
 ### Step 7: Initialize Workflow State (Do This Last)
 
-Create `.map/<branch>/workflow_state.json` with the decomposition results. Wrap in `<MAP_State_v1_0>` comment for executor parsing.
+Create `.map/<branch>/workflow_state.json` with the decomposition results. Wrap in `MAP_State_v1_0` tag for executor parsing.
 
 Do this AFTER writing `task_plan_<branch>.md` so planning artifacts are created before the state gate becomes active.
 
-```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/\//-/g')
-STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-cat > .map/${BRANCH}/workflow_state.json <<EOF
+Use the **Write** tool to create `.map/<branch>/workflow_state.json` with this structure (substitute actual values):
+
+```json
 {
   "_semantic_tag": "MAP_State_v1_0",
   "workflow": "map-plan",
-  "started_at": "${STARTED_AT}",
+  "started_at": "<current UTC timestamp in ISO 8601>",
   "current_subtask": null,
   "current_state": "INITIALIZED",
   "completed_steps": {},
@@ -273,7 +278,6 @@ cat > .map/${BRANCH}/workflow_state.json <<EOF
     "ST-002": "Actor -> Action(params) -> Goal"
   }
 }
-EOF
 ```
 
 **IMPORTANT:**

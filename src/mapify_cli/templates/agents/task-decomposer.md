@@ -50,6 +50,10 @@ machine-readable blueprint for the Actor/Monitor pipeline.
 │    └─ Map all dependencies (no cycles!)                             │
 │    └─ Order by dependency (foundations first)                       │
 │    └─ Add risks for complexity_score ≥ 7                            │
+│    └─ CODE CHANGES ONLY: subtasks must produce code diffs.          │
+│       Do NOT create operational subtasks (rollback plans,           │
+│       integration test plans, deployment docs). These belong        │
+│       in the plan's Notes section, not as separate subtasks.        │
 │                                                                     │
 │ 6. VALIDATE (run checklist)                                         │
 │    └─ Circular dependency check (must be acyclic DAG)               │

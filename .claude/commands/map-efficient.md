@@ -41,6 +41,20 @@ State machine enforces sequencing, Python validates completion, hooks inject rem
 
 **Task:** $ARGUMENTS
 
+## Step 0: Detect Existing Plan from /map-plan
+
+Before starting the state machine, check if `/map-plan` already produced artifacts for this branch:
+
+```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/\//-/g')
+if [ -f ".map/${BRANCH}/task_plan_${BRANCH}.md" ] && [ ! -f ".map/${BRANCH}/step_state.json" ]; then
+  # Plan exists but execution hasn't started — resume from plan
+  python3 .map/scripts/map_orchestrator.py resume_from_plan
+fi
+```
+
+If `resume_from_plan` succeeds, the orchestrator skips DECOMPOSE, INIT_PLAN, and REVIEW_PLAN (the plan was already approved in /map-plan) and starts from CHOOSE_MODE.
+
 ## Step 1: Get Next Step Instruction
 
 ```bash
@@ -53,7 +67,7 @@ IS_COMPLETE=$(echo "$NEXT_STEP" | jq -r '.is_complete')
 
 # Check if workflow complete
 if [ "$IS_COMPLETE" = "true" ]; then
-  echo "✅ All subtasks complete. Running final verification..."
+  echo "All subtasks complete. Running final verification..."
   # Go to Step 3: Final Verification
 fi
 ```
@@ -89,8 +103,11 @@ Purpose: Actor compiles this line into code. Monitor verifies against it.
 This eliminates reasoning overhead — the contract IS the specification."""
 )
 
-# After decomposer returns: extract subtask sequence + aag_contracts, save to state
-# Update state: python3 .map/scripts/map_orchestrator.py validate_step "1.0"
+# After decomposer returns:
+# 1. Extract subtask IDs from blueprint and register them in state:
+#    python3 .map/scripts/map_orchestrator.py set_subtasks ST-001 ST-002 ST-003
+# 2. Validate step completion:
+#    python3 .map/scripts/map_orchestrator.py validate_step "1.0"
 ```
 
 ### Phase: INIT_PLAN (1.5)
@@ -121,10 +138,10 @@ Notes:
 ═══════════════════════════════════════════════════
 ```
 
-3. Ask for approval using AskUserQuestionTool (example):
+3. Ask for approval using AskUserQuestion (example):
 
 ```
-AskUserQuestionTool(questions=[
+AskUserQuestion(questions=[
   {
     "question": "Approve this plan and start execution?",
     "header": "Plan approval",
@@ -163,20 +180,20 @@ Note: In `batch` mode the orchestrator auto-skips the pause step (2.11).
 
 ### Phase: INIT_STATE (1.6)
 
-```bash
-# Create workflow_state.json
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/\//-/g')
-cat > .map/${BRANCH}/workflow_state.json <<'EOF'
+Get the branch name via Bash: `git rev-parse --abbrev-ref HEAD | sed 's/\//-/g'`
+
+Then use the **Write** tool to create `.map/<branch>/workflow_state.json`:
+
+```json
 {
   "workflow": "map-efficient",
-  "started_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "started_at": "<current UTC timestamp in ISO 8601>",
   "current_subtask": null,
   "current_state": "INITIALIZED",
   "completed_steps": {},
   "pending_steps": {},
   "subtask_sequence": []
 }
-EOF
 ```
 
 ### Phase: XML_PACKET (2.0)
@@ -328,8 +345,8 @@ Optional: analyzer_output, user_context"""
 # Code already applied by Actor, validated by Monitor
 # Update workflow state to mark subtask progress
 
-python3 scripts/map_step_runner.py update_workflow_state "ST-XXX" "validated" "VALIDATED"
-python3 scripts/map_step_runner.py update_plan_status "ST-XXX" "in_progress"
+python3 .map/scripts/map_step_runner.py update_workflow_state "ST-XXX" "validated" "VALIDATED"
+python3 .map/scripts/map_step_runner.py update_plan_status "ST-XXX" "in_progress"
 ```
 
 ### Phase: TESTS_GATE (2.8)
@@ -417,7 +434,7 @@ python3 .map/scripts/map_orchestrator.py validate_step "$STEP_ID"
 
 # Update plan status if subtask complete
 if [ "$PHASE" = "VERIFY_ADHERENCE" ]; then
-  python3 scripts/map_step_runner.py update_plan_status "$SUBTASK_ID" "complete"
+  python3 .map/scripts/map_step_runner.py update_plan_status "$SUBTASK_ID" "complete"
 fi
 ```
 
