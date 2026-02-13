@@ -27,21 +27,25 @@ WORKFLOW_RULES = {
         "forbidden_types": ["security", "auth", "payment", "database-schema"],
     },
     "map-efficient": {
-        "allowed_risk": ["low", "medium"],
-        "allowed_size": ["small", "medium", "large"],
-        "allowed_types": ["feature", "enhancement", "fix", "tweak", "maintenance", "docs"],
-        "forbidden_types": [],
-    },
-    "map-feature": {
         "allowed_risk": ["low", "medium", "high"],
         "allowed_size": ["small", "medium", "large"],
         "allowed_types": [
             "feature",
+            "enhancement",
+            "fix",
+            "tweak",
+            "maintenance",
+            "docs",
             "security",
             "auth",
             "payment",
             "database-schema",
             "infrastructure",
+            "refactor",
+            "restructure",
+            "rename",
+            "extract",
+            "cleanup",
         ],
         "forbidden_types": [],
     },
@@ -51,19 +55,12 @@ WORKFLOW_RULES = {
         "allowed_types": ["bug", "fix", "test-failure", "error", "regression"],
         "forbidden_types": ["feature", "refactor"],
     },
-    "map-refactor": {
-        "allowed_risk": ["low", "medium", "high"],
-        "allowed_size": ["small", "medium", "large"],
-        "allowed_types": ["refactor", "restructure", "rename", "extract", "cleanup"],
-        "forbidden_types": ["feature", "bug"],
-    },
 }
 
 # Recommendations for risky combinations
 RISK_OVERRIDES = {
-    ("map-fast", "high"): "map-feature",
+    ("map-fast", "high"): "map-efficient",
     ("map-fast", "medium"): "map-efficient",
-    ("map-efficient", "high"): "map-feature",
 }
 
 

@@ -31,9 +31,9 @@
         ]
       }
     },
-    "map-feature": {
+    "map-efficient": {
       "priority": "high",
-      "description": "Implement new features (critical, full validation)",
+      "description": "Production features, refactoring, critical code (recommended default, 60-70% tokens)",
       "promptTriggers": {
         "keywords": [
           "implement",
@@ -41,38 +41,12 @@
           "new feature",
           "create",
           "build",
-          "critical"
-        ],
-        "intentPatterns": [
-          "(implement|add|create|build).*?(feature|functionality)",
-          "new.*?(feature|component|module)",
-          "critical.*?(feature|implementation)"
-        ]
-      }
-    },
-    "map-efficient": {
-      "priority": "high",
-      "description": "Production features (optimized workflow, 60-70% tokens)",
-      "promptTriggers": {
-        "keywords": [
+          "critical",
           "production",
           "optimize",
           "enhance",
           "improve",
-          "update feature"
-        ],
-        "intentPatterns": [
-          "(optimize|enhance|improve).*?(feature|code|implementation)",
-          "production.*?(feature|deploy)",
-          "update.*?(feature|functionality)"
-        ]
-      }
-    },
-    "map-refactor": {
-      "priority": "medium",
-      "description": "Refactor code, improve structure",
-      "promptTriggers": {
-        "keywords": [
+          "update feature",
           "refactor",
           "restructure",
           "reorganize",
@@ -80,6 +54,12 @@
           "improve structure"
         ],
         "intentPatterns": [
+          "(implement|add|create|build).*?(feature|functionality)",
+          "new.*?(feature|component|module)",
+          "critical.*?(feature|implementation)",
+          "(optimize|enhance|improve).*?(feature|code|implementation)",
+          "production.*?(feature|deploy)",
+          "update.*?(feature|functionality)",
           "(refactor|restructure|reorganize).*?(code|component|module)",
           "clean.*?up.*?(code|structure)",
           "improve.*?(structure|architecture)"

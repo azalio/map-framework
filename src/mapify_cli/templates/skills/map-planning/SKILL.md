@@ -222,7 +222,7 @@ Only Monitor agent updates task_plan status (via `status_update` output field).
 | Stop hook warns "No terminal state" | `## Terminal State` section not updated | Update Terminal State to `complete`, `blocked`, `won't_do`, or `superseded` |
 | Branch name causes file errors | Branch has `/` characters | Scripts auto-sanitize: `feature/auth` becomes `feature-auth` |
 | PreToolUse hook shows stale focus | Plan file not updated after phase completion | Update `**Status:**` to `complete` and advance `## Current Phase` |
-| `/map-fast` ignores planning | By design — `/map-fast` skips planning | Use `/map-efficient` or `/map-feature` for planning support |
+| `/map-fast` ignores planning | By design — `/map-fast` skips planning | Use `/map-efficient` for planning support |
 
 ---
 
