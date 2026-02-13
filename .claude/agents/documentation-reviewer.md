@@ -444,7 +444,7 @@ mcp__deepwiki__ask_question(
 # 4. Check historical patterns (if mem0 available)
 mcp__mem0__map_tiered_search(
     query="CRD installation documentation patterns",
-    top_k=5,
+    limit=5,
     similarity_threshold=0.7
 )
 ```
