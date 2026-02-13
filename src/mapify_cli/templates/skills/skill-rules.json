@@ -24,6 +24,53 @@
           "explain.*?(workflow|map-fast|map-efficient)"
         ]
       }
+    },
+    "map-planning": {
+      "type": "domain",
+      "enforcement": "suggest",
+      "priority": "medium",
+      "description": "File-based planning with branch-scoped task tracking",
+      "promptTriggers": {
+        "keywords": [
+          "create plan",
+          "task plan",
+          "track progress",
+          "planning",
+          ".map directory",
+          "show task status",
+          "resume work"
+        ],
+        "intentPatterns": [
+          "(create|make|start).*(plan|planning)",
+          "(track|show|check).*(progress|status|tasks)",
+          "(resume|continue).*(work|task|plan)",
+          "\\.map.*(directory|folder|files)"
+        ]
+      }
+    },
+    "map-cli-reference": {
+      "type": "domain",
+      "enforcement": "suggest",
+      "priority": "high",
+      "description": "CLI and MCP error corrections",
+      "promptTriggers": {
+        "keywords": [
+          "mapify command",
+          "mapify error",
+          "no such command",
+          "no such option",
+          "mem0 mcp",
+          "validate graph",
+          "mapify init",
+          "mapify check"
+        ],
+        "intentPatterns": [
+          "(mapify|mem0).*(error|command|help|usage)",
+          "(no such).*(command|option)",
+          "validate.*(graph|dependency)",
+          "(how to|how do).*(mapify|mem0)"
+        ]
+      }
     }
   }
 }

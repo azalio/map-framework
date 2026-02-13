@@ -1,8 +1,17 @@
 ---
 name: map-planning
 version: "1.0.0"
-description: Implements file-based planning for MAP Framework workflows with branch-scoped task tracking in .map/ directory. Prevents goal drift via automatic plan synchronization before tool use and validates completion state on exit.
+description: >-
+  File-based planning for MAP Framework with branch-scoped task tracking
+  in .map/ directory. Use when user says "create a plan", "track progress",
+  "show task status", or needs persistent planning across agent sessions.
+  Prevents goal drift via automatic plan synchronization. Do NOT use for
+  workflow selection (use map-workflows-guide) or CLI errors (use
+  map-cli-reference).
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep
+metadata:
+  author: azalio
+  version: 3.1.0
 hooks:
   PreToolUse:
     - matcher: "Write|Edit|Bash"
@@ -160,6 +169,56 @@ Only Monitor agent updates task_plan status (via `status_update` output field).
 | `blocked` | Needs external input (human, resource) |
 | `won't_do` | Task intentionally cancelled |
 | `superseded` | Replaced by different approach |
+
+---
+
+## Examples
+
+### Example 1: Starting a new feature plan
+
+**User says:** "Create a plan for implementing user notifications"
+
+**Actions:**
+1. Run `init-session.sh` to create `.map/` skeleton for current branch
+2. Populate `task_plan_<branch>.md` with phases: research, design, implement, test
+3. Set Goal: "Implement user notification system with email and in-app channels"
+4. Mark ST-001 as `in_progress`
+
+**Result:** Persistent plan files created in `.map/` directory, PreToolUse hook keeps agent focused on current phase.
+
+### Example 2: Resuming work after context reset
+
+**User says:** "Show task status" or "What was I working on?"
+
+**Actions:**
+1. Read `task_plan_<branch>.md` to find current phase
+2. Read `progress_<branch>.md` for recent action log
+3. Read `findings_<branch>.md` for accumulated decisions
+
+**Result:** Agent resumes from last checkpoint without losing context, even after conversation window reset.
+
+### Example 3: Handling repeated failures
+
+**User says:** "The database migration keeps failing"
+
+**Actions:**
+1. Log error to `progress_<branch>.md` (attempt count tracked)
+2. After 3 failed attempts, trigger 3-Strike Protocol
+3. Present CONTINUE/SKIP/ABORT options to user
+
+**Result:** Phase marked `blocked`, agent moves to next subtask or exits cleanly.
+
+---
+
+## Troubleshooting
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| "Plan not found" warning | `.map/` directory not initialized | Run `init-session.sh` or start a MAP workflow |
+| Stop hook warns "No terminal state" | `## Terminal State` section not updated | Update Terminal State to `complete`, `blocked`, `won't_do`, or `superseded` |
+| Branch name causes file errors | Branch has `/` characters | Scripts auto-sanitize: `feature/auth` becomes `feature-auth` |
+| PreToolUse hook shows stale focus | Plan file not updated after phase completion | Update `**Status:**` to `complete` and advance `## Current Phase` |
+| `/map-fast` ignores planning | By design — `/map-fast` skips planning | Use `/map-efficient` or `/map-feature` for planning support |
 
 ---
 

@@ -1,5 +1,15 @@
+---
 name: map-cli-reference
-description: Use when encountering mapify CLI or MCP usage errors (no such command, no such option, parameter not found). Provides mem0 MCP and validate command corrections with common mistake patterns.
+description: >-
+  Quick reference for mapify CLI and mem0 MCP usage errors. Use when
+  encountering "no such command", "no such option", "parameter not found",
+  or when user asks "how to use mapify", "mem0 commands", "validate graph".
+  Do NOT use for workflow selection (use map-workflows-guide) or planning
+  methodology (use map-planning).
+metadata:
+  author: azalio
+  version: 3.1.0
+  mcp-server: mem0
 ---
 
 # MAP CLI Quick Reference
@@ -134,6 +144,56 @@ mcp__mem0__map_tiered_search(query="error handling", limit=5)
 
 **Source Code**:
 - `src/mapify_cli/__init__.py`
+
+---
+
+## Examples
+
+### Example 1: Fixing a deprecated command error
+
+**User says:** "I'm getting `Error: No such command 'playbook'` when running mapify"
+
+**Actions:**
+1. Identify error type — deprecated command usage
+2. Explain: playbook commands removed in v4.0+
+3. Provide replacement: `mcp__mem0__map_tiered_search` for reads, `Task(subagent_type="curator", ...)` for writes
+
+**Result:** User switches to mem0 MCP tools, error resolved.
+
+### Example 2: Validating a dependency graph
+
+**User says:** "How do I check if my task plan has circular dependencies?"
+
+**Actions:**
+1. Show command: `mapify validate graph task_plan.json`
+2. Explain exit codes: 0 = valid, 1 = invalid, 2 = malformed JSON
+3. Suggest `--strict` flag for CI pipelines and `--visualize` for debugging
+
+**Result:** User validates their task plan and fixes dependency issues before running workflow.
+
+### Example 3: mem0 MCP not responding
+
+**User says:** "mem0 tiered search returns empty results"
+
+**Actions:**
+1. Check mem0 MCP configuration in `.claude/mcp_config.json`
+2. Verify namespace conventions (org/project/branch)
+3. Test with broad query: `mcp__mem0__map_tiered_search(query="test", limit=1)`
+
+**Result:** User identifies configuration issue and restores mem0 connectivity.
+
+---
+
+## Troubleshooting
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| `No such command 'playbook'` | Deprecated in v4.0+ | Use `mcp__mem0__map_tiered_search` for pattern retrieval |
+| `No such option '--output'` | Wrong subcommand syntax | Check `mapify <command> --help` for valid options |
+| mem0 tool invocation fails | MCP server not configured | Add mem0 to `.claude/mcp_config.json` and restart |
+| `validate graph` exit code 2 | Malformed JSON input | Validate JSON with `python -m json.tool < file.json` |
+| Patterns not persisting | Writing directly instead of via Curator | Always use `Task(subagent_type="curator", ...)` for pattern writes |
+| `mapify init` overwrites files | Using `--force` flag | Omit `--force` to preserve existing configuration |
 
 ---
 

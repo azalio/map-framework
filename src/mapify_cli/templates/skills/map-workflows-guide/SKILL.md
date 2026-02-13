@@ -1,7 +1,17 @@
 ---
 name: map-workflows-guide
-description: Comprehensive guide for choosing the right MAP workflow based on task type and requirements
+description: >-
+  Guide for choosing the right MAP workflow based on task type, risk level,
+  and token budget. Use when user asks "which workflow should I use",
+  "difference between map-fast and map-efficient", "when to use map-debug",
+  or compares MAP workflows. Do NOT use for actual workflow execution —
+  use /map-efficient, /map-fast, etc. instead. Do NOT use for CLI errors
+  (use map-cli-reference).
 version: 1.0
+metadata:
+  author: azalio
+  version: 3.1.0
+  mcp-server: mem0
 ---
 
 # MAP Workflows Guide
@@ -569,6 +579,55 @@ MAP: 📚 Loads this skill for context
 2. **Have a critical feature?** See [map-feature-deep-dive.md](resources/map-feature-deep-dive.md)
 3. **Debugging an issue?** See [map-debug-deep-dive.md](resources/map-debug-deep-dive.md)
 4. **Understanding agents?** See [Agent Architecture](resources/agent-architecture.md)
+---
+
+## Examples
+
+### Example 1: Choosing a workflow for a new feature
+
+**User says:** "I need to add JWT authentication to the API"
+
+**Actions:**
+1. Assess risk level — security-sensitive (high-risk indicator)
+2. Check if first implementation — yes, OAuth/JWT is new
+3. Multiple modules affected — auth middleware, user service, token storage
+
+**Result:** Recommend `/map-feature` — critical security feature justifies 100% token cost for maximum validation and per-subtask learning.
+
+### Example 2: Quick fix with clear scope
+
+**User says:** "Update the error message in the login form"
+
+**Actions:**
+1. Assess risk — low, localized text change
+2. Check blast radius — single file, no dependencies
+3. No security implications
+
+**Result:** Recommend `/map-fast` — small, low-risk change with clear acceptance criteria. No learning needed.
+
+### Example 3: Debugging a test failure
+
+**User says:** "Tests in auth.test.ts are failing after the last merge"
+
+**Actions:**
+1. Identify task type — debugging/fixing specific issue
+2. Need root cause analysis — yes, regression after merge
+3. Not a new feature or refactor
+
+**Result:** Recommend `/map-debug` — focused on diagnosing failures with root cause analysis and regression prevention.
+
+---
+
+## Troubleshooting
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| Wrong workflow chosen mid-task | Cannot switch workflows during execution | Complete current workflow, then restart with correct one |
+| Predictor never runs in /map-efficient | Subtasks assessed as low-risk | Expected behavior; Predictor is conditional. Use /map-feature if you need guaranteed analysis |
+| No patterns stored after /map-fast | /map-fast skips learning agents | By design — use /map-efficient or /map-feature for pattern accumulation |
+| mem0 search returns empty | mem0 MCP not configured or namespaces mismatch | Verify mem0 in `.claude/mcp_config.json`, check namespace conventions |
+| Skill suggests wrong workflow | Description trigger mismatch | Check skill-rules.json triggers; refine query wording |
+
 ---
 
 **Skill Version:** 1.0
