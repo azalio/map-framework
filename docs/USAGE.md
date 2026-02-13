@@ -711,7 +711,7 @@ The checkpoint format (`.map/progress.md`) is designed with security in mind:
 
    ```
    .map/progress.md         - Workflow state (YAML frontmatter + markdown)
-   .map/task_plan_*.md      - Task decomposition with validation criteria
+   .map/*/task_plan_*.md    - Task decomposition with validation criteria
    ```
 
 2. **After compaction**, manually reference files:
@@ -719,7 +719,7 @@ The checkpoint format (`.map/progress.md`) is designed with security in mind:
    ```
    User: continue MAP workflow
          @.map/progress.md
-         @.map/task_plan_map-to-enchance.md
+         @.map/map-to-enchance/task_plan_map-to-enchance.md
 
    Claude: [reads files]
            Resuming subtask 4: "Add refresh token logic"
@@ -934,7 +934,7 @@ MAP uses file-based persistence with automatic injection:
 
 **Files:**
 - `.map/progress.md` - Workflow checkpoint with YAML frontmatter (machine-readable) + markdown body (human-readable)
-- `.map/task_plan_*.md` - Task decomposition with validation criteria
+- `.map/*/task_plan_*.md` - Task decomposition with validation criteria
 - `.map/dev_docs/context.md` - Project context
 - `.map/dev_docs/tasks.md` - Task checklist
 
@@ -2045,7 +2045,7 @@ This enables detailed logging from hooks, showing:
 | Verification results | `.map/verification_results_<branch>.json` | Machine-readable check results |
 | Workflow state | `.map/state_<branch>.json` | Current workflow status |
 | Repo insight | `.map/repo_insight_<branch>.json` | Project language and suggested checks |
-| Task plan | `.map/task_plan_<branch>.md` | Subtask breakdown with validation |
+| Task plan | `.map/<branch>/task_plan_<branch>.md` | Subtask breakdown with validation |
 | Progress checkpoint | `.map/progress.md` | Resume checkpoint for context recovery |
 
 #### Common Issues

@@ -178,7 +178,7 @@ When orchestrator provides `findings_file` path in prompt, append research resul
 
 **Input Signal** (from orchestrator):
 ```
-Findings file: .map/findings_feature-auth.md
+Findings file: .map/feature-auth/findings_feature-auth.md
 ```
 
 **Action**:

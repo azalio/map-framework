@@ -161,7 +161,7 @@ MAP Framework implements cognitive architecture inspired by prefrontal cortex fu
 
 **State Management:**
 - Workflow checkpoint stored in `.map/progress.md` (YAML frontmatter + markdown)
-- Task plan stored in `.map/task_plan_*.md`
+- Task plan stored in `.map/<branch>/task_plan_*.md`
 - Workflow logs in `.map/workflow_logs/`
 - Metrics tracked in `.claude/metrics/agent_metrics.jsonl`
 
@@ -2189,7 +2189,7 @@ MAP Framework applies cutting-edge context engineering principles for AI agents,
 
 Workflow state is managed through file-based persistence in `.map/` directory:
 - `.map/progress.md` - Workflow checkpoint (YAML frontmatter + markdown body)
-- `.map/task_plan_*.md` - Task decomposition with validation criteria
+- `.map/<branch>/task_plan_*.md` - Task decomposition with validation criteria
 - `.map/dev_docs/context.md` - Project context
 - `.map/dev_docs/tasks.md` - Task checklist
 
@@ -2273,7 +2273,7 @@ Filesystem (persists forever)           Conversation Memory (clears on compactio
 
 **Implementation:**
 - Checkpoint: `.map/progress.md` (YAML frontmatter + markdown body)
-- Task plan: `.map/task_plan_*.md` (subtask decomposition with validation criteria)
+- Task plan: `.map/<branch>/task_plan_*.md` (subtask decomposition with validation criteria)
 - Recovery: `/map-resume` command (detects checkpoint and offers to resume)
 
 ### Automatic Recovery (Phase 2)
@@ -2302,7 +2302,7 @@ Command checks .map/progress.md existence
         ↓
     [User confirms?]
         ↓ Yes
-    Load task plan from .map/task_plan_*.md
+    Load task plan from .map/<branch>/task_plan_*.md
         ↓
     Continue Actor→Monitor loop for remaining subtasks
         ↓
@@ -2316,7 +2316,7 @@ Command checks .map/progress.md existence
 | Resume command | `.claude/commands/map-resume.md` | User-facing recovery workflow |
 | WorkflowState class | `src/mapify_cli/workflow_state.py` | Checkpoint serialization/deserialization |
 | Checkpoint file | `.map/progress.md` | YAML frontmatter + markdown progress |
-| Task plan | `.map/task_plan_*.md` | Subtask decomposition with validation |
+| Task plan | `.map/<branch>/task_plan_*.md` | Subtask decomposition with validation |
 | Unit tests | `tests/test_workflow_state.py` | WorkflowState logic coverage |
 
 **Execution Flow:**
