@@ -1,5 +1,9 @@
 # /map-feature Deep Dive
 
+> **STATUS: PLANNED — NOT YET IMPLEMENTED.**
+> This workflow is designed but not yet available as a command.
+> Use `/map-efficient` for all feature development, including critical/high-risk features.
+
 ## When to Use
 
 **Critical features requiring maximum confidence:**
