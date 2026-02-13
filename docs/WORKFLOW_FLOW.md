@@ -165,7 +165,7 @@
 └──────────────────┬──────────────────────────────────┘
                    ↓
 ┌─────────────────────────────────────────────────────┐
-│ Turn 8: get_next_step → step_id=2.7, APPLY_CHANGES │
+│ Turn 8: get_next_step → step_id=2.7, UPDATE_STATE   │
 │                                                     │
 │ Выполняет: Edit/Write tools                        │
 │                                                     │
@@ -217,10 +217,9 @@
 | **2.1** | MEM0_SEARCH | Поиск паттернов в mem0 | ✅ Да (для каждого ST) |
 | **2.2** | RESEARCH | research-agent для контекста | 🔶 Условно (если 3+ файлов) |
 | **2.3** | ACTOR | Actor генерирует код | ✅ Да (для каждого ST) |
-| **2.4** | MONITOR | Monitor валидирует | ✅ Да (для каждого ST) |
-| **2.5** | RETRY_LOOP | Повтор при Monitor.valid=false | 🔶 Условно (макс 5 раз) |
+| **2.4** | MONITOR | Monitor валидирует (retry до 5 раз) | ✅ Да (для каждого ST) |
 | **2.6** | PREDICTOR | Анализ impact | 🔶 Условно (medium/high risk) |
-| **2.7** | APPLY_CHANGES | Применение Edit/Write | ✅ Да (блокируется gate) |
+| **2.7** | UPDATE_STATE | Обновление workflow_state.json | ✅ Да (для каждого ST) |
 | **2.8** | TESTS_GATE | Запуск тестов | 🔶 Условно (если есть) |
 | **2.9** | LINTER_GATE | Запуск линтера | 🔶 Условно (если есть) |
 | **2.10** | VERIFY_ADHERENCE | Self-audit checkpoint | ✅ Да (для каждого ST) |

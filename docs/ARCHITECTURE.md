@@ -729,14 +729,13 @@ See [USAGE.md - Workflow Variants](./USAGE.md#workflow-variants) for detailed de
 7. `2.1 MEM0_SEARCH` - Tiered memory search
 8. `2.2 RESEARCH` - research-agent (conditional)
 9. `2.3 ACTOR` - Actor agent implementation
-10. `2.4 MONITOR` - Monitor validation
-11. `2.5 RETRY_LOOP` - Retry on Monitor failure (not shown in linear flow)
-12. `2.6 PREDICTOR` - Impact analysis (conditional)
-13. `2.7 APPLY_CHANGES` - Write/Edit tools
-14. `2.8 TESTS_GATE` - Run tests
-15. `2.9 LINTER_GATE` - Run linter
-16. `2.10 VERIFY_ADHERENCE` - Self-audit checkpoint
-17. `2.11 SUBTASK_APPROVAL` - Pause between subtasks (step_by_step only)
+10. `2.4 MONITOR` - Monitor validation (retry up to 5 times)
+11. `2.6 PREDICTOR` - Impact analysis (conditional)
+12. `2.7 UPDATE_STATE` - Update workflow_state.json
+13. `2.8 TESTS_GATE` - Run tests
+14. `2.9 LINTER_GATE` - Run linter
+15. `2.10 VERIFY_ADHERENCE` - Self-audit checkpoint
+16. `2.11 SUBTASK_APPROVAL` - Pause between subtasks (step_by_step only)
 
 **State Files:**
 - `step_state.json` - Hook injection source (current step phase)
