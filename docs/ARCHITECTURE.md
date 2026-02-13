@@ -1774,7 +1774,7 @@ Agent prompts are located in `.claude/agents/*.md` and use **Handlebars template
 {{project_name}}           # e.g., "my-web-app"
 {{language}}               # e.g., "Python", "JavaScript"
 {{framework}}              # e.g., "Flask", "Next.js"
-{{standards_url}}          # Link to coding standards
+{{standards_doc}}          # Link to coding standards
 ```
 
 **Actor-specific:**
@@ -1952,7 +1952,7 @@ model: claude-sonnet-4-5  # or claude-haiku-3-5
 {{project_name}}    # From .claude/config.json
 {{language}}        # From .claude/config.json
 {{framework}}       # From .claude/config.json
-{{standards_url}}   # From .claude/config.json
+{{standards_doc}}   # From .claude/config.json
 ```
 
 **Pass custom variables:**
