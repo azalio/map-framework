@@ -9,7 +9,7 @@
 If no `.map/<branch>/workflow_state.json` exists, run full quality suite:
 
 ```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/\//-/g')
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
 STATE_FILE=".map/${BRANCH}/workflow_state.json"
 
 if [[ ! -f "$STATE_FILE" ]]; then
@@ -109,7 +109,7 @@ If `.map/<branch>/workflow_state.json` exists, verify subtask completion.
 Read the current state to understand what was completed:
 
 ```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/\//-/g')
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
 STATE_FILE=".map/${BRANCH}/workflow_state.json"
 
 # Use Read tool to load the state file contents
@@ -203,7 +203,7 @@ eval "$TEST_CMD"
 # If tests fail and you want a durable artifact for follow-up/debugging,
 # re-run capturing output and parse to .map/<branch>/diagnostics.json:
 #
-# BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/\//-/g')
+# BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
 # LOG_FILE=".map/${BRANCH}/tests.log"
 # mkdir -p ".map/${BRANCH}"
 # ( $TEST_CMD ) >"$LOG_FILE" 2>&1
@@ -223,7 +223,7 @@ echo "Running final lint..."
 eval "$LINT_CMD"
 
 # Optional (structured diagnostics):
-# BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/\//-/g')
+# BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
 # LOG_FILE=".map/${BRANCH}/lint.log"
 # mkdir -p ".map/${BRANCH}"
 # ( $LINT_CMD ) >"$LOG_FILE" 2>&1

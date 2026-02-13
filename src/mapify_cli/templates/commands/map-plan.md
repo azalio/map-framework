@@ -145,7 +145,7 @@ AskUserQuestion(questions=[
 ### Step 3: Create Branch Directory
 
 ```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/\//-/g')
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
 mkdir -p .map/${BRANCH}
 ```
 
@@ -208,7 +208,7 @@ Write the plan to `.map/<branch>/task_plan_<branch>.md` using the **Write** tool
 
 First, get the branch name:
 ```bash
-git rev-parse --abbrev-ref HEAD | sed 's/\//-/g'
+git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||'
 ```
 
 Then use the **Write** tool to create `.map/<branch>/task_plan_<branch>.md` with this structure:

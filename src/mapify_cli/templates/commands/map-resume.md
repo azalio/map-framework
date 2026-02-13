@@ -32,7 +32,7 @@ description: Resume incomplete MAP workflow from checkpoint
 Check if state files exist for the current branch:
 
 ```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/\//-/g')
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
 test -f ".map/${BRANCH}/step_state.json" && echo "Found incomplete workflow" || echo "No checkpoint"
 ```
 
@@ -62,7 +62,7 @@ No recovery needed.
 Read both state files and the task plan to display progress summary:
 
 ```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/\//-/g')
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
 
 # Read state files using the Read tool
 # .map/${BRANCH}/step_state.json — current orchestrator state
@@ -139,7 +139,7 @@ Before resuming, read:
 **Resume via orchestrator:**
 
 ```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/\//-/g')
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
 
 # Get next step from orchestrator (reads step_state.json internally)
 NEXT_STEP=$(python3 .map/scripts/map_orchestrator.py get_next_step)

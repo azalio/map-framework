@@ -66,7 +66,7 @@ Both files must stay in sync. The orchestrator updates `step_state.json` on ever
 Before starting the state machine, check if `/map-plan` already produced artifacts for this branch:
 
 ```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/\//-/g')
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
 if [ -f ".map/${BRANCH}/task_plan_${BRANCH}.md" ] && [ ! -f ".map/${BRANCH}/step_state.json" ]; then
   # Plan exists but execution hasn't started — resume from plan
   # step_state.json is the orchestrator's canonical state (see "Dual State Files" above)
@@ -201,7 +201,7 @@ Note: In `batch` mode the orchestrator auto-skips the pause step (2.11).
 
 ### Phase: INIT_STATE (1.6)
 
-Get the branch name via Bash: `git rev-parse --abbrev-ref HEAD | sed 's/\//-/g'`
+Get the branch name via Bash: `git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||'`
 
 Then use the **Write** tool to create `.map/<branch>/workflow_state.json`:
 
