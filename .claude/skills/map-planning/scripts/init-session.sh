@@ -3,16 +3,16 @@
 # init-session.sh - Initialize planning files for new MAP session
 #
 # Description:
-#   Creates .map/ directory and copies templates for branch-scoped planning files.
+#   Creates .map/<branch>/ directory and copies templates for branch-scoped planning files.
 #   Idempotent: skips files that already exist.
 #
 # Usage:
 #   ${CLAUDE_PLUGIN_ROOT}/scripts/init-session.sh
 #
 # Created files:
-#   .map/task_plan_<branch>.md
-#   .map/findings_<branch>.md
-#   .map/progress_<branch>.md
+#   .map/<branch>/task_plan_<branch>.md
+#   .map/<branch>/findings_<branch>.md
+#   .map/<branch>/progress_<branch>.md
 
 set -euo pipefail
 
@@ -22,17 +22,22 @@ SKILL_ROOT="$(dirname "$SCRIPT_DIR")"
 TEMPLATE_DIR="$SKILL_ROOT/templates"
 
 # Get branch name for file naming
-BRANCH=$(git branch --show-current 2>/dev/null || echo 'main')
+BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'main')
 if [ -z "$BRANCH" ]; then
     BRANCH="main"
 fi
-SANITIZED_BRANCH=$(echo "$BRANCH" | tr '/' '-')
 
-# Create .map directory
-MAP_DIR=".map"
+# Sanitize branch name (matches MAP orchestrator convention)
+SANITIZED_BRANCH=$(echo "$BRANCH" | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+if [ -z "$SANITIZED_BRANCH" ]; then
+    SANITIZED_BRANCH="main"
+fi
+
+# Create .map/<branch> directory (nested convention)
+MAP_DIR=".map/${SANITIZED_BRANCH}"
 mkdir -p "$MAP_DIR"
 
-# Define file paths
+# Define file paths (nested under branch directory)
 TASK_PLAN="$MAP_DIR/task_plan_${SANITIZED_BRANCH}.md"
 FINDINGS="$MAP_DIR/findings_${SANITIZED_BRANCH}.md"
 PROGRESS="$MAP_DIR/progress_${SANITIZED_BRANCH}.md"

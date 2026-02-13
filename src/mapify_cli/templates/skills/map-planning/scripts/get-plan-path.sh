@@ -4,32 +4,37 @@
 #
 # Description:
 #   Detects current git branch and outputs path to branch-specific task plan file.
-#   Sanitizes branch names by replacing '/' with '-' for filesystem compatibility.
+#   Sanitizes branch names for filesystem compatibility.
 #   Defaults to 'main' branch when not in a git repository.
 #
 # Usage:
 #   PLAN_PATH=$(bash .claude/skills/map-planning/scripts/get-plan-path.sh)
 #
 # Output:
-#   .map/task_plan_<sanitized_branch_name>.md
+#   .map/<sanitized_branch>/task_plan_<sanitized_branch>.md
 #
 # Examples:
-#   Branch: feature/map-planning -> .map/task_plan_feature-map-planning.md
-#   Branch: main                 -> .map/task_plan_main.md
-#   Not in repo                  -> .map/task_plan_main.md
+#   Branch: feature/map-planning -> .map/feature-map-planning/task_plan_feature-map-planning.md
+#   Branch: main                 -> .map/main/task_plan_main.md
+#   Not in repo                  -> .map/main/task_plan_main.md
 
 set -euo pipefail
 
 # Detect current git branch, default to 'main' if not in git repo
-BRANCH=$(git branch --show-current 2>/dev/null || echo 'main')
+BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'main')
 
 # Handle empty branch (detached HEAD or git issue)
 if [ -z "$BRANCH" ]; then
     BRANCH="main"
 fi
 
-# Sanitize branch name: replace '/' with '-' for filesystem safety
-SANITIZED_BRANCH=$(echo "$BRANCH" | tr '/' '-')
+# Sanitize branch name for filesystem safety (matches MAP orchestrator convention)
+SANITIZED_BRANCH=$(echo "$BRANCH" | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
 
-# Output the plan file path
-echo ".map/task_plan_${SANITIZED_BRANCH}.md"
+# Fallback if sanitization produced empty string
+if [ -z "$SANITIZED_BRANCH" ]; then
+    SANITIZED_BRANCH="main"
+fi
+
+# Output the plan file path (nested directory convention)
+echo ".map/${SANITIZED_BRANCH}/task_plan_${SANITIZED_BRANCH}.md"
