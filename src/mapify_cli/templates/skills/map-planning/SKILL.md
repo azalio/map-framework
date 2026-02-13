@@ -40,19 +40,23 @@ Instead of relying solely on conversation context (limited window), this skill e
 
 ## File Structure
 
-All files reside in `.map/` directory with branch-based naming:
+All files reside in `.map/<branch>/` directory with branch-based naming:
 
 ```
 .map/
-├── task_plan_<branch>.md    # Primary plan with phases and status
-├── findings_<branch>.md     # Research findings, decisions, key files
-└── progress_<branch>.md     # Action log, errors, test results
+└── <branch>/
+    ├── task_plan_<branch>.md    # Primary plan with phases and status
+    ├── findings_<branch>.md     # Research findings, decisions, key files
+    ├── progress_<branch>.md     # Action log, errors, test results
+    ├── workflow_state.json      # Subtask completion tracking
+    ├── step_state.json          # Orchestrator step state
+    └── evidence/                # Artifact-gated validation evidence
 ```
 
 **Example**: On branch `feature-auth`:
-- `.map/task_plan_feature-auth.md`
-- `.map/findings_feature-auth.md`
-- `.map/progress_feature-auth.md`
+- `.map/feature-auth/task_plan_feature-auth.md`
+- `.map/feature-auth/findings_feature-auth.md`
+- `.map/feature-auth/progress_feature-auth.md`
 
 ## Hook Behavior
 
@@ -112,7 +116,7 @@ Creates `.map/` directory and skeleton files for current branch.
 - Check validation criteria checkboxes [x] when done
 
 ### 3-Strike Error Protocol
-Log errors to `progress_<branch>.md` after attempt 3+. After 3 failed attempts:
+Log errors to `.map/<branch>/progress_<branch>.md` after attempt 3+. After 3 failed attempts:
 1. Escalate to user (CONTINUE/SKIP/ABORT options)
 2. If SKIP: mark phase `blocked`, move to next subtask
 3. If ABORT: mark workflow `blocked`, exit
@@ -180,7 +184,7 @@ Only Monitor agent updates task_plan status (via `status_update` output field).
 
 **Actions:**
 1. Run `init-session.sh` to create `.map/` skeleton for current branch
-2. Populate `task_plan_<branch>.md` with phases: research, design, implement, test
+2. Populate `.map/<branch>/task_plan_<branch>.md` with phases: research, design, implement, test
 3. Set Goal: "Implement user notification system with email and in-app channels"
 4. Mark ST-001 as `in_progress`
 
@@ -191,9 +195,9 @@ Only Monitor agent updates task_plan status (via `status_update` output field).
 **User says:** "Show task status" or "What was I working on?"
 
 **Actions:**
-1. Read `task_plan_<branch>.md` to find current phase
-2. Read `progress_<branch>.md` for recent action log
-3. Read `findings_<branch>.md` for accumulated decisions
+1. Read `.map/<branch>/task_plan_<branch>.md` to find current phase
+2. Read `.map/<branch>/progress_<branch>.md` for recent action log
+3. Read `.map/<branch>/findings_<branch>.md` for accumulated decisions
 
 **Result:** Agent resumes from last checkpoint without losing context, even after conversation window reset.
 
@@ -202,7 +206,7 @@ Only Monitor agent updates task_plan status (via `status_update` output field).
 **User says:** "The database migration keeps failing"
 
 **Actions:**
-1. Log error to `progress_<branch>.md` (attempt count tracked)
+1. Log error to `.map/<branch>/progress_<branch>.md` (attempt count tracked)
 2. After 3 failed attempts, trigger 3-Strike Protocol
 3. Present CONTINUE/SKIP/ABORT options to user
 

@@ -282,7 +282,7 @@ Subtasks should be ordered by dependency:
 
 ### Acceptance Criteria Section (Ralph Loop Integration)
 
-When writing task plans to `.map/task_plan_<branch>.md`, the orchestrator generates an Acceptance Criteria section from subtask validation_criteria. The format is:
+When writing task plans to `.map/<branch>/task_plan_<branch>.md`, the orchestrator generates an Acceptance Criteria section from subtask validation_criteria. The format is:
 
 ```markdown
 ## Acceptance Criteria

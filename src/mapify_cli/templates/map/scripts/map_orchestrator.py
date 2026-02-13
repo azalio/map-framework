@@ -269,7 +269,7 @@ def get_step_instruction(step_id: str, state: StepState) -> str:
             "into ≤20 atomic subtasks with validation criteria."
         ),
         "1.5": (
-            "Generate .map/task_plan_<branch>.md from decomposer blueprint. "
+            "Generate .map/<branch>/task_plan_<branch>.md from decomposer blueprint. "
             "Include Goal, Current Phase, and status for each subtask."
         ),
         "1.55": (
