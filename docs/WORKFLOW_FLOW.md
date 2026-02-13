@@ -380,13 +380,13 @@ Applying modifications...
 **Проверить состояние:**
 ```bash
 # Посмотреть текущий шаг
-cat .map/$(git branch --show-current | sed 's/\//-/g')/step_state.json
+cat .map/$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')/step_state.json
 
 # Получить следующий шаг вручную
 python3 .map/scripts/map_orchestrator.py get_next_step
 
 # Проверить workflow state (для gate)
-cat .map/$(git branch --show-current | sed 's/\//-/g')/workflow_state.json
+cat .map/$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')/workflow_state.json
 ```
 
 **Сбросить состояние:**

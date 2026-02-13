@@ -279,7 +279,7 @@ Task(
 [paste from .map/<branch>/current_packet.xml]
 </MAP_Packet>
 
-<MAP_Context source="mem0" top_k="3">
+<MAP_Context source="mem0" limit="3">
 [top context_patterns from mem0 + relevance_score]
 </MAP_Context>
 

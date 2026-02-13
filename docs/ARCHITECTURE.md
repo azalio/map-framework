@@ -2564,7 +2564,7 @@ All failures are non-blocking - hook returns `{"continue": true}` and logs error
 
 **Problem:** Too many patterns distract model, reduce focus on most relevant patterns.
 
-**Solution:** Limit patterns retrieved to `top_k=5` (configurable via tiered search).
+**Solution:** Limit patterns retrieved to `limit=5` (configurable via tiered search).
 
 **Behavior:**
 
@@ -2583,9 +2583,9 @@ result = mcp__mem0__map_tiered_search(
 - ✅ Faster retrieval via tiered caching
 
 **Customization:**
-- `top_k=3`: Simple tasks, minimal context needed
-- `top_k=5`: Balanced (recommended default)
-- `top_k=7-10`: Complex tasks requiring multiple pattern references
+- `limit=3`: Simple tasks, minimal context needed
+- `limit=5`: Balanced (recommended default)
+- `limit=7-10`: Complex tasks requiring multiple pattern references
 
 ### Template Optimization (Phase 1.4)
 
@@ -2611,7 +2611,7 @@ result = mcp__mem0__map_tiered_search(
 **Phase 1 ✅ COMPLETED** (2025-10-18):
 - [x] **RecitationManager** (482 lines): Recitation Pattern for focus
 - [x] **MapWorkflowLogger** (246 lines): Detailed workflow logging
-- [x] **Pattern top_k=5**: Limit retrieved patterns
+- [x] **Pattern limit=5**: Limit retrieved patterns
 - [x] **Template Optimization**: Optimize verbose outputs (-9.6% tokens)
 
 **Phase 1 Results:**
