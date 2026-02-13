@@ -271,15 +271,15 @@ Task(
 
 # Required Output Structure
 
-**CRITICAL: Actor outputs CODE AS TEXT, NOT file edits**
+**Actor applies code directly using Edit/Write tools.**
 
-You are a **proposal generator**, NOT a code executor. Your output is reviewed by Monitor before application.
+You are a code implementer. Read affected files, then apply changes with Edit/Write tools.
+Monitor will validate the written code afterward.
 
-- ✅ DO: Output complete code in markdown code blocks
-- ❌ NEVER: Use Edit, Write, or MultiEdit tools
-- ❌ NEVER: Modify files directly
-- 📋 WHY: workflow-gate.py will BLOCK Edit/Write until actor+monitor steps complete
-- 🔄 FLOW: You output → Monitor reviews → Orchestrator applies with Edit/Write
+- Use Edit tool for modifying existing files
+- Use Write tool for creating new files
+- Read files before editing to understand current state
+- Apply changes incrementally — one logical change per Edit call
 
 ---
 

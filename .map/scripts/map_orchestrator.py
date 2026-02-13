@@ -114,7 +114,7 @@ STEP_PHASES = {
     "2.4": "MONITOR",
     "2.5": "RETRY_LOOP",
     "2.6": "PREDICTOR",
-    "2.7": "APPLY_CHANGES",
+    "2.7": "UPDATE_STATE",
     "2.8": "TESTS_GATE",
     "2.9": "LINTER_GATE",
     "2.10": "VERIFY_ADHERENCE",
@@ -305,8 +305,8 @@ def get_step_instruction(step_id: str, state: StepState) -> str:
             "(required for medium/high risk subtasks)."
         ),
         "2.7": (
-            "Apply Actor's changes using Edit/Write tools. "
-            "GATE: Only allowed if Monitor.valid === true."
+            "Update workflow state to mark subtask progress. "
+            "Code was already applied by Actor and validated by Monitor."
         ),
         "2.8": (
             "Run tests using pytest/npm test/go test/cargo test. "
@@ -363,7 +363,8 @@ def get_next_step(branch: str) -> Dict:
             state.current_step_id = "2.0"
             state.current_step_phase = "XML_PACKET"
             # Reset to subtask-level steps (skip global setup steps)
-            state.pending_steps = STEP_ORDER[3:]  # Start from 2.0
+            xml_packet_idx = STEP_ORDER.index("2.0")
+            state.pending_steps = STEP_ORDER[xml_packet_idx:]  # Start from 2.0
             state.completed_steps = []
             state.retry_count = 0
             state.save(state_file)
@@ -516,6 +517,33 @@ def set_execution_mode(mode: str, branch: str) -> Dict:
     return {"status": "success", "execution_mode": state.execution_mode}
 
 
+def check_circuit_breaker(branch: str) -> Dict:
+    """Check circuit breaker status based on completed steps count.
+
+    Returns tool_count (total completed steps) and max_iterations threshold.
+    If tool_count >= max_iterations, the workflow should ask the user to continue or abort.
+
+    Args:
+        branch: Git branch name (sanitized)
+
+    Returns:
+        Dict with tool_count, max_iterations, triggered flag
+    """
+    state_file = Path(f".map/{branch}/step_state.json")
+    state = StepState.load(state_file)
+
+    tool_count = len(state.completed_steps)
+    max_iterations = len(state.subtask_sequence) * len(STEP_ORDER)
+
+    return {
+        "tool_count": tool_count,
+        "max_iterations": max_iterations,
+        "triggered": tool_count >= max_iterations,
+        "retry_count": state.retry_count,
+        "max_retries": state.max_retries,
+    }
+
+
 def set_subtasks(subtask_ids: List[str], branch: str) -> Dict:
     """Set subtask sequence after decomposition and select the first subtask.
 
@@ -632,6 +660,7 @@ def main():
             "set_execution_mode",
             "set_subtasks",
             "resume_from_plan",
+            "check_circuit_breaker",
         ],
         help="Command to execute",
     )
@@ -708,6 +737,10 @@ def main():
 
         elif args.command == "resume_from_plan":
             result = resume_from_plan(branch)
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "check_circuit_breaker":
+            result = check_circuit_breaker(branch)
             print(json.dumps(result, indent=2))
 
     except Exception as e:

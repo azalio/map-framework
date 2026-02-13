@@ -462,7 +462,7 @@ else
 
   # Recurse: Launch new context with minimal state transfer
   echo "Next step: $(echo "$NEXT_STEP" | jq -r '.step_id')"
-  # Continue with Step 1 (fresh invocation via map-efficient-step)
+  # Continue with Step 1 (loop back to get_next_step, or use /map-resume in a fresh session)
 fi
 ```
 
