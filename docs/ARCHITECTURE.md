@@ -1199,6 +1199,42 @@ If you modified `.claude/commands/map-efficient.md`, you must manually integrate
 - Outputs compressed summary (<2K tokens)
 - Prevents Actor context bloat (would be 20-50K tokens if Actor read directly)
 
+### 12. FinalVerifier
+
+**Responsibility:** Adversarial verifier applying the "Four-Eyes Principle" — verifies the ENTIRE task goal is achieved, not just individual subtasks. Catches premature completion and hallucinated success.
+
+**Input:**
+```json
+{
+  "original_goal": "From .map/<branch>/task_plan_<branch>.md",
+  "acceptance_criteria": "From task plan table",
+  "completed_subtasks": "From progress_<branch>.md checkboxes",
+  "validation_criteria": "From orchestrator"
+}
+```
+
+**Output:**
+```json
+{
+  "verdict": "PASS",
+  "confidence": 0.95,
+  "criteria_met": ["All acceptance criteria verified"],
+  "root_cause": null,
+  "recommendation": "COMPLETE"
+}
+```
+
+**Verification Process:**
+1. Read original goal and acceptance criteria from `.map/` checkpoint files
+2. Verify each acceptance criterion against actual file state (Read, Grep, Bash)
+3. Run tests if specified in validation criteria
+4. Apply root cause analysis if verification fails
+5. Return verdict: PASS → COMPLETE, FAIL → RE_DECOMPOSE or ESCALATE
+
+**Model Used:** Sonnet (adversarial verification requires strong reasoning)
+
+**Usage Context:** Mandatory final step in `/map-efficient` and invoked by `/map-check`
+
 ---
 
 ## MCP Integration
