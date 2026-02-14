@@ -286,7 +286,7 @@ Instead of treating playbook bullets as plain text, the KG:
 - **Tracks provenance**: Links each entity back to the bullet it came from
 - **Finds contradictions**: Alerts you when new patterns conflict with existing knowledge
 
-**Extraction happens automatically** during MAP workflows (Reflector/Curator agents), so you don't need to manually populate the graph.
+**Extraction happens via `/map-learn`** after MAP workflows (Reflector/Curator agents), so you don't need to manually populate the graph.
 
 ### Entity Types (7)
 
@@ -1206,8 +1206,9 @@ MAP Framework offers three workflow variants with different trade-offs between t
 - ✅ Refactoring with clear scope
 
 **Why it's better than /map-fast:**
-- Still preserves full learning (Reflector/Curator)
+- Learning available via `/map-learn` after workflow (Reflector/Curator)
 - Conditional Predictor catches high-risk issues
+- Final-Verifier provides adversarial verification
 - Only 10% less token savings but much safer
 
 **Example use cases:**
@@ -1370,23 +1371,24 @@ MAP Framework offers three workflow variants with different trade-offs between t
    - Predictor only called if risk_level='high' or Monitor flags issues
    - Low-risk tasks (simple CRUD, UI updates) skip impact analysis
 
-2. **Batched Learning** (10-15% savings)
-   - Reflector analyzes ALL subtasks together at end
-   - Curator makes single playbook update
-   - More holistic insights (sees patterns across subtasks)
-   - Saves (N-1) × 3K tokens for N subtasks
+2. **Learning Decoupled to /map-learn** (token savings during main workflow)
+   - Reflector and Curator are NOT called during /map-efficient execution
+   - Run `/map-learn` after workflow completes to extract patterns
+   - Reflector then analyzes ALL subtasks together (batched, more holistic insights)
+   - Curator makes a single playbook update (deduplication via mem0)
 
-3. **Evaluator Skipped** (8-12% savings)
+3. **Evaluator Not Invoked** (8-12% savings)
    - Monitor provides sufficient validation for most tasks
-   - Evaluator's 6-dimension scoring rarely changes decisions
+   - The Evaluator agent is skipped entirely (not just its scoring)
+   - Evaluator only runs in `/map-debug` and `/map-review`
    - Quality still ensured by Monitor's comprehensive checks
 
 **What's Preserved:**
-- ✅ Full learning cycle (Reflector + Curator)
-- ✅ Playbook updates (batched but complete)
-- ✅ mem0 integration (high-quality patterns stored)
+- ✅ Learning available via `/map-learn` (Reflector + Curator, optional after workflow)
+- ✅ Tests gate + Linter gate per subtask
+- ✅ Final-Verifier (adversarial verification at end)
 - ✅ Essential quality gates (Monitor validation)
-- ✅ Impact analysis (when needed)
+- ✅ Impact analysis (conditional Predictor when needed)
 
 ### Workflow Selection Flowchart
 
@@ -1432,10 +1434,10 @@ START: I need to implement a feature
 **✅ Reality:** /map-fast defeats MAP's purpose (no learning = repeat mistakes = waste tokens long-term). Use /map-efficient instead.
 
 **❌ Misconception:** "/map-efficient skips quality checks"
-**✅ Reality:** Monitor still validates everything. Only Evaluator's scoring is skipped (rarely changes decisions).
+**✅ Reality:** Monitor still validates every subtask. Evaluator is not invoked (it only runs in /map-debug and /map-review), but Tests gate, Linter gate, and Final-Verifier ensure quality.
 
-**❌ Misconception:** "Batched learning in /map-efficient is inferior to per-subtask learning"
-**✅ Reality:** Batched learning sees patterns ACROSS subtasks, often producing better insights than isolated per-subtask analysis.
+**❌ Misconception:** "Learning via /map-learn is inferior to per-subtask learning"
+**✅ Reality:** /map-learn runs Reflector/Curator after the workflow completes, analyzing ALL subtasks together. This batched approach sees patterns ACROSS subtasks, often producing better insights than isolated per-subtask analysis.
 
 ## 🎯 Best Practices
 
@@ -1561,7 +1563,7 @@ The upgrade of Predictor and Evaluator from haiku to sonnet provides:
 **1. Use `/map-efficient` workflow (RECOMMENDED)**
 - Skips Evaluator per subtask (Monitor provides sufficient validation)
 - Conditional Predictor (only called for high-risk changes)
-- Batched Reflector/Curator at end
+- Reflector/Curator available via `/map-learn` after workflow
 - **Token savings: 30-40%**
 
 **2. Use `/map-fast` for small, low-risk changes**
