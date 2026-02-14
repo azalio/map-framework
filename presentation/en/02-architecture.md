@@ -57,7 +57,7 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 
 ### 4. Predictor (2,108 lines)
 
-**Model:** haiku (cost-optimized)
+**Model:** sonnet
 **Purpose:** Impact analysis specialist; predicts ripple effects BEFORE implementation
 
 **MCP integrations (3 tools):**
@@ -70,7 +70,7 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 
 ### 5. Evaluator (1,492 lines)
 
-**Model:** haiku (cost-optimized)
+**Model:** sonnet
 **Purpose:** Objective quality assessor with data-driven metrics
 
 **MCP integrations (5 tools):**
@@ -187,5 +187,5 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 
 ### Model Strategy
 
-- **haiku** (cost-optimized): Predictor, Evaluator
-- **sonnet** (quality-critical): Actor, Monitor, TaskDecomposer, Reflector, Curator, DocumentationReviewer
+- **sonnet** (quality-critical): Actor, Monitor, TaskDecomposer, Predictor, Evaluator, Reflector, Curator, DocumentationReviewer
+- **opus** (highest reasoning): DebateArbiter

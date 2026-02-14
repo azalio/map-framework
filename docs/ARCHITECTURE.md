@@ -841,7 +841,7 @@ If you modified `.claude/commands/map-efficient.md`, you must manually integrate
 
 **MCP Tool Usage:**
 - `mcp__mem0__map_tiered_search`: Find existing patterns before implementing
-- `context7__get-library-docs`: Get current library documentation
+- `mcp__context7__get-library-docs`: Get current library documentation
 
 ### 3. Monitor
 
@@ -909,7 +909,7 @@ If you modified `.claude/commands/map-efficient.md`, you must manually integrate
 - Configuration requirements
 - Test coverage gaps
 
-**Model Used:** Haiku (fast, cost-effective for analysis)
+**Model Used:** Sonnet (impact analysis requires complex reasoning)
 
 ### 5. Evaluator
 
@@ -940,7 +940,7 @@ If you modified `.claude/commands/map-efficient.md`, you must manually integrate
 
 **Approval Threshold:** >7.0 overall score
 
-**Model Used:** Haiku (fast scoring)
+**Model Used:** Sonnet (evaluation requires nuanced judgment)
 
 ### 6. Reflector
 
@@ -1148,7 +1148,7 @@ If you modified `.claude/commands/map-efficient.md`, you must manually integrate
 **Usage Context:** Only invoked in `/map-debate` workflow after all variants validated
 
 **MCP Tool Usage:**
-- `sequential-thinking`: Multi-step reasoning for complex trade-off analysis
+- `mcp__sequential-thinking__sequentialthinking`: Multi-step reasoning for complex trade-off analysis
 
 ### 11. ResearchAgent
 
@@ -1311,11 +1311,11 @@ MCP servers are configured differently depending on the usage context:
 **WHEN using external libraries:**
 
 1. Resolve library ID:
-   - Tool: context7__resolve-library-id
+   - Tool: mcp__context7__resolve-library-id
    - Input: Library name (e.g., "Flask", "Next.js")
 
 2. Fetch current docs:
-   - Tool: context7__get-library-docs
+   - Tool: mcp__context7__get-library-docs
    - Parameters: library_id, topic, tokens (default: 5000)
 
 3. Use docs for:
@@ -1809,8 +1809,8 @@ MAP Framework uses intelligent model selection to balance quality and cost.
 | TaskDecomposer | sonnet-4-5 | Quality-critical: task planning |
 | Actor | sonnet-4-5 | Quality-critical: code generation |
 | Monitor | sonnet-4-5 | Quality-critical: validation |
-| Predictor | haiku-3-5 | Fast analysis, non-critical |
-| Evaluator | haiku-3-5 | Fast scoring, structured output |
+| Predictor | sonnet-4-5 | Impact analysis requires complex reasoning |
+| Evaluator | sonnet-4-5 | Evaluation requires nuanced judgment |
 | Reflector | sonnet-4-5 | Quality-critical: pattern extraction |
 | Curator | sonnet-4-5 | Quality-critical: knowledge management |
 | DocumentationReviewer | sonnet-4-5 | Quality-critical: doc validation |
@@ -1829,14 +1829,13 @@ model: claude-sonnet-4-5  # or claude-haiku-3-5
 ```
 
 **Cost vs Quality Trade-offs:**
-- **All Sonnet/Opus:** Highest quality, 3-4x cost (Opus for DebateArbiter)
-- **Mixed (current):** Balanced, 40-60% cost reduction
-- **All Haiku:** Lowest cost, risk of quality degradation in code generation
+- **All Sonnet/Opus (current):** Highest quality, Opus only for DebateArbiter
+- **Downgrade to Haiku:** Lower cost, risk of quality degradation in analysis and scoring
 
 **Recommended:**
-- Keep on Sonnet: TaskDecomposer, Actor, Monitor, Reflector, Curator, DocumentationReviewer, Synthesizer, ResearchAgent
+- Keep on Sonnet: TaskDecomposer, Actor, Monitor, Predictor, Evaluator, Reflector, Curator, DocumentationReviewer, Synthesizer, ResearchAgent
 - Keep on Opus: DebateArbiter (cross-variant reasoning requires highest quality)
-- Safe to use Haiku: Predictor, Evaluator (fast analysis, structured output)
+- Safe to downgrade to Haiku: Predictor, Evaluator (if cost reduction is priority)
 
 ### Adding Custom Agents
 

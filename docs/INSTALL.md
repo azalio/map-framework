@@ -299,7 +299,11 @@ MAP Framework uses **slash commands** as entry points that coordinate specialize
 - **`/map-debate`** - Multi-variant with Opus arbiter (7 agents): 3 Actor variants → debate-arbiter synthesis
 - **`/map-debug`** - Diagnostic and fix workflows with agent coordination
 - **`/map-fast`** - Minimal workflow (3 agents) — small, low-risk changes (reduced analysis)
-- **`/map-review`** - Comprehensive review with MAP analysis
+- **`/map-review`** - Comprehensive review with Monitor, Predictor, and Evaluator agents
+- **`/map-check`** - Quality gates and verification for staged changes
+- **`/map-plan`** - Architect phase only: decompose task without implementation
+- **`/map-release`** - Package release workflow with validation gates
+- **`/map-resume`** - Resume incomplete MAP workflow from checkpoint
 - **`/map-learn`** - Extract lessons: reflector → curator → mem0 storage
 
 **Note:** Agents are invoked automatically by slash commands. Direct agent invocation is not the recommended approach—use the slash commands above for proper workflow orchestration.
