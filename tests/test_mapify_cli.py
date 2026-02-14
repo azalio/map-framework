@@ -586,7 +586,7 @@ class TestAgentCreation:
 
         Verifies that:
         - Fallback generators create valid agent content
-        - All 8 agents are created successfully
+        - All 12 agents are created successfully
         - Content includes required sections (IDENTITY, ROLE)
         - MCP integration sections are included when MCP servers specified
         """
@@ -601,7 +601,7 @@ class TestAgentCreation:
         agents_dir = tmp_path / ".claude" / "agents"
         assert agents_dir.exists()
 
-        # Verify all 8 agents were created using fallback generators
+        # Verify core agents were created using fallback generators
         expected_agents = [
             "task-decomposer.md",
             "actor.md",
