@@ -1176,17 +1176,17 @@ Summary:
 
 ## 🔀 Workflow Variants
 
-MAP Framework offers three workflow variants with different trade-offs between token usage, quality assurance, and learning:
+MAP Framework offers three primary implementation workflows with different trade-offs between token usage, quality assurance, and learning. Additional supporting workflows (`/map-debug`, `/map-review`, `/map-check`, `/map-plan`, `/map-release`, `/map-resume`, `/map-learn`) are documented in their respective sections.
 
 ### Comparison Table
 
 | Feature | /map-efficient ⭐ | /map-debate | /map-fast ⚠️ |
 |---------|-------------------|-------------|--------------|
-| **Agents Used** | 5-6 (optimized) | 7 (multi-variant) | 3 (minimal) |
+| **Agents Used** | 4-6 (task-decomposer, actor, monitor + conditional research-agent, predictor + final-verifier) | 7 (multi-variant) | 3 (minimal) |
 | **Token Cost** | **Baseline** | 3x (Opus model) | 40-50% less |
 | **Learning** | Via `/map-learn` | Via `/map-learn` | ❌ None |
-| **Quality Gates** | Essential agents | Opus arbiter | Basic only |
-| **Impact Analysis** | ✅ Conditional | ✅ Conditional | ❌ Never |
+| **Quality Gates** | Essential agents + Final-Verifier | Opus arbiter | Basic only |
+| **Impact Analysis** | ✅ Conditional (Predictor) | ✅ Conditional | ❌ Never |
 | **Multi-Variant** | ⚠️ Conditional (Self-MoA) | ✅ **Always 3 variants** | ❌ Never |
 | **Synthesis Model** | Synthesizer (sonnet) | **debate-arbiter (opus)** | N/A |
 | **Playbook Updates** | Via `/map-learn` | Via `/map-learn` | ❌ None |

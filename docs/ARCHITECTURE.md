@@ -343,12 +343,12 @@ All JSON schemas are defined in `src/mapify_cli/schemas.py`:
 
 MAP Framework provides multiple workflow variants with different agent orchestration strategies:
 
-#### 1. `/map-efficient` - Optimized Pipeline (3-5 Agents) ⭐ RECOMMENDED
+#### 1. `/map-efficient` - Optimized Pipeline (4-6 Agents) ⭐ RECOMMENDED
 
-**Agent Sequence:** TaskDecomposer → (Actor → Monitor → conditional Predictor) per subtask
+**Agent Sequence:** TaskDecomposer → [conditional ResearchAgent] → (Actor → Monitor → [conditional Predictor]) per subtask → FinalVerifier
 
 **With Self-MoA** (--self-moa flag OR high risk/complexity):
-TaskDecomposer → (3×Actor parallel → 3×Monitor parallel → Synthesizer → final Monitor → conditional Predictor) per subtask
+TaskDecomposer → [conditional ResearchAgent] → (3×Actor parallel → 3×Monitor parallel → Synthesizer → final Monitor → [conditional Predictor]) per subtask → FinalVerifier
 
 **Optimizations:**
 
