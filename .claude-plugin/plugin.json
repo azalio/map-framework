@@ -1,7 +1,7 @@
 {
   "name": "map-framework",
   "version": "1.0.0",
-  "description": "Modular Agentic Planner (MAP) - Cognitive architecture for AI agents with 9 specialized agents, ACE learning system, and professional code review integration",
+  "description": "Modular Agentic Planner (MAP) - Cognitive architecture for AI agents with 12 specialized agents, ACE learning system, and professional code review integration",
   "author": "azalio",
   "license": "MIT",
   "repository": "https://github.com/azalio/map-framework",
