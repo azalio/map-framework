@@ -29,8 +29,8 @@ MAP Framework orchestrates 12 specialized agents in a coordinated workflow.
 - **Role:** Quality scoring and final approval
 - **Input:** Actor + Monitor results
 - **Output:** Quality score (0-10), approve/reject decision
-- **When it runs:** /map-fast, /map-debug
-- **Skipped in:** /map-efficient (Monitor provides sufficient validation)
+- **When it runs:** /map-debug, /map-review
+- **Skipped in:** /map-efficient, /map-fast (Monitor provides sufficient validation)
 
 ### Analysis
 
@@ -239,7 +239,7 @@ Agents communicate via structured JSON:
 | TaskDecomposer | ~1.5K | Once | All workflows |
 | Actor | ~2-3K | Per subtask | All workflows |
 | Monitor | ~1K | Per Actor output | All workflows |
-| Evaluator | ~0.8K | Per subtask | map-debug |
+| Evaluator | ~0.8K | Per subtask | map-debug, map-review |
 | Predictor | ~1.5K | Per subtask or conditional | Varies |
 | Reflector | ~2K | Per subtask or batched | Varies |
 | Curator | ~1.5K | After Reflector | Varies |

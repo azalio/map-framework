@@ -30,6 +30,11 @@
 
 ### Agents NOT Called
 
+**Evaluator (Quality Scoring)**
+- No quality scoring (0-10 scale)
+- No approval/rejection gate
+- Monitor handles basic correctness only
+
 **Predictor (Impact Analysis)**
 - No dependency analysis
 - Breaking changes undetected
@@ -51,7 +56,7 @@
 - Basic implementation ✅
 - Correctness validation ✅
 
-**Result:** Functional code, but zero learning
+**Result:** Functional code, but zero learning and no quality scoring
 
 ---
 
@@ -62,12 +67,12 @@
 | TaskDecomposer | ~1.5K | ✅ Runs |
 | Actor | ~2-3K | ✅ Runs |
 | Monitor | ~1K | ✅ Runs |
-| Evaluator | ~0.8K | ✅ Runs |
+| Evaluator | ~0.8K | ❌ Skipped |
 | Predictor | ~1.5K | ❌ Skipped |
 | Reflector | ~2K | ❌ Skipped |
 | Curator | ~1.5K | ❌ Skipped |
 
-**Total saved:** ~5K per subtask
+**Total saved:** ~5.8K per subtask
 **Percentage:** 40-50% vs full pipeline
 
 ---
@@ -88,10 +93,10 @@ Next step: If scope grows, switch to /map-efficient
 ```
 TaskDecomposer: 2 subtasks
 ST-1: Setup React Query client
-  Actor → Monitor → Evaluator → Apply
+  Actor → Monitor → Apply
 ST-2: Test with one API endpoint
-  Actor → Monitor → Evaluator → Apply
-Done. No Reflector, no Curator, no patterns learned.
+  Actor → Monitor → Apply
+Done. No Evaluator, no Reflector, no Curator, no patterns learned.
 ```
 
 **Appropriate because:**

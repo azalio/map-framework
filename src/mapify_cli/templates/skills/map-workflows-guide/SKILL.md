@@ -16,7 +16,7 @@ metadata:
 
 # MAP Workflows Guide
 
-This skill helps you choose the optimal MAP workflow for your development tasks. MAP Framework provides 4 implemented workflows (`/map-fast`, `/map-efficient`, `/map-debug`, `/map-debate`), each optimized for different scenarios with varying token costs, learning capabilities, and quality gates. Two additional workflows (`/map-feature`, `/map-refactor`) are planned but not yet implemented.
+This skill helps you choose the optimal MAP workflow for your development tasks. MAP Framework provides **10 workflow commands**: 4 primary workflows (`/map-fast`, `/map-efficient`, `/map-debug`, `/map-debate`) and 6 supporting commands (`/map-review`, `/map-check`, `/map-plan`, `/map-release`, `/map-resume`, `/map-learn`). Each is optimized for different scenarios with varying token costs, learning capabilities, and quality gates. Two additional workflows (`/map-feature`, `/map-refactor`) are planned but not yet implemented.
 
 ## Quick Decision Tree
 
@@ -77,7 +77,7 @@ Answer these 5 questions to find your workflow:
 **What you get:**
 - ✅ Full implementation (Actor generates code)
 - ✅ Basic validation (Monitor checks correctness)
-- ✅ Quality check (Evaluator scores solution)
+- ❌ NO quality scoring (Evaluator skipped)
 - ❌ NO impact analysis (Predictor skipped entirely)
 - ❌ NO learning (Reflector/Curator skipped)
 
@@ -118,9 +118,10 @@ Answer these 5 questions to find your workflow:
 **What you get:**
 - ✅ Full implementation (Actor)
 - ✅ Comprehensive validation (Monitor with feedback loops)
-- ✅ Quality gates (Evaluator approval)
 - ✅ Impact analysis (Predictor runs conditionally)
-- ✅ **Batched learning** (Reflector/Curator run once at end)
+- ✅ Tests gate + Linter gate per subtask
+- ✅ Final-Verifier (adversarial verification at end)
+- ✅ **Learning via /map-learn** (Reflector/Curator, optional after workflow)
 
 **Optimization strategy:**
 - **Conditional Predictor:** Runs only if risk detected (security, breaking changes)
@@ -246,6 +247,7 @@ MAP workflows orchestrate **12 specialized agents**, each with specific responsi
 - Checks completeness
 - Approves/rejects solution
 - Feedback loop: Returns to Actor if score < threshold
+- **Only in /map-debug, /map-review** (skipped in /map-efficient, /map-fast, /map-debate)
 
 ### Analysis Agents
 
@@ -364,7 +366,7 @@ Avoid /map-fast for:
 
 **Q: What about /map-feature and /map-refactor?**
 
-A: These are **planned but not yet implemented**. Use `/map-efficient` for all feature development and refactoring tasks. `/map-efficient` provides the full agent pipeline (Actor, Monitor, conditional Predictor, Evaluator) with batched learning. Describe the risk level and refactoring intent in your task description for appropriate Predictor analysis.
+A: These are **planned but not yet implemented**. Use `/map-efficient` for all feature development and refactoring tasks. `/map-efficient` provides the full agent pipeline (Actor, Monitor, conditional Predictor, Tests/Linter gates, Final-Verifier) with optional learning via `/map-learn`. Describe the risk level and refactoring intent in your task description for appropriate Predictor analysis.
 
 **Q: Can I switch workflows mid-task?**
 
