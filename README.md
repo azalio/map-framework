@@ -44,12 +44,18 @@ claude
 
 | Command | Use For |
 |---------|---------|
-| `/map-efficient` | Production features (recommended) |
+| `/map-efficient` | Production features, refactoring, complex tasks (recommended) |
 | `/map-debug` | Bug fixes and debugging |
+| `/map-fast` | Small, low-risk changes |
+| `/map-debate` | Complex decisions with multi-variant synthesis |
 | `/map-review` | Pre-commit code review |
-| `/map-fast` | Throwaway prototypes only |
+| `/map-check` | Quality gates and verification |
+| `/map-plan` | Task decomposition without implementation |
+| `/map-release` | Package release workflow |
+| `/map-resume` | Resume interrupted workflows |
+| `/map-learn` | Extract lessons after workflow completion |
 
-[All commands and options →](docs/USAGE.md)
+[Detailed usage and options →](docs/USAGE.md)
 
 ## How It Works
 
