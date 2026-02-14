@@ -146,7 +146,7 @@ Curator (batched):
 ```
 
 **Token usage:**
-- /map-feature: ~12k tokens
+- Full pipeline: ~12k tokens
 - /map-efficient: ~7.5k tokens
 - **Savings: 37.5%**
 
