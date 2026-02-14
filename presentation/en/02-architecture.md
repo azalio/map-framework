@@ -60,11 +60,12 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 **Model:** sonnet
 **Purpose:** Impact analysis specialist; predicts ripple effects BEFORE implementation
 
-**MCP integrations (3 tools):**
+**MCP integrations (4 tools):**
 
 - `mcp__mem0__map_tiered_search` — search past breaking changes and migration patterns
-- `context7__get-library-docs` — check library version compatibility
-- `deepwiki__read_wiki_structure + ask_question` — study migration patterns
+- `mcp__context7__get-library-docs` — check library version compatibility
+- `mcp__deepwiki__read_wiki_structure + ask_question` — study migration patterns
+- `mcp__sequential-thinking__sequentialthinking` — complex trade-off analysis for multi-system impact
 
 **Output:** affected_files, breaking_changes, required_updates, risk_level (low/medium/high), rollback_plan
 
@@ -207,7 +208,7 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 
 **All agents use:**
 
-- YAML frontmatter: name, description, model (sonnet/opus), version 2.2.0
+- YAML frontmatter: name, description, model (sonnet/opus), version, last_updated
 - Handlebars variables: {{project_name}}, {{language}}, {{framework}}, {{subtask_description}}, {{existing_patterns}}, {{feedback}}
 - Standard sections: IDENTITY, context, mcp_integration, rationale, critical/constraints, examples, output_format
 

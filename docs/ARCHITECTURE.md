@@ -2115,15 +2115,10 @@ Agent template changes are tracked in the project's main CHANGELOG.md.
 - Best practices and anti-patterns
 - Troubleshooting common issues
 
-**Usage:**
-```markdown
-# In agent templates, reference patterns:
-
-See [MCP-PATTERNS.md](MCP-PATTERNS.md#actor-patterns) for:
-- How to search mem0 before implementing
-- When to fetch library docs
-- Batch search optimization
-```
+**Usage:** Each agent template contains its own MCP Tool Selection Matrix with:
+- Conditions for when to use each tool
+- Query patterns for effective searches
+- Skip conditions to avoid unnecessary calls
 
 ### Updating Strategies
 
@@ -2165,7 +2160,7 @@ See [MCP-PATTERNS.md](MCP-PATTERNS.md#actor-patterns) for:
 6. **Document:**
    - Update `version` and `last_updated` in frontmatter
    - Add entry to CHANGELOG.md
-   - Update MCP-PATTERNS.md if tool usage changed
+   - Update MCP Tool Selection Matrix in agent template if tool usage changed
 
 **Rollback if needed:**
 ```bash
