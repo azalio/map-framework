@@ -16,7 +16,7 @@ metadata:
 
 # MAP Workflows Guide
 
-This skill helps you choose the optimal MAP workflow for your development tasks. MAP Framework provides 3 implemented workflows (`/map-fast`, `/map-efficient`, `/map-debug`), each optimized for different scenarios with varying token costs, learning capabilities, and quality gates. Two additional workflows (`/map-feature`, `/map-refactor`) are planned but not yet implemented.
+This skill helps you choose the optimal MAP workflow for your development tasks. MAP Framework provides 4 implemented workflows (`/map-fast`, `/map-efficient`, `/map-debug`, `/map-debate`), each optimized for different scenarios with varying token costs, learning capabilities, and quality gates. Two additional workflows (`/map-feature`, `/map-refactor`) are planned but not yet implemented.
 
 ## Quick Decision Tree
 
@@ -31,8 +31,8 @@ Answer these 5 questions to find your workflow:
    YES  → Use /map-debug (70-80% tokens, focused analysis)
    NO   → Continue to question 3
 
-3. Are you refactoring existing code or restructuring modules?
-   YES  → Use /map-efficient (60-70% tokens, with dependency context)
+3. Do stakeholders need documented reasoning and trade-off analysis?
+   YES  → Use /map-debate (3x cost, Opus arbiter, explicit reasoning)
    NO   → Continue to question 4
 
 4. Is this critical infrastructure or security-sensitive code?
@@ -48,14 +48,16 @@ Answer these 5 questions to find your workflow:
 
 ## Workflow Comparison Matrix
 
-| Aspect | `/map-fast` | `/map-efficient` | `/map-debug` |
-|--------|-----------|-----------------|-------------|
-| **Token Cost** | 40-50% | **60-70%** | 70-80% |
-| **Learning** | ❌ None | ✅ Batched | ✅ Per-subtask |
-| **Quality Gates** | Basic | Essential | Focused |
-| **Impact Analysis** | ❌ Skipped | ⚠️ Conditional | ✅ Yes |
-| **Best For** | Low-risk | **Production** | Bugs |
-| **Recommendation** | Use sparingly | **DEFAULT** | Issues |
+| Aspect | `/map-fast` | `/map-efficient` | `/map-debug` | `/map-debate` |
+|--------|-----------|-----------------|-------------|--------------|
+| **Token Cost** | 40-50% | **60-70%** | 70-80% | ~3x baseline |
+| **Learning** | ❌ None | ✅ Via /map-learn | ✅ Per-subtask | ✅ Via /map-learn |
+| **Quality Gates** | Basic | Essential | Focused | Multi-variant |
+| **Impact Analysis** | ❌ Skipped | ⚠️ Conditional | ✅ Yes | ⚠️ Conditional |
+| **Multi-Variant** | ❌ Never | ⚠️ Optional (--self-moa) | ❌ Never | ✅ Always (3 variants) |
+| **Synthesis Model** | N/A | Sonnet | N/A | **Opus** |
+| **Best For** | Low-risk | **Production** | Bugs | Reasoning transparency |
+| **Recommendation** | Use sparingly | **DEFAULT** | Issues | Complex decisions |
 
 > **Note:** `/map-feature` and `/map-refactor` are **planned but not yet implemented**.
 > Use `/map-efficient` for critical features and refactoring tasks.
@@ -80,7 +82,7 @@ Answer these 5 questions to find your workflow:
 - ❌ NO learning (Reflector/Curator skipped)
 
 **Trade-offs:**
-- Saves 50-60% tokens vs /map-feature
+- Saves 50-60% tokens vs full pipeline (every agent per subtask)
 - mem0 never improves (no patterns stored)
 - Knowledge never accumulates
 - Minimal quality gates (only basic checks)
@@ -123,7 +125,7 @@ Answer these 5 questions to find your workflow:
 **Optimization strategy:**
 - **Conditional Predictor:** Runs only if risk detected (security, breaking changes)
 - **Batched Learning:** Reflector/Curator run ONCE after all subtasks complete
-- **Result:** 35-40% token savings vs /map-feature while preserving learning
+- **Result:** 35-40% token savings vs full pipeline while preserving learning
 - **Same quality gates:** Monitor still validates each subtask
 
 **When Predictor runs:**

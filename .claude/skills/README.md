@@ -34,7 +34,7 @@ Skills provide specialized guidance without executing code. They help users unde
 
 **Content:**
 - Quick decision tree (5 questions)
-- Workflow comparison matrix (5 workflows)
+- Workflow comparison matrix (4 implemented + 2 planned)
 - Detailed workflow descriptions
 - Agent architecture overview
 - 8 deep-dive resource files
