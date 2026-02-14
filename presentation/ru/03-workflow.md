@@ -9,7 +9,7 @@ MAP Framework использует **строго последовательну
 ```mermaid
 flowchart TD
     Start([Начало задачи]) --> Decompose[0. TaskDecomposer<br/>Декомпозиция]
-    Decompose --> Plan[2.5 Checkpoint<br/>Создать progress.md]
+    Decompose --> Plan[Checkpoint<br/>Создать progress.md]
     Plan --> Actor[1. Actor<br/>Реализация подзадачи]
     Actor --> Monitor[2. Monitor<br/>Валидация качества]
 
@@ -21,10 +21,12 @@ flowchart TD
     Evaluator -->|Approved| Accept[5. ACCEPT changes<br/>Применение изменений]
     Evaluator -->|Not Approved| Actor
 
-    Accept --> Reflector[6. Reflector<br/>Извлечение уроков<br/><b>MANDATORY</b>]
-    Reflector --> Curator[7. Curator<br/>Обновление playbook<br/><b>MANDATORY</b>]
+    Accept --> Reflector[6. Reflector<br/>Извлечение уроков]
+    Reflector --> Curator[7. Curator<br/>Обновление playbook]
 
-    Curator --> End([Subtask Complete])
+    Curator -->|Ещё подзадачи| Actor
+    Curator -->|Все готово| Verifier[8. FinalVerifier<br/>Adversarial верификация]
+    Verifier --> End([Workflow завершён])
 ```
 
 ## Slash-команды Orchestrator

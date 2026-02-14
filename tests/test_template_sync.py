@@ -37,16 +37,20 @@ class TestTemplateSynchronization:
 
     @pytest.fixture
     def expected_agents(self):
-        """List of expected agent template files."""
+        """List of expected agent template files (all 12 agents)."""
         return [
             "actor.md",
+            "curator.md",
+            "debate-arbiter.md",
+            "documentation-reviewer.md",
+            "evaluator.md",
+            "final-verifier.md",
             "monitor.md",
             "predictor.md",
-            "evaluator.md",
-            "curator.md",
             "reflector.md",
+            "research-agent.md",
+            "synthesizer.md",
             "task-decomposer.md",
-            "documentation-reviewer.md",
         ]
 
     def test_all_agents_exist_in_both_directories(

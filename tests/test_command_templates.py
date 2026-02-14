@@ -90,13 +90,18 @@ class TestCommandTemplates:
         assert "optional" in content.lower(), "Should mention /map-learn is optional"
 
     def test_all_command_templates_exist(self, templates_commands_dir):
-        """Test that all expected command template files exist."""
+        """Test that all 10 expected command template files exist."""
         expected_commands = [
+            "map-check.md",  # Quality gates
+            "map-debate.md",  # Multi-variant with Opus arbiter
+            "map-debug.md",  # Debugging workflow
             "map-efficient.md",  # Recommended workflow
-            "map-debug.md",
             "map-fast.md",  # Minimal workflow
             "map-learn.md",  # Optional learning
+            "map-plan.md",  # Decomposition only
             "map-release.md",  # Release workflow
+            "map-resume.md",  # Resume interrupted workflow
+            "map-review.md",  # Code review
         ]
 
         for command in expected_commands:

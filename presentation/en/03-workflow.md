@@ -9,7 +9,7 @@ MAP Framework uses a **strictly sequential orchestration** that begins with Task
 ```mermaid
 flowchart TD
     Start([Task Start]) --> Decompose[0. TaskDecomposer<br/>Create subtasks]
-    Decompose --> Plan[2.5 Checkpoint<br/>Create progress.md]
+    Decompose --> Plan[Checkpoint<br/>Create progress.md]
     Plan --> Actor[1. Actor<br/>Implement subtask]
     Actor --> Monitor[2. Monitor<br/>Quality validation]
 
@@ -21,10 +21,12 @@ flowchart TD
     Evaluator -->|Approved| Accept[5. ACCEPT changes<br/>Apply to files]
     Evaluator -->|Not Approved| Actor
 
-    Accept --> Reflector[6. Reflector<br/>Extract lessons<br/><b>MANDATORY</b>]
-    Reflector --> Curator[7. Curator<br/>Update playbook<br/><b>MANDATORY</b>]
+    Accept --> Reflector[6. Reflector<br/>Extract lessons]
+    Reflector --> Curator[7. Curator<br/>Update playbook]
 
-    Curator --> End([Subtask Complete])
+    Curator -->|More subtasks| Actor
+    Curator -->|All done| Verifier[8. FinalVerifier<br/>Adversarial verification]
+    Verifier --> End([Workflow Complete])
 ```
 
 ## Orchestrator Slash Commands
