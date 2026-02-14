@@ -219,7 +219,7 @@ Intended for refactoring with dependency-focused impact analysis and breaking ch
 
 ## Understanding MAP Agents
 
-MAP workflows orchestrate **8 specialized agents**, each with specific responsibilities:
+MAP workflows orchestrate **12 specialized agents**, each with specific responsibilities:
 
 ### Execution & Validation Agents
 
@@ -280,6 +280,34 @@ MAP workflows orchestrate **8 specialized agents**, each with specific responsib
 - Checks consistency
 - Validates examples
 - Verifies external dependency docs current
+
+### Synthesis Agents
+
+**Debate-Arbiter** — Multi-variant cross-evaluation (MAP Debate)
+- Cross-evaluates Actor variants with explicit reasoning
+- Synthesizes optimal solution from multiple approaches
+- Uses Opus model for reasoning transparency
+- **Only in /map-debate workflow**
+
+**Synthesizer** — Solution synthesis
+- Extracts decisions from multiple variants
+- Generates unified code from best elements (Self-MoA)
+- Merges insights across Actor outputs
+- **Used in /map-efficient with --self-moa flag**
+
+### Discovery & Verification Agents
+
+**Research-Agent** — Codebase discovery
+- Heavy codebase reading with compressed output
+- Gathers context proactively before Actor implementation
+- Prevents context pollution in implementation agents
+- **Used in /map-plan, /map-efficient, /map-debug**
+
+**Final-Verifier** — Adversarial verification (Ralph Loop)
+- Root cause analysis via adversarial testing
+- Terminal verification after all other agents
+- Ensures no regressions or overlooked issues
+- **Used in /map-check, /map-efficient**
 
 ---
 

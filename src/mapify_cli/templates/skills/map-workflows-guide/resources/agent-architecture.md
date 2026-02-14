@@ -1,6 +1,6 @@
 # Agent Architecture
 
-MAP Framework orchestrates 8 specialized agents in a coordinated workflow.
+MAP Framework orchestrates 12 specialized agents in a coordinated workflow.
 
 ## Agent Categories
 
@@ -71,6 +71,34 @@ MAP Framework orchestrates 8 specialized agents in a coordinated workflow.
 - **Input:** Documentation files
 - **Output:** Completeness assessment, dependency analysis
 - **When it runs:** On-demand (not part of standard workflows)
+
+### Synthesis
+
+**9. Debate-Arbiter**
+- **Role:** Cross-evaluates Actor variants with explicit reasoning
+- **Input:** Multiple Actor outputs (variants)
+- **Output:** Synthesized optimal solution with reasoning trace
+- **When it runs:** /map-debate (per subtask, uses Opus model)
+
+**10. Synthesizer**
+- **Role:** Extracts decisions from variants and generates unified code (Self-MoA)
+- **Input:** Multiple Actor outputs
+- **Output:** Merged implementation combining best elements
+- **When it runs:** /map-efficient with --self-moa flag
+
+### Discovery & Verification
+
+**11. Research-Agent**
+- **Role:** Heavy codebase reading with compressed output
+- **Input:** Research question or exploration goal
+- **Output:** Compressed context for implementation agents
+- **When it runs:** /map-plan, /map-efficient, /map-debug (before Actor)
+
+**12. Final-Verifier**
+- **Role:** Adversarial verification with Root Cause Analysis (Ralph Loop)
+- **Input:** Complete implementation after all other agents
+- **Output:** Verification verdict, regression analysis
+- **When it runs:** /map-check, /map-efficient (terminal verification)
 
 ---
 
@@ -214,6 +242,10 @@ Agents communicate via structured JSON:
 | Predictor | ~1.5K | Per subtask or conditional | Varies |
 | Reflector | ~2K | Per subtask or batched | Varies |
 | Curator | ~1.5K | After Reflector | Varies |
+| Debate-Arbiter | ~3-4K | Per subtask | map-debate only |
+| Synthesizer | ~2K | Per subtask | map-efficient (--self-moa) |
+| Research-Agent | ~2-3K | Once (before Actor) | map-plan, map-efficient, map-debug |
+| Final-Verifier | ~2K | Once (terminal) | map-check, map-efficient |
 
 **map-efficient savings:**
 - Skip Evaluator: ~0.8K per subtask

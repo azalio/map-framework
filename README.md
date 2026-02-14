@@ -9,7 +9,7 @@ Based on [MAP cognitive architecture](https://github.com/Shanka123/MAP) (Nature 
 
 ## Why MAP?
 
-- **Structured workflows** — 11 specialized agents instead of single-prompt chaos
+- **Structured workflows** — 12 specialized agents instead of single-prompt chaos
 - **Quality gates** — automatic validation catches errors before they compound
 - **40-60% cost savings** — prevents circular reasoning and scope creep
 - **Learning system** — captures patterns for reuse across projects

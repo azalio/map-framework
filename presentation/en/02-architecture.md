@@ -2,9 +2,9 @@
 
 ## Overview
 
-MAP Framework is built around **8 specialized agents**, coordinated by the Orchestrator.
+MAP Framework is built around **12 specialized agents**, coordinated by the Orchestrator.
 
-The **Orchestrator** is NOT an agent template. Workflow coordination logic lives in the slash commands `.claude/commands/map-*.md` (map-efficient, map-debug, map-fast, map-review).
+The **Orchestrator** is NOT an agent template. Workflow coordination logic lives in the slash commands `.claude/commands/map-*.md` (map-efficient, map-debug, map-fast, map-debate, map-review, map-check, map-plan, map-release, map-resume, map-learn).
 
 ## System Components
 

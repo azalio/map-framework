@@ -1738,7 +1738,7 @@ Skills follow the 500-line rule:
 - `map-release-deep-dive.md` - Release workflow, validation gates
 
 **System architecture:**
-- `agent-architecture.md` - How 11 agents orchestrate
+- `agent-architecture.md` - How 12 agents orchestrate
 - `playbook-system.md` - Knowledge storage, quality scoring
 
 ### Creating Custom Skills

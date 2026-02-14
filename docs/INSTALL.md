@@ -218,7 +218,7 @@ If you prefer manual setup:
    ```
    your-project/
    ├── .claude/
-   │   ├── agents/                    # 11 specialized agents
+   │   ├── agents/                    # 12 specialized agents
    │   │   ├── task-decomposer.md     # Decomposes tasks into subtasks
    │   │   ├── actor.md               # Implements code
    │   │   ├── monitor.md             # Validates implementations
@@ -229,15 +229,19 @@ If you prefer manual setup:
    │   │   ├── synthesizer.md         # Self-MoA: Merges variants
    │   │   ├── debate-arbiter.md      # Opus: Cross-evaluates variants
    │   │   ├── research-agent.md      # Isolated codebase research
+   │   │   ├── final-verifier.md      # Adversarial verification (Ralph Loop)
    │   │   └── documentation-reviewer.md  # Reviews technical docs
-   │   ├── commands/                  # 7 slash commands
+   │   ├── commands/                  # 10 slash commands
    │   │   ├── map-efficient.md       # Optimized workflow (recommended)
    │   │   ├── map-debate.md          # Multi-variant with Opus reasoning
    │   │   ├── map-debug.md           # Debug workflow
    │   │   ├── map-fast.md            # Minimal workflow (low-risk only)
    │   │   ├── map-learn.md           # Extract and save lessons
    │   │   ├── map-review.md          # Review workflow
-   │   │   └── map-release.md         # Release workflow
+   │   │   ├── map-release.md         # Release workflow
+   │   │   ├── map-check.md           # Quality gates & verification
+   │   │   ├── map-plan.md            # Architecture decomposition
+   │   │   └── map-resume.md          # Resume interrupted workflows
    │   └── mcp_config.json
    ```
 

@@ -14,9 +14,9 @@
 
 ## Core Concepts
 
-### 8 Specialized Agents
+### 12 Specialized Agents
 
-MAP coordinates 8 agents via the Orchestrator:
+MAP coordinates 12 agents via the Orchestrator:
 
 1. **[TaskDecomposer](https://github.com/azalio/map-framework/blob/main/.claude/agents/task-decomposer.md)** — breaks goals into atomic subtasks
 2. **[Actor](https://github.com/azalio/map-framework/blob/main/.claude/agents/actor.md)** — generates code and solutions
@@ -26,6 +26,10 @@ MAP coordinates 8 agents via the Orchestrator:
 6. **[Reflector](https://github.com/azalio/map-framework/blob/main/.claude/agents/reflector.md)** — extracts lessons from successes and failures
 7. **[Curator](https://github.com/azalio/map-framework/blob/main/.claude/agents/curator.md)** — manages the knowledge base (playbook)
 8. **[DocumentationReviewer](https://github.com/azalio/map-framework/blob/main/.claude/agents/documentation-reviewer.md)** — checks documentation completeness and correctness
+9. **[Debate-Arbiter](https://github.com/azalio/map-framework/blob/main/.claude/agents/debate-arbiter.md)** — cross-evaluates variants with explicit reasoning (Opus)
+10. **[Synthesizer](https://github.com/azalio/map-framework/blob/main/.claude/agents/synthesizer.md)** — merges multiple variants into unified solution (Self-MoA)
+11. **[Research-Agent](https://github.com/azalio/map-framework/blob/main/.claude/agents/research-agent.md)** — isolated codebase research
+12. **[Final-Verifier](https://github.com/azalio/map-framework/blob/main/.claude/agents/final-verifier.md)** — adversarial verification (Ralph Loop)
 
 The **Orchestrator** is the workflow coordination logic implemented in slash commands (`.claude/commands/map-*.md`), not a separate agent template.
 

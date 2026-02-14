@@ -53,7 +53,7 @@ MAP: [Shows decision tree and comparison matrix]
 - `map-debug-deep-dive.md` - Debugging techniques
 - `map-feature-deep-dive.md` - Full validation workflow (PLANNED)
 - `map-refactor-deep-dive.md` - Dependency analysis (PLANNED)
-- `agent-architecture.md` - How 8 agents orchestrate
+- `agent-architecture.md` - How 12 agents orchestrate
 - `playbook-system.md` - Knowledge storage and search
 
 ---

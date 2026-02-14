@@ -21,7 +21,7 @@ Deep technical documentation for MAP (Modular Agentic Planner) implementation.
 
 ### High-Level Design
 
-MAP Framework implements cognitive architecture inspired by prefrontal cortex functions, orchestrating 11 specialized agents for software development with automatic quality validation.
+MAP Framework implements cognitive architecture inspired by prefrontal cortex functions, orchestrating 12 specialized agents for software development with automatic quality validation.
 
 **Key Design Principle:** Each slash command has its own unique workflow with different agent sequences. There is no single "standard" workflow — the orchestration logic is defined in `.claude/commands/map-*.md` files.
 
