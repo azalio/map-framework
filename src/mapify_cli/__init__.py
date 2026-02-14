@@ -1370,10 +1370,13 @@ def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
             "monitor": [],
             "predictor": [],
             "evaluator": [],
-            "orchestrator": [],
             "reflector": [],
             "curator": [],
             "documentation-reviewer": [],
+            "debate-arbiter": [],
+            "synthesizer": [],
+            "research-agent": [],
+            "final-verifier": [],
         },
         "workflow_settings": {
             "always_retrieve_knowledge": True,
@@ -1427,14 +1430,14 @@ def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
             "task-decomposer",
             "monitor",
             "evaluator",
-            "orchestrator",
             "reflector",
+            "debate-arbiter",
         ]:
             if agent in config["agent_mcp_mappings"]:
                 config["agent_mcp_mappings"][agent].append("sequential-thinking")
 
     if "claude-reviewer" in mcp_servers:
-        for agent in ["monitor", "evaluator", "orchestrator"]:
+        for agent in ["monitor", "evaluator", "final-verifier"]:
             if agent in config["agent_mcp_mappings"]:
                 config["agent_mcp_mappings"][agent].append("claude-reviewer")
 
