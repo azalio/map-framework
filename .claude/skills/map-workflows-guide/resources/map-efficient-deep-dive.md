@@ -36,7 +36,7 @@ Subtask 3: Add unit tests (tests/auth.test.ts)
 
 ### Reflector/Curator: Batched Learning
 
-**Standard workflow (/map-feature):**
+**Full pipeline (theoretical baseline):**
 ```
 Subtask 1 → Actor → Monitor → Predictor → Evaluator → Reflector → Curator
 Subtask 2 → Actor → Monitor → Predictor → Evaluator → Reflector → Curator
@@ -56,7 +56,7 @@ Subtask 3 → Actor → Monitor → [Predictor?] → Evaluator
 ```
 Result: 1 × Reflector/Curator cycle
 
-**Token savings:** 35-40% vs /map-feature
+**Token savings:** 35-40% vs full pipeline
 
 ---
 
@@ -71,7 +71,7 @@ Result: 1 × Reflector/Curator cycle
 - Most development work (80% of tasks)
 
 ❌ **Don't use for:**
-- Critical infrastructure (use /map-feature)
+- Critical infrastructure (use /map-efficient with --self-moa or /map-debate)
 - Small, low-risk changes (use /map-fast)
 - Simple bug fixes (use /map-debug)
 

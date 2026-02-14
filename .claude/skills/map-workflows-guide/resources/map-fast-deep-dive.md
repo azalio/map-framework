@@ -68,7 +68,7 @@
 | Curator | ~1.5K | ❌ Skipped |
 
 **Total saved:** ~5K per subtask
-**Percentage:** 40-50% vs /map-feature
+**Percentage:** 40-50% vs full pipeline
 
 ---
 
@@ -119,7 +119,7 @@ Risk: High (security, breaking changes)
 3. No Curator → Team doesn't learn from mistakes
 4. High risk for under-validation mindset
 
-**Correct choice:** `/map-feature` (critical infrastructure)
+**Correct choice:** `/map-efficient` (critical infrastructure)
 
 ---
 
@@ -190,7 +190,7 @@ Why?
 - Faster for tiny tasks (<50 lines)
 - Use when MAP overhead doesn't make sense
 
-**3. /map-feature**
+**3. /map-efficient or /map-debate**
 - For high-risk changes
 - Security or infrastructure work
 
