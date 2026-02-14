@@ -144,9 +144,9 @@ STEP_ORDER = [
 # If always_required is False, evidence is only checked when the step
 # appears in pending_steps (i.e., it wasn't skipped).
 EVIDENCE_REQUIRED = {
-    "2.3": ("actor", True),      # Always required
-    "2.4": ("monitor", True),    # Always required
-    "2.6": ("predictor", False), # Only when 2.6 is in pending_steps
+    "2.3": ("actor", True),  # Always required
+    "2.4": ("monitor", True),  # Always required
+    "2.6": ("predictor", False),  # Only when 2.6 is in pending_steps
 }
 
 
@@ -468,15 +468,11 @@ def validate_step(step_id: str, branch: str) -> Dict:
             }
         # Validate JSON structure
         try:
-            evidence_data = json.loads(
-                evidence_file.read_text(encoding="utf-8")
-            )
+            evidence_data = json.loads(evidence_file.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError) as exc:
             return {
                 "valid": False,
-                "message": (
-                    f"Evidence file {evidence_file} is not valid JSON: {exc}"
-                ),
+                "message": (f"Evidence file {evidence_file} is not valid JSON: {exc}"),
             }
         # Check required fields
         for required_field in ("phase", "subtask_id", "timestamp"):

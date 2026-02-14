@@ -69,9 +69,7 @@ class TestSkillStructure:
         """All skill folders must contain a SKILL.md file."""
         for folder in skill_folders:
             skill_file = skills_dir / folder / "SKILL.md"
-            assert skill_file.exists(), (
-                f"Skill '{folder}' is missing SKILL.md"
-            )
+            assert skill_file.exists(), f"Skill '{folder}' is missing SKILL.md"
 
     def test_skill_names_are_kebab_case(self, skill_folders):
         """Skill folder names must use kebab-case only."""
@@ -98,35 +96,33 @@ class TestSkillStructure:
         for folder in skill_folders:
             skill_file = skills_dir / folder / "SKILL.md"
             content = skill_file.read_text()
-            assert content.startswith("---"), (
-                f"Skill '{folder}/SKILL.md' is missing opening '---' delimiter"
-            )
+            assert content.startswith(
+                "---"
+            ), f"Skill '{folder}/SKILL.md' is missing opening '---' delimiter"
             # Find closing delimiter (skip the opening one)
             end = content.find("---", 3)
-            assert end > 3, (
-                f"Skill '{folder}/SKILL.md' is missing closing '---' delimiter"
-            )
+            assert (
+                end > 3
+            ), f"Skill '{folder}/SKILL.md' is missing closing '---' delimiter"
             # Parse YAML
             frontmatter = self._parse_frontmatter(skill_file)
-            assert frontmatter, (
-                f"Skill '{folder}/SKILL.md' has empty or invalid YAML frontmatter"
-            )
+            assert (
+                frontmatter
+            ), f"Skill '{folder}/SKILL.md' has empty or invalid YAML frontmatter"
 
     def test_frontmatter_has_required_fields(self, skills_dir, skill_folders):
         """Frontmatter must include 'name' and 'description' fields."""
         for folder in skill_folders:
             skill_file = skills_dir / folder / "SKILL.md"
             fm = self._parse_frontmatter(skill_file)
-            assert "name" in fm, (
-                f"Skill '{folder}' frontmatter is missing 'name' field"
-            )
-            assert "description" in fm, (
-                f"Skill '{folder}' frontmatter is missing 'description' field"
-            )
+            assert "name" in fm, f"Skill '{folder}' frontmatter is missing 'name' field"
+            assert (
+                "description" in fm
+            ), f"Skill '{folder}' frontmatter is missing 'description' field"
             # Name should match folder
-            assert fm["name"] == folder, (
-                f"Skill '{folder}' frontmatter name '{fm['name']}' doesn't match folder name"
-            )
+            assert (
+                fm["name"] == folder
+            ), f"Skill '{folder}' frontmatter name '{fm['name']}' doesn't match folder name"
 
     def test_descriptions_include_trigger_phrases(self, skills_dir, skill_folders):
         """Descriptions must mention 'Use when' or trigger conditions."""
@@ -169,18 +165,18 @@ class TestSkillStructure:
         for folder in skill_folders:
             skill_file = skills_dir / folder / "SKILL.md"
             content = skill_file.read_text()
-            assert re.search(r"^## Examples", content, re.MULTILINE), (
-                f"Skill '{folder}' is missing '## Examples' section"
-            )
+            assert re.search(
+                r"^## Examples", content, re.MULTILINE
+            ), f"Skill '{folder}' is missing '## Examples' section"
 
     def test_skills_have_troubleshooting_section(self, skills_dir, skill_folders):
         """All skills should have a Troubleshooting section."""
         for folder in skill_folders:
             skill_file = skills_dir / folder / "SKILL.md"
             content = skill_file.read_text()
-            assert re.search(r"^## Troubleshooting", content, re.MULTILINE), (
-                f"Skill '{folder}' is missing '## Troubleshooting' section"
-            )
+            assert re.search(
+                r"^## Troubleshooting", content, re.MULTILINE
+            ), f"Skill '{folder}' is missing '## Troubleshooting' section"
 
     # --- skill-rules.json tests ---
 
@@ -225,7 +221,9 @@ class TestSkillStructure:
 
     # --- Template sync tests ---
 
-    def test_skill_templates_in_sync(self, skills_dir, template_skills_dir, skill_folders):
+    def test_skill_templates_in_sync(
+        self, skills_dir, template_skills_dir, skill_folders
+    ):
         """Skill SKILL.md files should be in sync between .claude/ and templates/."""
         if not template_skills_dir.exists():
             pytest.skip("Template skills directory doesn't exist")
@@ -270,6 +268,7 @@ class TestSkillStructure:
                     # Check file has executable permission or is a python script
                     if script.suffix == ".sh":
                         import os
+
                         assert os.access(script, os.X_OK), (
                             f"Script '{script}' is not executable. "
                             f"Run: chmod +x {script}"
