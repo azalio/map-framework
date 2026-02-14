@@ -1711,9 +1711,9 @@ Skills automatically suggest themselves when relevant:
 User: "I need to add a feature"
 MAP: 🎯 "Consider /map-efficient"
 
-User: "What's the difference between efficient and feature?"
+User: "What's the difference between efficient and debate?"
 MAP: 📚 "Loading map-workflows-guide skill"
-[Shows comparison: efficient = production, feature = critical]
+[Shows comparison: efficient = production, debate = reasoning transparency]
 ```
 
 ### Progressive Disclosure

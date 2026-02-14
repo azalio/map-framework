@@ -233,13 +233,13 @@ class TestEntityExtractor:
 
     def test_extract_map_workflow(self, extractor):
         """Test extracting MAP Framework workflows."""
-        text = "Use map-feature workflow for implementation and map-debug for troubleshooting."
+        text = "Use map-efficient workflow for implementation and map-debug for troubleshooting."
         entities = extractor.extract_entities(text)
 
         workflow_entities = [e for e in entities if e.type == EntityType.WORKFLOW]
         workflow_names = {e.name.lower() for e in workflow_entities}
 
-        assert any("map" in name and "feature" in name for name in workflow_names)
+        assert any("map" in name and "efficient" in name for name in workflow_names)
         assert any("map" in name and "debug" in name for name in workflow_names)
 
     # ============================================================================

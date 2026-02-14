@@ -252,7 +252,7 @@ MAP workflows orchestrate **8 specialized agents**, each with specific responsib
 - Predicts side effects
 - Identifies risks and breaking changes
 - **Conditional in /map-efficient** (runs if risk detected)
-- **Always in /map-feature** (runs per subtask)
+- **Always in /map-debug** (focused analysis)
 
 ### Learning Agents
 
@@ -261,8 +261,8 @@ MAP workflows orchestrate **8 specialized agents**, each with specific responsib
 - Extracts reusable patterns
 - Searches mem0 for existing knowledge via `mcp__mem0__map_tiered_search`
 - Prevents duplicate pattern storage
-- **Batched in /map-efficient** (runs once at end)
-- **Per-subtask in /map-feature** (extracts frequently)
+- **Batched in /map-efficient** (runs once at end, via /map-learn)
+- **Skipped in /map-fast** (no learning)
 
 **Curator** — Knowledge management
 - Stores patterns in mem0 via `mcp__mem0__map_add_pattern`
@@ -449,7 +449,7 @@ MAP: 🎯 Suggests /map-efficient
 ```
 MAP: "Is this for production?"
 User: "Yes, but critical feature"
-MAP: 🎯 Suggests /map-feature instead
+MAP: 🎯 Suggests /map-efficient with --self-moa instead
 ```
 
 **Direct command:**
@@ -522,8 +522,8 @@ MAP: 📚 Loads this skill for context
 | Issue | Cause | Solution |
 |-------|-------|----------|
 | Wrong workflow chosen mid-task | Cannot switch workflows during execution | Complete current workflow, then restart with correct one |
-| Predictor never runs in /map-efficient | Subtasks assessed as low-risk | Expected behavior; Predictor is conditional. Use /map-feature if you need guaranteed analysis |
-| No patterns stored after /map-fast | /map-fast skips learning agents | By design — use /map-efficient or /map-feature for pattern accumulation |
+| Predictor never runs in /map-efficient | Subtasks assessed as low-risk | Expected behavior; Predictor is conditional. Use /map-debug for guaranteed analysis |
+| No patterns stored after /map-fast | /map-fast skips learning agents | By design — use /map-efficient + /map-learn for pattern accumulation |
 | mem0 search returns empty | mem0 MCP not configured or namespaces mismatch | Verify mem0 in `.claude/mcp_config.json`, check namespace conventions |
 | Skill suggests wrong workflow | Description trigger mismatch | Check skill-rules.json triggers; refine query wording |
 

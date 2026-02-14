@@ -29,7 +29,7 @@ MAP Framework orchestrates 8 specialized agents in a coordinated workflow.
 - **Role:** Quality scoring and final approval
 - **Input:** Actor + Monitor results
 - **Output:** Quality score (0-10), approve/reject decision
-- **When it runs:** /map-fast, /map-feature (per subtask), /map-debug, /map-refactor
+- **When it runs:** /map-fast, /map-debug
 - **Skipped in:** /map-efficient (Monitor provides sufficient validation)
 
 ### Analysis
@@ -39,9 +39,9 @@ MAP Framework orchestrates 8 specialized agents in a coordinated workflow.
 - **Input:** Planned changes
 - **Output:** Affected files, breaking changes, risk assessment
 - **When it runs:**
-  - /map-feature: Always (per subtask)
   - /map-efficient: Conditional (only if Monitor flags high risk)
-  - /map-debug, /map-refactor: Always (focused analysis)
+  - /map-debug: Always (focused analysis)
+  - /map-debate: Conditional (same as /map-efficient)
   - /map-fast: Never (skipped)
 
 ### Learning
@@ -51,8 +51,7 @@ MAP Framework orchestrates 8 specialized agents in a coordinated workflow.
 - **Input:** All agent outputs for subtask(s)
 - **Output:** Insights, patterns discovered, pattern updates
 - **When it runs:**
-  - /map-feature: Per subtask
-  - /map-efficient, /map-debug, /map-refactor: Batched (once at end)
+  - /map-efficient, /map-debug, /map-debate: Batched (once at end, via /map-learn)
   - /map-fast: Never (skipped)
 - **MCP Tool:** Uses `mcp__mem0__map_tiered_search` to check for existing patterns
 
@@ -96,17 +95,18 @@ TaskDecomposer
     Reflector (all subtasks) → Curator → Done
 ```
 
-### Full Pipeline (map-feature)
+### Multi-Variant Pipeline (map-debate)
 
 ```
 TaskDecomposer
   ↓
   For each subtask:
-    Actor → Monitor → Predictor → Evaluator
-      ↓ if approved
-    Reflector → Curator → Apply changes
+    Actor×3 → Monitor×3 → debate-arbiter (Opus)
+      ↓ synthesized
+    Monitor → [Predictor if high risk] → Apply changes
   ↓
-  Done
+  Batch learning (via /map-learn):
+    Reflector (all subtasks) → Curator → Done
 ```
 
 ---
@@ -210,7 +210,7 @@ Agents communicate via structured JSON:
 | TaskDecomposer | ~1.5K | Once | All workflows |
 | Actor | ~2-3K | Per subtask | All workflows |
 | Monitor | ~1K | Per Actor output | All workflows |
-| Evaluator | ~0.8K | Per subtask | map-fast, map-feature |
+| Evaluator | ~0.8K | Per subtask | map-fast, map-debug |
 | Predictor | ~1.5K | Per subtask or conditional | Varies |
 | Reflector | ~2K | Per subtask or batched | Varies |
 | Curator | ~1.5K | After Reflector | Varies |
@@ -228,7 +228,7 @@ Agents communicate via structured JSON:
 
 To add a custom agent:
 1. Create `.claude/agents/my-agent.md` with prompt template
-2. Add to workflow command (e.g., `.claude/commands/map-feature.md`)
+2. Add to workflow command (e.g., `.claude/commands/map-efficient.md`)
 3. Define when it runs (before/after which agents)
 4. Specify input/output format
 

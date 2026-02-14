@@ -1900,7 +1900,7 @@ model: claude-sonnet-4-5  # or claude-haiku-3-5
 6. **Update orchestration:**
    Edit `.claude/commands/map-efficient.md` to call new agent:
    ```markdown
-   ## After Evaluator approves:
+   ## After Monitor validates:
 
    **6. Security Audit** (SecurityAuditor):
    - Call: Task(subagent_type="security-auditor", input=actor_output)
