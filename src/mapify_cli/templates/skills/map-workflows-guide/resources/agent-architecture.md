@@ -107,8 +107,8 @@ MAP Framework orchestrates 12 specialized agents in a coordinated workflow.
 ### Linear Pipeline (map-fast)
 
 ```
-TaskDecomposer → Actor → Monitor → Evaluator → Done
-(No learning, no impact analysis)
+TaskDecomposer → Actor → Monitor → Apply → Done
+(No Evaluator, no Predictor, no learning)
 ```
 
 ### Conditional Pipeline (map-efficient)
@@ -117,10 +117,11 @@ TaskDecomposer → Actor → Monitor → Evaluator → Done
 TaskDecomposer
   ↓
   For each subtask:
-    Actor → Monitor → [Predictor if high risk] → Apply changes
+    Actor → Monitor → [Predictor if high risk] → Tests → Linter → Apply
   ↓
-  Batch learning:
-    Reflector (all subtasks) → Curator → Done
+  Final-Verifier (adversarial verification of entire goal)
+  ↓
+  Done! Optional: /map-learn → Reflector → Curator
 ```
 
 ### Multi-Variant Pipeline (map-debate)
@@ -238,7 +239,7 @@ Agents communicate via structured JSON:
 | TaskDecomposer | ~1.5K | Once | All workflows |
 | Actor | ~2-3K | Per subtask | All workflows |
 | Monitor | ~1K | Per Actor output | All workflows |
-| Evaluator | ~0.8K | Per subtask | map-fast, map-debug |
+| Evaluator | ~0.8K | Per subtask | map-debug |
 | Predictor | ~1.5K | Per subtask or conditional | Varies |
 | Reflector | ~2K | Per subtask or batched | Varies |
 | Curator | ~1.5K | After Reflector | Varies |

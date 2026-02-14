@@ -29,12 +29,21 @@ flowchart TD
 
 ## Orchestrator Slash Commands
 
-MAP provides **4 specialized workflow commands** for different scenarios:
+MAP provides **10 workflow commands** for different scenarios:
 
-1. **`/map-efficient`** — implement features, refactor code, complex tasks
-2. **`/map-debug`** — debug issues
-3. **`/map-fast`** — small, low-risk changes
-4. **`/map-review`** — review changes
+**Primary workflows:**
+1. **`/map-efficient`** — implement features, refactor code, complex tasks (recommended default)
+2. **`/map-debug`** — debug issues, fix bugs
+3. **`/map-fast`** — small, low-risk changes with minimal overhead
+4. **`/map-debate`** — multi-variant synthesis with Opus arbiter
+
+**Supporting commands:**
+5. **`/map-review`** — review changes before commit
+6. **`/map-check`** — quality gates and verification
+7. **`/map-plan`** — architecture decomposition only
+8. **`/map-release`** — release workflow with validation gates
+9. **`/map-resume`** — resume interrupted workflows
+10. **`/map-learn`** — extract and preserve lessons (optional learning step)
 
 The **Orchestrator** is NOT a separate agent template; it is the coordination logic implemented in these slash commands.
 
@@ -223,11 +232,6 @@ Before completing any MAP workflow subtask the orchestrator **MUST** check 2 que
 
 ## Exception: Non-MAP Tasks
 
-These rules apply **ONLY** when using MAP framework commands:
-
-- `/map-efficient`
-- `/map-debug`
-- `/map-fast`
-- `/map-review`
+These rules apply **ONLY** when using MAP framework commands (`/map-efficient`, `/map-debug`, `/map-fast`, `/map-debate`, `/map-review`, `/map-check`, `/map-plan`, `/map-release`, `/map-resume`, `/map-learn`).
 
 For ordinary tasks (bug fixes, docs, simple changes) you can work directly without the full agent chain.

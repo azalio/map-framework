@@ -42,19 +42,20 @@ Subtask 1 → Actor → Monitor → Predictor → Evaluator → Reflector → Cu
 Subtask 2 → Actor → Monitor → Predictor → Evaluator → Reflector → Curator
 Subtask 3 → Actor → Monitor → Predictor → Evaluator → Reflector → Curator
 ```
-Result: 3 × Reflector/Curator cycles
+Result: 3 × (Predictor + Evaluator + Reflector + Curator) cycles
 
 **Optimized workflow (/map-efficient):**
 ```
-Subtask 1 → Actor → Monitor → [Predictor?] → Evaluator
-Subtask 2 → Actor → Monitor → [Predictor?] → Evaluator
-Subtask 3 → Actor → Monitor → [Predictor?] → Evaluator
+Subtask 1 → Actor → Monitor → [Predictor if high risk] → Apply
+Subtask 2 → Actor → Monitor → [Predictor if high risk] → Apply
+Subtask 3 → Actor → Monitor → [Predictor if high risk] → Apply
            ↓
-        Reflector (analyzes ALL subtasks)
+        Final-Verifier (adversarial verification)
            ↓
-        Curator (consolidates patterns)
+        Done! Optionally run /map-learn:
+           Reflector (analyzes ALL subtasks) → Curator (consolidates patterns)
 ```
-Result: 1 × Reflector/Curator cycle
+Result: No Evaluator, no per-subtask Reflector/Curator. Learning decoupled to /map-learn.
 
 **Token savings:** 35-40% vs full pipeline
 
@@ -81,16 +82,16 @@ Result: 1 × Reflector/Curator cycle
 
 **Myth:** "Optimized workflows sacrifice quality"
 
-**Reality:** /map-efficient preserves all quality gates:
-- ✅ Monitor validates every subtask
-- ✅ Evaluator scores every implementation
-- ✅ Predictor runs when needed (conditional)
-- ✅ Reflector analyzes complete context
-- ✅ Curator consolidates all patterns
+**Reality:** /map-efficient preserves essential quality gates:
+- ✅ Monitor validates every subtask (correctness gate)
+- ✅ Predictor runs when needed (conditional impact analysis)
+- ✅ Tests gate and linter gate run per subtask
+- ✅ Final-Verifier checks entire goal at end (adversarial verification)
+- ✅ Learning available via /map-learn after workflow completes
 
-**What's optimized:**
-- Frequency (when agents run)
-- NOT functionality (what agents do)
+**What's optimized (intentionally omitted per-subtask):**
+- Evaluator — Monitor validates correctness directly
+- Reflector/Curator — decoupled to /map-learn (optional, run after workflow)
 
 ---
 
@@ -115,34 +116,36 @@ ST-1: Pagination params
 ├─ Actor: Modify routes/posts.ts
 ├─ Monitor: ✅ Valid
 ├─ Predictor: ⏭️ SKIPPED (low risk)
-└─ Evaluator: ✅ Approved (score: 8/10)
+├─ Tests gate: ✅ Passed
+└─ Linter gate: ✅ Passed
 
 ST-2: Service update
 ├─ Actor: Modify services/PostService.ts
 ├─ Monitor: ✅ Valid
 ├─ Predictor: ✅ RAN (affects API contract)
 │  └─ Impact: Breaking change if clients expect all posts
-├─ Evaluator: ✅ Approved (score: 9/10)
+├─ Tests gate: ✅ Passed
 └─ Note: "Add API versioning or deprecation notice"
 
 ST-3: Integration tests
 ├─ Actor: Add tests/posts.integration.test.ts
 ├─ Monitor: ✅ Valid (tests pass)
 ├─ Predictor: ⏭️ SKIPPED (test file)
-└─ Evaluator: ✅ Approved (score: 8/10)
+├─ Tests gate: ✅ Passed
+└─ Linter gate: ✅ Passed
 
-Reflector (batched):
-├─ Analyzed: 3 subtasks
-├─ Searched mem0: Found similar pagination patterns
-└─ Extracted:
-   - Pagination parameter pattern (offset/limit)
-   - API versioning consideration
-   - Integration test structure
+Final-Verifier: ✅ All subtasks verified, goal achieved
 
-Curator (batched):
-├─ Checked duplicates: 2 similar bullets found
-├─ Added: 1 new bullet (API pagination pattern)
-└─ Updated: 1 existing bullet (test coverage++)
+Optional /map-learn:
+  Reflector (batched):
+  ├─ Analyzed: 3 subtasks
+  ├─ Searched mem0: Found similar pagination patterns
+  └─ Extracted: pagination pattern, API versioning, test structure
+
+  Curator (batched):
+  ├─ Checked duplicates: 2 similar bullets found
+  ├─ Added: 1 new bullet (API pagination pattern)
+  └─ Updated: 1 existing bullet (test coverage++)
 ```
 
 **Token usage:**
