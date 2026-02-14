@@ -145,6 +145,34 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 
 **Review Workflow:** Read source → Extract URLs → Fetch URLs → Check CRDs/dependencies → Verify documentation → Cross-check decomposition
 
+### 9. Synthesizer
+
+**Model:** sonnet
+**Purpose:** Merges multiple Actor variants into a unified solution (Self-MoA in /map-efficient)
+
+**Output:** Synthesized code combining best elements from all validated variants
+
+### 10. DebateArbiter
+
+**Model:** opus (highest reasoning quality)
+**Purpose:** Cross-evaluates Actor variants with explicit reasoning matrix; synthesizes optimal solution in /map-debate
+
+**Output:** comparison_matrix, decision_rationales, synthesized code
+
+### 11. ResearchAgent
+
+**Model:** inherit (uses parent context model)
+**Purpose:** Heavy codebase reading with compressed output; prevents Actor context bloat
+
+**Output:** Executive summary (<2K tokens) with file locations, patterns, and confidence score
+
+### 12. FinalVerifier
+
+**Model:** sonnet
+**Purpose:** Adversarial verifier (Four-Eyes Principle); catches premature completion and hallucinated success
+
+**Output:** verdict (PASS/FAIL), confidence score, root cause analysis if failed
+
 ## Agent Interactions
 
 ### Orchestrator Workflow (Automated sequence)
@@ -187,5 +215,6 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 
 ### Model Strategy
 
-- **sonnet** (quality-critical): Actor, Monitor, TaskDecomposer, Predictor, Evaluator, Reflector, Curator, DocumentationReviewer
+- **sonnet** (quality-critical): Actor, Monitor, TaskDecomposer, Predictor, Evaluator, Reflector, Curator, DocumentationReviewer, Synthesizer, FinalVerifier
 - **opus** (highest reasoning): DebateArbiter
+- **inherit** (parent context): ResearchAgent
