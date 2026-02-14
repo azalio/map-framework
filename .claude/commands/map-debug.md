@@ -129,7 +129,7 @@ Provide FULL file content for changes."
 
 ### Monitor Validation
 
-After each fix:
+After each fix (max 5 Actor->Monitor retry iterations per subtask):
 
 ```
 Task(

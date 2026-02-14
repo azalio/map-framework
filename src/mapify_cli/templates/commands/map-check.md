@@ -9,7 +9,7 @@
 If no `.map/<branch>/workflow_state.json` exists, run full quality suite:
 
 ```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/\//-/g')
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
 STATE_FILE=".map/${BRANCH}/workflow_state.json"
 
 if [[ ! -f "$STATE_FILE" ]]; then
@@ -109,10 +109,10 @@ If `.map/<branch>/workflow_state.json` exists, verify subtask completion.
 Read the current state to understand what was completed:
 
 ```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/\//-/g')
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
 STATE_FILE=".map/${BRANCH}/workflow_state.json"
 
-cat "$STATE_FILE"
+# Use Read tool to load the state file contents
 ```
 
 ### Step 2: Validate All Subtasks Complete
@@ -159,7 +159,7 @@ Read task_plan_<branch>.md to get acceptance criteria:
 
 ```bash
 PLAN_FILE=".map/${BRANCH}/task_plan_${BRANCH}.md"
-cat "$PLAN_FILE"
+# Use Read tool to load the plan file contents
 ```
 
 ### Step 4: Call Final Verifier
@@ -195,7 +195,7 @@ Even if verifier approves, run automated checks:
 
 **Tests:**
 ```bash
-TEST_CMD=$(jq -r '.test_command // "pytest"' .claude/ralph-loop-config.json)
+TEST_CMD="pytest"  # Default; override if project uses different test runner
 echo "Running final tests..."
 eval "$TEST_CMD"
 
@@ -203,7 +203,7 @@ eval "$TEST_CMD"
 # If tests fail and you want a durable artifact for follow-up/debugging,
 # re-run capturing output and parse to .map/<branch>/diagnostics.json:
 #
-# BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/\//-/g')
+# BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
 # LOG_FILE=".map/${BRANCH}/tests.log"
 # mkdir -p ".map/${BRANCH}"
 # ( $TEST_CMD ) >"$LOG_FILE" 2>&1
@@ -218,12 +218,12 @@ fi
 
 **Linter:**
 ```bash
-LINT_CMD=$(jq -r '.lint_command // "make lint"' .claude/ralph-loop-config.json)
+LINT_CMD="make lint"  # Default; override if project uses different linter
 echo "Running final lint..."
 eval "$LINT_CMD"
 
 # Optional (structured diagnostics):
-# BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/\//-/g')
+# BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
 # LOG_FILE=".map/${BRANCH}/lint.log"
 # mkdir -p ".map/${BRANCH}"
 # ( $LINT_CMD ) >"$LOG_FILE" 2>&1

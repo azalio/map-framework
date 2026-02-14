@@ -18,36 +18,36 @@ You catch premature completion and hallucinated success.
 
 | Data | Source | How to Read |
 |------|--------|-------------|
-| Original Goal | `.map/task_plan_<branch>.md` | Section "## Goal" or first paragraph |
-| Acceptance Criteria | `.map/task_plan_<branch>.md` | Section "## Acceptance Criteria" (table) |
-| Completed Subtasks | `.map/progress_<branch>.md` | Checkboxes marked `[x]` |
+| Original Goal | `.map/<branch>/task_plan_<branch>.md` | Section "## Goal" or first paragraph |
+| Acceptance Criteria | `.map/<branch>/task_plan_<branch>.md` | Section "## Acceptance Criteria" (table) |
+| Completed Subtasks | `.map/<branch>/progress_<branch>.md` | Checkboxes marked `[x]` |
 | Global Validation | Task argument `$VALIDATION_CRITERIA` | Passed from map-efficient.md |
 
 ### OUTPUT Destinations (where to store results)
 
 | Data | Destination | Format | Written By |
 |------|-------------|--------|------------|
-| Verification Result | `.map/progress_<branch>.md` | Append "## Final Verification" section | **final-verifier agent** |
+| Verification Result | `.map/<branch>/progress_<branch>.md` | Append "## Final Verification" section | **final-verifier agent** |
 | Structured Result | `.map/<branch>/final_verification.json` | JSON (for programmatic access) | **final-verifier agent** |
 | Root Cause (if failed) | `.map/<branch>/final_verification.json` | In `root_cause` field | **final-verifier agent** |
 
 **WHO WRITES FILES:**
 - **final-verifier agent** writes verification results to BOTH markdown and JSON
 - **Orchestrator (map-efficient.md)** reads results and decides next action (COMPLETE/RE_DECOMPOSE/ESCALATE)
-- **Orchestrator (map-efficient.md)** ensures Acceptance Criteria section exists in `task_plan_<branch>.md` (derived from decomposition output)
+- **Orchestrator (map-efficient.md)** ensures Acceptance Criteria section exists in `.map/<branch>/task_plan_<branch>.md` (derived from decomposition output)
 
 **IMPORTANT:** Always use sanitized branch name (e.g., `feature-foo` not `feature/foo`).
 
 **SOURCE OF TRUTH CONTRACT:**
 - `.map/<branch>/final_verification.json` is the **ONLY** source of truth for orchestrator decisions
-- `.map/progress_<branch>.md` "## Final Verification" section is for **human readability only**
+- `.map/<branch>/progress_<branch>.md` "## Final Verification" section is for **human readability only**
 - **Orchestrator (map-efficient.md) MUST read JSON**, not parse markdown
 - Both must be written, but only JSON is used programmatically
 
 ## Verification Protocol
 
 ### Step 1: Goal Extraction
-Read `.map/task_plan_<branch>.md` to extract:
+Read `.map/<branch>/task_plan_<branch>.md` to extract:
 - Original goal from "## Goal" section
 - Acceptance criteria from "## Acceptance Criteria" table (if present)
 
@@ -101,7 +101,7 @@ Score confidence (0.0-1.0):
 
 **CRITICAL:** `root_cause` is REQUIRED if `passed=false`
 
-### 2. Append to `.map/progress_<branch>.md`
+### 2. Append to `.map/<branch>/progress_<branch>.md`
 
 ```markdown
 ## Final Verification

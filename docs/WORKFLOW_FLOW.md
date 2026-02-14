@@ -165,7 +165,7 @@
 └──────────────────┬──────────────────────────────────┘
                    ↓
 ┌─────────────────────────────────────────────────────┐
-│ Turn 8: get_next_step → step_id=2.7, APPLY_CHANGES │
+│ Turn 8: get_next_step → step_id=2.7, UPDATE_STATE   │
 │                                                     │
 │ Выполняет: Edit/Write tools                        │
 │                                                     │
@@ -204,7 +204,7 @@
 
 ---
 
-## 🎯 17 фаз workflow
+## 🎯 16 фаз workflow
 
 | Step | Фаза | Описание | Обязательно? |
 |------|------|----------|--------------|
@@ -217,10 +217,9 @@
 | **2.1** | MEM0_SEARCH | Поиск паттернов в mem0 | ✅ Да (для каждого ST) |
 | **2.2** | RESEARCH | research-agent для контекста | 🔶 Условно (если 3+ файлов) |
 | **2.3** | ACTOR | Actor генерирует код | ✅ Да (для каждого ST) |
-| **2.4** | MONITOR | Monitor валидирует | ✅ Да (для каждого ST) |
-| **2.5** | RETRY_LOOP | Повтор при Monitor.valid=false | 🔶 Условно (макс 5 раз) |
+| **2.4** | MONITOR | Monitor валидирует (retry до 5 раз) | ✅ Да (для каждого ST) |
 | **2.6** | PREDICTOR | Анализ impact | 🔶 Условно (medium/high risk) |
-| **2.7** | APPLY_CHANGES | Применение Edit/Write | ✅ Да (блокируется gate) |
+| **2.7** | UPDATE_STATE | Обновление workflow_state.json | ✅ Да (для каждого ST) |
 | **2.8** | TESTS_GATE | Запуск тестов | 🔶 Условно (если есть) |
 | **2.9** | LINTER_GATE | Запуск линтера | 🔶 Условно (если есть) |
 | **2.10** | VERIFY_ADHERENCE | Self-audit checkpoint | ✅ Да (для каждого ST) |
@@ -346,7 +345,7 @@ Claude: [Применяет Edit/Write] ✅
 # Система автоматически:
 # 1. Создаст .map/<branch>/step_state.json
 # 2. Будет показывать прогресс в хуках
-# 3. Пройдет все 14 фаз для каждого subtask
+# 3. Пройдет все 16 фаз для каждого subtask
 # 4. Завершится финальной верификацией
 ```
 
@@ -380,13 +379,13 @@ Applying modifications...
 **Проверить состояние:**
 ```bash
 # Посмотреть текущий шаг
-cat .map/$(git branch --show-current | sed 's/\//-/g')/step_state.json
+cat .map/$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')/step_state.json
 
 # Получить следующий шаг вручную
 python3 .map/scripts/map_orchestrator.py get_next_step
 
 # Проверить workflow state (для gate)
-cat .map/$(git branch --show-current | sed 's/\//-/g')/workflow_state.json
+cat .map/$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')/workflow_state.json
 ```
 
 **Сбросить состояние:**

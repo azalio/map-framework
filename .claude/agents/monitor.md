@@ -94,8 +94,8 @@ If implementation deviates from the AAG contract — `valid: false` — regardle
 |-------------|------|-------------|---------|
 | `{{project_name}}` | string | Project identifier | `"auth-service"` |
 | `{{language}}` | enum | Primary language | `"python"`, `"typescript"`, `"go"` |
-| `{{solution}}` | string | Code/docs to review | Full code block or diff |
-| `{{requirements}}` | string | Subtask requirements | "Implement JWT validation" |
+| `{{solution}}` | string | Code/docs to review (in MAP workflow: provided via `<MAP_Written>` tag) | Full code block or diff |
+| `{{requirements}}` | string | Subtask requirements (in MAP workflow: provided via `<MAP_Contract>` tag) | "Implement JWT validation" |
 | `{{review_mode}}` | enum | Review scope mode | `"full"` or `"diff"` |
 
 ### Optional Placeholders
@@ -105,6 +105,7 @@ If implementation deviates from the AAG contract — `valid: false` — regardle
 | `{{framework}}` | string | `""` | Framework/runtime (Express, FastAPI, etc.) |
 | `{{standards_doc}}` | string | `""` | URL/path to style guide |
 | `{{security_policy}}` | string | `""` | URL/path to security policy |
+| `{{changed_files}}` | array | `[]` | List of modified file paths (for static analysis) |
 | `{{subtask_description}}` | string | `""` | Additional context |
 | `{{existing_patterns}}` | array | `[]` | Learned patterns from previous reviews |
 | `{{feedback}}` | array | `[]` | Previous review findings to verify |
@@ -2494,3 +2495,27 @@ def check_rate_limit(user_id, action, limit=100, window=3600):
 - Only MEDIUM/LOW issues → valid=true (with feedback)
 
 </Monitor_Critical_Reminders>
+
+### Evidence File (Artifact-Gated Validation)
+
+**Exception to read-only rule**: Monitor writes evidence files to `.map/` artifacts directory via Bash (not Write tool). This does NOT violate the read-only-for-project-code rule — `.map/` is a workflow artifact directory, not project code.
+
+After completing validation, write an evidence file:
+
+```bash
+cat > .map/<branch>/evidence/monitor_<subtask_id>.json << 'EVIDENCE'
+{
+  "phase": "MONITOR",
+  "subtask_id": "<subtask_id>",
+  "timestamp": "<ISO 8601 UTC>",
+  "valid": true,
+  "issues_found": <number of issues>,
+  "recommendation": "approve|reject|revise"
+}
+EVIDENCE
+```
+
+**Required fields** (orchestrator validates these): `phase`, `subtask_id`, `timestamp`.
+Other fields are informational but recommended for audit trail.
+
+**CRITICAL**: Without this file, `validate_step("2.4")` will reject the step.

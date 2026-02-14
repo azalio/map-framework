@@ -231,7 +231,7 @@ Check current state:
 
 ```bash
 # Show current state
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed 's/\//-/g')
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
 cat .map/${BRANCH}/workflow_state.json | jq '.'
 
 # Check what steps are completed for current subtask

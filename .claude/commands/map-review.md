@@ -94,19 +94,21 @@ Task(
 **Playbook Context:**
 [paste relevant playbook bullets]
 
-Provide quality assessment:
-- Code quality score (0-100)
-- Test coverage assessment
-- Documentation completeness
-- Maintainability score
-- Overall verdict
+Provide quality assessment using 1-10 scoring (matches evaluator agent template):
+- Functionality score (1-10)
+- Code quality score (1-10)
+- Performance score (1-10)
+- Security score (1-10)
+- Testability score (1-10)
+- Completeness score (1-10)
 
 Output JSON with:
-- scores: {code_quality, test_coverage, documentation, maintainability, overall}
-- verdict: 'excellent' | 'good' | 'acceptable' | 'needs_work' | 'reject'
+- scores: {functionality, code_quality, performance, security, testability, completeness}
+- overall_score: weighted float (1.0-10.0)
+- recommendation: 'proceed' | 'improve' | 'reconsider'
 - strengths: array of strings
-- improvements_needed: array of strings
-- final_recommendation: string"
+- weaknesses: array of strings
+- next_steps: array of strings"
 )
 ```
 
@@ -133,10 +135,10 @@ Once all three agents have completed, combine their findings:
 - Affected Files: [predictor.affected_files.length]
 
 **Evaluator Assessment:**
-- Overall Score: [evaluator.scores.overall]/100
-- Code Quality: [evaluator.scores.code_quality]/100
-- Test Coverage: [evaluator.scores.test_coverage]/100
-- Verdict: [evaluator.verdict]
+- Overall Score: [evaluator.overall_score]/10
+- Code Quality: [evaluator.scores.code_quality]/10
+- Security: [evaluator.scores.security]/10
+- Recommendation: [evaluator.recommendation]
 
 ### Critical Issues (High Severity)
 
@@ -160,9 +162,9 @@ Once all three agents have completed, combine their findings:
 ### Final Verdict
 
 Based on combined analysis:
-- **Proceed if:** Monitor verdict = 'approved' AND Evaluator verdict = 'excellent'|'good'|'acceptable'
-- **Revise if:** Monitor verdict = 'needs_revision' OR Evaluator verdict = 'needs_work'
-- **Block if:** Monitor verdict = 'rejected' OR Evaluator verdict = 'reject' OR (Predictor risk_level = 'high' AND breaking_changes.length > 0)
+- **Proceed if:** Monitor verdict = 'approved' AND Evaluator recommendation = 'proceed'
+- **Revise if:** Monitor verdict = 'needs_revision' OR Evaluator recommendation = 'improve'
+- **Block if:** Monitor verdict = 'rejected' OR Evaluator recommendation = 'reconsider' OR (Predictor risk_level = 'high' AND breaking_changes.length > 0)
 
 ---
 

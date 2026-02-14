@@ -42,6 +42,7 @@ DESIGN RATIONALE:
 """
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Dict, Optional
@@ -51,6 +52,16 @@ EDITING_TOOLS = {"Edit", "Write", "MultiEdit"}
 
 # Required steps before allowing edits
 REQUIRED_STEPS = ["actor", "monitor"]
+
+
+def sanitize_branch_name(branch: str) -> str:
+    """Sanitize branch name for safe filesystem paths."""
+    sanitized = branch.replace("/", "-")
+    sanitized = re.sub(r"[^a-zA-Z0-9_.-]", "-", sanitized)
+    sanitized = re.sub(r"-+", "-", sanitized).strip("-")
+    if ".." in sanitized or sanitized.startswith("."):
+        return "default"
+    return sanitized or "default"
 
 
 def get_branch_name() -> str:
@@ -65,9 +76,7 @@ def get_branch_name() -> str:
             timeout=1,
         )
         if result.returncode == 0:
-            branch = result.stdout.strip()
-            # Sanitize for filesystem (same as other MAP tools)
-            return branch.replace("/", "-").replace(" ", "-")
+            return sanitize_branch_name(result.stdout.strip())
     except Exception:
         pass
     return "default"

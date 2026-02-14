@@ -14,9 +14,9 @@
 
 ## Core Concepts
 
-### 8 Specialized Agents
+### 12 Specialized Agents
 
-MAP coordinates 8 agents via the Orchestrator:
+MAP coordinates 12 agents via the Orchestrator:
 
 1. **[TaskDecomposer](https://github.com/azalio/map-framework/blob/main/.claude/agents/task-decomposer.md)** — breaks goals into atomic subtasks
 2. **[Actor](https://github.com/azalio/map-framework/blob/main/.claude/agents/actor.md)** — generates code and solutions
@@ -26,6 +26,10 @@ MAP coordinates 8 agents via the Orchestrator:
 6. **[Reflector](https://github.com/azalio/map-framework/blob/main/.claude/agents/reflector.md)** — extracts lessons from successes and failures
 7. **[Curator](https://github.com/azalio/map-framework/blob/main/.claude/agents/curator.md)** — manages the knowledge base (playbook)
 8. **[DocumentationReviewer](https://github.com/azalio/map-framework/blob/main/.claude/agents/documentation-reviewer.md)** — checks documentation completeness and correctness
+9. **[Debate-Arbiter](https://github.com/azalio/map-framework/blob/main/.claude/agents/debate-arbiter.md)** — cross-evaluates variants with explicit reasoning (Opus)
+10. **[Synthesizer](https://github.com/azalio/map-framework/blob/main/.claude/agents/synthesizer.md)** — merges multiple variants into unified solution (Self-MoA)
+11. **[Research-Agent](https://github.com/azalio/map-framework/blob/main/.claude/agents/research-agent.md)** — isolated codebase research
+12. **[Final-Verifier](https://github.com/azalio/map-framework/blob/main/.claude/agents/final-verifier.md)** — adversarial verification (Ralph Loop)
 
 The **Orchestrator** is the workflow coordination logic implemented in slash commands (`.claude/commands/map-*.md`), not a separate agent template.
 
@@ -33,6 +37,7 @@ The **Orchestrator** is the workflow coordination logic implemented in slash com
 
 MAP uses **5 MCP servers** to extend capabilities:
 
+- **[mem0](https://github.com/mem0ai/mem0-mcp)** — semantic pattern memory (tiered search, pattern storage)
 - **[claude-reviewer](https://github.com/rsokolowski/mcp-claude-reviewer)** — professional code review with security analysis
 - **[sequential-thinking](https://github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking)** — chains of thought for complex tasks
 - **[context7](https://github.com/upstash/context7)** — up-to-date library documentation
@@ -45,7 +50,7 @@ MAP uses **5 MCP servers** to extend capabilities:
 - Stored at [.claude/mem0 MCP](https://github.com/azalio/map-framework/blob/main/.claude/mem0 MCP)
 - **10 categories of patterns**: architecture, implementation, security, performance, errors, testing, code quality, tool usage, debugging, CLI tool patterns
 - **top_k = 5**: returns only the 5 most relevant patterns to reduce cognitive load
-- **Automatic learning**: Reflector extracts patterns from every task, Curator incrementally updates the playbook
+- **Learning via /map-learn**: Reflector extracts patterns, Curator incrementally updates the playbook (optional step after workflows)
 
 ## Benefits
 
@@ -53,8 +58,8 @@ MAP uses **5 MCP servers** to extend capabilities:
 
 **Model allocation strategy:**
 
-- Predictor, Evaluator: **haiku** (fast analysis)
-- Actor, Monitor, TaskDecomposer, Reflector, Curator, DocumentationReviewer: **sonnet** (quality-critical)
+- Actor, Monitor, TaskDecomposer, Predictor, Evaluator, Reflector, Curator, DocumentationReviewer: **sonnet** (quality-critical)
+- DebateArbiter: **opus** (highest reasoning for cross-variant analysis)
 
 ### Agent Context Isolation
 

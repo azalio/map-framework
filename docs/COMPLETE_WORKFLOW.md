@@ -28,7 +28,7 @@
 
 **Внутри:**
 1. **task-decomposer** agent разбивает задачу на subtasks
-2. Создаёт `.map/task_plan_<branch>.md` с:
+2. Создаёт `.map/<branch>/task_plan_<branch>.md` с:
    - Goal (цель)
    - Subtasks (ST-001, ST-002, ...) с описаниями
    - Validation criteria для каждого subtask
@@ -90,7 +90,7 @@ Validation:
 
 **👤 Действие пользователя:**
 - Просматривает план
-- Может **отредактировать** `.map/task_plan_<branch>.md` вручную
+- Может **отредактировать** `.map/<branch>/task_plan_<branch>.md` вручную
 - Утверждает командой `/map-efficient` (переход к фазе 2)
 
 ---

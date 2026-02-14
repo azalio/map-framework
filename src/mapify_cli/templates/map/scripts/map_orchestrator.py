@@ -12,7 +12,7 @@ DESIGN PRINCIPLE:
 
 ARCHITECTURE:
   ┌─────────────────────────────────────────────────────────────┐
-  │  map-efficient.md (150 lines)                               │
+  │  map-efficient.md (~540 lines)                               │
   │  ├─> 1. Call get_next_step() → returns step instruction    │
   │  ├─> 2. Execute step (Actor/Monitor/mem0/etc)              │
   │  ├─> 3. Call validate_step() → checks completion           │
@@ -35,7 +35,7 @@ STATE FILE:
       "pending_steps": ["2.1_MEM0_SEARCH", "2.3_ACTOR", "2.4_MONITOR", ...]
     }
 
-STEP PHASES (14 total):
+STEP PHASES (16 total):
   1.0  DECOMPOSE          - task-decomposer agent
   1.5  INIT_PLAN          - Generate task_plan.md
   1.55 REVIEW_PLAN        - User review + explicit approval checkpoint
@@ -46,9 +46,8 @@ STEP PHASES (14 total):
   2.2  RESEARCH           - research-agent (conditional)
   2.3  ACTOR              - Actor agent implementation
   2.4  MONITOR            - Monitor validation
-  2.5  RETRY_LOOP         - Retry on Monitor failure
   2.6  PREDICTOR          - Impact analysis (conditional)
-  2.7  APPLY_CHANGES      - Write/Edit tools
+  2.7  UPDATE_STATE       - Mark subtask progress
   2.8  TESTS_GATE         - Run tests
   2.9  LINTER_GATE        - Run linter
   2.10 VERIFY_ADHERENCE   - Self-audit checkpoint
@@ -112,9 +111,8 @@ STEP_PHASES = {
     "2.2": "RESEARCH",
     "2.3": "ACTOR",
     "2.4": "MONITOR",
-    "2.5": "RETRY_LOOP",
     "2.6": "PREDICTOR",
-    "2.7": "APPLY_CHANGES",
+    "2.7": "UPDATE_STATE",
     "2.8": "TESTS_GATE",
     "2.9": "LINTER_GATE",
     "2.10": "VERIFY_ADHERENCE",
@@ -140,6 +138,16 @@ STEP_ORDER = [
     "2.10",
     "2.11",
 ]
+
+# Steps that require evidence files from agents before validation.
+# Format: step_id -> (agent_phase, always_required)
+# If always_required is False, evidence is only checked when the step
+# appears in pending_steps (i.e., it wasn't skipped).
+EVIDENCE_REQUIRED = {
+    "2.3": ("actor", True),      # Always required
+    "2.4": ("monitor", True),    # Always required
+    "2.6": ("predictor", False), # Only when 2.6 is in pending_steps
+}
 
 
 @dataclass
@@ -261,7 +269,7 @@ def get_step_instruction(step_id: str, state: StepState) -> str:
             "into ≤20 atomic subtasks with validation criteria."
         ),
         "1.5": (
-            "Generate .map/task_plan_<branch>.md from decomposer blueprint. "
+            "Generate .map/<branch>/task_plan_<branch>.md from decomposer blueprint. "
             "Include Goal, Current Phase, and status for each subtask."
         ),
         "1.55": (
@@ -294,19 +302,25 @@ def get_step_instruction(step_id: str, state: StepState) -> str:
         ),
         "2.3": (
             f"Call Task(subagent_type='actor') to implement subtask "
-            f"{state.current_subtask_id}. Pass XML packet and context patterns."
+            f"{state.current_subtask_id}. Pass XML packet and context patterns. "
+            f"Actor MUST write evidence file: "
+            f".map/<branch>/evidence/actor_{state.current_subtask_id}.json"
         ),
         "2.4": (
             "Call Task(subagent_type='monitor') to validate Actor output. "
-            "Check correctness, security, standards, and tests."
+            "Check correctness, security, standards, and tests. "
+            f"Monitor MUST write evidence file: "
+            f".map/<branch>/evidence/monitor_{state.current_subtask_id}.json"
         ),
         "2.6": (
             "Call Task(subagent_type='predictor') for impact analysis "
-            "(required for medium/high risk subtasks)."
+            "(required for medium/high risk subtasks). "
+            f"Predictor MUST write evidence file: "
+            f".map/<branch>/evidence/predictor_{state.current_subtask_id}.json"
         ),
         "2.7": (
-            "Apply Actor's changes using Edit/Write tools. "
-            "GATE: Only allowed if Monitor.valid === true."
+            "Update workflow state to mark subtask progress. "
+            "Code was already applied by Actor and validated by Monitor."
         ),
         "2.8": (
             "Run tests using pytest/npm test/go test/cargo test. "
@@ -363,7 +377,8 @@ def get_next_step(branch: str) -> Dict:
             state.current_step_id = "2.0"
             state.current_step_phase = "XML_PACKET"
             # Reset to subtask-level steps (skip global setup steps)
-            state.pending_steps = STEP_ORDER[3:]  # Start from 2.0
+            xml_packet_idx = STEP_ORDER.index("2.0")
+            state.pending_steps = STEP_ORDER[xml_packet_idx:]  # Start from 2.0
             state.completed_steps = []
             state.retry_count = 0
             state.save(state_file)
@@ -428,10 +443,73 @@ def validate_step(step_id: str, branch: str) -> Dict:
             "message": "Invalid execution_mode. Set mode first: python3 .map/scripts/map_orchestrator.py set_execution_mode step_by_step|batch",
         }
 
+    # Evidence-gated validation: require agent evidence files for key steps
+    if step_id in EVIDENCE_REQUIRED:
+        phase_name, always_required = EVIDENCE_REQUIRED[step_id]
+        evidence_dir = Path(f".map/{branch}/evidence")
+        if not evidence_dir.is_dir():
+            return {
+                "valid": False,
+                "message": (
+                    f"Evidence directory missing: {evidence_dir}. "
+                    f"Run initialize or resume_from_plan first."
+                ),
+            }
+        subtask_id = state.current_subtask_id or "unknown"
+        evidence_file = evidence_dir / f"{phase_name}_{subtask_id}.json"
+        if not evidence_file.exists():
+            return {
+                "valid": False,
+                "message": (
+                    f"Evidence file missing: {evidence_file}. "
+                    f"The {phase_name} agent must write this file before "
+                    f"validate_step can accept step {step_id}."
+                ),
+            }
+        # Validate JSON structure
+        try:
+            evidence_data = json.loads(
+                evidence_file.read_text(encoding="utf-8")
+            )
+        except (json.JSONDecodeError, OSError) as exc:
+            return {
+                "valid": False,
+                "message": (
+                    f"Evidence file {evidence_file} is not valid JSON: {exc}"
+                ),
+            }
+        # Check required fields
+        for required_field in ("phase", "subtask_id", "timestamp"):
+            if required_field not in evidence_data:
+                return {
+                    "valid": False,
+                    "message": (
+                        f"Evidence file {evidence_file} missing required "
+                        f"field: '{required_field}'. "
+                        f"Required fields: phase, subtask_id, timestamp."
+                    ),
+                }
+        # Validate subtask_id matches current subtask
+        if evidence_data.get("subtask_id") != subtask_id:
+            return {
+                "valid": False,
+                "message": (
+                    f"Evidence file subtask_id mismatch: "
+                    f"expected '{subtask_id}', "
+                    f"got '{evidence_data.get('subtask_id')}'."
+                ),
+            }
+
     # Mark step complete
     state.completed_steps.append(step_id)
     if step_id in state.pending_steps:
         state.pending_steps.remove(step_id)
+
+    # When transitioning from init phases to execution phases,
+    # ensure the first subtask is selected
+    if step_id == "1.6" and state.subtask_sequence and not state.current_subtask_id:
+        state.current_subtask_id = state.subtask_sequence[0]
+        state.subtask_index = 0
 
     # Advance current_step_id to next pending step
     if state.pending_steps:
@@ -468,6 +546,10 @@ def initialize_workflow(task: str, branch: str) -> Dict:
     # Create fresh state
     state = StepState()
     state.save(state_file)
+
+    # Create evidence directory for artifact-gated validation
+    evidence_dir = Path(f".map/{branch}/evidence")
+    evidence_dir.mkdir(parents=True, exist_ok=True)
 
     return {
         "status": "initialized",
@@ -510,6 +592,198 @@ def set_execution_mode(mode: str, branch: str) -> Dict:
     return {"status": "success", "execution_mode": state.execution_mode}
 
 
+SKIPPABLE_STEPS = {"2.2", "2.6", "2.11"}
+
+
+def skip_step(step_id: str, branch: str) -> Dict:
+    """Skip a conditional step without executing it.
+
+    Only steps that are defined as conditional can be skipped:
+      - 2.2 (RESEARCH): conditional on refactoring or 3+ files
+      - 2.6 (PREDICTOR): conditional on medium/high risk
+      - 2.11 (SUBTASK_APPROVAL): conditional on step_by_step mode
+
+    Args:
+        step_id: Step identifier to skip
+        branch: Git branch name (sanitized)
+
+    Returns:
+        Dict with status and next step info
+    """
+    if step_id not in SKIPPABLE_STEPS:
+        return {
+            "status": "error",
+            "message": (
+                f"Step {step_id} cannot be skipped. "
+                f"Only conditional steps can be skipped: "
+                f"{', '.join(sorted(SKIPPABLE_STEPS))}"
+            ),
+        }
+
+    state_file = Path(f".map/{branch}/step_state.json")
+    state = StepState.load(state_file)
+
+    if state.current_step_id != step_id:
+        return {
+            "status": "error",
+            "message": f"Step mismatch: current is {state.current_step_id}, cannot skip {step_id}",
+        }
+
+    # Mark step as completed (skipped) and advance
+    state.completed_steps.append(step_id)
+    if step_id in state.pending_steps:
+        state.pending_steps.remove(step_id)
+
+    # Advance to next pending step
+    if state.pending_steps:
+        next_id = state.pending_steps[0]
+        state.current_step_id = next_id
+        state.current_step_phase = STEP_PHASES.get(next_id, "UNKNOWN")
+    else:
+        state.current_step_id = "COMPLETE"
+        state.current_step_phase = "COMPLETE"
+
+    state.save(state_file)
+
+    return {
+        "status": "success",
+        "message": f"Step {step_id} skipped",
+        "next_step": state.current_step_id,
+    }
+
+
+def check_circuit_breaker(branch: str) -> Dict:
+    """Check circuit breaker status based on completed steps count.
+
+    Returns tool_count (total completed steps) and max_iterations threshold.
+    If tool_count >= max_iterations, the workflow should ask the user to continue or abort.
+
+    Args:
+        branch: Git branch name (sanitized)
+
+    Returns:
+        Dict with tool_count, max_iterations, triggered flag
+    """
+    state_file = Path(f".map/{branch}/step_state.json")
+    state = StepState.load(state_file)
+
+    tool_count = len(state.completed_steps)
+    max_iterations = len(state.subtask_sequence) * len(STEP_ORDER)
+
+    return {
+        "tool_count": tool_count,
+        "max_iterations": max_iterations,
+        "triggered": tool_count >= max_iterations,
+        "retry_count": state.retry_count,
+        "max_retries": state.max_retries,
+    }
+
+
+def set_subtasks(subtask_ids: List[str], branch: str) -> Dict:
+    """Set subtask sequence after decomposition and select the first subtask.
+
+    Args:
+        subtask_ids: List of subtask IDs (e.g., ["ST-001", "ST-002", "ST-003"])
+        branch: Git branch name (sanitized)
+
+    Returns:
+        Dict with status and subtask info
+    """
+    state_file = Path(f".map/{branch}/step_state.json")
+    state = StepState.load(state_file)
+
+    if not subtask_ids:
+        return {"status": "error", "message": "At least one subtask ID is required"}
+
+    state.subtask_sequence = subtask_ids
+    state.current_subtask_id = subtask_ids[0]
+    state.subtask_index = 0
+    state.save(state_file)
+
+    return {
+        "status": "success",
+        "subtask_sequence": subtask_ids,
+        "current_subtask_id": subtask_ids[0],
+    }
+
+
+def resume_from_plan(branch: str) -> Dict:
+    """Resume workflow from an existing /map-plan output, skipping init phases.
+
+    Detects task_plan_<branch>.md and workflow_state.json created by /map-plan.
+    Extracts subtask IDs from the plan, marks init phases as completed, and
+    starts execution from CHOOSE_MODE (user still picks step_by_step vs batch).
+
+    Args:
+        branch: Git branch name (sanitized)
+
+    Returns:
+        Dict with status and skipped phases
+    """
+    plan_dir = Path(f".map/{branch}")
+    plan_file = plan_dir / f"task_plan_{branch}.md"
+    workflow_state_file = plan_dir / "workflow_state.json"
+
+    # Verify plan artifacts exist
+    if not plan_file.exists():
+        return {
+            "status": "error",
+            "message": f"No plan found at {plan_file}. Run /map-plan first.",
+        }
+
+    # Extract subtask IDs from plan file (ST-XXX pattern)
+    import re
+
+    plan_content = plan_file.read_text(encoding="utf-8")
+    subtask_ids = re.findall(r"###\s+(ST-\d+)", plan_content)
+
+    if not subtask_ids:
+        return {
+            "status": "error",
+            "message": f"No subtask IDs (ST-XXX) found in {plan_file}.",
+        }
+
+    # Extract AAG contracts if present in workflow_state.json
+    aag_contracts = {}
+    if workflow_state_file.exists():
+        try:
+            ws_data = json.loads(workflow_state_file.read_text(encoding="utf-8"))
+            aag_contracts = ws_data.get("aag_contracts", {})
+        except (json.JSONDecodeError, KeyError):
+            pass
+
+    # Create state that skips DECOMPOSE, INIT_PLAN, REVIEW_PLAN (plan already approved)
+    # Start from CHOOSE_MODE so user can still pick execution mode
+    skipped_phases = ["1.0", "1.5", "1.55"]
+    execution_start = [s for s in STEP_ORDER if s not in skipped_phases]
+
+    state_file = plan_dir / "step_state.json"
+    state = StepState(
+        current_subtask_id=subtask_ids[0],
+        subtask_index=0,
+        subtask_sequence=subtask_ids,
+        current_step_id="1.56",
+        current_step_phase="CHOOSE_MODE",
+        completed_steps=skipped_phases,
+        pending_steps=execution_start,
+        plan_approved=True,
+    )
+    state.save(state_file)
+
+    # Create evidence directory for artifact-gated validation
+    evidence_dir = plan_dir / "evidence"
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+
+    return {
+        "status": "success",
+        "message": "Resumed from /map-plan. Skipped DECOMPOSE, INIT_PLAN, REVIEW_PLAN.",
+        "subtask_sequence": subtask_ids,
+        "current_subtask_id": subtask_ids[0],
+        "aag_contracts_found": len(aag_contracts),
+        "next_phase": "CHOOSE_MODE",
+    }
+
+
 def main():
     """CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -523,11 +797,19 @@ def main():
             "initialize",
             "set_plan_approved",
             "set_execution_mode",
+            "skip_step",
+            "set_subtasks",
+            "resume_from_plan",
+            "check_circuit_breaker",
         ],
         help="Command to execute",
     )
-    parser.add_argument("task_or_step", nargs="?", help="Task description or step ID")
-    parser.add_argument("value", nargs="?", help="Optional value for setter commands")
+    parser.add_argument(
+        "task_or_step", nargs="?", help="Task description, step ID, or subtask IDs"
+    )
+    parser.add_argument(
+        "extra_args", nargs="*", help="Additional arguments (e.g., more subtask IDs)"
+    )
     parser.add_argument("--branch", help="Git branch (auto-detected if omitted)")
 
     args = parser.parse_args()
@@ -575,6 +857,40 @@ def main():
                 )
                 sys.exit(1)
             result = set_execution_mode(mode, branch)
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "skip_step":
+            if not args.task_or_step:
+                print(
+                    json.dumps({"error": "step_id required for skip_step"}),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            result = skip_step(args.task_or_step, branch)
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "set_subtasks":
+            if not args.task_or_step:
+                print(
+                    json.dumps(
+                        {
+                            "error": "At least one subtask ID required. "
+                            "Usage: set_subtasks ST-001 ST-002 ST-003"
+                        }
+                    ),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            subtask_ids = [args.task_or_step] + (args.extra_args or [])
+            result = set_subtasks(subtask_ids, branch)
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "resume_from_plan":
+            result = resume_from_plan(branch)
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "check_circuit_breaker":
+            result = check_circuit_breaker(branch)
             print(json.dumps(result, indent=2))
 
     except Exception as e:

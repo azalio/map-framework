@@ -64,7 +64,7 @@ mapify init .
 **Benefits:**
 
 - Automatic project structure setup
-- Copies all 8 agents and 4 slash commands
+- Copies all 12 agents and 10 slash commands
 - Creates `.claude/mem0 MCP` with a starter structure
 - Best choice for new projects
 
@@ -92,7 +92,7 @@ Copy selected components into an existing project:
 
 ```bash
 .claude/
-├── agents/           # 8 agent template files
+├── agents/           # 12 agent template files
 │   ├── task-decomposer.md
 │   ├── actor.md
 │   ├── monitor.md
@@ -100,12 +100,22 @@ Copy selected components into an existing project:
 │   ├── evaluator.md
 │   ├── reflector.md
 │   ├── curator.md
-│   └── documentation-reviewer.md
-├── commands/         # 4 slash commands
-│   ├── map-feature.md
+│   ├── documentation-reviewer.md
+│   ├── debate-arbiter.md
+│   ├── synthesizer.md
+│   ├── research-agent.md
+│   └── final-verifier.md
+├── commands/         # Workflow slash commands
+│   ├── map-efficient.md
 │   ├── map-debug.md
-│   ├── map-refactor.md
-│   └── map-review.md
+│   ├── map-fast.md
+│   ├── map-debate.md
+│   ├── map-review.md
+│   ├── map-check.md
+│   ├── map-plan.md
+│   ├── map-release.md
+│   ├── map-resume.md
+│   └── map-learn.md
 └── mem0 MCP       # ACE knowledge base (SQLite)
 ```
 
@@ -117,15 +127,15 @@ Copy selected components into an existing project:
 
 ## First Commands
 
-After installation, you have **4 core workflow commands**:
+After installation, you have **10 workflow commands** (4 primary + 6 supporting). Here are the 4 most commonly used:
 
-### /map-feature — Implement New Features
+### /map-efficient — Full Workflow (Features, Refactoring, Complex Tasks)
 
 ```bash
-/map-feature Implement user authentication with JWT tokens
+/map-efficient Implement user authentication with JWT tokens
 ```
 
-Automatically decomposes the task, implements, validates, and extracts reusable patterns for future work.
+Automatically decomposes the task, implements, validates, and extracts reusable patterns for future work. Handles features, refactoring, and any complex development task.
 
 ### /map-debug — Debug Issues
 
@@ -135,21 +145,21 @@ Automatically decomposes the task, implements, validates, and extracts reusable 
 
 Diagnoses and fixes issues with detailed analysis and impact prediction.
 
-### /map-refactor — Refactor Code
+### /map-fast — Quick Changes
 
 ```bash
-/map-refactor Extract database queries into repository pattern
+/map-fast Add environment variable for API timeout
 ```
 
-Refactors with impact prediction and quality assessment.
+Minimal workflow for small, low-risk changes with 40-50% token savings.
 
-### /map-review — Review Documentation
+### /map-review — Review Changes
 
 ```bash
 /map-review Check API documentation for completeness
 ```
 
-Comprehensive technical documentation review for completeness and correctness.
+Comprehensive review of changes using Monitor, Predictor, and Evaluator agents.
 
 ## Configuration
 
@@ -190,6 +200,7 @@ MAP requires **5 MCP servers** for full functionality:
 
 **Required:**
 
+- **mem0** — semantic pattern memory (tiered search, pattern storage)
 - **claude-reviewer** — professional code review with security analysis
 
 **Optional (recommended):**
@@ -223,11 +234,11 @@ After installation:
 1. **Run your first workflow:**
 
    ```bash
-   /map-feature Implement hello world endpoint
+   /map-efficient Implement hello world endpoint
    ```
 
 2. **Inspect the generated checkpoint:**
-   - Open `.map/progress.md`
+   - Open `.map/<branch>/progress.md`
    - Watch progress markers
 
 3. **Review results:**

@@ -4,12 +4,12 @@
 
 MAP Framework использует **строго последовательную оркестрацию**, которая начинается с TaskDecomposer, после чего для каждой подзадачи запускается цикл реализации.
 
-**Обязательная последовательность:**
+**Полный pipeline (концептуальный — отдельные workflows могут пропускать агентов):**
 
 ```mermaid
 flowchart TD
     Start([Начало задачи]) --> Decompose[0. TaskDecomposer<br/>Декомпозиция]
-    Decompose --> Plan[2.5 Checkpoint<br/>Создать progress.md]
+    Decompose --> Plan[Checkpoint<br/>Создать progress.md]
     Plan --> Actor[1. Actor<br/>Реализация подзадачи]
     Actor --> Monitor[2. Monitor<br/>Валидация качества]
 
@@ -21,20 +21,31 @@ flowchart TD
     Evaluator -->|Approved| Accept[5. ACCEPT changes<br/>Применение изменений]
     Evaluator -->|Not Approved| Actor
 
-    Accept --> Reflector[6. Reflector<br/>Извлечение уроков<br/><b>MANDATORY</b>]
-    Reflector --> Curator[7. Curator<br/>Обновление playbook<br/><b>MANDATORY</b>]
+    Accept --> Reflector[6. Reflector<br/>Извлечение уроков]
+    Reflector --> Curator[7. Curator<br/>Обновление playbook]
 
-    Curator --> End([Subtask Complete])
+    Curator -->|Ещё подзадачи| Actor
+    Curator -->|Все готово| Verifier[8. FinalVerifier<br/>Adversarial верификация]
+    Verifier --> End([Workflow завершён])
 ```
 
 ## Slash-команды Orchestrator
 
-MAP предоставляет **4 специализированных workflow команды** для различных сценариев:
+MAP предоставляет **10 workflow команд** для различных сценариев:
 
-1. **`/map-feature`** — реализация новых функций
-2. **`/map-debug`** — отладка проблем
-3. **`/map-refactor`** — рефакторинг кода
-4. **`/map-review`** — review документации
+**Основные workflows:**
+1. **`/map-efficient`** — реализация фичей, рефакторинг, сложные задачи (рекомендуемый по умолчанию)
+2. **`/map-debug`** — отладка проблем, исправление багов
+3. **`/map-fast`** — небольшие низкорисковые изменения
+4. **`/map-debate`** — мульти-вариантный синтез с Opus арбитром
+
+**Вспомогательные команды:**
+5. **`/map-review`** — review изменений перед коммитом
+6. **`/map-check`** — quality gates и верификация
+7. **`/map-plan`** — только архитектурная декомпозиция
+8. **`/map-release`** — release workflow с валидационными гейтами
+9. **`/map-resume`** — возобновление прерванных workflows
+10. **`/map-learn`** — извлечение и сохранение уроков (опциональный шаг)
 
 **Orchestrator** — НЕ отдельный агент-шаблон, а логика координации, реализованная в этих slash-командах.
 
@@ -142,7 +153,7 @@ MAP предоставляет **4 специализированных workflow
 - Дисплей: "⚠️ Retry attempt 2 - review previous errors"
 - Реализует паттерны `qual-0001` (WHAT/WHERE/HOW/WHY) и `arch-0005` (three-failure threshold)
 
-**Источник:** `CONTEXT-ENGINEERING-IMPROVEMENTS.md` Phase 1.1 (lines 276-289), `.claude/commands/map-feature.md` lines 61-103
+**Источник:** `CONTEXT-ENGINEERING-IMPROVEMENTS.md` Phase 1.1 (lines 276-289), `.claude/commands/map-efficient.md`
 
 ## Actor-Monitor Retry Loop
 
@@ -234,11 +245,6 @@ MAP использует **5 core MCP tools** для расширения воз
 
 ## Exception: Non-MAP Tasks
 
-Эти правила **ТОЛЬКО** применяются при использовании MAP framework команд:
-
-- `/map-feature`
-- `/map-debug`
-- `/map-refactor`
-- `/map-review`
+Эти правила **ТОЛЬКО** применяются при использовании MAP framework команд (`/map-efficient`, `/map-debug`, `/map-fast`, `/map-debate`, `/map-review`, `/map-check`, `/map-plan`, `/map-release`, `/map-resume`, `/map-learn`).
 
 Для обычных задач (bug fixes, documentation, простые изменения) можно работать напрямую без полной agent chain.

@@ -1,12 +1,22 @@
 ---
 name: map-workflows-guide
-description: Comprehensive guide for choosing the right MAP workflow based on task type and requirements
+description: >-
+  Guide for choosing the right MAP workflow based on task type, risk level,
+  and token budget. Use when user asks "which workflow should I use",
+  "difference between map-fast and map-efficient", "when to use map-debug",
+  or compares MAP workflows. Do NOT use for actual workflow execution —
+  use /map-efficient, /map-fast, etc. instead. Do NOT use for CLI errors
+  (use map-cli-reference).
 version: 1.0
+metadata:
+  author: azalio
+  version: 3.1.0
+  mcp-server: mem0
 ---
 
 # MAP Workflows Guide
 
-This skill helps you choose the optimal MAP workflow for your development tasks. MAP Framework provides 5 specialized workflows, each optimized for different scenarios with varying token costs, learning capabilities, and quality gates.
+This skill helps you choose the optimal MAP workflow for your development tasks. MAP Framework provides **10 workflow commands**: 4 primary workflows (`/map-fast`, `/map-efficient`, `/map-debug`, `/map-debate`) and 6 supporting commands (`/map-review`, `/map-check`, `/map-plan`, `/map-release`, `/map-resume`, `/map-learn`). Each is optimized for different scenarios with varying token costs, learning capabilities, and quality gates. Two additional workflows (`/map-feature`, `/map-refactor`) are planned but not yet implemented.
 
 ## Quick Decision Tree
 
@@ -21,12 +31,12 @@ Answer these 5 questions to find your workflow:
    YES  → Use /map-debug (70-80% tokens, focused analysis)
    NO   → Continue to question 3
 
-3. Are you refactoring existing code or restructuring modules?
-   YES  → Use /map-refactor (70-80% tokens, dependency analysis)
+3. Do stakeholders need documented reasoning and trade-off analysis?
+   YES  → Use /map-debate (3x cost, Opus arbiter, explicit reasoning)
    NO   → Continue to question 4
 
 4. Is this critical infrastructure or security-sensitive code?
-   YES  → Use /map-feature (100% tokens, maximum validation)
+   YES  → Use /map-efficient (60-70% tokens, recommended default)
    NO   → Continue to question 5
 
 5. Is this a change you'll maintain long-term or that has non-trivial impact?
@@ -38,14 +48,20 @@ Answer these 5 questions to find your workflow:
 
 ## Workflow Comparison Matrix
 
-| Aspect | `/map-fast` | `/map-efficient` | `/map-feature` | `/map-debug` | `/map-refactor` |
-|--------|-----------|-----------------|----------------|-------------|-----------------|
-| **Token Cost** | 40-50% | **60-70%** | 100% (baseline) | 70-80% | 70-80% |
-| **Learning** | ❌ None | ✅ Batched | ✅ Per-subtask | ✅ Per-subtask | ✅ Per-subtask |
-| **Quality Gates** | Basic | Essential | All 8 agents | Focused | Focused |
-| **Impact Analysis** | ❌ Skipped | ⚠️ Conditional | ✅ Always | ✅ Yes | ✅ Yes |
-| **Best For** | Low-risk | **Production** | Critical | Bugs | Refactoring |
-| **Recommendation** | Use sparingly | **DEFAULT** | High-risk | Issues | Changes |
+| Aspect | `/map-fast` | `/map-efficient` | `/map-debug` | `/map-debate` |
+|--------|-----------|-----------------|-------------|--------------|
+| **Token Cost** | 40-50% | **60-70%** | 70-80% | ~3x baseline |
+| **Learning** | ❌ None | ✅ Via /map-learn | ✅ Per-subtask | ✅ Via /map-learn |
+| **Quality Gates** | Basic | Essential | Focused | Multi-variant |
+| **Impact Analysis** | ❌ Skipped | ⚠️ Conditional | ✅ Yes | ⚠️ Conditional |
+| **Multi-Variant** | ❌ Never | ⚠️ Optional (--self-moa) | ❌ Never | ✅ Always (3 variants) |
+| **Synthesis Model** | N/A | Sonnet | N/A | **Opus** |
+| **Best For** | Low-risk | **Production** | Bugs | Reasoning transparency |
+| **Recommendation** | Use sparingly | **DEFAULT** | Issues | Complex decisions |
+
+> **Note:** `/map-feature` and `/map-refactor` are **planned but not yet implemented**.
+> Use `/map-efficient` for critical features and refactoring tasks.
+> See [Planned Workflows](#planned-workflows) below for details.
 
 ---
 
@@ -61,12 +77,12 @@ Answer these 5 questions to find your workflow:
 **What you get:**
 - ✅ Full implementation (Actor generates code)
 - ✅ Basic validation (Monitor checks correctness)
-- ✅ Quality check (Evaluator scores solution)
+- ❌ NO quality scoring (Evaluator skipped)
 - ❌ NO impact analysis (Predictor skipped entirely)
 - ❌ NO learning (Reflector/Curator skipped)
 
 **Trade-offs:**
-- Saves 50-60% tokens vs /map-feature
+- Saves 50-60% tokens vs full pipeline (every agent per subtask)
 - mem0 never improves (no patterns stored)
 - Knowledge never accumulates
 - Minimal quality gates (only basic checks)
@@ -102,14 +118,15 @@ Answer these 5 questions to find your workflow:
 **What you get:**
 - ✅ Full implementation (Actor)
 - ✅ Comprehensive validation (Monitor with feedback loops)
-- ✅ Quality gates (Evaluator approval)
 - ✅ Impact analysis (Predictor runs conditionally)
-- ✅ **Batched learning** (Reflector/Curator run once at end)
+- ✅ Tests gate + Linter gate per subtask
+- ✅ Final-Verifier (adversarial verification at end)
+- ✅ **Learning via /map-learn** (Reflector/Curator, optional after workflow)
 
 **Optimization strategy:**
 - **Conditional Predictor:** Runs only if risk detected (security, breaking changes)
 - **Batched Learning:** Reflector/Curator run ONCE after all subtasks complete
-- **Result:** 35-40% token savings vs /map-feature while preserving learning
+- **Result:** 35-40% token savings vs full pipeline while preserving learning
 - **Same quality gates:** Monitor still validates each subtask
 
 **When Predictor runs:**
@@ -140,58 +157,7 @@ Despite token optimization, preserves:
 
 ---
 
-### 3. /map-feature — Critical Features 🏗️
-
-**Use this when:**
-- Implementing security-critical functionality
-- First-time complex features requiring maximum validation
-- High-risk changes affecting many systems
-- You need complete assurance before production
-- Learning is critical for future similar tasks
-
-**What you get:**
-- ✅ Full implementation (Actor)
-- ✅ Comprehensive validation (Monitor with loops)
-- ✅ **Per-subtask impact analysis** (Predictor always runs)
-- ✅ Quality gates (Evaluator always runs)
-- ✅ **Per-subtask learning** (Reflector/Curator after each subtask)
-
-**Trade-offs:**
-- 100% token cost (no optimization applied)
-- Slower execution (maximum agent cycles)
-- Maximum quality assurance
-- Most comprehensive learning (frequent reflections)
-- Best for high-stakes implementations
-
-**When this is required:**
-- Authentication/authorization systems
-- Payment processing
-- Database schema changes
-- Multi-service coordination
-- Code that affects many dependencies
-
-**Example tasks:**
-- "Implement secure JWT authentication system"
-- "Refactor database schema for multi-tenancy"
-- "Add payment processing via Stripe"
-- "Build real-time notification system"
-
-**Command syntax:**
-```bash
-/map-feature [task description]
-```
-
-**Agent pipeline:**
-```
-TaskDecomposer → Actor → Monitor → Predictor →
-Evaluator → Reflector → Curator → [Next subtask]
-```
-
-**See also:** [resources/map-feature-deep-dive.md](resources/map-feature-deep-dive.md)
-
----
-
-### 4. /map-debug — Bug Fixes 🐛
+### 3. /map-debug — Bug Fixes 🐛
 
 **Use this when:**
 - Fixing specific bugs or defects
@@ -234,52 +200,27 @@ Evaluator → Reflector → Curator → [Next subtask]
 
 ---
 
-### 5. /map-refactor — Code Restructuring 🔧
+### Planned Workflows
 
-**Use this when:**
-- Refactoring existing code for readability
-- Improving code structure or design
-- Cleaning up technical debt
-- Renaming/reorganizing modules
-- Extracting common logic
+The following workflows are **planned but not yet implemented**. Use `/map-efficient` as a substitute for both.
 
-**What you get:**
-- ✅ Implementation (Actor)
-- ✅ Validation (Monitor)
-- ✅ **Dependency impact analysis** (Predictor focused on dependencies)
-- ✅ Quality gates (Evaluator)
-- ✅ Learning (Reflector/Curator)
+#### /map-feature — Critical Features (PLANNED)
 
-**Specialized for:**
-- Breaking change detection
-- Dependency tracking
-- Migration planning
-- Careful phased refactoring
+Intended for security-critical and high-risk features requiring maximum validation (100% token cost, per-subtask learning, Predictor always runs). **Not yet implemented.** Use `/map-efficient` instead — it provides the same agent pipeline with conditional Predictor and batched learning.
 
-**Example tasks:**
-- "Refactor auth service to separate concerns"
-- "Extract common validation logic into shared module"
-- "Rename User model to Account throughout codebase"
-- "Convert callback-based API to promise-based"
+**Design reference:** [resources/map-feature-deep-dive.md](resources/map-feature-deep-dive.md)
 
-**Command syntax:**
-```bash
-/map-refactor [refactoring description]
-```
+#### /map-refactor — Code Restructuring (PLANNED)
 
-**Impact analysis includes:**
-- Which files/modules depend on changed code
-- Potential breaking changes
-- Migration strategy
-- Scope of refactoring
+Intended for refactoring with dependency-focused impact analysis and breaking change detection. **Not yet implemented.** Use `/map-efficient` instead — describe the refactoring intent in the task description for appropriate Predictor analysis.
 
-**See also:** [resources/map-refactor-deep-dive.md](resources/map-refactor-deep-dive.md)
+**Design reference:** [resources/map-refactor-deep-dive.md](resources/map-refactor-deep-dive.md)
 
 ---
 
 ## Understanding MAP Agents
 
-MAP workflows orchestrate **8 specialized agents**, each with specific responsibilities:
+MAP workflows orchestrate **12 specialized agents**, each with specific responsibilities:
 
 ### Execution & Validation Agents
 
@@ -306,6 +247,7 @@ MAP workflows orchestrate **8 specialized agents**, each with specific responsib
 - Checks completeness
 - Approves/rejects solution
 - Feedback loop: Returns to Actor if score < threshold
+- **Only in /map-debug, /map-review** (skipped in /map-efficient, /map-fast, /map-debate)
 
 ### Analysis Agents
 
@@ -314,7 +256,7 @@ MAP workflows orchestrate **8 specialized agents**, each with specific responsib
 - Predicts side effects
 - Identifies risks and breaking changes
 - **Conditional in /map-efficient** (runs if risk detected)
-- **Always in /map-feature** (runs per subtask)
+- **Always in /map-debug** (focused analysis)
 
 ### Learning Agents
 
@@ -323,8 +265,8 @@ MAP workflows orchestrate **8 specialized agents**, each with specific responsib
 - Extracts reusable patterns
 - Searches mem0 for existing knowledge via `mcp__mem0__map_tiered_search`
 - Prevents duplicate pattern storage
-- **Batched in /map-efficient** (runs once at end)
-- **Per-subtask in /map-feature** (extracts frequently)
+- **Batched in /map-efficient** (runs once at end, via /map-learn)
+- **Skipped in /map-fast** (no learning)
 
 **Curator** — Knowledge management
 - Stores patterns in mem0 via `mcp__mem0__map_add_pattern`
@@ -340,6 +282,34 @@ MAP workflows orchestrate **8 specialized agents**, each with specific responsib
 - Checks consistency
 - Validates examples
 - Verifies external dependency docs current
+
+### Synthesis Agents
+
+**Debate-Arbiter** — Multi-variant cross-evaluation (MAP Debate)
+- Cross-evaluates Actor variants with explicit reasoning
+- Synthesizes optimal solution from multiple approaches
+- Uses Opus model for reasoning transparency
+- **Only in /map-debate workflow**
+
+**Synthesizer** — Solution synthesis
+- Extracts decisions from multiple variants
+- Generates unified code from best elements (Self-MoA)
+- Merges insights across Actor outputs
+- **Used in /map-efficient with --self-moa flag**
+
+### Discovery & Verification Agents
+
+**Research-Agent** — Codebase discovery
+- Heavy codebase reading with compressed output
+- Gathers context proactively before Actor implementation
+- Prevents context pollution in implementation agents
+- **Used in /map-plan, /map-efficient, /map-debug**
+
+**Final-Verifier** — Adversarial verification (Ralph Loop)
+- Root cause analysis via adversarial testing
+- Terminal verification after all other agents
+- Ensures no regressions or overlooked issues
+- **Used in /map-check, /map-efficient**
 
 ---
 
@@ -364,26 +334,10 @@ START: What type of development task?
 │
 │ NO ↓
 │
-├─────────────────────────────────────┐
-│ Refactoring existing code?          │
-│ (Improving structure, renaming)     │
-├─────────────────────────────────────┘
-│ YES → /map-refactor (70-80% tokens, dependency tracking)
-│
-│ NO ↓
-│
-├─────────────────────────────────────┐
-│ Critical/high-risk feature?         │
-│ (Auth, payments, security, database)│
-├─────────────────────────────────────┘
-│ YES → /map-feature (100% tokens, full validation)
-│
-│ NO ↓
-│
 └─────────────────────────────────────┐
-  Standard production feature?        │
-  (/map-efficient recommended) ←──────┘
-  YES → /map-efficient (60-70% tokens, RECOMMENDED)
+  Everything else (features,          │
+  refactoring, critical code)  ←──────┘
+  → /map-efficient (60-70% tokens, RECOMMENDED)
 ```
 
 ---
@@ -410,22 +364,9 @@ Avoid /map-fast for:
 - Broad refactors or multi-module changes
 - High uncertainty requirements
 
-**Q: What's the practical difference between /map-feature and /map-efficient?**
+**Q: What about /map-feature and /map-refactor?**
 
-A: Token cost vs learning frequency:
-
-**/map-feature:** Maximum assurance
-- Predictor runs after EVERY subtask (100% analysis)
-- Reflector/Curator run after EVERY subtask
-- Cost: 100% tokens, slowest execution
-- Best for: First implementations, critical systems
-
-**/map-efficient:** Smart optimization
-- Predictor runs ONLY when risk detected (conditional)
-- Reflector/Curator run ONCE at end (batched)
-- Cost: 60-70% tokens, faster execution
-- Same learning: Patterns still captured at end
-- Best for: Standard features, most development
+A: These are **planned but not yet implemented**. Use `/map-efficient` for all feature development and refactoring tasks. `/map-efficient` provides the full agent pipeline (Actor, Monitor, conditional Predictor, Tests/Linter gates, Final-Verifier) with optional learning via `/map-learn`. Describe the risk level and refactoring intent in your task description for appropriate Predictor analysis.
 
 **Q: Can I switch workflows mid-task?**
 
@@ -477,9 +418,9 @@ For detailed information on each workflow:
 
 - **[map-fast Deep Dive](resources/map-fast-deep-dive.md)** — Token breakdown, skip conditions, risks
 - **[map-efficient Deep Dive](resources/map-efficient-deep-dive.md)** — Optimization strategy, Predictor conditions, batching
-- **[map-feature Deep Dive](resources/map-feature-deep-dive.md)** — Full pipeline, cost analysis, when required
 - **[map-debug Deep Dive](resources/map-debug-deep-dive.md)** — Debugging strategies, error analysis, best practices
-- **[map-refactor Deep Dive](resources/map-refactor-deep-dive.md)** — Impact analysis, breaking changes, migration planning
+- **[map-feature Deep Dive](resources/map-feature-deep-dive.md)** — Design reference (PLANNED, not yet implemented)
+- **[map-refactor Deep Dive](resources/map-refactor-deep-dive.md)** — Design reference (PLANNED, not yet implemented)
 
 Agent & system details:
 
@@ -490,16 +431,16 @@ Agent & system details:
 
 ## Real-World Examples
 
-### Example 1: Choosing between /map-efficient and /map-feature
+### Example 1: Choosing /map-efficient for a critical feature
 
 **Task:** "Add OAuth2 authentication"
 
 **Analysis:**
-- Affects security ✓ (high-risk indicator)
-- Affects multiple modules ✓ (breaking changes possible)
-- First implementation of OAuth2 ✓ (high complexity)
+- Affects security (high-risk indicator)
+- Affects multiple modules (breaking changes possible)
+- First implementation of OAuth2 (high complexity)
 
-**Decision:** `/map-feature` (worth 100% token cost for critical feature)
+**Decision:** `/map-efficient` — describe the security-sensitive nature in the task description. Predictor will trigger conditionally on security-related subtasks.
 
 ### Example 2: Choosing /map-debug
 
@@ -540,7 +481,7 @@ MAP: 🎯 Suggests /map-efficient
 ```
 MAP: "Is this for production?"
 User: "Yes, but critical feature"
-MAP: 🎯 Suggests /map-feature instead
+MAP: 🎯 Suggests /map-efficient with --self-moa instead
 ```
 
 **Direct command:**
@@ -555,7 +496,7 @@ MAP: 📚 Loads this skill for context
 
 1. **Default to /map-efficient** — It's the recommended choice for 80% of tasks
 2. **Use /map-fast sparingly** — Only for small, low-risk changes with clear scope
-3. **Reserve /map-feature for critical paths** — Don't overuse, save for auth/payments/security
+3. **Use /map-efficient for critical paths** — Describe risk context in the task description for appropriate Predictor triggers
 4. **Monitor pattern growth** — Use mem0 search to see learning improving
 5. **Trust the optimization** — /map-efficient preserves quality while cutting token usage
 6. **Review deep dives** — When in doubt, check the appropriate deep-dive resource
@@ -566,9 +507,58 @@ MAP: 📚 Loads this skill for context
 ## Next Steps
 
 1. **First time using MAP?** Start with `/map-efficient`
-2. **Have a critical feature?** See [map-feature-deep-dive.md](resources/map-feature-deep-dive.md)
+2. **Have a critical feature?** Use `/map-efficient` with risk context in the task description
 3. **Debugging an issue?** See [map-debug-deep-dive.md](resources/map-debug-deep-dive.md)
 4. **Understanding agents?** See [Agent Architecture](resources/agent-architecture.md)
+---
+
+## Examples
+
+### Example 1: Choosing a workflow for a new feature
+
+**User says:** "I need to add JWT authentication to the API"
+
+**Actions:**
+1. Assess risk level — security-sensitive (high-risk indicator)
+2. Check if first implementation — yes, OAuth/JWT is new
+3. Multiple modules affected — auth middleware, user service, token storage
+
+**Result:** Recommend `/map-efficient` — describe the security context in the task. Predictor will trigger on security-sensitive subtasks. Batched learning captures patterns at the end.
+
+### Example 2: Quick fix with clear scope
+
+**User says:** "Update the error message in the login form"
+
+**Actions:**
+1. Assess risk — low, localized text change
+2. Check blast radius — single file, no dependencies
+3. No security implications
+
+**Result:** Recommend `/map-fast` — small, low-risk change with clear acceptance criteria. No learning needed.
+
+### Example 3: Debugging a test failure
+
+**User says:** "Tests in auth.test.ts are failing after the last merge"
+
+**Actions:**
+1. Identify task type — debugging/fixing specific issue
+2. Need root cause analysis — yes, regression after merge
+3. Not a new feature or refactor
+
+**Result:** Recommend `/map-debug` — focused on diagnosing failures with root cause analysis and regression prevention.
+
+---
+
+## Troubleshooting
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| Wrong workflow chosen mid-task | Cannot switch workflows during execution | Complete current workflow, then restart with correct one |
+| Predictor never runs in /map-efficient | Subtasks assessed as low-risk | Expected behavior; Predictor is conditional. Use /map-debug for guaranteed analysis |
+| No patterns stored after /map-fast | /map-fast skips learning agents | By design — use /map-efficient + /map-learn for pattern accumulation |
+| mem0 search returns empty | mem0 MCP not configured or namespaces mismatch | Verify mem0 in `.claude/mcp_config.json`, check namespace conventions |
+| Skill suggests wrong workflow | Description trigger mismatch | Check skill-rules.json triggers; refine query wording |
+
 ---
 
 **Skill Version:** 1.0

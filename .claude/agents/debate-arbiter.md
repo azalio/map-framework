@@ -3,7 +3,7 @@ name: debate-arbiter
 description: Cross-evaluates Actor variants with explicit reasoning and synthesizes optimal solution (MAP Debate)
 model: opus
 version: 1.0.0
-last_updated: 2025-01-08
+last_updated: 2026-02-14
 ---
 
 # QUICK REFERENCE (Read First)

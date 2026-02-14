@@ -124,16 +124,16 @@ CONFLICT (Category B: -0.10):
 
 ### Position in MAP Pipeline
 ```
-Actor (propose changes)
-    ↓ analyzer_output
+Actor (implement changes)
+    ↓ code changes applied
+Monitor (validate correctness)
+    ↓ validation_result
 PREDICTOR (assess impact) ← YOU ARE HERE
     ↓ prediction_output
-Monitor (validate at runtime)
-    ↓ validation_result
-Evaluator (score quality)
+[Evaluator — only in /map-debug and /map-review]
 ```
 
-### Upstream (Actor → Predictor)
+### Upstream (Actor → Monitor → Predictor)
 **Input Contract Version**: 1.0
 
 | Field from Actor | How Predictor Uses It |
@@ -1783,6 +1783,28 @@ When an edge case is detected, it MUST appear in THREE places:
 ```
 
 </output_format>
+
+### Evidence File (Artifact-Gated Validation)
+
+After completing impact analysis, write an evidence file via Bash:
+
+```bash
+cat > .map/<branch>/evidence/predictor_<subtask_id>.json << 'EVIDENCE'
+{
+  "phase": "PREDICTOR",
+  "subtask_id": "<subtask_id>",
+  "timestamp": "<ISO 8601 UTC>",
+  "risk_assessment": "<low|medium|high|critical>",
+  "confidence_score": <0.30-0.95>,
+  "tier_selected": "<1|2|3>"
+}
+EVIDENCE
+```
+
+**Required fields** (orchestrator validates these): `phase`, `subtask_id`, `timestamp`.
+Other fields are informational but recommended for audit trail.
+
+**CRITICAL**: Without this file, `validate_step("2.6")` will reject the step.
 
 <confidence_calculation>
 

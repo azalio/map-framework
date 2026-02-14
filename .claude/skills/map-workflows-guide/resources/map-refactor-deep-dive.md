@@ -1,5 +1,9 @@
 # /map-refactor Deep Dive
 
+> **STATUS: PLANNED — NOT YET IMPLEMENTED.**
+> This workflow is designed but not yet available as a command.
+> Use `/map-efficient` for refactoring tasks.
+
 ## When to Use
 
 **Code restructuring without behavior changes:**

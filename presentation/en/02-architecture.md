@@ -2,13 +2,13 @@
 
 ## Overview
 
-MAP Framework is built around **8 specialized agents**, coordinated by the Orchestrator.
+MAP Framework is built around **12 specialized agents**, coordinated by the Orchestrator.
 
-The **Orchestrator** is NOT an agent template. Workflow coordination logic lives in the slash commands `.claude/commands/map-*.md` (map-feature, map-debug, map-refactor, map-review).
+The **Orchestrator** is NOT an agent template. Workflow coordination logic lives in the slash commands `.claude/commands/map-*.md` (map-efficient, map-debug, map-fast, map-debate, map-review, map-check, map-plan, map-release, map-resume, map-learn).
 
 ## System Components
 
-### 1. TaskDecomposer (1,169 lines)
+### 1. TaskDecomposer (867 lines)
 
 **Model:** sonnet
 **Purpose:** Translates high-level goals into atomic, testable subtasks with explicit dependencies
@@ -22,7 +22,7 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 
 **Output:** JSON with subtasks, acceptance_criteria, estimated_complexity, depends_on
 
-### 2. Actor (641 lines)
+### 2. Actor (1,084 lines)
 
 **Model:** sonnet
 **Purpose:** Senior software engineer; writes clean, efficient, production-ready code
@@ -37,7 +37,7 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 
 **Inputs:** {{existing_patterns}} (top_k=5), {{plan_context}} (recitation pattern), {{feedback}} (if retry)
 
-### 3. Monitor (908 lines)
+### 3. Monitor (2,521 lines)
 
 **Model:** sonnet
 **Purpose:** Meticulous code reviewer (10+ years), catches bugs, vulnerabilities, and standard violations
@@ -55,22 +55,23 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 
 **Output:** valid (boolean), issues (severity/category/description), verdict (approved/needs_revision/rejected)
 
-### 4. Predictor (898 lines)
+### 4. Predictor (2,108 lines)
 
-**Model:** haiku (cost-optimized)
+**Model:** sonnet
 **Purpose:** Impact analysis specialist; predicts ripple effects BEFORE implementation
 
-**MCP integrations (3 tools):**
+**MCP integrations (4 tools):**
 
 - `mcp__mem0__map_tiered_search` — search past breaking changes and migration patterns
-- `context7__get-library-docs` — check library version compatibility
-- `deepwiki__read_wiki_structure + ask_question` — study migration patterns
+- `mcp__context7__get-library-docs` — check library version compatibility
+- `mcp__deepwiki__read_wiki_structure + ask_question` — study migration patterns
+- `mcp__sequential-thinking__sequentialthinking` — complex trade-off analysis for multi-system impact
 
 **Output:** affected_files, breaking_changes, required_updates, risk_level (low/medium/high), rollback_plan
 
-### 5. Evaluator (843 lines)
+### 5. Evaluator (1,492 lines)
 
-**Model:** haiku (cost-optimized)
+**Model:** sonnet
 **Purpose:** Objective quality assessor with data-driven metrics
 
 **MCP integrations (5 tools):**
@@ -85,7 +86,7 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 
 **Output:** scores (code_quality, test_coverage, documentation, security, performance, maintainability 0–10), overall_score, recommendation
 
-### 6. Reflector (1,004 lines) — ACE Learning
+### 6. Reflector (851 lines) — ACE Learning
 
 **Model:** sonnet
 **Purpose:** Expert learning analyst; extracts reusable patterns from implementations
@@ -104,7 +105,7 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 
 **Output:** key_insight, patterns_used, patterns_discovered, bullet_updates (helpful/harmful count), suggested_new_bullets
 
-### 7. Curator (1,145 lines) — ACE Learning
+### 7. Curator (1,296 lines) — ACE Learning
 
 **Model:** sonnet
 **Purpose:** Knowledge curator; evolves the playbook without context collapse
@@ -132,7 +133,7 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 
 - `Fetch` — MANDATORY: verify EVERY external URL in docs
 - `deepwiki__ask_question` — get architecture details from external projects
-- `context7__resolve_library_id + get-library-docs` — verify API/integration details
+- `context7__resolve-library-id + get-library-docs` — verify API/integration details
 - `mcp__mem0__map_tiered_search` — check known documentation anti-patterns
 
 **Critical constraints (NEVER violate):**
@@ -144,6 +145,34 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 - ALWAYS cite exact line numbers for inconsistencies
 
 **Review Workflow:** Read source → Extract URLs → Fetch URLs → Check CRDs/dependencies → Verify documentation → Cross-check decomposition
+
+### 9. Synthesizer
+
+**Model:** sonnet
+**Purpose:** Merges multiple Actor variants into a unified solution (Self-MoA in /map-efficient)
+
+**Output:** Synthesized code combining best elements from all validated variants
+
+### 10. DebateArbiter
+
+**Model:** opus (highest reasoning quality)
+**Purpose:** Cross-evaluates Actor variants with explicit reasoning matrix; synthesizes optimal solution in /map-debate
+
+**Output:** comparison_matrix, decision_rationales, synthesized code
+
+### 11. ResearchAgent
+
+**Model:** inherit (uses parent context model)
+**Purpose:** Heavy codebase reading with compressed output; prevents Actor context bloat
+
+**Output:** Executive summary (<2K tokens) with file locations, patterns, and confidence score
+
+### 12. FinalVerifier
+
+**Model:** sonnet
+**Purpose:** Adversarial verifier (Four-Eyes Principle); catches premature completion and hallucinated success
+
+**Output:** verdict (PASS/FAIL), confidence score, root cause analysis if failed
 
 ## Agent Interactions
 
@@ -173,13 +202,13 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 - ALWAYS verify MCP tool usage in agent outputs
 - Manual extraction/curation bypasses MCP tools → knowledge won't deduplicate → lessons won't be learned
 
-**Enforcement source:** `.claude/commands/map-feature.md` lines 263–355 + MAP workflow enforcement rules
+**Enforcement source:** `.claude/commands/map-efficient.md` + MAP workflow enforcement rules
 
 ### Template Structure
 
 **All agents use:**
 
-- YAML frontmatter: name, description, model (sonnet/haiku), version 2.2.0
+- YAML frontmatter: name, description, model (sonnet/opus), version, last_updated
 - Handlebars variables: {{project_name}}, {{language}}, {{framework}}, {{subtask_description}}, {{existing_patterns}}, {{feedback}}
 - Standard sections: IDENTITY, context, mcp_integration, rationale, critical/constraints, examples, output_format
 
@@ -187,5 +216,6 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 
 ### Model Strategy
 
-- **haiku** (cost-optimized): Predictor, Evaluator
-- **sonnet** (quality-critical): Actor, Monitor, TaskDecomposer, Reflector, Curator, DocumentationReviewer
+- **sonnet** (quality-critical): Actor, Monitor, TaskDecomposer, Predictor, Evaluator, Reflector, Curator, DocumentationReviewer, Synthesizer, FinalVerifier
+- **opus** (highest reasoning): DebateArbiter
+- **inherit** (parent context): ResearchAgent

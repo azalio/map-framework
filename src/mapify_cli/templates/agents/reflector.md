@@ -3,7 +3,7 @@ name: reflector
 description: Extracts structured lessons from successes and failures (ACE)
 model: sonnet
 version: 4.0.0
-last_updated: 2025-01-12
+last_updated: 2026-01-12
 ---
 
 # IDENTITY
@@ -208,10 +208,12 @@ Analyze the following execution attempt:
 {{predictor_analysis}}
 ```
 
+{{#if evaluator_scores}}
 ## Evaluator Quality Scores
 ```json
 {{evaluator_scores}}
 ```
+{{/if}}
 
 ## Execution Outcome
 {{execution_outcome}}

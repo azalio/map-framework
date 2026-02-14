@@ -65,13 +65,12 @@ Current step set (linear order; some are conditional):
 8. `2.2` RESEARCH (conditional)
 9. `2.3` ACTOR
 10. `2.4` MONITOR
-11. `2.5` RETRY_LOOP (conditional)
-12. `2.6` PREDICTOR (conditional)
-13. `2.7` APPLY_CHANGES
-14. `2.8` TESTS_GATE (conditional)
-15. `2.9` LINTER_GATE (conditional)
-16. `2.10` VERIFY_ADHERENCE
-17. `2.11` SUBTASK_APPROVAL (conditional; step_by_step only)
+11. `2.6` PREDICTOR (conditional)
+12. `2.7` UPDATE_STATE
+13. `2.8` TESTS_GATE (conditional)
+14. `2.9` LINTER_GATE (conditional)
+15. `2.10` VERIFY_ADHERENCE
+16. `2.11` SUBTASK_APPROVAL (conditional; step_by_step only)
 
 ## Relationship to workflow_state.json
 

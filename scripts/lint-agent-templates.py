@@ -158,8 +158,8 @@ class TemplateLinter:
                     "subtask_description",
                     "playbook_bullets",
                     "feedback",
-                    "standards_url",
-                    "branch",
+                    "standards_doc",
+                    "branch_name",
                     "related_files",
                 ]
 

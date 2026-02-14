@@ -4,7 +4,7 @@ Official Claude Code plugin for MAP Framework - Modular Agentic Planner with cog
 
 ## What is MAP Framework?
 
-MAP (Modular Agentic Planner) is a cognitive architecture that orchestrates 9 specialized agents to improve code quality through systematic validation and iterative refinement.
+MAP (Modular Agentic Planner) is a cognitive architecture that orchestrates 12 specialized agents to improve code quality through systematic validation and iterative refinement.
 
 **Based on research:**
 - [MAP Paper - Nature Communications (2025)](https://github.com/Shanka123/MAP) — 74% improvement in planning tasks
@@ -12,7 +12,7 @@ MAP (Modular Agentic Planner) is a cognitive architecture that orchestrates 9 sp
 
 ## Features
 
-### 9 Specialized Agents
+### 12 Specialized Agents
 
 1. **TaskDecomposer** — breaks goals into atomic subtasks
 2. **Actor** — generates code and solutions
@@ -21,8 +21,11 @@ MAP (Modular Agentic Planner) is a cognitive architecture that orchestrates 9 sp
 5. **Evaluator** — scores solution quality (functionality, security, testability)
 6. **Reflector** — extracts lessons from successes and failures
 7. **Curator** — manages knowledge base (playbook)
-8. **Orchestrator** — coordinates all agents
-9. **DocumentationReviewer** — checks documentation completeness
+8. **DocumentationReviewer** — checks documentation completeness
+9. **Debate-Arbiter** — cross-evaluates variants with reasoning (Opus)
+10. **Synthesizer** — merges multiple variants (Self-MoA)
+11. **Research-Agent** — isolated codebase research
+12. **Final-Verifier** — adversarial verification (Ralph Loop)
 
 ### Claude Code Integration
 
@@ -33,11 +36,17 @@ MAP (Modular Agentic Planner) is a cognitive architecture that orchestrates 9 sp
 - `session-init` — loads ACE playbook at session start
 - `track-metrics` — tracks agent performance
 
-**4 Slash Commands:**
-- `/map-feature` — implement new features with full MAP workflow
+**10 Slash Commands:**
+- `/map-efficient` — implement features, refactor code, complex tasks with full MAP workflow
 - `/map-debug` — debug issues using MAP analysis
-- `/map-refactor` — refactor code with impact analysis
+- `/map-fast` — small, low-risk changes with minimal overhead
+- `/map-debate` — multi-variant synthesis with Opus arbiter
 - `/map-review` — comprehensive review of changes
+- `/map-check` — quality gates and verification
+- `/map-plan` — architecture decomposition
+- `/map-release` — release workflow with validation gates
+- `/map-resume` — resume interrupted workflows
+- `/map-learn` — extract and preserve lessons
 
 ### ACE Learning System
 
@@ -97,14 +106,14 @@ cp map-framework/.claude/settings.hooks.json your-project/.claude/
 ## Quick Start
 
 ```bash
-# Feature development
-/map-feature implement user authentication with JWT tokens
+# Feature development / refactoring / complex tasks
+/map-efficient implement user authentication with JWT tokens
 
 # Debugging
 /map-debug fix the API 500 error on login endpoint
 
-# Refactoring
-/map-refactor refactor UserService class with dependency injection
+# Small, low-risk changes
+/map-fast add environment variable for API timeout
 
 # Code review
 /map-review review the recent changes in auth.py

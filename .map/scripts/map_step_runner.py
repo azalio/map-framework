@@ -108,7 +108,7 @@ def update_workflow_state(
 
         return {
             "status": "success",
-            "message": f"Updated {subtask_id}: {step_name} → {new_state}",
+            "message": f"Updated {subtask_id}: {step_name} -> {new_state}",
             "completed_steps": state["completed_steps"][subtask_id],
         }
 
@@ -135,7 +135,7 @@ def update_plan_status(
     if branch is None:
         branch = get_branch_name()
 
-    plan_file = Path(f".map/task_plan_{branch}.md")
+    plan_file = Path(f".map/{branch}/task_plan_{branch}.md")
 
     if not plan_file.exists():
         return {"status": "error", "message": f"Plan file not found: {plan_file}"}
@@ -143,8 +143,8 @@ def update_plan_status(
     try:
         content = plan_file.read_text(encoding="utf-8")
 
-        # Find subtask section (## ST-XXX: Title)
-        pattern = rf"(## {re.escape(subtask_id)}:.*?\n\*\*Status:\*\*\s+)\w+"
+        # Find subtask section (### ST-XXX: Title)
+        pattern = rf"(### {re.escape(subtask_id)}:.*?\n- \*\*Status:\*\*\s+)\w+"
         replacement = rf"\g<1>{new_status}"
 
         updated_content = re.sub(pattern, replacement, content)
@@ -277,7 +277,7 @@ def get_plan_path(branch: Optional[str] = None) -> Path:
     """
     if branch is None:
         branch = get_branch_name()
-    return Path(f".map/task_plan_{branch}.md")
+    return Path(f".map/{branch}/task_plan_{branch}.md")
 
 
 def read_current_goal(branch: Optional[str] = None) -> Optional[str]:

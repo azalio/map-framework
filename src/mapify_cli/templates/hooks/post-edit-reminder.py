@@ -12,9 +12,20 @@ Output: ~80 char reminder via hookSpecificOutput.appended_text
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
+
+
+def sanitize_branch_name(branch: str) -> str:
+    """Sanitize branch name for safe filesystem paths."""
+    sanitized = branch.replace("/", "-")
+    sanitized = re.sub(r"[^a-zA-Z0-9_.-]", "-", sanitized)
+    sanitized = re.sub(r"-+", "-", sanitized).strip("-")
+    if ".." in sanitized or sanitized.startswith("."):
+        return "default"
+    return sanitized or "default"
 
 
 def get_branch_name() -> str:
@@ -24,10 +35,10 @@ def get_branch_name() -> str:
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
             capture_output=True,
             text=True,
-            timeout=2,
+            timeout=1,
         )
         if result.returncode == 0:
-            return result.stdout.strip().replace("/", "-")
+            return sanitize_branch_name(result.stdout.strip())
     except Exception:
         pass
     return "default"

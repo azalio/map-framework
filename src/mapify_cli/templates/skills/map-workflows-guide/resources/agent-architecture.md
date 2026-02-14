@@ -1,6 +1,6 @@
 # Agent Architecture
 
-MAP Framework orchestrates 8 specialized agents in a coordinated workflow.
+MAP Framework orchestrates 12 specialized agents in a coordinated workflow.
 
 ## Agent Categories
 
@@ -29,8 +29,8 @@ MAP Framework orchestrates 8 specialized agents in a coordinated workflow.
 - **Role:** Quality scoring and final approval
 - **Input:** Actor + Monitor results
 - **Output:** Quality score (0-10), approve/reject decision
-- **When it runs:** /map-fast, /map-feature (per subtask), /map-debug, /map-refactor
-- **Skipped in:** /map-efficient (Monitor provides sufficient validation)
+- **When it runs:** /map-debug, /map-review
+- **Skipped in:** /map-efficient, /map-fast (Monitor provides sufficient validation)
 
 ### Analysis
 
@@ -39,9 +39,9 @@ MAP Framework orchestrates 8 specialized agents in a coordinated workflow.
 - **Input:** Planned changes
 - **Output:** Affected files, breaking changes, risk assessment
 - **When it runs:**
-  - /map-feature: Always (per subtask)
   - /map-efficient: Conditional (only if Monitor flags high risk)
-  - /map-debug, /map-refactor: Always (focused analysis)
+  - /map-debug: Always (focused analysis)
+  - /map-debate: Conditional (same as /map-efficient)
   - /map-fast: Never (skipped)
 
 ### Learning
@@ -51,8 +51,7 @@ MAP Framework orchestrates 8 specialized agents in a coordinated workflow.
 - **Input:** All agent outputs for subtask(s)
 - **Output:** Insights, patterns discovered, pattern updates
 - **When it runs:**
-  - /map-feature: Per subtask
-  - /map-efficient, /map-debug, /map-refactor: Batched (once at end)
+  - /map-efficient, /map-debug, /map-debate: Batched (once at end, via /map-learn)
   - /map-fast: Never (skipped)
 - **MCP Tool:** Uses `mcp__mem0__map_tiered_search` to check for existing patterns
 
@@ -73,6 +72,34 @@ MAP Framework orchestrates 8 specialized agents in a coordinated workflow.
 - **Output:** Completeness assessment, dependency analysis
 - **When it runs:** On-demand (not part of standard workflows)
 
+### Synthesis
+
+**9. Debate-Arbiter**
+- **Role:** Cross-evaluates Actor variants with explicit reasoning
+- **Input:** Multiple Actor outputs (variants)
+- **Output:** Synthesized optimal solution with reasoning trace
+- **When it runs:** /map-debate (per subtask, uses Opus model)
+
+**10. Synthesizer**
+- **Role:** Extracts decisions from variants and generates unified code (Self-MoA)
+- **Input:** Multiple Actor outputs
+- **Output:** Merged implementation combining best elements
+- **When it runs:** /map-efficient with --self-moa flag
+
+### Discovery & Verification
+
+**11. Research-Agent**
+- **Role:** Heavy codebase reading with compressed output
+- **Input:** Research question or exploration goal
+- **Output:** Compressed context for implementation agents
+- **When it runs:** /map-plan, /map-efficient, /map-debug (before Actor)
+
+**12. Final-Verifier**
+- **Role:** Adversarial verification with Root Cause Analysis (Ralph Loop)
+- **Input:** Complete implementation after all other agents
+- **Output:** Verification verdict, regression analysis
+- **When it runs:** /map-check, /map-efficient (terminal verification)
+
 ---
 
 ## Orchestration Patterns
@@ -80,8 +107,8 @@ MAP Framework orchestrates 8 specialized agents in a coordinated workflow.
 ### Linear Pipeline (map-fast)
 
 ```
-TaskDecomposer → Actor → Monitor → Evaluator → Done
-(No learning, no impact analysis)
+TaskDecomposer → Actor → Monitor → Apply → Done
+(No Evaluator, no Predictor, no learning)
 ```
 
 ### Conditional Pipeline (map-efficient)
@@ -90,23 +117,25 @@ TaskDecomposer → Actor → Monitor → Evaluator → Done
 TaskDecomposer
   ↓
   For each subtask:
-    Actor → Monitor → [Predictor if high risk] → Apply changes
+    Actor → Monitor → [Predictor if high risk] → Tests → Linter → Apply
   ↓
-  Batch learning:
-    Reflector (all subtasks) → Curator → Done
+  Final-Verifier (adversarial verification of entire goal)
+  ↓
+  Done! Optional: /map-learn → Reflector → Curator
 ```
 
-### Full Pipeline (map-feature)
+### Multi-Variant Pipeline (map-debate)
 
 ```
 TaskDecomposer
   ↓
   For each subtask:
-    Actor → Monitor → Predictor → Evaluator
-      ↓ if approved
-    Reflector → Curator → Apply changes
+    Actor×3 → Monitor×3 → debate-arbiter (Opus)
+      ↓ synthesized
+    Monitor → [Predictor if high risk] → Apply changes
   ↓
-  Done
+  Batch learning (via /map-learn):
+    Reflector (all subtasks) → Curator → Done
 ```
 
 ---
@@ -210,10 +239,14 @@ Agents communicate via structured JSON:
 | TaskDecomposer | ~1.5K | Once | All workflows |
 | Actor | ~2-3K | Per subtask | All workflows |
 | Monitor | ~1K | Per Actor output | All workflows |
-| Evaluator | ~0.8K | Per subtask | map-fast, map-feature |
+| Evaluator | ~0.8K | Per subtask | map-debug, map-review |
 | Predictor | ~1.5K | Per subtask or conditional | Varies |
 | Reflector | ~2K | Per subtask or batched | Varies |
 | Curator | ~1.5K | After Reflector | Varies |
+| Debate-Arbiter | ~3-4K | Per subtask | map-debate only |
+| Synthesizer | ~2K | Per subtask | map-efficient (--self-moa) |
+| Research-Agent | ~2-3K | Once (before Actor) | map-plan, map-efficient, map-debug |
+| Final-Verifier | ~2K | Once (terminal) | map-check, map-efficient |
 
 **map-efficient savings:**
 - Skip Evaluator: ~0.8K per subtask
@@ -228,7 +261,7 @@ Agents communicate via structured JSON:
 
 To add a custom agent:
 1. Create `.claude/agents/my-agent.md` with prompt template
-2. Add to workflow command (e.g., `.claude/commands/map-feature.md`)
+2. Add to workflow command (e.g., `.claude/commands/map-efficient.md`)
 3. Define when it runs (before/after which agents)
 4. Specify input/output format
 

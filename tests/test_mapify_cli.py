@@ -185,14 +185,14 @@ class TestInitCommand:
         assert settings_local.exists()
         settings = json.loads(settings_local.read_text())
         allow = settings.get("permissions", {}).get("allow", [])
-        assert "Bash(go test:*)" in allow
-        assert "Bash(go vet :*)" in allow
-        assert "Bash(go mod tidy:*)" in allow
+        assert "Bash(go test *)" in allow
+        assert "Bash(go vet *)" in allow
+        assert "Bash(go mod tidy *)" in allow
         assert "mcp__mem0__*" in allow
         assert "mcp__sourcecraft__list_pull_request_comments" in allow
         assert "Bash(make generate manifests)" in allow
         assert "Bash(make manifests)" in allow
-        assert "Bash(git worktree add:*)" in allow
+        assert "Bash(git worktree add *)" in allow
         assert (
             'Bash(openssl req -x509 -newkey rsa:512 -keyout /dev/null -out /dev/stdout -days 365 -nodes -subj "/CN=test" 2>/dev/null)'
             in allow
@@ -586,9 +586,13 @@ class TestAgentCreation:
 
         Verifies that:
         - Fallback generators create valid agent content
-        - All 8 agents are created successfully
+        - 8 core agents are created via fallback generators
         - Content includes required sections (IDENTITY, ROLE)
         - MCP integration sections are included when MCP servers specified
+
+        Note: Fallback generators only cover 8 core agents. The remaining 4
+        (debate-arbiter, synthesizer, research-agent, final-verifier) are
+        only available when copying from templates.
         """
         # Mock templates directory that doesn't have agent templates
         mock_templates_path = tmp_path / "mock_templates"
@@ -601,7 +605,7 @@ class TestAgentCreation:
         agents_dir = tmp_path / ".claude" / "agents"
         assert agents_dir.exists()
 
-        # Verify all 8 agents were created using fallback generators
+        # Verify core agents were created using fallback generators
         expected_agents = [
             "task-decomposer.md",
             "actor.md",

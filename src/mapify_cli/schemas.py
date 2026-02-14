@@ -217,8 +217,8 @@ STATE_ARTIFACT_SCHEMA = {
     "properties": {
         "workflow": {
             "type": "string",
-            "description": "Type of MAP workflow (e.g., 'map-efficient', 'map-debug', 'map-feature')",
-            "examples": ["map-efficient", "map-debug", "map-feature", "map-refactor"],
+            "description": "Type of MAP workflow (e.g., 'map-efficient', 'map-debug', 'map-fast')",
+            "examples": ["map-efficient", "map-debug", "map-fast"],
         },
         "terminal_status": {
             "type": "string",

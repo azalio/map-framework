@@ -4,12 +4,12 @@
 
 MAP Framework uses a **strictly sequential orchestration** that begins with TaskDecomposer and then runs an implementation loop for each subtask.
 
-**Mandatory sequence:**
+**Full pipeline (conceptual — individual workflows may skip agents):**
 
 ```mermaid
 flowchart TD
     Start([Task Start]) --> Decompose[0. TaskDecomposer<br/>Create subtasks]
-    Decompose --> Plan[2.5 Checkpoint<br/>Create progress.md]
+    Decompose --> Plan[Checkpoint<br/>Create progress.md]
     Plan --> Actor[1. Actor<br/>Implement subtask]
     Actor --> Monitor[2. Monitor<br/>Quality validation]
 
@@ -21,20 +21,31 @@ flowchart TD
     Evaluator -->|Approved| Accept[5. ACCEPT changes<br/>Apply to files]
     Evaluator -->|Not Approved| Actor
 
-    Accept --> Reflector[6. Reflector<br/>Extract lessons<br/><b>MANDATORY</b>]
-    Reflector --> Curator[7. Curator<br/>Update playbook<br/><b>MANDATORY</b>]
+    Accept --> Reflector[6. Reflector<br/>Extract lessons]
+    Reflector --> Curator[7. Curator<br/>Update playbook]
 
-    Curator --> End([Subtask Complete])
+    Curator -->|More subtasks| Actor
+    Curator -->|All done| Verifier[8. FinalVerifier<br/>Adversarial verification]
+    Verifier --> End([Workflow Complete])
 ```
 
 ## Orchestrator Slash Commands
 
-MAP provides **4 specialized workflow commands** for different scenarios:
+MAP provides **10 workflow commands** for different scenarios:
 
-1. **`/map-feature`** — implement new features
-2. **`/map-debug`** — debug issues
-3. **`/map-refactor`** — refactor code
-4. **`/map-review`** — review documentation
+**Primary workflows:**
+1. **`/map-efficient`** — implement features, refactor code, complex tasks (recommended default)
+2. **`/map-debug`** — debug issues, fix bugs
+3. **`/map-fast`** — small, low-risk changes with minimal overhead
+4. **`/map-debate`** — multi-variant synthesis with Opus arbiter
+
+**Supporting commands:**
+5. **`/map-review`** — review changes before commit
+6. **`/map-check`** — quality gates and verification
+7. **`/map-plan`** — architecture decomposition only
+8. **`/map-release`** — release workflow with validation gates
+9. **`/map-resume`** — resume interrupted workflows
+10. **`/map-learn`** — extract and preserve lessons (optional learning step)
 
 The **Orchestrator** is NOT a separate agent template; it is the coordination logic implemented in these slash commands.
 
@@ -131,7 +142,7 @@ After invoking Reflector or Curator, the orchestrator **MUST VERIFY** MCP tool u
 - Display: “⚠️ Retry attempt 2 — review previous errors”
 - Implements patterns `qual-0001` (WHAT/WHERE/HOW/WHY) and `arch-0005` (three-failure threshold)
 
-**Sources:** `CONTEXT-ENGINEERING-IMPROVEMENTS.md` Phase 1.1 (lines 276–289), `.claude/commands/map-feature.md` lines 61–103
+**Sources:** `CONTEXT-ENGINEERING-IMPROVEMENTS.md` Phase 1.1 (lines 276–289), `.claude/commands/map-efficient.md`
 
 ## Actor–Monitor Retry Loop
 
@@ -223,11 +234,6 @@ Before completing any MAP workflow subtask the orchestrator **MUST** check 2 que
 
 ## Exception: Non-MAP Tasks
 
-These rules apply **ONLY** when using MAP framework commands:
-
-- `/map-feature`
-- `/map-debug`
-- `/map-refactor`
-- `/map-review`
+These rules apply **ONLY** when using MAP framework commands (`/map-efficient`, `/map-debug`, `/map-fast`, `/map-debate`, `/map-review`, `/map-check`, `/map-plan`, `/map-release`, `/map-resume`, `/map-learn`).
 
 For ordinary tasks (bug fixes, docs, simple changes) you can work directly without the full agent chain.

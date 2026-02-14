@@ -147,8 +147,8 @@ mapify init my-project
 This will:
 
 - ✅ Create project directory
-- ✅ Install 11 MAP agents (including ACE Reflector & Curator, Synthesizer, DebateArbiter, ResearchAgent)
-- ✅ Add 7 slash commands (/map-efficient, /map-debug, /map-fast, /map-learn, /map-review, /map-debate, /map-release)
+- ✅ Install 12 MAP agents (including ACE Reflector & Curator, Synthesizer, DebateArbiter, ResearchAgent, FinalVerifier)
+- ✅ Add 10 slash commands (/map-efficient, /map-debug, /map-fast, /map-debate, /map-learn, /map-review, /map-release, /map-check, /map-plan, /map-resume)
 - ✅ Configure essential MCP servers
 - ✅ Initialize git repository
 - ✅ Create ACE playbook structure
@@ -218,7 +218,7 @@ If you prefer manual setup:
    ```
    your-project/
    ├── .claude/
-   │   ├── agents/                    # 11 specialized agents
+   │   ├── agents/                    # 12 specialized agents
    │   │   ├── task-decomposer.md     # Decomposes tasks into subtasks
    │   │   ├── actor.md               # Implements code
    │   │   ├── monitor.md             # Validates implementations
@@ -229,15 +229,19 @@ If you prefer manual setup:
    │   │   ├── synthesizer.md         # Self-MoA: Merges variants
    │   │   ├── debate-arbiter.md      # Opus: Cross-evaluates variants
    │   │   ├── research-agent.md      # Isolated codebase research
+   │   │   ├── final-verifier.md      # Adversarial verification (Ralph Loop)
    │   │   └── documentation-reviewer.md  # Reviews technical docs
-   │   ├── commands/                  # 7 slash commands
+   │   ├── commands/                  # 10 slash commands
    │   │   ├── map-efficient.md       # Optimized workflow (recommended)
    │   │   ├── map-debate.md          # Multi-variant with Opus reasoning
    │   │   ├── map-debug.md           # Debug workflow
    │   │   ├── map-fast.md            # Minimal workflow (low-risk only)
    │   │   ├── map-learn.md           # Extract and save lessons
    │   │   ├── map-review.md          # Review workflow
-   │   │   └── map-release.md         # Release workflow
+   │   │   ├── map-release.md         # Release workflow
+   │   │   ├── map-check.md           # Quality gates & verification
+   │   │   ├── map-plan.md            # Architecture decomposition
+   │   │   └── map-resume.md          # Resume interrupted workflows
    │   └── mcp_config.json
    ```
 
@@ -295,7 +299,11 @@ MAP Framework uses **slash commands** as entry points that coordinate specialize
 - **`/map-debate`** - Multi-variant with Opus arbiter (7 agents): 3 Actor variants → debate-arbiter synthesis
 - **`/map-debug`** - Diagnostic and fix workflows with agent coordination
 - **`/map-fast`** - Minimal workflow (3 agents) — small, low-risk changes (reduced analysis)
-- **`/map-review`** - Comprehensive review with MAP analysis
+- **`/map-review`** - Comprehensive review with Monitor, Predictor, and Evaluator agents
+- **`/map-check`** - Quality gates and verification for staged changes
+- **`/map-plan`** - Architect phase only: decompose task without implementation
+- **`/map-release`** - Package release workflow with validation gates
+- **`/map-resume`** - Resume incomplete MAP workflow from checkpoint
 - **`/map-learn`** - Extract lessons: reflector → curator → mem0 storage
 
 **Note:** Agents are invoked automatically by slash commands. Direct agent invocation is not the recommended approach—use the slash commands above for proper workflow orchestration.

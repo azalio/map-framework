@@ -1,11 +1,12 @@
 """Verification results recorder for MAP Framework.
 
-Records verification results to .map/verification_results_<branch>.json
+Records verification results to .map/verification_results_<sanitized_branch>.json
 with atomic writes to prevent concurrent write corruption.
 """
 
 import json
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -35,19 +36,21 @@ class VerificationResults(TypedDict):
 def _sanitize_branch_name(branch: str) -> str:
     """Sanitize branch name for use in filenames.
 
-    Replaces characters that could cause path issues (like '/') with underscores.
+    Replaces characters that could cause path issues with dashes,
+    consistent with MAP framework branch sanitization elsewhere.
 
     Args:
         branch: Git branch name (e.g., 'feature/foo', 'main')
 
     Returns:
-        Sanitized branch name safe for filenames (e.g., 'feature_foo', 'main')
+        Sanitized branch name safe for filenames (e.g., 'feature-foo', 'main')
     """
-    # Replace forward slashes (common in feature/bugfix branches) with underscores
-    sanitized = branch.replace("/", "_")
-    # Also handle backslashes just in case
-    sanitized = sanitized.replace("\\", "_")
-    return sanitized
+    sanitized = branch.replace("/", "-")
+    sanitized = re.sub(r"[^a-zA-Z0-9_.-]", "-", sanitized)
+    sanitized = re.sub(r"-+", "-", sanitized).strip("-")
+    if ".." in sanitized or sanitized.startswith("."):
+        return "default"
+    return sanitized or "default"
 
 
 def _log_warning(message: str) -> None:

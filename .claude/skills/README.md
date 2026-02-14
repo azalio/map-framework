@@ -34,7 +34,7 @@ Skills provide specialized guidance without executing code. They help users unde
 
 **Content:**
 - Quick decision tree (5 questions)
-- Workflow comparison matrix (5 workflows)
+- Workflow comparison matrix (4 implemented + 2 planned)
 - Detailed workflow descriptions
 - Agent architecture overview
 - 8 deep-dive resource files
@@ -50,10 +50,10 @@ MAP: [Shows decision tree and comparison matrix]
 **Resources available:**
 - `map-fast-deep-dive.md` - When (not) to use /map-fast
 - `map-efficient-deep-dive.md` - Optimization strategies
-- `map-feature-deep-dive.md` - Full validation workflow
 - `map-debug-deep-dive.md` - Debugging techniques
-- `map-refactor-deep-dive.md` - Dependency analysis
-- `agent-architecture.md` - How 8 agents orchestrate
+- `map-feature-deep-dive.md` - Full validation workflow (PLANNED)
+- `map-refactor-deep-dive.md` - Dependency analysis (PLANNED)
+- `agent-architecture.md` - How 12 agents orchestrate
 - `playbook-system.md` - Knowledge storage and search
 
 ---

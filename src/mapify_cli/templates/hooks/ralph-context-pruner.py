@@ -65,6 +65,7 @@ def get_branch_name() -> str:
             capture_output=True,
             text=True,
             cwd=PROJECT_DIR,
+            timeout=2,
         )
         if result.returncode == 0:
             return sanitize_branch_name(result.stdout.strip())
@@ -233,10 +234,7 @@ def main() -> None:
     if state:
         # Save restore point
         if save_restore_point(branch, state):
-            print(
-                f"[ralph-pruner] Saved restore_point for branch: {branch}",
-                file=sys.stderr,
-            )
+            print(f"[ralph-pruner] Saved restore_point for branch: {branch}", file=sys.stderr)
 
         # Inject recovery message into context
         recovery_msg = format_recovery_message(state, branch)

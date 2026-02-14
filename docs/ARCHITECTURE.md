@@ -21,7 +21,7 @@ Deep technical documentation for MAP (Modular Agentic Planner) implementation.
 
 ### High-Level Design
 
-MAP Framework implements cognitive architecture inspired by prefrontal cortex functions, orchestrating 11 specialized agents for software development with automatic quality validation.
+MAP Framework implements cognitive architecture inspired by prefrontal cortex functions, orchestrating 12 specialized agents for software development with automatic quality validation.
 
 **Key Design Principle:** Each slash command has its own unique workflow with different agent sequences. There is no single "standard" workflow — the orchestration logic is defined in `.claude/commands/map-*.md` files.
 
@@ -161,7 +161,7 @@ MAP Framework implements cognitive architecture inspired by prefrontal cortex fu
 
 **State Management:**
 - Workflow checkpoint stored in `.map/progress.md` (YAML frontmatter + markdown)
-- Task plan stored in `.map/task_plan_*.md`
+- Task plan stored in `.map/<branch>/task_plan_*.md`
 - Workflow logs in `.map/workflow_logs/`
 - Metrics tracked in `.claude/metrics/agent_metrics.jsonl`
 
@@ -343,12 +343,12 @@ All JSON schemas are defined in `src/mapify_cli/schemas.py`:
 
 MAP Framework provides multiple workflow variants with different agent orchestration strategies:
 
-#### 1. `/map-efficient` - Optimized Pipeline (3-5 Agents) ⭐ RECOMMENDED
+#### 1. `/map-efficient` - Optimized Pipeline (4-6 Agents) ⭐ RECOMMENDED
 
-**Agent Sequence:** TaskDecomposer → (Actor → Monitor → conditional Predictor) per subtask
+**Agent Sequence:** TaskDecomposer → [conditional ResearchAgent] → (Actor → Monitor → [conditional Predictor]) per subtask → FinalVerifier
 
 **With Self-MoA** (--self-moa flag OR high risk/complexity):
-TaskDecomposer → (3×Actor parallel → 3×Monitor parallel → Synthesizer → final Monitor → conditional Predictor) per subtask
+TaskDecomposer → [conditional ResearchAgent] → (3×Actor parallel → 3×Monitor parallel → Synthesizer → final Monitor → [conditional Predictor]) per subtask → FinalVerifier
 
 **Optimizations:**
 
@@ -427,9 +427,9 @@ print("Consider running /map-learn to save patterns")
 - Broad refactors or multi-module changes
 - High uncertainty requirements
 
-#### 3. `/map-debate` - Debate-Based Multi-Variant (6 Agents)
+#### 3. `/map-debate` - Debate-Based Multi-Variant (5-7 Agents)
 
-**Agent Sequence:** TaskDecomposer → (3×Actor parallel → 3×Monitor parallel → DebateArbiter (Opus) → Monitor → [Predictor if risky]) per subtask
+**Agent Sequence:** TaskDecomposer → [conditional ResearchAgent] → (3×Actor parallel → 3×Monitor parallel → DebateArbiter (Opus) → Monitor → [Predictor if risky]) per subtask
 
 **Multi-Variant Architecture:**
 
@@ -729,14 +729,13 @@ See [USAGE.md - Workflow Variants](./USAGE.md#workflow-variants) for detailed de
 7. `2.1 MEM0_SEARCH` - Tiered memory search
 8. `2.2 RESEARCH` - research-agent (conditional)
 9. `2.3 ACTOR` - Actor agent implementation
-10. `2.4 MONITOR` - Monitor validation
-11. `2.5 RETRY_LOOP` - Retry on Monitor failure (not shown in linear flow)
-12. `2.6 PREDICTOR` - Impact analysis (conditional)
-13. `2.7 APPLY_CHANGES` - Write/Edit tools
-14. `2.8 TESTS_GATE` - Run tests
-15. `2.9 LINTER_GATE` - Run linter
-16. `2.10 VERIFY_ADHERENCE` - Self-audit checkpoint
-17. `2.11 SUBTASK_APPROVAL` - Pause between subtasks (step_by_step only)
+10. `2.4 MONITOR` - Monitor validation (retry up to 5 times)
+11. `2.6 PREDICTOR` - Impact analysis (conditional)
+12. `2.7 UPDATE_STATE` - Update workflow_state.json
+13. `2.8 TESTS_GATE` - Run tests
+14. `2.9 LINTER_GATE` - Run linter
+15. `2.10 VERIFY_ADHERENCE` - Self-audit checkpoint
+16. `2.11 SUBTASK_APPROVAL` - Pause between subtasks (step_by_step only)
 
 **State Files:**
 - `step_state.json` - Hook injection source (current step phase)
@@ -842,7 +841,7 @@ If you modified `.claude/commands/map-efficient.md`, you must manually integrate
 
 **MCP Tool Usage:**
 - `mcp__mem0__map_tiered_search`: Find existing patterns before implementing
-- `context7__get-library-docs`: Get current library documentation
+- `mcp__context7__get-library-docs`: Get current library documentation
 
 ### 3. Monitor
 
@@ -910,7 +909,7 @@ If you modified `.claude/commands/map-efficient.md`, you must manually integrate
 - Configuration requirements
 - Test coverage gaps
 
-**Model Used:** Haiku (fast, cost-effective for analysis)
+**Model Used:** Sonnet (impact analysis requires complex reasoning)
 
 ### 5. Evaluator
 
@@ -941,7 +940,7 @@ If you modified `.claude/commands/map-efficient.md`, you must manually integrate
 
 **Approval Threshold:** >7.0 overall score
 
-**Model Used:** Haiku (fast scoring)
+**Model Used:** Sonnet (evaluation requires nuanced judgment)
 
 ### 6. Reflector
 
@@ -1149,7 +1148,7 @@ If you modified `.claude/commands/map-efficient.md`, you must manually integrate
 **Usage Context:** Only invoked in `/map-debate` workflow after all variants validated
 
 **MCP Tool Usage:**
-- `sequential-thinking`: Multi-step reasoning for complex trade-off analysis
+- `mcp__sequential-thinking__sequentialthinking`: Multi-step reasoning for complex trade-off analysis
 
 ### 11. ResearchAgent
 
@@ -1199,6 +1198,42 @@ If you modified `.claude/commands/map-efficient.md`, you must manually integrate
 - Reads 10-50 files per invocation
 - Outputs compressed summary (<2K tokens)
 - Prevents Actor context bloat (would be 20-50K tokens if Actor read directly)
+
+### 12. FinalVerifier
+
+**Responsibility:** Adversarial verifier applying the "Four-Eyes Principle" — verifies the ENTIRE task goal is achieved, not just individual subtasks. Catches premature completion and hallucinated success.
+
+**Input:**
+```json
+{
+  "original_goal": "From .map/<branch>/task_plan_<branch>.md",
+  "acceptance_criteria": "From task plan table",
+  "completed_subtasks": "From progress_<branch>.md checkboxes",
+  "validation_criteria": "From orchestrator"
+}
+```
+
+**Output:**
+```json
+{
+  "verdict": "PASS",
+  "confidence": 0.95,
+  "criteria_met": ["All acceptance criteria verified"],
+  "root_cause": null,
+  "recommendation": "COMPLETE"
+}
+```
+
+**Verification Process:**
+1. Read original goal and acceptance criteria from `.map/` checkpoint files
+2. Verify each acceptance criterion against actual file state (Read, Grep, Bash)
+3. Run tests if specified in validation criteria
+4. Apply root cause analysis if verification fails
+5. Return verdict: PASS → COMPLETE, FAIL → RE_DECOMPOSE or ESCALATE
+
+**Model Used:** Sonnet (adversarial verification requires strong reasoning)
+
+**Usage Context:** Mandatory final step in `/map-efficient` and invoked by `/map-check`
 
 ---
 
@@ -1312,11 +1347,11 @@ MCP servers are configured differently depending on the usage context:
 **WHEN using external libraries:**
 
 1. Resolve library ID:
-   - Tool: context7__resolve-library-id
+   - Tool: mcp__context7__resolve-library-id
    - Input: Library name (e.g., "Flask", "Next.js")
 
 2. Fetch current docs:
-   - Tool: context7__get-library-docs
+   - Tool: mcp__context7__get-library-docs
    - Parameters: library_id, topic, tokens (default: 5000)
 
 3. Use docs for:
@@ -1774,7 +1809,7 @@ Agent prompts are located in `.claude/agents/*.md` and use **Handlebars template
 {{project_name}}           # e.g., "my-web-app"
 {{language}}               # e.g., "Python", "JavaScript"
 {{framework}}              # e.g., "Flask", "Next.js"
-{{standards_url}}          # Link to coding standards
+{{standards_doc}}          # Link to coding standards
 ```
 
 **Actor-specific:**
@@ -1810,8 +1845,8 @@ MAP Framework uses intelligent model selection to balance quality and cost.
 | TaskDecomposer | sonnet-4-5 | Quality-critical: task planning |
 | Actor | sonnet-4-5 | Quality-critical: code generation |
 | Monitor | sonnet-4-5 | Quality-critical: validation |
-| Predictor | haiku-3-5 | Fast analysis, non-critical |
-| Evaluator | haiku-3-5 | Fast scoring, structured output |
+| Predictor | sonnet-4-5 | Impact analysis requires complex reasoning |
+| Evaluator | sonnet-4-5 | Evaluation requires nuanced judgment |
 | Reflector | sonnet-4-5 | Quality-critical: pattern extraction |
 | Curator | sonnet-4-5 | Quality-critical: knowledge management |
 | DocumentationReviewer | sonnet-4-5 | Quality-critical: doc validation |
@@ -1830,14 +1865,13 @@ model: claude-sonnet-4-5  # or claude-haiku-3-5
 ```
 
 **Cost vs Quality Trade-offs:**
-- **All Sonnet/Opus:** Highest quality, 3-4x cost (Opus for DebateArbiter)
-- **Mixed (current):** Balanced, 40-60% cost reduction
-- **All Haiku:** Lowest cost, risk of quality degradation in code generation
+- **All Sonnet/Opus (current):** Highest quality, Opus only for DebateArbiter
+- **Downgrade to Haiku:** Lower cost, risk of quality degradation in analysis and scoring
 
 **Recommended:**
-- Keep on Sonnet: TaskDecomposer, Actor, Monitor, Reflector, Curator, DocumentationReviewer, Synthesizer, ResearchAgent
+- Keep on Sonnet: TaskDecomposer, Actor, Monitor, Predictor, Evaluator, Reflector, Curator, DocumentationReviewer, Synthesizer, ResearchAgent
 - Keep on Opus: DebateArbiter (cross-variant reasoning requires highest quality)
-- Safe to use Haiku: Predictor, Evaluator (fast analysis, structured output)
+- Safe to downgrade to Haiku: Predictor, Evaluator (if cost reduction is priority)
 
 ### Adding Custom Agents
 
@@ -1901,7 +1935,7 @@ model: claude-sonnet-4-5  # or claude-haiku-3-5
 6. **Update orchestration:**
    Edit `.claude/commands/map-efficient.md` to call new agent:
    ```markdown
-   ## After Evaluator approves:
+   ## After Monitor validates:
 
    **6. Security Audit** (SecurityAuditor):
    - Call: Task(subagent_type="security-auditor", input=actor_output)
@@ -1952,7 +1986,7 @@ model: claude-sonnet-4-5  # or claude-haiku-3-5
 {{project_name}}    # From .claude/config.json
 {{language}}        # From .claude/config.json
 {{framework}}       # From .claude/config.json
-{{standards_url}}   # From .claude/config.json
+{{standards_doc}}   # From .claude/config.json
 ```
 
 **Pass custom variables:**
@@ -2081,15 +2115,10 @@ Agent template changes are tracked in the project's main CHANGELOG.md.
 - Best practices and anti-patterns
 - Troubleshooting common issues
 
-**Usage:**
-```markdown
-# In agent templates, reference patterns:
-
-See [MCP-PATTERNS.md](MCP-PATTERNS.md#actor-patterns) for:
-- How to search mem0 before implementing
-- When to fetch library docs
-- Batch search optimization
-```
+**Usage:** Each agent template contains its own MCP Tool Selection Matrix with:
+- Conditions for when to use each tool
+- Query patterns for effective searches
+- Skip conditions to avoid unnecessary calls
 
 ### Updating Strategies
 
@@ -2131,7 +2160,7 @@ See [MCP-PATTERNS.md](MCP-PATTERNS.md#actor-patterns) for:
 6. **Document:**
    - Update `version` and `last_updated` in frontmatter
    - Add entry to CHANGELOG.md
-   - Update MCP-PATTERNS.md if tool usage changed
+   - Update MCP Tool Selection Matrix in agent template if tool usage changed
 
 **Rollback if needed:**
 ```bash
@@ -2189,7 +2218,7 @@ MAP Framework applies cutting-edge context engineering principles for AI agents,
 
 Workflow state is managed through file-based persistence in `.map/` directory:
 - `.map/progress.md` - Workflow checkpoint (YAML frontmatter + markdown body)
-- `.map/task_plan_*.md` - Task decomposition with validation criteria
+- `.map/<branch>/task_plan_*.md` - Task decomposition with validation criteria
 - `.map/dev_docs/context.md` - Project context
 - `.map/dev_docs/tasks.md` - Task checklist
 
@@ -2273,7 +2302,7 @@ Filesystem (persists forever)           Conversation Memory (clears on compactio
 
 **Implementation:**
 - Checkpoint: `.map/progress.md` (YAML frontmatter + markdown body)
-- Task plan: `.map/task_plan_*.md` (subtask decomposition with validation criteria)
+- Task plan: `.map/<branch>/task_plan_*.md` (subtask decomposition with validation criteria)
 - Recovery: `/map-resume` command (detects checkpoint and offers to resume)
 
 ### Automatic Recovery (Phase 2)
@@ -2302,7 +2331,7 @@ Command checks .map/progress.md existence
         ↓
     [User confirms?]
         ↓ Yes
-    Load task plan from .map/task_plan_*.md
+    Load task plan from .map/<branch>/task_plan_*.md
         ↓
     Continue Actor→Monitor loop for remaining subtasks
         ↓
@@ -2316,7 +2345,7 @@ Command checks .map/progress.md existence
 | Resume command | `.claude/commands/map-resume.md` | User-facing recovery workflow |
 | WorkflowState class | `src/mapify_cli/workflow_state.py` | Checkpoint serialization/deserialization |
 | Checkpoint file | `.map/progress.md` | YAML frontmatter + markdown progress |
-| Task plan | `.map/task_plan_*.md` | Subtask decomposition with validation |
+| Task plan | `.map/<branch>/task_plan_*.md` | Subtask decomposition with validation |
 | Unit tests | `tests/test_workflow_state.py` | WorkflowState logic coverage |
 
 **Execution Flow:**
@@ -2564,7 +2593,7 @@ All failures are non-blocking - hook returns `{"continue": true}` and logs error
 
 **Problem:** Too many patterns distract model, reduce focus on most relevant patterns.
 
-**Solution:** Limit patterns retrieved to `top_k=5` (configurable via tiered search).
+**Solution:** Limit patterns retrieved to `limit=5` (configurable via tiered search).
 
 **Behavior:**
 
@@ -2583,9 +2612,9 @@ result = mcp__mem0__map_tiered_search(
 - ✅ Faster retrieval via tiered caching
 
 **Customization:**
-- `top_k=3`: Simple tasks, minimal context needed
-- `top_k=5`: Balanced (recommended default)
-- `top_k=7-10`: Complex tasks requiring multiple pattern references
+- `limit=3`: Simple tasks, minimal context needed
+- `limit=5`: Balanced (recommended default)
+- `limit=7-10`: Complex tasks requiring multiple pattern references
 
 ### Template Optimization (Phase 1.4)
 
@@ -2611,7 +2640,7 @@ result = mcp__mem0__map_tiered_search(
 **Phase 1 ✅ COMPLETED** (2025-10-18):
 - [x] **RecitationManager** (482 lines): Recitation Pattern for focus
 - [x] **MapWorkflowLogger** (246 lines): Detailed workflow logging
-- [x] **Pattern top_k=5**: Limit retrieved patterns
+- [x] **Pattern limit=5**: Limit retrieved patterns
 - [x] **Template Optimization**: Optimize verbose outputs (-9.6% tokens)
 
 **Phase 1 Results:**

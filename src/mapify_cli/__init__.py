@@ -1195,38 +1195,39 @@ def configure_global_permissions() -> None:
     # Default permissions for read-only commands
     default_permissions = {
         "allow": [
-            "Bash(git status:*)",
-            "Bash(git log:*)",
-            "Bash(git diff:*)",
-            "Bash(git show:*)",
-            "Bash(git check-ignore:*)",
-            "Bash(git branch --show-current:*)",
-            "Bash(git branch -a:*)",
-            "Bash(git ls-files:*)",
-            "Bash(ls :*)",
-            "Bash(cat :*)",
-            "Bash(head :*)",
-            "Bash(tail :*)",
-            "Bash(wc :*)",
-            "Bash(grep :*)",
-            "Bash(find :*)",
-            "Bash(sort :*)",
-            "Bash(uniq :*)",
-            "Bash(jq :*)",
-            "Bash(which :*)",
-            "Bash(echo :*)",
-            "Bash(pwd:*)",
-            "Bash(whoami:*)",
-            "Bash(ruby -c :*)",
-            "Bash(go fmt /tmp/:*)",
-            "Bash(gofmt -l :*)",
-            "Bash(gofmt -d :*)",
-            "Bash(go vet :*)",
-            "Bash(go build:*)",
-            "Bash(go test -c:*)",
-            "Bash(go mod download:*)",
-            "Bash(go mod tidy:*)",
-            "Bash(chmod +x:*)",
+            "Bash(git status *)",
+            "Bash(git log *)",
+            "Bash(git diff *)",
+            "Bash(git show *)",
+            "Bash(git check-ignore *)",
+            "Bash(git branch --show-current *)",
+            "Bash(git branch -a *)",
+            "Bash(git rev-parse *)",
+            "Bash(git ls-files *)",
+            "Bash(ls *)",
+            "Bash(cat *)",
+            "Bash(head *)",
+            "Bash(tail *)",
+            "Bash(wc *)",
+            "Bash(grep *)",
+            "Bash(find *)",
+            "Bash(sort *)",
+            "Bash(uniq *)",
+            "Bash(jq *)",
+            "Bash(which *)",
+            "Bash(echo *)",
+            "Bash(pwd *)",
+            "Bash(whoami *)",
+            "Bash(ruby -c *)",
+            "Bash(go fmt /tmp/ *)",
+            "Bash(gofmt -l *)",
+            "Bash(gofmt -d *)",
+            "Bash(go vet *)",
+            "Bash(go build *)",
+            "Bash(go test -c *)",
+            "Bash(go mod download *)",
+            "Bash(go mod tidy *)",
+            "Bash(chmod +x *)",
             "Read(//Users/**)",
             "Read(//private/tmp/**)",
             "Glob(**)",
@@ -1292,19 +1293,19 @@ def create_or_merge_project_settings_local(project_path: Path) -> None:
             # SourceCraft MCP helpers (project-scoped)
             "mcp__sourcecraft__list_pull_request_comments",
             # Common safe Go workflows (project-scoped)
-            "Bash(go test:*)",
-            "Bash(go test -c:*)",
-            "Bash(go vet :*)",
-            "Bash(go build:*)",
-            "Bash(go mod download:*)",
-            "Bash(go mod tidy:*)",
-            "Bash(gofmt -l :*)",
-            "Bash(gofmt -d :*)",
+            "Bash(go test *)",
+            "Bash(go test -c *)",
+            "Bash(go vet *)",
+            "Bash(go build *)",
+            "Bash(go mod download *)",
+            "Bash(go mod tidy *)",
+            "Bash(gofmt -l *)",
+            "Bash(gofmt -d *)",
             # Common safe Make targets
             "Bash(make generate manifests)",
             "Bash(make manifests)",
             # Common git workflows
-            "Bash(git worktree add:*)",
+            "Bash(git worktree add *)",
             # Used by some test/dev scripts to produce temporary dev certs
             'Bash(openssl req -x509 -newkey rsa:512 -keyout /dev/null -out /dev/stdout -days 365 -nodes -subj "/CN=test" 2>/dev/null)',
         ],
@@ -1369,10 +1370,13 @@ def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
             "monitor": [],
             "predictor": [],
             "evaluator": [],
-            "orchestrator": [],
             "reflector": [],
             "curator": [],
             "documentation-reviewer": [],
+            "debate-arbiter": [],
+            "synthesizer": [],
+            "research-agent": [],
+            "final-verifier": [],
         },
         "workflow_settings": {
             "always_retrieve_knowledge": True,
@@ -1426,14 +1430,14 @@ def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
             "task-decomposer",
             "monitor",
             "evaluator",
-            "orchestrator",
             "reflector",
+            "debate-arbiter",
         ]:
             if agent in config["agent_mcp_mappings"]:
                 config["agent_mcp_mappings"][agent].append("sequential-thinking")
 
     if "claude-reviewer" in mcp_servers:
-        for agent in ["monitor", "evaluator", "orchestrator"]:
+        for agent in ["monitor", "evaluator", "final-verifier"]:
             if agent in config["agent_mcp_mappings"]:
                 config["agent_mcp_mappings"][agent].append("claude-reviewer")
 
@@ -2089,12 +2093,12 @@ def init(
     tracker.add("create-agents", "Create MAP agents")
     tracker.start("create-agents")
     create_agent_files(project_path, selected_mcp_servers)
-    tracker.complete("create-agents", "8 agents")
+    tracker.complete("create-agents", "12 agents")
 
     tracker.add("create-commands", "Create slash commands")
     tracker.start("create-commands")
     create_command_files(project_path)
-    tracker.complete("create-commands", "4 commands")
+    tracker.complete("create-commands", "10 commands")
 
     tracker.add("create-skills", "Create skills")
     tracker.start("create-skills")

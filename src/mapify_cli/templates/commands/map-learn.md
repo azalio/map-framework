@@ -27,11 +27,11 @@ description: Extract and preserve lessons from completed workflows (OPTIONAL lea
 
 ## ⚠️ IMPORTANT: This is an OPTIONAL step
 
-**You are NOT required to run this command.** MAP workflows (except /map-fast) include learning by default.
+**You are NOT required to run this command.** No MAP workflow includes automatic learning — learning is always a separate step via this command.
 
 Use /map-learn when:
+- You completed /map-efficient, /map-debug, or /map-fast and want to preserve lessons
 - You want to batch-learn from multiple workflows at once
-- You completed /map-fast and want to preserve lessons retroactively
 - You want to manually trigger learning for custom workflows
 
 **Do NOT use this command:**
