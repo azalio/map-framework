@@ -80,7 +80,7 @@ The orchestration lives in `.claude/commands/map-*.md` prompts created by `mapif
 ## Trouble?
 
 - **Command not found** → Run `mapify init` in your project first
-- **Agent errors** → Check `.claude/agents/` has all 11 `.md` files
+- **Agent errors** → Check `.claude/agents/` has all 12 `.md` files
 - [More help →](docs/INSTALL.md#troubleshooting)
 
 ## Contributing
