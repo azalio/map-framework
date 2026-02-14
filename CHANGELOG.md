@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-02-14
+
 ### Added
 - **Artifact-gated validation** in MAP orchestrator for stricter workflow enforcement
 - **Enhanced skills** with examples, troubleshooting sections, trigger rules, and validation scripts
