@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Artifact-gated validation** in MAP orchestrator for stricter workflow enforcement
+- **Enhanced skills** with examples, troubleshooting sections, trigger rules, and validation scripts
+- **skip_step command** for MAP orchestrator to allow controlled step skipping
+
+### Fixed
+- **Documentation accuracy audit** (48 fixes): Comprehensive alignment of all docs, presentations, and templates with actual implementation
+  - Corrected agent count references across all docs (8/9/11 → 12 agents)
+  - Corrected command count references (updated to 10 MAP commands)
+  - Added missing agents (Synthesizer, DebateArbiter, ResearchAgent, FinalVerifier) to ARCHITECTURE.md and presentations
+  - Replaced phantom `/map-feature` and `/map-refactor` references with implemented workflows
+  - Removed stale haiku model references from presentations
+  - Fixed Evaluator workflow assignments and map-fast agent pipeline docs
+- **Template variable consistency**: Resolved 8 template variable inconsistencies (`{{standards_url}}` → `{{standards_doc}}`, etc.)
+- **Branch sanitization**: Unified branch name sanitization across all hooks, commands, and agents
+- **Path conventions**: Corrected flat `.map/` path references to nested `<branch>/` directory convention
+- **API parameter naming**: Fixed `top_k` → `limit` in documentation-reviewer and other agents
+- **MAP workflow inconsistencies**: Resolved 35 audit issues across orchestrator, commands, and agent templates
+- **Plan path bug** and evidence indentation in orchestrator
+- **Removed stale references**: Cleaned up RETRY_LOOP/APPLY_CHANGES step references
+- **Test fixtures**: Updated to cover all 12 agents and 10 commands
+- **Black formatting**: Fixed formatting in 4 template/test files
+
 ## [3.1.0] - 2026-02-09
 
 ### Changed (BREAKING)
