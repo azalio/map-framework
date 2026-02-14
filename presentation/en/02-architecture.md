@@ -179,7 +179,7 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 
 **All agents use:**
 
-- YAML frontmatter: name, description, model (sonnet/haiku), version 2.2.0
+- YAML frontmatter: name, description, model (sonnet/opus), version 2.2.0
 - Handlebars variables: {{project_name}}, {{language}}, {{framework}}, {{subtask_description}}, {{existing_patterns}}, {{feedback}}
 - Standard sections: IDENTITY, context, mcp_integration, rationale, critical/constraints, examples, output_format
 

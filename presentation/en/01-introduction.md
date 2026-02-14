@@ -58,8 +58,8 @@ MAP uses **5 MCP servers** to extend capabilities:
 
 **Model allocation strategy:**
 
-- Predictor, Evaluator: **haiku** (fast analysis)
-- Actor, Monitor, TaskDecomposer, Reflector, Curator, DocumentationReviewer: **sonnet** (quality-critical)
+- Actor, Monitor, TaskDecomposer, Predictor, Evaluator, Reflector, Curator, DocumentationReviewer: **sonnet** (quality-critical)
+- DebateArbiter: **opus** (highest reasoning for cross-variant analysis)
 
 ### Agent Context Isolation
 
