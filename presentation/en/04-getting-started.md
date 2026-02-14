@@ -127,7 +127,7 @@ Copy selected components into an existing project:
 
 ## First Commands
 
-After installation, you have **4 core workflow commands**:
+After installation, you have **10 workflow commands** (4 primary + 6 supporting). Here are the 4 most commonly used:
 
 ### /map-efficient — Full Workflow (Features, Refactoring, Complex Tasks)
 
@@ -200,6 +200,7 @@ MAP requires **5 MCP servers** for full functionality:
 
 **Required:**
 
+- **mem0** — semantic pattern memory (tiered search, pattern storage)
 - **claude-reviewer** — professional code review with security analysis
 
 **Optional (recommended):**

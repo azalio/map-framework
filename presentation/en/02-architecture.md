@@ -8,7 +8,7 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 
 ## System Components
 
-### 1. TaskDecomposer (1,169 lines)
+### 1. TaskDecomposer (867 lines)
 
 **Model:** sonnet
 **Purpose:** Translates high-level goals into atomic, testable subtasks with explicit dependencies
@@ -22,7 +22,7 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 
 **Output:** JSON with subtasks, acceptance_criteria, estimated_complexity, depends_on
 
-### 2. Actor (641 lines)
+### 2. Actor (1,084 lines)
 
 **Model:** sonnet
 **Purpose:** Senior software engineer; writes clean, efficient, production-ready code
@@ -37,7 +37,7 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 
 **Inputs:** {{existing_patterns}} (top_k=5), {{plan_context}} (recitation pattern), {{feedback}} (if retry)
 
-### 3. Monitor (908 lines)
+### 3. Monitor (2,521 lines)
 
 **Model:** sonnet
 **Purpose:** Meticulous code reviewer (10+ years), catches bugs, vulnerabilities, and standard violations
@@ -55,7 +55,7 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 
 **Output:** valid (boolean), issues (severity/category/description), verdict (approved/needs_revision/rejected)
 
-### 4. Predictor (898 lines)
+### 4. Predictor (2,108 lines)
 
 **Model:** haiku (cost-optimized)
 **Purpose:** Impact analysis specialist; predicts ripple effects BEFORE implementation
@@ -68,7 +68,7 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 
 **Output:** affected_files, breaking_changes, required_updates, risk_level (low/medium/high), rollback_plan
 
-### 5. Evaluator (843 lines)
+### 5. Evaluator (1,492 lines)
 
 **Model:** haiku (cost-optimized)
 **Purpose:** Objective quality assessor with data-driven metrics
@@ -85,7 +85,7 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 
 **Output:** scores (code_quality, test_coverage, documentation, security, performance, maintainability 0–10), overall_score, recommendation
 
-### 6. Reflector (1,004 lines) — ACE Learning
+### 6. Reflector (851 lines) — ACE Learning
 
 **Model:** sonnet
 **Purpose:** Expert learning analyst; extracts reusable patterns from implementations
@@ -104,7 +104,7 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 
 **Output:** key_insight, patterns_used, patterns_discovered, bullet_updates (helpful/harmful count), suggested_new_bullets
 
-### 7. Curator (1,145 lines) — ACE Learning
+### 7. Curator (1,296 lines) — ACE Learning
 
 **Model:** sonnet
 **Purpose:** Knowledge curator; evolves the playbook without context collapse
@@ -132,7 +132,7 @@ The **Orchestrator** is NOT an agent template. Workflow coordination logic lives
 
 - `Fetch` — MANDATORY: verify EVERY external URL in docs
 - `deepwiki__ask_question` — get architecture details from external projects
-- `context7__resolve_library_id + get-library-docs` — verify API/integration details
+- `context7__resolve-library-id + get-library-docs` — verify API/integration details
 - `mcp__mem0__map_tiered_search` — check known documentation anti-patterns
 
 **Critical constraints (NEVER violate):**
