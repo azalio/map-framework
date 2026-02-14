@@ -2090,12 +2090,12 @@ def init(
     tracker.add("create-agents", "Create MAP agents")
     tracker.start("create-agents")
     create_agent_files(project_path, selected_mcp_servers)
-    tracker.complete("create-agents", "8 agents")
+    tracker.complete("create-agents", "12 agents")
 
     tracker.add("create-commands", "Create slash commands")
     tracker.start("create-commands")
     create_command_files(project_path)
-    tracker.complete("create-commands", "4 commands")
+    tracker.complete("create-commands", "10 commands")
 
     tracker.add("create-skills", "Create skills")
     tracker.start("create-skills")

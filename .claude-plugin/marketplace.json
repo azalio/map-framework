@@ -32,10 +32,10 @@
         "development"
       ],
       "features": [
-        "9 specialized agents (TaskDecomposer, Actor, Monitor, Predictor, Evaluator, Reflector, Curator, Orchestrator, DocumentationReviewer)",
+        "12 specialized agents (TaskDecomposer, Actor, Monitor, Predictor, Evaluator, Reflector, Curator, DocumentationReviewer, Debate-Arbiter, Synthesizer, Research-Agent, Final-Verifier)",
         "ACE learning system with persistent knowledge base",
         "5 Claude Code hooks for automation",
-        "4 slash commands (/map-efficient, /map-debug, /map-fast, /map-review)",
+        "10 slash commands (/map-efficient, /map-debug, /map-fast, /map-debate, /map-review, /map-check, /map-plan, /map-release, /map-resume, /map-learn)",
         "Professional code review integration",
         "Cost optimization (40-60% savings)"
       ],

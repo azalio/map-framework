@@ -147,8 +147,8 @@ mapify init my-project
 This will:
 
 - ✅ Create project directory
-- ✅ Install 11 MAP agents (including ACE Reflector & Curator, Synthesizer, DebateArbiter, ResearchAgent)
-- ✅ Add 7 slash commands (/map-efficient, /map-debug, /map-fast, /map-learn, /map-review, /map-debate, /map-release)
+- ✅ Install 12 MAP agents (including ACE Reflector & Curator, Synthesizer, DebateArbiter, ResearchAgent, FinalVerifier)
+- ✅ Add 10 slash commands (/map-efficient, /map-debug, /map-fast, /map-debate, /map-learn, /map-review, /map-release, /map-check, /map-plan, /map-resume)
 - ✅ Configure essential MCP servers
 - ✅ Initialize git repository
 - ✅ Create ACE playbook structure

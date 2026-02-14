@@ -64,7 +64,7 @@ mapify init .
 **Benefits:**
 
 - Automatic project structure setup
-- Copies all 8 agents and 4 slash commands
+- Copies all 12 agents and 10 slash commands
 - Creates `.claude/mem0 MCP` with a starter structure
 - Best choice for new projects
 
@@ -92,7 +92,7 @@ Copy selected components into an existing project:
 
 ```bash
 .claude/
-├── agents/           # 8 agent template files
+├── agents/           # 12 agent template files
 │   ├── task-decomposer.md
 │   ├── actor.md
 │   ├── monitor.md
@@ -100,12 +100,22 @@ Copy selected components into an existing project:
 │   ├── evaluator.md
 │   ├── reflector.md
 │   ├── curator.md
-│   └── documentation-reviewer.md
+│   ├── documentation-reviewer.md
+│   ├── debate-arbiter.md
+│   ├── synthesizer.md
+│   ├── research-agent.md
+│   └── final-verifier.md
 ├── commands/         # Workflow slash commands
 │   ├── map-efficient.md
 │   ├── map-debug.md
 │   ├── map-fast.md
-│   └── map-review.md
+│   ├── map-debate.md
+│   ├── map-review.md
+│   ├── map-check.md
+│   ├── map-plan.md
+│   ├── map-release.md
+│   ├── map-resume.md
+│   └── map-learn.md
 └── mem0 MCP       # ACE knowledge base (SQLite)
 ```
 
