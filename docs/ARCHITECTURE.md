@@ -427,9 +427,9 @@ print("Consider running /map-learn to save patterns")
 - Broad refactors or multi-module changes
 - High uncertainty requirements
 
-#### 3. `/map-debate` - Debate-Based Multi-Variant (6 Agents)
+#### 3. `/map-debate` - Debate-Based Multi-Variant (5-7 Agents)
 
-**Agent Sequence:** TaskDecomposer → (3×Actor parallel → 3×Monitor parallel → DebateArbiter (Opus) → Monitor → [Predictor if risky]) per subtask
+**Agent Sequence:** TaskDecomposer → [conditional ResearchAgent] → (3×Actor parallel → 3×Monitor parallel → DebateArbiter (Opus) → Monitor → [Predictor if risky]) per subtask
 
 **Multi-Variant Architecture:**
 
