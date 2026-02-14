@@ -35,7 +35,7 @@ STATE FILE:
       "pending_steps": ["2.1_MEM0_SEARCH", "2.3_ACTOR", "2.4_MONITOR", ...]
     }
 
-STEP PHASES (13 total):
+STEP PHASES (16 total):
   1.0  DECOMPOSE          - task-decomposer agent
   1.5  INIT_PLAN          - Generate task_plan.md
   1.55 REVIEW_PLAN        - User review + explicit approval checkpoint

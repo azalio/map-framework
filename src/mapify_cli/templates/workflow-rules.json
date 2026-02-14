@@ -66,6 +66,25 @@
         ]
       }
     },
+    "map-debate": {
+      "priority": "medium",
+      "description": "Multi-variant synthesis with Opus arbiter for reasoning transparency",
+      "promptTriggers": {
+        "keywords": [
+          "debate",
+          "compare approaches",
+          "trade-offs",
+          "reasoning",
+          "multiple variants",
+          "architectural decision"
+        ],
+        "intentPatterns": [
+          "(compare|debate|weigh).*?(approaches|options|trade-offs)",
+          "(need|want).*?(reasoning|transparency|justification)",
+          "(architectural|design).*?(decision|choice)"
+        ]
+      }
+    },
     "map-fast": {
       "priority": "low",
       "description": "Small, low-risk changes with reduced analysis (NO learning)",
