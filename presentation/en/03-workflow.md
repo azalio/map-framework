@@ -4,7 +4,7 @@
 
 MAP Framework uses a **strictly sequential orchestration** that begins with TaskDecomposer and then runs an implementation loop for each subtask.
 
-**Mandatory sequence:**
+**Full pipeline (conceptual — individual workflows may skip agents):**
 
 ```mermaid
 flowchart TD
