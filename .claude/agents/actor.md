@@ -509,7 +509,7 @@ After applying all code changes, write an evidence file so the orchestrator can 
 ```bash
 cat > .map/<branch>/evidence/actor_<subtask_id>.json << 'EVIDENCE'
 {
-  "phase": "actor",
+  "phase": "ACTOR",
   "subtask_id": "<subtask_id>",
   "timestamp": "<ISO 8601 UTC>",
   "summary": "<one-line description of what was implemented>",

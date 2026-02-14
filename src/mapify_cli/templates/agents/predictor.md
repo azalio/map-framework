@@ -1791,7 +1791,7 @@ After completing impact analysis, write an evidence file via Bash:
 ```bash
 cat > .map/<branch>/evidence/predictor_<subtask_id>.json << 'EVIDENCE'
 {
-  "phase": "predictor",
+  "phase": "PREDICTOR",
   "subtask_id": "<subtask_id>",
   "timestamp": "<ISO 8601 UTC>",
   "risk_assessment": "<low|medium|high|critical>",

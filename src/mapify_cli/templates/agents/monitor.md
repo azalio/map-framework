@@ -2505,7 +2505,7 @@ After completing validation, write an evidence file:
 ```bash
 cat > .map/<branch>/evidence/monitor_<subtask_id>.json << 'EVIDENCE'
 {
-  "phase": "monitor",
+  "phase": "MONITOR",
   "subtask_id": "<subtask_id>",
   "timestamp": "<ISO 8601 UTC>",
   "valid": true,
