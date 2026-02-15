@@ -741,8 +741,8 @@ Check if new patterns conflict with existing knowledge before adding them. This 
 ## When to Check
 
 Check for contradictions when:
-- **Operation type is ADD** (new bullet being added)
-- Bullet content includes **technical patterns or anti-patterns**
+- **Operation type is ADD** (new pattern being added)
+- Pattern content includes **technical patterns or anti-patterns**
 - **High-stakes decisions** in sections like:
   - ARCHITECTURE_PATTERNS
   - SECURITY_PATTERNS
@@ -751,61 +751,31 @@ Check for contradictions when:
 
 **Skip for**:
 - Low-risk sections (DEBUGGING_TECHNIQUES, TOOL_USAGE general tips)
-- UPDATE operations (only modifying existing bullets)
+- UPDATE operations (only modifying existing patterns)
 - Simple code style rules
 
 ## How to Check
 
-**Step 1: Extract Entities from New Bullet**
+**Step 1: Search mem0 for Similar Patterns**
 
-```python
-from mapify_cli.entity_extractor import extract_entities
+Before adding a new pattern, search for existing patterns that cover the same topic:
 
-# For each ADD operation
-for operation in delta_operations:
-    if operation["type"] == "ADD":
-        bullet_content = operation["content"]
-
-        # Extract entities to understand what the bullet is about
-        entities = extract_entities(bullet_content)
+```
+mcp__mem0__map_tiered_search(query="<key terms from new pattern>")
 ```
 
-**Step 2: Check for Conflicts**
+**Step 2: Evaluate Conflicts**
 
-```python
-import sqlite3
-
-from mapify_cli.contradiction_detector import check_new_pattern_conflicts
-
-# Patterns stored in mem0 (no local DB needed)
-
-# Check for conflicts with existing knowledge graph data
-conflicts = check_new_pattern_conflicts(
-    db_conn=db_conn,
-    pattern_text=bullet_content,
-    entities=entities,
-    min_confidence=0.7  # Only high-confidence conflicts
-)
-```
+Review search results for:
+- **Direct contradictions**: Existing pattern says opposite of new pattern
+- **Semantic overlap**: Existing pattern covers same ground (potential duplicate)
+- **Partial conflicts**: Existing pattern applies in different context
 
 **Step 3: Handle Conflicts**
 
-```python
-# Filter to high-severity conflicts
-high_severity = [c for c in conflicts if c.severity == "high"]
-
-if high_severity:
-    print(f"⚠ WARNING: New bullet conflicts with existing patterns:")
-    for conflict in high_severity:
-        print(f"  - {conflict.description}")
-        print(f"    Conflicting bullet: {conflict.existing_bullet_id}")
-        print(f"    Suggestion: {conflict.resolution_suggestion}")
-
-    # DECISION POINT - Choose one:
-    # Option 1: Reject ADD operation (safest)
-    # Option 2: Change to UPDATE with deprecation of conflicting bullet
-    # Option 3: Add warning to metadata, let user decide
-```
+- If **contradicting pattern found**: Don't add — instead UPDATE existing or DEPRECATE it
+- If **duplicate found**: Skip ADD, optionally UPDATE existing with new details
+- If **no conflicts**: Proceed with ADD
 
 **Step 4: Document in Operations**
 
@@ -819,7 +789,7 @@ If contradictions detected, include in operation metadata:
   "metadata": {
     "conflicts_detected": 2,
     "highest_severity": "medium",
-    "conflicting_bullets": ["sec-0012", "sec-0034"],
+    "conflicting_patterns": ["sec-0012", "sec-0034"],
     "resolution": "Manual review recommended - conflicts with existing JWT patterns"
   }
 }
@@ -828,13 +798,13 @@ If contradictions detected, include in operation metadata:
 ## Conflict Resolution Strategies
 
 **High Severity Conflicts**:
-- **Stop and warn**: Don't add the bullet, explain conflict to user
-- **Update existing**: If new pattern is better, UPDATE existing bullet instead
-- **Deprecate old**: If new pattern obsoletes old, DEPRECATE old bullet
+- **Stop and warn**: Don't add the pattern, explain conflict to user
+- **Update existing**: If new pattern is better, UPDATE existing pattern instead
+- **Deprecate old**: If new pattern obsoletes old, DEPRECATE old pattern
 
 **Medium Severity Conflicts**:
 - **Add with warning**: Include conflict note in metadata
-- **Link bullets**: Use `related_to` to show relationship
+- **Link patterns**: Use `related_to` to show relationship
 - **Request clarification**: Ask Reflector for more context
 
 **Low Severity Conflicts**:
@@ -844,9 +814,7 @@ If contradictions detected, include in operation metadata:
 ## Important Notes
 
 - **This is RECOMMENDED but not mandatory**: Curation works without contradiction detection
-- **Only check high-confidence conflicts** (≥0.7 confidence threshold)
 - **Don't auto-reject**: Provide warning and let orchestrator/user decide
-- **Keep it fast**: Detection should add <3 seconds to curation time
 - **No breaking changes**: This is an additive safety check
 
 </recommended_enhancement>
