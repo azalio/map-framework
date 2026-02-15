@@ -2,18 +2,13 @@
 
 > **Machine-readable specification**: See [CLI_REFERENCE.json](./CLI_REFERENCE.json) for complete JSON schema
 
-> **IMPORTANT (v4.0+):** Pattern storage has migrated from playbook.db to mem0 MCP. The playbook commands below are retained for legacy compatibility and Knowledge Graph queries. For pattern storage and retrieval, use mem0 MCP tools: `mcp__mem0__map_tiered_search`, `mcp__mem0__map_add_pattern`, `mcp__mem0__map_archive_pattern`.
-
 Complete reference for all mapify CLI commands with correct syntax, parameters, and common error corrections.
+
+> **Note (v4.0+):** Pattern storage and retrieval is handled by the mem0 MCP server (tiered namespaces: branch → project → org). For pattern operations, use mem0 MCP tools: `mcp__mem0__map_tiered_search`, `mcp__mem0__map_add_pattern`, `mcp__mem0__map_archive_pattern`.
 
 ## Table of Contents
 
-- [Playbook Commands](#playbook-commands)
-  - [query](#mapify-playbook-query)
-  - [search](#mapify-playbook-search)
-  - [apply-delta](#mapify-playbook-apply-delta)
-  - [stats](#mapify-playbook-stats)
-  - [sync](#mapify-playbook-sync)
+- [Pattern Storage (mem0 MCP)](#pattern-storage-mem0-mcp)
 - [Validate Commands](#validate-commands)
   - [graph](#mapify-validate-graph)
 - [Root Commands](#root-commands)
@@ -21,13 +16,13 @@ Complete reference for all mapify CLI commands with correct syntax, parameters, 
   - [check](#mapify-check)
   - [upgrade](#mapify-upgrade)
 - [Common Mistakes](#common-mistakes)
-- [Query Syntax Guide](#query-syntax-guide)
+- [Pattern Search Guide (mem0 MCP)](#pattern-search-guide-mem0-mcp)
 
 ---
 
 ## Pattern Storage (mem0 MCP)
 
-As of v4.0, pattern storage and retrieval is handled by the mem0 MCP server (tiered namespaces: branch → project → org). The legacy playbook CLI is not the source of truth for patterns.
+Pattern storage and retrieval is handled by the mem0 MCP server (tiered namespaces: branch → project → org).
 
 ### Search Patterns
 
@@ -196,7 +191,7 @@ Updates agent templates in `.claude/agents/` to latest versions.
 
 ## Common Mistakes
 
-### 1. Using Legacy Playbook Commands
+### 1. Using Legacy CLI Commands
 
 | ❌ Wrong | ✅ Correct | Explanation |
 |---------|-----------|-------------|
@@ -208,12 +203,12 @@ Updates agent templates in `.claude/agents/` to latest versions.
 |---------|-----------|-------------|
 | Direct mem0 writes from ad-hoc scripts | `Task(subagent_type="curator", ...)` | Curator handles deduplication + quality scoring |
 
-### 3. Wrong Approach (LEGACY - v4.0+ uses mem0 MCP)
+### 3. Wrong Approach (v4.0+ uses mem0 MCP)
 
 | ❌ Wrong | ✅ Correct | Explanation |
 |---------|-----------|-------------|
-| `sqlite3 .claude/playbook.db "UPDATE..."` | `mcp__mem0__map_add_pattern` via Curator | Direct DB access breaks integrity; patterns now in mem0 |
-| `Edit(.claude/playbook.db, ...)` | `Task(subagent_type="curator", ...)` | Cannot edit binary DB; use Curator agent |
+| Direct database access for patterns | `mcp__mem0__map_add_pattern` via Curator | Direct access breaks integrity; patterns are in mem0 |
+| Bypassing Curator for pattern writes | `Task(subagent_type="curator", ...)` | Curator handles deduplication and quality scoring |
 
 ---
 
@@ -278,5 +273,4 @@ Searches across tiers (branch → project → org) before extracting new pattern
 
 For the most up-to-date command definitions, see the source code decorators:
 - `@app.command()` - Root commands
-- `@playbook_app.command()` - Playbook commands
 - `@validate_app.command()` - Validate commands

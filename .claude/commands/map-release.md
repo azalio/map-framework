@@ -65,9 +65,9 @@ Phase 7: Final Summary and Cleanup
 
 **Purpose:** Verify all prerequisites before initiating release. Failure in any gate aborts the workflow.
 
-### 1.1 Load Playbook Context for Release Patterns
+### 1.1 Load mem0 Context for Release Patterns
 
-Query playbook for release-related patterns and past release issues:
+Search mem0 for release-related patterns and past release issues:
 
 ```bash
 # Fetch release-related patterns from mem0

@@ -284,7 +284,7 @@ Read(
 
 {{#if existing_patterns}}
 
-**Relevant patterns from playbook:**
+**Relevant patterns from mem0:**
 
 {{existing_patterns}}
 
@@ -293,7 +293,7 @@ Read(
 {{/if}}
 
 {{#unless existing_patterns}}
-*No playbook patterns available. Search results will help seed the playbook.*
+*No mem0 patterns available. Search results will help seed the knowledge base.*
 {{/unless}}
 
 </Research_Patterns_ACE>

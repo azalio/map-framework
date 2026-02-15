@@ -344,12 +344,58 @@ if monitor_output["valid"] == false:
 ### Phase: PREDICTOR (2.6)
 
 ```python
-# Conditional: Call if risk_level ∈ {high, medium} OR escalation_required
-if requires_predictor(subtask):
+# Enhanced predictor decision:
+# 1. ALWAYS call for: high risk, security_critical, or escalation_required
+# 2. SKIP if: risk_level == "low"
+# 3. SKIP if: risk_level == "medium" AND all affected_files are new (don't exist yet)
+#    AND complexity_score <= 4 AND NOT security_critical
+#    → Write minimal evidence directly via Write tool
+# 4. OTHERWISE: Call predictor with tier_hint
+
+skip_predictor = (
+    not subtask.escalation_required
+    and not subtask.security_critical
+    and (
+        subtask.risk_level == "low"
+        or (
+            subtask.risk_level == "medium"
+            and subtask.affected_files  # guard against vacuous all()
+            and all(not file_exists(f) for f in subtask.affected_files)
+            and subtask.complexity_score <= 4
+        )
+    )
+)
+
+if skip_predictor:
+    # Write minimal evidence directly (no agent call needed)
+    # Use Write tool → <project_root>/.map/<branch>/evidence/predictor_<subtask_id>.json
+    {
+      "phase": "PREDICTOR",
+      "subtask_id": "<id>",
+      "timestamp": "<ISO 8601 UTC>",
+      "risk_assessment": "low",
+      "confidence_score": 0.95,
+      "tier_selected": "skipped",
+      "skip_reason": "New files only, no existing callers, complexity <= 4"
+    }
+else:
+    # Determine tier_hint from subtask metadata:
+    # - risk "medium" + complexity_score <= 3 → tier_hint: 1
+    # - risk "medium" + complexity_score 4-7 → tier_hint: 2
+    # - risk "high" OR security_critical → tier_hint: 3
+    if subtask.risk_level == "high" or subtask.security_critical:
+        tier_hint = 3
+    elif subtask.complexity_score <= 3:
+        tier_hint = 1
+    else:
+        tier_hint = 2
+
     Task(
       subagent_type="predictor",
       description="Analyze impact",
       prompt=f"""Analyze impact using Predictor schema.
+
+tier_hint: {tier_hint}
 
 <MAP_Packet subtask="[ID]" v="1.0" risk="[risk_level]">
 [paste from .map/<branch>/current_packet.xml]

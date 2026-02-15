@@ -37,7 +37,7 @@ Verification:
 ## Safety expectations
 
 - Don't add or expose secrets. Avoid reading/writing `.env*` and credential/key files.
-- When changing playbook/pattern storage behavior, keep Curator-mediated writes (see `.claude/agents/curator.md` and `docs/ARCHITECTURE.md`).
+- When changing pattern storage behavior, ensure Curator-mediated writes through mem0 MCP are preserved (see `.claude/agents/curator.md` and `docs/ARCHITECTURE.md`).
 
 ## Bash Command Guidelines
 
@@ -70,6 +70,21 @@ cat file.txt                   # Then process in memory
 When you pipe through `head/tail/less/more`, the source command keeps running but output buffers indefinitely. This makes commands appear "hung" when they're actually waiting for the pipe to complete.
 
 **Exception:** Filtering pipes are OK (grep, awk, sed) because they process all input.
+
+### Git commands: do NOT use `-C` when already in the repo
+
+When the working directory is already this repository, run git commands **without** the `-C` flag:
+
+```bash
+# ✅ Correct (working directory is already the repo):
+git status
+git diff
+git log -n 5
+
+# ❌ Wrong (redundant -C triggers permission prompts):
+git -C /path/to/map-framework status
+git -C /path/to/map-framework diff
+```
 
 **Full guidelines:** `.claude/references/bash-guidelines.md`
 

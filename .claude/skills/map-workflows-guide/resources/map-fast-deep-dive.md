@@ -20,7 +20,7 @@
 
 **Why?** No learning means:
 - Patterns not captured → team doesn't learn
-- Playbook not updated → knowledge lost
+- Knowledge base not updated → knowledge lost
 - Patterns not synced → other projects don't benefit
 - Technical debt accumulates
 
@@ -45,8 +45,8 @@
 - Failures not documented
 - Knowledge not extracted
 
-**Curator (Playbook Updates)**
-- No playbook bullets created
+**Curator (mem0 Pattern Updates)**
+- No mem0 patterns created
 - No pattern synchronization
 - No cross-project learning
 

@@ -425,7 +425,6 @@ For detailed information on each workflow:
 Agent & system details:
 
 - **[Agent Architecture](resources/agent-architecture.md)** — How agents orchestrate and coordinate
-- **[Playbook System (LEGACY)](resources/playbook-system.md)** — Historical pattern storage
 
 ---
 

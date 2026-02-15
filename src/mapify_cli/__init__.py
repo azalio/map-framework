@@ -850,7 +850,7 @@ Return JSON with:
 - key_insight: Main lesson learned
 - success_patterns: What worked well
 - failure_patterns: What went wrong
-- suggested_new_bullets: Playbook entries to add
+- suggested_new_patterns: Pattern entries to add
 - confidence: How reliable this insight is
 """
 
@@ -861,18 +861,18 @@ def create_curator_content(mcp_servers: List[str]) -> str:
 
     return f"""---
 name: curator
-description: Manages structured playbook with incremental updates (ACE)
+description: Manages structured patterns with incremental updates (ACE)
 tools: Read, Write, Edit
 model: sonnet
 ---
 
 # IDENTITY
 
-You are a knowledge curator who maintains the ACE playbook by integrating Reflector insights.
+You are a knowledge curator who maintains the ACE pattern store by integrating Reflector insights.
 {mcp_section}
 # ROLE
 
-Integrate Reflector insights into playbook using delta operations:
+Integrate Reflector insights into patterns using delta operations:
 - ADD: New pattern bullets
 - UPDATE: Increment helpful/harmful counters
 - DEPRECATE: Remove harmful patterns
@@ -887,7 +887,7 @@ Integrate Reflector insights into playbook using delta operations:
 ## Output Format (JSON)
 
 Return JSON with:
-- reasoning: Why these operations improve playbook
+- reasoning: Why these operations improve patterns
 - operations: Array of ADD/UPDATE/DEPRECATE operations
 - deduplication_check: What duplicates were found
 """
@@ -1086,7 +1086,7 @@ Extract and preserve lessons from recent workflow:
 
 $ARGUMENTS
 
-Call Reflector to extract patterns, then Curator to update playbook.
+Call Reflector to extract patterns, then Curator to update pattern store.
 """,
         }
 

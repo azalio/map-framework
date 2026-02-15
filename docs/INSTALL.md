@@ -151,7 +151,7 @@ This will:
 - ✅ Add 10 slash commands (/map-efficient, /map-debug, /map-fast, /map-debate, /map-learn, /map-review, /map-release, /map-check, /map-plan, /map-resume)
 - ✅ Configure essential MCP servers
 - ✅ Initialize git repository
-- ✅ Create ACE playbook structure
+- ✅ Configure ACE learning system (mem0 MCP)
 
 **Note:** MAP Framework is designed for Claude Code. All generated agents and commands are optimized for the Claude Code CLI.
 
@@ -225,7 +225,7 @@ If you prefer manual setup:
    │   │   ├── predictor.md           # Analyzes impact and risks
    │   │   ├── evaluator.md           # Scores solution quality
    │   │   ├── reflector.md           # ACE: Extracts lessons
-   │   │   ├── curator.md             # ACE: Manages playbook
+   │   │   ├── curator.md             # ACE: Manages knowledge base
    │   │   ├── synthesizer.md         # Self-MoA: Merges variants
    │   │   ├── debate-arbiter.md      # Opus: Cross-evaluates variants
    │   │   ├── research-agent.md      # Isolated codebase research
@@ -245,7 +245,7 @@ If you prefer manual setup:
    │   └── mcp_config.json
    ```
 
-> **Note (v4.0+):** Pattern storage migrated from playbook.db to mem0 MCP with tiered namespaces (branch → project → org).
+> **Note (v4.0+):** Pattern storage uses mem0 MCP with tiered namespaces (branch → project → org).
 
 ## Verify Installation
 
@@ -321,7 +321,7 @@ mcp__mem0__map_tiered_search("JWT authentication")
 mcp__mem0__map_add_pattern(content="...", category="security", tier="project")
 ```
 
-> **Note (v4.0+):** Pattern storage migrated from playbook.db to mem0 MCP with tiered namespaces (branch → project → org).
+> **Note (v4.0+):** Pattern storage uses mem0 MCP with tiered namespaces (branch → project → org).
 
 ## MCP Server Setup
 
@@ -378,7 +378,7 @@ The MAP Framework includes an ACE-style learning system via mem0 MCP:
   - testing
   - performance
 
-> **Note (v4.0+):** Pattern storage migrated from playbook.db to mem0 MCP. The system automatically grows as you use MAP commands with fingerprint-based deduplication.
+> **Note (v4.0+):** Pattern storage uses mem0 MCP. The system automatically grows as you use MAP commands with fingerprint-based deduplication.
 
 ## Optional: Semantic Search
 

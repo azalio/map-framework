@@ -40,7 +40,7 @@ Debugging workflow focuses on analysis before implementation:
 
 ## Step 1: Analyze the Issue
 
-Before calling task-decomposer, gather context and query playbook:
+Before calling task-decomposer, gather context and search mem0:
 
 ```bash
 # Search for similar debugging patterns
@@ -64,7 +64,7 @@ Task(
 **Context:**
 - Error logs: [if available]
 - Affected files: [from analysis]
-- Similar past issues: [from playbook search]
+- Similar past issues: [from mem0 search]
 
 Output JSON with:
 - subtasks: array of {id, description, debug_type: 'investigation'|'fix'|'verification', acceptance_criteria}

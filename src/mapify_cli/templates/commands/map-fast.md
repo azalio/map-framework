@@ -8,7 +8,7 @@ description: Minimal workflow for small, low-risk changes (40-50% savings, NO le
 
 Minimal agent sequence (40-50% token savings). Skips: Predictor, Reflector, Curator.
 
-**Consequences:** No impact analysis, no quality scoring, no learning, playbook never improves.
+**Consequences:** No impact analysis, no quality scoring, no learning, knowledge base never improves.
 
 Implement the following:
 
@@ -30,7 +30,7 @@ Minimal agent sequence (token-optimized, reduced analysis depth):
 **Agents INTENTIONALLY SKIPPED:**
 - Predictor (no impact analysis)
 - Reflector (no lesson extraction)
-- Curator (no playbook updates)
+- Curator (no mem0 pattern updates)
 
 **⚠️ CRITICAL:** This is NOT the full MAP workflow. Learning and impact analysis are disabled.
 
@@ -122,7 +122,7 @@ After all subtasks completed:
 2. Create commit with message
 3. Summarize what was implemented
 
-**Note:** No playbook updates (learning disabled).
+**Note:** No mem0 pattern updates (learning disabled).
 
 ## Critical Constraints
 

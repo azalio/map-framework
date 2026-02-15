@@ -568,7 +568,7 @@ If circular dependency detected (e.g., A→B→C→A):
 {{subtask_description}}
 
 {{#if existing_patterns}}
-## Relevant Playbook Knowledge
+## Relevant mem0 Knowledge
 
 The following patterns have been learned from previous successful implementations:
 

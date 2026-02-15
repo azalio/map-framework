@@ -504,10 +504,13 @@ When assessing performance impact, use these as default baselines unless project
 
 ### Evidence File (Artifact-Gated Validation)
 
-After applying all code changes, write an evidence file so the orchestrator can verify this step ran. Use Bash (not Write tool) to create the file:
+After applying all code changes, write an evidence file so the orchestrator can verify this step ran. Use the **Write tool** to create the file at the absolute path:
 
-```bash
-cat > .map/<branch>/evidence/actor_<subtask_id>.json << 'EVIDENCE'
+`<project_root>/.map/<branch>/evidence/actor_<subtask_id>.json`
+
+with the following JSON content:
+
+```json
 {
   "phase": "ACTOR",
   "subtask_id": "<subtask_id>",
@@ -517,7 +520,6 @@ cat > .map/<branch>/evidence/actor_<subtask_id>.json << 'EVIDENCE'
   "files_changed": ["<list of modified file paths>"],
   "status": "applied"
 }
-EVIDENCE
 ```
 
 **Required fields** (orchestrator validates these): `phase`, `subtask_id`, `timestamp`.
@@ -606,7 +608,7 @@ output:
   default: "Will implement read-through unless directed otherwise"
 ```
 
-## When Playbook Patterns Conflict
+## When mem0 Patterns Conflict
 
 ```yaml
 output:

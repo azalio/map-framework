@@ -7,12 +7,12 @@
 # Examples:
 #   ./check-command.sh validate graph
 #   ./check-command.sh init
-#   ./check-command.sh playbook  # deprecated command
+#   ./check-command.sh playbook  # removed command
 #
 # Exit codes:
 #   0 - Command exists
 #   1 - Command not found
-#   2 - Command deprecated
+#   2 - Command removed
 
 set -euo pipefail
 
@@ -30,21 +30,21 @@ if [ -z "$SUBCOMMAND" ]; then
   echo "  upgrade    - Upgrade agent templates"
   echo "  validate   - Validate dependency graphs"
   echo ""
-  echo "Deprecated subcommands:"
+  echo "Removed subcommands:"
   echo "  playbook   - Removed in v4.0+ (use mem0 MCP)"
   exit 1
 fi
 
-# Known deprecated commands
-DEPRECATED_COMMANDS="playbook"
+# Removed subcommands (replaced by mem0 MCP in v4.0+)
+REMOVED_COMMANDS="playbook"
 
 # Known valid commands
 VALID_COMMANDS="init check upgrade validate"
 
-# Check deprecated first
-for dep in $DEPRECATED_COMMANDS; do
+# Check removed commands first
+for dep in $REMOVED_COMMANDS; do
   if [ "$SUBCOMMAND" = "$dep" ]; then
-    echo "ERROR: '$SUBCOMMAND' is deprecated (removed in v4.0+)"
+    echo "ERROR: '$SUBCOMMAND' was removed in v4.0+ (use mem0 MCP instead)"
     echo ""
     echo "Replacements:"
     case "$SUBCOMMAND" in
