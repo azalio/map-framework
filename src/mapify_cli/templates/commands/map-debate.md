@@ -44,10 +44,14 @@ Task: $ARGUMENTS
 
 Hard requirements:
 - Use `blueprint.subtasks[].validation_criteria` (2-4 testable, verifiable outcomes)
+  - Prefix each criterion with `VC1:`, `VC2:`, ... (stable references for Actor/Monitor)
+  - Include a concrete anchor per VC (endpoint/function + file path)
 - Use `blueprint.subtasks[].dependencies` (array of subtask IDs) and order subtasks by dependency
 - Include `blueprint.subtasks[].complexity_score` (1-10) and `risk_level` (low|medium|high)
 - Include `blueprint.subtasks[].security_critical` (true for auth/crypto/validation/data access)
-- Include `blueprint.subtasks[].test_strategy` with unit/integration/e2e keys"
+- Include `blueprint.subtasks[].test_strategy` with unit/integration/e2e keys
+  - Map every `VCn:` to ≥1 planned test case (prefer test name contains `vc<n>`)
+  - Recommended format: `path/to/test_file.ext::test_name_or_symbol`"
 )
 ```
 

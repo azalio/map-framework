@@ -248,8 +248,21 @@ Return **ONLY** valid JSON in this exact structure:
 **subtasks[].complexity_rationale**: MUST reference factors: "Score N: factor (+X), factor (+Y)..."
 **subtasks[].validation_criteria**: Array of **testable conditions** that prove completion
   - REQUIRED: 2-4 specific, verifiable outcomes
-  - Good: "Returns 401 for expired token", "Creates audit log entry with user_id"
-  - Bad: "Works correctly", "Handles errors"
+  - Format (recommended): Prefix each item with `VC1:`, `VC2:`, ... for stable cross-agent reference.
+  - Each criterion MUST be both:
+    - **Behavior-/artifact-verifiable** (can be checked by reading code), and
+    - **Test-verifiable** (has at least one concrete test case planned in `test_strategy`).
+  - Each criterion SHOULD include a concrete anchor:
+    - endpoint/handler + route, OR
+    - function/class name + file path
+  - Good:
+    - "VC1: POST /users returns 201 and persists normalized email (users/routes.py:create_user)"
+    - "VC2: Returns 401 for expired token (auth/middleware.py:validate_token)"
+    - "VC3: Creates audit log entry with user_id (audit/logger.py:log_event)"
+  - Bad:
+    - "Works correctly"
+    - "Handles errors"
+    - "Tests pass"
 **subtasks[].contracts**: Array of **executable assertion patterns** (optional but recommended for complexity_score ≥ 5)
   - `type`: "precondition" | "postcondition" | "invariant"
   - `assertion`: Executable pattern (e.g., "response.status == 401 WHEN token.expired")
@@ -269,6 +282,13 @@ Return **ONLY** valid JSON in this exact structure:
   - OMIT when: standard pattern with obvious implementation
   - Example: "Use existing RateLimiter middleware, configure for /api/* routes"
 **subtasks[].test_strategy**: Required object with unit/integration/e2e keys. Use "N/A" for levels not applicable.
+  - MUST map `validation_criteria` → tests:
+    - For each `VCn:` criterion, include at least one planned test name that covers it.
+    - Recommended naming: include `vc<n>` in the test name (e.g., `test_vc1_*`, `TestVC1*`) for deterministic grep-ability.
+    - Recommended format: `path/to/test_file.ext::test_name_or_symbol`
+  - "N/A" is acceptable ONLY when:
+    - The repository has no automated test harness, and adding one is out-of-scope for this subtask.
+    - In that case: either add a FOUNDATION subtask to introduce a minimal test harness, or document the gap explicitly in risks/assumptions.
 **subtasks[].affected_files**: Precise file paths (NOT "backend", "frontend"); use [] if paths unknown
 
 ### Subtask Ordering
@@ -491,9 +511,10 @@ When invoked with `mode: "re_decomposition"` from the orchestrator, you receive 
 - [ ] Descriptions explain HOW, not just WHAT
 
 **Acceptance Criteria**:
-- [ ] Each subtask has 3-5 specific criteria
+- [ ] Each subtask has 2-4 specific criteria
 - [ ] Criteria are testable and measurable
-- [ ] Criteria cover: functionality + edge cases + testing
+- [ ] Criteria cover: functionality + edge cases (as applicable)
+- [ ] Each VC has a concrete verification hook in test_strategy (at least one planned test per VC)
 - [ ] No vague criteria ("works", "is good", "done")
 
 **File Paths**:
@@ -510,7 +531,7 @@ When invoked with `mode: "re_decomposition"` from the orchestrator, you receive 
 
 **Test Strategy**:
 - [ ] test_strategy object included for each subtask
-- [ ] Unit tests specified (REQUIRED for all subtasks)
+- [ ] Unit tests specified (default). If repo has no test harness: add a FOUNDATION subtask to introduce minimal tests or explicitly justify "N/A".
 - [ ] Integration tests specified when subtask integrates multiple components
 - [ ] E2e tests specified when subtask impacts user-facing functionality
 - [ ] "N/A" used appropriately when test layer not applicable

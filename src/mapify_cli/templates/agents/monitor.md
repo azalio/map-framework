@@ -821,14 +821,26 @@ When `{{requirements}}` or `{{subtask_description}}` includes `validation_criter
 ```
 FOR each criterion in validation_criteria:
   1. PARSE criterion into testable assertion
-  2. VERIFY assertion against {{solution}}
-  3. RECORD result: PASS | FAIL | PARTIAL | UNTESTABLE
+  2. VERIFY assertion against {{solution}} (code-path evidence)
+  3. VERIFY test coverage using test_strategy (if not N/A)
+  4. RECORD result: PASS | FAIL | PARTIAL | UNTESTABLE
 
 CONTRACT_STATUS:
   - ALL PASS → contract_compliant: true
   - ANY FAIL → contract_compliant: false, list violations
   - ANY UNTESTABLE → flag for clarification
 ```
+
+### Test Coverage Rule (Executable Contracts)
+
+Design constraints only become reliable when they are enforced by executable checks.
+
+For each `VCn:` criterion:
+- If `test_strategy` is provided and not `N/A`, require at least one concrete test case that covers it.
+- Prefer deterministic mapping: test names include `vc<n>` (e.g., `test_vc1_*`, `TestVC1*`).
+- Evidence MUST include both:
+  - **Code evidence** (where in code the behavior is implemented), and
+  - **Test evidence** (where in tests it is asserted).
 
 ### Contract Assertion Patterns
 
@@ -852,15 +864,31 @@ Include in JSON output when validation_criteria provided:
     "failed": 1,
     "untestable": 0,
     "details": [
-      {"criterion": "Returns 401 for expired token", "status": "PASS", "evidence": "Line 45: if token.expired: return 401"},
-      {"criterion": "Creates audit log entry", "status": "FAIL", "evidence": "No audit.log() call found in create_user()"}
+      {
+        "criterion": "VC1: Returns 401 for expired token (auth/middleware.py:validate_token)",
+        "status": "PASS",
+        "code_evidence": "auth/middleware.py:45: if token.expired: return 401",
+        "test_coverage": "PASS",
+        "test_evidence": "tests/test_auth.py::test_vc1_expired_token_returns_401"
+      },
+      {
+        "criterion": "VC2: Creates audit log entry with user_id (audit/logger.py:log_event)",
+        "status": "FAIL",
+        "code_evidence": "No audit.log_event() call found in create_user()",
+        "test_coverage": "MISSING",
+        "test_evidence": "No test found matching vc2 or described in test_strategy"
+      }
     ]
   },
   "contract_compliant": false
 }
 ```
 
-**Decision Rule**: If `contract_compliant: false`, set `valid: false` unless ALL failed contracts are LOW severity (documentation, naming).
+**Decision Rule**:
+- If `contract_compliant: false`, set `valid: false` unless ALL failed contracts are LOW severity (documentation, naming).
+- If any Behavioral/Integration/Edge-case criterion has `test_coverage != PASS` and test_strategy is not `N/A`:
+  - If `security_critical == true`: set `valid: false` (missing executable enforcement is a release blocker).
+  - Otherwise: add a **testability** issue and require Actor to add tests.
 
 </Monitor_Contract_Validation>
 
@@ -2512,7 +2540,13 @@ with the following JSON content:
   "timestamp": "<ISO 8601 UTC>",
   "valid": true,
   "issues_found": 0,
-  "recommendation": "approve|reject|revise"
+  "recommendation": "approve|reject|revise",
+  "validation_criteria_test_coverage": {
+    "total": 0,
+    "covered": 0,
+    "missing": 0,
+    "notes": "Optional: summarize VC→test coverage findings"
+  }
 }
 ```
 

@@ -375,6 +375,10 @@ Document key decisions using this structure:
 - [ ] Error cases (invalid input, failures)
 - [ ] Security cases (injection, auth bypass) — if applicable
 
+**Validation criteria → tests (MANDATORY when test_strategy is not N/A)**:
+- For each `VCn:` item in `validation_criteria`, implement or update at least one automated test that would fail without your change and pass with it.
+- Prefer naming tests with `vc<n>` (e.g., `test_vc1_*`, `TestVC1*`) so Monitor can deterministically confirm coverage.
+
 **Format**:
 ```
 1. test_[function]_[scenario]_[expected]
@@ -392,7 +396,18 @@ Document key decisions using this structure:
    Expected: 409, {"error": "Email already registered"}
 </example>
 
-## 6. Used Patterns (ACE Learning)
+## 6. Validation Criteria Coverage (Evidence)
+
+If the subtask packet includes `validation_criteria`, list each `VCn:` and where it is enforced.
+
+**Format**:
+```
+VC1: <criterion text>
+- Code: path/to/file.ext#SymbolOrLocation
+- Tests: path/to/test_file.ext::test_name (or N/A with reason)
+```
+
+## 7. Used Patterns (ACE Learning)
 
 **Format**: `["impl-0012", "sec-0034"]` or `[]` if none
 
@@ -403,7 +418,7 @@ Document key decisions using this structure:
 
 **If no patterns match**: `[]` with note "No relevant patterns in current mem0"
 
-## 7. Integration Notes (If Applicable)
+## 8. Integration Notes (If Applicable)
 
 Only include if changes affect:
 - Database schema (migrations needed?)
@@ -449,6 +464,7 @@ Only include if changes affect:
 - [ ] AAG contract stated BEFORE code (Section 1)
 - [ ] Trade-offs documented with alternatives
 - [ ] Test cases cover happy + edge + error paths
+- [ ] Each `validation_criteria` item has at least one automated test (or explicit N/A with reason)
 - [ ] Used patterns tracked (or `[]` if none)
 - [ ] Template variables `{{...}}` preserved in generated code
 
@@ -518,6 +534,14 @@ with the following JSON content:
   "summary": "<one-line description of what was implemented>",
   "aag_contract": "<the AAG contract line>",
   "files_changed": ["<list of modified file paths>"],
+  "tests_changed": ["<list of modified/added test file paths>"],
+  "validation_criteria_coverage": [
+    {
+      "criterion": "VC1: ...",
+      "tests": ["path/to/test_file.ext::test_name"],
+      "notes": "Short justification if tests are N/A or partial"
+    }
+  ],
   "status": "applied"
 }
 ```
@@ -1083,4 +1107,3 @@ export class ReconnectingWebSocket {
 **Used Bullets**: `[]` (No similar patterns in mem0. Novel implementation.)
 
 </Actor_Reference_Examples>
-
