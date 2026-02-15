@@ -168,13 +168,16 @@
       "description": "Semantic search across tiered namespaces (branch -> project -> org)",
       "parameters": {
         "query": "Search string for pattern matching",
+        "user_id": "Org-scoped user identifier (e.g., \"org:acme-corp\")",
+        "run_id": "Tier-scoped run identifier (e.g., \"proj:my-app:branch:feat-auth\")",
         "limit": "Maximum results to return (default: 5)",
-        "section_filter": "Optional filter by category"
+        "section_filter": "Optional filter by category",
+        "min_quality_score": "Optional minimum quality score threshold"
       },
       "examples": [
         {
-          "call": "mcp__mem0__map_tiered_search(query=\"JWT authentication\", limit=5)",
-          "description": "Basic semantic pattern search"
+          "call": "mcp__mem0__map_tiered_search(query=\"JWT authentication\", user_id=\"org:acme-corp\", run_id=\"proj:my-app:branch:feat-auth\", limit=5)",
+          "description": "Basic semantic pattern search with tier scope"
         },
         {
           "call": "mcp__mem0__map_tiered_search(query=\"input validation\", section_filter=\"SECURITY_PATTERNS\", limit=10)",
@@ -186,9 +189,15 @@
       "tool": "mcp__mem0__map_add_pattern",
       "description": "Store a new pattern (fingerprint-based deduplication)",
       "parameters": {
-        "content": "Pattern text to store",
-        "category": "Section classification (e.g., implementation, security)",
-        "tier": "Target namespace (branch/project/org)"
+        "text": "Pattern text to store",
+        "section": "Section classification (e.g., SECURITY_PATTERNS, IMPLEMENTATION_PATTERNS)",
+        "scope": "Target namespace (branch/project/org)",
+        "user_id": "Org-scoped user identifier (e.g., \"org:acme-corp\")",
+        "run_id": "Tier-scoped run identifier (e.g., \"proj:my-app:branch:feat-auth\")",
+        "agent_origin": "Agent that created the pattern (e.g., \"curator\")",
+        "code_example": "Optional code example demonstrating the pattern",
+        "tech_stack": "Optional technology stack (e.g., [\"python\", \"sqlalchemy\"])",
+        "tags": "Optional tags for cross-referencing (e.g., [\"security\", \"jwt\"])"
       },
       "note": "Should be called through Curator agent for deduplication"
     },
@@ -196,13 +205,23 @@
       "tool": "mcp__mem0__map_archive_pattern",
       "description": "Mark a pattern as deprecated",
       "parameters": {
-        "pattern_id": "ID of the pattern to archive",
-        "reason": "Reason for archiving"
+        "memory_id": "ID of the pattern to archive",
+        "reason": "Reason for archiving",
+        "superseded_by": "Optional memory_id of the replacement pattern",
+        "archived_by": "Agent performing the archival (e.g., \"curator\")"
       }
     },
     "promote_pattern": {
       "tool": "mcp__mem0__map_promote_pattern",
-      "description": "Promote a pattern to a higher tier"
+      "description": "Promote a pattern to a higher tier",
+      "parameters": {
+        "memory_id": "ID of the pattern to promote",
+        "target_scope": "Target tier (\"project\" or \"org\")",
+        "user_id": "Org-scoped user identifier (e.g., \"org:acme-corp\")",
+        "target_run_id": "Target tier run identifier (e.g., \"proj:my-app\")",
+        "promoted_by": "Agent or mechanism performing promotion (e.g., \"auto\")",
+        "promotion_reason": "Reason for promotion (e.g., \"helpful_count >= 5\")"
+      }
     }
   },
   "common_patterns": {

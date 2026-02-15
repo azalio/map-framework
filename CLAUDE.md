@@ -82,8 +82,8 @@ git diff
 git log -n 5
 
 # ❌ Wrong (redundant -C triggers permission prompts):
-git -C /Users/azalio/gitroot/azalio/map-framework status
-git -C /Users/azalio/gitroot/azalio/map-framework diff
+git -C /path/to/map-framework status
+git -C /path/to/map-framework diff
 ```
 
 **Full guidelines:** `.claude/references/bash-guidelines.md`

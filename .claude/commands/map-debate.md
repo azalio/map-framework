@@ -329,12 +329,16 @@ AskUserQuestion(questions=[
 # 4. OTHERWISE: Call predictor with tier_hint
 
 skip_predictor = (
-    subtask.risk_level == "low"
-    or (
-        subtask.risk_level == "medium"
-        and all(not file_exists(f) for f in subtask.affected_files)
-        and subtask.complexity_score <= 4
-        and not subtask.security_critical
+    not subtask.escalation_required
+    and not subtask.security_critical
+    and (
+        subtask.risk_level == "low"
+        or (
+            subtask.risk_level == "medium"
+            and subtask.affected_files  # guard against vacuous all()
+            and all(not file_exists(f) for f in subtask.affected_files)
+            and subtask.complexity_score <= 4
+        )
     )
 )
 
@@ -346,7 +350,7 @@ if skip_predictor:
       "subtask_id": "<id>",
       "timestamp": "<ISO 8601 UTC>",
       "risk_assessment": "low",
-      "confidence_score": "0.95",
+      "confidence_score": 0.95,
       "tier_selected": "skipped",
       "skip_reason": "New files only, no existing callers, complexity <= 4"
     }

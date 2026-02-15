@@ -60,8 +60,8 @@ class TestAgentCLICorrectness:
 
         assert not errors, "\n".join(errors)
 
-    def test_agents_have_cli_reference_or_examples(self, agent_files):
-        """Test that agents either have CLI reference section or proper examples."""
+    def test_agents_have_cli_reference(self, agent_files):
+        """Test that agents have CLI reference section."""
         warnings = []
 
         # Agents that should have CLI guidance
@@ -71,7 +71,7 @@ class TestAgentCLICorrectness:
             if agent_file.name in cli_heavy_agents:
                 content = agent_file.read_text()
 
-                # Check if agent has CLI reference section or examples
+                # Check if agent has CLI reference section
                 has_cli_reference = "<mapify_cli_reference>" in content
 
                 if not has_cli_reference:

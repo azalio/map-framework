@@ -1730,7 +1730,7 @@ Return **ONLY** valid JSON in this exact structure:
 ### Field Requirements
 
 **analysis_metadata** (NEW - Required):
-- `tier_selected`: Which tier was used (1, 2, or 3)
+- `tier_selected`: Which tier was used (1, 2, 3, or skipped)
 - `tier_rationale`: Why this tier was selected (links to triage decision)
 - `tools_used`: Which MCP tools were actually invoked
 - `analysis_duration_seconds`: Actual time spent (for tier compliance check)
@@ -1807,7 +1807,7 @@ with the following JSON content:
   "timestamp": "<ISO 8601 UTC>",
   "risk_assessment": "<low|medium|high|critical>",
   "confidence_score": "<0.30-0.95>",
-  "tier_selected": "<1|2|3>"
+  "tier_selected": "<1|2|3|skipped>"
 }
 ```
 
