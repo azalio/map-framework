@@ -28,7 +28,8 @@ HOOK BEHAVIOR:
 
 TESTING:
   echo '{"tool_name": "Edit", "tool_input": {"file_path": "test.py"}}' | python3 workflow-gate.py
-  # Expected: Exit code 0, allow (no workflow state) OR deny with reason (if workflow active + missing steps)
+  # Expected (no workflow state): Exit 0, stdout: {}
+  # Expected (workflow active, missing steps): Exit 0, stdout: {"hookSpecificOutput":{"permissionDecision":"deny",...}}
 
 PERFORMANCE:
   Target: <100ms per invocation

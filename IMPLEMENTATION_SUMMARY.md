@@ -148,7 +148,8 @@ Instead of a 995-line command file that Claude "compresses" mentally, inject ~30
 .claude/
 ├── hooks/
 │   ├── workflow-context-injector.py (NEW)
-│   └── settings.json (UPDATED)
+│   └── (other hooks omitted)
+├── settings.json (UPDATED)
 ├── commands/
 │   ├── map-efficient.md (OPTIMIZED - 995→394 lines)
 │   └── map-efficient.md.backup (BACKUP)

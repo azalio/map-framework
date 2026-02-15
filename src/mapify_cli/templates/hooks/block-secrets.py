@@ -26,7 +26,7 @@ HOOK BEHAVIOR:
 
 TESTING:
   echo '{"tool_name": "Read", "tool_input": {"file_path": ".env"}}' | python3 block-secrets.py
-  # Expected: Exit code 2, JSON error on stderr
+  # Expected: Exit code 0, JSON on stdout with permissionDecision=deny
 
 PERFORMANCE:
   Target: <100ms per invocation

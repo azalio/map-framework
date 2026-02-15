@@ -380,7 +380,7 @@ Document key decisions using this structure:
 - Prefer naming tests with `vc<n>` (e.g., `test_vc1_*`, `TestVC1*`) so Monitor can deterministically confirm coverage.
 
 **Format**:
-```
+```text
 1. test_[function]_[scenario]_[expected]
    Input: [specific input]
    Expected: [specific output/behavior]
@@ -401,7 +401,7 @@ Document key decisions using this structure:
 If the subtask packet includes `validation_criteria`, list each `VCn:` and where it is enforced.
 
 **Format**:
-```
+```text
 VC1: <criterion text>
 - Code: path/to/file.ext#SymbolOrLocation
 - Tests: path/to/test_file.ext::test_name (or N/A with reason)

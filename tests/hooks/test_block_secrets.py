@@ -69,8 +69,9 @@ class TestValidationCriteria:
 
     def test_criterion_3_legitimate_allowed(self):
         """VC3: Legitimate files like 'app.py' are allowed."""
-        exit_code, _, _ = run_hook("Read", "app.py")
-        assert exit_code == 0, "app.py should be allowed"
+        exit_code, stdout, stderr = run_hook("Read", "app.py")
+        assert exit_code == 0, f"app.py should be allowed. stderr: {stderr}"
+        assert _parse_stdout(stdout) == {}
 
     def test_criterion_4_performance(self):
         """VC4: Hook execution completes in <100ms."""
