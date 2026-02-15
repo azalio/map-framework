@@ -319,27 +319,69 @@ AskUserQuestion(questions=[
 
 ### 2.10 Conditional Predictor
 
-**Call if:** `risk_level ∈ {high, medium}` OR `escalation_required === true`
+```python
+# Enhanced predictor decision:
+# 1. ALWAYS call for: high risk, security_critical, or escalation_required
+# 2. SKIP if: risk_level == "low"
+# 3. SKIP if: risk_level == "medium" AND all affected_files are new (don't exist yet)
+#    AND complexity_score <= 4 AND NOT security_critical
+#    → Write minimal evidence directly via Write tool
+# 4. OTHERWISE: Call predictor with tier_hint
 
-```
-Task(
-  subagent_type="predictor",
-  description="Analyze impact",
-  prompt="Analyze impact using Predictor input schema.
-
-**AI Packet (XML):** [paste <SUBTASK_ST_XXX>...</SUBTASK_ST_XXX>]
-
-Required inputs:
-- change_description: [summary from debate-arbiter synthesis_reasoning]
-- files_changed: [list of paths from synthesized code]
-- diff_content: [unified diff]
-
-Optional inputs:
-- analyzer_output: [debate-arbiter output]
-- user_context: [subtask requirements + arbiter confidence]
-
-Return ONLY valid JSON following Predictor schema."
+skip_predictor = (
+    subtask.risk_level == "low"
+    or (
+        subtask.risk_level == "medium"
+        and all(not file_exists(f) for f in subtask.affected_files)
+        and subtask.complexity_score <= 4
+        and not subtask.security_critical
+    )
 )
+
+if skip_predictor:
+    # Write minimal evidence directly (no agent call needed)
+    # Use Write tool → <project_root>/.map/<branch>/evidence/predictor_<subtask_id>.json
+    {
+      "phase": "PREDICTOR",
+      "subtask_id": "<id>",
+      "timestamp": "<ISO 8601 UTC>",
+      "risk_assessment": "low",
+      "confidence_score": "0.95",
+      "tier_selected": "skipped",
+      "skip_reason": "New files only, no existing callers, complexity <= 4"
+    }
+else:
+    # Determine tier_hint from subtask metadata:
+    # - risk "medium" + complexity_score <= 3 → tier_hint: 1
+    # - risk "medium" + complexity_score 4-7 → tier_hint: 2
+    # - risk "high" OR security_critical → tier_hint: 3
+    if subtask.risk_level == "high" or subtask.security_critical:
+        tier_hint = 3
+    elif subtask.complexity_score <= 3:
+        tier_hint = 1
+    else:
+        tier_hint = 2
+
+    Task(
+      subagent_type="predictor",
+      description="Analyze impact",
+      prompt="Analyze impact using Predictor input schema.
+
+    tier_hint: {tier_hint}
+
+    **AI Packet (XML):** [paste <SUBTASK_ST_XXX>...</SUBTASK_ST_XXX>]
+
+    Required inputs:
+    - change_description: [summary from debate-arbiter synthesis_reasoning]
+    - files_changed: [list of paths from synthesized code]
+    - diff_content: [unified diff]
+
+    Optional inputs:
+    - analyzer_output: [debate-arbiter output]
+    - user_context: [subtask requirements + arbiter confidence]
+
+    Return ONLY valid JSON following Predictor schema."
+    )
 ```
 
 ### 2.11 Apply Changes

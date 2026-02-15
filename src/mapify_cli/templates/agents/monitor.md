@@ -2498,21 +2498,21 @@ def check_rate_limit(user_id, action, limit=100, window=3600):
 
 ### Evidence File (Artifact-Gated Validation)
 
-**Exception to read-only rule**: Monitor writes evidence files to `.map/` artifacts directory via Bash (not Write tool). This does NOT violate the read-only-for-project-code rule — `.map/` is a workflow artifact directory, not project code.
+After completing validation, write an evidence file. Use the **Write tool** to create the file at the absolute path:
 
-After completing validation, write an evidence file:
+`<project_root>/.map/<branch>/evidence/monitor_<subtask_id>.json`
 
-```bash
-cat > .map/<branch>/evidence/monitor_<subtask_id>.json << 'EVIDENCE'
+with the following JSON content:
+
+```json
 {
   "phase": "MONITOR",
   "subtask_id": "<subtask_id>",
   "timestamp": "<ISO 8601 UTC>",
   "valid": true,
-  "issues_found": <number of issues>,
+  "issues_found": "<number of issues>",
   "recommendation": "approve|reject|revise"
 }
-EVIDENCE
 ```
 
 **Required fields** (orchestrator validates these): `phase`, `subtask_id`, `timestamp`.

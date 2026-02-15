@@ -204,6 +204,14 @@ IF risk_assessment = "medium" OR "low":
 
 <triage>
 
+## Tier Hint (from Orchestrator)
+
+If the orchestrator provides a `tier_hint` in the prompt, use it as the starting tier.
+You MAY escalate to a higher tier if your Phase 1/Phase 2 triage detects signals
+that warrant deeper analysis. You MUST NOT downgrade below the hint.
+
+If no `tier_hint` is provided, use the existing phased triage selection below.
+
 ## Analysis Depth Selection (CRITICAL - Do This First)
 
 Before any analysis, classify the change to select appropriate depth:
@@ -1786,19 +1794,21 @@ When an edge case is detected, it MUST appear in THREE places:
 
 ### Evidence File (Artifact-Gated Validation)
 
-After completing impact analysis, write an evidence file via Bash:
+After completing impact analysis, write an evidence file. Use the **Write tool** to create the file at the absolute path:
 
-```bash
-cat > .map/<branch>/evidence/predictor_<subtask_id>.json << 'EVIDENCE'
+`<project_root>/.map/<branch>/evidence/predictor_<subtask_id>.json`
+
+with the following JSON content:
+
+```json
 {
   "phase": "PREDICTOR",
   "subtask_id": "<subtask_id>",
   "timestamp": "<ISO 8601 UTC>",
   "risk_assessment": "<low|medium|high|critical>",
-  "confidence_score": <0.30-0.95>,
+  "confidence_score": "<0.30-0.95>",
   "tier_selected": "<1|2|3>"
 }
-EVIDENCE
 ```
 
 **Required fields** (orchestrator validates these): `phase`, `subtask_id`, `timestamp`.
