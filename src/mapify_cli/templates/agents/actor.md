@@ -739,7 +739,10 @@ output:
 
 {{feedback}}
 
-**Action Required**: Address ALL issues above. Focus on:
+**Action Required**: Address ALL issues above. Do NOT dismiss feedback as "out of scope" or "separate task".
+If you believe an item should be deferred, STOP and ask the user for explicit approval to defer.
+
+Focus on:
 1. Specific line items mentioned
 2. Quality checklist items that failed
 3. Security or constraint violations

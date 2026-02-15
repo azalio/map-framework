@@ -2523,6 +2523,10 @@ def check_rate_limit(user_id, action, limit=100, window=3600):
 - Requirements unmet → valid=false
 - Only MEDIUM/LOW issues → valid=true (with feedback)
 
+**Hard-stop semantics**:
+- If you set `valid=false`, the workflow MUST fix the issues before proceeding.
+- Do not accept "we'll do it later" reasoning as a resolution unless the user explicitly approves deferral.
+
 </Monitor_Critical_Reminders>
 
 ### Evidence File (Artifact-Gated Validation)

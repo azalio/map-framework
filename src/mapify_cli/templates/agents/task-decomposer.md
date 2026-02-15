@@ -273,10 +273,14 @@ Return **ONLY** valid JSON in this exact structure:
   - This is the primary handoff artifact to the Actor agent
   - Actor "compiles" this contract into code; Monitor verifies against it
   - Format: `"<Actor> -> <Action>(params) -> <Goal with success criteria>"`
+  - **Integration is part of the contract**:
+    - Prefer describing the *entrypoint + call chain* that makes the behavior real (especially for validation, policy checks, auth, migrations).
+    - Avoid leaf-only contracts that are easy to satisfy in isolation but not wired into production code paths.
   - Examples:
     - `"AuthService -> validate(token) -> returns 401|200 with user_id"`
     - `"ProjectModel -> add_field(archived_at: DateTime?) -> migration passes"`
     - `"RateLimiter -> decorate(endpoint, 100/min) -> returns 429 when exceeded"`
+    - `"ConfigLoader -> load_policy(path) -> calls validate_risk_policy(); raises ConfigValidationError on contradictions"`
 **subtasks[].implementation_hint**: Optional guidance for non-obvious implementations
   - RECOMMENDED when: complexity_score >= 5 OR security_critical OR dependencies.length >= 2
   - OMIT when: standard pattern with obvious implementation
@@ -504,6 +508,7 @@ When invoked with `mode: "re_decomposition"` from the orchestrator, you receive 
 - [ ] Each subtask is atomic (independently implementable + testable)
 - [ ] Each subtask has an aag_contract in `Actor -> Action(params) -> Goal` format
 - [ ] AAG contracts are specific (not "does stuff" — name classes, methods, return types)
+- [ ] AAG contracts include wiring/integration when relevant (entrypoint + validator/policy checks, not leaf-only helpers)
 - [ ] All dependencies are explicit and accurate
 - [ ] Subtasks ordered by dependency (foundations first)
 - [ ] 5-8 subtasks (not too granular or too coarse)
