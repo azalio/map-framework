@@ -9,7 +9,7 @@ Merged hook that blocks:
 Trigger: Edit|Write|Bash
 Exit codes:
   0 - Allow
-  2 - Block (with error message)
+  0 + permissionDecision=deny - Block (preferred)
 """
 
 import json
@@ -84,17 +84,20 @@ def check_command_safety(command: str) -> tuple[bool, str]:
     return True, ""
 
 
-def block_access(reason: str, tool_name: str) -> None:
-    """Block tool execution with error message."""
-    error_output = {
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "error": reason,
-            "details": f"Tool '{tool_name}' blocked by safety guardrails",
-        }
-    }
-    print(json.dumps(error_output), file=sys.stderr)
-    sys.exit(2)
+def deny(reason: str) -> None:
+    """Deny tool execution using structured PreToolUse decision control."""
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": reason,
+                }
+            }
+        )
+    )
+    sys.exit(0)
 
 
 def main() -> None:
@@ -108,18 +111,18 @@ def main() -> None:
     tool_input = input_data.get("tool_input", {})
 
     # Check file-based tools
-    if tool_name in ("Edit", "Write", "Read"):
+    if tool_name in ("Edit", "Write", "Read", "MultiEdit"):
         file_path = tool_input.get("file_path", "") or tool_input.get("path", "")
         is_safe, reason = check_file_safety(file_path)
         if not is_safe:
-            block_access(reason, tool_name)
+            deny(f"{reason} (tool={tool_name})")
 
     # Check bash commands
     elif tool_name == "Bash":
         command = tool_input.get("command", "")
         is_safe, reason = check_command_safety(command)
         if not is_safe:
-            block_access(reason, tool_name)
+            deny(f"{reason} (tool={tool_name})")
 
     print("{}")
     sys.exit(0)

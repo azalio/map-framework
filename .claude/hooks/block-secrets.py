@@ -22,7 +22,7 @@ ALLOWED FILE PATTERNS:
 
 HOOK BEHAVIOR:
   - Exit code 0: Allow tool execution (non-sensitive file)
-  - Exit code 2: Block tool execution (sensitive file detected)
+  - Exit code 0 + permissionDecision=deny: Block tool execution (sensitive file detected)
 
 TESTING:
   echo '{"tool_name": "Read", "tool_input": {"file_path": ".env"}}' | python3 block-secrets.py
@@ -78,16 +78,21 @@ def is_sensitive_file(file_path: str) -> bool:
 
 def block_access(file_path: str, tool_name: str):
     """Block tool execution and output error message."""
-    error_output = {
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "error": f"Blocked: Access to sensitive file '{file_path}' is prohibited",
-            "details": f"Tool '{tool_name}' attempted to access a protected file. Sensitive files include: .env*, *credentials*, *secret*, private keys (*.pem, *.key, *_rsa, etc.)",
-            "suggestion": "If you need to work with sensitive data, use environment variables or a secrets management system instead of reading raw credential files.",
-        }
-    }
-    print(json.dumps(error_output), file=sys.stderr)
-    sys.exit(2)  # Exit code 2 blocks execution
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": (
+                        f"Blocked: Access to sensitive file '{file_path}' is prohibited "
+                        f"(tool={tool_name})."
+                    ),
+                }
+            }
+        )
+    )
+    sys.exit(0)
 
 
 def main():

@@ -44,7 +44,7 @@
   - Recursive invocation for fresh context per subtask
 
 ### Configuration Updates
-- **`.claude/settings.hooks.json`**: Added workflow-context-injector.py hook registration
+- **`.claude/settings.json`**: Added workflow-context-injector.py hook registration
 - **Template sync**: All files copied to `src/mapify_cli/templates/`
 
 ### Documentation Updates
@@ -148,7 +148,7 @@ Instead of a 995-line command file that Claude "compresses" mentally, inject ~30
 .claude/
 ├── hooks/
 │   ├── workflow-context-injector.py (NEW)
-│   └── settings.hooks.json (UPDATED)
+│   └── settings.json (UPDATED)
 ├── commands/
 │   ├── map-efficient.md (OPTIMIZED - 995→394 lines)
 │   └── map-efficient.md.backup (BACKUP)
@@ -157,13 +157,13 @@ Instead of a 995-line command file that Claude "compresses" mentally, inject ~30
 ├── map_orchestrator.py (NEW)
 └── map_step_runner.py (NEW)
 
-src/mapify_cli/templates/
-├── hooks/workflow-context-injector.py (SYNCED)
-├── commands/map-efficient.md (SYNCED)
-├── map/scripts/
-│   ├── map_orchestrator.py (SYNCED)
-│   └── map_step_runner.py (SYNCED)
-└── settings.hooks.json (SYNCED)
+ src/mapify_cli/templates/
+ ├── hooks/workflow-context-injector.py (SYNCED)
+ ├── commands/map-efficient.md (SYNCED)
+ ├── map/scripts/
+ │   ├── map_orchestrator.py (SYNCED)
+ │   └── map_step_runner.py (SYNCED)
+ └── settings.json (SYNCED)
 
 docs/
 ├── ARCHITECTURE.md (UPDATED - new section)

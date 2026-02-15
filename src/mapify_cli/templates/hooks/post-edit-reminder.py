@@ -7,7 +7,7 @@ Only triggers when there's an active MAP workflow.
 
 Trigger: Edit|Write
 Exit codes: Always 0 (non-blocking)
-Output: ~80 char reminder via hookSpecificOutput.appended_text
+Output: ~80 char reminder via hookSpecificOutput.additionalContext
 """
 
 import json
@@ -73,7 +73,12 @@ def main() -> None:
 
     # Inject lightweight reminder
     reminder = "[MAP] Code changed. Run tests before committing!"
-    output = {"hookSpecificOutput": {"appended_text": reminder}}
+    output = {
+        "hookSpecificOutput": {
+            "hookEventName": "PostToolUse",
+            "additionalContext": reminder,
+        }
+    }
     print(json.dumps(output))
     sys.exit(0)
 

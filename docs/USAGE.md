@@ -1941,7 +1941,7 @@ If you prefer direct execution without clarification:
 * implement user authentication  # Skips improvement
 ```
 
-**Option 2: Remove from settings.hooks.json**
+**Option 2: Remove from `.claude/settings.json`**
 ```json
 {
   "hooks": {
@@ -1972,7 +1972,7 @@ MAP Framework includes additional hooks for security and quality:
 | `block-dangerous.sh` | PreToolUse | Block dangerous shell commands |
 | `end-of-turn.sh` | Stop | Quality gates (linting, secret scanning) |
 
-**Configuration:** See `.claude/settings.hooks.json` for hook configuration.
+**Configuration:** See `.claude/settings.json` for hook configuration (or manage via `/hooks`).
 
 **Security hooks:** See [Security Model: Three-Layer Defense](#-security-model-three-layer-defense) for details.
 

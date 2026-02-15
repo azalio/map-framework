@@ -266,4 +266,4 @@ This external state file combined with hook enforcement implements that principl
 - `.claude/hooks/workflow-gate.py` - Enforcement hook
 - `.claude/commands/map-efficient.md` - Workflow definition
 - `.map/<branch>/task_plan_<branch>.md` - Human-readable plan
-- `.claude/settings.hooks.json` - Hook registration
+- `.claude/settings.json` - Hook registration

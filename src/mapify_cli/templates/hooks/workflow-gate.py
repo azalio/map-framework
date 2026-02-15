@@ -23,12 +23,12 @@ WORKFLOW STATE FILE:
     - pending_steps: Dict mapping subtask_id -> list of pending steps
 
 HOOK BEHAVIOR:
-  - Exit code 0 + approve: Allow tool execution
-  - Exit code 2 + block: Block tool execution with error message
+  - Exit code 0: Allow tool execution
+  - Exit code 0 + permissionDecision=deny: Block tool execution with reason (preferred)
 
 TESTING:
   echo '{"tool_name": "Edit", "tool_input": {"file_path": "test.py"}}' | python3 workflow-gate.py
-  # Expected: Exit code 2, JSON error on stderr (no workflow state)
+  # Expected: Exit code 0, allow (no workflow state) OR deny with reason (if workflow active + missing steps)
 
 PERFORMANCE:
   Target: <100ms per invocation
@@ -138,7 +138,7 @@ def main():
 
         # Allow non-editing tools
         if tool_name not in EDITING_TOOLS:
-            print(json.dumps({"decision": "approve"}))
+            print("{}")
             sys.exit(0)
 
         # Get current branch
@@ -150,25 +150,32 @@ def main():
         if state is None:
             # No workflow state = not in MAP workflow mode, allow
             # (This prevents breaking non-MAP work)
-            print(json.dumps({"decision": "approve"}))
+            print("{}")
             sys.exit(0)
 
         # Check workflow compliance
         is_compliant, error_message = check_workflow_compliance(state)
 
         if is_compliant:
-            print(json.dumps({"decision": "approve"}))
+            print("{}")
             sys.exit(0)
         else:
             print(
-                json.dumps({"decision": "block", "reason": error_message}),
-                file=sys.stderr,
+                json.dumps(
+                    {
+                        "hookSpecificOutput": {
+                            "hookEventName": "PreToolUse",
+                            "permissionDecision": "deny",
+                            "permissionDecisionReason": error_message,
+                        }
+                    }
+                )
             )
-            sys.exit(2)
+            sys.exit(0)
 
     except Exception as e:
         # On hook failure, approve (fail-open to avoid blocking work)
-        print(json.dumps({"decision": "approve"}))
+        print("{}")
         if os.environ.get("DEBUG_WORKFLOW_GATE"):
             print(f"[workflow-gate] ERROR: {e}", file=sys.stderr)
         sys.exit(0)

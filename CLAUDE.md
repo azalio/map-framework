@@ -16,7 +16,7 @@ Common synced paths:
 - `.claude/commands/` → `src/mapify_cli/templates/commands/`
 - `.claude/hooks/` → `src/mapify_cli/templates/hooks/`
 - `.claude/references/` → `src/mapify_cli/templates/references/`
-- `.claude/settings.json`, `.claude/settings.hooks.json`, `.claude/workflow-rules.json` → `src/mapify_cli/templates/`
+- `.claude/settings.json`, `.claude/workflow-rules.json` → `src/mapify_cli/templates/`
 
 Do the sync via a deterministic command (preferred):
 - `make sync-templates` (runs `scripts/sync-templates.sh`)

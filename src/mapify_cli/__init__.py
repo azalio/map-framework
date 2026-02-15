@@ -1269,15 +1269,16 @@ def configure_global_permissions() -> None:
 
 
 def create_or_merge_project_settings_local(project_path: Path) -> None:
-    """Create/merge .claude/settings.local.json with safe project allowlist and hooks.
+    """Create/merge .claude/settings.local.json with safe project allowlist.
 
     Claude Code supports per-project approvals via `.claude/settings.local.json`.
     This file is user-local (should not be committed) and is merged by Claude Code
     with global settings from `~/.claude/settings.json`.
 
-    IMPORTANT: Claude Code only reads hooks from `settings.json` or `settings.local.json`.
-    The separate `settings.hooks.json` file is NOT read by Claude Code. Therefore, this
-    function merges hooks from the template `settings.hooks.json` into `settings.local.json`.
+    IMPORTANT:
+    - Shared, repo-committed hooks MUST be configured in `.claude/settings.json`.
+    - `.claude/settings.local.json` is for user-local approvals/allowlists and should
+      not be used as the primary distribution mechanism for project hooks.
 
     We keep this allowlist intentionally narrow and focused on common safe actions
     for local development workflows.
@@ -1313,20 +1314,6 @@ def create_or_merge_project_settings_local(project_path: Path) -> None:
         "ask": [],
     }
 
-    # Load hooks from template settings.hooks.json
-    # Claude Code doesn't read hooks from settings.hooks.json, so we merge them here
-    hooks_config: Dict[str, Any] = {}
-    templates_dir = get_templates_dir()
-    hooks_template_file = templates_dir / "settings.hooks.json"
-    if hooks_template_file.exists():
-        try:
-            hooks_data = json.loads(hooks_template_file.read_text(encoding="utf-8"))
-            hooks_config = hooks_data.get("hooks", {})
-        except (json.JSONDecodeError, OSError) as e:
-            console.print(
-                f"[yellow]Warning:[/yellow] Could not read hooks template: {e}"
-            )
-
     # Load existing settings if present
     if settings_file.exists():
         try:
@@ -1339,6 +1326,14 @@ def create_or_merge_project_settings_local(project_path: Path) -> None:
     else:
         existing_settings = {}
 
+    if isinstance(existing_settings, dict) and existing_settings.get("hooks"):
+        console.print(
+            "[yellow]Warning:[/yellow] .claude/settings.local.json contains hooks. "
+            "Claude Code loads hooks from BOTH .claude/settings.json and .claude/settings.local.json, "
+            "so this can cause duplicate hook executions. "
+            "Move shared hooks to .claude/settings.json and remove the hooks section from settings.local.json."
+        )
+
     existing_settings.setdefault("permissions", {})
     permissions = existing_settings["permissions"]
 
@@ -1350,12 +1345,6 @@ def create_or_merge_project_settings_local(project_path: Path) -> None:
 
     permissions.setdefault("deny", permissions.get("deny", []))
     permissions.setdefault("ask", permissions.get("ask", []))
-
-    # Replace hooks configuration from template
-    # Always use template hooks to ensure correct $CLAUDE_PROJECT_DIR paths
-    # User customizations should be done by editing the template or post-init
-    if hooks_config:
-        existing_settings["hooks"] = hooks_config
 
     settings_file.write_text(json.dumps(existing_settings, indent=2) + "\n")
 
@@ -1904,7 +1893,6 @@ def create_config_files(project_path: Path) -> int:
 
     Copies configuration files:
     - settings.json
-    - settings.hooks.json
     - ralph-loop-config.json
     - workflow-rules.json
 
@@ -1919,7 +1907,6 @@ def create_config_files(project_path: Path) -> int:
 
     config_files = [
         "settings.json",
-        "settings.hooks.json",
         "ralph-loop-config.json",
         "workflow-rules.json",
     ]
