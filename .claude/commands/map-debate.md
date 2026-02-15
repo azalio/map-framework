@@ -168,7 +168,7 @@ Task(
   description="Implement subtask [ID] - Security (v1)",
   prompt="Implement with SECURITY focus:
 **AI Packet (XML):** [paste <SUBTASK_ST_XXX>...</SUBTASK_ST_XXX>]
-**Playbook Context:** [top context_patterns + relevance_score]
+**mem0 Context:** [top context_patterns + relevance_score]
 **Quality Context:** deployment_risk_level={risk_level}, min_security={min_security}, min_functionality={min_functionality}
 ⚠️  Your variant MUST meet minimum quality thresholds. Quality is non-negotiable regardless of security focus.
 approach_focus: security, variant_id: v1, self_moa_mode: true
@@ -181,7 +181,7 @@ Task(
   description="Implement subtask [ID] - Performance (v2)",
   prompt="Implement with PERFORMANCE focus:
 **AI Packet (XML):** [paste <SUBTASK_ST_XXX>...</SUBTASK_ST_XXX>]
-**Playbook Context:** [top context_patterns + relevance_score]
+**mem0 Context:** [top context_patterns + relevance_score]
 **Quality Context:** deployment_risk_level={risk_level}, min_security={min_security}, min_functionality={min_functionality}
 ⚠️  Your variant MUST meet minimum quality thresholds. Quality is non-negotiable regardless of performance focus.
 approach_focus: performance, variant_id: v2, self_moa_mode: true
@@ -194,7 +194,7 @@ Task(
   description="Implement subtask [ID] - Simplicity (v3)",
   prompt="Implement with SIMPLICITY focus:
 **AI Packet (XML):** [paste <SUBTASK_ST_XXX>...</SUBTASK_ST_XXX>]
-**Playbook Context:** [top context_patterns + relevance_score]
+**mem0 Context:** [top context_patterns + relevance_score]
 **Quality Context:** deployment_risk_level={risk_level}, min_security={min_security}, min_functionality={min_functionality}
 ⚠️  Your variant MUST meet minimum quality thresholds. Quality is non-negotiable regardless of simplicity focus.
 approach_focus: simplicity, variant_id: v3, self_moa_mode: true

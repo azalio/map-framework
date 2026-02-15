@@ -144,7 +144,7 @@ MAP Framework implements cognitive architecture inspired by prefrontal cortex fu
 
 5. **Learning Cycle** (Reflector → Curator)
    - Extracts patterns from successes and failures
-   - Updates knowledge base (playbook)
+   - Updates knowledge base (mem0 MCP)
    - Enables continuous improvement
 
 ### Agent Coordination Protocol
@@ -405,15 +405,15 @@ print("Consider running /map-learn to save patterns")
 - ❌ Predictor (no impact analysis)
 - ❌ Evaluator (no quality scoring)
 - ❌ Reflector (no lesson extraction)
-- ❌ Curator (no playbook updates)
+- ❌ Curator (no knowledge base updates)
 
 **Token Usage:** 50-60% of baseline
 **Learning:** None (defeats MAP's purpose)
 **Quality Gates:** Basic only (Monitor validation)
 
 **Architectural Consequences:**
-- Playbook remains static (no continuous improvement)
-- Knowledge base never grows
+- Knowledge base remains static (no continuous improvement)
+- mem0 patterns never grow
 - Breaking changes undetected (no Predictor)
 - Security/performance issues may slip through (no Evaluator)
 - Same mistakes repeated (no Reflector)
@@ -472,7 +472,7 @@ print("Consider running /map-learn to save patterns")
 - Complex features where optimal approach is unclear
 - Security-critical code requiring multiple review perspectives
 - Performance-sensitive implementations
-- Learning optimal patterns (arbiter reasoning becomes playbook content)
+- Learning optimal patterns (arbiter reasoning becomes mem0 pattern content)
 - Situations where you want to explore solution space thoroughly
 
 **Technical Details:**
@@ -514,7 +514,7 @@ for subtask in subtasks:
 
 **Trade-offs:**
 - **Pro:** Maximum solution quality through variant exploration
-- **Pro:** Discovers optimal patterns for playbook
+- **Pro:** Discovers optimal patterns for knowledge base
 - **Pro:** Arbiter reasoning provides detailed decision documentation
 - **Con:** Higher token cost (3× Actor + Opus arbiter)
 - **Con:** Longer execution time (parallel but still 3× work)
@@ -1141,7 +1141,7 @@ If you modified `.claude/commands/map-efficient.md`, you must manually integrate
 - Compares approaches across multiple dimensions
 - Uses Opus model for high-quality reasoning
 - Provides explicit synthesis guidance
-- Documents trade-off analysis for playbook
+- Documents trade-off analysis for knowledge base
 
 **Model Used:** Opus 4.5 (highest reasoning quality for complex analysis)
 
@@ -1463,7 +1463,7 @@ mem0 MCP server configuration is managed externally. Key parameters for MAP tool
 
 The Knowledge Graph (KG) layer transforms implicit knowledge into an explicit, queryable semantic graph. Instead of storing patterns as unstructured text, the KG extracts entities (tools, patterns, concepts) and relationships (uses, depends-on, contradicts) for advanced querying and analysis.
 
-> **Note:** As of v4.0, pattern storage has migrated from playbook.db to mem0 MCP with tiered namespaces (branch → project → org). The Knowledge Graph functionality described below is now provided via mem0's semantic search capabilities.
+> **Note:** As of v4.0, pattern storage uses mem0 MCP with tiered namespaces (branch → project → org). The Knowledge Graph functionality described below is now provided via mem0's semantic search capabilities.
 
 **Key Capabilities:**
 - **Entity Extraction**: Automatically identifies 7 entity types from stored patterns
@@ -1541,7 +1541,7 @@ The Knowledge Graph (KG) layer transforms implicit knowledge into an explicit, q
 
 ### Memory System (v4.0)
 
-> **Note:** As of v4.0, the legacy memory system (playbook.db) has been replaced with mem0 MCP. This section describes the legacy architecture for reference.
+> **Note:** As of v4.0, the memory system uses mem0 MCP. This section describes the legacy architecture for reference.
 
 MAP Framework now operates with **mem0 MCP tiered storage**:
 
@@ -1558,7 +1558,7 @@ MAP Framework now operates with **mem0 MCP tiered storage**:
 
 **Example:**
 
-Playbook bullet (v2.1 style):
+Pattern (v2.1 style):
 ```
 "Use pytest for testing Python applications. pytest depends on unittest internally."
 ```
@@ -1678,9 +1678,9 @@ All KG queries target <100ms latency:
 
 **From v2.1 to v3.0:**
 
-Migration was **automatic** (ran on PlaybookManager initialization):
+Migration was **automatic** (ran on knowledge manager initialization):
 - Checked `metadata.schema_version`
-- If `< 3.0`, executed `schemas.SCHEMA_V3_0_SQL`
+- If `< 3.0`, executed the KG schema migration SQL
 - Added 4 new tables: `entities`, `relationships`, `provenance`, `entities_fts`
 - Updated `schema_version` to `'3.0'`
 - Set `kg_enabled = '1'`
@@ -2045,7 +2045,7 @@ Located at: `.git/hooks/pre-commit`
 
 **Prevents commits if:**
 - Template variables removed from agents
-- Critical sections deleted (playbook, feedback, context)
+- Critical sections deleted (mem0 patterns, feedback, context)
 - Massive deletions (>500 lines) without review
 
 **Example block:**
@@ -2667,7 +2667,7 @@ result = mcp__mem0__map_tiered_search(
 - **Monitor approval rate:** >80% first try (current: varies by task complexity)
 - **Evaluator scores:** average >7.0/10 (approval threshold)
 - **Iteration count:** <3 per subtask (indicates clear feedback)
-- **Playbook growth:** increasing high-quality patterns (helpful_count >= 5)
+- **Knowledge growth:** increasing high-quality patterns in mem0 (helpful_count >= 5)
 
 **Tracking:**
 ```bash

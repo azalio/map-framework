@@ -357,7 +357,7 @@ class EntityExtractor:
         Extract all entities from content string.
 
         Args:
-            content: Text to extract entities from (playbook bullet content, code, etc.)
+            content: Text to extract entities from (pattern content, code, etc.)
 
         Returns:
             List of Entity objects with confidence scores

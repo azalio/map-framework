@@ -1,279 +1,9 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Mapify CLI Reference",
-  "version": "1.0.0",
-  "description": "Machine-readable specification of mapify CLI commands, parameters, and usage patterns",
+  "version": "2.0.0",
+  "description": "Machine-readable specification of mapify CLI commands, parameters, and usage patterns. Pattern storage uses mem0 MCP (v4.0+).",
   "commands": {
-    "playbook": {
-      "description": "Manage and search playbook patterns",
-      "subcommands": {
-        "query": {
-          "description": "Query playbook using FTS5 full-text search",
-          "usage": "mapify playbook query [QUERY_TEXT] [OPTIONS]",
-          "parameters": {
-            "query_text": {
-              "type": "string",
-              "required": true,
-              "position": "argument",
-              "description": "Search query text (supports FTS5 query syntax)"
-            },
-            "section": {
-              "type": "string[]",
-              "required": false,
-              "flag": "--section",
-              "description": "Filter by section (can specify multiple)",
-              "examples": ["ARCHITECTURE_PATTERNS", "IMPLEMENTATION_PATTERNS", "TESTING_PATTERNS"]
-            },
-            "limit": {
-              "type": "integer",
-              "required": false,
-              "flag": "--limit",
-              "default": 5,
-              "description": "Maximum results to return"
-            },
-            "mode": {
-              "type": "string",
-              "required": false,
-              "flag": "--mode",
-              "default": "local",
-              "enum": ["local"],
-              "description": "Search mode: local (playbook only)"
-            },
-            "format": {
-              "type": "string",
-              "required": false,
-              "flag": "--format",
-              "default": "markdown",
-              "enum": ["markdown", "json"],
-              "description": "Output format"
-            },
-            "min-quality": {
-              "type": "integer",
-              "required": false,
-              "flag": "--min-quality",
-              "default": 0,
-              "description": "Minimum quality score (helpful - harmful)"
-            }
-          },
-          "examples": [
-            {
-              "command": "mapify playbook query \"JWT authentication\" --limit 5",
-              "description": "Basic query for JWT patterns"
-            },
-            {
-              "command": "mapify playbook query \"API design\" --section ARCHITECTURE_PATTERNS",
-              "description": "Query specific section"
-            }
-          ],
-          "common_errors": [
-            {
-              "wrong": "mapify playbook query --bullet-id test-0016",
-              "correct": "mapify playbook query \"test-0016\"",
-              "explanation": "Use query text as argument, not --bullet-id option (doesn't exist)"
-            }
-          ]
-        },
-        "search": {
-          "description": "Search playbook for relevant patterns (semantic search, slower than query)",
-          "usage": "mapify playbook search [QUERY] [OPTIONS]",
-          "parameters": {
-            "query": {
-              "type": "string",
-              "required": true,
-              "position": "argument",
-              "description": "Search query"
-            },
-            "top-k": {
-              "type": "integer",
-              "required": false,
-              "flag": "--top-k",
-              "default": 5,
-              "description": "Number of results to return"
-            }
-          },
-          "examples": [
-            {
-              "command": "mapify playbook search \"authentication patterns\" --top-k 10",
-              "description": "Semantic search for authentication patterns"
-            }
-          ],
-          "common_errors": [
-            {
-              "wrong": "mapify playbook search --limit 3",
-              "correct": "mapify playbook search \"query text\" --top-k 3",
-              "explanation": "Use --top-k, not --limit (different from query command)"
-            }
-          ]
-        },
-        "apply-delta": {
-          "description": "Apply delta operations to playbook (ADD, UPDATE, DEPRECATE)",
-          "usage": "mapify playbook apply-delta [FILE] [OPTIONS]",
-          "parameters": {
-            "input_file": {
-              "type": "path",
-              "required": false,
-              "position": "argument",
-              "description": "JSON file containing delta operations (or use stdin)"
-            },
-            "dry-run": {
-              "type": "boolean",
-              "required": false,
-              "flag": "--dry-run",
-              "default": false,
-              "description": "Preview changes without applying them"
-            }
-          },
-          "input_format": {
-            "type": "object",
-            "schema": {
-              "operations": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "type": {
-                      "type": "string",
-                      "enum": ["ADD", "UPDATE", "DEPRECATE"],
-                      "description": "Operation type"
-                    },
-                    "bullet_id": {
-                      "type": "string",
-                      "description": "Required for UPDATE and DEPRECATE"
-                    },
-                    "section": {
-                      "type": "string",
-                      "description": "Required for ADD"
-                    },
-                    "content": {
-                      "type": "string",
-                      "description": "Required for ADD only (UPDATE uses increment counters)"
-                    },
-                    "code_example": {
-                      "type": "string",
-                      "description": "Optional for ADD - code snippet demonstrating the pattern"
-                    },
-                    "tags": {
-                      "type": "array",
-                      "items": {"type": "string"},
-                      "description": "Optional for ADD - categorization tags"
-                    },
-                    "related_to": {
-                      "type": "array",
-                      "items": {"type": "string"},
-                      "description": "Optional for ADD - IDs of related bullets"
-                    },
-                    "executable_scripts": {
-                      "type": "array",
-                      "items": {"type": "string"},
-                      "description": "Optional for ADD - runnable code examples"
-                    },
-                    "increment_helpful": {
-                      "type": "integer",
-                      "description": "Optional for UPDATE - increment helpful counter"
-                    },
-                    "increment_harmful": {
-                      "type": "integer",
-                      "description": "Optional for UPDATE - increment harmful counter"
-                    },
-                    "reason": {
-                      "type": "string",
-                      "description": "Optional for DEPRECATE - deprecation reason"
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "examples": [
-            {
-              "command": "mapify playbook apply-delta operations.json",
-              "description": "Apply operations from file",
-              "sample_operations": {
-                "operations": [
-                  {
-                    "type": "ADD",
-                    "section": "SECURITY_PATTERNS",
-                    "content": "Use parameterized queries to prevent SQL injection",
-                    "code_example": "cursor.execute('SELECT * FROM users WHERE id = ?', (user_id,))",
-                    "tags": ["security", "sql", "injection-prevention"]
-                  },
-                  {
-                    "type": "UPDATE",
-                    "bullet_id": "sec-0012",
-                    "increment_helpful": 1
-                  },
-                  {
-                    "type": "DEPRECATE",
-                    "bullet_id": "impl-0001",
-                    "reason": "Pattern obsolete due to library update"
-                  }
-                ]
-              }
-            },
-            {
-              "command": "echo '{\"operations\":[{\"type\":\"UPDATE\",\"bullet_id\":\"impl-0042\",\"increment_helpful\":1}]}' | mapify playbook apply-delta",
-              "description": "Apply operations from stdin"
-            },
-            {
-              "command": "mapify playbook apply-delta operations.json --dry-run",
-              "description": "Preview changes without applying"
-            }
-          ],
-          "notes": [
-            "This is the ONLY correct way to update playbook",
-            "Never use direct sqlite3 commands",
-            "Never use Edit tool on playbook.db"
-          ]
-        },
-        "stats": {
-          "description": "Show playbook statistics",
-          "usage": "mapify playbook stats",
-          "parameters": {},
-          "examples": [
-            {
-              "command": "mapify playbook stats",
-              "description": "Display bullet counts by section and quality metrics"
-            }
-          ]
-        },
-        "sync": {
-          "description": "Show high-quality patterns ready for cross-project sync",
-          "usage": "mapify playbook sync [OPTIONS]",
-          "parameters": {
-            "threshold": {
-              "type": "integer",
-              "required": false,
-              "flag": "--threshold",
-              "default": 5,
-              "description": "Minimum helpful count for patterns to be considered high-quality"
-            }
-          },
-          "examples": [
-            {
-              "command": "mapify playbook sync",
-              "description": "Show patterns with helpful_count >= 5"
-            },
-            {
-              "command": "mapify playbook sync --threshold 10",
-              "description": "Show patterns with helpful_count >= 10"
-            }
-          ]
-        }
-      },
-      "removed_commands": [
-        {
-          "command": "list",
-          "wrong_usage": "mapify playbook list --sections",
-          "explanation": "This command doesn't exist. Use 'mapify playbook stats' to see section overview or 'mapify playbook query' to search."
-        },
-        {
-          "command": "get",
-          "wrong_usage": "mapify playbook get docu-0005",
-          "correct_usage": "mapify playbook query \"docu-0005\"",
-          "explanation": "Use 'query' command with bullet ID as search text"
-        }
-      ]
-    },
     "validate": {
       "description": "Validate task dependency graphs",
       "subcommands": {
@@ -431,164 +161,104 @@
       }
     }
   },
-  "common_patterns": {
-    "query_vs_search": {
-      "description": "Understanding the difference between playbook query and search",
-      "query": {
-        "method": "FTS5 full-text search",
-        "speed": "Fast (indexed)",
-        "use_case": "Known keywords, exact terms, large playbooks",
-        "syntax": "SQLite FTS5 query syntax (AND, OR, NOT, NEAR, prefix*)"
+  "mem0_mcp_tools": {
+    "description": "Pattern storage and retrieval via mem0 MCP (v4.0+). These replace the legacy playbook CLI commands.",
+    "tiered_search": {
+      "tool": "mcp__mem0__map_tiered_search",
+      "description": "Semantic search across tiered namespaces (branch -> project -> org)",
+      "parameters": {
+        "query": "Search string for pattern matching",
+        "limit": "Maximum results to return (default: 5)",
+        "section_filter": "Optional filter by category"
       },
-      "search": {
-        "method": "Semantic search (embedding-based)",
-        "speed": "Slower (requires embeddings)",
-        "use_case": "Conceptual search, similar patterns, synonyms",
-        "syntax": "Natural language"
-      },
-      "recommendation": "Use 'query' for most cases, 'search' for semantic similarity"
+      "examples": [
+        {
+          "call": "mcp__mem0__map_tiered_search(query=\"JWT authentication\", limit=5)",
+          "description": "Basic semantic pattern search"
+        },
+        {
+          "call": "mcp__mem0__map_tiered_search(query=\"input validation\", section_filter=\"SECURITY_PATTERNS\", limit=10)",
+          "description": "Search with section filter"
+        }
+      ]
     },
-    "playbook_modes": {
-      "local": "Search only project playbook (fast)"
+    "add_pattern": {
+      "tool": "mcp__mem0__map_add_pattern",
+      "description": "Store a new pattern (fingerprint-based deduplication)",
+      "parameters": {
+        "content": "Pattern text to store",
+        "category": "Section classification (e.g., implementation, security)",
+        "tier": "Target namespace (branch/project/org)"
+      },
+      "note": "Should be called through Curator agent for deduplication"
+    },
+    "archive_pattern": {
+      "tool": "mcp__mem0__map_archive_pattern",
+      "description": "Mark a pattern as deprecated",
+      "parameters": {
+        "pattern_id": "ID of the pattern to archive",
+        "reason": "Reason for archiving"
+      }
+    },
+    "promote_pattern": {
+      "tool": "mcp__mem0__map_promote_pattern",
+      "description": "Promote a pattern to a higher tier"
+    }
+  },
+  "common_patterns": {
+    "mem0_search": {
+      "description": "mem0 provides semantic search across tiered namespaces",
+      "method": "Semantic search (embedding-based)",
+      "speed": "Low latency (<200ms)",
+      "use_case": "Pattern retrieval, conceptual search, similar patterns",
+      "syntax": "Natural language queries"
     },
     "stdin_support": {
       "description": "Commands that accept stdin input",
       "commands": [
-        "mapify playbook apply-delta",
         "mapify validate graph"
       ],
-      "example": "echo '{...}' | mapify playbook apply-delta"
+      "example": "echo '{...}' | mapify validate graph"
     }
-  },
-  "fts5_query_syntax": {
-    "description": "SQLite FTS5 query syntax for 'mapify playbook query'",
-    "operators": {
-      "AND": {
-        "syntax": "term1 AND term2",
-        "description": "Both terms must be present",
-        "example": "JWT AND authentication"
-      },
-      "OR": {
-        "syntax": "term1 OR term2",
-        "description": "Either term must be present",
-        "example": "error OR exception"
-      },
-      "NOT": {
-        "syntax": "term1 NOT term2",
-        "description": "First term present, second term absent",
-        "example": "testing NOT integration"
-      },
-      "NEAR": {
-        "syntax": "NEAR(term1 term2, N)",
-        "description": "Terms within N tokens of each other",
-        "example": "NEAR(JWT token, 5)"
-      },
-      "prefix": {
-        "syntax": "term*",
-        "description": "Prefix matching",
-        "example": "auth* (matches auth, authentication, authorize)"
-      },
-      "phrase": {
-        "syntax": "\"exact phrase\"",
-        "description": "Exact phrase match",
-        "example": "\"error handling\""
-      }
-    },
-    "examples": [
-      {
-        "query": "JWT AND authentication",
-        "description": "Find bullets with both JWT and authentication"
-      },
-      {
-        "query": "error OR exception OR failure",
-        "description": "Find bullets with any error-related terms"
-      },
-      {
-        "query": "test* AND NOT integration",
-        "description": "Find testing patterns excluding integration tests"
-      },
-      {
-        "query": "\"API design\" AND REST",
-        "description": "Find REST API design patterns"
-      }
-    ]
   },
   "error_patterns": {
     "description": "Common mistakes and corrections",
     "errors": [
       {
-        "category": "wrong_command",
-        "mistake": "mapify playbook list --sections",
-        "reason": "Command 'list' doesn't exist",
-        "correction": "mapify playbook stats",
-        "explanation": "Use 'stats' to see section overview"
-      },
-      {
-        "category": "wrong_command",
-        "mistake": "mapify playbook get docu-0005",
-        "reason": "Command 'get' doesn't exist",
-        "correction": "mapify playbook query \"docu-0005\"",
-        "explanation": "Use 'query' with bullet ID as search text"
-      },
-      {
-        "category": "wrong_parameter",
-        "mistake": "mapify playbook search --limit 3",
-        "reason": "Parameter '--limit' doesn't exist for search",
-        "correction": "mapify playbook search \"query\" --top-k 3",
-        "explanation": "search uses --top-k, not --limit (query uses --limit)"
-      },
-      {
-        "category": "wrong_parameter",
-        "mistake": "mapify playbook query --bullet-id test-0016",
-        "reason": "Option '--bullet-id' doesn't exist",
-        "correction": "mapify playbook query \"test-0016\"",
-        "explanation": "Use bullet ID as query text argument"
+        "category": "legacy_command",
+        "mistake": "mapify playbook ...",
+        "reason": "Legacy playbook CLI commands removed in v4.0+",
+        "correction": "mcp__mem0__map_tiered_search(query=\"...\")",
+        "explanation": "Use mem0 MCP tools for pattern storage and retrieval"
       },
       {
         "category": "wrong_approach",
-        "mistake": "sqlite3 .claude/playbook.db \"UPDATE bullets SET ...\"",
-        "reason": "Direct database modification bypasses validation",
-        "correction": "mapify playbook apply-delta operations.json",
-        "explanation": "Always use apply-delta to maintain integrity"
-      },
-      {
-        "category": "wrong_approach",
-        "mistake": "Edit tool on playbook.db",
-        "reason": "Cannot edit binary SQLite database",
-        "correction": "mapify playbook apply-delta operations.json",
-        "explanation": "Use apply-delta with JSON delta operations"
-      },
-      {
-        "category": "legacy_format",
-        "mistake": "Using legacy JSON format for playbook",
-        "reason": "Playbook uses SQLite database (playbook.db)",
-        "correction": "mapify playbook query \"...\"",
-        "explanation": "Use CLI commands to interact with playbook.db"
+        "mistake": "Direct mem0 writes without Curator",
+        "reason": "Bypasses deduplication and quality scoring",
+        "correction": "Task(subagent_type=\"curator\", ...)",
+        "explanation": "Curator handles fingerprint-based deduplication"
       }
     ]
   },
   "integration_notes": {
     "map_workflow": {
-      "description": "How MAP agents use the CLI",
+      "description": "How MAP agents use mem0 MCP",
       "curator_agent": {
-        "role": "Updates playbook via delta operations",
+        "role": "Manages knowledge base via mem0 MCP",
         "workflow": [
           "1. Curator analyzes reflector insights",
-          "2. Generates delta operations (ADD/UPDATE/DEPRECATE)",
-          "3. Outputs JSON to file",
-          "4. Main agent runs: mapify playbook apply-delta operations.json"
+          "2. Searches mem0 for duplicates via mcp__mem0__map_tiered_search",
+          "3. Stores new patterns via mcp__mem0__map_add_pattern",
+          "4. Archives outdated patterns via mcp__mem0__map_archive_pattern"
         ],
-        "critical_rule": "NEVER manually update playbook.db - always use apply-delta"
+        "critical_rule": "NEVER write patterns directly - always use Curator agent"
       },
       "reflector_agent": {
         "role": "Searches for existing patterns before extracting new ones",
         "workflow": [
-          "1. Search mem0 for similar patterns",
-          "2. Search local playbook",
-          "3. Extract only novel patterns"
-        ],
-        "uses_commands": [
-          "mapify playbook query \"...\""
+          "1. Search mem0 for similar patterns via mcp__mem0__map_tiered_search",
+          "2. Extract only novel patterns",
+          "3. Pass to Curator for storage"
         ]
       }
     }
@@ -597,11 +267,10 @@
     "generated_from": "src/mapify_cli/__init__.py",
     "command_definitions": [
       "@app.command() decorators",
-      "@playbook_app.command() decorators",
       "@validate_app.command() decorators"
     ],
-    "version": "Based on map-framework 2.3.0",
-    "last_updated": "2025-11-07",
+    "version": "Based on map-framework 4.0.0",
+    "last_updated": "2026-02-15",
     "related_docs": [
       "docs/USAGE.md",
       "docs/ARCHITECTURE.md",

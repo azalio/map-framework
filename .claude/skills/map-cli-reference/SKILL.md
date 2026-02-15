@@ -14,7 +14,7 @@ metadata:
 
 # MAP CLI Quick Reference
 
-> **Note (v4.0+):** Pattern storage and retrieval uses mem0 MCP (tiered namespaces). Legacy playbook subcommands are not the source of truth for patterns.
+> **Note (v4.0+):** Pattern storage and retrieval uses mem0 MCP (tiered namespaces).
 
 Fast lookup for commands, parameters, and common error corrections.
 
@@ -69,11 +69,12 @@ mapify upgrade
 
 ## Common Errors & Corrections
 
-### Error 1: Using Deprecated Playbook Commands
+### Error 1: Using Removed Commands
 
 **Issue**: `Error: No such command 'playbook'` or docs/examples mention `mapify playbook ...`
 
 **Solution**:
+- The `playbook` command was removed in v4.0+
 - For pattern retrieval: use `mcp__mem0__map_tiered_search`
 - For pattern writes: use `Task(subagent_type="curator", ...)`
 
@@ -154,8 +155,8 @@ mcp__mem0__map_tiered_search(query="error handling", limit=5)
 **User says:** "I'm getting `Error: No such command 'playbook'` when running mapify"
 
 **Actions:**
-1. Identify error type — deprecated command usage
-2. Explain: playbook commands removed in v4.0+
+1. Identify error type — removed command usage
+2. Explain: `playbook` command was removed in v4.0+, replaced by mem0 MCP
 3. Provide replacement: `mcp__mem0__map_tiered_search` for reads, `Task(subagent_type="curator", ...)` for writes
 
 **Result:** User switches to mem0 MCP tools, error resolved.
@@ -188,7 +189,7 @@ mcp__mem0__map_tiered_search(query="error handling", limit=5)
 
 | Issue | Cause | Solution |
 |-------|-------|----------|
-| `No such command 'playbook'` | Deprecated in v4.0+ | Use `mcp__mem0__map_tiered_search` for pattern retrieval |
+| `No such command 'playbook'` | Removed in v4.0+ | Use `mcp__mem0__map_tiered_search` for pattern retrieval |
 | `No such option '--output'` | Wrong subcommand syntax | Check `mapify <command> --help` for valid options |
 | mem0 tool invocation fails | MCP server not configured | Add mem0 to `.claude/mcp_config.json` and restart |
 | `validate graph` exit code 2 | Malformed JSON input | Validate JSON with `python -m json.tool < file.json` |

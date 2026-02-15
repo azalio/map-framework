@@ -1872,7 +1872,7 @@ POSITIVE ADJUSTMENTS:
 +0.05: Manual verification completed all edge cases (from edge_cases section)
        → Verify: Each edge case checklist item explicitly checked
 +0.05: Change matches documented pattern in existing_patterns
-       → Verify: Quote matching playbook bullet in recommendation
+       → Verify: Quote matching mem0 pattern in recommendation
 +0.05: Entities verified against provided context
        → Verify: All files in required_updates exist in files_changed or diff
 

@@ -710,7 +710,7 @@ mcp__mem0__map_tiered_search(
 {{subtask_description}}
 
 {{#if existing_patterns}}
-## Relevant Playbook Knowledge
+## Relevant mem0 Knowledge
 
 {{existing_patterns}}
 

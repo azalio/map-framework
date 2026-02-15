@@ -156,7 +156,6 @@ class TemplateLinter:
                     "language",
                     "framework",
                     "subtask_description",
-                    "playbook_bullets",
                     "feedback",
                     "standards_doc",
                     "branch_name",

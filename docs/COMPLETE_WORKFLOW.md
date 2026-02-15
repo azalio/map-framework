@@ -410,8 +410,8 @@ How to proceed?
 /map-learn "OAuth 2.0 implementation with CSRF protection"
 
 # Reflector извлекает уроки
-# Curator обновляет playbook.db
-# Паттерны сохраняются в mem0 для будущих проектов
+# Curator сохраняет паттерны в mem0 MCP
+# Паттерны доступны для будущих проектов
 ```
 
 ---

@@ -7,7 +7,7 @@
 # Examples:
 #   ./check-command.sh validate graph
 #   ./check-command.sh init
-#   ./check-command.sh playbook  # deprecated command
+#   ./check-command.sh playbook  # removed command
 #
 # Exit codes:
 #   0 - Command exists
@@ -30,7 +30,7 @@ if [ -z "$SUBCOMMAND" ]; then
   echo "  upgrade    - Upgrade agent templates"
   echo "  validate   - Validate dependency graphs"
   echo ""
-  echo "Deprecated subcommands:"
+  echo "Removed subcommands:"
   echo "  playbook   - Removed in v4.0+ (use mem0 MCP)"
   exit 1
 fi

@@ -378,7 +378,7 @@ IF execution_outcome = success AND no notable new patterns:
   → Check: Did existing bullets guide Actor? Was task trivial?
   → IF trivial: "Standard implementation, no novel learning"
   → IF bullets helped: bullet_updates with "helpful" tags, suggested_new_bullets = []
-  → key_insight: "Existing playbook patterns validated for [use case]"
+  → key_insight: "Existing mem0 patterns validated for [use case]"
 ```
 
 ## Tool Edge Cases
@@ -763,7 +763,7 @@ Use {{language}}/{{framework}} syntax. Show specific library, configuration, exp
 
 <example name="success_no_new_bullet">
 
-## Success - No New Bullet Needed (Playbook Validated)
+## Success - No New Bullet Needed (Patterns Validated)
 
 **Input**: Standard REST endpoint implementation, all validations pass, Evaluator: 9.0/10
 
@@ -774,11 +774,11 @@ Use {{language}}/{{framework}} syntax. Show specific library, configuration, exp
 
   "error_identification": "No errors. Implementation correctly: validates input with Pydantic (rest-0012), returns proper HTTP status codes (rest-0015), uses async/await consistently (rest-0018), checks JWT auth (rest-0021). All existing patterns applied correctly.",
 
-  "root_cause_analysis": "Success root cause: Actor followed established REST patterns from playbook. Bullets rest-0012 through rest-0024 provided comprehensive guidance. No novel decisions required - standard CRUD operation. This validates pattern coverage, not new learning opportunity.",
+  "root_cause_analysis": "Success root cause: Actor followed established REST patterns from mem0. Patterns rest-0012 through rest-0024 provided comprehensive guidance. No novel decisions required - standard CRUD operation. This validates pattern coverage, not new learning opportunity.",
 
   "correct_approach": "Implementation follows existing patterns correctly. No correction needed.\n\n```python\n# Actor's implementation (correct)\n@router.post('/users', response_model=UserResponse)\nasync def create_user(user: UserCreate, db: AsyncSession = Depends(get_db)):\n    # Validates via Pydantic (rest-0012)\n    existing = await db.execute(select(User).where(User.email == user.email))\n    if existing.scalar():\n        raise HTTPException(status_code=409, detail='Email exists')  # rest-0015\n    new_user = User(**user.dict())\n    db.add(new_user)\n    await db.commit()  # rest-0018\n    return new_user\n```",
 
-  "key_insight": "When existing playbook bullets comprehensively cover a pattern, successful application validates the playbook rather than generating new bullets. Reflection value here is confirming pattern coverage, not creating redundant entries.",
+  "key_insight": "When existing mem0 patterns comprehensively cover a pattern, successful application validates coverage rather than generating new patterns. Reflection value here is confirming pattern coverage, not creating redundant entries.",
 
   "bullet_updates": [
     {"bullet_id": "rest-0012", "tag": "helpful", "reason": "Pydantic validation pattern correctly applied"},

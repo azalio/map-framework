@@ -16,7 +16,7 @@ Performance targets:
 - query_relationships(): <50ms
 - get_entity_provenance(): <20ms
 
-Based on: src/mapify_cli/schemas.py (SCHEMA_V3_0_SQL)
+Based on: src/mapify_cli/schemas.py
 """
 
 import sqlite3
@@ -83,10 +83,9 @@ class KnowledgeGraphQuery:
     - Parameterized queries for safety and caching
 
     Example:
-        >>> from mapify_cli.playbook_manager import PlaybookManager
-        >>> pm = PlaybookManager()
-        >>> paths = pm.kg_query.find_paths('ent-pytest', 'ent-python', max_depth=2)
-        >>> neighbors = pm.kg_query.get_neighbors('ent-pytest', direction='outgoing')
+        >>> kg_query = KnowledgeGraphQuery(db_conn)
+        >>> paths = kg_query.find_paths('ent-pytest', 'ent-python', max_depth=2)
+        >>> neighbors = kg_query.get_neighbors('ent-pytest', direction='outgoing')
     """
 
     def __init__(self, db_conn: sqlite3.Connection):
@@ -94,14 +93,14 @@ class KnowledgeGraphQuery:
         Initialize query interface with existing database connection.
 
         Args:
-            db_conn: SQLite connection from PlaybookManager
+            db_conn: SQLite database connection
 
         Note:
             Connection must have row_factory set to sqlite3.Row for dict-like access
         """
         self.db_conn = db_conn
 
-        # Ensure row_factory is set (should already be set by PlaybookManager)
+        # Ensure row_factory is set
         if self.db_conn.row_factory is None:
             self.db_conn.row_factory = sqlite3.Row
 

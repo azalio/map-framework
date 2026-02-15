@@ -14,7 +14,7 @@ MAP Framework orchestrates 12 specialized agents in a coordinated workflow.
 
 **2. Actor**
 - **Role:** Implements code changes
-- **Input:** Subtask description, acceptance criteria, playbook context
+- **Input:** Subtask description, acceptance criteria, mem0 pattern context
 - **Output:** Code changes, rationale, test strategy
 - **When it runs:** For each subtask (multiple times if revisions needed)
 
@@ -193,7 +193,7 @@ Otherwise: Skipped (token savings)
 ### Workflow State
 - All subtask results
 - Aggregated patterns (Reflector)
-- Playbook delta operations (Curator)
+- mem0 delta operations (Curator)
 
 ---
 
@@ -275,5 +275,4 @@ Create `.claude/commands/map-custom.md`:
 ---
 
 **See also:**
-- [Playbook System](playbook-system.md) - How knowledge is structured
 - [map-efficient Deep Dive](map-efficient-deep-dive.md) - Conditional execution example

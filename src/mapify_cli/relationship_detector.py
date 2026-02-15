@@ -27,7 +27,7 @@ class RelationshipType(Enum):
 
     # Required 5 types (for 70% accuracy requirement)
     USES = "USES"  # A uses B (pytest USES Python)
-    DEPENDS_ON = "DEPENDS_ON"  # A depends on B (MAP-workflow DEPENDS_ON playbook.db)
+    DEPENDS_ON = "DEPENDS_ON"  # A depends on B (MAP-workflow DEPENDS_ON mem0-patterns)
     CONTRADICTS = "CONTRADICTS"  # A contradicts B (generic-exception CONTRADICTS specific-exceptions)
     SUPERSEDES = "SUPERSEDES"  # A replaces B (SQLite SUPERSEDES JSON-storage)
     RELATED_TO = "RELATED_TO"  # Generic relationship (fallback)
@@ -130,7 +130,7 @@ class RelationshipDetector:
         """
 
         # USES: A uses B
-        # Examples: "pytest uses Python", "Flask uses Jinja2", "MAP workflow uses playbook.db"
+        # Examples: "pytest uses Python", "Flask uses Jinja2", "MAP workflow uses mem0 patterns"
         # Pattern captures: word or multi-word entity (limited to 2 words)
         self.uses_patterns = [
             re.compile(
@@ -152,7 +152,7 @@ class RelationshipDetector:
         ]
 
         # DEPENDS_ON: A depends on B
-        # Examples: "MAP workflow depends on playbook.db", "Actor requires Monitor"
+        # Examples: "MAP workflow depends on mem0 patterns", "Actor requires Monitor"
         self.depends_on_patterns = [
             re.compile(
                 r"\b(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+depends?\s+on\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\b",
@@ -194,7 +194,7 @@ class RelationshipDetector:
         ]
 
         # SUPERSEDES: A replaces B
-        # Examples: "playbook.db supersedes playbook.json", "migrated from JSON to SQLite"
+        # Examples: "mem0 supersedes JSON storage", "migrated from JSON to SQLite"
         self.supersedes_patterns = [
             re.compile(
                 r"\b(?P<source>[\w\-\.]+(?:\s[\w\-\.]+)?)\s+supersedes?\s+(?P<target>[\w\-\.]+(?:\s[\w\-\.]+)?)\b",
@@ -269,7 +269,7 @@ class RelationshipDetector:
         Detect relationships between entities in content.
 
         Args:
-            content: Text to extract relationships from (playbook bullet content)
+            content: Text to extract relationships from (pattern content)
             entities: List of Entity objects already extracted from content
             bullet_id: ID of bullet this content came from (for provenance)
 

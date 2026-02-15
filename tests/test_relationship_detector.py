@@ -62,9 +62,9 @@ class TestRelationshipDetector:
                 last_seen_at=now,
             ),
             Entity(
-                id="ent-playbook-db",
+                id="ent-pattern-store",
                 type=EntityType.TOOL,
-                name="playbook.db",
+                name="pattern-store",
                 confidence=0.9,
                 first_seen_at=now,
                 last_seen_at=now,
@@ -86,9 +86,9 @@ class TestRelationshipDetector:
                 last_seen_at=now,
             ),
             Entity(
-                id="ent-playbook-json",
+                id="ent-json-storage",
                 type=EntityType.TOOL,
-                name="playbook.json",
+                name="json-storage",
                 confidence=0.7,
                 first_seen_at=now,
                 last_seen_at=now,
@@ -210,19 +210,19 @@ class TestRelationshipDetector:
 
     def test_extract_depends_on_explicit(self, detector, sample_entities):
         """Test extracting DEPENDS_ON with explicit 'depends on' verb."""
-        text = "The MAP workflow depends on playbook.db to store patterns."
+        text = "The MAP workflow depends on pattern-store to store patterns."
         rels = detector.detect_relationships(text, sample_entities, "bullet-004")
 
         depends_rels = [r for r in rels if r.type == RelationshipType.DEPENDS_ON]
         assert len(depends_rels) >= 1
 
-        # Should extract: MAP-workflow DEPENDS_ON playbook.db
+        # Should extract: MAP-workflow DEPENDS_ON pattern-store
         map_depends_db = next(
             (
                 r
                 for r in depends_rels
                 if r.source_entity_id == "ent-map-workflow"
-                and r.target_entity_id == "ent-playbook-db"
+                and r.target_entity_id == "ent-pattern-store"
             ),
             None,
         )
@@ -231,7 +231,7 @@ class TestRelationshipDetector:
 
     def test_extract_depends_on_requires(self, detector, sample_entities):
         """Test extracting DEPENDS_ON with 'requires' verb."""
-        text = "MAP workflow requires playbook.db for storage."
+        text = "MAP workflow requires pattern-store for storage."
         rels = detector.detect_relationships(text, sample_entities, "bullet-005")
 
         depends_rels = [r for r in rels if r.type == RelationshipType.DEPENDS_ON]
@@ -241,7 +241,7 @@ class TestRelationshipDetector:
         """Test extracting DEPENDS_ON with 'needs' verb."""
         # Note: "workflow" won't match "MAP-workflow" unless we add it as entity
         # Use exact entity name
-        text = "MAP-workflow needs playbook.db to function."
+        text = "MAP-workflow needs pattern-store to function."
         rels = detector.detect_relationships(text, sample_entities, "bullet-006")
 
         depends_rels = [r for r in rels if r.type == RelationshipType.DEPENDS_ON]
@@ -306,19 +306,19 @@ class TestRelationshipDetector:
 
     def test_extract_supersedes_explicit(self, detector, sample_entities):
         """Test extracting SUPERSEDES with explicit 'supersedes' verb."""
-        text = "playbook.db supersedes playbook.json for pattern storage."
+        text = "pattern-store supersedes json-storage for pattern storage."
         rels = detector.detect_relationships(text, sample_entities, "bullet-010")
 
         supersedes_rels = [r for r in rels if r.type == RelationshipType.SUPERSEDES]
         assert len(supersedes_rels) >= 1
 
-        # Should extract: playbook.db SUPERSEDES playbook.json
+        # Should extract: pattern-store SUPERSEDES json-storage
         supersedes = next(
             (
                 r
                 for r in supersedes_rels
-                if r.source_entity_id == "ent-playbook-db"
-                and r.target_entity_id == "ent-playbook-json"
+                if r.source_entity_id == "ent-pattern-store"
+                and r.target_entity_id == "ent-json-storage"
             ),
             None,
         )
@@ -327,19 +327,19 @@ class TestRelationshipDetector:
 
     def test_extract_supersedes_migrated(self, detector, sample_entities):
         """Test extracting SUPERSEDES with 'migrated from X to Y' pattern."""
-        text = "We migrated from playbook.json to playbook.db."
+        text = "We migrated from json-storage to pattern-store."
         rels = detector.detect_relationships(text, sample_entities, "bullet-011")
 
         supersedes_rels = [r for r in rels if r.type == RelationshipType.SUPERSEDES]
         assert len(supersedes_rels) >= 1
 
-        # Should extract: playbook.db SUPERSEDES playbook.json
+        # Should extract: pattern-store SUPERSEDES json-storage
         supersedes = next(
             (
                 r
                 for r in supersedes_rels
-                if r.source_entity_id == "ent-playbook-db"
-                and r.target_entity_id == "ent-playbook-json"
+                if r.source_entity_id == "ent-pattern-store"
+                and r.target_entity_id == "ent-json-storage"
             ),
             None,
         )
@@ -347,7 +347,7 @@ class TestRelationshipDetector:
 
     def test_extract_supersedes_replaces(self, detector, sample_entities):
         """Test extracting SUPERSEDES with 'replaces' verb."""
-        text = "playbook.db replaces playbook.json."
+        text = "pattern-store replaces json-storage."
         rels = detector.detect_relationships(text, sample_entities, "bullet-012")
 
         supersedes_rels = [r for r in rels if r.type == RelationshipType.SUPERSEDES]
@@ -601,9 +601,9 @@ class TestRelationshipDetector:
         """Test that all confidence scores are in valid range [0.0, 1.0]."""
         text = """
         pytest uses Python for testing.
-        MAP-workflow depends on playbook.db.
+        MAP-workflow depends on pattern-store.
         generic-exception contradicts specific-exceptions.
-        playbook.db supersedes playbook.json.
+        pattern-store supersedes json-storage.
         SQLite and FTS5 enable search.
         """
         rels = detector.detect_relationships(text, sample_entities, "bullet-028")
@@ -703,9 +703,9 @@ class TestRelationshipDetector:
                 last_seen_at=now,
             ),
             Entity(
-                id="ent-playbook-db",
+                id="ent-pattern-store",
                 type=EntityType.TOOL,
-                name="playbook.db",
+                name="pattern-store",
                 confidence=0.9,
                 first_seen_at=now,
                 last_seen_at=now,
@@ -713,7 +713,7 @@ class TestRelationshipDetector:
         ]
 
         # Use space instead of hyphen
-        text = "MAP workflow depends on playbook.db."
+        text = "MAP workflow depends on pattern-store."
         rels = detector.detect_relationships(text, entities, "bullet-032")
 
         depends_rels = [r for r in rels if r.type == RelationshipType.DEPENDS_ON]
@@ -835,14 +835,14 @@ class TestRelationshipDetector:
             ),
             # DEPENDS_ON relationships (4 cases)
             (
-                "The MAP workflow depends on playbook.db to store patterns.",
-                ["MAP-workflow", "playbook.db"],
-                [("MAP-workflow", "playbook.db", RelationshipType.DEPENDS_ON)],
+                "The MAP workflow depends on pattern-store to store patterns.",
+                ["MAP-workflow", "pattern-store"],
+                [("MAP-workflow", "pattern-store", RelationshipType.DEPENDS_ON)],
             ),
             (
-                "MAP workflow requires playbook.db for storage.",
-                ["MAP-workflow", "playbook.db"],
-                [("MAP-workflow", "playbook.db", RelationshipType.DEPENDS_ON)],
+                "MAP workflow requires pattern-store for storage.",
+                ["MAP-workflow", "pattern-store"],
+                [("MAP-workflow", "pattern-store", RelationshipType.DEPENDS_ON)],
             ),
             (
                 "Actor needs Monitor for validation.",
@@ -890,14 +890,14 @@ class TestRelationshipDetector:
             ),
             # SUPERSEDES relationships (3 cases)
             (
-                "playbook.db supersedes playbook.json for pattern storage.",
-                ["playbook.db", "playbook.json"],
-                [("playbook.db", "playbook.json", RelationshipType.SUPERSEDES)],
+                "pattern-store supersedes json-storage for pattern storage.",
+                ["pattern-store", "json-storage"],
+                [("pattern-store", "json-storage", RelationshipType.SUPERSEDES)],
             ),
             (
-                "We migrated from playbook.json to playbook.db.",
-                ["playbook.db", "playbook.json"],
-                [("playbook.db", "playbook.json", RelationshipType.SUPERSEDES)],
+                "We migrated from json-storage to pattern-store.",
+                ["pattern-store", "json-storage"],
+                [("pattern-store", "json-storage", RelationshipType.SUPERSEDES)],
             ),
             (
                 "Python 3 replaces Python 2.",
@@ -964,8 +964,8 @@ class TestRelationshipDetector:
                 "flask",
                 "sqlite",
                 "fts5",
-                "playbook.db",
-                "playbook.json",
+                "pattern-store",
+                "json-storage",
             ]:
                 etype = EntityType.TOOL
             elif name.lower() in ["python", "jinja2", "python-2", "python-3"]:
@@ -1120,12 +1120,12 @@ class TestIntegration:
     """Integration tests combining entity extraction and relationship detection."""
 
     def test_end_to_end_extraction(self):
-        """Test complete workflow: extract entities → detect relationships."""
+        """Test complete workflow: extract entities --> detect relationships."""
         text = """
         We use pytest for testing Python applications.
-        The MAP workflow depends on playbook.db to store patterns.
+        The MAP workflow depends on pattern-store to store patterns.
         Never use generic-exception. Use specific-exceptions instead.
-        We migrated from playbook.json to playbook.db.
+        We migrated from json-storage to pattern-store.
         SQLite and FTS5 enable fast full-text search.
         """
 
@@ -1144,8 +1144,8 @@ class TestIntegration:
             or RelationshipType.DEPENDS_ON in rel_types
         )
 
-    def test_integration_with_real_playbook_content(self):
-        """Test with realistic playbook bullet content."""
+    def test_integration_with_real_pattern_content(self):
+        """Test with realistic pattern content."""
         text = """
         FTS5 Query-Tokenizer Alignment: SQLite FTS5 tokenizes queries using unicode61 tokenizer.
         Queries MUST match tokenizer behavior or return zero results. Transform queries by:

@@ -19,7 +19,6 @@
       "Bash(pytest *)",
       "Bash(make lint)",
       "Bash(make test)",
-      "Bash(sqlite3 .claude/playbook.db *)",
       "Bash(ruff *)",
       "Bash(black *)",
       "Bash(git status)",

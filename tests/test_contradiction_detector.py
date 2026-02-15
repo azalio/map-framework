@@ -27,7 +27,58 @@ from mapify_cli.contradiction_detector import (
 )
 from mapify_cli.entity_extractor import Entity, EntityType, extract_entities
 from mapify_cli.relationship_detector import Relationship, RelationshipType
-from mapify_cli.schemas import SCHEMA_V3_0_SQL
+# Knowledge Graph schema (inlined; was SCHEMA_V3_0_SQL before removal from schemas.py)
+_KG_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS entities (
+    id TEXT PRIMARY KEY,
+    type TEXT NOT NULL CHECK(type IN ('TOOL','PATTERN','CONCEPT','ERROR_TYPE','TECHNOLOGY','WORKFLOW','ANTIPATTERN')),
+    name TEXT NOT NULL,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    confidence REAL NOT NULL DEFAULT 0.8 CHECK(confidence >= 0.0 AND confidence <= 1.0),
+    metadata TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(type);
+CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name COLLATE NOCASE);
+
+CREATE TABLE IF NOT EXISTS relationships (
+    id TEXT PRIMARY KEY,
+    source_entity_id TEXT NOT NULL,
+    target_entity_id TEXT NOT NULL,
+    type TEXT NOT NULL CHECK(type IN ('USES','DEPENDS_ON','CONTRADICTS','SUPERSEDES','RELATED_TO','IMPLEMENTS','CAUSES','PREVENTS','ALTERNATIVE_TO')),
+    created_from_bullet_id TEXT NOT NULL,
+    confidence REAL NOT NULL DEFAULT 0.8 CHECK(confidence >= 0.0 AND confidence <= 1.0),
+    metadata TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (source_entity_id) REFERENCES entities(id) ON DELETE CASCADE,
+    FOREIGN KEY (target_entity_id) REFERENCES entities(id) ON DELETE CASCADE,
+    FOREIGN KEY (created_from_bullet_id) REFERENCES bullets(id) ON DELETE CASCADE,
+    UNIQUE(source_entity_id, target_entity_id, type)
+);
+CREATE INDEX IF NOT EXISTS idx_rel_source ON relationships(source_entity_id, type);
+CREATE INDEX IF NOT EXISTS idx_rel_target ON relationships(target_entity_id, type);
+
+CREATE TABLE IF NOT EXISTS provenance (
+    id TEXT PRIMARY KEY,
+    entity_id TEXT,
+    relationship_id TEXT,
+    source_bullet_id TEXT NOT NULL,
+    extraction_method TEXT NOT NULL CHECK(extraction_method IN ('MANUAL','NLP_REGEX','LLM_GPT4','LLM_CLAUDE','RULE_BASED')),
+    extraction_confidence REAL NOT NULL DEFAULT 0.8,
+    extracted_at TEXT NOT NULL,
+    metadata TEXT,
+    FOREIGN KEY (entity_id) REFERENCES entities(id) ON DELETE CASCADE,
+    FOREIGN KEY (relationship_id) REFERENCES relationships(id) ON DELETE CASCADE,
+    FOREIGN KEY (source_bullet_id) REFERENCES bullets(id) ON DELETE CASCADE,
+    CHECK((entity_id IS NOT NULL AND relationship_id IS NULL) OR (entity_id IS NULL AND relationship_id IS NOT NULL))
+);
+
+INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', '3.0');
+INSERT OR IGNORE INTO metadata (key, value) VALUES ('kg_enabled', '1');
+"""
 
 
 class TestContradictionDetector:
@@ -65,7 +116,7 @@ class TestContradictionDetector:
         )
 
         # Execute KG schema
-        conn.executescript(SCHEMA_V3_0_SQL)
+        conn.executescript(_KG_SCHEMA_SQL)
         conn.commit()
 
         yield conn

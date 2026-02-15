@@ -81,10 +81,8 @@ class ContradictionDetector:
     - get_contradiction_report(): <100ms
 
     Example:
-        >>> from mapify_cli.playbook_manager import PlaybookManager
-        >>> pm = PlaybookManager()
         >>> detector = ContradictionDetector()
-        >>> contradictions = detector.detect_contradictions(pm.db_conn, min_confidence=0.7)
+        >>> contradictions = detector.detect_contradictions(db_conn, min_confidence=0.7)
         >>> for c in contradictions:
         ...     print(f"{c.severity.upper()}: {c.entity_a.name} contradicts {c.entity_b.name}")
     """
@@ -280,7 +278,7 @@ class ContradictionDetector:
         """
         Check if new pattern (from Curator) conflicts with existing knowledge.
 
-        Use case: Curator calls this before adding new bullet to playbook.
+        Use case: Curator calls this before adding new pattern.
         If conflicts found with severity='high', Curator should warn or reject.
 
         Args:
@@ -642,10 +640,8 @@ def detect_contradictions(
         List of Contradiction objects
 
     Example:
-        >>> from mapify_cli.playbook_manager import PlaybookManager
         >>> from mapify_cli.contradiction_detector import detect_contradictions
-        >>> pm = PlaybookManager()
-        >>> contradictions = detect_contradictions(pm.db_conn, min_confidence=0.7)
+        >>> contradictions = detect_contradictions(db_conn, min_confidence=0.7)
         >>> for c in contradictions:
         ...     print(f"{c.severity.upper()}: {c.description}")
     """
@@ -671,7 +667,7 @@ def find_entity_contradictions(
 
     Example:
         >>> from mapify_cli.contradiction_detector import find_entity_contradictions
-        >>> conflicts = find_entity_contradictions(pm.db_conn, 'ent-generic-exception')
+        >>> conflicts = find_entity_contradictions(db_conn, 'ent-generic-exception')
     """
     detector = ContradictionDetector()
     return detector.find_entity_contradictions(db_conn, entity_id, min_confidence)
@@ -702,7 +698,7 @@ def check_new_pattern_conflicts(
         >>> from mapify_cli.contradiction_detector import check_new_pattern_conflicts
         >>> new_pattern = "Always use generic exception handling"
         >>> entities = extract_entities(new_pattern)
-        >>> conflicts = check_new_pattern_conflicts(pm.db_conn, new_pattern, entities)
+        >>> conflicts = check_new_pattern_conflicts(db_conn, new_pattern, entities)
     """
     detector = ContradictionDetector()
     return detector.check_new_pattern_conflicts(
@@ -728,7 +724,7 @@ def get_contradiction_report(
 
     Example:
         >>> from mapify_cli.contradiction_detector import get_contradiction_report
-        >>> report = get_contradiction_report(pm.db_conn, group_by='severity')
+        >>> report = get_contradiction_report(db_conn, group_by='severity')
         >>> print(report['summary'])
     """
     detector = ContradictionDetector()

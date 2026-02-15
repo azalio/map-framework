@@ -54,7 +54,6 @@ MAP: [Shows decision tree and comparison matrix]
 - `map-feature-deep-dive.md` - Full validation workflow (PLANNED)
 - `map-refactor-deep-dive.md` - Dependency analysis (PLANNED)
 - `agent-architecture.md` - How 12 agents orchestrate
-- `playbook-system.md` - Knowledge storage and search
 
 ---
 
@@ -124,7 +123,6 @@ Skills work seamlessly with the prompt improvement system:
         ├── map-debug-deep-dive.md
         ├── map-refactor-deep-dive.md
         ├── agent-architecture.md
-        ├── playbook-system.md
 ```
 
 ---

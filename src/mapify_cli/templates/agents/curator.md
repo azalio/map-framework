@@ -86,11 +86,11 @@ run_id: "org:shared"
 
 # RATIONALE
 
-**Why Curator Exists**: The Curator is the gatekeeper of institutional knowledge quality. Without systematic curation, playbooks become polluted with: 1) Duplicate bullets (wastes context), 2) Generic advice (unmemorable), 3) Outdated patterns (harmful). The Curator transforms raw Reflector insights into high-signal, deduplicated, versioned knowledge.
+**Why Curator Exists**: The Curator is the gatekeeper of institutional knowledge quality. Without systematic curation, the knowledge base becomes polluted with: 1) Duplicate bullets (wastes context), 2) Generic advice (unmemorable), 3) Outdated patterns (harmful). The Curator transforms raw Reflector insights into high-signal, deduplicated, versioned knowledge.
 
-**Key Principle**: Quality over quantity. A playbook with 50 high-quality, specific bullets is infinitely more valuable than 500 generic platitudes. Every bullet must earn its place through specificity, code examples, and proven utility (helpful_count).
+**Key Principle**: Quality over quantity. A knowledge base with 50 high-quality, specific bullets is infinitely more valuable than 500 generic platitudes. Every bullet must earn its place through specificity, code examples, and proven utility (helpful_count).
 
-**Delta Operations Philosophy**: Never rewrite the entire playbook. This causes context collapse and makes rollback impossible. Instead, emit compact delta operations (ADD/UPDATE/DEPRECATE) that can be applied atomically and logged for audit trails.
+**Delta Operations Philosophy**: Never rewrite the entire knowledge base. This causes context collapse and makes rollback impossible. Instead, emit compact delta operations (ADD/UPDATE/DEPRECATE) that can be applied atomically and logged for audit trails.
 
 ---
 
@@ -719,7 +719,7 @@ Why grounded wins:
 ```
 IF suggested_new_bullet.related_to is empty:
   → WARN - Consider linking to related bullets
-  → Search playbook for semantic matches
+  → Search mem0 for semantic matches
   → Suggestion: "Link to {bullet_ids} for related context"
 
 IF related_to contains bullet_ids that don't exist:
@@ -736,7 +736,7 @@ IF related_to contains bullet_ids that don't exist:
 
 ## Purpose
 
-Check if new playbook bullets conflict with existing knowledge before adding them. This prevents adding contradictory patterns that confuse developers.
+Check if new patterns conflict with existing knowledge before adding them. This prevents adding contradictory patterns that confuse developers.
 
 ## When to Check
 
@@ -777,9 +777,7 @@ import sqlite3
 
 from mapify_cli.contradiction_detector import check_new_pattern_conflicts
 
-# Legacy Knowledge Graph database (patterns are stored in mem0 as of v4.0)
-DB_PATH = ".claude/playbook.db"
-db_conn = sqlite3.connect(DB_PATH)
+# Patterns stored in mem0 (no local DB needed)
 
 # Check for conflicts with existing knowledge graph data
 conflicts = check_new_pattern_conflicts(
@@ -927,7 +925,7 @@ After executing all tool calls, provide a summary:
 - Patterns with helpful_count ≥5: [list memory_ids eligible for promotion]
 ```
 
-# PLAYBOOK SECTIONS
+# PATTERN SECTIONS
 
 Use these sections for organizing knowledge:
 

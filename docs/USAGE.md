@@ -172,7 +172,7 @@ Self-MoA uses ~4x tokens per subtask:
 
 ## 🧠 Pattern Storage & Retrieval (mem0 MCP)
 
-As of v4.0, patterns are stored and retrieved via the mem0 MCP server. There is no local playbook CLI workflow for pattern search/update.
+As of v4.0, patterns are stored and retrieved via the mem0 MCP server. There is no local CLI workflow for pattern search/update.
 
 ### Tiered Pattern Search
 
@@ -212,7 +212,7 @@ This section documents frequently encountered CLI command errors and their corre
 
 | ❌ Incorrect | ✅ Correct | Explanation |
 |-------------|-----------|-------------|
-| Using legacy playbook commands (`mapify playbook ...`) | Use `mcp__mem0__map_tiered_search` | Playbook CLI is not used for patterns in v4.0+ |
+| Using legacy CLI commands (`mapify playbook ...`) | Use `mcp__mem0__map_tiered_search` | Legacy CLI is not used for patterns in v4.0+ |
 | Calling mem0 tools directly from workflow docs | Use `Task(subagent_type="curator", ...)` for writes | Curator handles dedupe + quality scoring |
 
 ### Wrong Approach (CRITICAL)
@@ -222,7 +222,7 @@ This section documents frequently encountered CLI command errors and their corre
 | Direct mem0 MCP calls without Curator | `Task(subagent_type="curator", ...)` | Curator validates quality, checks duplicates via tiered search |
 | Manually creating patterns | `mcp__mem0__map_add_pattern` via Curator | Fingerprint-based deduplication prevents duplicates |
 
-> **Note (v4.0+):** Pattern storage migrated from playbook.db to mem0 MCP. Use mem0 tools: `mcp__mem0__map_tiered_search`, `mcp__mem0__map_add_pattern`, `mcp__mem0__map_archive_pattern`.
+> **Note (v4.0+):** Pattern storage uses mem0 MCP. Use mem0 tools: `mcp__mem0__map_tiered_search`, `mcp__mem0__map_add_pattern`, `mcp__mem0__map_archive_pattern`.
 
 ### Wrong Operation Field Name
 
@@ -276,17 +276,17 @@ git commit --no-verify  # NOT RECOMMENDED
 
 > **Added in v3.0** — Semantic knowledge extraction and querying for enhanced pattern discovery.
 
-The Knowledge Graph (KG) layer automatically extracts entities (tools, patterns, concepts) and relationships (uses, depends-on, contradicts) from your playbook, enabling advanced queries and contradiction detection.
+The Knowledge Graph (KG) layer automatically extracts entities (tools, patterns, concepts) and relationships (uses, depends-on, contradicts) from your knowledge base, enabling advanced queries and contradiction detection.
 
 ### What is the Knowledge Graph?
 
-Instead of treating playbook bullets as plain text, the KG:
+Instead of treating patterns as plain text, the KG:
 - **Extracts entities**: Identifies tools (pytest, Docker), patterns (retry-with-backoff), concepts (idempotency), etc.
 - **Detects relationships**: Discovers "pytest USES Python", "race-condition CAUSES data-corruption", etc.
 - **Tracks provenance**: Links each entity back to the bullet it came from
 - **Finds contradictions**: Alerts you when new patterns conflict with existing knowledge
 
-**Extraction happens via `/map-learn`** after MAP workflows (Reflector/Curator agents), so you don't need to manually populate the graph.
+**Extraction happens via `/map-learn`** after MAP workflows (Reflector/Curator agents), so you do not need to manually populate the graph.
 
 ### Entity Types (7)
 
@@ -326,7 +326,7 @@ from mapify_cli.entity_extractor import EntityType
 from mapify_cli.relationship_detector import RelationshipType
 
 # Initialize Knowledge Graph for entity queries (LEGACY - patterns now in mem0)
-db_conn = sqlite3.connect(".claude/playbook.db")
+db_conn = sqlite3.connect(".claude/knowledge_graph.db")
 kg = KnowledgeGraphQuery(db_conn)
 
 # Example 1: Find all tools with high confidence
@@ -355,7 +355,7 @@ cutoff = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
 recent = kg.entities_since(cutoff, min_confidence=0.7)
 print(f"New entities (last 24h): {len(recent)}")
 
-# Example 5: Find all dependencies in your playbook
+# Example 5: Find all dependencies in your knowledge base
 deps = kg.query_relationships(relationship_type=RelationshipType.DEPENDS_ON)
 for dep in deps:
     source = kg.query_entities()[0]  # Get entity details
@@ -374,7 +374,7 @@ from mapify_cli.contradiction_detector import ContradictionDetector
 
 detector = ContradictionDetector()
 
-# Find all contradictions in playbook
+# Find all contradictions in knowledge base
 contradictions = detector.detect_contradictions(pm.db_conn, min_confidence=0.7)
 
 for contra in contradictions:
@@ -404,7 +404,7 @@ for contra in contradictions:
 
 #### Checking New Patterns for Conflicts (Curator Integration)
 
-When adding new bullets to the playbook, the Curator agent automatically checks for contradictions:
+When adding new patterns to the knowledge base, the Curator agent automatically checks for contradictions:
 
 ```python
 from mapify_cli.entity_extractor import extract_entities
@@ -423,7 +423,7 @@ if conflicts:
         print(f"    Resolution: {conflict.resolution_suggestion}")
     # Curator will REJECT or REQUEST_REVIEW based on severity
 else:
-    print("✅ No conflicts - safe to add to playbook")
+    print("✅ No conflicts - safe to add to knowledge base")
 ```
 
 ### Temporal Queries (Find Recent Knowledge)
@@ -535,7 +535,7 @@ search_results = conn.execute("""
 ### Migration from v2.1 to v3.0
 
 **Migration is automatic** when you upgrade to MAP Framework v1.3.0+:
-- Runs when `PlaybookManager` initializes
+- Runs when the knowledge manager initializes
 - Adds 4 new tables: `entities`, `relationships`, `provenance`, `entities_fts`
 - **Zero data loss** (only adds tables, never modifies existing bullets)
 - Takes <1 second (idempotent, safe to run multiple times)
@@ -558,7 +558,7 @@ pm.db_conn.commit()
 ```
 
 **Why you might disable:**
-- Performance concerns on very large playbooks (>50K entities)
+- Performance concerns on very large knowledge bases (>50K entities)
 - You only need text-based search (FTS5), not semantic queries
 - Debugging KG extraction issues
 
@@ -576,7 +576,7 @@ pm.db_conn.commit()
 
 ## 🔍 Pattern Search Tips (mem0 MCP)
 
-As of v4.0, pattern search is provided by mem0 MCP. Unlike the legacy FTS5-based playbook search, mem0 search is semantic and works best with descriptive queries.
+As of v4.0, pattern search is provided by mem0 MCP. Unlike legacy FTS5-based search, mem0 search is semantic and works best with descriptive queries.
 
 ### Practical Query Guidelines
 
@@ -871,7 +871,7 @@ After `mapify init`:
       },
       {
         "matcher": "",  // ✅ MAP Framework hook added
-        "description": "Enhance prompts with clarification and playbook context",
+        "description": "Enhance prompts with clarification and pattern context",
         "hooks": [
           {"type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/improve-prompt.py"}
         ]
@@ -1189,7 +1189,7 @@ MAP Framework offers three primary implementation workflows with different trade
 | **Impact Analysis** | ✅ Conditional (Predictor) | ✅ Conditional | ❌ Never |
 | **Multi-Variant** | ⚠️ Conditional (Self-MoA) | ✅ **Always 3 variants** | ❌ Never |
 | **Synthesis Model** | Synthesizer (sonnet) | **debate-arbiter (opus)** | N/A |
-| **Playbook Updates** | Via `/map-learn` | Via `/map-learn` | ❌ None |
+| **Knowledge Updates** | Via `/map-learn` | Via `/map-learn` | ❌ None |
 | **Best For** | **Most tasks** | **Reasoning transparency** | Throwaway only |
 | **Production Ready** | ✅ Yes | ✅ Yes (expensive) | ❌ NO |
 
@@ -1313,7 +1313,7 @@ MAP Framework offers three primary implementation workflows with different trade
 
 **Why it's dangerous:**
 - No impact analysis → Breaking changes undetected
-- No learning → Playbook stays empty, same mistakes repeated
+- No learning → Knowledge base stays empty, same mistakes repeated
 - No quality scoring → Security/performance issues missed
 - No knowledge integration → Knowledge lost forever
 
@@ -1375,7 +1375,7 @@ MAP Framework offers three primary implementation workflows with different trade
    - Reflector and Curator are NOT called during /map-efficient execution
    - Run `/map-learn` after workflow completes to extract patterns
    - Reflector then analyzes ALL subtasks together (batched, more holistic insights)
-   - Curator makes a single playbook update (deduplication via mem0)
+   - Curator makes a single knowledge base update (deduplication via mem0)
 
 3. **Evaluator Not Invoked** (8-12% savings)
    - Monitor provides sufficient validation for most tasks
@@ -1459,7 +1459,7 @@ The Actor agent now includes a 10-item Quality Checklist for self-review before 
 5. MCP tools usage (mcp__mem0__map_tiered_search, context7)
 6. Template variable preservation (orchestration compatibility)
 7. Trade-offs documentation (decision rationale)
-8. Playbook bullet tracking (ACE feedback loop)
+8. Pattern tracking (ACE feedback loop)
 9. Complete implementations (no ellipsis or placeholders)
 10. Dependency justification (no unnecessary libraries)
 
@@ -1736,12 +1736,12 @@ Skills follow the 500-line rule:
 - `map-efficient-deep-dive.md` - Optimization strategy, recommended default
 - `map-debate-deep-dive.md` - Multi-variant synthesis, Opus reasoning
 - `map-debug-deep-dive.md` - Debugging strategies, error analysis
-- `map-learn-deep-dive.md` - Lesson extraction, playbook updates
+- `map-learn-deep-dive.md` - Lesson extraction, knowledge base updates
 - `map-release-deep-dive.md` - Release workflow, validation gates
 
 **System architecture:**
 - `agent-architecture.md` - How 12 agents orchestrate
-- `playbook-system.md` - Knowledge storage, quality scoring
+- `mem0-patterns.md` - Knowledge storage, quality scoring
 
 ### Creating Custom Skills
 
@@ -2189,7 +2189,7 @@ MAP: [Prompt Improver Hook seeking clarification]
 
 User: [Selects option]
 
-MAP: [Proceeds with full context + playbook patterns]
+MAP: [Proceeds with full context + mem0 patterns]
 ```
 
 **Bypass options:**
@@ -2213,15 +2213,15 @@ MAP: [Proceeds with full context + playbook patterns]
 MAP uses **multiple UserPromptSubmit hooks** that run in parallel:
 
 1. **Prompt-Improver** – Disambiguates vague prompts (wraps prompt with evaluation instructions)
-2. **Playbook Injection** – Adds relevant patterns, and suggests workflows and skills
+2. **Pattern Injection** – Adds relevant mem0 patterns, and suggests workflows and skills
 
 > **Note:** Claude Code executes all matching hooks in parallel. Each hook's `additionalContext` output is concatenated and added to the prompt. The order is not guaranteed, but both enhancements are applied.
 
-> **Implementation detail:** Prompt improvement, playbook injection, and workflow suggestions are handled within the `improve-prompt.py` hook (`.claude/hooks/improve-prompt.py`).
+> **Implementation detail:** Prompt improvement, pattern injection, and workflow suggestions are handled within the `improve-prompt.py` hook (`.claude/hooks/improve-prompt.py`).
 
 **Benefits:**
 - Both hooks enhance the prompt with different types of context
-- Prompt-Improver adds evaluation wrapper, Playbook adds patterns/workflows/skills
+- Prompt-Improver adds evaluation wrapper, Pattern Injection adds mem0 patterns/workflows/skills
 - Modular design (hooks can be disabled independently)
 - Parallel execution (efficient)
 
@@ -2241,7 +2241,7 @@ If you prefer direct execution without clarification:
     "UserPromptSubmit": [
       // Comment out or remove Prompt-Improver hook
       {
-        "description": "Enhance prompts with clarification and playbook context",
+        "description": "Enhance prompts with clarification and pattern context",
         "hooks": [
           {
             "type": "command",

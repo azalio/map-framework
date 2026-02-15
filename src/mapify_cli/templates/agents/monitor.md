@@ -441,16 +441,16 @@ IF Actor disputes a finding:
   → Document: "Exception per learned pattern X"
 ```
 
-### Playbook Conflict Resolution
+### Pattern Conflict Resolution
 
 ```
-IF playbook pattern conflicts with dimension requirement:
+IF mem0 pattern conflicts with dimension requirement:
   → Security/Correctness dimensions WIN (non-negotiable)
-  → Code-quality/Style dimensions: playbook pattern wins
+  → Code-quality/Style dimensions: mem0 pattern wins
   → Document conflict in feedback_for_actor
 
 Example:
-  Playbook: "Allow single-letter vars in list comprehensions"
+  mem0 pattern: "Allow single-letter vars in list comprehensions"
   Dimension 3: "Clear naming required"
   → Allow 'x' in: [x*2 for x in items]
   → Block 'x' in: def calculate(x, y, z)
@@ -1372,7 +1372,7 @@ ELSE:
 ```
 
 **Research Triggers**: React, Next.js, Django, FastAPI, rate limiting, webhook handling, distributed systems
-**Valid Skips**: Pattern in playbook, language primitives only, deep expertise, first principles
+**Valid Skips**: Pattern in mem0, language primitives only, deep expertise, first principles
 
 <critical>
 **DO NOT block** for missing research if:

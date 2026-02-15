@@ -40,8 +40,8 @@ Task(
 **Changes:**
 [paste git diff output]
 
-**Playbook Context:**
-[paste relevant playbook bullets]
+**mem0 Context:**
+[paste relevant mem0 patterns]
 
 Check for:
 - Code correctness and logic errors
@@ -65,8 +65,8 @@ Task(
 **Changes:**
 [paste git diff output]
 
-**Playbook Context:**
-[paste relevant playbook bullets]
+**mem0 Context:**
+[paste relevant mem0 patterns]
 
 Analyze:
 - Affected files and modules
@@ -91,8 +91,8 @@ Task(
 **Changes:**
 [paste git diff output]
 
-**Playbook Context:**
-[paste relevant playbook bullets]
+**mem0 Context:**
+[paste relevant mem0 patterns]
 
 Provide quality assessment using 1-10 scoring (matches evaluator agent template):
 - Functionality score (1-10)

@@ -608,7 +608,7 @@ output:
   default: "Will implement read-through unless directed otherwise"
 ```
 
-## When Playbook Patterns Conflict
+## When mem0 Patterns Conflict
 
 ```yaml
 output:
