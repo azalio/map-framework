@@ -29,6 +29,22 @@ def run_hook(tool_name: str, file_path: str) -> tuple[int, str, str]:
     return result.returncode, result.stdout, result.stderr
 
 
+def _parse_stdout(stdout: str) -> dict:
+    stdout = (stdout or "").strip()
+    if not stdout:
+        return {}
+    return json.loads(stdout)
+
+
+def _assert_denied(payload: dict, expected_file_fragment: str | None = None) -> None:
+    assert payload.get("hookSpecificOutput", {}).get("hookEventName") == "PreToolUse"
+    assert payload["hookSpecificOutput"].get("permissionDecision") == "deny"
+    reason = payload["hookSpecificOutput"].get("permissionDecisionReason", "")
+    assert reason
+    if expected_file_fragment:
+        assert expected_file_fragment.lower() in reason.lower()
+
+
 # =============================================================================
 # Validation Criteria Tests
 # =============================================================================
@@ -38,16 +54,18 @@ class TestValidationCriteria:
     """Tests for the 5 validation criteria from the task."""
 
     def test_criterion_1_env_blocked(self):
-        """VC1: Read('.env') returns exit code 2 with 'Blocked' message."""
-        exit_code, _, stderr = run_hook("Read", ".env")
-        assert exit_code == 2, f"Expected exit 2, got {exit_code}"
-        assert "Blocked" in stderr, f"Expected 'Blocked' in stderr: {stderr}"
+        """VC1: Read('.env') is blocked (permissionDecision=deny)."""
+        exit_code, stdout, stderr = run_hook("Read", ".env")
+        assert exit_code == 0, f"Expected exit 0. stderr: {stderr}"
+        payload = _parse_stdout(stdout)
+        _assert_denied(payload, expected_file_fragment=".env")
 
     def test_criterion_2_credentials_blocked(self):
         """VC2: Write('credentials.json') is blocked."""
-        exit_code, _, stderr = run_hook("Write", "credentials.json")
-        assert exit_code == 2, f"Expected exit 2, got {exit_code}"
-        assert "Blocked" in stderr
+        exit_code, stdout, stderr = run_hook("Write", "credentials.json")
+        assert exit_code == 0, f"Expected exit 0. stderr: {stderr}"
+        payload = _parse_stdout(stdout)
+        _assert_denied(payload, expected_file_fragment="credentials.json")
 
     def test_criterion_3_legitimate_allowed(self):
         """VC3: Legitimate files like 'app.py' are allowed."""
@@ -86,8 +104,10 @@ class TestEnvFiles:
         ],
     )
     def test_env_variants_blocked(self, filename):
-        exit_code, _, _ = run_hook("Read", filename)
-        assert exit_code == 2, f"{filename} should be blocked"
+        exit_code, stdout, stderr = run_hook("Read", filename)
+        assert exit_code == 0, f"Expected exit 0. stderr: {stderr}"
+        payload = _parse_stdout(stdout)
+        _assert_denied(payload, expected_file_fragment=filename)
 
 
 class TestCredentialFiles:
@@ -104,8 +124,10 @@ class TestCredentialFiles:
         ],
     )
     def test_credentials_blocked(self, filename):
-        exit_code, _, _ = run_hook("Read", filename)
-        assert exit_code == 2, f"{filename} should be blocked"
+        exit_code, stdout, stderr = run_hook("Read", filename)
+        assert exit_code == 0, f"Expected exit 0. stderr: {stderr}"
+        payload = _parse_stdout(stdout)
+        _assert_denied(payload, expected_file_fragment=filename)
 
 
 class TestSecretFiles:
@@ -122,8 +144,10 @@ class TestSecretFiles:
         ],
     )
     def test_secrets_blocked(self, filename):
-        exit_code, _, _ = run_hook("Read", filename)
-        assert exit_code == 2, f"{filename} should be blocked"
+        exit_code, stdout, stderr = run_hook("Read", filename)
+        assert exit_code == 0, f"Expected exit 0. stderr: {stderr}"
+        payload = _parse_stdout(stdout)
+        _assert_denied(payload, expected_file_fragment=filename)
 
 
 class TestPrivateKeys:
@@ -156,8 +180,10 @@ class TestPrivateKeys:
         ],
     )
     def test_private_keys_blocked(self, filename):
-        exit_code, _, stderr = run_hook("Read", filename)
-        assert exit_code == 2, f"{filename} should be blocked. stderr: {stderr}"
+        exit_code, stdout, stderr = run_hook("Read", filename)
+        assert exit_code == 0, f"Expected exit 0. stderr: {stderr}"
+        payload = _parse_stdout(stdout)
+        _assert_denied(payload, expected_file_fragment=filename)
 
 
 # =============================================================================
@@ -246,15 +272,17 @@ class TestPathTraversal:
         ],
     )
     def test_sensitive_path_component_blocked(self, path):
-        exit_code, _, stderr = run_hook("Read", path)
-        assert (
-            exit_code == 2
-        ), f"Path with sensitive component '{path}' should be blocked. stderr: {stderr}"
+        exit_code, stdout, stderr = run_hook("Read", path)
+        assert exit_code == 0, f"Expected exit 0. stderr: {stderr}"
+        payload = _parse_stdout(stdout)
+        _assert_denied(payload, expected_file_fragment=path)
 
     def test_relative_traversal_with_env(self):
         """Test ../../../.env style paths."""
-        exit_code, _, _ = run_hook("Read", "../../../.env")
-        assert exit_code == 2, "Relative path with .env should be blocked"
+        exit_code, stdout, stderr = run_hook("Read", "../../../.env")
+        assert exit_code == 0, f"Expected exit 0. stderr: {stderr}"
+        payload = _parse_stdout(stdout)
+        _assert_denied(payload, expected_file_fragment=".env")
 
 
 # =============================================================================
@@ -266,16 +294,22 @@ class TestToolInterception:
     """Test that only Read/Edit/Write tools are intercepted."""
 
     def test_read_intercepted(self):
-        exit_code, _, _ = run_hook("Read", ".env")
-        assert exit_code == 2
+        exit_code, stdout, stderr = run_hook("Read", ".env")
+        assert exit_code == 0, f"Expected exit 0. stderr: {stderr}"
+        payload = _parse_stdout(stdout)
+        _assert_denied(payload, expected_file_fragment=".env")
 
     def test_write_intercepted(self):
-        exit_code, _, _ = run_hook("Write", ".env")
-        assert exit_code == 2
+        exit_code, stdout, stderr = run_hook("Write", ".env")
+        assert exit_code == 0, f"Expected exit 0. stderr: {stderr}"
+        payload = _parse_stdout(stdout)
+        _assert_denied(payload, expected_file_fragment=".env")
 
     def test_edit_intercepted(self):
-        exit_code, _, _ = run_hook("Edit", ".env")
-        assert exit_code == 2
+        exit_code, stdout, stderr = run_hook("Edit", ".env")
+        assert exit_code == 0, f"Expected exit 0. stderr: {stderr}"
+        payload = _parse_stdout(stdout)
+        _assert_denied(payload, expected_file_fragment=".env")
 
     def test_bash_not_intercepted(self):
         """Bash tool should not be intercepted (different hook)."""
@@ -338,19 +372,18 @@ class TestOutputFormat:
     """Test that error output follows expected JSON structure."""
 
     def test_error_json_structure(self):
-        """Blocked file should output valid JSON to stderr."""
-        _, _, stderr = run_hook("Read", ".env")
-        error_data = json.loads(stderr)
-        assert "hookSpecificOutput" in error_data
-        assert error_data["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
-        assert "error" in error_data["hookSpecificOutput"]
-        assert "Blocked" in error_data["hookSpecificOutput"]["error"]
+        """Blocked file should output valid JSON to stdout."""
+        exit_code, stdout, stderr = run_hook("Read", ".env")
+        assert exit_code == 0, f"Expected exit 0. stderr: {stderr}"
+        payload = _parse_stdout(stdout)
+        _assert_denied(payload, expected_file_fragment=".env")
 
     def test_error_contains_file_path(self):
         """Error message should mention the blocked file."""
-        _, _, stderr = run_hook("Read", "credentials.json")
-        error_data = json.loads(stderr)
-        assert "credentials.json" in error_data["hookSpecificOutput"]["error"]
+        exit_code, stdout, stderr = run_hook("Read", "credentials.json")
+        assert exit_code == 0, f"Expected exit 0. stderr: {stderr}"
+        payload = _parse_stdout(stdout)
+        _assert_denied(payload, expected_file_fragment="credentials.json")
 
 
 # =============================================================================
@@ -374,5 +407,7 @@ class TestCaseSensitivity:
         ],
     )
     def test_case_insensitive_blocking(self, filename):
-        exit_code, _, _ = run_hook("Read", filename)
-        assert exit_code == 2, f"Case variant {filename} should be blocked"
+        exit_code, stdout, stderr = run_hook("Read", filename)
+        assert exit_code == 0, f"Expected exit 0. stderr: {stderr}"
+        payload = _parse_stdout(stdout)
+        _assert_denied(payload, expected_file_fragment=filename)
