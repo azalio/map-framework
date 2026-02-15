@@ -180,8 +180,8 @@
           "description": "Basic semantic pattern search with tier scope"
         },
         {
-          "call": "mcp__mem0__map_tiered_search(query=\"input validation\", section_filter=\"SECURITY_PATTERNS\", limit=10)",
-          "description": "Search with section filter"
+          "call": "mcp__mem0__map_tiered_search(query=\"input validation\", user_id=\"org:acme-corp\", run_id=\"proj:my-app:branch:feat-auth\", section_filter=\"SECURITY_PATTERNS\", limit=10)",
+          "description": "Search with section filter and tier scope"
         }
       ]
     },

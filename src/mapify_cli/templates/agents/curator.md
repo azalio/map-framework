@@ -760,7 +760,7 @@ Check for contradictions when:
 
 Before adding a new pattern, search for existing patterns that cover the same topic:
 
-```
+```text
 mcp__mem0__map_tiered_search(query="<key terms from new pattern>")
 ```
 
