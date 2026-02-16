@@ -68,12 +68,13 @@ MAP Framework implements cognitive architecture inspired by prefrontal cortex fu
 │  │ Uses Claude Opus for cross-evaluation and synthesis      │   │
 │  └──────────────────────────────────────────────────────────┘   │
 │                                                                  │
-│  /map-review (parallel analysis):                               │
+│  /map-review (interactive 4-section):                            │
 │  ┌──────────────────────────────────────────────────────────┐   │
-│  │ Query mem0 patterns → Get git diff                       │   │
-│  │ → [Monitor + Predictor + Evaluator] (all 3 in parallel)  │   │
-│  │ → Aggregate results → Final verdict                      │   │
-│  │ No TaskDecomposer. Reviews current branch changes        │   │
+│  │ 4× mem0 queries + git diff                               │   │
+│  │ → [Monitor + Predictor + Evaluator] (all 3 parallel)     │   │
+│  │ → Interactive: Architecture → Quality → Tests → Perf     │   │
+│  │ → Verdict: PROCEED / REVISE / BLOCK                      │   │
+│  │ --ci mode: batch report, no interaction                   │   │
 │  └──────────────────────────────────────────────────────────┘   │
 │                                                                  │
 │  /map-fast (⚠️ minimal, low-risk only):                        │
@@ -549,20 +550,29 @@ for subtask in subtasks:
 - Root cause analysis
 - Regression debugging
 
-#### 5. `/map-review` - Code Review Workflow (3 Agents)
+#### 5. `/map-review` - Interactive Code Review (3 Agents)
 
-**Agent Sequence:** mem0 pattern query → git diff → [Monitor + Predictor + Evaluator] (parallel) → Aggregate verdict
+**Agent Sequence:** 4× mem0 targeted queries + git diff → [Monitor + Predictor + Evaluator] (all 3 parallel) → Interactive 4-section presentation → Verdict
 
 **Review-Specific Features:**
 
 1. **No TaskDecomposer** - Reviews current branch changes as-is
-2. **Parallel Agent Execution** - All 3 agents run simultaneously on same diff
-3. **Aggregated Verdict Logic:**
-   - Proceed if: Monitor approved AND Evaluator excellent/good/acceptable
-   - Revise if: Monitor needs_revision OR Evaluator needs_work
-   - Block if: Monitor rejected OR Evaluator reject OR (Predictor high risk + breaking changes)
+2. **Parallel Collection** - 4 mem0 queries + 3 agents launched in a single message (7 parallel calls)
+3. **Interactive 4-Section Presentation:**
+   - **Architecture** (primary: Predictor — breaking changes, affected components)
+   - **Code Quality** (primary: Monitor — correctness, maintainability issues)
+   - **Tests** (primary: Monitor — testability, coverage gaps)
+   - **Performance** (primary: Monitor — performance issues, cross-ref Predictor risk)
+4. **Review Section Protocol** — each section presents top N issues (BIG=4, SMALL=1) with options and tradeoffs, user picks resolution via AskUserQuestion
+5. **BIG/SMALL mode** — user selects review depth at start
+6. **CI/Auto mode** (`--ci`/`--auto` flag) — batch report with no interaction, auto-selects recommended options
+7. **Verdict Logic:**
+   - PROCEED: Monitor approved + valid AND Evaluator proceed
+   - REVISE: Monitor needs_revision OR Evaluator improve
+   - BLOCK: Monitor rejected OR Evaluator reconsider OR security/functionality < 5 OR (Predictor high risk + breaking changes)
+   - Priority: BLOCK > REVISE > PROCEED
 
-**Token Usage:** 50-60% of baseline (single diff, no implementation)
+**Token Usage:** ~15-25K tokens (4 mem0 queries + parallel agents + interactive 4-section presentation; `--ci` mode ~12-15K)
 **Learning:** Optional via `/map-learn`
 **Quality Gates:** All 3 review agents
 
@@ -570,6 +580,7 @@ for subtask in subtasks:
 - Pre-commit code review
 - PR review automation
 - Quality gate before merge
+- CI pipeline integration (`--ci` mode)
 
 #### 6. `/map-release` - Release Workflow (No Agents)
 
@@ -631,7 +642,7 @@ Typical token consumption per subtask (estimated):
 - /map-efficient (Self-MoA): ~25-30K tokens (3× Actor + Synthesizer)
 - /map-fast: ~8-10K tokens (minimal, no learning)
 - /map-debug: ~15-20K tokens (full pipeline with Evaluator)
-- /map-review: ~8-10K tokens (parallel agents on single diff)
+- /map-review: ~15-25K tokens (4 mem0 queries + parallel agents + interactive 4-section presentation; --ci mode ~12-15K)
 - /map-debate: ~30-40K tokens (3× Actor + Opus DebateArbiter)
 
 **For 5-subtask workflow:**
