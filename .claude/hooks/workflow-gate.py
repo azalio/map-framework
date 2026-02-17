@@ -10,9 +10,10 @@ USAGE:
   No manual invocation needed - Claude Code handles hook execution.
 
 ENFORCEMENT RULES:
-  - Blocks Edit/Write/MultiEdit if workflow_state.json is missing
+  - Allows Edit/Write/MultiEdit when workflow_state.json is missing (fail-open)
   - Blocks if current subtask hasn't completed required steps: ['actor', 'monitor']
   - Allows tools if all required steps are completed
+  - Always allows edits under .map/ (workflow artifacts/state) to prevent deadlocks
   - Allows Read, Bash, and other non-editing tools always
 
 WORKFLOW STATE FILE:
@@ -53,6 +54,56 @@ EDITING_TOOLS = {"Edit", "Write", "MultiEdit"}
 
 # Required steps before allowing edits
 REQUIRED_STEPS = ["actor", "monitor"]
+
+
+def extract_target_file_paths(tool_call: Dict) -> list[str]:
+    """Best-effort extraction of file paths from Claude Code tool payloads."""
+    tool_input = tool_call.get("tool_input") or {}
+    if not isinstance(tool_input, dict):
+        return []
+
+    paths: list[str] = []
+
+    direct = tool_input.get("file_path")
+    if isinstance(direct, str) and direct.strip():
+        paths.append(direct)
+
+    edits = tool_input.get("edits")
+    if isinstance(edits, list):
+        for edit in edits:
+            if not isinstance(edit, dict):
+                continue
+            fp = edit.get("file_path")
+            if isinstance(fp, str) and fp.strip():
+                paths.append(fp)
+
+    return paths
+
+
+def is_map_artifact_path(file_path: str) -> bool:
+    """
+    Return True if file_path resolves under the current working directory's .map/.
+
+    This allowlist prevents the workflow gate from deadlocking itself by blocking
+    updates to workflow artifacts (including workflow_state.json).
+    """
+    if not isinstance(file_path, str) or not file_path.strip():
+        return False
+
+    repo_root = Path.cwd().resolve()
+    candidate = Path(file_path)
+    resolved = (
+        candidate.resolve(strict=False)
+        if candidate.is_absolute()
+        else (repo_root / candidate).resolve(strict=False)
+    )
+
+    try:
+        rel = resolved.relative_to(repo_root)
+    except ValueError:
+        return False
+
+    return bool(rel.parts) and rel.parts[0] == ".map"
 
 
 def sanitize_branch_name(branch: str) -> str:
@@ -106,7 +157,17 @@ def check_workflow_compliance(state: Dict) -> tuple[bool, Optional[str]]:
     """
     current_subtask = state.get("current_subtask")
     if not current_subtask:
-        return False, "No current_subtask defined in workflow_state.json"
+        current_state = state.get("current_state") or "UNKNOWN"
+        return False, (
+            "⛔ Workflow Enforcement: No current_subtask defined in workflow_state.json\n\n"
+            f"current_state: {current_state}\n\n"
+            "Edits to non-.map files are blocked until current_subtask is set and "
+            "the required steps are completed.\n\n"
+            "To fix:\n"
+            "  - Update .map/<branch>/workflow_state.json to set current_subtask\n"
+            "  - Or re-run /map-resume or /map-plan to regenerate state\n"
+            "  - Or delete .map/<branch>/workflow_state.json to disable enforcement"
+        )
 
     completed = state.get("completed_steps", {}).get(current_subtask, [])
 
@@ -139,6 +200,12 @@ def main():
 
         # Allow non-editing tools
         if tool_name not in EDITING_TOOLS:
+            print("{}")
+            sys.exit(0)
+
+        # Always allow edits to MAP workflow artifacts under .map/
+        target_paths = extract_target_file_paths(tool_call)
+        if target_paths and all(is_map_artifact_path(p) for p in target_paths):
             print("{}")
             sys.exit(0)
 
