@@ -13,7 +13,7 @@ Exit codes:
   0 - Always (PreCompact hooks don't block)
 
 Output:
-  hookSpecificOutput.appended_text - Recovery message injected into context
+  hookSpecificOutput.additionalContext - Recovery message injected into context
 """
 import json
 import os
@@ -238,7 +238,10 @@ def main() -> None:
 
         # Inject recovery message into context
         recovery_msg = format_recovery_message(state, branch)
-        output["hookSpecificOutput"] = {"appended_text": recovery_msg}
+        output["hookSpecificOutput"] = {
+            "hookEventName": "PreCompact",
+            "additionalContext": recovery_msg,
+        }
 
     # Prune log files in ALL branch directories
     actions = []

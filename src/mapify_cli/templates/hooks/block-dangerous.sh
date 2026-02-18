@@ -14,11 +14,11 @@
 #
 # EXIT CODES:
 #   0 - Allow command execution
-#   2 - Block command execution (dangerous command detected)
+#   0 + permissionDecision=deny - Block command execution (preferred)
 #
 # TESTING:
 #   echo '{"tool_name": "Bash", "tool_input": {"command": "rm -rf /"}}' | bash block-dangerous.sh
-#   # Expected: Exit code 2
+#   # Expected: Exit code 0 with permissionDecision=deny in JSON output
 #
 # =============================================================================
 
@@ -27,9 +27,60 @@ set -euo pipefail
 # Read JSON from stdin
 INPUT=$(cat)
 
-# Extract tool_name and command using jq (or fallback to grep)
-TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null || echo "")
-COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null || echo "")
+deny() {
+    local reason="$1"
+
+    if command -v jq >/dev/null 2>&1; then
+        jq -n --arg reason "$reason" '{
+          hookSpecificOutput: {
+            hookEventName: "PreToolUse",
+            permissionDecision: "deny",
+            permissionDecisionReason: $reason
+          }
+        }'
+        return 0
+    fi
+
+    if command -v python3 >/dev/null 2>&1; then
+        python3 - "$reason" <<'PY'
+import json
+import sys
+
+reason = sys.argv[1]
+print(
+    json.dumps(
+        {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": reason,
+            }
+        }
+    )
+)
+PY
+        return 0
+    fi
+
+    local escaped=${reason//\\/\\\\}
+    escaped=${escaped//\"/\\\"}
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$escaped"
+}
+
+if command -v jq >/dev/null 2>&1; then
+    TOOL_NAME=$(jq -r '.tool_name // empty' <<<"$INPUT" 2>/dev/null || true)
+    COMMAND=$(jq -r '.tool_input.command // empty' <<<"$INPUT" 2>/dev/null || true)
+elif command -v python3 >/dev/null 2>&1; then
+    TOOL_NAME=$(
+        python3 -c 'import json,sys; d=json.loads(sys.stdin.read() or "{}"); print(d.get("tool_name",""))' <<<"$INPUT" 2>/dev/null || true
+    )
+    COMMAND=$(
+        python3 -c 'import json,sys; d=json.loads(sys.stdin.read() or "{}"); ti=d.get("tool_input") or {}; print(ti.get("command",""))' <<<"$INPUT" 2>/dev/null || true
+    )
+else
+    TOOL_NAME=""
+    COMMAND=""
+fi
 
 # Only intercept Bash tool
 if [[ "$TOOL_NAME" != "Bash" ]]; then
@@ -51,60 +102,68 @@ COMMAND_LOWER=$(echo "$COMMAND" | tr '[:upper:]' '[:lower:]')
 # =============================================================================
 
 # Check for rm -rf (recursive force delete)
-# Matches: rm -rf, rm -fr, rm -r -f, rm -f -r, rm --recursive --force
-if echo "$COMMAND" | grep -qE 'rm\s+(-rf|-fr)\s'; then
-    echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","error":"Blocked: rm -rf is prohibited","details":"Recursive force delete can cause irreversible data loss","suggestion":"Use rm with specific paths and without -rf flag"}}' >&2
-    exit 2
-fi
+# Matches: rm -rf, rm -fr, rm -r -f, rm -f -r, rm --recursive --force, and edge
+# cases where flags touch the path (e.g., rm -rf0dir).
+if echo "$COMMAND_LOWER" | grep -qE '(^|[[:space:];|&()])rm[[:space:]]'; then
+    # Long flags: --recursive and --force
+    if echo "$COMMAND_LOWER" | grep -qE -- '--recursive' && echo "$COMMAND_LOWER" | grep -qE -- '--force'; then
+        deny "Blocked: rm -rf is prohibited (recursive force delete can cause irreversible data loss)"
+        exit 0
+    fi
 
-# Catch rm -rf at end of command or with path immediately after
-if echo "$COMMAND" | grep -qE 'rm\s+(-rf|-fr)\s*(/|~|\.|[a-zA-Z])'; then
-    echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","error":"Blocked: rm -rf is prohibited","details":"Recursive force delete can cause irreversible data loss","suggestion":"Use rm with specific paths and without -rf flag"}}' >&2
-    exit 2
-fi
+    # Combined short flags: -rf / -fr (including edge cases where the path touches flags)
+    if echo "$COMMAND_LOWER" | grep -qE '(^|[[:space:];|&()])rm[[:space:]].*-[^[:space:]]*r[^[:space:]]*f'; then
+        deny "Blocked: rm -rf is prohibited (recursive force delete can cause irreversible data loss)"
+        exit 0
+    fi
+    if echo "$COMMAND_LOWER" | grep -qE '(^|[[:space:];|&()])rm[[:space:]].*-[^[:space:]]*f[^[:space:]]*r'; then
+        deny "Blocked: rm -rf is prohibited (recursive force delete can cause irreversible data loss)"
+        exit 0
+    fi
 
-# Catch separated flags: rm -r -f or rm -f -r
-if echo "$COMMAND" | grep -qE 'rm\s+(-r\s+-f|-f\s+-r)\s'; then
-    echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","error":"Blocked: rm -rf is prohibited","details":"Recursive force delete can cause irreversible data loss","suggestion":"Use rm with specific paths and without -rf flag"}}' >&2
-    exit 2
+    # Separate short flags: -r -f / -f -r
+    if echo "$COMMAND_LOWER" | grep -qE '(^|[[:space:]])-r([[:space:]]|$)' && echo "$COMMAND_LOWER" | grep -qE '(^|[[:space:]])-f([[:space:]]|$)'; then
+        deny "Blocked: rm -rf is prohibited (recursive force delete can cause irreversible data loss)"
+        exit 0
+    fi
 fi
 
 # Check for git push --force to main/master
 # Matches: git push --force origin main, git push -f origin master
 if echo "$COMMAND" | grep -qE 'git\s+push\s+.*(-f|--force).*\s+(origin|upstream)\s+(main|master)(\s|$)'; then
-    echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","error":"Blocked: Force push to main/master is prohibited","details":"Force pushing to protected branches can overwrite team work","suggestion":"Use regular push or push to a feature branch"}}' >&2
-    exit 2
+    deny "Blocked: Force push to main/master is prohibited (can overwrite team work)"
+    exit 0
 fi
 
 # Also check reverse order: git push origin main --force
 if echo "$COMMAND" | grep -qE 'git\s+push\s+(origin|upstream)\s+(main|master)\s+(-f|--force)'; then
-    echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","error":"Blocked: Force push to main/master is prohibited","details":"Force pushing to protected branches can overwrite team work","suggestion":"Use regular push or push to a feature branch"}}' >&2
-    exit 2
+    deny "Blocked: Force push to main/master is prohibited (can overwrite team work)"
+    exit 0
 fi
 
 # Check for git reset --hard (without specific commit, or dangerous patterns)
 # Block: git reset --hard, git reset --hard HEAD~, git reset --hard origin/
 if echo "$COMMAND" | grep -qE 'git\s+reset\s+--hard(\s|$)'; then
-    echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","error":"Blocked: git reset --hard is prohibited","details":"Hard reset can cause irreversible loss of uncommitted changes","suggestion":"Use git stash or git reset --soft instead"}}' >&2
-    exit 2
+    deny "Blocked: git reset --hard is prohibited (can cause irreversible loss of uncommitted changes)"
+    exit 0
 fi
 
 # Check for dangerous chmod/chown on system directories
 if echo "$COMMAND" | grep -qE '(chmod|chown)\s+(-R|--recursive)\s+.*\s+/($|\s)'; then
-    echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","error":"Blocked: Recursive chmod/chown on root is prohibited","details":"This can break system permissions","suggestion":"Specify a more targeted path"}}' >&2
-    exit 2
+    deny "Blocked: Recursive chmod/chown on / is prohibited (can break system permissions)"
+    exit 0
 fi
 
 # Check for dd with of=/dev/
 if echo "$COMMAND" | grep -qE 'dd\s+.*of=/dev/'; then
-    echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","error":"Blocked: dd to /dev/ is prohibited","details":"Writing to raw devices can destroy data","suggestion":"Use safer file operations"}}' >&2
-    exit 2
+    deny "Blocked: dd with of=/dev/* is prohibited (writing to raw devices can destroy data)"
+    exit 0
 fi
 
 # Check for mkfs (format filesystem)
 if echo "$COMMAND" | grep -qE 'mkfs'; then
-    echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","error":"Blocked: mkfs is prohibited","details":"Formatting filesystems can destroy data","suggestion":"This operation requires manual execution"}}' >&2
-    exit 2
+    deny "Blocked: mkfs is prohibited (formatting filesystems can destroy data)"
+    exit 0
 fi
 
 # =============================================================================

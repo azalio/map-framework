@@ -152,12 +152,12 @@ Skills work seamlessly with the prompt improvement system:
 
 **Check:**
 1. `skill-rules.json` has correct triggers
-2. `improve-prompt.py` hook is enabled in `settings.hooks.json`
+2. `improve-prompt.py` hook is enabled in `.claude/settings.json`
 3. Hook processes UserPromptSubmit events
 
 **Fix:**
 - Update trigger patterns in `skill-rules.json`
-- Verify hook configuration in `.claude/settings.hooks.json`
+- Verify hook configuration in `.claude/settings.json`
 
 ### Skill content too long
 

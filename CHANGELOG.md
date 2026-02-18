@@ -72,7 +72,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **task-decomposer.md**: Enhanced with Acceptance Criteria table format, re-decomposition mode, dependency enforcement
 - **map-efficient.md**: Added Step 3.5 Final Verification with circuit breaker check, final-verifier invocation, re-decomposition logic
-- **settings.hooks.json**: Added PreToolUse, PostToolUse, and PreCompact hook entries for Ralph Loop
+- **.claude/settings.json (hooks)**: Added PreToolUse, PostToolUse, and PreCompact hook entries for Ralph Loop
 
 ### Documentation
 - Branch-scoped artifacts stored in `.map/<sanitized-branch>/` directory
@@ -353,7 +353,7 @@ rm -rf .claude/hooks/
   - Preserved user settings during hooks installation (merge strategy)
 
 - **mapify init Command Fixes** (1aee890, 7d264ef, 956ef96)
-  - Fixed mapify init to copy Python hooks and settings.hooks.json correctly
+  - Fixed mapify init to copy Python hooks and hook-enabled `.claude/settings.json` correctly
   - Corrected settings file location (.claude/ not .claude/hooks/)
   - Restored SessionStart hook functionality
 

@@ -1,47 +1,133 @@
 ---
-description: Comprehensive MAP review of changes using Monitor, Predictor, and Evaluator agents
+description: Interactive 4-section code review using Monitor, Predictor, and Evaluator agents
 ---
 
 # MAP Review Workflow
 
-Review current changes using MAP agents for comprehensive quality analysis.
+Interactive, structured code review of current changes using Monitor, Predictor, and Evaluator agents.
 
-## What This Command Does
+**Task:** $ARGUMENTS
 
-1. **Monitor** - Validates code correctness, security, standards compliance
-2. **Predictor** - Analyzes impact on codebase, breaking changes, dependencies
-3. **Evaluator** - Scores overall quality and provides actionable feedback
+## Execution Rules
 
-## Step 1: Query mem0 for Review Patterns
+1. Execute all steps in the order listed below
+2. Use the exact `subagent_type` values specified (monitor, predictor, evaluator)
+3. All 3 agents are required — do not skip any
+4. **Monitor `valid=false` is a hard stop** — report issues immediately, do not proceed to interactive presentation
+5. Wait for all parallel calls to complete before proceeding to the next phase
+
+## Review Preferences (Customize per project)
+
+These defaults guide how agents weigh findings. Override by editing this section:
+
+- **DRY:** Important — flag duplication aggressively
+- **Testing:** Non-negotiable — missing tests = high severity
+- **Engineering level:** "Engineered enough" — reject both under-engineering and over-engineering
+- **Edge cases:** Prefer handling more, especially for public APIs
+- **Clarity:** Explicit over clever — readable code wins
+- **Performance:** Flag only when measurable impact is likely
+
+## Expected Agent Output Schemas (Contract Reference)
+
+These are the fields each agent is expected to return. The command prompt explicitly requests them.
+
+**Monitor:**
+- `valid`: boolean — overall pass/fail
+- `summary`: string — brief description of findings
+- `verdict`: `'approved'` | `'needs_revision'` | `'rejected'` — requested explicitly (not in base schema, `additionalProperties: true`)
+- `issues[]`: array of `{severity, category, description, file_path, line_range, suggestion}`
+- `passed_checks[]`: array of strings — checks that passed
+- `failed_checks[]`: array of strings — checks that failed
+
+**Predictor:**
+- `risk_assessment`: `'low'` | `'medium'` | `'high'` | `'critical'`
+- `predicted_state.affected_components[]`: array of affected components/files
+- `predicted_state.breaking_changes[]`: array of `{type, description, mitigation}`
+- `predicted_state.required_updates[]`: array of required follow-up changes
+- `confidence.score`: float 0.0-1.0
+
+**Evaluator:**
+- `scores.functionality`: int 0-10
+- `scores.code_quality`: int 0-10
+- `scores.performance`: int 0-10
+- `scores.security`: int 0-10
+- `scores.testability`: int 0-10
+- `scores.completeness`: int 0-10
+- `overall_score`: float 1.0-10.0 (weighted)
+- `recommendation`: `'proceed'` | `'improve'` | `'reconsider'`
+- `strengths[]`: array of strings
+- `weaknesses[]`: array of strings
+- `next_steps[]`: array of strings
+
+## Review Section Protocol
+
+This protocol is used identically by all 4 review sections below. Do NOT deviate.
+
+1. **Present top N issues** (N=4 in BIG mode, N=1 in SMALL mode) from the primary source agent for this section, using the section prefix (e.g., ARCH-1, QUALITY-2, TESTS-1, PERF-3)
+2. **For each issue:**
+   - Describe the problem with `file:line` references where available
+   - Present 2-3 options with tradeoffs (pros/cons for each)
+   - **Recommended option is always listed first** (marked with "(Recommended)")
+3. **AskUserQuestion** with numbered issues and lettered options for each
+   - Example: "ARCH-1: Option A (Recommended) / Option B / Option C"
+   - **Skip AskUserQuestion in CI mode** — auto-select recommended options
+4. **Summarize decisions** from this section in 3-5 lines before proceeding to the next section
+   - Include: which issues were addressed, which options were chosen, what remains
+
+## Step 0: Select Review Mode
+
+**Parse $ARGUMENTS for `--ci` or `--auto`:**
+- If `--ci` or `--auto` is present in $ARGUMENTS → set CI_MODE=true
+- CI_MODE skips all AskUserQuestion calls and auto-selects recommended options
+
+**If NOT CI_MODE:** Use AskUserQuestion to ask the user:
+
+> How thorough should this review be?
+> - **BIG** (Recommended): Up to 4 issues per section — comprehensive review
+> - **SMALL**: 1 issue per section — quick pass for small changes
+
+Default to BIG if user doesn't respond or in CI mode.
+
+## Phase A: Collection (Parallel)
+
+### Step A.1: Gather changes
 
 ```bash
-# Get review best practices
-REVIEW_PATTERNS=$(mcp__mem0__map_tiered_search(query="code review", limit=5))
-```
-
-## Step 2: Get Current Changes
-
-```bash
-# Get staged and unstaged changes
 git diff HEAD
 git status
 ```
 
-## Step 3: Invoke All Review Agents in Parallel
+Save the diff output — it will be passed to all 3 agents.
 
-**IMPORTANT**: Call Monitor, Predictor, and Evaluator simultaneously by invoking all three Task calls in a single message. These agents operate independently on the same git diff without shared state.
+### Step A.2: Launch all parallel calls
+
+In **ONE message**, launch all 7 calls in parallel (no dependencies between them):
+
+**4 mem0 queries:**
+
+```
+mcp__mem0__map_tiered_search(query="architecture review patterns")
+mcp__mem0__map_tiered_search(query="code quality standards")
+mcp__mem0__map_tiered_search(query="test coverage criteria")
+mcp__mem0__map_tiered_search(query="performance review patterns")
+```
+
+**3 agent Task calls** (pass the git diff + Review Preferences to each):
 
 ```
 Task(
   subagent_type="monitor",
   description="Review code changes",
-  prompt="Review the following changes for code quality:
+  prompt="Review the following changes for code quality, security, and correctness.
+
+**Review Preferences:**
+[paste Review Preferences section above]
 
 **Changes:**
 [paste git diff output]
 
 **mem0 Context:**
-[paste relevant mem0 patterns]
+[paste relevant mem0 patterns from queries above — use architecture + code quality results]
 
 Check for:
 - Code correctness and logic errors
@@ -52,49 +138,59 @@ Check for:
 
 Output JSON with:
 - valid: boolean
-- issues: array of {severity, category, description, file_path, line_range, suggestion}
+- summary: string
 - verdict: 'approved' | 'needs_revision' | 'rejected'
-- summary: string"
+- issues: array of {severity, category, description, file_path, line_range, suggestion}
+- passed_checks: array of strings
+- failed_checks: array of strings"
 )
 
 Task(
   subagent_type="predictor",
   description="Analyze change impact",
-  prompt="Analyze the impact of these changes:
+  prompt="Analyze the impact of these changes on the broader codebase.
+
+**Review Preferences:**
+[paste Review Preferences section above]
 
 **Changes:**
 [paste git diff output]
 
 **mem0 Context:**
-[paste relevant mem0 patterns]
+[paste relevant mem0 patterns from queries above — use architecture results]
 
 Analyze:
-- Affected files and modules
+- Affected components and modules
 - Breaking changes (API, schema, behavior)
 - Dependencies that need updates
-- Risk assessment
+- Risk assessment (low/medium/high/critical)
 - Integration points affected
 
 Output JSON with:
-- affected_files: array of {path, change_type, impact_level}
-- breaking_changes: array of {type, description, mitigation}
-- dependencies_affected: array of strings
-- risk_level: 'low' | 'medium' | 'high'
-- recommendations: array of strings"
+- risk_assessment: 'low' | 'medium' | 'high' | 'critical'
+- predicted_state:
+    affected_components: array of affected files/modules
+    breaking_changes: array of {type, description, mitigation}
+    required_updates: array of strings
+- confidence:
+    score: float 0.0-1.0"
 )
 
 Task(
   subagent_type="evaluator",
   description="Score change quality",
-  prompt="Evaluate the overall quality of these changes:
+  prompt="Evaluate the overall quality of these changes.
+
+**Review Preferences:**
+[paste Review Preferences section above]
 
 **Changes:**
 [paste git diff output]
 
 **mem0 Context:**
-[paste relevant mem0 patterns]
+[paste relevant mem0 patterns from queries above — use code quality + test coverage results]
 
-Provide quality assessment using 1-10 scoring (matches evaluator agent template):
+Provide quality assessment using 1-10 scoring:
 - Functionality score (1-10)
 - Code quality score (1-10)
 - Performance score (1-10)
@@ -112,71 +208,126 @@ Output JSON with:
 )
 ```
 
-**How Parallel Execution Works:**
-1. Claude Code will process all three Task calls from the same message
-2. Each agent analyzes the git diff independently
-3. Wait for all three Task calls to complete before proceeding
-4. Collect results from Monitor, Predictor, and Evaluator outputs
+**Parallel execution:** All 7 calls (4 mem0 + 3 agents) MUST be issued in a single message. Wait for all to complete before proceeding.
 
-## Step 4: Aggregate and Present Results
+### Hard Stop Check
 
-Once all three agents have completed, combine their findings:
+After all agents complete, check Monitor output:
+- If `Monitor.valid = false` → **HARD STOP**. Present Monitor issues immediately and do not proceed to Phase B. The user must fix issues before re-running the review.
 
-### Review Summary
+## Phase B: Interactive Presentation (4 Sections)
 
-**Monitor Analysis:**
-- Verdict: [monitor.verdict]
-- Issues Found: [count by severity]
-- Valid: [monitor.valid]
+Present findings section by section. Each section follows the **Review Section Protocol** defined above.
 
-**Predictor Analysis:**
-- Risk Level: [predictor.risk_level]
-- Breaking Changes: [predictor.breaking_changes.length]
-- Affected Files: [predictor.affected_files.length]
+### Section 1: Architecture
 
-**Evaluator Assessment:**
-- Overall Score: [evaluator.overall_score]/10
-- Code Quality: [evaluator.scores.code_quality]/10
-- Security: [evaluator.scores.security]/10
-- Recommendation: [evaluator.recommendation]
+**Primary source:** Predictor (`breaking_changes`, `affected_components`, `risk_assessment`)
+**Cross-reference:** Evaluator `scores.completeness`
+**Issue prefix:** `ARCH`
 
-### Critical Issues (High Severity)
+Focus on:
+- Breaking changes and their mitigations
+- Affected component blast radius
+- Architectural fit of the changes
+- Completeness of the change set (are all affected areas updated?)
 
-[List high-severity issues from Monitor]
+→ Follow **Review Section Protocol**
+→ Summarize decisions before proceeding to Section 2
 
-### Breaking Changes
+### Section 2: Code Quality
 
-[List breaking changes from Predictor]
+**Primary source:** Monitor (`issues` filtered by category: correctness, code-quality, maintainability)
+**Cross-reference:** Evaluator `scores.code_quality`
+**Issue prefix:** `QUALITY`
 
-### Recommendations
+Focus on:
+- Correctness issues (logic errors, edge cases)
+- Code quality issues (naming, structure, DRY violations)
+- Maintainability concerns
+- Standards compliance
 
-**From Monitor:**
-[List Monitor suggestions for critical issues]
+→ Follow **Review Section Protocol**
+→ Summarize decisions before proceeding to Section 3
 
-**From Predictor:**
-[List Predictor recommendations]
+### Section 3: Tests
 
-**From Evaluator:**
-[List Evaluator improvements needed]
+**Primary source:** Monitor (`issues` filtered by category: testability, test-coverage)
+**Cross-reference:** Evaluator `scores.testability`
+**Issue prefix:** `TESTS`
 
-### Final Verdict
+Focus on:
+- Missing test coverage for new/changed code
+- Test quality (edge cases, error paths)
+- Testability of the implementation (dependency injection, mocking seams)
 
-Based on combined analysis:
-- **Proceed if:** Monitor verdict = 'approved' AND Evaluator recommendation = 'proceed'
-- **Revise if:** Monitor verdict = 'needs_revision' OR Evaluator recommendation = 'improve'
-- **Block if:** Monitor verdict = 'rejected' OR Evaluator recommendation = 'reconsider' OR (Predictor risk_level = 'high' AND breaking_changes.length > 0)
+→ Follow **Review Section Protocol**
+→ Summarize decisions before proceeding to Section 4
 
----
+### Section 4: Performance
 
-## 💡 Optional: Preserve Review Learnings
+**Primary source:** Monitor (`issues` filtered by category: performance)
+**Cross-reference:** Evaluator `scores.performance` + Predictor `risk_assessment`
+**Issue prefix:** `PERF`
+
+Focus on:
+- Performance regressions
+- Algorithmic complexity concerns
+- Resource usage (memory, CPU, I/O)
+- Only flag issues where measurable impact is likely (per Review Preferences)
+
+→ Follow **Review Section Protocol**
+
+## Final Verdict
+
+Based on combined agent outputs, determine one of:
+
+**PROCEED:** All conditions met:
+- `Monitor.verdict = 'approved'` AND `Monitor.valid = true`
+- `Evaluator.recommendation = 'proceed'`
+
+**REVISE:** Any condition true:
+- `Monitor.verdict = 'needs_revision'`
+- `Evaluator.recommendation = 'improve'`
+
+**BLOCK:** Any condition true (highest priority):
+- `Monitor.verdict = 'rejected'`
+- `Evaluator.recommendation = 'reconsider'`
+- `Evaluator.scores.security < 5`
+- `Evaluator.scores.functionality < 5`
+- `Predictor.risk_assessment = 'high'` AND `predicted_state.breaking_changes` is non-empty
+
+**Priority:** BLOCK > REVISE > PROCEED
+
+Present the verdict with a summary table:
+- Monitor verdict + valid status
+- Evaluator overall score + recommendation
+- Predictor risk assessment
+- Key issues resolved during interactive review
+- Remaining action items
+
+## CI/Auto Mode Behavior
+
+When `CI_MODE = true` (triggered by `--ci` or `--auto` in $ARGUMENTS):
+- Skip all AskUserQuestion calls
+- Auto-select BIG mode (4 issues per section)
+- Auto-select recommended options for all issues
+- Present all 4 sections as a batch report (no pauses between sections)
+- Output structured verdict at the end
+- Suitable for CI pipelines and automated review contexts
+
+## Optional: Preserve Review Learnings
 
 If the review revealed valuable patterns or common issues worth preserving:
 
 ```
-/map-learn [review summary with issues found and resolution patterns]
+/map-learn [review summary with key findings, resolution patterns, and verdict rationale]
 ```
 
-## MCP Tools Available
+## MCP Tools Used
 
-- `mcp__mem0__map_tiered_search` - Search past review patterns
-- `mcp__sequential-thinking__sequentialthinking` - Complex analysis decisions
+- `mcp__mem0__map_tiered_search` — Search past review patterns (4 targeted queries)
+- `mcp__sequential-thinking__sequentialthinking` — Complex analysis decisions during interactive presentation
+
+---
+
+**Begin review now.**

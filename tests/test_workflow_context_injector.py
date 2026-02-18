@@ -56,12 +56,12 @@ def test_injects_for_edit_when_step_state_exists(tmp_path: Path) -> None:
     assert code == 0
     assert err == ""
     payload = json.loads(out)
-    appended = payload["hookSpecificOutput"]["appended_text"]
-    assert "[MAP]" in appended
-    assert "1.55" in appended
-    assert "REVIEW_PLAN" in appended
-    assert "ST-001" in appended
-    assert "REQUIRED" in appended
+    additional = payload["hookSpecificOutput"]["additionalContext"]
+    assert "[MAP]" in additional
+    assert "1.55" in additional
+    assert "REVIEW_PLAN" in additional
+    assert "ST-001" in additional
+    assert "REQUIRED" in additional
 
 
 def test_skips_for_readonly_bash(tmp_path: Path) -> None:
@@ -111,7 +111,7 @@ def test_injects_for_pytest_bash_when_step_state_exists(tmp_path: Path) -> None:
     assert code == 0
     assert err == ""
     payload = json.loads(out)
-    appended = payload["hookSpecificOutput"]["appended_text"]
-    assert "2.8" in appended
-    assert "TESTS_GATE" in appended
-    assert "ST-002" in appended
+    additional = payload["hookSpecificOutput"]["additionalContext"]
+    assert "2.8" in additional
+    assert "TESTS_GATE" in additional
+    assert "ST-002" in additional

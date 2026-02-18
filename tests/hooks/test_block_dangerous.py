@@ -27,6 +27,22 @@ def run_hook(command: str) -> tuple[int, str, str]:
     return result.returncode, result.stdout, result.stderr
 
 
+def _parse_stdout(stdout: str) -> dict:
+    stdout = (stdout or "").strip()
+    if not stdout:
+        return {}
+    return json.loads(stdout)
+
+
+def _assert_denied(payload: dict, expected_substring: str | None = None) -> None:
+    assert payload.get("hookSpecificOutput", {}).get("hookEventName") == "PreToolUse"
+    assert payload["hookSpecificOutput"].get("permissionDecision") == "deny"
+    reason = payload["hookSpecificOutput"].get("permissionDecisionReason", "")
+    assert reason
+    if expected_substring:
+        assert expected_substring.lower() in reason.lower()
+
+
 # =============================================================================
 # Validation Criteria Tests
 # =============================================================================
@@ -36,32 +52,37 @@ class TestValidationCriteria:
     """Tests for the validation criteria from task decomposition."""
 
     def test_criterion_1_rm_rf_blocked(self):
-        """VC1: Bash command 'rm -rf /' is blocked with exit code 2."""
-        exit_code, _, stderr = run_hook("rm -rf /")
-        assert exit_code == 2, f"Expected exit 2, got {exit_code}"
-        assert "Blocked" in stderr, f"Expected 'Blocked' in stderr: {stderr}"
+        """VC1: Bash command 'rm -rf /' is blocked (permissionDecision=deny)."""
+        exit_code, stdout, stderr = run_hook("rm -rf /")
+        assert exit_code == 0, f"Expected exit 0, got {exit_code}. stderr: {stderr}"
+        payload = _parse_stdout(stdout)
+        _assert_denied(payload, expected_substring="rm -rf")
 
     def test_criterion_2_force_push_main_blocked(self):
         """VC2: git push --force origin main is blocked."""
-        exit_code, _, stderr = run_hook("git push --force origin main")
-        assert exit_code == 2, f"Expected exit 2, got {exit_code}"
-        assert "Blocked" in stderr
+        exit_code, stdout, stderr = run_hook("git push --force origin main")
+        assert exit_code == 0, f"Expected exit 0, got {exit_code}. stderr: {stderr}"
+        payload = _parse_stdout(stdout)
+        _assert_denied(payload, expected_substring="force push")
 
     def test_criterion_3_reset_hard_blocked(self):
         """VC3: git reset --hard is blocked."""
-        exit_code, _, stderr = run_hook("git reset --hard")
-        assert exit_code == 2, f"Expected exit 2, got {exit_code}"
-        assert "Blocked" in stderr
+        exit_code, stdout, stderr = run_hook("git reset --hard")
+        assert exit_code == 0, f"Expected exit 0, got {exit_code}. stderr: {stderr}"
+        payload = _parse_stdout(stdout)
+        _assert_denied(payload, expected_substring="reset --hard")
 
     def test_criterion_4_force_push_feature_allowed(self):
         """VC4: git push --force origin feature-branch is allowed."""
-        exit_code, _, _ = run_hook("git push --force origin feature-branch")
-        assert exit_code == 0, "Force push to feature branch should be allowed"
+        exit_code, stdout, stderr = run_hook("git push --force origin feature-branch")
+        assert exit_code == 0, f"Expected exit 0. stderr: {stderr}"
+        assert _parse_stdout(stdout) == {}, "Force push to feature branch should be allowed"
 
     def test_criterion_5_legitimate_allowed(self):
         """VC5: Legitimate commands like 'pytest' are allowed."""
-        exit_code, _, _ = run_hook("pytest")
-        assert exit_code == 0, "pytest should be allowed"
+        exit_code, stdout, stderr = run_hook("pytest")
+        assert exit_code == 0, f"Expected exit 0. stderr: {stderr}"
+        assert _parse_stdout(stdout) == {}, "pytest should be allowed"
 
 
 # =============================================================================
@@ -86,9 +107,10 @@ class TestRmRfBlocking:
         ],
     )
     def test_rm_rf_variants_blocked(self, command):
-        exit_code, _, stderr = run_hook(command)
-        assert exit_code == 2, f"'{command}' should be blocked"
-        assert "rm -rf" in stderr.lower() or "blocked" in stderr.lower()
+        exit_code, stdout, stderr = run_hook(command)
+        assert exit_code == 0, f"Expected exit 0. stderr: {stderr}"
+        payload = _parse_stdout(stdout)
+        _assert_denied(payload, expected_substring="rm -rf")
 
     def test_rm_without_rf_allowed(self):
         """rm without -rf should be allowed."""
@@ -123,9 +145,10 @@ class TestGitForcePushBlocking:
         ],
     )
     def test_force_push_protected_blocked(self, command):
-        exit_code, _, stderr = run_hook(command)
-        assert exit_code == 2, f"'{command}' should be blocked"
-        assert "Blocked" in stderr
+        exit_code, stdout, stderr = run_hook(command)
+        assert exit_code == 0, f"Expected exit 0. stderr: {stderr}"
+        payload = _parse_stdout(stdout)
+        _assert_denied(payload, expected_substring="force push")
 
     @pytest.mark.parametrize(
         "command",
@@ -166,9 +189,10 @@ class TestGitResetHardBlocking:
         ],
     )
     def test_reset_hard_variants_blocked(self, command):
-        exit_code, _, stderr = run_hook(command)
-        assert exit_code == 2, f"'{command}' should be blocked"
-        assert "Blocked" in stderr
+        exit_code, stdout, stderr = run_hook(command)
+        assert exit_code == 0, f"Expected exit 0. stderr: {stderr}"
+        payload = _parse_stdout(stdout)
+        _assert_denied(payload, expected_substring="reset --hard")
 
     @pytest.mark.parametrize(
         "command",
@@ -217,8 +241,9 @@ class TestLegitimateCommands:
         ],
     )
     def test_safe_commands_allowed(self, command):
-        exit_code, _, stderr = run_hook(command)
+        exit_code, stdout, stderr = run_hook(command)
         assert exit_code == 0, f"'{command}' should be allowed. stderr: {stderr}"
+        assert _parse_stdout(stdout) == {}, f"'{command}' should be allowed"
 
 
 # =============================================================================
@@ -282,18 +307,24 @@ class TestAdditionalDangerousCommands:
         ],
     )
     def test_recursive_permissions_on_root_blocked(self, command):
-        exit_code, _, _ = run_hook(command)
-        assert exit_code == 2, f"'{command}' should be blocked"
+        exit_code, stdout, stderr = run_hook(command)
+        assert exit_code == 0, f"Expected exit 0. stderr: {stderr}"
+        payload = _parse_stdout(stdout)
+        _assert_denied(payload, expected_substring="chmod/chown")
 
     def test_dd_to_device_blocked(self):
         """dd writing to /dev/ should be blocked."""
-        exit_code, _, _ = run_hook("dd if=/dev/zero of=/dev/sda")
-        assert exit_code == 2, "dd to device should be blocked"
+        exit_code, stdout, stderr = run_hook("dd if=/dev/zero of=/dev/sda")
+        assert exit_code == 0, f"Expected exit 0. stderr: {stderr}"
+        payload = _parse_stdout(stdout)
+        _assert_denied(payload, expected_substring="dd")
 
     def test_mkfs_blocked(self):
         """mkfs should be blocked."""
-        exit_code, _, _ = run_hook("mkfs.ext4 /dev/sda1")
-        assert exit_code == 2, "mkfs should be blocked"
+        exit_code, stdout, stderr = run_hook("mkfs.ext4 /dev/sda1")
+        assert exit_code == 0, f"Expected exit 0. stderr: {stderr}"
+        payload = _parse_stdout(stdout)
+        _assert_denied(payload, expected_substring="mkfs")
 
 
 # =============================================================================
@@ -305,10 +336,8 @@ class TestOutputFormat:
     """Test that error output follows expected JSON structure."""
 
     def test_error_json_structure(self):
-        """Blocked command should output valid JSON to stderr."""
-        _, _, stderr = run_hook("rm -rf /")
-        error_data = json.loads(stderr)
-        assert "hookSpecificOutput" in error_data
-        assert error_data["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
-        assert "error" in error_data["hookSpecificOutput"]
-        assert "Blocked" in error_data["hookSpecificOutput"]["error"]
+        """Blocked command should output valid JSON to stdout."""
+        exit_code, stdout, stderr = run_hook("rm -rf /")
+        assert exit_code == 0, f"Expected exit 0. stderr: {stderr}"
+        payload = _parse_stdout(stdout)
+        _assert_denied(payload, expected_substring="Blocked")

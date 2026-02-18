@@ -16,7 +16,7 @@ Common synced paths:
 - `.claude/commands/` → `src/mapify_cli/templates/commands/`
 - `.claude/hooks/` → `src/mapify_cli/templates/hooks/`
 - `.claude/references/` → `src/mapify_cli/templates/references/`
-- `.claude/settings.json`, `.claude/settings.hooks.json`, `.claude/workflow-rules.json` → `src/mapify_cli/templates/`
+- `.claude/settings.json`, `.claude/workflow-rules.json` → `src/mapify_cli/templates/`
 
 Do the sync via a deterministic command (preferred):
 - `make sync-templates` (runs `scripts/sync-templates.sh`)
@@ -38,6 +38,12 @@ Verification:
 
 - Don't add or expose secrets. Avoid reading/writing `.env*` and credential/key files.
 - When changing pattern storage behavior, ensure Curator-mediated writes through mem0 MCP are preserved (see `.claude/agents/curator.md` and `docs/ARCHITECTURE.md`).
+
+## MAP Workflow Rules
+
+- If **Monitor** returns `valid=false`, treat it as a **hard stop**: fix the issues before proceeding.
+  - Do NOT dismiss Monitor feedback as "out of scope" / "separate task".
+  - If you're unsure whether fixing it is in scope: ask the user explicitly and wait for a decision.
 
 ## Bash Command Guidelines
 

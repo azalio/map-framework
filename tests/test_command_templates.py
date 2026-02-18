@@ -165,3 +165,215 @@ class TestCommandTemplates:
         assert (
             "token-efficient" in content.lower() or "efficient" in content.lower()
         ), "Should describe itself as efficient"
+
+
+class TestMapReviewStructure:
+    """Test structural properties of the map-review command template."""
+
+    @pytest.fixture
+    def project_root(self):
+        return Path(__file__).parent.parent
+
+    @pytest.fixture
+    def templates_commands_dir(self, project_root):
+        return project_root / "src" / "mapify_cli" / "templates" / "commands"
+
+    @pytest.fixture
+    def review_content(self, templates_commands_dir):
+        return (templates_commands_dir / "map-review.md").read_text()
+
+    def test_has_frontmatter(self, review_content):
+        """map-review.md starts with YAML frontmatter containing description."""
+        assert review_content.startswith("---")
+        assert "description:" in review_content[:200]
+
+    def test_has_arguments_placeholder(self, review_content):
+        """Command references $ARGUMENTS for user input."""
+        assert "$ARGUMENTS" in review_content
+
+    def test_has_review_section_protocol(self, review_content):
+        """Review Section Protocol is defined once and referenced by sections."""
+        assert "Review Section Protocol" in review_content
+
+    def test_has_four_section_headings(self, review_content):
+        """All 4 review sections are present."""
+        assert "Section 1: Architecture" in review_content
+        assert "Section 2: Code Quality" in review_content
+        assert "Section 3: Tests" in review_content
+        assert "Section 4: Performance" in review_content
+
+    @pytest.mark.parametrize("prefix", ["ARCH", "QUALITY", "TESTS", "PERF"])
+    def test_section_prefixes_present(self, review_content, prefix):
+        """Each section defines its issue prefix."""
+        assert prefix in review_content
+
+    @pytest.mark.parametrize(
+        "section,source",
+        [
+            ("Section 1: Architecture", "Predictor"),
+            ("Section 2: Code Quality", "Monitor"),
+            ("Section 3: Tests", "Monitor"),
+            ("Section 4: Performance", "Monitor"),
+        ],
+    )
+    def test_primary_source_mapping(self, review_content, section, source):
+        """Each section references its primary source agent."""
+        # Find the section and check the source is mentioned nearby
+        idx = review_content.index(section)
+        section_block = review_content[idx : idx + 500]
+        assert source in section_block, (
+            f"{section} should reference {source} as primary source"
+        )
+
+    def test_three_agent_task_calls(self, review_content):
+        """Command includes Task calls for all 3 agents."""
+        assert 'subagent_type="monitor"' in review_content
+        assert 'subagent_type="predictor"' in review_content
+        assert 'subagent_type="evaluator"' in review_content
+
+    def test_four_mem0_queries(self, review_content):
+        """Command includes at least 4 mem0 tiered search queries."""
+        count = review_content.count("map_tiered_search")
+        assert count >= 4, f"Expected at least 4 mem0 queries, found {count}"
+
+    def test_ci_mode_flag(self, review_content):
+        """Command documents --ci flag for CI mode."""
+        assert "--ci" in review_content
+
+    def test_ask_user_question_mentioned(self, review_content):
+        """Command uses AskUserQuestion for interactive presentation."""
+        assert "AskUserQuestion" in review_content
+
+    def test_review_preferences_section(self, review_content):
+        """Command includes Review Preferences section."""
+        assert "Review Preferences" in review_content
+
+    def test_schema_documentation(self, review_content):
+        """Command documents expected agent output schemas."""
+        assert "Expected Agent Output Schemas" in review_content
+
+    def test_map_learn_suggestion(self, review_content):
+        """Command suggests /map-learn for preserving review learnings."""
+        assert "/map-learn" in review_content
+
+    def test_parallel_execution_instruction(self, review_content):
+        """Command instructs parallel execution of agents."""
+        content_lower = review_content.lower()
+        assert "parallel" in content_lower
+
+    def test_previous_section_summary(self, review_content):
+        """Command instructs summarizing decisions before next section."""
+        assert "Summarize decisions" in review_content or "summarize" in review_content.lower()
+
+
+class TestMapReviewVerdictLogic:
+    """Test verdict logic conditions in map-review command."""
+
+    @pytest.fixture
+    def project_root(self):
+        return Path(__file__).parent.parent
+
+    @pytest.fixture
+    def templates_commands_dir(self, project_root):
+        return project_root / "src" / "mapify_cli" / "templates" / "commands"
+
+    @pytest.fixture
+    def review_content(self, templates_commands_dir):
+        return (templates_commands_dir / "map-review.md").read_text()
+
+    def test_proceed_conditions(self, review_content):
+        """PROCEED requires Monitor approved + Evaluator proceed."""
+        assert "PROCEED" in review_content
+        assert "Monitor.verdict" in review_content
+        assert "'approved'" in review_content
+        assert "Evaluator.recommendation" in review_content
+        assert "'proceed'" in review_content
+
+    def test_revise_conditions(self, review_content):
+        """REVISE triggered by needs_revision or improve."""
+        assert "REVISE" in review_content
+        assert "'needs_revision'" in review_content
+        assert "'improve'" in review_content
+
+    def test_block_conditions(self, review_content):
+        """BLOCK triggered by rejected, reconsider, or critical thresholds."""
+        assert "BLOCK" in review_content
+        assert "'rejected'" in review_content
+        assert "'reconsider'" in review_content
+
+    def test_block_security_threshold(self, review_content):
+        """BLOCK includes security score < 5 condition."""
+        assert "security < 5" in review_content or "security<5" in review_content
+
+    def test_block_functionality_threshold(self, review_content):
+        """BLOCK includes functionality score < 5 condition."""
+        assert (
+            "functionality < 5" in review_content
+            or "functionality<5" in review_content
+        )
+
+    def test_block_predictor_risk(self, review_content):
+        """BLOCK includes high risk + breaking changes condition."""
+        assert "risk_assessment" in review_content
+        assert "breaking_changes" in review_content
+
+    def test_priority_ordering(self, review_content):
+        """Verdict priority is BLOCK > REVISE > PROCEED."""
+        assert "BLOCK > REVISE > PROCEED" in review_content
+
+    def test_references_monitor_valid(self, review_content):
+        """Verdict references Monitor.valid field."""
+        assert "Monitor.valid" in review_content
+
+    def test_references_evaluator_overall_score(self, review_content):
+        """Verdict section references Evaluator overall_score."""
+        assert "overall_score" in review_content
+
+    def test_references_predictor_risk_assessment(self, review_content):
+        """Verdict references Predictor risk_assessment."""
+        assert "Predictor.risk_assessment" in review_content or (
+            "Predictor" in review_content and "risk_assessment" in review_content
+        )
+
+
+class TestAgentSchemaFieldsPresent:
+    """Test that agent template files contain expected schema fields."""
+
+    @pytest.fixture
+    def project_root(self):
+        return Path(__file__).parent.parent
+
+    @pytest.fixture
+    def claude_agents_dir(self, project_root):
+        """Use .claude/agents/ (development source) for field verification."""
+        return project_root / ".claude" / "agents"
+
+    def test_monitor_has_valid_field(self, claude_agents_dir):
+        """Monitor agent template contains 'valid' field."""
+        content = (claude_agents_dir / "monitor.md").read_text()
+        assert "valid" in content
+
+    def test_monitor_has_issues_field(self, claude_agents_dir):
+        """Monitor agent template contains 'issues' field."""
+        content = (claude_agents_dir / "monitor.md").read_text()
+        assert "issues" in content
+
+    def test_predictor_has_risk_assessment(self, claude_agents_dir):
+        """Predictor agent template contains 'risk_assessment' field."""
+        content = (claude_agents_dir / "predictor.md").read_text()
+        assert "risk_assessment" in content
+
+    def test_predictor_has_breaking_changes(self, claude_agents_dir):
+        """Predictor agent template contains 'breaking_changes' field."""
+        content = (claude_agents_dir / "predictor.md").read_text()
+        assert "breaking_changes" in content
+
+    def test_evaluator_has_scores(self, claude_agents_dir):
+        """Evaluator agent template contains 'scores' field."""
+        content = (claude_agents_dir / "evaluator.md").read_text()
+        assert "scores" in content
+
+    def test_evaluator_has_recommendation(self, claude_agents_dir):
+        """Evaluator agent template contains 'recommendation' field."""
+        content = (claude_agents_dir / "evaluator.md").read_text()
+        assert "recommendation" in content

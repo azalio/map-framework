@@ -243,7 +243,12 @@ def main() -> None:
 
     reminder = format_reminder(state, branch)
     if reminder:
-        output = {"hookSpecificOutput": {"appended_text": reminder}}
+        output = {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": reminder,
+            }
+        }
         print(json.dumps(output))
     else:
         print("{}")
