@@ -34,7 +34,6 @@ For each subtask:
   4. Evaluator scores quality
   5. If approved:
      5a. Reflector extracts patterns
-     5b. Curator stores patterns in mem0
      5c. Apply changes
   6. If not approved: Return to Actor
 ```
@@ -55,10 +54,8 @@ Subtask 1: Implement JWT generation
   ↓ completed
 Reflector: "JWT secret storage pattern"
 Curator: Add pattern "impl-0099: Store secrets in env vars"
-  ↓ mem0 updated
 Subtask 2: Implement JWT validation
   ↓ starts
-Actor queries mem0: Finds "impl-0099"
   ↓ applies pattern
 Uses env vars (learned from Subtask 1)
 ```
@@ -114,7 +111,6 @@ ST-1: OAuth2 provider config
 
 ST-2: Authorization code flow
 ├─ Actor: Implement auth/oauth.ts
-│  └─ Queries mem0: Finds "sec-0042"
 │  └─ Uses .env for secrets (learned from ST-1!)
 ├─ Monitor: ✅ Valid
 ├─ Predictor: ✅ RAN (affects auth flow)
@@ -209,7 +205,6 @@ ST-2: Authorization code flow
 - ✅ No security vulnerabilities
 
 **Knowledge captured:**
-- ✅ mem0 patterns created (N subtasks → N+ patterns)
 - ✅ Team can apply patterns immediately
 
 **Impact understood:**
@@ -225,7 +220,6 @@ ST-2: Authorization code flow
 **Cause:** Per-subtask learning overhead
 **Solution:** Consider /map-efficient for next similar task
 
-**Issue:** Too many mem0 patterns created
 **Cause:** Reflector suggesting redundant patterns
 **Solution:** Curator should check for duplicates more aggressively
 
@@ -238,4 +232,3 @@ ST-2: Authorization code flow
 **See also:**
 - [map-efficient-deep-dive.md](map-efficient-deep-dive.md) - Optimized alternative
 - [agent-architecture.md](agent-architecture.md) - Understanding all agents
-- [mem0 tiered search](../../map-cli-reference/SKILL.md) - How knowledge is stored and retrieved

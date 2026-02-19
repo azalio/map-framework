@@ -40,7 +40,6 @@ class TestTemplateSynchronization:
         """List of expected agent template files (all 12 agents)."""
         return [
             "actor.md",
-            "curator.md",
             "debate-arbiter.md",
             "documentation-reviewer.md",
             "evaluator.md",
@@ -116,7 +115,6 @@ class TestTemplateSynchronization:
             "monitor.md",
             "predictor.md",
             "evaluator.md",
-            "curator.md",
             "reflector.md",
             "task-decomposer.md",
             "documentation-reviewer.md",

@@ -14,7 +14,6 @@ MAP Framework orchestrates 12 specialized agents in a coordinated workflow.
 
 **2. Actor**
 - **Role:** Implements code changes
-- **Input:** Subtask description, acceptance criteria, mem0 pattern context
 - **Output:** Code changes, rationale, test strategy
 - **When it runs:** For each subtask (multiple times if revisions needed)
 
@@ -53,7 +52,6 @@ MAP Framework orchestrates 12 specialized agents in a coordinated workflow.
 - **When it runs:**
   - /map-efficient, /map-debug, /map-debate: Batched (once at end, via /map-learn)
   - /map-fast: Never (skipped)
-- **MCP Tool:** Uses `mcp__mem0__map_tiered_search` to check for existing patterns
 
 **7. Curator**
 - **Role:** Updates memory with validated patterns
@@ -61,8 +59,6 @@ MAP Framework orchestrates 12 specialized agents in a coordinated workflow.
 - **Output:** Delta operations (ADD/UPDATE/ARCHIVE patterns)
 - **When it runs:** After Reflector
 - **MCP Tools:**
-  - `mcp__mem0__map_tiered_search` to deduplicate
-  - `mcp__mem0__map_add_pattern` to store new patterns
 
 ### Optional
 
@@ -193,7 +189,6 @@ Otherwise: Skipped (token savings)
 ### Workflow State
 - All subtask results
 - Aggregated patterns (Reflector)
-- mem0 delta operations (Curator)
 
 ---
 

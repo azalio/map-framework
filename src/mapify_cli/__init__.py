@@ -538,7 +538,6 @@ def create_agent_files(project_path: Path, mcp_servers: List[str]) -> None:
             "predictor": create_predictor_content(mcp_servers),
             "evaluator": create_evaluator_content(mcp_servers),
             "reflector": create_reflector_content(mcp_servers),
-            "curator": create_curator_content(mcp_servers),
             "documentation-reviewer": create_documentation_reviewer_content(
                 mcp_servers
             ),
@@ -855,43 +854,6 @@ Return JSON with:
 """
 
 
-def create_curator_content(mcp_servers: List[str]) -> str:
-    """Create curator agent content"""
-    mcp_section = ""
-
-    return f"""---
-name: curator
-description: Manages structured patterns with incremental updates (ACE)
-tools: Read, Write, Edit
-model: sonnet
----
-
-# IDENTITY
-
-You are a knowledge curator who maintains the ACE pattern store by integrating Reflector insights.
-{mcp_section}
-# ROLE
-
-Integrate Reflector insights into patterns using delta operations:
-- ADD: New pattern bullets
-- UPDATE: Increment helpful/harmful counters
-- DEPRECATE: Remove harmful patterns
-
-## Quality Gates
-
-- Content length ≥ 100 characters
-- Code examples for technical patterns
-- Deduplication via semantic similarity
-- Technology-specific (not generic advice)
-
-## Output Format (JSON)
-
-Return JSON with:
-- reasoning: Why these operations improve patterns
-- operations: Array of ADD/UPDATE/DEPRECATE operations
-- deduplication_check: What duplicates were found
-"""
-
 
 # Note: test-generator agent removed
 
@@ -1055,7 +1017,6 @@ $ARGUMENTS
 
 Start with task decomposition (task-decomposer), then iterate through actor-monitor for each subtask.
 Predictor is called conditionally for high-risk subtasks only.
-Run /map-learn after workflow if you want to preserve lessons learned.
 """,
             "map-debug": """---
 description: Debug issue using MAP analysis
@@ -1078,16 +1039,7 @@ $ARGUMENTS
 Implement quickly with basic monitor validation only. No learning, no predictor.
     Use for small, low-risk changes where speed matters.
 """,
-            "map-learn": """---
-description: Extract lessons from completed workflows
----
 
-Extract and preserve lessons from recent workflow:
-
-$ARGUMENTS
-
-Call Reflector to extract patterns, then Curator to update pattern store.
-""",
         }
 
         for name, content in commands.items():
@@ -1289,8 +1241,6 @@ def create_or_merge_project_settings_local(project_path: Path) -> None:
 
     default_permissions: Dict[str, Any] = {
         "allow": [
-            # Allow all mem0 MCP tools (project-scoped)
-            "mcp__mem0__*",
             # SourceCraft MCP helpers (project-scoped)
             "mcp__sourcecraft__list_pull_request_comments",
             # Common safe Go workflows (project-scoped)
@@ -1360,7 +1310,6 @@ def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
             "predictor": [],
             "evaluator": [],
             "reflector": [],
-            "curator": [],
             "documentation-reviewer": [],
             "debate-arbiter": [],
             "synthesizer": [],
@@ -1368,8 +1317,6 @@ def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
             "final-verifier": [],
         },
         "workflow_settings": {
-            "always_retrieve_knowledge": True,
-            "store_successful_patterns": True,
             "use_professional_review": True,
             "enable_sequential_thinking": True,
             "knowledge_cache_ttl": 3600,
@@ -1839,7 +1786,6 @@ This directory contains custom slash commands for Claude Code.
 - `/map-efficient` - Implement features with optimized workflow (recommended)
 - `/map-debug` - Debug issues using MAP analysis
 - `/map-fast` - Quick implementation with minimal validation
-- `/map-learn` - Extract lessons from completed workflows
 - `/map-release` - Execute MAP Framework package release workflow
 
 ## Creating Custom Commands
@@ -2179,9 +2125,6 @@ def init(
     steps_lines.append("   • [cyan]/map-debug[/] - Debug issue using MAP analysis")
     steps_lines.append(
         "   • [cyan]/map-fast[/] - Quick implementation with minimal validation"
-    )
-    steps_lines.append(
-        "   • [cyan]/map-learn[/] - Extract lessons from completed workflows"
     )
 
     steps_panel = Panel(

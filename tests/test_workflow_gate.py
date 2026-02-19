@@ -175,7 +175,6 @@ class TestWorkflowGate:
                     "completed_steps": {
                         "ST-001": [
                             "xml_packet",
-                            "mem0_search",
                         ]  # Missing actor and monitor
                     },
                     "pending_steps": {
@@ -211,7 +210,6 @@ class TestWorkflowGate:
                     "completed_steps": {
                         "ST-001": [
                             "xml_packet",
-                            "mem0_search",
                             "actor",
                         ]  # Missing monitor
                     },
@@ -243,7 +241,7 @@ class TestWorkflowGate:
                     "workflow": "map-efficient",
                     "current_subtask": "ST-001",
                     "completed_steps": {
-                        "ST-001": ["xml_packet", "mem0_search", "actor", "monitor"]
+                        "ST-001": ["xml_packet", "actor", "monitor"]
                     },
                     "pending_steps": {"ST-001": ["tests", "linter"]},
                 }

@@ -150,8 +150,6 @@ def required_action_for_step(step_id: str, step_phase: str, state: dict) -> str 
         return "Approve plan (set_plan_approved true)"
     if step_id == "1.56":
         return "Choose mode (set_execution_mode step_by_step|batch)"
-    if step_id == "2.1":
-        return "Run mem0 search before Actor"
     if step_id == "2.3":
         return "Run Actor"
     if step_id == "2.4":

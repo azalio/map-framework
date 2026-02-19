@@ -33,10 +33,8 @@ machine-readable blueprint for the Actor/Monitor pipeline.
 │    └─ Derive category: 1-4=low, 5-6=medium, 7-10=high              │
 │                                                                     │
 │ 3. GATHER CONTEXT (if complexity ≥ 3)                               │
-│    └─ ALWAYS: mcp__mem0__map_tiered_search (historical decompositions)      │
 │    └─ IF ambiguous: sequentialthinking                              │
 │    └─ IF external lib: get-library-docs                             │
-│    └─ Handle fallbacks if tools fail/return empty                   │
 │                                                                     │
 │ 4. IDENTIFY ASSUMPTIONS & OPEN QUESTIONS                            │
 │    └─ Document in analysis.assumptions                              │
@@ -85,47 +83,11 @@ machine-readable blueprint for the Actor/Monitor pipeline.
 
 | Condition | Tool | Query Pattern |
 |-----------|------|---------------|
-| **ALWAYS** (complexity ≥ 3) | mcp__mem0__map_tiered_search | `"feature implementation [type]"`, `"task decomposition [domain]"` |
 | Ambiguous/complex goal | sequentialthinking | Iterative refinement of scope and dependencies |
 | External library | get-library-docs | Setup/quickstart guides for initialization order |
 | Unfamiliar domain | deepwiki | `"How does [repo] structure [feature]?"` |
 
 **Skip MCP when**: complexity_score ≤ 2, trivial change, clear internal pattern exists
-
-### Re-rank Retrieved Patterns
-
-After mcp__mem0__map_tiered_search, re-rank results by relevance to current decomposition:
-
-```
-FOR each pattern in results:
-  relevance_score = 0
-  IF pattern.feature_type matches goal_type: relevance_score += 2
-  IF pattern.language == {{language}}: relevance_score += 1
-  IF pattern.success_rate > 0.8: relevance_score += 2
-  IF pattern.subtask_count in [5..8]: relevance_score += 1  # optimal range
-  IF pattern.created_at > (now - 60_days): relevance_score += 1
-
-SORT by relevance_score DESC
-USE top 2 patterns as decomposition reference
-DOCUMENT: "Referenced patterns: [IDs] with relevance scores [X, Y]"
-```
-
-### MCP Fallback Procedures
-
-```
-IF mcp__mem0__map_tiered_search returns NO results:
-  → Document "No historical precedent" in assumptions
-  → Add +1 to Risk factor for affected subtask (e.g., Risk: +0 → +1)
-  → Add research subtask if total complexity >= 5
-
-IF MCP tool FAILS (timeout/unavailable):
-  → Document in open_questions
-  → Add +1 to Risk factor for ALL subtasks (uncertainty penalty)
-  → Add "Decomposition lacks historical validation" to risks
-
-Note: Uncertainty adjustments modify the Risk factor in the formula,
-applied BEFORE the cap at 10. Example: Base(1)+Novelty(+1)+Deps(+1)+Scope(+2)+Risk(+0→+1 uncertainty)=6
-```
 
 For detailed MCP usage examples, see: `.claude/references/mcp-usage-examples.md`
 
@@ -498,7 +460,6 @@ When invoked with `mode: "re_decomposition"` from the orchestrator, you receive 
 ## Before Submitting Decomposition
 
 **Analysis Completeness**:
-- [ ] Ran mcp__mem0__map_tiered_search for similar features
 - [ ] Used sequential-thinking for complex/ambiguous goals
 - [ ] Checked library docs for initialization requirements
 - [ ] Identified all risks (not empty for medium/high complexity)
@@ -570,9 +531,7 @@ If circular dependency detected (e.g., A→B→C→A):
 - [ ] Open questions flagged that need clarification before proceeding
 
 **MCP Tool Usage Verification**:
-- [ ] Did you call mcp__mem0__map_tiered_search FIRST? (mandatory for non-trivial goals)
-- [ ] Did you use insights from MCP tools in your decomposition?
-- [ ] If no historical context found, documented "No relevant history found" in analysis
+- [ ] Did you use insights from MCP tools in your decomposition (if applicable)?
 
 </Decomposer_Checklist_v2_4>
 
@@ -594,9 +553,9 @@ If circular dependency detected (e.g., A→B→C→A):
 {{subtask_description}}
 
 {{#if existing_patterns}}
-## Relevant mem0 Knowledge
+## Relevant Knowledge
 
-The following patterns have been learned from previous successful implementations:
+The following patterns are available for reference:
 
 {{existing_patterns}}
 
@@ -724,7 +683,7 @@ Omit for simple CRUD, internal helpers, obvious logic.
 ## Decomposition Process (5 Phases)
 
 **Phase 1: Understand** → Scope, boundaries, complexity estimate
-**Phase 2: Context** → mcp__mem0__map_tiered_search, library docs, existing patterns
+**Phase 2: Context** → library docs, existing patterns in codebase
 **Phase 3: Atomize** → Break into independently implementable+testable units
 **Phase 4: Dependencies** → Map prerequisites, order by foundation→dependent→parallel
 **Phase 5: Validate** → Testable criteria, realistic scores, no placeholders

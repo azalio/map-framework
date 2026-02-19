@@ -20,16 +20,15 @@ description: Debate-based MAP workflow with Opus arbiter for multi-variant synth
 ```
 1. DECOMPOSE → task-decomposer
 2. FOR each subtask:
-   a. CONTEXT → mem0 tiered search (`mcp__mem0__map_tiered_search`)
-   b. RESEARCH → if existing code understanding needed
-   c. 3 Actors (parallel) → security/performance/simplicity focuses
-   d. 3 Monitors (parallel) → validate + extract decisions
-   e. debate-arbiter (opus) → cross-evaluate + synthesize
-   f. Final Monitor → validate synthesis
-   g. If invalid: retry with feedback (max 5)
-   h. If risk_level ∈ {high, medium}: → Predictor
-   i. Apply changes
-3. SUMMARY → optionally suggest /map-learn
+   a. RESEARCH → if existing code understanding needed
+   b. 3 Actors (parallel) → security/performance/simplicity focuses
+   c. 3 Monitors (parallel) → validate + extract decisions
+   d. debate-arbiter (opus) → cross-evaluate + synthesize
+   e. Final Monitor → validate synthesis
+   f. If invalid: retry with feedback (max 5)
+   g. If risk_level ∈ {high, medium}: → Predictor
+   h. Apply changes
+3. SUMMARY
 ```
 
 ## Step 1: Task Decomposition
@@ -87,32 +86,7 @@ Before calling any agents for the subtask, build a single **AI Packet** with uni
 
 Pass this packet verbatim to Actor/Monitor/debate-arbiter/Predictor. Do NOT rename tags mid-flow.
 
-### 2.1 Get Context + Re-rank
-
-```bash
-# Patterns from mem0 (tiered: branch → project → org)
-mcp__mem0__map_tiered_search(query="[subtask description]", limit=5)
-
-# Optional: broader conceptual lookup
-mcp__mem0__map_tiered_search(query="[concept]", limit=5)
-```
-
-**Re-rank retrieved patterns** by relevance to current subtask:
-
-```
-FOR each pattern in retrieved_patterns:
-  relevance_score = evaluate:
-    - Domain match: Does pattern's domain match subtask? (+2)
-    - Technology overlap: Same language/framework? (+1)
-    - Recency: Created within 30 days? (+1)
-    - Success indicator: Marked validated/production? (+1)
-    - Complexity alignment: Similar complexity_score? (+1)
-
-  SORT patterns by relevance_score DESC
-  PASS top 3 patterns to Actor as "context_patterns"
-```
-
-### 2.2 Research (Conditional)
+### 2.1 Research (Conditional)
 
 **Call if:** refactoring, bug fixes, extending existing code, touching 3+ files
 **Skip for:** new standalone features, docs, config
@@ -172,7 +146,6 @@ Task(
   description="Implement subtask [ID] - Security (v1)",
   prompt="Implement with SECURITY focus:
 **AI Packet (XML):** [paste <SUBTASK_ST_XXX>...</SUBTASK_ST_XXX>]
-**mem0 Context:** [top context_patterns + relevance_score]
 **Quality Context:** deployment_risk_level={risk_level}, min_security={min_security}, min_functionality={min_functionality}
 ⚠️  Your variant MUST meet minimum quality thresholds. Quality is non-negotiable regardless of security focus.
 approach_focus: security, variant_id: v1, self_moa_mode: true
@@ -185,7 +158,6 @@ Task(
   description="Implement subtask [ID] - Performance (v2)",
   prompt="Implement with PERFORMANCE focus:
 **AI Packet (XML):** [paste <SUBTASK_ST_XXX>...</SUBTASK_ST_XXX>]
-**mem0 Context:** [top context_patterns + relevance_score]
 **Quality Context:** deployment_risk_level={risk_level}, min_security={min_security}, min_functionality={min_functionality}
 ⚠️  Your variant MUST meet minimum quality thresholds. Quality is non-negotiable regardless of performance focus.
 approach_focus: performance, variant_id: v2, self_moa_mode: true
@@ -198,7 +170,6 @@ Task(
   description="Implement subtask [ID] - Simplicity (v3)",
   prompt="Implement with SIMPLICITY focus:
 **AI Packet (XML):** [paste <SUBTASK_ST_XXX>...</SUBTASK_ST_XXX>]
-**mem0 Context:** [top context_patterns + relevance_score]
 **Quality Context:** deployment_risk_level={risk_level}, min_security={min_security}, min_functionality={min_functionality}
 ⚠️  Your variant MUST meet minimum quality thresholds. Quality is non-negotiable regardless of simplicity focus.
 approach_focus: simplicity, variant_id: v3, self_moa_mode: true
@@ -429,7 +400,6 @@ If none found: mark gate as skipped and proceed.
 - Report: features implemented, files changed
 - Include key synthesis reasoning highlights from debate-arbiter
 
-**Optional:** Run `/map-learn [summary]` to preserve valuable patterns for future workflows.
 
 ---
 

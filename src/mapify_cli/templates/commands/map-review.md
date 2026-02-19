@@ -101,18 +101,7 @@ Save the diff output — it will be passed to all 3 agents.
 
 ### Step A.2: Launch all parallel calls
 
-In **ONE message**, launch all 7 calls in parallel (no dependencies between them):
-
-**4 mem0 queries:**
-
-```
-mcp__mem0__map_tiered_search(query="architecture review patterns")
-mcp__mem0__map_tiered_search(query="code quality standards")
-mcp__mem0__map_tiered_search(query="test coverage criteria")
-mcp__mem0__map_tiered_search(query="performance review patterns")
-```
-
-**3 agent Task calls** (pass the git diff + Review Preferences to each):
+In **ONE message**, launch all 3 agent Task calls in parallel (no dependencies between them):
 
 ```
 Task(
@@ -125,9 +114,6 @@ Task(
 
 **Changes:**
 [paste git diff output]
-
-**mem0 Context:**
-[paste relevant mem0 patterns from queries above — use architecture + code quality results]
 
 Check for:
 - Code correctness and logic errors
@@ -155,9 +141,6 @@ Task(
 
 **Changes:**
 [paste git diff output]
-
-**mem0 Context:**
-[paste relevant mem0 patterns from queries above — use architecture results]
 
 Analyze:
 - Affected components and modules
@@ -187,9 +170,6 @@ Task(
 **Changes:**
 [paste git diff output]
 
-**mem0 Context:**
-[paste relevant mem0 patterns from queries above — use code quality + test coverage results]
-
 Provide quality assessment using 1-10 scoring:
 - Functionality score (1-10)
 - Code quality score (1-10)
@@ -208,7 +188,7 @@ Output JSON with:
 )
 ```
 
-**Parallel execution:** All 7 calls (4 mem0 + 3 agents) MUST be issued in a single message. Wait for all to complete before proceeding.
+**Parallel execution:** All 3 agent calls MUST be issued in a single message. Wait for all to complete before proceeding.
 
 ### Hard Stop Check
 
@@ -315,17 +295,8 @@ When `CI_MODE = true` (triggered by `--ci` or `--auto` in $ARGUMENTS):
 - Output structured verdict at the end
 - Suitable for CI pipelines and automated review contexts
 
-## Optional: Preserve Review Learnings
-
-If the review revealed valuable patterns or common issues worth preserving:
-
-```
-/map-learn [review summary with key findings, resolution patterns, and verdict rationale]
-```
-
 ## MCP Tools Used
 
-- `mcp__mem0__map_tiered_search` — Search past review patterns (4 targeted queries)
 - `mcp__sequential-thinking__sequentialthinking` — Complex analysis decisions during interactive presentation
 
 ---

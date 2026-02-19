@@ -14,7 +14,7 @@ ARCHITECTURE:
   ┌─────────────────────────────────────────────────────────────┐
   │  map-efficient.md (~540 lines)                               │
   │  ├─> 1. Call get_next_step() → returns step instruction    │
-  │  ├─> 2. Execute step (Actor/Monitor/mem0/etc)              │
+  │  ├─> 2. Execute step (Actor/Monitor/etc)                   │
   │  ├─> 3. Call validate_step() → checks completion           │
   │  ├─> 4. If more steps: recurse with fresh context          │
   │  └─> 5. Else: complete workflow                            │
@@ -29,10 +29,10 @@ STATE FILE:
       "current_subtask_id": "ST-001",
       "subtask_index": 0,
       "subtask_sequence": ["ST-001", "ST-002", "ST-003"],
-      "current_step_id": "2.1",
-      "current_step_phase": "MEM0_SEARCH",
+      "current_step_id": "2.2",
+      "current_step_phase": "RESEARCH",
       "completed_steps": ["1.0_DECOMPOSE", "1.5_INIT_PLAN", "2.0_XML_PACKET"],
-      "pending_steps": ["2.1_MEM0_SEARCH", "2.3_ACTOR", "2.4_MONITOR", ...]
+      "pending_steps": ["2.3_ACTOR", "2.4_MONITOR", ...]
     }
 
 STEP PHASES (16 total):
@@ -42,7 +42,6 @@ STEP PHASES (16 total):
   1.56 CHOOSE_MODE        - Choose execution mode (step_by_step|batch)
   1.6  INIT_STATE         - Create workflow_state.json
   2.0  XML_PACKET         - Build AI-friendly subtask packet
-  2.1  MEM0_SEARCH        - Tiered memory search
   2.2  RESEARCH           - research-agent (conditional)
   2.3  ACTOR              - Actor agent implementation
   2.4  MONITOR            - Monitor validation
@@ -107,7 +106,6 @@ STEP_PHASES = {
     "1.56": "CHOOSE_MODE",
     "1.6": "INIT_STATE",
     "2.0": "XML_PACKET",
-    "2.1": "MEM0_SEARCH",
     "2.2": "RESEARCH",
     "2.3": "ACTOR",
     "2.4": "MONITOR",
@@ -127,7 +125,6 @@ STEP_ORDER = [
     "1.56",
     "1.6",
     "2.0",
-    "2.1",
     "2.2",
     "2.3",
     "2.4",
@@ -291,10 +288,6 @@ def get_step_instruction(step_id: str, state: StepState) -> str:
             f"Build XML packet for subtask {state.current_subtask_id}. "
             "Include ID, title, description, risk_level, affected_files, "
             "validation_criteria, and test_strategy."
-        ),
-        "2.1": (
-            "Call mcp__mem0__map_tiered_search to retrieve relevant patterns. "
-            "Re-rank by relevance and pass top 3 to Actor."
         ),
         "2.2": (
             "Call Task(subagent_type='research-agent') if refactoring or "

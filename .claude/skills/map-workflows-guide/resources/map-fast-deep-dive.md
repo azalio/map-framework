@@ -45,8 +45,6 @@
 - Failures not documented
 - Knowledge not extracted
 
-**Curator (mem0 Pattern Updates)**
-- No mem0 patterns created
 - No pattern synchronization
 - No cross-project learning
 

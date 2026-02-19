@@ -139,7 +139,6 @@ Final-Verifier: ✅ All subtasks verified, goal achieved
 Optional /map-learn:
   Reflector (batched):
   ├─ Analyzed: 3 subtasks
-  ├─ Searched mem0: Found similar pagination patterns
   └─ Extracted: pagination pattern, API versioning, test structure
 
   Curator (batched):

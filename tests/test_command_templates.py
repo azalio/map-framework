@@ -79,25 +79,14 @@ class TestCommandTemplates:
             "NO learning" in content or "no learning" in content
         ), "Should mention no learning"
 
-    def test_map_efficient_suggests_map_learn(self, templates_commands_dir):
-        """Test that map-efficient.md suggests optional /map-learn for learning."""
-        map_efficient = templates_commands_dir / "map-efficient.md"
-        content = map_efficient.read_text()
-
-        # Learning is now in separate /map-learn command
-        # map-efficient should suggest it as optional
-        assert "/map-learn" in content, "Should suggest /map-learn for learning"
-        assert "optional" in content.lower(), "Should mention /map-learn is optional"
-
     def test_all_command_templates_exist(self, templates_commands_dir):
-        """Test that all 10 expected command template files exist."""
+        """Test that all 9 expected command template files exist."""
         expected_commands = [
             "map-check.md",  # Quality gates
             "map-debate.md",  # Multi-variant with Opus arbiter
             "map-debug.md",  # Debugging workflow
             "map-efficient.md",  # Recommended workflow
             "map-fast.md",  # Minimal workflow
-            "map-learn.md",  # Optional learning
             "map-plan.md",  # Decomposition only
             "map-release.md",  # Release workflow
             "map-resume.md",  # Resume interrupted workflow
@@ -120,9 +109,7 @@ class TestCommandTemplates:
         assert "Actor" in content or "actor" in content
         assert "Monitor" in content or "monitor" in content
 
-        # Check that Reflector/Curator are mentioned as SKIPPED
-        assert "reflector" in content.lower(), "Should mention Reflector (as skipped)"
-        assert "curator" in content.lower(), "Should mention Curator (as skipped)"
+        # Check that learning is skipped
         assert (
             "skipped" in content.lower() or "no learning" in content.lower()
         ), "Should indicate learning is skipped"
@@ -137,9 +124,6 @@ class TestCommandTemplates:
         assert "Actor" in content or "actor" in content
         assert "Monitor" in content or "monitor" in content
         assert "Predictor" in content or "predictor" in content
-
-        # Should mention /map-learn as optional
-        assert "/map-learn" in content, "Should reference optional /map-learn command"
 
         # Should mention conditional Predictor
         assert "conditional" in content.lower()
@@ -231,11 +215,6 @@ class TestMapReviewStructure:
         assert 'subagent_type="predictor"' in review_content
         assert 'subagent_type="evaluator"' in review_content
 
-    def test_four_mem0_queries(self, review_content):
-        """Command includes at least 4 mem0 tiered search queries."""
-        count = review_content.count("map_tiered_search")
-        assert count >= 4, f"Expected at least 4 mem0 queries, found {count}"
-
     def test_ci_mode_flag(self, review_content):
         """Command documents --ci flag for CI mode."""
         assert "--ci" in review_content
@@ -251,10 +230,6 @@ class TestMapReviewStructure:
     def test_schema_documentation(self, review_content):
         """Command documents expected agent output schemas."""
         assert "Expected Agent Output Schemas" in review_content
-
-    def test_map_learn_suggestion(self, review_content):
-        """Command suggests /map-learn for preserving review learnings."""
-        assert "/map-learn" in review_content
 
     def test_parallel_execution_instruction(self, review_content):
         """Command instructs parallel execution of agents."""
