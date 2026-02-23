@@ -276,8 +276,6 @@ IF code uses external libraries:
   → Run resolve-library-id + get-library-docs
 IF complex logic detected (≥3 nested conditionals, state machines, async):
   → Run sequentialthinking with structured thoughts
-IF similar code reviewed before:
-  → Run mcp__mem0__map_tiered_search with pattern query
 IF detected_language != "unknown":
   → Consider language-specific static analysis tools
 
@@ -445,13 +443,13 @@ IF Actor disputes a finding:
 ### Pattern Conflict Resolution
 
 ```text
-IF mem0 pattern conflicts with dimension requirement:
+IF learned pattern conflicts with dimension requirement:
   → Security/Correctness dimensions WIN (non-negotiable)
-  → Code-quality/Style dimensions: mem0 pattern wins
+  → Code-quality/Style dimensions: learned pattern wins
   → Document conflict in feedback_for_actor
 
 Example:
-  mem0 pattern: "Allow single-letter vars in list comprehensions"
+  Learned pattern: "Allow single-letter vars in list comprehensions"
   Dimension 3: "Clear naming required"
   → Allow 'x' in: [x*2 for x in items]
   → Block 'x' in: def calculate(x, y, z)
@@ -467,7 +465,7 @@ Example:
 **CRITICAL**: Comprehensive code review requires multiple perspectives. Use ALL relevant MCP tools to catch issues that single-pass review might miss.
 
 <rationale>
-Code review quality directly impacts production stability. MCP tools provide: (1) professional AI review baseline, (2) historical pattern matching for known issues, (3) library-specific best practices, (4) industry standard comparisons. Using these tools catches 3-5x more issues than manual review alone.
+Code review quality directly impacts production stability. MCP tools provide: (1) professional AI review baseline, (2) library-specific best practices, (3) industry standard comparisons. Using these tools catches 3-5x more issues than manual review alone.
 </rationale>
 
 ### Tool Selection Decision Framework
@@ -476,16 +474,16 @@ Code review quality directly impacts production stability. MCP tools provide: (1
 Review Scope Decision:
 
 Implementation Code:
-  → request_review (AI baseline) → mcp__mem0__map_tiered_search (known patterns)
+  → request_review (AI baseline)
   → get-library-docs (external libs) → sequentialthinking (complex logic)
   → deepwiki (security patterns)
 
 Documentation:
   → Glob/Read (find source of truth) → Fetch (validate URLs)
-  → mcp__mem0__map_tiered_search (anti-patterns) → ESCALATE if inconsistent
+  → ESCALATE if inconsistent
 
 Test Code:
-  → mcp__mem0__map_tiered_search (test patterns) → get-library-docs (framework practices)
+  → get-library-docs (framework practices)
   → Verify coverage expectations
 ```
 
@@ -503,25 +501,7 @@ request_review({
 })
 ```
 
-### 2. mcp__mem0__map_tiered_search
-**Use When**: Check known issues/anti-patterns from memory
-**Parameters**: `query` (search string), `category` (optional filter)
-**Queries**: `"code review issue [pattern]"`, `"security vulnerability [code]"`, `"anti-pattern [tech]"`, `"test anti-pattern [type]"`
-**Rationale**: Past issues repeat—prevent regressions by searching learned patterns
-
-**Re-rank results** by relevance to current review:
-```
-FOR each pattern in results:
-  relevance_score = 0
-  IF pattern.category matches review_dimension: relevance_score += 2
-  IF pattern.language == {{language}}: relevance_score += 1
-  IF pattern.severity in {critical, high}: relevance_score += 1
-  IF pattern.validated == true: relevance_score += 1
-SORT by relevance_score DESC
-USE top 3 patterns for issue detection
-```
-
-### 3. mcp__sequential-thinking__sequentialthinking
+### 2. mcp__sequential-thinking__sequentialthinking
 **Use When**: Complex logic requiring systematic trace (see triggers below)
 
 **Complexity Triggers** (use sequentialthinking if ANY apply):
@@ -542,18 +522,18 @@ Thought N+1: Check for unreachable code or logic gaps
 Conclusion: List issues found with line numbers
 ```
 
-### 4. mcp__context7__get-library-docs
+### 3. mcp__context7__get-library-docs
 **Use When**: Code uses external libraries/frameworks
 **Process**: `resolve-library-id` → `get-library-docs(library_id, topic)`
 **Topics**: best-practices, security, error-handling, performance, deprecated-apis
 **Rationale**: Current docs prevent deprecated APIs and missing security features
 
-### 5. mcp__deepwiki__ask_question
+### 4. mcp__deepwiki__ask_question
 **Use When**: Validate security/architecture patterns
 **Queries**: "How does [repo] handle [concern]?", "Common mistakes in [feature]?"
 **Rationale**: Learn from battle-tested production code
 
-### 6. Fetch Tool (Documentation Review Only)
+### 5. Fetch Tool (Documentation Review Only)
 **Use When**: Reviewing documentation that mentions external projects/URLs
 **Process**: Extract URLs → Fetch each → Verify dependencies documented
 **Rationale**: External integrations have hidden dependencies (CRDs, adapters)
@@ -561,7 +541,6 @@ Conclusion: List issues found with line numbers
 <critical>
 **IMPORTANT**:
 - Use request_review FIRST for all code reviews
-- Always search mem0 for known patterns before marking valid
 - Get current library docs for ANY external library used
 - Use sequential thinking for complex logic validation
 - Document which MCP tools you used in your review summary
@@ -574,7 +553,6 @@ Conclusion: List issues found with line numbers
 Tool                    | Timeout | Action on Timeout
 ------------------------|---------|----------------------------------
 request_review          | 5 min   | Proceed to manual 10-dimension review
-map_tiered_search       | 2 min   | Skip, note in summary, proceed
 sequentialthinking      | 5 min   | Manual trace critical paths
 get-library-docs        | 3 min   | Use deepwiki or Fetch as fallback
 deepwiki                | 3 min   | Skip pattern validation, proceed
@@ -595,11 +573,6 @@ IF request_review fails or times out (>5 min):
   → Proceed with manual 10-dimension review
   → Note "MCP baseline unavailable" in summary
   → Apply extra scrutiny to security dimension
-
-IF map_tiered_search returns empty results:
-  → This is NORMAL for new codebases or novel patterns
-  → Do NOT treat as blocking
-  → Proceed with standard review
 
 IF get-library-docs unavailable or library not indexed:
   → Use deepwiki to search for library patterns
@@ -628,7 +601,6 @@ Priority 1: Manual Review (human-level logic)
   → Trust tools for SYNTAX errors, type mismatches, style violations
 
 Priority 2: Security-focused tools
-  → map_tiered_search (known vulnerabilities) > request_review (general)
   → deepwiki (production patterns) > get-library-docs (generic docs)
 
 Priority 3: Specificity
@@ -656,7 +628,6 @@ Priority 4: Severity
 | Short Name | Full MCP Name | Category |
 |------------|---------------|----------|
 | `request_review` | `mcp__claude-reviewer__request_review` | AI Review |
-| `map_tiered_search` | `mcp__mem0__map_tiered_search` | Knowledge |
 | `sequentialthinking` | `mcp__sequential-thinking__sequentialthinking` | Analysis |
 | `get_library_docs` | `mcp__context7__get-library-docs` | Docs |
 | `resolve_library_id` | `mcp__context7__resolve-library-id` | Docs |
@@ -691,28 +662,6 @@ Priority 4: Severity
 ```
 **Key Fields**: `findings[].line`, `findings[].severity`, `findings[].message`
 **Integration**: Convert each finding to Monitor issue format, map type→category
-
-#### map_tiered_search Response
-```json
-{
-  "results": [
-    {
-      "id": "mem-uuid",
-      "memory": "Pattern: Always validate JWT expiry before processing",
-      "score": 0.95,
-      "metadata": {
-        "category": "security",
-        "source": "auth-service",
-        "created_at": "2024-01-15T10:30:00Z"
-      }
-    }
-  ],
-  "total": 3,
-  "query": "JWT validation patterns"
-}
-```
-**Key Fields**: `results[].memory`, `results[].score` (>0.8 = highly relevant)
-**Integration**: Empty results is NORMAL for new codebases - proceed without error
 
 #### sequentialthinking Response
 ```json
@@ -965,8 +914,7 @@ def divide(a, b):
 2. Verify parameterized queries (no string interpolation)
 3. Check command execution (no shell=True with user input)
 4. Validate file paths (no path traversal)
-5. Search mem0 for known vulnerabilities: `"security vulnerability [language]"`
-6. Use deepwiki to check production security patterns
+5. Use deepwiki to check production security patterns
 
 #### Pass Criteria
 - All inputs validated with allowlist approach
@@ -1401,7 +1349,7 @@ ELSE:
 ```
 
 **Research Triggers**: React, Next.js, Django, FastAPI, rate limiting, webhook handling, distributed systems
-**Valid Skips**: Pattern in mem0, language primitives only, deep expertise, first principles
+**Valid Skips**: Language primitives only, deep expertise, first principles
 
 <critical>
 **DO NOT block** for missing research if:
@@ -1551,7 +1499,7 @@ Before returning JSON, verify:
   "failed_checks": [],
   "feedback_for_actor": "Implementation is solid. No changes required.",
   "estimated_fix_time": "5 minutes",
-  "mcp_tools_used": ["request_review", "map_tiered_search"]
+  "mcp_tools_used": ["request_review"]
 }
 ```
 
@@ -1666,7 +1614,7 @@ Do NOT invent issues to justify review effort. Empty `issues` array is valid.
       "type": "array",
       "items": {
         "type": "string",
-        "enum": ["request_review", "map_tiered_search", "map_add_pattern", "sequentialthinking", "get_library_docs", "resolve_library_id", "deepwiki", "glob", "read", "fetch"]
+        "enum": ["request_review", "sequentialthinking", "get_library_docs", "resolve_library_id", "deepwiki", "glob", "read", "fetch"]
       },
       "description": "MCP tools successfully used during review"
     },
@@ -1674,7 +1622,7 @@ Do NOT invent issues to justify review effort. Empty `issues` array is valid.
       "type": "array",
       "items": {
         "type": "string",
-        "enum": ["request_review", "map_tiered_search", "map_add_pattern", "sequentialthinking", "get_library_docs", "resolve_library_id", "deepwiki", "glob", "read", "fetch"]
+        "enum": ["request_review", "sequentialthinking", "get_library_docs", "resolve_library_id", "deepwiki", "glob", "read", "fetch"]
       },
       "description": "MCP tools that failed or timed out"
     },
@@ -1821,7 +1769,7 @@ IF map-planning workflow active AND valid === true:
   "failed_checks": ["testability", "documentation"],
   "feedback_for_actor": "Actionable guidance with specific steps (reference dimensions: 'Security dimension failed: add input validation' or 'Dimension 2 (Security): missing rate limiting')",
   "estimated_fix_time": "5 minutes|30 minutes|2 hours|4 hours",
-  "mcp_tools_used": ["request_review", "map_tiered_search"]
+  "mcp_tools_used": ["request_review"]
 }
 ```
 
@@ -2146,9 +2094,6 @@ IF ≥3 MCP tools fail in sequence:
 |------|--------------|-----------------|
 | `request_review` | Timeout (>5min) | Skip AI baseline, proceed with full 10-dimension manual review |
 | `request_review` | Error response | Log error, proceed with manual review, note limitation |
-| `map_tiered_search` | Empty results | Normal for new code - proceed, no fallback needed |
-| `map_tiered_search` | Timeout | Skip pattern matching, proceed with standard review |
-| `map_tiered_search` | Error | Skip impact analysis, note in feedback |
 | `sequentialthinking` | Quota exceeded | Manual trace critical paths, recommend human review |
 | `get_library_docs` | Library not indexed | Try deepwiki → Fetch docs URL → note limitation |
 | `deepwiki` | Timeout | Skip pattern validation, proceed with conservative review |
@@ -2177,7 +2122,7 @@ IF Manual Only mode:
   "summary": "Manual review completed - MCP tools unavailable",
   "issues": [...],
   "mcp_tools_used": [],
-  "mcp_tools_failed": ["request_review", "map_tiered_search", "sequentialthinking"],
+  "mcp_tools_failed": ["request_review", "sequentialthinking"],
   "recovery_mode": "manual_only",
   "recovery_notes": "3+ tool failures triggered manual-only review. Extra scrutiny applied to Security and Correctness dimensions.",
   "feedback_for_actor": "Note: This review was performed without AI baseline (tool failures). Consider requesting a follow-up review when tools are available for security-critical sections."
@@ -2193,9 +2138,9 @@ IF tool returns partial results (truncated, incomplete):
   → Do NOT treat as full failure
   → Supplement with manual review for gaps
 
-Example: map_tiered_search returns 3 of expected 10 results
-  → Use the 3 results
-  → Note: "Pattern search returned partial results"
+Example: A tool returns partial results (3 of expected 10)
+  → Use the available results
+  → Note: "Tool returned partial results"
   → Manually check for common patterns not in results
 ```
 
@@ -2247,7 +2192,7 @@ After each review, the orchestrator should log:
   "duration_seconds": 180,
   "loc_reviewed": 450,
   "language": "python",
-  "tools_used": ["request_review", "map_tiered_search"],
+  "tools_used": ["request_review"],
   "tools_failed": [],
   "issues_found": {"critical": 0, "high": 2, "medium": 5, "low": 1},
   "valid": true,
@@ -2266,7 +2211,7 @@ IF false positive rate >15%:
 IF bug catch rate <70%:
   → Expand dimension checklists
   → Add more MCP tool triggers
-  → Review missed patterns, add to mem0
+  → Review missed patterns, document for future reference
 
 IF review time consistently >target:
   → Optimize tool selection
@@ -2349,7 +2294,7 @@ IF review time consistently >target:
   "failed_checks": ["correctness", "security", "testability"],
   "feedback_for_actor": "Add validation, email check, db error handling, tests. Start with missing field validation (HIGH), then add security checks.",
   "estimated_fix_time": "30 minutes",
-  "mcp_tools_used": ["request_review", "map_tiered_search"]
+  "mcp_tools_used": ["request_review"]
 }
 ```
 
@@ -2394,7 +2339,7 @@ def search_users(query):
   "failed_checks": ["security", "correctness"],
   "feedback_for_actor": "CRITICAL: SQL injection vulnerability allows arbitrary database access. MUST fix before deployment. Use parameterized queries (see suggestion). Also add input validation for query length.",
   "estimated_fix_time": "30 minutes",
-  "mcp_tools_used": ["request_review", "map_tiered_search", "deepwiki"]
+  "mcp_tools_used": ["request_review", "deepwiki"]
 }
 ```
 
@@ -2431,7 +2376,7 @@ def search_users(query):
   "failed_checks": ["documentation"],
   "feedback_for_actor": "Read tech-design.md:145-160 for correct trigger syntax. Use 'engines: {}' not 'presets: []'. Add both disable scenarios (global and per-engine).",
   "estimated_fix_time": "2 hours",
-  "mcp_tools_used": ["Glob", "Read", "map_tiered_search"]
+  "mcp_tools_used": ["Glob", "Read"]
 }
 ```
 
@@ -2439,7 +2384,7 @@ def search_users(query):
 
 ### Example 4: Edge Case - MCP Tools Unavailable
 
-**Scenario**: request_review times out, map_tiered_search returns empty
+**Scenario**: request_review times out, other tools unavailable
 
 **Code**:
 ```python
@@ -2486,7 +2431,7 @@ def check_rate_limit(user_id, action, limit=100, window=3600):
   "failed_checks": ["correctness", "performance", "testability"],
   "feedback_for_actor": "Note: MCP baseline review unavailable (timeout). Manual review identified race condition in rate limiter - use Redis pipeline or Lua script for atomic incr+expire. Add Redis connection error handling. Consider dependency injection for testability.",
   "estimated_fix_time": "30 minutes",
-  "mcp_tools_used": ["request_review (timeout)", "map_tiered_search (no results)"]
+  "mcp_tools_used": ["request_review (timeout)"]
 }
 ```
 
@@ -2500,7 +2445,7 @@ def check_rate_limit(user_id, action, limit=100, window=3600):
 **Before returning your review JSON:**
 
 1. ✅ Did I use request_review for code implementations?
-2. ✅ Did I search mem0 for known issue patterns?
+2. ✅ Did I check for known issue patterns?
 3. ✅ Did I check all 10 validation dimensions systematically?
 4. ✅ Did I verify documentation against source of truth (if applicable)?
 5. ✅ Are all issues specific with location and actionable suggestions?

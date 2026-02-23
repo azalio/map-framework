@@ -61,8 +61,7 @@ Current step set (linear order; some are conditional):
 4. `1.56` CHOOSE_MODE
 5. `1.6` INIT_STATE
 6. `2.0` XML_PACKET
-7. `2.1` MEM0_SEARCH
-8. `2.2` RESEARCH (conditional)
+7. `2.2` RESEARCH (conditional)
 9. `2.3` ACTOR
 10. `2.4` MONITOR
 11. `2.6` PREDICTOR (conditional)

@@ -60,13 +60,38 @@ SENSITIVE_PATTERNS = [
 ]
 
 
+SAFE_PATH_PREFIXES = [
+    ".claude/hooks/",
+    ".claude/agents/",
+    ".claude/commands/",
+    ".claude/references/",
+    ".claude/skills/",
+    "src/",
+    "tests/",
+    "docs/",
+    "scripts/",
+]
+
+
 def is_sensitive_file(file_path: str) -> bool:
     """Check if file path matches any sensitive file pattern.
 
     Checks ALL path components (not just filename) to catch patterns
-    in directory names or parent paths.
+    in directory names or parent paths. Skips files in known safe
+    directories (hooks, agents, source code, tests, etc.)
     """
     path_obj = Path(file_path)
+
+    # Normalize to relative path for prefix matching
+    try:
+        rel = str(path_obj.relative_to(Path.cwd()))
+    except ValueError:
+        rel = str(path_obj)
+
+    # Allow known safe directories
+    for prefix in SAFE_PATH_PREFIXES:
+        if rel.startswith(prefix):
+            return False
 
     # Check each path component against all patterns
     for part in path_obj.parts:

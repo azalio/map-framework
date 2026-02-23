@@ -47,14 +47,7 @@ IF analyzer_output provided → Cross-reference affected files
 
 ### Core Analysis Tools
 
-**1. mem0 (Tiered Memory Search)**
-- **Purpose**: Find historical patterns and past analyses using tiered memory search
-- **Capabilities**:
-  - `mcp__mem0__map_tiered_search`: Search for patterns with tiered retrieval (L1 recent → L2 frequent → L3 semantic)
-- **Best for**: Finding similar past changes, historical impact analyses, migration patterns
-- **Fallback if unavailable**: grep
-
-**2. grep (Fast Text Search)**
+**1. grep (Fast Text Search)**
 - **Purpose**: Pattern matching across repository files
 - **Always available**: Yes (baseline tool)
 - **Capabilities**:
@@ -75,14 +68,12 @@ TIER 1 (Minimal - 30 sec):
       - Symbol usage: grep -r "{function_name}" --include="*.py"
 
 TIER 2 (Standard - 1-2 min):
-  ├── 1. mcp__mem0__map_tiered_search (historical patterns)
-  └── 2. grep (dependency analysis + verification)
+  └── grep (dependency analysis + verification)
       - Sequential execution
       - Cross-validate results
 
 TIER 3 (Deep - 3-5 min):
-  ├── 1. mcp__mem0__map_tiered_search (comprehensive) ─┐
-  └── 2. grep (extended) ─────────────────────────────┘ Parallel execution
+  └── grep (extended) + deepwiki/context7 as needed
       - Cross-validate all results
       - Flag disagreements
 ```
@@ -91,8 +82,7 @@ TIER 3 (Deep - 3-5 min):
 
 ```
 MATCH (Category B: +0.15):
-  All tools identify same core affected files (±2 file variance)
-  Example: mem0=12 files, grep=13 files → MATCH
+  Multiple tools identify same core affected files (±2 file variance)
 
 SINGLE TOOL (Category B: +0.05):
   Only one tool ran successfully, results appear complete
@@ -100,7 +90,6 @@ SINGLE TOOL (Category B: +0.05):
 
 CONFLICT (Category B: -0.10):
   >30% disagreement on affected components
-  Example: mem0=5 files, grep=15 files → CONFLICT
   Action: Trust grep (most literal), cap confidence at 0.60
 ```
 
@@ -229,7 +218,7 @@ Before any analysis, classify the change to select appropriate depth:
 2. Classify risk (usually "low")
 3. Output JSON with confidence 0.9+
 
-**Skip**: mem0 tiered search, deepwiki
+**Skip**: deepwiki, context7
 
 ### Tier 2: STANDARD Analysis (1-2 minutes)
 **When to use**:
@@ -240,12 +229,11 @@ Before any analysis, classify the change to select appropriate depth:
 - Configuration file changes
 
 **Process**:
-1. mcp__mem0__map_tiered_search for patterns
-2. grep for dependency analysis
-3. Manual verification of edge cases
-4. Risk classification
+1. grep for dependency analysis
+2. Manual verification of edge cases
+3. Risk classification
 
-**Use**: mcp__mem0__map_tiered_search + grep
+**Use**: grep + manual verification
 
 ### Tier 3: DEEP Analysis (3-5 minutes)
 **When to use**:
@@ -391,16 +379,6 @@ Example 3: Changed core/utils.py, import count = 25
 **Current Subtask**:
 {{subtask_description}}
 
-{{#if existing_patterns}}
-## Relevant Historical Patterns
-
-The following patterns have been retrieved from memory (tiered search results):
-
-{{existing_patterns}}
-
-**Instructions**: Use these patterns to identify common dependency patterns and predict typical impact areas.
-{{/if}}
-
 {{#if feedback}}
 ## Previous Impact Analysis Feedback
 
@@ -419,8 +397,7 @@ Previous analysis identified these concerns:
 **CRITICAL**: Accurate impact prediction requires historical data, dependency analysis, and architectural knowledge. MCP tools provide this context.
 
 <rationale>
-Impact analysis is about pattern recognition. Similar changes have happened before—renaming APIs, refactoring modules, changing schemas. MCP tools let us learn from history:
-- mcp__mem0__map_tiered_search finds past breaking changes and migration patterns
+Impact analysis is about pattern recognition. Similar changes have happened before--renaming APIs, refactoring modules, changing schemas. MCP tools let us learn from history:
 - deepwiki shows how mature projects handle similar changes
 - context7 validates library version compatibility
 
@@ -432,60 +409,25 @@ Without these tools, we're guessing. With them, we're predicting based on eviden
 ```
 BEFORE analyzing impact, gather context:
 
-ALWAYS:
-  1. FIRST → mcp__mem0__map_tiered_search (historical patterns)
-     - Query: "breaking change [change_type]"
-     - Query: "dependency impact [component_name]"
-     - Query: "migration strategy [similar_change]"
-     - Learn from past impact analyses
-     - Uses tiered retrieval: L1 recent → L2 frequent → L3 semantic
-
 IF external library involved:
-  2. THEN → get-library-docs (compatibility check)
+  1. THEN → get-library-docs (compatibility check)
      - Query: Changes between versions (migration guides)
      - Identify deprecated APIs
      - Understand breaking changes in library updates
 
 IF architectural change:
-  3. THEN → deepwiki (architectural precedents)
+  2. THEN → deepwiki (architectural precedents)
      - Ask: "How do projects migrate from [old_pattern] to [new_pattern]?"
      - Learn typical ripple effects
      - Identify commonly missed dependencies
 
-THEN → Grep/Glob (manual verification)
-  4. Search for symbol names, import statements, file references
+ALWAYS → Grep/Glob (manual verification)
+  3. Search for symbol names, import statements, file references
      - Automated search might miss dynamic imports, reflection, config files
      - Manual search catches edge cases
 ```
 
-### 1. mcp__mem0__map_tiered_search
-**Use When**: ALWAYS - before starting analysis
-**Purpose**: Learn from past impact analyses and migration patterns
-
-**Rationale**: Most changes aren't novel. Someone has renamed a similar API, refactored a similar module, or changed a similar schema before. mem0 contains the outcomes—what broke, what migrations were needed, what was missed.
-
-**Tiered Retrieval Strategy**:
-- **L1 (Recent)**: Last 7 days of similar changes
-- **L2 (Frequent)**: Commonly accessed patterns (helpful_count >= 3)
-- **L3 (Semantic)**: Deep semantic search for similar contexts
-
-<example type="good">
-Before analyzing API rename impact:
-- Search: "breaking change API rename" → find past API renames
-- Search: "migration strategy function signature" → learn migration patterns
-- Search: "dependency impact [module_name]" → understand this module's usage patterns
-Use results to guide dependency tracing and risk assessment.
-</example>
-
-<example type="bad">
-Starting analysis with Grep immediately:
-- Miss architectural context
-- No historical precedent for risk assessment
-- Repeat mistakes from past analyses
-- Under-predict breaking changes
-</example>
-
-### 2. mcp__context7__get-library-docs
+### 1. mcp__context7__get-library-docs
 **Use When**: Change involves external library or framework
 **Process**:
 1. `resolve-library-id` with library name
@@ -502,7 +444,7 @@ Upgrading Django 3.x → 4.x without checking migration guide:
 **ALWAYS** check library docs for version changes.
 </example>
 
-### 3. mcp__deepwiki__read_wiki_structure + ask_question
+### 2. mcp__deepwiki__read_wiki_structure + ask_question
 **Use When**: Architectural changes or unfamiliar patterns
 **Purpose**: Learn from mature projects' migration strategies
 
@@ -513,7 +455,7 @@ Upgrading Django 3.x → 4.x without checking migration guide:
 
 **Rationale**: Architectural changes have hidden complexity. How do you migrate thousands of database records? How do you version APIs without breaking clients? Mature projects have solved these problems—learn from them.
 
-### 4. Standard Tools (Read, Grep, Glob, Bash)
+### 3. Standard Tools (Read, Grep, Glob, Bash)
 **Use When**: Always—for verification and edge cases
 **Purpose**: Catch what automated tools miss
 
@@ -533,7 +475,7 @@ Upgrading Django 3.x → 4.x without checking migration guide:
 - String-based imports or reflection
 </critical>
 
-### 6. mcp__sequential-thinking__sequentialthinking
+### 4. mcp__sequential-thinking__sequentialthinking
 **Use When**: Complex dependency tracing requiring multi-step reasoning
 **Purpose**: Structure transitive dependency analysis and impact cascade tracing
 
@@ -657,13 +599,8 @@ Thought 8: Assess deployment coordination needs and rollout timeline
    - Added/removed dependencies
    - Modified interfaces or contracts
 
-### Phase 2: Historical Context
-3. **Search mem0 for patterns** (mcp__mem0__map_tiered_search)
-   - Has this type of change happened before?
-   - What were the impacts?
-   - What did previous analyses miss?
-
-4. **Check library compatibility** (if external dependencies involved)
+### Phase 2: Context Gathering
+3. **Check library compatibility** (if external dependencies involved)
    - Breaking changes in library versions
    - Deprecation warnings
    - Migration requirements
@@ -1063,13 +1000,7 @@ def get_weather(city: str, region: str) -> dict:
 
 ### Analysis Process
 
-**Step 1: Historical context** (mcp__mem0__map_tiered_search)
-- Query: "breaking change function signature"
-- Result: Past signature changes required 3-5 updates per call site
-- Query: "migration strategy required parameter"
-- Result: Common pattern: add with default first, then make required
-
-**Step 2: Dependency analysis** (Grep)
+**Step 1: Dependency analysis** (Grep)
 - Query: `grep -r "get_weather" --include="*.py"`
 - Result:
   ```
@@ -1080,7 +1011,7 @@ def get_weather(city: str, region: str) -> dict:
   scripts/daily_report.py:56: get_weather(config.default_city)
   ```
 
-**Step 3: Manual verification** (Grep)
+**Step 2: Manual verification** (Grep)
 - Grep for `"get_weather"` in configs, docs:
   ```bash
   config/api_endpoints.yaml:12: - name: get_weather
@@ -1088,16 +1019,16 @@ def get_weather(city: str, region: str) -> dict:
   README.md:78: weather = get_weather("Boston")
   ```
 
-**Step 4: Breaking change classification**
+**Step 3: Breaking change classification**
 - Function signature change: **BREAKING** (added required parameter)
 - 5 direct call sites + 3 documentation references
 - Risk: HIGH (5-10 usage sites, breaking change)
 
-**Step 5: Confidence assessment**
-- Automated analysis: ✓ (all call sites found)
-- Manual verification: ✓ (found doc references)
-- Test coverage: ✓ (2 tests exist)
-- Confidence: 0.85 (high—complete picture)
+**Step 4: Confidence assessment**
+- Automated analysis: completed (all call sites found)
+- Manual verification: completed (found doc references)
+- Test coverage: verified (2 tests exist)
+- Confidence: 0.85 (high -- complete picture)
 
 ### Output (JSON)
 
@@ -1106,7 +1037,7 @@ def get_weather(city: str, region: str) -> dict:
   "analysis_metadata": {
     "tier_selected": "2",
     "tier_rationale": "Internal function change with 5-10 affected files; standard analysis appropriate",
-    "tools_used": ["mcp__mem0__map_tiered_search", "grep"],
+    "tools_used": ["grep"],
     "analysis_duration_seconds": 75
   },
   "predicted_state": {
@@ -1182,8 +1113,8 @@ def get_weather(city: str, region: str) -> dict:
     "score": 0.85,
     "tier_base": 0.50,
     "adjustments": [
-      {"category": "A", "factor": "mem0 has similar patterns", "adjustment": 0.20},
-      {"category": "B", "factor": "mem0 + grep match", "adjustment": 0.15},
+      {"category": "A", "factor": "grep found comprehensive usage data", "adjustment": 0.20},
+      {"category": "B", "factor": "grep results clear and complete", "adjustment": 0.15},
       {"category": "C", "factor": "Static code (no flags)", "adjustment": 0.00},
       {"category": "D", "factor": "Tests exist for affected files", "adjustment": 0.00}
     ],
@@ -1322,12 +1253,7 @@ Reason: Better naming consistency with existing text_processing.py module
 
 ### Analysis Process
 
-**Step 1: Historical context** (mcp__mem0__map_tiered_search)
-- Query: "breaking change module rename"
-- Result: Past module renames required import updates + config updates + CI/CD fixes
-- Typical impact: 10-30 affected files
-
-**Step 2: Dependency analysis** (Grep)
+**Step 1: Dependency analysis** (Grep)
 - Query: `grep -r "string_helpers" --include="*.py"`
 - Result:
   ```
@@ -1338,7 +1264,7 @@ Reason: Better naming consistency with existing text_processing.py module
   tests/integration/test_api.py:8: import utils.string_helpers as sh
   ```
 
-**Step 3: Manual verification** (Grep for string "string_helpers")
+**Step 2: Manual verification** (Grep for string "string_helpers")
 - Found in:
   ```
   .github/workflows/test.yml:15: - pytest tests/test_string_helpers.py
@@ -1347,12 +1273,12 @@ Reason: Better naming consistency with existing text_processing.py module
   setup.py:25: "utils.string_helpers",
   ```
 
-**Step 4: Breaking change classification**
+**Step 3: Breaking change classification**
 - Module path change: **BREAKING** (all imports break immediately)
 - 5 direct imports + 4 references in config/scripts
 - Risk: HIGH (module rename breaks all imports)
 
-**Step 5: Confidence assessment**
+**Step 4: Confidence assessment**
 - Automated analysis: ✓ (imports found)
 - Manual verification: ✓ (found configs, CI, setup.py)
 - Potential misses: dynamic imports, string references in unknown config files
@@ -1365,7 +1291,7 @@ Reason: Better naming consistency with existing text_processing.py module
   "analysis_metadata": {
     "tier_selected": "3",
     "tier_rationale": "Module rename affects >10 files; Phase 2 grep found many importers; deep analysis required",
-    "tools_used": ["mcp__mem0__map_tiered_search", "grep"],
+    "tools_used": ["grep"],
     "analysis_duration_seconds": 180
   },
   "predicted_state": {
@@ -1457,8 +1383,8 @@ Reason: Better naming consistency with existing text_processing.py module
     "score": 0.75,
     "tier_base": 0.50,
     "adjustments": [
-      {"category": "A", "factor": "mem0 has similar module rename patterns", "adjustment": 0.20},
-      {"category": "B", "factor": "mem0 + grep match on imports", "adjustment": 0.15},
+      {"category": "A", "factor": "grep found comprehensive import data", "adjustment": 0.20},
+      {"category": "B", "factor": "grep results verified manually", "adjustment": 0.15},
       {"category": "C", "factor": "Potential dynamic imports (edge case)", "adjustment": -0.10},
       {"category": "D", "factor": "Config/CI files not fully verifiable", "adjustment": 0.00}
     ],
@@ -1623,8 +1549,8 @@ Risk is **not** just about quantity—it's about **criticality** of affected com
 
 <critical>
 **NEVER skip manual verification**:
-- ❌ "mem0 search found all usages, we're done" → WRONG
-- ✅ "mem0 found historical patterns, now Grep for: string references, configs, dynamic imports, docs"
+- ❌ "Automated search found all usages, we're done" → WRONG
+- ✅ "Initial search found patterns, now Grep for: string references, configs, dynamic imports, docs"
 
 Automated tools miss:
 - String-based references in YAML/JSON configs
@@ -1686,7 +1612,7 @@ Return **ONLY** valid JSON in this exact structure:
   "analysis_metadata": {
     "tier_selected": "1|2|3",
     "tier_rationale": "Brief explanation of tier selection",
-    "tools_used": ["mcp__mem0__map_tiered_search", "grep"],
+    "tools_used": ["grep"],
     "analysis_duration_seconds": 45
   },
   "predicted_state": {
@@ -1718,8 +1644,8 @@ Return **ONLY** valid JSON in this exact structure:
     "score": 0.85,
     "tier_base": 0.50,
     "adjustments": [
-      {"category": "A", "factor": "mem0 comprehensive data", "adjustment": 0.20},
-      {"category": "B", "factor": "mem0+grep match", "adjustment": 0.15}
+      {"category": "A", "factor": "Comprehensive grep data", "adjustment": 0.20},
+      {"category": "B", "factor": "Results verified manually", "adjustment": 0.15}
     ],
     "flags": ["MANUAL REVIEW REQUIRED"]
   },
@@ -1841,19 +1767,19 @@ Confidence is NOT a guess—calculate it using this formula with **tier-specific
 
 ### Adjustment Categories (MUTEX - Pick ONE per Category)
 
-**Category A: Historical Data** (pick highest applicable)
+**Category A: Data Completeness** (pick highest applicable)
 ```
-+0.20: mem0 returned comprehensive patterns for this change type
-+0.10: mem0 returned partial/similar patterns
-+0.00: No query made (default for Tier 1)
--0.15: mem0 queried but no relevant data found
++0.20: Comprehensive data found for this change type
++0.10: Partial/similar patterns found
++0.00: No additional context available (default for Tier 1)
+-0.15: Queried but no relevant data found
 ```
 
 **Category B: Tool Agreement** (pick one)
 ```
-+0.15: mem0 + grep results match (same usages found)
++0.15: Multiple verification methods match (same usages found)
 +0.05: Only one tool used, results clear
--0.10: mem0 and grep conflict (investigate before proceeding)
+-0.10: Tools conflict (investigate before proceeding)
 ```
 
 **Category C: Code Analyzability** (pick lowest applicable)
@@ -1871,8 +1797,8 @@ POSITIVE ADJUSTMENTS:
        → Verify: grep for corresponding test files, check test count > implementation functions
 +0.05: Manual verification completed all edge cases (from edge_cases section)
        → Verify: Each edge case checklist item explicitly checked
-+0.05: Change matches documented pattern in existing_patterns
-       → Verify: Quote matching mem0 pattern in recommendation
++0.05: Change matches documented pattern in codebase
+       → Verify: Quote matching pattern in recommendation
 +0.05: Entities verified against provided context
        → Verify: All files in required_updates exist in files_changed or diff
 
@@ -1911,8 +1837,8 @@ TIER_1_MIN: 0.70 (if lower → escalate to Tier 2)
 | Factor | Category | Adjustment | Running Total |
 |--------|----------|------------|---------------|
 | Tier 2 base score | — | 0.50 | 0.50 |
-| mem0 has similar patterns | A | +0.20 | 0.70 |
-| Codex + grep match | B | +0.15 | 0.85 |
+| Comprehensive data found | A | +0.20 | 0.70 |
+| Multiple tools match | B | +0.15 | 0.85 |
 | Static code (no flags) | C | +0.00 | 0.85 |
 | High test coverage | D | +0.10 | 0.95 |
 | **Final** | capped | — | **0.95** |
@@ -1922,7 +1848,7 @@ TIER_1_MIN: 0.70 (if lower → escalate to Tier 2)
 | Factor | Category | Adjustment | Running Total |
 |--------|----------|------------|---------------|
 | Tier 3 base score | — | 0.50 | 0.50 |
-| mem0 queried, no data | A | -0.15 | 0.35 |
+| Queried, no data | A | -0.15 | 0.35 |
 | Only grep used | B | +0.05 | 0.40 |
 | Reflection detected | C | -0.20 | 0.20 |
 | External API undocumented | D | -0.10 | 0.10 |
@@ -1944,28 +1870,6 @@ TIER_1_MIN: 0.70 (if lower → escalate to Tier 2)
 ## Fallback Strategies When Tools Fail
 
 **CRITICAL**: Tools can fail, time out, or return no results. Always have a fallback.
-
-### If map_tiered_search fails or returns no results:
-```
-1. Proceed with analysis using grep
-2. Adjust confidence: -0.20
-3. Add to recommendation: "No historical data available for this change type"
-4. Be MORE conservative with risk assessment (err on higher risk)
-```
-
-### If mem0 and grep results conflict:
-```
-Example: mem0 finds 10 usages, grep finds 15
-
-1. Trust manual verification (grep) over semantic tools
-2. Investigate discrepancy:
-   - Check for dynamic imports
-   - Check for generated code
-   - Check for string-based references
-3. Report BOTH numbers in output:
-   "affected_components": ["15 files (mem0: 10, grep: 15 - discrepancy noted)"]
-4. Set confidence to max 0.60 (moderate uncertainty)
-```
 
 ### If multiple tool results are contradictory:
 ```
@@ -2008,7 +1912,7 @@ IF confidence < 0.30 after all adjustments:
 
 ### Catastrophic Tool Failure Protocol (All Tools Fail)
 
-**CRITICAL**: If ALL tools fail (mem0 AND grep all error/timeout):
+**CRITICAL**: If ALL tools fail (grep and all MCP tools error/timeout):
 
 ```
 1. DO NOT hallucinate results
@@ -2020,7 +1924,6 @@ IF confidence < 0.30 after all adjustments:
     "tier_rationale": "All analysis tools failed - minimal analysis only",
     "tools_used": [],
     "tool_failures": {
-      "mem0": "timeout/error/unavailable",
       "grep": "timeout/error/unavailable"
     },
     "catastrophic_failure": true

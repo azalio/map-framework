@@ -12,10 +12,9 @@ last_updated: 2025-11-27
 ┌─────────────────────────────────────────────────────────────────────┐
 │                    ACTOR AGENT PROTOCOL                              │
 ├─────────────────────────────────────────────────────────────────────┤
-│  1. mcp__mem0__map_tiered_search → BEFORE any implementation        │
-│  2. Implement complete code → No placeholders, no ellipsis          │
-│  3. Handle ALL errors       → Explicit try/catch, no silent fails   │
-│  4. Document trade-offs     → Alternatives considered, why chosen   │
+│  1. Implement complete code → No placeholders, no ellipsis          │
+│  2. Handle ALL errors       → Explicit try/catch, no silent fails   │
+│  3. Document trade-offs     → Alternatives considered, why chosen   │
 ├─────────────────────────────────────────────────────────────────────┤
 │  REQUIRED: Use Edit/Write tools to apply code directly              │
 │  NEVER: Modify outside {{allowed_scope}} | Skip error handling      │
@@ -82,20 +81,9 @@ This enables Synthesizer to extract and resolve decisions across variants.
 
 # MCP Tool Integration (Single Source of Truth)
 
-## Mandatory Tools (Every Implementation)
-
-### 1. mcp__mem0__map_tiered_search — BEFORE Implementation
-**Purpose**: Learn from past solutions, avoid repeating mistakes
-**When**: ALWAYS, even for simple tasks
-**Query Format**: `"[technology] [feature] implementation"` or `"[error type] solution"`
-
-**Note**: Actors no longer store patterns directly. After Monitor approval, run `/map-learn` to trigger Reflector → Curator → mem0 storage.
-
----
-
 ## Research Tools (Optional — Use When Knowledge Gap Exists)
 
-**Decision Rule**: Use if unfamiliar library/algorithm/architecture. Skip if existing patterns cover it.
+**Decision Rule**: Use if unfamiliar library/algorithm/architecture.
 
 | Trigger | Tool | Purpose |
 |---------|------|---------|
@@ -105,13 +93,7 @@ This enables Synthesizer to extract and resolve decisions across variants.
 ### Tool Selection Flowchart
 
 ```
-START → mcp__mem0__map_tiered_search (ALWAYS)
-    ↓
-Found relevant pattern in mem0?
-    YES → Apply pattern, implement
-    NO  → Continue research
-    ↓
-Using external library?
+START → Using external library?
     YES → context7: resolve-library-id → get-library-docs
     NO  → Continue
     ↓
@@ -129,40 +111,6 @@ Monitor will validate written code
 ---
 
 ## Handling MCP Tool Responses
-
-### mcp__mem0__map_tiered_search Results
-
-**Re-rank retrieved patterns** before use:
-```
-FOR each pattern in results:
-  relevance_score = 0
-  IF pattern.domain matches subtask_domain: relevance_score += 2
-  IF pattern.language == {{language}}: relevance_score += 1
-  IF pattern.created_at > (now - 30_days): relevance_score += 1
-  IF pattern.metadata.validated == true: relevance_score += 1
-  IF abs(pattern.complexity - subtask.complexity) <= 2: relevance_score += 1
-
-SORT by relevance_score DESC
-USE top 3 patterns (discard low-relevance noise)
-```
-
-**Multiple patterns found**:
-- Apply re-ranking algorithm above
-- Prefer highest relevance_score (not just most recent)
-- Prefer patterns marked "validated" or "production"
-- Document selection rationale in Trade-offs
-
-**Conflicting patterns**:
-```yaml
-conflict: "Pattern A says X, Pattern B says Y"
-resolution: "Using Pattern A (higher relevance score: domain match + validated)"
-action: "Document conflict in Trade-offs for Monitor review"
-```
-
-**Empty results**:
-- Document: "No similar patterns in mem0. Novel implementation."
-- Increase test coverage for unvalidated approach
-- Flag in Trade-offs for extra Monitor scrutiny
 
 ### context7 / deepwiki Results
 
@@ -183,16 +131,9 @@ mitigation: "Added version check, comprehensive tests"
 
 **Library Implementation**:
 ```
-mcp__mem0__map_tiered_search("[library] implementation")
-    → (if no patterns) context7: get-library-docs
+context7: get-library-docs
     → (if architecture unclear) deepwiki: ask_question
-    → implement → /map-learn (after approval)
-```
-
-**Algorithm Implementation**:
-```
-mcp__mem0__map_tiered_search("[algorithm] implementation")
-    → review, adapt, test → /map-learn (after approval)
+    → implement
 ```
 
 ---
@@ -203,18 +144,8 @@ When multiple sources provide conflicting guidance, follow this priority (highes
 
 1. **Explicit human instruction** in subtask description
 2. **Security constraints** (NEVER override)
-3. **mem0 patterns** (validated past patterns from tiered search)
-4. **Research tools** (context7, deepwiki)
-5. **Training data** (fallback)
-
-**Example conflict resolution**:
-```yaml
-conflict:
-  mem0_pattern_1: "Use polling for real-time updates"
-  mem0_pattern_2: "Use webhooks for real-time updates"
-resolution: "Using pattern with higher relevance score and more recent validation"
-action: "Document in Trade-offs for Monitor review"
-```
+3. **Research tools** (context7, deepwiki)
+4. **Training data** (fallback)
 
 </Actor_MCP_Protocol>
 
@@ -262,8 +193,7 @@ Task(
 ## Skip Research If
 
 - Task is self-contained (new file, no dependencies)
-- mem0 already has the pattern you need
-- mcp__mem0__map_tiered_search returned sufficient context
+- Existing patterns from context already cover the need
 
 ---
 
@@ -309,7 +239,7 @@ Explain solution strategy in 2-3 sentences. Include:
 - MCP tools used and what they informed (if any)
 
 <example>
-"Implementing rate limiting using token bucket algorithm. mcp__mem0__map_tiered_search found similar pattern (impl-0089) for Redis-based limiting. Adapted for in-memory use per requirements."
+"Implementing rate limiting using token bucket algorithm. Adapted standard Redis-based limiting pattern for in-memory use per requirements."
 </example>
 
 ## 3. Code Changes
@@ -407,18 +337,7 @@ VC1: <criterion text>
 - Tests: path/to/test_file.ext::test_name (or N/A with reason)
 ```
 
-## 7. Used Patterns (ACE Learning)
-
-**Format**: `["impl-0012", "sec-0034"]` or `[]` if none
-
-**How to identify pattern IDs**:
-- Scan `{{existing_patterns}}` for your subtask's domain
-- Note IDs you actually referenced during implementation
-- Format in mem0: `[impl-0042] Description: ...`
-
-**If no patterns match**: `[]` with note "No relevant patterns in current mem0"
-
-## 8. Integration Notes (If Applicable)
+## 7. Integration Notes (If Applicable)
 
 Only include if changes affect:
 - Database schema (migrations needed?)
@@ -456,8 +375,7 @@ Only include if changes affect:
 - [ ] **Dependencies**: Known vulnerabilities checked (if new deps)
 
 ### MCP Compliance
-- [ ] mcp__mem0__map_tiered_search called before implementation
-- [ ] Research tools used if knowledge gap existed
+- [ ] Research tools used if knowledge gap existed (context7, deepwiki)
 - [ ] Fallback documented if tools unavailable
 
 ### Output Completeness
@@ -465,7 +383,6 @@ Only include if changes affect:
 - [ ] Trade-offs documented with alternatives
 - [ ] Test cases cover happy + edge + error paths
 - [ ] Each `validation_criteria` item has at least one automated test (or explicit N/A with reason)
-- [ ] Used patterns tracked (or `[]` if none)
 - [ ] Template variables `{{...}}` preserved in generated code
 
 ### SFT Comfort Zone (Token Discipline)
@@ -632,17 +549,6 @@ output:
   default: "Will implement read-through unless directed otherwise"
 ```
 
-## When mem0 Patterns Conflict
-
-```yaml
-output:
-  status: PATTERN_CONFLICT
-  bullets: ["impl-0012", "impl-0089"]
-  conflict: "impl-0012 recommends polling, impl-0089 recommends webhooks"
-  analysis: "impl-0089 is newer, has better rationale for real-time needs"
-  resolution: "Using impl-0089 pattern - please confirm or override"
-```
-
 ## When Implementation Exceeds Scope
 
 **Target**: 50-300 lines per subtask
@@ -680,15 +586,14 @@ output:
 # for the completed portions
 ```
 
-## When All Tools Unavailable (Degraded Mode)
+## When All Research Tools Unavailable (Degraded Mode)
 
-If mcp__mem0__map_tiered_search AND research tools all fail:
+If all research tools fail:
 
 ```yaml
 output:
   status: DEGRADED_MODE
   limitations:
-    - "mcp__mem0__map_tiered_search: timeout after 3 attempts"
     - "context7: service unavailable"
     - "deepwiki: connection refused"
   confidence: LOW
@@ -750,30 +655,6 @@ Focus on:
 {{/if}}
 
 </MAP_Subtask_Intent>
-
-
-<MAP_Patterns_ACE>
-
-## Available Patterns (ACE Learning)
-
-{{#if existing_patterns}}
-
-**How to read pattern IDs**: `[category-NNNN]` where category = impl|sec|test|perf|arch|err
-
-{{existing_patterns}}
-
-**Usage**:
-1. Identify relevant patterns by domain/technology
-2. Apply patterns directly (adapt, don't copy)
-3. Track applied pattern IDs in "Used Patterns" section
-
-{{/if}}
-
-{{#unless existing_patterns}}
-*No patterns available yet. Your implementation will seed mem0 via /map-learn. Be extra thorough.*
-{{/unless}}
-
-</MAP_Patterns_ACE>
 
 ---
 
@@ -862,7 +743,7 @@ Default:
 
 **Subtask**: "Create user registration endpoint"
 
-**Approach**: POST /api/register with email/password validation, bcrypt hashing, JWT response. mcp__mem0__map_tiered_search found sec-0012 (password hashing) and impl-0034 (validation patterns).
+**Approach**: POST /api/register with email/password validation, bcrypt hashing, JWT response. Using standard password hashing and validation patterns.
 
 **Code Changes**:
 
@@ -933,7 +814,6 @@ def register():
 6. test_register_sql_injection_safe
 7. test_register_token_decodes_correctly
 
-**Used Patterns**: `["sec-0012", "impl-0034"]`
 
 ---
 
@@ -941,7 +821,7 @@ def register():
 
 **Subtask**: "Add rate limiting to existing API endpoint"
 
-**Approach**: Token bucket rate limiting using existing Redis connection. 100 req/min per IP. mcp__mem0__map_tiered_search found impl-0089 (Redis patterns).
+**Approach**: Token bucket rate limiting using existing Redis connection. 100 req/min per IP. Using standard Redis rate limiting patterns.
 
 **Code Changes**:
 
@@ -1022,7 +902,6 @@ def get_data():
 4. test_rate_limit_per_ip_isolation
 5. test_rate_limit_headers_present
 
-**Used Patterns**: `["impl-0089"]`
 
 ---
 
@@ -1058,7 +937,7 @@ recommendation: "Option 1 - clean solution worth scope expansion"
 
 **Subtask**: "Implement WebSocket reconnection logic"
 
-**Approach**: Exponential backoff reconnection. mcp__mem0__map_tiered_search empty. context7 timed out. Implemented standard pattern with documented fallback.
+**Approach**: Exponential backoff reconnection. context7 timed out. Implemented standard pattern with documented fallback.
 
 **Code Changes**:
 ```typescript
@@ -1106,7 +985,5 @@ export class ReconnectingWebSocket {
 2. test_reconnect_exponential_backoff_timing
 3. test_reconnect_max_attempts_triggers_callback
 4. test_reconnect_handles_immediate_disconnect
-
-**Used Bullets**: `[]` (No similar patterns in mem0. Novel implementation.)
 
 </Actor_Reference_Examples>

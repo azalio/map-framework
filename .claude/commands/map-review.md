@@ -63,7 +63,7 @@ These are the fields each agent is expected to return. The command prompt explic
 
 This protocol is used identically by all 4 review sections below. Do NOT deviate.
 
-1. **Present top N issues** (N=4 in BIG mode, N=1 in SMALL mode) from the primary source agent for this section, using the section prefix (e.g., ARCH-1, QUALITY-2, TESTS-1, PERF-3)
+1. **Present top 4 issues** from the primary source agent for this section, using the section prefix (e.g., ARCH-1, QUALITY-2, TESTS-1, PERF-3)
 2. **For each issue:**
    - Describe the problem with `file:line` references where available
    - Present 2-3 options with tradeoffs (pros/cons for each)
@@ -74,19 +74,13 @@ This protocol is used identically by all 4 review sections below. Do NOT deviate
 4. **Summarize decisions** from this section in 3-5 lines before proceeding to the next section
    - Include: which issues were addressed, which options were chosen, what remains
 
-## Step 0: Select Review Mode
+## Step 0: Detect CI Mode
 
 **Parse $ARGUMENTS for `--ci` or `--auto`:**
 - If `--ci` or `--auto` is present in $ARGUMENTS → set CI_MODE=true
 - CI_MODE skips all AskUserQuestion calls and auto-selects recommended options
 
-**If NOT CI_MODE:** Use AskUserQuestion to ask the user:
-
-> How thorough should this review be?
-> - **BIG** (Recommended): Up to 4 issues per section — comprehensive review
-> - **SMALL**: 1 issue per section — quick pass for small changes
-
-Default to BIG if user doesn't respond or in CI mode.
+**Always use comprehensive review** — up to 4 issues per section, no mode selection menu.
 
 ## Phase A: Collection (Parallel)
 
@@ -101,16 +95,7 @@ Save the diff output — it will be passed to all 3 agents.
 
 ### Step A.2: Launch all parallel calls
 
-In **ONE message**, launch all 7 calls in parallel (no dependencies between them):
-
-**4 mem0 queries:**
-
-```
-mcp__mem0__map_tiered_search(query="architecture review patterns")
-mcp__mem0__map_tiered_search(query="code quality standards")
-mcp__mem0__map_tiered_search(query="test coverage criteria")
-mcp__mem0__map_tiered_search(query="performance review patterns")
-```
+In **ONE message**, launch all 3 calls in parallel (no dependencies between them):
 
 **3 agent Task calls** (pass the git diff + Review Preferences to each):
 
@@ -125,9 +110,6 @@ Task(
 
 **Changes:**
 [paste git diff output]
-
-**mem0 Context:**
-[paste relevant mem0 patterns from queries above — use architecture + code quality results]
 
 Check for:
 - Code correctness and logic errors
@@ -155,9 +137,6 @@ Task(
 
 **Changes:**
 [paste git diff output]
-
-**mem0 Context:**
-[paste relevant mem0 patterns from queries above — use architecture results]
 
 Analyze:
 - Affected components and modules
@@ -187,9 +166,6 @@ Task(
 **Changes:**
 [paste git diff output]
 
-**mem0 Context:**
-[paste relevant mem0 patterns from queries above — use code quality + test coverage results]
-
 Provide quality assessment using 1-10 scoring:
 - Functionality score (1-10)
 - Code quality score (1-10)
@@ -208,7 +184,7 @@ Output JSON with:
 )
 ```
 
-**Parallel execution:** All 7 calls (4 mem0 + 3 agents) MUST be issued in a single message. Wait for all to complete before proceeding.
+**Parallel execution:** All 3 agent calls MUST be issued in a single message. Wait for all to complete before proceeding.
 
 ### Hard Stop Check
 
@@ -309,7 +285,6 @@ Present the verdict with a summary table:
 
 When `CI_MODE = true` (triggered by `--ci` or `--auto` in $ARGUMENTS):
 - Skip all AskUserQuestion calls
-- Auto-select BIG mode (4 issues per section)
 - Auto-select recommended options for all issues
 - Present all 4 sections as a batch report (no pauses between sections)
 - Output structured verdict at the end
@@ -325,7 +300,6 @@ If the review revealed valuable patterns or common issues worth preserving:
 
 ## MCP Tools Used
 
-- `mcp__mem0__map_tiered_search` — Search past review patterns (4 targeted queries)
 - `mcp__sequential-thinking__sequentialthinking` — Complex analysis decisions during interactive presentation
 
 ---

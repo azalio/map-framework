@@ -6,7 +6,7 @@
 - Original `/map-efficient` command: 995 lines, ~5,400 tokens
 - **Issue**: Attention dilution → Claude skips critical steps (20% compliance)
 - **Critical symptoms**:
-  - mem0 search skipped 80% of time
+  - Context search skipped 80% of time
   - Self-audit skipped 90% of time
   - User interventions required ~3 times per workflow
 
@@ -60,7 +60,7 @@
 |--------|---------------|----------------|-------------|
 | **Step compliance** | ~20% | ~85% | 4.25× |
 | **Command file tokens** | ~5,400 | ~1,750 | 68% reduction |
-| **mem0 search skip rate** | 80% | ~5% | 16× improvement |
+| **Context search skip rate** | 80% | ~5% | 16× improvement |
 | **Self-audit skip rate** | 90% | ~10% | 9× improvement |
 | **User interventions** | ~3 per workflow | ~0.3 | 10× reduction |
 | **Total workflow tokens** | ~54,000 | ~9,250 | 83% reduction |
@@ -96,7 +96,7 @@ User types: /map-efficient
 
 ┌──────────────────────────────────────────────────────────────┐
 │  PreToolUse Hook (workflow-context-injector.py)              │
-│  Injects: "⚠️ MANDATORY: Call mem0 BEFORE Actor"            │
+│  Injects: "⚠️ MANDATORY: Search context BEFORE Actor"       │
 └──────────────────────────────────────────────────────────────┘
 
     ↓

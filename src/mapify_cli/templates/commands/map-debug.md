@@ -40,12 +40,7 @@ Debugging workflow focuses on analysis before implementation:
 
 ## Step 1: Analyze the Issue
 
-Before calling task-decomposer, gather context and search mem0:
-
-```bash
-# Search for similar debugging patterns
-PATTERN_CONTEXT=$(mcp__mem0__map_tiered_search(query="debug [issue type]", section_filter="DEBUGGING_TECHNIQUES", limit=5))
-```
+Before calling task-decomposer, gather context:
 
 1. **Read error logs/stack traces** (if provided in $ARGUMENTS)
 2. **Identify affected files**: Use Grep/Glob to find relevant code
@@ -64,7 +59,6 @@ Task(
 **Context:**
 - Error logs: [if available]
 - Affected files: [from analysis]
-- Similar past issues: [from mem0 search]
 
 Output JSON with:
 - subtasks: array of {id, description, debug_type: 'investigation'|'fix'|'verification', acceptance_criteria}
@@ -240,7 +234,6 @@ This is **completely optional**. Run it when debugging patterns are valuable for
 
 ## MCP Tools for Debugging
 
-- `mcp__mem0__map_tiered_search` - Find similar past debugging sessions
 - `mcp__sequential-thinking__sequentialthinking` - Complex root cause analysis
 - `mcp__context7__get-library-docs` - Check library documentation for known issues
 - `mcp__deepwiki__ask_question` - Learn from how others solved similar issues

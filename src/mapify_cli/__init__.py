@@ -538,7 +538,6 @@ def create_agent_files(project_path: Path, mcp_servers: List[str]) -> None:
             "predictor": create_predictor_content(mcp_servers),
             "evaluator": create_evaluator_content(mcp_servers),
             "reflector": create_reflector_content(mcp_servers),
-            "curator": create_curator_content(mcp_servers),
             "documentation-reviewer": create_documentation_reviewer_content(
                 mcp_servers
             ),
@@ -827,7 +826,7 @@ def create_reflector_content(mcp_servers: List[str]) -> str:
 
     return f"""---
 name: reflector
-description: Extracts structured lessons from execution attempts (ACE)
+description: Extracts structured lessons from execution attempts
 tools: Read, Grep, Glob
 model: sonnet
 ---
@@ -852,44 +851,6 @@ Return JSON with:
 - failure_patterns: What went wrong
 - suggested_new_patterns: Pattern entries to add
 - confidence: How reliable this insight is
-"""
-
-
-def create_curator_content(mcp_servers: List[str]) -> str:
-    """Create curator agent content"""
-    mcp_section = ""
-
-    return f"""---
-name: curator
-description: Manages structured patterns with incremental updates (ACE)
-tools: Read, Write, Edit
-model: sonnet
----
-
-# IDENTITY
-
-You are a knowledge curator who maintains the ACE pattern store by integrating Reflector insights.
-{mcp_section}
-# ROLE
-
-Integrate Reflector insights into patterns using delta operations:
-- ADD: New pattern bullets
-- UPDATE: Increment helpful/harmful counters
-- DEPRECATE: Remove harmful patterns
-
-## Quality Gates
-
-- Content length ≥ 100 characters
-- Code examples for technical patterns
-- Deduplication via semantic similarity
-- Technology-specific (not generic advice)
-
-## Output Format (JSON)
-
-Return JSON with:
-- reasoning: Why these operations improve patterns
-- operations: Array of ADD/UPDATE/DEPRECATE operations
-- deduplication_check: What duplicates were found
 """
 
 
@@ -1086,7 +1047,7 @@ Extract and preserve lessons from recent workflow:
 
 $ARGUMENTS
 
-Call Reflector to extract patterns, then Curator to update pattern store.
+Call Reflector to extract patterns from recent workflow.
 """,
         }
 
@@ -1289,8 +1250,6 @@ def create_or_merge_project_settings_local(project_path: Path) -> None:
 
     default_permissions: Dict[str, Any] = {
         "allow": [
-            # Allow all mem0 MCP tools (project-scoped)
-            "mcp__mem0__*",
             # SourceCraft MCP helpers (project-scoped)
             "mcp__sourcecraft__list_pull_request_comments",
             # Common safe Go workflows (project-scoped)
@@ -1360,7 +1319,6 @@ def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
             "predictor": [],
             "evaluator": [],
             "reflector": [],
-            "curator": [],
             "documentation-reviewer": [],
             "debate-arbiter": [],
             "synthesizer": [],

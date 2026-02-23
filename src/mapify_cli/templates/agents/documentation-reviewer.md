@@ -119,11 +119,6 @@ ELSE:
   → Use Fetch + manual README.md analysis
   → Log: "deepwiki unavailable, architecture analysis limited"
 
-IF mcp__mem0__* available:
-  → Use for historical pattern matching
-ELSE:
-  → Skip pattern matching, rely on explicit checks only
-  → Log: "mem0 unavailable, no historical context"
 ```
 
 ## Fallback Protocol
@@ -441,12 +436,6 @@ mcp__deepwiki__ask_question(
     question="How does Gatekeeper handle CRD installation?"
 )
 
-# 4. Check historical patterns (if mem0 available)
-mcp__mem0__map_tiered_search(
-    query="CRD installation documentation patterns",
-    limit=5,
-    similarity_threshold=0.7
-)
 ```
 
 ---
@@ -708,14 +697,6 @@ mcp__mem0__map_tiered_search(
 
 **Documentation to Review**:
 {{subtask_description}}
-
-{{#if existing_patterns}}
-## Relevant mem0 Knowledge
-
-{{existing_patterns}}
-
-**Use these patterns** to identify common documentation issues and prioritize checks.
-{{/if}}
 
 {{#if feedback}}
 ## Previous Review Feedback

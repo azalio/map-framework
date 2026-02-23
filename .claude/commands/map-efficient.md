@@ -24,7 +24,6 @@ State machine enforces sequencing, Python validates completion, hooks inject rem
 /map-efficient does NOT use these agents (by design):
 - **Evaluator** — quality scoring not needed; Monitor validates correctness directly
 - **Reflector** — lesson extraction is a separate step via `/map-learn`
-- **Curator** — pattern storage is a separate step via `/map-learn`
 
 This is NOT a violation of MAP agent rules. Learning is decoupled into `/map-learn` (optional, run after workflow completes) to reduce token usage during execution.
 
@@ -48,7 +47,7 @@ Both files must stay in sync. The orchestrator updates `step_state.json` on ever
 │  map-efficient.md (THIS FILE - ~540 lines)                  │
 │  1. Load state → Get next step instruction                  │
 │  2. Route to appropriate executor based on step phase       │
-│  3. Execute step (Actor/Monitor/mem0/tests/etc)             │
+│  3. Execute step (Actor/Monitor/tests/etc)                  │
 │  4. Validate completion → Update state                      │
 │  5. If more steps → Recurse; Else → Complete                │
 └─────────────────────────────────────────────────────────────┘
@@ -235,20 +234,6 @@ xml_packet = create_xml_packet(subtask)
 # Packet boundaries are unambiguous — agents parse by tag, not by heuristics
 ```
 
-### Phase: MEM0_SEARCH (2.1)
-
-```bash
-# Tiered search: branch → project → org
-mcp__mem0__map_tiered_search(
-  query="[subtask description]",
-  limit=5,
-  user_id="org:[org_name]",
-  run_id="proj:[project_name]:branch:[branch_name]"
-)
-
-# Re-rank by relevance, pass top 3 to Actor
-```
-
 ### Phase: RESEARCH (2.2)
 
 ```python
@@ -282,10 +267,6 @@ Task(
 <MAP_Packet subtask="[ID]" v="1.0" risk="[risk_level]">
 [paste from .map/<branch>/current_packet.xml]
 </MAP_Packet>
-
-<MAP_Context source="mem0" limit="3">
-[top context_patterns from mem0 + relevance_score]
-</MAP_Context>
 
 <MAP_Contract>
 [AAG contract from decomposition: Actor -> Action -> Goal]
@@ -466,7 +447,6 @@ Answer: [YES/NO - if NO, explain why not]
 
 Question 2: For EACH subtask, did I:
   - Create XML packet? [YES/NO per subtask]
-  - Call mem0 search? [YES/NO per subtask]
   - Call research-agent if 3+ files? [YES/NO/N/A per subtask]
   - Call Actor agent? [YES/NO per subtask]
   - Call Monitor agent after Actor? [YES/NO per subtask]
@@ -521,7 +501,7 @@ if [ "$IS_COMPLETE" = "true" ]; then
   # Go to Step 3
 else
   # CONTEXT DISTILLATION before recurse:
-  # Do NOT pass full RESEARCH logs, mem0 results, or Actor/Monitor transcripts.
+  # Do NOT pass full RESEARCH logs or Actor/Monitor transcripts.
   # Pass ONLY the distilled state to keep new context in SFT comfort zone (~4k tokens):
   #
   # 1. findings.md       — distilled research output (not raw search logs)

@@ -65,16 +65,7 @@ Phase 7: Final Summary and Cleanup
 
 **Purpose:** Verify all prerequisites before initiating release. Failure in any gate aborts the workflow.
 
-### 1.1 Load mem0 Context for Release Patterns
-
-Search mem0 for release-related patterns and past release issues:
-
-```bash
-# Fetch release-related patterns from mem0
-RELEASE_PATTERNS=$(mcp__mem0__map_tiered_search(query="release validation PyPI CI/CD", limit=10))
-```
-
-### 1.2 Validation Gates (12 Required)
+### 1.1 Validation Gates (12 Required)
 
 Execute all validation gates in parallel where possible:
 
@@ -267,7 +258,7 @@ fi
 
 **Gap tolerance:** ±2 commits (accounts for chore commits, merge commits, etc.)
 
-### 1.3 Phase 1 Complete
+### 1.2 Phase 1 Complete
 
 If all 12 gates pass, proceed to Phase 2.
 
@@ -1153,8 +1144,6 @@ pip index versions mapify-cli
 
 Use these MCP tools throughout the workflow:
 
-- **`mcp__mem0__map_tiered_search`** - Search for release patterns from past projects
-- **`mcp__mem0__map_add_pattern`** - Store release learnings cross-project
 - **`mcp__sequential-thinking__sequentialthinking`** - Complex decision making for version bump
 
 **Built-in Tools (not MCP):**
@@ -1200,7 +1189,6 @@ You should:
 
 1. **Phase 1 - Pre-Release Validation:**
    ```bash
-   mcp__mem0__map_tiered_search(query="release validation PyPI", limit=10)
    # Run all 12 validation gates
    pytest tests/ && black --check src/ && ruff check src/ && mypy src/ && ...
    # Verify CI passed on main

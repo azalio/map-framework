@@ -47,8 +47,6 @@ INITIALIZED                 → Workflow started, no subtask active
   ↓
 XML_PACKET_CREATED         → AI packet created for current subtask
   ↓
-CONTEXT_LOADED             → mem0 tiered search completed
-  ↓
 RESEARCH_DONE              → Research agent completed (if 3+ files)
   ↓
 ACTOR_CALLED               → Actor agent generated implementation
@@ -73,7 +71,6 @@ WORKFLOW_COMPLETE          → All subtasks done, final verification pending
 Standard step names used in `completed_steps` arrays:
 
 - `"xml_packet"` - AI-friendly subtask packet created
-- `"mem0_search"` - Context patterns retrieved from mem0
 - `"research"` - Research agent analyzed codebase (optional, for 3+ files)
 - `"actor"` - Actor agent generated implementation
 - `"monitor"` - Monitor agent validated implementation
@@ -109,9 +106,9 @@ Standard step names used in `completed_steps` arrays:
     "ST-001": ["xml_packet"]
   },
   "pending_steps": {
-    "ST-001": ["mem0_search", "actor", "monitor", "tests", "linter"],
-    "ST-002": ["xml_packet", "mem0_search", "actor", "monitor", "tests", "linter"],
-    "ST-003": ["xml_packet", "mem0_search", "actor", "monitor", "tests", "linter"]
+    "ST-001": ["actor", "monitor", "tests", "linter"],
+    "ST-002": ["xml_packet", "actor", "monitor", "tests", "linter"],
+    "ST-003": ["xml_packet", "actor", "monitor", "tests", "linter"]
   },
   "subtask_sequence": ["ST-001", "ST-002", "ST-003"]
 }
@@ -126,12 +123,12 @@ Standard step names used in `completed_steps` arrays:
   "current_subtask": "ST-001",
   "current_state": "MONITOR_PASSED",
   "completed_steps": {
-    "ST-001": ["xml_packet", "mem0_search", "actor", "monitor"]
+    "ST-001": ["xml_packet", "actor", "monitor"]
   },
   "pending_steps": {
     "ST-001": ["tests", "linter"],
-    "ST-002": ["xml_packet", "mem0_search", "actor", "monitor", "tests", "linter"],
-    "ST-003": ["xml_packet", "mem0_search", "actor", "monitor", "tests", "linter"]
+    "ST-002": ["xml_packet", "actor", "monitor", "tests", "linter"],
+    "ST-003": ["xml_packet", "actor", "monitor", "tests", "linter"]
   },
   "subtask_sequence": ["ST-001", "ST-002", "ST-003"]
 }
@@ -148,12 +145,12 @@ At this point, workflow-gate.py will **ALLOW** Edit/Write because both "actor" a
   "current_subtask": "ST-001",
   "current_state": "SUBTASK_COMPLETE",
   "completed_steps": {
-    "ST-001": ["xml_packet", "mem0_search", "actor", "monitor", "tests", "linter"]
+    "ST-001": ["xml_packet", "actor", "monitor", "tests", "linter"]
   },
   "pending_steps": {
     "ST-001": [],
-    "ST-002": ["xml_packet", "mem0_search", "actor", "monitor", "tests", "linter"],
-    "ST-003": ["xml_packet", "mem0_search", "actor", "monitor", "tests", "linter"]
+    "ST-002": ["xml_packet", "actor", "monitor", "tests", "linter"],
+    "ST-003": ["xml_packet", "actor", "monitor", "tests", "linter"]
   },
   "subtask_sequence": ["ST-001", "ST-002", "ST-003"]
 }

@@ -18,7 +18,6 @@
       "repository": "https://github.com/azalio/map-framework",
       "keywords": [
         "MAP",
-        "ACE",
         "cognitive-architecture",
         "planning",
         "agents",
@@ -32,8 +31,7 @@
         "development"
       ],
       "features": [
-        "12 specialized agents (TaskDecomposer, Actor, Monitor, Predictor, Evaluator, Reflector, Curator, DocumentationReviewer, Debate-Arbiter, Synthesizer, Research-Agent, Final-Verifier)",
-        "ACE learning system with persistent knowledge base",
+        "11 specialized agents (TaskDecomposer, Actor, Monitor, Predictor, Evaluator, Reflector, DocumentationReviewer, Debate-Arbiter, Synthesizer, Research-Agent, Final-Verifier)",
         "5 Claude Code hooks for automation",
         "10 slash commands (/map-efficient, /map-debug, /map-fast, /map-debate, /map-review, /map-check, /map-plan, /map-release, /map-resume, /map-learn)",
         "Professional code review integration",
@@ -56,8 +54,7 @@
         "hooks": "https://github.com/azalio/map-framework/blob/main/.claude/hooks/README.md"
       },
       "research": {
-        "map_paper": "https://github.com/Shanka123/MAP",
-        "ace_paper": "https://arxiv.org/abs/2510.04618v1"
+        "map_paper": "https://github.com/Shanka123/MAP"
       }
     }
   ],

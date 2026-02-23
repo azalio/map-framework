@@ -276,24 +276,3 @@ Read(
 {{/if}}
 
 </Research_Query_v1_0>
-
-
-<Research_Patterns_ACE>
-
-## Available Patterns (ACE Learning)
-
-{{#if existing_patterns}}
-
-**Relevant patterns from mem0:**
-
-{{existing_patterns}}
-
-**Usage**: Reference these patterns in your search to find similar implementations.
-
-{{/if}}
-
-{{#unless existing_patterns}}
-*No mem0 patterns available. Search results will help seed the knowledge base.*
-{{/unless}}
-
-</Research_Patterns_ACE>

@@ -53,8 +53,6 @@ Refactoring = Changing structure WITHOUT changing behavior
    - What patterns emerged?
    - What dependencies were discovered?
    - What risks were mitigated?
-
-4. Curator documents:
    - Refactoring techniques
    - Dependency patterns
    - Migration strategies
@@ -203,9 +201,6 @@ Reflector:
 ├─ Pattern: "Use dependency injection for services"
 └─ Technique: "Incremental refactoring (6 safe steps)"
 
-Curator:
-├─ ADD "arch-0042: Controller-Service pattern"
-└─ ADD "refactor-0099: Incremental extraction technique"
 ```
 
 **Token usage:** ~9K tokens (6 subtasks, Predictor always runs)

@@ -4,36 +4,9 @@ Reference examples for task-decomposer agent. Loaded on demand for complex decom
 
 ---
 
-## mcp__mem0__map_tiered_search Examples
-
-**Good Example - Decomposing "Add user authentication"**:
-```
-Search: "feature implementation authentication" → find past auth implementations
-Search: "task decomposition auth flow" → learn typical subtask breakdown
-Result: Discover pattern (from tiered search across branch/project/org):
-  1. User model (foundation)
-  2. Password hashing (depends on user model)
-  3. Login/logout endpoints (depends on password hashing)
-  4. Session management (depends on endpoints)
-  5. Auth middleware (depends on session)
-  6. Protected routes (depends on middleware)
-
-Use this proven order instead of guessing.
-```
-
-**Bad Example - Decomposing without historical context**:
-```
-Jump directly to listing subtasks
-→ Miss critical dependency order (e.g., try to implement middleware before session management exists)
-→ Overlook edge cases that past implementations revealed
-→ Create subtasks that are too coarse or too granular
-```
-
----
-
 ## sequential-thinking for Reasoning Examples
 
-**When to use**: After mem0 search finds similar features
+**When to use**: After finding similar features in existing codebase
 
 **Key Difference from Pattern Search**:
 - Pattern search → **Output**: "Here are the 5 subtasks for authentication"
@@ -41,7 +14,7 @@ Jump directly to listing subtasks
 
 **Example: Decomposing "Add real-time notifications"**
 
-**Step 1 - mcp__mem0__map_tiered_search (WHAT worked)**:
+**Step 1 - Search for similar implementations (WHAT worked)**:
 ```
 Query: "feature implementation notifications"
 Result: Found 3 past implementations with subtask lists:

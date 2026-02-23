@@ -1,14 +1,13 @@
 {
   "name": "map-framework",
   "version": "1.0.0",
-  "description": "Modular Agentic Planner (MAP) - Cognitive architecture for AI agents with 12 specialized agents, ACE learning system, and professional code review integration",
+  "description": "Modular Agentic Planner (MAP) - Cognitive architecture for AI agents with 11 specialized agents and professional code review integration",
   "author": "azalio",
   "license": "MIT",
   "repository": "https://github.com/azalio/map-framework",
   "homepage": "https://github.com/azalio/map-framework",
   "keywords": [
     "MAP",
-    "ACE",
     "cognitive-architecture",
     "planning",
     "agents",
@@ -34,8 +33,7 @@
     ]
   },
   "features": [
-    "12 specialized MAP agents (TaskDecomposer, Actor, Monitor, Predictor, Evaluator, Reflector, Curator, DocumentationReviewer, Debate-Arbiter, Synthesizer, Research-Agent, Final-Verifier)",
-    "ACE (Agentic Context Engineering) learning system with persistent knowledge base",
+    "11 specialized MAP agents (TaskDecomposer, Actor, Monitor, Predictor, Evaluator, Reflector, DocumentationReviewer, Debate-Arbiter, Synthesizer, Research-Agent, Final-Verifier)",
     "5 Claude Code hooks for automation (validate-agent-templates, auto-store-knowledge, enrich-context, session-init, track-metrics)",
     "10 slash commands (/map-efficient, /map-debug, /map-fast, /map-debate, /map-review, /map-check, /map-plan, /map-release, /map-resume, /map-learn)",
     "Professional code review with claude-reviewer MCP",
@@ -66,7 +64,6 @@
       "evaluator",
       "orchestrator",
       "reflector",
-      "curator",
       "documentation-reviewer"
     ],
     "commands": [

@@ -188,7 +188,6 @@ class TestInitCommand:
         assert "Bash(go test *)" in allow
         assert "Bash(go vet *)" in allow
         assert "Bash(go mod tidy *)" in allow
-        assert "mcp__mem0__*" in allow
         assert "mcp__sourcecraft__list_pull_request_comments" in allow
         assert "Bash(make generate manifests)" in allow
         assert "Bash(make manifests)" in allow
@@ -613,7 +612,6 @@ class TestAgentCreation:
             "predictor.md",
             "evaluator.md",
             "reflector.md",
-            "curator.md",
             "documentation-reviewer.md",
         ]
 

@@ -34,15 +34,15 @@ Subtask 3: Add unit tests (tests/auth.test.ts)
 → Predictor: ⏭️ SKIPPED (test file, no side effects)
 ```
 
-### Reflector/Curator: Batched Learning
+### Reflector: Batched Learning
 
 **Full pipeline (theoretical baseline):**
 ```
-Subtask 1 → Actor → Monitor → Predictor → Evaluator → Reflector → Curator
-Subtask 2 → Actor → Monitor → Predictor → Evaluator → Reflector → Curator
-Subtask 3 → Actor → Monitor → Predictor → Evaluator → Reflector → Curator
+Subtask 1 → Actor → Monitor → Predictor → Evaluator → Reflector
+Subtask 2 → Actor → Monitor → Predictor → Evaluator → Reflector
+Subtask 3 → Actor → Monitor → Predictor → Evaluator → Reflector
 ```
-Result: 3 × (Predictor + Evaluator + Reflector + Curator) cycles
+Result: 3 × (Predictor + Evaluator + Reflector) cycles
 
 **Optimized workflow (/map-efficient):**
 ```
@@ -53,9 +53,9 @@ Subtask 3 → Actor → Monitor → [Predictor if high risk] → Apply
         Final-Verifier (adversarial verification)
            ↓
         Done! Optionally run /map-learn:
-           Reflector (analyzes ALL subtasks) → Curator (consolidates patterns)
+           Reflector (analyzes ALL subtasks, consolidates patterns)
 ```
-Result: No Evaluator, no per-subtask Reflector/Curator. Learning decoupled to /map-learn.
+Result: No Evaluator, no per-subtask Reflector. Learning decoupled to /map-learn.
 
 **Token savings:** 35-40% vs full pipeline
 
@@ -91,7 +91,7 @@ Result: No Evaluator, no per-subtask Reflector/Curator. Learning decoupled to /m
 
 **What's optimized (intentionally omitted per-subtask):**
 - Evaluator — Monitor validates correctness directly
-- Reflector/Curator — decoupled to /map-learn (optional, run after workflow)
+- Reflector — decoupled to /map-learn (optional, run after workflow)
 
 ---
 
@@ -139,13 +139,9 @@ Final-Verifier: ✅ All subtasks verified, goal achieved
 Optional /map-learn:
   Reflector (batched):
   ├─ Analyzed: 3 subtasks
-  ├─ Searched mem0: Found similar pagination patterns
-  └─ Extracted: pagination pattern, API versioning, test structure
-
-  Curator (batched):
-  ├─ Checked duplicates: 2 similar bullets found
-  ├─ Added: 1 new bullet (API pagination pattern)
-  └─ Updated: 1 existing bullet (test coverage++)
+  ├─ Found similar pagination patterns
+  ├─ Extracted: pagination pattern, API versioning, test structure
+  └─ Consolidated: 1 new pattern (API pagination), 1 updated (test coverage++)
 ```
 
 **Token usage:**
@@ -192,7 +188,7 @@ BATCH_SIZE = None  # or 5 for large tasks
 **Fix:** Review `subtask.modifies_critical_files()` logic
 
 **Issue:** Learning not happening
-**Cause:** Reflector/Curator not running
+**Cause:** Reflector not running
 **Fix:** Check workflow completion (must finish all subtasks)
 
 **Issue:** Token usage higher than expected

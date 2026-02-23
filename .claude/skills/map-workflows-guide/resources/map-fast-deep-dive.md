@@ -45,11 +45,6 @@
 - Failures not documented
 - Knowledge not extracted
 
-**Curator (mem0 Pattern Updates)**
-- No mem0 patterns created
-- No pattern synchronization
-- No cross-project learning
-
 ### What Remains
 
 **Actor + Monitor:**
@@ -70,7 +65,6 @@
 | Evaluator | ~0.8K | ❌ Skipped |
 | Predictor | ~1.5K | ❌ Skipped |
 | Reflector | ~2K | ❌ Skipped |
-| Curator | ~1.5K | ❌ Skipped |
 
 **Total saved:** ~5.8K per subtask
 **Percentage:** 40-50% vs full pipeline
@@ -96,7 +90,7 @@ ST-1: Setup React Query client
   Actor → Monitor → Apply
 ST-2: Test with one API endpoint
   Actor → Monitor → Apply
-Done. No Evaluator, no Reflector, no Curator, no patterns learned.
+Done. No Evaluator, no Reflector, no patterns learned.
 ```
 
 **Appropriate because:**
@@ -121,7 +115,7 @@ Risk: High (security, breaking changes)
 **Problems with using map-fast:**
 1. No Predictor → Breaking changes undetected
 2. No Reflector → Security patterns not learned
-3. No Curator → Team doesn't learn from mistakes
+3. No learning → Team doesn't learn from mistakes
 4. High risk for under-validation mindset
 
 **Correct choice:** `/map-efficient` (critical infrastructure)

@@ -120,9 +120,8 @@ class TestCommandTemplates:
         assert "Actor" in content or "actor" in content
         assert "Monitor" in content or "monitor" in content
 
-        # Check that Reflector/Curator are mentioned as SKIPPED
+        # Check that Reflector is mentioned as SKIPPED
         assert "reflector" in content.lower(), "Should mention Reflector (as skipped)"
-        assert "curator" in content.lower(), "Should mention Curator (as skipped)"
         assert (
             "skipped" in content.lower() or "no learning" in content.lower()
         ), "Should indicate learning is skipped"
@@ -230,11 +229,6 @@ class TestMapReviewStructure:
         assert 'subagent_type="monitor"' in review_content
         assert 'subagent_type="predictor"' in review_content
         assert 'subagent_type="evaluator"' in review_content
-
-    def test_four_mem0_queries(self, review_content):
-        """Command includes at least 4 mem0 tiered search queries."""
-        count = review_content.count("map_tiered_search")
-        assert count >= 4, f"Expected at least 4 mem0 queries, found {count}"
 
     def test_ci_mode_flag(self, review_content):
         """Command documents --ci flag for CI mode."""

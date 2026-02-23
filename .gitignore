@@ -58,15 +58,6 @@ docs/claude-code-infrastructure-showcase
 docs/claude-code-subagents
 
 
-# Curator temporary files
-.claude/curator_delta_operations.json
-.claude/curator_integration_report.json
-.claude/curator_operations.json
-.claude/*_integration_report.json
-.claude/apply_*_deltas.py
-.claude/insert_*_bullets.sql
-curator_operations*.json
-curator_final_report.json
 docs/claude-code-prompt-improver
 
 # macOS system files

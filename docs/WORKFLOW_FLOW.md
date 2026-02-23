@@ -131,17 +131,8 @@
 └──────────────────┬──────────────────────────────────┘
                    ↓
 ┌─────────────────────────────────────────────────────┐
-│ Turn 5: get_next_step → step_id=2.1, MEM0_SEARCH   │
-│                                                     │
-│ Hook НАПОМИНАЕТ перед КАЖДЫМ Tool call:            │
-│ ⚠️  "Call mcp__mem0__map_tiered_search BEFORE Actor"
-│                                                     │
-│ Выполняет: mcp__mem0__map_tiered_search(...)       │
-│ Валидирует: validate_step "2.1"                    │
-└──────────────────┬──────────────────────────────────┘
-                   ↓
 ┌─────────────────────────────────────────────────────┐
-│ Turn 6: get_next_step → step_id=2.3, ACTOR         │
+│ Turn 5: get_next_step → step_id=2.3, ACTOR         │
 │                                                     │
 │ Hook НАПОМИНАЕТ:                                    │
 │ ⚠️  "Launch Task(subagent_type='actor')"           │
@@ -151,7 +142,7 @@
 └──────────────────┬──────────────────────────────────┘
                    ↓
 ┌─────────────────────────────────────────────────────┐
-│ Turn 7: get_next_step → step_id=2.4, MONITOR       │
+│ Turn 6: get_next_step → step_id=2.4, MONITOR       │
 │                                                     │
 │ Hook НАПОМИНАЕТ:                                    │
 │ ⚠️  "Launch Task(subagent_type='monitor')"         │
@@ -165,7 +156,7 @@
 └──────────────────┬──────────────────────────────────┘
                    ↓
 ┌─────────────────────────────────────────────────────┐
-│ Turn 8: get_next_step → step_id=2.7, UPDATE_STATE   │
+│ Turn 7: get_next_step → step_id=2.7, UPDATE_STATE   │
 │                                                     │
 │ Выполняет: Edit/Write tools                        │
 │                                                     │
@@ -176,11 +167,11 @@
 └──────────────────┬──────────────────────────────────┘
                    ↓
 ┌─────────────────────────────────────────────────────┐
-│ Turn 9-10: TESTS_GATE → LINTER_GATE                │
+│ Turn 8-9: TESTS_GATE → LINTER_GATE                │
 └──────────────────┬──────────────────────────────────┘
                    ↓
 ┌─────────────────────────────────────────────────────┐
-│ Turn 11: get_next_step → step_id=2.10, VERIFY      │
+│ Turn 10: get_next_step → step_id=2.10, VERIFY      │
 │                                                     │
 │ Hook НАПОМИНАЕТ:                                    │
 │ ⚠️  "Output self-audit before marking complete"    │
@@ -214,7 +205,6 @@
 | **1.56** | CHOOSE_MODE | Выбор режима выполнения (step_by_step\|batch) | ✅ Да |
 | **1.6** | INIT_STATE | Создание workflow_state.json | ✅ Да |
 | **2.0** | XML_PACKET | Построение AI-friendly пакета | ✅ Да (для каждого ST) |
-| **2.1** | MEM0_SEARCH | Поиск паттернов в mem0 | ✅ Да (для каждого ST) |
 | **2.2** | RESEARCH | research-agent для контекста | 🔶 Условно (если 3+ файлов) |
 | **2.3** | ACTOR | Actor генерирует код | ✅ Да (для каждого ST) |
 | **2.4** | MONITOR | Monitor валидирует (retry до 5 раз) | ✅ Да (для каждого ST) |
@@ -295,7 +285,7 @@ Claude видит: 19 шагов, 163 строки circuit breaker, 103 стро
   ↓
 Claude "компрессирует" ментально: "Ok, просто запусти agents и пиши код"
   ↓
-⚠️  Пропускает: mem0 search (80%), self-audit (90%)
+⚠️  Пропускает: research (80%), self-audit (90%)
 ```
 
 ### ✅ Новый подход (v2.0.0)
@@ -308,22 +298,17 @@ Turn 1: map_orchestrator говорит: "Step 1.0: Call task-decomposer"
   ↓
 Claude: [Вызывает task-decomposer] ✅
   ↓
-Turn 2: map_orchestrator говорит: "Step 2.1: Call mem0 search"
-        Hook напоминает: "⚠️  MANDATORY: Call mem0 BEFORE Actor"
-  ↓
-Claude: [Вызывает mem0] ✅
-  ↓
-Turn 3: map_orchestrator говорит: "Step 2.3: Call Actor"
+Turn 2: map_orchestrator говорит: "Step 2.3: Call Actor"
         Hook напоминает: "⚠️  MANDATORY: Launch Actor"
   ↓
 Claude: [Вызывает Actor] ✅
   ↓
-Turn 4: map_orchestrator говорит: "Step 2.4: Call Monitor"
+Turn 3: map_orchestrator говорит: "Step 2.4: Call Monitor"
         Hook напоминает: "⚠️  MANDATORY: Launch Monitor"
   ↓
 Claude: [Вызывает Monitor] ✅
   ↓
-Turn 5: map_orchestrator говорит: "Step 2.7: Apply changes"
+Turn 4: map_orchestrator говорит: "Step 2.7: Apply changes"
         Gate проверяет: actor+monitor выполнены ✅
   ↓
 Claude: [Применяет Edit/Write] ✅
@@ -360,9 +345,9 @@ CHECKPOINT: Calling task-decomposer
 Turn 5:
 ═══════════════════════════════════════════════════
 MAP WORKFLOW CHECKPOINT
-Current Step:  2.1 - MEM0_SEARCH
+Current Step:  2.3 - ACTOR
 Progress:      Subtask 1/5
-⚠️  MANDATORY: Call mem0 BEFORE Actor
+⚠️  MANDATORY: Launch Actor
 ═══════════════════════════════════════════════════
 
 Turn 8:

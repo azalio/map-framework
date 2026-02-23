@@ -26,8 +26,8 @@ DANGEROUS_FILE_PATTERNS = [
     r"id_rsa",
     r"id_ed25519",
     r"\.key$",
-    r"password",
-    r"token",
+    r"passwords?\.(json|ya?ml|toml|txt)$",  # password files, not any file with "password" in path
+    r"tokens?\.(json|ya?ml|toml|txt)$",  # token files, not any file with "token" in path
 ]
 
 # Dangerous bash command patterns
@@ -46,7 +46,11 @@ DANGEROUS_COMMANDS = [
 ]
 
 # Safe path prefixes (skip checks for known safe directories)
-SAFE_PATH_PREFIXES = ["src/", "lib/", "test/", "tests/", "docs/", "pkg/", "cmd/", "internal/"]
+SAFE_PATH_PREFIXES = [
+    "src/", "lib/", "test/", "tests/", "docs/", "pkg/", "cmd/", "internal/",
+    ".claude/agents/", ".claude/commands/", ".claude/hooks/", ".claude/references/",
+    ".claude/skills/", "scripts/",
+]
 
 
 def is_safe_path(path: str) -> bool:

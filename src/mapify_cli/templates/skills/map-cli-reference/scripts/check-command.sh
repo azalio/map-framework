@@ -31,11 +31,11 @@ if [ -z "$SUBCOMMAND" ]; then
   echo "  validate   - Validate dependency graphs"
   echo ""
   echo "Removed subcommands:"
-  echo "  playbook   - Removed in v4.0+ (use mem0 MCP)"
+  echo "  playbook   - Removed in v4.0+"
   exit 1
 fi
 
-# Removed subcommands (replaced by mem0 MCP in v4.0+)
+# Removed subcommands
 REMOVED_COMMANDS="playbook"
 
 # Known valid commands
@@ -44,16 +44,7 @@ VALID_COMMANDS="init check upgrade validate"
 # Check removed commands first
 for dep in $REMOVED_COMMANDS; do
   if [ "$SUBCOMMAND" = "$dep" ]; then
-    echo "ERROR: '$SUBCOMMAND' was removed in v4.0+ (use mem0 MCP instead)"
-    echo ""
-    echo "Replacements:"
-    case "$SUBCOMMAND" in
-      playbook)
-        echo "  Pattern retrieval: mcp__mem0__map_tiered_search(query=\"...\", limit=5)"
-        echo "  Pattern storage:   Task(subagent_type=\"curator\", ...)"
-        echo "  Pattern archival:  mcp__mem0__map_archive_pattern(...)"
-        ;;
-    esac
+    echo "ERROR: '$SUBCOMMAND' was removed in v4.0+"
     exit 2
   fi
 done

@@ -15,13 +15,10 @@ Complete usage examples, best practices, and optimization strategies for the MAP
   - [When to Use Self-MoA](#when-to-use-self-moa)
   - [Example Synthesis](#example-synthesis)
   - [Token Cost Considerations](#token-cost-considerations)
-- [Pattern Storage & Retrieval (mem0 MCP)](#-pattern-storage--retrieval-mem0-mcp)
 - [Common CLI Mistakes](#-common-cli-mistakes)
-    - [Wrong Approach](#wrong-approach-critical)
   - [Wrong Operation Field Name](#wrong-operation-field-name)
   - [Quick Reference Resources](#quick-reference-resources)
   - [Validation Tools](#validation-tools)
-- [Pattern Search Tips (mem0 MCP)](#-pattern-search-tips-mem0-mcp)
 - [Dependency Validation](#dependency-validation)
   - [Basic Usage](#basic-usage)
   - [Visualization Mode](#visualization-mode)
@@ -170,59 +167,12 @@ Self-MoA uses ~4x tokens per subtask:
 
 ---
 
-## 🧠 Pattern Storage & Retrieval (mem0 MCP)
-
-As of v4.0, patterns are stored and retrieved via the mem0 MCP server. There is no local CLI workflow for pattern search/update.
-
-### Tiered Pattern Search
-
-Use `mcp__mem0__map_tiered_search` to search across scopes (branch → project → org):
-
-```bash
-# Basic search
-mcp__mem0__map_tiered_search(query="JWT authentication", limit=5)
-
-# Narrow search by section (example)
-mcp__mem0__map_tiered_search(query="error handling", section_filter="ERROR_HANDLING_PATTERNS", limit=10)
-```
-
-### Adding / Archiving Patterns
-
-Patterns should be written through the Curator agent (deduplication + fingerprinting):
-
-```bash
-Task(subagent_type="curator", ...)
-
-# Curator uses mem0 MCP tools:
-# - mcp__mem0__map_add_pattern
-# - mcp__mem0__map_archive_pattern
-# - mcp__mem0__map_promote_pattern
-```
-
----
-
 ## ⚠️ Common CLI Mistakes
 
 This section documents frequently encountered CLI command errors and their corrections. These validations are enforced by:
 - Pre-commit hooks (`.git/hooks/pre-commit`)
 - E2E tests (`tests/test_agent_cli_correctness.py`)
 - Agent template CLI reference sections
-
-### Common Mistakes (v4.0+)
-
-| ❌ Incorrect | ✅ Correct | Explanation |
-|-------------|-----------|-------------|
-| Using legacy CLI commands (`mapify playbook ...`) | Use `mcp__mem0__map_tiered_search` | Legacy CLI is not used for patterns in v4.0+ |
-| Calling mem0 tools directly from workflow docs | Use `Task(subagent_type="curator", ...)` for writes | Curator handles dedupe + quality scoring |
-
-### Wrong Approach (CRITICAL)
-
-| ❌ NEVER DO THIS | ✅ ALWAYS USE THIS | Why |
-|------------------|-------------------|-----|
-| Direct mem0 MCP calls without Curator | `Task(subagent_type="curator", ...)` | Curator validates quality, checks duplicates via tiered search |
-| Manually creating patterns | `mcp__mem0__map_add_pattern` via Curator | Fingerprint-based deduplication prevents duplicates |
-
-> **Note (v4.0+):** Pattern storage uses mem0 MCP. Use mem0 tools: `mcp__mem0__map_tiered_search`, `mcp__mem0__map_add_pattern`, `mcp__mem0__map_archive_pattern`.
 
 ### Wrong Operation Field Name
 
@@ -271,36 +221,6 @@ git commit --no-verify  # NOT RECOMMENDED
 ```
 
 ---
-
-## 🧠 Pattern Storage (mem0 MCP)
-
-> **v4.0+** — Pattern storage uses mem0 MCP. The legacy Knowledge Graph SQLite modules have been removed.
-
-Pattern retrieval, contradiction detection, and knowledge management are all handled through mem0 MCP tools. See the Pattern Search Tips section below for practical usage.
-
----
-
-## 🔍 Pattern Search Tips (mem0 MCP)
-
-As of v4.0, pattern search is provided by mem0 MCP. Unlike legacy FTS5-based search, mem0 search is semantic and works best with descriptive queries.
-
-
-### Practical Query Guidelines
-
-- Include the concrete technology and intent (e.g. "JWT refresh tokens", "Go error handling")
-- Add qualifiers when results are too broad (e.g. "PostgreSQL", "FastAPI", "rate limiting")
-- Prefer natural language for conceptual lookups (e.g. "how to handle retries with jitter")
-
-```bash
-# Basic search (tiered: branch → project → org)
-mcp__mem0__map_tiered_search(query="JWT authentication", limit=5)
-
-# More specific query
-mcp__mem0__map_tiered_search(query="retry with exponential backoff and jitter", limit=5)
-
-# Section-filtered search (when you know the category)
-mcp__mem0__map_tiered_search(query="input validation", section_filter="SECURITY_PATTERNS", limit=10)
-```
 
 ## 🔄 Handling Context Compaction
 
@@ -913,7 +833,7 @@ MAP Framework offers three primary implementation workflows with different trade
 - ✅ Refactoring with clear scope
 
 **Why it's better than /map-fast:**
-- Learning available via `/map-learn` after workflow (Reflector/Curator)
+- Learning available via `/map-learn` after workflow (Reflector)
 - Conditional Predictor catches high-risk issues
 - Final-Verifier provides adversarial verification
 - Only 10% less token savings but much safer
@@ -1079,10 +999,9 @@ MAP Framework offers three primary implementation workflows with different trade
    - Low-risk tasks (simple CRUD, UI updates) skip impact analysis
 
 2. **Learning Decoupled to /map-learn** (token savings during main workflow)
-   - Reflector and Curator are NOT called during /map-efficient execution
+   - Reflector is NOT called during /map-efficient execution
    - Run `/map-learn` after workflow completes to extract patterns
    - Reflector then analyzes ALL subtasks together (batched, more holistic insights)
-   - Curator makes a single knowledge base update (deduplication via mem0)
 
 3. **Evaluator Not Invoked** (8-12% savings)
    - Monitor provides sufficient validation for most tasks
@@ -1091,7 +1010,7 @@ MAP Framework offers three primary implementation workflows with different trade
    - Quality still ensured by Monitor's comprehensive checks
 
 **What's Preserved:**
-- ✅ Learning available via `/map-learn` (Reflector + Curator, optional after workflow)
+- ✅ Learning available via `/map-learn` (Reflector, optional after workflow)
 - ✅ Tests gate + Linter gate per subtask
 - ✅ Final-Verifier (adversarial verification at end)
 - ✅ Essential quality gates (Monitor validation)
@@ -1144,7 +1063,7 @@ START: I need to implement a feature
 **✅ Reality:** Monitor still validates every subtask. Evaluator is not invoked (it only runs in /map-debug and /map-review), but Tests gate, Linter gate, and Final-Verifier ensure quality.
 
 **❌ Misconception:** "Learning via /map-learn is inferior to per-subtask learning"
-**✅ Reality:** /map-learn runs Reflector/Curator after the workflow completes, analyzing ALL subtasks together. This batched approach sees patterns ACROSS subtasks, often producing better insights than isolated per-subtask analysis.
+**✅ Reality:** /map-learn runs Reflector after the workflow completes, analyzing ALL subtasks together. This batched approach sees patterns ACROSS subtasks, often producing better insights than isolated per-subtask analysis.
 
 ## 🎯 Best Practices
 
@@ -1163,12 +1082,11 @@ The Actor agent now includes a 10-item Quality Checklist for self-review before 
 2. Explicit error handling (no silent failures)
 3. Security review (SQL injection, XSS, sensitive data)
 4. Test case identification (happy path + edge cases)
-5. MCP tools usage (mcp__mem0__map_tiered_search, context7)
+5. MCP tools usage (context7, sequential-thinking)
 6. Template variable preservation (orchestration compatibility)
 7. Trade-offs documentation (decision rationale)
-8. Pattern tracking (ACE feedback loop)
-9. Complete implementations (no ellipsis or placeholders)
-10. Dependency justification (no unnecessary libraries)
+8. Complete implementations (no ellipsis or placeholders)
+9. Dependency justification (no unnecessary libraries)
 
 **How it works:**
 - Actor performs self-review before submission
@@ -1252,7 +1170,6 @@ MAP Framework supports intelligent model selection per agent to balance capabili
 | **Monitor** | sonnet | Quality validation requires thoroughness | ➡️ |
 | **TaskDecomposer** | sonnet | Requires good understanding of requirements | ➡️ |
 | **Reflector** | sonnet | Pattern extraction needs reasoning | ➡️ |
-| **Curator** | sonnet | Knowledge management requires care | ➡️ |
 | **DocumentationReviewer** | sonnet | Documentation analysis needs thoroughness | ➡️ |
 
 ### Cost Impact of Model Upgrades
@@ -1270,12 +1187,12 @@ The upgrade of Predictor and Evaluator from haiku to sonnet provides:
 **1. Use `/map-efficient` workflow (RECOMMENDED)**
 - Skips Evaluator per subtask (Monitor provides sufficient validation)
 - Conditional Predictor (only called for high-risk changes)
-- Reflector/Curator available via `/map-learn` after workflow
+- Reflector available via `/map-learn` after workflow
 - **Token savings: 30-40%**
 
 **2. Use `/map-fast` for small, low-risk changes**
 - Minimal agent sequence: TaskDecomposer → Actor → Monitor
-- Skips: Predictor, Evaluator, Reflector, Curator
+- Skips: Predictor, Evaluator, Reflector
 - **Token savings: 40-50%** (but no learning!)
 
 ### How It Works
@@ -1448,7 +1365,6 @@ Skills follow the 500-line rule:
 
 **System architecture:**
 - `agent-architecture.md` - How 12 agents orchestrate
-- `mem0-patterns.md` - Knowledge storage, quality scoring
 
 ### Creating Custom Skills
 
@@ -1467,7 +1383,6 @@ MAP Framework implements defense-in-depth security via three complementary layer
 ### Layer 1: Behavioral Rules (CLAUDE.md)
 
 Guidelines in `.claude/CLAUDE.md` that guide agent behavior:
-- NEVER skip mem0 deduplication checks
 - NEVER write code as orchestrator
 - NEVER commit .env files
 
@@ -1896,7 +1811,7 @@ MAP: [Prompt Improver Hook seeking clarification]
 
 User: [Selects option]
 
-MAP: [Proceeds with full context + mem0 patterns]
+MAP: [Proceeds with full context]
 ```
 
 **Bypass options:**
@@ -1920,7 +1835,7 @@ MAP: [Proceeds with full context + mem0 patterns]
 MAP uses **multiple UserPromptSubmit hooks** that run in parallel:
 
 1. **Prompt-Improver** – Disambiguates vague prompts (wraps prompt with evaluation instructions)
-2. **Pattern Injection** – Adds relevant mem0 patterns, and suggests workflows and skills
+2. **Pattern Injection** – Adds relevant patterns, and suggests workflows and skills
 
 > **Note:** Claude Code executes all matching hooks in parallel. Each hook's `additionalContext` output is concatenated and added to the prompt. The order is not guaranteed, but both enhancements are applied.
 
@@ -1928,7 +1843,7 @@ MAP uses **multiple UserPromptSubmit hooks** that run in parallel:
 
 **Benefits:**
 - Both hooks enhance the prompt with different types of context
-- Prompt-Improver adds evaluation wrapper, Pattern Injection adds mem0 patterns/workflows/skills
+- Prompt-Improver adds evaluation wrapper, Pattern Injection adds patterns/workflows/skills
 - Modular design (hooks can be disabled independently)
 - Parallel execution (efficient)
 
