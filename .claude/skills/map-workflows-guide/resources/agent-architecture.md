@@ -1,6 +1,6 @@
 # Agent Architecture
 
-MAP Framework orchestrates 12 specialized agents in a coordinated workflow.
+MAP Framework orchestrates 11 specialized agents in a coordinated workflow.
 
 ## Agent Categories
 
@@ -14,7 +14,7 @@ MAP Framework orchestrates 12 specialized agents in a coordinated workflow.
 
 **2. Actor**
 - **Role:** Implements code changes
-- **Input:** Subtask description, acceptance criteria, mem0 pattern context
+- **Input:** Subtask description, acceptance criteria
 - **Output:** Code changes, rationale, test strategy
 - **When it runs:** For each subtask (multiple times if revisions needed)
 
@@ -53,16 +53,6 @@ MAP Framework orchestrates 12 specialized agents in a coordinated workflow.
 - **When it runs:**
   - /map-efficient, /map-debug, /map-debate: Batched (once at end, via /map-learn)
   - /map-fast: Never (skipped)
-- **MCP Tool:** Uses `mcp__mem0__map_tiered_search` to check for existing patterns
-
-**7. Curator**
-- **Role:** Updates memory with validated patterns
-- **Input:** Reflector insights
-- **Output:** Delta operations (ADD/UPDATE/ARCHIVE patterns)
-- **When it runs:** After Reflector
-- **MCP Tools:**
-  - `mcp__mem0__map_tiered_search` to deduplicate
-  - `mcp__mem0__map_add_pattern` to store new patterns
 
 ### Optional
 
@@ -121,7 +111,7 @@ TaskDecomposer
   ↓
   Final-Verifier (adversarial verification of entire goal)
   ↓
-  Done! Optional: /map-learn → Reflector → Curator
+  Done! Optional: /map-learn → Reflector
 ```
 
 ### Multi-Variant Pipeline (map-debate)
@@ -135,7 +125,7 @@ TaskDecomposer
     Monitor → [Predictor if high risk] → Apply changes
   ↓
   Batch learning (via /map-learn):
-    Reflector (all subtasks) → Curator → Done
+    Reflector (all subtasks) → Done
 ```
 
 ---
@@ -193,7 +183,6 @@ Otherwise: Skipped (token savings)
 ### Workflow State
 - All subtask results
 - Aggregated patterns (Reflector)
-- mem0 delta operations (Curator)
 
 ---
 
@@ -223,8 +212,8 @@ Agents communicate via structured JSON:
 - Actor iterates (max 3-5 attempts)
 - If still failing: Mark subtask as failed, continue with others
 
-### MCP Tool Failures
-- Reflector/Curator gracefully degrade
+### Learning Failures
+- Reflector gracefully degrades
 - Learning skipped but implementation continues
 - Logged to stderr for debugging
 
@@ -242,7 +231,6 @@ Agents communicate via structured JSON:
 | Evaluator | ~0.8K | Per subtask | map-debug, map-review |
 | Predictor | ~1.5K | Per subtask or conditional | Varies |
 | Reflector | ~2K | Per subtask or batched | Varies |
-| Curator | ~1.5K | After Reflector | Varies |
 | Debate-Arbiter | ~3-4K | Per subtask | map-debate only |
 | Synthesizer | ~2K | Per subtask | map-efficient (--self-moa) |
 | Research-Agent | ~2-3K | Once (before Actor) | map-plan, map-efficient, map-debug |
@@ -251,7 +239,7 @@ Agents communicate via structured JSON:
 **map-efficient savings:**
 - Skip Evaluator: ~0.8K per subtask
 - Conditional Predictor: ~1.5K per low-risk subtask
-- Batch Reflector/Curator: ~(N-1) × 3.5K for N subtasks
+- Batch Reflector: ~(N-1) × 2K for N subtasks
 
 ---
 

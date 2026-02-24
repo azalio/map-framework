@@ -11,7 +11,6 @@ version: 1.0
 metadata:
   author: azalio
   version: 3.1.0
-  mcp-server: mem0
 ---
 
 # MAP Workflows Guide
@@ -79,14 +78,12 @@ Answer these 5 questions to find your workflow:
 - ✅ Basic validation (Monitor checks correctness)
 - ❌ NO quality scoring (Evaluator skipped)
 - ❌ NO impact analysis (Predictor skipped entirely)
-- ❌ NO learning (Reflector/Curator skipped)
+- ❌ NO learning (Reflector skipped)
 
 **Trade-offs:**
 - Saves 50-60% tokens vs full pipeline (every agent per subtask)
-- mem0 never improves (no patterns stored)
 - Knowledge never accumulates
 - Minimal quality gates (only basic checks)
-- Cannot reuse learned patterns in future tasks
 
 **Example tasks:**
 - "Fix a small validation edge case"
@@ -121,11 +118,11 @@ Answer these 5 questions to find your workflow:
 - ✅ Impact analysis (Predictor runs conditionally)
 - ✅ Tests gate + Linter gate per subtask
 - ✅ Final-Verifier (adversarial verification at end)
-- ✅ **Learning via /map-learn** (Reflector/Curator, optional after workflow)
+- ✅ **Learning via /map-learn** (Reflector, optional after workflow)
 
 **Optimization strategy:**
 - **Conditional Predictor:** Runs only if risk detected (security, breaking changes)
-- **Batched Learning:** Reflector/Curator run ONCE after all subtasks complete
+- **Batched Learning:** Reflector runs ONCE after all subtasks complete
 - **Result:** 35-40% token savings vs full pipeline while preserving learning
 - **Same quality gates:** Monitor still validates each subtask
 
@@ -151,7 +148,6 @@ Despite token optimization, preserves:
 - Per-subtask validation (Monitor always checks)
 - Complete implementation feedback loops
 - Full learning (batched, not skipped)
-- mem0 pattern growth from all tasks
 
 **See also:** [resources/map-efficient-deep-dive.md](resources/map-efficient-deep-dive.md)
 
@@ -171,7 +167,7 @@ Despite token optimization, preserves:
 - ✅ Validation (Monitor verifies fix)
 - ✅ Root cause analysis
 - ✅ Impact assessment (Predictor)
-- ✅ Learning (Reflector/Curator)
+- ✅ Learning (Reflector)
 
 **Specialized features:**
 - Error log analysis
@@ -233,8 +229,7 @@ MAP workflows orchestrate **12 specialized agents**, each with specific responsi
 **Actor** — Writes code and implements
 - Generates implementation
 - Makes file changes
-- Uses existing patterns from mem0
-- Queries mem0 for relevant knowledge
+- Uses existing patterns from previous workflows
 
 **Monitor** — Validates correctness
 - Checks implementation against criteria
@@ -263,17 +258,9 @@ MAP workflows orchestrate **12 specialized agents**, each with specific responsi
 **Reflector** — Pattern extraction
 - Analyzes what worked and failed
 - Extracts reusable patterns
-- Searches mem0 for existing knowledge via `mcp__mem0__map_tiered_search`
-- Prevents duplicate pattern storage
+- Prevents duplicate pattern extraction
 - **Batched in /map-efficient** (runs once at end, via /map-learn)
 - **Skipped in /map-fast** (no learning)
-
-**Curator** — Knowledge management
-- Stores patterns in mem0 via `mcp__mem0__map_add_pattern`
-- Deduplicates via tiered search
-- Archives outdated patterns via `mcp__mem0__map_archive_pattern`
-- Maintains pattern metadata
-- **Batched in /map-efficient** (runs once at end)
 
 ### Optional Agent
 
@@ -389,27 +376,6 @@ Predictor runs if:
 - High complexity estimated
 - Multiple files affected
 
-**Q: How does the mem0 tiered memory system work?**
-
-A: mem0 MCP provides tiered pattern storage:
-
-**L1 (Branch-scoped)**
-- Patterns specific to current feature branch
-- Experimental patterns for current work
-- Fastest access
-
-**L2 (Project-scoped)**
-- Shared project knowledge
-- Validated patterns used across branches
-- Standard access
-
-**L3 (Org-scoped)**
-- Cross-project patterns
-- Organizational best practices
-- Broadest scope
-
-Search flows: L1 → L2 → L3 (most specific first)
-
 ---
 
 ## Resources & Deep Dives
@@ -496,10 +462,8 @@ MAP: 📚 Loads this skill for context
 1. **Default to /map-efficient** — It's the recommended choice for 80% of tasks
 2. **Use /map-fast sparingly** — Only for small, low-risk changes with clear scope
 3. **Use /map-efficient for critical paths** — Describe risk context in the task description for appropriate Predictor triggers
-4. **Monitor pattern growth** — Use mem0 search to see learning improving
-5. **Trust the optimization** — /map-efficient preserves quality while cutting token usage
-6. **Review deep dives** — When in doubt, check the appropriate deep-dive resource
-7. **Leverage mem0 patterns** — Stored patterns from previous tasks via tiered search
+4. **Trust the optimization** — /map-efficient preserves quality while cutting token usage
+5. **Review deep dives** — When in doubt, check the appropriate deep-dive resource
 
 ---
 
@@ -555,7 +519,6 @@ MAP: 📚 Loads this skill for context
 | Wrong workflow chosen mid-task | Cannot switch workflows during execution | Complete current workflow, then restart with correct one |
 | Predictor never runs in /map-efficient | Subtasks assessed as low-risk | Expected behavior; Predictor is conditional. Use /map-debug for guaranteed analysis |
 | No patterns stored after /map-fast | /map-fast skips learning agents | By design — use /map-efficient + /map-learn for pattern accumulation |
-| mem0 search returns empty | mem0 MCP not configured or namespaces mismatch | Verify mem0 in `.claude/mcp_config.json`, check namespace conventions |
 | Skill suggests wrong workflow | Description trigger mismatch | Check skill-rules.json triggers; refine query wording |
 
 ---

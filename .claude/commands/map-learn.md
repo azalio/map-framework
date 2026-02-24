@@ -4,7 +4,7 @@ description: Extract and preserve lessons from completed workflows (OPTIONAL lea
 
 # MAP Learn - Post-Workflow Learning
 
-**Purpose:** Standalone command to extract and preserve lessons AFTER completing any MAP workflow.
+**Purpose:** Standalone command to extract lessons AFTER completing any MAP workflow.
 
 **When to use:**
 - After `/map-efficient` completes (to preserve patterns from the workflow)
@@ -13,24 +13,18 @@ description: Extract and preserve lessons from completed workflows (OPTIONAL lea
 
 **What it does:**
 1. Calls Reflector agent to analyze workflow outputs and extract patterns
-2. Calls Curator agent to store patterns directly via mem0 MCP tools
-3. Verifies patterns stored via `mcp__mem0__map_tiered_search`
-
-**Storage Architecture:**
-- Branch tier: `run_id="proj:PROJECT:branch:BRANCH"` (branch-scoped patterns)
-- Project tier: `run_id="proj:PROJECT"` (shared across branches)
-- Org tier: `user_id="org:ORG"` only (shared across all projects)
+2. Outputs a structured learning summary for the user to review
 
 **Workflow Summary Input:** $ARGUMENTS
 
 ---
 
-## ⚠️ IMPORTANT: This is an OPTIONAL step
+## IMPORTANT: This is an OPTIONAL step
 
-**You are NOT required to run this command.** No MAP workflow includes automatic learning — learning is always a separate step via this command.
+**You are NOT required to run this command.** No MAP workflow includes automatic learning -- learning is always a separate step via this command.
 
 Use /map-learn when:
-- You completed /map-efficient, /map-debug, or /map-fast and want to preserve lessons
+- You completed /map-efficient, /map-debug, or /map-fast and want to extract lessons
 - You want to batch-learn from multiple workflows at once
 - You want to manually trigger learning for custom workflows
 
@@ -56,7 +50,7 @@ Check that $ARGUMENTS contains workflow summary:
 Workflow: /map-efficient "Add user authentication"
 Subtasks completed: 3
 Files changed: api/auth.py, models/user.py, tests/test_auth.py
-Iterations: 5 total (Actor→Monitor loops)
+Iterations: 5 total (Actor->Monitor loops)
 
 Subtask 1 (Actor output):
 [paste Actor JSON output]
@@ -73,7 +67,7 @@ Subtask 1 (Monitor result):
 
 ## Step 2: Reflector Analysis
 
-**⚠️ MUST use subagent_type="reflector"** (NOT general-purpose):
+**MUST use subagent_type="reflector"** (NOT general-purpose):
 
 ```
 Task(
@@ -83,15 +77,6 @@ Task(
 
 **Workflow Summary:**
 $ARGUMENTS
-
-**MANDATORY FIRST STEP:**
-1. Call mcp__mem0__map_tiered_search to check if similar patterns already exist across tiers
-2. Only suggest new bullets if pattern is genuinely novel (not found in any tier)
-3. Reference existing patterns with their tier context in your analysis
-
-**Tier Search Parameters:**
-- user_id: 'org:ORG_NAME' (for org-level context)
-- run_id: 'proj:PROJECT_NAME:branch:BRANCH_NAME' (for branch context with inheritance)
 
 **Analysis Instructions:**
 
@@ -111,106 +96,17 @@ Analyze holistically across ALL subtasks:
 
 **Output JSON with:**
 - key_insight: string (one sentence takeaway for entire workflow)
-- patterns_used: array of strings (existing patterns applied successfully, with tier labels)
+- patterns_used: array of strings (existing patterns applied successfully)
 - patterns_discovered: array of strings (new patterns worth preserving)
 - bullet_updates: array of {bullet_id, tag: 'helpful'|'harmful', reason}
 - suggested_new_bullets: array of {section, content, code_example, rationale}
-- workflow_efficiency: {total_iterations, avg_per_subtask, bottlenecks: array of strings}
-- mem0_duplicates_found: array of {pattern, tier, memory_id} (from tiered search results)"
+- workflow_efficiency: {total_iterations, avg_per_subtask, bottlenecks: array of strings}"
 )
 ```
 
-**Verification:** Check Reflector output contains evidence of `mcp__mem0__map_tiered_search` call:
-- Should show: "mem0 tiered search found existing patterns in [tier]..."
-- Or: "No similar patterns found in any tier. This appears to be a novel pattern."
-
-**If tiered search was NOT called:** Reflector did not follow instructions. Flag this as critical issue.
-
 ---
 
-## Step 3: Curator Storage
-
-**⚠️ MUST use subagent_type="curator"** (NOT general-purpose):
-
-```
-Task(
-  subagent_type="curator",
-  description="Store workflow learnings via mem0 MCP tools",
-  prompt="Store Reflector insights using mem0 MCP tools directly:
-
-**Reflector Insights:**
-[paste Reflector JSON output from Step 2]
-
-**MANDATORY: Curator now calls mem0 MCP tools directly (NO JSON delta output)**
-
-**Curator will:**
-1. Call mcp__mem0__map_tiered_search to verify no duplicates exist
-2. Call mcp__mem0__map_add_pattern for each new pattern
-3. Call mcp__mem0__map_promote_pattern for patterns with helpful_count >= 3
-
-**Tier Selection:**
-- Branch tier: run_id='proj:PROJECT:branch:BRANCH' (for unvalidated patterns)
-- Project tier: run_id='proj:PROJECT' (for proven patterns)
-- Org tier: user_id='org:ORG' only (for cross-project patterns)
-
-**Deduplication via Fingerprinting:**
-- Each pattern has SHA256 fingerprint of normalized content
-- mcp__mem0__map_add_pattern returns {created: false} if duplicate exists
-- Reference existing pattern ID instead of creating duplicate
-
-**Promotion Criteria:**
-- helpful_count >= 3: Eligible for promotion to higher tier
-- helpful_count >= 5: Auto-promote to project tier
-- helpful_count >= 10 with cross-project usage: Promote to org tier"
-)
-```
-
-**Verification:** Curator will:
-- Show tool calls to `mcp__mem0__map_tiered_search` for deduplication
-- Show tool calls to `mcp__mem0__map_add_pattern` for new patterns
-- Report patterns stored with their tier and memory_id
-
-**If Curator outputs JSON instead of calling tools:** Curator did not follow updated instructions. Flag this as critical issue.
-
----
-
-## Step 4: Verify Storage
-
-Verify patterns were stored correctly using mem0 tiered search:
-
-```
-mcp__mem0__map_tiered_search(
-  query="[pattern content from Reflector]",
-  user_id="org:ORG_NAME",
-  run_id="proj:PROJECT:branch:BRANCH",
-  include_archived=false
-)
-```
-
-**Expected output:**
-```json
-{
-  "results": [
-    {
-      "memory_id": "mem-abc123",
-      "text": "Pattern content...",
-      "tier": "branch",
-      "metadata": {
-        "section_id": "IMPLEMENTATION_PATTERNS",
-        "helpful_count": 1,
-        "created_at": "2025-01-12T..."
-      }
-    }
-  ],
-  "total": 1
-}
-```
-
-**If patterns not found:** Check Curator tool call outputs for errors. Retry storage if needed.
-
----
-
-## Step 5: Summary Report
+## Step 3: Summary Report
 
 Provide learning summary:
 
@@ -219,96 +115,26 @@ Provide learning summary:
 
 **Workflow Analyzed:** [workflow type from input]
 **Total Subtasks:** [N]
-**Iterations Required:** [total Actor→Monitor loops]
+**Iterations Required:** [total Actor->Monitor loops]
 
 ### Reflector Insights
 - **Key Insight:** [key_insight from Reflector]
-- **Patterns Used:** [count] existing patterns applied successfully (with tier labels)
+- **Patterns Used:** [count] existing patterns applied successfully
 - **Patterns Discovered:** [count] new patterns identified
-- **mem0 Duplicates Found:** [count] (avoided duplication via fingerprint)
 
-### Curator Storage Results
-- **Stored:** [N] new patterns via mcp__mem0__map_add_pattern
-- **Skipped (duplicates):** [N] patterns already exist
-- **Promoted:** [N] patterns to higher tiers
+### Discovered Patterns
+[List each pattern from patterns_discovered with description]
 
-### Tier Distribution
-- **Branch tier:** [N] patterns (run_id=proj:PROJECT:branch:BRANCH)
-- **Project tier:** [N] patterns (run_id=proj:PROJECT)
-- **Org tier:** [N] patterns (user_id=org:ORG only)
+### Suggested Improvements
+[List each suggested_new_bullet with section and rationale]
 
-### Next Steps
-- Review new patterns: `mcp__mem0__map_tiered_search(query="[pattern]", ...)`
-- Validate in next workflow: Apply patterns and increment helpful_count if successful
-- Promote proven patterns: Use mcp__mem0__map_promote_pattern for patterns with helpful_count >= 3
+### Workflow Efficiency
+- **Total Iterations:** [total_iterations]
+- **Average per Subtask:** [avg_per_subtask]
+- **Bottlenecks:** [list bottlenecks]
 
-**Learning cycle complete. Patterns stored in mem0.**
+**Learning extraction complete.**
 ```
-
----
-
-## Troubleshooting
-
-### Issue: Reflector didn't call mcp__mem0__map_tiered_search
-
-**Symptom:** Reflector output has no mention of "mem0 tiered search found" or tier labels.
-
-**Cause:** Reflector agent template not followed.
-
-**Fix:**
-1. Re-run Reflector with explicit instruction: "FIRST STEP: Call mcp__mem0__map_tiered_search"
-2. Verify output shows search results with tier labels
-3. Proceed to Curator only after verification
-
-### Issue: Curator output JSON instead of calling tools
-
-**Symptom:** Curator returns JSON delta operations instead of calling mem0 MCP tools directly.
-
-**Cause:** Curator using outdated workflow (pre-mem0 migration).
-
-**Fix:**
-1. Ensure Curator agent template is version 4.0.0+
-2. Re-run Curator with explicit instruction: "Call mem0 MCP tools directly, DO NOT output JSON"
-3. Verify Curator shows mcp__mem0__map_add_pattern calls in output
-
-### Issue: mcp__mem0__map_add_pattern returns duplicate error
-
-**Symptom:** `{created: false, existing_memory_id: "..."}` returned.
-
-**Cause:** Pattern with same fingerprint already exists.
-
-**This is expected behavior!** Fingerprint-based deduplication working correctly.
-
-**Action:**
-1. Reference the existing memory_id instead of creating new
-2. If pattern needs update, use mcp__mem0__update_memory
-3. If pattern should be promoted, use mcp__mem0__map_promote_pattern
-
-### Issue: mem0 MCP server unavailable
-
-**Symptom:** Tool calls fail with connection error.
-
-**Cause:** mem0-mcp server not running or misconfigured.
-
-**Fix:**
-1. Check mem0-mcp server status
-2. Verify MCP configuration in Claude Code settings
-3. Restart mem0-mcp server if needed
-4. If persistent failure: Document patterns manually, retry later
-
-### Issue: Patterns stored in wrong tier
-
-**Symptom:** Branch-specific patterns stored at org level, or vice versa.
-
-**Cause:** Incorrect namespace parameters to mcp__mem0__map_add_pattern.
-
-**Fix:**
-1. Verify namespace format:
-   - Branch: `run_id="proj:PROJECT:branch:BRANCH"` + `user_id="org:ORG"`
-   - Project: `run_id="proj:PROJECT"` + `user_id="org:ORG"`
-   - Org: `user_id="org:ORG"` only (no run_id)
-2. Use mcp__mem0__map_promote_pattern to move to correct tier
-3. Archive incorrectly placed pattern with mcp__mem0__map_archive_pattern
 
 ---
 
@@ -316,17 +142,13 @@ Provide learning summary:
 
 **Typical /map-learn execution:**
 - Reflector: ~3K tokens (depends on workflow size)
-- Curator: ~2K tokens (direct tool calls, no JSON processing)
-- Verification: ~500 tokens (tiered search)
-- **Total:** 5-6K tokens for standard workflow
+- Summary: ~500 tokens
+- **Total:** 3-4K tokens for standard workflow
 
 **Large workflow (8+ subtasks):**
 - Reflector: ~6K tokens
-- Curator: ~4K tokens (multiple pattern storage calls)
-- Verification: ~1K tokens
-- **Total:** 10-12K tokens
-
-**Compared to per-subtask learning:** /map-learn saves ~(N-1) * 5K tokens for N subtasks.
+- Summary: ~1K tokens
+- **Total:** 6-7K tokens
 
 ---
 
@@ -351,30 +173,10 @@ Key implementation:
 ```
 
 Reflector extracts:
-- mem0 tiered search found no similar patterns in any tier
 - Pattern: WebSocket reconnection logic
 - Pattern: Optimistic UI updates
 
-Curator stores via mem0 MCP tools:
-```
-mcp__mem0__map_add_pattern(
-  text="WebSocket exponential backoff: Start with 1s delay, double on each retry (max 30s)...",
-  user_id="org:myorg",
-  run_id="proj:dashboard:branch:feature-ws",
-  metadata={section_id: "IMPLEMENTATION_PATTERNS", helpful_count: 1}
-)
-→ {created: true, memory_id: "mem-abc123", tier: "branch"}
-
-mcp__mem0__map_add_pattern(
-  text="Optimistic UI: Update local state immediately, revert on server error...",
-  user_id="org:myorg",
-  run_id="proj:dashboard:branch:feature-ws",
-  metadata={section_id: "FRONTEND_PATTERNS", helpful_count: 1}
-)
-→ {created: true, memory_id: "mem-def456", tier: "branch"}
-```
-
-### Example 2: Batched learning with promotion
+### Example 2: Batched learning
 
 User completed 3 separate debugging sessions, wants to batch-learn:
 
@@ -397,30 +199,8 @@ Common theme: Concurrency issues"
 ```
 
 Reflector extracts:
-- mem0 tiered search found "concurrency control" in project tier (helpful_count: 4)
-- Common pattern: Concurrency control (UPDATE existing)
+- Common pattern: Concurrency control
 - New patterns: DB locks, connection pooling, timezone handling
-
-Curator stores and promotes:
-```
-# Update existing pattern (increment helpful_count)
-mcp__mem0__update_memory(
-  memory_id="mem-existing-concurrency",
-  text="Updated concurrency control pattern with 3 new use cases..."
-)
-
-# Store new patterns at branch tier
-mcp__mem0__map_add_pattern(text="Database transaction locks...", ...)
-mcp__mem0__map_add_pattern(text="Connection pooling with limits...", ...)
-mcp__mem0__map_add_pattern(text="UTC-everywhere timezone pattern...", ...)
-
-# Promote existing pattern to org tier (helpful_count now 5)
-mcp__mem0__map_promote_pattern(
-  memory_id="mem-existing-concurrency",
-  target_user_id="org:myorg"
-)
-→ {promoted: true, new_memory_id: "mem-org-xyz", new_tier: "org"}
-```
 
 ---
 
@@ -462,11 +242,5 @@ mcp__mem0__map_promote_pattern(
 - Retroactively adding learning to /map-fast workflows
 - Capturing holistic patterns across subtasks
 - Custom workflows that didn't include learning
-
-**Storage Architecture Benefits:**
-- **Fingerprint deduplication:** Prevents duplicate patterns automatically
-- **Tiered inheritance:** Branch patterns inherit from project, project from org
-- **Quality-driven promotion:** Proven patterns automatically bubble up to higher tiers
-- **Soft delete:** Archived patterns preserved for audit, excluded from search
 
 **Remember:** The goal is to build organizational knowledge, not to learn from every single task. Quality over quantity.

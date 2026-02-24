@@ -4,15 +4,15 @@ Official Claude Code plugin for MAP Framework - Modular Agentic Planner with cog
 
 ## What is MAP Framework?
 
-MAP (Modular Agentic Planner) is a cognitive architecture that orchestrates 12 specialized agents to improve code quality through systematic validation and iterative refinement.
+MAP (Modular Agentic Planner) is a cognitive architecture that orchestrates 11 specialized agents to improve code quality through systematic validation and iterative refinement.
 
 **Based on research:**
 - [MAP Paper - Nature Communications (2025)](https://github.com/Shanka123/MAP) — 74% improvement in planning tasks
-- [ACE Paper - arXiv:2510.04618v1](https://arxiv.org/abs/2510.04618v1) — continuous learning from experience
+
 
 ## Features
 
-### 12 Specialized Agents
+### 11 Specialized Agents
 
 1. **TaskDecomposer** — breaks goals into atomic subtasks
 2. **Actor** — generates code and solutions
@@ -20,21 +20,20 @@ MAP (Modular Agentic Planner) is a cognitive architecture that orchestrates 12 s
 4. **Predictor** — analyzes change impact across codebase
 5. **Evaluator** — scores solution quality (functionality, security, testability)
 6. **Reflector** — extracts lessons from successes and failures
-7. **Curator** — manages knowledge base (playbook)
-8. **DocumentationReviewer** — checks documentation completeness
-9. **Debate-Arbiter** — cross-evaluates variants with reasoning (Opus)
-10. **Synthesizer** — merges multiple variants (Self-MoA)
-11. **Research-Agent** — isolated codebase research
-12. **Final-Verifier** — adversarial verification (Ralph Loop)
+7. **DocumentationReviewer** — checks documentation completeness
+8. **Debate-Arbiter** — cross-evaluates variants with reasoning (Opus)
+9. **Synthesizer** — merges multiple variants (Self-MoA)
+10. **Research-Agent** — isolated codebase research
+11. **Final-Verifier** — adversarial verification (Ralph Loop)
 
 ### Claude Code Integration
 
 **5 Automated Hooks:**
 - `validate-agent-templates` — prevents accidental removal of template variables
-- `auto-store-knowledge` — automatically saves successful patterns
 - `enrich-context` — enriches prompts with relevant knowledge
-- `session-init` — loads ACE playbook at session start
+- `session-init` — loads workflow context at session start
 - `track-metrics` — tracks agent performance
+- `workflow-gate` — enforces workflow step sequencing
 
 **10 Slash Commands:**
 - `/map-efficient` — implement features, refactor code, complex tasks with full MAP workflow
@@ -47,13 +46,6 @@ MAP (Modular Agentic Planner) is a cognitive architecture that orchestrates 12 s
 - `/map-release` — release workflow with validation gates
 - `/map-resume` — resume interrupted workflows
 - `/map-learn` — extract and preserve lessons
-
-### ACE Learning System
-
-- **Persistent Knowledge** — solutions saved and reused via mem0 MCP
-- **Semantic Search** — find patterns by meaning (optional)
-- **Quality Tracking** — monitor pattern effectiveness
-- **Continuous Learning** — each workflow improves future ones
 
 ### Cost Optimization
 
@@ -95,11 +87,9 @@ cp map-framework/.claude/settings.hooks.json your-project/.claude/
 ## Requirements
 
 - **Claude Code CLI** — installed and configured
-- **MCP Servers** (essential):
-  - `claude-reviewer` — professional code review
-  - `sequential-thinking` — chain-of-thought reasoning
 
 **Recommended MCP Servers:**
+- `sequential-thinking` — chain-of-thought reasoning
 - `context7` — library documentation
 - `deepwiki` — GitHub repository analysis
 
@@ -146,8 +136,8 @@ cp map-framework/.claude/settings.hooks.json your-project/.claude/
     │  └──────────┬───────────┘       │
     │             │                    │
     │  ┌──────────▼───────────┐       │
-    │  │ REFLECTOR → CURATOR  │       │
-    │  │ (learn → knowledge)  │       │
+    │  │ REFLECTOR             │       │
+    │  │ (learn → patterns)   │       │
     │  └──────────────────────┘       │
     └──────────────────────────────────┘
 ```

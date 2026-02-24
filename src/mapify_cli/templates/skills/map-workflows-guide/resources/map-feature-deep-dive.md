@@ -34,14 +34,13 @@ For each subtask:
   4. Evaluator scores quality
   5. If approved:
      5a. Reflector extracts patterns
-     5b. Curator stores patterns in mem0
-     5c. Apply changes
+     5b. Apply changes
   6. If not approved: Return to Actor
 ```
 
 **Key difference from /map-efficient:**
 - Predictor runs EVERY subtask (not conditional)
-- Reflector/Curator run AFTER EVERY subtask (not batched)
+- Reflector runs AFTER EVERY subtask (not batched)
 
 ---
 
@@ -54,11 +53,10 @@ For each subtask:
 Subtask 1: Implement JWT generation
   ↓ completed
 Reflector: "JWT secret storage pattern"
-Curator: Add pattern "impl-0099: Store secrets in env vars"
-  ↓ mem0 updated
+  ↓ pattern extracted
 Subtask 2: Implement JWT validation
   ↓ starts
-Actor queries mem0: Finds "impl-0099"
+Actor uses learned pattern
   ↓ applies pattern
 Uses env vars (learned from Subtask 1)
 ```
@@ -70,10 +68,10 @@ Uses env vars (learned from Subtask 1)
 **Per-subtask (/map-feature):**
 - ✅ Immediate pattern application
 - ✅ Error correction within workflow
-- ❌ Higher token cost (N × Reflector/Curator)
+- ❌ Higher token cost (N × Reflector)
 
 **Batched (/map-efficient):**
-- ✅ Lower token cost (1 × Reflector/Curator)
+- ✅ Lower token cost (1 × Reflector)
 - ⚠️ Patterns applied in next workflow
 - ✅ Holistic insights (sees all subtasks together)
 
@@ -109,19 +107,16 @@ ST-1: OAuth2 provider config
 ├─ Predictor: ✅ RAN (security-sensitive)
 │  └─ Impact: Config must not be committed
 ├─ Evaluator: ✅ Approved (score: 9/10)
-├─ Reflector: Pattern "Store OAuth secrets in env"
-└─ Curator: ADD "sec-0042: OAuth secrets in .env"
+└─ Reflector: Pattern "Store OAuth secrets in env"
 
 ST-2: Authorization code flow
 ├─ Actor: Implement auth/oauth.ts
-│  └─ Queries mem0: Finds "sec-0042"
 │  └─ Uses .env for secrets (learned from ST-1!)
 ├─ Monitor: ✅ Valid
 ├─ Predictor: ✅ RAN (affects auth flow)
 │  └─ Impact: All protected routes need update
 ├─ Evaluator: ✅ Approved (score: 9/10)
-├─ Reflector: Pattern "PKCE for public clients"
-└─ Curator: ADD "sec-0043: Use PKCE extension"
+└─ Reflector: Pattern "PKCE for public clients"
 
 [ST-3, ST-4, ST-5 continue with same pattern]
 ```
@@ -209,7 +204,7 @@ ST-2: Authorization code flow
 - ✅ No security vulnerabilities
 
 **Knowledge captured:**
-- ✅ mem0 patterns created (N subtasks → N+ patterns)
+- ✅ Patterns extracted (N subtasks → N+ patterns)
 - ✅ Team can apply patterns immediately
 
 **Impact understood:**
@@ -225,9 +220,9 @@ ST-2: Authorization code flow
 **Cause:** Per-subtask learning overhead
 **Solution:** Consider /map-efficient for next similar task
 
-**Issue:** Too many mem0 patterns created
+**Issue:** Too many patterns created
 **Cause:** Reflector suggesting redundant patterns
-**Solution:** Curator should check for duplicates more aggressively
+**Solution:** Review and deduplicate patterns more aggressively
 
 **Issue:** Predictor always says "high risk"
 **Cause:** Overly conservative risk assessment
@@ -238,4 +233,3 @@ ST-2: Authorization code flow
 **See also:**
 - [map-efficient-deep-dive.md](map-efficient-deep-dive.md) - Optimized alternative
 - [agent-architecture.md](agent-architecture.md) - Understanding all agents
-- [mem0 tiered search](../../map-cli-reference/SKILL.md) - How knowledge is stored and retrieved

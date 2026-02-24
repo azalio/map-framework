@@ -147,11 +147,10 @@ mapify init my-project
 This will:
 
 - ✅ Create project directory
-- ✅ Install 12 MAP agents (including ACE Reflector & Curator, Synthesizer, DebateArbiter, ResearchAgent, FinalVerifier)
+- ✅ Install MAP agents (including Synthesizer, DebateArbiter, ResearchAgent, FinalVerifier)
 - ✅ Add 10 slash commands (/map-efficient, /map-debug, /map-fast, /map-debate, /map-learn, /map-review, /map-release, /map-check, /map-plan, /map-resume)
 - ✅ Configure essential MCP servers
 - ✅ Initialize git repository
-- ✅ Configure ACE learning system (mem0 MCP)
 
 **Note:** MAP Framework is designed for Claude Code. All generated agents and commands are optimized for the Claude Code CLI.
 
@@ -224,8 +223,7 @@ If you prefer manual setup:
    │   │   ├── monitor.md             # Validates implementations
    │   │   ├── predictor.md           # Analyzes impact and risks
    │   │   ├── evaluator.md           # Scores solution quality
-   │   │   ├── reflector.md           # ACE: Extracts lessons
-   │   │   ├── curator.md             # ACE: Manages knowledge base
+   │   │   ├── reflector.md           # Extracts lessons
    │   │   ├── synthesizer.md         # Self-MoA: Merges variants
    │   │   ├── debate-arbiter.md      # Opus: Cross-evaluates variants
    │   │   ├── research-agent.md      # Isolated codebase research
@@ -244,8 +242,6 @@ If you prefer manual setup:
    │   │   └── map-resume.md          # Resume interrupted workflows
    │   └── mcp_config.json
    ```
-
-> **Note (v4.0+):** Pattern storage uses mem0 MCP with tiered namespaces (branch → project → org).
 
 ## Verify Installation
 
@@ -304,41 +300,13 @@ MAP Framework uses **slash commands** as entry points that coordinate specialize
 - **`/map-plan`** - Architect phase only: decompose task without implementation
 - **`/map-release`** - Package release workflow with validation gates
 - **`/map-resume`** - Resume incomplete MAP workflow from checkpoint
-- **`/map-learn`** - Extract lessons: reflector → curator → mem0 storage
+- **`/map-learn`** - Extract lessons from completed workflows
 
 **Note:** Agents are invoked automatically by slash commands. Direct agent invocation is not the recommended approach—use the slash commands above for proper workflow orchestration.
-
-### Learning System (mem0 MCP)
-
-MAP automatically learns from your work through the mem0 tiered memory system:
-
-```bash
-# Search for relevant patterns via mem0 MCP
-# In Claude Code, Curator agent calls:
-mcp__mem0__map_tiered_search("JWT authentication")
-
-# Add new patterns via Curator agent
-mcp__mem0__map_add_pattern(content="...", category="security", tier="project")
-```
-
-> **Note (v4.0+):** Pattern storage uses mem0 MCP with tiered namespaces (branch → project → org).
 
 ## MCP Server Setup
 
 If you selected MCP servers during installation, ensure they're configured:
-
-### mem0 (Knowledge Management) - RECOMMENDED
-
-**Overview:**
-
-- Tiered pattern storage (branch → project → org)
-- Semantic search across all tiers
-- Fingerprint-based deduplication
-- Enables cross-project learning
-
-**Setup:**
-
-See mem0 MCP server documentation for installation instructions.
 
 ### Claude-Reviewer (Professional Review)
 
@@ -363,22 +331,6 @@ See mem0 MCP server documentation for installation instructions.
 - Read documentation from any GitHub repo
 - Analyze architectural patterns
 - Learn from production implementations
-
-## ACE Learning (Knowledge Management)
-
-The MAP Framework includes an ACE-style learning system via mem0 MCP:
-
-- **Reflector agent**: Extracts lessons from successes and failures
-- **Curator agent**: Maintains structured knowledge base via mem0 MCP
-- **mem0 tiered storage**: Patterns stored across namespaces (branch → project → org) with categories:
-  - implementation
-  - security
-  - architecture
-  - debugging
-  - testing
-  - performance
-
-> **Note (v4.0+):** Pattern storage uses mem0 MCP. The system automatically grows as you use MAP commands with fingerprint-based deduplication.
 
 ## Optional: Semantic Search
 
@@ -499,17 +451,6 @@ ls ~/.claude/local/claude
 
 Check that MCP servers are properly configured in your Claude Code settings. The configuration file is at `.claude/mcp_config.json`.
 
-### Issue: Pattern search not working (mem0 MCP)
-
-As of v4.0, pattern storage and retrieval is handled by the mem0 MCP server (not local semantic search).
-
-Verify that:
-
-- mem0 MCP is enabled in your Claude Code MCP configuration (`.claude/mcp_config.json` or Claude settings)
-- the mem0 MCP server is reachable from Claude Code
-
-If mem0 is misconfigured, you may see missing context in workflows that call `mcp__mem0__map_tiered_search`.
-
 ## Uninstalling
 
 To remove MAP Framework:
@@ -520,7 +461,6 @@ rm -rf .claude/agents/
 rm -rf .claude/commands/
 rm .claude/mcp_config.json
 rm -rf .claude/embeddings_cache/
-# Note: mem0 data is managed by mem0 MCP server, not local files
 
 # Uninstall mapify CLI
 uv tool uninstall mapify-cli

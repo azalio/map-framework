@@ -3,7 +3,6 @@
 Deep technical documentation for MAP (Modular Agentic Planner) implementation.
 
 > **Research Foundation:** [Nature Communications research (2025)](https://github.com/Shanka123/MAP) — 74% improvement in planning tasks
-> **Learning System:** [ACE (Agentic Context Engineering)](https://arxiv.org/abs/2510.04618v1) — continuous learning from experience
 
 ## Table of Contents
 
@@ -70,7 +69,7 @@ MAP Framework implements cognitive architecture inspired by prefrontal cortex fu
 │                                                                  │
 │  /map-review (interactive 4-section):                            │
 │  ┌──────────────────────────────────────────────────────────┐   │
-│  │ 4× mem0 queries + git diff                               │   │
+│  │ git diff analysis                                         │   │
 │  │ → [Monitor + Predictor + Evaluator] (all 3 parallel)     │   │
 │  │ → Interactive: Architecture → Quality → Tests → Perf     │   │
 │  │ → Verdict: PROCEED / REVISE / BLOCK                      │   │
@@ -98,9 +97,9 @@ MAP Framework implements cognitive architecture inspired by prefrontal cortex fu
 │                                                                  │
 │  /map-learn (post-workflow learning):                           │
 │  ┌──────────────────────────────────────────────────────────┐   │
-│  │ Reflector → Curator → mem0 storage → Verification        │   │
+│  │ Reflector → Verification                                  │   │
 │  │ Standalone command. Run AFTER any workflow completes.    │   │
-│  │ Extracts patterns and stores via mem0 MCP tools.         │   │
+│  │ Extracts patterns from workflow outcomes.                 │   │
 │  └──────────────────────────────────────────────────────────┘   │
 │                                                                  │
 │  RESEARCH-AGENT (on-demand in any workflow):                    │
@@ -143,9 +142,8 @@ MAP Framework implements cognitive architecture inspired by prefrontal cortex fu
    - Functionality, security, testability, maintainability
    - Scores 0-10, approval threshold >7.0
 
-5. **Learning Cycle** (Reflector → Curator)
+5. **Learning Cycle** (Reflector)
    - Extracts patterns from successes and failures
-   - Updates knowledge base (mem0 MCP)
    - Enables continuous improvement
 
 ### Agent Coordination Protocol
@@ -364,7 +362,7 @@ TaskDecomposer → [conditional ResearchAgent] → (3×Actor parallel → 3×Mon
    - Quality still ensured by Monitor's comprehensive checks
 
 3. **Learning is OPTIONAL via /map-learn**
-   - Workflow does NOT include Reflector/Curator
+   - Workflow does NOT include Reflector
    - At completion, suggests running `/map-learn` if patterns worth saving
    - Separation keeps workflows fast, learning intentional
 
@@ -406,7 +404,6 @@ print("Consider running /map-learn to save patterns")
 - ❌ Predictor (no impact analysis)
 - ❌ Evaluator (no quality scoring)
 - ❌ Reflector (no lesson extraction)
-- ❌ Curator (no knowledge base updates)
 
 **Token Usage:** 50-60% of baseline
 **Learning:** None (defeats MAP's purpose)
@@ -414,7 +411,6 @@ print("Consider running /map-learn to save patterns")
 
 **Architectural Consequences:**
 - Knowledge base remains static (no continuous improvement)
-- mem0 patterns never grow
 - Breaking changes undetected (no Predictor)
 - Security/performance issues may slip through (no Evaluator)
 - Same mistakes repeated (no Reflector)
@@ -473,7 +469,6 @@ print("Consider running /map-learn to save patterns")
 - Complex features where optimal approach is unclear
 - Security-critical code requiring multiple review perspectives
 - Performance-sensitive implementations
-- Learning optimal patterns (arbiter reasoning becomes mem0 pattern content)
 - Situations where you want to explore solution space thoroughly
 
 **Technical Details:**
@@ -527,8 +522,6 @@ for subtask in subtasks:
 **Debugging-Specific Features:**
 
 1. **Pre-Analysis Phase**
-   - Query mem0 for ERROR_PATTERNS and DEBUGGING_TECHNIQUES
-   - Search mem0 for similar past debugging sessions via tiered search
    - Identify affected files via Grep/Glob
 
 2. **Step Types** (defined by TaskDecomposer):
@@ -552,12 +545,12 @@ for subtask in subtasks:
 
 #### 5. `/map-review` - Interactive Code Review (3 Agents)
 
-**Agent Sequence:** 4× mem0 targeted queries + git diff → [Monitor + Predictor + Evaluator] (all 3 parallel) → Interactive 4-section presentation → Verdict
+**Agent Sequence:** git diff → [Monitor + Predictor + Evaluator] (all 3 parallel) → Interactive 4-section presentation → Verdict
 
 **Review-Specific Features:**
 
 1. **No TaskDecomposer** - Reviews current branch changes as-is
-2. **Parallel Collection** - 4 mem0 queries + 3 agents launched in a single message (7 parallel calls)
+2. **Parallel Agent Launch** - 3 agents launched in a single message
 3. **Interactive 4-Section Presentation:**
    - **Architecture** (primary: Predictor — breaking changes, affected components)
    - **Code Quality** (primary: Monitor — correctness, maintainability issues)
@@ -572,7 +565,7 @@ for subtask in subtasks:
    - BLOCK: Monitor rejected OR Evaluator reconsider OR security/functionality < 5 OR (Predictor high risk + breaking changes)
    - Priority: BLOCK > REVISE > PROCEED
 
-**Token Usage:** ~15-25K tokens (4 mem0 queries + parallel agents + interactive 4-section presentation; `--ci` mode ~12-15K)
+**Token Usage:** ~15-25K tokens (parallel agents + interactive 4-section presentation; `--ci` mode ~12-15K)
 **Learning:** Optional via `/map-learn`
 **Quality Gates:** All 3 review agents
 
@@ -604,15 +597,13 @@ for subtask in subtasks:
 - Package releases to PyPI
 - Version bumping with full validation
 
-#### 7. `/map-learn` - Post-Workflow Learning (2 Agents)
+#### 7. `/map-learn` - Post-Workflow Learning (1 Agent)
 
-**Agent Sequence:** Reflector → Curator → mem0 storage → Verification
+**Agent Sequence:** Reflector → Verification
 
 **Standalone Learning:**
 - Run AFTER any workflow completes (not during)
 - Extracts patterns from Actor/Monitor/Predictor outputs
-- Stores patterns in mem0 via `mcp__mem0__map_add_pattern`
-- Uses tiered namespaces (branch → project → org) for pattern organization
 
 **Token Usage:** 5-8K tokens (depends on workflow size)
 **When to use:**
@@ -632,7 +623,6 @@ Typical token consumption per subtask (estimated):
 | Predictor | 1.5K | 1K | 2.5K | Conditional in /map-efficient, always in /map-debug |
 | Evaluator | 2K | 1K | 3K | Only in /map-debug, /map-review |
 | Reflector | 2K | 1K | 3K | Only via /map-learn |
-| Curator | 1.5K | 0.5K | 2K | Only via /map-learn |
 | DebateArbiter | 3K | 2K | 5K | Opus model, /map-debate only (includes synthesis) |
 | Synthesizer | 2K | 3K | 5K | /map-efficient Self-MoA only (DebateArbiter handles this in /map-debate) |
 | ResearchAgent | 2K | 4K | 6K | Heavy codebase reading, on-demand in any workflow |
@@ -642,7 +632,7 @@ Typical token consumption per subtask (estimated):
 - /map-efficient (Self-MoA): ~25-30K tokens (3× Actor + Synthesizer)
 - /map-fast: ~8-10K tokens (minimal, no learning)
 - /map-debug: ~15-20K tokens (full pipeline with Evaluator)
-- /map-review: ~15-25K tokens (4 mem0 queries + parallel agents + interactive 4-section presentation; --ci mode ~12-15K)
+- /map-review: ~15-25K tokens (parallel agents + interactive 4-section presentation; --ci mode ~12-15K)
 - /map-debate: ~30-40K tokens (3× Actor + Opus DebateArbiter)
 
 **For 5-subtask workflow:**
@@ -658,7 +648,7 @@ See [USAGE.md - Workflow Variants](./USAGE.md#workflow-variants) for detailed de
 
 ### Hook-Based Context Injection (v2.0.0+)
 
-**Problem:** Long command files (995 lines, ~5.4K tokens) cause attention dilution → Claude skips critical workflow steps like mem0 search and self-audit (20% compliance rate).
+**Problem:** Long command files (995 lines, ~5.4K tokens) cause attention dilution → Claude skips critical workflow steps like research and self-audit (20% compliance rate).
 
 **Solution:** State-machine orchestration + PreToolUse hook injection
 
@@ -676,7 +666,7 @@ See [USAGE.md - Workflow Variants](./USAGE.md#workflow-variants) for detailed de
 ┌─────────────────────────────────────────────────────────────┐
 │  map-efficient.md (~1.75K tokens, down from ~5.4K)          │
 │  1. Get next step instruction (map_orchestrator.py)         │
-│  2. Route to executor (Actor/Monitor/mem0/etc)              │
+│  2. Route to executor (Actor/Monitor/etc)              │
 │  3. Execute step                                            │
 │  4. Validate completion → Update state                      │
 │  5. Recurse if more steps; else complete                    │
@@ -700,12 +690,12 @@ See [USAGE.md - Workflow Variants](./USAGE.md#workflow-variants) for detailed de
 ╔═══════════════════════════════════════════════════════════╗
 ║ MAP WORKFLOW CHECKPOINT                                   ║
 ╠═══════════════════════════════════════════════════════════╣
-║ Current Step:  2.1 - MEM0_SEARCH
+║ Current Step:  2.2 - RESEARCH
 ║ Progress:      Subtask 1/5
 ║ Completed:     1.0_DECOMPOSE, 1.5_INIT_PLAN, 2.0_XML_PACKET
 ║
 ║ ⚠️  MANDATORY NEXT ACTION:
-║    Call mcp__mem0__map_tiered_search BEFORE Actor
+║    Call research-agent BEFORE Actor
 ╚═══════════════════════════════════════════════════════════╝
 ```
 
@@ -717,7 +707,7 @@ See [USAGE.md - Workflow Variants](./USAGE.md#workflow-variants) for detailed de
 |--------|---------------|----------------|
 | **Step compliance** | ~20% | ~85% (predicted) |
 | **Command file tokens** | ~5,400 | ~1,750 |
-| **mem0 search skip rate** | 80% | ~5% (predicted) |
+| **Research skip rate** | 80% | ~5% (predicted) |
 | **Self-audit skip rate** | 90% | ~10% (predicted) |
 | **User interventions** | ~3 per workflow | ~0.3 (predicted) |
 | **Hook latency** | N/A | <100ms |
@@ -737,8 +727,7 @@ See [USAGE.md - Workflow Variants](./USAGE.md#workflow-variants) for detailed de
 4. `1.56 CHOOSE_MODE` - Select execution mode (step_by_step|batch)
 5. `1.6 INIT_STATE` - Create workflow_state.json
 6. `2.0 XML_PACKET` - Build AI-friendly subtask packet
-7. `2.1 MEM0_SEARCH` - Tiered memory search
-8. `2.2 RESEARCH` - research-agent (conditional)
+7. `2.2 RESEARCH` - research-agent (conditional)
 9. `2.3 ACTOR` - Actor agent implementation
 10. `2.4 MONITOR` - Monitor validation (retry up to 5 times)
 11. `2.6 PREDICTOR` - Impact analysis (conditional)
@@ -844,14 +833,12 @@ If you modified `.claude/commands/map-efficient.md`, you must manually integrate
 5. **Used Patterns** (pattern IDs applied)
 
 **Key Behaviors:**
-- ALWAYS searches mem0 MCP for existing patterns first
 - Fetches current docs for external libraries (via context7)
 - Explicit error handling required (no silent failures)
 - Complete code, not sketches or placeholders
 - Security-first approach for auth/data access
 
 **MCP Tool Usage:**
-- `mcp__mem0__map_tiered_search`: Find existing patterns before implementing
 - `mcp__context7__get-library-docs`: Get current library documentation
 
 ### 3. Monitor
@@ -976,62 +963,14 @@ If you modified `.claude/commands/map-efficient.md`, you must manually integrate
 ```
 
 **Key Behaviors:**
-- MUST search mem0 MCP for existing patterns first (avoid duplicates)
 - Extracts both successful patterns and failure lessons
 - Contextualizes lessons (when to apply, when to avoid)
 - Links to specific workflow outcomes
 
 **MCP Tool Usage:**
-- `mcp__mem0__map_tiered_search`: Check for existing similar patterns
 - `mcp__sequential-thinking__sequentialthinking`: Structure reasoning process
 
-### 7. Curator
-
-**Responsibility:** Manage knowledge base (mem0) with incremental updates.
-
-**Input:** Reflector's extracted patterns
-
-**Output:**
-```json
-{
-  "patterns_to_add": [
-    {
-      "pattern_id": "impl-0008",
-      "content": "Use bcrypt for password hashing with work factor 12",
-      "category": "implementation",
-      "tags": ["security", "authentication", "passwords"],
-      "tier": "project"
-    }
-  ],
-  "patterns_to_update": [
-    {
-      "pattern_id": "impl-0003",
-      "updates": {"content": "Updated JWT signature algorithm from HS256 to RS256"},
-      "reason": "Security improvement based on recent OWASP guidelines"
-    }
-  ],
-  "patterns_to_archive": []
-}
-```
-
-**Operations:**
-- **ADD:** New pattern not in mem0 (via `mcp__mem0__map_add_pattern`)
-- **UPDATE:** Improve existing pattern
-- **ARCHIVE:** Mark pattern as deprecated (via `mcp__mem0__map_archive_pattern`)
-- **NONE:** No changes needed
-
-**Key Behaviors:**
-- MUST search mem0 MCP for duplicates before adding
-- Fingerprint-based deduplication (exact match prevention)
-- Uses tiered storage (branch → project → org namespaces)
-- Incremental updates only (no full rewrites)
-
-**MCP Tool Usage:**
-- `mcp__mem0__map_tiered_search`: Deduplication check
-- `mcp__mem0__map_add_pattern`: Store new patterns
-- `mcp__mem0__map_archive_pattern`: Deprecate outdated patterns
-
-### 8. DocumentationReviewer
+### 7. DocumentationReviewer
 
 **Responsibility:** Check documentation completeness and correctness.
 
@@ -1057,7 +996,7 @@ If you modified `.claude/commands/map-efficient.md`, you must manually integrate
 - ✅ Configuration options explained
 - ✅ Examples match actual code behavior
 
-### 9. Synthesizer
+### 8. Synthesizer
 
 **Responsibility:** Merge best elements from multiple Actor variants in Self-MoA (Mixture of Agents) workflows.
 
@@ -1098,7 +1037,7 @@ If you modified `.claude/commands/map-efficient.md`, you must manually integrate
 
 **Usage Context:** Only invoked in `/map-debate` workflow after DebateArbiter completes cross-evaluation
 
-### 10. DebateArbiter
+### 9. DebateArbiter
 
 **Responsibility:** Cross-evaluate multiple Actor variants with explicit reasoning, identify best approaches for each decision point.
 
@@ -1161,7 +1100,7 @@ If you modified `.claude/commands/map-efficient.md`, you must manually integrate
 **MCP Tool Usage:**
 - `mcp__sequential-thinking__sequentialthinking`: Multi-step reasoning for complex trade-off analysis
 
-### 11. ResearchAgent
+### 10. ResearchAgent
 
 **Responsibility:** Heavy codebase reading with context isolation and compressed output for Actor/Monitor consumption.
 
@@ -1210,7 +1149,7 @@ If you modified `.claude/commands/map-efficient.md`, you must manually integrate
 - Outputs compressed summary (<2K tokens)
 - Prevents Actor context bloat (would be 20-50K tokens if Actor read directly)
 
-### 12. FinalVerifier
+### 11. FinalVerifier
 
 **Responsibility:** Adversarial verifier applying the "Four-Eyes Principle" — verifies the ENTIRE task goal is achieved, not just individual subtasks. Catches premature completion and hallucinated success.
 
@@ -1258,7 +1197,6 @@ MAP uses MCP (Model Context Protocol) servers for enhanced capabilities beyond b
 
 | MCP Server | Purpose | Required For | Performance Notes |
 |------------|---------|--------------|-------------------|
-| **mem0** | Tiered pattern storage and retrieval | Reflector, Curator, Actor | Low latency (<200ms) |
 | **claude-reviewer** | Professional code review | Monitor | Medium latency (~2-5s) |
 | **sequential-thinking** | Chain-of-thought reasoning | Complex problem solving | Medium latency (~1-3s) |
 | **context7** | Up-to-date library documentation | Actor (external libs) | Low latency (<500ms) |
@@ -1275,14 +1213,6 @@ MCP servers are configured differently depending on the usage context:
 ```json
 {
   "mcp_servers": {
-    "mem0": {
-      "enabled": true,
-      "description": "Tiered pattern storage with semantic search",
-      "config": {
-        "retrieval_limit": 5,
-        "tiers": ["branch", "project", "org"]
-      }
-    },
     "claude-reviewer": {
       "enabled": true,
       "description": "Professional code review with security analysis",
@@ -1294,65 +1224,9 @@ MCP servers are configured differently depending on the usage context:
 }
 ```
 
-#### Global Configuration
-
-**File:** `mcp_config.json` (project root)
-
-```json
-{
-  "mcp_servers": {
-    "mem0": {
-      "enabled": true,
-      "description": "Tiered memory system for pattern storage",
-      "config": {
-        "retrieval_limit": 5
-      }
-    }
-  }
-}
-```
-
 ### MCP Tool Usage Patterns
 
-#### Pattern 1: Search Before Implement (Actor)
-
-```markdown
-**BEFORE implementing any solution:**
-
-1. Search mem0 for existing patterns via tiered search:
-   - Query: "implementation pattern [feature_type]"
-   - Example: "implementation pattern JWT authentication"
-   - Tiers searched: L1 (recent) → L2 (frequent) → L3 (semantic)
-
-2. If relevant patterns found:
-   - Review code snippets and trade-offs
-   - Adapt to current context
-   - Track which patterns used (pattern IDs)
-
-3. If no patterns found:
-   - Proceed with fresh implementation
-   - Document new pattern for Reflector
-```
-
-#### Pattern 2: Deduplication (Reflector, Curator)
-
-```markdown
-**BEFORE adding new patterns:**
-
-1. Reflector searches mem0:
-   - Query: Pattern description
-   - Uses fingerprint-based exact match
-
-2. If similar pattern exists:
-   - Compare quality scores
-   - Decide: update existing or create new variant
-
-3. Curator confirms:
-   - Final deduplication check via `map_add_pattern` (returns created=false if duplicate)
-   - Operation: ADD vs UPDATE vs ARCHIVE vs NONE
-```
-
-#### Pattern 3: Current Documentation (Actor)
+#### Pattern 1: Current Documentation (Actor)
 
 ```markdown
 **WHEN using external libraries:**
@@ -1371,7 +1245,7 @@ MCP servers are configured differently depending on the usage context:
    - Deprecation warnings
 ```
 
-#### Pattern 4: Professional Review (Monitor)
+#### Pattern 2: Professional Review (Monitor)
 
 ```markdown
 **AFTER Actor generates code:**
@@ -1391,21 +1265,6 @@ MCP servers are configured differently depending on the usage context:
 ```
 
 ### Configuration Options
-
-#### mem0 Configuration
-
-mem0 MCP server configuration is managed externally. Key parameters for MAP tools:
-
-**Tiered Search Parameters:**
-- `query`: Search string for pattern matching
-- `category`: Optional filter by section (e.g., "implementation", "debugging")
-- Tiers: L1 (recent/branch) → L2 (frequent/project) → L3 (semantic/org)
-
-**Add Pattern Parameters:**
-- `content`: Pattern text to store
-- `category`: Section classification
-- `fingerprint`: Auto-generated for deduplication
-- `tier`: Target namespace (branch/project/org)
 
 #### Context7 Configuration
 
@@ -1436,7 +1295,6 @@ mem0 MCP server configuration is managed externally. Key parameters for MAP tool
 ### MCP Server Availability
 
 **Commonly Available:**
-- mem0 (tiered pattern storage)
 - claude-reviewer (code review)
 - sequential-thinking (reasoning)
 
@@ -1453,22 +1311,13 @@ mem0 MCP server configuration is managed externally. Key parameters for MAP tool
 ### Performance Considerations
 
 **Latency Budget (per subtask):**
-- mem0 searches: ~200ms each (Actor: 2-3 searches = ~600ms)
 - context7 docs: ~500ms per fetch (Actor: 1-2 fetches = ~1s)
 - claude-reviewer: ~2-5s per review (Monitor: 1 review)
 - Total overhead: ~2-7s per subtask
 
 **Optimization Strategies:**
-- Use tiered search to get most relevant patterns first
 - Batch similar searches where possible
-- Use `retrieval_limit` to control context size
 - Enable MCP caching when available (Phase 2 roadmap)
-
----
-
-## Knowledge Graph Layer (Removed)
-
-> **Removed in v4.0+.** The legacy Knowledge Graph SQLite modules (entity_extractor, relationship_detector, contradiction_detector, graph_query) have been removed. All pattern storage, search, and contradiction detection are now handled via mem0 MCP tools.
 
 ---
 
@@ -1506,11 +1355,10 @@ Agent prompts are located in `.claude/agents/*.md` and use **Handlebars template
 - Template variables: `{{language}}`, `{{project_name}}`, `{{framework}}`
 - Conditional blocks: `{{#if existing_patterns}}...{{/if}}`
 - Context sections: `{{subtask_description}}`, `{{feedback}}`
-- ACE learning sections: existing patterns, used_patterns tracking
 
 **Why they're critical:**
 - Orchestrator fills these at runtime with project context
-- Removing them breaks multi-language support, ACE learning, feedback loops
+- Removing them breaks multi-language support and feedback loops
 - Git pre-commit hook validates their presence (see Hooks Integration)
 
 #### Template Variable Reference
@@ -1526,7 +1374,7 @@ Agent prompts are located in `.claude/agents/*.md` and use **Handlebars template
 **Actor-specific:**
 ```handlebars
 {{subtask_description}}    # From TaskDecomposer
-{{existing_patterns}}      # Relevant patterns from mem0
+{{existing_patterns}}      # Relevant patterns from context
 {{#if feedback}}           # Monitor feedback (retry loop)
   {{feedback}}
 {{/if}}
@@ -1559,7 +1407,6 @@ MAP Framework uses intelligent model selection to balance quality and cost.
 | Predictor | sonnet-4-5 | Impact analysis requires complex reasoning |
 | Evaluator | sonnet-4-5 | Evaluation requires nuanced judgment |
 | Reflector | sonnet-4-5 | Quality-critical: pattern extraction |
-| Curator | sonnet-4-5 | Quality-critical: knowledge management |
 | DocumentationReviewer | sonnet-4-5 | Quality-critical: doc validation |
 | Synthesizer | sonnet-4-5 | Quality-critical: variant synthesis |
 | DebateArbiter | opus-4-5 | Highest quality: cross-variant reasoning |
@@ -1580,7 +1427,7 @@ model: claude-sonnet-4-5  # or claude-haiku-3-5
 - **Downgrade to Haiku:** Lower cost, risk of quality degradation in analysis and scoring
 
 **Recommended:**
-- Keep on Sonnet: TaskDecomposer, Actor, Monitor, Predictor, Evaluator, Reflector, Curator, DocumentationReviewer, Synthesizer, ResearchAgent
+- Keep on Sonnet: TaskDecomposer, Actor, Monitor, Predictor, Evaluator, Reflector, DocumentationReviewer, Synthesizer, ResearchAgent
 - Keep on Opus: DebateArbiter (cross-variant reasoning requires highest quality)
 - Safe to downgrade to Haiku: Predictor, Evaluator (if cost reduction is priority)
 
@@ -1615,16 +1462,7 @@ model: claude-sonnet-4-5  # or claude-haiku-3-5
    - **Framework**: {{framework}}
    ```
 
-4. **Specify MCP tool usage:**
-   ```markdown
-   ## MCP INTEGRATION
-
-   **CRITICAL**: ALWAYS use mcp__mem0__map_tiered_search before auditing:
-   - Query: "security vulnerability [component_type]"
-   - Check for past security issues and fixes
-   ```
-
-5. **Define output format:**
+4. **Define output format:**
    ```markdown
    ## OUTPUT FORMAT
 
@@ -1643,7 +1481,7 @@ model: claude-sonnet-4-5  # or claude-haiku-3-5
    ```
    ```
 
-6. **Update orchestration:**
+5. **Update orchestration:**
    Edit `.claude/commands/map-efficient.md` to call new agent:
    ```markdown
    ## After Monitor validates:
@@ -1756,7 +1594,7 @@ Located at: `.git/hooks/pre-commit`
 
 **Prevents commits if:**
 - Template variables removed from agents
-- Critical sections deleted (mem0 patterns, feedback, context)
+- Critical sections deleted (feedback, context)
 - Massive deletions (>500 lines) without review
 
 **Example block:**
@@ -1805,11 +1643,6 @@ Agent template changes are tracked in the project's main CHANGELOG.md.
 
 ### Breaking Changes
 - Actor: Changed output format to include `used_patterns` array
-- All agents: Migrated to mem0 MCP tools
-
-### Added
-- Actor: MCP integration section with mem0 tool usage patterns
-- Reflector: mem0 deduplication checks before pattern extraction
 
 ### Fixed
 - Monitor: Clarified validation criteria for error handling
@@ -2153,7 +1986,7 @@ Claude Code hooks run in subprocess with restricted capabilities:
 
 | Capability | Available? | Workaround |
 |-----------|-----------|-----------|
-| MCP tool access | ❌ No | Hooks can't call `mcp__mem0__map_tiered_search`, `sequential-thinking` |
+| MCP tool access | ❌ No | Hooks can't call MCP tools like `sequential-thinking` |
 | Python imports | ❌ No | Must call separate Python script via subprocess |
 | Async operations | ❌ No | Synchronous execution only (5s timeout) |
 | External scripts | ✅ Yes | Can call `python3`, `jq`, bash utilities |
@@ -2300,34 +2133,7 @@ All failures are non-blocking - hook returns `{"continue": true}` and logs error
 - ✅ Audit trail for compliance
 - ✅ Metrics dashboard input
 
-### Pattern Top-K Limiting (Phase 1.3)
-
-**Problem:** Too many patterns distract model, reduce focus on most relevant patterns.
-
-**Solution:** Limit patterns retrieved to `limit=5` (configurable via tiered search).
-
-**Behavior:**
-
-```python
-# In Actor agent context injection:
-# mem0 tiered search returns limited results automatically
-result = mcp__mem0__map_tiered_search(
-    query=subtask_description
-    # Returns up to 5 patterns by default
-)
-```
-
-**Benefits:**
-- ✅ ~15% token reduction in Actor prompts
-- ✅ Improved focus on best patterns
-- ✅ Faster retrieval via tiered caching
-
-**Customization:**
-- `limit=3`: Simple tasks, minimal context needed
-- `limit=5`: Balanced (recommended default)
-- `limit=7-10`: Complex tasks requiring multiple pattern references
-
-### Template Optimization (Phase 1.4)
+### Template Optimization (Phase 1.3)
 
 **Problem:** Verbose agent outputs waste tokens without adding value.
 
@@ -2361,7 +2167,7 @@ result = mcp__mem0__map_tiered_search(
 
 **Phase 2** (Prioritized):
 1. **Checkpoints** (high impact) — Workflow resumption after interruption
-2. **MCP caching** (medium-high) — Latency reduction for mem0/context7
+2. **MCP caching** (medium-high) — Latency reduction for context7
 3. **Keyword+semantic search** (medium) — Hybrid retrieval accuracy
 4. **Pattern variation** (low-medium) — Few-shot bias reduction
 
@@ -2378,7 +2184,7 @@ result = mcp__mem0__map_tiered_search(
 - **Monitor approval rate:** >80% first try (current: varies by task complexity)
 - **Evaluator scores:** average >7.0/10 (approval threshold)
 - **Iteration count:** <3 per subtask (indicates clear feedback)
-- **Knowledge growth:** increasing high-quality patterns in mem0 (helpful_count >= 5)
+- **Knowledge growth:** increasing high-quality patterns over time
 
 **Tracking:**
 ```bash
@@ -2394,7 +2200,6 @@ cat .map/workflow_logs/feat_auth_20251023_143022.json | jq '.subtasks[].agents.e
 ## References
 
 - [MAP Paper - Nature Communications](https://github.com/Shanka123/MAP)
-- [ACE Paper - arXiv:2510.04618v1](https://arxiv.org/abs/2510.04618v1)
 - [Context Engineering for AI Agents (Manus.im)](https://manus.im/blog/Context-Engineering-for-AI-Agents-Lessons-from-Building-Manus)
 - [Claude Code Documentation](https://docs.anthropic.com/en/docs/claude-code)
 

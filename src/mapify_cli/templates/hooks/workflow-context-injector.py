@@ -151,7 +151,7 @@ def required_action_for_step(step_id: str, step_phase: str, state: dict) -> str 
     if step_id == "1.56":
         return "Choose mode (set_execution_mode step_by_step|batch)"
     if step_id == "2.1":
-        return "Run mem0 search before Actor"
+        return "Run context search before Actor (skip if not needed)"
     if step_id == "2.3":
         return "Run Actor"
     if step_id == "2.4":
@@ -189,6 +189,17 @@ def format_reminder(state: dict, branch: str) -> str | None:
     plan_ok = "y" if state.get("plan_approved") else "n"
     mode = (state.get("execution_mode") or "").strip() or "batch"
 
+    # Wave progress display
+    waves = state.get("execution_waves") or []
+    wave_idx = state.get("current_wave_index", 0)
+    wave_hint = ""
+    if waves:
+        wave_hint = f" | WAVE {wave_idx + 1}/{len(waves)}"
+        current_wave = waves[wave_idx] if wave_idx < len(waves) else []
+        if len(current_wave) > 1:
+            wave_hint += f" ({', '.join(current_wave)})"
+            mode = "batch:parallel"
+
     required = required_action_for_step(step_id, step_phase, state)
 
     diag_hint = ""
@@ -204,7 +215,7 @@ def format_reminder(state: dict, branch: str) -> str | None:
     if not step_id and not step_phase:
         return None
 
-    base = f"[MAP] {step_id} {step_phase} | ST: {subtask_id} ({progress}) | plan:{plan_ok} mode:{mode}{diag_hint}"
+    base = f"[MAP] {step_id} {step_phase} | ST: {subtask_id} ({progress}) | plan:{plan_ok} mode:{mode}{wave_hint}{diag_hint}"
     if required:
         return f"{base} | REQUIRED: {required}"
     return base

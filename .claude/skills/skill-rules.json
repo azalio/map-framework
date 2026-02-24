@@ -52,23 +52,22 @@
       "type": "domain",
       "enforcement": "suggest",
       "priority": "high",
-      "description": "CLI and MCP error corrections",
+      "description": "CLI error corrections",
       "promptTriggers": {
         "keywords": [
           "mapify command",
           "mapify error",
           "no such command",
           "no such option",
-          "mem0 mcp",
           "validate graph",
           "mapify init",
           "mapify check"
         ],
         "intentPatterns": [
-          "(mapify|mem0).*(error|command|help|usage)",
+          "mapify.*(error|command|help|usage)",
           "(no such).*(command|option)",
           "validate.*(graph|dependency)",
-          "(how to|how do).*(mapify|mem0)"
+          "(how to|how do).*mapify"
         ]
       }
     }

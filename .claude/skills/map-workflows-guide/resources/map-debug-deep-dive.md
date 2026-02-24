@@ -39,7 +39,7 @@
    - How was it fixed?
    - How to prevent similar bugs?
 
-4. Curator documents:
+   Reflector also documents:
    - Debugging techniques used
    - Common pitfalls
    - Prevention strategies
@@ -152,9 +152,6 @@ Reflector:
 ├─ Solution: "Use mutex for critical sections"
 └─ Prevention: "Design for immutability"
 
-Curator:
-├─ ADD "debug-0042: Async race condition patterns"
-└─ ADD "impl-0099: Use immutable state updates"
 ```
 
 ---
@@ -221,7 +218,7 @@ Root cause: Improper async error handling
 2. What test was missing?
 3. What pattern should we follow?
 
-**Curator documents:**
+**Reflector documents:**
 ```json
 {
   "type": "TESTING_STRATEGY",

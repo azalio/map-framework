@@ -65,7 +65,7 @@ class TestAgentCLICorrectness:
         warnings = []
 
         # Agents that should have CLI guidance
-        cli_heavy_agents = ["actor.md", "reflector.md", "curator.md"]
+        cli_heavy_agents = ["actor.md", "reflector.md"]
 
         for agent_file in agent_files:
             if agent_file.name in cli_heavy_agents:

@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Mapify CLI Reference",
   "version": "2.0.0",
-  "description": "Machine-readable specification of mapify CLI commands, parameters, and usage patterns. Pattern storage uses mem0 MCP (v4.0+).",
+  "description": "Machine-readable specification of mapify CLI commands, parameters, and usage patterns.",
   "commands": {
     "validate": {
       "description": "Validate task dependency graphs",
@@ -161,77 +161,7 @@
       }
     }
   },
-  "mem0_mcp_tools": {
-    "description": "Pattern storage and retrieval via mem0 MCP (v4.0+). These replace the legacy playbook CLI commands.",
-    "tiered_search": {
-      "tool": "mcp__mem0__map_tiered_search",
-      "description": "Semantic search across tiered namespaces (branch -> project -> org)",
-      "parameters": {
-        "query": "Search string for pattern matching",
-        "user_id": "Org-scoped user identifier (e.g., \"org:acme-corp\")",
-        "run_id": "Tier-scoped run identifier (e.g., \"proj:my-app:branch:feat-auth\")",
-        "limit": "Maximum results to return (default: 5)",
-        "section_filter": "Optional filter by category",
-        "min_quality_score": "Optional minimum quality score threshold"
-      },
-      "examples": [
-        {
-          "call": "mcp__mem0__map_tiered_search(query=\"JWT authentication\", user_id=\"org:acme-corp\", run_id=\"proj:my-app:branch:feat-auth\", limit=5)",
-          "description": "Basic semantic pattern search with tier scope"
-        },
-        {
-          "call": "mcp__mem0__map_tiered_search(query=\"input validation\", user_id=\"org:acme-corp\", run_id=\"proj:my-app:branch:feat-auth\", section_filter=\"SECURITY_PATTERNS\", limit=10)",
-          "description": "Search with section filter and tier scope"
-        }
-      ]
-    },
-    "add_pattern": {
-      "tool": "mcp__mem0__map_add_pattern",
-      "description": "Store a new pattern (fingerprint-based deduplication)",
-      "parameters": {
-        "text": "Pattern text to store",
-        "section": "Section classification (e.g., SECURITY_PATTERNS, IMPLEMENTATION_PATTERNS)",
-        "scope": "Target namespace (branch/project/org)",
-        "user_id": "Org-scoped user identifier (e.g., \"org:acme-corp\")",
-        "run_id": "Tier-scoped run identifier (e.g., \"proj:my-app:branch:feat-auth\")",
-        "agent_origin": "Agent that created the pattern (e.g., \"curator\")",
-        "code_example": "Optional code example demonstrating the pattern",
-        "tech_stack": "Optional technology stack (e.g., [\"python\", \"sqlalchemy\"])",
-        "tags": "Optional tags for cross-referencing (e.g., [\"security\", \"jwt\"])"
-      },
-      "note": "Should be called through Curator agent for deduplication"
-    },
-    "archive_pattern": {
-      "tool": "mcp__mem0__map_archive_pattern",
-      "description": "Mark a pattern as deprecated",
-      "parameters": {
-        "memory_id": "ID of the pattern to archive",
-        "reason": "Reason for archiving",
-        "superseded_by": "Optional memory_id of the replacement pattern",
-        "archived_by": "Agent performing the archival (e.g., \"curator\")"
-      }
-    },
-    "promote_pattern": {
-      "tool": "mcp__mem0__map_promote_pattern",
-      "description": "Promote a pattern to a higher tier",
-      "parameters": {
-        "memory_id": "ID of the pattern to promote",
-        "target_scope": "Target tier (\"project\" or \"org\")",
-        "user_id": "Org-scoped user identifier (e.g., \"org:acme-corp\")",
-        "target_run_id": "Target tier run identifier (e.g., \"proj:my-app\")",
-        "promoted_by": "Agent or mechanism performing promotion (e.g., \"auto\")",
-        "promotion_reason": "Reason for promotion (e.g., \"helpful_count >= 5\")"
-      }
-    }
-  },
   "common_patterns": {
-    "mem0_search": {
-      "description": "mem0 provides semantic search across tiered namespaces",
-      "method": "Semantic search (embedding-based)",
-      "speed": "Low latency (<200ms)",
-      "use_case": "Pattern retrieval, conceptual search, similar patterns",
-      "syntax": "Natural language queries"
-    },
     "stdin_support": {
       "description": "Commands that accept stdin input",
       "commands": [
@@ -246,41 +176,11 @@
       {
         "category": "legacy_command",
         "mistake": "mapify playbook ...",
-        "reason": "Legacy playbook CLI commands removed in v4.0+",
-        "correction": "mcp__mem0__map_tiered_search(query=\"...\")",
-        "explanation": "Use mem0 MCP tools for pattern storage and retrieval"
-      },
-      {
-        "category": "wrong_approach",
-        "mistake": "Direct mem0 writes without Curator",
-        "reason": "Bypasses deduplication and quality scoring",
-        "correction": "Task(subagent_type=\"curator\", ...)",
-        "explanation": "Curator handles fingerprint-based deduplication"
+        "reason": "Legacy playbook CLI commands removed",
+        "correction": "Use slash commands (/map-efficient, /map-learn, etc.)",
+        "explanation": "Use MAP slash commands for workflow operations"
       }
     ]
-  },
-  "integration_notes": {
-    "map_workflow": {
-      "description": "How MAP agents use mem0 MCP",
-      "curator_agent": {
-        "role": "Manages knowledge base via mem0 MCP",
-        "workflow": [
-          "1. Curator analyzes reflector insights",
-          "2. Searches mem0 for duplicates via mcp__mem0__map_tiered_search",
-          "3. Stores new patterns via mcp__mem0__map_add_pattern",
-          "4. Archives outdated patterns via mcp__mem0__map_archive_pattern"
-        ],
-        "critical_rule": "NEVER write patterns directly - always use Curator agent"
-      },
-      "reflector_agent": {
-        "role": "Searches for existing patterns before extracting new ones",
-        "workflow": [
-          "1. Search mem0 for similar patterns via mcp__mem0__map_tiered_search",
-          "2. Extract only novel patterns",
-          "3. Pass to Curator for storage"
-        ]
-      }
-    }
   },
   "metadata": {
     "generated_from": "src/mapify_cli/__init__.py",

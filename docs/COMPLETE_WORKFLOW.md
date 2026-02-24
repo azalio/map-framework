@@ -124,9 +124,9 @@ Validation:
 ┌─────────────────────────────────────────────────────────────┐
 │ Turn 2: Начало ST-001                                       │
 ├─────────────────────────────────────────────────────────────┤
-│ • map_orchestrator → "Step 2.1: MEM0_SEARCH"                │
-│ • Hook: "⚠️ Call mcp__mem0__map_tiered_search BEFORE Actor" │
-│ • Поиск существующих паттернов OAuth в mem0                 │
+│ • map_orchestrator → "Step 2.1: RESEARCH"                    │
+│ • Hook: "⚠️ Gather context BEFORE Actor"                    │
+│ • Поиск существующих паттернов OAuth                        │
 └─────────────────────────────────────────────────────────────┘
                          ↓
 ┌─────────────────────────────────────────────────────────────┐
@@ -135,7 +135,7 @@ Validation:
 │ • map_orchestrator → "Step 2.3: ACTOR"                      │
 │ • Hook: "⚠️ Use Edit/Write tools to apply code directly"    │
 │ • Actor:                                                    │
-│   1. Анализирует паттерны из mem0                           │
+│   1. Анализирует существующий код                           │
 │   2. Генерирует config/oauth.py                             │
 │   3. ЗАПИСЫВАЕТ код с Write("/path/to/file", content)       │
 │ • 🆕 Код уже на диске!                                      │
@@ -410,7 +410,6 @@ How to proceed?
 /map-learn "OAuth 2.0 implementation with CSRF protection"
 
 # Reflector извлекает уроки
-# Curator сохраняет паттерны в mem0 MCP
 # Паттерны доступны для будущих проектов
 ```
 

@@ -37,7 +37,6 @@ Verification:
 ## Safety expectations
 
 - Don't add or expose secrets. Avoid reading/writing `.env*` and credential/key files.
-- When changing pattern storage behavior, ensure Curator-mediated writes through mem0 MCP are preserved (see `.claude/agents/curator.md` and `docs/ARCHITECTURE.md`).
 
 ## Bash Command Guidelines
 

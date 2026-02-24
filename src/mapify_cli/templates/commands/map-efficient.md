@@ -24,7 +24,6 @@ State machine enforces sequencing, Python validates completion, hooks inject rem
 /map-efficient does NOT use these agents (by design):
 - **Evaluator** — quality scoring not needed; Monitor validates correctness directly
 - **Reflector** — lesson extraction is a separate step via `/map-learn`
-- **Curator** — pattern storage is a separate step via `/map-learn`
 
 This is NOT a violation of MAP agent rules. Learning is decoupled into `/map-learn` (optional, run after workflow completes) to reduce token usage during execution.
 
@@ -48,7 +47,7 @@ Both files must stay in sync. The orchestrator updates `step_state.json` on ever
 │  map-efficient.md (THIS FILE - ~540 lines)                  │
 │  1. Load state → Get next step instruction                  │
 │  2. Route to appropriate executor based on step phase       │
-│  3. Execute step (Actor/Monitor/mem0/tests/etc)             │
+│  3. Execute step (Actor/Monitor/tests/etc)                  │
 │  4. Validate completion → Update state                      │
 │  5. If more steps → Recurse; Else → Complete                │
 └─────────────────────────────────────────────────────────────┘
@@ -129,9 +128,11 @@ This eliminates reasoning overhead — the contract IS the specification."""
 )
 
 # After decomposer returns:
-# 1. Extract subtask IDs from blueprint and register them in state:
+# 1. Save the full blueprint JSON for wave computation:
+#    Write the decomposer output to .map/<branch>/blueprint.json
+# 2. Extract subtask IDs from blueprint and register them in state:
 #    python3 .map/scripts/map_orchestrator.py set_subtasks ST-001 ST-002 ST-003
-# 2. Validate step completion:
+# 3. Validate step completion:
 #    python3 .map/scripts/map_orchestrator.py validate_step "1.0"
 ```
 
@@ -221,6 +222,76 @@ Then use the **Write** tool to create `.map/<branch>/workflow_state.json`:
 }
 ```
 
+### Wave Computation (after INIT_STATE)
+
+After INIT_STATE (1.6) completes, compute execution waves from the dependency DAG:
+
+```bash
+python3 .map/scripts/map_orchestrator.py set_waves --blueprint .map/${BRANCH}/blueprint.json
+```
+
+This reads the blueprint, builds a dependency graph, computes topological waves,
+and splits waves by file conflicts. The result is stored in `step_state.json`.
+
+**Wave execution**: If waves are computed, subtasks within a wave run their Actor
+and Monitor phases in parallel. Check wave status with:
+
+```bash
+WAVE=$(python3 .map/scripts/map_orchestrator.py get_wave_step)
+MODE=$(echo "$WAVE" | jq -r '.mode')
+```
+
+If `mode` is `"parallel"`, launch all actors in the wave in ONE message using
+multiple `Task()` calls, then all monitors in ONE message. If `mode` is
+`"sequential"`, use the standard single-subtask loop below.
+
+**Parallel wave execution loop**:
+
+```
+loop:
+  WAVE = get_wave_step()
+  if WAVE.is_complete: goto final_verification
+
+  if WAVE.mode == "sequential":
+    # Single subtask — same as standard behavior below
+    execute_current_sequential_loop()
+  else:
+    # === PARALLEL WAVE ===
+    # Phase A: Prep (sequential per subtask - lightweight)
+    for each subtask in WAVE.subtasks:
+      build XML_PACKET, run CONTEXT_SEARCH, optional RESEARCH
+
+    # Phase B: Parallel Actors
+    # Launch ALL Task(subagent_type="actor") calls in ONE message
+    # Example: Task(actor, "Implement ST-002") + Task(actor, "Implement ST-004")
+
+    # Phase C: Parallel Monitors
+    # After all actors return, launch ALL monitors in ONE message
+    # Example: Task(monitor, "Validate ST-002") + Task(monitor, "Validate ST-004")
+
+    # Phase D: Retry handling
+    # For each monitor that returned valid=false:
+    #   Re-run actor + monitor for that subtask (serially)
+    #   Track retries per subtask: validate_wave_step SUBTASK_ID STEP_ID
+
+    # Phase E: Per-wave gates
+    # Run tests + linter ONCE for the entire wave
+    # pytest / npm test / etc.
+
+    # Phase F: Advance wave
+    python3 .map/scripts/map_orchestrator.py advance_wave
+
+    # Update workflow state for all subtasks in batch:
+    python3 .map/scripts/map_step_runner.py update_workflow_state_batch '[
+      {"subtask_id": "ST-002", "step_name": "actor", "new_state": "ACTOR_CALLED"},
+      {"subtask_id": "ST-002", "step_name": "monitor", "new_state": "MONITOR_PASSED"},
+      {"subtask_id": "ST-004", "step_name": "actor", "new_state": "ACTOR_CALLED"},
+      {"subtask_id": "ST-004", "step_name": "monitor", "new_state": "MONITOR_PASSED"}
+    ]'
+```
+
+Linear DAGs naturally degrade to single-subtask waves (identical to current behavior).
+
 ### Phase: XML_PACKET (2.0)
 
 ```python
@@ -233,20 +304,6 @@ xml_packet = create_xml_packet(subtask)
 
 # Save packet to .map/<branch>/current_packet.xml for agent access
 # Packet boundaries are unambiguous — agents parse by tag, not by heuristics
-```
-
-### Phase: MEM0_SEARCH (2.1)
-
-```bash
-# Tiered search: branch → project → org
-mcp__mem0__map_tiered_search(
-  query="[subtask description]",
-  limit=5,
-  user_id="org:[org_name]",
-  run_id="proj:[project_name]:branch:[branch_name]"
-)
-
-# Re-rank by relevance, pass top 3 to Actor
 ```
 
 ### Phase: RESEARCH (2.2)
@@ -282,10 +339,6 @@ Task(
 <MAP_Packet subtask="[ID]" v="1.0" risk="[risk_level]">
 [paste from .map/<branch>/current_packet.xml]
 </MAP_Packet>
-
-<MAP_Context source="mem0" limit="3">
-[top context_patterns from mem0 + relevance_score]
-</MAP_Context>
 
 <MAP_Contract>
 [AAG contract from decomposition: Actor -> Action -> Goal]
@@ -466,7 +519,6 @@ Answer: [YES/NO - if NO, explain why not]
 
 Question 2: For EACH subtask, did I:
   - Create XML packet? [YES/NO per subtask]
-  - Call mem0 search? [YES/NO per subtask]
   - Call research-agent if 3+ files? [YES/NO/N/A per subtask]
   - Call Actor agent? [YES/NO per subtask]
   - Call Monitor agent after Actor? [YES/NO per subtask]
@@ -521,7 +573,7 @@ if [ "$IS_COMPLETE" = "true" ]; then
   # Go to Step 3
 else
   # CONTEXT DISTILLATION before recurse:
-  # Do NOT pass full RESEARCH logs, mem0 results, or Actor/Monitor transcripts.
+  # Do NOT pass full RESEARCH logs or Actor/Monitor transcripts.
   # Pass ONLY the distilled state to keep new context in SFT comfort zone (~4k tokens):
   #
   # 1. findings.md       — distilled research output (not raw search logs)
