@@ -116,6 +116,82 @@ def update_workflow_state(
         return {"status": "error", "message": str(e)}
 
 
+def update_workflow_state_batch(
+    updates: List[Dict],
+    branch: Optional[str] = None,
+) -> Dict:
+    """
+    Update workflow_state.json for multiple subtasks in one call.
+
+    Used in wave-based parallel execution to update all subtasks in a wave
+    after their actors/monitors complete.
+
+    Args:
+        updates: List of dicts, each with:
+            - subtask_id: Subtask ID (e.g., "ST-002")
+            - step_name: Step name (e.g., "actor", "monitor")
+            - new_state: New state (e.g., "ACTOR_CALLED", "MONITOR_PASSED")
+        branch: Git branch (auto-detected if None)
+
+    Returns:
+        Dict with status and per-subtask results
+    """
+    if branch is None:
+        branch = get_branch_name()
+
+    state_file = Path(f".map/{branch}/workflow_state.json")
+
+    if not state_file.exists():
+        return {"status": "error", "message": "workflow_state.json not found"}
+
+    try:
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+
+        if "completed_steps" not in state:
+            state["completed_steps"] = {}
+
+        results = []
+        active_subtasks = []
+
+        for update in updates:
+            subtask_id = update.get("subtask_id", "")
+            step_name = update.get("step_name", "")
+            new_state = update.get("new_state", "")
+
+            if subtask_id not in state["completed_steps"]:
+                state["completed_steps"][subtask_id] = []
+
+            if step_name not in state["completed_steps"][subtask_id]:
+                state["completed_steps"][subtask_id].append(step_name)
+
+            active_subtasks.append(subtask_id)
+            results.append({
+                "subtask_id": subtask_id,
+                "step_name": step_name,
+                "new_state": new_state,
+            })
+
+        # Set active_subtasks list for wave mode (used by workflow-gate.py)
+        state["active_subtasks"] = active_subtasks
+        if active_subtasks:
+            state["current_subtask"] = active_subtasks[0]
+            state["current_state"] = updates[-1].get("new_state", "UPDATED")
+
+        # Write back atomically
+        tmp_file = state_file.with_suffix(".tmp")
+        tmp_file.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        tmp_file.replace(state_file)
+
+        return {
+            "status": "success",
+            "message": f"Batch updated {len(updates)} subtasks",
+            "results": results,
+        }
+
+    except (json.JSONDecodeError, OSError) as e:
+        return {"status": "error", "message": str(e)}
+
+
 def update_plan_status(
     subtask_id: str,
     new_status: str,
@@ -342,7 +418,17 @@ if __name__ == "__main__":
 
     func_name = sys.argv[1]
 
-    if func_name == "update_workflow_state" and len(sys.argv) >= 5:
+    if func_name == "update_workflow_state_batch" and len(sys.argv) >= 3:
+        updates_json = sys.argv[2]
+        try:
+            updates = json.loads(updates_json)
+        except json.JSONDecodeError as e:
+            print(json.dumps({"status": "error", "message": f"Invalid JSON: {e}"}))
+            sys.exit(1)
+        result = update_workflow_state_batch(updates)
+        print(json.dumps(result, indent=2))
+
+    elif func_name == "update_workflow_state" and len(sys.argv) >= 5:
         result = update_workflow_state(sys.argv[2], sys.argv[3], sys.argv[4])
         print(json.dumps(result, indent=2))
 

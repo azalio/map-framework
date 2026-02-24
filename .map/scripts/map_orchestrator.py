@@ -144,9 +144,9 @@ STEP_ORDER = [
 # If always_required is False, evidence is only checked when the step
 # appears in pending_steps (i.e., it wasn't skipped).
 EVIDENCE_REQUIRED = {
-    "2.3": ("actor", True),      # Always required
-    "2.4": ("monitor", True),    # Always required
-    "2.6": ("predictor", False), # Only when 2.6 is in pending_steps
+    "2.3": ("actor", True),  # Always required
+    "2.4": ("monitor", True),  # Always required
+    "2.6": ("predictor", False),  # Only when 2.6 is in pending_steps
 }
 
 
@@ -167,6 +167,11 @@ class StepState:
     max_retries: int = 5
     plan_approved: bool = False
     execution_mode: str = "batch"  # batch|step_by_step
+    # Wave-based parallel execution fields
+    execution_waves: List[List[str]] = field(default_factory=list)
+    current_wave_index: int = 0
+    subtask_phases: Dict[str, str] = field(default_factory=dict)
+    subtask_retry_counts: Dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         """Serialize to dictionary."""
@@ -184,6 +189,10 @@ class StepState:
             "max_retries": self.max_retries,
             "plan_approved": self.plan_approved,
             "execution_mode": self.execution_mode,
+            "execution_waves": self.execution_waves,
+            "current_wave_index": self.current_wave_index,
+            "subtask_phases": self.subtask_phases,
+            "subtask_retry_counts": self.subtask_retry_counts,
         }
 
     @classmethod
@@ -203,6 +212,10 @@ class StepState:
             max_retries=data.get("max_retries", 5),
             plan_approved=data.get("plan_approved", False),
             execution_mode=data.get("execution_mode", "batch"),
+            execution_waves=data.get("execution_waves", []),
+            current_wave_index=data.get("current_wave_index", 0),
+            subtask_phases=data.get("subtask_phases", {}),
+            subtask_retry_counts=data.get("subtask_retry_counts", {}),
         )
 
     @classmethod
@@ -468,15 +481,11 @@ def validate_step(step_id: str, branch: str) -> Dict:
             }
         # Validate JSON structure
         try:
-            evidence_data = json.loads(
-                evidence_file.read_text(encoding="utf-8")
-            )
+            evidence_data = json.loads(evidence_file.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError) as exc:
             return {
                 "valid": False,
-                "message": (
-                    f"Evidence file {evidence_file} is not valid JSON: {exc}"
-                ),
+                "message": (f"Evidence file {evidence_file} is not valid JSON: {exc}"),
             }
         # Check required fields
         for required_field in ("phase", "subtask_id", "timestamp"):
@@ -590,6 +599,255 @@ def set_execution_mode(mode: str, branch: str) -> Dict:
     state.execution_mode = normalized
     state.save(state_file)
     return {"status": "success", "execution_mode": state.execution_mode}
+
+
+def set_waves(branch: str, blueprint_path: Optional[str] = None) -> Dict:
+    """Compute execution waves from blueprint DAG and store in step_state.json.
+
+    Reads the blueprint JSON, builds a DependencyGraph, computes topological
+    waves, and splits waves by file conflicts. Stores the result in
+    step_state.execution_waves.
+
+    Args:
+        branch: Git branch name (sanitized)
+        blueprint_path: Path to blueprint JSON (default: .map/<branch>/blueprint.json)
+
+    Returns:
+        Dict with status and computed waves
+    """
+    # Import here to avoid circular deps at module level
+    sys_path_added = False
+    try:
+        from mapify_cli.dependency_graph import DependencyGraph, SubtaskNode
+    except ImportError:
+        # When running as a standalone script inside .map/scripts/,
+        # dependency_graph.py is not on the path. Try a relative import
+        # from the repo root (two levels up from .map/scripts/).
+        import importlib.util
+
+        dg_candidates = [
+            Path("src/mapify_cli/dependency_graph.py"),
+            Path(__file__).resolve().parents[3] / "src" / "mapify_cli" / "dependency_graph.py",
+        ]
+        loaded = False
+        for candidate in dg_candidates:
+            if candidate.exists():
+                spec = importlib.util.spec_from_file_location("dependency_graph", candidate)
+                if spec and spec.loader:
+                    mod = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(mod)
+                    DependencyGraph = mod.DependencyGraph  # noqa: N806
+                    SubtaskNode = mod.SubtaskNode  # noqa: N806
+                    loaded = True
+                    break
+        if not loaded:
+            return {
+                "status": "error",
+                "message": "Cannot import dependency_graph module",
+            }
+
+    if blueprint_path is None:
+        blueprint_path = f".map/{branch}/blueprint.json"
+
+    bp_file = Path(blueprint_path)
+    if not bp_file.exists():
+        return {
+            "status": "error",
+            "message": f"Blueprint not found: {blueprint_path}",
+        }
+
+    try:
+        blueprint = json.loads(bp_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        return {"status": "error", "message": f"Invalid blueprint: {exc}"}
+
+    subtasks = blueprint.get("subtasks", [])
+    if not subtasks:
+        return {"status": "error", "message": "No subtasks in blueprint"}
+
+    # Build graph
+    graph = DependencyGraph()
+    affected_files_map: Dict[str, set] = {}
+    for st in subtasks:
+        st_id = st.get("id", "")
+        deps = st.get("dependencies", [])
+        graph.add_node(SubtaskNode(id=st_id, dependencies=deps))
+        files = st.get("affected_files", [])
+        affected_files_map[st_id] = set(files) if files else set()
+
+    # Compute waves
+    raw_waves = graph.compute_waves()
+    if raw_waves is None:
+        return {"status": "error", "message": "Cycle detected in dependency graph"}
+
+    # Split each wave by file conflicts
+    final_waves: List[List[str]] = []
+    for wave in raw_waves:
+        sub_waves = graph.split_wave_by_file_conflicts(wave, affected_files_map)
+        final_waves.extend(sub_waves)
+
+    # Store in state
+    state_file = Path(f".map/{branch}/step_state.json")
+    state = StepState.load(state_file)
+    state.execution_waves = final_waves
+    state.current_wave_index = 0
+    state.subtask_phases = {}
+    state.subtask_retry_counts = {}
+    state.save(state_file)
+
+    return {
+        "status": "success",
+        "execution_waves": final_waves,
+        "wave_count": len(final_waves),
+    }
+
+
+def get_wave_step(branch: str) -> Dict:
+    """Get the current wave's subtask batch and per-subtask phases.
+
+    Returns JSON describing what to execute next in wave-based mode.
+
+    Args:
+        branch: Git branch name (sanitized)
+
+    Returns:
+        Dict with mode (parallel|sequential), wave_index, subtasks, is_complete
+    """
+    state_file = Path(f".map/{branch}/step_state.json")
+    state = StepState.load(state_file)
+
+    if not state.execution_waves:
+        return {
+            "mode": "sequential",
+            "wave_index": 0,
+            "subtasks": [],
+            "is_complete": True,
+            "message": "No execution waves configured. Use sequential mode.",
+        }
+
+    if state.current_wave_index >= len(state.execution_waves):
+        return {
+            "mode": "sequential",
+            "wave_index": state.current_wave_index,
+            "subtasks": [],
+            "is_complete": True,
+        }
+
+    wave = state.execution_waves[state.current_wave_index]
+    mode = "sequential" if len(wave) == 1 else "parallel"
+
+    # Build subtask info with current phases
+    subtask_infos = []
+    for st_id in wave:
+        phase = state.subtask_phases.get(st_id, "2.3")
+        phase_name = STEP_PHASES.get(phase, "ACTOR")
+        subtask_infos.append({
+            "subtask_id": st_id,
+            "phase": phase_name,
+            "step_id": phase,
+        })
+
+    return {
+        "mode": mode,
+        "wave_index": state.current_wave_index,
+        "wave_total": len(state.execution_waves),
+        "subtasks": subtask_infos,
+        "is_complete": False,
+    }
+
+
+def validate_wave_step(subtask_id: str, step_id: str, branch: str) -> Dict:
+    """Validate one subtask's step within a wave and advance its phase.
+
+    Args:
+        subtask_id: Subtask ID (e.g., "ST-002")
+        step_id: Step ID completed (e.g., "2.3")
+        branch: Git branch name (sanitized)
+
+    Returns:
+        Dict with validation result and next phase for this subtask
+    """
+    state_file = Path(f".map/{branch}/step_state.json")
+    state = StepState.load(state_file)
+
+    # Evidence-gated validation for actor/monitor steps
+    if step_id in EVIDENCE_REQUIRED:
+        phase_name, _always_required = EVIDENCE_REQUIRED[step_id]
+        evidence_dir = Path(f".map/{branch}/evidence")
+        if evidence_dir.is_dir():
+            evidence_file = evidence_dir / f"{phase_name}_{subtask_id}.json"
+            if not evidence_file.exists():
+                return {
+                    "valid": False,
+                    "message": (
+                        f"Evidence file missing: {evidence_file}. "
+                        f"The {phase_name} agent must write this file."
+                    ),
+                }
+
+    # Determine next phase for this subtask
+    subtask_step_order = [s for s in STEP_ORDER if s.startswith("2.")]
+    current_idx = subtask_step_order.index(step_id) if step_id in subtask_step_order else -1
+
+    if current_idx >= 0 and current_idx + 1 < len(subtask_step_order):
+        next_phase = subtask_step_order[current_idx + 1]
+    else:
+        next_phase = "COMPLETE"
+
+    state.subtask_phases[subtask_id] = next_phase
+    state.save(state_file)
+
+    return {
+        "valid": True,
+        "message": f"Step {step_id} for {subtask_id} completed",
+        "next_phase": next_phase,
+        "subtask_id": subtask_id,
+    }
+
+
+def advance_wave(branch: str) -> Dict:
+    """Advance to the next execution wave.
+
+    Called when all subtasks in current wave have passed VERIFY_ADHERENCE.
+
+    Args:
+        branch: Git branch name (sanitized)
+
+    Returns:
+        Dict with status and new wave index
+    """
+    state_file = Path(f".map/{branch}/step_state.json")
+    state = StepState.load(state_file)
+
+    if not state.execution_waves:
+        return {"status": "error", "message": "No execution waves configured"}
+
+    state.current_wave_index += 1
+    # Reset per-subtask phases for the new wave
+    state.subtask_phases = {}
+    state.subtask_retry_counts = {}
+
+    is_complete = state.current_wave_index >= len(state.execution_waves)
+
+    # Update subtask_index to track overall progress
+    if not is_complete:
+        next_wave = state.execution_waves[state.current_wave_index]
+        if next_wave:
+            state.current_subtask_id = next_wave[0]
+            # Find the index in subtask_sequence
+            if state.current_subtask_id in state.subtask_sequence:
+                state.subtask_index = state.subtask_sequence.index(
+                    state.current_subtask_id
+                )
+
+    state.save(state_file)
+
+    return {
+        "status": "success",
+        "current_wave_index": state.current_wave_index,
+        "is_complete": is_complete,
+        "wave_total": len(state.execution_waves),
+    }
 
 
 SKIPPABLE_STEPS = {"2.2", "2.6", "2.11"}
@@ -801,6 +1059,10 @@ def main():
             "set_subtasks",
             "resume_from_plan",
             "check_circuit_breaker",
+            "set_waves",
+            "get_wave_step",
+            "validate_wave_step",
+            "advance_wave",
         ],
         help="Command to execute",
     )
@@ -811,6 +1073,9 @@ def main():
         "extra_args", nargs="*", help="Additional arguments (e.g., more subtask IDs)"
     )
     parser.add_argument("--branch", help="Git branch (auto-detected if omitted)")
+    parser.add_argument(
+        "--blueprint", help="Path to blueprint JSON (for set_waves command)"
+    )
 
     args = parser.parse_args()
 
@@ -891,6 +1156,36 @@ def main():
 
         elif args.command == "check_circuit_breaker":
             result = check_circuit_breaker(branch)
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "set_waves":
+            blueprint_path = args.blueprint or args.task_or_step  # --blueprint or positional
+            result = set_waves(branch, blueprint_path)
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "get_wave_step":
+            result = get_wave_step(branch)
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "validate_wave_step":
+            if not args.task_or_step:
+                print(
+                    json.dumps({"error": "subtask_id required for validate_wave_step"}),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            extra = args.extra_args or []
+            if not extra:
+                print(
+                    json.dumps({"error": "step_id required as second argument"}),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            result = validate_wave_step(args.task_or_step, extra[0], branch)
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "advance_wave":
+            result = advance_wave(branch)
             print(json.dumps(result, indent=2))
 
     except Exception as e:

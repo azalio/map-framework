@@ -327,6 +327,124 @@ class DependencyGraph:
 
         return result
 
+    def compute_waves(self) -> Optional[List[List[str]]]:
+        """
+        Compute execution waves from the dependency DAG using Kahn's algorithm.
+
+        Each wave contains subtasks whose dependencies are all satisfied by
+        prior waves. Within a wave, subtasks can execute in parallel.
+
+        Returns:
+            List of waves (each wave is a list of subtask IDs), or None if
+            cycle detected. Empty graph returns [].
+
+        Performance: O(V+E) where V = nodes, E = edges
+
+        Example:
+            >>> graph = DependencyGraph()
+            >>> graph.add_node(SubtaskNode(id="ST-001", dependencies=[]))
+            >>> graph.add_node(SubtaskNode(id="ST-002", dependencies=["ST-001"]))
+            >>> graph.add_node(SubtaskNode(id="ST-003", dependencies=["ST-001"]))
+            >>> graph.add_node(SubtaskNode(id="ST-004", dependencies=["ST-002", "ST-003"]))
+            >>> graph.compute_waves()
+            [['ST-001'], ['ST-002', 'ST-003'], ['ST-004']]
+        """
+        if not self.nodes:
+            return []
+
+        # Compute in-degree for each node (only count edges to nodes in graph)
+        in_degree: Dict[str, int] = {nid: 0 for nid in self.nodes}
+        for nid, node in self.nodes.items():
+            for dep_id in node.dependencies:
+                if dep_id in self.nodes:
+                    in_degree[nid] += 1
+
+        # Collect initial zero-in-degree nodes as wave 0
+        waves: List[List[str]] = []
+        current_wave = sorted(
+            [nid for nid, deg in in_degree.items() if deg == 0]
+        )
+
+        processed = 0
+        while current_wave:
+            waves.append(current_wave)
+            processed += len(current_wave)
+            next_wave_set: Set[str] = set()
+
+            for nid in current_wave:
+                # Decrement in-degree for all dependents
+                for dependent_id in self.get_dependents(nid):
+                    in_degree[dependent_id] -= 1
+                    if in_degree[dependent_id] == 0:
+                        next_wave_set.add(dependent_id)
+
+            current_wave = sorted(next_wave_set)
+
+        # If not all nodes processed, there's a cycle
+        if processed != len(self.nodes):
+            return None
+
+        return waves
+
+    def split_wave_by_file_conflicts(
+        self, wave: List[str], affected_files_map: Dict[str, Set[str]]
+    ) -> List[List[str]]:
+        """
+        Split a single wave into sub-waves where no two subtasks share files.
+
+        Uses greedy coloring: each subtask is placed in the first sub-wave
+        that has no file overlap. Subtasks with empty/unknown affected_files
+        are treated as conflicting with all others (placed alone).
+
+        Args:
+            wave: List of subtask IDs in one wave
+            affected_files_map: Dict mapping subtask_id -> set of affected file paths
+
+        Returns:
+            List of sub-waves where no two subtasks in the same sub-wave share files
+
+        Example:
+            >>> graph = DependencyGraph()
+            >>> wave = ["ST-002", "ST-003", "ST-004"]
+            >>> files = {"ST-002": {"a.py"}, "ST-003": {"b.py"}, "ST-004": {"a.py"}}
+            >>> graph.split_wave_by_file_conflicts(wave, files)
+            [['ST-002', 'ST-003'], ['ST-004']]
+        """
+        if len(wave) <= 1:
+            return [wave] if wave else []
+
+        sub_waves: List[List[str]] = []
+        sub_wave_files: List[Set[str]] = []
+
+        for subtask_id in wave:
+            files = affected_files_map.get(subtask_id, set())
+
+            # Empty/unknown files = conflict with everything, place alone
+            if not files:
+                sub_waves.append([subtask_id])
+                sub_wave_files.append(set())  # placeholder
+                continue
+
+            placed = False
+            for i, sw_files in enumerate(sub_wave_files):
+                # Skip sub-waves that contain an "unknown files" subtask
+                # (those have empty sw_files but exist in sub_waves)
+                if not sw_files and sub_waves[i]:
+                    # This sub-wave has a subtask with unknown files
+                    continue
+                # Check for file overlap
+                if not files & sw_files:
+                    sub_waves[i].append(subtask_id)
+                    sub_wave_files[i] |= files
+                    placed = True
+                    break
+
+            if not placed:
+                sub_waves.append([subtask_id])
+                sub_wave_files.append(set(files))
+
+        return sub_waves
+
     def clear(self) -> None:
         """
         Remove all nodes from graph.

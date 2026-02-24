@@ -150,13 +150,24 @@ def load_workflow_state(branch: str) -> Optional[Dict]:
 
 def check_workflow_compliance(state: Dict) -> tuple[bool, Optional[str]]:
     """
-    Check if current subtask has completed required workflow steps.
+    Check if current subtask(s) have completed required workflow steps.
+
+    Supports both single-subtask mode (current_subtask) and parallel wave mode
+    (active_subtasks list). In parallel mode, allows edits if ANY active
+    subtask has completed the required steps.
 
     Returns:
         (is_compliant, error_message)
     """
-    current_subtask = state.get("current_subtask")
-    if not current_subtask:
+    # Try active_subtasks first (parallel wave mode)
+    active = state.get("active_subtasks", [])
+    if not active:
+        # Backward compat: single current_subtask
+        current = state.get("current_subtask")
+        if current:
+            active = [current]
+
+    if not active:
         current_state = state.get("current_state") or "UNKNOWN"
         return False, (
             "⛔ Workflow Enforcement: No current_subtask defined in workflow_state.json\n\n"
@@ -169,26 +180,33 @@ def check_workflow_compliance(state: Dict) -> tuple[bool, Optional[str]]:
             "  - Or delete .map/<branch>/workflow_state.json to disable enforcement"
         )
 
-    completed = state.get("completed_steps", {}).get(current_subtask, [])
+    # Allow if ANY active subtask has completed required steps
+    for subtask_id in active:
+        completed = state.get("completed_steps", {}).get(subtask_id, [])
+        if all(step in completed for step in REQUIRED_STEPS):
+            return True, None
 
-    missing_steps = [step for step in REQUIRED_STEPS if step not in completed]
+    # Block with appropriate message
+    missing_details = []
+    for subtask_id in active:
+        completed = state.get("completed_steps", {}).get(subtask_id, [])
+        missing = [step for step in REQUIRED_STEPS if step not in completed]
+        if missing:
+            missing_details.append(f"{subtask_id}: missing {', '.join(missing)}")
 
-    if missing_steps:
-        pending = state.get("pending_steps", {}).get(current_subtask, [])
-        return False, (
-            f"⛔ Workflow Enforcement: Cannot edit code for {current_subtask}\n\n"
-            f"Missing required steps: {', '.join(missing_steps)}\n"
-            f"Completed: {', '.join(completed) if completed else 'none'}\n"
-            f"Pending: {', '.join(pending) if pending else 'none'}\n\n"
-            f"Required workflow:\n"
-            f"  1. Call Task(subagent_type='actor') to generate implementation\n"
-            f"  2. Call Task(subagent_type='monitor') to validate\n"
-            f"  3. Only then can you apply changes with Edit/Write\n\n"
-            f"To fix: Complete missing steps before editing code.\n"
-            f"Or update workflow_state.json if steps were completed."
-        )
-
-    return True, None
+    return False, (
+        f"⛔ Workflow Enforcement: Cannot edit code for active subtasks\n\n"
+        f"Active subtasks: {', '.join(active)}\n"
+        f"Missing steps:\n"
+        + "\n".join(f"  - {d}" for d in missing_details)
+        + "\n\n"
+        "Required workflow:\n"
+        "  1. Call Task(subagent_type='actor') to generate implementation\n"
+        "  2. Call Task(subagent_type='monitor') to validate\n"
+        "  3. Only then can you apply changes with Edit/Write\n\n"
+        "To fix: Complete missing steps before editing code.\n"
+        "Or update workflow_state.json if steps were completed."
+    )
 
 
 def main():

@@ -203,5 +203,153 @@ class TestEdgeCases:
         assert result.index("ST-002") < result.index("ST-003")
 
 
+class TestComputeWaves:
+    """Tests for compute_waves() - topological wave computation."""
+
+    def test_linear_chain_produces_single_subtask_waves(self):
+        """Linear chain: each subtask in its own wave."""
+        graph = DependencyGraph()
+        graph.add_node(SubtaskNode(id="ST-001", dependencies=[]))
+        graph.add_node(SubtaskNode(id="ST-002", dependencies=["ST-001"]))
+        graph.add_node(SubtaskNode(id="ST-003", dependencies=["ST-002"]))
+
+        waves = graph.compute_waves()
+        assert waves == [["ST-001"], ["ST-002"], ["ST-003"]]
+
+    def test_fan_out_produces_parallel_wave(self):
+        """Fan-out: root node then all dependents in one wave."""
+        graph = DependencyGraph()
+        graph.add_node(SubtaskNode(id="ST-001", dependencies=[]))
+        graph.add_node(SubtaskNode(id="ST-002", dependencies=["ST-001"]))
+        graph.add_node(SubtaskNode(id="ST-003", dependencies=["ST-001"]))
+        graph.add_node(SubtaskNode(id="ST-004", dependencies=["ST-001"]))
+
+        waves = graph.compute_waves()
+        assert waves == [["ST-001"], ["ST-002", "ST-003", "ST-004"]]
+
+    def test_diamond_produces_three_waves(self):
+        """Diamond DAG: root, two parallel, then merge node."""
+        graph = DependencyGraph()
+        graph.add_node(SubtaskNode(id="ST-001", dependencies=[]))
+        graph.add_node(SubtaskNode(id="ST-002", dependencies=["ST-001"]))
+        graph.add_node(SubtaskNode(id="ST-003", dependencies=["ST-001"]))
+        graph.add_node(SubtaskNode(id="ST-004", dependencies=["ST-002", "ST-003"]))
+
+        waves = graph.compute_waves()
+        assert waves == [["ST-001"], ["ST-002", "ST-003"], ["ST-004"]]
+
+    def test_cycle_returns_none(self):
+        """Cycle in graph should return None."""
+        graph = DependencyGraph()
+        graph.add_node(SubtaskNode(id="ST-001", dependencies=["ST-002"]))
+        graph.add_node(SubtaskNode(id="ST-002", dependencies=["ST-001"]))
+
+        assert graph.compute_waves() is None
+
+    def test_empty_graph_returns_empty_list(self):
+        """Empty graph returns empty list."""
+        graph = DependencyGraph()
+        assert graph.compute_waves() == []
+
+    def test_single_node_returns_single_wave(self):
+        """Single node returns one wave with one element."""
+        graph = DependencyGraph()
+        graph.add_node(SubtaskNode(id="ST-001", dependencies=[]))
+
+        assert graph.compute_waves() == [["ST-001"]]
+
+    def test_multiple_roots_in_first_wave(self):
+        """Multiple independent roots all appear in wave 0."""
+        graph = DependencyGraph()
+        graph.add_node(SubtaskNode(id="ST-001", dependencies=[]))
+        graph.add_node(SubtaskNode(id="ST-002", dependencies=[]))
+        graph.add_node(SubtaskNode(id="ST-003", dependencies=["ST-001", "ST-002"]))
+
+        waves = graph.compute_waves()
+        assert waves == [["ST-001", "ST-002"], ["ST-003"]]
+
+    def test_dangling_dependency_treated_as_root(self):
+        """Node with dependency not in graph is treated as having no deps."""
+        graph = DependencyGraph()
+        graph.add_node(SubtaskNode(id="ST-001", dependencies=["ST-MISSING"]))
+        graph.add_node(SubtaskNode(id="ST-002", dependencies=["ST-001"]))
+
+        waves = graph.compute_waves()
+        assert waves == [["ST-001"], ["ST-002"]]
+
+
+class TestSplitWaveByFileConflicts:
+    """Tests for split_wave_by_file_conflicts()."""
+
+    def test_no_overlap_single_sub_wave(self):
+        """No file overlap: all subtasks in one sub-wave."""
+        graph = DependencyGraph()
+        wave = ["ST-002", "ST-003", "ST-004"]
+        files = {
+            "ST-002": {"a.py"},
+            "ST-003": {"b.py"},
+            "ST-004": {"c.py"},
+        }
+        result = graph.split_wave_by_file_conflicts(wave, files)
+        assert result == [["ST-002", "ST-003", "ST-004"]]
+
+    def test_partial_overlap_splits_into_sub_waves(self):
+        """Partial overlap: conflicting subtasks in separate sub-waves."""
+        graph = DependencyGraph()
+        wave = ["ST-002", "ST-003", "ST-004"]
+        files = {
+            "ST-002": {"a.py"},
+            "ST-003": {"b.py"},
+            "ST-004": {"a.py"},
+        }
+        result = graph.split_wave_by_file_conflicts(wave, files)
+        assert result == [["ST-002", "ST-003"], ["ST-004"]]
+
+    def test_all_overlap_each_in_own_sub_wave(self):
+        """All subtasks share files: each in its own sub-wave."""
+        graph = DependencyGraph()
+        wave = ["ST-001", "ST-002", "ST-003"]
+        files = {
+            "ST-001": {"shared.py"},
+            "ST-002": {"shared.py"},
+            "ST-003": {"shared.py"},
+        }
+        result = graph.split_wave_by_file_conflicts(wave, files)
+        assert result == [["ST-001"], ["ST-002"], ["ST-003"]]
+
+    def test_empty_affected_files_placed_alone(self):
+        """Subtasks with empty affected_files are placed in their own sub-wave."""
+        graph = DependencyGraph()
+        wave = ["ST-001", "ST-002", "ST-003"]
+        files = {
+            "ST-001": {"a.py"},
+            "ST-002": set(),  # empty = unknown
+            "ST-003": {"b.py"},
+        }
+        result = graph.split_wave_by_file_conflicts(wave, files)
+        # ST-002 should be alone, ST-001 and ST-003 can be together
+        assert ["ST-002"] in result
+        assert ["ST-001", "ST-003"] in result
+
+    def test_missing_from_map_treated_as_empty(self):
+        """Subtask not in affected_files_map treated as empty (placed alone)."""
+        graph = DependencyGraph()
+        wave = ["ST-001", "ST-002"]
+        files = {"ST-001": {"a.py"}}  # ST-002 missing
+        result = graph.split_wave_by_file_conflicts(wave, files)
+        assert ["ST-002"] in result
+
+    def test_single_subtask_wave(self):
+        """Single subtask wave returns as-is."""
+        graph = DependencyGraph()
+        result = graph.split_wave_by_file_conflicts(["ST-001"], {"ST-001": {"a.py"}})
+        assert result == [["ST-001"]]
+
+    def test_empty_wave(self):
+        """Empty wave returns empty list."""
+        graph = DependencyGraph()
+        assert graph.split_wave_by_file_conflicts([], {}) == []
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
