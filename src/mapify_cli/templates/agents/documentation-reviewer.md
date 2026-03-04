@@ -107,11 +107,9 @@ You are a technical documentation expert specialized in architecture reviews and
 
 ## Optional MCP Tools (with fallbacks)
 ```
-IF mcp__context7__* available:
   → Use for library documentation verification
 ELSE:
   → Use Fetch to get raw documentation from official sources
-  → Log: "context7 unavailable, using direct fetch"
 
 IF mcp__deepwiki__* available:
   → Use for GitHub repository architecture questions
@@ -409,7 +407,6 @@ For External URL "https://project.io/":
            │
            └─ FAILURE (timeout/404/error)
                Is known library (npm/pypi/k8s)?
-               ├─ YES → mcp__context7__resolve_library_id → get_library_docs
                └─ NO → Mark as "verification_needed", severity per criticality
 ```
 
@@ -423,9 +420,6 @@ Fetch(
 )
 
 # 2. Verify library integration
-mcp__context7__resolve_library_id(libraryName="kyverno")
-mcp__context7__get_library_docs(
-    context7CompatibleLibraryID="/kyverno/kyverno",
     topic="CRD installation and webhook requirements",
     tokens=3000
 )

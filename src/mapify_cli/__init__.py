@@ -83,16 +83,13 @@ ssl_context = create_ssl_context()
 # Constants
 MCP_SERVER_CHOICES = {
     "all": "All available MCP servers",
-    "essential": "Essential (claude-reviewer, sequential-thinking)",
-    "docs": "Documentation (context7, deepwiki)",
+    "essential": "Essential (sequential-thinking, deepwiki)",
     "custom": "Select individually",
     "none": "Skip MCP setup",
 }
 
 INDIVIDUAL_MCP_SERVERS = {
-    "claude-reviewer": "Professional code review",
     "sequential-thinking": "Chain-of-thought reasoning",
-    "context7": "Library documentation",
     "deepwiki": "GitHub repository intelligence",
 }
 
@@ -551,7 +548,7 @@ def create_agent_files(project_path: Path, mcp_servers: List[str]) -> None:
 def create_task_decomposer_content(mcp_servers: List[str]) -> str:
     """Create task-decomposer agent content"""
     mcp_section = ""
-    if any(s in mcp_servers for s in ["sequential-thinking", "deepwiki", "context7"]):
+    if any(s in mcp_servers for s in ["sequential-thinking", "deepwiki"]):
         mcp_section = """
 ## MCP Integration
 
@@ -566,11 +563,6 @@ def create_task_decomposer_content(mcp_servers: List[str]) -> str:
             mcp_section += """
 2. **mcp__deepwiki__ask_question** - Get insights from GitHub repositories
    - Ask: "How does [repo] implement [feature]?"
-"""
-        if "context7" in mcp_servers:
-            mcp_section += """
-3. **mcp__context7__get-library-docs** - Get up-to-date library documentation
-   - First use resolve-library-id to find the library
 """
 
     return f"""---
@@ -600,20 +592,13 @@ Return a valid JSON document with subtasks, dependencies, and acceptance criteri
 def create_actor_content(mcp_servers: List[str]) -> str:
     """Create actor agent content"""
     mcp_section = ""
-    if any(s in mcp_servers for s in ["context7", "deepwiki"]):
+    if "deepwiki" in mcp_servers:
         mcp_section = """
 # MCP INTEGRATION
 
 **ALWAYS use these MCP tools:**
-"""
-        if "context7" in mcp_servers:
-            mcp_section += """
-1. **mcp__context7__get-library-docs** - Get current library documentation
-   - Essential when using external libraries/frameworks
-"""
-        if "deepwiki" in mcp_servers:
-            mcp_section += """
-2. **mcp__deepwiki__read_wiki_contents** - Study implementation patterns
+
+1. **mcp__deepwiki__read_wiki_contents** - Study implementation patterns
    - Learn from production code examples
 """
 
@@ -683,18 +668,7 @@ Provide implementation with approach, code changes, trade-offs, and testing cons
 
 def create_monitor_content(mcp_servers: List[str]) -> str:
     """Create monitor agent content"""
-    mcp_section = ""
-    if "claude-reviewer" in mcp_servers:
-        mcp_section = """
-# MCP INTEGRATION
-
-**ALWAYS use these MCP tools for comprehensive review:**
-
-1. **mcp__claude-reviewer__request_review** - Get professional AI code review
-   - Use FIRST to get baseline review, then add your analysis
-"""
-
-    return f"""---
+    return """---
 name: monitor
 description: Reviews code for correctness, standards, security, and testability (MAP)
 tools: Read, Grep, Bash, Glob
@@ -704,7 +678,7 @@ model: sonnet
 # IDENTITY
 
 You are a meticulous code reviewer and security expert. Your mission is to catch bugs, vulnerabilities, and violations before code reaches production.
-{mcp_section}
+
 # REVIEW CHECKLIST
 
 Work through: Correctness, Security, Code Quality, Performance, Testability, Maintainability
@@ -751,21 +725,14 @@ Return strictly valid JSON with validation results and specific issues.
 def create_predictor_content(mcp_servers: List[str]) -> str:
     """Create predictor agent content"""
     mcp_section = ""
-    if any(s in mcp_servers for s in ["deepwiki", "context7"]):
+    if "deepwiki" in mcp_servers:
         mcp_section = """
 ## MCP Integration
 
 **ALWAYS use these MCP tools:**
-"""
-        if "deepwiki" in mcp_servers:
-            mcp_section += """
+
 1. **mcp__deepwiki__ask_question** - Check how repos handle similar changes
    - Ask: "What breaks when changing [component]?"
-"""
-        if "context7" in mcp_servers:
-            mcp_section += """
-2. **mcp__context7__get-library-docs** - Check library compatibility
-   - Verify API changes against current documentation
 """
 
     return f"""---
@@ -860,21 +827,13 @@ Return JSON with:
 def create_documentation_reviewer_content(mcp_servers: List[str]) -> str:
     """Create documentation-reviewer agent content"""
     mcp_section = ""
-    if any(s in mcp_servers for s in ["context7", "deepwiki"]):
+    if "deepwiki" in mcp_servers:
         mcp_section = """
 # MCP INTEGRATION
 
 **ALWAYS use these tools for documentation review:**
-"""
-        if "context7" in mcp_servers:
-            mcp_section += """
-1. **mcp__context7__get-library-docs** - Verify library requirements
-   - Check official docs for installation requirements
-   - Validate version compatibility
-"""
-        if "deepwiki" in mcp_servers:
-            mcp_section += """
-2. **mcp__deepwiki__ask_question** - Compare with similar projects
+
+1. **mcp__deepwiki__ask_question** - Compare with similar projects
    - Ask: "How do other projects handle [integration]?"
    - Learn from successful implementations
 """
@@ -1336,15 +1295,6 @@ def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
 
     # Add server configurations
     server_configs = {
-        "claude-reviewer": {
-            "enabled": True,
-            "description": "Professional AI code review",
-            "config": {
-                "auto_review": True,
-                "focus_areas": ["security", "performance", "testing"],
-                "severity_threshold": "medium",
-            },
-        },
         "sequential-thinking": {
             "enabled": True,
             "description": "Chain-of-thought reasoning",
@@ -1353,11 +1303,6 @@ def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
                 "branch_exploration": True,
                 "hypothesis_verification": True,
             },
-        },
-        "context7": {
-            "enabled": True,
-            "description": "Up-to-date library documentation",
-            "config": {"tokens": 5000, "auto_resolve": True, "cache_duration": 3600},
         },
         "deepwiki": {
             "enabled": True,
@@ -1382,15 +1327,6 @@ def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
         ]:
             if agent in config["agent_mcp_mappings"]:
                 config["agent_mcp_mappings"][agent].append("sequential-thinking")
-
-    if "claude-reviewer" in mcp_servers:
-        for agent in ["monitor", "evaluator", "final-verifier"]:
-            if agent in config["agent_mcp_mappings"]:
-                config["agent_mcp_mappings"][agent].append("claude-reviewer")
-
-    if "context7" in mcp_servers:
-        for agent in config["agent_mcp_mappings"]:
-            config["agent_mcp_mappings"][agent].append("context7")
 
     if "deepwiki" in mcp_servers:
         for agent in config["agent_mcp_mappings"]:
@@ -1420,10 +1356,6 @@ def build_standard_mcp_servers() -> Dict[str, Dict[str, Any]]:
         "sequential-thinking": {
             "command": "npx",
             "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
-        },
-        "context7": {
-            "type": "http",
-            "url": "https://mcp.context7.com/mcp",
         },
         "deepwiki": {
             "type": "http",
@@ -1537,7 +1469,7 @@ def create_or_merge_project_mcp_json(
 
     Args:
         project_path: Project root directory
-        mcp_servers: List of MCP server names to configure (e.g., ["context7", "deepwiki"])
+        mcp_servers: List of MCP server names to configure (e.g., ["sequential-thinking", "deepwiki"])
 
     Behavior:
         - If mcp_servers is empty: No file created/modified (early return)
@@ -1890,7 +1822,7 @@ def init(
     mcp: str = typer.Option(
         "all",
         "--mcp",
-        help="MCP server installation (default: all). Options: all, essential, docs, none, or comma-separated list (e.g. context7,deepwiki)",
+        help="MCP server installation (default: all). Options: all, essential, none, or comma-separated list (e.g. sequential-thinking,deepwiki)",
     ),
     no_git: bool = typer.Option(
         False, "--no-git", help="Skip git repository initialization"
@@ -1918,7 +1850,7 @@ def init(
         mapify init my-project              # Installs all MCP servers
         mapify init my-project --mcp none   # Skip MCP installation
         mapify init my-project --mcp essential
-        mapify init my-project --mcp "context7,deepwiki"
+        mapify init my-project --mcp "sequential-thinking,deepwiki"
         mapify init .
         mapify init . --force  # Force init in non-empty current directory
         mapify init --debug  # Enable workflow logging
@@ -2016,9 +1948,7 @@ def init(
     if mcp == "all":
         selected_mcp_servers = list(INDIVIDUAL_MCP_SERVERS.keys())
     elif mcp == "essential":
-        selected_mcp_servers = ["claude-reviewer", "sequential-thinking"]
-    elif mcp == "docs":
-        selected_mcp_servers = ["context7", "deepwiki"]
+        selected_mcp_servers = ["sequential-thinking", "deepwiki"]
     elif mcp == "none":
         selected_mcp_servers = []
     else:

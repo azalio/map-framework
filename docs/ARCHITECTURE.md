@@ -833,13 +833,13 @@ If you modified `.claude/commands/map-efficient.md`, you must manually integrate
 5. **Used Patterns** (pattern IDs applied)
 
 **Key Behaviors:**
-- Fetches current docs for external libraries (via context7)
+- Fetches current docs for external libraries (via deepwiki)
 - Explicit error handling required (no silent failures)
 - Complete code, not sketches or placeholders
 - Security-first approach for auth/data access
 
 **MCP Tool Usage:**
-- `mcp__context7__get-library-docs`: Get current library documentation
+- `mcp__deepwiki__read_wiki_contents`: Get current library/project documentation
 
 ### 3. Monitor
 
@@ -871,7 +871,6 @@ If you modified `.claude/commands/map-efficient.md`, you must manually integrate
 - ✅ Dependency justification (if new deps added)
 
 **Key Behaviors:**
-- Uses `claude-reviewer` MCP for professional code review
 - Severity classification: critical/major/minor
 - Specific, actionable feedback
 - Checks against project coding standards
@@ -1197,9 +1196,7 @@ MAP uses MCP (Model Context Protocol) servers for enhanced capabilities beyond b
 
 | MCP Server | Purpose | Required For | Performance Notes |
 |------------|---------|--------------|-------------------|
-| **claude-reviewer** | Professional code review | Monitor | Medium latency (~2-5s) |
 | **sequential-thinking** | Chain-of-thought reasoning | Complex problem solving | Medium latency (~1-3s) |
-| **context7** | Up-to-date library documentation | Actor (external libs) | Low latency (<500ms) |
 | **deepwiki** | GitHub repository analysis | Research phase | Medium latency (~3-7s) |
 
 ### Configuration
@@ -1213,12 +1210,13 @@ MCP servers are configured differently depending on the usage context:
 ```json
 {
   "mcp_servers": {
-    "claude-reviewer": {
+    "sequential-thinking": {
       "enabled": true,
-      "description": "Professional code review with security analysis",
-      "config": {
-        "focus_areas": ["security", "performance", "maintainability"]
-      }
+      "description": "Chain-of-thought reasoning for complex problems"
+    },
+    "deepwiki": {
+      "enabled": true,
+      "description": "GitHub repository analysis and documentation"
     }
   }
 }
@@ -1226,18 +1224,18 @@ MCP servers are configured differently depending on the usage context:
 
 ### MCP Tool Usage Patterns
 
-#### Pattern 1: Current Documentation (Actor)
+#### Pattern 1: Documentation Lookup (Actor)
 
 ```markdown
-**WHEN using external libraries:**
+**WHEN using external libraries or researching projects:**
 
-1. Resolve library ID:
-   - Tool: mcp__context7__resolve-library-id
-   - Input: Library name (e.g., "Flask", "Next.js")
+1. Read wiki structure:
+   - Tool: mcp__deepwiki__read_wiki_structure
+   - Input: Repository owner/name (e.g., "pallets/flask")
 
-2. Fetch current docs:
-   - Tool: mcp__context7__get-library-docs
-   - Parameters: library_id, topic, tokens (default: 5000)
+2. Read wiki contents:
+   - Tool: mcp__deepwiki__read_wiki_contents
+   - Parameters: repo_name, page path
 
 3. Use docs for:
    - API signature verification
@@ -1245,61 +1243,12 @@ MCP servers are configured differently depending on the usage context:
    - Deprecation warnings
 ```
 
-#### Pattern 2: Professional Review (Monitor)
-
-```markdown
-**AFTER Actor generates code:**
-
-1. Request code review:
-   - Tool: claude-reviewer__request_review
-   - Parameters: summary, focus_areas, test_command
-
-2. Parse review output:
-   - Critical issues → BLOCK
-   - Major issues → FEEDBACK to Actor
-   - Minor issues → SUGGESTIONS
-
-3. Iterate until approved:
-   - Max 3-5 iterations
-   - Track iteration count in plan
-```
-
-### Configuration Options
-
-#### Context7 Configuration
-
-```json
-{
-  "context7": {
-    "config": {
-      "default_tokens": 5000,          // Default doc size per request
-      "cache_duration": 3600           // Cache docs for 1 hour
-    }
-  }
-}
-```
-
-#### Claude-Reviewer Configuration
-
-```json
-{
-  "claude-reviewer": {
-    "config": {
-      "focus_areas": ["security", "performance", "maintainability"],
-      "auto_mark_complete": false      // Require manual completion
-    }
-  }
-}
-```
-
 ### MCP Server Availability
 
 **Commonly Available:**
-- claude-reviewer (code review)
 - sequential-thinking (reasoning)
 
 **May Require Installation:**
-- context7 (check Claude Code documentation)
 - deepwiki (check Claude Code documentation)
 
 **To verify availability:**
@@ -1311,9 +1260,8 @@ MCP servers are configured differently depending on the usage context:
 ### Performance Considerations
 
 **Latency Budget (per subtask):**
-- context7 docs: ~500ms per fetch (Actor: 1-2 fetches = ~1s)
-- claude-reviewer: ~2-5s per review (Monitor: 1 review)
-- Total overhead: ~2-7s per subtask
+- deepwiki docs: ~3-7s per fetch (Actor: 1-2 fetches)
+- Total overhead: ~3-7s per subtask
 
 **Optimization Strategies:**
 - Batch similar searches where possible
@@ -2167,7 +2115,7 @@ All failures are non-blocking - hook returns `{"continue": true}` and logs error
 
 **Phase 2** (Prioritized):
 1. **Checkpoints** (high impact) — Workflow resumption after interruption
-2. **MCP caching** (medium-high) — Latency reduction for context7
+2. **MCP caching** (medium-high) — Latency reduction for MCP servers
 3. **Keyword+semantic search** (medium) — Hybrid retrieval accuracy
 4. **Pattern variation** (low-medium) — Few-shot bias reduction
 

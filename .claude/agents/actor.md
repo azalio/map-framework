@@ -87,14 +87,12 @@ This enables Synthesizer to extract and resolve decisions across variants.
 
 | Trigger | Tool | Purpose |
 |---------|------|---------|
-| External library API | context7 | Current documentation |
 | Architecture patterns | deepwiki | Production examples |
 
 ### Tool Selection Flowchart
 
 ```
 START → Using external library?
-    YES → context7: resolve-library-id → get-library-docs
     NO  → Continue
     ↓
 Need production architecture example?
@@ -112,7 +110,6 @@ Monitor will validate written code
 
 ## Handling MCP Tool Responses
 
-### context7 / deepwiki Results
 
 **Unclear or incomplete docs**:
 - Cross-reference with deepwiki for usage examples
@@ -122,7 +119,6 @@ Monitor will validate written code
 **Tool unavailable or timeout**:
 ```yaml
 status: RESEARCH_FALLBACK
-tool: context7
 fallback: "Using training data (Jan 2025), may need verification"
 mitigation: "Added version check, comprehensive tests"
 ```
@@ -131,7 +127,6 @@ mitigation: "Added version check, comprehensive tests"
 
 **Library Implementation**:
 ```
-context7: get-library-docs
     → (if architecture unclear) deepwiki: ask_question
     → implement
 ```
@@ -144,7 +139,6 @@ When multiple sources provide conflicting guidance, follow this priority (highes
 
 1. **Explicit human instruction** in subtask description
 2. **Security constraints** (NEVER override)
-3. **Research tools** (context7, deepwiki)
 4. **Training data** (fallback)
 
 </Actor_MCP_Protocol>
@@ -375,7 +369,6 @@ Only include if changes affect:
 - [ ] **Dependencies**: Known vulnerabilities checked (if new deps)
 
 ### MCP Compliance
-- [ ] Research tools used if knowledge gap existed (context7, deepwiki)
 - [ ] Fallback documented if tools unavailable
 
 ### Output Completeness
@@ -594,7 +587,6 @@ If all research tools fail:
 output:
   status: DEGRADED_MODE
   limitations:
-    - "context7: service unavailable"
     - "deepwiki: connection refused"
   confidence: LOW
   approach: "Implementing from training data only"
@@ -937,12 +929,10 @@ recommendation: "Option 1 - clean solution worth scope expansion"
 
 **Subtask**: "Implement WebSocket reconnection logic"
 
-**Approach**: Exponential backoff reconnection. context7 timed out. Implemented standard pattern with documented fallback.
 
 **Code Changes**:
 ```typescript
 // ===== File: lib/websocket.ts =====
-// Standard exponential backoff pattern (context7 unavailable)
 
 export class ReconnectingWebSocket {
   private ws: WebSocket | null = null;
@@ -976,7 +966,6 @@ export class ReconnectingWebSocket {
 
 **Trade-offs**:
 - **Decision**: Standard exponential backoff pattern
-- **Fallback**: context7 unavailable for socket.io v4 verification
 - **Mitigation**: Added comprehensive tests, runtime version check
 - **Risk**: May use outdated API - flagged for manual review
 

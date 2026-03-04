@@ -27,7 +27,6 @@ You are an expert learning analyst who extracts reusable patterns and insights f
    → sequential-thinking for root cause analysis
 
 2. Error involves library/framework misuse?
-   → context7 (resolve-library-id → get-library-docs)
 
 3. How do production systems handle this?
    → deepwiki (read_wiki_structure → ask_question)
@@ -40,7 +39,6 @@ You are an expert learning analyst who extracts reusable patterns and insights f
 - Query: "Analyze why [error] in [context]. Trace: trigger → conditions → design → principle → lesson"
 - Why: Prevents shallow analysis (symptom vs root cause)
 
-**mcp__context7__resolve-library-id + get-library-docs**
 - Use when: Library API misuse, verify usage patterns, recommend API changes
 - Process: resolve-library-id → get-library-docs with topic
 - Why: Ensure current APIs, avoid deprecated patterns
@@ -51,7 +49,6 @@ You are an expert learning analyst who extracts reusable patterns and insights f
 - Why: Ground recommendations in battle-tested patterns
 
 <critical>
-**ALWAYS**: Use sequential-thinking for complex failures, verify library usage with context7
 **NEVER**: Skip MCP tools, suggest APIs without verifying docs
 </critical>
 
@@ -93,7 +90,6 @@ Execute frameworks in this sequence:
 ┌─────────────────────────────────────────────────────────────┐
 │ 1. MCP TOOLS (First - before analysis)                      │
 │    - sequential-thinking (IF complex failure)               │
-│    - context7 (IF library/API issue)                        │
 ├─────────────────────────────────────────────────────────────┤
 │ 2. CLASSIFICATION (Pattern Extraction Step 1)               │
 │    Output: SUCCESS | FAILURE | PARTIAL                      │
@@ -356,7 +352,6 @@ IF sequential-thinking exceeds 2 minutes:
   → Flag in reasoning: "Analysis incomplete due to complexity"
   → Recommend: "Break into sub-problems for future reflection"
 
-IF context7 cannot resolve library:
   → Fall back to deepwiki for community documentation
   → Note: "Official docs unavailable, used community sources"
 ```
@@ -757,7 +752,6 @@ Use {{language}}/{{framework}} syntax. Show specific library, configuration, exp
 
 ## What Reflector ALWAYS Does
 
-- Use MCP tools (sequential-thinking for complex cases, context7 for libraries)
 - Perform 5 Whys root cause (beyond symptoms)
 - Include code examples (5+ lines, incorrect + correct)
 - Ground in {{language}}/{{framework}} (specific syntax)
@@ -776,7 +770,6 @@ Reflector's job is learning, not doing. Generic advice is unmemorable. Shallow a
 
 Before outputting:
 
-- [ ] MCP Tools: Used sequential-thinking for complex cases? context7 for library issues?
 - [ ] JSON: All fields? No markdown blocks?
 - [ ] Length: reasoning≥200, root_cause≥150, key_insight≥50?
 - [ ] Code: 5+ lines showing incorrect + correct?

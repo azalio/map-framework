@@ -376,7 +376,6 @@ Thought 8: Generate recommendation balancing dimensions
 **Thought Structure Example**:
 ```
 Thought 1: Identify knowledge gap areas (post-cutoff APIs, complex algorithms, security patterns)
-Thought 2: Check Actor output for research documentation (context7, deepwiki citations)
 Thought 3: Evaluate if research was appropriate (did gap require external knowledge?)
 Thought 4: Assess implementation correctness against research sources or known patterns
 Thought 5: Determine if research omission caused correctness issues (outdated API, wrong algorithm)
@@ -397,13 +396,11 @@ Thought 7: Generate recommendation with research feedback
 **Initial hypothesis**: Completeness 7/10 (has tests, docs), Functionality 8/10 (works)
 
 **Sequential-thinking discovery**:
-- **Thought 1**: Next.js Server Actions released April 2023 (post-cutoff) → expect context7 research
 - **Thought 2**: No research citations in Approach section → used training data (outdated)
 - **Thought 4**: Implementation uses `getServerSideProps` → deprecated in Next.js 13+ (Functionality 6/10, uses old API)
 - **Thought 5**: Should use async Server Components pattern → research would have caught this
 - **Thought 6**: Completeness 5/10 (missing research step, outdated implementation approach)
 - **Consolidated**: Functionality 6/10 (wrong pattern), Completeness 5/10 (no research), Code_quality 7/10 (clear but outdated)
-- **Recommendation**: "improve" - use mcp__context7 to get Next.js 14 Server Actions docs, refactor to async Server Components pattern
 
 ---
 
@@ -425,11 +422,9 @@ Thought 7: Generate recommendation with research feedback
 
 **Value Add**: Sequential-thinking reveals dimension interactions that single-pass evaluation misses, leading to more accurate scores and actionable recommendations that address root trade-offs (not just symptoms).
 
-### 2. mcp__claude-reviewer__get_review_history
 **Use When**: Check consistency with past implementations
 **Rationale**: Maintain consistent standards (e.g., if past testability scored 8/10, use same criteria). Prevents score inflation/deflation.
 
-### 3. mcp__context7__get-library-docs
 **Use When**: Solution uses external libraries/frameworks
 **Process**: `resolve-library-id` → `get-library-docs(topics: best-practices, performance, security, testing)`
 **Rationale**: Libraries define quality standards (React testing, Django security). Validate solutions follow these.
@@ -648,7 +643,6 @@ Untested code is broken code waiting to happen. Testability indicates design qua
 - [ ] Error handling complete?
 - [ ] Logging added for debugging?
 - [ ] Research performed when appropriate (unfamiliar libraries, complex algorithms)?
-  - IF subtask requires external knowledge (post-cutoff APIs, production patterns): Did Actor use research tools (context7/deepwiki) OR document skip justification?
   - IF research performed: Are sources cited in output (Approach/Trade-offs sections)?
   - Research completeness indicates thoroughness and reduces Monitor rejection risk
 - [ ] Deployment considerations addressed?
