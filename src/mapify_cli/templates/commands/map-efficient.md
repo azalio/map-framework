@@ -15,7 +15,8 @@ State machine enforces sequencing, Python validates completion, hooks inject rem
 2. Use exact `subagent_type` specified — never substitute
 3. Call each agent individually — no combining or skipping
 4. Max 5 retry iterations per subtask (note: /map-fast uses max 3)
-5. Agent phases (ACTOR 2.3, MONITOR 2.4, PREDICTOR 2.6) require evidence files.
+5. **Always batch mode, always parallel**: execution mode is always `batch` (no pauses). After INIT_STATE, always compute waves and execute independent subtasks in parallel (multiple `Task()` calls in one message). See "Wave Computation" section.
+6. Agent phases (ACTOR 2.3, MONITOR 2.4, PREDICTOR 2.6) require evidence files.
    Each agent writes `.map/<branch>/evidence/<phase>_<subtask_id>.json` after completing work.
    `validate_step` rejects the step if evidence is missing or malformed.
 
@@ -212,7 +213,10 @@ Then use the **Write** tool to create `.map/<branch>/workflow_state.json`:
 }
 ```
 
-### Wave Computation (after INIT_STATE)
+### Wave Computation (after INIT_STATE) — REQUIRED
+
+**IMPORTANT: Always compute waves and execute subtasks in parallel when possible.**
+This is not optional — wave computation must run after every INIT_STATE.
 
 After INIT_STATE (1.6) completes, compute execution waves from the dependency DAG:
 
