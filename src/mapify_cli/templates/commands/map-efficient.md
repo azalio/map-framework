@@ -73,7 +73,7 @@ if [ -f ".map/${BRANCH}/task_plan_${BRANCH}.md" ] && [ ! -f ".map/${BRANCH}/step
 fi
 ```
 
-If `resume_from_plan` succeeds, the orchestrator skips DECOMPOSE, INIT_PLAN, and REVIEW_PLAN (the plan was already approved in /map-plan) and starts from CHOOSE_MODE.
+If `resume_from_plan` succeeds, the orchestrator skips DECOMPOSE, INIT_PLAN, REVIEW_PLAN, and CHOOSE_MODE (plan already approved, batch mode auto-set) and starts from INIT_STATE.
 
 ## Step 1: Get Next Step Instruction
 
@@ -189,20 +189,10 @@ python3 .map/scripts/map_orchestrator.py set_plan_approved true
 
 If not approved, stop (do not proceed).
 
-### Phase: CHOOSE_MODE (1.56)
+### Phase: CHOOSE_MODE (1.56) — Auto-skipped
 
-Ask the user how to run the workflow:
-
-1. `step_by_step` - pause between subtasks for confirmation
-2. `batch` - run through all subtasks without pausing
-
-Persist choice:
-
-```bash
-python3 .map/scripts/map_orchestrator.py set_execution_mode step_by_step  # or batch
-```
-
-Note: In `batch` mode the orchestrator auto-skips the pause step (2.11).
+Execution mode is always `batch` (auto-set by orchestrator). No user interaction needed.
+The orchestrator auto-skips this step and proceeds to INIT_STATE.
 
 ### Phase: INIT_STATE (1.6)
 
@@ -539,13 +529,9 @@ If FAILED: DO NOT PROCEED. Go back and complete missing steps.
 ═══════════════════════════════════════════════════
 ```
 
-### Phase: SUBTASK_APPROVAL (2.11)
+### Phase: SUBTASK_APPROVAL (2.11) — Auto-skipped
 
-Only used when execution_mode is `step_by_step`.
-
-- Show a brief completion checkpoint for the current subtask.
-- Ask the user whether to continue to the next subtask.
-- If execution_mode is `batch`, the orchestrator auto-skips this step.
+Auto-skipped in batch mode (default). The orchestrator proceeds to the next subtask without pausing.
 
 ## Step 2a: Validate Step Completion
 
@@ -589,7 +575,7 @@ else
 fi
 ```
 
-In `step_by_step` mode, the state machine inserts a pause step (2.11) between subtasks.
+Execution mode is always `batch`. The orchestrator auto-skips pause steps (2.11) between subtasks.
 
 ## Step 3: Final Verification (Ralph Loop)
 
