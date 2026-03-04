@@ -348,6 +348,12 @@ Protocol (execute in order):
 )
 ```
 
+**CRITICAL: After Actor returns, do NOT debug or fix issues yourself.**
+- If Actor reports diagnostics/errors — proceed directly to MONITOR.
+- LSP diagnostics shown after Actor may be stale (IDE lag). Do NOT read files or attempt manual fixes.
+- Monitor will verify compilation (`go build`, `pytest`, etc.) and report real issues.
+- If Monitor returns `valid=false`, retry via Actor (not manual edits).
+
 ### Phase: MONITOR (2.4)
 
 ```python
