@@ -76,7 +76,9 @@ class TestValidationCriteria:
         """VC4: git push --force origin feature-branch is allowed."""
         exit_code, stdout, stderr = run_hook("git push --force origin feature-branch")
         assert exit_code == 0, f"Expected exit 0. stderr: {stderr}"
-        assert _parse_stdout(stdout) == {}, "Force push to feature branch should be allowed"
+        assert (
+            _parse_stdout(stdout) == {}
+        ), "Force push to feature branch should be allowed"
 
     def test_criterion_5_legitimate_allowed(self):
         """VC5: Legitimate commands like 'pytest' are allowed."""

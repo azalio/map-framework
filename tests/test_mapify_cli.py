@@ -898,7 +898,10 @@ class TestMcpJsonConfig:
         config = json.loads(mcp_file.read_text())
         assert "mcpServers" in config
         # essential = sequential-thinking + deepwiki
-        assert "deepwiki" in config["mcpServers"] or "sequential-thinking" in config["mcpServers"]
+        assert (
+            "deepwiki" in config["mcpServers"]
+            or "sequential-thinking" in config["mcpServers"]
+        )
 
 
 class TestCreateMapTools:

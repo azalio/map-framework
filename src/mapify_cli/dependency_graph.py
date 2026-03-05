@@ -361,9 +361,7 @@ class DependencyGraph:
 
         # Collect initial zero-in-degree nodes as wave 0
         waves: List[List[str]] = []
-        current_wave = sorted(
-            [nid for nid, deg in in_degree.items() if deg == 0]
-        )
+        current_wave = sorted([nid for nid, deg in in_degree.items() if deg == 0])
 
         processed = 0
         while current_wave:

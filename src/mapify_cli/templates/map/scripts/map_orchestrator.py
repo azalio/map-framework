@@ -616,7 +616,6 @@ def set_waves(branch: str, blueprint_path: Optional[str] = None) -> Dict:
         Dict with status and computed waves
     """
     # Import here to avoid circular deps at module level
-    sys_path_added = False
     try:
         from mapify_cli.dependency_graph import DependencyGraph, SubtaskNode
     except ImportError:
@@ -627,17 +626,22 @@ def set_waves(branch: str, blueprint_path: Optional[str] = None) -> Dict:
 
         dg_candidates = [
             Path("src/mapify_cli/dependency_graph.py"),
-            Path(__file__).resolve().parents[3] / "src" / "mapify_cli" / "dependency_graph.py",
+            Path(__file__).resolve().parents[3]
+            / "src"
+            / "mapify_cli"
+            / "dependency_graph.py",
         ]
         loaded = False
         for candidate in dg_candidates:
             if candidate.exists():
-                spec = importlib.util.spec_from_file_location("dependency_graph", candidate)
+                spec = importlib.util.spec_from_file_location(
+                    "dependency_graph", candidate
+                )
                 if spec and spec.loader:
                     mod = importlib.util.module_from_spec(spec)
                     spec.loader.exec_module(mod)
-                    DependencyGraph = mod.DependencyGraph  # noqa: N806
-                    SubtaskNode = mod.SubtaskNode  # noqa: N806
+                    DependencyGraph = mod.DependencyGraph  # type: ignore[misc]  # noqa: N806
+                    SubtaskNode = mod.SubtaskNode  # type: ignore[misc]  # noqa: N806
                     loaded = True
                     break
         if not loaded:
@@ -741,11 +745,13 @@ def get_wave_step(branch: str) -> Dict:
     for st_id in wave:
         phase = state.subtask_phases.get(st_id, "2.3")
         phase_name = STEP_PHASES.get(phase, "ACTOR")
-        subtask_infos.append({
-            "subtask_id": st_id,
-            "phase": phase_name,
-            "step_id": phase,
-        })
+        subtask_infos.append(
+            {
+                "subtask_id": st_id,
+                "phase": phase_name,
+                "step_id": phase,
+            }
+        )
 
     return {
         "mode": mode,
@@ -787,7 +793,9 @@ def validate_wave_step(subtask_id: str, step_id: str, branch: str) -> Dict:
 
     # Determine next phase for this subtask
     subtask_step_order = [s for s in STEP_ORDER if s.startswith("2.")]
-    current_idx = subtask_step_order.index(step_id) if step_id in subtask_step_order else -1
+    current_idx = (
+        subtask_step_order.index(step_id) if step_id in subtask_step_order else -1
+    )
 
     if current_idx >= 0 and current_idx + 1 < len(subtask_step_order):
         next_phase = subtask_step_order[current_idx + 1]
@@ -1159,7 +1167,9 @@ def main():
             print(json.dumps(result, indent=2))
 
         elif args.command == "set_waves":
-            blueprint_path = args.blueprint or args.task_or_step  # --blueprint or positional
+            blueprint_path = (
+                args.blueprint or args.task_or_step
+            )  # --blueprint or positional
             result = set_waves(branch, blueprint_path)
             print(json.dumps(result, indent=2))
 

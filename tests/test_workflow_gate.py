@@ -34,7 +34,9 @@ class TestWorkflowGate:
 
     def _assert_denied(self, stdout: str) -> str:
         payload = self._parse_stdout(stdout)
-        assert payload.get("hookSpecificOutput", {}).get("hookEventName") == "PreToolUse"
+        assert (
+            payload.get("hookSpecificOutput", {}).get("hookEventName") == "PreToolUse"
+        )
         assert payload["hookSpecificOutput"].get("permissionDecision") == "deny"
         reason = payload["hookSpecificOutput"].get("permissionDecisionReason", "")
         assert reason
@@ -240,9 +242,7 @@ class TestWorkflowGate:
                 {
                     "workflow": "map-efficient",
                     "current_subtask": "ST-001",
-                    "completed_steps": {
-                        "ST-001": ["xml_packet", "actor", "monitor"]
-                    },
+                    "completed_steps": {"ST-001": ["xml_packet", "actor", "monitor"]},
                     "pending_steps": {"ST-001": ["tests", "linter"]},
                 }
             )

@@ -165,11 +165,13 @@ def update_workflow_state_batch(
                 state["completed_steps"][subtask_id].append(step_name)
 
             active_subtasks.append(subtask_id)
-            results.append({
-                "subtask_id": subtask_id,
-                "step_name": step_name,
-                "new_state": new_state,
-            })
+            results.append(
+                {
+                    "subtask_id": subtask_id,
+                    "step_name": step_name,
+                    "new_state": new_state,
+                }
+            )
 
         # Set active_subtasks list for wave mode (used by workflow-gate.py)
         state["active_subtasks"] = active_subtasks

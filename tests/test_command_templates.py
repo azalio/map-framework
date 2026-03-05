@@ -220,9 +220,9 @@ class TestMapReviewStructure:
         # Find the section and check the source is mentioned nearby
         idx = review_content.index(section)
         section_block = review_content[idx : idx + 500]
-        assert source in section_block, (
-            f"{section} should reference {source} as primary source"
-        )
+        assert (
+            source in section_block
+        ), f"{section} should reference {source} as primary source"
 
     def test_three_agent_task_calls(self, review_content):
         """Command includes Task calls for all 3 agents."""
@@ -257,7 +257,10 @@ class TestMapReviewStructure:
 
     def test_previous_section_summary(self, review_content):
         """Command instructs summarizing decisions before next section."""
-        assert "Summarize decisions" in review_content or "summarize" in review_content.lower()
+        assert (
+            "Summarize decisions" in review_content
+            or "summarize" in review_content.lower()
+        )
 
 
 class TestMapReviewVerdictLogic:
@@ -302,8 +305,7 @@ class TestMapReviewVerdictLogic:
     def test_block_functionality_threshold(self, review_content):
         """BLOCK includes functionality score < 5 condition."""
         assert (
-            "functionality < 5" in review_content
-            or "functionality<5" in review_content
+            "functionality < 5" in review_content or "functionality<5" in review_content
         )
 
     def test_block_predictor_risk(self, review_content):

@@ -7,7 +7,6 @@ These schemas are embedded in code to ensure they're available
 in packaged installations (uv tool install, pip install).
 """
 
-
 # ============================================================================
 # JSON SCHEMA DEFINITIONS FOR .map/ STATE ARTIFACTS
 # ============================================================================
