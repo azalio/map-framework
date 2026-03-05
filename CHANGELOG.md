@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Wave-based parallel subtask execution** in `/map-efficient` with dependency-graph-driven wave ordering
+- **Resume detection** in `/map-plan` for continuing interrupted planning sessions
+- **Interactive 4-section map-review** rewrite with structured review flow
+
+### Changed
+- **Monitor forwarding**: Actor now forwards directly to Monitor instead of debugging after Actor phase
+- **Parallel wave enforcement**: Enforced parallel wave execution in map-efficient workflow
+- **Auto batch mode**: Automatically set batch mode in map-efficient, skip CHOOSE_MODE step
+- **Monitor hard stop**: `valid=false` from Monitor is now a hard stop requiring fixes before proceeding
+- **Integrated AAG contracts** with validation criteria enforcement (VC→tests)
+
+### Removed
+- **SQLite Knowledge Graph** modules removed entirely
+- **Cipher and playbook references** removed, migrated to mem0 patterns terminology
+- **mem0/ACE/Curator** agents removed, simplified architecture
+- **context7 and claude-reviewer** MCP server configurations removed
+- **Curator agent** template files removed
+
+### Fixed
+- **Claude Code hook configuration** and outputs for correct schema compliance
+- **Workflow gate** now allows map artifact updates
+- **Evidence writes** replaced heredoc pattern with Write tool, added predictor skip logic
+- **PR review findings** across agents, CLI reference, and templates
+- **Hook robustness** improvements and documentation
+- **Black formatting**, ruff lint, and mypy type errors across 11 files
+
 ## [3.2.0] - 2026-02-14
 
 ### Added
