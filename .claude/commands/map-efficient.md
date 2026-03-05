@@ -15,7 +15,8 @@ State machine enforces sequencing, Python validates completion, hooks inject rem
 2. Use exact `subagent_type` specified — never substitute
 3. Call each agent individually — no combining or skipping
 4. Max 5 retry iterations per subtask (note: /map-fast uses max 3)
-5. Agent phases (ACTOR 2.3, MONITOR 2.4, PREDICTOR 2.6) require evidence files.
+5. **Always batch mode, always parallel**: execution mode is always `batch` (no pauses). After INIT_STATE, always compute waves and execute independent subtasks in parallel (multiple `Task()` calls in one message). See "Wave Computation" section.
+6. Agent phases (ACTOR 2.3, MONITOR 2.4, PREDICTOR 2.6) require evidence files.
    Each agent writes `.map/<branch>/evidence/<phase>_<subtask_id>.json` after completing work.
    `validate_step` rejects the step if evidence is missing or malformed.
 
@@ -73,7 +74,7 @@ if [ -f ".map/${BRANCH}/task_plan_${BRANCH}.md" ] && [ ! -f ".map/${BRANCH}/step
 fi
 ```
 
-If `resume_from_plan` succeeds, the orchestrator skips DECOMPOSE, INIT_PLAN, and REVIEW_PLAN (the plan was already approved in /map-plan) and starts from CHOOSE_MODE.
+If `resume_from_plan` succeeds, the orchestrator skips DECOMPOSE, INIT_PLAN, REVIEW_PLAN, and CHOOSE_MODE (plan already approved, batch mode auto-set) and starts from INIT_STATE.
 
 ## Step 1: Get Next Step Instruction
 
@@ -189,20 +190,10 @@ python3 .map/scripts/map_orchestrator.py set_plan_approved true
 
 If not approved, stop (do not proceed).
 
-### Phase: CHOOSE_MODE (1.56)
+### Phase: CHOOSE_MODE (1.56) — Auto-skipped
 
-Ask the user how to run the workflow:
-
-1. `step_by_step` - pause between subtasks for confirmation
-2. `batch` - run through all subtasks without pausing
-
-Persist choice:
-
-```bash
-python3 .map/scripts/map_orchestrator.py set_execution_mode step_by_step  # or batch
-```
-
-Note: In `batch` mode the orchestrator auto-skips the pause step (2.11).
+Execution mode is always `batch` (auto-set by orchestrator). No user interaction needed.
+The orchestrator auto-skips this step and proceeds to INIT_STATE.
 
 ### Phase: INIT_STATE (1.6)
 
@@ -222,7 +213,10 @@ Then use the **Write** tool to create `.map/<branch>/workflow_state.json`:
 }
 ```
 
-### Wave Computation (after INIT_STATE)
+### Wave Computation (after INIT_STATE) — REQUIRED
+
+**IMPORTANT: Always compute waves and execute subtasks in parallel when possible.**
+This is not optional — wave computation must run after every INIT_STATE.
 
 After INIT_STATE (1.6) completes, compute execution waves from the dependency DAG:
 
@@ -353,6 +347,12 @@ Protocol (execute in order):
 6. Output: approach + files_changed + trade-offs"""
 )
 ```
+
+**CRITICAL: After Actor returns, do NOT debug or fix issues yourself.**
+- If Actor reports diagnostics/errors — proceed directly to MONITOR.
+- LSP diagnostics shown after Actor may be stale (IDE lag). Do NOT read files or attempt manual fixes.
+- Monitor will verify compilation (`go build`, `pytest`, etc.) and report real issues.
+- If Monitor returns `valid=false`, retry via Actor (not manual edits).
 
 ### Phase: MONITOR (2.4)
 
@@ -539,13 +539,9 @@ If FAILED: DO NOT PROCEED. Go back and complete missing steps.
 ═══════════════════════════════════════════════════
 ```
 
-### Phase: SUBTASK_APPROVAL (2.11)
+### Phase: SUBTASK_APPROVAL (2.11) — Auto-skipped
 
-Only used when execution_mode is `step_by_step`.
-
-- Show a brief completion checkpoint for the current subtask.
-- Ask the user whether to continue to the next subtask.
-- If execution_mode is `batch`, the orchestrator auto-skips this step.
+Auto-skipped in batch mode (default). The orchestrator proceeds to the next subtask without pausing.
 
 ## Step 2a: Validate Step Completion
 
@@ -589,7 +585,7 @@ else
 fi
 ```
 
-In `step_by_step` mode, the state machine inserts a pause step (2.11) between subtasks.
+Execution mode is always `batch`. The orchestrator auto-skips pause steps (2.11) between subtasks.
 
 ## Step 3: Final Verification (Ralph Loop)
 

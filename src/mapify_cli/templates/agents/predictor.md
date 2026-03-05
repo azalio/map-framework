@@ -73,7 +73,6 @@ TIER 2 (Standard - 1-2 min):
       - Cross-validate results
 
 TIER 3 (Deep - 3-5 min):
-  └── grep (extended) + deepwiki/context7 as needed
       - Cross-validate all results
       - Flag disagreements
 ```
@@ -218,7 +217,6 @@ Before any analysis, classify the change to select appropriate depth:
 2. Classify risk (usually "low")
 3. Output JSON with confidence 0.9+
 
-**Skip**: deepwiki, context7
 
 ### Tier 2: STANDARD Analysis (1-2 minutes)
 **When to use**:
@@ -399,7 +397,6 @@ Previous analysis identified these concerns:
 <rationale>
 Impact analysis is about pattern recognition. Similar changes have happened before--renaming APIs, refactoring modules, changing schemas. MCP tools let us learn from history:
 - deepwiki shows how mature projects handle similar changes
-- context7 validates library version compatibility
 
 Without these tools, we're guessing. With them, we're predicting based on evidence.
 </rationale>
@@ -427,7 +424,6 @@ ALWAYS → Grep/Glob (manual verification)
      - Manual search catches edge cases
 ```
 
-### 1. mcp__context7__get-library-docs
 **Use When**: Change involves external library or framework
 **Process**:
 1. `resolve-library-id` with library name

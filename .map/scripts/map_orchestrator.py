@@ -39,7 +39,7 @@ STEP PHASES (16 total):
   1.0  DECOMPOSE          - task-decomposer agent
   1.5  INIT_PLAN          - Generate task_plan.md
   1.55 REVIEW_PLAN        - User review + explicit approval checkpoint
-  1.56 CHOOSE_MODE        - Choose execution mode (step_by_step|batch)
+  1.56 CHOOSE_MODE        - Auto-skipped (always batch mode)
   1.6  INIT_STATE         - Create workflow_state.json
   2.0  XML_PACKET         - Build AI-friendly subtask packet
   2.1  CONTEXT_SEARCH     - Context search
@@ -51,7 +51,7 @@ STEP PHASES (16 total):
   2.8  TESTS_GATE         - Run tests
   2.9  LINTER_GATE        - Run linter
   2.10 VERIFY_ADHERENCE   - Self-audit checkpoint
-  2.11 SUBTASK_APPROVAL   - Optional pause between subtasks (step_by_step)
+  2.11 SUBTASK_APPROVAL   - Auto-skipped in batch mode
 
 CLI INTERFACE:
   python3 map_orchestrator.py get_next_step [--branch BRANCH]
@@ -292,9 +292,8 @@ def get_step_instruction(step_id: str, state: StepState) -> str:
             "python3 .map/scripts/map_orchestrator.py set_plan_approved true"
         ),
         "1.56": (
-            "Ask user to choose execution mode: step_by_step (pause between subtasks) "
-            "or batch (run through). Persist choice in step_state.json: "
-            "python3 .map/scripts/map_orchestrator.py set_execution_mode step_by_step|batch"
+            "Execution mode is batch (auto-set). No user action needed. "
+            "Advance to next step: python3 .map/scripts/map_orchestrator.py get_next_step"
         ),
         "1.6": (
             "Create .map/<branch>/workflow_state.json with initial state. "
@@ -369,6 +368,13 @@ def get_next_step(branch: str) -> Dict:
     """
     state_file = Path(f".map/{branch}/step_state.json")
     state = StepState.load(state_file)
+
+    # Auto-skip CHOOSE_MODE: always batch, set mode automatically
+    while state.pending_steps and state.pending_steps[0] == "1.56":
+        state.execution_mode = "batch"
+        state.completed_steps.append("1.56")
+        state.pending_steps.pop(0)
+        state.save(state_file)
 
     # Auto-skip steps that are conditional in batch mode
     while (
@@ -450,11 +456,7 @@ def validate_step(step_id: str, branch: str) -> Dict:
             "valid": False,
             "message": "Plan not approved. Set approval first: python3 .map/scripts/map_orchestrator.py set_plan_approved true",
         }
-    if step_id == "1.56" and state.execution_mode not in {"batch", "step_by_step"}:
-        return {
-            "valid": False,
-            "message": "Invalid execution_mode. Set mode first: python3 .map/scripts/map_orchestrator.py set_execution_mode step_by_step|batch",
-        }
+    # CHOOSE_MODE is auto-skipped; execution_mode is always "batch"
 
     # Evidence-gated validation: require agent evidence files for key steps
     if step_id in EVIDENCE_REQUIRED:
@@ -970,7 +972,7 @@ def resume_from_plan(branch: str) -> Dict:
 
     Detects task_plan_<branch>.md and workflow_state.json created by /map-plan.
     Extracts subtask IDs from the plan, marks init phases as completed, and
-    starts execution from CHOOSE_MODE (user still picks step_by_step vs batch).
+    starts execution from INIT_STATE (batch mode auto-set).
 
     Args:
         branch: Git branch name (sanitized)
@@ -1010,9 +1012,9 @@ def resume_from_plan(branch: str) -> Dict:
         except (json.JSONDecodeError, KeyError):
             pass
 
-    # Create state that skips DECOMPOSE, INIT_PLAN, REVIEW_PLAN (plan already approved)
-    # Start from CHOOSE_MODE so user can still pick execution mode
-    skipped_phases = ["1.0", "1.5", "1.55"]
+    # Create state that skips DECOMPOSE, INIT_PLAN, REVIEW_PLAN, CHOOSE_MODE
+    # (plan already approved, execution mode is always batch)
+    skipped_phases = ["1.0", "1.5", "1.55", "1.56"]
     execution_start = [s for s in STEP_ORDER if s not in skipped_phases]
 
     state_file = plan_dir / "step_state.json"
@@ -1020,11 +1022,12 @@ def resume_from_plan(branch: str) -> Dict:
         current_subtask_id=subtask_ids[0],
         subtask_index=0,
         subtask_sequence=subtask_ids,
-        current_step_id="1.56",
-        current_step_phase="CHOOSE_MODE",
+        current_step_id=execution_start[0] if execution_start else "1.6",
+        current_step_phase=STEP_PHASES.get(execution_start[0], "INIT_STATE") if execution_start else "INIT_STATE",
         completed_steps=skipped_phases,
         pending_steps=execution_start,
         plan_approved=True,
+        execution_mode="batch",
     )
     state.save(state_file)
 
@@ -1034,11 +1037,11 @@ def resume_from_plan(branch: str) -> Dict:
 
     return {
         "status": "success",
-        "message": "Resumed from /map-plan. Skipped DECOMPOSE, INIT_PLAN, REVIEW_PLAN.",
+        "message": "Resumed from /map-plan. Skipped DECOMPOSE, INIT_PLAN, REVIEW_PLAN, CHOOSE_MODE. Mode: batch.",
         "subtask_sequence": subtask_ids,
         "current_subtask_id": subtask_ids[0],
         "aag_contracts_found": len(aag_contracts),
-        "next_phase": "CHOOSE_MODE",
+        "next_phase": "INIT_STATE",
     }
 
 

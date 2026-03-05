@@ -23,7 +23,43 @@
 
 ## Workflow Steps
 
+### Pre-flight: Resume Detection
+
+Before starting ANY step, check which artifacts already exist for this branch:
+
+```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+echo "findings:    $(test -f .map/${BRANCH}/findings_${BRANCH}.md && echo EXISTS || echo MISSING)"
+echo "spec:        $(test -f .map/${BRANCH}/spec_${BRANCH}.md && echo EXISTS || echo MISSING)"
+echo "task_plan:   $(test -f .map/${BRANCH}/task_plan_${BRANCH}.md && echo EXISTS || echo MISSING)"
+echo "state:       $(test -f .map/${BRANCH}/workflow_state.json && echo EXISTS || echo MISSING)"
+```
+
+**Resume rules:**
+- If `findings` EXISTS → skip Step 0 (discovery), read existing findings instead
+- If `spec` EXISTS → skip Steps 1-2 (interview), read existing spec instead
+- If `task_plan` EXISTS → skip Steps 4-6 (decomposition), read existing plan instead
+- If `workflow_state.json` EXISTS → plan is already complete, print checkpoint and STOP
+
+This prevents redundant work when the user restarts Claude mid-plan.
+
 ### Step 0: Quick Discovery (Optional but Recommended)
+
+**IMPORTANT — Check for existing discovery first:**
+
+Before running discovery, check if `.map/<branch>/findings_<branch>.md` already exists:
+
+```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+test -f ".map/${BRANCH}/findings_${BRANCH}.md" && echo "EXISTS" || echo "MISSING"
+```
+
+- If **EXISTS**: Read the file, print "Discovery already completed — reusing existing findings", and skip to Step 1.
+- If **MISSING**: Run discovery below.
+
+This prevents redundant discovery when the user restarts a Claude session mid-plan.
+
+---
 
 If the request touches an existing codebase (most do), do a short discovery pass to avoid planning in a vacuum.
 

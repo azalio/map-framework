@@ -162,14 +162,11 @@ Choose which MCP servers to enable:
 # All available MCP servers
 mapify init my-project --mcp all
 
-# Essential servers only (claude-reviewer, sequential-thinking)
+# Essential servers only (sequential-thinking, deepwiki)
 mapify init my-project --mcp essential
 
-# Documentation servers (context7, deepwiki)
-mapify init my-project --mcp docs
-
 # Specific servers
-mapify init my-project --mcp "context7,deepwiki"
+mapify init my-project --mcp "sequential-thinking,deepwiki"
 
 # No MCP servers
 mapify init my-project --mcp none
@@ -308,23 +305,11 @@ MAP Framework uses **slash commands** as entry points that coordinate specialize
 
 If you selected MCP servers during installation, ensure they're configured:
 
-### Claude-Reviewer (Professional Review)
-
-- Automated security and quality analysis
-- Historical review tracking
-- Focused review on specific areas
-
 ### Sequential-Thinking (Chain-of-Thought)
 
 - Complex problem decomposition
 - Iterative refinement of solutions
 - Edge case discovery
-
-### Context7 (Library Documentation)
-
-- Current API references for any library
-- Version-specific documentation
-- Migration guides
 
 ### Deepwiki (GitHub Intelligence)
 

@@ -235,7 +235,6 @@ This is **completely optional**. Run it when debugging patterns are valuable for
 ## MCP Tools for Debugging
 
 - `mcp__sequential-thinking__sequentialthinking` - Complex root cause analysis
-- `mcp__context7__get-library-docs` - Check library documentation for known issues
 - `mcp__deepwiki__ask_question` - Learn from how others solved similar issues
 
 ## Critical Constraints

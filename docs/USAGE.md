@@ -79,7 +79,7 @@ Maintain all existing functionality.
 
 ```bash
 /map-efficient integrate Stripe payment processing.
-Use context7 to get latest Stripe docs.
+Use deepwiki to get latest Stripe docs.
 ```
 
 ### Learning from Open Source
@@ -1082,7 +1082,7 @@ The Actor agent now includes a 10-item Quality Checklist for self-review before 
 2. Explicit error handling (no silent failures)
 3. Security review (SQL injection, XSS, sensitive data)
 4. Test case identification (happy path + edge cases)
-5. MCP tools usage (context7, sequential-thinking)
+5. MCP tools usage (deepwiki, sequential-thinking)
 6. Template variable preservation (orchestration compatibility)
 7. Trade-offs documentation (decision rationale)
 8. Complete implementations (no ellipsis or placeholders)

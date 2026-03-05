@@ -5,22 +5,6 @@
   "_warning": "Project-specific .mcp.json overrides global ~/.claude.json settings. Only use if you need project-specific MCP configuration.",
 
   "mcpServers": {
-    "claude-reviewer": {
-      "_comment": "Code review MCP server - provides professional code review with security analysis",
-      "_note": "This example uses a community server. You may need to adjust the command for your setup.",
-      "_alternatives": [
-        "Custom fork: /path/to/your/mcp-claude-reviewer/mcp-wrapper.sh",
-        "Community server: npx -y @vibesnipe/code-review-mcp"
-      ],
-      "_required_for": "Professional code review integration, MAP /map-review command",
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "@vibesnipe/code-review-mcp"],
-      "env": {
-        "OPENAI_API_KEY": "${OPENAI_API_KEY}"
-      }
-    },
-
     "sequential-thinking": {
       "_comment": "Anthropic's Sequential Thinking - Provides structured chain-of-thought reasoning",
       "_install": "Automatically installed via npx",
@@ -29,17 +13,6 @@
       "type": "stdio",
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
-    },
-
-    "context7": {
-      "_comment": "Context7 by Upstash - Up-to-date, version-specific library documentation",
-      "_install": "Automatically installed via npx",
-      "_required_for": "Library documentation lookup (optional but recommended)",
-      "_docs": "https://github.com/upstash/context7",
-      "_usage": "Add 'use context7' to your prompts",
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp"]
     },
 
     "deepwiki": {
@@ -57,11 +30,9 @@
     "global_vs_local": "Most users should configure MCP servers in ~/.claude.json globally. Only use project-specific .mcp.json if you need different configurations per project.",
     "environment_variables": "Environment variables like ${OPENAI_API_KEY} are expanded from your shell environment or .env file.",
     "required_servers": [
-      "claude-reviewer - Essential for code review features",
       "sequential-thinking - Essential for complex reasoning"
     ],
     "optional_servers": [
-      "context7 - Recommended for library documentation",
       "deepwiki - Recommended for GitHub repository analysis"
     ],
     "alternative_installations": {

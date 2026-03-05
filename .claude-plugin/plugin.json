@@ -24,11 +24,7 @@
   "requirements": {
     "claude_code_version": ">=1.0.0",
     "mcp_servers": [
-      "claude-reviewer",
-      "sequential-thinking"
-    ],
-    "recommended_mcp_servers": [
-      "context7",
+      "sequential-thinking",
       "deepwiki"
     ]
   },
@@ -36,7 +32,6 @@
     "11 specialized MAP agents (TaskDecomposer, Actor, Monitor, Predictor, Evaluator, Reflector, DocumentationReviewer, Debate-Arbiter, Synthesizer, Research-Agent, Final-Verifier)",
     "5 Claude Code hooks for automation (validate-agent-templates, auto-store-knowledge, enrich-context, session-init, track-metrics)",
     "10 slash commands (/map-efficient, /map-debug, /map-fast, /map-debate, /map-review, /map-check, /map-plan, /map-release, /map-resume, /map-learn)",
-    "Professional code review with claude-reviewer MCP",
     "Chain-of-thought reasoning with sequential-thinking MCP",
     "Semantic pattern search with embeddings cache",
     "Cost optimization with per-agent model selection (haiku/sonnet/opus)"

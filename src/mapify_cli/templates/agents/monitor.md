@@ -487,7 +487,6 @@ Test Code:
   → Verify coverage expectations
 ```
 
-### 1. mcp__claude-reviewer__request_review
 **Use When**: Reviewing implementation code (ALWAYS use first)
 **Parameters**: `summary` (1-2 sentences), `focus_areas` (array), `test_command` (optional)
 **Rationale**: AI baseline review + your domain expertise catches more issues
@@ -522,7 +521,6 @@ Thought N+1: Check for unreachable code or logic gaps
 Conclusion: List issues found with line numbers
 ```
 
-### 3. mcp__context7__get-library-docs
 **Use When**: Code uses external libraries/frameworks
 **Process**: `resolve-library-id` → `get-library-docs(library_id, topic)`
 **Topics**: best-practices, security, error-handling, performance, deprecated-apis
@@ -627,10 +625,7 @@ Priority 4: Severity
 
 | Short Name | Full MCP Name | Category |
 |------------|---------------|----------|
-| `request_review` | `mcp__claude-reviewer__request_review` | AI Review |
 | `sequentialthinking` | `mcp__sequential-thinking__sequentialthinking` | Analysis |
-| `get_library_docs` | `mcp__context7__get-library-docs` | Docs |
-| `resolve_library_id` | `mcp__context7__resolve-library-id` | Docs |
 | `deepwiki` | `mcp__deepwiki__ask_question` | Docs |
 | `glob` | Built-in Glob tool | File |
 | `read` | Built-in Read tool | File |
