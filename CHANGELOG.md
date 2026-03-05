@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.3.0] - 2026-03-05
+
 ### Added
 - **Wave-based parallel subtask execution** in `/map-efficient` with dependency-graph-driven wave ordering
 - **Resume detection** in `/map-plan` for continuing interrupted planning sessions
