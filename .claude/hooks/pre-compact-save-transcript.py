@@ -3,7 +3,7 @@
 Pre-Compact Transcript Saver - PreCompact Hook.
 
 Before context compaction, saves the full conversation transcript
-to .map/<branch>-YYYY-MM-DD-HH-MM.md as readable markdown.
+to .map/<branch>/transcript-YYYY-MM-DD-HH-MM-SS.md as readable markdown.
 
 This preserves the full context for later review.
 
@@ -93,7 +93,7 @@ def parse_transcript(transcript_path: Path) -> str:
     """Parse JSONL transcript into readable markdown."""
     lines = []
     try:
-        with open(transcript_path) as f:
+        with open(transcript_path, encoding="utf-8") as f:
             for raw_line in f:
                 raw_line = raw_line.strip()
                 if not raw_line:
@@ -143,7 +143,7 @@ def main() -> None:
         sys.exit(0)
 
     branch = get_branch_name()
-    timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M")
+    timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
 
     branch_dir = MAP_DIR / branch
     branch_dir.mkdir(parents=True, exist_ok=True)
