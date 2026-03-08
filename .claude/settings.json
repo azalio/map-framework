@@ -35,6 +35,20 @@
     ]
   },
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "description": "Post-Compact Context - inject transcript path and workflow state after compaction",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/post-compact-context.py",
+            "timeout": 5,
+            "description": "Tells Claude where to find the pre-compaction transcript and workflow state"
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Edit|Write|Read|MultiEdit|Bash",
@@ -75,14 +89,14 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Edit|Write|MultiEdit",
-        "description": "Post-Edit Reminder - lightweight test reminder after code changes",
+        "matcher": "Edit|Write|MultiEdit|Bash",
+        "description": "Iteration Logger - logs tool calls, detects thrashing patterns",
         "hooks": [
           {
             "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/post-edit-reminder.py",
-            "timeout": 3,
-            "description": "Reminds to run tests after Edit/Write (only when MAP workflow active)"
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/ralph-iteration-logger.py",
+            "timeout": 5,
+            "description": "Logs iterations to .map/<branch>/iteration_log.jsonl, alerts on file thrashing"
           }
         ]
       }
@@ -97,6 +111,18 @@
             "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/ralph-context-pruner.py",
             "timeout": 10,
             "description": "Saves workflow restore point and prunes old logs"
+          }
+        ]
+      },
+      {
+        "matcher": "*",
+        "description": "Transcript Saver - save full conversation to .map/ before compaction",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/pre-compact-save-transcript.py",
+            "timeout": 30,
+            "description": "Saves full transcript as readable markdown to .map/<branch>/transcript-YYYY-MM-DD-HH-MM.md"
           }
         ]
       }
