@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Pre-compact transcript saver** hook to preserve conversation context before compaction
+- **SessionStart(compact) hook** to inject transcript path after compaction for context continuity
+
+### Fixed
+- **Hook test coverage**: replaced deleted hook tests with safety-guardrails tests
+- **Copilot review comments**: addressed feedback from automated code review
+- **Black formatting** in hook template files (safety-guardrails, workflow-gate, ralph-context-pruner)
+
 ## [3.3.0] - 2026-03-05
 
 ### Added

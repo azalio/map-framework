@@ -47,9 +47,20 @@ DANGEROUS_COMMANDS = [
 
 # Safe path prefixes (skip checks for known safe directories)
 SAFE_PATH_PREFIXES = [
-    "src/", "lib/", "test/", "tests/", "docs/", "pkg/", "cmd/", "internal/",
-    ".claude/agents/", ".claude/commands/", ".claude/hooks/", ".claude/references/",
-    ".claude/skills/", "scripts/",
+    "src/",
+    "lib/",
+    "test/",
+    "tests/",
+    "docs/",
+    "pkg/",
+    "cmd/",
+    "internal/",
+    ".claude/agents/",
+    ".claude/commands/",
+    ".claude/hooks/",
+    ".claude/references/",
+    ".claude/skills/",
+    "scripts/",
 ]
 
 
@@ -71,7 +82,10 @@ def check_file_safety(path: str) -> tuple[bool, str]:
     path_lower = path.lower()
     for pattern in DANGEROUS_FILE_PATTERNS:
         if re.search(pattern, path_lower, re.IGNORECASE):
-            return False, f"Blocked: Access to sensitive file pattern '{pattern}' in path: {path}"
+            return (
+                False,
+                f"Blocked: Access to sensitive file pattern '{pattern}' in path: {path}",
+            )
 
     return True, ""
 

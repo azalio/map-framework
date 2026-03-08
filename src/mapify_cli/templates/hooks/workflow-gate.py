@@ -197,9 +197,7 @@ def check_workflow_compliance(state: Dict) -> tuple[bool, Optional[str]]:
     return False, (
         f"⛔ Workflow Enforcement: Cannot edit code for active subtasks\n\n"
         f"Active subtasks: {', '.join(active)}\n"
-        f"Missing steps:\n"
-        + "\n".join(f"  - {d}" for d in missing_details)
-        + "\n\n"
+        f"Missing steps:\n" + "\n".join(f"  - {d}" for d in missing_details) + "\n\n"
         "Required workflow:\n"
         "  1. Call Task(subagent_type='actor') to generate implementation\n"
         "  2. Call Task(subagent_type='monitor') to validate\n"

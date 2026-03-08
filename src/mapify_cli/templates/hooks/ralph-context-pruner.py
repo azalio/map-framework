@@ -234,7 +234,10 @@ def main() -> None:
     if state:
         # Save restore point
         if save_restore_point(branch, state):
-            print(f"[ralph-pruner] Saved restore_point for branch: {branch}", file=sys.stderr)
+            print(
+                f"[ralph-pruner] Saved restore_point for branch: {branch}",
+                file=sys.stderr,
+            )
 
         # Note: PreCompact has no decision control per docs — additionalContext
         # is not supported. Recovery context is injected via SessionStart(compact)
