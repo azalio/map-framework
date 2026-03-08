@@ -13,7 +13,7 @@ Exit codes:
   0 - Always (PreCompact hooks don't block)
 
 Output:
-  hookSpecificOutput.additionalContext - Recovery message injected into context
+  Side effects only (PreCompact has no decision control per docs)
 """
 import json
 import os
@@ -236,12 +236,9 @@ def main() -> None:
         if save_restore_point(branch, state):
             print(f"[ralph-pruner] Saved restore_point for branch: {branch}", file=sys.stderr)
 
-        # Inject recovery message into context
-        recovery_msg = format_recovery_message(state, branch)
-        output["hookSpecificOutput"] = {
-            "hookEventName": "PreCompact",
-            "additionalContext": recovery_msg,
-        }
+        # Note: PreCompact has no decision control per docs — additionalContext
+        # is not supported. Recovery context is injected via SessionStart(compact)
+        # hook (post-compact-context.py) which reads restore_point.json.
 
     # Prune log files in ALL branch directories
     actions = []

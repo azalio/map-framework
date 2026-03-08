@@ -35,6 +35,20 @@
     ]
   },
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "description": "Post-Compact Context - inject transcript path and workflow state after compaction",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/post-compact-context.py",
+            "timeout": 5,
+            "description": "Tells Claude where to find the pre-compaction transcript and workflow state"
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Edit|Write|Read|MultiEdit|Bash",

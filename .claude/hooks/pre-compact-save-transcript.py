@@ -164,6 +164,15 @@ def main() -> None:
         print(f"[pre-compact-save] Saved transcript to {outfile}", file=sys.stderr)
     except (IOError, OSError) as e:
         print(f"[pre-compact-save] Failed to save: {e}", file=sys.stderr)
+        print("{}")
+        sys.exit(0)
+
+    # Write a pointer file so the context-pruner (or compact summary) can reference it
+    pointer = branch_dir / "last-transcript.txt"
+    try:
+        pointer.write_text(str(outfile.relative_to(PROJECT_DIR)), encoding="utf-8")
+    except (IOError, OSError):
+        pass
 
     print("{}")
     sys.exit(0)
