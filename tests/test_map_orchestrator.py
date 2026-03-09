@@ -124,7 +124,6 @@ class TestSetWaves:
         assert waves[0] == ["ST-001"]
         assert waves[1] == ["ST-002"]
 
-
     def test_set_waves_nested_blueprint_format(self, branch_dir, tmp_path):
         """Full decomposer output with subtasks nested under 'blueprint' key."""
         branch = branch_dir
