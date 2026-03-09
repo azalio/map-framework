@@ -663,7 +663,12 @@ def set_waves(branch: str, blueprint_path: Optional[str] = None) -> Dict:
     except (json.JSONDecodeError, OSError) as exc:
         return {"status": "error", "message": f"Invalid blueprint: {exc}"}
 
-    subtasks = blueprint.get("subtasks", [])
+    # Support both formats: full decomposer output (subtasks nested under
+    # "blueprint" key) and flat format (subtasks at top level).
+    if "blueprint" in blueprint and isinstance(blueprint["blueprint"], dict):
+        subtasks = blueprint["blueprint"].get("subtasks", [])
+    else:
+        subtasks = blueprint.get("subtasks", [])
     if not subtasks:
         return {"status": "error", "message": "No subtasks in blueprint"}
 

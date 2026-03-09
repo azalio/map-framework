@@ -125,6 +125,37 @@ class TestSetWaves:
         assert waves[1] == ["ST-002"]
 
 
+    def test_set_waves_nested_blueprint_format(self, branch_dir, tmp_path):
+        """Full decomposer output with subtasks nested under 'blueprint' key."""
+        branch = branch_dir
+        bp_dir = tmp_path / ".map" / branch
+        bp_dir.mkdir(parents=True, exist_ok=True)
+        full_output = {
+            "schema_version": "2.0",
+            "analysis": {"assumptions": [], "open_questions": []},
+            "blueprint": {
+                "id": "test",
+                "summary": "Test",
+                "subtasks": [
+                    {"id": "ST-001", "dependencies": [], "affected_files": []},
+                    {
+                        "id": "ST-002",
+                        "dependencies": ["ST-001"],
+                        "affected_files": [],
+                    },
+                ],
+            },
+        }
+        bp_file = bp_dir / "blueprint.json"
+        bp_file.write_text(json.dumps(full_output), encoding="utf-8")
+
+        result = map_orchestrator.set_waves(branch, str(bp_file))
+        assert result["status"] == "success"
+        waves = result["execution_waves"]
+        assert waves[0] == ["ST-001"]
+        assert waves[1] == ["ST-002"]
+
+
 class TestGetWaveStep:
     """Tests for get_wave_step command."""
 
