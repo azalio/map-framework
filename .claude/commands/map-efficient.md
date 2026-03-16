@@ -596,10 +596,16 @@ Question 2: For EACH subtask, did I:
   - Run linter gate? [YES/NO per subtask]
 Answer: [List each subtask and answers]
 
-Question 3: Did I ever write code directly without Actor?
+Question 3: (TDD mode only) For EACH subtask, did I:
+  - Call TEST_WRITER before Actor? [YES/NO/N/A per subtask]
+  - Verify tests failed at TEST_FAIL_GATE? [YES/NO/N/A per subtask]
+  - Use code_only mode for Actor (no test modifications)? [YES/NO/N/A]
+Answer: [List answers, or N/A if TDD mode is not active]
+
+Question 4: Did I ever write code directly without Actor?
 Answer: [YES/NO - if YES, this is a VIOLATION]
 
-Question 4: Did I output CHECKPOINT blocks before agent calls?
+Question 5: Did I output CHECKPOINT blocks before agent calls?
 Answer: [YES/NO - if NO, add them now]
 
 EVALUATION: [PASSED/FAILED]

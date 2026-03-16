@@ -139,6 +139,9 @@ elif [ -f "go.mod" ]; then
   TEST_OUTPUT=$(go test ./... 2>&1) || true
 elif [ -f "Cargo.toml" ]; then
   TEST_OUTPUT=$(cargo test 2>&1) || true
+else
+  echo "WARNING: No test runner detected. Set TEST_OUTPUT manually for your project."
+  TEST_OUTPUT="NO_TEST_RUNNER_FOUND"
 fi
 ```
 

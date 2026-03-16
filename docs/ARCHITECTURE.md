@@ -33,11 +33,11 @@ MAP Framework implements cognitive architecture inspired by prefrontal cortex fu
     ┌───────────────┼───────────────────────────────────────┐
     │               │               │               │        │
     ▼               ▼               ▼               ▼        ▼
-┌────────┐    ┌────────┐    ┌────────┐    ┌────────┐  ┌────────┐
-│EFFICIENT│    │ DEBUG  │    │ DEBATE │    │ REVIEW │  │  FAST  │
-└────┬────┘    └────┬────┘   └────┬────┘   └────┬────┘  └────┬────┘
-     │              │             │              │            │
-     ▼              ▼             ▼              ▼            ▼
+┌────────┐    ┌────────┐    ┌────────┐    ┌────────┐  ┌────────┐  ┌────────┐
+│EFFICIENT│    │  TDD   │    │ DEBUG  │    │ DEBATE │  │ REVIEW │  │  FAST  │
+└────┬────┘    └────┬────┘   └────┬────┘   └────┬────┘  └────┬────┘  └────┬────┘
+     │              │             │              │            │            │
+     ▼              ▼             ▼              ▼            ▼            ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                   WORKFLOW-SPECIFIC SEQUENCES                    │
 ├─────────────────────────────────────────────────────────────────┤
@@ -48,6 +48,14 @@ MAP Framework implements cognitive architecture inspired by prefrontal cortex fu
 │  │   ├─ Standard: Actor → Monitor → [Predictor if risky]    │   │
 │  │   └─ Self-MoA: 3×Actor → 3×Monitor → Synthesizer → Mon.  │   │
 │  │ No Evaluator. Learning via /map-learn (optional)         │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                                                                  │
+│  /map-tdd (test-first development):                              │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ TaskDecomposer → For each subtask:                       │   │
+│  │   TEST_WRITER (tests from spec) → TEST_FAIL_GATE (Red)  │   │
+│  │   → Actor (code_only) → Monitor → [Predictor if risky]  │   │
+│  │ Tests written BEFORE implementation. 18 phases.          │   │
 │  └──────────────────────────────────────────────────────────┘   │
 │                                                                  │
 │  /map-debug (debugging-specific):                               │

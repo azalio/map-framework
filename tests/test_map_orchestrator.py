@@ -457,7 +457,8 @@ class TestTDDMode:
 
     def test_validate_wave_step_with_tdd_mode(self, branch_dir, sample_blueprint):
         """validate_wave_step uses TDD step order when tdd_mode is enabled."""
-        map_orchestrator.set_waves(branch_dir)
+        result = map_orchestrator.set_waves(branch_dir, sample_blueprint)
+        assert result["status"] == "success"
         state_file = Path(f".map/{branch_dir}/step_state.json")
         state = map_orchestrator.StepState.load(state_file)
         state.tdd_mode = True
@@ -505,6 +506,70 @@ class TestTDDMode:
     def test_tdd_step_order_has_more_steps(self):
         """TDD_STEP_ORDER has exactly 2 more steps than STEP_ORDER."""
         assert len(map_orchestrator.TDD_STEP_ORDER) == len(map_orchestrator.STEP_ORDER) + 2
+
+    def test_set_tdd_mode_accepts_various_falsy_values(self, branch_dir):
+        """set_tdd_mode accepts 'no', 'n', '0', 'false' as falsy."""
+        for value in ["no", "n", "0", "false", "FALSE", " False "]:
+            state = map_orchestrator.StepState()
+            state.tdd_mode = True
+            state.save(Path(f".map/{branch_dir}/step_state.json"))
+            result = map_orchestrator.set_tdd_mode(value, branch_dir)
+            assert result["tdd_mode"] is False, f"Failed for value: {value!r}"
+
+    def test_get_next_step_after_mid_workflow_tdd_toggle(self, branch_dir):
+        """get_next_step returns TEST_WRITER after enabling TDD mid-workflow."""
+        state = map_orchestrator.StepState()
+        state.subtask_sequence = ["ST-001"]
+        state.current_subtask_id = "ST-001"
+        state.completed_steps = ["1.0", "1.5", "1.55", "1.56", "1.6",
+                                 "2.0", "2.1", "2.2"]
+        state.pending_steps = ["2.3", "2.4", "2.6", "2.7", "2.8",
+                               "2.9", "2.10", "2.11"]
+        state.current_step_id = "2.2"
+        state.current_step_phase = "RESEARCH"
+        state.save(Path(f".map/{branch_dir}/step_state.json"))
+
+        map_orchestrator.set_tdd_mode("true", branch_dir)
+        result = map_orchestrator.get_next_step(branch_dir)
+        assert result["step_id"] == "2.25"
+        assert result["phase"] == "TEST_WRITER"
+
+    def test_skip_step_works_for_tdd_phases(self, branch_dir):
+        """skip_step('2.25') succeeds when tdd_mode is True."""
+        state = map_orchestrator.StepState()
+        state.tdd_mode = True
+        state.current_step_id = "2.25"
+        state.current_step_phase = "TEST_WRITER"
+        state.pending_steps = ["2.25", "2.26", "2.3", "2.4", "2.6", "2.7",
+                               "2.8", "2.9", "2.10", "2.11"]
+        state.save(Path(f".map/{branch_dir}/step_state.json"))
+
+        result = map_orchestrator.skip_step("2.25", branch_dir)
+        assert result["status"] == "success"
+
+        loaded = map_orchestrator.StepState.load(
+            Path(f".map/{branch_dir}/step_state.json")
+        )
+        assert "2.25" not in loaded.pending_steps
+        assert "2.25" in loaded.completed_steps
+
+    def test_validate_wave_step_missing_evidence_dir(self, branch_dir, sample_blueprint):
+        """validate_wave_step returns error when evidence directory is missing."""
+        result = map_orchestrator.set_waves(branch_dir, sample_blueprint)
+        assert result["status"] == "success"
+        state_file = Path(f".map/{branch_dir}/step_state.json")
+        state = map_orchestrator.StepState.load(state_file)
+        state.subtask_phases = {"ST-001": "2.3"}
+        # Remove evidence directory
+        evidence_dir = Path(f".map/{branch_dir}/evidence")
+        if evidence_dir.exists():
+            import shutil
+            shutil.rmtree(evidence_dir)
+        state.save(state_file)
+
+        result = map_orchestrator.validate_wave_step("ST-001", "2.3", branch_dir)
+        assert result["valid"] is False
+        assert "Evidence directory missing" in result["message"]
 
 
 if __name__ == "__main__":

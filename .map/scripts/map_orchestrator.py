@@ -301,6 +301,24 @@ def get_branch_name() -> str:
         return "default"
 
 
+def _actor_step_instruction(state: StepState) -> str:
+    """Build instruction string for the ACTOR step, TDD-aware."""
+    subtask = state.current_subtask_id
+    if state.tdd_mode:
+        context = (
+            "TDD CODE_ONLY mode: pass <TDD_Mode>code_only</TDD_Mode>. "
+            "Actor must make existing tests green without modifying test files. "
+        )
+    else:
+        context = "Pass XML packet and context patterns. "
+    return (
+        f"Call Task(subagent_type='actor') to implement subtask {subtask}. "
+        f"{context}"
+        f"Actor MUST write evidence file: "
+        f".map/<branch>/evidence/actor_{subtask}.json"
+    )
+
+
 def get_step_instruction(step_id: str, state: StepState) -> str:
     """
     Get instruction for executing a specific step.
@@ -364,18 +382,7 @@ def get_step_instruction(step_id: str, state: StepState) -> str:
             f"If tests fail with assertion errors → proceed to ACTOR. "
             f"Write evidence: .map/<branch>/evidence/test_fail_gate_{state.current_subtask_id}.json"
         ),
-        "2.3": (
-            f"Call Task(subagent_type='actor') to implement subtask "
-            f"{state.current_subtask_id}. "
-            + (
-                "TDD CODE_ONLY mode: pass <TDD_Mode>code_only</TDD_Mode>. "
-                "Actor must make existing tests green without modifying test files. "
-                if state.tdd_mode
-                else "Pass XML packet and context patterns. "
-            )
-            + f"Actor MUST write evidence file: "
-            f".map/<branch>/evidence/actor_{state.current_subtask_id}.json"
-        ),
+        "2.3": _actor_step_instruction(state),
         "2.4": (
             "Call Task(subagent_type='monitor') to validate Actor output. "
             "Check correctness, security, standards, and tests. "
@@ -883,16 +890,23 @@ def validate_wave_step(subtask_id: str, step_id: str, branch: str) -> Dict:
     if step_id in EVIDENCE_REQUIRED:
         phase_name, _always_required = EVIDENCE_REQUIRED[step_id]
         evidence_dir = Path(f".map/{branch}/evidence")
-        if evidence_dir.is_dir():
-            evidence_file = evidence_dir / f"{phase_name}_{subtask_id}.json"
-            if not evidence_file.exists():
-                return {
-                    "valid": False,
-                    "message": (
-                        f"Evidence file missing: {evidence_file}. "
-                        f"The {phase_name} agent must write this file."
-                    ),
-                }
+        if not evidence_dir.is_dir():
+            return {
+                "valid": False,
+                "message": (
+                    f"Evidence directory missing: {evidence_dir}. "
+                    f"Create it before running agent steps."
+                ),
+            }
+        evidence_file = evidence_dir / f"{phase_name}_{subtask_id}.json"
+        if not evidence_file.exists():
+            return {
+                "valid": False,
+                "message": (
+                    f"Evidence file missing: {evidence_file}. "
+                    f"The {phase_name} agent must write this file."
+                ),
+            }
 
     # Determine next phase for this subtask
     subtask_step_order = [s for s in _get_step_order(state.tdd_mode) if s.startswith("2.")]
