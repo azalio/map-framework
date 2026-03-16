@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **TDD workflow (`/map-tdd`)**: Test-first development mode where tests are written from specification before implementation. Includes TEST_WRITER (2.25) and TEST_FAIL_GATE (2.26) phases
+- **`--tdd` flag for `/map-efficient`**: Enables TDD mode within the standard efficient workflow
+- **TDD support in Actor agent**: Two new modes — `test_writer` (write only tests from spec) and `code_only` (implement to make tests green, no test modifications)
+- **`set_tdd_mode` orchestrator command**: Enable/disable TDD phases in the state machine
+- **Enhanced SPEC phase in `/map-plan`**: Structured spec template with Invariants, Edge Cases, Acceptance Criteria, and Security Boundaries sections
+- **Devil's Advocate review step**: After spec creation, Monitor agent adversarially reviews the spec for race conditions, ownership ambiguity, missing edge cases, contradictions, and security gaps (skipped for complexity < 5)
+- **Spec invariant linkage in task-decomposer**: Contracts must trace back to spec invariants when spec exists; checklist enforces coverage
+
 ## [3.4.1] - 2026-03-09
 
 ### Fixed

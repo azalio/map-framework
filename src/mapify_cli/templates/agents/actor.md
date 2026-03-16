@@ -227,6 +227,52 @@ UserService -> register(email, password) -> creates user, returns 201 with JWT
 
 ---
 
+## TDD Mode Support
+
+Actor supports two TDD modes, activated by the `<TDD_Mode>` tag in the prompt:
+
+### TDD Mode: `test_writer`
+
+When `<TDD_Mode>test_writer</TDD_Mode>` is present:
+
+**You write ONLY test files.** No implementation code.
+
+Rules:
+1. Derive tests from the AAG contract, validation_criteria, and test_strategy — NOT from any implementation.
+2. You have NO knowledge of the implementation. Do not assume internal structure, class names, or method signatures beyond what the contract specifies.
+3. Test the PUBLIC interface/behavior described in the contract.
+4. Each `VCn:` validation criterion must have at least one corresponding test.
+5. Include edge cases from the spec's `## Edge Cases` section if available in the packet.
+6. Use standard test patterns for the project's language and framework.
+7. Tests SHOULD fail when run (implementation doesn't exist yet). This is expected.
+
+Output:
+- Test files created via Write tool
+- Evidence file: `.map/<branch>/evidence/test_writer_<subtask_id>.json`
+
+### TDD Mode: `code_only`
+
+When `<TDD_Mode>code_only</TDD_Mode>` is present:
+
+**You write ONLY implementation code.** Test files are READ-ONLY.
+
+Rules:
+1. Read the test files listed in `<TDD_Tests>` FIRST to understand expected behavior.
+2. Do NOT modify, delete, or rename any test file.
+3. Implement the minimum code needed to make ALL existing tests pass.
+4. Follow the AAG contract as your specification.
+5. If a test seems wrong (testing impossible behavior), flag it in trade-offs but still implement to satisfy it. Monitor will catch true test issues.
+
+Output:
+- Implementation files created/modified via Edit/Write tools
+- Standard Actor evidence file
+
+### No TDD Mode (default)
+
+When no `<TDD_Mode>` tag is present, Actor operates in standard mode: write both implementation and tests as described in sections 3-7 below.
+
+---
+
 ## 2. Approach
 Explain solution strategy in 2-3 sentences. Include:
 - Core idea and why this approach

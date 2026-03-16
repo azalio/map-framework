@@ -803,7 +803,7 @@ Summary:
 
 ## 🔀 Workflow Variants
 
-MAP Framework offers three primary implementation workflows with different trade-offs between token usage, quality assurance, and learning. Additional supporting workflows (`/map-debug`, `/map-review`, `/map-check`, `/map-plan`, `/map-release`, `/map-resume`, `/map-learn`) are documented in their respective sections.
+MAP Framework offers three primary implementation workflows with different trade-offs between token usage, quality assurance, and learning. A fourth workflow (`/map-tdd`) adds test-first development. Additional supporting workflows (`/map-debug`, `/map-review`, `/map-check`, `/map-plan`, `/map-release`, `/map-resume`, `/map-learn`) are documented in their respective sections.
 
 ### Comparison Table
 
@@ -955,6 +955,33 @@ MAP Framework offers three primary implementation workflows with different trade
 # Minor docs automation
 /map-fast Update CLI help text formatting
 ```
+
+#### Use `/map-tdd` (Test-Driven Development)
+
+**When:** Correctness-critical features where you need tests to validate behavior independently of implementation.
+
+**Key insight:** When AI writes tests alongside code, tests tend to confirm the implementation (including its bugs) rather than validate the specification. TDD mode separates test authoring from implementation.
+
+**Flow:**
+```
+DECOMPOSE → TEST_WRITER (tests from spec) → TEST_FAIL_GATE (verify Red) → ACTOR (code only) → MONITOR
+```
+
+**Usage:**
+```bash
+# Standalone TDD workflow
+/map-tdd Add payment processing with refund support
+
+# Or via --tdd flag on /map-efficient
+/map-efficient --tdd Add JWT authentication with refresh tokens
+```
+
+**Best for:**
+- Auth, payments, data integrity features
+- Features with clear acceptance criteria in the spec
+- When previous AI-generated tests missed real bugs
+
+**Token cost:** ~20-30% higher than /map-efficient (extra Actor call for test-writing phase).
 
 ### Real-World Token Usage Examples
 

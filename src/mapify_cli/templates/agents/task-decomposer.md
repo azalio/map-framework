@@ -244,6 +244,7 @@ Return **ONLY** valid JSON in this exact structure:
   - `scope`: "function" | "endpoint" | "module"
   - Include when: security_critical OR complexity_score ≥ 5 OR API contracts
   - Omit when: simple CRUD, internal helpers, complexity_score < 5
+  - **Spec invariant linkage**: If a `spec_<branch>.md` file exists with an `## Invariants` section, each contract MUST trace back to at least one spec invariant. Add `"source": "spec-invariant-N"` to link the contract to the invariant it enforces. This ensures no spec invariant is left unguarded by contracts.
 **subtasks[].aag_contract**: REQUIRED one-line contract in `Actor -> Action(params) -> Goal` format
   - This is the primary handoff artifact to the Actor agent
   - Actor "compiles" this contract into code; Monitor verifies against it
@@ -542,6 +543,11 @@ If circular dependency detected (e.g., A→B→C→A):
 - [ ] For complexity_score ≥ 7, verify at least one entry in `risks` (or explicitly state `[]` if none)
 - [ ] All assumptions documented that could affect implementation
 - [ ] Open questions flagged that need clarification before proceeding
+
+**Spec Invariant Coverage** (when spec exists):
+- [ ] Read `spec_<branch>.md` if present — check for `## Invariants` section
+- [ ] Each spec invariant is covered by at least one contract across subtasks
+- [ ] Edge cases from spec's `## Edge Cases` section are reflected in validation_criteria
 
 **MCP Tool Usage Verification**:
 - [ ] Did you use insights from MCP tools in your decomposition?

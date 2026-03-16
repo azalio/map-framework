@@ -61,6 +61,29 @@ Both files must stay in sync. The orchestrator updates `step_state.json` on ever
 
 **Task:** $ARGUMENTS
 
+## Flag Parsing
+
+Parse optional flags from `$ARGUMENTS`:
+
+- **`--tdd`**: Enable TDD mode (test-first workflow). Inserts TEST_WRITER and TEST_FAIL_GATE phases before ACTOR. Tests are written from spec before implementation.
+
+```bash
+# Extract flags and clean task description
+TASK_ARGS="$ARGUMENTS"
+TDD_FLAG=false
+if echo "$TASK_ARGS" | grep -q -- '--tdd'; then
+  TDD_FLAG=true
+  TASK_ARGS=$(echo "$TASK_ARGS" | sed 's/--tdd//g' | xargs)
+fi
+```
+
+If `--tdd` is detected, enable TDD mode after state initialization:
+```bash
+if [ "$TDD_FLAG" = "true" ]; then
+  python3 .map/scripts/map_orchestrator.py set_tdd_mode true
+fi
+```
+
 ## Step 0: Detect Existing Plan from /map-plan
 
 Before starting the state machine, check if `/map-plan` already produced artifacts for this branch:
@@ -322,7 +345,53 @@ This file is the SOLE research artifact passed to Actor and future steps."""
     )
 ```
 
+### Phase: TEST_WRITER (2.25) — TDD Mode Only
+
+Auto-skipped when TDD mode is disabled. When active:
+
+```python
+Task(
+  subagent_type="actor",
+  description="TDD: Write tests for subtask [ID]",
+  prompt=f"""You are in TDD TEST_WRITER mode.
+
+<MAP_Packet subtask="[ID]" v="1.0" risk="[risk_level]">
+[paste from .map/<branch>/current_packet.xml]
+</MAP_Packet>
+
+<MAP_Contract>
+[AAG contract from decomposition]
+</MAP_Contract>
+
+<TDD_Mode>test_writer</TDD_Mode>
+
+STRICT RULES:
+1. Write ONLY test files. Do NOT create or modify implementation files.
+2. Tests must be derived from the SPECIFICATION (AAG contract + validation_criteria).
+3. You have NO knowledge of the implementation.
+4. Each VCn: validation criterion must have at least one corresponding test.
+5. Tests SHOULD fail when run (implementation doesn't exist yet).
+
+Write evidence: .map/<branch>/evidence/test_writer_<subtask_id>.json"""
+)
+```
+
+### Phase: TEST_FAIL_GATE (2.26) — TDD Mode Only
+
+Auto-skipped when TDD mode is disabled. When active, run the tests — they MUST fail:
+
+```bash
+# Run tests — expect failures (Red phase)
+pytest --tb=short 2>&1 || true
+# If tests PASS → go back to TEST_WRITER (tests are trivial)
+# If tests FAIL with assertion errors → proceed to ACTOR (expected TDD state)
+```
+
+Write evidence: `.map/<branch>/evidence/test_fail_gate_<subtask_id>.json`
+
 ### Phase: ACTOR (2.3)
+
+When TDD mode is active, Actor receives `<TDD_Mode>code_only</TDD_Mode>` and must NOT modify test files. When TDD is off, standard behavior.
 
 ```python
 Task(
