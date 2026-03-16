@@ -310,5 +310,202 @@ class TestBackwardCompat:
         assert loaded.subtask_retry_counts == {}
 
 
+class TestTDDMode:
+    """Tests for TDD mode: set_tdd_mode, _get_step_order, auto-skip, and TDD-aware phases."""
+
+    def test_get_step_order_default(self):
+        """_get_step_order returns STEP_ORDER when tdd_mode=False."""
+        order = map_orchestrator._get_step_order(False)
+        assert order is map_orchestrator.STEP_ORDER
+        assert "2.25" not in order
+        assert "2.26" not in order
+
+    def test_get_step_order_tdd(self):
+        """_get_step_order returns TDD_STEP_ORDER when tdd_mode=True."""
+        order = map_orchestrator._get_step_order(True)
+        assert order is map_orchestrator.TDD_STEP_ORDER
+        assert "2.25" in order
+        assert "2.26" in order
+        # TDD phases must come before ACTOR (2.3)
+        assert order.index("2.25") < order.index("2.3")
+        assert order.index("2.26") < order.index("2.3")
+        assert order.index("2.25") < order.index("2.26")
+
+    def test_set_tdd_mode_enables(self, branch_dir):
+        """set_tdd_mode('true') enables TDD and rebuilds pending_steps with TDD phases."""
+        state = map_orchestrator.StepState()
+        state.save(Path(f".map/{branch_dir}/step_state.json"))
+
+        result = map_orchestrator.set_tdd_mode("true", branch_dir)
+        assert result["status"] == "success"
+        assert result["tdd_mode"] is True
+
+        loaded = map_orchestrator.StepState.load(
+            Path(f".map/{branch_dir}/step_state.json")
+        )
+        assert loaded.tdd_mode is True
+        assert "2.25" in loaded.pending_steps
+        assert "2.26" in loaded.pending_steps
+
+    def test_set_tdd_mode_disables(self, branch_dir):
+        """set_tdd_mode('false') disables TDD and removes TDD phases from pending_steps."""
+        state = map_orchestrator.StepState()
+        state.tdd_mode = True
+        state.pending_steps = map_orchestrator.TDD_STEP_ORDER.copy()
+        state.save(Path(f".map/{branch_dir}/step_state.json"))
+
+        result = map_orchestrator.set_tdd_mode("false", branch_dir)
+        assert result["status"] == "success"
+        assert result["tdd_mode"] is False
+
+        loaded = map_orchestrator.StepState.load(
+            Path(f".map/{branch_dir}/step_state.json")
+        )
+        assert loaded.tdd_mode is False
+        assert "2.25" not in loaded.pending_steps
+        assert "2.26" not in loaded.pending_steps
+
+    def test_set_tdd_mode_invalid_value(self, branch_dir):
+        """set_tdd_mode with invalid value returns error."""
+        state = map_orchestrator.StepState()
+        state.save(Path(f".map/{branch_dir}/step_state.json"))
+
+        result = map_orchestrator.set_tdd_mode("maybe", branch_dir)
+        assert result["status"] == "error"
+        assert "Invalid" in result["message"]
+
+    def test_set_tdd_mode_preserves_completed_steps(self, branch_dir):
+        """Enabling TDD mode doesn't re-add already completed steps."""
+        state = map_orchestrator.StepState()
+        state.completed_steps = ["1.0", "1.5"]
+        state.pending_steps = ["1.55", "1.56", "1.6", "2.0", "2.1", "2.2", "2.3",
+                               "2.4", "2.6", "2.7", "2.8", "2.9", "2.10", "2.11"]
+        state.save(Path(f".map/{branch_dir}/step_state.json"))
+
+        map_orchestrator.set_tdd_mode("true", branch_dir)
+
+        loaded = map_orchestrator.StepState.load(
+            Path(f".map/{branch_dir}/step_state.json")
+        )
+        assert "1.0" not in loaded.pending_steps
+        assert "1.5" not in loaded.pending_steps
+        assert "2.25" in loaded.pending_steps
+        assert "2.26" in loaded.pending_steps
+
+    def test_set_tdd_mode_accepts_various_truthy_values(self, branch_dir):
+        """set_tdd_mode accepts 'yes', 'y', '1', 'true' as truthy."""
+        for value in ["yes", "y", "1", "true", "TRUE", " True "]:
+            state = map_orchestrator.StepState()
+            state.save(Path(f".map/{branch_dir}/step_state.json"))
+            result = map_orchestrator.set_tdd_mode(value, branch_dir)
+            assert result["tdd_mode"] is True, f"Failed for value: {value!r}"
+
+    def test_auto_skip_tdd_phases_when_disabled(self, branch_dir):
+        """get_next_step auto-skips 2.25 and 2.26 when tdd_mode=False."""
+        state = map_orchestrator.StepState()
+        state.tdd_mode = False
+        state.subtask_sequence = ["ST-001"]
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.2"
+        state.current_step_phase = "AAG_CONTRACT"
+        state.pending_steps = ["2.25", "2.26", "2.3", "2.4", "2.6", "2.7",
+                               "2.8", "2.9", "2.10", "2.11"]
+        state.save(Path(f".map/{branch_dir}/step_state.json"))
+
+        result = map_orchestrator.get_next_step(branch_dir)
+        assert result["step_id"] == "2.3"
+        assert result["phase"] == "ACTOR"
+
+    def test_tdd_phases_not_skipped_when_enabled(self, branch_dir):
+        """get_next_step does NOT skip 2.25 when tdd_mode=True."""
+        state = map_orchestrator.StepState()
+        state.tdd_mode = True
+        state.subtask_sequence = ["ST-001"]
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.2"
+        state.current_step_phase = "AAG_CONTRACT"
+        state.pending_steps = ["2.25", "2.26", "2.3", "2.4", "2.6", "2.7",
+                               "2.8", "2.9", "2.10", "2.11"]
+        state.save(Path(f".map/{branch_dir}/step_state.json"))
+
+        result = map_orchestrator.get_next_step(branch_dir)
+        assert result["step_id"] == "2.25"
+        assert result["phase"] == "TEST_WRITER"
+
+    def test_tdd_state_serialization(self, branch_dir):
+        """tdd_mode field serializes and deserializes correctly."""
+        state = map_orchestrator.StepState()
+        state.tdd_mode = True
+        state_file = Path(f".map/{branch_dir}/step_state.json")
+        state.save(state_file)
+
+        loaded = map_orchestrator.StepState.load(state_file)
+        assert loaded.tdd_mode is True
+
+    def test_old_state_without_tdd_mode_defaults_false(self, branch_dir):
+        """State file without tdd_mode field defaults to False."""
+        old_state = {
+            "workflow": "map-efficient",
+            "current_step_id": "1.0",
+            "current_step_phase": "DECOMPOSE",
+        }
+        state_file = Path(f".map/{branch_dir}/step_state.json")
+        state_file.write_text(json.dumps(old_state), encoding="utf-8")
+
+        loaded = map_orchestrator.StepState.load(state_file)
+        assert loaded.tdd_mode is False
+
+    def test_validate_wave_step_with_tdd_mode(self, branch_dir, sample_blueprint):
+        """validate_wave_step uses TDD step order when tdd_mode is enabled."""
+        map_orchestrator.set_waves(branch_dir)
+        state_file = Path(f".map/{branch_dir}/step_state.json")
+        state = map_orchestrator.StepState.load(state_file)
+        state.tdd_mode = True
+        state.subtask_phases = {"ST-001": "2.25"}
+
+        evidence = {
+            "phase": "TEST_WRITER",
+            "subtask_id": "ST-001",
+            "status": "applied",
+        }
+        evidence_file = Path(f".map/{branch_dir}/evidence/test_writer_ST-001.json")
+        evidence_file.write_text(json.dumps(evidence), encoding="utf-8")
+
+        state.save(state_file)
+        result = map_orchestrator.validate_wave_step("ST-001", "2.25", branch_dir)
+        assert result["valid"] is True
+        loaded = map_orchestrator.StepState.load(state_file)
+        assert loaded.subtask_phases["ST-001"] == "2.26"
+
+    def test_circuit_breaker_uses_tdd_step_count(self, branch_dir):
+        """check_circuit_breaker uses TDD step count when tdd_mode is enabled."""
+        state = map_orchestrator.StepState()
+        state.tdd_mode = True
+        state.subtask_sequence = ["ST-001"]
+        state.completed_steps = []
+        state.save(Path(f".map/{branch_dir}/step_state.json"))
+
+        result = map_orchestrator.check_circuit_breaker(branch_dir)
+        expected_max = len(map_orchestrator.TDD_STEP_ORDER)
+        assert result["max_iterations"] == expected_max
+        assert result["triggered"] is False
+
+    def test_circuit_breaker_standard_step_count(self, branch_dir):
+        """check_circuit_breaker uses standard step count when tdd_mode is disabled."""
+        state = map_orchestrator.StepState()
+        state.tdd_mode = False
+        state.subtask_sequence = ["ST-001"]
+        state.completed_steps = []
+        state.save(Path(f".map/{branch_dir}/step_state.json"))
+
+        result = map_orchestrator.check_circuit_breaker(branch_dir)
+        expected_max = len(map_orchestrator.STEP_ORDER)
+        assert result["max_iterations"] == expected_max
+
+    def test_tdd_step_order_has_more_steps(self):
+        """TDD_STEP_ORDER has exactly 2 more steps than STEP_ORDER."""
+        assert len(map_orchestrator.TDD_STEP_ORDER) == len(map_orchestrator.STEP_ORDER) + 2
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

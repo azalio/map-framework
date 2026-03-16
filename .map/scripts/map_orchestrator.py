@@ -721,7 +721,6 @@ def set_waves(branch: str, blueprint_path: Optional[str] = None) -> Dict:
         Dict with status and computed waves
     """
     # Import here to avoid circular deps at module level
-    sys_path_added = False
     try:
         from mapify_cli.dependency_graph import DependencyGraph, SubtaskNode
     except ImportError:
@@ -741,8 +740,8 @@ def set_waves(branch: str, blueprint_path: Optional[str] = None) -> Dict:
                 if spec and spec.loader:
                     mod = importlib.util.module_from_spec(spec)
                     spec.loader.exec_module(mod)
-                    DependencyGraph = mod.DependencyGraph  # noqa: N806
-                    SubtaskNode = mod.SubtaskNode  # noqa: N806
+                    DependencyGraph = mod.DependencyGraph  # type: ignore[misc]  # noqa: N806
+                    SubtaskNode = mod.SubtaskNode  # type: ignore[misc]  # noqa: N806
                     loaded = True
                     break
         if not loaded:
@@ -896,7 +895,7 @@ def validate_wave_step(subtask_id: str, step_id: str, branch: str) -> Dict:
                 }
 
     # Determine next phase for this subtask
-    subtask_step_order = [s for s in STEP_ORDER if s.startswith("2.")]
+    subtask_step_order = [s for s in _get_step_order(state.tdd_mode) if s.startswith("2.")]
     current_idx = subtask_step_order.index(step_id) if step_id in subtask_step_order else -1
 
     if current_idx >= 0 and current_idx + 1 < len(subtask_step_order):
@@ -1036,7 +1035,7 @@ def check_circuit_breaker(branch: str) -> Dict:
     state = StepState.load(state_file)
 
     tool_count = len(state.completed_steps)
-    max_iterations = len(state.subtask_sequence) * len(STEP_ORDER)
+    max_iterations = len(state.subtask_sequence) * len(_get_step_order(state.tdd_mode))
 
     return {
         "tool_count": tool_count,
