@@ -197,6 +197,9 @@ class StepState:
     execution_mode: str = "batch"  # batch|step_by_step
     # TDD mode: inserts TEST_WRITER and TEST_FAIL_GATE before ACTOR
     tdd_mode: bool = False
+    # Steps skipped (not executed) — tracked separately from completed_steps
+    # so that re-enabling TDD can re-introduce skipped TDD steps
+    skipped_steps: List[str] = field(default_factory=list)
     # Wave-based parallel execution fields
     execution_waves: List[List[str]] = field(default_factory=list)
     current_wave_index: int = 0
@@ -220,6 +223,7 @@ class StepState:
             "plan_approved": self.plan_approved,
             "execution_mode": self.execution_mode,
             "tdd_mode": self.tdd_mode,
+            "skipped_steps": self.skipped_steps,
             "execution_waves": self.execution_waves,
             "current_wave_index": self.current_wave_index,
             "subtask_phases": self.subtask_phases,
@@ -244,6 +248,7 @@ class StepState:
             plan_approved=data.get("plan_approved", False),
             execution_mode=data.get("execution_mode", "batch"),
             tdd_mode=data.get("tdd_mode", False),
+            skipped_steps=data.get("skipped_steps", []),
             execution_waves=data.get("execution_waves", []),
             current_wave_index=data.get("current_wave_index", 0),
             subtask_phases=data.get("subtask_phases", {}),
@@ -447,7 +452,8 @@ def get_next_step(branch: str) -> Dict:
         and state.pending_steps[0] in ("2.25", "2.26")
         and not state.tdd_mode
     ):
-        state.completed_steps.append(state.pending_steps.pop(0))
+        skipped = state.pending_steps.pop(0)
+        state.skipped_steps.append(skipped)
         state.save(state_file)
 
     # Auto-skip steps that are conditional in batch mode
@@ -474,6 +480,7 @@ def get_next_step(branch: str) -> Dict:
             xml_packet_idx = step_order.index("2.0")
             state.pending_steps = step_order[xml_packet_idx:]  # Start from 2.0
             state.completed_steps = []
+            state.skipped_steps = []
             state.retry_count = 0
             state.save(state_file)
         else:
@@ -704,10 +711,47 @@ def set_tdd_mode(value: str, branch: str) -> Dict:
             "message": f"Invalid value for tdd_mode: {value}",
         }
 
-    # Rebuild pending_steps with correct order for TDD mode
+    # Rebuild pending_steps relative to current position (not from scratch)
+    # to avoid re-introducing already-completed global steps (1.x)
     step_order = _get_step_order(state.tdd_mode)
-    completed_set = set(state.completed_steps)
-    state.pending_steps = [s for s in step_order if s not in completed_set]
+
+    # When re-enabling TDD, remove 2.25/2.26 from skipped so they can run
+    if state.tdd_mode:
+        state.skipped_steps = [
+            s for s in state.skipped_steps if s not in ("2.25", "2.26")
+        ]
+
+    done_and_skipped = set(state.completed_steps) | set(state.skipped_steps)
+
+    if state.pending_steps:
+        # Find position of first pending step in the new order
+        first_pending = state.pending_steps[0]
+        if first_pending in step_order:
+            pos = step_order.index(first_pending)
+            # When enabling TDD, also include TDD steps that come
+            # just before the current position (2.25/2.26 before 2.3)
+            if state.tdd_mode:
+                # Find the earliest TDD step not yet done
+                tdd_steps = {"2.25", "2.26"}
+                earliest_tdd = None
+                for i, s in enumerate(step_order):
+                    if s in tdd_steps and s not in done_and_skipped and i < pos:
+                        if earliest_tdd is None or i < earliest_tdd:
+                            earliest_tdd = i
+                if earliest_tdd is not None:
+                    pos = earliest_tdd
+            # Rebuild from position onwards, excluding done/skipped
+            state.pending_steps = [
+                s for s in step_order[pos:] if s not in done_and_skipped
+            ]
+        else:
+            state.pending_steps = [
+                s for s in step_order if s not in done_and_skipped
+            ]
+    else:
+        state.pending_steps = [
+            s for s in step_order if s not in done_and_skipped
+        ]
 
     state.save(state_file)
     return {"status": "success", "tdd_mode": state.tdd_mode}
@@ -853,9 +897,11 @@ def get_wave_step(branch: str) -> Dict:
     mode = "sequential" if len(wave) == 1 else "parallel"
 
     # Build subtask info with current phases
+    # Default start phase depends on TDD mode
+    default_phase = "2.25" if state.tdd_mode else "2.3"
     subtask_infos = []
     for st_id in wave:
-        phase = state.subtask_phases.get(st_id, "2.3")
+        phase = state.subtask_phases.get(st_id, default_phase)
         phase_name = STEP_PHASES.get(phase, "ACTOR")
         subtask_infos.append({
             "subtask_id": st_id,
@@ -981,6 +1027,8 @@ def skip_step(step_id: str, branch: str) -> Dict:
 
     Only steps that are defined as conditional can be skipped:
       - 2.2 (RESEARCH): conditional on refactoring or 3+ files
+      - 2.25 (TEST_WRITER): TDD mode only, auto-skipped otherwise
+      - 2.26 (TEST_FAIL_GATE): TDD mode only, auto-skipped otherwise
       - 2.6 (PREDICTOR): conditional on medium/high risk
       - 2.11 (SUBTASK_APPROVAL): conditional on step_by_step mode
 
@@ -1204,8 +1252,7 @@ def get_plan_progress(branch: str) -> Dict:
     completed = [s for s in subtasks if s["status"] == "complete"]
     pending = [s for s in subtasks if s["status"] != "complete"]
 
-    # Determine suggested next subtask
-    # Prefer first pending subtask (plan order respects dependencies)
+    # Determine suggested next subtask (first pending in plan order)
     suggested_next = pending[0]["id"] if pending else None
 
     return {

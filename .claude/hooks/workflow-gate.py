@@ -99,11 +99,13 @@ def is_exempt_path(file_path: str) -> bool:
         else (Path.cwd().resolve() / candidate).resolve(strict=False)
     )
 
-    # Allow Claude auto-memory and settings (~/.claude/)
-    claude_dir = Path.home() / ".claude"
+    # Allow Claude auto-memory writes (~/.claude/projects/*/memory/)
+    claude_memory_dir = Path.home() / ".claude" / "projects"
     try:
-        resolved.relative_to(claude_dir.resolve())
-        return True
+        rel = resolved.relative_to(claude_memory_dir.resolve())
+        # Only allow paths that include a "memory" component
+        if "memory" in rel.parts:
+            return True
     except ValueError:
         pass
 

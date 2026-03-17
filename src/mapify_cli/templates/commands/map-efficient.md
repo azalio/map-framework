@@ -59,8 +59,6 @@ Both files must stay in sync. The orchestrator updates `step_state.json` on ever
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Task:** $ARGUMENTS
-
 ## Flag Parsing
 
 Parse optional flags from `$ARGUMENTS`:
@@ -76,6 +74,10 @@ if echo "$TASK_ARGS" | grep -q -- '--tdd'; then
   TASK_ARGS=$(echo "$TASK_ARGS" | sed 's/--tdd//g' | xargs)
 fi
 ```
+
+**Task:** $TASK_ARGS
+
+**IMPORTANT:** Use `$TASK_ARGS` (not `$ARGUMENTS`) in all agent prompts below. The `--tdd` flag has been stripped from `$TASK_ARGS` so it won't leak into task descriptions.
 
 If `--tdd` is detected, enable TDD mode after state initialization:
 ```bash
@@ -128,7 +130,7 @@ Task(
   description="Decompose task into subtasks",
   prompt=f"""Break down into ≤20 atomic subtasks and RETURN ONLY JSON.
 
-Task: $ARGUMENTS
+Task: $TASK_ARGS
 
 Hard requirements:
 - Use `blueprint.subtasks[].validation_criteria` (2-4 testable outcomes)
@@ -277,6 +279,14 @@ loop:
     # Phase A: Prep (sequential per subtask - lightweight)
     for each subtask in WAVE.subtasks:
       build XML_PACKET, run CONTEXT_SEARCH, optional RESEARCH
+
+    # Phase A.5: TDD phases (if --tdd mode)
+    # When TDD is enabled, run TEST_WRITER + TEST_FAIL_GATE per subtask
+    # BEFORE launching Actors. These run sequentially per subtask.
+    if TDD_FLAG:
+      for each subtask in WAVE.subtasks:
+        run TEST_WRITER (2.25) → validate_wave_step SUBTASK_ID "2.25"
+        run TEST_FAIL_GATE (2.26) → validate_wave_step SUBTASK_ID "2.26"
 
     # Phase B: Parallel Actors
     # Launch ALL Task(subagent_type="actor") calls in ONE message

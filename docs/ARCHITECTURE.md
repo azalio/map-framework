@@ -740,20 +740,21 @@ See [USAGE.md - Workflow Variants](./USAGE.md#workflow-variants) for detailed de
 1. `1.0 DECOMPOSE` - task-decomposer agent
 2. `1.5 INIT_PLAN` - Generate task_plan.md
 3. `1.55 REVIEW_PLAN` - User approval checkpoint
-4. `1.56 CHOOSE_MODE` - Select execution mode (step_by_step|batch)
+4. `1.56 CHOOSE_MODE` - Auto-skipped (always batch mode)
 5. `1.6 INIT_STATE` - Create workflow_state.json
 6. `2.0 XML_PACKET` - Build AI-friendly subtask packet
-7. `2.2 RESEARCH` - research-agent (conditional)
-8. `2.25 TEST_WRITER` - TDD: write tests from spec (TDD mode only, auto-skipped otherwise)
-9. `2.26 TEST_FAIL_GATE` - TDD: verify tests fail without impl (TDD mode only)
-10. `2.3 ACTOR` - Actor agent implementation (code-only in TDD mode)
-11. `2.4 MONITOR` - Monitor validation (retry up to 5 times)
-12. `2.6 PREDICTOR` - Impact analysis (conditional)
-13. `2.7 UPDATE_STATE` - Update workflow_state.json
-14. `2.8 TESTS_GATE` - Run tests
-15. `2.9 LINTER_GATE` - Run linter
-16. `2.10 VERIFY_ADHERENCE` - Self-audit checkpoint
-17. `2.11 SUBTASK_APPROVAL` - Pause between subtasks (step_by_step only)
+7. `2.1 CONTEXT_SEARCH` - Context search for relevant patterns
+8. `2.2 RESEARCH` - research-agent (conditional)
+9. `2.25 TEST_WRITER` - TDD: write tests from spec (TDD mode only, auto-skipped otherwise)
+10. `2.26 TEST_FAIL_GATE` - TDD: verify tests fail without impl (TDD mode only)
+11. `2.3 ACTOR` - Actor agent implementation (code-only in TDD mode)
+12. `2.4 MONITOR` - Monitor validation (retry up to 5 times)
+13. `2.6 PREDICTOR` - Impact analysis (conditional)
+14. `2.7 UPDATE_STATE` - Update workflow_state.json
+15. `2.8 TESTS_GATE` - Run tests
+16. `2.9 LINTER_GATE` - Run linter
+17. `2.10 VERIFY_ADHERENCE` - Self-audit checkpoint
+18. `2.11 SUBTASK_APPROVAL` - Pause between subtasks (step_by_step only, auto-skipped in batch)
 
 **State Files:**
 - `step_state.json` - Hook injection source (current step phase)
