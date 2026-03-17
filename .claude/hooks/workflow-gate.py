@@ -14,6 +14,7 @@ ENFORCEMENT RULES:
   - Blocks if current subtask hasn't completed required steps: ['actor', 'monitor']
   - Allows tools if all required steps are completed
   - Always allows edits under .map/ (workflow artifacts/state) to prevent deadlocks
+  - Always allows edits under ~/.claude/ (auto-memory, project settings)
   - Allows Read, Bash, and other non-editing tools always
 
 WORKFLOW STATE FILE:
@@ -80,24 +81,36 @@ def extract_target_file_paths(tool_call: Dict) -> list[str]:
     return paths
 
 
-def is_map_artifact_path(file_path: str) -> bool:
+def is_exempt_path(file_path: str) -> bool:
     """
-    Return True if file_path resolves under the current working directory's .map/.
+    Return True if file_path is exempt from workflow enforcement.
 
-    This allowlist prevents the workflow gate from deadlocking itself by blocking
-    updates to workflow artifacts (including workflow_state.json).
+    Exempt paths:
+    - .map/ artifacts (workflow state, plans, findings) -- prevents deadlocks
+    - ~/.claude/ (auto-memory, project settings) -- Claude's own persistence
     """
     if not isinstance(file_path, str) or not file_path.strip():
         return False
 
-    repo_root = Path.cwd().resolve()
     candidate = Path(file_path)
     resolved = (
         candidate.resolve(strict=False)
         if candidate.is_absolute()
-        else (repo_root / candidate).resolve(strict=False)
+        else (Path.cwd().resolve() / candidate).resolve(strict=False)
     )
 
+    # Allow Claude auto-memory writes (~/.claude/projects/*/memory/)
+    claude_memory_dir = Path.home() / ".claude" / "projects"
+    try:
+        rel = resolved.relative_to(claude_memory_dir.resolve())
+        # Only allow paths that include a "memory" component
+        if "memory" in rel.parts:
+            return True
+    except ValueError:
+        pass
+
+    # Allow .map/ artifacts
+    repo_root = Path.cwd().resolve()
     try:
         rel = resolved.relative_to(repo_root)
     except ValueError:
@@ -221,7 +234,7 @@ def main():
 
         # Always allow edits to MAP workflow artifacts under .map/
         target_paths = extract_target_file_paths(tool_call)
-        if target_paths and all(is_map_artifact_path(p) for p in target_paths):
+        if target_paths and all(is_exempt_path(p) for p in target_paths):
             print("{}")
             sys.exit(0)
 

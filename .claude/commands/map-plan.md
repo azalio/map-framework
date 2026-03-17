@@ -106,7 +106,7 @@ Read the user's requirements and decide if deep interview is needed.
 - Small isolated change (single bug fix, test update)
 - User explicitly provided a spec or detailed description
 
-If interview is not needed, skip to Step 3.
+If interview is not needed, skip to Step 2a (write spec without interview).
 
 ### Step 2: Deep Interview (Spec Discovery)
 
@@ -169,6 +169,45 @@ AskUserQuestion(questions=[
 | 1 | Token storage | Server-side (Redis) | Need revocation support |
 | 2 | Session expiry UX | Silent refresh | Better UX, no data loss |
 
+## Invariants
+
+Conditions that MUST remain true throughout implementation and after deployment.
+These are hard constraints — violating any invariant is a blocker.
+
+- [e.g., "All API endpoints require authentication except /health and /login"]
+- [e.g., "Database migrations must be backward-compatible (no column drops)"]
+- [e.g., "Response time for any endpoint must stay under 500ms p95"]
+
+## Edge Cases
+
+Enumerate boundary conditions and unusual inputs that implementation must handle.
+
+| # | Edge Case | Expected Behavior | Priority |
+|---|-----------|-------------------|----------|
+| 1 | [e.g., Empty input array] | [Return empty result, not error] | must-handle |
+| 2 | [e.g., Concurrent updates to same resource] | [Last-write-wins with conflict detection] | must-handle |
+| 3 | [e.g., Unicode in usernames] | [Accept, normalize to NFC] | should-handle |
+
+Priority levels: `must-handle` (blocks release), `should-handle` (best effort), `won't-handle` (documented limitation).
+
+## Acceptance Criteria
+
+Formal, testable conditions that define "done". Each criterion must be verifiable by automated test or manual check.
+
+| ID | Criterion | Verification Method |
+|----|-----------|-------------------|
+| AC-1 | [e.g., User can log in with valid credentials] | `pytest tests/test_auth.py::test_login` |
+| AC-2 | [e.g., Invalid token returns 401] | `pytest tests/test_auth.py::test_invalid_token` |
+
+## Security Boundaries
+
+*(Include for security-critical tasks; omit for purely internal/cosmetic changes)*
+
+- **Trust boundary:** [e.g., "All user input is untrusted; validate at API layer"]
+- **Auth model:** [e.g., "RBAC with role checks at service layer, not just route level"]
+- **Data sensitivity:** [e.g., "PII fields encrypted at rest, never logged"]
+- **Attack surface:** [e.g., "Public API exposed to internet; internal services behind VPN"]
+
 ## Out of Scope
 
 - [Explicitly excluded items]
@@ -177,6 +216,54 @@ AskUserQuestion(questions=[
 
 - [Anything still unresolved]
 ```
+
+### Step 2a: Write Spec (when interview was skipped)
+
+If interview was skipped (task is well-defined), still write `spec_<branch>.md` using the same template as Step 2. Populate it from the user's requirements and discovery findings:
+
+- **Decisions Made**: extract from user's request (may be short or N/A)
+- **Invariants**: derive from existing code patterns found in discovery
+- **Edge Cases**: identify from the task description and affected code
+- **Acceptance Criteria**: REQUIRED — must be testable conditions that define "done"
+- **Security Boundaries**: include if task touches auth/validation/user input
+- **Out of Scope**: explicitly state what is NOT being changed
+
+This ensures every `/map-plan` run produces a spec, regardless of whether interview happened.
+
+### Step 2b: Devil's Advocate Review (SPEC_REVIEW)
+
+**Skip if:** complexity < 5 (simple, well-defined tasks).
+
+After writing the spec, invoke Monitor agent to adversarially review it. The goal is to surface gaps, contradictions, and missing edge cases BEFORE decomposition.
+
+```
+Task(
+  subagent_type="monitor",
+  description="Devil's Advocate spec review",
+  prompt=f"""You are reviewing a SPECIFICATION (not code). Act as Devil's Advocate.
+
+Read the spec file: .map/<branch>/spec_<branch>.md
+
+Check for:
+1. **Race conditions / concurrency gaps**: Are there shared resources without defined conflict resolution?
+2. **Ownership ambiguity**: Are responsibilities clearly assigned? Could two components both assume the other handles something?
+3. **Missing edge cases**: Compare the Edge Cases section against Invariants — are there invariant violations not covered by edge cases?
+4. **Contradictions**: Do any decisions contradict invariants or acceptance criteria?
+5. **Security gaps**: Are trust boundaries complete? Are there injection vectors not addressed?
+6. **Implicit assumptions**: What is assumed but not stated?
+
+Output format:
+- For each finding: severity (HIGH/MEDIUM/LOW), category, description, suggested fix
+- If NO high-severity issues found: output "SPEC APPROVED"
+- If HIGH-severity issues found: list them clearly for user resolution
+"""
+)
+```
+
+**After Devil's Advocate review:**
+- If **SPEC APPROVED** (no HIGH-severity findings): proceed to Step 3.
+- If **HIGH-severity findings**: present them to the user via AskUserQuestion. Update the spec with resolutions before proceeding. Do NOT silently proceed past HIGH findings.
+- MEDIUM/LOW findings: note them in the spec's Open Questions section but proceed.
 
 ### Step 3: Create Branch Directory
 

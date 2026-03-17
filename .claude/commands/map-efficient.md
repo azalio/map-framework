@@ -59,7 +59,32 @@ Both files must stay in sync. The orchestrator updates `step_state.json` on ever
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Task:** $ARGUMENTS
+## Flag Parsing
+
+Parse optional flags from `$ARGUMENTS`:
+
+- **`--tdd`**: Enable TDD mode (test-first workflow). Inserts TEST_WRITER and TEST_FAIL_GATE phases before ACTOR. Tests are written from spec before implementation.
+
+```bash
+# Extract flags and clean task description
+TASK_ARGS="$ARGUMENTS"
+TDD_FLAG=false
+if echo "$TASK_ARGS" | grep -q -- '--tdd'; then
+  TDD_FLAG=true
+  TASK_ARGS=$(echo "$TASK_ARGS" | sed 's/--tdd//g' | xargs)
+fi
+```
+
+**Task:** $TASK_ARGS
+
+**IMPORTANT:** Use `$TASK_ARGS` (not `$ARGUMENTS`) in all agent prompts below. The `--tdd` flag has been stripped from `$TASK_ARGS` so it won't leak into task descriptions.
+
+If `--tdd` is detected, enable TDD mode after state initialization:
+```bash
+if [ "$TDD_FLAG" = "true" ]; then
+  python3 .map/scripts/map_orchestrator.py set_tdd_mode true
+fi
+```
 
 ## Step 0: Detect Existing Plan from /map-plan
 
@@ -105,7 +130,7 @@ Task(
   description="Decompose task into subtasks",
   prompt=f"""Break down into ≤20 atomic subtasks and RETURN ONLY JSON.
 
-Task: $ARGUMENTS
+Task: $TASK_ARGS
 
 Hard requirements:
 - Use `blueprint.subtasks[].validation_criteria` (2-4 testable outcomes)
@@ -255,6 +280,14 @@ loop:
     for each subtask in WAVE.subtasks:
       build XML_PACKET, run CONTEXT_SEARCH, optional RESEARCH
 
+    # Phase A.5: TDD phases (if --tdd mode)
+    # When TDD is enabled, run TEST_WRITER + TEST_FAIL_GATE per subtask
+    # BEFORE launching Actors. These run sequentially per subtask.
+    if TDD_FLAG:
+      for each subtask in WAVE.subtasks:
+        run TEST_WRITER (2.25) → validate_wave_step SUBTASK_ID "2.25"
+        run TEST_FAIL_GATE (2.26) → validate_wave_step SUBTASK_ID "2.26"
+
     # Phase B: Parallel Actors
     # Launch ALL Task(subagent_type="actor") calls in ONE message
     # Example: Task(actor, "Implement ST-002") + Task(actor, "Implement ST-004")
@@ -322,7 +355,63 @@ This file is the SOLE research artifact passed to Actor and future steps."""
     )
 ```
 
+### Phase: TEST_WRITER (2.25) — TDD Mode Only
+
+Auto-skipped when TDD mode is disabled. When active:
+
+```python
+Task(
+  subagent_type="actor",
+  description="TDD: Write tests for subtask [ID]",
+  prompt=f"""You are in TDD TEST_WRITER mode.
+
+<MAP_Packet subtask="[ID]" v="1.0" risk="[risk_level]">
+[paste from .map/<branch>/current_packet.xml]
+</MAP_Packet>
+
+<MAP_Contract>
+[AAG contract from decomposition]
+</MAP_Contract>
+
+<TDD_Mode>test_writer</TDD_Mode>
+
+STRICT RULES:
+1. Write ONLY test files. Do NOT create or modify implementation files.
+2. Tests must be derived from the SPECIFICATION (AAG contract + validation_criteria).
+3. You have NO knowledge of the implementation.
+4. Each VCn: validation criterion must have at least one corresponding test.
+5. Tests SHOULD fail when run (implementation doesn't exist yet).
+6. Test files MUST be lint-clean. Use proper imports at the top of the file
+   (not inside type annotations). Run the project linter on test files before finishing.
+
+Write evidence: .map/<branch>/evidence/test_writer_<subtask_id>.json"""
+)
+```
+
+### Phase: TEST_FAIL_GATE (2.26) — TDD Mode Only
+
+Auto-skipped when TDD mode is disabled. When active:
+
+**First:** lint-check test files (ACTOR cannot fix them later):
+```bash
+# Lint ONLY the test files from TEST_WRITER evidence
+ruff check <test_files> 2>&1 || true
+# If lint errors → go back to TEST_WRITER with feedback to fix lint
+```
+
+**Then:** run the tests — they MUST fail:
+```bash
+# Run tests — expect failures (Red phase)
+pytest --tb=short 2>&1 || true
+# If tests PASS → go back to TEST_WRITER (tests are trivial)
+# If tests FAIL with assertion errors → proceed to ACTOR (expected TDD state)
+```
+
+Write evidence: `.map/<branch>/evidence/test_fail_gate_<subtask_id>.json`
+
 ### Phase: ACTOR (2.3)
+
+When TDD mode is active, Actor receives `<TDD_Mode>code_only</TDD_Mode>` and must NOT modify test files. When TDD is off, standard behavior.
 
 ```python
 Task(
@@ -527,10 +616,16 @@ Question 2: For EACH subtask, did I:
   - Run linter gate? [YES/NO per subtask]
 Answer: [List each subtask and answers]
 
-Question 3: Did I ever write code directly without Actor?
+Question 3: (TDD mode only) For EACH subtask, did I:
+  - Call TEST_WRITER before Actor? [YES/NO/N/A per subtask]
+  - Verify tests failed at TEST_FAIL_GATE? [YES/NO/N/A per subtask]
+  - Use code_only mode for Actor (no test modifications)? [YES/NO/N/A]
+Answer: [List answers, or N/A if TDD mode is not active]
+
+Question 4: Did I ever write code directly without Actor?
 Answer: [YES/NO - if YES, this is a VIOLATION]
 
-Question 4: Did I output CHECKPOINT blocks before agent calls?
+Question 5: Did I output CHECKPOINT blocks before agent calls?
 Answer: [YES/NO - if NO, add them now]
 
 EVALUATION: [PASSED/FAILED]

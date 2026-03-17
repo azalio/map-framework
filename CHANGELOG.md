@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **TDD workflow (`/map-tdd`)**: Test-first development mode where tests are written from specification before implementation. Includes TEST_WRITER (2.25) and TEST_FAIL_GATE (2.26) phases
+- **`--tdd` flag for `/map-efficient`**: Enables TDD mode within the standard efficient workflow
+- **TDD support in Actor agent**: Two new modes — `test_writer` (write only tests from spec) and `code_only` (implement to make tests green, no test modifications)
+- **`set_tdd_mode` orchestrator command**: Enable/disable TDD phases in the state machine
+- **Single subtask execution (`/map-task ST-001`)**: Execute one specific subtask from an existing plan without running the full workflow. Requires `/map-plan` first
+- **Single subtask TDD (`/map-tdd ST-001`)**: Write TDD tests and implement a specific subtask. Combines single-subtask execution with test-first development
+- **`resume_single_subtask` orchestrator command**: Sets up state for executing a single subtask with optional `--tdd` flag
+- **Enhanced SPEC phase in `/map-plan`**: Structured spec template with Invariants, Edge Cases, Acceptance Criteria, and Security Boundaries sections
+- **Devil's Advocate review step**: After spec creation, Monitor agent adversarially reviews the spec for race conditions, ownership ambiguity, missing edge cases, contradictions, and security gaps (skipped for complexity < 5)
+- **Spec invariant linkage in task-decomposer**: Contracts must trace back to spec invariants when spec exists; checklist enforces coverage
+- **`skipped_steps` tracking**: TDD steps skipped when TDD is disabled are tracked separately from completed steps, making TDD toggle reversible
+- **Plan progress tracking (`get_plan_progress`)**: Shows completed/pending subtask counts and suggests next subtask
+
+### Fixed
+- **`--tdd` flag leak**: Flag was leaking into agent prompts via `$ARGUMENTS`; now stripped into `$TASK_ARGS`
+- **Wave-mode TDD support**: Waves now start subtasks at TEST_WRITER (2.25) instead of ACTOR (2.3) when TDD is enabled
+- **`set_tdd_mode` restart bug**: Toggling TDD after first subtask no longer re-introduces completed global steps (1.x)
+- **TDD toggle reversibility**: Re-enabling TDD correctly re-introduces TEST_WRITER/TEST_FAIL_GATE phases even when they come before the current position
+- **ARCHITECTURE.md phase list**: Added missing `2.1 CONTEXT_SEARCH`, fixed `CHOOSE_MODE` description
+- **SKIPPABLE_STEPS docstring**: Added 2.25/2.26 to documented skippable steps
+- **`get_plan_progress` docstring**: Removed incorrect claim about dependency-aware ordering
+- **Workflow gate `~/.claude/` scope**: Narrowed exemption from entire `~/.claude/` to only `~/.claude/projects/*/memory/`
+
 ## [3.4.1] - 2026-03-09
 
 ### Fixed

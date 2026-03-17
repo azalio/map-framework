@@ -21,9 +21,11 @@ description: Resume incomplete MAP workflow from checkpoint
 6. Continues from the last incomplete step via the state machine
 
 **State files used:**
-- **`step_state.json`** — Orchestrator canonical state. Source of truth for resumption. Tracks current step, retry counts, circuit breaker status.
+- **`step_state.json`** — Orchestrator canonical state. Source of truth for resumption. Tracks current step, retry counts, circuit breaker status. Includes `tdd_mode` field (persisted across sessions).
 - **`workflow_state.json`** — Enforcement gates. Tracks subtask completion for workflow-gate.py hook.
 - **`task_plan_<branch>.md`** — Full task decomposition with validation criteria and AAG contracts.
+
+**TDD mode note:** If the interrupted workflow was using `/map-tdd` or `--tdd` flag, `tdd_mode: true` is preserved in `step_state.json`. The TDD phases (TEST_WRITER, TEST_FAIL_GATE) will be correctly included in the resumed workflow. No manual re-enablement is needed when resuming from `step_state.json`.
 
 ---
 

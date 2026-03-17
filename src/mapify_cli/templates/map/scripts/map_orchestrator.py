@@ -35,15 +35,17 @@ STATE FILE:
       "pending_steps": ["2.1_CONTEXT_SEARCH", "2.3_ACTOR", "2.4_MONITOR", ...]
     }
 
-STEP PHASES (16 total):
+STEP PHASES (18 total, 16 standard + 2 TDD):
   1.0  DECOMPOSE          - task-decomposer agent
   1.5  INIT_PLAN          - Generate task_plan.md
   1.55 REVIEW_PLAN        - User review + explicit approval checkpoint
-  1.56 CHOOSE_MODE        - Choose execution mode (step_by_step|batch)
+  1.56 CHOOSE_MODE        - Auto-skipped (always batch mode)
   1.6  INIT_STATE         - Create workflow_state.json
   2.0  XML_PACKET         - Build AI-friendly subtask packet
   2.1  CONTEXT_SEARCH     - Context search
   2.2  RESEARCH           - research-agent (conditional)
+  2.25 TEST_WRITER        - TDD: write tests from spec (TDD mode only)
+  2.26 TEST_FAIL_GATE     - TDD: verify tests fail without impl (TDD mode only)
   2.3  ACTOR              - Actor agent implementation
   2.4  MONITOR            - Monitor validation
   2.6  PREDICTOR          - Impact analysis (conditional)
@@ -51,7 +53,7 @@ STEP PHASES (16 total):
   2.8  TESTS_GATE         - Run tests
   2.9  LINTER_GATE        - Run linter
   2.10 VERIFY_ADHERENCE   - Self-audit checkpoint
-  2.11 SUBTASK_APPROVAL   - Optional pause between subtasks (step_by_step)
+  2.11 SUBTASK_APPROVAL   - Auto-skipped in batch mode
 
 CLI INTERFACE:
   python3 map_orchestrator.py get_next_step [--branch BRANCH]
@@ -109,6 +111,8 @@ STEP_PHASES = {
     "2.0": "XML_PACKET",
     "2.1": "CONTEXT_SEARCH",
     "2.2": "RESEARCH",
+    "2.25": "TEST_WRITER",
+    "2.26": "TEST_FAIL_GATE",
     "2.3": "ACTOR",
     "2.4": "MONITOR",
     "2.6": "PREDICTOR",
@@ -119,7 +123,7 @@ STEP_PHASES = {
     "2.11": "SUBTASK_APPROVAL",
 }
 
-# Step execution order
+# Step execution order (standard — without TDD phases)
 STEP_ORDER = [
     "1.0",
     "1.5",
@@ -139,11 +143,35 @@ STEP_ORDER = [
     "2.11",
 ]
 
+# TDD step order — includes TEST_WRITER and TEST_FAIL_GATE before ACTOR
+TDD_STEP_ORDER = [
+    "1.0",
+    "1.5",
+    "1.55",
+    "1.56",
+    "1.6",
+    "2.0",
+    "2.1",
+    "2.2",
+    "2.25",
+    "2.26",
+    "2.3",
+    "2.4",
+    "2.6",
+    "2.7",
+    "2.8",
+    "2.9",
+    "2.10",
+    "2.11",
+]
+
 # Steps that require evidence files from agents before validation.
 # Format: step_id -> (agent_phase, always_required)
 # If always_required is False, evidence is only checked when the step
 # appears in pending_steps (i.e., it wasn't skipped).
 EVIDENCE_REQUIRED = {
+    "2.25": ("test_writer", False),  # Only in TDD mode
+    "2.26": ("test_fail_gate", False),  # Only in TDD mode
     "2.3": ("actor", True),  # Always required
     "2.4": ("monitor", True),  # Always required
     "2.6": ("predictor", False),  # Only when 2.6 is in pending_steps
@@ -167,6 +195,11 @@ class StepState:
     max_retries: int = 5
     plan_approved: bool = False
     execution_mode: str = "batch"  # batch|step_by_step
+    # TDD mode: inserts TEST_WRITER and TEST_FAIL_GATE before ACTOR
+    tdd_mode: bool = False
+    # Steps skipped (not executed) — tracked separately from completed_steps
+    # so that re-enabling TDD can re-introduce skipped TDD steps
+    skipped_steps: List[str] = field(default_factory=list)
     # Wave-based parallel execution fields
     execution_waves: List[List[str]] = field(default_factory=list)
     current_wave_index: int = 0
@@ -189,6 +222,8 @@ class StepState:
             "max_retries": self.max_retries,
             "plan_approved": self.plan_approved,
             "execution_mode": self.execution_mode,
+            "tdd_mode": self.tdd_mode,
+            "skipped_steps": self.skipped_steps,
             "execution_waves": self.execution_waves,
             "current_wave_index": self.current_wave_index,
             "subtask_phases": self.subtask_phases,
@@ -212,6 +247,8 @@ class StepState:
             max_retries=data.get("max_retries", 5),
             plan_approved=data.get("plan_approved", False),
             execution_mode=data.get("execution_mode", "batch"),
+            tdd_mode=data.get("tdd_mode", False),
+            skipped_steps=data.get("skipped_steps", []),
             execution_waves=data.get("execution_waves", []),
             current_wave_index=data.get("current_wave_index", 0),
             subtask_phases=data.get("subtask_phases", {}),
@@ -240,6 +277,11 @@ class StepState:
         tmp_file.replace(state_file)
 
 
+def _get_step_order(tdd_mode: bool = False) -> List[str]:
+    """Return the appropriate step order based on TDD mode."""
+    return TDD_STEP_ORDER if tdd_mode else STEP_ORDER
+
+
 def get_branch_name() -> str:
     """Get sanitized git branch name."""
     try:
@@ -262,6 +304,24 @@ def get_branch_name() -> str:
         return "default"
     except Exception:
         return "default"
+
+
+def _actor_step_instruction(state: StepState) -> str:
+    """Build instruction string for the ACTOR step, TDD-aware."""
+    subtask = state.current_subtask_id
+    if state.tdd_mode:
+        context = (
+            "TDD CODE_ONLY mode: pass <TDD_Mode>code_only</TDD_Mode>. "
+            "Actor must make existing tests green without modifying test files. "
+        )
+    else:
+        context = "Pass XML packet and context patterns. "
+    return (
+        f"Call Task(subagent_type='actor') to implement subtask {subtask}. "
+        f"{context}"
+        f"Actor MUST write evidence file: "
+        f".map/<branch>/evidence/actor_{subtask}.json"
+    )
 
 
 def get_step_instruction(step_id: str, state: StepState) -> str:
@@ -292,9 +352,8 @@ def get_step_instruction(step_id: str, state: StepState) -> str:
             "python3 .map/scripts/map_orchestrator.py set_plan_approved true"
         ),
         "1.56": (
-            "Ask user to choose execution mode: step_by_step (pause between subtasks) "
-            "or batch (run through). Persist choice in step_state.json: "
-            "python3 .map/scripts/map_orchestrator.py set_execution_mode step_by_step|batch"
+            "Execution mode is batch (auto-set). No user action needed. "
+            "Advance to next step: python3 .map/scripts/map_orchestrator.py get_next_step"
         ),
         "1.6": (
             "Create .map/<branch>/workflow_state.json with initial state. "
@@ -313,12 +372,22 @@ def get_step_instruction(step_id: str, state: StepState) -> str:
             "Call Task(subagent_type='research-agent') if refactoring or "
             "touching 3+ files. Pass findings to Actor."
         ),
-        "2.3": (
-            f"Call Task(subagent_type='actor') to implement subtask "
-            f"{state.current_subtask_id}. Pass XML packet and context patterns. "
+        "2.25": (
+            f"TDD TEST_WRITER: Call Task(subagent_type='actor') with "
+            f"<TDD_Mode>test_writer</TDD_Mode> to write ONLY tests for subtask "
+            f"{state.current_subtask_id}. Tests must be derived from spec/contract, "
+            f"NOT from implementation. "
             f"Actor MUST write evidence file: "
-            f".map/<branch>/evidence/actor_{state.current_subtask_id}.json"
+            f".map/<branch>/evidence/test_writer_{state.current_subtask_id}.json"
         ),
+        "2.26": (
+            f"TDD TEST_FAIL_GATE: Run tests written by TEST_WRITER. "
+            f"Tests MUST fail (no implementation exists yet). "
+            f"If tests pass → problem (trivial tests), go back to TEST_WRITER. "
+            f"If tests fail with assertion errors → proceed to ACTOR. "
+            f"Write evidence: .map/<branch>/evidence/test_fail_gate_{state.current_subtask_id}.json"
+        ),
+        "2.3": _actor_step_instruction(state),
         "2.4": (
             "Call Task(subagent_type='monitor') to validate Actor output. "
             "Check correctness, security, standards, and tests. "
@@ -370,6 +439,23 @@ def get_next_step(branch: str) -> Dict:
     state_file = Path(f".map/{branch}/step_state.json")
     state = StepState.load(state_file)
 
+    # Auto-skip CHOOSE_MODE: always batch, set mode automatically
+    while state.pending_steps and state.pending_steps[0] == "1.56":
+        state.execution_mode = "batch"
+        state.completed_steps.append("1.56")
+        state.pending_steps.pop(0)
+        state.save(state_file)
+
+    # Auto-skip TDD phases when tdd_mode is disabled
+    while (
+        state.pending_steps
+        and state.pending_steps[0] in ("2.25", "2.26")
+        and not state.tdd_mode
+    ):
+        skipped = state.pending_steps.pop(0)
+        state.skipped_steps.append(skipped)
+        state.save(state_file)
+
     # Auto-skip steps that are conditional in batch mode
     while (
         state.pending_steps
@@ -390,9 +476,11 @@ def get_next_step(branch: str) -> Dict:
             state.current_step_id = "2.0"
             state.current_step_phase = "XML_PACKET"
             # Reset to subtask-level steps (skip global setup steps)
-            xml_packet_idx = STEP_ORDER.index("2.0")
-            state.pending_steps = STEP_ORDER[xml_packet_idx:]  # Start from 2.0
+            step_order = _get_step_order(state.tdd_mode)
+            xml_packet_idx = step_order.index("2.0")
+            state.pending_steps = step_order[xml_packet_idx:]  # Start from 2.0
             state.completed_steps = []
+            state.skipped_steps = []
             state.retry_count = 0
             state.save(state_file)
         else:
@@ -450,11 +538,7 @@ def validate_step(step_id: str, branch: str) -> Dict:
             "valid": False,
             "message": "Plan not approved. Set approval first: python3 .map/scripts/map_orchestrator.py set_plan_approved true",
         }
-    if step_id == "1.56" and state.execution_mode not in {"batch", "step_by_step"}:
-        return {
-            "valid": False,
-            "message": "Invalid execution_mode. Set mode first: python3 .map/scripts/map_orchestrator.py set_execution_mode step_by_step|batch",
-        }
+    # CHOOSE_MODE is auto-skipped; execution_mode is always "batch"
 
     # Evidence-gated validation: require agent evidence files for key steps
     if step_id in EVIDENCE_REQUIRED:
@@ -601,6 +685,78 @@ def set_execution_mode(mode: str, branch: str) -> Dict:
     return {"status": "success", "execution_mode": state.execution_mode}
 
 
+def set_tdd_mode(value: str, branch: str) -> Dict:
+    """Enable or disable TDD mode (test-first workflow).
+
+    When enabled, inserts TEST_WRITER (2.25) and TEST_FAIL_GATE (2.26)
+    phases before ACTOR (2.3) in the step sequence.
+
+    Args:
+        value: "true" or "false"
+        branch: Git branch name (sanitized)
+
+    Returns:
+        Dict with status and tdd_mode value
+    """
+    state_file = Path(f".map/{branch}/step_state.json")
+    state = StepState.load(state_file)
+    normalized = (value or "").strip().lower()
+    if normalized in {"1", "true", "yes", "y"}:
+        state.tdd_mode = True
+    elif normalized in {"0", "false", "no", "n"}:
+        state.tdd_mode = False
+    else:
+        return {
+            "status": "error",
+            "message": f"Invalid value for tdd_mode: {value}",
+        }
+
+    # Rebuild pending_steps relative to current position (not from scratch)
+    # to avoid re-introducing already-completed global steps (1.x)
+    step_order = _get_step_order(state.tdd_mode)
+
+    # When re-enabling TDD, remove 2.25/2.26 from skipped so they can run
+    if state.tdd_mode:
+        state.skipped_steps = [
+            s for s in state.skipped_steps if s not in ("2.25", "2.26")
+        ]
+
+    done_and_skipped = set(state.completed_steps) | set(state.skipped_steps)
+
+    if state.pending_steps:
+        # Find position of first pending step in the new order
+        first_pending = state.pending_steps[0]
+        if first_pending in step_order:
+            pos = step_order.index(first_pending)
+            # When enabling TDD, also include TDD steps that come
+            # just before the current position (2.25/2.26 before 2.3)
+            if state.tdd_mode:
+                # Find the earliest TDD step not yet done
+                tdd_steps = {"2.25", "2.26"}
+                earliest_tdd = None
+                for i, s in enumerate(step_order):
+                    if s in tdd_steps and s not in done_and_skipped and i < pos:
+                        if earliest_tdd is None or i < earliest_tdd:
+                            earliest_tdd = i
+                if earliest_tdd is not None:
+                    pos = earliest_tdd
+            # Rebuild from position onwards, excluding done/skipped
+            state.pending_steps = [
+                s for s in step_order[pos:] if s not in done_and_skipped
+            ]
+        else:
+            state.pending_steps = [
+                s for s in step_order if s not in done_and_skipped
+            ]
+    else:
+        state.pending_steps = [
+            s for s in step_order if s not in done_and_skipped
+        ]
+
+    state.save(state_file)
+    return {"status": "success", "tdd_mode": state.tdd_mode}
+
+
 def set_waves(branch: str, blueprint_path: Optional[str] = None) -> Dict:
     """Compute execution waves from blueprint DAG and store in step_state.json.
 
@@ -626,17 +782,12 @@ def set_waves(branch: str, blueprint_path: Optional[str] = None) -> Dict:
 
         dg_candidates = [
             Path("src/mapify_cli/dependency_graph.py"),
-            Path(__file__).resolve().parents[3]
-            / "src"
-            / "mapify_cli"
-            / "dependency_graph.py",
+            Path(__file__).resolve().parents[3] / "src" / "mapify_cli" / "dependency_graph.py",
         ]
         loaded = False
         for candidate in dg_candidates:
             if candidate.exists():
-                spec = importlib.util.spec_from_file_location(
-                    "dependency_graph", candidate
-                )
+                spec = importlib.util.spec_from_file_location("dependency_graph", candidate)
                 if spec and spec.loader:
                     mod = importlib.util.module_from_spec(spec)
                     spec.loader.exec_module(mod)
@@ -746,17 +897,17 @@ def get_wave_step(branch: str) -> Dict:
     mode = "sequential" if len(wave) == 1 else "parallel"
 
     # Build subtask info with current phases
+    # Default start phase depends on TDD mode
+    default_phase = "2.25" if state.tdd_mode else "2.3"
     subtask_infos = []
     for st_id in wave:
-        phase = state.subtask_phases.get(st_id, "2.3")
+        phase = state.subtask_phases.get(st_id, default_phase)
         phase_name = STEP_PHASES.get(phase, "ACTOR")
-        subtask_infos.append(
-            {
-                "subtask_id": st_id,
-                "phase": phase_name,
-                "step_id": phase,
-            }
-        )
+        subtask_infos.append({
+            "subtask_id": st_id,
+            "phase": phase_name,
+            "step_id": phase,
+        })
 
     return {
         "mode": mode,
@@ -785,22 +936,27 @@ def validate_wave_step(subtask_id: str, step_id: str, branch: str) -> Dict:
     if step_id in EVIDENCE_REQUIRED:
         phase_name, _always_required = EVIDENCE_REQUIRED[step_id]
         evidence_dir = Path(f".map/{branch}/evidence")
-        if evidence_dir.is_dir():
-            evidence_file = evidence_dir / f"{phase_name}_{subtask_id}.json"
-            if not evidence_file.exists():
-                return {
-                    "valid": False,
-                    "message": (
-                        f"Evidence file missing: {evidence_file}. "
-                        f"The {phase_name} agent must write this file."
-                    ),
-                }
+        if not evidence_dir.is_dir():
+            return {
+                "valid": False,
+                "message": (
+                    f"Evidence directory missing: {evidence_dir}. "
+                    f"Create it before running agent steps."
+                ),
+            }
+        evidence_file = evidence_dir / f"{phase_name}_{subtask_id}.json"
+        if not evidence_file.exists():
+            return {
+                "valid": False,
+                "message": (
+                    f"Evidence file missing: {evidence_file}. "
+                    f"The {phase_name} agent must write this file."
+                ),
+            }
 
     # Determine next phase for this subtask
-    subtask_step_order = [s for s in STEP_ORDER if s.startswith("2.")]
-    current_idx = (
-        subtask_step_order.index(step_id) if step_id in subtask_step_order else -1
-    )
+    subtask_step_order = [s for s in _get_step_order(state.tdd_mode) if s.startswith("2.")]
+    current_idx = subtask_step_order.index(step_id) if step_id in subtask_step_order else -1
 
     if current_idx >= 0 and current_idx + 1 < len(subtask_step_order):
         next_phase = subtask_step_order[current_idx + 1]
@@ -863,7 +1019,7 @@ def advance_wave(branch: str) -> Dict:
     }
 
 
-SKIPPABLE_STEPS = {"2.2", "2.6", "2.11"}
+SKIPPABLE_STEPS = {"2.2", "2.25", "2.26", "2.6", "2.11"}
 
 
 def skip_step(step_id: str, branch: str) -> Dict:
@@ -871,6 +1027,8 @@ def skip_step(step_id: str, branch: str) -> Dict:
 
     Only steps that are defined as conditional can be skipped:
       - 2.2 (RESEARCH): conditional on refactoring or 3+ files
+      - 2.25 (TEST_WRITER): TDD mode only, auto-skipped otherwise
+      - 2.26 (TEST_FAIL_GATE): TDD mode only, auto-skipped otherwise
       - 2.6 (PREDICTOR): conditional on medium/high risk
       - 2.11 (SUBTASK_APPROVAL): conditional on step_by_step mode
 
@@ -939,7 +1097,7 @@ def check_circuit_breaker(branch: str) -> Dict:
     state = StepState.load(state_file)
 
     tool_count = len(state.completed_steps)
-    max_iterations = len(state.subtask_sequence) * len(STEP_ORDER)
+    max_iterations = len(state.subtask_sequence) * len(_get_step_order(state.tdd_mode))
 
     return {
         "tool_count": tool_count,
@@ -983,7 +1141,7 @@ def resume_from_plan(branch: str) -> Dict:
 
     Detects task_plan_<branch>.md and workflow_state.json created by /map-plan.
     Extracts subtask IDs from the plan, marks init phases as completed, and
-    starts execution from CHOOSE_MODE (user still picks step_by_step vs batch).
+    starts execution from INIT_STATE (batch mode auto-set).
 
     Args:
         branch: Git branch name (sanitized)
@@ -1023,9 +1181,9 @@ def resume_from_plan(branch: str) -> Dict:
         except (json.JSONDecodeError, KeyError):
             pass
 
-    # Create state that skips DECOMPOSE, INIT_PLAN, REVIEW_PLAN (plan already approved)
-    # Start from CHOOSE_MODE so user can still pick execution mode
-    skipped_phases = ["1.0", "1.5", "1.55"]
+    # Create state that skips DECOMPOSE, INIT_PLAN, REVIEW_PLAN, CHOOSE_MODE
+    # (plan already approved, execution mode is always batch)
+    skipped_phases = ["1.0", "1.5", "1.55", "1.56"]
     execution_start = [s for s in STEP_ORDER if s not in skipped_phases]
 
     state_file = plan_dir / "step_state.json"
@@ -1033,11 +1191,12 @@ def resume_from_plan(branch: str) -> Dict:
         current_subtask_id=subtask_ids[0],
         subtask_index=0,
         subtask_sequence=subtask_ids,
-        current_step_id="1.56",
-        current_step_phase="CHOOSE_MODE",
+        current_step_id=execution_start[0] if execution_start else "1.6",
+        current_step_phase=STEP_PHASES.get(execution_start[0], "INIT_STATE") if execution_start else "INIT_STATE",
         completed_steps=skipped_phases,
         pending_steps=execution_start,
         plan_approved=True,
+        execution_mode="batch",
     )
     state.save(state_file)
 
@@ -1047,11 +1206,146 @@ def resume_from_plan(branch: str) -> Dict:
 
     return {
         "status": "success",
-        "message": "Resumed from /map-plan. Skipped DECOMPOSE, INIT_PLAN, REVIEW_PLAN.",
+        "message": "Resumed from /map-plan. Skipped DECOMPOSE, INIT_PLAN, REVIEW_PLAN, CHOOSE_MODE. Mode: batch.",
         "subtask_sequence": subtask_ids,
         "current_subtask_id": subtask_ids[0],
         "aag_contracts_found": len(aag_contracts),
-        "next_phase": "CHOOSE_MODE",
+        "next_phase": "INIT_STATE",
+    }
+
+
+def get_plan_progress(branch: str) -> Dict:
+    """Return status of all subtasks from the task plan.
+
+    Reads task_plan_<branch>.md and extracts subtask IDs with their statuses.
+    Identifies the next pending subtask (respecting dependency order from blueprint).
+
+    Args:
+        branch: Git branch name (sanitized)
+
+    Returns:
+        Dict with subtask statuses, completed/pending counts, and suggested next
+    """
+    import re
+
+    plan_dir = Path(f".map/{branch}")
+    plan_file = plan_dir / f"task_plan_{branch}.md"
+
+    if not plan_file.exists():
+        return {"status": "error", "message": f"No plan found at {plan_file}."}
+
+    content = plan_file.read_text(encoding="utf-8")
+
+    # Extract subtask IDs and statuses: ### ST-XXX ... \n- **Status:** <status>
+    subtasks = []
+    for match in re.finditer(
+        r"###\s+(ST-\d+)[^\n]*\n(?:.*?\n)*?- \*\*Status:\*\*\s+(\w+)",
+        content,
+    ):
+        subtasks.append({"id": match.group(1), "status": match.group(2)})
+
+    if not subtasks:
+        # Fallback: just extract IDs without status
+        ids = re.findall(r"###\s+(ST-\d+)", content)
+        subtasks = [{"id": sid, "status": "unknown"} for sid in ids]
+
+    completed = [s for s in subtasks if s["status"] == "complete"]
+    pending = [s for s in subtasks if s["status"] != "complete"]
+
+    # Determine suggested next subtask (first pending in plan order)
+    suggested_next = pending[0]["id"] if pending else None
+
+    return {
+        "status": "success",
+        "total": len(subtasks),
+        "completed_count": len(completed),
+        "pending_count": len(pending),
+        "subtasks": subtasks,
+        "completed": [s["id"] for s in completed],
+        "pending": [s["id"] for s in pending],
+        "suggested_next": suggested_next,
+    }
+
+
+def resume_single_subtask(subtask_id: str, branch: str, tdd_mode: bool = False) -> Dict:
+    """Set up state to execute a single subtask from an existing plan.
+
+    Requires task_plan_<branch>.md to exist (created by /map-plan or decomposer).
+    Validates that the requested subtask ID exists in the plan.
+    Creates state starting from XML_PACKET (2.0) for just that one subtask.
+
+    Args:
+        subtask_id: The subtask to execute (e.g., "ST-001")
+        branch: Git branch name (sanitized)
+        tdd_mode: Whether to enable TDD mode for this subtask
+
+    Returns:
+        Dict with status and state info
+    """
+    plan_dir = Path(f".map/{branch}")
+    plan_file = plan_dir / f"task_plan_{branch}.md"
+
+    if not plan_file.exists():
+        return {
+            "status": "error",
+            "message": f"No plan found at {plan_file}. Run /map-plan first.",
+        }
+
+    import re
+
+    plan_content = plan_file.read_text(encoding="utf-8")
+    all_subtask_ids = re.findall(r"###\s+(ST-\d+)", plan_content)
+
+    if not all_subtask_ids:
+        return {
+            "status": "error",
+            "message": f"No subtask IDs (ST-XXX) found in {plan_file}.",
+        }
+
+    if subtask_id not in all_subtask_ids:
+        return {
+            "status": "error",
+            "message": (
+                f"Subtask {subtask_id} not found in plan. "
+                f"Available: {', '.join(all_subtask_ids)}"
+            ),
+        }
+
+    # Build state for single subtask execution
+    step_order = _get_step_order(tdd_mode)
+    xml_packet_idx = step_order.index("2.0")
+    subtask_steps = step_order[xml_packet_idx:]
+
+    state_file = plan_dir / "step_state.json"
+    state = StepState(
+        current_subtask_id=subtask_id,
+        subtask_index=0,
+        subtask_sequence=[subtask_id],  # Only this one subtask
+        current_step_id="2.0",
+        current_step_phase="XML_PACKET",
+        completed_steps=["1.0", "1.5", "1.55", "1.56", "1.6"],
+        pending_steps=subtask_steps,
+        plan_approved=True,
+        execution_mode="batch",
+        tdd_mode=tdd_mode,
+    )
+    state.save(state_file)
+
+    # Ensure evidence directory exists
+    evidence_dir = plan_dir / "evidence"
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+
+    return {
+        "status": "success",
+        "message": (
+            f"Single subtask mode: {subtask_id}. "
+            f"TDD: {'enabled' if tdd_mode else 'disabled'}. "
+            f"Starting from XML_PACKET."
+        ),
+        "subtask_id": subtask_id,
+        "tdd_mode": tdd_mode,
+        "all_subtasks_in_plan": all_subtask_ids,
+        "next_phase": "XML_PACKET",
     }
 
 
@@ -1068,6 +1362,7 @@ def main():
             "initialize",
             "set_plan_approved",
             "set_execution_mode",
+            "set_tdd_mode",
             "skip_step",
             "set_subtasks",
             "resume_from_plan",
@@ -1076,6 +1371,8 @@ def main():
             "get_wave_step",
             "validate_wave_step",
             "advance_wave",
+            "resume_single_subtask",
+            "get_plan_progress",
         ],
         help="Command to execute",
     )
@@ -1088,6 +1385,9 @@ def main():
     parser.add_argument("--branch", help="Git branch (auto-detected if omitted)")
     parser.add_argument(
         "--blueprint", help="Path to blueprint JSON (for set_waves command)"
+    )
+    parser.add_argument(
+        "--tdd", action="store_true", help="Enable TDD mode (for resume_single_subtask)"
     )
 
     args = parser.parse_args()
@@ -1137,6 +1437,17 @@ def main():
             result = set_execution_mode(mode, branch)
             print(json.dumps(result, indent=2))
 
+        elif args.command == "set_tdd_mode":
+            value = args.task_or_step
+            if value is None:
+                print(
+                    json.dumps({"error": "value required for set_tdd_mode"}),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            result = set_tdd_mode(value, branch)
+            print(json.dumps(result, indent=2))
+
         elif args.command == "skip_step":
             if not args.task_or_step:
                 print(
@@ -1172,9 +1483,7 @@ def main():
             print(json.dumps(result, indent=2))
 
         elif args.command == "set_waves":
-            blueprint_path = (
-                args.blueprint or args.task_or_step
-            )  # --blueprint or positional
+            blueprint_path = args.blueprint or args.task_or_step  # --blueprint or positional
             result = set_waves(branch, blueprint_path)
             print(json.dumps(result, indent=2))
 
@@ -1201,6 +1510,22 @@ def main():
 
         elif args.command == "advance_wave":
             result = advance_wave(branch)
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "resume_single_subtask":
+            if not args.task_or_step:
+                print(
+                    json.dumps(
+                        {"error": "subtask_id required. Usage: resume_single_subtask ST-001 [--tdd]"}
+                    ),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            result = resume_single_subtask(args.task_or_step, branch, tdd_mode=args.tdd)
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "get_plan_progress":
+            result = get_plan_progress(branch)
             print(json.dumps(result, indent=2))
 
     except Exception as e:
