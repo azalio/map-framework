@@ -371,6 +371,8 @@ STRICT RULES:
 3. You have NO knowledge of the implementation.
 4. Each VCn: validation criterion must have at least one corresponding test.
 5. Tests SHOULD fail when run (implementation doesn't exist yet).
+6. Test files MUST be lint-clean. Use proper imports at the top of the file
+   (not inside type annotations). Run the project linter on test files before finishing.
 
 Write evidence: .map/<branch>/evidence/test_writer_<subtask_id>.json"""
 )
@@ -378,8 +380,16 @@ Write evidence: .map/<branch>/evidence/test_writer_<subtask_id>.json"""
 
 ### Phase: TEST_FAIL_GATE (2.26) — TDD Mode Only
 
-Auto-skipped when TDD mode is disabled. When active, run the tests — they MUST fail:
+Auto-skipped when TDD mode is disabled. When active:
 
+**First:** lint-check test files (ACTOR cannot fix them later):
+```bash
+# Lint ONLY the test files from TEST_WRITER evidence
+ruff check <test_files> 2>&1 || true
+# If lint errors → go back to TEST_WRITER with feedback to fix lint
+```
+
+**Then:** run the tests — they MUST fail:
 ```bash
 # Run tests — expect failures (Red phase)
 pytest --tb=short 2>&1 || true

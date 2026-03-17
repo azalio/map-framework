@@ -127,6 +127,9 @@ STRICT RULES:
 5. Use standard test patterns for the project's language/framework.
 6. Each validation_criteria item (VCn:) must have at least one corresponding test.
 7. Include edge cases from the spec's Edge Cases section if available.
+8. Test files MUST be lint-clean. Use proper imports at the top of the file
+   (not inside type annotations). Run the project linter (ruff/eslint/golangci-lint)
+   on test files before finishing. Fix any lint errors in your test files.
 
 Output:
 - Test files written via Edit/Write tools
@@ -172,7 +175,23 @@ else
 fi
 ```
 
-**Evaluate results:**
+**First: lint-check test files.** ACTOR cannot fix test files later, so they must be clean now.
+
+```bash
+# Lint-check ONLY the test files created by TEST_WRITER
+# (read test_files_created from evidence/test_writer_<subtask_id>.json)
+if command -v ruff &> /dev/null; then
+  LINT_OUTPUT=$(ruff check <test_files> 2>&1) || true
+elif command -v eslint &> /dev/null; then
+  LINT_OUTPUT=$(eslint <test_files> 2>&1) || true
+elif command -v golangci-lint &> /dev/null; then
+  LINT_OUTPUT=$(golangci-lint run <test_files> 2>&1) || true
+fi
+```
+
+- **Lint errors found** → Go back to TEST_WRITER with feedback: "Fix lint errors in test files: <errors>. ACTOR cannot modify test files, so they must be lint-clean now."
+
+**Then evaluate test results:**
 
 - **Tests FAIL with assertion/import errors** → GOOD. This is the expected TDD state ("Red" phase). Proceed to ACTOR.
 - **Tests PASS** → PROBLEM. Tests are trivial or not testing real behavior. Go back to TEST_WRITER with feedback: "Tests pass without implementation. Tests must assert behavior that requires code to be written."
