@@ -1166,6 +1166,88 @@ def resume_from_plan(branch: str) -> Dict:
     }
 
 
+def resume_single_subtask(subtask_id: str, branch: str, tdd_mode: bool = False) -> Dict:
+    """Set up state to execute a single subtask from an existing plan.
+
+    Requires task_plan_<branch>.md to exist (created by /map-plan or decomposer).
+    Validates that the requested subtask ID exists in the plan.
+    Creates state starting from XML_PACKET (2.0) for just that one subtask.
+
+    Args:
+        subtask_id: The subtask to execute (e.g., "ST-001")
+        branch: Git branch name (sanitized)
+        tdd_mode: Whether to enable TDD mode for this subtask
+
+    Returns:
+        Dict with status and state info
+    """
+    plan_dir = Path(f".map/{branch}")
+    plan_file = plan_dir / f"task_plan_{branch}.md"
+
+    if not plan_file.exists():
+        return {
+            "status": "error",
+            "message": f"No plan found at {plan_file}. Run /map-plan first.",
+        }
+
+    import re
+
+    plan_content = plan_file.read_text(encoding="utf-8")
+    all_subtask_ids = re.findall(r"###\s+(ST-\d+)", plan_content)
+
+    if not all_subtask_ids:
+        return {
+            "status": "error",
+            "message": f"No subtask IDs (ST-XXX) found in {plan_file}.",
+        }
+
+    if subtask_id not in all_subtask_ids:
+        return {
+            "status": "error",
+            "message": (
+                f"Subtask {subtask_id} not found in plan. "
+                f"Available: {', '.join(all_subtask_ids)}"
+            ),
+        }
+
+    # Build state for single subtask execution
+    step_order = _get_step_order(tdd_mode)
+    xml_packet_idx = step_order.index("2.0")
+    subtask_steps = step_order[xml_packet_idx:]
+
+    state_file = plan_dir / "step_state.json"
+    state = StepState(
+        current_subtask_id=subtask_id,
+        subtask_index=0,
+        subtask_sequence=[subtask_id],  # Only this one subtask
+        current_step_id="2.0",
+        current_step_phase="XML_PACKET",
+        completed_steps=["1.0", "1.5", "1.55", "1.56", "1.6"],
+        pending_steps=subtask_steps,
+        plan_approved=True,
+        execution_mode="batch",
+        tdd_mode=tdd_mode,
+    )
+    state.save(state_file)
+
+    # Ensure evidence directory exists
+    evidence_dir = plan_dir / "evidence"
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+
+    return {
+        "status": "success",
+        "message": (
+            f"Single subtask mode: {subtask_id}. "
+            f"TDD: {'enabled' if tdd_mode else 'disabled'}. "
+            f"Starting from XML_PACKET."
+        ),
+        "subtask_id": subtask_id,
+        "tdd_mode": tdd_mode,
+        "all_subtasks_in_plan": all_subtask_ids,
+        "next_phase": "XML_PACKET",
+    }
+
+
 def main():
     """CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -1188,6 +1270,7 @@ def main():
             "get_wave_step",
             "validate_wave_step",
             "advance_wave",
+            "resume_single_subtask",
         ],
         help="Command to execute",
     )
@@ -1200,6 +1283,9 @@ def main():
     parser.add_argument("--branch", help="Git branch (auto-detected if omitted)")
     parser.add_argument(
         "--blueprint", help="Path to blueprint JSON (for set_waves command)"
+    )
+    parser.add_argument(
+        "--tdd", action="store_true", help="Enable TDD mode (for resume_single_subtask)"
     )
 
     args = parser.parse_args()
@@ -1322,6 +1408,18 @@ def main():
 
         elif args.command == "advance_wave":
             result = advance_wave(branch)
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "resume_single_subtask":
+            if not args.task_or_step:
+                print(
+                    json.dumps(
+                        {"error": "subtask_id required. Usage: resume_single_subtask ST-001 [--tdd]"}
+                    ),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            result = resume_single_subtask(args.task_or_step, branch, tdd_mode=args.tdd)
             print(json.dumps(result, indent=2))
 
     except Exception as e:

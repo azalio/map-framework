@@ -803,7 +803,7 @@ Summary:
 
 ## 🔀 Workflow Variants
 
-MAP Framework offers three primary implementation workflows with different trade-offs between token usage, quality assurance, and learning. A fourth workflow (`/map-tdd`) adds test-first development. Additional supporting workflows (`/map-debug`, `/map-review`, `/map-check`, `/map-plan`, `/map-release`, `/map-resume`, `/map-learn`) are documented in their respective sections.
+MAP Framework offers three primary implementation workflows with different trade-offs between token usage, quality assurance, and learning. A fourth workflow (`/map-tdd`) adds test-first development. A fifth (`/map-task`) executes a single subtask from an existing plan. Additional supporting workflows (`/map-debug`, `/map-review`, `/map-check`, `/map-plan`, `/map-release`, `/map-resume`, `/map-learn`) are documented in their respective sections.
 
 ### Comparison Table
 
@@ -982,6 +982,33 @@ DECOMPOSE → TEST_WRITER (tests from spec) → TEST_FAIL_GATE (verify Red) → 
 - When previous AI-generated tests missed real bugs
 
 **Token cost:** ~20-30% higher than /map-efficient (extra Actor call for test-writing phase).
+
+#### Use `/map-task` (Single Subtask Execution)
+
+**When:** You have a plan from `/map-plan` and want to execute just one specific subtask.
+
+**Prerequisites:** Run `/map-plan` first to create a task decomposition.
+
+**Usage:**
+```bash
+# Execute a single subtask from the plan
+/map-task ST-001
+
+# Write TDD tests for a specific subtask
+/map-tdd ST-001
+
+# Typical workflow: plan first, then pick subtasks
+/map-plan Add user authentication
+/map-task ST-001   # implement first subtask
+/map-tdd ST-002    # TDD for second subtask
+/map-task ST-003   # implement third subtask
+```
+
+**Best for:**
+- Fine-grained control over execution order
+- Parallelizing subtasks across multiple sessions
+- Resuming work on a specific subtask after context reset
+- Cherry-picking which subtasks to implement now vs. later
 
 ### Real-World Token Usage Examples
 

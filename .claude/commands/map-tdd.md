@@ -30,12 +30,39 @@ TDD:       DECOMPOSE → TEST_WRITER → TEST_FAIL_GATE → ACTOR (code only) �
 
 ---
 
-## Step 0: Prerequisites
+## Step 0: Parse Arguments and Detect Mode
+
+```bash
+TASK_ARGS="$ARGUMENTS"
+SUBTASK_ID=$(echo "$TASK_ARGS" | grep -oE 'ST-[0-9]+' | head -1)
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+```
+
+**Two modes:**
+- **Single-subtask mode** (`/map-tdd ST-001`): Write tests + implement for ONE subtask only
+- **Full workflow mode** (`/map-tdd "task description"`): TDD for all subtasks
+
+### Single-Subtask Mode (when `$SUBTASK_ID` is detected)
+
+```bash
+RESULT=$(python3 .map/scripts/map_orchestrator.py resume_single_subtask "$SUBTASK_ID" --tdd)
+STATUS=$(echo "$RESULT" | jq -r '.status')
+
+if [ "$STATUS" = "error" ]; then
+  echo "$RESULT" | jq -r '.message'
+  # If no plan: "Run /map-plan first"
+  # If subtask not found: shows available IDs
+  exit 1
+fi
+```
+
+Then proceed directly to **Step 1: State Machine Loop** below.
+
+### Full Workflow Mode (no subtask ID)
 
 Verify that a plan or spec exists for this branch:
 
 ```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
 echo "spec:        $(test -f .map/${BRANCH}/spec_${BRANCH}.md && echo EXISTS || echo MISSING)"
 echo "task_plan:   $(test -f .map/${BRANCH}/task_plan_${BRANCH}.md && echo EXISTS || echo MISSING)"
 echo "step_state:  $(test -f .map/${BRANCH}/step_state.json && echo EXISTS || echo MISSING)"
@@ -45,7 +72,7 @@ echo "step_state:  $(test -f .map/${BRANCH}/step_state.json && echo EXISTS || ec
 - If **step_state.json EXISTS**: Resume from checkpoint (same as /map-efficient resume logic).
 - If **task_plan EXISTS but no step_state**: Run `python3 .map/scripts/map_orchestrator.py resume_from_plan` then enable TDD mode.
 
-### Enable TDD Mode
+### Enable TDD Mode (full workflow only)
 
 After state is initialized (either fresh or resumed):
 
@@ -68,7 +95,7 @@ PHASE=$(echo "$NEXT_STEP" | jq -r '.phase')
 ```
 
 Route to the appropriate executor based on `$PHASE`. All phases from /map-efficient work identically.
-The two NEW phases are described below.
+The two TDD-specific phases are described below.
 
 ---
 
@@ -238,6 +265,7 @@ After ACTOR, proceed to MONITOR as usual. Monitor verifies both implementation A
 ## Related Commands
 
 - **/map-plan** — Create spec with invariants and acceptance criteria (recommended before /map-tdd)
+- **/map-task ST-001** — Execute a single subtask without TDD (implementation only)
 - **/map-efficient** — Standard workflow without test-first constraint
 - **/map-check** — Final verification after all subtasks complete
 - **/map-learn** — Extract lessons from completed TDD workflow

@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`--tdd` flag for `/map-efficient`**: Enables TDD mode within the standard efficient workflow
 - **TDD support in Actor agent**: Two new modes — `test_writer` (write only tests from spec) and `code_only` (implement to make tests green, no test modifications)
 - **`set_tdd_mode` orchestrator command**: Enable/disable TDD phases in the state machine
+- **Single subtask execution (`/map-task ST-001`)**: Execute one specific subtask from an existing plan without running the full workflow. Requires `/map-plan` first
+- **Single subtask TDD (`/map-tdd ST-001`)**: Write TDD tests and implement a specific subtask. Combines single-subtask execution with test-first development
+- **`resume_single_subtask` orchestrator command**: Sets up state for executing a single subtask with optional `--tdd` flag
 - **Enhanced SPEC phase in `/map-plan`**: Structured spec template with Invariants, Edge Cases, Acceptance Criteria, and Security Boundaries sections
 - **Devil's Advocate review step**: After spec creation, Monitor agent adversarially reviews the spec for race conditions, ownership ambiguity, missing edge cases, contradictions, and security gaps (skipped for complexity < 5)
 - **Spec invariant linkage in task-decomposer**: Contracts must trace back to spec invariants when spec exists; checklist enforces coverage

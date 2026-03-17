@@ -572,5 +572,91 @@ class TestTDDMode:
         assert "Evidence directory missing" in result["message"]
 
 
+class TestResumeSingleSubtask:
+    """Tests for resume_single_subtask — single subtask execution."""
+
+    def _create_plan(self, tmp_path, branch, subtask_ids):
+        """Helper to create a task plan with given subtask IDs."""
+        plan_dir = tmp_path / ".map" / branch
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        plan_content = "# Task Plan\n\n"
+        for st_id in subtask_ids:
+            plan_content += f"### {st_id}\n- **Status:** pending\n\n"
+        plan_file = plan_dir / f"task_plan_{branch}.md"
+        plan_file.write_text(plan_content)
+        return plan_dir
+
+    def test_resume_single_subtask_success(self, branch_dir, tmp_path):
+        """Basic single subtask setup creates correct state."""
+        self._create_plan(tmp_path, branch_dir, ["ST-001", "ST-002", "ST-003"])
+        result = map_orchestrator.resume_single_subtask("ST-002", branch_dir)
+        assert result["status"] == "success"
+        assert result["subtask_id"] == "ST-002"
+        assert result["tdd_mode"] is False
+
+        # Verify state file
+        state_file = Path(f".map/{branch_dir}/step_state.json")
+        state = map_orchestrator.StepState.load(state_file)
+        assert state.subtask_sequence == ["ST-002"]
+        assert state.current_subtask_id == "ST-002"
+        assert state.current_step_id == "2.0"
+        assert state.plan_approved is True
+        assert "1.0" in state.completed_steps
+        assert "2.0" in state.pending_steps
+
+    def test_resume_single_subtask_with_tdd(self, branch_dir, tmp_path):
+        """TDD mode adds TEST_WRITER and TEST_FAIL_GATE to pending steps."""
+        self._create_plan(tmp_path, branch_dir, ["ST-001", "ST-002"])
+        result = map_orchestrator.resume_single_subtask("ST-001", branch_dir, tdd_mode=True)
+        assert result["status"] == "success"
+        assert result["tdd_mode"] is True
+
+        state_file = Path(f".map/{branch_dir}/step_state.json")
+        state = map_orchestrator.StepState.load(state_file)
+        assert state.tdd_mode is True
+        assert "2.25" in state.pending_steps
+        assert "2.26" in state.pending_steps
+
+    def test_resume_single_subtask_no_plan(self, branch_dir):
+        """Error when no plan file exists."""
+        result = map_orchestrator.resume_single_subtask("ST-001", branch_dir)
+        assert result["status"] == "error"
+        assert "No plan found" in result["message"]
+
+    def test_resume_single_subtask_not_in_plan(self, branch_dir, tmp_path):
+        """Error when subtask ID is not in the plan."""
+        self._create_plan(tmp_path, branch_dir, ["ST-001", "ST-002"])
+        result = map_orchestrator.resume_single_subtask("ST-999", branch_dir)
+        assert result["status"] == "error"
+        assert "ST-999 not found" in result["message"]
+        assert "ST-001" in result["message"]
+
+    def test_resume_single_subtask_creates_evidence_dir(self, branch_dir, tmp_path):
+        """Evidence directory is created automatically."""
+        # Remove the evidence dir created by fixture
+        import shutil
+        evidence_dir = tmp_path / ".map" / branch_dir / "evidence"
+        if evidence_dir.exists():
+            shutil.rmtree(evidence_dir)
+
+        self._create_plan(tmp_path, branch_dir, ["ST-001"])
+        map_orchestrator.resume_single_subtask("ST-001", branch_dir)
+        assert evidence_dir.exists()
+
+    def test_resume_single_subtask_lists_all_subtasks(self, branch_dir, tmp_path):
+        """Response includes all subtask IDs from the plan."""
+        self._create_plan(tmp_path, branch_dir, ["ST-001", "ST-002", "ST-003"])
+        result = map_orchestrator.resume_single_subtask("ST-001", branch_dir)
+        assert result["all_subtasks_in_plan"] == ["ST-001", "ST-002", "ST-003"]
+
+    def test_resume_single_subtask_then_get_next_step(self, branch_dir, tmp_path):
+        """After resume_single_subtask, get_next_step returns XML_PACKET."""
+        self._create_plan(tmp_path, branch_dir, ["ST-001", "ST-002"])
+        map_orchestrator.resume_single_subtask("ST-002", branch_dir)
+        result = map_orchestrator.get_next_step(branch_dir)
+        assert result["phase"] == "XML_PACKET"
+        assert result["current_subtask"] == "ST-002"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
