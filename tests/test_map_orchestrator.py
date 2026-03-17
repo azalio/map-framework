@@ -658,5 +658,72 @@ class TestResumeSingleSubtask:
         assert result["current_subtask"] == "ST-002"
 
 
+class TestGetPlanProgress:
+    """Tests for get_plan_progress — plan status overview."""
+
+    def _create_plan_with_statuses(self, tmp_path, branch, subtasks):
+        """Helper: subtasks is list of (id, status) tuples."""
+        plan_dir = tmp_path / ".map" / branch
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        content = "# Task Plan\n\n"
+        for sid, status in subtasks:
+            content += f"### {sid}: Some title\n- **Status:** {status}\n\n"
+        (plan_dir / f"task_plan_{branch}.md").write_text(content)
+
+    def test_all_pending(self, branch_dir, tmp_path):
+        """All subtasks pending — suggested_next is first one."""
+        self._create_plan_with_statuses(
+            tmp_path, branch_dir,
+            [("ST-001", "pending"), ("ST-002", "pending"), ("ST-003", "pending")],
+        )
+        result = map_orchestrator.get_plan_progress(branch_dir)
+        assert result["status"] == "success"
+        assert result["total"] == 3
+        assert result["completed_count"] == 0
+        assert result["pending_count"] == 3
+        assert result["suggested_next"] == "ST-001"
+
+    def test_some_complete(self, branch_dir, tmp_path):
+        """Mix of complete and pending — suggested_next skips completed."""
+        self._create_plan_with_statuses(
+            tmp_path, branch_dir,
+            [("ST-001", "complete"), ("ST-002", "complete"), ("ST-003", "pending")],
+        )
+        result = map_orchestrator.get_plan_progress(branch_dir)
+        assert result["completed_count"] == 2
+        assert result["pending_count"] == 1
+        assert result["completed"] == ["ST-001", "ST-002"]
+        assert result["pending"] == ["ST-003"]
+        assert result["suggested_next"] == "ST-003"
+
+    def test_all_complete(self, branch_dir, tmp_path):
+        """All subtasks complete — suggested_next is None."""
+        self._create_plan_with_statuses(
+            tmp_path, branch_dir,
+            [("ST-001", "complete"), ("ST-002", "complete")],
+        )
+        result = map_orchestrator.get_plan_progress(branch_dir)
+        assert result["completed_count"] == 2
+        assert result["pending_count"] == 0
+        assert result["suggested_next"] is None
+
+    def test_no_plan(self, branch_dir):
+        """Error when no plan exists."""
+        result = map_orchestrator.get_plan_progress(branch_dir)
+        assert result["status"] == "error"
+        assert "No plan found" in result["message"]
+
+    def test_in_progress_counts_as_pending(self, branch_dir, tmp_path):
+        """in_progress subtask counts as pending (not complete)."""
+        self._create_plan_with_statuses(
+            tmp_path, branch_dir,
+            [("ST-001", "complete"), ("ST-002", "in_progress"), ("ST-003", "pending")],
+        )
+        result = map_orchestrator.get_plan_progress(branch_dir)
+        assert result["completed_count"] == 1
+        assert result["pending_count"] == 2
+        assert result["suggested_next"] == "ST-002"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

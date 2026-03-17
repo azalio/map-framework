@@ -103,9 +103,25 @@ For each step:
 **If Monitor returns `valid: false`:**
 - Retry Actor with feedback (max 5 iterations)
 
-## Step 4: Completion
+## Step 4: Completion and Progress Report
 
 When `get_next_step` returns `is_complete: true`:
+
+1. Update the plan status:
+```bash
+python3 .map/scripts/map_step_runner.py update_plan_status "${SUBTASK_ID}" "complete"
+```
+
+2. Get overall plan progress:
+```bash
+PROGRESS=$(python3 .map/scripts/map_orchestrator.py get_plan_progress)
+TOTAL=$(echo "$PROGRESS" | jq -r '.total')
+DONE=$(echo "$PROGRESS" | jq -r '.completed_count')
+REMAINING=$(echo "$PROGRESS" | jq -r '.pending_count')
+SUGGESTED=$(echo "$PROGRESS" | jq -r '.suggested_next')
+```
+
+3. Display completion report with remaining subtasks:
 
 ```text
 ═══════════════════════════════════════════════════
@@ -118,16 +134,46 @@ Status: COMPLETE
 Files Modified:
   - <list of changed files>
 
-Next steps:
-  - Run /map-task ST-XXX for the next subtask
-  - Run tests to verify: pytest / npm test / go test
-  - Run /map-check for full verification
+───────────────────────────────────────────────────
+PLAN PROGRESS: ${DONE}/${TOTAL} subtasks complete
+───────────────────────────────────────────────────
+
+Completed:
+  ✓ ST-001: <title>
+  ✓ ST-002: <title>  ← just completed
+
+Remaining:
+  ○ ST-003: <title> (pending)
+  ○ ST-004: <title> (pending)
+
 ═══════════════════════════════════════════════════
 ```
 
-Update the plan status:
-```bash
-python3 .map/scripts/map_step_runner.py update_plan_status "${SUBTASK_ID}" "complete"
+4. **Suggest next subtask** using AskUserQuestion:
+
+```
+AskUserQuestion(questions=[
+  {
+    "question": "What would you like to do next?",
+    "header": "Next subtask",
+    "options": [
+      {"label": "/map-task ${SUGGESTED}", "description": "Execute next subtask: <title>"},
+      {"label": "/map-tdd ${SUGGESTED}", "description": "TDD for next subtask: <title>"},
+      {"label": "Done for now", "description": "Stop here, continue later with /map-task"}
+    ],
+    "multiSelect": false
+  }
+])
+```
+
+**If all subtasks are complete** (REMAINING == 0), skip the question and show:
+
+```text
+═══════════════════════════════════════════════════
+ALL SUBTASKS COMPLETE (${TOTAL}/${TOTAL})
+═══════════════════════════════════════════════════
+
+Run /map-check for final verification, or /map-learn to extract patterns.
 ```
 
 ---

@@ -1166,6 +1166,60 @@ def resume_from_plan(branch: str) -> Dict:
     }
 
 
+def get_plan_progress(branch: str) -> Dict:
+    """Return status of all subtasks from the task plan.
+
+    Reads task_plan_<branch>.md and extracts subtask IDs with their statuses.
+    Identifies the next pending subtask (respecting dependency order from blueprint).
+
+    Args:
+        branch: Git branch name (sanitized)
+
+    Returns:
+        Dict with subtask statuses, completed/pending counts, and suggested next
+    """
+    import re
+
+    plan_dir = Path(f".map/{branch}")
+    plan_file = plan_dir / f"task_plan_{branch}.md"
+
+    if not plan_file.exists():
+        return {"status": "error", "message": f"No plan found at {plan_file}."}
+
+    content = plan_file.read_text(encoding="utf-8")
+
+    # Extract subtask IDs and statuses: ### ST-XXX ... \n- **Status:** <status>
+    subtasks = []
+    for match in re.finditer(
+        r"###\s+(ST-\d+)[^\n]*\n(?:.*?\n)*?- \*\*Status:\*\*\s+(\w+)",
+        content,
+    ):
+        subtasks.append({"id": match.group(1), "status": match.group(2)})
+
+    if not subtasks:
+        # Fallback: just extract IDs without status
+        ids = re.findall(r"###\s+(ST-\d+)", content)
+        subtasks = [{"id": sid, "status": "unknown"} for sid in ids]
+
+    completed = [s for s in subtasks if s["status"] == "complete"]
+    pending = [s for s in subtasks if s["status"] != "complete"]
+
+    # Determine suggested next subtask
+    # Prefer first pending subtask (plan order respects dependencies)
+    suggested_next = pending[0]["id"] if pending else None
+
+    return {
+        "status": "success",
+        "total": len(subtasks),
+        "completed_count": len(completed),
+        "pending_count": len(pending),
+        "subtasks": subtasks,
+        "completed": [s["id"] for s in completed],
+        "pending": [s["id"] for s in pending],
+        "suggested_next": suggested_next,
+    }
+
+
 def resume_single_subtask(subtask_id: str, branch: str, tdd_mode: bool = False) -> Dict:
     """Set up state to execute a single subtask from an existing plan.
 
@@ -1271,6 +1325,7 @@ def main():
             "validate_wave_step",
             "advance_wave",
             "resume_single_subtask",
+            "get_plan_progress",
         ],
         help="Command to execute",
     )
@@ -1420,6 +1475,10 @@ def main():
                 )
                 sys.exit(1)
             result = resume_single_subtask(args.task_or_step, branch, tdd_mode=args.tdd)
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "get_plan_progress":
+            result = get_plan_progress(branch)
             print(json.dumps(result, indent=2))
 
     except Exception as e:
