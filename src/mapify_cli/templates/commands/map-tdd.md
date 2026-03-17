@@ -256,7 +256,16 @@ Evidence file: .map/<branch>/evidence/actor_<subtask_id>.json"""
 )
 ```
 
-After ACTOR, proceed to MONITOR as usual. Monitor verifies both implementation AND that tests pass.
+**CRITICAL: After ACTOR returns, you MUST call Monitor (2.4). Do NOT skip Monitor. Do NOT mark the subtask complete without Monitor validation.** This is not optional — Monitor is a mandatory phase in every workflow, including TDD.
+
+```bash
+# Validate Actor step, then get_next_step will return MONITOR (2.4)
+python3 .map/scripts/map_orchestrator.py validate_step "2.3"
+NEXT_STEP=$(python3 .map/scripts/map_orchestrator.py get_next_step)
+# NEXT_STEP.phase MUST be "MONITOR" — execute it before proceeding
+```
+
+Monitor verifies both implementation correctness AND that all tests pass.
 
 ---
 
