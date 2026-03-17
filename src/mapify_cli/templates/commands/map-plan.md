@@ -106,7 +106,7 @@ Read the user's requirements and decide if deep interview is needed.
 - Small isolated change (single bug fix, test update)
 - User explicitly provided a spec or detailed description
 
-If interview is not needed, skip to Step 3.
+If interview is not needed, skip to Step 2a (write spec without interview).
 
 ### Step 2: Deep Interview (Spec Discovery)
 
@@ -217,9 +217,22 @@ Formal, testable conditions that define "done". Each criterion must be verifiabl
 - [Anything still unresolved]
 ```
 
+### Step 2a: Write Spec (when interview was skipped)
+
+If interview was skipped (task is well-defined), still write `spec_<branch>.md` using the same template as Step 2. Populate it from the user's requirements and discovery findings:
+
+- **Decisions Made**: extract from user's request (may be short or N/A)
+- **Invariants**: derive from existing code patterns found in discovery
+- **Edge Cases**: identify from the task description and affected code
+- **Acceptance Criteria**: REQUIRED — must be testable conditions that define "done"
+- **Security Boundaries**: include if task touches auth/validation/user input
+- **Out of Scope**: explicitly state what is NOT being changed
+
+This ensures every `/map-plan` run produces a spec, regardless of whether interview happened.
+
 ### Step 2b: Devil's Advocate Review (SPEC_REVIEW)
 
-**Skip if:** complexity < 5 (simple, well-defined tasks) or interview was skipped.
+**Skip if:** complexity < 5 (simple, well-defined tasks).
 
 After writing the spec, invoke Monitor agent to adversarially review it. The goal is to surface gaps, contradictions, and missing edge cases BEFORE decomposition.
 
