@@ -325,6 +325,32 @@ Output requirements:
 )
 ```
 
+### Step 5.5: Save Blueprint JSON
+
+Save the raw decomposer output as `.map/<branch>/blueprint.json` using the **Write** tool. This file is required by `/map-efficient` for wave computation (`set_waves`).
+
+The blueprint JSON must include at minimum:
+```json
+{
+  "summary": "<goal description>",
+  "subtasks": [
+    {
+      "id": "ST-001",
+      "title": "<title>",
+      "aag_contract": "Actor -> Action(params) -> Goal",
+      "dependencies": [],
+      "affected_files": ["path/to/file.py"],
+      "complexity_score": 5,
+      "risk_level": "medium",
+      "validation_criteria": ["VC1: ...", "VC2: ..."],
+      "test_strategy": {"unit": ["test description"]}
+    }
+  ]
+}
+```
+
+If the decomposer returned structured JSON, save it directly. If it returned markdown, construct the JSON from the decomposed subtasks. **This step is mandatory** — without `blueprint.json`, `/map-efficient` cannot compute parallel execution waves.
+
 ### Step 6: Create Human-Readable Plan
 
 Write the plan to `.map/<branch>/task_plan_<branch>.md` using the **Write** tool. Wrap content in `<MAP_Plan_v1_0>` semantic brackets for machine-parseable handoff to executors.
@@ -419,6 +445,7 @@ WORKFLOW CHECKPOINT: PLAN PHASE COMPLETE
 ✅ Deep interview completed (N decisions captured)
 ✅ Architecture graph written to spec_${BRANCH}.md
 ✅ Task decomposed into N subtasks with AAG contracts
+✅ Blueprint saved to .map/${BRANCH}/blueprint.json
 ✅ workflow_state.json initialized (with aag_contracts map)
 ✅ Plan written to .map/${BRANCH}/task_plan_${BRANCH}.md
 ✅ Context distilled (plan files ≤4000 tokens per subtask)
