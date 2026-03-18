@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.0] - 2026-03-18
+
 ### Added
 - **TDD workflow (`/map-tdd`)**: Test-first development mode where tests are written from specification before implementation. Includes TEST_WRITER (2.25) and TEST_FAIL_GATE (2.26) phases
 - **`--tdd` flag for `/map-efficient`**: Enables TDD mode within the standard efficient workflow
