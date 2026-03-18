@@ -80,6 +80,15 @@ Locate the most relevant code for this request and return:
 - any existing similar implementations/patterns
 - risks/unknowns and what to verify
 
+CRITICAL: For EVERY file path you mention:
+1. Use Glob to verify the file actually exists
+2. If the spec/requirements say "create new file X" — CHECK if X already exists
+3. Clearly mark each file as EXISTING (verified via Glob) or NEW (confirmed not found)
+4. For existing files, note approximate LOC and key classes/functions
+
+Do NOT trust the spec's claims about which files are new vs existing.
+Always verify with Glob before reporting.
+
 User request:
 {user_requirements}
 """
@@ -87,6 +96,22 @@ User request:
 ```
 
 **Save discovery results:** The research-agent returns findings inline. Use the **Write** tool to save them to `.map/<branch>/findings_<branch>.md` so they persist across sessions. Include key file paths, patterns found, and risks.
+
+**Discovery output format** (in findings file):
+```markdown
+## Existing Files (verified via Glob)
+- `path/to/file.py` (1200 LOC) — contains ClassX, relevant because...
+- `path/to/other.py` (300 LOC) — integration point for...
+
+## Files to Create (confirmed not found)
+- `path/to/new_file.py` — needed for...
+
+## Patterns Found
+- ...
+
+## Risks / Unknowns
+- ...
+```
 
 If discovery is not needed (new greenfield code or already-provided spec), skip to Step 1.
 
