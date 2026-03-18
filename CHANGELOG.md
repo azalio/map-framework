@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **SKIPPABLE_STEPS docstring**: Added 2.25/2.26 to documented skippable steps
 - **`get_plan_progress` docstring**: Removed incorrect claim about dependency-aware ordering
 - **Workflow gate `~/.claude/` scope**: Narrowed exemption from entire `~/.claude/` to only `~/.claude/projects/*/memory/`
+- **Missing `blueprint.json` in `/map-plan`**: Added Step 5.5 to save decomposer output as `blueprint.json` for wave computation; `/map-efficient` gracefully falls back to sequential execution when missing
 
 ## [3.4.1] - 2026-03-09
 
