@@ -246,11 +246,18 @@ This is not optional — wave computation must run after every INIT_STATE.
 After INIT_STATE (1.6) completes, compute execution waves from the dependency DAG:
 
 ```bash
-python3 .map/scripts/map_orchestrator.py set_waves --blueprint .map/${BRANCH}/blueprint.json
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+if [ -f ".map/${BRANCH}/blueprint.json" ]; then
+  python3 .map/scripts/map_orchestrator.py set_waves --blueprint .map/${BRANCH}/blueprint.json
+else
+  echo "WARNING: blueprint.json not found. Running subtasks sequentially."
+  echo "To enable parallel waves, re-run /map-plan (saves blueprint.json since v3.5)."
+fi
 ```
 
 This reads the blueprint, builds a dependency graph, computes topological waves,
 and splits waves by file conflicts. The result is stored in `step_state.json`.
+If `blueprint.json` is missing (e.g., plan was created before v3.5), subtasks execute sequentially — this is safe but slower.
 
 **Wave execution**: If waves are computed, subtasks within a wave run their Actor
 and Monitor phases in parallel. Check wave status with:
