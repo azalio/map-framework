@@ -12,6 +12,7 @@ Complete reference for all mapify CLI commands with correct syntax, parameters, 
   - [init](#mapify-init)
   - [check](#mapify-check)
   - [upgrade](#mapify-upgrade)
+  - [doctor](#mapify-doctor)
 - [Common Mistakes](#common-mistakes)
 
 ---
@@ -96,7 +97,7 @@ mapify init [PROJECT_NAME] [OPTIONS]
 
 **Parameters:**
 - `PROJECT_NAME` (optional): Directory name (use '.' for current directory)
-- `--mcp [all|essential|docs|none|LIST]`: MCP servers to enable
+- `--mcp [all|essential|none|LIST]`: MCP servers to enable
 - `--no-git`: Skip git initialization
 - `--force`: Force merge/overwrite in non-empty directory
 
@@ -119,11 +120,16 @@ mapify init my-project --no-git
 mapify init . --mcp sequential-thinking,deepwiki
 ```
 
+**Also creates:**
+- `.map/scripts/` workflow runtime helpers
+- `.map/static-analysis/` language-specific analysis helpers
+- branch-scoped workflow state under `.map/<branch>/` as MAP commands run
+
 ---
 
 ### `mapify check`
 
-**Check that all required tools are installed**
+**Quick environment check for tools, MAP initialization, bundled templates, and supported MCP servers**
 
 ```bash
 mapify check [OPTIONS]
@@ -146,13 +152,53 @@ mapify check --debug
 
 ### `mapify upgrade`
 
-**Upgrade MAP agents to the latest version**
+**Refresh MAP Framework files in the current project**
 
 ```bash
 mapify upgrade
 ```
 
-Updates agent templates in `.claude/agents/` to latest versions.
+Refreshes shipped MAP files in the current project:
+- `.claude/agents/`
+- `.claude/commands/`
+- `.claude/skills/`
+- `.claude/references/`
+- `.claude/hooks/`
+- `.claude/settings.json`, `.claude/workflow-rules.json`, `.claude/ralph-loop-config.json`
+
+Preserves project-specific MCP selections in `.mcp.json` and `.claude/mcp_config.json`.
+
+---
+
+### `mapify doctor`
+
+**Run a detailed MAP project readiness diagnosis**
+
+```bash
+mapify doctor [OPTIONS]
+```
+
+**Parameters:**
+- `--debug`: Enable debug logging
+
+**Checks include:**
+- Required tools (`git`, `claude`)
+- Core MAP paths (`.claude/...`, `.map/scripts`)
+- Installed agent/command counts vs bundled templates
+- Current branch workspace availability in `.map/<branch>/`
+- `.mcp.json` readability
+
+**Examples:**
+
+```bash
+# Diagnose current project state
+mapify doctor
+
+# Diagnose with debug logging
+mapify doctor --debug
+```
+
+---
 
 ---
 
@@ -177,8 +223,8 @@ Updates agent templates in `.claude/agents/` to latest versions.
 ## Version Information
 
 **Generated from**: `src/mapify_cli/__init__.py`
-**Framework version**: Based on map-framework 2.3.0
-**Last updated**: 2026-01-11
+**Framework version**: Based on map-framework 3.5.0
+**Last updated**: 2026-03-19
 
 For the most up-to-date command definitions, see the source code decorators:
 - `@app.command()` - Root commands

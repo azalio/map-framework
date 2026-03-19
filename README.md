@@ -9,10 +9,11 @@ Based on [MAP cognitive architecture](https://github.com/Shanka123/MAP) (Nature 
 
 ## Why MAP?
 
-- **Structured workflows** — 12 specialized agents instead of single-prompt chaos
+- **Structured workflows** — 11 specialized agents instead of single-prompt chaos
 - **Quality gates** — automatic validation catches errors before they compound
 - **40-60% cost savings** — prevents circular reasoning and scope creep
 - **Learning system** — captures patterns for reuse across projects
+- **Persistent artifacts** — `/map-plan`, `/map-efficient`, and `/map-check` keep branch-scoped research, session, review, QA, and verification artifacts inside `.map/<branch>/`
 
 ## Quick Start
 
@@ -51,11 +52,21 @@ claude
 | `/map-review` | Pre-commit code review |
 | `/map-check` | Quality gates and verification |
 | `/map-plan` | Task decomposition without implementation |
+| `/map-task` | Execute a single subtask from an existing plan |
+| `/map-tdd` | Test-first implementation workflow |
 | `/map-release` | Package release workflow |
 | `/map-resume` | Resume interrupted workflows |
 | `/map-learn` | Extract lessons after workflow completion |
 
 [Detailed usage and options →](docs/USAGE.md)
+
+Canonical MAP flows:
+
+- Standard: `/map-plan` -> `/map-efficient` -> `/map-check` -> `/map-review`
+- Full TDD: `/map-plan` -> `/map-tdd` -> `/map-check` -> `/map-review`
+- Targeted subtask TDD: `/map-plan` -> `/map-tdd ST-001` -> `/map-task ST-001` -> ... -> `/map-check` -> `/map-review`
+
+These workflows maintain branch-scoped artifacts like `research.md`, `implementation-plan.md`, `code-review-001.md`, `qa-001.md`, `verification-summary.md`, `pr-draft.md`, and run dossiers under `.map/<branch>/`.
 
 ## How It Works
 
@@ -86,7 +97,7 @@ The orchestration lives in `.claude/commands/map-*.md` prompts created by `mapif
 ## Trouble?
 
 - **Command not found** → Run `mapify init` in your project first
-- **Agent errors** → Check `.claude/agents/` has all 12 `.md` files
+- **Agent errors** → Check `.claude/agents/` has all 11 shipped agent `.md` files
 - [More help →](docs/INSTALL.md#troubleshooting)
 
 ## Contributing

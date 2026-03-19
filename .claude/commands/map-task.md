@@ -94,6 +94,16 @@ Route to the appropriate executor based on `$PHASE`. All phases from `/map-effic
 - **LINTER_GATE (2.9)** — Run linter
 - **VERIFY_ADHERENCE (2.10)** — Self-audit
 
+Single-subtask execution must keep using the shared branch workspace artifacts rather than creating task-local side files:
+
+- `session-log.md`
+- `devlog-001.md`
+- `code-review-00N.md`
+- `qa-001.md`
+- `pr-draft.md`
+
+When Monitor runs during `/map-task`, append to the next `code-review-00N.md` so targeted subtask execution stays aligned with the full workflow artifact model.
+
 For each step:
 1. Get next step from orchestrator
 2. Execute the phase (same handlers as map-efficient)

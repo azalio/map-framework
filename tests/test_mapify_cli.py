@@ -17,6 +17,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from mapify_cli import (
     app,
     build_standard_mcp_servers,
+    count_agent_templates,
+    count_command_templates,
     create_agent_files,
     create_command_files,
     create_commands_dir,
@@ -392,7 +394,7 @@ class TestInitCommand:
         assert (tmp_path / ".claude" / "agents").exists()
         assert (tmp_path / ".claude" / "mcp_config.json").exists()
 
-        # Verify all 4 MCP servers are configured
+        # Verify default MCP servers are configured
         mcp_config = json.loads((tmp_path / ".claude" / "mcp_config.json").read_text())
         expected_servers = [
             "sequential-thinking",
@@ -401,14 +403,14 @@ class TestInitCommand:
 
         assert "mcp_servers" in mcp_config, "mcp_config missing 'mcp_servers' key"
         for server in expected_servers:
-            assert (
-                server in mcp_config["mcp_servers"]
-            ), f"MCP server '{server}' not found in config"
+            assert server in mcp_config["mcp_servers"], (
+                f"MCP server '{server}' not found in config"
+            )
 
-        # Verify exactly 4 servers (no extras)
-        assert (
-            len(mcp_config["mcp_servers"]) == 4
-        ), f"Expected 4 servers, found {len(mcp_config['mcp_servers'])}"
+        # Verify exactly the expected default set (no extras)
+        assert sorted(mcp_config["mcp_servers"]) == sorted(expected_servers), (
+            f"Expected default MCP servers {expected_servers}, found {mcp_config['mcp_servers']}"
+        )
 
     def test_init_force_no_prompts(self, tmp_path):
         """Test that init --force completes without interactive confirmation prompts.
@@ -456,9 +458,9 @@ class TestInitCommand:
         # This confirms --force actually re-initialized the files
         assert actor_file.exists()
         restored_content = actor_file.read_text()
-        assert (
-            restored_content != "# Modified by user"
-        ), "--force did not restore template files"
+        assert restored_content != "# Modified by user", (
+            "--force did not restore template files"
+        )
         # Should contain some template markers (not exact match due to potential updates)
         assert len(restored_content) > 100, "Restored actor.md seems too short"
 
@@ -483,11 +485,20 @@ class TestCheckCommand:
         os.chdir(tmp_path)
         mock_check_tool.return_value = True
 
+        init_result = runner.invoke(app, ["init", ".", "--no-git", "--mcp", "none"])
+        assert init_result.exit_code == 0
+
         result = runner.invoke(app, ["check"])
 
         assert result.exit_code == 0
         assert (
             "Check Available Tools" in result.stdout or "MAP Framework" in result.stdout
+        )
+        assert "initialized" in result.stdout
+        expected_agents = count_agent_templates()
+        expected_commands = count_command_templates()
+        assert (
+            f"{expected_agents} agents, {expected_commands} commands" in result.stdout
         )
 
     @mock.patch("mapify_cli.check_tool")
@@ -499,7 +510,43 @@ class TestCheckCommand:
         result = runner.invoke(app, ["check"])
 
         assert result.exit_code == 0
-        assert "Check Available Tools" in result.stdout or "MAP" in result.stdout
+        assert "sequential-thinking" in result.stdout
+        assert "deepwiki" in result.stdout
+
+
+class TestDoctorCommand:
+    """Test the doctor command."""
+
+    @mock.patch("mapify_cli.check_tool")
+    def test_doctor_initialized_project(self, mock_check_tool, tmp_path):
+        """Doctor should report healthy project structure after init."""
+        os.chdir(tmp_path)
+        mock_check_tool.return_value = True
+
+        init_result = runner.invoke(app, ["init", ".", "--no-git", "--mcp", "none"])
+        assert init_result.exit_code == 0
+
+        result = runner.invoke(app, ["doctor"])
+
+        assert result.exit_code == 0
+        assert "MAP Doctor" in result.stdout
+        assert ".map/main/" in result.stdout
+        expected_agents = count_agent_templates()
+        expected_commands = count_command_templates()
+        assert f"{expected_agents}/{expected_agents}" in result.stdout
+        assert f"{expected_commands}/{expected_commands}" in result.stdout
+
+    @mock.patch("mapify_cli.check_tool")
+    def test_doctor_reports_missing_structure(self, mock_check_tool, tmp_path):
+        """Doctor should surface missing paths in non-initialized directories."""
+        os.chdir(tmp_path)
+        mock_check_tool.return_value = True
+
+        result = runner.invoke(app, ["doctor"])
+
+        assert result.exit_code == 0
+        assert "Missing core paths" in result.stdout
+        assert ".map/scripts" in result.stdout
 
 
 class TestUpgradeCommand:
@@ -507,38 +554,43 @@ class TestUpgradeCommand:
 
     @mock.patch("mapify_cli.get_latest_release")
     def test_upgrade_available(self, mock_get_latest, tmp_path):
-        """Test upgrade when newer version is available."""
+        """Test upgrade refreshes files and reports newer release."""
         os.chdir(tmp_path)
+        init_result = runner.invoke(app, ["init", ".", "--no-git", "--mcp", "none"])
+        assert init_result.exit_code == 0
+
+        actor_file = tmp_path / ".claude" / "agents" / "actor.md"
+        original_content = actor_file.read_text()
+        actor_file.write_text("stale content\n")
+
         mock_get_latest.return_value = {
-            "tag_name": "v2.0.0",
-            "html_url": "https://github.com/azalio/map-framework/releases/tag/v2.0.0",
+            "tag_name": "v9.9.9",
+            "html_url": "https://github.com/azalio/map-framework/releases/tag/v9.9.9",
         }
 
         result = runner.invoke(app, ["upgrade"])
 
         assert result.exit_code == 0
-        # For now, upgrade shows "coming soon" message
-        assert (
-            "Upgrade feature coming soon" in result.stdout
-            or "New version available" in result.stdout
-        )
+        assert "New version available" in result.stdout
+        assert "Upgrade complete" in result.stdout
+        assert actor_file.read_text() == original_content
 
     @mock.patch("mapify_cli.get_latest_release")
     def test_upgrade_not_available(self, mock_get_latest, tmp_path):
         """Test upgrade when already on latest version."""
         os.chdir(tmp_path)
+        init_result = runner.invoke(app, ["init", ".", "--no-git", "--mcp", "none"])
+        assert init_result.exit_code == 0
         mock_get_latest.return_value = {
-            "tag_name": "v1.0.0",
-            "html_url": "https://github.com/azalio/map-framework/releases/tag/v1.0.0",
+            "tag_name": "v3.5.0",
+            "html_url": "https://github.com/azalio/map-framework/releases/tag/v3.5.0",
         }
 
         result = runner.invoke(app, ["upgrade"])
 
         assert result.exit_code == 0
-        assert (
-            "Upgrade feature coming soon" in result.stdout
-            or "already on the latest version" in result.stdout
-        )
+        assert "latest installed version" in result.stdout
+        assert "Upgrade complete" in result.stdout
 
     def test_upgrade_not_initialized(self, tmp_path):
         """Test upgrade in non-initialized directory."""
@@ -546,10 +598,7 @@ class TestUpgradeCommand:
         result = runner.invoke(app, ["upgrade"])
 
         assert result.exit_code == 0
-        assert (
-            "Upgrade feature coming soon" in result.stdout
-            or "MAP Framework not initialized" in result.stdout
-        )
+        assert "MAP Framework not initialized" in result.stdout
 
 
 class TestAgentCreation:
@@ -631,9 +680,9 @@ class TestAgentCreation:
                 name in agent_file
                 for name in ["task-decomposer", "actor", "monitor", "predictor"]
             ):
-                assert (
-                    "mcp" in content.lower() or "tool" in content.lower()
-                ), f"Agent {agent_file} missing MCP integration section"
+                assert "mcp" in content.lower() or "tool" in content.lower(), (
+                    f"Agent {agent_file} missing MCP integration section"
+                )
 
 
 class TestCommandCreation:
@@ -712,9 +761,9 @@ class TestMcpJsonConfig:
 
         # http servers should have 'type' and 'url' keys
         for server_name in ["deepwiki"]:
-            assert (
-                servers[server_name].get("type") == "http"
-            ), f"{server_name} should be http"
+            assert servers[server_name].get("type") == "http", (
+                f"{server_name} should be http"
+            )
             assert "url" in servers[server_name], f"{server_name} missing url"
 
     def test_read_project_mcp_json_missing_file(self, tmp_path):
@@ -891,9 +940,9 @@ class TestMcpJsonConfig:
 
         # Allow exit code 0 or initialization messages
         mcp_file = tmp_path / ".mcp.json"
-        assert (
-            mcp_file.exists()
-        ), f"Expected .mcp.json to be created. Output: {result.output}"
+        assert mcp_file.exists(), (
+            f"Expected .mcp.json to be created. Output: {result.output}"
+        )
 
         config = json.loads(mcp_file.read_text())
         assert "mcpServers" in config
@@ -997,19 +1046,16 @@ class TestCreateMapTools:
     def test_create_map_tools_map_exists_but_no_static_analysis(
         self, mock_get_templates, tmp_path
     ):
-        """Test when templates_dir/map exists but static-analysis subdirectory doesn't."""
-        # Create templates/map without static-analysis
+        """Test when templates_dir/map exists but has no shipped content."""
         mock_templates = tmp_path / "templates"
         mock_templates.mkdir()
         (mock_templates / "map").mkdir()
-        # Don't create static-analysis subdirectory
         mock_get_templates.return_value = mock_templates
 
         count = create_map_tools(tmp_path)
 
-        # Should return 0 when static-analysis doesn't exist
+        # Should return 0 when map template is empty
         assert count == 0
-        # .map directory should still be created
         assert (tmp_path / ".map").exists()
 
     def test_create_map_tools_preserves_other_map_contents(self, tmp_path):

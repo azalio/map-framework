@@ -15,7 +15,7 @@ metadata:
 
 # MAP Workflows Guide
 
-This skill helps you choose the optimal MAP workflow for your development tasks. MAP Framework provides **10 workflow commands**: 4 primary workflows (`/map-fast`, `/map-efficient`, `/map-debug`, `/map-debate`) and 6 supporting commands (`/map-review`, `/map-check`, `/map-plan`, `/map-release`, `/map-resume`, `/map-learn`). Each is optimized for different scenarios with varying token costs, learning capabilities, and quality gates. Two additional workflows (`/map-feature`, `/map-refactor`) are planned but not yet implemented.
+This skill helps you choose the optimal MAP workflow for your development tasks. MAP Framework provides **12 workflow commands**: 4 primary workflows (`/map-fast`, `/map-efficient`, `/map-debug`, `/map-debate`) and 8 supporting commands (`/map-review`, `/map-check`, `/map-plan`, `/map-task`, `/map-tdd`, `/map-release`, `/map-resume`, `/map-learn`). Each is optimized for different scenarios with varying token costs, learning capabilities, and quality gates. Two additional workflows (`/map-feature`, `/map-refactor`) are planned but not yet implemented.
 
 ## Quick Decision Tree
 
@@ -216,7 +216,7 @@ Intended for refactoring with dependency-focused impact analysis and breaking ch
 
 ## Understanding MAP Agents
 
-MAP workflows orchestrate **12 specialized agents**, each with specific responsibilities:
+MAP workflows orchestrate **11 specialized agents**, each with specific responsibilities:
 
 ### Execution & Validation Agents
 

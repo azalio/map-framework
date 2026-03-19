@@ -148,9 +148,10 @@ This will:
 
 - ✅ Create project directory
 - ✅ Install MAP agents (including Synthesizer, DebateArbiter, ResearchAgent, FinalVerifier)
-- ✅ Add 10 slash commands (/map-efficient, /map-debug, /map-fast, /map-debate, /map-learn, /map-review, /map-release, /map-check, /map-plan, /map-resume)
+- ✅ Add 12 slash commands (/map-efficient, /map-debug, /map-fast, /map-debate, /map-learn, /map-review, /map-check, /map-plan, /map-task, /map-tdd, /map-release, /map-resume)
 - ✅ Configure essential MCP servers
 - ✅ Initialize git repository
+- ✅ Install branch-scoped `.map/<branch>/` workflow runtime used by `/map-plan` and `/map-efficient`
 
 **Note:** MAP Framework is designed for Claude Code. All generated agents and commands are optimized for the Claude Code CLI.
 
@@ -214,7 +215,7 @@ If you prefer manual setup:
    ```
    your-project/
    ├── .claude/
-   │   ├── agents/                    # 12 specialized agents
+   │   ├── agents/                    # 11 specialized agents
    │   │   ├── task-decomposer.md     # Decomposes tasks into subtasks
    │   │   ├── actor.md               # Implements code
    │   │   ├── monitor.md             # Validates implementations
@@ -226,7 +227,7 @@ If you prefer manual setup:
    │   │   ├── research-agent.md      # Isolated codebase research
    │   │   ├── final-verifier.md      # Adversarial verification (Ralph Loop)
    │   │   └── documentation-reviewer.md  # Reviews technical docs
-   │   ├── commands/                  # 10 slash commands
+   │   ├── commands/                  # 12 slash commands
    │   │   ├── map-efficient.md       # Optimized workflow (recommended)
    │   │   ├── map-debate.md          # Multi-variant with Opus reasoning
    │   │   ├── map-debug.md           # Debug workflow

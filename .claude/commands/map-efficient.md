@@ -36,6 +36,18 @@ This is NOT a violation of MAP agent rules. Learning is decoupled into `/map-lea
 
 Both files must stay in sync. The orchestrator updates `step_state.json` on every step; `workflow_state.json` is updated at phase boundaries (INIT_STATE, UPDATE_STATE).
 
+## Human-Readable Workflow Artifacts
+
+In addition to machine-readable state/evidence, maintain these branch-scoped markdown artifacts in `.map/<branch>/`:
+
+- `devlog-001.md` — implementation trail and notable changes across subtasks
+- `session-log.md` — chronological workflow journal for the current branch/session
+- `code-review-001.md`, `code-review-002.md`, ... — Monitor verdicts and required fixes per execution review iteration
+- `qa-001.md` — final verification and command results in human-readable form
+- `pr-draft.md` — evolving PR summary, updated as execution finishes
+
+These files are the cook-inspired handoff layer. Keep them concise and update them during the workflow instead of deferring to a separate command.
+
 ## Architecture Overview
 
 ```text
@@ -100,6 +112,26 @@ fi
 ```
 
 If `resume_from_plan` succeeds, the orchestrator skips DECOMPOSE, INIT_PLAN, REVIEW_PLAN, and CHOOSE_MODE (plan already approved, batch mode auto-set) and starts from INIT_STATE.
+
+Before continuing execution, ensure the branch workspace contains `session-log.md`, `devlog-001.md`, `qa-001.md`, and `pr-draft.md` by running:
+
+```bash
+python3 .map/scripts/map_step_runner.py ensure_human_artifacts
+```
+
+Create numbered execution review artifacts deterministically with:
+
+```bash
+python3 .map/scripts/map_step_runner.py next_numbered_artifact_path code-review
+```
+
+Use `session-log.md` as the high-level journal:
+- append one entry when a subtask starts
+- append one entry after Actor completes
+- append one entry after Monitor verdict
+- append one entry before final verification
+
+Each entry should include timestamp, subtask ID, phase, outcome, and pointers to related artifacts (`code-review-XXX.md`, `devlog-001.md`, `qa-001.md`, evidence files).
 
 ## Step 1: Get Next Step Instruction
 
@@ -447,6 +479,18 @@ Protocol (execute in order):
 **CRITICAL: After Actor returns, do NOT debug or fix issues yourself.**
 - If Actor reports diagnostics/errors — proceed directly to MONITOR.
 - LSP diagnostics shown after Actor may be stale (IDE lag). Do NOT read files or attempt manual fixes.
+
+After Actor finishes, update `.map/<branch>/devlog-001.md` with:
+- subtask ID
+- files changed
+- implementation approach
+- unresolved concerns handed to Monitor
+
+Also append a short entry to `.map/<branch>/session-log.md` via:
+
+```bash
+python3 .map/scripts/map_step_runner.py append_session_log ACTOR implemented <subtask_id> "files changed + approach" "devlog-001.md,.map/<branch>/evidence/actor_<subtask_id>.json"
+```
 - Monitor will verify compilation (`go build`, `pytest`, etc.) and report real issues.
 - If Monitor returns `valid=false`, retry via Actor (not manual edits).
 
@@ -645,6 +689,24 @@ If FAILED: DO NOT PROCEED. Go back and complete missing steps.
 
 Auto-skipped in batch mode (default). The orchestrator proceeds to the next subtask without pausing.
 
+### Monitor Artifact Rule
+
+After EVERY Monitor run, write a new execution review artifact in `.map/<branch>/code-review-XXX.md`.
+
+- First Monitor result for the workflow: `code-review-001.md`
+- Second: `code-review-002.md`
+- Continue incrementing for each validation iteration, including retries
+
+Each review artifact must include:
+- subtask ID
+- verdict (`valid=true/false`)
+- key findings grouped by severity
+- exact fixes required before retry, if any
+
+Do not overwrite the previous review file; keep the loop history visible.
+
+After writing the execution review artifact, append a matching summary line with `append_session_log` so someone resuming the branch can scan the review history without opening every file.
+
 ## Step 2a: Validate Step Completion
 
 After executing step, validate and update state:
@@ -658,6 +720,11 @@ if [ "$PHASE" = "VERIFY_ADHERENCE" ]; then
   python3 .map/scripts/map_step_runner.py update_plan_status "$SUBTASK_ID" "complete"
 fi
 ```
+
+If `PHASE=VERIFY_ADHERENCE` succeeds, also append to `.map/<branch>/devlog-001.md`:
+- subtask completed
+- verification summary
+- tests/lint run for that subtask
 
 ## Step 2b: Continue or Complete (Context Distillation)
 
@@ -678,6 +745,7 @@ else
   # 2. workflow_state.json — current progress + completed subtask IDs
   # 3. task_plan.md       — plan with updated statuses
   # 4. aag_contract       — one-line contract for NEXT subtask only
+  # 5. session-log.md / latest code-review-XXX.md / devlog-001.md — human-readable loop history
   #
   # The fresh invocation reads these files — it never inherits conversation history.
 
@@ -727,6 +795,32 @@ You MUST:
 Write results to .map/{branch}/final_verification.json"""
 )
 ```
+
+After final verifier returns, update `.map/<branch>/qa-001.md` with:
+- commands run
+- pass/fail summary
+- residual risks
+- rollback notes if applicable
+
+Also write `.map/<branch>/verification-summary.md` with a compact final report using:
+
+```bash
+python3 .map/scripts/map_step_runner.py write_verification_summary "READY FOR REVIEW" "<task title>" "- pytest ...,- ruff ..." "- notable findings" "- open PR"
+```
+
+The summary should include:
+- overall verdict
+- key commands executed
+- notable failures or warnings
+- confidence / risk statement
+- recommended next action (review, rework, release)
+
+Also update `.map/<branch>/pr-draft.md` with:
+- concise summary of delivered behavior
+- validation commands/results
+- notable risks or follow-up work
+
+Finally append a closing entry to `.map/<branch>/session-log.md` that points to `qa-001.md`, `verification-summary.md`, and `pr-draft.md`.
 
 ### 3.3 Evaluate Results
 

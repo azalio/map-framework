@@ -193,9 +193,7 @@ class TestGetWaveStep:
         assert result["is_complete"] is True
         assert result["mode"] == "sequential"
 
-    def test_tdd_mode_default_phase_is_test_writer(
-        self, branch_dir, sample_blueprint
-    ):
+    def test_tdd_mode_default_phase_is_test_writer(self, branch_dir, sample_blueprint):
         """In TDD mode, wave subtasks default to TEST_WRITER (2.25) not ACTOR."""
         map_orchestrator.set_waves(branch_dir, sample_blueprint)
         state_file = Path(f".map/{branch_dir}/step_state.json")
@@ -393,8 +391,22 @@ class TestTDDMode:
         """Enabling TDD mode doesn't re-add already completed steps."""
         state = map_orchestrator.StepState()
         state.completed_steps = ["1.0", "1.5"]
-        state.pending_steps = ["1.55", "1.56", "1.6", "2.0", "2.1", "2.2", "2.3",
-                               "2.4", "2.6", "2.7", "2.8", "2.9", "2.10", "2.11"]
+        state.pending_steps = [
+            "1.55",
+            "1.56",
+            "1.6",
+            "2.0",
+            "2.1",
+            "2.2",
+            "2.3",
+            "2.4",
+            "2.6",
+            "2.7",
+            "2.8",
+            "2.9",
+            "2.10",
+            "2.11",
+        ]
         state.save(Path(f".map/{branch_dir}/step_state.json"))
 
         map_orchestrator.set_tdd_mode("true", branch_dir)
@@ -423,8 +435,18 @@ class TestTDDMode:
         state.current_subtask_id = "ST-001"
         state.current_step_id = "2.2"
         state.current_step_phase = "AAG_CONTRACT"
-        state.pending_steps = ["2.25", "2.26", "2.3", "2.4", "2.6", "2.7",
-                               "2.8", "2.9", "2.10", "2.11"]
+        state.pending_steps = [
+            "2.25",
+            "2.26",
+            "2.3",
+            "2.4",
+            "2.6",
+            "2.7",
+            "2.8",
+            "2.9",
+            "2.10",
+            "2.11",
+        ]
         state.save(Path(f".map/{branch_dir}/step_state.json"))
 
         result = map_orchestrator.get_next_step(branch_dir)
@@ -439,8 +461,18 @@ class TestTDDMode:
         state.current_subtask_id = "ST-001"
         state.current_step_id = "2.2"
         state.current_step_phase = "AAG_CONTRACT"
-        state.pending_steps = ["2.25", "2.26", "2.3", "2.4", "2.6", "2.7",
-                               "2.8", "2.9", "2.10", "2.11"]
+        state.pending_steps = [
+            "2.25",
+            "2.26",
+            "2.3",
+            "2.4",
+            "2.6",
+            "2.7",
+            "2.8",
+            "2.9",
+            "2.10",
+            "2.11",
+        ]
         state.save(Path(f".map/{branch_dir}/step_state.json"))
 
         result = map_orchestrator.get_next_step(branch_dir)
@@ -520,7 +552,9 @@ class TestTDDMode:
 
     def test_tdd_step_order_has_more_steps(self):
         """TDD_STEP_ORDER has exactly 2 more steps than STEP_ORDER."""
-        assert len(map_orchestrator.TDD_STEP_ORDER) == len(map_orchestrator.STEP_ORDER) + 2
+        assert (
+            len(map_orchestrator.TDD_STEP_ORDER) == len(map_orchestrator.STEP_ORDER) + 2
+        )
 
     def test_set_tdd_mode_accepts_various_falsy_values(self, branch_dir):
         """set_tdd_mode accepts 'no', 'n', '0', 'false' as falsy."""
@@ -536,10 +570,17 @@ class TestTDDMode:
         state = map_orchestrator.StepState()
         state.subtask_sequence = ["ST-001"]
         state.current_subtask_id = "ST-001"
-        state.completed_steps = ["1.0", "1.5", "1.55", "1.56", "1.6",
-                                 "2.0", "2.1", "2.2"]
-        state.pending_steps = ["2.3", "2.4", "2.6", "2.7", "2.8",
-                               "2.9", "2.10", "2.11"]
+        state.completed_steps = [
+            "1.0",
+            "1.5",
+            "1.55",
+            "1.56",
+            "1.6",
+            "2.0",
+            "2.1",
+            "2.2",
+        ]
+        state.pending_steps = ["2.3", "2.4", "2.6", "2.7", "2.8", "2.9", "2.10", "2.11"]
         state.current_step_id = "2.2"
         state.current_step_phase = "RESEARCH"
         state.save(Path(f".map/{branch_dir}/step_state.json"))
@@ -555,8 +596,18 @@ class TestTDDMode:
         state.tdd_mode = True
         state.current_step_id = "2.25"
         state.current_step_phase = "TEST_WRITER"
-        state.pending_steps = ["2.25", "2.26", "2.3", "2.4", "2.6", "2.7",
-                               "2.8", "2.9", "2.10", "2.11"]
+        state.pending_steps = [
+            "2.25",
+            "2.26",
+            "2.3",
+            "2.4",
+            "2.6",
+            "2.7",
+            "2.8",
+            "2.9",
+            "2.10",
+            "2.11",
+        ]
         state.save(Path(f".map/{branch_dir}/step_state.json"))
 
         result = map_orchestrator.skip_step("2.25", branch_dir)
@@ -574,8 +625,18 @@ class TestTDDMode:
         state.tdd_mode = False
         state.subtask_sequence = ["ST-001"]
         state.current_subtask_id = "ST-001"
-        state.pending_steps = ["2.25", "2.26", "2.3", "2.4", "2.6", "2.7",
-                               "2.8", "2.9", "2.10", "2.11"]
+        state.pending_steps = [
+            "2.25",
+            "2.26",
+            "2.3",
+            "2.4",
+            "2.6",
+            "2.7",
+            "2.8",
+            "2.9",
+            "2.10",
+            "2.11",
+        ]
         state.save(Path(f".map/{branch_dir}/step_state.json"))
 
         map_orchestrator.get_next_step(branch_dir)
@@ -594,10 +655,28 @@ class TestTDDMode:
         state.tdd_mode = True
         state.subtask_sequence = ["ST-001"]
         state.current_subtask_id = "ST-001"
-        state.completed_steps = ["1.0", "1.5", "1.55", "1.56", "1.6",
-                                 "2.0", "2.1", "2.2"]
-        state.pending_steps = ["2.25", "2.26", "2.3", "2.4", "2.6", "2.7",
-                               "2.8", "2.9", "2.10", "2.11"]
+        state.completed_steps = [
+            "1.0",
+            "1.5",
+            "1.55",
+            "1.56",
+            "1.6",
+            "2.0",
+            "2.1",
+            "2.2",
+        ]
+        state.pending_steps = [
+            "2.25",
+            "2.26",
+            "2.3",
+            "2.4",
+            "2.6",
+            "2.7",
+            "2.8",
+            "2.9",
+            "2.10",
+            "2.11",
+        ]
         state.save(Path(f".map/{branch_dir}/step_state.json"))
 
         # Disable TDD
@@ -622,8 +701,19 @@ class TestTDDMode:
         state.subtask_index = 1
         state.current_subtask_id = "ST-002"
         state.completed_steps = []  # Reset after subtask transition
-        state.pending_steps = ["2.0", "2.1", "2.2", "2.3", "2.4", "2.6",
-                               "2.7", "2.8", "2.9", "2.10", "2.11"]
+        state.pending_steps = [
+            "2.0",
+            "2.1",
+            "2.2",
+            "2.3",
+            "2.4",
+            "2.6",
+            "2.7",
+            "2.8",
+            "2.9",
+            "2.10",
+            "2.11",
+        ]
         state.save(Path(f".map/{branch_dir}/step_state.json"))
 
         map_orchestrator.set_tdd_mode("true", branch_dir)
@@ -647,7 +737,9 @@ class TestTDDMode:
         loaded = map_orchestrator.StepState.load(state_file)
         assert loaded.skipped_steps == ["2.25", "2.26"]
 
-    def test_validate_wave_step_missing_evidence_dir(self, branch_dir, sample_blueprint):
+    def test_validate_wave_step_missing_evidence_dir(
+        self, branch_dir, sample_blueprint
+    ):
         """validate_wave_step returns error when evidence directory is missing."""
         result = map_orchestrator.set_waves(branch_dir, sample_blueprint)
         assert result["status"] == "success"
@@ -658,6 +750,7 @@ class TestTDDMode:
         evidence_dir = Path(f".map/{branch_dir}/evidence")
         if evidence_dir.exists():
             import shutil
+
             shutil.rmtree(evidence_dir)
         state.save(state_file)
 
@@ -701,7 +794,9 @@ class TestResumeSingleSubtask:
     def test_resume_single_subtask_with_tdd(self, branch_dir, tmp_path):
         """TDD mode adds TEST_WRITER and TEST_FAIL_GATE to pending steps."""
         self._create_plan(tmp_path, branch_dir, ["ST-001", "ST-002"])
-        result = map_orchestrator.resume_single_subtask("ST-001", branch_dir, tdd_mode=True)
+        result = map_orchestrator.resume_single_subtask(
+            "ST-001", branch_dir, tdd_mode=True
+        )
         assert result["status"] == "success"
         assert result["tdd_mode"] is True
 
@@ -729,6 +824,7 @@ class TestResumeSingleSubtask:
         """Evidence directory is created automatically."""
         # Remove the evidence dir created by fixture
         import shutil
+
         evidence_dir = tmp_path / ".map" / branch_dir / "evidence"
         if evidence_dir.exists():
             shutil.rmtree(evidence_dir)
@@ -751,6 +847,32 @@ class TestResumeSingleSubtask:
         assert result["phase"] == "XML_PACKET"
         assert result["current_subtask"] == "ST-002"
 
+    def test_resume_single_subtask_includes_human_artifact_briefing(
+        self, branch_dir, tmp_path
+    ):
+        """Resume returns session/review/verification context for handoff."""
+        plan_dir = self._create_plan(tmp_path, branch_dir, ["ST-001", "ST-002"])
+        (plan_dir / "session-log.md").write_text(
+            "# Session Log\n\n## 2026-03-19 — MONITOR\n- Outcome: revise\n",
+            encoding="utf-8",
+        )
+        (plan_dir / "code-review-002.md").write_text(
+            "# Code Review 002\n\n- fix auth edge case\n- rerun pytest\n",
+            encoding="utf-8",
+        )
+        (plan_dir / "verification-summary.md").write_text(
+            "# Verification Summary\n\n- Verdict: NEEDS WORK\n",
+            encoding="utf-8",
+        )
+
+        result = map_orchestrator.resume_single_subtask("ST-001", branch_dir)
+
+        briefing = result["resume_briefing"]
+        assert briefing["latest_review_path"].endswith("code-review-002.md")
+        assert briefing["latest_verification_verdict"] == "NEEDS WORK"
+        assert "MONITOR" in briefing["recent_session_log"]
+        assert "fix auth edge case" in "\n".join(briefing["suggested_fixes"])
+
 
 class TestGetPlanProgress:
     """Tests for get_plan_progress — plan status overview."""
@@ -767,7 +889,8 @@ class TestGetPlanProgress:
     def test_all_pending(self, branch_dir, tmp_path):
         """All subtasks pending — suggested_next is first one."""
         self._create_plan_with_statuses(
-            tmp_path, branch_dir,
+            tmp_path,
+            branch_dir,
             [("ST-001", "pending"), ("ST-002", "pending"), ("ST-003", "pending")],
         )
         result = map_orchestrator.get_plan_progress(branch_dir)
@@ -780,7 +903,8 @@ class TestGetPlanProgress:
     def test_some_complete(self, branch_dir, tmp_path):
         """Mix of complete and pending — suggested_next skips completed."""
         self._create_plan_with_statuses(
-            tmp_path, branch_dir,
+            tmp_path,
+            branch_dir,
             [("ST-001", "complete"), ("ST-002", "complete"), ("ST-003", "pending")],
         )
         result = map_orchestrator.get_plan_progress(branch_dir)
@@ -793,7 +917,8 @@ class TestGetPlanProgress:
     def test_all_complete(self, branch_dir, tmp_path):
         """All subtasks complete — suggested_next is None."""
         self._create_plan_with_statuses(
-            tmp_path, branch_dir,
+            tmp_path,
+            branch_dir,
             [("ST-001", "complete"), ("ST-002", "complete")],
         )
         result = map_orchestrator.get_plan_progress(branch_dir)
@@ -810,13 +935,111 @@ class TestGetPlanProgress:
     def test_in_progress_counts_as_pending(self, branch_dir, tmp_path):
         """in_progress subtask counts as pending (not complete)."""
         self._create_plan_with_statuses(
-            tmp_path, branch_dir,
+            tmp_path,
+            branch_dir,
             [("ST-001", "complete"), ("ST-002", "in_progress"), ("ST-003", "pending")],
         )
         result = map_orchestrator.get_plan_progress(branch_dir)
         assert result["completed_count"] == 1
         assert result["pending_count"] == 2
         assert result["suggested_next"] == "ST-002"
+
+    def test_plan_progress_includes_resume_briefing(self, branch_dir, tmp_path):
+        """Plan progress surfaces latest human-readable branch artifacts."""
+        self._create_plan_with_statuses(
+            tmp_path, branch_dir, [("ST-001", "complete"), ("ST-002", "pending")]
+        )
+        plan_dir = tmp_path / ".map" / branch_dir
+        (plan_dir / "session-log.md").write_text(
+            "# Session Log\n\n## 2026-03-19 — ACTOR\n- Outcome: implemented\n",
+            encoding="utf-8",
+        )
+        (plan_dir / "code-review-001.md").write_text(
+            "# Code Review 001\n\n- update tests\n",
+            encoding="utf-8",
+        )
+
+        result = map_orchestrator.get_plan_progress(branch_dir)
+
+        briefing = result["resume_briefing"]
+        assert briefing["latest_review_path"].endswith("code-review-001.md")
+        assert "ACTOR" in briefing["recent_session_log"]
+        assert "update tests" in "\n".join(briefing["suggested_fixes"])
+
+
+class TestResumeFromPlan:
+    """Tests for resume_from_plan artifact-aware context."""
+
+    def test_resume_from_plan_includes_resume_briefing(self, branch_dir, tmp_path):
+        plan_dir = tmp_path / ".map" / branch_dir
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / f"task_plan_{branch_dir}.md").write_text(
+            "# Task Plan\n\n### ST-001\n- **Status:** pending\n\n### ST-002\n- **Status:** pending\n",
+            encoding="utf-8",
+        )
+        (plan_dir / "workflow_state.json").write_text(
+            json.dumps({"aag_contracts": {"ST-001": "Keep auth isolated"}}),
+            encoding="utf-8",
+        )
+        (plan_dir / "session-log.md").write_text(
+            "# Session Log\n\n## 2026-03-19 — INIT\n- Outcome: ready\n",
+            encoding="utf-8",
+        )
+        (plan_dir / "verification-summary.md").write_text(
+            "# Verification Summary\n\n- Verdict: READY FOR REVIEW\n",
+            encoding="utf-8",
+        )
+
+        result = map_orchestrator.resume_from_plan(branch_dir)
+
+        assert result["status"] == "success"
+        briefing = result["resume_briefing"]
+        assert briefing["latest_verification_verdict"] == "READY FOR REVIEW"
+        assert "INIT" in briefing["recent_session_log"]
+
+
+class TestBuildResumeBriefing:
+    """Tests for next-action resume briefing synthesis."""
+
+    def test_build_resume_briefing_prefers_fixing_failed_verification(
+        self, branch_dir, tmp_path
+    ):
+        plan_dir = tmp_path / ".map" / branch_dir
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / f"task_plan_{branch_dir}.md").write_text(
+            "# Task Plan\n\n### ST-001: Auth\n- **Status:** in_progress\n\n### ST-002: UI\n- **Status:** pending\n",
+            encoding="utf-8",
+        )
+        (plan_dir / "step_state.json").write_text(
+            json.dumps(
+                {
+                    "current_subtask_id": "ST-001",
+                    "current_step_phase": "MONITOR",
+                    "subtask_sequence": ["ST-001", "ST-002"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "verification-summary.md").write_text(
+            "# Verification Summary\n\n- Verdict: NEEDS WORK\n",
+            encoding="utf-8",
+        )
+        (plan_dir / "code-review-001.md").write_text(
+            "# Code Review 001\n\n- fix auth edge case\n",
+            encoding="utf-8",
+        )
+
+        result = map_orchestrator.build_resume_briefing(branch_dir)
+
+        assert result["current_subtask"] == "ST-001"
+        assert result["current_phase"] == "MONITOR"
+        assert result["suggested_next"] == "ST-001"
+        assert result["next_action"][0].startswith(
+            "Address issues from the latest verification"
+        )
+        assert any(
+            "Review requested fixes" in action for action in result["next_action"]
+        )
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ Note: .claude/commands/ is gitignored (generated via mapify init), so tests
 only validate src/mapify_cli/templates/commands/ which is the source of truth.
 """
 
+import json
 import pytest
 from pathlib import Path
 
@@ -34,9 +35,9 @@ class TestCommandTemplates:
     def test_map_efficient_exists_in_templates(self, templates_commands_dir):
         """Test that map-efficient.md exists in templates/commands/."""
         map_efficient = templates_commands_dir / "map-efficient.md"
-        assert (
-            map_efficient.exists()
-        ), f"map-efficient.md not found in {templates_commands_dir}"
+        assert map_efficient.exists(), (
+            f"map-efficient.md not found in {templates_commands_dir}"
+        )
         assert map_efficient.is_file(), "map-efficient.md should be a file"
 
     def test_map_fast_has_frontmatter(self, templates_commands_dir):
@@ -45,9 +46,9 @@ class TestCommandTemplates:
         content = map_fast.read_text()
 
         assert content.startswith("---"), "map-fast.md should start with frontmatter"
-        assert (
-            "description:" in content[:200]
-        ), "Frontmatter should contain description field"
+        assert "description:" in content[:200], (
+            "Frontmatter should contain description field"
+        )
         assert content.split("---")[1].strip(), "Frontmatter should not be empty"
 
     def test_map_efficient_has_frontmatter(self, templates_commands_dir):
@@ -55,12 +56,12 @@ class TestCommandTemplates:
         map_efficient = templates_commands_dir / "map-efficient.md"
         content = map_efficient.read_text()
 
-        assert content.startswith(
-            "---"
-        ), "map-efficient.md should start with frontmatter"
-        assert (
-            "description:" in content[:200]
-        ), "Frontmatter should contain description field"
+        assert content.startswith("---"), (
+            "map-efficient.md should start with frontmatter"
+        )
+        assert "description:" in content[:200], (
+            "Frontmatter should contain description field"
+        )
         assert content.split("---")[1].strip(), "Frontmatter should not be empty"
 
     def test_map_fast_contains_warning(self, templates_commands_dir):
@@ -69,15 +70,15 @@ class TestCommandTemplates:
         content = map_fast.read_text()
 
         # Check for warning markers
-        assert (
-            "⚠️" in content or "WARNING" in content
-        ), "map-fast.md should contain warning indicators"
-        assert (
-            "low-risk" in content.lower() or "low risk" in content.lower()
-        ), "map-fast.md should indicate low-risk use only"
-        assert (
-            "NO learning" in content or "no learning" in content
-        ), "Should mention no learning"
+        assert "⚠️" in content or "WARNING" in content, (
+            "map-fast.md should contain warning indicators"
+        )
+        assert "low-risk" in content.lower() or "low risk" in content.lower(), (
+            "map-fast.md should indicate low-risk use only"
+        )
+        assert "NO learning" in content or "no learning" in content, (
+            "Should mention no learning"
+        )
 
     def test_map_efficient_suggests_map_learn(self, templates_commands_dir):
         """Test that map-efficient.md suggests optional /map-learn for learning."""
@@ -90,7 +91,7 @@ class TestCommandTemplates:
         assert "optional" in content.lower(), "Should mention /map-learn is optional"
 
     def test_all_command_templates_exist(self, templates_commands_dir):
-        """Test that all 10 expected command template files exist."""
+        """Test that all 12 expected command template files exist."""
         expected_commands = [
             "map-check.md",  # Quality gates
             "map-debate.md",  # Multi-variant with Opus arbiter
@@ -102,13 +103,67 @@ class TestCommandTemplates:
             "map-release.md",  # Release workflow
             "map-resume.md",  # Resume interrupted workflow
             "map-review.md",  # Code review
+            "map-task.md",  # Single subtask execution
+            "map-tdd.md",  # Test-first implementation
         ]
 
         for command in expected_commands:
             command_path = templates_commands_dir / command
-            assert (
-                command_path.exists()
-            ), f"Expected command template {command} not found in {templates_commands_dir}"
+            assert command_path.exists(), (
+                f"Expected command template {command} not found in {templates_commands_dir}"
+            )
+
+        actual_commands = sorted(
+            path.name for path in templates_commands_dir.glob("map-*.md")
+        )
+        assert sorted(expected_commands) == actual_commands
+
+    def test_readme_lists_all_shipped_slash_commands(
+        self, project_root, templates_commands_dir
+    ):
+        """README command table should mention every shipped slash command."""
+        readme = (project_root / "README.md").read_text(encoding="utf-8")
+        commands = [path.stem for path in templates_commands_dir.glob("map-*.md")]
+
+        for command in commands:
+            assert f"`/{command}`" in readme, f"README missing /{command}"
+
+    def test_readme_mentions_canonical_flows(self, project_root):
+        """README should document the standard and TDD canonical flows."""
+        readme = (project_root / "README.md").read_text(encoding="utf-8")
+
+        assert (
+            "/map-plan` -> `/map-efficient` -> `/map-check` -> `/map-review" in readme
+        )
+        assert "/map-plan` -> `/map-tdd` -> `/map-check` -> `/map-review" in readme
+
+    def test_usage_mentions_targeted_subtask_tdd_flow(self, project_root):
+        """Usage guide should document the targeted subtask TDD flow."""
+        content = (project_root / "docs" / "USAGE.md").read_text(encoding="utf-8")
+
+        assert "/map-tdd ST-001" in content
+        assert "/map-task ST-001" in content
+
+    def test_cli_reference_json_matches_root_commands(self, project_root):
+        """Machine-readable CLI reference should match root CLI commands."""
+        reference = json.loads(
+            (project_root / "docs" / "CLI_REFERENCE.json").read_text(encoding="utf-8")
+        )
+        root_commands = set(reference["commands"]["root"]["commands"].keys())
+        assert root_commands == {"init", "check", "doctor", "upgrade"}
+
+    def test_cli_reference_markdown_mentions_all_root_commands(self, project_root):
+        """Human-readable CLI reference should stay aligned with root commands."""
+        content = (project_root / "docs" / "CLI_COMMAND_REFERENCE.md").read_text(
+            encoding="utf-8"
+        )
+        for command in [
+            "mapify init",
+            "mapify check",
+            "mapify doctor",
+            "mapify upgrade",
+        ]:
+            assert command in content
 
     def test_map_fast_workflow_structure(self, templates_commands_dir):
         """Test that map-fast.md has correct workflow structure (minimal agents)."""
@@ -122,9 +177,9 @@ class TestCommandTemplates:
 
         # Check that Reflector is mentioned as SKIPPED
         assert "reflector" in content.lower(), "Should mention Reflector (as skipped)"
-        assert (
-            "skipped" in content.lower() or "no learning" in content.lower()
-        ), "Should indicate learning is skipped"
+        assert "skipped" in content.lower() or "no learning" in content.lower(), (
+            "Should indicate learning is skipped"
+        )
 
     def test_map_efficient_workflow_structure(self, templates_commands_dir):
         """Test that map-efficient.md has correct workflow structure (optional learning)."""
@@ -161,9 +216,102 @@ class TestCommandTemplates:
         content = map_efficient.read_text()
 
         # Should describe itself as token-efficient in description
-        assert (
-            "token-efficient" in content.lower() or "efficient" in content.lower()
-        ), "Should describe itself as efficient"
+        assert "token-efficient" in content.lower() or "efficient" in content.lower(), (
+            "Should describe itself as efficient"
+        )
+
+    def test_map_plan_writes_human_artifacts(self, templates_commands_dir):
+        """/map-plan should maintain branch-scoped human-readable artifacts."""
+        content = (templates_commands_dir / "map-plan.md").read_text()
+
+        assert "research.md" in content
+        assert "implementation-plan.md" in content
+        assert "decision-log.md" in content
+        assert "pr-draft.md" in content
+        assert "plan-review-00N.md" in content
+        assert "plan-gate.json" in content
+
+    def test_map_efficient_tracks_review_loop_artifacts(self, templates_commands_dir):
+        """/map-efficient should preserve review/devlog/qa artifacts in branch workspace."""
+        content = (templates_commands_dir / "map-efficient.md").read_text()
+
+        assert "devlog-001.md" in content
+        assert "session-log.md" in content
+        assert "code-review-001.md" in content
+        assert "qa-001.md" in content
+        assert "code-review-XXX.md" in content
+
+    def test_map_tdd_uses_shared_execution_artifacts(self, templates_commands_dir):
+        """/map-tdd should reuse the same branch-scoped artifact model as map-efficient."""
+        content = (templates_commands_dir / "map-tdd.md").read_text()
+
+        assert "code-review-00N.md" in content
+        assert "session-log.md" in content
+        assert "pr-draft.md" in content
+
+    def test_map_task_uses_shared_execution_artifacts(self, templates_commands_dir):
+        """/map-task should keep using shared branch execution artifacts."""
+        content = (templates_commands_dir / "map-task.md").read_text()
+
+        assert "code-review-00N.md" in content
+        assert "session-log.md" in content
+        assert "qa-001.md" in content
+
+    def test_map_check_writes_verification_summary(self, templates_commands_dir):
+        """/map-check should produce a human-readable verification summary artifact."""
+        content = (templates_commands_dir / "map-check.md").read_text()
+
+        assert "verification-summary.md" in content
+        assert "READY FOR REVIEW" in content
+        assert "NEEDS WORK" in content
+
+    def test_map_resume_reads_human_artifact_history(self, templates_commands_dir):
+        """/map-resume should use session and verification artifacts for handoff."""
+        content = (templates_commands_dir / "map-resume.md").read_text()
+
+        assert "session-log.md" in content
+        assert "verification-summary.md" in content
+
+    def test_map_check_rebuilds_pr_draft_from_handoff_bundle(
+        self, templates_commands_dir
+    ):
+        """/map-check should rebuild PR draft from deterministic artifact bundle."""
+        content = (templates_commands_dir / "map-check.md").read_text()
+
+        assert "build_handoff_bundle" in content
+        assert "write_pr_draft" in content
+
+    def test_map_review_refreshes_pr_draft(self, templates_commands_dir):
+        """/map-review should refresh PR handoff after review verdict."""
+        content = (templates_commands_dir / "map-review.md").read_text()
+
+        assert "build_handoff_bundle" in content
+        assert "pr-draft.md" in content
+        assert "code-review-00N.md" in content
+        assert "write_stage_gate" in content
+        assert "build_review_handoff" in content
+        assert "active-issues.json" in content
+
+    def test_map_resume_is_briefing_oriented(self, templates_commands_dir):
+        """/map-resume should surface resume briefing and next action guidance."""
+        content = (templates_commands_dir / "map-resume.md").read_text()
+
+        assert "Resume Briefing" in content
+        assert "Immediate next action" in content
+        assert "Do not improvise a new plan" in content
+
+    def test_map_check_records_run_summaries_and_known_issues(
+        self, templates_commands_dir
+    ):
+        """/map-check should mention run summaries and known issues accounting."""
+        content = (templates_commands_dir / "map-check.md").read_text()
+
+        assert "diagnostics.py summarize" in content
+        assert "known-issues.json" in content
+        assert "add_known_issue" in content
+        assert "runs/<timestamp>/RESULTS.md" in content
+        assert "write_stage_gate" in content
+        assert "replace_active_issues" in content
 
 
 class TestMapReviewStructure:
@@ -220,9 +368,9 @@ class TestMapReviewStructure:
         # Find the section and check the source is mentioned nearby
         idx = review_content.index(section)
         section_block = review_content[idx : idx + 500]
-        assert (
-            source in section_block
-        ), f"{section} should reference {source} as primary source"
+        assert source in section_block, (
+            f"{section} should reference {source} as primary source"
+        )
 
     def test_three_agent_task_calls(self, review_content):
         """Command includes Task calls for all 3 agents."""

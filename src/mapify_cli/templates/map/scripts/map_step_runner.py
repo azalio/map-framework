@@ -26,10 +26,448 @@ TESTING:
   python3 -c "from map_step_runner import update_workflow_state; \\
     update_workflow_state('ST-001', 'actor', 'ACTOR_CALLED')"
 """
+
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
+
+
+HUMAN_ARTIFACT_DEFAULTS = {
+    "session-log.md": "# Session Log\n\n",
+    "devlog-001.md": "# Devlog 001\n\n",
+    "qa-001.md": "# QA 001\n\n",
+    "pr-draft.md": "# PR Draft\n\n## Summary\n\n## Validation\n\n## Risks / Follow-up\n",
+}
+
+
+KNOWN_ISSUES_DEFAULT = {"issues": []}
+ACTIVE_ISSUES_DEFAULT = {"updated_at": "", "issues": []}
+
+GATE_VERDICTS = {"ready", "needs-revision", "blocked"}
+
+
+def get_branch_dir(branch: Optional[str] = None) -> Path:
+    """Return .map/<branch> directory, auto-detecting branch when omitted."""
+    if branch is None:
+        branch = get_branch_name()
+    return Path(f".map/{branch}")
+
+
+def ensure_human_artifacts(branch: Optional[str] = None) -> Dict:
+    """Ensure core human-readable workflow artifacts exist for the branch."""
+    branch_dir = get_branch_dir(branch)
+    branch_dir.mkdir(parents=True, exist_ok=True)
+
+    created = []
+    existing = []
+    for file_name, content in HUMAN_ARTIFACT_DEFAULTS.items():
+        path = branch_dir / file_name
+        if path.exists():
+            existing.append(file_name)
+            continue
+        path.write_text(content, encoding="utf-8")
+        created.append(file_name)
+
+    return {
+        "status": "success",
+        "branch_dir": str(branch_dir),
+        "created": created,
+        "existing": existing,
+    }
+
+
+def next_numbered_artifact_path(
+    prefix: str, branch: Optional[str] = None, extension: str = ".md"
+) -> Dict:
+    """Return the next numbered artifact path like review-002.md."""
+    branch_dir = get_branch_dir(branch)
+    branch_dir.mkdir(parents=True, exist_ok=True)
+
+    pattern = re.compile(rf"^{re.escape(prefix)}-(\d{{3}}){re.escape(extension)}$")
+    next_index = 1
+    for path in branch_dir.iterdir():
+        match = pattern.match(path.name)
+        if match:
+            next_index = max(next_index, int(match.group(1)) + 1)
+
+    file_name = f"{prefix}-{next_index:03d}{extension}"
+    return {
+        "status": "success",
+        "path": str(branch_dir / file_name),
+        "file_name": file_name,
+        "index": next_index,
+    }
+
+
+def append_session_log(
+    phase: str,
+    outcome: str,
+    subtask_id: str = "",
+    details: str = "",
+    artifact_refs: Optional[List[str]] = None,
+    branch: Optional[str] = None,
+) -> Dict:
+    """Append a concise entry to session-log.md."""
+    ensure_human_artifacts(branch)
+    branch_dir = get_branch_dir(branch)
+    log_file = branch_dir / "session-log.md"
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    refs = ", ".join(artifact_refs or [])
+
+    lines = [
+        f"## {timestamp} — {phase}",
+        f"- Outcome: {outcome}",
+    ]
+    if subtask_id:
+        lines.append(f"- Subtask: {subtask_id}")
+    if details:
+        lines.append(f"- Details: {details}")
+    if refs:
+        lines.append(f"- Artifacts: {refs}")
+    lines.append("")
+
+    with log_file.open("a", encoding="utf-8") as handle:
+        handle.write("\n".join(lines))
+
+    return {"status": "success", "path": str(log_file)}
+
+
+def write_verification_summary(
+    verdict: str,
+    task_title: str = "",
+    checks_run: str = "",
+    findings: str = "",
+    next_action: str = "",
+    branch: Optional[str] = None,
+) -> Dict:
+    """Write a compact human-readable verification summary."""
+    branch_name = branch or get_branch_name()
+    branch_dir = get_branch_dir(branch_name)
+    branch_dir.mkdir(parents=True, exist_ok=True)
+    summary_file = branch_dir / "verification-summary.md"
+
+    content = (
+        "# Verification Summary\n\n"
+        f"- Branch: {branch_name}\n"
+        f"- Task: {task_title or '[not provided]'}\n"
+        f"- Verdict: {verdict}\n\n"
+        "## Checks Run\n"
+        f"{checks_run or '- [not recorded]'}\n\n"
+        "## Findings\n"
+        f"{findings or '- [not recorded]'}\n\n"
+        "## Next Action\n"
+        f"{next_action or '- [not recorded]'}\n"
+    )
+    summary_file.write_text(content, encoding="utf-8")
+    return {"status": "success", "path": str(summary_file)}
+
+
+def write_pr_draft(
+    summary: str = "",
+    validation: str = "",
+    risks_follow_up: str = "",
+    branch: Optional[str] = None,
+) -> Dict:
+    """Write a compact PR draft artifact for the current branch."""
+    branch_dir = get_branch_dir(branch)
+    branch_dir.mkdir(parents=True, exist_ok=True)
+    pr_file = branch_dir / "pr-draft.md"
+
+    content = (
+        "# PR Draft\n\n"
+        "## Summary\n"
+        f"{summary or '- [not recorded]'}\n\n"
+        "## Validation\n"
+        f"{validation or '- [not recorded]'}\n\n"
+        "## Risks / Follow-up\n"
+        f"{risks_follow_up or '- [not recorded]'}\n"
+    )
+    pr_file.write_text(content, encoding="utf-8")
+    return {"status": "success", "path": str(pr_file)}
+
+
+def write_plan_review(
+    summary: str = "",
+    high: str = "",
+    medium: str = "",
+    low: str = "",
+    resolved_since_previous: str = "",
+    open_concerns: str = "",
+    recommendation: str = "needs-revision",
+    branch: Optional[str] = None,
+) -> Dict:
+    """Write the next staged planning review artifact."""
+    recommendation = recommendation.strip().lower()
+    if recommendation not in GATE_VERDICTS:
+        return {
+            "status": "error",
+            "message": f"Invalid recommendation: {recommendation}",
+        }
+
+    artifact = next_numbered_artifact_path("plan-review", branch)
+    review_file = Path(artifact["path"])
+    review_file.parent.mkdir(parents=True, exist_ok=True)
+    review_number = artifact["index"]
+
+    content = (
+        f"# Plan Review {review_number:03d}\n\n"
+        "## Summary\n"
+        f"{summary or '- [not recorded]'}\n\n"
+        "## High\n"
+        f"{high or '(None)'}\n\n"
+        "## Medium\n"
+        f"{medium or '(None)'}\n\n"
+        "## Low\n"
+        f"{low or '(None)'}\n\n"
+        "## Resolved Since Previous Review\n"
+        f"{resolved_since_previous or '(None)'}\n\n"
+        "## Open Concerns\n"
+        f"{open_concerns or '(None)'}\n\n"
+        "## Recommendation\n"
+        f"- {recommendation}\n"
+    )
+    review_file.write_text(content, encoding="utf-8")
+    return {
+        "status": "success",
+        "path": str(review_file),
+        "file_name": review_file.name,
+        "index": review_number,
+    }
+
+
+def write_stage_gate(
+    stage: str,
+    verdict: str,
+    source_artifact: str = "",
+    notes: str = "",
+    branch: Optional[str] = None,
+) -> Dict:
+    """Write a machine-readable gate artifact for a workflow stage."""
+    verdict = verdict.strip().lower()
+    if verdict not in GATE_VERDICTS:
+        return {"status": "error", "message": f"Invalid verdict: {verdict}"}
+
+    normalized_stage = stage.strip().lower().replace("_", "-")
+    gate_file = get_branch_dir(branch) / f"{normalized_stage}-gate.json"
+    gate_file.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "stage": normalized_stage,
+        "verdict": verdict,
+        "source_artifact": source_artifact or None,
+        "updated_at": datetime.now().isoformat(),
+        "notes": notes or "",
+    }
+    gate_file.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8"
+    )
+    return {"status": "success", "path": str(gate_file), "verdict": verdict}
+
+
+def ensure_active_issues_file(branch: Optional[str] = None) -> Dict:
+    """Ensure active-issues.json exists for current unresolved issue set."""
+    branch_dir = get_branch_dir(branch)
+    branch_dir.mkdir(parents=True, exist_ok=True)
+    issues_file = branch_dir / "active-issues.json"
+    if not issues_file.exists():
+        payload = {**ACTIVE_ISSUES_DEFAULT, "updated_at": datetime.now().isoformat()}
+        issues_file.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8"
+        )
+        return {"status": "success", "path": str(issues_file), "created": True}
+    return {"status": "success", "path": str(issues_file), "created": False}
+
+
+def replace_active_issues(
+    stage: str,
+    source_artifact: str,
+    issues_text: str = "",
+    branch: Optional[str] = None,
+) -> Dict:
+    """Replace active unresolved issue set from newline-delimited bullets/text."""
+    ensure_active_issues_file(branch)
+    issues_file = get_branch_dir(branch) / "active-issues.json"
+
+    issue_lines = []
+    for raw in issues_text.splitlines():
+        line = raw.strip()
+        if not line or line in {"(None)", "- (None)"}:
+            continue
+        if line.startswith("- "):
+            line = line[2:].strip()
+        issue_lines.append(line)
+
+    issues = [
+        {
+            "id": f"{stage[:3].upper()}-{index:03d}",
+            "stage": stage,
+            "source_artifact": source_artifact,
+            "status": "open",
+            "summary": line,
+        }
+        for index, line in enumerate(issue_lines, start=1)
+    ]
+    payload = {
+        "updated_at": datetime.now().isoformat(),
+        "issues": issues,
+    }
+    issues_file.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8"
+    )
+    return {"status": "success", "path": str(issues_file), "count": len(issues)}
+
+
+def build_handoff_bundle(branch: Optional[str] = None) -> Dict:
+    """Build a compact handoff bundle from branch-scoped human artifacts."""
+    branch_name = branch or get_branch_name()
+    branch_dir = get_branch_dir(branch_name)
+    ensure_human_artifacts(branch_name)
+
+    def read(name: str) -> str:
+        path = branch_dir / name
+        return path.read_text(encoding="utf-8") if path.exists() else ""
+
+    session_log = read("session-log.md")
+    verification = read("verification-summary.md")
+    qa = read("qa-001.md")
+    active_issues = read("active-issues.json")
+    verification_gate = read("verification-gate.json")
+    review_path = next_numbered_artifact_path("code-review", branch_name)
+    latest_review_index = max(0, review_path["index"] - 1)
+    latest_review_name = (
+        f"code-review-{latest_review_index:03d}.md" if latest_review_index > 0 else ""
+    )
+    latest_review = read(latest_review_name) if latest_review_name else ""
+
+    summary = []
+    if verification:
+        summary.append("- Verification summary available")
+    if verification_gate:
+        summary.append("- Verification gate recorded")
+    if latest_review:
+        summary.append(f"- Latest review: {latest_review_name}")
+    if session_log:
+        summary.append("- Session log captured")
+    if active_issues:
+        summary.append("- Active unresolved issues tracked")
+
+    validation = []
+    if verification:
+        validation.append(verification.strip())
+    if qa:
+        validation.append(qa.strip())
+    if verification_gate:
+        validation.append(verification_gate.strip())
+
+    risks = []
+    if latest_review:
+        risks.append(latest_review.strip())
+    if active_issues:
+        risks.append(active_issues.strip())
+
+    return {
+        "status": "success",
+        "branch": branch_name,
+        "summary": "\n".join(summary) or "- [not recorded]",
+        "validation": "\n\n".join(validation) or "- [not recorded]",
+        "risks_follow_up": "\n\n".join(risks) or "- [not recorded]",
+    }
+
+
+def build_review_handoff(branch: Optional[str] = None) -> Dict:
+    """Build final review context from planning, execution, and verification artifacts."""
+    branch_name = branch or get_branch_name()
+    branch_dir = get_branch_dir(branch_name)
+
+    def read(name: str) -> str:
+        path = branch_dir / name
+        return path.read_text(encoding="utf-8") if path.exists() else ""
+
+    plan_review_next = next_numbered_artifact_path("plan-review", branch_name)
+    latest_plan_review_index = max(0, plan_review_next["index"] - 1)
+    latest_plan_review_name = (
+        f"plan-review-{latest_plan_review_index:03d}.md"
+        if latest_plan_review_index > 0
+        else ""
+    )
+    code_review_next = next_numbered_artifact_path("code-review", branch_name)
+    latest_code_review_index = max(0, code_review_next["index"] - 1)
+    latest_code_review_name = (
+        f"code-review-{latest_code_review_index:03d}.md"
+        if latest_code_review_index > 0
+        else ""
+    )
+
+    payload = {
+        "status": "success",
+        "branch": branch_name,
+        "plan_review_path": latest_plan_review_name or None,
+        "code_review_path": latest_code_review_name or None,
+        "verification_summary_path": "verification-summary.md"
+        if (branch_dir / "verification-summary.md").exists()
+        else None,
+        "qa_path": "qa-001.md" if (branch_dir / "qa-001.md").exists() else None,
+        "pr_draft_path": "pr-draft.md"
+        if (branch_dir / "pr-draft.md").exists()
+        else None,
+        "active_issues_path": "active-issues.json"
+        if (branch_dir / "active-issues.json").exists()
+        else None,
+        "plan_review": read(latest_plan_review_name)
+        if latest_plan_review_name
+        else None,
+        "code_review": read(latest_code_review_name)
+        if latest_code_review_name
+        else None,
+        "verification_summary": read("verification-summary.md"),
+        "qa": read("qa-001.md"),
+        "pr_draft": read("pr-draft.md"),
+        "active_issues": read("active-issues.json") or None,
+    }
+    return payload
+
+
+def ensure_known_issues_file(branch: Optional[str] = None) -> Dict:
+    """Ensure known-issues.json exists for accepted blockers / known limitations."""
+    branch_dir = get_branch_dir(branch)
+    branch_dir.mkdir(parents=True, exist_ok=True)
+    issues_file = branch_dir / "known-issues.json"
+    if not issues_file.exists():
+        issues_file.write_text(
+            json.dumps(KNOWN_ISSUES_DEFAULT, indent=2, ensure_ascii=True) + "\n",
+            encoding="utf-8",
+        )
+        return {"status": "success", "path": str(issues_file), "created": True}
+    return {"status": "success", "path": str(issues_file), "created": False}
+
+
+def add_known_issue(
+    title: str,
+    status: str = "accepted",
+    notes: str = "",
+    branch: Optional[str] = None,
+) -> Dict:
+    """Append a known issue / accepted blocker entry."""
+    ensure_known_issues_file(branch)
+    issues_file = get_branch_dir(branch) / "known-issues.json"
+    payload = json.loads(issues_file.read_text(encoding="utf-8"))
+    payload.setdefault("issues", []).append(
+        {
+            "title": title,
+            "status": status,
+            "notes": notes,
+            "recorded_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+    )
+    issues_file.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8"
+    )
+    return {
+        "status": "success",
+        "path": str(issues_file),
+        "count": len(payload["issues"]),
+    }
 
 
 def get_branch_name() -> str:
@@ -450,6 +888,92 @@ if __name__ == "__main__":
     elif func_name == "get_current_phase":
         phase = get_current_phase()
         print(phase or "Phase not found")
+
+    elif func_name == "ensure_human_artifacts":
+        result = ensure_human_artifacts()
+        print(json.dumps(result, indent=2))
+
+    elif func_name == "next_numbered_artifact_path" and len(sys.argv) >= 3:
+        result = next_numbered_artifact_path(sys.argv[2])
+        print(json.dumps(result, indent=2))
+
+    elif func_name == "append_session_log" and len(sys.argv) >= 4:
+        phase = sys.argv[2]
+        outcome = sys.argv[3]
+        subtask_id = sys.argv[4] if len(sys.argv) >= 5 else ""
+        details = sys.argv[5] if len(sys.argv) >= 6 else ""
+        refs = sys.argv[6].split(",") if len(sys.argv) >= 7 and sys.argv[6] else []
+        result = append_session_log(phase, outcome, subtask_id, details, refs)
+        print(json.dumps(result, indent=2))
+
+    elif func_name == "write_verification_summary" and len(sys.argv) >= 3:
+        verdict = sys.argv[2]
+        task_title = sys.argv[3] if len(sys.argv) >= 4 else ""
+        checks_run = sys.argv[4] if len(sys.argv) >= 5 else ""
+        findings = sys.argv[5] if len(sys.argv) >= 6 else ""
+        next_action = sys.argv[6] if len(sys.argv) >= 7 else ""
+        result = write_verification_summary(
+            verdict, task_title, checks_run, findings, next_action
+        )
+        print(json.dumps(result, indent=2))
+
+    elif func_name == "write_pr_draft":
+        summary = sys.argv[2] if len(sys.argv) >= 3 else ""
+        validation = sys.argv[3] if len(sys.argv) >= 4 else ""
+        risks_follow_up = sys.argv[4] if len(sys.argv) >= 5 else ""
+        result = write_pr_draft(summary, validation, risks_follow_up)
+        print(json.dumps(result, indent=2))
+
+    elif func_name == "write_plan_review":
+        summary = sys.argv[2] if len(sys.argv) >= 3 else ""
+        high = sys.argv[3] if len(sys.argv) >= 4 else ""
+        medium = sys.argv[4] if len(sys.argv) >= 5 else ""
+        low = sys.argv[5] if len(sys.argv) >= 6 else ""
+        resolved = sys.argv[6] if len(sys.argv) >= 7 else ""
+        open_concerns = sys.argv[7] if len(sys.argv) >= 8 else ""
+        recommendation = sys.argv[8] if len(sys.argv) >= 9 else "needs-revision"
+        result = write_plan_review(
+            summary, high, medium, low, resolved, open_concerns, recommendation
+        )
+        print(json.dumps(result, indent=2))
+
+    elif func_name == "write_stage_gate" and len(sys.argv) >= 4:
+        stage = sys.argv[2]
+        verdict = sys.argv[3]
+        source_artifact = sys.argv[4] if len(sys.argv) >= 5 else ""
+        notes = sys.argv[5] if len(sys.argv) >= 6 else ""
+        result = write_stage_gate(stage, verdict, source_artifact, notes)
+        print(json.dumps(result, indent=2))
+
+    elif func_name == "build_handoff_bundle":
+        result = build_handoff_bundle()
+        print(json.dumps(result, indent=2))
+
+    elif func_name == "build_review_handoff":
+        result = build_review_handoff()
+        print(json.dumps(result, indent=2))
+
+    elif func_name == "ensure_known_issues_file":
+        result = ensure_known_issues_file()
+        print(json.dumps(result, indent=2))
+
+    elif func_name == "ensure_active_issues_file":
+        result = ensure_active_issues_file()
+        print(json.dumps(result, indent=2))
+
+    elif func_name == "replace_active_issues" and len(sys.argv) >= 4:
+        stage = sys.argv[2]
+        source_artifact = sys.argv[3]
+        issues_text = sys.argv[4] if len(sys.argv) >= 5 else ""
+        result = replace_active_issues(stage, source_artifact, issues_text)
+        print(json.dumps(result, indent=2))
+
+    elif func_name == "add_known_issue" and len(sys.argv) >= 3:
+        title = sys.argv[2]
+        status = sys.argv[3] if len(sys.argv) >= 4 else "accepted"
+        notes = sys.argv[4] if len(sys.argv) >= 5 else ""
+        result = add_known_issue(title, status, notes)
+        print(json.dumps(result, indent=2))
 
     else:
         print(f"Unknown function: {func_name}")

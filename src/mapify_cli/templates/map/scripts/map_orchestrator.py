@@ -178,6 +178,138 @@ EVIDENCE_REQUIRED = {
 }
 
 
+def _read_text_if_exists(path: Path) -> str:
+    """Return UTF-8 text content for a file when present."""
+    if not path.exists() or not path.is_file():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _extract_recent_markdown_section(content: str, max_lines: int = 12) -> str:
+    """Return the most recent non-empty lines from markdown content."""
+    if not content:
+        return ""
+    lines = [line.rstrip() for line in content.splitlines() if line.strip()]
+    if not lines:
+        return ""
+    return "\n".join(lines[-max_lines:])
+
+
+def _latest_numbered_artifact(plan_dir: Path, prefix: str) -> Optional[Path]:
+    """Return latest numbered artifact like review-003.md."""
+    matches = sorted(plan_dir.glob(f"{prefix}-*.md"))
+    numbered = []
+    for path in matches:
+        stem = path.stem
+        suffix = stem.removeprefix(f"{prefix}-")
+        if suffix.isdigit():
+            numbered.append((int(suffix), path))
+    if not numbered:
+        return None
+    return max(numbered, key=lambda item: item[0])[1]
+
+
+def get_resume_briefing(branch: str) -> Dict:
+    """Collect human-readable artifact context for resume and handoff flows."""
+    plan_dir = Path(f".map/{branch}")
+    session_log = plan_dir / "session-log.md"
+    verification_summary = plan_dir / "verification-summary.md"
+    devlog = plan_dir / "devlog-001.md"
+    latest_review = _latest_numbered_artifact(plan_dir, "code-review")
+    latest_qa = _latest_numbered_artifact(plan_dir, "qa")
+
+    review_content = _read_text_if_exists(latest_review) if latest_review else ""
+    verification_content = _read_text_if_exists(verification_summary)
+
+    verdict_match = None
+    if verification_content:
+        import re
+
+        verdict_match = re.search(r"- Verdict:\s*(.+)", verification_content)
+
+    fix_lines = []
+    for line in review_content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("- "):
+            fix_lines.append(stripped)
+    fix_lines = fix_lines[:5]
+
+    return {
+        "branch": branch,
+        "session_log_path": str(session_log) if session_log.exists() else None,
+        "verification_summary_path": (
+            str(verification_summary) if verification_summary.exists() else None
+        ),
+        "latest_review_path": str(latest_review) if latest_review else None,
+        "latest_qa_path": str(latest_qa) if latest_qa else None,
+        "devlog_path": str(devlog) if devlog.exists() else None,
+        "latest_verification_verdict": (
+            verdict_match.group(1).strip() if verdict_match else None
+        ),
+        "recent_session_log": _extract_recent_markdown_section(
+            _read_text_if_exists(session_log)
+        ),
+        "latest_review_summary": _extract_recent_markdown_section(review_content),
+        "latest_verification_summary": _extract_recent_markdown_section(
+            verification_content
+        ),
+        "suggested_fixes": fix_lines,
+    }
+
+
+def build_resume_briefing(branch: str) -> Dict:
+    """Build a concise next-action briefing from plan progress and artifacts."""
+    plan_progress = get_plan_progress(branch)
+    briefing = get_resume_briefing(branch)
+
+    suggested_next = None
+    completed_count = 0
+    pending_count = 0
+    current_subtask = None
+    if plan_progress.get("status") == "success":
+        suggested_next = plan_progress.get("suggested_next")
+        completed_count = plan_progress.get("completed_count", 0)
+        pending_count = plan_progress.get("pending_count", 0)
+
+    state_file = Path(f".map/{branch}/step_state.json")
+    if state_file.exists():
+        state = StepState.load(state_file)
+        current_subtask = state.current_subtask_id
+        current_phase = state.current_step_phase
+    else:
+        current_phase = None
+
+    next_action = []
+    if briefing.get("latest_verification_verdict") == "NEEDS WORK":
+        next_action.append(
+            "Address issues from the latest verification before continuing"
+        )
+    if briefing.get("suggested_fixes"):
+        next_action.append("Review requested fixes from latest review artifact")
+    if current_subtask and current_phase:
+        next_action.append(f"Resume {current_subtask} at phase {current_phase}")
+    elif suggested_next:
+        next_action.append(f"Start next pending subtask {suggested_next}")
+    elif pending_count == 0 and completed_count > 0:
+        next_action.append(
+            "Workflow appears complete; review PR and verification artifacts"
+        )
+
+    return {
+        "branch": branch,
+        "current_subtask": current_subtask,
+        "current_phase": current_phase,
+        "completed_count": completed_count,
+        "pending_count": pending_count,
+        "suggested_next": suggested_next,
+        "resume_briefing": briefing,
+        "next_action": next_action,
+    }
+
+
 @dataclass
 class StepState:
     """Workflow step state tracking."""
@@ -745,13 +877,9 @@ def set_tdd_mode(value: str, branch: str) -> Dict:
                 s for s in step_order[pos:] if s not in done_and_skipped
             ]
         else:
-            state.pending_steps = [
-                s for s in step_order if s not in done_and_skipped
-            ]
+            state.pending_steps = [s for s in step_order if s not in done_and_skipped]
     else:
-        state.pending_steps = [
-            s for s in step_order if s not in done_and_skipped
-        ]
+        state.pending_steps = [s for s in step_order if s not in done_and_skipped]
 
     state.save(state_file)
     return {"status": "success", "tdd_mode": state.tdd_mode}
@@ -782,12 +910,17 @@ def set_waves(branch: str, blueprint_path: Optional[str] = None) -> Dict:
 
         dg_candidates = [
             Path("src/mapify_cli/dependency_graph.py"),
-            Path(__file__).resolve().parents[3] / "src" / "mapify_cli" / "dependency_graph.py",
+            Path(__file__).resolve().parents[3]
+            / "src"
+            / "mapify_cli"
+            / "dependency_graph.py",
         ]
         loaded = False
         for candidate in dg_candidates:
             if candidate.exists():
-                spec = importlib.util.spec_from_file_location("dependency_graph", candidate)
+                spec = importlib.util.spec_from_file_location(
+                    "dependency_graph", candidate
+                )
                 if spec and spec.loader:
                     mod = importlib.util.module_from_spec(spec)
                     spec.loader.exec_module(mod)
@@ -903,11 +1036,13 @@ def get_wave_step(branch: str) -> Dict:
     for st_id in wave:
         phase = state.subtask_phases.get(st_id, default_phase)
         phase_name = STEP_PHASES.get(phase, "ACTOR")
-        subtask_infos.append({
-            "subtask_id": st_id,
-            "phase": phase_name,
-            "step_id": phase,
-        })
+        subtask_infos.append(
+            {
+                "subtask_id": st_id,
+                "phase": phase_name,
+                "step_id": phase,
+            }
+        )
 
     return {
         "mode": mode,
@@ -955,8 +1090,12 @@ def validate_wave_step(subtask_id: str, step_id: str, branch: str) -> Dict:
             }
 
     # Determine next phase for this subtask
-    subtask_step_order = [s for s in _get_step_order(state.tdd_mode) if s.startswith("2.")]
-    current_idx = subtask_step_order.index(step_id) if step_id in subtask_step_order else -1
+    subtask_step_order = [
+        s for s in _get_step_order(state.tdd_mode) if s.startswith("2.")
+    ]
+    current_idx = (
+        subtask_step_order.index(step_id) if step_id in subtask_step_order else -1
+    )
 
     if current_idx >= 0 and current_idx + 1 < len(subtask_step_order):
         next_phase = subtask_step_order[current_idx + 1]
@@ -1192,7 +1331,9 @@ def resume_from_plan(branch: str) -> Dict:
         subtask_index=0,
         subtask_sequence=subtask_ids,
         current_step_id=execution_start[0] if execution_start else "1.6",
-        current_step_phase=STEP_PHASES.get(execution_start[0], "INIT_STATE") if execution_start else "INIT_STATE",
+        current_step_phase=STEP_PHASES.get(execution_start[0], "INIT_STATE")
+        if execution_start
+        else "INIT_STATE",
         completed_steps=skipped_phases,
         pending_steps=execution_start,
         plan_approved=True,
@@ -1204,6 +1345,8 @@ def resume_from_plan(branch: str) -> Dict:
     evidence_dir = plan_dir / "evidence"
     evidence_dir.mkdir(parents=True, exist_ok=True)
 
+    briefing = get_resume_briefing(branch)
+
     return {
         "status": "success",
         "message": "Resumed from /map-plan. Skipped DECOMPOSE, INIT_PLAN, REVIEW_PLAN, CHOOSE_MODE. Mode: batch.",
@@ -1211,6 +1354,7 @@ def resume_from_plan(branch: str) -> Dict:
         "current_subtask_id": subtask_ids[0],
         "aag_contracts_found": len(aag_contracts),
         "next_phase": "INIT_STATE",
+        "resume_briefing": briefing,
     }
 
 
@@ -1255,6 +1399,8 @@ def get_plan_progress(branch: str) -> Dict:
     # Determine suggested next subtask (first pending in plan order)
     suggested_next = pending[0]["id"] if pending else None
 
+    briefing = get_resume_briefing(branch)
+
     return {
         "status": "success",
         "total": len(subtasks),
@@ -1264,6 +1410,7 @@ def get_plan_progress(branch: str) -> Dict:
         "completed": [s["id"] for s in completed],
         "pending": [s["id"] for s in pending],
         "suggested_next": suggested_next,
+        "resume_briefing": briefing,
     }
 
 
@@ -1335,6 +1482,8 @@ def resume_single_subtask(subtask_id: str, branch: str, tdd_mode: bool = False) 
     evidence_dir = plan_dir / "evidence"
     evidence_dir.mkdir(parents=True, exist_ok=True)
 
+    briefing = get_resume_briefing(branch)
+
     return {
         "status": "success",
         "message": (
@@ -1346,6 +1495,7 @@ def resume_single_subtask(subtask_id: str, branch: str, tdd_mode: bool = False) 
         "tdd_mode": tdd_mode,
         "all_subtasks_in_plan": all_subtask_ids,
         "next_phase": "XML_PACKET",
+        "resume_briefing": briefing,
     }
 
 
@@ -1483,7 +1633,9 @@ def main():
             print(json.dumps(result, indent=2))
 
         elif args.command == "set_waves":
-            blueprint_path = args.blueprint or args.task_or_step  # --blueprint or positional
+            blueprint_path = (
+                args.blueprint or args.task_or_step
+            )  # --blueprint or positional
             result = set_waves(branch, blueprint_path)
             print(json.dumps(result, indent=2))
 
@@ -1516,7 +1668,9 @@ def main():
             if not args.task_or_step:
                 print(
                     json.dumps(
-                        {"error": "subtask_id required. Usage: resume_single_subtask ST-001 [--tdd]"}
+                        {
+                            "error": "subtask_id required. Usage: resume_single_subtask ST-001 [--tdd]"
+                        }
                     ),
                     file=sys.stderr,
                 )

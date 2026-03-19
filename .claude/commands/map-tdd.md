@@ -279,6 +279,18 @@ Monitor verifies both implementation correctness AND that all tests pass.
 | Token cost | Lower | ~20-30% higher (extra Actor call for tests) |
 | Best for | General development | Correctness-critical features |
 
+## Artifact Model
+
+`/map-tdd` uses the same branch-scoped execution artifacts as `/map-efficient` because it runs through the same orchestrated state machine with extra TDD phases:
+
+- `session-log.md`
+- `devlog-001.md`
+- `code-review-00N.md`
+- `qa-001.md`
+- `pr-draft.md`
+
+In TDD mode, `TEST_WRITER` and `TEST_FAIL_GATE` should append to the same branch workspace instead of creating a separate artifact universe.
+
 ---
 
 ## When NOT to use /map-tdd
