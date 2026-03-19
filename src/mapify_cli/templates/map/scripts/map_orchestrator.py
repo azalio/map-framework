@@ -218,7 +218,7 @@ def get_resume_briefing(branch: str) -> Dict:
     session_log = plan_dir / "session-log.md"
     verification_summary = plan_dir / "verification-summary.md"
     devlog = plan_dir / "devlog-001.md"
-    latest_review = _latest_numbered_artifact(plan_dir, "review")
+    latest_review = _latest_numbered_artifact(plan_dir, "code-review")
     latest_qa = _latest_numbered_artifact(plan_dir, "qa")
 
     review_content = _read_text_if_exists(latest_review) if latest_review else ""

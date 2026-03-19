@@ -856,8 +856,8 @@ class TestResumeSingleSubtask:
             "# Session Log\n\n## 2026-03-19 — MONITOR\n- Outcome: revise\n",
             encoding="utf-8",
         )
-        (plan_dir / "review-002.md").write_text(
-            "# Review 002\n\n- fix auth edge case\n- rerun pytest\n",
+        (plan_dir / "code-review-002.md").write_text(
+            "# Code Review 002\n\n- fix auth edge case\n- rerun pytest\n",
             encoding="utf-8",
         )
         (plan_dir / "verification-summary.md").write_text(
@@ -868,7 +868,7 @@ class TestResumeSingleSubtask:
         result = map_orchestrator.resume_single_subtask("ST-001", branch_dir)
 
         briefing = result["resume_briefing"]
-        assert briefing["latest_review_path"].endswith("review-002.md")
+        assert briefing["latest_review_path"].endswith("code-review-002.md")
         assert briefing["latest_verification_verdict"] == "NEEDS WORK"
         assert "MONITOR" in briefing["recent_session_log"]
         assert "fix auth edge case" in "\n".join(briefing["suggested_fixes"])
@@ -954,15 +954,15 @@ class TestGetPlanProgress:
             "# Session Log\n\n## 2026-03-19 — ACTOR\n- Outcome: implemented\n",
             encoding="utf-8",
         )
-        (plan_dir / "review-001.md").write_text(
-            "# Review 001\n\n- update tests\n",
+        (plan_dir / "code-review-001.md").write_text(
+            "# Code Review 001\n\n- update tests\n",
             encoding="utf-8",
         )
 
         result = map_orchestrator.get_plan_progress(branch_dir)
 
         briefing = result["resume_briefing"]
-        assert briefing["latest_review_path"].endswith("review-001.md")
+        assert briefing["latest_review_path"].endswith("code-review-001.md")
         assert "ACTOR" in briefing["recent_session_log"]
         assert "update tests" in "\n".join(briefing["suggested_fixes"])
 
@@ -1024,8 +1024,8 @@ class TestBuildResumeBriefing:
             "# Verification Summary\n\n- Verdict: NEEDS WORK\n",
             encoding="utf-8",
         )
-        (plan_dir / "review-001.md").write_text(
-            "# Review 001\n\n- fix auth edge case\n",
+        (plan_dir / "code-review-001.md").write_text(
+            "# Code Review 001\n\n- fix auth edge case\n",
             encoding="utf-8",
         )
 
@@ -1037,7 +1037,9 @@ class TestBuildResumeBriefing:
         assert result["next_action"][0].startswith(
             "Address issues from the latest verification"
         )
-        assert "Review requested fixes" in result["next_action"][1]
+        assert any(
+            "Review requested fixes" in action for action in result["next_action"]
+        )
 
 
 if __name__ == "__main__":

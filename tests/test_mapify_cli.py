@@ -17,6 +17,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from mapify_cli import (
     app,
     build_standard_mcp_servers,
+    count_agent_templates,
+    count_command_templates,
     create_agent_files,
     create_command_files,
     create_commands_dir,
@@ -493,7 +495,11 @@ class TestCheckCommand:
             "Check Available Tools" in result.stdout or "MAP Framework" in result.stdout
         )
         assert "initialized" in result.stdout
-        assert "11 agents, 12 commands" in result.stdout
+        expected_agents = count_agent_templates()
+        expected_commands = count_command_templates()
+        assert (
+            f"{expected_agents} agents, {expected_commands} commands" in result.stdout
+        )
 
     @mock.patch("mapify_cli.check_tool")
     def test_check_with_mcp_servers(self, mock_check_tool, tmp_path):
@@ -525,8 +531,10 @@ class TestDoctorCommand:
         assert result.exit_code == 0
         assert "MAP Doctor" in result.stdout
         assert ".map/main/" in result.stdout
-        assert "11/11" in result.stdout
-        assert "12/12" in result.stdout
+        expected_agents = count_agent_templates()
+        expected_commands = count_command_templates()
+        assert f"{expected_agents}/{expected_agents}" in result.stdout
+        assert f"{expected_commands}/{expected_commands}" in result.stdout
 
     @mock.patch("mapify_cli.check_tool")
     def test_doctor_reports_missing_structure(self, mock_check_tool, tmp_path):

@@ -72,10 +72,11 @@ BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|
 # .map/${BRANCH}/task_plan_${BRANCH}.md — full plan with AAG contracts
 ```
 
-Also query orchestrator plan progress for the canonical resume briefing:
+Also query orchestrator plan progress for the canonical progress payload:
 
 ```bash
 PROGRESS=$(python3 .map/scripts/map_orchestrator.py get_plan_progress)
+BRIEF=$(python3 .map/scripts/map_orchestrator.py build_resume_briefing)
 ```
 
 Parse the state and display:
@@ -91,14 +92,14 @@ Parse the state and display:
 
 ### Resume Briefing
 
-- **Suggested next subtask:** [from `suggested_next`]
-- **Latest verification verdict:** [from `resume_briefing.latest_verification_verdict` or "none"]
-- **Latest review artifact:** [from `resume_briefing.latest_review_path` or "none"]
-- **Immediate next action:** [first item from `next_action[]` if present, else "resume current step"]
+- **Suggested next subtask:** [from `PROGRESS.suggested_next`]
+- **Latest verification verdict:** [from `BRIEF.resume_briefing.latest_verification_verdict` or "none"]
+- **Latest review artifact:** [from `BRIEF.resume_briefing.latest_review_path` or "none"]
+- **Immediate next action:** [first item from `BRIEF.next_action[]` if present, else "resume current step"]
 
 ### Requested Fixes / Follow-ups
 
-- [items from `resume_briefing.suggested_fixes[]`, if any]
+- [items from `BRIEF.resume_briefing.suggested_fixes[]`, if any]
 
 ### Recent Session Context
 

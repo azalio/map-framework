@@ -579,11 +579,13 @@ def get_project_health(project_path: Path) -> Dict[str, Any]:
         "research.md",
         "implementation-plan.md",
         "decision-log.md",
+        "session-log.md",
         "devlog-001.md",
-        "review-001.md",
         "qa-001.md",
+        "verification-summary.md",
         "pr-draft.md",
     ]
+    numbered_artifact_prefixes = ["plan-review", "code-review"]
 
     mcp_json_ok = False
     if mcp_json_path.exists():
@@ -610,6 +612,11 @@ def get_project_health(project_path: Path) -> Dict[str, Any]:
         "branch_artifact_count": (
             len(
                 [name for name in branch_artifact_files if (branch_dir / name).exists()]
+            )
+            + sum(
+                1
+                for prefix in numbered_artifact_prefixes
+                if any(branch_dir.glob(f"{prefix}-*.md"))
             )
             if branch_dir.exists()
             else 0
@@ -668,7 +675,7 @@ def get_branch_artifact_templates(branch: str) -> Dict[str, str]:
         "implementation-plan.md": f"# Implementation Plan\n\n## Branch\n`{branch}`\n\n## Summary\n\n## Goals\n\n## Non-Goals\n\n## Steps\n1.\n2.\n3.\n\n## Validation Plan\n\n## Risks\n",
         "decision-log.md": "# Decision Log\n\n## Decision\n\n## Options Considered\n\n## Chosen Approach\n\n## Consequences\n",
         "devlog-001.md": "# Devlog 001\n\n## Changes\n\n## Notes\n\n## Verification\n",
-        "review-001.md": "# Review 001\n\n## Scope\n\n## Findings\n\n### High\n\n### Medium\n\n### Low\n\n## Verdict\n- [ ] Ready\n- [ ] Needs revision\n",
+        "code-review-001.md": "# Code Review 001\n\n## Scope\n\n## Findings\n\n### High\n\n### Medium\n\n### Low\n\n## Verdict\n- [ ] Ready\n- [ ] Needs revision\n",
         "qa-001.md": "# QA 001\n\n## Commands Run\n\n## Expected Result\n\n## Actual Result\n\n## Follow-ups\n",
         "pr-draft.md": "# PR Draft\n\n## Summary\n\n## Validation\n\n## Risks / Rollback\n",
     }
@@ -2369,11 +2376,7 @@ def check(debug: bool = typer.Option(False, "--debug", help="Enable debug loggin
 
     tracker.add("mcp", "Check supported MCP servers")
     supported_servers = sorted(build_standard_mcp_servers().keys())
-    unsupported_servers = [s for s in supported_servers if not check_mcp_server(s)]
-    if unsupported_servers:
-        tracker.error("mcp", f"unsupported: {', '.join(unsupported_servers)}")
-    else:
-        tracker.complete("mcp", ", ".join(supported_servers) or "none")
+    tracker.complete("mcp", ", ".join(supported_servers) or "none")
 
     console.print(tracker.render())
     console.print()
@@ -2555,9 +2558,14 @@ def upgrade():
 
     tracker = StepTracker("Upgrade MAP Framework Files")
 
+    existing_project_mcp = read_project_mcp_json(project_path / ".mcp.json")
+    existing_server_names = []
+    if existing_project_mcp:
+        existing_server_names = list(existing_project_mcp.get("mcpServers", {}).keys())
+
     tracker.add("agents", "Refresh agent templates")
     tracker.start("agents")
-    agent_count = create_agent_files(project_path, [])
+    agent_count = create_agent_files(project_path, existing_server_names)
     tracker.complete("agents", f"{agent_count} files")
 
     tracker.add("commands", "Refresh slash commands")

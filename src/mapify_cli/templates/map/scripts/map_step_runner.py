@@ -402,8 +402,8 @@ def build_review_handoff(branch: Optional[str] = None) -> Dict:
     payload = {
         "status": "success",
         "branch": branch_name,
-        "plan_review_path": latest_plan_review_name,
-        "code_review_path": latest_code_review_name,
+        "plan_review_path": latest_plan_review_name or None,
+        "code_review_path": latest_code_review_name or None,
         "verification_summary_path": "verification-summary.md"
         if (branch_dir / "verification-summary.md").exists()
         else None,
@@ -414,12 +414,16 @@ def build_review_handoff(branch: Optional[str] = None) -> Dict:
         "active_issues_path": "active-issues.json"
         if (branch_dir / "active-issues.json").exists()
         else None,
-        "plan_review": read(latest_plan_review_name) if latest_plan_review_name else "",
-        "code_review": read(latest_code_review_name) if latest_code_review_name else "",
+        "plan_review": read(latest_plan_review_name)
+        if latest_plan_review_name
+        else None,
+        "code_review": read(latest_code_review_name)
+        if latest_code_review_name
+        else None,
         "verification_summary": read("verification-summary.md"),
         "qa": read("qa-001.md"),
         "pr_draft": read("pr-draft.md"),
-        "active_issues": read("active-issues.json"),
+        "active_issues": read("active-issues.json") or None,
     }
     return payload
 
