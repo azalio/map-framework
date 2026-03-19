@@ -145,6 +145,21 @@ When multiple sources provide conflicting guidance, follow this priority (highes
 
 ---
 
+# GIT HISTORY CONTEXT (Conditional)
+
+When `{{git_history}}` is present (non-empty), read it before implementing.
+
+**Format:** Condensed `git log --oneline -10` + `git diff HEAD~1 --stat` for affected files.
+
+**Trigger contexts** (injected by orchestrator):
+- **debug**: When investigating a bug (monitor retry > 0)
+- **retry**: When re-invoked after monitor rejection (monitor_retry >= 2) — learn from prior failed approaches
+- **resume**: When workflow resumes after context compaction or session gap
+
+**When `{{git_history}}` is absent or empty:** Skip silently. Do NOT run git commands yourself.
+
+---
+
 # RESEARCH PHASE (Context Isolation)
 
 BEFORE implementation, if task requires understanding existing code.

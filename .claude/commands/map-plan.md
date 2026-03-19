@@ -208,6 +208,18 @@ These are hard constraints — violating any invariant is a blocker.
 - [e.g., "Database migrations must be backward-compatible (no column drops)"]
 - [e.g., "Response time for any endpoint must stay under 500ms p95"]
 
+## Constraints
+
+Workflow execution limits. When no constraints specified, all default to null (unlimited) and the enforcement hook skips checks.
+
+```yaml
+constraints:
+  max_files: null        # Maximum files Actor can modify per workflow (int or null)
+  max_subtasks: null     # Maximum subtasks in decomposition (int or null)
+  time_budget: null      # Maximum minutes for entire workflow (int or null)
+  scope_glob: null       # File glob restricting Actor's edit scope (string or null)
+```
+
 ## Edge Cases
 
 Enumerate boundary conditions and unusual inputs that implementation must handle.
@@ -486,6 +498,25 @@ Then use the **Write** tool to create `.map/<branch>/task_plan_<branch>.md` with
 
 **AAG Contract is REQUIRED** for every subtask. Copy directly from task-decomposer output's `aag_contract` field. This is the primary handoff to the Actor agent — without it, the Actor reasons instead of compiles.
 
+### Step 6.5: Validate Constraints (Before State Initialization)
+
+If the spec includes a `## Constraints` section with non-null values, validate before writing workflow_state.json:
+
+**scope_glob validation** (REQUIRED if scope_glob is non-null):
+- Reject if contains `..` (path traversal)
+- Reject if starts with `/` (absolute path)
+- Reject if contains `{` (brace expansion — Python version-dependent behavior)
+- On validation failure: print error and STOP — do not create workflow_state.json
+
+```bash
+# Example validation (run in Bash)
+SCOPE_GLOB="src/auth/**"  # from spec constraints
+if echo "$SCOPE_GLOB" | grep -qE '(\.\.)|^/|\{'; then
+  echo "ERROR: Invalid scope_glob '$SCOPE_GLOB'. Must be relative, no '..' or brace expansion."
+  exit 1
+fi
+```
+
 ### Step 7: Initialize Workflow State (Do This Last)
 
 Create `.map/<branch>/workflow_state.json` with the decomposition results. Wrap in `MAP_State_v1_0` tag for executor parsing.
@@ -507,6 +538,12 @@ Use the **Write** tool to create `.map/<branch>/workflow_state.json` with this s
   "aag_contracts": {
     "ST-001": "Actor -> Action(params) -> Goal",
     "ST-002": "Actor -> Action(params) -> Goal"
+  },
+  "constraints": {
+    "max_files": null,
+    "max_subtasks": null,
+    "time_budget": null,
+    "scope_glob": null
   }
 }
 ```
@@ -514,6 +551,7 @@ Use the **Write** tool to create `.map/<branch>/workflow_state.json` with this s
 **IMPORTANT:**
 - Replace `subtask_sequence` with actual IDs from the decomposition
 - Populate `aag_contracts` map with each subtask's AAG contract from the decomposer output — executors read this to set context for each subtask
+- Populate `constraints` from the spec's Constraints section. null = unlimited (hook skips enforcement)
 
 ### Step 8: Output Checkpoint
 

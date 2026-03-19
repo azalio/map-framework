@@ -266,7 +266,8 @@ Then use the **Write** tool to create `.map/<branch>/workflow_state.json`:
   "current_state": "INITIALIZED",
   "completed_steps": {},
   "pending_steps": {},
-  "subtask_sequence": []
+  "subtask_sequence": [],
+  "constraints": null
 }
 ```
 
@@ -533,9 +534,51 @@ if monitor_output["valid"] == false:
     if retry_count < 5:
         # Go back to Phase: ACTOR with Monitor feedback
         # Actor will fix issues and re-apply code
+
+        # === STUCK RECOVERY (at retry 3) ===
+        # At retry 3, intercept with intermediate recovery before retries 4-5.
+        # This gives Actor better context to break out of a stuck loop.
+        if retry_count == 3:
+            # Step 1: Check if research-agent already ran for this subtask
+            findings_file = f".map/{branch}/findings_{branch}.md"
+            if findings_file exists and has content for this subtask:
+                # Reuse existing findings (Edge Case 12: skip re-invocation)
+                recovery_context = read(findings_file)
+            else:
+                # Invoke research-agent for alternative approaches
+                Task(
+                    subagent_type="research-agent",
+                    description="Stuck recovery: find alternative approach",
+                    prompt=f"""Subtask {subtask_id} failed 3 monitor retries.
+Monitor feedback: {latest_monitor_feedback}
+Find an ALTERNATIVE approach. Current approach is not working.
+Focus on: different patterns, simpler implementations, existing utilities."""
+                )
+                recovery_context = research_agent_output
+
+            # Step 2: Invoke predictor (skip for low-risk subtasks — Edge Case 7)
+            if subtask.risk_level != "low":
+                Task(
+                    subagent_type="predictor",
+                    description="Stuck recovery: analyze why approach fails",
+                    prompt=f"""Subtask {subtask_id} failed 3 retries.
+Research findings: {recovery_context}
+Analyze: why is the current approach failing? What dependencies are missed?"""
+                )
+                recovery_context += predictor_output
+
+            # Step 3: Pass recovery context to Actor for retries 4-5
+            # Actor receives: original task + monitor feedback + recovery context
+            # This gives Actor a fresh perspective from research-agent/predictor
+
+            # If both research-agent and predictor found nothing useful:
+            if recovery_context is empty or unhelpful:
+                AskUserQuestion(questions=[{"question": "Stuck recovery: research-agent and predictor found no alternative. How to proceed?", "header": "Stuck", "options": [{"label": "Continue", "description": "Try 2 more retries with current approach"}, {"label": "Skip", "description": "Skip subtask, move to next"}, {"label": "Abort", "description": "Stop workflow"}], "multiSelect": false}])
+        # === END STUCK RECOVERY ===
+
     else:
-        # Escalate to user (retry limit reached)
-        AskUserQuestion(questions=[{"question": "Monitor retry limit reached. How to proceed?", "header": "Retry limit", "options": [{"label": "Continue", "description": "Reset retry counter and try again"}, {"label": "Skip", "description": "Skip this subtask and move to next"}, {"label": "Abort", "description": "Stop workflow"}], "multiSelect": false}])
+        # Escalate to user (retry limit reached after 5 attempts)
+        AskUserQuestion(questions=[{"question": "Monitor retry limit reached (5 attempts). How to proceed?", "header": "Retry limit", "options": [{"label": "Continue", "description": "Reset retry counter and try again"}, {"label": "Skip", "description": "Skip this subtask and move to next"}, {"label": "Abort", "description": "Stop workflow"}], "multiSelect": false}])
 ```
 
 ### Phase: PREDICTOR (2.6)
@@ -616,15 +659,16 @@ python3 .map/scripts/map_step_runner.py update_plan_status "ST-XXX" "in_progress
 ### Phase: TESTS_GATE (2.8)
 
 ```bash
-# Run tests if available (do NOT install dependencies)
+# Run tests if available (do NOT install dependencies). Capture exit code for guard pattern.
+TESTS_EXIT=0
 if [ -f "pytest.ini" ] || [ -f "setup.py" ]; then
-  pytest
+  pytest; TESTS_EXIT=$?
 elif [ -f "package.json" ]; then
-  npm test
+  npm test; TESTS_EXIT=$?
 elif [ -f "go.mod" ]; then
-  go test ./...
+  go test ./...; TESTS_EXIT=$?
 elif [ -f "Cargo.toml" ]; then
-  cargo test
+  cargo test; TESTS_EXIT=$?
 else
   echo "No tests found, skipping gate"
 fi
@@ -633,17 +677,48 @@ fi
 ### Phase: LINTER_GATE (2.9)
 
 ```bash
-# Run linter if available
+# Run linter if available. Capture exit code for guard pattern.
+LINT_EXIT=0
 if command -v ruff &> /dev/null; then
-  ruff check .
+  ruff check .; LINT_EXIT=$?
 elif command -v eslint &> /dev/null; then
-  eslint .
+  eslint .; LINT_EXIT=$?
 elif command -v golangci-lint &> /dev/null; then
-  golangci-lint run
+  golangci-lint run; LINT_EXIT=$?
 else
   echo "No linter found, skipping gate"
 fi
 ```
+
+### Phase: GUARD_DECISION (2.95)
+
+**Guard Pattern Decision Table** — applies after TESTS_GATE and LINTER_GATE.
+
+Guard rework counter (`guard_rework`) is **independent** of monitor retry counter.
+
+```
+IF monitor_output["valid"] == true:
+  IF TESTS_EXIT == 0 AND LINT_EXIT == 0:
+    → KEEP: Proceed to VERIFY_ADHERENCE (all green)
+
+  ELSE (monitor pass + guard fail = regression detected):
+    guard_rework += 1
+    IF guard_rework <= 2:
+      → RETRY Actor with guard failure context:
+        - Pass: test/lint stderr output
+        - Pass: "Monitor approved your changes but tests/linter failed (regression)"
+        - Pass: "Fix the regression without breaking the new behavior"
+        - After Actor retry → re-run Monitor → re-run TESTS_GATE + LINTER_GATE
+    ELSE (guard_rework > 2):
+      → ESCALATE to user:
+        AskUserQuestion("Guard failure after 2 rework attempts. Tests/linter still failing.")
+        Options: ["Skip this subtask", "Abort workflow"]
+
+ELSE (monitor_output["valid"] == false):
+  → Standard monitor retry logic (existing behavior, max 5 retries)
+```
+
+**Key invariant:** Guard rework never modifies test files — Actor must adapt implementation to pass existing tests.
 
 ### Phase: VERIFY_ADHERENCE (2.10)
 

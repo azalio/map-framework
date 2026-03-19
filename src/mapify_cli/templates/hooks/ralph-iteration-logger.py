@@ -304,8 +304,82 @@ def main() -> None:
                 file=sys.stderr,
             )
 
+    # Derive iteration summary (best-effort, never blocks)
+    try:
+        derive_summary(log_file)
+    except Exception:
+        pass
+
     print("{}")
     sys.exit(0)
+
+
+def derive_summary(log_file: Path) -> None:
+    """Derive iteration_summary.json from iteration_log.jsonl.
+
+    Aggregates per-file stats, truncates to last 50 entries when > 100,
+    and writes a summary JSON to the same branch directory.
+    """
+    if not log_file.exists():
+        return
+
+    lines = log_file.read_text(encoding="utf-8").strip().split("\n")
+    entries = []
+    for line in lines:
+        if line.strip():
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+
+    total_entries_seen = len(entries)
+    if total_entries_seen == 0:
+        return
+
+    # Truncate to last 50 if > 100 entries
+    dropped_count = 0
+    if total_entries_seen > 100:
+        dropped_count = total_entries_seen - 50
+        entries = entries[-50:]
+
+    # Aggregate per-file stats
+    file_data: dict[str, list[float]] = {}
+    file_thrashing: Counter[str] = Counter()
+    for entry in entries:
+        f = entry.get("file", "unknown")
+        eff = entry.get("effectiveness", 0.0)
+        file_data.setdefault(f, []).append(eff)
+        file_thrashing[f] += 1
+
+    file_stats: list[dict[str, object]] = []
+    thrashing_alert_count = 0
+    for f, effs in sorted(file_data.items(), key=lambda x: -len(x[1])):
+        is_thrashing = 1 if file_thrashing[f] >= THRASHING_WINDOW else 0
+        thrashing_alert_count += is_thrashing
+        file_stats.append({
+            "file": f,
+            "iterations": len(effs),
+            "avg_effectiveness": round(sum(effs) / len(effs), 3) if effs else 0.0,
+            "thrashing_count": is_thrashing,
+        })
+
+    all_effs = [e.get("effectiveness", 0.0) for e in entries]
+    summary: dict[str, object] = {
+        "generated_at": datetime.now().isoformat(),
+        "entry_count": len(entries),
+        "total_entries_seen": total_entries_seen,
+        "dropped_count": dropped_count,
+        "file_stats": file_stats,
+        "aggregate": {
+            "total_iterations": total_entries_seen,
+            "avg_effectiveness": round(sum(all_effs) / len(all_effs), 3) if all_effs else 0.0,
+            "total_thrashing_alerts": thrashing_alert_count,
+        },
+    }
+
+    summary_file = log_file.parent / "iteration_summary.json"
+    with open(summary_file, "w", encoding="utf-8") as f:
+        json.dump(summary, f, indent=2, ensure_ascii=True)
 
 
 if __name__ == "__main__":

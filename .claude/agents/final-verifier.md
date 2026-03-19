@@ -57,6 +57,15 @@ Read `.map/<branch>/task_plan_<branch>.md` to extract:
 - Review integration points between subtasks
 - Verify ALL validation_criteria are met
 
+#### Noise Handling Protocol (Flaky Test Re-runs)
+When tests fail on first run, apply the confirmation policy:
+1. Re-run the failed test suite up to **2 more times** (3 total runs)
+2. Use **2/3 majority rule**: if 2 out of 3 runs pass, mark tests as `passed`
+3. If majority fails: mark tests as `failed`
+4. If results are inconsistent (some pass, some fail across runs): set `flaky_detected: true`
+5. Linter checks: always **1/1** (deterministic, no re-run needed)
+6. Record `test_run_count` (how many times the test suite was executed)
+
 ### Step 3: Adversarial Checks
 - Are there edge cases not covered by tests?
 - Do subtask outputs integrate correctly?
@@ -86,6 +95,8 @@ Score confidence (0.0-1.0):
     "tests_run": ["test_name"],
     "tests_passed": 10,
     "tests_failed": 0,
+    "test_run_count": 1,
+    "flaky_detected": false,
     "ground_truth_check": "passed|failed|skipped",
     "integration_check": "passed|failed"
   },
@@ -143,8 +154,12 @@ If verification passes, update the `Status` column in the Acceptance Criteria ta
 
 ## Decision Rules
 
+### Flaky Confidence Adjustment
+Before applying threshold checks: if `flaky_detected == true`, subtract 0.1 from confidence score.
+This applies before the 0.7 threshold check below.
+
 ### PASS (confidence >= 0.7)
-- All tests pass
+- All tests pass (or 2/3 majority pass with flaky_detected noted)
 - All acceptance criteria met
 - No blocking issues found
 - Recommend: `COMPLETE`
