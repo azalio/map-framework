@@ -110,9 +110,9 @@ class StepTracker:
 
     def __init__(self, title: str):
         self.title = title
-        self.steps: List[Dict[str, Any]] = (
-            []
-        )  # list of dicts: {key, label, status, detail}
+        self.steps: List[
+            Dict[str, Any]
+        ] = []  # list of dicts: {key, label, status, detail}
         self._refresh_cb = None
 
     def attach_refresh(self, cb):
@@ -452,10 +452,8 @@ def check_tool(tool: str) -> bool:
 
 
 def check_mcp_server(server: str) -> bool:
-    """Check if an MCP server is available/configured"""
-    # For now, we'll assume MCP servers are available if configured
-    # In a real implementation, you'd check actual MCP configuration
-    return True
+    """Check if an MCP server is recognized by this installation."""
+    return server in build_standard_mcp_servers()
 
 
 def is_debug_enabled(debug_flag: Optional[bool] = None) -> bool:
@@ -503,8 +501,220 @@ def get_templates_dir() -> Path:
     raise RuntimeError("Templates directory not found. Please reinstall mapify-cli.")
 
 
-def create_agent_files(project_path: Path, mcp_servers: List[str]) -> None:
-    """Create MAP agent files in .claude/agents/"""
+def count_template_markdown_files(template_subdir: str) -> int:
+    """Count shipped markdown templates in a subdirectory."""
+    template_dir = get_templates_dir() / template_subdir
+    if not template_dir.exists():
+        return 0
+    return len([path for path in template_dir.glob("*.md") if path.is_file()])
+
+
+def count_agent_templates() -> int:
+    """Count shipped agent templates, excluding documentation files."""
+    template_dir = get_templates_dir() / "agents"
+    if not template_dir.exists():
+        return 0
+
+    exclude_files = {"README.md", "CHANGELOG.md", "MCP-PATTERNS.md"}
+    return len(
+        [
+            path
+            for path in template_dir.glob("*.md")
+            if path.is_file() and path.name not in exclude_files
+        ]
+    )
+
+
+def count_command_templates() -> int:
+    """Count shipped slash command templates."""
+    return count_template_markdown_files("commands")
+
+
+def count_project_markdown_files(
+    directory: Path, exclude_files: Optional[set[str]] = None
+) -> int:
+    """Count markdown files in a project directory."""
+    if not directory.exists():
+        return 0
+    exclude_files = exclude_files or set()
+    return len(
+        [
+            path
+            for path in directory.glob("*.md")
+            if path.is_file() and path.name not in exclude_files
+        ]
+    )
+
+
+def is_map_initialized(project_path: Path) -> bool:
+    """Return True when the current directory looks like a MAP project."""
+    required_paths = [
+        project_path / ".claude" / "agents",
+        project_path / ".claude" / "commands",
+        project_path / ".claude" / "settings.json",
+        project_path / ".claude" / "workflow-rules.json",
+    ]
+    return all(path.exists() for path in required_paths)
+
+
+def get_project_health(project_path: Path) -> Dict[str, Any]:
+    """Collect project health diagnostics for check/doctor commands."""
+    agent_exclude = {"README.md", "CHANGELOG.md", "MCP-PATTERNS.md"}
+    current_branch = sanitize_identifier(get_current_branch_name())
+    branch_dir = project_path / ".map" / current_branch
+    required_paths = {
+        ".claude/agents": project_path / ".claude" / "agents",
+        ".claude/commands": project_path / ".claude" / "commands",
+        ".claude/settings.json": project_path / ".claude" / "settings.json",
+        ".claude/workflow-rules.json": project_path / ".claude" / "workflow-rules.json",
+        ".map/scripts": project_path / ".map" / "scripts",
+    }
+    missing_paths = [name for name, path in required_paths.items() if not path.exists()]
+
+    agents_dir = project_path / ".claude" / "agents"
+    commands_dir = project_path / ".claude" / "commands"
+    mcp_json_path = project_path / ".mcp.json"
+    internal_mcp_path = project_path / ".claude" / "mcp_config.json"
+    branch_artifact_files = [
+        "research.md",
+        "implementation-plan.md",
+        "decision-log.md",
+        "devlog-001.md",
+        "review-001.md",
+        "qa-001.md",
+        "pr-draft.md",
+    ]
+
+    mcp_json_ok = False
+    if mcp_json_path.exists():
+        mcp_json_ok = read_project_mcp_json(mcp_json_path) is not None
+
+    return {
+        "initialized": is_map_initialized(project_path),
+        "missing_paths": missing_paths,
+        "installed_agents": count_project_markdown_files(agents_dir, agent_exclude),
+        "installed_commands": count_project_markdown_files(commands_dir),
+        "expected_agents": count_agent_templates(),
+        "expected_commands": count_command_templates(),
+        "has_project_mcp": mcp_json_path.exists(),
+        "project_mcp_valid": mcp_json_ok,
+        "has_internal_mcp": internal_mcp_path.exists(),
+        "current_branch": current_branch,
+        "branch_workspace_exists": branch_dir.exists(),
+        "branch_workspace_files": (
+            sorted(path.name for path in branch_dir.iterdir() if path.is_file())
+            if branch_dir.exists()
+            else []
+        ),
+        "branch_artifact_files": branch_artifact_files,
+        "branch_artifact_count": (
+            len(
+                [name for name in branch_artifact_files if (branch_dir / name).exists()]
+            )
+            if branch_dir.exists()
+            else 0
+        ),
+    }
+
+
+def parse_version(version: str) -> tuple[int, ...]:
+    """Parse a semantic-ish version string into an integer tuple."""
+    cleaned = version.strip().lstrip("v")
+    parts = []
+    for chunk in cleaned.split("."):
+        digits = "".join(ch for ch in chunk if ch.isdigit())
+        if not digits:
+            break
+        parts.append(int(digits))
+    return tuple(parts)
+
+
+def sanitize_identifier(value: str, fallback: str = "main") -> str:
+    """Sanitize a user or branch supplied identifier for filesystem use."""
+    sanitized = value.strip().replace("/", "-")
+    sanitized = "".join(ch if ch.isalnum() or ch in "._-" else "-" for ch in sanitized)
+    while "--" in sanitized:
+        sanitized = sanitized.replace("--", "-")
+    sanitized = sanitized.strip("-.")
+    return sanitized or fallback
+
+
+def get_current_branch_name() -> str:
+    """Return current git branch name, or 'main' when unavailable."""
+    try:
+        result = subprocess.run(
+            ["git", "branch", "--show-current"],
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=Path.cwd(),
+        )
+        branch = result.stdout.strip()
+        return branch or "main"
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "main"
+
+
+def get_branch_workspace_dir(project_path: Path, branch: Optional[str] = None) -> Path:
+    """Return the branch-scoped MAP workspace directory."""
+    branch_name = sanitize_identifier(branch or get_current_branch_name())
+    return project_path / ".map" / branch_name
+
+
+def get_branch_artifact_templates(branch: str) -> Dict[str, str]:
+    """Return cook-inspired artifact templates aligned to MAP branch workspaces."""
+    return {
+        "research.md": f"# Research\n\n## Branch\n`{branch}`\n\n## Request\n\n## Context\n\n## Constraints\n\n## Related Files\n\n## Prior Art\n\n## Recommendation\n",
+        "implementation-plan.md": f"# Implementation Plan\n\n## Branch\n`{branch}`\n\n## Summary\n\n## Goals\n\n## Non-Goals\n\n## Steps\n1.\n2.\n3.\n\n## Validation Plan\n\n## Risks\n",
+        "decision-log.md": "# Decision Log\n\n## Decision\n\n## Options Considered\n\n## Chosen Approach\n\n## Consequences\n",
+        "devlog-001.md": "# Devlog 001\n\n## Changes\n\n## Notes\n\n## Verification\n",
+        "review-001.md": "# Review 001\n\n## Scope\n\n## Findings\n\n### High\n\n### Medium\n\n### Low\n\n## Verdict\n- [ ] Ready\n- [ ] Needs revision\n",
+        "qa-001.md": "# QA 001\n\n## Commands Run\n\n## Expected Result\n\n## Actual Result\n\n## Follow-ups\n",
+        "pr-draft.md": "# PR Draft\n\n## Summary\n\n## Validation\n\n## Risks / Rollback\n",
+    }
+
+
+def initialize_branch_workspace(
+    project_path: Path, branch: Optional[str] = None
+) -> Path:
+    """Create branch-scoped planning artifacts inside `.map/<branch>/`."""
+    branch_name = sanitize_identifier(branch or get_current_branch_name())
+    workspace_dir = get_branch_workspace_dir(project_path, branch_name)
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+
+    for file_name, content in get_branch_artifact_templates(branch_name).items():
+        destination = workspace_dir / file_name
+        if not destination.exists():
+            destination.write_text(content, encoding="utf-8")
+
+    return workspace_dir
+
+
+def get_branch_workspace_status(
+    project_path: Path, branch: Optional[str] = None
+) -> Dict[str, Any]:
+    """Collect status information for branch-scoped planning artifacts."""
+    branch_name = sanitize_identifier(branch or get_current_branch_name())
+    workspace_dir = get_branch_workspace_dir(project_path, branch_name)
+    expected_files = list(get_branch_artifact_templates(branch_name).keys())
+    existing_files = (
+        sorted(path.name for path in workspace_dir.iterdir())
+        if workspace_dir.exists()
+        else []
+    )
+    missing_files = [name for name in expected_files if name not in existing_files]
+    return {
+        "branch": branch_name,
+        "path": workspace_dir,
+        "exists": workspace_dir.exists(),
+        "existing_files": existing_files,
+        "missing_files": missing_files,
+        "is_complete": workspace_dir.exists() and not missing_files,
+    }
+
+
+def create_agent_files(project_path: Path, mcp_servers: List[str]) -> int:
+    """Create MAP agent files in .claude/agents/."""
     agents_dir = project_path / ".claude" / "agents"
     agents_dir.mkdir(parents=True, exist_ok=True)
 
@@ -518,6 +728,7 @@ def create_agent_files(project_path: Path, mcp_servers: List[str]) -> None:
 
         # Files to exclude from agent directory (documentation, not agents)
         exclude_files = {"README.md", "CHANGELOG.md", "MCP-PATTERNS.md"}
+        count = 0
 
         for agent_template in agents_template_dir.glob("*.md"):
             # Skip documentation files - they're not agents
@@ -525,6 +736,8 @@ def create_agent_files(project_path: Path, mcp_servers: List[str]) -> None:
                 continue
             dest_file = agents_dir / agent_template.name
             shutil.copy2(agent_template, dest_file)
+            count += 1
+        return count
     else:
         # Fallback: generate simplified versions if templates not found
         # NOTE: orchestrator removed (moved to slash commands in production architecture)
@@ -543,6 +756,7 @@ def create_agent_files(project_path: Path, mcp_servers: List[str]) -> None:
         for name, content in agents.items():
             agent_file = agents_dir / f"{name}.md"
             agent_file.write_text(content)
+        return len(agents)
 
 
 def create_task_decomposer_content(mcp_servers: List[str]) -> str:
@@ -953,8 +1167,8 @@ def create_reference_files(project_path: Path) -> int:
     return count
 
 
-def create_command_files(project_path: Path) -> None:
-    """Create MAP slash commands in .claude/commands/"""
+def create_command_files(project_path: Path) -> int:
+    """Create MAP slash commands in .claude/commands/."""
     commands_dir = project_path / ".claude" / "commands"
     commands_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1013,13 +1227,17 @@ Call Reflector to extract patterns from recent workflow.
         for name, content in commands.items():
             command_file = commands_dir / f"{name}.md"
             command_file.write_text(content)
+        return len(commands)
     else:
         # Copy templates from bundled directory
         import shutil
 
+        count = 0
         for command_template in commands_template_dir.glob("*.md"):
             dest_file = commands_dir / command_template.name
             shutil.copy2(command_template, dest_file)
+            count += 1
+        return count
 
 
 def create_skill_files(project_path: Path) -> int:
@@ -1058,20 +1276,16 @@ def create_skill_files(project_path: Path) -> int:
     return count
 
 
-def _copy_map_subdir(
-    map_template_dir: Path, map_dir: Path, subdir: str, executable_glob: str
-) -> int:
-    """Copy a subdirectory from map templates to .map/ and make scripts executable."""
+def _copy_map_path(src: Path, dest: Path) -> int:
+    """Copy a path from map templates to .map/ and mark scripts executable."""
     import shutil
 
-    src = map_template_dir / subdir
-    if not src.exists():
-        return 0
-
-    dest = map_dir / subdir
     if dest.exists():
         try:
-            shutil.rmtree(dest)
+            if dest.is_dir():
+                shutil.rmtree(dest)
+            else:
+                dest.unlink()
         except (OSError, PermissionError) as e:
             import sys
 
@@ -1079,17 +1293,23 @@ def _copy_map_subdir(
                 f"Warning: Could not remove existing {dest}: {e}",
                 file=sys.stderr,
             )
-    shutil.copytree(src, dest, dirs_exist_ok=True)
+    if src.is_dir():
+        shutil.copytree(src, dest, dirs_exist_ok=True)
+    else:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
 
     count = 0
-    for script in dest.rglob(executable_glob):
-        script.chmod(script.stat().st_mode | 0o755)
-        count += 1
+    script_targets = [dest] if dest.is_file() else list(dest.rglob("*"))
+    for script in script_targets:
+        if script.is_file() and script.suffix in (".sh", ".py"):
+            script.chmod(script.stat().st_mode | 0o755)
+            count += 1
     return count
 
 
 def create_map_tools(project_path: Path) -> int:
-    """Create .map/ directory with static analysis tools and orchestrator scripts."""
+    """Create .map/ directory with shipped MAP runtime and planning assets."""
     map_dir = project_path / ".map"
     map_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1098,8 +1318,8 @@ def create_map_tools(project_path: Path) -> int:
 
     count = 0
     if map_template_dir.exists():
-        count += _copy_map_subdir(map_template_dir, map_dir, "static-analysis", "*.sh")
-        count += _copy_map_subdir(map_template_dir, map_dir, "scripts", "*.py")
+        for item in map_template_dir.iterdir():
+            count += _copy_map_path(item, map_dir / item.name)
 
     return count
 
@@ -1727,10 +1947,17 @@ This directory contains custom slash commands for Claude Code.
 ## Available Commands
 
 - `/map-efficient` - Implement features with optimized workflow (recommended)
+- `/map-plan` - Decompose work without implementing it yet
+- `/map-task` - Execute a single subtask from an existing plan
+- `/map-tdd` - Run a test-first workflow for one task or plan
 - `/map-debug` - Debug issues using MAP analysis
+- `/map-debate` - Generate variants and synthesize the best result
+- `/map-review` - Run a structured review workflow
+- `/map-check` - Run workflow quality gates and verification
 - `/map-fast` - Quick implementation with minimal validation
 - `/map-learn` - Extract lessons from completed workflows
 - `/map-release` - Execute MAP Framework package release workflow
+- `/map-resume` - Resume an interrupted workflow from `.map/`
 
 ## Creating Custom Commands
 
@@ -1906,9 +2133,9 @@ def init(
     else:
         # Type assertion: flow guarantees project_name is not None here
         # (checked at line 1931, and not in use_current_dir branch)
-        assert (
-            project_name is not None
-        ), "project_name must be set in non-current-dir mode"
+        assert project_name is not None, (
+            "project_name must be set in non-current-dir mode"
+        )
         project_path = Path(project_name).resolve()
         if project_path.exists():
             console.print(
@@ -1967,13 +2194,15 @@ def init(
     # Create MAP files
     tracker.add("create-agents", "Create MAP agents")
     tracker.start("create-agents")
-    create_agent_files(project_path, selected_mcp_servers)
-    tracker.complete("create-agents", "12 agents")
+    agent_count = create_agent_files(project_path, selected_mcp_servers)
+    agent_word = "agent" if agent_count == 1 else "agents"
+    tracker.complete("create-agents", f"{agent_count} {agent_word}")
 
     tracker.add("create-commands", "Create slash commands")
     tracker.start("create-commands")
-    create_command_files(project_path)
-    tracker.complete("create-commands", "10 commands")
+    command_count = create_command_files(project_path)
+    command_word = "command" if command_count == 1 else "commands"
+    tracker.complete("create-commands", f"{command_count} {command_word}")
 
     tracker.add("create-skills", "Create skills")
     tracker.start("create-skills")
@@ -2071,6 +2300,9 @@ def init(
     steps_lines.append(
         "   • [cyan]/map-learn[/] - Extract lessons from completed workflows"
     )
+    steps_lines.append(
+        f"{step_num + 1}. Run [cyan]/map-plan[/cyan] first when you want branch-scoped research, spec, and plan artifacts in `.map/<branch>/`"
+    )
 
     steps_panel = Panel(
         "\n".join(steps_lines), title="Next Steps", border_style="cyan", padding=(1, 2)
@@ -2095,7 +2327,7 @@ def check(debug: bool = typer.Option(False, "--debug", help="Enable debug loggin
             "command_start", "mapify check", metadata={"debug": debug}
         )
     show_banner()
-    console.print("[bold]Checking for installed tools...[/bold]\n")
+    console.print("[bold]Checking MAP Framework environment...[/bold]\n")
 
     tracker = StepTracker("Check Available Tools")
 
@@ -2118,36 +2350,259 @@ def check(debug: bool = typer.Option(False, "--debug", help="Enable debug loggin
             tracker.error(tool, "not found")
             results[tool] = False
 
+    health = get_project_health(Path.cwd())
+
+    tracker.add("project", "Detect MAP project")
+    if health["initialized"]:
+        tracker.complete("project", "initialized")
+    else:
+        tracker.error("project", "not initialized")
+
+    tracker.add("templates", "Inspect bundled templates")
+    if health["expected_agents"] and health["expected_commands"]:
+        tracker.complete(
+            "templates",
+            f"{health['expected_agents']} agents, {health['expected_commands']} commands",
+        )
+    else:
+        tracker.error("templates", "missing bundled templates")
+
+    tracker.add("mcp", "Check supported MCP servers")
+    supported_servers = sorted(build_standard_mcp_servers().keys())
+    unsupported_servers = [s for s in supported_servers if not check_mcp_server(s)]
+    if unsupported_servers:
+        tracker.error("mcp", f"unsupported: {', '.join(unsupported_servers)}")
+    else:
+        tracker.complete("mcp", ", ".join(supported_servers) or "none")
+
     console.print(tracker.render())
     console.print()
 
-    if all(results.values()):
+    if all(results.values()) and health["initialized"]:
         console.print(
             "[bold green]All tools are installed! MAP Framework is ready to use.[/bold green]"
         )
     else:
-        console.print("[yellow]Some tools are missing:[/yellow]")
+        console.print("[yellow]MAP environment needs attention:[/yellow]")
         if not results.get("git"):
             console.print("  • Install git: https://git-scm.com/downloads")
         if not results.get("claude"):
             console.print(
                 "  • Install Claude Code: https://docs.anthropic.com/en/docs/claude-code/setup"
             )
+        if not health["initialized"]:
+            console.print("  • Initialize this directory: mapify init .")
+
+
+@app.command()
+def doctor(debug: bool = typer.Option(False, "--debug", help="Enable debug logging")):
+    """Run a detailed MAP project readiness diagnosis."""
+    if is_debug_enabled(debug):
+        from mapify_cli.workflow_logger import MapWorkflowLogger
+
+        workflow_logger = MapWorkflowLogger(Path.cwd(), enabled=True)
+        log_file = workflow_logger.start_session(
+            task_id=f"mapify_doctor_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        )
+        console.print(f"[dim]Debug logging enabled: {log_file}[/dim]")
+        workflow_logger.log_event(
+            "command_start", "mapify doctor", metadata={"debug": debug}
+        )
+
+    show_banner()
+    console.print("[bold]Running MAP doctor...[/bold]\n")
+
+    project_path = Path.cwd()
+    health = get_project_health(project_path)
+    tracker = StepTracker("MAP Doctor")
+
+    for tool_name, description in [
+        ("git", "Git version control"),
+        ("claude", "Claude Code CLI"),
+    ]:
+        tracker.add(tool_name, description)
+        if check_tool(tool_name):
+            tracker.complete(tool_name, "available")
+        else:
+            tracker.error(tool_name, "not found")
+
+    tracker.add("project", "MAP project structure")
+    if not health["missing_paths"]:
+        tracker.complete("project", "all core paths present")
+    else:
+        tracker.error("project", f"missing {len(health['missing_paths'])} path(s)")
+
+    tracker.add("templates", "Installed template counts")
+    if (
+        health["installed_agents"] == health["expected_agents"]
+        and health["installed_commands"] == health["expected_commands"]
+    ):
+        tracker.complete(
+            "templates",
+            f"{health['installed_agents']}/{health['expected_agents']} agents, "
+            f"{health['installed_commands']}/{health['expected_commands']} commands",
+        )
+    else:
+        tracker.error(
+            "templates",
+            f"agents {health['installed_agents']}/{health['expected_agents']}, "
+            f"commands {health['installed_commands']}/{health['expected_commands']}",
+        )
+
+    tracker.add("planning", "Branch workspace artifacts")
+    if health["branch_workspace_exists"]:
+        tracker.complete(
+            "planning",
+            f"branch {health['current_branch']}: {health['branch_artifact_count']}/{len(health['branch_artifact_files'])} artifacts",
+        )
+    else:
+        tracker.error("planning", f"missing .map/{health['current_branch']}")
+
+    tracker.add("mcp", "Project MCP configuration")
+    if health["has_project_mcp"]:
+        if health["project_mcp_valid"]:
+            tracker.complete("mcp", ".mcp.json valid")
+        else:
+            tracker.error("mcp", ".mcp.json unreadable")
+    elif health["has_internal_mcp"]:
+        tracker.complete("mcp", "internal config only")
+    else:
+        tracker.complete("mcp", "no MCP config")
+
+    console.print(tracker.render())
+    console.print()
+
+    details = Table(title="Doctor Details", show_header=True, header_style="bold cyan")
+    details.add_column("Check")
+    details.add_column("Status")
+    details.add_column("Details")
+    details.add_row(
+        "Project",
+        "OK" if health["initialized"] else "Needs init",
+        ".claude + workflow configs detected"
+        if health["initialized"]
+        else "Run `mapify init .`",
+    )
+    details.add_row(
+        "Agents",
+        f"{health['installed_agents']}/{health['expected_agents']}",
+        "Installed vs bundled agent templates",
+    )
+    details.add_row(
+        "Commands",
+        f"{health['installed_commands']}/{health['expected_commands']}",
+        "Installed vs bundled slash commands",
+    )
+    details.add_row(
+        "Planning",
+        (
+            f"{health['branch_artifact_count']}/{len(health['branch_artifact_files'])}"
+            if health["branch_workspace_exists"]
+            else "missing"
+        ),
+        f"Current branch workspace: .map/{health['current_branch']}/",
+    )
+    details.add_row(
+        "MCP",
+        "valid"
+        if health["project_mcp_valid"]
+        else ("present" if health["has_project_mcp"] else "not configured"),
+        ".mcp.json status",
+    )
+    console.print(details)
+
+    if health["missing_paths"]:
+        console.print()
+        console.print("[yellow]Missing core paths:[/yellow]")
+        for path_name in health["missing_paths"]:
+            console.print(f"  • {path_name}")
 
 
 @app.command()
 def upgrade():
     """Upgrade MAP agents to the latest version."""
     show_banner()
+    project_path = Path.cwd()
+
+    if not is_map_initialized(project_path):
+        console.print(
+            "[yellow]MAP Framework not initialized in this directory.[/yellow]"
+        )
+        console.print("Run: [cyan]mapify init .[/cyan]")
+        raise typer.Exit(0)
+
     console.print("[cyan]Checking for updates...[/cyan]")
+    latest_release = get_latest_release("azalio", "map-framework")
+    latest_version = None
 
-    # In a real implementation, this would:
-    # 1. Fetch latest release from GitHub
-    # 2. Compare versions
-    # 3. Update agents if newer version available
+    if latest_release and latest_release.get("tag_name"):
+        latest_version = latest_release["tag_name"].lstrip("v")
+        if parse_version(latest_version) > parse_version(__version__):
+            console.print(
+                f"[yellow]New version available:[/yellow] {latest_version} "
+                f"(installed {__version__})"
+            )
+            if latest_release.get("html_url"):
+                console.print(f"Release: [cyan]{latest_release['html_url']}[/cyan]")
+        else:
+            console.print(
+                f"[green]You are on the latest installed version ({__version__}).[/green]"
+            )
+    else:
+        console.print(
+            "[dim]Could not fetch release metadata; refreshing local templates anyway.[/dim]"
+        )
 
-    console.print("[yellow]Upgrade feature coming soon![/yellow]")
-    console.print("For now, run: [cyan]mapify init . --force[/cyan] to update agents")
+    tracker = StepTracker("Upgrade MAP Framework Files")
+
+    tracker.add("agents", "Refresh agent templates")
+    tracker.start("agents")
+    agent_count = create_agent_files(project_path, [])
+    tracker.complete("agents", f"{agent_count} files")
+
+    tracker.add("commands", "Refresh slash commands")
+    tracker.start("commands")
+    command_count = create_command_files(project_path)
+    tracker.complete("commands", f"{command_count} files")
+
+    tracker.add("skills", "Refresh skills")
+    tracker.start("skills")
+    skill_count = create_skill_files(project_path)
+    tracker.complete("skills", f"{skill_count} folders")
+
+    tracker.add("references", "Refresh reference files")
+    tracker.start("references")
+    ref_count = create_reference_files(project_path)
+    tracker.complete("references", f"{ref_count} files")
+
+    tracker.add("hooks", "Refresh shared hooks")
+    tracker.start("hooks")
+    hook_count = create_hook_files(project_path)
+    tracker.complete("hooks", f"{hook_count} files")
+
+    tracker.add("configs", "Refresh config files")
+    tracker.start("configs")
+    config_count = create_config_files(project_path)
+    tracker.complete("configs", f"{config_count} files")
+
+    tracker.add("permissions", "Merge local approvals")
+    tracker.start("permissions")
+    create_or_merge_project_settings_local(project_path)
+    tracker.complete("permissions", "settings.local.json updated")
+
+    if (project_path / ".claude" / "mcp_config.json").exists() or (
+        project_path / ".mcp.json"
+    ).exists():
+        tracker.add("mcp", "Preserve MCP config")
+        tracker.complete("mcp", "left unchanged")
+
+    console.print()
+    console.print(tracker.render())
+    console.print()
+    console.print("[bold green]Upgrade complete.[/bold green]")
+    console.print(
+        "[dim]Note: upgrade refreshes shipped MAP files but does not overwrite project-specific MCP selections.[/dim]"
+    )
 
 
 # Validate commands

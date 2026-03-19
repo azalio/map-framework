@@ -91,7 +91,7 @@
               "type": "string",
               "required": false,
               "flag": "--mcp",
-              "enum": ["all", "essential", "docs", "none", "comma-separated-list"],
+              "enum": ["all", "essential", "none", "comma-separated-list"],
               "description": "MCP servers to enable"
             },
             "no-git": {
@@ -125,7 +125,7 @@
           ]
         },
         "check": {
-          "description": "Check that all required tools are installed",
+          "description": "Quick environment check for tools, MAP initialization, bundled templates, and supported MCP servers",
           "usage": "mapify check [OPTIONS]",
           "parameters": {
             "debug": {
@@ -139,7 +139,7 @@
           "examples": [
             {
               "command": "mapify check",
-              "description": "Verify all dependencies are installed"
+              "description": "Verify tool availability and MAP project readiness"
             },
             {
               "command": "mapify check --debug",
@@ -147,14 +147,37 @@
             }
           ]
         },
+        "doctor": {
+          "description": "Run a detailed MAP project readiness diagnosis",
+          "usage": "mapify doctor [OPTIONS]",
+          "parameters": {
+            "debug": {
+              "type": "boolean",
+              "required": false,
+              "flag": "--debug",
+              "default": false,
+              "description": "Enable debug logging"
+            }
+          },
+          "examples": [
+            {
+              "command": "mapify doctor",
+              "description": "Diagnose current project state"
+            },
+            {
+              "command": "mapify doctor --debug",
+              "description": "Diagnose with debug logging"
+            }
+          ]
+        },
         "upgrade": {
-          "description": "Upgrade MAP agents to the latest version",
+          "description": "Refresh MAP Framework files in the current project",
           "usage": "mapify upgrade",
           "parameters": {},
           "examples": [
             {
               "command": "mapify upgrade",
-              "description": "Update agent templates to latest version"
+              "description": "Refresh shipped MAP files in the current project"
             }
           ]
         }
@@ -188,8 +211,8 @@
       "@app.command() decorators",
       "@validate_app.command() decorators"
     ],
-    "version": "Based on map-framework 4.0.0",
-    "last_updated": "2026-02-15",
+    "version": "Based on map-framework 3.5.0",
+    "last_updated": "2026-03-19",
     "related_docs": [
       "docs/USAGE.md",
       "docs/ARCHITECTURE.md",

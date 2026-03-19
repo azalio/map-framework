@@ -93,6 +93,24 @@ git status
 
 Save the diff output — it will be passed to all 3 agents.
 
+### Step A.1b: Load canonical review handoff
+
+Before launching agents, load the branch-scoped review handoff so review works from accumulated MAP artifacts instead of reconstructing context ad hoc:
+
+```bash
+HANDOFF=$(python3 .map/scripts/map_step_runner.py build_review_handoff)
+```
+
+This handoff should surface, when present:
+- latest `plan-review-00N.md`
+- latest `code-review-00N.md`
+- `verification-summary.md`
+- `qa-001.md`
+- `pr-draft.md`
+- `active-issues.json`
+
+Use these artifacts as the primary reviewer context before relying on raw diff analysis alone.
+
 ### Step A.2: Launch all parallel calls
 
 In **ONE message**, launch all 3 calls in parallel (no dependencies between them):
@@ -280,6 +298,46 @@ Present the verdict with a summary table:
 - Predictor risk assessment
 - Key issues resolved during interactive review
 - Remaining action items
+
+## Handoff Artifact Update
+
+After the final verdict, update branch-scoped handoff artifacts so review output survives beyond the chat:
+
+1. Write or append the most important review findings into the next `code-review-00N.md`
+2. Persist final review gate + active unresolved set:
+
+```bash
+python3 .map/scripts/map_step_runner.py write_stage_gate \
+  review \
+  ready \
+  code-review-001.md \
+  "Final review passed"
+
+python3 .map/scripts/map_step_runner.py ensure_active_issues_file
+python3 .map/scripts/map_step_runner.py replace_active_issues \
+  review \
+  code-review-001.md \
+  "- [remaining reviewer action items, or '(None)']"
+```
+
+Map verdicts to gate values:
+- `PROCEED` -> `ready`
+- `REVISE` -> `needs-revision`
+- `BLOCK` -> `blocked`
+
+2. Rebuild the PR handoff from current artifacts:
+
+```bash
+BUNDLE=$(python3 .map/scripts/map_step_runner.py build_handoff_bundle)
+SUMMARY=$(echo "$BUNDLE" | jq -r '.summary')
+VALIDATION=$(echo "$BUNDLE" | jq -r '.validation')
+RISKS=$(echo "$BUNDLE" | jq -r '.risks_follow_up')
+python3 .map/scripts/map_step_runner.py write_pr_draft "$SUMMARY" "$VALIDATION" "$RISKS"
+```
+
+This keeps `pr-draft.md` aligned with the latest review verdict and follow-up work.
+
+`active-issues.json` is the current unresolved set. Historical issues remain in `plan-review-00N.md`, `code-review-00N.md`, `qa-001.md`, and run dossiers under `.map/<branch>/runs/`.
 
 ## CI/Auto Mode Behavior
 

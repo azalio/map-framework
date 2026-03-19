@@ -10,7 +10,7 @@
       "id": "map-framework",
       "name": "MAP Framework",
       "version": "1.0.0",
-      "description": "Modular Agentic Planner - Cognitive architecture for AI agents inspired by prefrontal cortex functions. Orchestrates 12 specialized agents for development with automatic quality validation.",
+      "description": "Modular Agentic Planner - Cognitive architecture for AI agents inspired by prefrontal cortex functions. Orchestrates 11 specialized agents for development with automatic quality validation.",
       "author": "azalio",
       "license": "MIT",
       "source": "github:azalio/map-framework",
@@ -33,7 +33,7 @@
       "features": [
         "11 specialized agents (TaskDecomposer, Actor, Monitor, Predictor, Evaluator, Reflector, DocumentationReviewer, Debate-Arbiter, Synthesizer, Research-Agent, Final-Verifier)",
         "5 Claude Code hooks for automation",
-        "10 slash commands (/map-efficient, /map-debug, /map-fast, /map-debate, /map-review, /map-check, /map-plan, /map-release, /map-resume, /map-learn)",
+        "12 slash commands (/map-efficient, /map-debug, /map-fast, /map-debate, /map-review, /map-check, /map-plan, /map-task, /map-tdd, /map-release, /map-resume, /map-learn)",
         "Professional code review integration",
         "Cost optimization (40-60% savings)"
       ],

@@ -2,6 +2,42 @@
 
 Complete usage examples, best practices, and optimization strategies for the MAP Framework.
 
+For long-running work, the canonical MAP flows maintain branch-scoped artifacts directly inside `.map/<branch>/`, so research, session logs, code-review lineage, verification summaries, PR drafts, and run dossiers survive context resets.
+
+## Canonical Flows
+
+### Standard flow
+
+```bash
+/map-plan clarify scope and decompose the task
+/map-efficient implement the approved plan
+/map-check
+/map-review
+```
+
+### Full TDD flow
+
+```bash
+/map-plan define the behavior and subtasks
+/map-tdd implement with test-first phases enabled
+/map-check
+/map-review
+```
+
+### Targeted subtask TDD flow
+
+```bash
+/map-plan decompose work into subtasks
+/map-tdd ST-001
+/map-task ST-001
+/map-tdd ST-002
+/map-task ST-002
+/map-check
+/map-review
+```
+
+The full TDD flow is the primary test-first path. The targeted subtask flow is the fine-grained variant when you want to drive one subtask at a time.
+
 ## Navigation
 
 - [Usage Examples](#usage-examples)

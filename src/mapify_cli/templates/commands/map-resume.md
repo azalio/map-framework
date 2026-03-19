@@ -61,7 +61,7 @@ No recovery needed.
 
 ## Step 2: Load and Display Progress
 
-Read both state files and the task plan to display progress summary:
+Read both state files, the task plan, and branch artifacts to display a briefing:
 
 ```bash
 BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
@@ -70,6 +70,12 @@ BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|
 # .map/${BRANCH}/step_state.json — current orchestrator state
 # .map/${BRANCH}/workflow_state.json — subtask completion status
 # .map/${BRANCH}/task_plan_${BRANCH}.md — full plan with AAG contracts
+```
+
+Also query orchestrator plan progress for the canonical resume briefing:
+
+```bash
+PROGRESS=$(python3 .map/scripts/map_orchestrator.py get_plan_progress)
 ```
 
 Parse the state and display:
@@ -82,6 +88,23 @@ Parse the state and display:
 **Current Step:** [current_step from step_state.json]
 **Current Phase:** [phase name from step_state.json]
 **Started:** [started_at from workflow_state.json]
+
+### Resume Briefing
+
+- **Suggested next subtask:** [from `suggested_next`]
+- **Latest verification verdict:** [from `resume_briefing.latest_verification_verdict` or "none"]
+- **Latest review artifact:** [from `resume_briefing.latest_review_path` or "none"]
+- **Immediate next action:** [first item from `next_action[]` if present, else "resume current step"]
+
+### Requested Fixes / Follow-ups
+
+- [items from `resume_briefing.suggested_fixes[]`, if any]
+
+### Recent Session Context
+
+```text
+[recent_session_log excerpt]
+```
 
 ### Progress Overview
 
@@ -137,6 +160,8 @@ Before resuming, read:
 1. `.map/<branch>/step_state.json` — current orchestrator state
 2. `.map/<branch>/workflow_state.json` — subtask completion
 3. `.map/<branch>/task_plan_<branch>.md` — full task decomposition with AAG contracts
+4. `python3 .map/scripts/map_orchestrator.py get_plan_progress` — canonical plan + briefing payload
+5. `.map/<branch>/session-log.md` / `.map/<branch>/verification-summary.md` — extra detail if needed
 
 **Resume via orchestrator:**
 
@@ -156,11 +181,14 @@ For each step, route to the appropriate executor based on `$PHASE` (ACTOR, MONIT
 
 **For each remaining subtask:**
 
-1. **Get next step** from orchestrator
-2. **Execute phase** (Actor → Monitor → Predictor → etc.)
-3. **Validate step** via `map_orchestrator.py validate_step`
-4. **Update state** automatically via orchestrator
-5. **Continue** to next step until workflow complete
+1. **Review the briefing first** to see latest verdict, fixes, and next action
+2. **Get next step** from orchestrator
+3. **Execute phase** (Actor → Monitor → Predictor → etc.)
+4. **Validate step** via `map_orchestrator.py validate_step`
+5. **Update state** automatically via orchestrator
+6. **Continue** to next step until workflow complete
+
+Resume should prioritize the explicit next action from the briefing. Do not improvise a new plan if the artifact trail already indicates the required fix or next subtask.
 
 **If Monitor returns `valid: false`:**
 - Retry Actor with feedback (max 5 iterations, tracked in step_state.json)
@@ -387,6 +415,8 @@ When resuming:
 1. Read `step_state.json` for orchestrator position (current step + subtask)
 2. Read `workflow_state.json` for completed/pending subtask list
 3. Read `task_plan_<branch>.md` for AAG contracts and validation criteria
+4. Read `session-log.md` for latest human-readable iteration history before resuming
+5. If present, read `verification-summary.md` to understand the latest final verdict or remaining issues
 4. Call `map_orchestrator.py get_next_step` to determine next action
 5. Continue phase-based execution from that point
 

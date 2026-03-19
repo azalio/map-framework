@@ -245,6 +245,40 @@ if [[ -n $(git status --porcelain) ]]; then
 fi
 ```
 
+### Step 5b: Record Run Summary and Known Issues
+
+After each major gate (tests, lint, final verifier), write a compact run summary and a timestamped run dossier under `.map/<branch>/runs/<timestamp>/`, and keep accepted blockers in `.map/<branch>/known-issues.json`.
+
+Examples:
+
+```bash
+python3 .map/scripts/diagnostics.py summarize \
+  --tool tests \
+  --command "$TEST_CMD" \
+  --exit-code $? \
+  --summary "Pytest run for branch verification" \
+  --known-issues ".map/${BRANCH}/known-issues.json" \
+  --notes "Capture any deviations, flaky behavior, or environment quirks here"
+
+python3 .map/scripts/map_step_runner.py ensure_known_issues_file
+python3 .map/scripts/map_step_runner.py add_known_issue "Flaky integration test in CI" accepted "Non-blocking for local verification; tracked for follow-up"
+```
+
+Use `known-issues.json` only for issues intentionally accepted or deferred. Do NOT hide new blocking failures there.
+
+Run dossier contract:
+
+- `.map/<branch>/runs/<timestamp>/RESULTS.md` — mandatory
+- `.map/<branch>/runs/<timestamp>/NOTES.md` — optional
+
+`RESULTS.md` should act as the canonical historical record for that verification run and include:
+- setup/context
+- summary verdict
+- test matrix row(s)
+- detailed results
+- bugs/blockers found
+- accepted/deferred issues count
+
 ### Step 6: Update Workflow State (Complete)
 
 If verification passes, mark workflow complete:
@@ -254,6 +288,75 @@ jq '.current_state = "WORKFLOW_COMPLETE" | .completed_at = "'$(date -u +%Y-%m-%d
 ```
 
 ### Step 7: Output Verification Report
+
+Before printing the console report, update `.map/<branch>/verification-summary.md` with:
+
+```bash
+python3 .map/scripts/map_step_runner.py write_verification_summary "READY FOR REVIEW" "<task title>" "- pytest ...,- ruff ..." "- key findings" "- open PR"
+```
+
+This file should be a compact human-readable report with:
+- branch and task title
+- overall verdict (`READY FOR REVIEW` or `NEEDS WORK`)
+- commands/tests run
+- key failures or warnings
+- recommended next step
+
+Then persist canonical verification handoff artifacts:
+
+```bash
+# Machine-readable gate semantics
+python3 .map/scripts/map_step_runner.py write_stage_gate \
+  verification \
+  ready \
+  verification-summary.md \
+  "Verification passed and branch is ready for review"
+
+# Current unresolved set for the branch/workflow stage
+python3 .map/scripts/map_step_runner.py ensure_active_issues_file
+python3 .map/scripts/map_step_runner.py replace_active_issues \
+  verification \
+  verification-summary.md \
+  "- [list unresolved verification issues here, or '(None)']"
+```
+
+Use these verdict mappings consistently:
+- `ready` — verification passed, safe to move to `/map-review`
+- `needs-revision` — implementation changes required before review
+- `blocked` — external/tooling/environment issue prevents safe progress
+
+Then build a handoff bundle and update `.map/<branch>/pr-draft.md` from the collected artifacts:
+
+```bash
+BUNDLE=$(python3 .map/scripts/map_step_runner.py build_handoff_bundle)
+SUMMARY=$(echo "$BUNDLE" | jq -r '.summary')
+VALIDATION=$(echo "$BUNDLE" | jq -r '.validation')
+RISKS=$(echo "$BUNDLE" | jq -r '.risks_follow_up')
+python3 .map/scripts/map_step_runner.py write_pr_draft "$SUMMARY" "$VALIDATION" "$RISKS"
+```
+
+This ensures `pr-draft.md` is built from actual workflow artifacts instead of freeform memory.
+It also means `/map-review` can consume a single consolidated verification handoff instead of re-deriving the branch state from scratch.
+
+Recommended format:
+
+```markdown
+# Verification Summary
+
+- Branch: <branch>
+- Task: <title>
+- Verdict: READY FOR REVIEW | NEEDS WORK
+
+## Checks Run
+- pytest ...
+- ruff ...
+
+## Findings
+- ...
+
+## Next Action
+- ...
+```
 
 Print detailed verification results:
 
