@@ -89,6 +89,7 @@ def write_run_dossier(
     summary: str,
     diagnostics_payload: dict[str, Any],
     accepted_issue_count: int,
+    deferred_issue_count: int,
     notes: str = "",
 ) -> dict[str, str]:
     """Write a timestamped run dossier with RESULTS.md and optional NOTES.md."""
@@ -108,7 +109,7 @@ def write_run_dossier(
         issue_lines = "- (None)"
 
     content = (
-        "# Testing Results\n\n"
+        "# Run Results\n\n"
         "## Setup\n"
         f"- Branch: {branch}\n"
         f"- Tool: {tool}\n"
@@ -116,20 +117,21 @@ def write_run_dossier(
         "## Summary\n"
         f"- Status: {status.upper()}\n"
         f"- Summary: {summary}\n\n"
-        "## Test Matrix\n"
-        "| Check | Result | Notes |\n"
+        "## Check Matrix\n"
+        "| Tool | Result | Notes |\n"
         "|---|---|---|\n"
         f"| {tool} | {status.upper()} | {summary} |\n\n"
         "## Detailed Results\n"
         f"- Issue count: {len(issues)}\n"
         f"- Accepted issue count: {accepted_issue_count}\n"
+        f"- Deferred issue count: {deferred_issue_count}\n"
         f"- Diagnostics source: {diagnostics_path or '[not recorded]'}\n\n"
         "## Bugs / Blockers Found\n"
         f"{issue_lines}\n\n"
         "## Accepted / Deferred Issues\n"
         + (
-            f"- {accepted_issue_count} accepted/deferred issue(s) recorded in known-issues.json\n"
-            if accepted_issue_count
+            f"- {accepted_issue_count} accepted and {deferred_issue_count} deferred issue(s) recorded in known-issues.json\n"
+            if accepted_issue_count or deferred_issue_count
             else "- (None)\n"
         )
     )
@@ -231,23 +233,32 @@ def cmd_summarize(args: argparse.Namespace) -> int:
     )
     diagnostics_payload: dict[str, Any] = {}
     if diagnostics_path.exists():
-        diagnostics_payload = json.loads(
-            diagnostics_path.read_text(encoding="utf-8", errors="replace")
-        )
+        try:
+            diagnostics_payload = json.loads(
+                diagnostics_path.read_text(encoding="utf-8", errors="replace")
+            )
+        except json.JSONDecodeError:
+            diagnostics_payload = {}
 
     known_issues = []
     if args.known_issues:
         known_path = Path(args.known_issues)
         if known_path.exists():
-            known_payload = json.loads(
-                known_path.read_text(encoding="utf-8", errors="replace")
-            )
-            known_issues = known_payload.get("issues", [])
+            try:
+                known_payload = json.loads(
+                    known_path.read_text(encoding="utf-8", errors="replace")
+                )
+                known_issues = known_payload.get("issues", [])
+            except json.JSONDecodeError:
+                known_issues = []
 
     issues = diagnostics_payload.get("issues", [])
     status = "passed" if args.exit_code == 0 else "failed"
     accepted_issue_count = sum(
         1 for issue in known_issues if issue.get("status") == "accepted"
+    )
+    deferred_issue_count = sum(
+        1 for issue in known_issues if issue.get("status") == "deferred"
     )
 
     payload = {
@@ -277,6 +288,7 @@ def cmd_summarize(args: argparse.Namespace) -> int:
             "diagnostics_path": payload["diagnostics_path"],
         },
         accepted_issue_count=accepted_issue_count,
+        deferred_issue_count=deferred_issue_count,
         notes=args.notes,
     )
     payload.update(dossier)

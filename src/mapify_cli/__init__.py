@@ -609,6 +609,9 @@ def get_project_health(project_path: Path) -> Dict[str, Any]:
             else []
         ),
         "branch_artifact_files": branch_artifact_files,
+        "numbered_artifact_prefixes": numbered_artifact_prefixes,
+        "expected_branch_artifact_count": len(branch_artifact_files)
+        + len(numbered_artifact_prefixes),
         "branch_artifact_count": (
             len(
                 [name for name in branch_artifact_files if (branch_dir / name).exists()]
@@ -2456,7 +2459,7 @@ def doctor(debug: bool = typer.Option(False, "--debug", help="Enable debug loggi
     if health["branch_workspace_exists"]:
         tracker.complete(
             "planning",
-            f"branch {health['current_branch']}: {health['branch_artifact_count']}/{len(health['branch_artifact_files'])} artifacts",
+            f"branch {health['current_branch']}: {health['branch_artifact_count']}/{health['expected_branch_artifact_count']} artifacts",
         )
     else:
         tracker.error("planning", f"missing .map/{health['current_branch']}")
@@ -2499,7 +2502,7 @@ def doctor(debug: bool = typer.Option(False, "--debug", help="Enable debug loggi
     details.add_row(
         "Planning",
         (
-            f"{health['branch_artifact_count']}/{len(health['branch_artifact_files'])}"
+            f"{health['branch_artifact_count']}/{health['expected_branch_artifact_count']}"
             if health["branch_workspace_exists"]
             else "missing"
         ),

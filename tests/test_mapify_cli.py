@@ -394,7 +394,7 @@ class TestInitCommand:
         assert (tmp_path / ".claude" / "agents").exists()
         assert (tmp_path / ".claude" / "mcp_config.json").exists()
 
-        # Verify all 4 MCP servers are configured
+        # Verify default MCP servers are configured
         mcp_config = json.loads((tmp_path / ".claude" / "mcp_config.json").read_text())
         expected_servers = [
             "sequential-thinking",
@@ -407,9 +407,9 @@ class TestInitCommand:
                 f"MCP server '{server}' not found in config"
             )
 
-        # Verify exactly 4 servers (no extras)
-        assert len(mcp_config["mcp_servers"]) == 4, (
-            f"Expected 4 servers, found {len(mcp_config['mcp_servers'])}"
+        # Verify exactly the expected default set (no extras)
+        assert sorted(mcp_config["mcp_servers"]) == sorted(expected_servers), (
+            f"Expected default MCP servers {expected_servers}, found {mcp_config['mcp_servers']}"
         )
 
     def test_init_force_no_prompts(self, tmp_path):

@@ -11,8 +11,8 @@ Complete reference for all mapify CLI commands with correct syntax, parameters, 
 - [Root Commands](#root-commands)
   - [init](#mapify-init)
   - [check](#mapify-check)
-  - [doctor](#mapify-doctor)
   - [upgrade](#mapify-upgrade)
+  - [doctor](#mapify-doctor)
 - [Common Mistakes](#common-mistakes)
 
 ---

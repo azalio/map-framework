@@ -39,7 +39,15 @@ def test_cmd_summarize_writes_run_summary(branch_workspace):
     )
     known_issues_file = branch_workspace / "known-issues.json"
     known_issues_file.write_text(
-        json.dumps({"issues": [{"title": "Flaky test", "status": "accepted"}]}) + "\n",
+        json.dumps(
+            {
+                "issues": [
+                    {"title": "Flaky test", "status": "accepted"},
+                    {"title": "Manual repro pending", "status": "deferred"},
+                ]
+            }
+        )
+        + "\n",
         encoding="utf-8",
     )
 
@@ -76,8 +84,41 @@ def test_cmd_summarize_writes_run_summary(branch_workspace):
     assert results_path.exists()
     assert results_path.name == "RESULTS.md"
     results = results_path.read_text(encoding="utf-8")
-    assert "Testing Results" in results
+    assert "Run Results" in results
+    assert "Deferred issue count: 1" in results
     assert "Pytest failed" in results
     notes_path = Path(payload["notes_path"])
     assert notes_path.exists()
     assert "Observed flaky timing" in notes_path.read_text(encoding="utf-8")
+
+
+def test_cmd_summarize_handles_invalid_json_gracefully(branch_workspace):
+    diagnostics_file = branch_workspace / "diagnostics.json"
+    diagnostics_file.write_text("{invalid json\n", encoding="utf-8")
+    known_issues_file = branch_workspace / "known-issues.json"
+    known_issues_file.write_text("{invalid json\n", encoding="utf-8")
+
+    args = type(
+        "Args",
+        (),
+        {
+            "branch": "",
+            "out": "",
+            "diagnostics": str(diagnostics_file),
+            "known_issues": str(known_issues_file),
+            "tool": "lint",
+            "command": "ruff check .",
+            "exit_code": 0,
+            "summary": "Lint passed",
+            "notes": "",
+        },
+    )()
+
+    result = diagnostics.cmd_summarize(args)
+    assert result == 0
+
+    payload = json.loads(
+        (branch_workspace / "run-summary.json").read_text(encoding="utf-8")
+    )
+    assert payload["status"] == "passed"
+    assert payload["issue_count"] == 0
