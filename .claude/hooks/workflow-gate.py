@@ -169,11 +169,16 @@ def check_constraints(branch: str, target_paths: list[str]) -> Optional[str]:
     # scope_glob
     scope_glob = constraints.get("scope_glob")
     if scope_glob and target_paths:
+        repo_root = Path.cwd().resolve()
         for tp in target_paths:
+            resolved = Path(tp).resolve()
             try:
-                rel = str(Path(tp).resolve().relative_to(Path.cwd().resolve()))
+                rel = str(resolved.relative_to(repo_root))
             except ValueError:
-                rel = tp
+                return (
+                    f"Constraint: scope_glob='{scope_glob}'\n"
+                    f"File '{resolved}' resolves outside repository root."
+                )
             if not fnmatch(rel, scope_glob):
                 return (
                     f"Constraint: scope_glob='{scope_glob}'\n"

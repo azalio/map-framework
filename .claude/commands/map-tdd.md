@@ -130,7 +130,7 @@ STRICT RULES:
 8. Cover scenario dimensions from test_strategy: write tests for at minimum
    happy_path, error, edge_case, and security dimensions (use "N/A" if not applicable).
    Each dimension should have at least one dedicated test or test case.
-8. Test files MUST be lint-clean. Use proper imports at the top of the file
+9. Test files MUST be lint-clean. Use proper imports at the top of the file
    (not inside type annotations). Run the project linter (ruff/eslint/golangci-lint)
    on test files before finishing. Fix any lint errors in your test files.
 

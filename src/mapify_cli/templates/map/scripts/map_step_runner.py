@@ -42,8 +42,8 @@ HUMAN_ARTIFACT_DEFAULTS = {
 }
 
 
-KNOWN_ISSUES_DEFAULT: dict[str, list[str]] = {"issues": []}
-ACTIVE_ISSUES_DEFAULT: dict[str, str | list[str]] = {"updated_at": "", "issues": []}
+KNOWN_ISSUES_DEFAULT: dict[str, list[dict[str, object]]] = {"issues": []}
+ACTIVE_ISSUES_DEFAULT: dict[str, object] = {"updated_at": "", "issues": []}
 
 GATE_VERDICTS = {"ready", "needs-revision", "blocked"}
 

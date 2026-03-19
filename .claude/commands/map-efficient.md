@@ -659,35 +659,40 @@ python3 .map/scripts/map_step_runner.py update_plan_status "ST-XXX" "in_progress
 ### Phase: TESTS_GATE (2.8)
 
 ```bash
-# Run tests if available (do NOT install dependencies). Capture exit code for guard pattern.
+# Run tests if available (do NOT install dependencies). Capture exit code + output for guard pattern.
 TESTS_EXIT=0
+TEST_OUTPUT=""
 if [ -f "pytest.ini" ] || [ -f "setup.py" ]; then
-  pytest; TESTS_EXIT=$?
+  TEST_OUTPUT=$(pytest 2>&1); TESTS_EXIT=$?
 elif [ -f "package.json" ]; then
-  npm test; TESTS_EXIT=$?
+  TEST_OUTPUT=$(npm test 2>&1); TESTS_EXIT=$?
 elif [ -f "go.mod" ]; then
-  go test ./...; TESTS_EXIT=$?
+  TEST_OUTPUT=$(go test ./... 2>&1); TESTS_EXIT=$?
 elif [ -f "Cargo.toml" ]; then
-  cargo test; TESTS_EXIT=$?
+  TEST_OUTPUT=$(cargo test 2>&1); TESTS_EXIT=$?
 else
   echo "No tests found, skipping gate"
 fi
+# Print output so it's visible in the conversation
+echo "$TEST_OUTPUT"
 ```
 
 ### Phase: LINTER_GATE (2.9)
 
 ```bash
-# Run linter if available. Capture exit code for guard pattern.
+# Run linter if available. Capture exit code + output for guard pattern.
 LINT_EXIT=0
+LINT_OUTPUT=""
 if command -v ruff &> /dev/null; then
-  ruff check .; LINT_EXIT=$?
+  LINT_OUTPUT=$(ruff check . 2>&1); LINT_EXIT=$?
 elif command -v eslint &> /dev/null; then
-  eslint .; LINT_EXIT=$?
+  LINT_OUTPUT=$(eslint . 2>&1); LINT_EXIT=$?
 elif command -v golangci-lint &> /dev/null; then
-  golangci-lint run; LINT_EXIT=$?
+  LINT_OUTPUT=$(golangci-lint run 2>&1); LINT_EXIT=$?
 else
   echo "No linter found, skipping gate"
 fi
+echo "$LINT_OUTPUT"
 ```
 
 ### Phase: GUARD_DECISION (2.95)

@@ -17,11 +17,9 @@
     "allow": [
       "Edit(.claude/agents/*)",
       "Edit(.claude/commands/*)",
-      "Edit(.claude/hooks/*)",
       "Edit(.claude/references/*)",
       "Write(.claude/agents/*)",
       "Write(.claude/commands/*)",
-      "Write(.claude/hooks/*)",
       "Write(.claude/references/*)",
       "Bash(mapify *)",
       "Bash(pytest *)",

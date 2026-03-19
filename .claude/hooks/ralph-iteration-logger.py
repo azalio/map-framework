@@ -317,36 +317,43 @@ def main() -> None:
 def derive_summary(log_file: Path) -> None:
     """Derive iteration_summary.json from iteration_log.jsonl.
 
-    Aggregates per-file stats, truncates to last 50 entries when > 100,
-    and writes a summary JSON to the same branch directory.
+    Reads only the last 100 lines (via deque) to keep O(1) memory and fast I/O.
+    Aggregates per-file stats, skips entries without a file path.
     """
     if not log_file.exists():
         return
 
-    lines = log_file.read_text(encoding="utf-8").strip().split("\n")
-    entries = []
-    for line in lines:
-        if line.strip():
-            try:
-                entries.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
+    from collections import deque
 
-    total_entries_seen = len(entries)
-    if total_entries_seen == 0:
+    # Stream only last 100 lines — O(N) read but O(1) memory
+    total_lines = 0
+    last_lines: deque[str] = deque(maxlen=100)
+    with open(log_file, "r", encoding="utf-8") as fh:
+        for line in fh:
+            stripped = line.strip()
+            if stripped:
+                total_lines += 1
+                last_lines.append(stripped)
+
+    entries = []
+    for line in last_lines:
+        try:
+            entries.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+
+    if not entries:
         return
 
-    # Truncate to last 50 if > 100 entries
-    dropped_count = 0
-    if total_entries_seen > 100:
-        dropped_count = total_entries_seen - 50
-        entries = entries[-50:]
+    dropped_count = max(0, total_lines - len(entries))
 
-    # Aggregate per-file stats
+    # Aggregate per-file stats — skip entries without a concrete file path
     file_data: dict[str, list[float]] = {}
     file_thrashing: Counter[str] = Counter()
     for entry in entries:
-        f = entry.get("file", "unknown")
+        f = (entry.get("file") or "").strip()
+        if not f:
+            continue
         eff = entry.get("effectiveness", 0.0)
         file_data.setdefault(f, []).append(eff)
         file_thrashing[f] += 1
@@ -363,23 +370,23 @@ def derive_summary(log_file: Path) -> None:
             "thrashing_count": is_thrashing,
         })
 
-    all_effs = [e.get("effectiveness", 0.0) for e in entries]
+    all_effs = [e.get("effectiveness", 0.0) for e in entries if (e.get("file") or "").strip()]
     summary: dict[str, object] = {
         "generated_at": datetime.now().isoformat(),
         "entry_count": len(entries),
-        "total_entries_seen": total_entries_seen,
+        "total_entries_seen": total_lines,
         "dropped_count": dropped_count,
         "file_stats": file_stats,
         "aggregate": {
-            "total_iterations": total_entries_seen,
+            "total_iterations": total_lines,
             "avg_effectiveness": round(sum(all_effs) / len(all_effs), 3) if all_effs else 0.0,
             "total_thrashing_alerts": thrashing_alert_count,
         },
     }
 
     summary_file = log_file.parent / "iteration_summary.json"
-    with open(summary_file, "w", encoding="utf-8") as f:
-        json.dump(summary, f, indent=2, ensure_ascii=True)
+    with open(summary_file, "w", encoding="utf-8") as fh:
+        json.dump(summary, fh, indent=2, ensure_ascii=True)
 
 
 if __name__ == "__main__":
