@@ -12,7 +12,7 @@
 - Calls task-decomposer agent to break down the user's request into subtasks
 - Creates `.map/<branch>/task_plan_<branch>.md` with subtask list
 - Initializes `.map/<branch>/workflow_state.json` with subtask sequence
-- Maintains branch-scoped human-readable artifacts in `.map/<branch>/` (`research.md`, `implementation-plan.md`, `decision-log.md`, `pr-draft.md`)
+- Maintains branch-scoped human-readable artifacts in `.map/<branch>/` (`implementation-plan.md`, `decision-log.md`, `pr-draft.md`)
 - **STOPS** after planning (forces context flush)
 
 **What this command CANNOT do:**
@@ -34,7 +34,6 @@ echo "findings:    $(test -f .map/${BRANCH}/findings_${BRANCH}.md && echo EXISTS
 echo "spec:        $(test -f .map/${BRANCH}/spec_${BRANCH}.md && echo EXISTS || echo MISSING)"
 echo "task_plan:   $(test -f .map/${BRANCH}/task_plan_${BRANCH}.md && echo EXISTS || echo MISSING)"
 echo "state:       $(test -f .map/${BRANCH}/workflow_state.json && echo EXISTS || echo MISSING)"
-echo "research:    $(test -f .map/${BRANCH}/research.md && echo EXISTS || echo MISSING)"
 echo "impl_plan:   $(test -f .map/${BRANCH}/implementation-plan.md && echo EXISTS || echo MISSING)"
 echo "decisions:   $(test -f .map/${BRANCH}/decision-log.md && echo EXISTS || echo MISSING)"
 echo "pr_draft:    $(test -f .map/${BRANCH}/pr-draft.md && echo EXISTS || echo MISSING)"
@@ -100,7 +99,7 @@ User request:
 )
 ```
 
-**Save discovery results:** The research-agent returns findings inline. Use the **Write** tool to save them to both `.map/<branch>/findings_<branch>.md` and `.map/<branch>/research.md` so they persist across sessions. `findings_<branch>.md` stays optimized for executor distillation; `research.md` is the human-readable planning note.
+**Save discovery results:** The research-agent returns findings inline. Use the **Write** tool to save them to `.map/<branch>/findings_<branch>.md` so they persist across sessions.
 
 **Discovery output format** (in findings file):
 ```markdown
@@ -567,7 +566,7 @@ WORKFLOW CHECKPOINT: PLAN PHASE COMPLETE
 ✅ Blueprint saved to .map/${BRANCH}/blueprint.json
 ✅ workflow_state.json initialized (with aag_contracts map)
 ✅ Plan written to .map/${BRANCH}/task_plan_${BRANCH}.md
-✅ Human-readable artifacts updated: research.md, implementation-plan.md, decision-log.md, pr-draft.md
+✅ Human-readable artifacts updated: implementation-plan.md, decision-log.md, pr-draft.md
 ✅ Planning review recorded: plan-review-00N.md + plan-gate.json
 ✅ Context distilled (plan files ≤4000 tokens per subtask)
 
@@ -593,7 +592,6 @@ DISTILLATION CHECKLIST:
   [x] workflow_state.json   — has aag_contracts map + subtask_sequence
   [x] spec_<branch>.md      — has architecture graph + decisions (if interview was done)
   [x] findings_<branch>.md  — has research pointers (if discovery was done)
-  [x] research.md           — human-readable discovery and context for resume/handoff
   [x] implementation-plan.md — concise execution roadmap for humans
   [x] decision-log.md       — key tradeoffs captured before implementation
   [x] pr-draft.md           — initial summary + validation + risk notes

@@ -224,7 +224,6 @@ class TestCommandTemplates:
         """/map-plan should maintain branch-scoped human-readable artifacts."""
         content = (templates_commands_dir / "map-plan.md").read_text()
 
-        assert "research.md" in content
         assert "implementation-plan.md" in content
         assert "decision-log.md" in content
         assert "pr-draft.md" in content
