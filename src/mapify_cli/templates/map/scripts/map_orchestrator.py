@@ -477,10 +477,10 @@ def get_step_instruction(step_id: str, state: StepState) -> str:
             f"NOT from implementation."
         ),
         "2.26": (
-            f"TDD TEST_FAIL_GATE: Run tests written by TEST_WRITER. "
-            f"Tests MUST fail (no implementation exists yet). "
-            f"If tests pass → problem (trivial tests), go back to TEST_WRITER. "
-            f"If tests fail with assertion errors → proceed to ACTOR."
+            "TDD TEST_FAIL_GATE: Run tests written by TEST_WRITER. "
+            "Tests MUST fail (no implementation exists yet). "
+            "If tests pass → problem (trivial tests), go back to TEST_WRITER. "
+            "If tests fail with assertion errors → proceed to ACTOR."
         ),
         "2.3": _actor_step_instruction(state),
         "2.4": (
@@ -1164,7 +1164,7 @@ def resume_from_plan(branch: str) -> Dict:
         }
 
     # Extract AAG contracts from step_state.json or blueprint.json if present
-    aag_contracts = {}
+    aag_contracts: Dict[str, str] = {}
     step_state_file = plan_dir / "step_state.json"
     blueprint_file = plan_dir / "blueprint.json"
     for source_file in [step_state_file, blueprint_file]:

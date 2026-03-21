@@ -128,7 +128,7 @@ class TestWorkflowGate:
     # --- Fail-open behavior ---
 
     def test_allows_edit_when_no_state_files(self, tmp_path: Path) -> None:
-        """Edit allowed when neither step_state.json nor workflow_state.json exist."""
+        """Edit allowed when neither step_state.json nor step_state.json exist."""
         code, stdout, _ = self.run_hook(
             {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}},
             tmp_path,
@@ -325,9 +325,12 @@ class TestWorkflowGate:
 
     def test_scope_glob_blocks_outside_scope(self, tmp_path: Path) -> None:
         """scope_glob constraint blocks edits outside allowed pattern."""
-        self._setup_step_state(tmp_path, "master", "ACTOR")
         map_dir = tmp_path / ".map" / "master"
-        (map_dir / "workflow_state.json").write_text(json.dumps({
+        map_dir.mkdir(parents=True, exist_ok=True)
+        (map_dir / "step_state.json").write_text(json.dumps({
+            "current_step_phase": "ACTOR",
+            "current_subtask_id": "ST-001",
+            "subtask_phases": {},
             "constraints": {"scope_glob": "src/*"},
             "started_at": "2026-01-01T00:00:00Z",
         }))
@@ -342,9 +345,12 @@ class TestWorkflowGate:
 
     def test_scope_glob_allows_within_scope(self, tmp_path: Path) -> None:
         """scope_glob constraint allows edits matching the pattern."""
-        self._setup_step_state(tmp_path, "master", "ACTOR")
         map_dir = tmp_path / ".map" / "master"
-        (map_dir / "workflow_state.json").write_text(json.dumps({
+        map_dir.mkdir(parents=True, exist_ok=True)
+        (map_dir / "step_state.json").write_text(json.dumps({
+            "current_step_phase": "ACTOR",
+            "current_subtask_id": "ST-001",
+            "subtask_phases": {},
             "constraints": {"scope_glob": "src/*"},
             "started_at": "2026-01-01T00:00:00Z",
         }))
@@ -359,9 +365,12 @@ class TestWorkflowGate:
 
     def test_no_constraints_allows_all(self, tmp_path: Path) -> None:
         """When constraints is null, all edits are allowed."""
-        self._setup_step_state(tmp_path, "master", "ACTOR")
         map_dir = tmp_path / ".map" / "master"
-        (map_dir / "workflow_state.json").write_text(json.dumps({
+        map_dir.mkdir(parents=True, exist_ok=True)
+        (map_dir / "step_state.json").write_text(json.dumps({
+            "current_step_phase": "ACTOR",
+            "current_subtask_id": "ST-001",
+            "subtask_phases": {},
             "constraints": None,
             "started_at": "2026-01-01T00:00:00Z",
         }))
@@ -375,11 +384,14 @@ class TestWorkflowGate:
 
     def test_time_budget_blocks_when_exceeded(self, tmp_path: Path) -> None:
         """time_budget constraint blocks after elapsed time exceeds budget."""
-        self._setup_step_state(tmp_path, "master", "ACTOR")
         map_dir = tmp_path / ".map" / "master"
-        (map_dir / "workflow_state.json").write_text(json.dumps({
-            "constraints": {"time_budget": 1},  # 1 minute budget
-            "started_at": "2020-01-01T00:00:00Z",  # Long ago → exceeded
+        map_dir.mkdir(parents=True, exist_ok=True)
+        (map_dir / "step_state.json").write_text(json.dumps({
+            "current_step_phase": "ACTOR",
+            "current_subtask_id": "ST-001",
+            "subtask_phases": {},
+            "constraints": {"time_budget": 1},
+            "started_at": "2020-01-01T00:00:00Z",
         }))
 
         code, stdout, _ = self.run_hook(

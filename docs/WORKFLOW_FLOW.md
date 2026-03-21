@@ -120,12 +120,12 @@
                    ↓
 ┌─────────────────────────────────────────────────────┐
 │ Turn 3: get_next_step → step_id=1.6, INIT_STATE    │
-│ Выполняет: Создание workflow_state.json            │
+│ Выполняет: Создание step_state.json            │
 │ Валидирует: validate_step "1.6"                    │
 └──────────────────┬──────────────────────────────────┘
                    ↓
 ┌─────────────────────────────────────────────────────┐
-│ Turn 4: get_next_step → step_id=2.0, XML_PACKET    │
+│ Turn 4: get_next_step → step_id=2.0, RESEARCH    │
 │ Выполняет: Создание XML пакета для ST-001          │
 │ Валидирует: validate_step "2.0"                    │
 └──────────────────┬──────────────────────────────────┘
@@ -203,13 +203,13 @@
 | **1.5** | INIT_PLAN | Создание task_plan.md | ✅ Да |
 | **1.55** | REVIEW_PLAN | Явное одобрение плана пользователем | ✅ Да |
 | **1.56** | CHOOSE_MODE | Выбор режима выполнения (step_by_step\|batch) | ✅ Да |
-| **1.6** | INIT_STATE | Создание workflow_state.json | ✅ Да |
-| **2.0** | XML_PACKET | Построение AI-friendly пакета | ✅ Да (для каждого ST) |
+| **1.6** | INIT_STATE | Создание step_state.json | ✅ Да |
+| **2.0** | RESEARCH | Построение AI-friendly пакета | ✅ Да (для каждого ST) |
 | **2.2** | RESEARCH | research-agent для контекста | 🔶 Условно (если 3+ файлов) |
 | **2.3** | ACTOR | Actor генерирует код | ✅ Да (для каждого ST) |
 | **2.4** | MONITOR | Monitor валидирует (retry до 5 раз) | ✅ Да (для каждого ST) |
 | **2.6** | PREDICTOR | Анализ impact | 🔶 Условно (medium/high risk) |
-| **2.7** | UPDATE_STATE | Обновление workflow_state.json | ✅ Да (для каждого ST) |
+| **2.7** | UPDATE_STATE | Обновление step_state.json | ✅ Да (для каждого ST) |
 | **2.8** | TESTS_GATE | Запуск тестов | 🔶 Условно (если есть) |
 | **2.9** | LINTER_GATE | Запуск линтера | 🔶 Условно (если есть) |
 | **2.10** | VERIFY_ADHERENCE | Self-audit checkpoint | ✅ Да (для каждого ST) |
@@ -237,7 +237,7 @@
 ### 3️⃣ Workflow Gate (workflow-gate.py)
 **Роль:** БЛОКИРУЕТ нарушения
 
-- Проверяет workflow_state.json
+- Проверяет step_state.json
 - БЛОКИРУЕТ Edit/Write если actor+monitor не выполнены
 - Exit code 2 = hard block с сообщением об ошибке
 
@@ -370,14 +370,14 @@ cat .map/$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|
 python3 .map/scripts/map_orchestrator.py get_next_step
 
 # Проверить workflow state (для gate)
-cat .map/$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')/workflow_state.json
+cat .map/$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')/step_state.json
 ```
 
 **Сбросить состояние:**
 ```bash
 # Удалить state files (начать заново)
 rm -rf .map/<branch>/step_state.json
-rm -rf .map/<branch>/workflow_state.json
+rm -rf .map/<branch>/step_state.json
 ```
 
 **Включить отладку хука:**
