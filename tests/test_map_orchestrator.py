@@ -298,7 +298,7 @@ class TestBackwardCompat:
         old_state = {
             "workflow": "map-efficient",
             "current_step_id": "2.0",
-            "current_step_phase": "XML_PACKET",
+            "current_step_phase": "XML_PACKET",  # intentionally old/removed phase — backward compat test
             "subtask_sequence": ["ST-001"],
             # No wave fields
         }

@@ -306,10 +306,7 @@ loop:
     # Run tests + linter ONCE for the entire wave
     # pytest / npm test / etc.
 
-    # Phase F: Advance wave
-    python3 .map/scripts/map_orchestrator.py advance_wave
-
-    # Advance wave after all subtasks pass Monitor + per-wave gates
+    # Phase F: Advance wave — after all subtasks pass Monitor + per-wave gates
     python3 .map/scripts/map_orchestrator.py advance_wave
 ```
 
