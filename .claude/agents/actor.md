@@ -279,7 +279,7 @@ Rules:
 
 Output:
 - Implementation files created/modified via Edit/Write tools
-- Standard Actor evidence file
+- Brief output summary (files changed, trade-offs)
 
 ### No TDD Mode (default)
 

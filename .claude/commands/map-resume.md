@@ -104,7 +104,7 @@ Parse the state and display:
 ### Recent Session Context
 
 ```text
-[recent_session_log excerpt]
+[latest code-review excerpt excerpt]
 ```
 
 ### Progress Overview

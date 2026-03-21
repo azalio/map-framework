@@ -212,8 +212,6 @@
 | **2.7** | UPDATE_STATE | Обновление step_state.json | ✅ Да (для каждого ST) |
 | **2.8** | TESTS_GATE | Запуск тестов | 🔶 Условно (если есть) |
 | **2.9** | LINTER_GATE | Запуск линтера | 🔶 Условно (если есть) |
-| **2.10** | VERIFY_ADHERENCE | Self-audit checkpoint | ✅ Да (для каждого ST) |
-| **2.11** | SUBTASK_APPROVAL | Пауза между ST в режиме step_by_step | 🔶 Условно |
 
 ---
 

@@ -174,7 +174,7 @@ Task(
 Verify that all subtasks from the plan have been completed successfully.
 
 Plan: {task_plan_content}
-State: {workflow_state_content}
+State: {step_state_content}
 
 For each subtask, check:
 1. All acceptance criteria met

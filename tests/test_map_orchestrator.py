@@ -38,7 +38,6 @@ def branch_dir(tmp_path, monkeypatch):
     branch = "test-branch"
     map_dir = tmp_path / ".map" / branch
     map_dir.mkdir(parents=True)
-    (map_dir / "evidence").mkdir()
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(map_orchestrator, "get_branch_name", lambda: branch)
     return branch
@@ -218,16 +217,6 @@ class TestValidateWaveStep:
 
     def test_actor_step_advances_to_monitor(self, branch_dir, sample_blueprint):
         map_orchestrator.set_waves(branch_dir, sample_blueprint)
-        # Create evidence file for actor step
-        evidence_dir = Path(f".map/{branch_dir}/evidence")
-        evidence = {
-            "phase": "actor",
-            "subtask_id": "ST-001",
-            "timestamp": "2026-01-01T00:00:00Z",
-        }
-        (evidence_dir / "actor_ST-001.json").write_text(
-            json.dumps(evidence), encoding="utf-8"
-        )
         result = map_orchestrator.validate_wave_step("ST-001", "2.3", branch_dir)
         assert result["valid"] is True
         assert result["next_phase"] == "2.4"
@@ -510,14 +499,6 @@ class TestTDDMode:
         state = map_orchestrator.StepState.load(state_file)
         state.tdd_mode = True
         state.subtask_phases = {"ST-001": "2.25"}
-
-        evidence = {
-            "phase": "TEST_WRITER",
-            "subtask_id": "ST-001",
-            "status": "applied",
-        }
-        evidence_file = Path(f".map/{branch_dir}/evidence/test_writer_ST-001.json")
-        evidence_file.write_text(json.dumps(evidence), encoding="utf-8")
 
         state.save(state_file)
         result = map_orchestrator.validate_wave_step("ST-001", "2.25", branch_dir)
@@ -821,7 +802,7 @@ class TestResumeSingleSubtask:
         assert result["all_subtasks_in_plan"] == ["ST-001", "ST-002", "ST-003"]
 
     def test_resume_single_subtask_then_get_next_step(self, branch_dir, tmp_path):
-        """After resume_single_subtask, get_next_step returns XML_PACKET."""
+        """After resume_single_subtask, get_next_step returns RESEARCH."""
         self._create_plan(tmp_path, branch_dir, ["ST-001", "ST-002"])
         map_orchestrator.resume_single_subtask("ST-002", branch_dir)
         result = map_orchestrator.get_next_step(branch_dir)
@@ -833,10 +814,6 @@ class TestResumeSingleSubtask:
     ):
         """Resume returns session/review/verification context for handoff."""
         plan_dir = self._create_plan(tmp_path, branch_dir, ["ST-001", "ST-002"])
-        (plan_dir / "session-log.md").write_text(
-            "# Session Log\n\n## 2026-03-19 — MONITOR\n- Outcome: revise\n",
-            encoding="utf-8",
-        )
         (plan_dir / "code-review-002.md").write_text(
             "# Code Review 002\n\n- fix auth edge case\n- rerun pytest\n",
             encoding="utf-8",
@@ -930,10 +907,6 @@ class TestGetPlanProgress:
             tmp_path, branch_dir, [("ST-001", "complete"), ("ST-002", "pending")]
         )
         plan_dir = tmp_path / ".map" / branch_dir
-        (plan_dir / "session-log.md").write_text(
-            "# Session Log\n\n## 2026-03-19 — ACTOR\n- Outcome: implemented\n",
-            encoding="utf-8",
-        )
         (plan_dir / "code-review-001.md").write_text(
             "# Code Review 001\n\n- update tests\n",
             encoding="utf-8",
@@ -956,7 +929,7 @@ class TestResumeFromPlan:
             "# Task Plan\n\n### ST-001\n- **Status:** pending\n\n### ST-002\n- **Status:** pending\n",
             encoding="utf-8",
         )
-        (plan_dir / "workflow_state.json").write_text(
+        (plan_dir / "step_state.json").write_text(
             json.dumps({"aag_contracts": {"ST-001": "Keep auth isolated"}}),
             encoding="utf-8",
         )

@@ -2476,4 +2476,3 @@ Return validation result as JSON in your response (no separate evidence file nee
 - `issues_found`: count
 - `recommendation`: approve/reject/revise
 
-**CRITICAL**: Without this file, `validate_step("2.4")` will reject the step.
