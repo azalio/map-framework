@@ -8,10 +8,10 @@ Uses step_state.json (orchestrator canonical state) as single source of truth.
 ENFORCEMENT:
   - Edit allowed during phases: ACTOR, APPLY, TEST_WRITER
   - Edit blocked during all other phases (DECOMPOSE, MONITOR, PREDICTOR, etc.)
-  - Fail-open: no step_state.json or no workflow_state.json → allow
+  - Fail-open: no step_state.json or no step_state.json → allow
   - Always allows: .map/ artifacts, ~/.claude/ memory, non-editing tools
 
-CONSTRAINTS (from workflow_state.json):
+CONSTRAINTS (from step_state.json):
   - scope_glob: restrict edits to matching file patterns
   - time_budget: block after N minutes elapsed
 
@@ -151,8 +151,8 @@ def is_editing_phase(branch: str) -> tuple[bool, Optional[str]]:
 
 
 def check_constraints(branch: str, target_paths: list[str]) -> Optional[str]:
-    """Check constraints from workflow_state.json. Returns error or None."""
-    state_file = Path(f".map/{branch}/workflow_state.json")
+    """Check constraints from step_state.json. Returns error or None."""
+    state_file = Path(f".map/{branch}/step_state.json")
     if not state_file.exists():
         return None
 
@@ -247,7 +247,7 @@ def main() -> None:
         if not allowed:
             deny(error or "Edit blocked: not in an editing phase.")
 
-        # Constraint check (workflow_state.json)
+        # Constraint check (step_state.json)
         constraint_error = check_constraints(branch, target_paths)
         if constraint_error:
             deny(constraint_error)

@@ -48,9 +48,8 @@ All files reside in `.map/<branch>/` directory with branch-based naming:
     ├── task_plan_<branch>.md    # Primary plan with phases and status
     ├── findings_<branch>.md     # Research findings, decisions, key files
     ├── progress_<branch>.md     # Action log, errors, test results
-    ├── workflow_state.json      # Subtask completion tracking
+    ├── step_state.json      # Subtask completion tracking
     ├── step_state.json          # Orchestrator step state
-    └── evidence/                # Artifact-gated validation evidence
 ```
 
 **Example**: On branch `feature-auth`:

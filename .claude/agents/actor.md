@@ -263,7 +263,6 @@ Rules:
 
 Output:
 - Test files created via Write tool
-- Evidence file: `.map/<branch>/evidence/test_writer_<subtask_id>.json`
 
 ### TDD Mode: `code_only`
 
@@ -489,38 +488,12 @@ When assessing performance impact, use these as default baselines unless project
 
 **Protocol**: Document rationale → Add TODO if needed → Proceed
 
-### Evidence File (Artifact-Gated Validation)
+### Output Summary
 
-After applying all code changes, write an evidence file so the orchestrator can verify this step ran. Use the **Write tool** to create the file at the absolute path:
-
-`<project_root>/.map/<branch>/evidence/actor_<subtask_id>.json`
-
-with the following JSON content:
-
-```json
-{
-  "phase": "ACTOR",
-  "subtask_id": "<subtask_id>",
-  "timestamp": "<ISO 8601 UTC>",
-  "summary": "<one-line description of what was implemented>",
-  "aag_contract": "<the AAG contract line>",
-  "files_changed": ["<list of modified file paths>"],
-  "tests_changed": ["<list of modified/added test file paths>"],
-  "validation_criteria_coverage": [
-    {
-      "criterion": "VC1: ...",
-      "tests": ["path/to/test_file.ext::test_name"],
-      "notes": "Short justification if tests are N/A or partial"
-    }
-  ],
-  "status": "applied"
-}
-```
-
-**Required fields** (orchestrator validates these): `phase`, `subtask_id`, `timestamp`.
-Other fields are informational but recommended for audit trail.
-
-**CRITICAL**: Without this file, `validate_step("2.3")` will reject the step.
+After applying all code changes, output a brief summary:
+- Files changed (list)
+- AAG contract compliance (met/not met)
+- Trade-offs or concerns for Monitor
 
 </Actor_Quality_v3_1>
 

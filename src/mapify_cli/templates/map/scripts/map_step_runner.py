@@ -17,14 +17,14 @@ USAGE:
   - Progress tracking
 
 FUNCTIONS:
-  - update_workflow_state: Mark step complete in workflow_state.json
+  - update_step_state: Mark step complete in step_state.json
   - update_plan_status: Update subtask status in task_plan.md
   - validate_checkpoint: Check if required steps completed
   - create_xml_packet: Build AI-friendly subtask packet
 
 TESTING:
-  python3 -c "from map_step_runner import update_workflow_state; \\
-    update_workflow_state('ST-001', 'actor', 'ACTOR_CALLED')"
+  python3 -c "from map_step_runner import update_step_state; \\
+    update_step_state('ST-001', 'actor', 'ACTOR_CALLED')"
 """
 
 import json
@@ -35,8 +35,6 @@ from typing import Dict, List, Optional
 
 
 HUMAN_ARTIFACT_DEFAULTS = {
-    "session-log.md": "# Session Log\n\n",
-    "devlog-001.md": "# Devlog 001\n\n",
     "qa-001.md": "# QA 001\n\n",
     "pr-draft.md": "# PR Draft\n\n## Summary\n\n## Validation\n\n## Risks / Follow-up\n",
 }
@@ -109,10 +107,9 @@ def append_session_log(
     artifact_refs: Optional[List[str]] = None,
     branch: Optional[str] = None,
 ) -> Dict:
-    """Append a concise entry to session-log.md."""
+    """Append a concise entry to code-review-XXX.md."""
     ensure_human_artifacts(branch)
     branch_dir = get_branch_dir(branch)
-    log_file = branch_dir / "session-log.md"
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     refs = ", ".join(artifact_refs or [])
 
@@ -328,7 +325,6 @@ def build_handoff_bundle(branch: Optional[str] = None) -> Dict:
         path = branch_dir / name
         return path.read_text(encoding="utf-8") if path.exists() else ""
 
-    session_log = read("session-log.md")
     verification = read("verification-summary.md")
     qa = read("qa-001.md")
     active_issues = read("active-issues.json")
@@ -494,14 +490,14 @@ def get_branch_name() -> str:
         return "default"
 
 
-def update_workflow_state(
+def update_step_state(
     subtask_id: str,
     step_name: str,
     new_state: str,
     branch: Optional[str] = None,
 ) -> Dict:
     """
-    Update workflow_state.json after step completion.
+    Update step_state.json after step completion.
 
     Args:
         subtask_id: Subtask ID (e.g., "ST-001")
@@ -515,10 +511,10 @@ def update_workflow_state(
     if branch is None:
         branch = get_branch_name()
 
-    state_file = Path(f".map/{branch}/workflow_state.json")
+    state_file = Path(f".map/{branch}/step_state.json")
 
     if not state_file.exists():
-        return {"status": "error", "message": "workflow_state.json not found"}
+        return {"status": "error", "message": "step_state.json not found"}
 
     try:
         state = json.loads(state_file.read_text(encoding="utf-8"))
@@ -554,12 +550,12 @@ def update_workflow_state(
         return {"status": "error", "message": str(e)}
 
 
-def update_workflow_state_batch(
+def update_step_state_batch(
     updates: List[Dict],
     branch: Optional[str] = None,
 ) -> Dict:
     """
-    Update workflow_state.json for multiple subtasks in one call.
+    Update step_state.json for multiple subtasks in one call.
 
     Used in wave-based parallel execution to update all subtasks in a wave
     after their actors/monitors complete.
@@ -577,10 +573,10 @@ def update_workflow_state_batch(
     if branch is None:
         branch = get_branch_name()
 
-    state_file = Path(f".map/{branch}/workflow_state.json")
+    state_file = Path(f".map/{branch}/step_state.json")
 
     if not state_file.exists():
-        return {"status": "error", "message": "workflow_state.json not found"}
+        return {"status": "error", "message": "step_state.json not found"}
 
     try:
         state = json.loads(state_file.read_text(encoding="utf-8"))
@@ -702,13 +698,13 @@ def validate_checkpoint(
     if branch is None:
         branch = get_branch_name()
 
-    state_file = Path(f".map/{branch}/workflow_state.json")
+    state_file = Path(f".map/{branch}/step_state.json")
 
     if not state_file.exists():
         return {
             "valid": False,
             "missing_steps": required_steps,
-            "message": "workflow_state.json not found",
+            "message": "step_state.json not found",
         }
 
     try:
@@ -858,18 +854,18 @@ if __name__ == "__main__":
 
     func_name = sys.argv[1]
 
-    if func_name == "update_workflow_state_batch" and len(sys.argv) >= 3:
+    if func_name == "update_step_state_batch" and len(sys.argv) >= 3:
         updates_json = sys.argv[2]
         try:
             updates = json.loads(updates_json)
         except json.JSONDecodeError as e:
             print(json.dumps({"status": "error", "message": f"Invalid JSON: {e}"}))
             sys.exit(1)
-        result = update_workflow_state_batch(updates)
+        result = update_step_state_batch(updates)
         print(json.dumps(result, indent=2))
 
-    elif func_name == "update_workflow_state" and len(sys.argv) >= 5:
-        result = update_workflow_state(sys.argv[2], sys.argv[3], sys.argv[4])
+    elif func_name == "update_step_state" and len(sys.argv) >= 5:
+        result = update_step_state(sys.argv[2], sys.argv[3], sys.argv[4])
         print(json.dumps(result, indent=2))
 
     elif func_name == "update_plan_status" and len(sys.argv) >= 4:
