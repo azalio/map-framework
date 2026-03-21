@@ -178,7 +178,6 @@ IS_COMPLETE=$(echo "$NEXT_STEP" | jq -r '.is_complete')
 
 **Then follow the same phase routing as /map-efficient:**
 
-For each step, route to the appropriate executor based on `$PHASE` (ACTOR, MONITOR, PREDICTOR, TESTS_GATE, etc.) following the exact same phase handlers documented in map-efficient.md.
 
 **For each remaining subtask:**
 

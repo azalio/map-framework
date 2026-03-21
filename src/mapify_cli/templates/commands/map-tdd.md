@@ -272,7 +272,7 @@ Monitor verifies both implementation correctness AND that all tests pass.
 |--------|---------------|----------|
 | Test authoring | Actor writes code + tests together | TEST_WRITER writes tests first, Actor writes code only |
 | Test independence | Tests may mirror implementation | Tests derived from spec only |
-| Phase count | 16 phases | 18 phases (+TEST_WRITER, +TEST_FAIL_GATE) |
+| Phase count | 6 phases | 8 phases (+TEST_WRITER, +TEST_FAIL_GATE)) |
 | Token cost | Lower | ~20-30% higher (extra Actor call for tests) |
 | Best for | General development | Correctness-critical features |
 

@@ -26,14 +26,14 @@
 #### 2. State Machine
 - **`.map/scripts/map_orchestrator.py`** (~400 lines)
   - CLI interface: `get_next_step`, `validate_step`, `initialize`
-  - Manages 14 workflow step phases (DECOMPOSE → VERIFY_ADHERENCE)
+  - Manages 8 workflow step phases (DECOMPOSE → MONITOR)
   - State file: `.map/<branch>/step_state.json`
   - Enforces sequential execution, prevents step skipping
 
 #### 3. Utilities
 - **`.map/scripts/map_step_runner.py`** (~300 lines)
   - Deterministic step executors for mechanical operations
-  - Functions: update_workflow_state, update_plan_status, validate_checkpoint, create_xml_packet
+  - Functions: update_step_state, update_plan_status, validate_checkpoint, validate_step
   - Separates file I/O from LLM reasoning
 
 #### 4. Optimized Command
