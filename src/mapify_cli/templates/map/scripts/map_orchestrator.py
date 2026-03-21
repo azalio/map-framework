@@ -522,16 +522,6 @@ def get_next_step(branch: str) -> Dict:
         state.skipped_steps.append(skipped)
         state.save(state_file)
 
-    # Auto-skip steps that are conditional in batch mode
-    while (
-        state.pending_steps
-        and state.pending_steps[0] == "2.11"
-        and state.execution_mode == "batch"
-    ):
-        state.completed_steps.append("2.11")
-        state.pending_steps.pop(0)
-        state.save(state_file)
-
     # Check if workflow complete
     if not state.pending_steps:
         # Check if more subtasks remain
@@ -1013,7 +1003,7 @@ def advance_wave(branch: str) -> Dict:
     }
 
 
-SKIPPABLE_STEPS = {"2.2", "2.25", "2.26", "2.6", "2.11"}
+SKIPPABLE_STEPS = {"2.2", "2.25", "2.26"}
 
 
 def skip_step(step_id: str, branch: str) -> Dict:
