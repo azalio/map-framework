@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Pipeline simplification**: `/map-efficient` reduced from 11 phases to 2-3 per subtask ([RESEARCH] → ACTOR → MONITOR). Removed XML_PACKET, CONTEXT_SEARCH, PREDICTOR, UPDATE_STATE, TESTS_GATE, LINTER_GATE, VERIFY_ADHERENCE, SUBTASK_APPROVAL phases
+- **Per-wave gates**: Tests and linter now run once per wave (after all Monitor passes) instead of per subtask
+- **Single state file**: `workflow_state.json` merged into `step_state.json` as single source of truth
+- **Workflow gate rewrite**: Phase-based enforcement (ACTOR/APPLY/TEST_WRITER phases allow Edit) instead of completed_steps checking
+- **Predictor**: No longer a pipeline phase; runs only during stuck recovery at retry 3
+
+### Removed
+- Evidence files and evidence directory (write-only artifacts nobody read)
+- `session-log.md` and `devlog-XXX.md` (boilerplate, replaced by `code-review-XXX.md`)
+- `workflow_state.json` (replaced by `step_state.json`)
+- 8 pipeline phases (see Changed above)
+
+### Added
+- **Guard pattern**: Decision table for regression detection (monitor pass + guard fail → retry Actor max 2)
+- **Stuck recovery protocol**: At monitor retry 3, invoke research-agent → predictor before retries 4-5
+- **Scenario dimensions**: `test_strategy.scenario_dimensions` (happy_path, error, edge_case, security) in TaskDecomposer
+- **Constraint enforcement**: `scope_glob`, `time_budget` in workflow-gate.py hook
+- **Flaky-aware verification**: FinalVerifier re-runs failed tests 3x with 2/3 majority rule
+- **Iteration summary**: `iteration_summary.json` derived from ralph-iteration-logger
+- **Git-as-memory**: Conditional `{{git_history}}` context in Actor for debug/retry/resume
+
 ## [3.5.0] - 2026-03-18
 
 ### Added

@@ -610,7 +610,7 @@ These files survive compaction because they're stored on disk, not in conversati
 
 For implementation details on checkpoint format and compaction resilience architecture, see:
 - [ARCHITECTURE.md - Context Engineering](ARCHITECTURE.md#context-engineering) - Recitation Pattern and Compaction Resilience
-- `src/mapify_cli/workflow_state.py` - WorkflowState class with auto-checkpointing
+- `src/mapify_cli/templates/map/scripts/map_orchestrator.py` - StepState class with step_state.json persistence
 
 ## 🔍 Dependency Validation
 
