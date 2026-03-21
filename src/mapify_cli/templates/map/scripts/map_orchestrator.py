@@ -30,30 +30,25 @@ STATE FILE:
       "subtask_index": 0,
       "subtask_sequence": ["ST-001", "ST-002", "ST-003"],
       "current_step_id": "2.1",
-      "current_step_phase": "CONTEXT_SEARCH",
-      "completed_steps": ["1.0_DECOMPOSE", "1.5_INIT_PLAN", "2.0_XML_PACKET"],
-      "pending_steps": ["2.1_CONTEXT_SEARCH", "2.3_ACTOR", "2.4_MONITOR", ...]
+      "current_step_phase": "RESEARCH",
+      "completed_steps": ["1.0_DECOMPOSE", "1.5_INIT_PLAN"],
+      "pending_steps": ["2.2_RESEARCH", "2.3_ACTOR", "2.4_MONITOR"]
     }
 
-STEP PHASES (18 total, 16 standard + 2 TDD):
+STEP PHASES (10 total, 8 standard + 2 TDD):
   1.0  DECOMPOSE          - task-decomposer agent
   1.5  INIT_PLAN          - Generate task_plan.md
   1.55 REVIEW_PLAN        - User review + explicit approval checkpoint
   1.56 CHOOSE_MODE        - Auto-skipped (always batch mode)
-  1.6  INIT_STATE         - Create workflow_state.json
-  2.0  XML_PACKET         - Build AI-friendly subtask packet
-  2.1  CONTEXT_SEARCH     - Context search
-  2.2  RESEARCH           - research-agent (conditional)
+  1.6  INIT_STATE         - Create step_state.json (single source of truth)
+  2.2  RESEARCH           - research-agent (conditional: 3+ existing files OR high risk)
   2.25 TEST_WRITER        - TDD: write tests from spec (TDD mode only)
   2.26 TEST_FAIL_GATE     - TDD: verify tests fail without impl (TDD mode only)
   2.3  ACTOR              - Actor agent implementation
   2.4  MONITOR            - Monitor validation
-  2.6  PREDICTOR          - Impact analysis (conditional)
-  2.7  UPDATE_STATE       - Mark subtask progress
-  2.8  TESTS_GATE         - Run tests
-  2.9  LINTER_GATE        - Run linter
-  2.10 VERIFY_ADHERENCE   - Self-audit checkpoint
-  2.11 SUBTASK_APPROVAL   - Auto-skipped in batch mode
+
+  Per-wave gates (TESTS + LINTER) run once after all Monitor passes (in map-efficient.md).
+  Predictor runs only in stuck recovery at retry 3 (not a pipeline phase).
 
 CLI INTERFACE:
   python3 map_orchestrator.py get_next_step [--branch BRANCH]
@@ -108,19 +103,11 @@ STEP_PHASES = {
     "1.55": "REVIEW_PLAN",
     "1.56": "CHOOSE_MODE",
     "1.6": "INIT_STATE",
-    "2.0": "XML_PACKET",
-    "2.1": "CONTEXT_SEARCH",
     "2.2": "RESEARCH",
     "2.25": "TEST_WRITER",
     "2.26": "TEST_FAIL_GATE",
     "2.3": "ACTOR",
     "2.4": "MONITOR",
-    "2.6": "PREDICTOR",
-    "2.7": "UPDATE_STATE",
-    "2.8": "TESTS_GATE",
-    "2.9": "LINTER_GATE",
-    "2.10": "VERIFY_ADHERENCE",
-    "2.11": "SUBTASK_APPROVAL",
 }
 
 # Step execution order (standard — without TDD phases)
@@ -130,17 +117,9 @@ STEP_ORDER = [
     "1.55",
     "1.56",
     "1.6",
-    "2.0",
-    "2.1",
     "2.2",
     "2.3",
     "2.4",
-    "2.6",
-    "2.7",
-    "2.8",
-    "2.9",
-    "2.10",
-    "2.11",
 ]
 
 # TDD step order — includes TEST_WRITER and TEST_FAIL_GATE before ACTOR
@@ -150,32 +129,12 @@ TDD_STEP_ORDER = [
     "1.55",
     "1.56",
     "1.6",
-    "2.0",
-    "2.1",
     "2.2",
     "2.25",
     "2.26",
     "2.3",
     "2.4",
-    "2.6",
-    "2.7",
-    "2.8",
-    "2.9",
-    "2.10",
-    "2.11",
 ]
-
-# Steps that require evidence files from agents before validation.
-# Format: step_id -> (agent_phase, always_required)
-# If always_required is False, evidence is only checked when the step
-# appears in pending_steps (i.e., it wasn't skipped).
-EVIDENCE_REQUIRED = {
-    "2.25": ("test_writer", False),  # Only in TDD mode
-    "2.26": ("test_fail_gate", False),  # Only in TDD mode
-    "2.3": ("actor", True),  # Always required
-    "2.4": ("monitor", True),  # Always required
-    "2.6": ("predictor", False),  # Only when 2.6 is in pending_steps
-}
 
 
 def _read_text_if_exists(path: Path) -> str:
@@ -215,9 +174,7 @@ def _latest_numbered_artifact(plan_dir: Path, prefix: str) -> Optional[Path]:
 def get_resume_briefing(branch: str) -> Dict:
     """Collect human-readable artifact context for resume and handoff flows."""
     plan_dir = Path(f".map/{branch}")
-    session_log = plan_dir / "session-log.md"
     verification_summary = plan_dir / "verification-summary.md"
-    devlog = plan_dir / "devlog-001.md"
     latest_review = _latest_numbered_artifact(plan_dir, "code-review")
     latest_qa = _latest_numbered_artifact(plan_dir, "qa")
 
@@ -239,18 +196,13 @@ def get_resume_briefing(branch: str) -> Dict:
 
     return {
         "branch": branch,
-        "session_log_path": str(session_log) if session_log.exists() else None,
         "verification_summary_path": (
             str(verification_summary) if verification_summary.exists() else None
         ),
         "latest_review_path": str(latest_review) if latest_review else None,
         "latest_qa_path": str(latest_qa) if latest_qa else None,
-        "devlog_path": str(devlog) if devlog.exists() else None,
         "latest_verification_verdict": (
             verdict_match.group(1).strip() if verdict_match else None
-        ),
-        "recent_session_log": _extract_recent_markdown_section(
-            _read_text_if_exists(session_log)
         ),
         "latest_review_summary": _extract_recent_markdown_section(review_content),
         "latest_verification_summary": _extract_recent_markdown_section(
@@ -337,6 +289,15 @@ class StepState:
     current_wave_index: int = 0
     subtask_phases: Dict[str, str] = field(default_factory=dict)
     subtask_retry_counts: Dict[str, int] = field(default_factory=dict)
+    # New fields from pipeline simplification
+    active_phase: str = ""
+    active_subtask_id: Optional[str] = None
+    workflow_status: str = "INITIALIZED"
+    subtask_states: Dict[str, str] = field(default_factory=dict)
+    wave_states: Dict[str, str] = field(default_factory=dict)
+    subtask_files_changed: Dict[str, List[str]] = field(default_factory=dict)
+    guard_rework_counts: Dict[str, int] = field(default_factory=dict)
+    constraints: Optional[Dict] = None
 
     def to_dict(self) -> dict:
         """Serialize to dictionary."""
@@ -360,6 +321,14 @@ class StepState:
             "current_wave_index": self.current_wave_index,
             "subtask_phases": self.subtask_phases,
             "subtask_retry_counts": self.subtask_retry_counts,
+            "active_phase": self.active_phase,
+            "active_subtask_id": self.active_subtask_id,
+            "workflow_status": self.workflow_status,
+            "subtask_states": self.subtask_states,
+            "wave_states": self.wave_states,
+            "subtask_files_changed": self.subtask_files_changed,
+            "guard_rework_counts": self.guard_rework_counts,
+            "constraints": self.constraints,
         }
 
     @classmethod
@@ -385,6 +354,14 @@ class StepState:
             current_wave_index=data.get("current_wave_index", 0),
             subtask_phases=data.get("subtask_phases", {}),
             subtask_retry_counts=data.get("subtask_retry_counts", {}),
+            active_phase=data.get("active_phase", ""),
+            active_subtask_id=data.get("active_subtask_id"),
+            workflow_status=data.get("workflow_status", "INITIALIZED"),
+            subtask_states=data.get("subtask_states", {}),
+            wave_states=data.get("wave_states", {}),
+            subtask_files_changed=data.get("subtask_files_changed", {}),
+            guard_rework_counts=data.get("guard_rework_counts", {}),
+            constraints=data.get("constraints"),
         )
 
     @classmethod
@@ -447,12 +424,10 @@ def _actor_step_instruction(state: StepState) -> str:
             "Actor must make existing tests green without modifying test files. "
         )
     else:
-        context = "Pass XML packet and context patterns. "
+        context = "Pass AAG contract and context. "
     return (
         f"Call Task(subagent_type='actor') to implement subtask {subtask}. "
         f"{context}"
-        f"Actor MUST write evidence file: "
-        f".map/<branch>/evidence/actor_{subtask}.json"
     )
 
 
@@ -488,70 +463,29 @@ def get_step_instruction(step_id: str, state: StepState) -> str:
             "Advance to next step: python3 .map/scripts/map_orchestrator.py get_next_step"
         ),
         "1.6": (
-            "Create .map/<branch>/workflow_state.json with initial state. "
-            "Required for workflow-gate.py enforcement."
-        ),
-        "2.0": (
-            f"Build XML packet for subtask {state.current_subtask_id}. "
-            "Include ID, title, description, risk_level, affected_files, "
-            "validation_criteria, and test_strategy."
-        ),
-        "2.1": (
-            "Search for relevant patterns and context. "
-            "Re-rank by relevance and pass top 3 to Actor."
+            "Create .map/<branch>/step_state.json with initial state. "
+            "Single source of truth for workflow enforcement."
         ),
         "2.2": (
-            "Call Task(subagent_type='research-agent') if refactoring or "
-            "touching 3+ files. Pass findings to Actor."
+            "Call Task(subagent_type='research-agent') if subtask touches "
+            "3+ existing files OR risk=high. Pass findings to Actor."
         ),
         "2.25": (
             f"TDD TEST_WRITER: Call Task(subagent_type='actor') with "
             f"<TDD_Mode>test_writer</TDD_Mode> to write ONLY tests for subtask "
             f"{state.current_subtask_id}. Tests must be derived from spec/contract, "
-            f"NOT from implementation. "
-            f"Actor MUST write evidence file: "
-            f".map/<branch>/evidence/test_writer_{state.current_subtask_id}.json"
+            f"NOT from implementation."
         ),
         "2.26": (
             f"TDD TEST_FAIL_GATE: Run tests written by TEST_WRITER. "
             f"Tests MUST fail (no implementation exists yet). "
             f"If tests pass → problem (trivial tests), go back to TEST_WRITER. "
-            f"If tests fail with assertion errors → proceed to ACTOR. "
-            f"Write evidence: .map/<branch>/evidence/test_fail_gate_{state.current_subtask_id}.json"
+            f"If tests fail with assertion errors → proceed to ACTOR."
         ),
         "2.3": _actor_step_instruction(state),
         "2.4": (
             "Call Task(subagent_type='monitor') to validate Actor output. "
-            "Check correctness, security, standards, and tests. "
-            f"Monitor MUST write evidence file: "
-            f".map/<branch>/evidence/monitor_{state.current_subtask_id}.json"
-        ),
-        "2.6": (
-            "Call Task(subagent_type='predictor') for impact analysis "
-            "(required for medium/high risk subtasks). "
-            f"Predictor MUST write evidence file: "
-            f".map/<branch>/evidence/predictor_{state.current_subtask_id}.json"
-        ),
-        "2.7": (
-            "Update workflow state to mark subtask progress. "
-            "Code was already applied by Actor and validated by Monitor."
-        ),
-        "2.8": (
-            "Run tests using pytest/npm test/go test/cargo test. "
-            "Skip if no tests available."
-        ),
-        "2.9": (
-            "Run linter using ruff/eslint/golangci-lint/cargo clippy. "
-            "Skip if not configured."
-        ),
-        "2.10": (
-            "Output workflow adherence self-audit. "
-            "Verify all required steps completed before marking subtask done."
-        ),
-        "2.11": (
-            "If execution_mode == step_by_step: show a brief checkpoint for the completed subtask "
-            "and AskUserQuestion to continue to the next subtask or abort. "
-            "If execution_mode == batch: this step is auto-skipped by orchestrator."
+            "Check correctness, security, standards, and tests."
         ),
     }
 
@@ -605,12 +539,12 @@ def get_next_step(branch: str) -> Dict:
             # Move to next subtask, reset steps
             state.subtask_index += 1
             state.current_subtask_id = state.subtask_sequence[state.subtask_index]
-            state.current_step_id = "2.0"
-            state.current_step_phase = "XML_PACKET"
+            state.current_step_id = "2.2"
+            state.current_step_phase = "RESEARCH"
             # Reset to subtask-level steps (skip global setup steps)
             step_order = _get_step_order(state.tdd_mode)
-            xml_packet_idx = step_order.index("2.0")
-            state.pending_steps = step_order[xml_packet_idx:]  # Start from 2.0
+            research_idx = step_order.index("2.2")
+            state.pending_steps = step_order[research_idx:]  # Start from 2.2
             state.completed_steps = []
             state.skipped_steps = []
             state.retry_count = 0
@@ -672,59 +606,6 @@ def validate_step(step_id: str, branch: str) -> Dict:
         }
     # CHOOSE_MODE is auto-skipped; execution_mode is always "batch"
 
-    # Evidence-gated validation: require agent evidence files for key steps
-    if step_id in EVIDENCE_REQUIRED:
-        phase_name, always_required = EVIDENCE_REQUIRED[step_id]
-        evidence_dir = Path(f".map/{branch}/evidence")
-        if not evidence_dir.is_dir():
-            return {
-                "valid": False,
-                "message": (
-                    f"Evidence directory missing: {evidence_dir}. "
-                    f"Run initialize or resume_from_plan first."
-                ),
-            }
-        subtask_id = state.current_subtask_id or "unknown"
-        evidence_file = evidence_dir / f"{phase_name}_{subtask_id}.json"
-        if not evidence_file.exists():
-            return {
-                "valid": False,
-                "message": (
-                    f"Evidence file missing: {evidence_file}. "
-                    f"The {phase_name} agent must write this file before "
-                    f"validate_step can accept step {step_id}."
-                ),
-            }
-        # Validate JSON structure
-        try:
-            evidence_data = json.loads(evidence_file.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError) as exc:
-            return {
-                "valid": False,
-                "message": (f"Evidence file {evidence_file} is not valid JSON: {exc}"),
-            }
-        # Check required fields
-        for required_field in ("phase", "subtask_id", "timestamp"):
-            if required_field not in evidence_data:
-                return {
-                    "valid": False,
-                    "message": (
-                        f"Evidence file {evidence_file} missing required "
-                        f"field: '{required_field}'. "
-                        f"Required fields: phase, subtask_id, timestamp."
-                    ),
-                }
-        # Validate subtask_id matches current subtask
-        if evidence_data.get("subtask_id") != subtask_id:
-            return {
-                "valid": False,
-                "message": (
-                    f"Evidence file subtask_id mismatch: "
-                    f"expected '{subtask_id}', "
-                    f"got '{evidence_data.get('subtask_id')}'."
-                ),
-            }
-
     # Mark step complete
     state.completed_steps.append(step_id)
     if step_id in state.pending_steps:
@@ -771,10 +652,6 @@ def initialize_workflow(task: str, branch: str) -> Dict:
     # Create fresh state
     state = StepState()
     state.save(state_file)
-
-    # Create evidence directory for artifact-gated validation
-    evidence_dir = Path(f".map/{branch}/evidence")
-    evidence_dir.mkdir(parents=True, exist_ok=True)
 
     return {
         "status": "initialized",
@@ -1067,28 +944,6 @@ def validate_wave_step(subtask_id: str, step_id: str, branch: str) -> Dict:
     state_file = Path(f".map/{branch}/step_state.json")
     state = StepState.load(state_file)
 
-    # Evidence-gated validation for actor/monitor steps
-    if step_id in EVIDENCE_REQUIRED:
-        phase_name, _always_required = EVIDENCE_REQUIRED[step_id]
-        evidence_dir = Path(f".map/{branch}/evidence")
-        if not evidence_dir.is_dir():
-            return {
-                "valid": False,
-                "message": (
-                    f"Evidence directory missing: {evidence_dir}. "
-                    f"Create it before running agent steps."
-                ),
-            }
-        evidence_file = evidence_dir / f"{phase_name}_{subtask_id}.json"
-        if not evidence_file.exists():
-            return {
-                "valid": False,
-                "message": (
-                    f"Evidence file missing: {evidence_file}. "
-                    f"The {phase_name} agent must write this file."
-                ),
-            }
-
     # Determine next phase for this subtask
     subtask_step_order = [
         s for s in _get_step_order(state.tdd_mode) if s.startswith("2.")
@@ -1116,7 +971,7 @@ def validate_wave_step(subtask_id: str, step_id: str, branch: str) -> Dict:
 def advance_wave(branch: str) -> Dict:
     """Advance to the next execution wave.
 
-    Called when all subtasks in current wave have passed VERIFY_ADHERENCE.
+    Called when all subtasks in current wave have passed Monitor and per-wave gates.
 
     Args:
         branch: Git branch name (sanitized)
@@ -1165,11 +1020,9 @@ def skip_step(step_id: str, branch: str) -> Dict:
     """Skip a conditional step without executing it.
 
     Only steps that are defined as conditional can be skipped:
-      - 2.2 (RESEARCH): conditional on refactoring or 3+ files
+      - 2.2 (RESEARCH): conditional on 3+ existing files or high risk
       - 2.25 (TEST_WRITER): TDD mode only, auto-skipped otherwise
       - 2.26 (TEST_FAIL_GATE): TDD mode only, auto-skipped otherwise
-      - 2.6 (PREDICTOR): conditional on medium/high risk
-      - 2.11 (SUBTASK_APPROVAL): conditional on step_by_step mode
 
     Args:
         step_id: Step identifier to skip
@@ -1278,7 +1131,7 @@ def set_subtasks(subtask_ids: List[str], branch: str) -> Dict:
 def resume_from_plan(branch: str) -> Dict:
     """Resume workflow from an existing /map-plan output, skipping init phases.
 
-    Detects task_plan_<branch>.md and workflow_state.json created by /map-plan.
+    Detects task_plan_<branch>.md and step_state.json created by /map-plan.
     Extracts subtask IDs from the plan, marks init phases as completed, and
     starts execution from INIT_STATE (batch mode auto-set).
 
@@ -1290,7 +1143,6 @@ def resume_from_plan(branch: str) -> Dict:
     """
     plan_dir = Path(f".map/{branch}")
     plan_file = plan_dir / f"task_plan_{branch}.md"
-    workflow_state_file = plan_dir / "workflow_state.json"
 
     # Verify plan artifacts exist
     if not plan_file.exists():
@@ -1311,14 +1163,17 @@ def resume_from_plan(branch: str) -> Dict:
             "message": f"No subtask IDs (ST-XXX) found in {plan_file}.",
         }
 
-    # Extract AAG contracts if present in workflow_state.json
+    # Extract AAG contracts from step_state.json or blueprint.json if present
     aag_contracts = {}
-    if workflow_state_file.exists():
-        try:
-            ws_data = json.loads(workflow_state_file.read_text(encoding="utf-8"))
-            aag_contracts = ws_data.get("aag_contracts", {})
-        except (json.JSONDecodeError, KeyError):
-            pass
+    step_state_file = plan_dir / "step_state.json"
+    blueprint_file = plan_dir / "blueprint.json"
+    for source_file in [step_state_file, blueprint_file]:
+        if source_file.exists() and not aag_contracts:
+            try:
+                src_data = json.loads(source_file.read_text(encoding="utf-8"))
+                aag_contracts = src_data.get("aag_contracts", {})
+            except (json.JSONDecodeError, KeyError):
+                pass
 
     # Create state that skips DECOMPOSE, INIT_PLAN, REVIEW_PLAN, CHOOSE_MODE
     # (plan already approved, execution mode is always batch)
@@ -1338,12 +1193,9 @@ def resume_from_plan(branch: str) -> Dict:
         pending_steps=execution_start,
         plan_approved=True,
         execution_mode="batch",
+        workflow_status="IN_PROGRESS",
     )
     state.save(state_file)
-
-    # Create evidence directory for artifact-gated validation
-    evidence_dir = plan_dir / "evidence"
-    evidence_dir.mkdir(parents=True, exist_ok=True)
 
     briefing = get_resume_briefing(branch)
 
@@ -1419,7 +1271,7 @@ def resume_single_subtask(subtask_id: str, branch: str, tdd_mode: bool = False) 
 
     Requires task_plan_<branch>.md to exist (created by /map-plan or decomposer).
     Validates that the requested subtask ID exists in the plan.
-    Creates state starting from XML_PACKET (2.0) for just that one subtask.
+    Creates state starting from RESEARCH (2.2) for just that one subtask.
 
     Args:
         subtask_id: The subtask to execute (e.g., "ST-001")
@@ -1460,27 +1312,24 @@ def resume_single_subtask(subtask_id: str, branch: str, tdd_mode: bool = False) 
 
     # Build state for single subtask execution
     step_order = _get_step_order(tdd_mode)
-    xml_packet_idx = step_order.index("2.0")
-    subtask_steps = step_order[xml_packet_idx:]
+    research_idx = step_order.index("2.2")
+    subtask_steps = step_order[research_idx:]
 
     state_file = plan_dir / "step_state.json"
     state = StepState(
         current_subtask_id=subtask_id,
         subtask_index=0,
         subtask_sequence=[subtask_id],  # Only this one subtask
-        current_step_id="2.0",
-        current_step_phase="XML_PACKET",
+        current_step_id="2.2",
+        current_step_phase="RESEARCH",
         completed_steps=["1.0", "1.5", "1.55", "1.56", "1.6"],
         pending_steps=subtask_steps,
         plan_approved=True,
         execution_mode="batch",
         tdd_mode=tdd_mode,
+        workflow_status="IN_PROGRESS",
     )
     state.save(state_file)
-
-    # Ensure evidence directory exists
-    evidence_dir = plan_dir / "evidence"
-    evidence_dir.mkdir(parents=True, exist_ok=True)
 
     briefing = get_resume_briefing(branch)
 
@@ -1489,12 +1338,12 @@ def resume_single_subtask(subtask_id: str, branch: str, tdd_mode: bool = False) 
         "message": (
             f"Single subtask mode: {subtask_id}. "
             f"TDD: {'enabled' if tdd_mode else 'disabled'}. "
-            f"Starting from XML_PACKET."
+            f"Starting from RESEARCH."
         ),
         "subtask_id": subtask_id,
         "tdd_mode": tdd_mode,
         "all_subtasks_in_plan": all_subtask_ids,
-        "next_phase": "XML_PACKET",
+        "next_phase": "RESEARCH",
         "resume_briefing": briefing,
     }
 
