@@ -8,7 +8,7 @@ Uses step_state.json (orchestrator canonical state) as single source of truth.
 ENFORCEMENT:
   - Edit allowed during phases: ACTOR, APPLY, TEST_WRITER
   - Edit blocked during all other phases (DECOMPOSE, MONITOR, PREDICTOR, etc.)
-  - Fail-open: no step_state.json or no step_state.json → allow
+  - Fail-open: missing or unreadable step_state.json → allow
   - Always allows: .map/ artifacts, ~/.claude/ memory, non-editing tools
 
 CONSTRAINTS (from step_state.json):

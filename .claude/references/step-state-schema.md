@@ -63,8 +63,4 @@ Current step set (linear order; some are conditional):
 7. `2.2` RESEARCH (conditional)
 9. `2.3` ACTOR
 10. `2.4` MONITOR
-11. `2.6` PREDICTOR (conditional)
-12. `2.7` UPDATE_STATE
-13. `2.8` TESTS_GATE (conditional)
-14. `2.9` LINTER_GATE (conditional)
 

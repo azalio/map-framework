@@ -128,7 +128,7 @@ class TestWorkflowGate:
     # --- Fail-open behavior ---
 
     def test_allows_edit_when_no_state_files(self, tmp_path: Path) -> None:
-        """Edit allowed when neither step_state.json nor step_state.json exist."""
+        """Edit allowed when no step_state.json exists."""
         code, stdout, _ = self.run_hook(
             {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}},
             tmp_path,

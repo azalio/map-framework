@@ -8,7 +8,7 @@ Injects a short MAP workflow reminder ONLY for significant operations:
 - Bash: inject for test/build/vcs commands
 
 Source of truth: .map/<branch>/step_state.json
-(step_state.json is for enforcement gates only).
+(single state file used for enforcement gates and workflow context injection).
 
 Trigger: Edit|Write|Bash
 Exit codes: Always 0 (non-blocking, just adds context)

@@ -87,10 +87,6 @@ Route to the appropriate executor based on `$PHASE`. All phases from `/map-effic
 - **RESEARCH (2.2)** — Call research-agent if needed
 - **ACTOR (2.3)** — Implement the subtask
 - **MONITOR (2.4)** — Validate implementation
-- **PREDICTOR (2.6)** — Impact analysis (conditional)
-- **UPDATE_STATE (2.7)** — Mark progress
-- **TESTS_GATE (2.8)** — Run tests
-- **LINTER_GATE (2.9)** — Run linter
 
 Single-subtask execution must keep using the shared branch workspace artifacts rather than creating task-local side files:
 

@@ -25,7 +25,7 @@ description: Resume incomplete MAP workflow from checkpoint
 - **`step_state.json`** — Enforcement gates. Tracks subtask completion for workflow-gate.py hook.
 - **`task_plan_<branch>.md`** — Full task decomposition with validation criteria and AAG contracts.
 
-**TDD mode note:** If the interrupted workflow was using `/map-tdd` or `--tdd` flag, `tdd_mode: true` is preserved in `step_state.json`. The TDD phases (TEST_WRITER, TEST_FAIL_GATE) will be correctly included in the resumed workflow. No manual re-enablement is needed when resuming from `step_state.json`.
+**TDD mode note:** If the interrupted workflow was using `/map-tdd` or `--tdd` flag, `tdd_mode: true` is preserved in `step_state.json`.
 
 ---
 
@@ -146,7 +146,7 @@ AskUserQuestion(questions=[
 **Handle user response:**
 
 - **Resume:** Proceed to Step 4 (resume workflow)
-- **Start fresh:** Delete `.map/<branch>/step_state.json` and `.map/<branch>/step_state.json`, exit with "State cleared. Start fresh with /map-efficient."
+- **Start fresh:** Delete step_state.json`, exit with "State cleared. Start fresh with /map-efficient."
 - **Abort:** Exit without changes
 
 ---
@@ -234,7 +234,7 @@ After all subtasks complete:
 
 ### State File Corrupted
 
-If `step_state.json` or `step_state.json` parsing fails:
+If `step_state.json` parsing fails:
 
 ```markdown
 ## State File Corrupted
@@ -355,7 +355,7 @@ No recovery needed.
 ### After `/clear`
 
 If user runs `/clear` during a workflow:
-- State is preserved in `.map/<branch>/step_state.json` and `step_state.json`
+- State is preserved in `.map/<branch>/step_state.json`
 - User can resume with `/map-resume`
 - Fresh context starts from checkpoint state
 
@@ -475,9 +475,9 @@ Resume is designed for context efficiency:
 2. Load relevant source files for remaining subtasks
 3. Provide context summary in Actor prompt
 
-### Issue: step_state.json and step_state.json out of sync
+### Issue: step_state.json out of sync
 
-**Symptom:** step_state.json shows ST-004 in progress, but step_state.json shows ST-003 pending.
+**Symptom:** step_state.json shows ST-003 pending.
 
 **Cause:** Crash between orchestrator update and workflow state update.
 
