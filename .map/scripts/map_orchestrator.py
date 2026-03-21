@@ -29,10 +29,10 @@ STATE FILE:
       "current_subtask_id": "ST-001",
       "subtask_index": 0,
       "subtask_sequence": ["ST-001", "ST-002", "ST-003"],
-      "current_step_id": "2.1",
+      "current_step_id": "2.2",
       "current_step_phase": "RESEARCH",
-      "completed_steps": ["1.0_DECOMPOSE", "1.5_INIT_PLAN"],
-      "pending_steps": ["2.2_RESEARCH", "2.3_ACTOR", "2.4_MONITOR"]
+      "completed_steps": ["1.0", "1.5", "1.55", "1.56", "1.6"],
+      "pending_steps": ["2.2", "2.3", "2.4"]
     }
 
 STEP PHASES (10 total, 8 standard + 2 TDD):

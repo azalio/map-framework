@@ -531,8 +531,8 @@ Use the **Write** tool to create `.map/<branch>/step_state.json` with this struc
   "started_at": "<current UTC timestamp in ISO 8601>",
   "current_subtask": null,
   "current_state": "INITIALIZED",
-  "completed_steps": {},
-  "pending_steps": {},
+  "completed_steps": [],
+  "pending_steps": [],
   "subtask_sequence": ["ST-001", "ST-002", "ST-003"],
   "aag_contracts": {
     "ST-001": "Actor -> Action(params) -> Goal",

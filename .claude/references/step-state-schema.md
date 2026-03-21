@@ -9,7 +9,7 @@ It enables:
 - **Reminders:** `workflow-context-injector.py` injects a short reminder before significant tool calls
 - **User checkpoints:** explicit plan approval + execution mode selection
 
-This is separate from `step_state.json`, which tracks subtask execution steps for enforcement (see `workflow-state-schema.md`).
+`step_state.json` is the single source of truth for workflow state, used by both the orchestrator and enforcement hooks.
 
 ## Location
 

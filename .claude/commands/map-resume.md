@@ -403,8 +403,8 @@ The `.map/<branch>/step_state.json` tracks enforcement gates:
   "started_at": "2025-01-15T10:30:00Z",
   "current_subtask": "ST-004",
   "current_state": "IN_PROGRESS",
-  "completed_steps": {"ST-001": [...], "ST-002": [...], "ST-003": [...]},
-  "pending_steps": {"ST-004": [...], "ST-005": [...]},
+  "completed_steps": ["1.0", "1.5", "1.55", "1.56", "1.6", "2.2", "2.3", "2.4"],
+  "pending_steps": ["2.2", "2.3", "2.4"],
   "subtask_sequence": ["ST-001", "ST-002", "ST-003", "ST-004", "ST-005"]
 }
 ```
