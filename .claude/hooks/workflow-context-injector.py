@@ -150,20 +150,12 @@ def required_action_for_step(step_id: str, step_phase: str, state: dict) -> str 
         return "Approve plan (set_plan_approved true)"
     if step_id == "1.56":
         return "Choose mode (set_execution_mode step_by_step|batch)"
-    if step_id == "2.1":
-        return "Run context search before Actor (skip if not needed)"
+    if step_id == "2.2":
+        return "Run research-agent (conditional: 3+ existing files or high risk)"
     if step_id == "2.3":
         return "Run Actor"
     if step_id == "2.4":
         return "Run Monitor"
-    if step_id == "2.7":
-        return "Apply changes (Edit/Write)"
-    if step_id == "2.8":
-        return "Run tests"
-    if step_id == "2.9":
-        return "Run linter"
-    if step_id == "2.11" and mode == "step_by_step":
-        return "Confirm continue to next subtask"
 
     # Fallback for unknown step ids
     if step_phase:

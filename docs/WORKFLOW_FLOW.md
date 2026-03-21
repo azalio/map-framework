@@ -362,7 +362,6 @@ cat .map/$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|
 ```bash
 # Удалить state files (начать заново)
 rm -rf .map/<branch>/step_state.json
-rm -rf .map/<branch>/step_state.json
 ```
 
 **Включить отладку хука:**

@@ -318,17 +318,8 @@ skip_predictor = (
 )
 
 if skip_predictor:
-    # Write minimal evidence directly (no agent call needed)
-
-    {
-      "phase": "PREDICTOR",
-      "subtask_id": "<id>",
-      "timestamp": "<ISO 8601 UTC>",
-      "risk_assessment": "low",
-      "confidence_score": 0.95,
-      "tier_selected": "skipped",
-      "skip_reason": "New files only, no existing callers, complexity <= 4"
-    }
+    # No action needed — Predictor skipped for low-risk subtasks
+    pass
 else:
     # Determine tier_hint from subtask metadata:
     # - risk "medium" + complexity_score <= 3 → tier_hint: 1
