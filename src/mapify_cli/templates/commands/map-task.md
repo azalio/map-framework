@@ -83,8 +83,7 @@ PHASE=$(echo "$NEXT_STEP" | jq -r '.phase')
 
 Route to the appropriate executor based on `$PHASE`. All phases from `/map-efficient` work identically:
 
-- **XML_PACKET (2.0)** — Build XML packet for this subtask
-- **CONTEXT_SEARCH (2.1)** — Search for relevant patterns
+- **RESEARCH (2.2)** — Build XML packet for this subtask
 - **RESEARCH (2.2)** — Call research-agent if needed
 - **ACTOR (2.3)** — Implement the subtask
 - **MONITOR (2.4)** — Validate implementation
@@ -92,12 +91,11 @@ Route to the appropriate executor based on `$PHASE`. All phases from `/map-effic
 - **UPDATE_STATE (2.7)** — Mark progress
 - **TESTS_GATE (2.8)** — Run tests
 - **LINTER_GATE (2.9)** — Run linter
-- **VERIFY_ADHERENCE (2.10)** — Self-audit
 
 Single-subtask execution must keep using the shared branch workspace artifacts rather than creating task-local side files:
 
-- `session-log.md`
-- `devlog-001.md`
+
+
 - `code-review-00N.md`
 - `qa-001.md`
 - `pr-draft.md`

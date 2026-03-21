@@ -2469,32 +2469,11 @@ def check_rate_limit(user_id, action, limit=100, window=3600):
 
 </Monitor_Critical_Reminders>
 
-### Evidence File (Artifact-Gated Validation)
+### Output
 
-After completing validation, write an evidence file. Use the **Write tool** to create the file at the absolute path:
-
-`<project_root>/.map/<branch>/evidence/monitor_<subtask_id>.json`
-
-with the following JSON content:
-
-```json
-{
-  "phase": "MONITOR",
-  "subtask_id": "<subtask_id>",
-  "timestamp": "<ISO 8601 UTC>",
-  "valid": true,
-  "issues_found": 0,
-  "recommendation": "approve|reject|revise",
-  "validation_criteria_test_coverage": {
-    "total": 0,
-    "covered": 0,
-    "missing": 0,
-    "notes": "Optional: summarize VC→test coverage findings"
-  }
-}
-```
-
-**Required fields** (orchestrator validates these): `phase`, `subtask_id`, `timestamp`.
-Other fields are informational but recommended for audit trail.
+Return validation result as JSON in your response (no separate evidence file needed):
+- `valid`: true/false
+- `issues_found`: count
+- `recommendation`: approve/reject/revise
 
 **CRITICAL**: Without this file, `validate_step("2.4")` will reject the step.

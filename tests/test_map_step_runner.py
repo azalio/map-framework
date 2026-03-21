@@ -33,8 +33,6 @@ def test_ensure_human_artifacts_creates_defaults(branch_workspace):
     result = map_step_runner.ensure_human_artifacts()
 
     assert result["status"] == "success"
-    assert (branch_workspace / "session-log.md").exists()
-    assert (branch_workspace / "devlog-001.md").exists()
     assert (branch_workspace / "qa-001.md").exists()
     assert (branch_workspace / "pr-draft.md").exists()
 
@@ -48,20 +46,6 @@ def test_next_numbered_artifact_path_increments(branch_workspace):
     assert result["status"] == "success"
     assert result["file_name"] == "code-review-003.md"
 
-
-def test_append_session_log_records_entry(branch_workspace):
-    map_step_runner.append_session_log(
-        "ACTOR",
-        "implemented",
-        "ST-001",
-        "updated models",
-        ["devlog-001.md", "code-review-001.md"],
-    )
-
-    content = (branch_workspace / "session-log.md").read_text(encoding="utf-8")
-    assert "ACTOR" in content
-    assert "ST-001" in content
-    assert "devlog-001.md, code-review-001.md" in content
 
 
 def test_write_verification_summary_creates_report(branch_workspace):
@@ -95,10 +79,7 @@ def test_write_pr_draft_creates_report(branch_workspace):
 
 
 def test_build_handoff_bundle_reads_artifacts(branch_workspace):
-    (branch_workspace / "session-log.md").write_text(
-        "# Session Log\n\n## 2026-03-19 — ACTOR\n- Outcome: implemented\n",
-        encoding="utf-8",
-    )
+    """Build handoff bundle reads available artifacts."""
     (branch_workspace / "verification-summary.md").write_text(
         "# Verification Summary\n\n- Verdict: READY FOR REVIEW\n",
         encoding="utf-8",

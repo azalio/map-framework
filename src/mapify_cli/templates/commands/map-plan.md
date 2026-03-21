@@ -11,7 +11,7 @@
 - Optionally runs a short discovery pass (research-agent) to identify key files/patterns
 - Calls task-decomposer agent to break down the user's request into subtasks
 - Creates `.map/<branch>/task_plan_<branch>.md` with subtask list
-- Initializes `.map/<branch>/workflow_state.json` with subtask sequence
+- Initializes `.map/<branch>/step_state.json` with subtask sequence
 - Maintains branch-scoped human-readable artifacts in `.map/<branch>/` (`implementation-plan.md`, `decision-log.md`, `pr-draft.md`)
 - **STOPS** after planning (forces context flush)
 
@@ -33,7 +33,7 @@ BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|
 echo "findings:    $(test -f .map/${BRANCH}/findings_${BRANCH}.md && echo EXISTS || echo MISSING)"
 echo "spec:        $(test -f .map/${BRANCH}/spec_${BRANCH}.md && echo EXISTS || echo MISSING)"
 echo "task_plan:   $(test -f .map/${BRANCH}/task_plan_${BRANCH}.md && echo EXISTS || echo MISSING)"
-echo "state:       $(test -f .map/${BRANCH}/workflow_state.json && echo EXISTS || echo MISSING)"
+echo "state:       $(test -f .map/${BRANCH}/step_state.json && echo EXISTS || echo MISSING)"
 echo "impl_plan:   $(test -f .map/${BRANCH}/implementation-plan.md && echo EXISTS || echo MISSING)"
 echo "decisions:   $(test -f .map/${BRANCH}/decision-log.md && echo EXISTS || echo MISSING)"
 echo "pr_draft:    $(test -f .map/${BRANCH}/pr-draft.md && echo EXISTS || echo MISSING)"
@@ -43,7 +43,7 @@ echo "pr_draft:    $(test -f .map/${BRANCH}/pr-draft.md && echo EXISTS || echo M
 - If `findings` EXISTS → skip Step 0 (discovery), read existing findings instead
 - If `spec` EXISTS → skip Steps 1-2 (interview), read existing spec instead
 - If `task_plan` EXISTS → skip Steps 4-6 (decomposition), read existing plan instead
-- If `workflow_state.json` EXISTS → plan is already complete, print checkpoint and STOP
+- If `step_state.json` EXISTS → plan is already complete, print checkpoint and STOP
 
 This prevents redundant work when the user restarts Claude mid-plan.
 
@@ -499,13 +499,13 @@ Then use the **Write** tool to create `.map/<branch>/task_plan_<branch>.md` with
 
 ### Step 6.5: Validate Constraints (Before State Initialization)
 
-If the spec includes a `## Constraints` section with non-null values, validate before writing workflow_state.json:
+If the spec includes a `## Constraints` section with non-null values, validate before writing step_state.json:
 
 **scope_glob validation** (REQUIRED if scope_glob is non-null):
 - Reject if contains `..` (path traversal)
 - Reject if starts with `/` (absolute path)
 - Reject if contains `{` (brace expansion — Python version-dependent behavior)
-- On validation failure: print error and STOP — do not create workflow_state.json
+- On validation failure: print error and STOP — do not create step_state.json
 
 ```bash
 # Example validation (run in Bash)
@@ -518,11 +518,11 @@ fi
 
 ### Step 7: Initialize Workflow State (Do This Last)
 
-Create `.map/<branch>/workflow_state.json` with the decomposition results. Wrap in `MAP_State_v1_0` tag for executor parsing.
+Create `.map/<branch>/step_state.json` with the decomposition results. Wrap in `MAP_State_v1_0` tag for executor parsing.
 
 Do this AFTER writing `task_plan_<branch>.md` so planning artifacts are created before the state gate becomes active.
 
-Use the **Write** tool to create `.map/<branch>/workflow_state.json` with this structure (substitute actual values):
+Use the **Write** tool to create `.map/<branch>/step_state.json` with this structure (substitute actual values):
 
 ```json
 {
@@ -564,7 +564,7 @@ WORKFLOW CHECKPOINT: PLAN PHASE COMPLETE
 ✅ Architecture graph written to spec_${BRANCH}.md
 ✅ Task decomposed into N subtasks with AAG contracts
 ✅ Blueprint saved to .map/${BRANCH}/blueprint.json
-✅ workflow_state.json initialized (with aag_contracts map)
+✅ step_state.json initialized (with aag_contracts map)
 ✅ Plan written to .map/${BRANCH}/task_plan_${BRANCH}.md
 ✅ Human-readable artifacts updated: implementation-plan.md, decision-log.md, pr-draft.md
 ✅ Planning review recorded: plan-review-00N.md + plan-gate.json
@@ -589,7 +589,7 @@ Next Steps:
 ```
 DISTILLATION CHECKLIST:
   [x] task_plan_<branch>.md — has AAG contracts for every subtask
-  [x] workflow_state.json   — has aag_contracts map + subtask_sequence
+  [x] step_state.json   — has aag_contracts map + subtask_sequence
   [x] spec_<branch>.md      — has architecture graph + decisions (if interview was done)
   [x] findings_<branch>.md  — has research pointers (if discovery was done)
   [x] implementation-plan.md — concise execution roadmap for humans
@@ -637,7 +637,7 @@ If plan files exceed this, condense — remove redundant descriptions, keep AAG 
 
 ## State Machine Integration
 
-This command transitions workflow_state.json through these states:
+This command transitions step_state.json through these states:
 
 ```
 (none) → INITIALIZED
@@ -661,7 +661,7 @@ workflow-gate.py is designed to prevent code edits during execution phases until
 
 /map-plan should:
 - avoid editing repo code (outside `.map/`)
-- finish writing planning artifacts (spec/task_plan) before creating `workflow_state.json`
+- finish writing planning artifacts (spec/task_plan) before creating `step_state.json`
 
 ---
 
@@ -697,7 +697,7 @@ User: "Add JWT authentication with refresh tokens"
 A: Subtasks are too granular. Ask task-decomposer to group related work into larger chunks (aim for 3-7 subtasks).
 
 **Q: User changed requirements after planning?**
-A: Re-run /map-plan. It will overwrite task_plan_<branch>.md and reset workflow_state.json.
+A: Re-run /map-plan. It will overwrite task_plan_<branch>.md and reset step_state.json.
 
 ---
 
@@ -707,7 +707,7 @@ This command succeeds when:
 - ✅ Deep interview completed (if scope warranted it) with spec_<branch>.md written
 - ✅ Architecture graph written in spec_<branch>.md (for complexity >= 3)
 - ✅ task_plan_<branch>.md exists with AAG contracts for every subtask
-- ✅ workflow_state.json exists with valid subtask_sequence + aag_contracts map
+- ✅ step_state.json exists with valid subtask_sequence + aag_contracts map
 - ✅ CHECKPOINT shows subtask count and IDs
 - ✅ Context distilled (plan files self-contained for fresh session)
 - ✅ You STOPPED (did not proceed to execution)

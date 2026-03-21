@@ -109,9 +109,6 @@ Task(
   description="TDD: Write tests for subtask [ID]",
   prompt=f"""You are in TDD TEST_WRITER mode.
 
-<MAP_Packet subtask="[ID]" v="1.0" risk="[risk_level]">
-[paste from .map/<branch>/current_packet.xml]
-</MAP_Packet>
 
 <MAP_Contract>
 [AAG contract from decomposition]
@@ -136,7 +133,7 @@ STRICT RULES:
 
 Output:
 - Test files written via Edit/Write tools
-- Evidence file: .map/<branch>/evidence/test_writer_<subtask_id>.json
+
 
 Evidence JSON must include:
   "phase": "TEST_WRITER",
@@ -182,7 +179,7 @@ fi
 
 ```bash
 # Lint-check ONLY the test files created by TEST_WRITER
-# (read test_files_created from evidence/test_writer_<subtask_id>.json)
+
 if command -v ruff &> /dev/null; then
   LINT_OUTPUT=$(ruff check <test_files> 2>&1) || true
 elif command -v eslint &> /dev/null; then
@@ -230,9 +227,6 @@ Task(
   description="TDD: Implement subtask [ID] to make tests green",
   prompt=f"""You are in TDD CODE_ONLY mode.
 
-<MAP_Packet subtask="[ID]" v="1.0" risk="[risk_level]">
-[paste from .map/<branch>/current_packet.xml]
-</MAP_Packet>
 
 <MAP_Contract>
 [AAG contract from decomposition]
@@ -255,7 +249,7 @@ Test files (READ-ONLY):
 {test_files_list}
 
 Output: standard Actor output (approach + code + trade-offs)
-Evidence file: .map/<branch>/evidence/actor_<subtask_id>.json"""
+
 )
 ```
 
@@ -286,8 +280,8 @@ Monitor verifies both implementation correctness AND that all tests pass.
 
 `/map-tdd` uses the same branch-scoped execution artifacts as `/map-efficient` because it runs through the same orchestrated state machine with extra TDD phases:
 
-- `session-log.md`
-- `devlog-001.md`
+
+
 - `code-review-00N.md`
 - `qa-001.md`
 - `pr-draft.md`

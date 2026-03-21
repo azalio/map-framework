@@ -87,7 +87,7 @@ def main() -> None:
                 parts.append(
                     f"MAP workflow state before compaction: "
                     f"workflow={workflow}, phase={phase}. "
-                    f"Full state: .map/{branch}/workflow_state.json"
+                    f"Full state: .map/{branch}/step_state.json"
                 )
         except (json.JSONDecodeError, IOError, OSError):
             pass

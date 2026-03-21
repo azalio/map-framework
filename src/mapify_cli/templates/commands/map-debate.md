@@ -319,7 +319,7 @@ skip_predictor = (
 
 if skip_predictor:
     # Write minimal evidence directly (no agent call needed)
-    # Use Write tool → <project_root>/.map/<branch>/evidence/predictor_<subtask_id>.json
+
     {
       "phase": "PREDICTOR",
       "subtask_id": "<id>",

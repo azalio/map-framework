@@ -107,28 +107,8 @@ def append_session_log(
     artifact_refs: Optional[List[str]] = None,
     branch: Optional[str] = None,
 ) -> Dict:
-    """Append a concise entry to code-review-XXX.md."""
-    ensure_human_artifacts(branch)
-    branch_dir = get_branch_dir(branch)
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    refs = ", ".join(artifact_refs or [])
-
-    lines = [
-        f"## {timestamp} — {phase}",
-        f"- Outcome: {outcome}",
-    ]
-    if subtask_id:
-        lines.append(f"- Subtask: {subtask_id}")
-    if details:
-        lines.append(f"- Details: {details}")
-    if refs:
-        lines.append(f"- Artifacts: {refs}")
-    lines.append("")
-
-    with log_file.open("a", encoding="utf-8") as handle:
-        handle.write("\n".join(lines))
-
-    return {"status": "success", "path": str(log_file)}
+    """Deprecated: session-log.md removed in pipeline simplification. No-op."""
+    return {"status": "success", "path": ""}
 
 
 def write_verification_summary(
@@ -343,8 +323,8 @@ def build_handoff_bundle(branch: Optional[str] = None) -> Dict:
         summary.append("- Verification gate recorded")
     if latest_review:
         summary.append(f"- Latest review: {latest_review_name}")
-    if session_log:
-        summary.append("- Session log captured")
+    if latest_review:
+        summary.append("- Code review history available")
     if active_issues:
         summary.append("- Active unresolved issues tracked")
 

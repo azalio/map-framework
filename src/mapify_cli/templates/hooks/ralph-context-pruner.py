@@ -141,8 +141,8 @@ def prune_file(file_path: Path, archive_dir: Path) -> Optional[str]:
 
 
 def load_workflow_state(branch: str) -> Optional[Dict[str, Any]]:
-    """Load workflow state from .map/<branch>/workflow_state.json."""
-    state_file = MAP_DIR / branch / "workflow_state.json"
+    """Load workflow state from .map/<branch>/step_state.json."""
+    state_file = MAP_DIR / branch / "step_state.json"
     if not state_file.exists():
         return None
     try:
@@ -205,7 +205,7 @@ Workflow: {workflow}
 Phase: {phase} | Task: {task}
 Done: {recent}
 NEXT: {mandatory if mandatory else 'Continue current task'}
-State: .map/{branch}/workflow_state.json"""
+State: .map/{branch}/step_state.json"""
 
     return msg
 

@@ -212,9 +212,9 @@ class TestValidateWaveStep:
 
     def test_advances_subtask_phase(self, branch_dir, sample_blueprint):
         map_orchestrator.set_waves(branch_dir, sample_blueprint)
-        result = map_orchestrator.validate_wave_step("ST-001", "2.0", branch_dir)
+        result = map_orchestrator.validate_wave_step("ST-001", "2.2", branch_dir)
         assert result["valid"] is True
-        assert result["next_phase"] == "2.1"
+        assert result["next_phase"] == "2.3"
 
     def test_actor_step_advances_to_monitor(self, branch_dir, sample_blueprint):
         map_orchestrator.set_waves(branch_dir, sample_blueprint)
@@ -232,11 +232,11 @@ class TestValidateWaveStep:
         assert result["valid"] is True
         assert result["next_phase"] == "2.4"
 
-    def test_missing_evidence_blocks_validation(self, branch_dir, sample_blueprint):
+    def test_validation_passes_without_evidence(self, branch_dir, sample_blueprint):
+        """Validation passes without evidence files (evidence removed from pipeline)."""
         map_orchestrator.set_waves(branch_dir, sample_blueprint)
         result = map_orchestrator.validate_wave_step("ST-001", "2.3", branch_dir)
-        assert result["valid"] is False
-        assert "Evidence file missing" in result["message"]
+        assert result["valid"] is True
 
 
 class TestAdvanceWave:
@@ -702,17 +702,9 @@ class TestTDDMode:
         state.current_subtask_id = "ST-002"
         state.completed_steps = []  # Reset after subtask transition
         state.pending_steps = [
-            "2.0",
-            "2.1",
             "2.2",
             "2.3",
             "2.4",
-            "2.6",
-            "2.7",
-            "2.8",
-            "2.9",
-            "2.10",
-            "2.11",
         ]
         state.save(Path(f".map/{branch_dir}/step_state.json"))
 
@@ -737,26 +729,19 @@ class TestTDDMode:
         loaded = map_orchestrator.StepState.load(state_file)
         assert loaded.skipped_steps == ["2.25", "2.26"]
 
-    def test_validate_wave_step_missing_evidence_dir(
+    def test_validate_wave_step_no_evidence_required(
         self, branch_dir, sample_blueprint
     ):
-        """validate_wave_step returns error when evidence directory is missing."""
+        """validate_wave_step passes without evidence directory (evidence removed)."""
         result = map_orchestrator.set_waves(branch_dir, sample_blueprint)
         assert result["status"] == "success"
         state_file = Path(f".map/{branch_dir}/step_state.json")
         state = map_orchestrator.StepState.load(state_file)
         state.subtask_phases = {"ST-001": "2.3"}
-        # Remove evidence directory
-        evidence_dir = Path(f".map/{branch_dir}/evidence")
-        if evidence_dir.exists():
-            import shutil
-
-            shutil.rmtree(evidence_dir)
         state.save(state_file)
 
         result = map_orchestrator.validate_wave_step("ST-001", "2.3", branch_dir)
-        assert result["valid"] is False
-        assert "Evidence directory missing" in result["message"]
+        assert result["valid"] is True
 
 
 class TestResumeSingleSubtask:
@@ -786,10 +771,10 @@ class TestResumeSingleSubtask:
         state = map_orchestrator.StepState.load(state_file)
         assert state.subtask_sequence == ["ST-002"]
         assert state.current_subtask_id == "ST-002"
-        assert state.current_step_id == "2.0"
+        assert state.current_step_id == "2.2"
         assert state.plan_approved is True
         assert "1.0" in state.completed_steps
-        assert "2.0" in state.pending_steps
+        assert "2.2" in state.pending_steps
 
     def test_resume_single_subtask_with_tdd(self, branch_dir, tmp_path):
         """TDD mode adds TEST_WRITER and TEST_FAIL_GATE to pending steps."""
@@ -820,18 +805,14 @@ class TestResumeSingleSubtask:
         assert "ST-999 not found" in result["message"]
         assert "ST-001" in result["message"]
 
-    def test_resume_single_subtask_creates_evidence_dir(self, branch_dir, tmp_path):
-        """Evidence directory is created automatically."""
-        # Remove the evidence dir created by fixture
-        import shutil
-
-        evidence_dir = tmp_path / ".map" / branch_dir / "evidence"
-        if evidence_dir.exists():
-            shutil.rmtree(evidence_dir)
-
+    def test_resume_single_subtask_sets_workflow_status(self, branch_dir, tmp_path):
+        """Resume sets workflow_status to IN_PROGRESS."""
         self._create_plan(tmp_path, branch_dir, ["ST-001"])
         map_orchestrator.resume_single_subtask("ST-001", branch_dir)
-        assert evidence_dir.exists()
+        state = map_orchestrator.StepState.load(
+            Path(f".map/{branch_dir}/step_state.json")
+        )
+        assert state.workflow_status == "IN_PROGRESS"
 
     def test_resume_single_subtask_lists_all_subtasks(self, branch_dir, tmp_path):
         """Response includes all subtask IDs from the plan."""
@@ -844,7 +825,7 @@ class TestResumeSingleSubtask:
         self._create_plan(tmp_path, branch_dir, ["ST-001", "ST-002"])
         map_orchestrator.resume_single_subtask("ST-002", branch_dir)
         result = map_orchestrator.get_next_step(branch_dir)
-        assert result["phase"] == "XML_PACKET"
+        assert result["phase"] == "RESEARCH"
         assert result["current_subtask"] == "ST-002"
 
     def test_resume_single_subtask_includes_human_artifact_briefing(
@@ -870,7 +851,6 @@ class TestResumeSingleSubtask:
         briefing = result["resume_briefing"]
         assert briefing["latest_review_path"].endswith("code-review-002.md")
         assert briefing["latest_verification_verdict"] == "NEEDS WORK"
-        assert "MONITOR" in briefing["recent_session_log"]
         assert "fix auth edge case" in "\n".join(briefing["suggested_fixes"])
 
 
@@ -963,7 +943,6 @@ class TestGetPlanProgress:
 
         briefing = result["resume_briefing"]
         assert briefing["latest_review_path"].endswith("code-review-001.md")
-        assert "ACTOR" in briefing["recent_session_log"]
         assert "update tests" in "\n".join(briefing["suggested_fixes"])
 
 
@@ -981,10 +960,6 @@ class TestResumeFromPlan:
             json.dumps({"aag_contracts": {"ST-001": "Keep auth isolated"}}),
             encoding="utf-8",
         )
-        (plan_dir / "session-log.md").write_text(
-            "# Session Log\n\n## 2026-03-19 — INIT\n- Outcome: ready\n",
-            encoding="utf-8",
-        )
         (plan_dir / "verification-summary.md").write_text(
             "# Verification Summary\n\n- Verdict: READY FOR REVIEW\n",
             encoding="utf-8",
@@ -995,7 +970,6 @@ class TestResumeFromPlan:
         assert result["status"] == "success"
         briefing = result["resume_briefing"]
         assert briefing["latest_verification_verdict"] == "READY FOR REVIEW"
-        assert "INIT" in briefing["recent_session_log"]
 
 
 class TestBuildResumeBriefing:
