@@ -576,8 +576,6 @@ def get_project_health(project_path: Path) -> Dict[str, Any]:
     mcp_json_path = project_path / ".mcp.json"
     internal_mcp_path = project_path / ".claude" / "mcp_config.json"
     branch_artifact_files = [
-        "implementation-plan.md",
-        "decision-log.md",
         "qa-001.md",
         "verification-summary.md",
         "pr-draft.md",
@@ -668,11 +666,9 @@ def get_branch_workspace_dir(project_path: Path, branch: Optional[str] = None) -
     return project_path / ".map" / branch_name
 
 
-def get_branch_artifact_templates(branch: str) -> Dict[str, str]:
-    """Return cook-inspired artifact templates aligned to MAP branch workspaces."""
+def get_branch_artifact_templates(branch: str = "") -> Dict[str, str]:
+    """Return artifact templates aligned to MAP branch workspaces."""
     return {
-        "implementation-plan.md": f"# Implementation Plan\n\n## Branch\n`{branch}`\n\n## Summary\n\n## Goals\n\n## Non-Goals\n\n## Steps\n1.\n2.\n3.\n\n## Validation Plan\n\n## Risks\n",
-        "decision-log.md": "# Decision Log\n\n## Decision\n\n## Options Considered\n\n## Chosen Approach\n\n## Consequences\n",
         "code-review-001.md": "# Code Review 001\n\n## Scope\n\n## Findings\n\n### High\n\n### Medium\n\n### Low\n\n## Verdict\n- [ ] Ready\n- [ ] Needs revision\n",
         "qa-001.md": "# QA 001\n\n## Commands Run\n\n## Expected Result\n\n## Actual Result\n\n## Follow-ups\n",
         "pr-draft.md": "# PR Draft\n\n## Summary\n\n## Validation\n\n## Risks / Rollback\n",

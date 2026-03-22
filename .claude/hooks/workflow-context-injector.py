@@ -144,8 +144,6 @@ def should_inject_for_bash(command: str) -> bool:
 
 def required_action_for_step(step_id: str, step_phase: str, state: dict) -> str | None:
     """Return a short required-next-action hint for common steps."""
-    mode = (state.get("execution_mode") or "").strip()
-
     if step_id == "1.55":
         return "Approve plan (set_plan_approved true)"
     if step_id == "1.56":

@@ -220,15 +220,14 @@ class TestCommandTemplates:
             "Should describe itself as efficient"
         )
 
-    def test_map_plan_writes_human_artifacts(self, templates_commands_dir):
-        """/map-plan should maintain branch-scoped human-readable artifacts."""
+    def test_map_plan_writes_core_artifacts(self, templates_commands_dir):
+        """/map-plan should create core planning artifacts."""
         content = (templates_commands_dir / "map-plan.md").read_text()
 
-        assert "implementation-plan.md" in content
-        assert "decision-log.md" in content
-        assert "pr-draft.md" in content
-        assert "plan-review-00N.md" in content
-        assert "plan-gate.json" in content
+        assert "task_plan_" in content
+        assert "step_state.json" in content
+        assert "blueprint.json" in content
+        assert "spec_" in content
 
     def test_map_efficient_tracks_review_loop_artifacts(self, templates_commands_dir):
         """/map-efficient should preserve review/devlog/qa artifacts in branch workspace."""
