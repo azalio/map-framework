@@ -807,6 +807,123 @@ def get_current_phase(branch: Optional[str] = None) -> Optional[str]:
     return None
 
 
+def run_test_gate() -> dict:
+    """Run project test suite as a deterministic verification gate.
+
+    Detects the test runner (pytest/npm/go/cargo) and executes it.
+    Returns structured result with pass/fail, output, and exit code.
+    Called AFTER Monitor returns valid=true, BEFORE validate_step advances state.
+    """
+    import subprocess
+
+    # Detect test runner
+    runners = [
+        (["pytest.ini", "pyproject.toml", "setup.py", "setup.cfg"], ["pytest", "--tb=short", "-q"]),
+        (["package.json"], ["npm", "test"]),
+        (["go.mod"], ["go", "test", "./..."]),
+        (["Cargo.toml"], ["cargo", "test"]),
+    ]
+
+    test_cmd = None
+    for markers, cmd in runners:
+        for marker in markers:
+            if Path(marker).exists():
+                # For pyproject.toml, check it actually has pytest config or is a Python project
+                if marker == "pyproject.toml":
+                    try:
+                        content = Path(marker).read_text(encoding="utf-8")
+                        if "pytest" not in content and "tool.pytest" not in content:
+                            continue
+                    except OSError:
+                        continue
+                test_cmd = cmd
+                break
+        if test_cmd:
+            break
+
+    if not test_cmd:
+        return {
+            "status": "skipped",
+            "passed": True,
+            "reason": "No test runner detected",
+            "output": "",
+            "exit_code": 0,
+        }
+
+    try:
+        result = subprocess.run(
+            test_cmd,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        passed = result.returncode == 0
+        output = result.stdout + result.stderr
+        # Truncate to avoid huge JSON
+        if len(output) > 5000:
+            output = output[:2000] + "\n...[truncated]...\n" + output[-2000:]
+
+        return {
+            "status": "success",
+            "passed": passed,
+            "output": output,
+            "exit_code": result.returncode,
+            "test_cmd": " ".join(test_cmd),
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            "status": "timeout",
+            "passed": False,
+            "output": "Test execution timed out after 300s",
+            "exit_code": -1,
+            "test_cmd": " ".join(test_cmd),
+        }
+    except OSError as e:
+        return {
+            "status": "error",
+            "passed": False,
+            "output": str(e),
+            "exit_code": -1,
+            "test_cmd": " ".join(test_cmd),
+        }
+
+
+def snapshot_code_state(branch: Optional[str] = None) -> dict:
+    """Capture current git state for artifact-to-code verification.
+
+    Records git ref, changed files, and diff stat so review artifacts
+    can be tied to actual code state. Populates subtask_files_changed.
+    """
+    import subprocess
+
+    branch_name = branch or get_branch_name()
+
+    def _run_git(args: list[str]) -> str:
+        try:
+            result = subprocess.run(
+                ["git"] + args,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            return result.stdout.strip() if result.returncode == 0 else ""
+        except Exception:
+            return ""
+
+    git_ref = _run_git(["rev-parse", "HEAD"])
+    diff_stat = _run_git(["diff", "--stat", "HEAD"])
+    diff_names = _run_git(["diff", "--name-only", "HEAD"])
+    files_changed = [f for f in diff_names.splitlines() if f.strip()] if diff_names else []
+
+    return {
+        "status": "success",
+        "git_ref": git_ref[:12] if git_ref else "unknown",
+        "files_changed": files_changed,
+        "diff_stat": diff_stat,
+        "branch": branch_name,
+    }
+
+
 if __name__ == "__main__":
     # Simple CLI interface for testing
     import sys
@@ -928,6 +1045,14 @@ if __name__ == "__main__":
         status = sys.argv[3] if len(sys.argv) >= 4 else "accepted"
         notes = sys.argv[4] if len(sys.argv) >= 5 else ""
         result = add_known_issue(title, status, notes)
+        print(json.dumps(result, indent=2))
+
+    elif func_name == "run_test_gate":
+        result = run_test_gate()
+        print(json.dumps(result, indent=2))
+
+    elif func_name == "snapshot_code_state":
+        result = snapshot_code_state()
         print(json.dumps(result, indent=2))
 
     else:

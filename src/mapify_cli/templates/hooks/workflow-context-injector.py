@@ -204,10 +204,21 @@ def format_reminder(state: dict, branch: str) -> str | None:
     if diag_file.exists():
         diag_hint = " | Diag: diagnostics.json"
 
+    # Show recently changed files for context freshness
+    files_hint = ""
+    files_changed = state.get("subtask_files_changed", {})
+    if files_changed and subtask_id != "-":
+        current_files = files_changed.get(subtask_id, [])
+        if current_files:
+            shown = current_files[:5]
+            files_hint = " | Files: " + ", ".join(Path(f).name for f in shown)
+            if len(current_files) > 5:
+                files_hint += f" +{len(current_files) - 5}"
+
     if not step_id and not step_phase:
         return None
 
-    base = f"[MAP] {step_id} {step_phase} | ST: {subtask_id} ({progress}) | plan:{plan_ok} mode:{mode}{wave_hint}{diag_hint}"
+    base = f"[MAP] {step_id} {step_phase} | ST: {subtask_id} ({progress}) | plan:{plan_ok} mode:{mode}{wave_hint}{diag_hint}{files_hint}"
     if required:
         return f"{base} | REQUIRED: {required}"
     return base

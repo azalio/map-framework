@@ -442,9 +442,18 @@ Protocol (execute in order):
 )
 ```
 
+# After Monitor returns valid=true, run deterministic test gate:
+TEST_GATE=$(python3 .map/scripts/map_step_runner.py run_test_gate)
+# If tests fail, treat as Monitor valid=false — feed output back to Actor
+if echo "$TEST_GATE" | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get('passed') else 1)" 2>/dev/null; then
+    # Tests passed — snapshot code state for artifact verification
+    SNAPSHOT=$(python3 .map/scripts/map_step_runner.py snapshot_code_state)
+    # Append git ref to review artifact header (if code-review file exists)
+fi
+
 # After Monitor returns:
 if monitor_output["valid"] == false:
-    # Increment retry counter
+    # Increment retry counter (also triggered when test gate fails above)
     if retry_count < 5:
         # Go back to Phase: ACTOR with Monitor feedback
         # Actor will fix issues and re-apply code

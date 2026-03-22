@@ -656,3 +656,101 @@ class TestAddKnownIssue:
 
         data = json.loads((branch_workspace / "known-issues.json").read_text(encoding="utf-8"))
         assert data["issues"][0]["status"] == "accepted"
+
+
+# ---------------------------------------------------------------------------
+# run_test_gate — focused unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestRunTestGate:
+    """Focused tests for run_test_gate."""
+
+    def test_no_test_runner_returns_skipped(self, tmp_path, monkeypatch):
+        """Returns skipped when no test runner markers exist."""
+        monkeypatch.chdir(tmp_path)
+
+        result = map_step_runner.run_test_gate()
+
+        assert result["status"] == "skipped"
+        assert result["passed"] is True
+        assert "No test runner detected" in result["reason"]
+
+    def test_pytest_detected_and_executed(self, tmp_path, monkeypatch):
+        """Detects pytest.ini and runs pytest."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+
+        import subprocess as real_subprocess
+
+        def mock_run(cmd, **kwargs):
+            result = real_subprocess.CompletedProcess(cmd, 0, "1 passed\n", "")
+            return result
+
+        monkeypatch.setattr("subprocess.run", mock_run)
+
+        result = map_step_runner.run_test_gate()
+
+        assert result["status"] == "success"
+        assert result["passed"] is True
+        assert "pytest" in result["test_cmd"]
+
+    def test_failed_tests_return_passed_false(self, tmp_path, monkeypatch):
+        """Failed tests return passed=False with output."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+
+        import subprocess as real_subprocess
+
+        def mock_run(cmd, **kwargs):
+            return real_subprocess.CompletedProcess(cmd, 1, "FAILED test_foo\n", "")
+
+        monkeypatch.setattr("subprocess.run", mock_run)
+
+        result = map_step_runner.run_test_gate()
+
+        assert result["status"] == "success"
+        assert result["passed"] is False
+        assert result["exit_code"] == 1
+
+    def test_timeout_returns_passed_false(self, tmp_path, monkeypatch):
+        """Timeout returns passed=False with timeout status."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+
+        import subprocess
+
+        def mock_run(cmd, **kwargs):
+            raise subprocess.TimeoutExpired(cmd, 300)
+
+        monkeypatch.setattr("subprocess.run", mock_run)
+
+        result = map_step_runner.run_test_gate()
+
+        assert result["status"] == "timeout"
+        assert result["passed"] is False
+
+
+# ---------------------------------------------------------------------------
+# snapshot_code_state — focused unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestSnapshotCodeState:
+    """Focused tests for snapshot_code_state."""
+
+    def test_returns_expected_structure(self, branch_workspace):
+        """Returns dict with git_ref, files_changed, diff_stat, branch."""
+        result = map_step_runner.snapshot_code_state()
+
+        assert result["status"] == "success"
+        assert "git_ref" in result
+        assert isinstance(result["files_changed"], list)
+        assert "diff_stat" in result
+        assert result["branch"] == "test-branch"
+
+    def test_git_ref_is_truncated(self, branch_workspace):
+        """git_ref is at most 12 characters."""
+        result = map_step_runner.snapshot_code_state()
+
+        assert len(result["git_ref"]) <= 12

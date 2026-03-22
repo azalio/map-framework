@@ -100,8 +100,9 @@ When Monitor runs during `/map-task`, append to the next `code-review-00N.md` so
 For each step:
 1. Get next step from orchestrator
 2. Execute the phase (same handlers as map-efficient)
-3. Validate: `python3 .map/scripts/map_orchestrator.py validate_step "$STEP_ID"`
-4. Continue to next step until complete
+3. **After Monitor valid=true:** run `python3 .map/scripts/map_step_runner.py run_test_gate` — if tests fail, treat as Monitor valid=false and feed test output back to Actor
+4. Validate: `python3 .map/scripts/map_orchestrator.py validate_step "$STEP_ID"`
+5. Continue to next step until complete
 
 **If Monitor returns `valid: false`:**
 - Retry Actor with feedback (max 5 iterations)
