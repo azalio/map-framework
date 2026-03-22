@@ -2,63 +2,38 @@
 """
 Claude Code PreToolUse Hook: Workflow Enforcement Gate
 
-Enforces MAP Framework workflow adherence by blocking Edit/Write/MultiEdit
-operations until required workflow steps (Actor + Monitor) are completed.
+Blocks Edit/Write/MultiEdit outside of Actor-related phases.
+Uses step_state.json (orchestrator canonical state) as single source of truth.
 
-USAGE:
-  This hook runs automatically before Edit/Write/MultiEdit tool calls.
-  No manual invocation needed - Claude Code handles hook execution.
+ENFORCEMENT:
+  - Edit allowed during phases: ACTOR, APPLY, TEST_WRITER
+  - Edit blocked during all other phases (DECOMPOSE, MONITOR, PREDICTOR, etc.)
+  - Fail-open: missing or unreadable step_state.json → allow
+  - Always allows: .map/ artifacts, ~/.claude/ memory, non-editing tools
 
-ENFORCEMENT RULES:
-  - Allows Edit/Write/MultiEdit when workflow_state.json is missing (fail-open)
-  - Blocks if current subtask hasn't completed required steps: ['actor', 'monitor']
-  - Allows tools if all required steps are completed
-  - Always allows edits under .map/ (workflow artifacts/state) to prevent deadlocks
-  - Always allows edits under ~/.claude/ (auto-memory, project settings)
-  - Allows Read, Bash, and other non-editing tools always
+CONSTRAINTS (from step_state.json):
+  - scope_glob: restrict edits to matching file patterns
+  - time_budget: block after N minutes elapsed
 
-WORKFLOW STATE FILE:
-  Location: .map/<branch>/workflow_state.json
-  Required fields:
-    - current_subtask: Current subtask ID (e.g., "ST-001")
-    - completed_steps: Dict mapping subtask_id -> list of completed steps
-    - pending_steps: Dict mapping subtask_id -> list of pending steps
-
-HOOK BEHAVIOR:
-  - Exit code 0: Allow tool execution
-  - Exit code 0 + permissionDecision=deny: Block tool execution with reason (preferred)
-
-TESTING:
-  echo '{"tool_name": "Edit", "tool_input": {"file_path": "test.py"}}' | python3 workflow-gate.py
-  # Expected (no workflow state): Exit 0, stdout: {}
-  # Expected (workflow active, missing steps): Exit 0, stdout: {"hookSpecificOutput":{"permissionDecision":"deny",...}}
-
-PERFORMANCE:
-  Target: <100ms per invocation
-  Design: Minimal I/O, fast JSON parsing, pre-compiled checks
-
-DESIGN RATIONALE:
-  Based on LLM Council recommendation: "Reify State - Don't tell the model
-  'remember to call Monitor.' Make the environment hostile to action until
-  the Monitor is called." This hook implements that principle through
-  filesystem-based enforcement.
+Exit code 0 always (fail-open on errors).
 """
 import json
 import os
 import re
 import sys
+from datetime import datetime, timezone
+from fnmatch import fnmatch
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Optional
 
-# Tools that require workflow enforcement
 EDITING_TOOLS = {"Edit", "Write", "MultiEdit"}
 
-# Required steps before allowing edits
-REQUIRED_STEPS = ["actor", "monitor"]
+# Phases where Edit/Write is expected (Actor applies code)
+EDITING_PHASES = {"ACTOR", "APPLY", "TEST_WRITER"}
 
 
-def extract_target_file_paths(tool_call: Dict) -> list[str]:
-    """Best-effort extraction of file paths from Claude Code tool payloads."""
+def extract_target_file_paths(tool_call: dict) -> list[str]:
+    """Extract file paths from tool call payload."""
     tool_input = tool_call.get("tool_input") or {}
     if not isinstance(tool_input, dict):
         return []
@@ -72,23 +47,16 @@ def extract_target_file_paths(tool_call: Dict) -> list[str]:
     edits = tool_input.get("edits")
     if isinstance(edits, list):
         for edit in edits:
-            if not isinstance(edit, dict):
-                continue
-            fp = edit.get("file_path")
-            if isinstance(fp, str) and fp.strip():
-                paths.append(fp)
+            if isinstance(edit, dict):
+                fp = edit.get("file_path")
+                if isinstance(fp, str) and fp.strip():
+                    paths.append(fp)
 
     return paths
 
 
 def is_exempt_path(file_path: str) -> bool:
-    """
-    Return True if file_path is exempt from workflow enforcement.
-
-    Exempt paths:
-    - .map/ artifacts (workflow state, plans, findings) -- prevents deadlocks
-    - ~/.claude/ (auto-memory, project settings) -- Claude's own persistence
-    """
+    """Return True if path is exempt from enforcement (.map/, ~/.claude/memory/)."""
     if not isinstance(file_path, str) or not file_path.strip():
         return False
 
@@ -99,20 +67,18 @@ def is_exempt_path(file_path: str) -> bool:
         else (Path.cwd().resolve() / candidate).resolve(strict=False)
     )
 
-    # Allow Claude auto-memory writes (~/.claude/projects/*/memory/)
+    # Allow ~/.claude/projects/*/memory/
     claude_memory_dir = Path.home() / ".claude" / "projects"
     try:
         rel = resolved.relative_to(claude_memory_dir.resolve())
-        # Only allow paths that include a "memory" component
         if "memory" in rel.parts:
             return True
     except ValueError:
         pass
 
-    # Allow .map/ artifacts
-    repo_root = Path.cwd().resolve()
+    # Allow .map/
     try:
-        rel = resolved.relative_to(repo_root)
+        rel = resolved.relative_to(Path.cwd().resolve())
     except ValueError:
         return False
 
@@ -120,7 +86,7 @@ def is_exempt_path(file_path: str) -> bool:
 
 
 def sanitize_branch_name(branch: str) -> str:
-    """Sanitize branch name for safe filesystem paths."""
+    """Sanitize branch name for filesystem paths."""
     sanitized = branch.replace("/", "-")
     sanitized = re.sub(r"[^a-zA-Z0-9_.-]", "-", sanitized)
     sanitized = re.sub(r"-+", "-", sanitized).strip("-")
@@ -130,7 +96,7 @@ def sanitize_branch_name(branch: str) -> str:
 
 
 def get_branch_name() -> str:
-    """Get current git branch name (sanitized for filesystem)."""
+    """Get current git branch name (sanitized)."""
     try:
         import subprocess
 
@@ -147,134 +113,159 @@ def get_branch_name() -> str:
     return "default"
 
 
-def load_workflow_state(branch: str) -> Optional[Dict]:
-    """Load workflow state from .map/<branch>/workflow_state.json"""
-    state_file = Path(f".map/{branch}/workflow_state.json")
+def is_editing_phase(branch: str) -> tuple[bool, Optional[str]]:
+    """Check step_state.json: is current phase one where Edit is allowed?
 
+    Returns (allowed, error_message).
+    """
+    step_file = Path(f".map/{branch}/step_state.json")
+    if not step_file.exists():
+        return True, None  # No step state → fail-open
+
+    try:
+        with open(step_file, "r", encoding="utf-8") as f:
+            state = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return True, None  # Corrupt/unreadable → fail-open
+
+    # Parallel wave mode: check subtask_phases dict
+    subtask_phases = state.get("subtask_phases", {})
+    if subtask_phases:
+        for phase in subtask_phases.values():
+            if phase in EDITING_PHASES:
+                return True, None
+
+    # Sequential mode: check current_step_phase
+    current_phase = state.get("current_step_phase", "")
+    if current_phase in EDITING_PHASES:
+        return True, None
+
+    # Not in an editing phase → block
+    subtask = state.get("current_subtask_id", "?")
+    return False, (
+        f"Workflow gate: Edit blocked during phase '{current_phase}' "
+        f"(subtask {subtask}).\n"
+        f"Edit is only allowed during: {', '.join(sorted(EDITING_PHASES))}.\n"
+        "Call the Actor agent first — it will apply code changes."
+    )
+
+
+def check_constraints(branch: str, target_paths: list[str]) -> Optional[str]:
+    """Check constraints from step_state.json. Returns error or None."""
+    state_file = Path(f".map/{branch}/step_state.json")
     if not state_file.exists():
         return None
 
     try:
         with open(state_file, "r", encoding="utf-8") as f:
-            return json.load(f)
+            state = json.load(f)
     except (json.JSONDecodeError, OSError):
         return None
 
+    constraints = state.get("constraints")
+    if not constraints:
+        return None
 
-def check_workflow_compliance(state: Dict) -> tuple[bool, Optional[str]]:
-    """
-    Check if current subtask(s) have completed required workflow steps.
-
-    Supports both single-subtask mode (current_subtask) and parallel wave mode
-    (active_subtasks list). In parallel mode, allows edits if ANY active
-    subtask has completed the required steps.
-
-    Returns:
-        (is_compliant, error_message)
-    """
-    # Try active_subtasks first (parallel wave mode)
-    active = state.get("active_subtasks", [])
-    if not active:
-        # Backward compat: single current_subtask
-        current = state.get("current_subtask")
-        if current:
-            active = [current]
-
-    if not active:
-        current_state = state.get("current_state") or "UNKNOWN"
-        return False, (
-            "⛔ Workflow Enforcement: No current_subtask defined in workflow_state.json\n\n"
-            f"current_state: {current_state}\n\n"
-            "Edits to non-.map files are blocked until current_subtask is set and "
-            "the required steps are completed.\n\n"
-            "To fix:\n"
-            "  - Update .map/<branch>/workflow_state.json to set current_subtask\n"
-            "  - Or re-run /map-resume or /map-plan to regenerate state\n"
-            "  - Or delete .map/<branch>/workflow_state.json to disable enforcement"
+    # scope_glob
+    scope_glob = constraints.get("scope_glob")
+    if scope_glob and "{" in scope_glob:
+        print(
+            f"[workflow-gate] WARNING: scope_glob contains '{{' which fnmatch treats as literal. "
+            f"Brace expansion is not supported. Ignoring scope_glob='{scope_glob}'.",
+            file=sys.stderr,
         )
+        scope_glob = None
+    if scope_glob and target_paths:
+        repo_root = Path.cwd().resolve()
+        for tp in target_paths:
+            resolved = Path(tp).resolve()
+            try:
+                rel = str(resolved.relative_to(repo_root))
+            except ValueError:
+                return (
+                    f"Constraint: scope_glob='{scope_glob}'\n"
+                    f"File '{resolved}' resolves outside repository root."
+                )
+            if not fnmatch(rel, scope_glob):
+                return (
+                    f"Constraint: scope_glob='{scope_glob}'\n"
+                    f"File '{rel}' is outside allowed scope."
+                )
 
-    # Allow if ANY active subtask has completed required steps
-    for subtask_id in active:
-        completed = state.get("completed_steps", {}).get(subtask_id, [])
-        if all(step in completed for step in REQUIRED_STEPS):
-            return True, None
+    # time_budget
+    time_budget = constraints.get("time_budget")
+    if time_budget is not None:
+        started_at = state.get("started_at")
+        if started_at:
+            try:
+                start = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+                elapsed = (datetime.now(timezone.utc) - start).total_seconds() / 60
+                if elapsed > time_budget:
+                    return (
+                        f"Constraint: time_budget={time_budget} min, "
+                        f"elapsed={elapsed:.0f} min."
+                    )
+            except (ValueError, TypeError):
+                pass
 
-    # Block with appropriate message
-    missing_details = []
-    for subtask_id in active:
-        completed = state.get("completed_steps", {}).get(subtask_id, [])
-        missing = [step for step in REQUIRED_STEPS if step not in completed]
-        if missing:
-            missing_details.append(f"{subtask_id}: missing {', '.join(missing)}")
+    return None
 
-    return False, (
-        f"⛔ Workflow Enforcement: Cannot edit code for active subtasks\n\n"
-        f"Active subtasks: {', '.join(active)}\n"
-        f"Missing steps:\n" + "\n".join(f"  - {d}" for d in missing_details) + "\n\n"
-        "Required workflow:\n"
-        "  1. Call Task(subagent_type='actor') to generate implementation\n"
-        "  2. Call Task(subagent_type='monitor') to validate\n"
-        "  3. Only then can you apply changes with Edit/Write\n\n"
-        "To fix: Complete missing steps before editing code.\n"
-        "Or update workflow_state.json if steps were completed."
+
+def deny(reason: str) -> None:
+    """Print deny response and exit."""
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": reason,
+                }
+            }
+        )
     )
+    sys.exit(0)
 
 
-def main():
-    """Main hook entry point."""
+def allow() -> None:
+    """Print allow response and exit."""
+    print("{}")
+    sys.exit(0)
+
+
+def main() -> None:
     try:
-        # Read tool call from stdin
         tool_call = json.load(sys.stdin)
         tool_name = tool_call.get("tool_name", "")
 
-        # Allow non-editing tools
+        # Non-editing tools → always allow
         if tool_name not in EDITING_TOOLS:
-            print("{}")
-            sys.exit(0)
+            allow()
 
-        # Always allow edits to MAP workflow artifacts under .map/
+        # Exempt paths (.map/, ~/.claude/memory/) → always allow
         target_paths = extract_target_file_paths(tool_call)
         if target_paths and all(is_exempt_path(p) for p in target_paths):
-            print("{}")
-            sys.exit(0)
+            allow()
 
-        # Get current branch
         branch = get_branch_name()
 
-        # Load workflow state
-        state = load_workflow_state(branch)
+        # Phase check (step_state.json)
+        allowed, error = is_editing_phase(branch)
+        if not allowed:
+            deny(error or "Edit blocked: not in an editing phase.")
 
-        if state is None:
-            # No workflow state = not in MAP workflow mode, allow
-            # (This prevents breaking non-MAP work)
-            print("{}")
-            sys.exit(0)
+        # Constraint check (step_state.json)
+        constraint_error = check_constraints(branch, target_paths)
+        if constraint_error:
+            deny(constraint_error)
 
-        # Check workflow compliance
-        is_compliant, error_message = check_workflow_compliance(state)
-
-        if is_compliant:
-            print("{}")
-            sys.exit(0)
-        else:
-            print(
-                json.dumps(
-                    {
-                        "hookSpecificOutput": {
-                            "hookEventName": "PreToolUse",
-                            "permissionDecision": "deny",
-                            "permissionDecisionReason": error_message,
-                        }
-                    }
-                )
-            )
-            sys.exit(0)
+        allow()
 
     except Exception as e:
-        # On hook failure, approve (fail-open to avoid blocking work)
-        print("{}")
+        # Fail-open on any error
         if os.environ.get("DEBUG_WORKFLOW_GATE"):
             print(f"[workflow-gate] ERROR: {e}", file=sys.stderr)
+        print("{}")
         sys.exit(0)
 
 

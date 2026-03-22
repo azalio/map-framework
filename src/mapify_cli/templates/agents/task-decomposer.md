@@ -158,7 +158,13 @@ Return **ONLY** valid JSON in this exact structure:
         "test_strategy": {
           "unit": "Specific unit tests (function/method level)",
           "integration": "Integration tests (component interactions) or 'N/A'",
-          "e2e": "E2E tests (full user flows) or 'N/A'"
+          "e2e": "E2E tests (full user flows) or 'N/A'",
+          "scenario_dimensions": {
+            "happy_path": "Primary success scenario test(s)",
+            "error": "Error/failure handling test(s)",
+            "edge_case": "Boundary conditions and unusual inputs test(s)",
+            "security": "Security-relevant test(s) or 'N/A'"
+          }
         },
         "affected_files": [
           "path/to/file1.py",
@@ -261,7 +267,8 @@ Return **ONLY** valid JSON in this exact structure:
   - RECOMMENDED when: complexity_score >= 5 OR security_critical OR dependencies.length >= 2
   - OMIT when: standard pattern with obvious implementation
   - Example: "Use existing RateLimiter middleware, configure for /api/* routes"
-**subtasks[].test_strategy**: Required object with unit/integration/e2e keys. Use "N/A" for levels not applicable.
+**subtasks[].test_strategy**: Required object with unit/integration/e2e keys plus `scenario_dimensions`. Use "N/A" for levels not applicable.
+  - **scenario_dimensions** (required): Object with four keys — `happy_path`, `error`, `edge_case`, `security`. Each describes at least one planned test covering that dimension. Use "N/A" for dimensions not relevant to the subtask. Testing-heavy subtasks must cover at minimum 4 dimensions.
   - MUST map `validation_criteria` → tests:
     - For each `VCn:` criterion, include at least one planned test name that covers it.
     - Recommended naming: include `vc<n>` in the test name (e.g., `test_vc1_*`, `TestVC1*`) for deterministic grep-ability.
@@ -751,7 +758,13 @@ For detailed examples and anti-patterns, see: `.claude/references/decomposition-
         "test_strategy": {
           "unit": "Test field accepts timestamps, test default is null",
           "integration": "Test migration applies cleanly",
-          "e2e": "N/A"
+          "e2e": "N/A",
+          "scenario_dimensions": {
+            "happy_path": "Test archived_at stores valid timestamp",
+            "error": "Test migration rollback on failure",
+            "edge_case": "Test field with existing null values in table",
+            "security": "N/A"
+          }
         },
         "affected_files": [
           "models/project.py",

@@ -304,8 +304,90 @@ def main() -> None:
                 file=sys.stderr,
             )
 
+    # Derive iteration summary (best-effort, never blocks)
+    try:
+        derive_summary(log_file)
+    except Exception:
+        pass
+
     print("{}")
     sys.exit(0)
+
+
+def derive_summary(log_file: Path) -> None:
+    """Derive iteration_summary.json from iteration_log.jsonl.
+
+    Reads only the last 100 lines (via deque) to keep O(1) memory and fast I/O.
+    Aggregates per-file stats, skips entries without a file path.
+    """
+    if not log_file.exists():
+        return
+
+    from collections import deque
+
+    # Stream only last 100 lines — O(N) read but O(1) memory
+    total_lines = 0
+    last_lines: deque[str] = deque(maxlen=100)
+    with open(log_file, "r", encoding="utf-8") as fh:
+        for line in fh:
+            stripped = line.strip()
+            if stripped:
+                total_lines += 1
+                last_lines.append(stripped)
+
+    entries = []
+    for line in last_lines:
+        try:
+            entries.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+
+    if not entries:
+        return
+
+    dropped_count = max(0, total_lines - len(entries))
+
+    # Aggregate per-file stats — skip entries without a concrete file path
+    file_data: dict[str, list[float]] = {}
+    file_thrashing: Counter[str] = Counter()
+    for entry in entries:
+        f = (entry.get("file") or "").strip()
+        if not f:
+            continue
+        eff = entry.get("effectiveness", 0.0)
+        file_data.setdefault(f, []).append(eff)
+        file_thrashing[f] += 1
+
+    file_stats: list[dict[str, object]] = []
+    thrashing_alert_count = 0
+    for f, effs in sorted(file_data.items(), key=lambda x: -len(x[1])):
+        is_thrashing = file_thrashing[f] >= THRASHING_WINDOW
+        if is_thrashing:
+            thrashing_alert_count += 1
+        file_stats.append({
+            "file": f,
+            "iterations": len(effs),
+            "avg_effectiveness": round(sum(effs) / len(effs), 3) if effs else 0.0,
+            "is_thrashing": is_thrashing,
+        })
+
+    all_effs = [e.get("effectiveness", 0.0) for e in entries if (e.get("file") or "").strip()]
+    summary: dict[str, object] = {
+        "generated_at": datetime.now().isoformat(),
+        "entry_count": len(entries),
+        "total_entries_seen": total_lines,
+        "dropped_count": dropped_count,
+        "file_stats": file_stats,
+        "aggregate": {
+            "total_iterations": total_lines,
+            "avg_effectiveness": round(sum(all_effs) / len(all_effs), 3) if all_effs else 0.0,
+            "total_thrashing_alerts": thrashing_alert_count,
+        },
+    }
+
+    summary_file = log_file.parent / "iteration_summary.json"
+    with open(summary_file, "w", encoding="utf-8") as fh:
+        json.dump(summary, fh, indent=2, ensure_ascii=True)
 
 
 if __name__ == "__main__":

@@ -285,6 +285,14 @@ Do NOT skip dimensions based on early findings — complete ALL 10.
 For each dimension: parse criteria → verify against code → record PASS/FAIL.
 Apply language-specific validation rules per dimension.
 
+PHASE 3.5: SPOT-CHECK (ALWAYS)
+Pick 2-3 code paths NOT covered by validation_criteria:
+1. Identify functions/methods in changed files not referenced by any VC
+2. For each: trace one happy path and one error path mentally
+3. Record any issues found as MEDIUM severity with category "spot-check"
+Purpose: Catch hallucinated "it works" claims outside contract scope.
+If no uncovered paths exist (all code is VC-covered), note "spot-check: full VC coverage" and skip.
+
 PHASE 4: SYNTHESIS
 Deduplicate issues across MCP tools + manual review
 Classify severity per guidelines
@@ -511,6 +519,14 @@ request_review({
 - ≥6 parameters with interdependencies
 - Error handling with ≥3 catch/except blocks
 - Loop with early exit conditions (break, continue, return)
+
+**Security Triggers** (ALWAYS use sequentialthinking for these):
+- Authentication, authorization, or session management code
+- Cryptographic operations or key/secret handling
+- Database write operations (INSERT, UPDATE, DELETE, migrations)
+- Payment or financial transaction processing
+- PII or sensitive data handling
+- File operations with user-controlled paths
 
 **Thought Structure Pattern**:
 ```
@@ -1328,6 +1344,7 @@ Actor template includes optional pre-implementation research using MCP tools for
 - Post-cutoff library used without current docs
 - Research performed but not cited
 - Research findings ignored in implementation
+- `[training-data]` tag used for security-critical decisions without tool verification
 
 #### Severity Mapping
 - **Critical**: N/A (research quality rarely critical)
@@ -2469,32 +2486,10 @@ def check_rate_limit(user_id, action, limit=100, window=3600):
 
 </Monitor_Critical_Reminders>
 
-### Evidence File (Artifact-Gated Validation)
+### Output
 
-After completing validation, write an evidence file. Use the **Write tool** to create the file at the absolute path:
+Return validation result as JSON in your response (no separate evidence file needed):
+- `valid`: true/false
+- `issues_found`: count
+- `recommendation`: approve/reject/revise
 
-`<project_root>/.map/<branch>/evidence/monitor_<subtask_id>.json`
-
-with the following JSON content:
-
-```json
-{
-  "phase": "MONITOR",
-  "subtask_id": "<subtask_id>",
-  "timestamp": "<ISO 8601 UTC>",
-  "valid": true,
-  "issues_found": 0,
-  "recommendation": "approve|reject|revise",
-  "validation_criteria_test_coverage": {
-    "total": 0,
-    "covered": 0,
-    "missing": 0,
-    "notes": "Optional: summarize VC→test coverage findings"
-  }
-}
-```
-
-**Required fields** (orchestrator validates these): `phase`, `subtask_id`, `timestamp`.
-Other fields are informational but recommended for audit trail.
-
-**CRITICAL**: Without this file, `validate_step("2.4")` will reject the step.

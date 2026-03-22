@@ -123,6 +123,139 @@ class TestIterationLogger:
         )
         assert code == 0
 
+    def test_derive_summary_creates_file(self, tmp_path: Path) -> None:
+        """derive_summary should create iteration_summary.json."""
+        branch = get_mock_branch()
+        branch_dir = tmp_path / ".map" / branch
+        branch_dir.mkdir(parents=True)
+        log_file = branch_dir / "iteration_log.jsonl"
+
+        with open(log_file, "w", encoding="utf-8") as f:
+            for i in range(5):
+                f.write(json.dumps({
+                    "ts": "2026-01-01T00:00:00",
+                    "iteration": i + 1,
+                    "tool": "Edit",
+                    "file": "/src/foo.py",
+                    "effectiveness": 0.8,
+                }) + "\n")
+
+        # Run hook to trigger derive_summary
+        code, _, _ = self.run_hook(
+            {"tool_name": "Edit", "tool_response": {"success": True}},
+            tmp_path,
+        )
+        assert code == 0
+
+        summary_file = branch_dir / "iteration_summary.json"
+        assert summary_file.exists()
+        summary = json.loads(summary_file.read_text())
+        assert summary["entry_count"] == 6  # 5 pre-existing + 1 from hook
+        assert len(summary["file_stats"]) >= 1
+        assert summary["aggregate"]["avg_effectiveness"] > 0
+
+    def test_derive_summary_is_thrashing_field_is_bool(self, tmp_path: Path) -> None:
+        """is_thrashing field in file_stats should be a boolean."""
+        branch = get_mock_branch()
+        branch_dir = tmp_path / ".map" / branch
+        branch_dir.mkdir(parents=True)
+        log_file = branch_dir / "iteration_log.jsonl"
+
+        # Write enough entries to trigger thrashing (>= THRASHING_WINDOW for one file)
+        with open(log_file, "w", encoding="utf-8") as f:
+            for i in range(5):
+                f.write(json.dumps({
+                    "ts": "2026-01-01T00:00:00",
+                    "iteration": i + 1,
+                    "tool": "Edit",
+                    "file": "/src/foo.py",
+                    "effectiveness": 0.5,
+                }) + "\n")
+
+        env = os.environ.copy()
+        env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
+        env["RALPH_THRASHING_WINDOW"] = "3"
+
+        result = subprocess.run(
+            ["python3", str(self.HOOK_PATH)],
+            input=json.dumps({"tool_name": "Edit", "tool_response": {"success": True}}),
+            capture_output=True, text=True, env=env,
+        )
+        assert result.returncode == 0
+
+        summary_file = branch_dir / "iteration_summary.json"
+        assert summary_file.exists()
+        summary = json.loads(summary_file.read_text())
+        for fs in summary["file_stats"]:
+            assert isinstance(fs["is_thrashing"], bool), \
+                f"is_thrashing should be bool, got {type(fs['is_thrashing'])}"
+
+    def test_derive_summary_dropped_count(self, tmp_path: Path) -> None:
+        """dropped_count should be non-zero when total lines exceed deque maxlen."""
+        branch = get_mock_branch()
+        branch_dir = tmp_path / ".map" / branch
+        branch_dir.mkdir(parents=True)
+        log_file = branch_dir / "iteration_log.jsonl"
+
+        # Write 110 lines — deque keeps last 100
+        with open(log_file, "w", encoding="utf-8") as f:
+            for i in range(110):
+                f.write(json.dumps({
+                    "ts": "2026-01-01T00:00:00",
+                    "iteration": i + 1,
+                    "tool": "Edit",
+                    "file": "/src/foo.py",
+                    "effectiveness": 1.0,
+                }) + "\n")
+
+        code, _, _ = self.run_hook(
+            {"tool_name": "Edit", "tool_response": {"success": True}},
+            tmp_path,
+        )
+        assert code == 0
+
+        summary_file = branch_dir / "iteration_summary.json"
+        summary = json.loads(summary_file.read_text())
+        assert summary["dropped_count"] > 0, "Should have dropped entries beyond 100"
+        assert summary["total_entries_seen"] == 111  # 110 pre-existing + 1 from hook
+
+    def test_derive_summary_empty_file_field_skipped(self, tmp_path: Path) -> None:
+        """Entries without a file path should be excluded from file_stats."""
+        branch = get_mock_branch()
+        branch_dir = tmp_path / ".map" / branch
+        branch_dir.mkdir(parents=True)
+        log_file = branch_dir / "iteration_log.jsonl"
+
+        with open(log_file, "w", encoding="utf-8") as f:
+            # Entry with no file
+            f.write(json.dumps({
+                "ts": "2026-01-01T00:00:00",
+                "iteration": 1,
+                "tool": "Bash",
+                "file": "",
+                "effectiveness": 1.0,
+            }) + "\n")
+            # Entry with file
+            f.write(json.dumps({
+                "ts": "2026-01-01T00:00:00",
+                "iteration": 2,
+                "tool": "Edit",
+                "file": "/src/bar.py",
+                "effectiveness": 0.9,
+            }) + "\n")
+
+        code, _, _ = self.run_hook(
+            {"tool_name": "Bash", "tool_response": {"exit_code": 0}},
+            tmp_path,
+        )
+        assert code == 0
+
+        summary_file = branch_dir / "iteration_summary.json"
+        summary = json.loads(summary_file.read_text())
+        file_names = [fs["file"] for fs in summary["file_stats"]]
+        assert "" not in file_names
+        assert "/src/bar.py" in file_names
+
 
 class TestContextPruner:
     """Tests for ralph-context-pruner.py hook."""

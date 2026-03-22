@@ -1714,29 +1714,12 @@ When an edge case is detected, it MUST appear in THREE places:
 
 </output_format>
 
-### Evidence File (Artifact-Gated Validation)
+### Output
 
-After completing impact analysis, write an evidence file. Use the **Write tool** to create the file at the absolute path:
-
-`<project_root>/.map/<branch>/evidence/predictor_<subtask_id>.json`
-
-with the following JSON content:
-
-```json
-{
-  "phase": "PREDICTOR",
-  "subtask_id": "<subtask_id>",
-  "timestamp": "<ISO 8601 UTC>",
-  "risk_assessment": "<low|medium|high|critical>",
-  "confidence_score": "<0.30-0.95>",
-  "tier_selected": "<1|2|3|skipped>"
-}
-```
-
-**Required fields** (orchestrator validates these): `phase`, `subtask_id`, `timestamp`.
-Other fields are informational but recommended for audit trail.
-
-**CRITICAL**: Without this file, `validate_step("2.6")` will reject the step.
+Return impact analysis as JSON in your response (no separate evidence file needed):
+- `risk_assessment`: low/medium/high/critical
+- `confidence_score`: 0.30-0.95
+- Key findings and recommendations
 
 <confidence_calculation>
 

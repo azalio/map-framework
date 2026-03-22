@@ -109,9 +109,6 @@ Task(
   description="TDD: Write tests for subtask [ID]",
   prompt=f"""You are in TDD TEST_WRITER mode.
 
-<MAP_Packet subtask="[ID]" v="1.0" risk="[risk_level]">
-[paste from .map/<branch>/current_packet.xml]
-</MAP_Packet>
 
 <MAP_Contract>
 [AAG contract from decomposition]
@@ -127,21 +124,15 @@ STRICT RULES:
 5. Use standard test patterns for the project's language/framework.
 6. Each validation_criteria item (VCn:) must have at least one corresponding test.
 7. Include edge cases from the spec's Edge Cases section if available.
-8. Test files MUST be lint-clean. Use proper imports at the top of the file
+8. Cover scenario dimensions from test_strategy: write tests for at minimum
+   happy_path, error, edge_case, and security dimensions (use "N/A" if not applicable).
+   Each dimension should have at least one dedicated test or test case.
+9. Test files MUST be lint-clean. Use proper imports at the top of the file
    (not inside type annotations). Run the project linter (ruff/eslint/golangci-lint)
    on test files before finishing. Fix any lint errors in your test files.
 
 Output:
 - Test files written via Edit/Write tools
-- Evidence file: .map/<branch>/evidence/test_writer_<subtask_id>.json
-
-Evidence JSON must include:
-  "phase": "TEST_WRITER",
-  "subtask_id": "<id>",
-  "timestamp": "<ISO 8601>",
-  "test_files_created": ["path/to/test_file.py"],
-  "validation_criteria_covered": ["VC1", "VC2", "VC3"],
-  "status": "applied"
 """
 )
 ```
@@ -179,7 +170,7 @@ fi
 
 ```bash
 # Lint-check ONLY the test files created by TEST_WRITER
-# (read test_files_created from evidence/test_writer_<subtask_id>.json)
+
 if command -v ruff &> /dev/null; then
   LINT_OUTPUT=$(ruff check <test_files> 2>&1) || true
 elif command -v eslint &> /dev/null; then
@@ -197,20 +188,6 @@ fi
 - **Tests PASS** → PROBLEM. Tests are trivial or not testing real behavior. Go back to TEST_WRITER with feedback: "Tests pass without implementation. Tests must assert behavior that requires code to be written."
 - **Tests have syntax errors** → Go back to TEST_WRITER with feedback to fix syntax.
 
-Write evidence file:
-
-```json
-{
-  "phase": "TEST_FAIL_GATE",
-  "subtask_id": "<id>",
-  "timestamp": "<ISO 8601>",
-  "tests_ran": true,
-  "tests_failed": true,
-  "failure_type": "assertion_errors",
-  "status": "gate_passed"
-}
-```
-
 ```bash
 python3 .map/scripts/map_orchestrator.py validate_step "2.26"
 ```
@@ -227,9 +204,6 @@ Task(
   description="TDD: Implement subtask [ID] to make tests green",
   prompt=f"""You are in TDD CODE_ONLY mode.
 
-<MAP_Packet subtask="[ID]" v="1.0" risk="[risk_level]">
-[paste from .map/<branch>/current_packet.xml]
-</MAP_Packet>
 
 <MAP_Contract>
 [AAG contract from decomposition]
@@ -252,7 +226,7 @@ Test files (READ-ONLY):
 {test_files_list}
 
 Output: standard Actor output (approach + code + trade-offs)
-Evidence file: .map/<branch>/evidence/actor_<subtask_id>.json"""
+
 )
 ```
 
@@ -275,7 +249,7 @@ Monitor verifies both implementation correctness AND that all tests pass.
 |--------|---------------|----------|
 | Test authoring | Actor writes code + tests together | TEST_WRITER writes tests first, Actor writes code only |
 | Test independence | Tests may mirror implementation | Tests derived from spec only |
-| Phase count | 16 phases | 18 phases (+TEST_WRITER, +TEST_FAIL_GATE) |
+| Phase count | 6 phases | 8 phases (+TEST_WRITER, +TEST_FAIL_GATE) |
 | Token cost | Lower | ~20-30% higher (extra Actor call for tests) |
 | Best for | General development | Correctness-critical features |
 
@@ -283,8 +257,7 @@ Monitor verifies both implementation correctness AND that all tests pass.
 
 `/map-tdd` uses the same branch-scoped execution artifacts as `/map-efficient` because it runs through the same orchestrated state machine with extra TDD phases:
 
-- `session-log.md`
-- `devlog-001.md`
+
 - `code-review-00N.md`
 - `qa-001.md`
 - `pr-draft.md`

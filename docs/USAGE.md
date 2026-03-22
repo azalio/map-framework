@@ -2,7 +2,7 @@
 
 Complete usage examples, best practices, and optimization strategies for the MAP Framework.
 
-For long-running work, the canonical MAP flows maintain branch-scoped artifacts directly inside `.map/<branch>/`, so research, session logs, code-review lineage, verification summaries, PR drafts, and run dossiers survive context resets.
+For long-running work, the canonical MAP flows maintain branch-scoped artifacts directly inside `.map/<branch>/`, so research, code-review lineage, verification summaries, PR drafts, and run dossiers survive context resets.
 
 ## Canonical Flows
 
@@ -610,7 +610,7 @@ These files survive compaction because they're stored on disk, not in conversati
 
 For implementation details on checkpoint format and compaction resilience architecture, see:
 - [ARCHITECTURE.md - Context Engineering](ARCHITECTURE.md#context-engineering) - Recitation Pattern and Compaction Resilience
-- `src/mapify_cli/workflow_state.py` - WorkflowState class with auto-checkpointing
+- `src/mapify_cli/templates/map/scripts/map_orchestrator.py` - StepState class with step_state.json persistence
 
 ## 🔍 Dependency Validation
 
@@ -845,7 +845,7 @@ MAP Framework offers three primary implementation workflows with different trade
 
 | Feature | /map-efficient ⭐ | /map-debate | /map-fast ⚠️ |
 |---------|-------------------|-------------|--------------|
-| **Agents Used** | 4-6 (task-decomposer, actor, monitor + conditional research-agent, predictor + final-verifier) | 7 (multi-variant) | 3 (minimal) |
+| **Agents Used** | 3-4 (task-decomposer, actor, monitor, final-verifier)) | 7 (multi-variant) | 3 (minimal) |
 | **Token Cost** | **Baseline** | 3x (Opus model) | 40-50% less |
 | **Learning** | Via `/map-learn` | Via `/map-learn` | ❌ None |
 | **Quality Gates** | Essential agents + Final-Verifier | Opus arbiter | Basic only |

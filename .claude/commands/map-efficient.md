@@ -16,9 +16,7 @@ State machine enforces sequencing, Python validates completion, hooks inject rem
 3. Call each agent individually — no combining or skipping
 4. Max 5 retry iterations per subtask (note: /map-fast uses max 3)
 5. **Always batch mode, always parallel**: execution mode is always `batch` (no pauses). After INIT_STATE, always compute waves and execute independent subtasks in parallel (multiple `Task()` calls in one message). See "Wave Computation" section.
-6. Agent phases (ACTOR 2.3, MONITOR 2.4, PREDICTOR 2.6) require evidence files.
-   Each agent writes `.map/<branch>/evidence/<phase>_<subtask_id>.json` after completing work.
-   `validate_step` rejects the step if evidence is missing or malformed.
+6. After Monitor pass, record files changed in `step_state.json` for guard isolation.
 
 ## Intentional Agent Omissions
 
@@ -28,25 +26,21 @@ State machine enforces sequencing, Python validates completion, hooks inject rem
 
 This is NOT a violation of MAP agent rules. Learning is decoupled into `/map-learn` (optional, run after workflow completes) to reduce token usage during execution.
 
-## Dual State Files
+## State File
 
-/map-efficient uses two state files in `.map/<branch>/`:
-- **`step_state.json`** — Orchestrator canonical state. Tracks current step, retry counts, circuit breaker. Written/read by `map_orchestrator.py`. This is the source of truth for workflow resumption.
-- **`workflow_state.json`** — Enforcement gates. Tracks subtask completion for `workflow-gate.py` hook validation. Written by `map_step_runner.py`.
+Single source of truth: `.map/<branch>/step_state.json`
 
-Both files must stay in sync. The orchestrator updates `step_state.json` on every step; `workflow_state.json` is updated at phase boundaries (INIT_STATE, UPDATE_STATE).
+Written/read by `map_orchestrator.py`. Tracks: current phase, subtask states, wave states,
+retry counts, constraints, files changed per subtask. Used by `workflow-gate.py` for
+phase-based enforcement (Edit allowed only during ACTOR/APPLY/TEST_WRITER phases).
 
-## Human-Readable Workflow Artifacts
+## Workflow Artifacts
 
-In addition to machine-readable state/evidence, maintain these branch-scoped markdown artifacts in `.map/<branch>/`:
+Branch-scoped markdown artifacts in `.map/<branch>/`:
 
-- `devlog-001.md` — implementation trail and notable changes across subtasks
-- `session-log.md` — chronological workflow journal for the current branch/session
-- `code-review-001.md`, `code-review-002.md`, ... — Monitor verdicts and required fixes per execution review iteration
-- `qa-001.md` — final verification and command results in human-readable form
+- `code-review-001.md`, `code-review-002.md`, ... — Monitor verdicts and required fixes
+- `qa-001.md` — final verification results in human-readable form
 - `pr-draft.md` — evolving PR summary, updated as execution finishes
-
-These files are the cook-inspired handoff layer. Keep them concise and update them during the workflow instead of deferring to a separate command.
 
 ## Architecture Overview
 
@@ -112,26 +106,6 @@ fi
 ```
 
 If `resume_from_plan` succeeds, the orchestrator skips DECOMPOSE, INIT_PLAN, REVIEW_PLAN, and CHOOSE_MODE (plan already approved, batch mode auto-set) and starts from INIT_STATE.
-
-Before continuing execution, ensure the branch workspace contains `session-log.md`, `devlog-001.md`, `qa-001.md`, and `pr-draft.md` by running:
-
-```bash
-python3 .map/scripts/map_step_runner.py ensure_human_artifacts
-```
-
-Create numbered execution review artifacts deterministically with:
-
-```bash
-python3 .map/scripts/map_step_runner.py next_numbered_artifact_path code-review
-```
-
-Use `session-log.md` as the high-level journal:
-- append one entry when a subtask starts
-- append one entry after Actor completes
-- append one entry after Monitor verdict
-- append one entry before final verification
-
-Each entry should include timestamp, subtask ID, phase, outcome, and pointers to related artifacts (`code-review-XXX.md`, `devlog-001.md`, `qa-001.md`, evidence files).
 
 ## Step 1: Get Next Step Instruction
 
@@ -256,19 +230,7 @@ The orchestrator auto-skips this step and proceeds to INIT_STATE.
 
 Get the branch name via Bash: `git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||'`
 
-Then use the **Write** tool to create `.map/<branch>/workflow_state.json`:
-
-```json
-{
-  "workflow": "map-efficient",
-  "started_at": "<current UTC timestamp in ISO 8601>",
-  "current_subtask": null,
-  "current_state": "INITIALIZED",
-  "completed_steps": {},
-  "pending_steps": {},
-  "subtask_sequence": []
-}
-```
+State is managed by the orchestrator via `step_state.json` (created automatically by `map_orchestrator.py`). No manual state file creation needed.
 
 ### Wave Computation (after INIT_STATE) — REQUIRED
 
@@ -317,7 +279,7 @@ loop:
     # === PARALLEL WAVE ===
     # Phase A: Prep (sequential per subtask - lightweight)
     for each subtask in WAVE.subtasks:
-      build XML_PACKET, run CONTEXT_SEARCH, optional RESEARCH
+      optional RESEARCH (if 3+ existing files or high risk)
 
     # Phase A.5: TDD phases (if --tdd mode)
     # When TDD is enabled, run TEST_WRITER + TEST_FAIL_GATE per subtask
@@ -344,38 +306,16 @@ loop:
     # Run tests + linter ONCE for the entire wave
     # pytest / npm test / etc.
 
-    # Phase F: Advance wave
+    # Phase F: Advance wave — after all subtasks pass Monitor + per-wave gates
     python3 .map/scripts/map_orchestrator.py advance_wave
-
-    # Update workflow state for all subtasks in batch:
-    python3 .map/scripts/map_step_runner.py update_workflow_state_batch '[
-      {"subtask_id": "ST-002", "step_name": "actor", "new_state": "ACTOR_CALLED"},
-      {"subtask_id": "ST-002", "step_name": "monitor", "new_state": "MONITOR_PASSED"},
-      {"subtask_id": "ST-004", "step_name": "actor", "new_state": "ACTOR_CALLED"},
-      {"subtask_id": "ST-004", "step_name": "monitor", "new_state": "MONITOR_PASSED"}
-    ]'
 ```
 
 Linear DAGs naturally degrade to single-subtask waves (identical to current behavior).
 
-### Phase: XML_PACKET (2.0)
-
-```python
-# Load current subtask from state
-subtask = load_current_subtask()
-
-# Build versioned, scoped XML packet with semantic brackets
-# Format: <MAP_Packet subtask="ST-XXX" v="1.0" risk="low|medium|high">
-xml_packet = create_xml_packet(subtask)
-
-# Save packet to .map/<branch>/current_packet.xml for agent access
-# Packet boundaries are unambiguous — agents parse by tag, not by heuristics
-```
-
 ### Phase: RESEARCH (2.2)
 
 ```python
-# Conditional: Call if refactoring OR touching 3+ files
+# Conditional: Call if subtask touches 3+ existing files OR risk=high
 if requires_research(subtask):
     Task(
       subagent_type="research-agent",
@@ -404,10 +344,6 @@ Task(
   description="TDD: Write tests for subtask [ID]",
   prompt=f"""You are in TDD TEST_WRITER mode.
 
-<MAP_Packet subtask="[ID]" v="1.0" risk="[risk_level]">
-[paste from .map/<branch>/current_packet.xml]
-</MAP_Packet>
-
 <MAP_Contract>
 [AAG contract from decomposition]
 </MAP_Contract>
@@ -423,7 +359,7 @@ STRICT RULES:
 6. Test files MUST be lint-clean. Use proper imports at the top of the file
    (not inside type annotations). Run the project linter on test files before finishing.
 
-Write evidence: .map/<branch>/evidence/test_writer_<subtask_id>.json"""
+"""
 )
 ```
 
@@ -433,7 +369,7 @@ Auto-skipped when TDD mode is disabled. When active:
 
 **First:** lint-check test files (ACTOR cannot fix them later):
 ```bash
-# Lint ONLY the test files from TEST_WRITER evidence
+# Lint ONLY the test files from TEST_WRITER
 ruff check <test_files> 2>&1 || true
 # If lint errors → go back to TEST_WRITER with feedback to fix lint
 ```
@@ -446,8 +382,6 @@ pytest --tb=short 2>&1 || true
 # If tests FAIL with assertion errors → proceed to ACTOR (expected TDD state)
 ```
 
-Write evidence: `.map/<branch>/evidence/test_fail_gate_<subtask_id>.json`
-
 ### Phase: ACTOR (2.3)
 
 When TDD mode is active, Actor receives `<TDD_Mode>code_only</TDD_Mode>` and must NOT modify test files. When TDD is off, standard behavior.
@@ -458,41 +392,26 @@ Task(
   description="Implement subtask [ID]",
   prompt=f"""Implement and APPLY CODE with Edit/Write tools.
 
-<MAP_Packet subtask="[ID]" v="1.0" risk="[risk_level]">
-[paste from .map/<branch>/current_packet.xml]
-</MAP_Packet>
-
 <MAP_Contract>
 [AAG contract from decomposition: Actor -> Action -> Goal]
 </MAP_Contract>
 
-Protocol (execute in order):
-1. Parse MAP_Packet — extract scope, affected_files, validation_criteria
-2. Parse MAP_Contract — this is your compilation target
-3. Read affected files to understand current state
-4. Implement: translate MAP_Contract into code (no reasoning about WHAT, only HOW)
-5. Apply code with Edit/Write tools
-6. Output: approach + files_changed + trade-offs"""
+Subtask: [ID] [title]
+Affected files: [from blueprint]
+Validation criteria: [from blueprint]
+
+Protocol:
+1. Parse MAP_Contract — this is your compilation target
+2. Read affected files to understand current state
+3. Implement: translate MAP_Contract into code
+4. Apply code with Edit/Write tools
+5. Output: approach + files_changed + trade-offs"""
 )
 ```
 
 **CRITICAL: After Actor returns, do NOT debug or fix issues yourself.**
 - If Actor reports diagnostics/errors — proceed directly to MONITOR.
-- LSP diagnostics shown after Actor may be stale (IDE lag). Do NOT read files or attempt manual fixes.
-
-After Actor finishes, update `.map/<branch>/devlog-001.md` with:
-- subtask ID
-- files changed
-- implementation approach
-- unresolved concerns handed to Monitor
-
-Also append a short entry to `.map/<branch>/session-log.md` via:
-
-```bash
-python3 .map/scripts/map_step_runner.py append_session_log ACTOR implemented <subtask_id> "files changed + approach" "devlog-001.md,.map/<branch>/evidence/actor_<subtask_id>.json"
-```
-- Monitor will verify compilation (`go build`, `pytest`, etc.) and report real issues.
-- If Monitor returns `valid=false`, retry via Actor (not manual edits).
+- Monitor will verify and report real issues. If `valid=false`, retry via Actor (not manual edits).
 
 ### Phase: MONITOR (2.4)
 
@@ -501,10 +420,6 @@ Task(
   subagent_type="monitor",
   description="Validate written code",
   prompt=f"""Validate WRITTEN CODE (Actor already applied with Edit/Write).
-
-<MAP_Packet subtask="[ID]" v="1.0" risk="[risk_level]">
-[paste from .map/<branch>/current_packet.xml]
-</MAP_Packet>
 
 <MAP_Written files="[count]">
 [list files modified by Actor]
@@ -527,167 +442,67 @@ Protocol (execute in order):
 )
 ```
 
+# After Monitor returns valid=true, run deterministic test gate:
+TEST_GATE=$(python3 .map/scripts/map_step_runner.py run_test_gate)
+# If tests fail, treat as Monitor valid=false — feed output back to Actor
+if echo "$TEST_GATE" | python3 -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get('passed') else 1)" 2>/dev/null; then
+    # Tests passed — snapshot code state for artifact verification
+    SNAPSHOT=$(python3 .map/scripts/map_step_runner.py snapshot_code_state)
+    # Append git ref to review artifact header (if code-review file exists)
+fi
+
 # After Monitor returns:
 if monitor_output["valid"] == false:
-    # Increment retry counter
+    # Increment retry counter (also triggered when test gate fails above)
     if retry_count < 5:
         # Go back to Phase: ACTOR with Monitor feedback
         # Actor will fix issues and re-apply code
+
+        # === STUCK RECOVERY (at retry 3) ===
+        # At retry 3, intercept with intermediate recovery before retries 4-5.
+        # This gives Actor better context to break out of a stuck loop.
+        if retry_count == 3:
+            # Step 1: Check if research-agent already ran for this subtask
+            findings_file = f".map/{branch}/findings_{branch}.md"
+            if findings_file exists and has content for this subtask:
+                # Reuse existing findings (Edge Case 12: skip re-invocation)
+                recovery_context = read(findings_file)
+            else:
+                # Invoke research-agent for alternative approaches
+                Task(
+                    subagent_type="research-agent",
+                    description="Stuck recovery: find alternative approach",
+                    prompt=f"""Subtask {subtask_id} failed 3 monitor retries.
+Monitor feedback: {latest_monitor_feedback}
+Find an ALTERNATIVE approach. Current approach is not working.
+Focus on: different patterns, simpler implementations, existing utilities."""
+                )
+                recovery_context = research_agent_output
+
+            # Step 2: Invoke predictor (skip for low-risk subtasks — Edge Case 7)
+            if subtask.risk_level != "low":
+                Task(
+                    subagent_type="predictor",
+                    description="Stuck recovery: analyze why approach fails",
+                    prompt=f"""Subtask {subtask_id} failed 3 retries.
+Research findings: {recovery_context}
+Analyze: why is the current approach failing? What dependencies are missed?"""
+                )
+                recovery_context += predictor_output
+
+            # Step 3: Pass recovery context to Actor for retries 4-5
+            # Actor receives: original task + monitor feedback + recovery context
+            # This gives Actor a fresh perspective from research-agent/predictor
+
+            # If both research-agent and predictor found nothing useful:
+            if recovery_context is empty or unhelpful:
+                AskUserQuestion(questions=[{"question": "Stuck recovery: research-agent and predictor found no alternative. How to proceed?", "header": "Stuck", "options": [{"label": "Continue", "description": "Try 2 more retries with current approach"}, {"label": "Skip", "description": "Skip subtask, move to next"}, {"label": "Abort", "description": "Stop workflow"}], "multiSelect": false}])
+        # === END STUCK RECOVERY ===
+
     else:
-        # Escalate to user (retry limit reached)
-        AskUserQuestion(questions=[{"question": "Monitor retry limit reached. How to proceed?", "header": "Retry limit", "options": [{"label": "Continue", "description": "Reset retry counter and try again"}, {"label": "Skip", "description": "Skip this subtask and move to next"}, {"label": "Abort", "description": "Stop workflow"}], "multiSelect": false}])
+        # Escalate to user (retry limit reached after 5 attempts)
+        AskUserQuestion(questions=[{"question": "Monitor retry limit reached (5 attempts). How to proceed?", "header": "Retry limit", "options": [{"label": "Continue", "description": "Reset retry counter and try again"}, {"label": "Skip", "description": "Skip this subtask and move to next"}, {"label": "Abort", "description": "Stop workflow"}], "multiSelect": false}])
 ```
-
-### Phase: PREDICTOR (2.6)
-
-```python
-# Enhanced predictor decision:
-# 1. ALWAYS call for: high risk, security_critical, or escalation_required
-# 2. SKIP if: risk_level == "low"
-# 3. SKIP if: risk_level == "medium" AND all affected_files are new (don't exist yet)
-#    AND complexity_score <= 4 AND NOT security_critical
-#    → Write minimal evidence directly via Write tool
-# 4. OTHERWISE: Call predictor with tier_hint
-
-skip_predictor = (
-    not subtask.escalation_required
-    and not subtask.security_critical
-    and (
-        subtask.risk_level == "low"
-        or (
-            subtask.risk_level == "medium"
-            and subtask.affected_files  # guard against vacuous all()
-            and all(not file_exists(f) for f in subtask.affected_files)
-            and subtask.complexity_score <= 4
-        )
-    )
-)
-
-if skip_predictor:
-    # Write minimal evidence directly (no agent call needed)
-    # Use Write tool → <project_root>/.map/<branch>/evidence/predictor_<subtask_id>.json
-    {
-      "phase": "PREDICTOR",
-      "subtask_id": "<id>",
-      "timestamp": "<ISO 8601 UTC>",
-      "risk_assessment": "low",
-      "confidence_score": 0.95,
-      "tier_selected": "skipped",
-      "skip_reason": "New files only, no existing callers, complexity <= 4"
-    }
-else:
-    # Determine tier_hint from subtask metadata:
-    # - risk "medium" + complexity_score <= 3 → tier_hint: 1
-    # - risk "medium" + complexity_score 4-7 → tier_hint: 2
-    # - risk "high" OR security_critical → tier_hint: 3
-    if subtask.risk_level == "high" or subtask.security_critical:
-        tier_hint = 3
-    elif subtask.complexity_score <= 3:
-        tier_hint = 1
-    else:
-        tier_hint = 2
-
-    Task(
-      subagent_type="predictor",
-      description="Analyze impact",
-      prompt=f"""Analyze impact using Predictor schema.
-
-tier_hint: {tier_hint}
-
-<MAP_Packet subtask="[ID]" v="1.0" risk="[risk_level]">
-[paste from .map/<branch>/current_packet.xml]
-</MAP_Packet>
-
-Required inputs: change_description, files_changed, diff_content
-Optional: analyzer_output, user_context"""
-    )
-```
-
-### Phase: UPDATE_STATE (2.7)
-
-```bash
-# Code already applied by Actor, validated by Monitor
-# Update workflow state to mark subtask progress
-
-python3 .map/scripts/map_step_runner.py update_workflow_state "ST-XXX" "validated" "VALIDATED"
-python3 .map/scripts/map_step_runner.py update_plan_status "ST-XXX" "in_progress"
-```
-
-### Phase: TESTS_GATE (2.8)
-
-```bash
-# Run tests if available (do NOT install dependencies)
-if [ -f "pytest.ini" ] || [ -f "setup.py" ]; then
-  pytest
-elif [ -f "package.json" ]; then
-  npm test
-elif [ -f "go.mod" ]; then
-  go test ./...
-elif [ -f "Cargo.toml" ]; then
-  cargo test
-else
-  echo "No tests found, skipping gate"
-fi
-```
-
-### Phase: LINTER_GATE (2.9)
-
-```bash
-# Run linter if available
-if command -v ruff &> /dev/null; then
-  ruff check .
-elif command -v eslint &> /dev/null; then
-  eslint .
-elif command -v golangci-lint &> /dev/null; then
-  golangci-lint run
-else
-  echo "No linter found, skipping gate"
-fi
-```
-
-### Phase: VERIFY_ADHERENCE (2.10)
-
-Output self-audit checkpoint:
-
-```text
-═══════════════════════════════════════════════════
-WORKFLOW ADHERENCE SELF-AUDIT
-═══════════════════════════════════════════════════
-
-Question 1: Did I call task-decomposer for decomposition?
-Answer: [YES/NO - if NO, explain why not]
-
-Question 2: For EACH subtask, did I:
-  - Create XML packet? [YES/NO per subtask]
-  - Call research-agent if 3+ files? [YES/NO/N/A per subtask]
-  - Call Actor agent? [YES/NO per subtask]
-  - Call Monitor agent after Actor? [YES/NO per subtask]
-  - Call Predictor if medium/high risk? [YES/NO/N/A per subtask]
-  - Run tests gate? [YES/NO per subtask]
-  - Run linter gate? [YES/NO per subtask]
-Answer: [List each subtask and answers]
-
-Question 3: (TDD mode only) For EACH subtask, did I:
-  - Call TEST_WRITER before Actor? [YES/NO/N/A per subtask]
-  - Verify tests failed at TEST_FAIL_GATE? [YES/NO/N/A per subtask]
-  - Use code_only mode for Actor (no test modifications)? [YES/NO/N/A]
-Answer: [List answers, or N/A if TDD mode is not active]
-
-Question 4: Did I ever write code directly without Actor?
-Answer: [YES/NO - if YES, this is a VIOLATION]
-
-Question 5: Did I output CHECKPOINT blocks before agent calls?
-Answer: [YES/NO - if NO, add them now]
-
-EVALUATION: [PASSED/FAILED]
-
-If FAILED: DO NOT PROCEED. Go back and complete missing steps.
-═══════════════════════════════════════════════════
-```
-
-### Phase: SUBTASK_APPROVAL (2.11) — Auto-skipped
-
-Auto-skipped in batch mode (default). The orchestrator proceeds to the next subtask without pausing.
 
 ### Monitor Artifact Rule
 
@@ -705,7 +520,59 @@ Each review artifact must include:
 
 Do not overwrite the previous review file; keep the loop history visible.
 
-After writing the execution review artifact, append a matching summary line with `append_session_log` so someone resuming the branch can scan the review history without opening every file.
+### Per-Wave Gates (after all subtasks in wave pass Monitor)
+
+After ALL subtasks in a wave have Monitor `valid=true`, run tests + linter ONCE for the entire wave:
+
+```bash
+# Run tests — capture exit code + output
+TESTS_EXIT=0
+TEST_OUTPUT=""
+if [ -f "pytest.ini" ] || [ -f "setup.py" ]; then
+  TEST_OUTPUT=$(pytest 2>&1); TESTS_EXIT=$?
+elif [ -f "package.json" ]; then
+  TEST_OUTPUT=$(npm test 2>&1); TESTS_EXIT=$?
+elif [ -f "go.mod" ]; then
+  TEST_OUTPUT=$(go test ./... 2>&1); TESTS_EXIT=$?
+elif [ -f "Cargo.toml" ]; then
+  TEST_OUTPUT=$(cargo test 2>&1); TESTS_EXIT=$?
+else
+  echo "No tests found, skipping gate"
+fi
+echo "$TEST_OUTPUT"
+
+# Run linter — capture exit code + output
+LINT_EXIT=0
+LINT_OUTPUT=""
+if command -v ruff &> /dev/null; then
+  LINT_OUTPUT=$(ruff check . 2>&1); LINT_EXIT=$?
+elif command -v eslint &> /dev/null; then
+  LINT_OUTPUT=$(eslint . 2>&1); LINT_EXIT=$?
+elif command -v golangci-lint &> /dev/null; then
+  LINT_OUTPUT=$(golangci-lint run 2>&1); LINT_EXIT=$?
+else
+  echo "No linter found, skipping gate"
+fi
+echo "$LINT_OUTPUT"
+```
+
+**Guard Pattern Decision (per-wave):**
+
+```
+IF TESTS_EXIT == 0 AND LINT_EXIT == 0:
+  → Wave passed. Advance to next wave.
+
+ELSE (regression detected):
+  → Isolate: Use subtask_files_changed from step_state.json to identify
+    which subtask's files cause the failure. Run failing tests per-subtask file set.
+  → If single subtask isolated: retry that subtask's Actor with guard context (max 2 rework).
+  → If interaction failure (no single culprit): rerun wave sequentially to identify.
+  → After rework: re-run full wave gates.
+  → If 2 rework attempts fail: escalate to user (Skip/Abort).
+```
+
+**Key invariant:** Guard rework never modifies test files — Actor must adapt implementation to pass existing tests.
+**NOT between retries:** Gates run only after ALL subtasks in wave pass Monitor, not between Actor→Monitor retry iterations.
 
 ## Step 2a: Validate Step Completion
 
@@ -714,19 +581,9 @@ After executing step, validate and update state:
 ```bash
 # Validate step completion
 python3 .map/scripts/map_orchestrator.py validate_step "$STEP_ID"
-
-# Update plan status if subtask complete
-if [ "$PHASE" = "VERIFY_ADHERENCE" ]; then
-  python3 .map/scripts/map_step_runner.py update_plan_status "$SUBTASK_ID" "complete"
-fi
 ```
 
-If `PHASE=VERIFY_ADHERENCE` succeeds, also append to `.map/<branch>/devlog-001.md`:
-- subtask completed
-- verification summary
-- tests/lint run for that subtask
-
-## Step 2b: Continue or Complete (Context Distillation)
+## Step 2b: Continue or Complete
 
 ```bash
 # Get next step
@@ -737,25 +594,14 @@ if [ "$IS_COMPLETE" = "true" ]; then
   echo "All subtasks complete. Proceeding to final verification."
   # Go to Step 3
 else
-  # CONTEXT DISTILLATION before recurse:
-  # Do NOT pass full RESEARCH logs or Actor/Monitor transcripts.
-  # Pass ONLY the distilled state to keep new context in SFT comfort zone (~4k tokens):
-  #
-  # 1. findings.md       — distilled research output (not raw search logs)
-  # 2. workflow_state.json — current progress + completed subtask IDs
-  # 3. task_plan.md       — plan with updated statuses
-  # 4. aag_contract       — one-line contract for NEXT subtask only
-  # 5. session-log.md / latest code-review-XXX.md / devlog-001.md — human-readable loop history
-  #
-  # The fresh invocation reads these files — it never inherits conversation history.
-
-  # Recurse: Launch new context with minimal state transfer
+  # Context for fresh invocation comes from files only:
+  # 1. step_state.json    — single source of truth for progress
+  # 2. task_plan.md       — plan with subtask statuses
+  # 3. findings.md        — distilled research (if discovery was done)
+  # 4. code-review-XXX.md — Monitor verdicts
   echo "Next step: $(echo "$NEXT_STEP" | jq -r '.step_id')"
-  # Continue with Step 1 (loop back to get_next_step, or use /map-resume in a fresh session)
 fi
 ```
-
-Execution mode is always `batch`. The orchestrator auto-skips pause steps (2.11) between subtasks.
 
 ## Step 3: Final Verification (Ralph Loop)
 
@@ -820,7 +666,7 @@ Also update `.map/<branch>/pr-draft.md` with:
 - validation commands/results
 - notable risks or follow-up work
 
-Finally append a closing entry to `.map/<branch>/session-log.md` that points to `qa-001.md`, `verification-summary.md`, and `pr-draft.md`.
+Update `.map/<branch>/pr-draft.md` with final summary and verification results.
 
 ### 3.3 Evaluate Results
 

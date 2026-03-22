@@ -14,18 +14,17 @@ description: Resume incomplete MAP workflow from checkpoint
 
 **What it does:**
 1. Detects `.map/<branch>/step_state.json` checkpoint (orchestrator canonical state)
-2. Cross-references `.map/<branch>/workflow_state.json` for subtask completion
+2. Cross-references `.map/<branch>/step_state.json` for subtask completion
 3. Displays workflow progress summary
 4. Shows completed and remaining subtasks
 5. Asks user confirmation before resuming
 6. Continues from the last incomplete step via the state machine
 
 **State files used:**
-- **`step_state.json`** — Orchestrator canonical state. Source of truth for resumption. Tracks current step, retry counts, circuit breaker status. Includes `tdd_mode` field (persisted across sessions).
-- **`workflow_state.json`** — Enforcement gates. Tracks subtask completion for workflow-gate.py hook.
+- **`step_state.json`** — Single source of truth. Tracks current step, retry counts, circuit breaker, subtask completion, and enforcement gates. Includes `tdd_mode` field (persisted across sessions).
 - **`task_plan_<branch>.md`** — Full task decomposition with validation criteria and AAG contracts.
 
-**TDD mode note:** If the interrupted workflow was using `/map-tdd` or `--tdd` flag, `tdd_mode: true` is preserved in `step_state.json`. The TDD phases (TEST_WRITER, TEST_FAIL_GATE) will be correctly included in the resumed workflow. No manual re-enablement is needed when resuming from `step_state.json`.
+**TDD mode note:** If the interrupted workflow was using `/map-tdd` or `--tdd` flag, `tdd_mode: true` is preserved in `step_state.json`.
 
 ---
 
@@ -67,8 +66,7 @@ Read both state files, the task plan, and branch artifacts to display a briefing
 BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
 
 # Read state files using the Read tool
-# .map/${BRANCH}/step_state.json — current orchestrator state
-# .map/${BRANCH}/workflow_state.json — subtask completion status
+# .map/${BRANCH}/step_state.json — orchestrator state + enforcement gates
 # .map/${BRANCH}/task_plan_${BRANCH}.md — full plan with AAG contracts
 ```
 
@@ -88,7 +86,7 @@ Parse the state and display:
 **Branch:** ${BRANCH}
 **Current Step:** [current_step from step_state.json]
 **Current Phase:** [phase name from step_state.json]
-**Started:** [started_at from workflow_state.json]
+**Started:** [started_at from step_state.json]
 
 ### Resume Briefing
 
@@ -104,7 +102,7 @@ Parse the state and display:
 ### Recent Session Context
 
 ```text
-[recent_session_log excerpt]
+[latest code-review excerpt excerpt]
 ```
 
 ### Progress Overview
@@ -146,7 +144,7 @@ AskUserQuestion(questions=[
 **Handle user response:**
 
 - **Resume:** Proceed to Step 4 (resume workflow)
-- **Start fresh:** Delete `.map/<branch>/step_state.json` and `.map/<branch>/workflow_state.json`, exit with "State cleared. Start fresh with /map-efficient."
+- **Start fresh:** Delete `step_state.json`, exit with "State cleared. Start fresh with /map-efficient."
 - **Abort:** Exit without changes
 
 ---
@@ -158,11 +156,10 @@ Use the orchestrator to determine the next step and continue execution.
 **Important context loading:**
 
 Before resuming, read:
-1. `.map/<branch>/step_state.json` — current orchestrator state
-2. `.map/<branch>/workflow_state.json` — subtask completion
-3. `.map/<branch>/task_plan_<branch>.md` — full task decomposition with AAG contracts
+1. `.map/<branch>/step_state.json` — orchestrator state + enforcement gates
+2. `.map/<branch>/task_plan_<branch>.md` — full task decomposition with AAG contracts
 4. `python3 .map/scripts/map_orchestrator.py get_plan_progress` — canonical plan + briefing payload
-5. `.map/<branch>/session-log.md` / `.map/<branch>/verification-summary.md` — extra detail if needed
+5. `.map/<branch>/code-review-XXX.md` / `.map/<branch>/verification-summary.md` — extra detail if needed
 
 **Resume via orchestrator:**
 
@@ -178,7 +175,6 @@ IS_COMPLETE=$(echo "$NEXT_STEP" | jq -r '.is_complete')
 
 **Then follow the same phase routing as /map-efficient:**
 
-For each step, route to the appropriate executor based on `$PHASE` (ACTOR, MONITOR, PREDICTOR, TESTS_GATE, etc.) following the exact same phase handlers documented in map-efficient.md.
 
 **For each remaining subtask:**
 
@@ -234,7 +230,7 @@ After all subtasks complete:
 
 ### State File Corrupted
 
-If `step_state.json` or `workflow_state.json` parsing fails:
+If `step_state.json` parsing fails:
 
 ```markdown
 ## State File Corrupted
@@ -355,7 +351,7 @@ No recovery needed.
 ### After `/clear`
 
 If user runs `/clear` during a workflow:
-- State is preserved in `.map/<branch>/step_state.json` and `workflow_state.json`
+- State is preserved in `.map/<branch>/step_state.json`
 - User can resume with `/map-resume`
 - Fresh context starts from checkpoint state
 
@@ -396,7 +392,7 @@ The `.map/<branch>/step_state.json` is managed by `map_orchestrator.py`:
 }
 ```
 
-The `.map/<branch>/workflow_state.json` tracks enforcement gates:
+The `.map/<branch>/step_state.json` tracks enforcement gates:
 
 ```json
 {
@@ -404,8 +400,8 @@ The `.map/<branch>/workflow_state.json` tracks enforcement gates:
   "started_at": "2025-01-15T10:30:00Z",
   "current_subtask": "ST-004",
   "current_state": "IN_PROGRESS",
-  "completed_steps": {"ST-001": [...], "ST-002": [...], "ST-003": [...]},
-  "pending_steps": {"ST-004": [...], "ST-005": [...]},
+  "completed_steps": ["1.0", "1.5", "1.55", "1.56", "1.6", "2.2", "2.3", "2.4"],
+  "pending_steps": ["2.2", "2.3", "2.4"],
   "subtask_sequence": ["ST-001", "ST-002", "ST-003", "ST-004", "ST-005"]
 }
 ```
@@ -414,9 +410,9 @@ The `.map/<branch>/workflow_state.json` tracks enforcement gates:
 
 When resuming:
 1. Read `step_state.json` for orchestrator position (current step + subtask)
-2. Read `workflow_state.json` for completed/pending subtask list
+2. Read `step_state.json` for completed/pending subtask list
 3. Read `task_plan_<branch>.md` for AAG contracts and validation criteria
-4. Read `session-log.md` for latest human-readable iteration history before resuming
+4. Read `code-review-XXX.md` for latest human-readable iteration history before resuming
 5. If present, read `verification-summary.md` to understand the latest final verdict or remaining issues
 4. Call `map_orchestrator.py get_next_step` to determine next action
 5. Continue phase-based execution from that point
@@ -475,13 +471,13 @@ Resume is designed for context efficiency:
 2. Load relevant source files for remaining subtasks
 3. Provide context summary in Actor prompt
 
-### Issue: step_state.json and workflow_state.json out of sync
+### Issue: step_state.json out of sync
 
-**Symptom:** step_state.json shows ST-004 in progress, but workflow_state.json shows ST-003 pending.
+**Symptom:** step_state.json shows ST-003 pending.
 
 **Cause:** Crash between orchestrator update and workflow state update.
 
 **Fix:**
 1. Trust `step_state.json` as the canonical source
-2. Update `workflow_state.json` to match
+2. Update `step_state.json` to match
 3. Resume from corrected state

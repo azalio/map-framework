@@ -55,7 +55,7 @@ MAP Framework implements cognitive architecture inspired by prefrontal cortex fu
 │  │ TaskDecomposer → For each subtask:                       │   │
 │  │   TEST_WRITER (tests from spec) → TEST_FAIL_GATE (Red)  │   │
 │  │   → Actor (code_only) → Monitor → [Predictor if risky]  │   │
-│  │ Tests written BEFORE implementation. 18 phases.          │   │
+│  │ Tests written BEFORE implementation. 8 phases.          │   │
 │  │ Single-subtask: /map-tdd ST-001 (TDD for one subtask)   │   │
 │  └──────────────────────────────────────────────────────────┘   │
 │                                                                  │
@@ -690,7 +690,7 @@ See [USAGE.md - Workflow Variants](./USAGE.md#workflow-variants) for detailed de
                               ↓
 ┌─────────────────────────────────────────────────────────────┐
 │  State Machine (.map/scripts/map_orchestrator.py)                │
-│  • 18 step phases (DECOMPOSE → SUBTASK_APPROVAL + 2 TDD)     │
+│  • 8 step phases (DECOMPOSE → SUBTASK_APPROVAL + 2 TDD)     │
 │  • State file: .map/<branch>/step_state.json                │
 │  • Enforces: Sequential execution, no step skipping         │
 │  • CLI: get_next_step, validate_step, initialize            │
@@ -708,7 +708,7 @@ See [USAGE.md - Workflow Variants](./USAGE.md#workflow-variants) for detailed de
 ╠═══════════════════════════════════════════════════════════╣
 ║ Current Step:  2.2 - RESEARCH
 ║ Progress:      Subtask 1/5
-║ Completed:     1.0_DECOMPOSE, 1.5_INIT_PLAN, 2.0_XML_PACKET
+║ Completed:     1.0_DECOMPOSE, 1.5_INIT_PLAN, 1.6_INIT_STATE
 ║
 ║ ⚠️  MANDATORY NEXT ACTION:
 ║    Call research-agent BEFORE Actor
@@ -736,34 +736,20 @@ See [USAGE.md - Workflow Variants](./USAGE.md#workflow-variants) for detailed de
 
 #### Implementation Details
 
-**18 Step Phases (16 standard + 2 TDD):**
+**8 Step Phases (6 standard + 2 TDD):**
 1. `1.0 DECOMPOSE` - task-decomposer agent
 2. `1.5 INIT_PLAN` - Generate task_plan.md
 3. `1.55 REVIEW_PLAN` - User approval checkpoint
 4. `1.56 CHOOSE_MODE` - Auto-skipped (always batch mode)
-5. `1.6 INIT_STATE` - Create workflow_state.json
-6. `2.0 XML_PACKET` - Build AI-friendly subtask packet
-7. `2.1 CONTEXT_SEARCH` - Context search for relevant patterns
+5. `1.6 INIT_STATE` - Create step_state.json
 8. `2.2 RESEARCH` - research-agent (conditional)
 9. `2.25 TEST_WRITER` - TDD: write tests from spec (TDD mode only, auto-skipped otherwise)
 10. `2.26 TEST_FAIL_GATE` - TDD: verify tests fail without impl (TDD mode only)
 11. `2.3 ACTOR` - Actor agent implementation (code-only in TDD mode)
 12. `2.4 MONITOR` - Monitor validation (retry up to 5 times)
-13. `2.6 PREDICTOR` - Impact analysis (conditional)
-14. `2.7 UPDATE_STATE` - Update workflow_state.json
-15. `2.8 TESTS_GATE` - Run tests
-16. `2.9 LINTER_GATE` - Run linter
-17. `2.10 VERIFY_ADHERENCE` - Self-audit checkpoint
-18. `2.11 SUBTASK_APPROVAL` - Pause between subtasks (step_by_step only, auto-skipped in batch)
 
-**State Files:**
-- `step_state.json` - Hook injection source (current step phase)
-- `workflow_state.json` - Gate enforcement source (actor+monitor completed)
-
-**Why Two State Files?**
-- Separation of concerns: step sequencing vs. gate enforcement
-- Independent evolution: hook system can change without breaking gates
-- Performance: Hook reads minimal state (~200 bytes), gates read full state
+**State File:**
+- `step_state.json` - Single source of truth for step sequencing, hook injection, and gate enforcement
 
 #### Migration Guide (v1.x → v2.0.0)
 

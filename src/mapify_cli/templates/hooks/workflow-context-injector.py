@@ -8,7 +8,7 @@ Injects a short MAP workflow reminder ONLY for significant operations:
 - Bash: inject for test/build/vcs commands
 
 Source of truth: .map/<branch>/step_state.json
-(workflow_state.json is for enforcement gates only).
+(single state file used for enforcement gates and workflow context injection).
 
 Trigger: Edit|Write|Bash
 Exit codes: Always 0 (non-blocking, just adds context)
@@ -150,20 +150,12 @@ def required_action_for_step(step_id: str, step_phase: str, state: dict) -> str 
         return "Approve plan (set_plan_approved true)"
     if step_id == "1.56":
         return "Choose mode (set_execution_mode step_by_step|batch)"
-    if step_id == "2.1":
-        return "Run context search before Actor (skip if not needed)"
+    if step_id == "2.2":
+        return "Run research-agent (conditional: 3+ existing files or high risk)"
     if step_id == "2.3":
         return "Run Actor"
     if step_id == "2.4":
         return "Run Monitor"
-    if step_id == "2.7":
-        return "Apply changes (Edit/Write)"
-    if step_id == "2.8":
-        return "Run tests"
-    if step_id == "2.9":
-        return "Run linter"
-    if step_id == "2.11" and mode == "step_by_step":
-        return "Confirm continue to next subtask"
 
     # Fallback for unknown step ids
     if step_phase:
@@ -212,10 +204,21 @@ def format_reminder(state: dict, branch: str) -> str | None:
     if diag_file.exists():
         diag_hint = " | Diag: diagnostics.json"
 
+    # Show recently changed files for context freshness
+    files_hint = ""
+    files_changed = state.get("subtask_files_changed", {})
+    if files_changed and subtask_id != "-":
+        current_files = files_changed.get(subtask_id, [])
+        if current_files:
+            shown = current_files[:5]
+            files_hint = " | Files: " + ", ".join(Path(f).name for f in shown)
+            if len(current_files) > 5:
+                files_hint += f" +{len(current_files) - 5}"
+
     if not step_id and not step_phase:
         return None
 
-    base = f"[MAP] {step_id} {step_phase} | ST: {subtask_id} ({progress}) | plan:{plan_ok} mode:{mode}{wave_hint}{diag_hint}"
+    base = f"[MAP] {step_id} {step_phase} | ST: {subtask_id} ({progress}) | plan:{plan_ok} mode:{mode}{wave_hint}{diag_hint}{files_hint}"
     if required:
         return f"{base} | REQUIRED: {required}"
     return base

@@ -224,7 +224,6 @@ class TestCommandTemplates:
         """/map-plan should maintain branch-scoped human-readable artifacts."""
         content = (templates_commands_dir / "map-plan.md").read_text()
 
-        assert "research.md" in content
         assert "implementation-plan.md" in content
         assert "decision-log.md" in content
         assert "pr-draft.md" in content
@@ -235,8 +234,6 @@ class TestCommandTemplates:
         """/map-efficient should preserve review/devlog/qa artifacts in branch workspace."""
         content = (templates_commands_dir / "map-efficient.md").read_text()
 
-        assert "devlog-001.md" in content
-        assert "session-log.md" in content
         assert "code-review-001.md" in content
         assert "qa-001.md" in content
         assert "code-review-XXX.md" in content
@@ -246,7 +243,6 @@ class TestCommandTemplates:
         content = (templates_commands_dir / "map-tdd.md").read_text()
 
         assert "code-review-00N.md" in content
-        assert "session-log.md" in content
         assert "pr-draft.md" in content
 
     def test_map_task_uses_shared_execution_artifacts(self, templates_commands_dir):
@@ -254,7 +250,6 @@ class TestCommandTemplates:
         content = (templates_commands_dir / "map-task.md").read_text()
 
         assert "code-review-00N.md" in content
-        assert "session-log.md" in content
         assert "qa-001.md" in content
 
     def test_map_check_writes_verification_summary(self, templates_commands_dir):
@@ -269,7 +264,6 @@ class TestCommandTemplates:
         """/map-resume should use session and verification artifacts for handoff."""
         content = (templates_commands_dir / "map-resume.md").read_text()
 
-        assert "session-log.md" in content
         assert "verification-summary.md" in content
 
     def test_map_check_rebuilds_pr_draft_from_handoff_bundle(

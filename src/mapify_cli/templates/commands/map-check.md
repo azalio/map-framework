@@ -6,11 +6,11 @@
 
 ## Mode 1: Standalone Quality Check (No MAP workflow)
 
-If no `.map/<branch>/workflow_state.json` exists, run full quality suite:
+If no `.map/<branch>/step_state.json` exists, run full quality suite:
 
 ```bash
 BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
-STATE_FILE=".map/${BRANCH}/workflow_state.json"
+STATE_FILE=".map/${BRANCH}/step_state.json"
 
 if [[ ! -f "$STATE_FILE" ]]; then
     echo "🔬 Running full quality checks (standalone mode)..."
@@ -81,7 +81,7 @@ Summary: All checks passed!
 
 ## Mode 2: MAP Workflow Verification
 
-If `.map/<branch>/workflow_state.json` exists, verify subtask completion.
+If `.map/<branch>/step_state.json` exists, verify subtask completion.
 
 **When to use:**
 - After completing all subtasks
@@ -90,7 +90,7 @@ If `.map/<branch>/workflow_state.json` exists, verify subtask completion.
 
 **What this command does:**
 - Calls final-verifier agent to audit completion
-- Checks workflow_state.json for all subtasks marked SUBTASK_COMPLETE
+- Checks step_state.json for all subtasks marked SUBTASK_COMPLETE
 - Validates acceptance criteria from task_plan_<branch>.md
 - Runs final quality gates (tests, linter)
 - **STOPS** with APPROVED or REJECTED verdict
@@ -110,7 +110,7 @@ Read the current state to understand what was completed:
 
 ```bash
 BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
-STATE_FILE=".map/${BRANCH}/workflow_state.json"
+STATE_FILE=".map/${BRANCH}/step_state.json"
 
 # Use Read tool to load the state file contents
 ```
@@ -174,7 +174,7 @@ Task(
 Verify that all subtasks from the plan have been completed successfully.
 
 Plan: {task_plan_content}
-State: {workflow_state_content}
+State: {step_state_content}
 
 For each subtask, check:
 1. All acceptance criteria met
@@ -367,8 +367,8 @@ Print detailed verification results:
 ═══════════════════════════════════════════════════
 Task: [task_title from plan]
 Branch: ${BRANCH}
-Started: [started_at from workflow_state.json]
-Completed: [completed_at from workflow_state.json]
+Started: [started_at from step_state.json]
+Completed: [completed_at from step_state.json]
 
 Subtasks Verified:
 ✅ ST-001: [title] - All acceptance criteria met
@@ -452,7 +452,7 @@ Status: NEEDS WORK
 - Forces separation between audit and correction
 
 **State Machine Validation:**
-- Checks workflow_state.json to ensure all subtasks are SUBTASK_COMPLETE
+- Checks step_state.json to ensure all subtasks are SUBTASK_COMPLETE
 - Verifies no pending_steps remain
 - Transitions to WORKFLOW_COMPLETE only if all checks pass
 
@@ -504,7 +504,7 @@ The final-verifier agent checks:
 - [ ] No obvious bugs or security issues
 
 **Whole Task:**
-- [ ] All subtasks completed (workflow_state.json)
+- [ ] All subtasks completed (step_state.json)
 - [ ] No pending steps remain
 - [ ] Integration between subtasks works correctly
 - [ ] No regressions in existing functionality
@@ -539,18 +539,18 @@ A: Just run `/map-check` again. It reads current state and re-runs all checks.
 ## Success Criteria
 
 This command succeeds when:
-- ✅ All subtasks in workflow_state.json are SUBTASK_COMPLETE
+- ✅ All subtasks in step_state.json are SUBTASK_COMPLETE
 - ✅ final-verifier returned APPROVED
 - ✅ All quality gates passed (tests, linter)
 - ✅ Verification report printed with detailed findings
-- ✅ workflow_state.json updated to WORKFLOW_COMPLETE
+- ✅ step_state.json updated to WORKFLOW_COMPLETE
 - ✅ You STOPPED (did not edit code or start new work)
 
 ---
 
 ## State Transition
 
-This command transitions workflow_state.json:
+This command transitions step_state.json:
 
 ```
 SUBTASK_COMPLETE (all subtasks) → WORKFLOW_COMPLETE

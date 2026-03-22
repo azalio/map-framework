@@ -83,21 +83,14 @@ PHASE=$(echo "$NEXT_STEP" | jq -r '.phase')
 
 Route to the appropriate executor based on `$PHASE`. All phases from `/map-efficient` work identically:
 
-- **XML_PACKET (2.0)** — Build XML packet for this subtask
-- **CONTEXT_SEARCH (2.1)** — Search for relevant patterns
 - **RESEARCH (2.2)** — Call research-agent if needed
 - **ACTOR (2.3)** — Implement the subtask
 - **MONITOR (2.4)** — Validate implementation
-- **PREDICTOR (2.6)** — Impact analysis (conditional)
-- **UPDATE_STATE (2.7)** — Mark progress
-- **TESTS_GATE (2.8)** — Run tests
-- **LINTER_GATE (2.9)** — Run linter
-- **VERIFY_ADHERENCE (2.10)** — Self-audit
 
 Single-subtask execution must keep using the shared branch workspace artifacts rather than creating task-local side files:
 
-- `session-log.md`
-- `devlog-001.md`
+
+
 - `code-review-00N.md`
 - `qa-001.md`
 - `pr-draft.md`
@@ -107,8 +100,9 @@ When Monitor runs during `/map-task`, append to the next `code-review-00N.md` so
 For each step:
 1. Get next step from orchestrator
 2. Execute the phase (same handlers as map-efficient)
-3. Validate: `python3 .map/scripts/map_orchestrator.py validate_step "$STEP_ID"`
-4. Continue to next step until complete
+3. **After Monitor valid=true:** run `python3 .map/scripts/map_step_runner.py run_test_gate` — if tests fail, treat as Monitor valid=false and feed test output back to Actor
+4. Validate: `python3 .map/scripts/map_orchestrator.py validate_step "$STEP_ID"`
+5. Continue to next step until complete
 
 **If Monitor returns `valid: false`:**
 - Retry Actor with feedback (max 5 iterations)

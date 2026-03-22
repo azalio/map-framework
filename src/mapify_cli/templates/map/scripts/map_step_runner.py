@@ -17,33 +17,31 @@ USAGE:
   - Progress tracking
 
 FUNCTIONS:
-  - update_workflow_state: Mark step complete in workflow_state.json
+  - update_step_state: Mark step complete in step_state.json
   - update_plan_status: Update subtask status in task_plan.md
   - validate_checkpoint: Check if required steps completed
   - create_xml_packet: Build AI-friendly subtask packet
 
 TESTING:
-  python3 -c "from map_step_runner import update_workflow_state; \\
-    update_workflow_state('ST-001', 'actor', 'ACTOR_CALLED')"
+  python3 -c "from map_step_runner import update_step_state; \\
+    update_step_state('ST-001', 'actor', 'ACTOR_CALLED')"
 """
 
 import json
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Optional
 
 
 HUMAN_ARTIFACT_DEFAULTS = {
-    "session-log.md": "# Session Log\n\n",
-    "devlog-001.md": "# Devlog 001\n\n",
     "qa-001.md": "# QA 001\n\n",
     "pr-draft.md": "# PR Draft\n\n## Summary\n\n## Validation\n\n## Risks / Follow-up\n",
 }
 
 
-KNOWN_ISSUES_DEFAULT = {"issues": []}
-ACTIVE_ISSUES_DEFAULT = {"updated_at": "", "issues": []}
+KNOWN_ISSUES_DEFAULT: dict[str, list[dict[str, object]]] = {"issues": []}
+ACTIVE_ISSUES_DEFAULT: dict[str, object] = {"updated_at": "", "issues": []}
 
 GATE_VERDICTS = {"ready", "needs-revision", "blocked"}
 
@@ -55,7 +53,7 @@ def get_branch_dir(branch: Optional[str] = None) -> Path:
     return Path(f".map/{branch}")
 
 
-def ensure_human_artifacts(branch: Optional[str] = None) -> Dict:
+def ensure_human_artifacts(branch: Optional[str] = None) -> dict:
     """Ensure core human-readable workflow artifacts exist for the branch."""
     branch_dir = get_branch_dir(branch)
     branch_dir.mkdir(parents=True, exist_ok=True)
@@ -80,7 +78,7 @@ def ensure_human_artifacts(branch: Optional[str] = None) -> Dict:
 
 def next_numbered_artifact_path(
     prefix: str, branch: Optional[str] = None, extension: str = ".md"
-) -> Dict:
+) -> dict:
     """Return the next numbered artifact path like review-002.md."""
     branch_dir = get_branch_dir(branch)
     branch_dir.mkdir(parents=True, exist_ok=True)
@@ -106,32 +104,15 @@ def append_session_log(
     outcome: str,
     subtask_id: str = "",
     details: str = "",
-    artifact_refs: Optional[List[str]] = None,
+    artifact_refs: Optional[list[str]] = None,
     branch: Optional[str] = None,
-) -> Dict:
-    """Append a concise entry to session-log.md."""
-    ensure_human_artifacts(branch)
-    branch_dir = get_branch_dir(branch)
-    log_file = branch_dir / "session-log.md"
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    refs = ", ".join(artifact_refs or [])
+) -> dict:
+    """Deprecated: session-log.md removed in pipeline simplification.
 
-    lines = [
-        f"## {timestamp} — {phase}",
-        f"- Outcome: {outcome}",
-    ]
-    if subtask_id:
-        lines.append(f"- Subtask: {subtask_id}")
-    if details:
-        lines.append(f"- Details: {details}")
-    if refs:
-        lines.append(f"- Artifacts: {refs}")
-    lines.append("")
-
-    with log_file.open("a", encoding="utf-8") as handle:
-        handle.write("\n".join(lines))
-
-    return {"status": "success", "path": str(log_file)}
+    Returns {"status": "deprecated", "path": "", "deprecated": True}.
+    Kept for CLI backward compatibility — callers should stop using this function.
+    """
+    return {"status": "deprecated", "path": "", "deprecated": True}
 
 
 def write_verification_summary(
@@ -141,7 +122,7 @@ def write_verification_summary(
     findings: str = "",
     next_action: str = "",
     branch: Optional[str] = None,
-) -> Dict:
+) -> dict:
     """Write a compact human-readable verification summary."""
     branch_name = branch or get_branch_name()
     branch_dir = get_branch_dir(branch_name)
@@ -169,7 +150,7 @@ def write_pr_draft(
     validation: str = "",
     risks_follow_up: str = "",
     branch: Optional[str] = None,
-) -> Dict:
+) -> dict:
     """Write a compact PR draft artifact for the current branch."""
     branch_dir = get_branch_dir(branch)
     branch_dir.mkdir(parents=True, exist_ok=True)
@@ -197,7 +178,7 @@ def write_plan_review(
     open_concerns: str = "",
     recommendation: str = "needs-revision",
     branch: Optional[str] = None,
-) -> Dict:
+) -> dict:
     """Write the next staged planning review artifact."""
     recommendation = recommendation.strip().lower()
     if recommendation not in GATE_VERDICTS:
@@ -243,7 +224,7 @@ def write_stage_gate(
     source_artifact: str = "",
     notes: str = "",
     branch: Optional[str] = None,
-) -> Dict:
+) -> dict:
     """Write a machine-readable gate artifact for a workflow stage."""
     verdict = verdict.strip().lower()
     if verdict not in GATE_VERDICTS:
@@ -265,7 +246,7 @@ def write_stage_gate(
     return {"status": "success", "path": str(gate_file), "verdict": verdict}
 
 
-def ensure_active_issues_file(branch: Optional[str] = None) -> Dict:
+def ensure_active_issues_file(branch: Optional[str] = None) -> dict:
     """Ensure active-issues.json exists for current unresolved issue set."""
     branch_dir = get_branch_dir(branch)
     branch_dir.mkdir(parents=True, exist_ok=True)
@@ -284,7 +265,7 @@ def replace_active_issues(
     source_artifact: str,
     issues_text: str = "",
     branch: Optional[str] = None,
-) -> Dict:
+) -> dict:
     """Replace active unresolved issue set from newline-delimited bullets/text."""
     ensure_active_issues_file(branch)
     issues_file = get_branch_dir(branch) / "active-issues.json"
@@ -318,7 +299,7 @@ def replace_active_issues(
     return {"status": "success", "path": str(issues_file), "count": len(issues)}
 
 
-def build_handoff_bundle(branch: Optional[str] = None) -> Dict:
+def build_handoff_bundle(branch: Optional[str] = None) -> dict:
     """Build a compact handoff bundle from branch-scoped human artifacts."""
     branch_name = branch or get_branch_name()
     branch_dir = get_branch_dir(branch_name)
@@ -328,7 +309,6 @@ def build_handoff_bundle(branch: Optional[str] = None) -> Dict:
         path = branch_dir / name
         return path.read_text(encoding="utf-8") if path.exists() else ""
 
-    session_log = read("session-log.md")
     verification = read("verification-summary.md")
     qa = read("qa-001.md")
     active_issues = read("active-issues.json")
@@ -347,8 +327,8 @@ def build_handoff_bundle(branch: Optional[str] = None) -> Dict:
         summary.append("- Verification gate recorded")
     if latest_review:
         summary.append(f"- Latest review: {latest_review_name}")
-    if session_log:
-        summary.append("- Session log captured")
+    if latest_review:
+        summary.append("- Code review history available")
     if active_issues:
         summary.append("- Active unresolved issues tracked")
 
@@ -375,7 +355,7 @@ def build_handoff_bundle(branch: Optional[str] = None) -> Dict:
     }
 
 
-def build_review_handoff(branch: Optional[str] = None) -> Dict:
+def build_review_handoff(branch: Optional[str] = None) -> dict:
     """Build final review context from planning, execution, and verification artifacts."""
     branch_name = branch or get_branch_name()
     branch_dir = get_branch_dir(branch_name)
@@ -428,7 +408,7 @@ def build_review_handoff(branch: Optional[str] = None) -> Dict:
     return payload
 
 
-def ensure_known_issues_file(branch: Optional[str] = None) -> Dict:
+def ensure_known_issues_file(branch: Optional[str] = None) -> dict:
     """Ensure known-issues.json exists for accepted blockers / known limitations."""
     branch_dir = get_branch_dir(branch)
     branch_dir.mkdir(parents=True, exist_ok=True)
@@ -447,7 +427,7 @@ def add_known_issue(
     status: str = "accepted",
     notes: str = "",
     branch: Optional[str] = None,
-) -> Dict:
+) -> dict:
     """Append a known issue / accepted blocker entry."""
     ensure_known_issues_file(branch)
     issues_file = get_branch_dir(branch) / "known-issues.json"
@@ -470,38 +450,17 @@ def add_known_issue(
     }
 
 
-def get_branch_name() -> str:
-    """Get sanitized git branch name."""
-    try:
-        import subprocess
-
-        result = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=1,
-        )
-        if result.returncode == 0:
-            branch = result.stdout.strip()
-            sanitized = branch.replace("/", "-")
-            sanitized = re.sub(r"[^a-zA-Z0-9_.-]", "-", sanitized)
-            sanitized = re.sub(r"-+", "-", sanitized).strip("-")
-            if ".." in sanitized or sanitized.startswith("."):
-                return "default"
-            return sanitized or "default"
-        return "default"
-    except Exception:
-        return "default"
+from map_utils import get_branch_name  # noqa: E402 — shared across .map/scripts/
 
 
-def update_workflow_state(
+def update_step_state(
     subtask_id: str,
     step_name: str,
     new_state: str,
     branch: Optional[str] = None,
-) -> Dict:
+) -> dict:
     """
-    Update workflow_state.json after step completion.
+    Update step_state.json after step completion.
 
     Args:
         subtask_id: Subtask ID (e.g., "ST-001")
@@ -510,15 +469,15 @@ def update_workflow_state(
         branch: Git branch (auto-detected if None)
 
     Returns:
-        Dict with status and updated state
+        dict with status and updated state
     """
     if branch is None:
         branch = get_branch_name()
 
-    state_file = Path(f".map/{branch}/workflow_state.json")
+    state_file = Path(f".map/{branch}/step_state.json")
 
     if not state_file.exists():
-        return {"status": "error", "message": "workflow_state.json not found"}
+        return {"status": "error", "message": "step_state.json not found"}
 
     try:
         state = json.loads(state_file.read_text(encoding="utf-8"))
@@ -554,12 +513,12 @@ def update_workflow_state(
         return {"status": "error", "message": str(e)}
 
 
-def update_workflow_state_batch(
-    updates: List[Dict],
+def update_step_state_batch(
+    updates: list[dict],
     branch: Optional[str] = None,
-) -> Dict:
+) -> dict:
     """
-    Update workflow_state.json for multiple subtasks in one call.
+    Update step_state.json for multiple subtasks in one call.
 
     Used in wave-based parallel execution to update all subtasks in a wave
     after their actors/monitors complete.
@@ -572,15 +531,15 @@ def update_workflow_state_batch(
         branch: Git branch (auto-detected if None)
 
     Returns:
-        Dict with status and per-subtask results
+        dict with status and per-subtask results
     """
     if branch is None:
         branch = get_branch_name()
 
-    state_file = Path(f".map/{branch}/workflow_state.json")
+    state_file = Path(f".map/{branch}/step_state.json")
 
     if not state_file.exists():
-        return {"status": "error", "message": "workflow_state.json not found"}
+        return {"status": "error", "message": "step_state.json not found"}
 
     try:
         state = json.loads(state_file.read_text(encoding="utf-8"))
@@ -636,7 +595,7 @@ def update_plan_status(
     subtask_id: str,
     new_status: str,
     branch: Optional[str] = None,
-) -> Dict:
+) -> dict:
     """
     Update subtask status in task_plan.md.
 
@@ -646,7 +605,7 @@ def update_plan_status(
         branch: Git branch (auto-detected if None)
 
     Returns:
-        Dict with status and message
+        dict with status and message
     """
     if branch is None:
         branch = get_branch_name()
@@ -685,9 +644,9 @@ def update_plan_status(
 
 def validate_checkpoint(
     subtask_id: str,
-    required_steps: List[str],
+    required_steps: list[str],
     branch: Optional[str] = None,
-) -> Dict:
+) -> dict:
     """
     Validate that required steps are completed for subtask.
 
@@ -697,18 +656,18 @@ def validate_checkpoint(
         branch: Git branch (auto-detected if None)
 
     Returns:
-        Dict with valid: bool, missing_steps: List[str]
+        dict with valid: bool, missing_steps: list[str]
     """
     if branch is None:
         branch = get_branch_name()
 
-    state_file = Path(f".map/{branch}/workflow_state.json")
+    state_file = Path(f".map/{branch}/step_state.json")
 
     if not state_file.exists():
         return {
             "valid": False,
             "missing_steps": required_steps,
-            "message": "workflow_state.json not found",
+            "message": "step_state.json not found",
         }
 
     try:
@@ -736,12 +695,12 @@ def validate_checkpoint(
         }
 
 
-def create_xml_packet(subtask: Dict) -> str:
+def create_xml_packet(subtask: dict) -> str:
     """
     Create AI-friendly XML packet for subtask.
 
     Args:
-        subtask: Dict with subtask data from decomposer blueprint
+        subtask: dict with subtask data from decomposer blueprint
 
     Returns:
         XML packet string
@@ -848,6 +807,123 @@ def get_current_phase(branch: Optional[str] = None) -> Optional[str]:
     return None
 
 
+def run_test_gate() -> dict:
+    """Run project test suite as a deterministic verification gate.
+
+    Detects the test runner (pytest/npm/go/cargo) and executes it.
+    Returns structured result with pass/fail, output, and exit code.
+    Called AFTER Monitor returns valid=true, BEFORE validate_step advances state.
+    """
+    import subprocess
+
+    # Detect test runner
+    runners = [
+        (["pytest.ini", "pyproject.toml", "setup.py", "setup.cfg"], ["pytest", "--tb=short", "-q"]),
+        (["package.json"], ["npm", "test"]),
+        (["go.mod"], ["go", "test", "./..."]),
+        (["Cargo.toml"], ["cargo", "test"]),
+    ]
+
+    test_cmd = None
+    for markers, cmd in runners:
+        for marker in markers:
+            if Path(marker).exists():
+                # For pyproject.toml, check it actually has pytest config or is a Python project
+                if marker == "pyproject.toml":
+                    try:
+                        content = Path(marker).read_text(encoding="utf-8")
+                        if "pytest" not in content and "tool.pytest" not in content:
+                            continue
+                    except OSError:
+                        continue
+                test_cmd = cmd
+                break
+        if test_cmd:
+            break
+
+    if not test_cmd:
+        return {
+            "status": "skipped",
+            "passed": True,
+            "reason": "No test runner detected",
+            "output": "",
+            "exit_code": 0,
+        }
+
+    try:
+        result = subprocess.run(
+            test_cmd,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        passed = result.returncode == 0
+        output = result.stdout + result.stderr
+        # Truncate to avoid huge JSON
+        if len(output) > 5000:
+            output = output[:2000] + "\n...[truncated]...\n" + output[-2000:]
+
+        return {
+            "status": "success",
+            "passed": passed,
+            "output": output,
+            "exit_code": result.returncode,
+            "test_cmd": " ".join(test_cmd),
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            "status": "timeout",
+            "passed": False,
+            "output": "Test execution timed out after 300s",
+            "exit_code": -1,
+            "test_cmd": " ".join(test_cmd),
+        }
+    except OSError as e:
+        return {
+            "status": "error",
+            "passed": False,
+            "output": str(e),
+            "exit_code": -1,
+            "test_cmd": " ".join(test_cmd),
+        }
+
+
+def snapshot_code_state(branch: Optional[str] = None) -> dict:
+    """Capture current git state for artifact-to-code verification.
+
+    Records git ref, changed files, and diff stat so review artifacts
+    can be tied to actual code state. Populates subtask_files_changed.
+    """
+    import subprocess
+
+    branch_name = branch or get_branch_name()
+
+    def _run_git(args: list[str]) -> str:
+        try:
+            result = subprocess.run(
+                ["git"] + args,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            return result.stdout.strip() if result.returncode == 0 else ""
+        except Exception:
+            return ""
+
+    git_ref = _run_git(["rev-parse", "HEAD"])
+    diff_stat = _run_git(["diff", "--stat", "HEAD"])
+    diff_names = _run_git(["diff", "--name-only", "HEAD"])
+    files_changed = [f for f in diff_names.splitlines() if f.strip()] if diff_names else []
+
+    return {
+        "status": "success",
+        "git_ref": git_ref[:12] if git_ref else "unknown",
+        "files_changed": files_changed,
+        "diff_stat": diff_stat,
+        "branch": branch_name,
+    }
+
+
 if __name__ == "__main__":
     # Simple CLI interface for testing
     import sys
@@ -858,18 +934,18 @@ if __name__ == "__main__":
 
     func_name = sys.argv[1]
 
-    if func_name == "update_workflow_state_batch" and len(sys.argv) >= 3:
+    if func_name == "update_step_state_batch" and len(sys.argv) >= 3:
         updates_json = sys.argv[2]
         try:
             updates = json.loads(updates_json)
         except json.JSONDecodeError as e:
             print(json.dumps({"status": "error", "message": f"Invalid JSON: {e}"}))
             sys.exit(1)
-        result = update_workflow_state_batch(updates)
+        result = update_step_state_batch(updates)
         print(json.dumps(result, indent=2))
 
-    elif func_name == "update_workflow_state" and len(sys.argv) >= 5:
-        result = update_workflow_state(sys.argv[2], sys.argv[3], sys.argv[4])
+    elif func_name == "update_step_state" and len(sys.argv) >= 5:
+        result = update_step_state(sys.argv[2], sys.argv[3], sys.argv[4])
         print(json.dumps(result, indent=2))
 
     elif func_name == "update_plan_status" and len(sys.argv) >= 4:
@@ -898,12 +974,8 @@ if __name__ == "__main__":
         print(json.dumps(result, indent=2))
 
     elif func_name == "append_session_log" and len(sys.argv) >= 4:
-        phase = sys.argv[2]
-        outcome = sys.argv[3]
-        subtask_id = sys.argv[4] if len(sys.argv) >= 5 else ""
-        details = sys.argv[5] if len(sys.argv) >= 6 else ""
-        refs = sys.argv[6].split(",") if len(sys.argv) >= 7 and sys.argv[6] else []
-        result = append_session_log(phase, outcome, subtask_id, details, refs)
+        # Deprecated — kept for backward compatibility, returns {"status": "deprecated"}
+        result = append_session_log(sys.argv[2], sys.argv[3])
         print(json.dumps(result, indent=2))
 
     elif func_name == "write_verification_summary" and len(sys.argv) >= 3:
@@ -973,6 +1045,14 @@ if __name__ == "__main__":
         status = sys.argv[3] if len(sys.argv) >= 4 else "accepted"
         notes = sys.argv[4] if len(sys.argv) >= 5 else ""
         result = add_known_issue(title, status, notes)
+        print(json.dumps(result, indent=2))
+
+    elif func_name == "run_test_gate":
+        result = run_test_gate()
+        print(json.dumps(result, indent=2))
+
+    elif func_name == "snapshot_code_state":
+        result = snapshot_code_state()
         print(json.dumps(result, indent=2))
 
     else:

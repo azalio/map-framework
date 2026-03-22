@@ -31,4 +31,8 @@ else
     fi
 fi
 
-echo "✅ Synced .claude/* → $templates_root/"
+# Sync .map/scripts/ → templates/map/scripts/
+mkdir -p "$templates_root/map/scripts"
+cp -a .map/scripts/*.py "$templates_root/map/scripts/"
+
+echo "✅ Synced .claude/* and .map/scripts/* → $templates_root/"

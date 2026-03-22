@@ -91,7 +91,7 @@
 │ Обновляет step_state.json:                         │
 │ {                                                   │
 │   "completed_steps": ["1.0"],                      │
-│   "pending_steps": ["1.5", "1.6", "2.0", ...],    │
+│   "pending_steps": ["1.5", "1.6", "2.2", "2.3", "2.4"], │
 │   "current_step_id": "1.5"                         │
 │ }                                                   │
 └─────────────────────────────────────────────────────┘
@@ -120,14 +120,11 @@
                    ↓
 ┌─────────────────────────────────────────────────────┐
 │ Turn 3: get_next_step → step_id=1.6, INIT_STATE    │
-│ Выполняет: Создание workflow_state.json            │
+│ Выполняет: Создание step_state.json            │
 │ Валидирует: validate_step "1.6"                    │
 └──────────────────┬──────────────────────────────────┘
                    ↓
 ┌─────────────────────────────────────────────────────┐
-│ Turn 4: get_next_step → step_id=2.0, XML_PACKET    │
-│ Выполняет: Создание XML пакета для ST-001          │
-│ Валидирует: validate_step "2.0"                    │
 └──────────────────┬──────────────────────────────────┘
                    ↓
 ┌─────────────────────────────────────────────────────┐
@@ -152,32 +149,24 @@
 │ Если Monitor.valid == false:                       │
 │   → Возврат к ACTOR с feedback (retry loop)        │
 │ Если Monitor.valid == true:                        │
-│   → validate_step "2.4" → Переход к 2.7            │
 └──────────────────┬──────────────────────────────────┘
                    ↓
 ┌─────────────────────────────────────────────────────┐
-│ Turn 7: get_next_step → step_id=2.7, UPDATE_STATE   │
 │                                                     │
 │ Выполняет: Edit/Write tools                        │
 │                                                     │
 │ ⚠️  workflow-gate.py БЛОКИРУЕТ если:              │
-│     actor+monitor НЕ в completed_steps             │
+│     current_step_phase NOT in ACTOR/APPLY/TEST_WRITER             │
 │                                                     │
-│ Валидирует: validate_step "2.7"                    │
 └──────────────────┬──────────────────────────────────┘
                    ↓
 ┌─────────────────────────────────────────────────────┐
-│ Turn 8-9: TESTS_GATE → LINTER_GATE                │
 └──────────────────┬──────────────────────────────────┘
                    ↓
 ┌─────────────────────────────────────────────────────┐
-│ Turn 10: get_next_step → step_id=2.10, VERIFY      │
+│ Per-wave gates: TESTS + LINTER (после всех Monitor) │
 │                                                     │
-│ Hook НАПОМИНАЕТ:                                    │
-│ ⚠️  "Output self-audit before marking complete"    │
-│                                                     │
-│ Выполняет: Self-audit checkpoint output            │
-│ Валидирует: validate_step "2.10"                   │
+│ Выполняет: pytest/ruff один раз на всю волну       │
 │                                                     │
 │ Обновляет: subtask_index++                         │
 │ Сбрасывает: pending_steps для след. subtask        │
@@ -203,17 +192,10 @@
 | **1.5** | INIT_PLAN | Создание task_plan.md | ✅ Да |
 | **1.55** | REVIEW_PLAN | Явное одобрение плана пользователем | ✅ Да |
 | **1.56** | CHOOSE_MODE | Выбор режима выполнения (step_by_step\|batch) | ✅ Да |
-| **1.6** | INIT_STATE | Создание workflow_state.json | ✅ Да |
-| **2.0** | XML_PACKET | Построение AI-friendly пакета | ✅ Да (для каждого ST) |
+| **1.6** | INIT_STATE | Создание step_state.json | ✅ Да |
 | **2.2** | RESEARCH | research-agent для контекста | 🔶 Условно (если 3+ файлов) |
 | **2.3** | ACTOR | Actor генерирует код | ✅ Да (для каждого ST) |
 | **2.4** | MONITOR | Monitor валидирует (retry до 5 раз) | ✅ Да (для каждого ST) |
-| **2.6** | PREDICTOR | Анализ impact | 🔶 Условно (medium/high risk) |
-| **2.7** | UPDATE_STATE | Обновление workflow_state.json | ✅ Да (для каждого ST) |
-| **2.8** | TESTS_GATE | Запуск тестов | 🔶 Условно (если есть) |
-| **2.9** | LINTER_GATE | Запуск линтера | 🔶 Условно (если есть) |
-| **2.10** | VERIFY_ADHERENCE | Self-audit checkpoint | ✅ Да (для каждого ST) |
-| **2.11** | SUBTASK_APPROVAL | Пауза между ST в режиме step_by_step | 🔶 Условно |
 
 ---
 
@@ -237,7 +219,7 @@
 ### 3️⃣ Workflow Gate (workflow-gate.py)
 **Роль:** БЛОКИРУЕТ нарушения
 
-- Проверяет workflow_state.json
+- Проверяет step_state.json
 - БЛОКИРУЕТ Edit/Write если actor+monitor не выполнены
 - Exit code 2 = hard block с сообщением об ошибке
 
@@ -308,10 +290,10 @@ Turn 3: map_orchestrator говорит: "Step 2.4: Call Monitor"
   ↓
 Claude: [Вызывает Monitor] ✅
   ↓
-Turn 4: map_orchestrator говорит: "Step 2.7: Apply changes"
-        Gate проверяет: actor+monitor выполнены ✅
+Turn 4: map_orchestrator говорит: "Step 2.2: Run Research (next subtask)"
+        Hook напоминает: "⚠️  Call research-agent BEFORE Actor"
   ↓
-Claude: [Применяет Edit/Write] ✅
+Claude: [Запускает research-agent или пропускает] ✅
 ```
 
 ---
@@ -330,7 +312,7 @@ Claude: [Применяет Edit/Write] ✅
 # Система автоматически:
 # 1. Создаст .map/<branch>/step_state.json
 # 2. Будет показывать прогресс в хуках
-# 3. Пройдет все 16 фаз для каждого subtask
+# 3. Пройдет все фазы для каждого subtask (RESEARCH → ACTOR → MONITOR)
 # 4. Завершится финальной верификацией
 ```
 
@@ -370,14 +352,13 @@ cat .map/$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|
 python3 .map/scripts/map_orchestrator.py get_next_step
 
 # Проверить workflow state (для gate)
-cat .map/$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')/workflow_state.json
+cat .map/$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')/step_state.json
 ```
 
 **Сбросить состояние:**
 ```bash
 # Удалить state files (начать заново)
 rm -rf .map/<branch>/step_state.json
-rm -rf .map/<branch>/workflow_state.json
 ```
 
 **Включить отладку хука:**

@@ -9,7 +9,7 @@ It enables:
 - **Reminders:** `workflow-context-injector.py` injects a short reminder before significant tool calls
 - **User checkpoints:** explicit plan approval + execution mode selection
 
-This is separate from `workflow_state.json`, which tracks subtask execution steps for enforcement (see `workflow-state-schema.md`).
+`step_state.json` is the single source of truth for workflow state, used by both the orchestrator and enforcement hooks.
 
 ## Location
 
@@ -60,18 +60,7 @@ Current step set (linear order; some are conditional):
 3. `1.55` REVIEW_PLAN
 4. `1.56` CHOOSE_MODE
 5. `1.6` INIT_STATE
-6. `2.0` XML_PACKET
 7. `2.2` RESEARCH (conditional)
 9. `2.3` ACTOR
 10. `2.4` MONITOR
-11. `2.6` PREDICTOR (conditional)
-12. `2.7` UPDATE_STATE
-13. `2.8` TESTS_GATE (conditional)
-14. `2.9` LINTER_GATE (conditional)
-15. `2.10` VERIFY_ADHERENCE
-16. `2.11` SUBTASK_APPROVAL (conditional; step_by_step only)
 
-## Relationship to workflow_state.json
-
-- `step_state.json`: sequencing + reminders (cheap to read, small)
-- `workflow_state.json`: enforcement gate for Edit/Write (actor+monitor must be completed)
