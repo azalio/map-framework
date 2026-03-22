@@ -12,7 +12,6 @@
 - Calls task-decomposer agent to break down the user's request into subtasks
 - Creates `.map/<branch>/task_plan_<branch>.md` with subtask list
 - Initializes `.map/<branch>/step_state.json` with subtask sequence
-- Maintains branch-scoped human-readable artifacts in `.map/<branch>/` (`implementation-plan.md`, `decision-log.md`, `pr-draft.md`)
 - **STOPS** after planning (forces context flush)
 
 **What this command CANNOT do:**
@@ -34,9 +33,6 @@ echo "findings:    $(test -f .map/${BRANCH}/findings_${BRANCH}.md && echo EXISTS
 echo "spec:        $(test -f .map/${BRANCH}/spec_${BRANCH}.md && echo EXISTS || echo MISSING)"
 echo "task_plan:   $(test -f .map/${BRANCH}/task_plan_${BRANCH}.md && echo EXISTS || echo MISSING)"
 echo "state:       $(test -f .map/${BRANCH}/step_state.json && echo EXISTS || echo MISSING)"
-echo "impl_plan:   $(test -f .map/${BRANCH}/implementation-plan.md && echo EXISTS || echo MISSING)"
-echo "decisions:   $(test -f .map/${BRANCH}/decision-log.md && echo EXISTS || echo MISSING)"
-echo "pr_draft:    $(test -f .map/${BRANCH}/pr-draft.md && echo EXISTS || echo MISSING)"
 ```
 
 **Resume rules:**
@@ -270,57 +266,6 @@ If interview was skipped (task is well-defined), still write `spec_<branch>.md` 
 - **Out of Scope**: explicitly state what is NOT being changed
 
 This ensures every `/map-plan` run produces a spec, regardless of whether interview happened.
-
-### Step 2c: Write Human-Readable Planning Artifacts
-
-After the spec is finalized, maintain these branch-scoped artifacts in `.map/<branch>/`:
-
-- `implementation-plan.md` — concise goals, non-goals, milestones, validation plan
-- `decision-log.md` — high-signal decisions and rationale from interview/spec review
-- `pr-draft.md` — placeholder PR summary that execution will update later
-
-Use the **Write** tool to create or overwrite them with distilled content from the spec and decomposition. Keep them short and useful for a human resuming work.
-
-Recommended structure:
-
-```markdown
-# Implementation Plan
-
-## Goal
-[1 sentence]
-
-## Non-Goals
-- ...
-
-## Planned Steps
-1. ST-001 — ...
-2. ST-002 — ...
-
-## Validation Plan
-- [command or check]
-```
-
-```markdown
-# Decision Log
-
-## Decision 001
-- Decision: ...
-- Rationale: ...
-- Impacted files: ...
-```
-
-```markdown
-# PR Draft
-
-## Summary
-- Planning completed for [goal]
-
-## Planned Validation
-- ...
-
-## Risks
-- ...
-```
 
 ### Step 2b: Devil's Advocate Review (SPEC_REVIEW)
 
@@ -566,8 +511,6 @@ WORKFLOW CHECKPOINT: PLAN PHASE COMPLETE
 ✅ Blueprint saved to .map/${BRANCH}/blueprint.json
 ✅ step_state.json initialized (with aag_contracts map)
 ✅ Plan written to .map/${BRANCH}/task_plan_${BRANCH}.md
-✅ Human-readable artifacts updated: implementation-plan.md, decision-log.md, pr-draft.md
-✅ Planning review recorded: plan-review-00N.md + plan-gate.json
 ✅ Context distilled (plan files ≤4000 tokens per subtask)
 
 Next Steps:
@@ -590,13 +533,9 @@ Next Steps:
 DISTILLATION CHECKLIST:
   [x] task_plan_<branch>.md — has AAG contracts for every subtask
   [x] step_state.json   — has aag_contracts map + subtask_sequence
+  [x] blueprint.json     — raw decomposer output for wave computation
   [x] spec_<branch>.md      — has architecture graph + decisions (if interview was done)
   [x] findings_<branch>.md  — has research pointers (if discovery was done)
-  [x] implementation-plan.md — concise execution roadmap for humans
-  [x] decision-log.md       — key tradeoffs captured before implementation
-  [x] pr-draft.md           — initial summary + validation + risk notes
-  [x] plan-review-00N.md    — staged planning review with carry-forward concerns
-  [x] plan-gate.json        — machine-readable planning verdict (`ready|needs-revision|blocked`)
 
 TARGET: Executor reads ≤4000 tokens of distilled state to start any subtask.
 If plan files exceed this, condense — remove redundant descriptions, keep AAG contracts + criteria.
