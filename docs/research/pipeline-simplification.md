@@ -188,25 +188,16 @@ Predictor is inline within stuck recovery, not a separate phase.
   "execution_waves": [["ST-001", "ST-002"], ["ST-003"]],
   "current_wave_index": 0,
 
-  "active_phase": "ACTOR",
-  "active_subtask_id": "ST-002",
+  "current_step_phase": "ACTOR",
+  "current_subtask_id": "ST-002",
 
-  "subtask_states": {
-    "ST-001": "MONITOR_PASSED",
-    "ST-002": "ACTOR_DONE",
-    "ST-003": "ACTOR_PENDING"
-  },
+  "subtask_phases": {"ST-001": "COMPLETE", "ST-002": "2.3"},
   "subtask_retry_counts": {"ST-001": 0, "ST-002": 1},
   "guard_rework_counts": {},
 
   "subtask_files_changed": {
     "ST-001": ["src/models/user.py", "src/models/__init__.py"],
     "ST-002": ["src/services/auth.py"]
-  },
-
-  "wave_states": {
-    "0": "WAVE_GATES_PENDING",
-    "1": "PENDING"
   },
 
   "constraints": {
@@ -225,26 +216,22 @@ Predictor is inline within stuck recovery, not a separate phase.
 
 | Field | Written by | Read by | Purpose |
 |-------|-----------|---------|---------|
-| `active_phase` | Orchestrator (before each agent call) | workflow-gate.py, workflow-context-injector.py | Gating: Edit allowed only during ACTOR, APPLY, TEST_WRITER. Reminder: show current phase. |
-| `active_subtask_id` | Orchestrator | workflow-context-injector.py | Reminder: show which subtask is active |
-| `subtask_states` | Orchestrator (after Monitor/gates) | Resume logic, orchestrator | Track per-subtask progress for resume |
-| `wave_states` | Orchestrator (after gates) | Resume logic, orchestrator | Track per-wave gate status for resume |
+| `current_step_phase` | Orchestrator (before each agent call) | workflow-gate.py, workflow-context-injector.py | Gating: Edit allowed only during ACTOR, APPLY, TEST_WRITER. Reminder: show current phase. |
+| `current_subtask_id` | Orchestrator | workflow-context-injector.py | Reminder: show which subtask is active |
 | `subtask_files_changed` | Orchestrator (after Actor returns) | Guard isolation strategy | Map subtask → files for per-subtask revert during wave gate failure |
 | `workflow_status` | Orchestrator (at lifecycle boundaries) | Resume, /map-check, CI/CD | Overall workflow outcome |
 
-Valid `active_phase` values: `RESEARCH`, `ACTOR`, `APPLY`, `TEST_WRITER`, `MONITOR`, `GATES`, `GATE_ISOLATION`, `FINAL_VERIFY`, `COMPLETE`
-Valid subtask states: `ACTOR_PENDING`, `RESEARCH_DONE`, `ACTOR_DONE`, `MONITOR_PASSED`, `MONITOR_FAILED`, `SKIPPED`
-Valid wave states: `PENDING`, `WAVE_GATES_PENDING`, `WAVE_GATES_PASSED`, `WAVE_GATES_FAILED`, `REWORK_IN_PROGRESS`
+Valid `current_step_phase` values: phase names from STEP_PHASES (`DECOMPOSE`, `INIT_PLAN`, `REVIEW_PLAN`, `CHOOSE_MODE`, `INIT_STATE`, `RESEARCH`, `TEST_WRITER`, `TEST_FAIL_GATE`, `ACTOR`, `MONITOR`, `COMPLETE`)
 Valid `workflow_status` values: `INITIALIZED`, `IN_PROGRESS`, `FINAL_VERIFY_PENDING`, `COMPLETE`, `FAILED`, `ABORTED`
 
 ### Hook contract mapping (old → new)
 
 | Hook | Old field | New field | Notes |
 |------|-----------|-----------|-------|
-| workflow-gate.py | `current_step_phase` in EDITING_PHASES | `active_phase` in {ACTOR, APPLY, TEST_WRITER} | Same logic, renamed field |
-| workflow-gate.py | `subtask_phases` dict (parallel) | `active_phase` (single value, covers wave) | During parallel wave Actor phase, active_phase=ACTOR for entire wave |
+| workflow-gate.py | `current_step_phase` in EDITING_PHASES | `current_step_phase` in {ACTOR, APPLY, TEST_WRITER} | Same logic, same field |
+| workflow-gate.py | `subtask_phases` dict (parallel) | `subtask_phases` dict + `current_step_phase` fallback | During parallel wave, any subtask in EDITING_PHASES allows edits |
 | workflow-gate.py | constraints from workflow_state.json | `constraints` in step_state.json | Same structure, moved |
-| context-injector | `current_step_phase` + `current_subtask_id` | `active_phase` + `active_subtask_id` | Same contract, renamed |
+| context-injector | `current_step_phase` + `current_subtask_id` | `current_step_phase` + `current_subtask_id` | Same contract, same fields |
 
 ## Full Migration Surface (P2 resolution)
 

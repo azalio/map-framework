@@ -133,15 +133,6 @@ STRICT RULES:
 
 Output:
 - Test files written via Edit/Write tools
-
-
-Evidence JSON must include:
-  "phase": "TEST_WRITER",
-  "subtask_id": "<id>",
-  "timestamp": "<ISO 8601>",
-  "test_files_created": ["path/to/test_file.py"],
-  "validation_criteria_covered": ["VC1", "VC2", "VC3"],
-  "status": "applied"
 """
 )
 ```
@@ -196,20 +187,6 @@ fi
 - **Tests FAIL with assertion/import errors** → GOOD. This is the expected TDD state ("Red" phase). Proceed to ACTOR.
 - **Tests PASS** → PROBLEM. Tests are trivial or not testing real behavior. Go back to TEST_WRITER with feedback: "Tests pass without implementation. Tests must assert behavior that requires code to be written."
 - **Tests have syntax errors** → Go back to TEST_WRITER with feedback to fix syntax.
-
-Write evidence file:
-
-```json
-{
-  "phase": "TEST_FAIL_GATE",
-  "subtask_id": "<id>",
-  "timestamp": "<ISO 8601>",
-  "tests_ran": true,
-  "tests_failed": true,
-  "failure_type": "assertion_errors",
-  "status": "gate_passed"
-}
-```
 
 ```bash
 python3 .map/scripts/map_orchestrator.py validate_step "2.26"
@@ -272,14 +249,13 @@ Monitor verifies both implementation correctness AND that all tests pass.
 |--------|---------------|----------|
 | Test authoring | Actor writes code + tests together | TEST_WRITER writes tests first, Actor writes code only |
 | Test independence | Tests may mirror implementation | Tests derived from spec only |
-| Phase count | 6 phases | 8 phases (+TEST_WRITER, +TEST_FAIL_GATE)) |
+| Phase count | 6 phases | 8 phases (+TEST_WRITER, +TEST_FAIL_GATE) |
 | Token cost | Lower | ~20-30% higher (extra Actor call for tests) |
 | Best for | General development | Correctness-critical features |
 
 ## Artifact Model
 
 `/map-tdd` uses the same branch-scoped execution artifacts as `/map-efficient` because it runs through the same orchestrated state machine with extra TDD phases:
-
 
 
 - `code-review-00N.md`

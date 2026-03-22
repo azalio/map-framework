@@ -401,3 +401,45 @@ class TestWorkflowGate:
         assert code == 0
         reason = self._assert_denied(stdout)
         assert "time_budget" in reason
+
+    def test_time_budget_allows_within_budget(self, tmp_path: Path) -> None:
+        """time_budget constraint allows edits when budget has not been exceeded."""
+        from datetime import datetime, timezone
+
+        map_dir = tmp_path / ".map" / "master"
+        map_dir.mkdir(parents=True, exist_ok=True)
+        (map_dir / "step_state.json").write_text(json.dumps({
+            "current_step_phase": "ACTOR",
+            "current_subtask_id": "ST-001",
+            "subtask_phases": {},
+            "constraints": {"time_budget": 9999},
+            "started_at": datetime.now(timezone.utc).isoformat(),
+        }))
+
+        code, stdout, _ = self.run_hook(
+            {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}},
+            tmp_path,
+        )
+        assert code == 0
+        self._assert_allowed(stdout)
+
+    def test_scope_glob_brace_expansion_bypassed(self, tmp_path: Path) -> None:
+        """scope_glob containing '{' is bypassed (fail-open) with stderr warning."""
+        map_dir = tmp_path / ".map" / "master"
+        map_dir.mkdir(parents=True, exist_ok=True)
+        (map_dir / "step_state.json").write_text(json.dumps({
+            "current_step_phase": "ACTOR",
+            "current_subtask_id": "ST-001",
+            "subtask_phases": {},
+            "constraints": {"scope_glob": "{src,tests}/**/*.py"},
+        }))
+
+        code, stdout, stderr = self.run_hook(
+            {"tool_name": "Edit", "tool_input": {"file_path": "/outside/scope.rb"}},
+            tmp_path,
+        )
+        assert code == 0
+        # Should be allowed (fail-open) because brace glob is unsupported
+        self._assert_allowed(stdout)
+        assert "WARNING" in stderr
+        assert "Brace expansion" in stderr

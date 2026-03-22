@@ -290,10 +290,10 @@ Turn 3: map_orchestrator говорит: "Step 2.4: Call Monitor"
   ↓
 Claude: [Вызывает Monitor] ✅
   ↓
-Turn 4: map_orchestrator говорит: "Step 2.3: Run Actor"
-        Gate проверяет: current_step_phase == ACTOR ✅
+Turn 4: map_orchestrator говорит: "Step 2.2: Run Research (next subtask)"
+        Hook напоминает: "⚠️  Call research-agent BEFORE Actor"
   ↓
-Claude: [Actor применяет Edit/Write] ✅
+Claude: [Запускает research-agent или пропускает] ✅
 ```
 
 ---
@@ -312,7 +312,7 @@ Claude: [Actor применяет Edit/Write] ✅
 # Система автоматически:
 # 1. Создаст .map/<branch>/step_state.json
 # 2. Будет показывать прогресс в хуках
-# 3. Пройдет все 16 фаз для каждого subtask
+# 3. Пройдет все фазы для каждого subtask (RESEARCH → ACTOR → MONITOR)
 # 4. Завершится финальной верификацией
 ```
 

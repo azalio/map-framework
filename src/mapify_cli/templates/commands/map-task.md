@@ -83,7 +83,6 @@ PHASE=$(echo "$NEXT_STEP" | jq -r '.phase')
 
 Route to the appropriate executor based on `$PHASE`. All phases from `/map-efficient` work identically:
 
-- **RESEARCH (2.2)** — Build XML packet for this subtask
 - **RESEARCH (2.2)** — Call research-agent if needed
 - **ACTOR (2.3)** — Implement the subtask
 - **MONITOR (2.4)** — Validate implementation

@@ -748,14 +748,8 @@ See [USAGE.md - Workflow Variants](./USAGE.md#workflow-variants) for detailed de
 11. `2.3 ACTOR` - Actor agent implementation (code-only in TDD mode)
 12. `2.4 MONITOR` - Monitor validation (retry up to 5 times)
 
-**State Files:**
-- `step_state.json` - Hook injection source (current step phase)
-- `step_state.json` - Gate enforcement source (actor+monitor completed)
-
-**Why Two State Files?**
-- Separation of concerns: step sequencing vs. gate enforcement
-- Independent evolution: hook system can change without breaking gates
-- Performance: Hook reads minimal state (~200 bytes), gates read full state
+**State File:**
+- `step_state.json` - Single source of truth for step sequencing, hook injection, and gate enforcement
 
 #### Migration Guide (v1.x → v2.0.0)
 

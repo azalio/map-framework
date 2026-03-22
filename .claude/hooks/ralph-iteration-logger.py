@@ -361,13 +361,14 @@ def derive_summary(log_file: Path) -> None:
     file_stats: list[dict[str, object]] = []
     thrashing_alert_count = 0
     for f, effs in sorted(file_data.items(), key=lambda x: -len(x[1])):
-        is_thrashing = 1 if file_thrashing[f] >= THRASHING_WINDOW else 0
-        thrashing_alert_count += is_thrashing
+        is_thrashing = file_thrashing[f] >= THRASHING_WINDOW
+        if is_thrashing:
+            thrashing_alert_count += 1
         file_stats.append({
             "file": f,
             "iterations": len(effs),
             "avg_effectiveness": round(sum(effs) / len(effs), 3) if effs else 0.0,
-            "thrashing_count": is_thrashing,
+            "is_thrashing": is_thrashing,
         })
 
     all_effs = [e.get("effectiveness", 0.0) for e in entries if (e.get("file") or "").strip()]

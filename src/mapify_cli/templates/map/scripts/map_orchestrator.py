@@ -89,12 +89,11 @@ TESTING:
 
 import argparse
 import json
-import subprocess
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Optional
 
 # Step phase definitions with execution order
 STEP_PHASES = {
@@ -171,7 +170,7 @@ def _latest_numbered_artifact(plan_dir: Path, prefix: str) -> Optional[Path]:
     return max(numbered, key=lambda item: item[0])[1]
 
 
-def get_resume_briefing(branch: str) -> Dict:
+def get_resume_briefing(branch: str) -> dict:
     """Collect human-readable artifact context for resume and handoff flows."""
     plan_dir = Path(f".map/{branch}")
     verification_summary = plan_dir / "verification-summary.md"
@@ -212,7 +211,7 @@ def get_resume_briefing(branch: str) -> Dict:
     }
 
 
-def build_resume_briefing(branch: str) -> Dict:
+def build_resume_briefing(branch: str) -> dict:
     """Build a concise next-action briefing from plan progress and artifacts."""
     plan_progress = get_plan_progress(branch)
     briefing = get_resume_briefing(branch)
@@ -270,11 +269,11 @@ class StepState:
     started_at: str = field(default_factory=lambda: datetime.now().isoformat())
     current_subtask_id: Optional[str] = None
     subtask_index: int = 0
-    subtask_sequence: List[str] = field(default_factory=list)
+    subtask_sequence: list[str] = field(default_factory=list)
     current_step_id: str = "1.0"
     current_step_phase: str = "DECOMPOSE"
-    completed_steps: List[str] = field(default_factory=list)
-    pending_steps: List[str] = field(default_factory=lambda: STEP_ORDER.copy())
+    completed_steps: list[str] = field(default_factory=list)
+    pending_steps: list[str] = field(default_factory=lambda: STEP_ORDER.copy())
     retry_count: int = 0
     max_retries: int = 5
     plan_approved: bool = False
@@ -283,21 +282,17 @@ class StepState:
     tdd_mode: bool = False
     # Steps skipped (not executed) — tracked separately from completed_steps
     # so that re-enabling TDD can re-introduce skipped TDD steps
-    skipped_steps: List[str] = field(default_factory=list)
+    skipped_steps: list[str] = field(default_factory=list)
     # Wave-based parallel execution fields
-    execution_waves: List[List[str]] = field(default_factory=list)
+    execution_waves: list[list[str]] = field(default_factory=list)
     current_wave_index: int = 0
-    subtask_phases: Dict[str, str] = field(default_factory=dict)
-    subtask_retry_counts: Dict[str, int] = field(default_factory=dict)
-    # New fields from pipeline simplification
-    active_phase: str = ""
-    active_subtask_id: Optional[str] = None
+    subtask_phases: dict[str, str] = field(default_factory=dict)
+    subtask_retry_counts: dict[str, int] = field(default_factory=dict)
+    # Pipeline simplification fields
     workflow_status: str = "INITIALIZED"
-    subtask_states: Dict[str, str] = field(default_factory=dict)
-    wave_states: Dict[str, str] = field(default_factory=dict)
-    subtask_files_changed: Dict[str, List[str]] = field(default_factory=dict)
-    guard_rework_counts: Dict[str, int] = field(default_factory=dict)
-    constraints: Optional[Dict] = None
+    subtask_files_changed: dict[str, list[str]] = field(default_factory=dict)
+    guard_rework_counts: dict[str, int] = field(default_factory=dict)
+    constraints: Optional[dict] = None
 
     def to_dict(self) -> dict:
         """Serialize to dictionary."""
@@ -321,11 +316,7 @@ class StepState:
             "current_wave_index": self.current_wave_index,
             "subtask_phases": self.subtask_phases,
             "subtask_retry_counts": self.subtask_retry_counts,
-            "active_phase": self.active_phase,
-            "active_subtask_id": self.active_subtask_id,
             "workflow_status": self.workflow_status,
-            "subtask_states": self.subtask_states,
-            "wave_states": self.wave_states,
             "subtask_files_changed": self.subtask_files_changed,
             "guard_rework_counts": self.guard_rework_counts,
             "constraints": self.constraints,
@@ -354,11 +345,7 @@ class StepState:
             current_wave_index=data.get("current_wave_index", 0),
             subtask_phases=data.get("subtask_phases", {}),
             subtask_retry_counts=data.get("subtask_retry_counts", {}),
-            active_phase=data.get("active_phase", ""),
-            active_subtask_id=data.get("active_subtask_id"),
             workflow_status=data.get("workflow_status", "INITIALIZED"),
-            subtask_states=data.get("subtask_states", {}),
-            wave_states=data.get("wave_states", {}),
             subtask_files_changed=data.get("subtask_files_changed", {}),
             guard_rework_counts=data.get("guard_rework_counts", {}),
             constraints=data.get("constraints"),
@@ -386,33 +373,12 @@ class StepState:
         tmp_file.replace(state_file)
 
 
-def _get_step_order(tdd_mode: bool = False) -> List[str]:
+def _get_step_order(tdd_mode: bool = False) -> list[str]:
     """Return the appropriate step order based on TDD mode."""
     return TDD_STEP_ORDER if tdd_mode else STEP_ORDER
 
 
-def get_branch_name() -> str:
-    """Get sanitized git branch name."""
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=1,
-        )
-        if result.returncode == 0:
-            branch = result.stdout.strip()
-            import re
-
-            sanitized = branch.replace("/", "-")
-            sanitized = re.sub(r"[^a-zA-Z0-9_.-]", "-", sanitized)
-            sanitized = re.sub(r"-+", "-", sanitized).strip("-")
-            if ".." in sanitized or sanitized.startswith("."):
-                return "default"
-            return sanitized or "default"
-        return "default"
-    except Exception:
-        return "default"
+from map_utils import get_branch_name  # noqa: E402 — shared across .map/scripts/
 
 
 def _actor_step_instruction(state: StepState) -> str:
@@ -492,7 +458,7 @@ def get_step_instruction(step_id: str, state: StepState) -> str:
     return instructions.get(step_id, f"Execute step {step_id} ({phase})")
 
 
-def get_next_step(branch: str) -> Dict:
+def get_next_step(branch: str) -> dict:
     """
     Determine next step in workflow.
 
@@ -567,7 +533,7 @@ def get_next_step(branch: str) -> Dict:
     }
 
 
-def validate_step(step_id: str, branch: str) -> Dict:
+def validate_step(step_id: str, branch: str) -> dict:
     """
     Validate step completion and update state.
 
@@ -626,7 +592,7 @@ def validate_step(step_id: str, branch: str) -> Dict:
     }
 
 
-def initialize_workflow(task: str, branch: str) -> Dict:
+def initialize_workflow(task: str, branch: str) -> dict:
     """
     Initialize workflow state for new task.
 
@@ -651,7 +617,7 @@ def initialize_workflow(task: str, branch: str) -> Dict:
     }
 
 
-def set_plan_approved(value: str, branch: str) -> Dict:
+def set_plan_approved(value: str, branch: str) -> dict:
     """Persist explicit plan approval in step_state.json."""
     state_file = Path(f".map/{branch}/step_state.json")
     state = StepState.load(state_file)
@@ -669,7 +635,7 @@ def set_plan_approved(value: str, branch: str) -> Dict:
     return {"status": "success", "plan_approved": state.plan_approved}
 
 
-def set_execution_mode(mode: str, branch: str) -> Dict:
+def set_execution_mode(mode: str, branch: str) -> dict:
     """Persist execution mode in step_state.json."""
     state_file = Path(f".map/{branch}/step_state.json")
     state = StepState.load(state_file)
@@ -684,7 +650,7 @@ def set_execution_mode(mode: str, branch: str) -> Dict:
     return {"status": "success", "execution_mode": state.execution_mode}
 
 
-def set_tdd_mode(value: str, branch: str) -> Dict:
+def set_tdd_mode(value: str, branch: str) -> dict:
     """Enable or disable TDD mode (test-first workflow).
 
     When enabled, inserts TEST_WRITER (2.25) and TEST_FAIL_GATE (2.26)
@@ -752,7 +718,7 @@ def set_tdd_mode(value: str, branch: str) -> Dict:
     return {"status": "success", "tdd_mode": state.tdd_mode}
 
 
-def set_waves(branch: str, blueprint_path: Optional[str] = None) -> Dict:
+def set_waves(branch: str, blueprint_path: Optional[str] = None) -> dict:
     """Compute execution waves from blueprint DAG and store in step_state.json.
 
     Reads the blueprint JSON, builds a DependencyGraph, computes topological
@@ -827,7 +793,7 @@ def set_waves(branch: str, blueprint_path: Optional[str] = None) -> Dict:
 
     # Build graph
     graph = DependencyGraph()
-    affected_files_map: Dict[str, set] = {}
+    affected_files_map: dict[str, set] = {}
     for st in subtasks:
         st_id = st.get("id", "")
         deps = st.get("dependencies", [])
@@ -841,7 +807,7 @@ def set_waves(branch: str, blueprint_path: Optional[str] = None) -> Dict:
         return {"status": "error", "message": "Cycle detected in dependency graph"}
 
     # Split each wave by file conflicts
-    final_waves: List[List[str]] = []
+    final_waves: list[list[str]] = []
     for wave in raw_waves:
         sub_waves = graph.split_wave_by_file_conflicts(wave, affected_files_map)
         final_waves.extend(sub_waves)
@@ -862,7 +828,7 @@ def set_waves(branch: str, blueprint_path: Optional[str] = None) -> Dict:
     }
 
 
-def get_wave_step(branch: str) -> Dict:
+def get_wave_step(branch: str) -> dict:
     """Get the current wave's subtask batch and per-subtask phases.
 
     Returns JSON describing what to execute next in wave-based mode.
@@ -920,7 +886,7 @@ def get_wave_step(branch: str) -> Dict:
     }
 
 
-def validate_wave_step(subtask_id: str, step_id: str, branch: str) -> Dict:
+def validate_wave_step(subtask_id: str, step_id: str, branch: str) -> dict:
     """Validate one subtask's step within a wave and advance its phase.
 
     Args:
@@ -958,7 +924,7 @@ def validate_wave_step(subtask_id: str, step_id: str, branch: str) -> Dict:
     }
 
 
-def advance_wave(branch: str) -> Dict:
+def advance_wave(branch: str) -> dict:
     """Advance to the next execution wave.
 
     Called when all subtasks in current wave have passed Monitor and per-wave gates.
@@ -1006,7 +972,7 @@ def advance_wave(branch: str) -> Dict:
 SKIPPABLE_STEPS = {"2.2", "2.25", "2.26"}
 
 
-def skip_step(step_id: str, branch: str) -> Dict:
+def skip_step(step_id: str, branch: str) -> dict:
     """Skip a conditional step without executing it.
 
     Only steps that are defined as conditional can be skipped:
@@ -1063,7 +1029,7 @@ def skip_step(step_id: str, branch: str) -> Dict:
     }
 
 
-def check_circuit_breaker(branch: str) -> Dict:
+def check_circuit_breaker(branch: str) -> dict:
     """Check circuit breaker status based on completed steps count.
 
     Returns tool_count (total completed steps) and max_iterations threshold.
@@ -1090,7 +1056,7 @@ def check_circuit_breaker(branch: str) -> Dict:
     }
 
 
-def set_subtasks(subtask_ids: List[str], branch: str) -> Dict:
+def set_subtasks(subtask_ids: list[str], branch: str) -> dict:
     """Set subtask sequence after decomposition and select the first subtask.
 
     Args:
@@ -1118,7 +1084,7 @@ def set_subtasks(subtask_ids: List[str], branch: str) -> Dict:
     }
 
 
-def resume_from_plan(branch: str) -> Dict:
+def resume_from_plan(branch: str) -> dict:
     """Resume workflow from an existing /map-plan output, skipping init phases.
 
     Detects task_plan_<branch>.md and step_state.json created by /map-plan.
@@ -1154,7 +1120,7 @@ def resume_from_plan(branch: str) -> Dict:
         }
 
     # Extract AAG contracts from step_state.json or blueprint.json if present
-    aag_contracts: Dict[str, str] = {}
+    aag_contracts: dict[str, str] = {}
     step_state_file = plan_dir / "step_state.json"
     blueprint_file = plan_dir / "blueprint.json"
     for source_file in [step_state_file, blueprint_file]:
@@ -1200,7 +1166,7 @@ def resume_from_plan(branch: str) -> Dict:
     }
 
 
-def get_plan_progress(branch: str) -> Dict:
+def get_plan_progress(branch: str) -> dict:
     """Return status of all subtasks from the task plan.
 
     Reads task_plan_<branch>.md and extracts subtask IDs with their statuses.
@@ -1256,7 +1222,7 @@ def get_plan_progress(branch: str) -> Dict:
     }
 
 
-def resume_single_subtask(subtask_id: str, branch: str, tdd_mode: bool = False) -> Dict:
+def resume_single_subtask(subtask_id: str, branch: str, tdd_mode: bool = False) -> dict:
     """Set up state to execute a single subtask from an existing plan.
 
     Requires task_plan_<branch>.md to exist (created by /map-plan or decomposer).

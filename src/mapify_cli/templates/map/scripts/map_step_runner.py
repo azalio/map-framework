@@ -31,7 +31,7 @@ import json
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Optional
 
 
 HUMAN_ARTIFACT_DEFAULTS = {
@@ -53,7 +53,7 @@ def get_branch_dir(branch: Optional[str] = None) -> Path:
     return Path(f".map/{branch}")
 
 
-def ensure_human_artifacts(branch: Optional[str] = None) -> Dict:
+def ensure_human_artifacts(branch: Optional[str] = None) -> dict:
     """Ensure core human-readable workflow artifacts exist for the branch."""
     branch_dir = get_branch_dir(branch)
     branch_dir.mkdir(parents=True, exist_ok=True)
@@ -78,7 +78,7 @@ def ensure_human_artifacts(branch: Optional[str] = None) -> Dict:
 
 def next_numbered_artifact_path(
     prefix: str, branch: Optional[str] = None, extension: str = ".md"
-) -> Dict:
+) -> dict:
     """Return the next numbered artifact path like review-002.md."""
     branch_dir = get_branch_dir(branch)
     branch_dir.mkdir(parents=True, exist_ok=True)
@@ -104,11 +104,15 @@ def append_session_log(
     outcome: str,
     subtask_id: str = "",
     details: str = "",
-    artifact_refs: Optional[List[str]] = None,
+    artifact_refs: Optional[list[str]] = None,
     branch: Optional[str] = None,
-) -> Dict:
-    """Deprecated: session-log.md removed in pipeline simplification. No-op."""
-    return {"status": "success", "path": ""}
+) -> dict:
+    """Deprecated: session-log.md removed in pipeline simplification.
+
+    Returns {"status": "deprecated", "path": "", "deprecated": True}.
+    Kept for CLI backward compatibility — callers should stop using this function.
+    """
+    return {"status": "deprecated", "path": "", "deprecated": True}
 
 
 def write_verification_summary(
@@ -118,7 +122,7 @@ def write_verification_summary(
     findings: str = "",
     next_action: str = "",
     branch: Optional[str] = None,
-) -> Dict:
+) -> dict:
     """Write a compact human-readable verification summary."""
     branch_name = branch or get_branch_name()
     branch_dir = get_branch_dir(branch_name)
@@ -146,7 +150,7 @@ def write_pr_draft(
     validation: str = "",
     risks_follow_up: str = "",
     branch: Optional[str] = None,
-) -> Dict:
+) -> dict:
     """Write a compact PR draft artifact for the current branch."""
     branch_dir = get_branch_dir(branch)
     branch_dir.mkdir(parents=True, exist_ok=True)
@@ -174,7 +178,7 @@ def write_plan_review(
     open_concerns: str = "",
     recommendation: str = "needs-revision",
     branch: Optional[str] = None,
-) -> Dict:
+) -> dict:
     """Write the next staged planning review artifact."""
     recommendation = recommendation.strip().lower()
     if recommendation not in GATE_VERDICTS:
@@ -220,7 +224,7 @@ def write_stage_gate(
     source_artifact: str = "",
     notes: str = "",
     branch: Optional[str] = None,
-) -> Dict:
+) -> dict:
     """Write a machine-readable gate artifact for a workflow stage."""
     verdict = verdict.strip().lower()
     if verdict not in GATE_VERDICTS:
@@ -242,7 +246,7 @@ def write_stage_gate(
     return {"status": "success", "path": str(gate_file), "verdict": verdict}
 
 
-def ensure_active_issues_file(branch: Optional[str] = None) -> Dict:
+def ensure_active_issues_file(branch: Optional[str] = None) -> dict:
     """Ensure active-issues.json exists for current unresolved issue set."""
     branch_dir = get_branch_dir(branch)
     branch_dir.mkdir(parents=True, exist_ok=True)
@@ -261,7 +265,7 @@ def replace_active_issues(
     source_artifact: str,
     issues_text: str = "",
     branch: Optional[str] = None,
-) -> Dict:
+) -> dict:
     """Replace active unresolved issue set from newline-delimited bullets/text."""
     ensure_active_issues_file(branch)
     issues_file = get_branch_dir(branch) / "active-issues.json"
@@ -295,7 +299,7 @@ def replace_active_issues(
     return {"status": "success", "path": str(issues_file), "count": len(issues)}
 
 
-def build_handoff_bundle(branch: Optional[str] = None) -> Dict:
+def build_handoff_bundle(branch: Optional[str] = None) -> dict:
     """Build a compact handoff bundle from branch-scoped human artifacts."""
     branch_name = branch or get_branch_name()
     branch_dir = get_branch_dir(branch_name)
@@ -351,7 +355,7 @@ def build_handoff_bundle(branch: Optional[str] = None) -> Dict:
     }
 
 
-def build_review_handoff(branch: Optional[str] = None) -> Dict:
+def build_review_handoff(branch: Optional[str] = None) -> dict:
     """Build final review context from planning, execution, and verification artifacts."""
     branch_name = branch or get_branch_name()
     branch_dir = get_branch_dir(branch_name)
@@ -404,7 +408,7 @@ def build_review_handoff(branch: Optional[str] = None) -> Dict:
     return payload
 
 
-def ensure_known_issues_file(branch: Optional[str] = None) -> Dict:
+def ensure_known_issues_file(branch: Optional[str] = None) -> dict:
     """Ensure known-issues.json exists for accepted blockers / known limitations."""
     branch_dir = get_branch_dir(branch)
     branch_dir.mkdir(parents=True, exist_ok=True)
@@ -423,7 +427,7 @@ def add_known_issue(
     status: str = "accepted",
     notes: str = "",
     branch: Optional[str] = None,
-) -> Dict:
+) -> dict:
     """Append a known issue / accepted blocker entry."""
     ensure_known_issues_file(branch)
     issues_file = get_branch_dir(branch) / "known-issues.json"
@@ -446,28 +450,7 @@ def add_known_issue(
     }
 
 
-def get_branch_name() -> str:
-    """Get sanitized git branch name."""
-    try:
-        import subprocess
-
-        result = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=1,
-        )
-        if result.returncode == 0:
-            branch = result.stdout.strip()
-            sanitized = branch.replace("/", "-")
-            sanitized = re.sub(r"[^a-zA-Z0-9_.-]", "-", sanitized)
-            sanitized = re.sub(r"-+", "-", sanitized).strip("-")
-            if ".." in sanitized or sanitized.startswith("."):
-                return "default"
-            return sanitized or "default"
-        return "default"
-    except Exception:
-        return "default"
+from map_utils import get_branch_name  # noqa: E402 — shared across .map/scripts/
 
 
 def update_step_state(
@@ -475,7 +458,7 @@ def update_step_state(
     step_name: str,
     new_state: str,
     branch: Optional[str] = None,
-) -> Dict:
+) -> dict:
     """
     Update step_state.json after step completion.
 
@@ -486,7 +469,7 @@ def update_step_state(
         branch: Git branch (auto-detected if None)
 
     Returns:
-        Dict with status and updated state
+        dict with status and updated state
     """
     if branch is None:
         branch = get_branch_name()
@@ -531,9 +514,9 @@ def update_step_state(
 
 
 def update_step_state_batch(
-    updates: List[Dict],
+    updates: list[dict],
     branch: Optional[str] = None,
-) -> Dict:
+) -> dict:
     """
     Update step_state.json for multiple subtasks in one call.
 
@@ -548,7 +531,7 @@ def update_step_state_batch(
         branch: Git branch (auto-detected if None)
 
     Returns:
-        Dict with status and per-subtask results
+        dict with status and per-subtask results
     """
     if branch is None:
         branch = get_branch_name()
@@ -612,7 +595,7 @@ def update_plan_status(
     subtask_id: str,
     new_status: str,
     branch: Optional[str] = None,
-) -> Dict:
+) -> dict:
     """
     Update subtask status in task_plan.md.
 
@@ -622,7 +605,7 @@ def update_plan_status(
         branch: Git branch (auto-detected if None)
 
     Returns:
-        Dict with status and message
+        dict with status and message
     """
     if branch is None:
         branch = get_branch_name()
@@ -661,9 +644,9 @@ def update_plan_status(
 
 def validate_checkpoint(
     subtask_id: str,
-    required_steps: List[str],
+    required_steps: list[str],
     branch: Optional[str] = None,
-) -> Dict:
+) -> dict:
     """
     Validate that required steps are completed for subtask.
 
@@ -673,7 +656,7 @@ def validate_checkpoint(
         branch: Git branch (auto-detected if None)
 
     Returns:
-        Dict with valid: bool, missing_steps: List[str]
+        dict with valid: bool, missing_steps: list[str]
     """
     if branch is None:
         branch = get_branch_name()
@@ -712,12 +695,12 @@ def validate_checkpoint(
         }
 
 
-def create_xml_packet(subtask: Dict) -> str:
+def create_xml_packet(subtask: dict) -> str:
     """
     Create AI-friendly XML packet for subtask.
 
     Args:
-        subtask: Dict with subtask data from decomposer blueprint
+        subtask: dict with subtask data from decomposer blueprint
 
     Returns:
         XML packet string
@@ -874,12 +857,8 @@ if __name__ == "__main__":
         print(json.dumps(result, indent=2))
 
     elif func_name == "append_session_log" and len(sys.argv) >= 4:
-        phase = sys.argv[2]
-        outcome = sys.argv[3]
-        subtask_id = sys.argv[4] if len(sys.argv) >= 5 else ""
-        details = sys.argv[5] if len(sys.argv) >= 6 else ""
-        refs = sys.argv[6].split(",") if len(sys.argv) >= 7 and sys.argv[6] else []
-        result = append_session_log(phase, outcome, subtask_id, details, refs)
+        # Deprecated — kept for backward compatibility, returns {"status": "deprecated"}
+        result = append_session_log(sys.argv[2], sys.argv[3])
         print(json.dumps(result, indent=2))
 
     elif func_name == "write_verification_summary" and len(sys.argv) >= 3:

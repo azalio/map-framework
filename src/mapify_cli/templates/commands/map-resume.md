@@ -144,7 +144,7 @@ AskUserQuestion(questions=[
 **Handle user response:**
 
 - **Resume:** Proceed to Step 4 (resume workflow)
-- **Start fresh:** Delete step_state.json`, exit with "State cleared. Start fresh with /map-efficient."
+- **Start fresh:** Delete `step_state.json`, exit with "State cleared. Start fresh with /map-efficient."
 - **Abort:** Exit without changes
 
 ---

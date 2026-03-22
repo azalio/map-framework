@@ -168,6 +168,13 @@ def check_constraints(branch: str, target_paths: list[str]) -> Optional[str]:
 
     # scope_glob
     scope_glob = constraints.get("scope_glob")
+    if scope_glob and "{" in scope_glob:
+        print(
+            f"[workflow-gate] WARNING: scope_glob contains '{{' which fnmatch treats as literal. "
+            f"Brace expansion is not supported. Ignoring scope_glob='{scope_glob}'.",
+            file=sys.stderr,
+        )
+        scope_glob = None
     if scope_glob and target_paths:
         repo_root = Path.cwd().resolve()
         for tp in target_paths:

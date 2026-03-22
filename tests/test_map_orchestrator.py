@@ -989,5 +989,230 @@ class TestBuildResumeBriefing:
         )
 
 
+class TestReadTextIfExists:
+    """Tests for _read_text_if_exists."""
+
+    def test_happy_path_returns_content(self, tmp_path):
+        """Returns full UTF-8 content of an existing file."""
+        f = tmp_path / "sample.txt"
+        f.write_text("hello world\n", encoding="utf-8")
+
+        result = map_orchestrator._read_text_if_exists(f)
+
+        assert result == "hello world\n"
+
+    def test_missing_file_returns_empty_string(self, tmp_path):
+        """Returns empty string for a path that does not exist."""
+        result = map_orchestrator._read_text_if_exists(tmp_path / "nonexistent.txt")
+
+        assert result == ""
+
+    def test_directory_path_returns_empty_string(self, tmp_path):
+        """Returns empty string when the path is a directory, not a file."""
+        result = map_orchestrator._read_text_if_exists(tmp_path)
+
+        assert result == ""
+
+    def test_empty_file_returns_empty_string(self, tmp_path):
+        """Returns empty string for an existing but empty file."""
+        f = tmp_path / "empty.txt"
+        f.write_text("", encoding="utf-8")
+
+        result = map_orchestrator._read_text_if_exists(f)
+
+        assert result == ""
+
+
+class TestExtractRecentMarkdownSection:
+    """Tests for _extract_recent_markdown_section."""
+
+    def test_happy_path_returns_all_lines_when_under_limit(self):
+        """Returns all non-empty lines when content is within max_lines."""
+        content = "line one\nline two\nline three\n"
+
+        result = map_orchestrator._extract_recent_markdown_section(content, max_lines=10)
+
+        assert "line one" in result
+        assert "line two" in result
+        assert "line three" in result
+
+    def test_empty_input_returns_empty_string(self):
+        """Returns empty string for empty content."""
+        result = map_orchestrator._extract_recent_markdown_section("", max_lines=12)
+
+        assert result == ""
+
+    def test_truncates_to_max_lines(self):
+        """Returns only the last max_lines non-empty lines."""
+        lines = [f"line {i}" for i in range(1, 21)]  # 20 lines
+        content = "\n".join(lines)
+
+        result = map_orchestrator._extract_recent_markdown_section(content, max_lines=5)
+
+        result_lines = result.splitlines()
+        assert len(result_lines) == 5
+        assert result_lines[-1] == "line 20"
+        assert result_lines[0] == "line 16"
+
+    def test_blank_lines_are_skipped(self):
+        """Blank/whitespace-only lines do not count towards max_lines."""
+        content = "real line\n\n   \nreal line 2\n"
+
+        result = map_orchestrator._extract_recent_markdown_section(content, max_lines=10)
+
+        result_lines = result.splitlines()
+        assert len(result_lines) == 2
+        assert "real line" in result_lines[0]
+
+    def test_whitespace_only_content_returns_empty(self):
+        """Content consisting only of whitespace/newlines returns empty string."""
+        result = map_orchestrator._extract_recent_markdown_section("\n\n   \n", max_lines=12)
+
+        assert result == ""
+
+
+class TestLatestNumberedArtifact:
+    """Tests for _latest_numbered_artifact."""
+
+    def test_happy_path_returns_highest_numbered_file(self, tmp_path):
+        """Returns the path of the highest-numbered matching file."""
+        (tmp_path / "code-review-001.md").write_text("r1", encoding="utf-8")
+        (tmp_path / "code-review-002.md").write_text("r2", encoding="utf-8")
+        (tmp_path / "code-review-003.md").write_text("r3", encoding="utf-8")
+
+        result = map_orchestrator._latest_numbered_artifact(tmp_path, "code-review")
+
+        assert result is not None
+        assert result.name == "code-review-003.md"
+
+    def test_returns_none_for_empty_directory(self, tmp_path):
+        """Returns None when no matching files exist in the directory."""
+        result = map_orchestrator._latest_numbered_artifact(tmp_path, "code-review")
+
+        assert result is None
+
+    def test_ignores_non_numeric_suffixes(self, tmp_path):
+        """Files with non-numeric suffixes are ignored."""
+        (tmp_path / "code-review-draft.md").write_text("draft", encoding="utf-8")
+        (tmp_path / "code-review-001.md").write_text("r1", encoding="utf-8")
+
+        result = map_orchestrator._latest_numbered_artifact(tmp_path, "code-review")
+
+        assert result is not None
+        assert result.name == "code-review-001.md"
+
+    def test_single_file_returned(self, tmp_path):
+        """With a single matching file, that file is returned."""
+        (tmp_path / "plan-review-007.md").write_text("plan", encoding="utf-8")
+
+        result = map_orchestrator._latest_numbered_artifact(tmp_path, "plan-review")
+
+        assert result is not None
+        assert result.name == "plan-review-007.md"
+
+    def test_different_prefix_not_matched(self, tmp_path):
+        """Files with a different prefix are not included in the result."""
+        (tmp_path / "code-review-001.md").write_text("r1", encoding="utf-8")
+
+        result = map_orchestrator._latest_numbered_artifact(tmp_path, "plan-review")
+
+        assert result is None
+
+
+class TestBuildResumeBriefingExtended:
+    """Extended tests for build_resume_briefing (complement TestBuildResumeBriefing)."""
+
+    def _make_plan(self, tmp_path, branch, subtasks):
+        """Helper: write a minimal task_plan file."""
+        plan_dir = tmp_path / ".map" / branch
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        content = "# Task Plan\n\n"
+        for sid, status in subtasks:
+            content += f"### {sid}: Title\n- **Status:** {status}\n\n"
+        (plan_dir / f"task_plan_{branch}.md").write_text(content, encoding="utf-8")
+        return plan_dir
+
+    def test_returns_correct_structure_with_empty_artifacts(self, branch_dir, tmp_path):
+        """Returns expected keys even when no review/verification artifacts exist."""
+        self._make_plan(tmp_path, branch_dir, [("ST-001", "pending")])
+
+        result = map_orchestrator.build_resume_briefing(branch_dir)
+
+        assert "branch" in result
+        assert "current_subtask" in result
+        assert "current_phase" in result
+        assert "completed_count" in result
+        assert "pending_count" in result
+        assert "suggested_next" in result
+        assert "next_action" in result
+        assert isinstance(result["next_action"], list)
+
+    def test_populates_next_action_with_needs_work_verdict(self, branch_dir, tmp_path):
+        """next_action starts with 'Address issues' when verdict is 'NEEDS WORK'."""
+        plan_dir = self._make_plan(
+            tmp_path, branch_dir, [("ST-001", "in_progress")]
+        )
+        (plan_dir / "verification-summary.md").write_text(
+            "# Verification Summary\n\n- Verdict: NEEDS WORK\n",
+            encoding="utf-8",
+        )
+        # Write state so current_subtask is populated
+        state = map_orchestrator.StepState()
+        state.current_subtask_id = "ST-001"
+        state.current_step_phase = "MONITOR"
+        state.subtask_sequence = ["ST-001"]
+        state.save(plan_dir / "step_state.json")
+
+        result = map_orchestrator.build_resume_briefing(branch_dir)
+
+        assert result["next_action"][0].startswith("Address issues")
+
+    def test_next_action_empty_when_all_complete_and_no_issues(self, branch_dir, tmp_path):
+        """next_action includes workflow-complete hint when all subtasks are done."""
+        self._make_plan(
+            tmp_path, branch_dir, [("ST-001", "complete"), ("ST-002", "complete")]
+        )
+
+        result = map_orchestrator.build_resume_briefing(branch_dir)
+
+        joined = " ".join(result["next_action"])
+        assert "complete" in joined.lower() or "review" in joined.lower()
+
+    def test_suggested_next_is_first_pending(self, branch_dir, tmp_path):
+        """suggested_next is the first pending subtask in plan order."""
+        self._make_plan(
+            tmp_path,
+            branch_dir,
+            [("ST-001", "complete"), ("ST-002", "pending"), ("ST-003", "pending")],
+        )
+
+        result = map_orchestrator.build_resume_briefing(branch_dir)
+
+        assert result["suggested_next"] == "ST-002"
+
+    def test_current_subtask_from_state_file(self, branch_dir, tmp_path):
+        """current_subtask is read from step_state.json when present."""
+        plan_dir = self._make_plan(
+            tmp_path, branch_dir, [("ST-001", "in_progress")]
+        )
+        state = map_orchestrator.StepState()
+        state.current_subtask_id = "ST-001"
+        state.current_step_phase = "ACTOR"
+        state.save(plan_dir / "step_state.json")
+
+        result = map_orchestrator.build_resume_briefing(branch_dir)
+
+        assert result["current_subtask"] == "ST-001"
+        assert result["current_phase"] == "ACTOR"
+
+    def test_no_plan_file_does_not_crash(self, branch_dir, tmp_path):
+        """build_resume_briefing does not raise even when no plan file exists."""
+        result = map_orchestrator.build_resume_briefing(branch_dir)
+
+        # Should return a dict with at minimum the branch key
+        assert "branch" in result
+        assert result["branch"] == branch_dir
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
