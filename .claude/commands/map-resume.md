@@ -21,8 +21,7 @@ description: Resume incomplete MAP workflow from checkpoint
 6. Continues from the last incomplete step via the state machine
 
 **State files used:**
-- **`step_state.json`** — Orchestrator canonical state. Source of truth for resumption. Tracks current step, retry counts, circuit breaker status. Includes `tdd_mode` field (persisted across sessions).
-- **`step_state.json`** — Enforcement gates. Tracks subtask completion for workflow-gate.py hook.
+- **`step_state.json`** — Single source of truth. Tracks current step, retry counts, circuit breaker, subtask completion, and enforcement gates. Includes `tdd_mode` field (persisted across sessions).
 - **`task_plan_<branch>.md`** — Full task decomposition with validation criteria and AAG contracts.
 
 **TDD mode note:** If the interrupted workflow was using `/map-tdd` or `--tdd` flag, `tdd_mode: true` is preserved in `step_state.json`.
@@ -67,8 +66,7 @@ Read both state files, the task plan, and branch artifacts to display a briefing
 BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
 
 # Read state files using the Read tool
-# .map/${BRANCH}/step_state.json — current orchestrator state
-# .map/${BRANCH}/step_state.json — subtask completion status
+# .map/${BRANCH}/step_state.json — orchestrator state + enforcement gates
 # .map/${BRANCH}/task_plan_${BRANCH}.md — full plan with AAG contracts
 ```
 
@@ -158,9 +156,8 @@ Use the orchestrator to determine the next step and continue execution.
 **Important context loading:**
 
 Before resuming, read:
-1. `.map/<branch>/step_state.json` — current orchestrator state
-2. `.map/<branch>/step_state.json` — subtask completion
-3. `.map/<branch>/task_plan_<branch>.md` — full task decomposition with AAG contracts
+1. `.map/<branch>/step_state.json` — orchestrator state + enforcement gates
+2. `.map/<branch>/task_plan_<branch>.md` — full task decomposition with AAG contracts
 4. `python3 .map/scripts/map_orchestrator.py get_plan_progress` — canonical plan + briefing payload
 5. `.map/<branch>/code-review-XXX.md` / `.map/<branch>/verification-summary.md` — extra detail if needed
 

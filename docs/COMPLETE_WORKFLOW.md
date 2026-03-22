@@ -124,7 +124,7 @@ Validation:
 ┌─────────────────────────────────────────────────────────────┐
 │ Turn 2: Начало ST-001                                       │
 ├─────────────────────────────────────────────────────────────┤
-│ • map_orchestrator → "Step 2.1: RESEARCH"                    │
+│ • map_orchestrator → "Step 2.2: RESEARCH"                    │
 │ • Hook: "⚠️ Gather context BEFORE Actor"                    │
 │ • Поиск существующих паттернов OAuth                        │
 └─────────────────────────────────────────────────────────────┘
@@ -457,7 +457,6 @@ vim .map/main/task_plan_main.md
 └── <branch>/
     ├── task_plan_<branch>.md        # Фаза 1: План с subtasks
     ├── step_state.json               # Фаза 2: Текущий шаг для hook
-    ├── current_packet.xml            # Фаза 2: XML packet для агентов
     ├── diagnostics.json              # Фаза 2/3: Структурные ошибки тестов/линта (best-effort)
     ├── final_verification.json       # Фаза 3: Результат проверки
     ├── progress_<branch>.md          # Фаза 3: История итераций
