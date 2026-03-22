@@ -708,7 +708,7 @@ See [USAGE.md - Workflow Variants](./USAGE.md#workflow-variants) for detailed de
 ╠═══════════════════════════════════════════════════════════╣
 ║ Current Step:  2.2 - RESEARCH
 ║ Progress:      Subtask 1/5
-║ Completed:     1.0_DECOMPOSE, 1.5_INIT_PLAN, 2.0_XML_PACKET
+║ Completed:     1.0_DECOMPOSE, 1.5_INIT_PLAN, 1.6_INIT_STATE
 ║
 ║ ⚠️  MANDATORY NEXT ACTION:
 ║    Call research-agent BEFORE Actor

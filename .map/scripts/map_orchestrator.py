@@ -436,7 +436,7 @@ def get_step_instruction(step_id: str, state: StepState) -> str:
     Get instruction for executing a specific step.
 
     Args:
-        step_id: Step identifier (e.g., "2.1")
+        step_id: Step identifier (e.g., "2.3")
         state: Current workflow state
 
     Returns:

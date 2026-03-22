@@ -91,7 +91,7 @@
 │ Обновляет step_state.json:                         │
 │ {                                                   │
 │   "completed_steps": ["1.0"],                      │
-│   "pending_steps": ["1.5", "1.6", "2.0", ...],    │
+│   "pending_steps": ["1.5", "1.6", "2.2", "2.3", "2.4"], │
 │   "current_step_id": "1.5"                         │
 │ }                                                   │
 └─────────────────────────────────────────────────────┘
@@ -164,12 +164,9 @@
 └──────────────────┬──────────────────────────────────┘
                    ↓
 ┌─────────────────────────────────────────────────────┐
-│ Turn 10: get_next_step → step_id=2.10, VERIFY      │
+│ Per-wave gates: TESTS + LINTER (после всех Monitor) │
 │                                                     │
-│ Hook НАПОМИНАЕТ:                                    │
-│ ⚠️  "Output self-audit before marking complete"    │
-│                                                     │
-│ Выполняет: Self-audit checkpoint output            │
+│ Выполняет: pytest/ruff один раз на всю волну       │
 │                                                     │
 │ Обновляет: subtask_index++                         │
 │ Сбрасывает: pending_steps для след. subtask        │
@@ -293,10 +290,10 @@ Turn 3: map_orchestrator говорит: "Step 2.4: Call Monitor"
   ↓
 Claude: [Вызывает Monitor] ✅
   ↓
-Turn 4: map_orchestrator говорит: "Step 2.7: Apply changes"
-        Gate проверяет: actor+monitor выполнены ✅
+Turn 4: map_orchestrator говорит: "Step 2.3: Run Actor"
+        Gate проверяет: current_step_phase == ACTOR ✅
   ↓
-Claude: [Применяет Edit/Write] ✅
+Claude: [Actor применяет Edit/Write] ✅
 ```
 
 ---
