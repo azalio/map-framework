@@ -25,6 +25,7 @@ from mapify_cli import (
     create_map_tools,
     create_or_merge_project_mcp_json,
     create_ssl_context,
+    get_branch_artifact_templates,
     get_latest_release,
     get_templates_dir,
     init_git_repo,
@@ -1075,3 +1076,16 @@ class TestCreateMapTools:
 
         # New scripts should also exist
         assert (map_dir / "static-analysis" / "analyze.sh").exists()
+
+
+class TestBranchArtifactTemplates:
+    """Tests for get_branch_artifact_templates()."""
+
+    def test_returns_expected_keys(self):
+        """Artifact template keys must match the expected set exactly."""
+        templates = get_branch_artifact_templates()
+        assert set(templates.keys()) == {
+            "code-review-001.md",
+            "qa-001.md",
+            "pr-draft.md",
+        }

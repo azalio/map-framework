@@ -666,7 +666,7 @@ def get_branch_workspace_dir(project_path: Path, branch: Optional[str] = None) -
     return project_path / ".map" / branch_name
 
 
-def get_branch_artifact_templates(branch: str = "") -> Dict[str, str]:
+def get_branch_artifact_templates() -> Dict[str, str]:
     """Return artifact templates aligned to MAP branch workspaces."""
     return {
         "code-review-001.md": "# Code Review 001\n\n## Scope\n\n## Findings\n\n### High\n\n### Medium\n\n### Low\n\n## Verdict\n- [ ] Ready\n- [ ] Needs revision\n",
@@ -683,7 +683,7 @@ def initialize_branch_workspace(
     workspace_dir = get_branch_workspace_dir(project_path, branch_name)
     workspace_dir.mkdir(parents=True, exist_ok=True)
 
-    for file_name, content in get_branch_artifact_templates(branch_name).items():
+    for file_name, content in get_branch_artifact_templates().items():
         destination = workspace_dir / file_name
         if not destination.exists():
             destination.write_text(content, encoding="utf-8")
@@ -697,7 +697,7 @@ def get_branch_workspace_status(
     """Collect status information for branch-scoped planning artifacts."""
     branch_name = sanitize_identifier(branch or get_current_branch_name())
     workspace_dir = get_branch_workspace_dir(project_path, branch_name)
-    expected_files = list(get_branch_artifact_templates(branch_name).keys())
+    expected_files = list(get_branch_artifact_templates().keys())
     existing_files = (
         sorted(path.name for path in workspace_dir.iterdir())
         if workspace_dir.exists()
