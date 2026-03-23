@@ -5,6 +5,11 @@ import sys
 from pathlib import Path
 from typing import List
 
+from mapify_cli.delivery.managed_file_copier import (
+    CopyResult,
+    DriftReport,
+    copy_managed_file,
+)
 from mapify_cli.delivery.agent_generator import (
     create_task_decomposer_content,
     create_actor_content,
@@ -14,6 +19,15 @@ from mapify_cli.delivery.agent_generator import (
     create_reflector_content,
     create_documentation_reviewer_content,
 )
+
+
+def _get_version() -> str:
+    """Get current mapify-cli version for metadata injection."""
+    try:
+        from mapify_cli import __version__
+        return __version__
+    except ImportError:
+        return "unknown"
 
 
 def get_templates_dir() -> Path:
@@ -42,7 +56,11 @@ def get_templates_dir() -> Path:
     raise RuntimeError("Templates directory not found. Please reinstall mapify-cli.")
 
 
-def create_agent_files(project_path: Path, mcp_servers: List[str]) -> int:
+def create_agent_files(
+    project_path: Path,
+    mcp_servers: List[str],
+    drift_report: DriftReport | None = None,
+) -> int:
     """Create MAP agent files in .claude/agents/."""
     agents_dir = project_path / ".claude" / "agents"
     agents_dir.mkdir(parents=True, exist_ok=True)
@@ -52,19 +70,19 @@ def create_agent_files(project_path: Path, mcp_servers: List[str]) -> int:
     agents_template_dir = templates_dir / "agents"
 
     if agents_template_dir.exists():
-        # Copy original agent files from templates (preserves template variables!)
-        import shutil
-
         # Files to exclude from agent directory (documentation, not agents)
         exclude_files = {"README.md", "CHANGELOG.md", "MCP-PATTERNS.md"}
         count = 0
+        version = _get_version()
 
         for agent_template in agents_template_dir.glob("*.md"):
             # Skip documentation files - they're not agents
             if agent_template.name in exclude_files:
                 continue
             dest_file = agents_dir / agent_template.name
-            shutil.copy2(agent_template, dest_file)
+            result = copy_managed_file(agent_template, dest_file, version)
+            if drift_report is not None:
+                drift_report.results.append(result)
             count += 1
         return count
     else:
@@ -88,7 +106,10 @@ def create_agent_files(project_path: Path, mcp_servers: List[str]) -> int:
         return len(agents)
 
 
-def create_reference_files(project_path: Path) -> int:
+def create_reference_files(
+    project_path: Path,
+    drift_report: DriftReport | None = None,
+) -> int:
     """Create MAP reference files in .claude/references/
 
     Returns:
@@ -103,17 +124,21 @@ def create_reference_files(project_path: Path) -> int:
 
     count = 0
     if references_template_dir.exists():
-        import shutil
-
+        version = _get_version()
         for ref_file in references_template_dir.glob("*.md"):
             dest_file = references_dir / ref_file.name
-            shutil.copy2(ref_file, dest_file)
+            result = copy_managed_file(ref_file, dest_file, version)
+            if drift_report is not None:
+                drift_report.results.append(result)
             count += 1
 
     return count
 
 
-def create_command_files(project_path: Path) -> int:
+def create_command_files(
+    project_path: Path,
+    drift_report: DriftReport | None = None,
+) -> int:
     """Create MAP slash commands in .claude/commands/."""
     commands_dir = project_path / ".claude" / "commands"
     commands_dir.mkdir(parents=True, exist_ok=True)
@@ -176,12 +201,13 @@ Call Reflector to extract patterns from recent workflow.
         return len(commands)
     else:
         # Copy templates from bundled directory
-        import shutil
-
+        version = _get_version()
         count = 0
         for command_template in commands_template_dir.glob("*.md"):
             dest_file = commands_dir / command_template.name
-            shutil.copy2(command_template, dest_file)
+            result = copy_managed_file(command_template, dest_file, version)
+            if drift_report is not None:
+                drift_report.results.append(result)
             count += 1
         return count
 
@@ -313,7 +339,10 @@ The filename becomes the command name (without the `.md` extension).
     )
 
 
-def create_hook_files(project_path: Path) -> int:
+def create_hook_files(
+    project_path: Path,
+    drift_report: DriftReport | None = None,
+) -> int:
     """Create MAP hook files in .claude/hooks/
 
     Returns:
@@ -328,12 +357,13 @@ def create_hook_files(project_path: Path) -> int:
 
     count = 0
     if hooks_template_dir.exists():
-        import shutil
-
+        version = _get_version()
         for hook_file in hooks_template_dir.iterdir():
             if hook_file.is_file():
                 dest_file = hooks_dir / hook_file.name
-                shutil.copy2(hook_file, dest_file)
+                result = copy_managed_file(hook_file, dest_file, version)
+                if drift_report is not None:
+                    drift_report.results.append(result)
                 # Preserve executable permissions
                 if hook_file.suffix in (".sh", ".py"):
                     dest_file.chmod(0o755)
@@ -342,7 +372,10 @@ def create_hook_files(project_path: Path) -> int:
     return count
 
 
-def create_config_files(project_path: Path) -> int:
+def create_config_files(
+    project_path: Path,
+    drift_report: DriftReport | None = None,
+) -> int:
     """Create MAP config files in .claude/
 
     Copies configuration files:
@@ -366,13 +399,15 @@ def create_config_files(project_path: Path) -> int:
     ]
 
     count = 0
-    import shutil
+    version = _get_version()
 
     for config_file in config_files:
         template_file = templates_dir / config_file
         if template_file.exists():
             dest_file = claude_dir / config_file
-            shutil.copy2(template_file, dest_file)
+            result = copy_managed_file(template_file, dest_file, version)
+            if drift_report is not None:
+                drift_report.results.append(result)
             count += 1
 
     return count

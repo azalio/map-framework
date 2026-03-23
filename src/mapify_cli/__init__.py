@@ -1141,6 +1141,11 @@ def upgrade():
 
     tracker = StepTracker("Upgrade MAP Framework Files")
 
+    # Track drift across all file types
+    from mapify_cli.delivery.managed_file_copier import DriftReport
+
+    drift_report = DriftReport()
+
     existing_project_mcp = read_project_mcp_json(project_path / ".mcp.json")
     existing_server_names = []
     if existing_project_mcp:
@@ -1148,12 +1153,12 @@ def upgrade():
 
     tracker.add("agents", "Refresh agent templates")
     tracker.start("agents")
-    agent_count = create_agent_files(project_path, existing_server_names)
+    agent_count = create_agent_files(project_path, existing_server_names, drift_report)
     tracker.complete("agents", f"{agent_count} files")
 
     tracker.add("commands", "Refresh slash commands")
     tracker.start("commands")
-    command_count = create_command_files(project_path)
+    command_count = create_command_files(project_path, drift_report)
     tracker.complete("commands", f"{command_count} files")
 
     tracker.add("skills", "Refresh skills")
@@ -1163,17 +1168,17 @@ def upgrade():
 
     tracker.add("references", "Refresh reference files")
     tracker.start("references")
-    ref_count = create_reference_files(project_path)
+    ref_count = create_reference_files(project_path, drift_report)
     tracker.complete("references", f"{ref_count} files")
 
     tracker.add("hooks", "Refresh shared hooks")
     tracker.start("hooks")
-    hook_count = create_hook_files(project_path)
+    hook_count = create_hook_files(project_path, drift_report)
     tracker.complete("hooks", f"{hook_count} files")
 
     tracker.add("configs", "Refresh config files")
     tracker.start("configs")
-    config_count = create_config_files(project_path)
+    config_count = create_config_files(project_path, drift_report)
     tracker.complete("configs", f"{config_count} files")
 
     tracker.add("permissions", "Merge local approvals")
@@ -1189,6 +1194,31 @@ def upgrade():
 
     console.print()
     console.print(tracker.render())
+
+    # Show drift warnings if any files were modified by the user
+    if drift_report.has_drift:
+        console.print()
+        console.print(
+            f"[yellow]⚠ {len(drift_report.drifted_files)} file(s) had local modifications:[/yellow]"
+        )
+        for r in drift_report.drifted_files:
+            try:
+                rel = r.dest.relative_to(project_path)
+            except ValueError:
+                rel = r.dest
+            backup_note = ""
+            if r.backed_up and r.backup_path:
+                try:
+                    backup_rel = r.backup_path.relative_to(project_path)
+                except ValueError:
+                    backup_rel = r.backup_path
+                backup_note = f" → backup: [cyan]{backup_rel}[/cyan]"
+            console.print(f"  [yellow]•[/yellow] {rel}{backup_note}")
+        console.print(
+            "[dim]Your changes were backed up to .bak files. "
+            "Review and re-apply any customizations if needed.[/dim]"
+        )
+
     console.print()
     console.print("[bold green]Upgrade complete.[/bold green]")
     console.print(

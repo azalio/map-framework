@@ -574,7 +574,13 @@ class TestUpgradeCommand:
         assert result.exit_code == 0
         assert "New version available" in result.stdout
         assert "Upgrade complete" in result.stdout
-        assert actor_file.read_text() == original_content
+        # Compare content ignoring MAP-MANAGED metadata timestamps (which differ between init and upgrade)
+        import re
+
+        def _strip_managed_meta(text):
+            return re.sub(r"<!-- MAP-MANAGED:.*?-->\n?", "", text)
+
+        assert _strip_managed_meta(actor_file.read_text()) == _strip_managed_meta(original_content)
 
     @mock.patch("mapify_cli.get_latest_release")
     def test_upgrade_not_available(self, mock_get_latest, tmp_path):

@@ -22,6 +22,15 @@ from mapify_cli.delivery.file_copier import (
     create_commands_dir,
     create_map_tools,
 )
+from mapify_cli.delivery.managed_file_copier import (
+    CopyResult,
+    DriftReport,
+    copy_managed_file,
+    detect_drift,
+    inject_metadata,
+    extract_metadata,
+    compute_hash,
+)
 
 __all__ = [
     "create_task_decomposer_content",
@@ -39,4 +48,11 @@ __all__ = [
     "create_config_files",
     "create_commands_dir",
     "create_map_tools",
+    "CopyResult",
+    "DriftReport",
+    "copy_managed_file",
+    "detect_drift",
+    "inject_metadata",
+    "extract_metadata",
+    "compute_hash",
 ]
