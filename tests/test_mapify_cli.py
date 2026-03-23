@@ -1030,7 +1030,7 @@ class TestCreateMapTools:
         assert count == actual_count
         assert count >= 5  # analyze.sh + common.sh + python.sh + go.sh + typescript.sh
 
-    @mock.patch("mapify_cli.get_templates_dir")
+    @mock.patch("mapify_cli.delivery.file_copier.get_templates_dir")
     def test_create_map_tools_no_templates(self, mock_get_templates, tmp_path):
         """Test handling when templates directory doesn't have map subdirectory."""
         # Mock empty templates directory
@@ -1043,7 +1043,7 @@ class TestCreateMapTools:
         # Should return 0 when no map templates exist
         assert count == 0
 
-    @mock.patch("mapify_cli.get_templates_dir")
+    @mock.patch("mapify_cli.delivery.file_copier.get_templates_dir")
     def test_create_map_tools_map_exists_but_no_static_analysis(
         self, mock_get_templates, tmp_path
     ):
