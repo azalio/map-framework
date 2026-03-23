@@ -7,7 +7,6 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -268,6 +267,45 @@ class TestCopyManagedFile:
         result = copy_managed_file(src, dest, "3.5.0")
         assert result.success
         assert "MAP-MANAGED" not in dest.read_text()  # yaml not supported yet
+
+
+    def test_repeated_upgrade_no_backup_collision(self, tmp_path):
+        """Two upgrades on a drifted file must create separate backups."""
+        import time
+
+        src = tmp_path / "template.md"
+        src.write_text("# Original")
+        dest = tmp_path / "dest.md"
+
+        # First install
+        copy_managed_file(src, dest, "3.5.0")
+
+        # User modifies
+        content = dest.read_text()
+        dest.write_text(content.replace("# Original", "# User v1"))
+
+        # First upgrade — creates backup
+        result1 = copy_managed_file(src, dest, "3.6.0")
+        assert result1.backed_up
+        backup1 = result1.backup_path
+
+        # User modifies again
+        content = dest.read_text()
+        dest.write_text(content.replace("# Original", "# User v2"))
+
+        # Small delay to ensure different timestamp
+        time.sleep(1.1)
+
+        # Second upgrade — must NOT overwrite first backup
+        result2 = copy_managed_file(src, dest, "3.7.0")
+        assert result2.backed_up
+        backup2 = result2.backup_path
+
+        assert backup1 != backup2, "Second backup must have a different path"
+        assert backup1.exists(), "First backup must still exist"
+        assert backup2.exists(), "Second backup must exist"
+        assert "User v1" in backup1.read_text()
+        assert "User v2" in backup2.read_text()
 
 
 class TestDriftReport:

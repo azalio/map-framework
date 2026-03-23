@@ -143,7 +143,7 @@ def extract_metadata(content: str, ext: str) -> tuple[Optional[dict[str, Any]], 
         return None, content
 
     if ext == ".py":
-        lines = content.split("\n", 2)
+        lines = content.split("\n", 3)
         # Check first non-shebang line
         check_idx = 0
         if lines and lines[0].startswith("#!"):
@@ -153,12 +153,13 @@ def extract_metadata(content: str, ext: str) -> tuple[Optional[dict[str, Any]], 
             if m:
                 try:
                     meta = json.loads(m.group(1))
-                    # Reconstruct without the metadata line
-                    before = "\n".join(lines[:check_idx])
-                    after = content[content.index(lines[check_idx]) + len(lines[check_idx]):]
-                    if after.startswith("\n"):
-                        after = after[1:]
-                    clean = (before + "\n" + after) if before else after
+                    # Reconstruct without the metadata line (positional, not search)
+                    before_parts = lines[:check_idx]
+                    after_parts = lines[check_idx + 1:]
+                    if before_parts:
+                        clean = "\n".join(before_parts) + "\n" + "\n".join(after_parts)
+                    else:
+                        clean = "\n".join(after_parts)
                     return meta, clean
                 except json.JSONDecodeError:
                     pass
@@ -269,9 +270,12 @@ def copy_managed_file(
     # Detect drift if destination exists
     drift_result = detect_drift(src, dest)
 
-    # Create backup if drifted
+    # Create backup if drifted (timestamped to avoid collision on repeated upgrades)
     if drift_result.drifted:
-        backup_path = dest.with_suffix(dest.suffix + ".bak")
+        from datetime import datetime, timezone
+
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+        backup_path = dest.with_suffix(f"{dest.suffix}.{ts}.bak")
         try:
             shutil.copy2(dest, backup_path)
             drift_result.backed_up = True

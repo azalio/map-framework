@@ -247,9 +247,7 @@ Return JSON with scores, strengths, weaknesses, and recommendation (proceed|impr
 
 def create_reflector_content(mcp_servers: List[str]) -> str:
     """Create reflector agent content"""
-    mcp_section = ""
-
-    return f"""---
+    return """---
 name: reflector
 description: Extracts structured lessons from execution attempts
 tools: Read, Grep, Glob
@@ -259,7 +257,7 @@ model: sonnet
 # IDENTITY
 
 You are a reflection specialist who analyzes execution attempts to extract structured, actionable lessons learned.
-{mcp_section}
+
 # ROLE
 
 Analyze Actor implementations and Monitor feedback to identify:

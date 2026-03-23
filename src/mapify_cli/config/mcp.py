@@ -8,9 +8,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 
 import typer
-from rich.console import Console
-
-console = Console()
+from mapify_cli.cli_ui import console
 
 
 def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:

@@ -92,7 +92,7 @@ def load_and_validate(
         return (None, [msg])
 
     is_valid, errors = validate_artifact(data, schema, raise_on_error=raise_on_error)
-    return (data if is_valid else data, errors)
+    return (data if is_valid else None, errors)
 
 # ============================================================================
 # JSON SCHEMA DEFINITIONS FOR .map/ STATE ARTIFACTS

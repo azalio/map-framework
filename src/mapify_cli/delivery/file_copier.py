@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import List
 
 from mapify_cli.delivery.managed_file_copier import (
-    CopyResult,
     DriftReport,
     copy_managed_file,
 )
@@ -250,8 +249,6 @@ def create_skill_files(project_path: Path) -> int:
 
 def _copy_map_path(src: Path, dest: Path) -> int:
     """Copy a path from map templates to .map/ and mark scripts executable."""
-    import shutil
-
     if dest.exists():
         try:
             if dest.is_dir():
@@ -259,8 +256,6 @@ def _copy_map_path(src: Path, dest: Path) -> int:
             else:
                 dest.unlink()
         except (OSError, PermissionError) as e:
-            import sys
-
             print(
                 f"Warning: Could not remove existing {dest}: {e}",
                 file=sys.stderr,

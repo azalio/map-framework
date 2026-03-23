@@ -93,7 +93,7 @@ INDIVIDUAL_MCP_SERVERS = {
     "deepwiki": "GitHub repository intelligence",
 }
 
-console = Console()
+from mapify_cli.cli_ui import console
 
 
 # Extracted submodules (v3.5.0 platform refactor)
@@ -218,29 +218,14 @@ def is_debug_enabled(debug_flag: Optional[bool] = None) -> bool:
 
 
 def get_templates_dir() -> Path:
-    """Get the path to bundled templates directory."""
-    import importlib.resources
+    """Get the path to bundled templates directory.
 
-    try:
-        # Python 3.11+ with importlib.resources.files
-        if hasattr(importlib.resources, "files"):
-            return Path(str(importlib.resources.files("mapify_cli") / "templates"))
-    except Exception:
-        pass
+    Delegates to :func:`mapify_cli.delivery.file_copier.get_templates_dir`
+    to avoid duplication.
+    """
+    from mapify_cli.delivery.file_copier import get_templates_dir as _get
 
-    # Fallback to module directory
-    module_dir = Path(__file__).parent
-    templates_dir = module_dir / "templates"
-    if templates_dir.exists():
-        return templates_dir
-
-    # Development mode - check parent directories
-    for parent in [module_dir.parent, module_dir.parent.parent]:
-        templates_dir = parent / "templates"
-        if templates_dir.exists():
-            return templates_dir
-
-    raise RuntimeError("Templates directory not found. Please reinstall mapify-cli.")
+    return _get()
 
 
 def count_template_markdown_files(template_subdir: str) -> int:

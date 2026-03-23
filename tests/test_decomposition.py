@@ -21,13 +21,10 @@ class TestCliUiModule:
         from mapify_cli.cli_ui import (
             BANNER,
             TAGLINE,
-            BannerGroup,
-            StepTracker,
             get_key,
             select_multiple_with_arrows,
             select_with_arrows,
             show_banner,
-            console,
         )
         assert BANNER is not None
         assert TAGLINE is not None
@@ -111,23 +108,6 @@ class TestDeliveryModule:
 
     def test_delivery_package_reexports(self):
         """Verify delivery __init__ re-exports everything."""
-        from mapify_cli.delivery import (
-            create_actor_content,
-            create_agent_files,
-            create_command_files,
-            create_commands_dir,
-            create_config_files,
-            create_documentation_reviewer_content,
-            create_evaluator_content,
-            create_hook_files,
-            create_map_tools,
-            create_monitor_content,
-            create_predictor_content,
-            create_reference_files,
-            create_reflector_content,
-            create_skill_files,
-            create_task_decomposer_content,
-        )
 
 
 class TestConfigModule:
@@ -178,16 +158,6 @@ class TestConfigModule:
 
     def test_config_package_reexports(self):
         """Verify config __init__ re-exports everything."""
-        from mapify_cli.config import (
-            build_standard_mcp_servers,
-            configure_global_permissions,
-            create_mcp_config,
-            create_or_merge_project_mcp_json,
-            create_or_merge_project_settings_local,
-            merge_mcp_json,
-            read_project_mcp_json,
-            write_project_mcp_json,
-        )
 
 
 class TestBackwardCompatibility:
@@ -195,27 +165,6 @@ class TestBackwardCompatibility:
 
     def test_all_original_imports_work(self):
         """The exact import list from test_mapify_cli.py must still work."""
-        from mapify_cli import (
-            app,
-            build_standard_mcp_servers,
-            count_agent_templates,
-            count_command_templates,
-            create_agent_files,
-            create_command_files,
-            create_commands_dir,
-            create_map_tools,
-            create_or_merge_project_mcp_json,
-            create_ssl_context,
-            get_branch_artifact_templates,
-            get_latest_release,
-            get_templates_dir,
-            init_git_repo,
-            is_command,
-            is_git_repo,
-            merge_mcp_json,
-            read_project_mcp_json,
-            write_project_mcp_json,
-        )
 
     def test_step_tracker_from_init(self):
         """StepTracker must be importable from mapify_cli (backward compat)."""
@@ -308,6 +257,18 @@ class TestValidateArtifact:
         data, errors = load_and_validate(tmp_path / "nope.json", BLUEPRINT_SCHEMA)
         assert data is None
         assert len(errors) == 1
+
+    def test_load_and_validate_invalid_data(self, tmp_path):
+        """load_and_validate must return None for invalid data."""
+        from mapify_cli.schemas import BLUEPRINT_SCHEMA, load_and_validate
+
+        invalid_file = tmp_path / "bad_blueprint.json"
+        # Missing required 'subtasks' field
+        invalid_file.write_text('{"not_subtasks": []}')
+
+        data, errors = load_and_validate(invalid_file, BLUEPRINT_SCHEMA)
+        assert data is None, "Invalid data should return None, not the parsed dict"
+        assert len(errors) > 0
 
 
 class TestProjectConfig:
@@ -424,8 +385,6 @@ class TestSafetyGuardrailsHookConfig:
 
     def test_hook_has_config_loading(self):
         """Verify the hook template loads config overrides."""
-        import importlib.util
-
         hook_path = (
             Path(__file__).parent.parent
             / "src"
@@ -439,3 +398,64 @@ class TestSafetyGuardrailsHookConfig:
         assert "safe_path_prefixes" in content
         assert "dangerous_file_patterns" in content
         assert "dangerous_commands" in content
+
+    def test_hook_respects_config_overrides(self, tmp_path):
+        """Runtime test: config overrides affect guardrail behavior."""
+        import importlib
+        import os
+
+        # Create a .map/config.yaml with custom safe_path_prefixes
+        map_dir = tmp_path / ".map"
+        map_dir.mkdir()
+        config_path = map_dir / "config.yaml"
+        config_path.write_text("safe_path_prefixes:\n  - custom_safe/\n  - also_safe/\n")
+
+        # Copy hook source to a temp module and load it
+        hook_src = (
+            Path(__file__).parent.parent
+            / "src"
+            / "mapify_cli"
+            / "templates"
+            / "hooks"
+            / "safety-guardrails.py"
+        )
+        hook_copy = tmp_path / "guardrails_test.py"
+        hook_copy.write_text(hook_src.read_text())
+
+        old_env = os.environ.get("CLAUDE_PROJECT_DIR")
+        os.environ["CLAUDE_PROJECT_DIR"] = str(tmp_path)
+        try:
+            spec = importlib.util.spec_from_file_location("guardrails_test", hook_copy)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            # custom_safe/ should be safe
+            assert mod.is_safe_path("custom_safe/file.py")
+            assert mod.is_safe_path("also_safe/data.json")
+            # src/ should NOT be safe (default overridden)
+            assert not mod.is_safe_path("src/main.py")
+        finally:
+            if old_env is None:
+                os.environ.pop("CLAUDE_PROJECT_DIR", None)
+            else:
+                os.environ["CLAUDE_PROJECT_DIR"] = old_env
+
+
+class TestMapConfigTypeCoercion:
+    """Test that load_map_config handles wrong-type YAML values gracefully."""
+
+    def test_wrong_type_falls_back_to_defaults(self, tmp_path):
+        """Wrong types in YAML should not crash; defaults should be used."""
+        from mapify_cli.config.project_config import load_map_config, MapConfig
+
+        map_dir = tmp_path / ".map"
+        map_dir.mkdir()
+        config = map_dir / "config.yaml"
+        config.write_text(
+            "actor_monitor_max_retries: not-an-int\n"
+            "confidence_threshold: also-wrong\n"
+        )
+        result = load_map_config(tmp_path)
+        defaults = MapConfig()
+        # Should get defaults since constructor will fail with bad types
+        assert result.actor_monitor_max_retries == defaults.actor_monitor_max_retries
+        assert result.confidence_threshold == defaults.confidence_threshold

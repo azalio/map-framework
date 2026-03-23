@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 try:
     import yaml
@@ -127,12 +126,27 @@ def load_map_config(project_path: Path) -> MapConfig:
         config_dict = {}
 
         # Map YAML keys to MapConfig fields, filtering out unrecognized keys
-        recognized_fields = {f.name for f in MapConfig.__dataclass_fields__.values()}
+        # and validating types against dataclass field annotations
+        defaults = MapConfig()
+        recognized_fields = {
+            f.name: f for f in MapConfig.__dataclass_fields__.values()
+        }
         for key, value in data.items():
-            if key in recognized_fields:
-                config_dict[key] = value
-            else:
+            if key not in recognized_fields:
                 logger.debug("Unknown config key in %s: %s (ignored)", config_file, key)
+                continue
+            # Validate type: check that YAML value matches expected type
+            expected_type = type(getattr(defaults, key))
+            if not isinstance(value, expected_type):
+                logger.warning(
+                    "Config key '%s' expects %s, got %s (%r). Using default.",
+                    key,
+                    expected_type.__name__,
+                    type(value).__name__,
+                    value,
+                )
+                continue
+            config_dict[key] = value
 
         # Create config with overrides; missing fields use dataclass defaults
         return MapConfig(**config_dict)

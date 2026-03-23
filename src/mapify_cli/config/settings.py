@@ -4,9 +4,7 @@ import json
 from pathlib import Path
 from typing import Dict, Any
 
-from rich.console import Console
-
-console = Console()
+from mapify_cli.cli_ui import console
 
 
 def configure_global_permissions() -> None:
@@ -166,7 +164,7 @@ def create_or_merge_project_settings_local(project_path: Path) -> None:
         if entry not in existing_allow:
             permissions.setdefault("allow", []).append(entry)
 
-    permissions.setdefault("deny", permissions.get("deny", []))
-    permissions.setdefault("ask", permissions.get("ask", []))
+    permissions.setdefault("deny", [])
+    permissions.setdefault("ask", [])
 
     settings_file.write_text(json.dumps(existing_settings, indent=2) + "\n")
