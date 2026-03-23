@@ -13,11 +13,17 @@ Exit codes:
 """
 
 import json
+import os
 import re
 import sys
+from pathlib import Path
+
+# =============================================================================
+# Default constants (overridable via .map/config.yaml → safe_path_prefixes)
+# =============================================================================
 
 # Dangerous file patterns (case-insensitive)
-DANGEROUS_FILE_PATTERNS = [
+_DEFAULT_DANGEROUS_FILE_PATTERNS = [
     r"\.env($|\.)",  # .env, .env.local, .env.production
     r"credentials",
     r"private[_-]?key",
@@ -31,7 +37,7 @@ DANGEROUS_FILE_PATTERNS = [
 ]
 
 # Dangerous bash command patterns
-DANGEROUS_COMMANDS = [
+_DEFAULT_DANGEROUS_COMMANDS = [
     r"rm\s+-rf\s+/",  # rm -rf /
     r"rm\s+-rf\s+\*",  # rm -rf *
     r"rm\s+-rf\s+\.\.",  # rm -rf ..
@@ -46,7 +52,7 @@ DANGEROUS_COMMANDS = [
 ]
 
 # Safe path prefixes (skip checks for known safe directories)
-SAFE_PATH_PREFIXES = [
+_DEFAULT_SAFE_PATH_PREFIXES = [
     "src/",
     "lib/",
     "test/",
@@ -62,6 +68,36 @@ SAFE_PATH_PREFIXES = [
     ".claude/skills/",
     "scripts/",
 ]
+
+
+def _load_config_overrides() -> dict:
+    """Load overrides from .map/config.yaml if it exists.
+
+    Reads safe_path_prefixes from project config to allow customization.
+    Falls back to defaults when config is missing or unreadable.
+    """
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+    config_path = project_dir / ".map" / "config.yaml"
+    if not config_path.exists():
+        return {}
+    try:
+        import yaml  # type: ignore[import-untyped]
+
+        with open(config_path) as f:
+            data = yaml.safe_load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+# Load overrides once at module init
+_config = _load_config_overrides()
+
+DANGEROUS_FILE_PATTERNS = _config.get(
+    "dangerous_file_patterns", _DEFAULT_DANGEROUS_FILE_PATTERNS
+)
+DANGEROUS_COMMANDS = _config.get("dangerous_commands", _DEFAULT_DANGEROUS_COMMANDS)
+SAFE_PATH_PREFIXES = _config.get("safe_path_prefixes", _DEFAULT_SAFE_PATH_PREFIXES)
 
 
 def is_safe_path(path: str) -> bool:

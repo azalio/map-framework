@@ -308,3 +308,134 @@ class TestValidateArtifact:
         data, errors = load_and_validate(tmp_path / "nope.json", BLUEPRINT_SCHEMA)
         assert data is None
         assert len(errors) == 1
+
+
+class TestProjectConfig:
+    """Test .map/config.yaml system (Step 2)."""
+
+    def test_default_config_values(self):
+        from mapify_cli.config.project_config import MapConfig
+
+        cfg = MapConfig()
+        assert cfg.profile == "full"
+        assert cfg.actor_monitor_max_retries == 5
+        assert cfg.confidence_threshold == 0.7
+        assert "src/" in cfg.safe_path_prefixes
+        assert cfg.language == ""
+
+    def test_load_map_config_no_file(self, tmp_path):
+        from mapify_cli.config.project_config import load_map_config
+
+        cfg = load_map_config(tmp_path)
+        assert cfg.profile == "full"  # default
+
+    def test_load_map_config_empty_file(self, tmp_path):
+        from mapify_cli.config.project_config import load_map_config
+
+        map_dir = tmp_path / ".map"
+        map_dir.mkdir()
+        (map_dir / "config.yaml").write_text("# just a comment\n")
+        cfg = load_map_config(tmp_path)
+        assert cfg.profile == "full"  # default when file is empty/comments only
+
+    def test_load_map_config_with_overrides(self, tmp_path):
+        from mapify_cli.config.project_config import load_map_config
+
+        map_dir = tmp_path / ".map"
+        map_dir.mkdir()
+        (map_dir / "config.yaml").write_text(
+            "profile: core\nactor_monitor_max_retries: 10\nlanguage: ru\n"
+        )
+        cfg = load_map_config(tmp_path)
+        assert cfg.profile == "core"
+        assert cfg.actor_monitor_max_retries == 10
+        assert cfg.language == "ru"
+        # Non-overridden fields keep defaults
+        assert cfg.confidence_threshold == 0.7
+
+    def test_load_map_config_ignores_unknown_keys(self, tmp_path):
+        from mapify_cli.config.project_config import load_map_config
+
+        map_dir = tmp_path / ".map"
+        map_dir.mkdir()
+        (map_dir / "config.yaml").write_text(
+            "profile: core\nsome_future_key: whatever\n"
+        )
+        cfg = load_map_config(tmp_path)
+        assert cfg.profile == "core"
+        assert not hasattr(cfg, "some_future_key")
+
+    def test_load_map_config_malformed_yaml(self, tmp_path):
+        from mapify_cli.config.project_config import load_map_config
+
+        map_dir = tmp_path / ".map"
+        map_dir.mkdir()
+        (map_dir / "config.yaml").write_text(":::bad yaml{{{")
+        cfg = load_map_config(tmp_path)
+        assert cfg.profile == "full"  # falls back to defaults
+
+    def test_load_map_config_non_dict(self, tmp_path):
+        from mapify_cli.config.project_config import load_map_config
+
+        map_dir = tmp_path / ".map"
+        map_dir.mkdir()
+        (map_dir / "config.yaml").write_text("- item1\n- item2\n")
+        cfg = load_map_config(tmp_path)
+        assert cfg.profile == "full"  # falls back to defaults
+
+    def test_generate_default_config_with_comments(self):
+        from mapify_cli.config.project_config import generate_default_config
+
+        content = generate_default_config(include_comments=True)
+        assert "profile: full" in content
+        assert "# Policy thresholds" in content
+        assert "# verification_checks:" in content
+
+    def test_generate_default_config_minimal(self):
+        from mapify_cli.config.project_config import generate_default_config
+
+        content = generate_default_config(include_comments=False)
+        assert "profile: full" in content
+        assert "# Policy thresholds" not in content
+
+    def test_write_default_config_creates_file(self, tmp_path):
+        from mapify_cli.config.project_config import write_default_config
+
+        path = write_default_config(tmp_path)
+        assert path.exists()
+        assert path == tmp_path / ".map" / "config.yaml"
+        content = path.read_text()
+        assert "profile: full" in content
+
+    def test_write_default_config_no_overwrite(self, tmp_path):
+        from mapify_cli.config.project_config import write_default_config
+
+        map_dir = tmp_path / ".map"
+        map_dir.mkdir()
+        config_file = map_dir / "config.yaml"
+        config_file.write_text("profile: core\n")
+
+        path = write_default_config(tmp_path)
+        assert path.read_text() == "profile: core\n"  # not overwritten
+
+
+class TestSafetyGuardrailsHookConfig:
+    """Test that safety-guardrails.py reads config overrides."""
+
+    def test_hook_has_config_loading(self):
+        """Verify the hook template loads config overrides."""
+        import importlib.util
+
+        hook_path = (
+            Path(__file__).parent.parent
+            / "src"
+            / "mapify_cli"
+            / "templates"
+            / "hooks"
+            / "safety-guardrails.py"
+        )
+        content = hook_path.read_text()
+        assert "_load_config_overrides" in content
+        assert "safe_path_prefixes" in content
+        assert "dangerous_file_patterns" in content
+        assert "dangerous_commands" in content

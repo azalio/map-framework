@@ -1,6 +1,6 @@
 """Configuration management for MAP Framework.
 
-Handles settings, permissions, and MCP server configuration.
+Handles settings, permissions, MCP server configuration, and project config.
 """
 
 from mapify_cli.config.settings import (
@@ -15,6 +15,12 @@ from mapify_cli.config.mcp import (
     merge_mcp_json,
     create_or_merge_project_mcp_json,
 )
+from mapify_cli.config.project_config import (
+    MapConfig,
+    load_map_config,
+    generate_default_config,
+    write_default_config,
+)
 
 __all__ = [
     "configure_global_permissions",
@@ -25,4 +31,8 @@ __all__ = [
     "write_project_mcp_json",
     "merge_mcp_json",
     "create_or_merge_project_mcp_json",
+    "MapConfig",
+    "load_map_config",
+    "generate_default_config",
+    "write_default_config",
 ]

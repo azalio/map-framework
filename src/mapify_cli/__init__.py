@@ -813,6 +813,17 @@ def init(
     config_word = "file" if config_count == 1 else "files"
     tracker.complete("create-configs", f"{config_count} {config_word}")
 
+    # Create default .map/config.yaml (project-level settings)
+    tracker.add("map-config", "Create .map/config.yaml")
+    tracker.start("map-config")
+    try:
+        from mapify_cli.config.project_config import write_default_config
+
+        config_path = write_default_config(project_path)
+        tracker.complete("map-config", str(config_path.relative_to(project_path)))
+    except Exception as e:
+        tracker.error("map-config", f"skipped: {e}")
+
     if selected_mcp_servers:
         # Create internal MCP config (for MAP Framework agent mappings)
         tracker.add("mcp-config", "Create internal MCP config")
