@@ -272,8 +272,6 @@ def copy_managed_file(
 
     # Create backup if drifted (timestamped to avoid collision on repeated upgrades)
     if drift_result.drifted:
-        from datetime import datetime, timezone
-
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
         backup_path = dest.with_suffix(f"{dest.suffix}.{ts}.bak")
         try:
@@ -292,7 +290,12 @@ def copy_managed_file(
 
     # Write
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(final_content, encoding="utf-8")
+    try:
+        dest.write_text(final_content, encoding="utf-8")
+    except OSError as exc:
+        drift_result.success = False
+        drift_result.reason += f" (write failed: {exc})"
+        return drift_result
 
     drift_result.success = True
     return drift_result
