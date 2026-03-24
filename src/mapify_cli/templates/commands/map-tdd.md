@@ -66,10 +66,14 @@ Verify that a plan or spec exists for this branch:
 echo "spec:        $(test -f .map/${BRANCH}/spec_${BRANCH}.md && echo EXISTS || echo MISSING)"
 echo "task_plan:   $(test -f .map/${BRANCH}/task_plan_${BRANCH}.md && echo EXISTS || echo MISSING)"
 echo "step_state:  $(test -f .map/${BRANCH}/step_state.json && echo EXISTS || echo MISSING)"
+if [ -f ".map/${BRANCH}/step_state.json" ]; then
+  echo "status:      $(python3 -c "import json; d=json.load(open('.map/${BRANCH}/step_state.json')); print(d.get('workflow_status', d.get('current_step_phase', 'UNKNOWN')))")"
+fi
 ```
 
 - If **no spec and no task_plan**: Run `/map-plan` first. TDD requires clear acceptance criteria.
-- If **step_state.json EXISTS**: Resume from checkpoint (same as /map-efficient resume logic).
+- If **step_state.json EXISTS and status is COMPLETE or INITIALIZED**: Previous workflow finished or only plan exists. You MUST reinitialize for TDD by running `python3 .map/scripts/map_orchestrator.py resume_single_subtask "$SUBTASK_ID" --tdd` (single subtask) or `python3 .map/scripts/map_orchestrator.py resume_from_plan` then enable TDD mode (full workflow). Do NOT attempt edits without reinitializing — the workflow gate will block edits when current_step_phase is empty/INITIALIZED/COMPLETE.
+- If **step_state.json EXISTS and status is IN_PROGRESS**: Resume from checkpoint (same as /map-efficient resume logic). Check `current_step_phase` — if empty, reinitialize with `resume_from_plan`.
 - If **task_plan EXISTS but no step_state**: Run `python3 .map/scripts/map_orchestrator.py resume_from_plan` then enable TDD mode.
 
 ### Enable TDD Mode (full workflow only)

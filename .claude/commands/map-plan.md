@@ -474,8 +474,8 @@ Use the **Write** tool to create `.map/<branch>/step_state.json` with this struc
   "_semantic_tag": "MAP_State_v1_0",
   "workflow": "map-plan",
   "started_at": "<current UTC timestamp in ISO 8601>",
-  "current_subtask": null,
-  "current_state": "INITIALIZED",
+  "current_subtask_id": null,
+  "current_step_phase": "INITIALIZED",
   "completed_steps": [],
   "pending_steps": [],
   "subtask_sequence": ["ST-001", "ST-002", "ST-003"],
@@ -491,6 +491,8 @@ Use the **Write** tool to create `.map/<branch>/step_state.json` with this struc
   }
 }
 ```
+
+**IMPORTANT field names:** Use `current_subtask_id` (not `current_subtask`) and `current_step_phase` (not `current_state`). These field names must match what `workflow-gate.py` reads — mismatched names cause the gate to block all edits.
 
 **IMPORTANT:**
 - Replace `subtask_sequence` with actual IDs from the decomposition
