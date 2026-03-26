@@ -132,13 +132,18 @@ class TestIterationLogger:
 
         with open(log_file, "w", encoding="utf-8") as f:
             for i in range(5):
-                f.write(json.dumps({
-                    "ts": "2026-01-01T00:00:00",
-                    "iteration": i + 1,
-                    "tool": "Edit",
-                    "file": "/src/foo.py",
-                    "effectiveness": 0.8,
-                }) + "\n")
+                f.write(
+                    json.dumps(
+                        {
+                            "ts": "2026-01-01T00:00:00",
+                            "iteration": i + 1,
+                            "tool": "Edit",
+                            "file": "/src/foo.py",
+                            "effectiveness": 0.8,
+                        }
+                    )
+                    + "\n"
+                )
 
         # Run hook to trigger derive_summary
         code, _, _ = self.run_hook(
@@ -164,13 +169,18 @@ class TestIterationLogger:
         # Write enough entries to trigger thrashing (>= THRASHING_WINDOW for one file)
         with open(log_file, "w", encoding="utf-8") as f:
             for i in range(5):
-                f.write(json.dumps({
-                    "ts": "2026-01-01T00:00:00",
-                    "iteration": i + 1,
-                    "tool": "Edit",
-                    "file": "/src/foo.py",
-                    "effectiveness": 0.5,
-                }) + "\n")
+                f.write(
+                    json.dumps(
+                        {
+                            "ts": "2026-01-01T00:00:00",
+                            "iteration": i + 1,
+                            "tool": "Edit",
+                            "file": "/src/foo.py",
+                            "effectiveness": 0.5,
+                        }
+                    )
+                    + "\n"
+                )
 
         env = os.environ.copy()
         env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
@@ -179,7 +189,9 @@ class TestIterationLogger:
         result = subprocess.run(
             ["python3", str(self.HOOK_PATH)],
             input=json.dumps({"tool_name": "Edit", "tool_response": {"success": True}}),
-            capture_output=True, text=True, env=env,
+            capture_output=True,
+            text=True,
+            env=env,
         )
         assert result.returncode == 0
 
@@ -187,8 +199,9 @@ class TestIterationLogger:
         assert summary_file.exists()
         summary = json.loads(summary_file.read_text())
         for fs in summary["file_stats"]:
-            assert isinstance(fs["is_thrashing"], bool), \
-                f"is_thrashing should be bool, got {type(fs['is_thrashing'])}"
+            assert isinstance(
+                fs["is_thrashing"], bool
+            ), f"is_thrashing should be bool, got {type(fs['is_thrashing'])}"
 
     def test_derive_summary_dropped_count(self, tmp_path: Path) -> None:
         """dropped_count should be non-zero when total lines exceed deque maxlen."""
@@ -200,13 +213,18 @@ class TestIterationLogger:
         # Write 110 lines — deque keeps last 100
         with open(log_file, "w", encoding="utf-8") as f:
             for i in range(110):
-                f.write(json.dumps({
-                    "ts": "2026-01-01T00:00:00",
-                    "iteration": i + 1,
-                    "tool": "Edit",
-                    "file": "/src/foo.py",
-                    "effectiveness": 1.0,
-                }) + "\n")
+                f.write(
+                    json.dumps(
+                        {
+                            "ts": "2026-01-01T00:00:00",
+                            "iteration": i + 1,
+                            "tool": "Edit",
+                            "file": "/src/foo.py",
+                            "effectiveness": 1.0,
+                        }
+                    )
+                    + "\n"
+                )
 
         code, _, _ = self.run_hook(
             {"tool_name": "Edit", "tool_response": {"success": True}},
@@ -228,21 +246,31 @@ class TestIterationLogger:
 
         with open(log_file, "w", encoding="utf-8") as f:
             # Entry with no file
-            f.write(json.dumps({
-                "ts": "2026-01-01T00:00:00",
-                "iteration": 1,
-                "tool": "Bash",
-                "file": "",
-                "effectiveness": 1.0,
-            }) + "\n")
+            f.write(
+                json.dumps(
+                    {
+                        "ts": "2026-01-01T00:00:00",
+                        "iteration": 1,
+                        "tool": "Bash",
+                        "file": "",
+                        "effectiveness": 1.0,
+                    }
+                )
+                + "\n"
+            )
             # Entry with file
-            f.write(json.dumps({
-                "ts": "2026-01-01T00:00:00",
-                "iteration": 2,
-                "tool": "Edit",
-                "file": "/src/bar.py",
-                "effectiveness": 0.9,
-            }) + "\n")
+            f.write(
+                json.dumps(
+                    {
+                        "ts": "2026-01-01T00:00:00",
+                        "iteration": 2,
+                        "tool": "Edit",
+                        "file": "/src/bar.py",
+                        "effectiveness": 0.9,
+                    }
+                )
+                + "\n"
+            )
 
         code, _, _ = self.run_hook(
             {"tool_name": "Bash", "tool_response": {"exit_code": 0}},

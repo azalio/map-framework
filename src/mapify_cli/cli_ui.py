@@ -36,9 +36,9 @@ class StepTracker:
 
     def __init__(self, title: str):
         self.title = title
-        self.steps: List[
-            Dict[str, Any]
-        ] = []  # list of dicts: {key, label, status, detail}
+        self.steps: List[Dict[str, Any]] = (
+            []
+        )  # list of dicts: {key, label, status, detail}
         self._refresh_cb = None
 
     def attach_refresh(self, cb):

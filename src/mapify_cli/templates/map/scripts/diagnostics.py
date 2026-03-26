@@ -272,9 +272,9 @@ def cmd_summarize(args: argparse.Namespace) -> int:
         "accepted_issue_count": accepted_issue_count,
         "summary": args.summary
         or ("No blocking issues" if status == "passed" else "Blocking issues detected"),
-        "diagnostics_path": str(diagnostics_path)
-        if diagnostics_path.exists()
-        else None,
+        "diagnostics_path": (
+            str(diagnostics_path) if diagnostics_path.exists() else None
+        ),
     }
 
     dossier = write_run_dossier(

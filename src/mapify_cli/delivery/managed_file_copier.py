@@ -28,6 +28,7 @@ from typing import Any, Optional
 # Data classes
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class CopyResult:
     """Result of a single managed file copy."""
@@ -64,6 +65,7 @@ class DriftReport:
 # ---------------------------------------------------------------------------
 # Hashing
 # ---------------------------------------------------------------------------
+
 
 def compute_hash(content: str | bytes) -> str:
     """SHA-256 hex digest of content."""
@@ -137,7 +139,7 @@ def extract_metadata(content: str, ext: str) -> tuple[Optional[dict[str, Any]], 
         if m:
             try:
                 meta = json.loads(m.group(1))
-                return meta, content[m.end():]
+                return meta, content[m.end() :]
             except json.JSONDecodeError:
                 pass
         return None, content
@@ -155,7 +157,7 @@ def extract_metadata(content: str, ext: str) -> tuple[Optional[dict[str, Any]], 
                     meta = json.loads(m.group(1))
                     # Reconstruct without the metadata line (positional, not search)
                     before_parts = lines[:check_idx]
-                    after_parts = lines[check_idx + 1:]
+                    after_parts = lines[check_idx + 1 :]
                     if before_parts:
                         clean = "\n".join(before_parts) + "\n" + "\n".join(after_parts)
                     else:
@@ -182,6 +184,7 @@ def extract_metadata(content: str, ext: str) -> tuple[Optional[dict[str, Any]], 
 # ---------------------------------------------------------------------------
 # Drift detection
 # ---------------------------------------------------------------------------
+
 
 def detect_drift(src_path: Path, dest_path: Path) -> CopyResult:
     """Check if dest_path has been modified by the user since last install.
@@ -218,7 +221,9 @@ def detect_drift(src_path: Path, dest_path: Path) -> CopyResult:
     current_hash = compute_hash(clean_dest)
     if current_hash != stored_hash:
         result.drifted = True
-        result.reason = f"content modified (hash {current_hash[:8]}… ≠ {stored_hash[:8]}…)"
+        result.reason = (
+            f"content modified (hash {current_hash[:8]}… ≠ {stored_hash[:8]}…)"
+        )
 
     return result
 
@@ -226,6 +231,7 @@ def detect_drift(src_path: Path, dest_path: Path) -> CopyResult:
 # ---------------------------------------------------------------------------
 # Main copy function
 # ---------------------------------------------------------------------------
+
 
 def copy_managed_file(
     src: Path,
@@ -246,7 +252,16 @@ def copy_managed_file(
         CopyResult with drift/backup information.
     """
     ext = dest.suffix.lower()
-    is_text_ext = ext in (".md", ".py", ".json", ".yaml", ".yml", ".toml", ".sh", ".txt")
+    is_text_ext = ext in (
+        ".md",
+        ".py",
+        ".json",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".sh",
+        ".txt",
+    )
 
     # If not a text file we know how to annotate, do a plain copy
     if not is_text_ext or not inject_meta:

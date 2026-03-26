@@ -26,6 +26,7 @@ class TestCliUiModule:
             select_with_arrows,
             show_banner,
         )
+
         assert BANNER is not None
         assert TAGLINE is not None
         assert callable(show_banner)
@@ -58,6 +59,7 @@ class TestDeliveryModule:
             create_reflector_content,
             create_task_decomposer_content,
         )
+
         # All should be callable
         for fn in [
             create_task_decomposer_content,
@@ -81,7 +83,10 @@ class TestDeliveryModule:
         from mapify_cli.delivery.agent_generator import create_task_decomposer_content
 
         content = create_task_decomposer_content(["sequential-thinking", "deepwiki"])
-        assert "sequential-thinking" in content.lower() or "sequentialthinking" in content.lower()
+        assert (
+            "sequential-thinking" in content.lower()
+            or "sequentialthinking" in content.lower()
+        )
 
     def test_file_copier_imports(self):
         from mapify_cli.delivery.file_copier import (
@@ -94,6 +99,7 @@ class TestDeliveryModule:
             create_reference_files,
             create_skill_files,
         )
+
         for fn in [
             create_agent_files,
             create_reference_files,
@@ -118,6 +124,7 @@ class TestConfigModule:
             configure_global_permissions,
             create_or_merge_project_settings_local,
         )
+
         assert callable(configure_global_permissions)
         assert callable(create_or_merge_project_settings_local)
 
@@ -130,6 +137,7 @@ class TestConfigModule:
             read_project_mcp_json,
             write_project_mcp_json,
         )
+
         for fn in [
             create_mcp_config,
             build_standard_mcp_servers,
@@ -175,10 +183,12 @@ class TestBackwardCompatibility:
 
     def test_show_banner_from_init(self):
         from mapify_cli import show_banner
+
         assert callable(show_banner)
 
     def test_configure_global_permissions_from_init(self):
         from mapify_cli import configure_global_permissions
+
         assert callable(configure_global_permissions)
 
 
@@ -187,6 +197,7 @@ class TestBlueprintSchema:
 
     def test_schema_exists(self):
         from mapify_cli.schemas import BLUEPRINT_SCHEMA
+
         assert BLUEPRINT_SCHEMA["title"] == "MAP Blueprint"
         assert "subtasks" in BLUEPRINT_SCHEMA["properties"]
 
@@ -243,7 +254,16 @@ class TestValidateArtifact:
         import json
         from mapify_cli.schemas import BLUEPRINT_SCHEMA, load_and_validate
 
-        bp = {"subtasks": [{"id": "ST-001", "title": "Test", "dependencies": [], "affected_files": ["a.py"]}]}
+        bp = {
+            "subtasks": [
+                {
+                    "id": "ST-001",
+                    "title": "Test",
+                    "dependencies": [],
+                    "affected_files": ["a.py"],
+                }
+            ]
+        }
         path = tmp_path / "blueprint.json"
         path.write_text(json.dumps(bp))
 
@@ -408,7 +428,9 @@ class TestSafetyGuardrailsHookConfig:
         map_dir = tmp_path / ".map"
         map_dir.mkdir()
         config_path = map_dir / "config.yaml"
-        config_path.write_text("safe_path_prefixes:\n  - custom_safe/\n  - also_safe/\n")
+        config_path.write_text(
+            "safe_path_prefixes:\n  - custom_safe/\n  - also_safe/\n"
+        )
 
         # Copy hook source to a temp module and load it
         hook_src = (

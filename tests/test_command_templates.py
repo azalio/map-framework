@@ -35,9 +35,9 @@ class TestCommandTemplates:
     def test_map_efficient_exists_in_templates(self, templates_commands_dir):
         """Test that map-efficient.md exists in templates/commands/."""
         map_efficient = templates_commands_dir / "map-efficient.md"
-        assert map_efficient.exists(), (
-            f"map-efficient.md not found in {templates_commands_dir}"
-        )
+        assert (
+            map_efficient.exists()
+        ), f"map-efficient.md not found in {templates_commands_dir}"
         assert map_efficient.is_file(), "map-efficient.md should be a file"
 
     def test_map_fast_has_frontmatter(self, templates_commands_dir):
@@ -46,9 +46,9 @@ class TestCommandTemplates:
         content = map_fast.read_text()
 
         assert content.startswith("---"), "map-fast.md should start with frontmatter"
-        assert "description:" in content[:200], (
-            "Frontmatter should contain description field"
-        )
+        assert (
+            "description:" in content[:200]
+        ), "Frontmatter should contain description field"
         assert content.split("---")[1].strip(), "Frontmatter should not be empty"
 
     def test_map_efficient_has_frontmatter(self, templates_commands_dir):
@@ -56,12 +56,12 @@ class TestCommandTemplates:
         map_efficient = templates_commands_dir / "map-efficient.md"
         content = map_efficient.read_text()
 
-        assert content.startswith("---"), (
-            "map-efficient.md should start with frontmatter"
-        )
-        assert "description:" in content[:200], (
-            "Frontmatter should contain description field"
-        )
+        assert content.startswith(
+            "---"
+        ), "map-efficient.md should start with frontmatter"
+        assert (
+            "description:" in content[:200]
+        ), "Frontmatter should contain description field"
         assert content.split("---")[1].strip(), "Frontmatter should not be empty"
 
     def test_map_fast_contains_warning(self, templates_commands_dir):
@@ -70,15 +70,15 @@ class TestCommandTemplates:
         content = map_fast.read_text()
 
         # Check for warning markers
-        assert "⚠️" in content or "WARNING" in content, (
-            "map-fast.md should contain warning indicators"
-        )
-        assert "low-risk" in content.lower() or "low risk" in content.lower(), (
-            "map-fast.md should indicate low-risk use only"
-        )
-        assert "NO learning" in content or "no learning" in content, (
-            "Should mention no learning"
-        )
+        assert (
+            "⚠️" in content or "WARNING" in content
+        ), "map-fast.md should contain warning indicators"
+        assert (
+            "low-risk" in content.lower() or "low risk" in content.lower()
+        ), "map-fast.md should indicate low-risk use only"
+        assert (
+            "NO learning" in content or "no learning" in content
+        ), "Should mention no learning"
 
     def test_map_efficient_suggests_map_learn(self, templates_commands_dir):
         """Test that map-efficient.md suggests optional /map-learn for learning."""
@@ -95,15 +95,15 @@ class TestCommandTemplates:
         map_learn = templates_commands_dir / "map-learn.md"
         content = map_learn.read_text()
 
-        assert ".claude/rules/learned/" in content, (
-            "map-learn should write to .claude/rules/learned/"
-        )
-        assert "Write Rules Files" in content, (
-            "map-learn should have a 'Write Rules Files' step"
-        )
-        assert "deduplication" in content.lower() or "duplicate" in content.lower(), (
-            "map-learn should handle deduplication"
-        )
+        assert (
+            ".claude/rules/learned/" in content
+        ), "map-learn should write to .claude/rules/learned/"
+        assert (
+            "Write Rules Files" in content
+        ), "map-learn should have a 'Write Rules Files' step"
+        assert (
+            "deduplication" in content.lower() or "duplicate" in content.lower()
+        ), "map-learn should handle deduplication"
 
     def test_all_command_templates_exist(self, templates_commands_dir):
         """Test that all 12 expected command template files exist."""
@@ -124,9 +124,9 @@ class TestCommandTemplates:
 
         for command in expected_commands:
             command_path = templates_commands_dir / command
-            assert command_path.exists(), (
-                f"Expected command template {command} not found in {templates_commands_dir}"
-            )
+            assert (
+                command_path.exists()
+            ), f"Expected command template {command} not found in {templates_commands_dir}"
 
         actual_commands = sorted(
             path.name for path in templates_commands_dir.glob("map-*.md")
@@ -192,9 +192,9 @@ class TestCommandTemplates:
 
         # Check that Reflector is mentioned as SKIPPED
         assert "reflector" in content.lower(), "Should mention Reflector (as skipped)"
-        assert "skipped" in content.lower() or "no learning" in content.lower(), (
-            "Should indicate learning is skipped"
-        )
+        assert (
+            "skipped" in content.lower() or "no learning" in content.lower()
+        ), "Should indicate learning is skipped"
 
     def test_map_efficient_workflow_structure(self, templates_commands_dir):
         """Test that map-efficient.md has correct workflow structure (optional learning)."""
@@ -231,9 +231,9 @@ class TestCommandTemplates:
         content = map_efficient.read_text()
 
         # Should describe itself as token-efficient in description
-        assert "token-efficient" in content.lower() or "efficient" in content.lower(), (
-            "Should describe itself as efficient"
-        )
+        assert (
+            "token-efficient" in content.lower() or "efficient" in content.lower()
+        ), "Should describe itself as efficient"
 
     def test_map_plan_writes_core_artifacts(self, templates_commands_dir):
         """/map-plan should create core planning artifacts."""
@@ -376,9 +376,9 @@ class TestMapReviewStructure:
         # Find the section and check the source is mentioned nearby
         idx = review_content.index(section)
         section_block = review_content[idx : idx + 500]
-        assert source in section_block, (
-            f"{section} should reference {source} as primary source"
-        )
+        assert (
+            source in section_block
+        ), f"{section} should reference {source} as primary source"
 
     def test_three_agent_task_calls(self, review_content):
         """Command includes Task calls for all 3 agents."""

@@ -220,7 +220,6 @@ class TestCopyManagedFile:
 
         # First install
         copy_managed_file(src, dest, "3.5.0")
-        first_content = dest.read_text()
 
         # Upgrade (same template)
         result = copy_managed_file(src, dest, "3.6.0")
@@ -267,7 +266,6 @@ class TestCopyManagedFile:
         result = copy_managed_file(src, dest, "3.5.0")
         assert result.success
         assert "MAP-MANAGED" not in dest.read_text()  # yaml not supported yet
-
 
     def test_repeated_upgrade_no_backup_collision(self, tmp_path):
         """Two upgrades on a drifted file must create separate backups."""
@@ -319,9 +317,7 @@ class TestDriftReport:
         report.results.append(
             CopyResult(src=Path("a"), dest=Path("b"), drifted=True, backed_up=True)
         )
-        report.results.append(
-            CopyResult(src=Path("c"), dest=Path("d"), drifted=False)
-        )
+        report.results.append(CopyResult(src=Path("c"), dest=Path("d"), drifted=False))
         assert report.has_drift
         assert len(report.drifted_files) == 1
         assert len(report.backed_up_files) == 1

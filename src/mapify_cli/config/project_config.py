@@ -128,9 +128,7 @@ def load_map_config(project_path: Path) -> MapConfig:
         # Map YAML keys to MapConfig fields, filtering out unrecognized keys
         # and validating types against dataclass field annotations
         defaults = MapConfig()
-        recognized_fields = {
-            f.name: f for f in MapConfig.__dataclass_fields__.values()
-        }
+        recognized_fields = {f.name: f for f in MapConfig.__dataclass_fields__.values()}
         for key, value in data.items():
             if key not in recognized_fields:
                 logger.debug("Unknown config key in %s: %s (ignored)", config_file, key)

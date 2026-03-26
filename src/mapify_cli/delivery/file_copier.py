@@ -26,6 +26,7 @@ def _get_version() -> str:
     """Get current mapify-cli version for metadata injection."""
     try:
         from mapify_cli import __version__
+
         return __version__
     except ImportError:
         return "unknown"

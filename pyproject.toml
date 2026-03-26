@@ -49,6 +49,16 @@ include = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/mapify_cli"]
 
+[tool.mypy]
+ignore_missing_imports = false
+exclude = [
+    "src/mapify_cli/templates/map/scripts/",
+]
+
+[[tool.mypy.overrides]]
+module = "yaml"
+ignore_missing_imports = true
+
 [project.urls]
 Homepage = "https://github.com/azalio/map-framework"
 Repository = "https://github.com/azalio/map-framework.git"

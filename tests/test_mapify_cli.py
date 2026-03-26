@@ -404,14 +404,14 @@ class TestInitCommand:
 
         assert "mcp_servers" in mcp_config, "mcp_config missing 'mcp_servers' key"
         for server in expected_servers:
-            assert server in mcp_config["mcp_servers"], (
-                f"MCP server '{server}' not found in config"
-            )
+            assert (
+                server in mcp_config["mcp_servers"]
+            ), f"MCP server '{server}' not found in config"
 
         # Verify exactly the expected default set (no extras)
-        assert sorted(mcp_config["mcp_servers"]) == sorted(expected_servers), (
-            f"Expected default MCP servers {expected_servers}, found {mcp_config['mcp_servers']}"
-        )
+        assert sorted(mcp_config["mcp_servers"]) == sorted(
+            expected_servers
+        ), f"Expected default MCP servers {expected_servers}, found {mcp_config['mcp_servers']}"
 
     def test_init_force_no_prompts(self, tmp_path):
         """Test that init --force completes without interactive confirmation prompts.
@@ -459,9 +459,9 @@ class TestInitCommand:
         # This confirms --force actually re-initialized the files
         assert actor_file.exists()
         restored_content = actor_file.read_text()
-        assert restored_content != "# Modified by user", (
-            "--force did not restore template files"
-        )
+        assert (
+            restored_content != "# Modified by user"
+        ), "--force did not restore template files"
         # Should contain some template markers (not exact match due to potential updates)
         assert len(restored_content) > 100, "Restored actor.md seems too short"
 
@@ -580,7 +580,9 @@ class TestUpgradeCommand:
         def _strip_managed_meta(text):
             return re.sub(r"<!-- MAP-MANAGED:.*?-->\n?", "", text)
 
-        assert _strip_managed_meta(actor_file.read_text()) == _strip_managed_meta(original_content)
+        assert _strip_managed_meta(actor_file.read_text()) == _strip_managed_meta(
+            original_content
+        )
 
     @mock.patch("mapify_cli.get_latest_release")
     def test_upgrade_not_available(self, mock_get_latest, tmp_path):
@@ -687,9 +689,9 @@ class TestAgentCreation:
                 name in agent_file
                 for name in ["task-decomposer", "actor", "monitor", "predictor"]
             ):
-                assert "mcp" in content.lower() or "tool" in content.lower(), (
-                    f"Agent {agent_file} missing MCP integration section"
-                )
+                assert (
+                    "mcp" in content.lower() or "tool" in content.lower()
+                ), f"Agent {agent_file} missing MCP integration section"
 
 
 class TestCommandCreation:
@@ -768,9 +770,9 @@ class TestMcpJsonConfig:
 
         # http servers should have 'type' and 'url' keys
         for server_name in ["deepwiki"]:
-            assert servers[server_name].get("type") == "http", (
-                f"{server_name} should be http"
-            )
+            assert (
+                servers[server_name].get("type") == "http"
+            ), f"{server_name} should be http"
             assert "url" in servers[server_name], f"{server_name} missing url"
 
     def test_read_project_mcp_json_missing_file(self, tmp_path):
@@ -947,9 +949,9 @@ class TestMcpJsonConfig:
 
         # Allow exit code 0 or initialization messages
         mcp_file = tmp_path / ".mcp.json"
-        assert mcp_file.exists(), (
-            f"Expected .mcp.json to be created. Output: {result.output}"
-        )
+        assert (
+            mcp_file.exists()
+        ), f"Expected .mcp.json to be created. Output: {result.output}"
 
         config = json.loads(mcp_file.read_text())
         assert "mcpServers" in config

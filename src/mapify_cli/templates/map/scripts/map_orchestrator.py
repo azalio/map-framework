@@ -1142,9 +1142,11 @@ def resume_from_plan(branch: str) -> dict:
         subtask_index=0,
         subtask_sequence=subtask_ids,
         current_step_id=execution_start[0] if execution_start else "1.6",
-        current_step_phase=STEP_PHASES.get(execution_start[0], "INIT_STATE")
-        if execution_start
-        else "INIT_STATE",
+        current_step_phase=(
+            STEP_PHASES.get(execution_start[0], "INIT_STATE")
+            if execution_start
+            else "INIT_STATE"
+        ),
         completed_steps=skipped_phases,
         pending_steps=execution_start,
         plan_approved=True,

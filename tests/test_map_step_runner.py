@@ -48,7 +48,6 @@ def test_next_numbered_artifact_path_increments(branch_workspace):
     assert result["file_name"] == "code-review-003.md"
 
 
-
 def test_write_verification_summary_creates_report(branch_workspace):
     result = map_step_runner.write_verification_summary(
         "READY FOR REVIEW",
@@ -242,7 +241,9 @@ class TestWriteStageGate:
 
     def test_invalid_verdict_returns_error(self, branch_workspace):
         """An unrecognised verdict returns an error dict without creating a file."""
-        result = map_step_runner.write_stage_gate("plan", "approved", "plan-review-001.md")
+        result = map_step_runner.write_stage_gate(
+            "plan", "approved", "plan-review-001.md"
+        )
 
         assert result["status"] == "error"
         assert "Invalid verdict" in result["message"]
@@ -259,12 +260,16 @@ class TestWriteStageGate:
         """All three GATE_VERDICTS are accepted without error."""
         for verdict in ("ready", "needs-revision", "blocked"):
             res = map_step_runner.write_stage_gate(f"stage-{verdict}", verdict)
-            assert res["status"] == "success", f"Expected success for verdict={verdict!r}"
+            assert (
+                res["status"] == "success"
+            ), f"Expected success for verdict={verdict!r}"
 
     def test_source_artifact_optional(self, branch_workspace):
         """Omitting source_artifact stores None in the JSON payload."""
         map_step_runner.write_stage_gate("plan", "ready")
-        data = json.loads((branch_workspace / "plan-gate.json").read_text(encoding="utf-8"))
+        data = json.loads(
+            (branch_workspace / "plan-gate.json").read_text(encoding="utf-8")
+        )
         assert data["source_artifact"] is None
 
     def test_branch_parameter_respected(self, tmp_path, monkeypatch):
@@ -340,7 +345,9 @@ class TestReplaceActiveIssues:
 
         assert result["status"] == "success"
         assert result["count"] == 2
-        data = json.loads((branch_workspace / "active-issues.json").read_text(encoding="utf-8"))
+        data = json.loads(
+            (branch_workspace / "active-issues.json").read_text(encoding="utf-8")
+        )
         ids = [issue["id"] for issue in data["issues"]]
         assert "VER-001" in ids
         assert "VER-002" in ids
@@ -355,7 +362,9 @@ class TestReplaceActiveIssues:
 
         assert result["status"] == "success"
         assert result["count"] == 0
-        data = json.loads((branch_workspace / "active-issues.json").read_text(encoding="utf-8"))
+        data = json.loads(
+            (branch_workspace / "active-issues.json").read_text(encoding="utf-8")
+        )
         assert data["issues"] == []
 
     def test_issue_id_format_uses_stage_prefix(self, branch_workspace):
@@ -364,23 +373,29 @@ class TestReplaceActiveIssues:
             "plan", "plan-review-001.md", "- missing acceptance criteria"
         )
 
-        data = json.loads((branch_workspace / "active-issues.json").read_text(encoding="utf-8"))
+        data = json.loads(
+            (branch_workspace / "active-issues.json").read_text(encoding="utf-8")
+        )
         assert data["issues"][0]["id"] == "PLA-001"
 
     def test_empty_issues_text_produces_empty_list(self, branch_workspace):
         """Completely empty issues_text results in zero issues."""
-        result = map_step_runner.replace_active_issues(
-            "code", "code-review-001.md", ""
-        )
+        result = map_step_runner.replace_active_issues("code", "code-review-001.md", "")
 
         assert result["count"] == 0
 
     def test_replaces_previous_issues(self, branch_workspace):
         """Calling replace twice overwrites the old issues entirely."""
-        map_step_runner.replace_active_issues("plan", "plan-review-001.md", "- first issue")
-        map_step_runner.replace_active_issues("plan", "plan-review-002.md", "- second issue")
+        map_step_runner.replace_active_issues(
+            "plan", "plan-review-001.md", "- first issue"
+        )
+        map_step_runner.replace_active_issues(
+            "plan", "plan-review-002.md", "- second issue"
+        )
 
-        data = json.loads((branch_workspace / "active-issues.json").read_text(encoding="utf-8"))
+        data = json.loads(
+            (branch_workspace / "active-issues.json").read_text(encoding="utf-8")
+        )
         assert len(data["issues"]) == 1
         assert data["issues"][0]["summary"] == "second issue"
 
@@ -395,10 +410,18 @@ class TestBuildReviewHandoff:
 
     def test_happy_path_returns_all_paths(self, branch_workspace):
         """Returns paths for all artifacts when they exist."""
-        (branch_workspace / "plan-review-001.md").write_text("# Plan Review 001\n", encoding="utf-8")
-        (branch_workspace / "code-review-001.md").write_text("# Code Review 001\n", encoding="utf-8")
-        (branch_workspace / "verification-summary.md").write_text("# VS\n", encoding="utf-8")
-        (branch_workspace / "active-issues.json").write_text('{"issues": []}\n', encoding="utf-8")
+        (branch_workspace / "plan-review-001.md").write_text(
+            "# Plan Review 001\n", encoding="utf-8"
+        )
+        (branch_workspace / "code-review-001.md").write_text(
+            "# Code Review 001\n", encoding="utf-8"
+        )
+        (branch_workspace / "verification-summary.md").write_text(
+            "# VS\n", encoding="utf-8"
+        )
+        (branch_workspace / "active-issues.json").write_text(
+            '{"issues": []}\n', encoding="utf-8"
+        )
 
         result = map_step_runner.build_review_handoff()
 
@@ -418,9 +441,15 @@ class TestBuildReviewHandoff:
 
     def test_returns_highest_numbered_review(self, branch_workspace):
         """With multiple code-review files, returns the highest-numbered one."""
-        (branch_workspace / "code-review-001.md").write_text("Review 1\n", encoding="utf-8")
-        (branch_workspace / "code-review-002.md").write_text("Review 2\n", encoding="utf-8")
-        (branch_workspace / "code-review-003.md").write_text("Review 3\n", encoding="utf-8")
+        (branch_workspace / "code-review-001.md").write_text(
+            "Review 1\n", encoding="utf-8"
+        )
+        (branch_workspace / "code-review-002.md").write_text(
+            "Review 2\n", encoding="utf-8"
+        )
+        (branch_workspace / "code-review-003.md").write_text(
+            "Review 3\n", encoding="utf-8"
+        )
 
         result = map_step_runner.build_review_handoff()
 
@@ -563,7 +592,9 @@ class TestWritePlanReview:
             res = map_step_runner.write_plan_review(
                 summary=f"Review for {verdict}", recommendation=verdict
             )
-            assert res["status"] == "success", f"Expected success for recommendation={verdict!r}"
+            assert (
+                res["status"] == "success"
+            ), f"Expected success for recommendation={verdict!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -622,7 +653,9 @@ class TestAddKnownIssue:
 
         assert result["status"] == "success"
         assert result["count"] == 1
-        data = json.loads((branch_workspace / "known-issues.json").read_text(encoding="utf-8"))
+        data = json.loads(
+            (branch_workspace / "known-issues.json").read_text(encoding="utf-8")
+        )
         assert data["issues"][0]["title"] == "Flaky integration test"
         assert data["issues"][0]["status"] == "accepted"
         assert data["issues"][0]["notes"] == "Tracked in follow-up"
@@ -644,7 +677,9 @@ class TestAddKnownIssue:
         result = map_step_runner.add_known_issue("Issue B", "deferred")
 
         assert result["count"] == 2
-        data = json.loads((branch_workspace / "known-issues.json").read_text(encoding="utf-8"))
+        data = json.loads(
+            (branch_workspace / "known-issues.json").read_text(encoding="utf-8")
+        )
         titles = [issue["title"] for issue in data["issues"]]
         assert "Issue A" in titles
         assert "Issue B" in titles
@@ -654,7 +689,9 @@ class TestAddKnownIssue:
         map_step_runner.ensure_known_issues_file()
         map_step_runner.add_known_issue("Default status issue")
 
-        data = json.loads((branch_workspace / "known-issues.json").read_text(encoding="utf-8"))
+        data = json.loads(
+            (branch_workspace / "known-issues.json").read_text(encoding="utf-8")
+        )
         assert data["issues"][0]["status"] == "accepted"
 
 

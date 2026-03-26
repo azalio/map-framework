@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 8 pipeline phases (see Changed above)
 
 ### Added
+- **Persist `/map-learn` lessons to `.claude/rules/`**: Extracted lessons are saved as rule files so future sessions apply them automatically
+- **Platform refactor**: Extracted spec, decomposition, config, and managed file copier into standalone modules for cleaner architecture
 - **Guard pattern**: Decision table for regression detection (monitor pass + guard fail → retry Actor max 2)
 - **Stuck recovery protocol**: At monitor retry 3, invoke research-agent → predictor before retries 4-5
 - **Scenario dimensions**: `test_strategy.scenario_dimensions` (happy_path, error, edge_case, security) in TaskDecomposer
@@ -28,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Flaky-aware verification**: FinalVerifier re-runs failed tests 3x with 2/3 majority rule
 - **Iteration summary**: `iteration_summary.json` derived from ralph-iteration-logger
 - **Git-as-memory**: Conditional `{{git_history}}` context in Actor for debug/retry/resume
+
+### Fixed
+- **Lint cleanup**: Removed unused imports, added re-export aliases, fixed E402 module ordering in `__init__.py`
+- **Mypy config**: Added `[tool.mypy]` section to `pyproject.toml` excluding template scripts and ignoring missing yaml stubs
 
 ## [3.5.0] - 2026-03-18
 

@@ -52,43 +52,60 @@ class TestWorkflowGate:
             )
             subprocess.run(
                 ["git", "config", "user.email", "test@example.com"],
-                cwd=tmp_path, capture_output=True, check=True,
+                cwd=tmp_path,
+                capture_output=True,
+                check=True,
             )
             subprocess.run(
                 ["git", "config", "user.name", "Test User"],
-                cwd=tmp_path, capture_output=True, check=True,
+                cwd=tmp_path,
+                capture_output=True,
+                check=True,
             )
             (tmp_path / "README.md").write_text("test\n")
             subprocess.run(
                 ["git", "add", "README.md"],
-                cwd=tmp_path, capture_output=True, check=True,
+                cwd=tmp_path,
+                capture_output=True,
+                check=True,
             )
             subprocess.run(
                 ["git", "commit", "-m", "Initial commit"],
-                cwd=tmp_path, capture_output=True, check=True,
+                cwd=tmp_path,
+                capture_output=True,
+                check=True,
             )
 
         current_branch = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=tmp_path, capture_output=True, text=True, check=True,
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
 
         if current_branch != branch:
             branch_exists = (
                 subprocess.run(
                     ["git", "rev-parse", "--verify", branch],
-                    cwd=tmp_path, capture_output=True,
-                ).returncode == 0
+                    cwd=tmp_path,
+                    capture_output=True,
+                ).returncode
+                == 0
             )
             if branch_exists:
                 subprocess.run(
                     ["git", "checkout", branch],
-                    cwd=tmp_path, capture_output=True, check=True,
+                    cwd=tmp_path,
+                    capture_output=True,
+                    check=True,
                 )
             else:
                 subprocess.run(
                     ["git", "checkout", "-b", branch],
-                    cwd=tmp_path, capture_output=True, check=True,
+                    cwd=tmp_path,
+                    capture_output=True,
+                    check=True,
                 )
 
         result = subprocess.run(
@@ -100,9 +117,14 @@ class TestWorkflowGate:
         )
         return result.returncode, result.stdout, result.stderr
 
-    def _setup_step_state(self, tmp_path: Path, branch: str, phase: str,
-                          subtask_id: str = "ST-001",
-                          subtask_phases: dict | None = None) -> None:
+    def _setup_step_state(
+        self,
+        tmp_path: Path,
+        branch: str,
+        phase: str,
+        subtask_id: str = "ST-001",
+        subtask_phases: dict | None = None,
+    ) -> None:
         """Create step_state.json with given phase."""
         map_dir = tmp_path / ".map" / branch
         map_dir.mkdir(parents=True, exist_ok=True)
@@ -154,7 +176,9 @@ class TestWorkflowGate:
         result = subprocess.run(
             ["python3", str(self.HOOK_PATH)],
             input="not valid json",
-            capture_output=True, text=True, cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            cwd=tmp_path,
         )
         assert result.returncode == 0
         self._assert_allowed(result.stdout)
@@ -248,7 +272,9 @@ class TestWorkflowGate:
     def test_allows_edit_when_any_subtask_in_actor_phase(self, tmp_path: Path) -> None:
         """In parallel mode, allow if ANY subtask is in an editing phase."""
         self._setup_step_state(
-            tmp_path, "master", "MONITOR",
+            tmp_path,
+            "master",
+            "MONITOR",
             subtask_phases={"ST-001": "MONITOR", "ST-002": "ACTOR"},
         )
         code, stdout, _ = self.run_hook(
@@ -261,7 +287,9 @@ class TestWorkflowGate:
     def test_blocks_edit_when_no_subtask_in_editing_phase(self, tmp_path: Path) -> None:
         """In parallel mode, block if NO subtask is in an editing phase."""
         self._setup_step_state(
-            tmp_path, "master", "MONITOR",
+            tmp_path,
+            "master",
+            "MONITOR",
             subtask_phases={"ST-001": "MONITOR", "ST-002": "PREDICTOR"},
         )
         code, stdout, _ = self.run_hook(
@@ -294,7 +322,8 @@ class TestWorkflowGate:
         # On master (no state) → fail-open → allow
         code, stdout, _ = self.run_hook(
             {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}},
-            tmp_path, branch="master",
+            tmp_path,
+            branch="master",
         )
         assert code == 0
         self._assert_allowed(stdout)
@@ -316,7 +345,8 @@ class TestWorkflowGate:
 
         code, stdout, _ = self.run_hook(
             {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}},
-            tmp_path, branch=branch_name,
+            tmp_path,
+            branch=branch_name,
         )
         assert code == 0
         self._assert_allowed(stdout)
@@ -327,16 +357,23 @@ class TestWorkflowGate:
         """scope_glob constraint blocks edits outside allowed pattern."""
         map_dir = tmp_path / ".map" / "master"
         map_dir.mkdir(parents=True, exist_ok=True)
-        (map_dir / "step_state.json").write_text(json.dumps({
-            "current_step_phase": "ACTOR",
-            "current_subtask_id": "ST-001",
-            "subtask_phases": {},
-            "constraints": {"scope_glob": "src/*"},
-            "started_at": "2026-01-01T00:00:00Z",
-        }))
+        (map_dir / "step_state.json").write_text(
+            json.dumps(
+                {
+                    "current_step_phase": "ACTOR",
+                    "current_subtask_id": "ST-001",
+                    "subtask_phases": {},
+                    "constraints": {"scope_glob": "src/*"},
+                    "started_at": "2026-01-01T00:00:00Z",
+                }
+            )
+        )
 
         code, stdout, _ = self.run_hook(
-            {"tool_name": "Edit", "tool_input": {"file_path": str(tmp_path / "tests" / "foo.py")}},
+            {
+                "tool_name": "Edit",
+                "tool_input": {"file_path": str(tmp_path / "tests" / "foo.py")},
+            },
             tmp_path,
         )
         assert code == 0
@@ -347,17 +384,24 @@ class TestWorkflowGate:
         """scope_glob constraint allows edits matching the pattern."""
         map_dir = tmp_path / ".map" / "master"
         map_dir.mkdir(parents=True, exist_ok=True)
-        (map_dir / "step_state.json").write_text(json.dumps({
-            "current_step_phase": "ACTOR",
-            "current_subtask_id": "ST-001",
-            "subtask_phases": {},
-            "constraints": {"scope_glob": "src/*"},
-            "started_at": "2026-01-01T00:00:00Z",
-        }))
+        (map_dir / "step_state.json").write_text(
+            json.dumps(
+                {
+                    "current_step_phase": "ACTOR",
+                    "current_subtask_id": "ST-001",
+                    "subtask_phases": {},
+                    "constraints": {"scope_glob": "src/*"},
+                    "started_at": "2026-01-01T00:00:00Z",
+                }
+            )
+        )
         (tmp_path / "src").mkdir(exist_ok=True)
 
         code, stdout, _ = self.run_hook(
-            {"tool_name": "Edit", "tool_input": {"file_path": str(tmp_path / "src" / "foo.py")}},
+            {
+                "tool_name": "Edit",
+                "tool_input": {"file_path": str(tmp_path / "src" / "foo.py")},
+            },
             tmp_path,
         )
         assert code == 0
@@ -367,13 +411,17 @@ class TestWorkflowGate:
         """When constraints is null, all edits are allowed."""
         map_dir = tmp_path / ".map" / "master"
         map_dir.mkdir(parents=True, exist_ok=True)
-        (map_dir / "step_state.json").write_text(json.dumps({
-            "current_step_phase": "ACTOR",
-            "current_subtask_id": "ST-001",
-            "subtask_phases": {},
-            "constraints": None,
-            "started_at": "2026-01-01T00:00:00Z",
-        }))
+        (map_dir / "step_state.json").write_text(
+            json.dumps(
+                {
+                    "current_step_phase": "ACTOR",
+                    "current_subtask_id": "ST-001",
+                    "subtask_phases": {},
+                    "constraints": None,
+                    "started_at": "2026-01-01T00:00:00Z",
+                }
+            )
+        )
 
         code, stdout, _ = self.run_hook(
             {"tool_name": "Edit", "tool_input": {"file_path": "/anywhere/foo.py"}},
@@ -386,13 +434,17 @@ class TestWorkflowGate:
         """time_budget constraint blocks after elapsed time exceeds budget."""
         map_dir = tmp_path / ".map" / "master"
         map_dir.mkdir(parents=True, exist_ok=True)
-        (map_dir / "step_state.json").write_text(json.dumps({
-            "current_step_phase": "ACTOR",
-            "current_subtask_id": "ST-001",
-            "subtask_phases": {},
-            "constraints": {"time_budget": 1},
-            "started_at": "2020-01-01T00:00:00Z",
-        }))
+        (map_dir / "step_state.json").write_text(
+            json.dumps(
+                {
+                    "current_step_phase": "ACTOR",
+                    "current_subtask_id": "ST-001",
+                    "subtask_phases": {},
+                    "constraints": {"time_budget": 1},
+                    "started_at": "2020-01-01T00:00:00Z",
+                }
+            )
+        )
 
         code, stdout, _ = self.run_hook(
             {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}},
@@ -408,13 +460,17 @@ class TestWorkflowGate:
 
         map_dir = tmp_path / ".map" / "master"
         map_dir.mkdir(parents=True, exist_ok=True)
-        (map_dir / "step_state.json").write_text(json.dumps({
-            "current_step_phase": "ACTOR",
-            "current_subtask_id": "ST-001",
-            "subtask_phases": {},
-            "constraints": {"time_budget": 9999},
-            "started_at": datetime.now(timezone.utc).isoformat(),
-        }))
+        (map_dir / "step_state.json").write_text(
+            json.dumps(
+                {
+                    "current_step_phase": "ACTOR",
+                    "current_subtask_id": "ST-001",
+                    "subtask_phases": {},
+                    "constraints": {"time_budget": 9999},
+                    "started_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+        )
 
         code, stdout, _ = self.run_hook(
             {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}},
@@ -427,12 +483,16 @@ class TestWorkflowGate:
         """scope_glob containing '{' is bypassed (fail-open) with stderr warning."""
         map_dir = tmp_path / ".map" / "master"
         map_dir.mkdir(parents=True, exist_ok=True)
-        (map_dir / "step_state.json").write_text(json.dumps({
-            "current_step_phase": "ACTOR",
-            "current_subtask_id": "ST-001",
-            "subtask_phases": {},
-            "constraints": {"scope_glob": "{src,tests}/**/*.py"},
-        }))
+        (map_dir / "step_state.json").write_text(
+            json.dumps(
+                {
+                    "current_step_phase": "ACTOR",
+                    "current_subtask_id": "ST-001",
+                    "subtask_phases": {},
+                    "constraints": {"scope_glob": "{src,tests}/**/*.py"},
+                }
+            )
+        )
 
         code, stdout, stderr = self.run_hook(
             {"tool_name": "Edit", "tool_input": {"file_path": "/outside/scope.rb"}},

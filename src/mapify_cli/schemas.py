@@ -39,13 +39,20 @@ def validate_artifact(
         validator_cls = getattr(
             jsonschema,
             "Draft202012Validator",
-            getattr(jsonschema, "Draft7Validator", getattr(jsonschema, "Draft4Validator", None)),
+            getattr(
+                jsonschema,
+                "Draft7Validator",
+                getattr(jsonschema, "Draft4Validator", None),
+            ),
         )
         if validator_cls is None:
             raise ImportError("No suitable jsonschema validator found")
         validator = validator_cls(schema)
         errors = sorted(validator.iter_errors(data), key=lambda e: list(e.path))
-        messages = [f"{'.'.join(str(p) for p in e.absolute_path) or '<root>'}: {e.message}" for e in errors]
+        messages = [
+            f"{'.'.join(str(p) for p in e.absolute_path) or '<root>'}: {e.message}"
+            for e in errors
+        ]
         if raise_on_error and messages:
             raise ValueError(f"Schema validation failed: {messages[0]}")
         return (len(messages) == 0, messages)
@@ -93,6 +100,7 @@ def load_and_validate(
 
     is_valid, errors = validate_artifact(data, schema, raise_on_error=raise_on_error)
     return (data if is_valid else None, errors)
+
 
 # ============================================================================
 # JSON SCHEMA DEFINITIONS FOR .map/ STATE ARTIFACTS

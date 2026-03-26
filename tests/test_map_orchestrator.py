@@ -1030,7 +1030,9 @@ class TestExtractRecentMarkdownSection:
         """Returns all non-empty lines when content is within max_lines."""
         content = "line one\nline two\nline three\n"
 
-        result = map_orchestrator._extract_recent_markdown_section(content, max_lines=10)
+        result = map_orchestrator._extract_recent_markdown_section(
+            content, max_lines=10
+        )
 
         assert "line one" in result
         assert "line two" in result
@@ -1058,7 +1060,9 @@ class TestExtractRecentMarkdownSection:
         """Blank/whitespace-only lines do not count towards max_lines."""
         content = "real line\n\n   \nreal line 2\n"
 
-        result = map_orchestrator._extract_recent_markdown_section(content, max_lines=10)
+        result = map_orchestrator._extract_recent_markdown_section(
+            content, max_lines=10
+        )
 
         result_lines = result.splitlines()
         assert len(result_lines) == 2
@@ -1066,7 +1070,9 @@ class TestExtractRecentMarkdownSection:
 
     def test_whitespace_only_content_returns_empty(self):
         """Content consisting only of whitespace/newlines returns empty string."""
-        result = map_orchestrator._extract_recent_markdown_section("\n\n   \n", max_lines=12)
+        result = map_orchestrator._extract_recent_markdown_section(
+            "\n\n   \n", max_lines=12
+        )
 
         assert result == ""
 
@@ -1149,9 +1155,7 @@ class TestBuildResumeBriefingExtended:
 
     def test_populates_next_action_with_needs_work_verdict(self, branch_dir, tmp_path):
         """next_action starts with 'Address issues' when verdict is 'NEEDS WORK'."""
-        plan_dir = self._make_plan(
-            tmp_path, branch_dir, [("ST-001", "in_progress")]
-        )
+        plan_dir = self._make_plan(tmp_path, branch_dir, [("ST-001", "in_progress")])
         (plan_dir / "verification-summary.md").write_text(
             "# Verification Summary\n\n- Verdict: NEEDS WORK\n",
             encoding="utf-8",
@@ -1167,7 +1171,9 @@ class TestBuildResumeBriefingExtended:
 
         assert result["next_action"][0].startswith("Address issues")
 
-    def test_next_action_empty_when_all_complete_and_no_issues(self, branch_dir, tmp_path):
+    def test_next_action_empty_when_all_complete_and_no_issues(
+        self, branch_dir, tmp_path
+    ):
         """next_action includes workflow-complete hint when all subtasks are done."""
         self._make_plan(
             tmp_path, branch_dir, [("ST-001", "complete"), ("ST-002", "complete")]
@@ -1192,9 +1198,7 @@ class TestBuildResumeBriefingExtended:
 
     def test_current_subtask_from_state_file(self, branch_dir, tmp_path):
         """current_subtask is read from step_state.json when present."""
-        plan_dir = self._make_plan(
-            tmp_path, branch_dir, [("ST-001", "in_progress")]
-        )
+        plan_dir = self._make_plan(tmp_path, branch_dir, [("ST-001", "in_progress")])
         state = map_orchestrator.StepState()
         state.current_subtask_id = "ST-001"
         state.current_step_phase = "ACTOR"

@@ -25,21 +25,17 @@ Or install globally:
 
 __version__ = "3.5.0"
 
-import copy
 import os
 import subprocess
 import sys
 import shutil
-import json
-import uuid
+import ssl
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
 import typer
 import httpx
-import readchar
-import ssl
 
 try:
     import truststore
@@ -48,14 +44,51 @@ try:
 except ImportError:
     HAS_TRUSTSTORE = False
 
-from rich.console import Console
 from rich.panel import Panel
-from rich.text import Text
 from rich.live import Live
 from rich.align import Align
 from rich.table import Table
-from rich.tree import Tree
-from typer.core import TyperGroup
+
+# Local submodule re-exports (v3.5.0 platform refactor)
+from mapify_cli.cli_ui import console
+from mapify_cli.cli_ui import (
+    StepTracker,
+    BannerGroup,
+    get_key as get_key,
+    select_with_arrows as select_with_arrows,
+    select_multiple_with_arrows as select_multiple_with_arrows,
+    show_banner,
+    BANNER as BANNER,
+    TAGLINE as TAGLINE,
+)
+from mapify_cli.delivery import (
+    create_task_decomposer_content as create_task_decomposer_content,
+    create_actor_content as create_actor_content,
+    create_monitor_content as create_monitor_content,
+    create_predictor_content as create_predictor_content,
+    create_evaluator_content as create_evaluator_content,
+    create_reflector_content as create_reflector_content,
+    create_documentation_reviewer_content as create_documentation_reviewer_content,
+    create_agent_files,
+    create_reference_files,
+    create_command_files,
+    create_skill_files,
+    create_hook_files,
+    create_config_files,
+    create_commands_dir as create_commands_dir,
+    create_map_tools,
+    create_rules_dir,
+)
+from mapify_cli.config import (
+    configure_global_permissions,
+    create_or_merge_project_settings_local,
+    create_mcp_config,
+    build_standard_mcp_servers,
+    read_project_mcp_json,
+    write_project_mcp_json as write_project_mcp_json,
+    merge_mcp_json as merge_mcp_json,
+    create_or_merge_project_mcp_json,
+)
 
 
 # Create secure SSL context with proper fallback
@@ -92,49 +125,6 @@ INDIVIDUAL_MCP_SERVERS = {
     "sequential-thinking": "Chain-of-thought reasoning",
     "deepwiki": "GitHub repository intelligence",
 }
-
-from mapify_cli.cli_ui import console
-
-
-# Extracted submodules (v3.5.0 platform refactor)
-from mapify_cli.cli_ui import (
-    StepTracker,
-    BannerGroup,
-    get_key,
-    select_with_arrows,
-    select_multiple_with_arrows,
-    show_banner,
-    BANNER,
-    TAGLINE,
-)
-from mapify_cli.delivery import (
-    create_task_decomposer_content,
-    create_actor_content,
-    create_monitor_content,
-    create_predictor_content,
-    create_evaluator_content,
-    create_reflector_content,
-    create_documentation_reviewer_content,
-    create_agent_files,
-    create_reference_files,
-    create_command_files,
-    create_skill_files,
-    create_hook_files,
-    create_config_files,
-    create_commands_dir,
-    create_map_tools,
-    create_rules_dir,
-)
-from mapify_cli.config import (
-    configure_global_permissions,
-    create_or_merge_project_settings_local,
-    create_mcp_config,
-    build_standard_mcp_servers,
-    read_project_mcp_json,
-    write_project_mcp_json,
-    merge_mcp_json,
-    create_or_merge_project_mcp_json,
-)
 
 
 app = typer.Typer(
@@ -698,9 +688,9 @@ def init(
     else:
         # Type assertion: flow guarantees project_name is not None here
         # (checked at line 1931, and not in use_current_dir branch)
-        assert project_name is not None, (
-            "project_name must be set in non-current-dir mode"
-        )
+        assert (
+            project_name is not None
+        ), "project_name must be set in non-current-dir mode"
         project_path = Path(project_name).resolve()
         if project_path.exists():
             console.print(
@@ -1060,9 +1050,11 @@ def doctor(debug: bool = typer.Option(False, "--debug", help="Enable debug loggi
     details.add_row(
         "Project",
         "OK" if health["initialized"] else "Needs init",
-        ".claude + workflow configs detected"
-        if health["initialized"]
-        else "Run `mapify init .`",
+        (
+            ".claude + workflow configs detected"
+            if health["initialized"]
+            else "Run `mapify init .`"
+        ),
     )
     details.add_row(
         "Agents",
@@ -1085,9 +1077,11 @@ def doctor(debug: bool = typer.Option(False, "--debug", help="Enable debug loggi
     )
     details.add_row(
         "MCP",
-        "valid"
-        if health["project_mcp_valid"]
-        else ("present" if health["has_project_mcp"] else "not configured"),
+        (
+            "valid"
+            if health["project_mcp_valid"]
+            else ("present" if health["has_project_mcp"] else "not configured")
+        ),
         ".mcp.json status",
     )
     console.print(details)
