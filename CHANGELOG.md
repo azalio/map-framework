@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.6.0] - 2026-03-26
+
 ### Changed
 - **Pipeline simplification**: `/map-efficient` reduced from 11 phases to 2-3 per subtask ([RESEARCH] → ACTOR → MONITOR). Removed XML_PACKET, CONTEXT_SEARCH, PREDICTOR, UPDATE_STATE, TESTS_GATE, LINTER_GATE, VERIFY_ADHERENCE, SUBTASK_APPROVAL phases
 - **Per-wave gates**: Tests and linter now run once per wave (after all Monitor passes) instead of per subtask
