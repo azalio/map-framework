@@ -93,6 +93,7 @@ The orchestration lives in `.claude/commands/map-*.md` prompts created by `mapif
 | [Installation](docs/INSTALL.md) | All install methods, PATH setup, troubleshooting |
 | [Usage Guide](docs/USAGE.md) | Workflows, examples, cost optimization, playbook |
 | [Architecture](docs/ARCHITECTURE.md) | Agents, MCP integration, customization |
+| [Platform Spec](docs/MAP_PLATFORM_SPEC.md) | Platform refactor roadmap, codebase analysis |
 
 ## Trouble?
 

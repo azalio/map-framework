@@ -7,6 +7,93 @@ These schemas are embedded in code to ensure they're available
 in packaged installations (uv tool install, pip install).
 """
 
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any, Optional
+
+
+def validate_artifact(
+    data: dict[str, Any],
+    schema: dict[str, Any],
+    *,
+    raise_on_error: bool = False,
+) -> tuple[bool, list[str]]:
+    """Validate a MAP artifact dict against a JSON Schema.
+
+    Uses jsonschema if available, falls back to required-field checking.
+
+    Args:
+        data: The artifact data to validate.
+        schema: A JSON Schema dict (one of *_SCHEMA constants).
+        raise_on_error: If True, raise ValueError on first error.
+
+    Returns:
+        (is_valid, list_of_error_messages)
+    """
+    try:
+        import jsonschema  # type: ignore[import-untyped]
+
+        # Use best available validator (prefer 2020-12, fall back to Draft7/4)
+        validator_cls = getattr(
+            jsonschema,
+            "Draft202012Validator",
+            getattr(jsonschema, "Draft7Validator", getattr(jsonschema, "Draft4Validator", None)),
+        )
+        if validator_cls is None:
+            raise ImportError("No suitable jsonschema validator found")
+        validator = validator_cls(schema)
+        errors = sorted(validator.iter_errors(data), key=lambda e: list(e.path))
+        messages = [f"{'.'.join(str(p) for p in e.absolute_path) or '<root>'}: {e.message}" for e in errors]
+        if raise_on_error and messages:
+            raise ValueError(f"Schema validation failed: {messages[0]}")
+        return (len(messages) == 0, messages)
+    except ImportError:
+        # Fallback: check required fields only
+        messages = []
+        required = schema.get("required", [])
+        for field in required:
+            if field not in data:
+                messages.append(f"<root>: '{field}' is a required property")
+        if raise_on_error and messages:
+            raise ValueError(f"Schema validation failed: {messages[0]}")
+        return (len(messages) == 0, messages)
+
+
+def load_and_validate(
+    path: Path,
+    schema: dict[str, Any],
+    *,
+    raise_on_error: bool = False,
+) -> tuple[Optional[dict[str, Any]], list[str]]:
+    """Load a JSON file and validate it against a schema.
+
+    Args:
+        path: Path to the JSON file.
+        schema: A JSON Schema dict.
+        raise_on_error: If True, raise on file/parse/validation errors.
+
+    Returns:
+        (parsed_data_or_None, list_of_error_messages)
+    """
+    if not path.exists():
+        msg = f"File not found: {path}"
+        if raise_on_error:
+            raise FileNotFoundError(msg)
+        return (None, [msg])
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        msg = f"Cannot read {path}: {exc}"
+        if raise_on_error:
+            raise ValueError(msg) from exc
+        return (None, [msg])
+
+    is_valid, errors = validate_artifact(data, schema, raise_on_error=raise_on_error)
+    return (data if is_valid else None, errors)
+
 # ============================================================================
 # JSON SCHEMA DEFINITIONS FOR .map/ STATE ARTIFACTS
 # ============================================================================
@@ -246,6 +333,73 @@ VERIFICATION_RESULTS_SCHEMA = {
         },
     },
     "required": ["overall", "recipes"],
+    "additionalProperties": True,
+}
+
+
+BLUEPRINT_SCHEMA = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://mapframework.dev/schemas/blueprint.json",
+    "title": "MAP Blueprint",
+    "description": "Blueprint artifact produced by /map-plan, stored in .map/<branch>/blueprint.json",
+    "type": "object",
+    "properties": {
+        "subtasks": {
+            "type": "array",
+            "description": "Ordered list of subtasks with dependency information",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "Unique subtask identifier (e.g., ST-001)",
+                        "pattern": "^ST-\\d{3,}$",
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Human-readable subtask title",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Detailed subtask description",
+                    },
+                    "dependencies": {
+                        "type": "array",
+                        "description": "List of subtask IDs this task depends on",
+                        "items": {"type": "string"},
+                    },
+                    "affected_files": {
+                        "type": "array",
+                        "description": "Files expected to be created or modified",
+                        "items": {"type": "string"},
+                    },
+                    "acceptance_criteria": {
+                        "type": "array",
+                        "description": "Criteria that must be met for the subtask to be considered complete",
+                        "items": {"type": "string"},
+                    },
+                    "risk": {
+                        "type": "string",
+                        "enum": ["low", "medium", "high"],
+                        "description": "Risk level of this subtask",
+                    },
+                },
+                "required": ["id", "title", "dependencies", "affected_files"],
+                "additionalProperties": True,
+            },
+        },
+        "metadata": {
+            "type": "object",
+            "description": "Blueprint metadata",
+            "properties": {
+                "created_at": {"type": "string", "format": "date-time"},
+                "workflow": {"type": "string"},
+                "goal": {"type": "string"},
+            },
+            "additionalProperties": True,
+        },
+    },
+    "required": ["subtasks"],
     "additionalProperties": True,
 }
 

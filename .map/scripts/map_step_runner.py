@@ -299,6 +299,15 @@ def replace_active_issues(
     return {"status": "success", "path": str(issues_file), "count": len(issues)}
 
 
+def _sanitize_for_json(text: str) -> str:
+    """Remove control characters (U+0000-U+001F except \\n \\r \\t) that break JSON consumers.
+
+    Python's json.dumps escapes these correctly, but downstream tools
+    (jq via bash pipes, shell variable expansion) can corrupt them.
+    """
+    return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text)
+
+
 def build_handoff_bundle(branch: Optional[str] = None) -> dict:
     """Build a compact handoff bundle from branch-scoped human artifacts."""
     branch_name = branch or get_branch_name()
@@ -307,7 +316,12 @@ def build_handoff_bundle(branch: Optional[str] = None) -> dict:
 
     def read(name: str) -> str:
         path = branch_dir / name
-        return path.read_text(encoding="utf-8") if path.exists() else ""
+        if not path.exists():
+            return ""
+        try:
+            return _sanitize_for_json(path.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            return ""
 
     verification = read("verification-summary.md")
     qa = read("qa-001.md")
@@ -362,7 +376,12 @@ def build_review_handoff(branch: Optional[str] = None) -> dict:
 
     def read(name: str) -> str:
         path = branch_dir / name
-        return path.read_text(encoding="utf-8") if path.exists() else ""
+        if not path.exists():
+            return ""
+        try:
+            return _sanitize_for_json(path.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            return ""
 
     plan_review_next = next_numbered_artifact_path("plan-review", branch_name)
     latest_plan_review_index = max(0, plan_review_next["index"] - 1)
@@ -1019,11 +1038,11 @@ if __name__ == "__main__":
 
     elif func_name == "build_handoff_bundle":
         result = build_handoff_bundle()
-        print(json.dumps(result, indent=2))
+        print(json.dumps(result, indent=2, ensure_ascii=True))
 
     elif func_name == "build_review_handoff":
         result = build_review_handoff()
-        print(json.dumps(result, indent=2))
+        print(json.dumps(result, indent=2, ensure_ascii=True))
 
     elif func_name == "ensure_known_issues_file":
         result = ensure_known_issues_file()
