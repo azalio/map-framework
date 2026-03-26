@@ -90,6 +90,21 @@ class TestCommandTemplates:
         assert "/map-learn" in content, "Should suggest /map-learn for learning"
         assert "optional" in content.lower(), "Should mention /map-learn is optional"
 
+    def test_map_learn_persists_to_rules(self, templates_commands_dir):
+        """Test that map-learn.md writes to .claude/rules/learned/ for persistence."""
+        map_learn = templates_commands_dir / "map-learn.md"
+        content = map_learn.read_text()
+
+        assert ".claude/rules/learned/" in content, (
+            "map-learn should write to .claude/rules/learned/"
+        )
+        assert "Write Rules Files" in content, (
+            "map-learn should have a 'Write Rules Files' step"
+        )
+        assert "deduplication" in content.lower() or "duplicate" in content.lower(), (
+            "map-learn should handle deduplication"
+        )
+
     def test_all_command_templates_exist(self, templates_commands_dir):
         """Test that all 12 expected command template files exist."""
         expected_commands = [

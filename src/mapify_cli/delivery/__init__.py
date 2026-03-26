@@ -21,6 +21,7 @@ from mapify_cli.delivery.file_copier import (
     create_config_files,
     create_commands_dir,
     create_map_tools,
+    create_rules_dir,
 )
 from mapify_cli.delivery.managed_file_copier import (
     CopyResult,
@@ -48,6 +49,7 @@ __all__ = [
     "create_config_files",
     "create_commands_dir",
     "create_map_tools",
+    "create_rules_dir",
     "CopyResult",
     "DriftReport",
     "copy_managed_file",

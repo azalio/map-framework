@@ -408,3 +408,35 @@ def create_config_files(
             count += 1
 
     return count
+
+
+def create_rules_dir(
+    project_path: Path,
+    drift_report: DriftReport | None = None,
+) -> int:
+    """Create .claude/rules/learned/ directory with README.
+
+    Creates the directory structure for persisting lessons extracted by
+    /map-learn. The README is copied from templates and managed; existing
+    user rules files are never touched.
+
+    Returns:
+        Number of files installed (0 or 1 for README).
+    """
+    rules_dir = project_path / ".claude" / "rules" / "learned"
+    rules_dir.mkdir(parents=True, exist_ok=True)
+
+    templates_dir = get_templates_dir()
+    readme_template = templates_dir / "rules" / "learned" / "README.md"
+
+    count = 0
+    if readme_template.exists():
+        dest = rules_dir / "README.md"
+        if not dest.exists():
+            version = _get_version()
+            result = copy_managed_file(readme_template, dest, version)
+            if drift_report is not None:
+                drift_report.results.append(result)
+            count += 1
+
+    return count

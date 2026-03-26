@@ -2,9 +2,9 @@
 description: Extract and preserve lessons from completed workflows (OPTIONAL learning step)
 ---
 
-# MAP Learn - Post-Workflow Learning
+# MAP Learn - Post-Workflow Learning with Persistence
 
-**Purpose:** Standalone command to extract lessons AFTER completing any MAP workflow.
+**Purpose:** Extract lessons AFTER completing any MAP workflow and persist them to `.claude/rules/learned/` so Claude Code loads them automatically in future sessions.
 
 **When to use:**
 - After `/map-efficient` completes (to preserve patterns from the workflow)
@@ -12,8 +12,10 @@ description: Extract and preserve lessons from completed workflows (OPTIONAL lea
 - After `/map-fast` completes (to retroactively add learning when learning was skipped)
 
 **What it does:**
-1. Calls Reflector agent to analyze workflow outputs and extract patterns
-2. Outputs a structured learning summary for the user to review
+1. Reads existing learned rules (for deduplication)
+2. Calls Reflector agent to analyze workflow outputs and extract patterns
+3. Writes new lessons to `.claude/rules/learned/*.md` files
+4. Outputs a structured learning summary
 
 **Workflow Summary Input:** $ARGUMENTS
 
@@ -21,7 +23,7 @@ description: Extract and preserve lessons from completed workflows (OPTIONAL lea
 
 ## IMPORTANT: This is an OPTIONAL step
 
-**You are NOT required to run this command.** No MAP workflow includes automatic learning -- learning is always a separate step via this command.
+**You are NOT required to run this command.** No MAP workflow includes automatic learning — learning is always a separate step via this command.
 
 Use /map-learn when:
 - You completed /map-efficient, /map-debug, or /map-fast and want to extract lessons
@@ -45,27 +47,23 @@ Check that $ARGUMENTS contains workflow summary:
 - Analysis results (Predictor/Evaluator outputs, if available)
 - Workflow metrics (total subtasks, iterations, files changed)
 
-**Example valid input:**
-```
-Workflow: /map-efficient "Add user authentication"
-Subtasks completed: 3
-Files changed: api/auth.py, models/user.py, tests/test_auth.py
-Iterations: 5 total (Actor->Monitor loops)
-
-Subtask 1 (Actor output):
-[paste Actor JSON output]
-
-Subtask 1 (Monitor result):
-[paste Monitor validation]
-
-...
-```
-
 **If input is incomplete:** Ask user to provide missing information before proceeding.
 
 ---
 
-## Step 2: Reflector Analysis
+## Step 2: Read Existing Rules and Call Reflector
+
+### Step 2a: Gather existing lessons for deduplication
+
+Before calling the Reflector, read all existing `.claude/rules/learned/*.md` files (excluding README.md). Extract the bullet points from each file.
+
+```bash
+ls .claude/rules/learned/*.md 2>/dev/null || echo "NO_EXISTING_RULES"
+```
+
+If files exist, read each one and collect all lines starting with `- **`. These are existing lessons that the Reflector should NOT duplicate.
+
+### Step 2b: Call Reflector
 
 **MUST use subagent_type="reflector"** (NOT general-purpose):
 
@@ -77,6 +75,9 @@ Task(
 
 **Workflow Summary:**
 $ARGUMENTS
+
+**Existing learned rules (do NOT duplicate these):**
+[paste extracted bullets from Step 2a, or 'None — first learning session' if no files exist]
 
 **Analysis Instructions:**
 
@@ -93,47 +94,127 @@ Analyze holistically across ALL subtasks:
 - Testing patterns (edge cases, test structure)
 - Performance patterns (optimization, resource usage)
 - Error patterns (what went wrong, how it was fixed)
+- Architecture patterns (system design, component boundaries)
+
+**IMPORTANT:** Do NOT repeat any pattern from the 'Existing learned rules' list above.
+Only suggest genuinely new patterns not already captured.
 
 **Output JSON with:**
-- key_insight: string (one sentence takeaway for entire workflow)
+- key_insight: string (one sentence takeaway in 'When X, always Y because Z' format)
 - patterns_used: array of strings (existing patterns applied successfully)
 - patterns_discovered: array of strings (new patterns worth preserving)
-- bullet_updates: array of {bullet_id, tag: 'helpful'|'harmful', reason}
-- suggested_new_bullets: array of {section, content, code_example, rationale}
+- suggested_new_bullets: array of {section, title, content, code_example, rationale}
+  where section is one of: SECURITY_PATTERNS, IMPLEMENTATION_PATTERNS, PERFORMANCE_PATTERNS,
+  ERROR_PATTERNS, ARCHITECTURE_PATTERNS, TESTING_STRATEGIES
 - workflow_efficiency: {total_iterations, avg_per_subtask, bottlenecks: array of strings}"
 )
 ```
 
 ---
 
-## Step 3: Summary Report
+## Step 3: Write Rules Files
 
-Provide learning summary:
+Transform Reflector output into `.claude/rules/learned/` markdown files.
+
+### Section-to-file mapping
+
+| Reflector section | File | `paths:` frontmatter |
+|---|---|---|
+| `SECURITY_PATTERNS` | `security-patterns.md` | None (loads always) |
+| `IMPLEMENTATION_PATTERNS` | `implementation-patterns.md` | Derived from file extensions in workflow |
+| `PERFORMANCE_PATTERNS` | `performance-patterns.md` | Derived from file extensions in workflow |
+| `ERROR_PATTERNS` | `error-patterns.md` | None (loads always) |
+| `ARCHITECTURE_PATTERNS` | `architecture-patterns.md` | None (loads always) |
+| `TESTING_STRATEGIES` | `testing-strategies.md` | `["**/test_*", "**/tests/**", "**/*_test.*", "**/*.test.*"]` |
+
+### Deriving `paths:` frontmatter
+
+For `IMPLEMENTATION_PATTERNS` and `PERFORMANCE_PATTERNS`:
+1. Extract file extensions from the workflow summary (e.g., `.py`, `.go`, `.ts`)
+2. Generate glob patterns: `.py` → `["**/*.py"]`, `.go` → `["**/*.go"]`
+3. If no extensions found or multiple languages, omit `paths:` (unconditional loading)
+
+### Writing each file
+
+For each `suggested_new_bullet` from the Reflector:
+
+1. **Determine target file** from the section mapping above.
+
+2. **If file does NOT exist**, create it with this structure:
+
+```markdown
+---
+paths:
+  - "**/*.py"
+---
+
+# {Section Title} (Learned)
+
+<!-- MAP-LEARN: populated by /map-learn. Edit freely. -->
+
+```
+
+Omit the `paths:` frontmatter block entirely for sections that load unconditionally.
+
+3. **Append the bullet** to the file:
+
+```markdown
+- **{title}** ({YYYY-MM-DD}): {content} [workflow: {workflow_type}]
+```
+
+If `code_example` is present, add it indented below:
+
+```markdown
+- **{title}** ({YYYY-MM-DD}): {content} [workflow: {workflow_type}]
+  ```{language}
+  {code_example}
+  ```
+```
+
+4. **Also write `key_insight`** from the top-level Reflector output as a bullet in the most relevant section file. Use section `IMPLEMENTATION_PATTERNS` as default if no better match.
+
+### File size check
+
+After writing, count bullets in each modified file. If any file exceeds 50 bullets, print a warning:
+
+```
+⚠ {filename} has {N} rules (recommended max: 50). Consider pruning old or low-value rules.
+```
+
+---
+
+## Step 4: Summary Report
+
+Print the learning summary:
 
 ```markdown
 ## /map-learn Completion Summary
 
 **Workflow Analyzed:** [workflow type from input]
 **Total Subtasks:** [N]
-**Iterations Required:** [total Actor->Monitor loops]
+
+### Rules Written to .claude/rules/learned/
+[For each file written:]
+- {filename}: +{N} rules ({action: 'new file created' | 'appended'})
+[If duplicates were skipped:]
+- Duplicates skipped: {N}
 
 ### Reflector Insights
-- **Key Insight:** [key_insight from Reflector]
-- **Patterns Used:** [count] existing patterns applied successfully
+- **Key Insight:** [key_insight]
+- **Patterns Applied:** [count] existing patterns used successfully
 - **Patterns Discovered:** [count] new patterns identified
-
-### Discovered Patterns
-[List each pattern from patterns_discovered with description]
-
-### Suggested Improvements
-[List each suggested_new_bullet with section and rationale]
 
 ### Workflow Efficiency
 - **Total Iterations:** [total_iterations]
 - **Average per Subtask:** [avg_per_subtask]
 - **Bottlenecks:** [list bottlenecks]
 
-**Learning extraction complete.**
+### Next Steps
+- Review written rules: open `.claude/rules/learned/` files
+- Rules will auto-load in next Claude Code session
+- Commit to share with team: `git add .claude/rules/`
+
+**Learning extraction and persistence complete.**
 ```
 
 ---
@@ -141,90 +222,71 @@ Provide learning summary:
 ## Token Budget Estimate
 
 **Typical /map-learn execution:**
+- Read existing rules: ~500 tokens
 - Reflector: ~3K tokens (depends on workflow size)
-- Summary: ~500 tokens
-- **Total:** 3-4K tokens for standard workflow
+- Write rules + summary: ~1K tokens
+- **Total:** 4-5K tokens for standard workflow
 
 **Large workflow (8+ subtasks):**
+- Read existing rules: ~1K tokens
 - Reflector: ~6K tokens
-- Summary: ~1K tokens
-- **Total:** 6-7K tokens
+- Write rules + summary: ~2K tokens
+- **Total:** 8-9K tokens
 
 ---
 
 ## Examples
 
-### Example 1: Learning from /map-fast workflow
-
-User completed `/map-fast "Implement real-time dashboard"` (no learning performed).
-
-Now retroactively extract lessons:
+### Example 1: First learning session (no existing rules)
 
 ```
-User: /map-learn "Workflow: /map-fast real-time dashboard
-Subtasks: 4 (WebSocket setup, React components, state management, styling)
-Files: ws-server.js, Dashboard.jsx, useWebSocket.js, dashboard.css
-Iterations: 2 (minor Monitor feedback)
+User: /map-learn "Workflow: /map-efficient 'Add user authentication'
+Subtasks: 3 (JWT setup, middleware, tests)
+Files: api/auth.py, middleware/jwt.py, tests/test_auth.py
+Iterations: 5
 
-Key implementation:
-- WebSocket reconnection with exponential backoff
-- React hooks for real-time state updates
-- Optimistic UI updates before server confirmation"
+Key decisions:
+- Used PyJWT with RS256
+- Middleware validates on every request
+- Refresh token rotation implemented"
 ```
 
-Reflector extracts:
-- Pattern: WebSocket reconnection logic
-- Pattern: Optimistic UI updates
+Result: Creates `.claude/rules/learned/security-patterns.md` and `implementation-patterns.md` with new rules.
 
-### Example 2: Batched learning
+### Example 2: Second learning session (deduplication)
 
-User completed 3 separate debugging sessions, wants to batch-learn:
+```
+User: /map-learn "Workflow: /map-efficient 'Add API rate limiting'
+Subtasks: 2 (rate limiter, tests)
+Files: middleware/rate_limit.py, tests/test_rate_limit.py
+Iterations: 3"
+```
+
+Reflector sees existing JWT/auth patterns in `security-patterns.md`, does NOT duplicate them, only adds new rate-limiting patterns.
+
+### Example 3: Batched learning
 
 ```
 User: /map-learn "Workflows: 3 debugging sessions this week
-
-Session 1: Fixed race condition in payment processing
-- Pattern: Added database transaction locks
-- Iterations: 4
-
-Session 2: Resolved memory leak in WebSocket connections
-- Pattern: Implemented connection pooling with limits
-- Iterations: 3
-
-Session 3: Fixed timezone bug in scheduler
-- Pattern: Always use UTC internally, convert at display layer
-- Iterations: 2
-
-Common theme: Concurrency issues"
+Session 1: Race condition in payment processing → DB transaction locks
+Session 2: Memory leak in WebSocket → connection pooling
+Session 3: Timezone bug in scheduler → always UTC internally"
 ```
 
-Reflector extracts:
-- Common pattern: Concurrency control
-- New patterns: DB locks, connection pooling, timezone handling
+Result: Appends patterns across multiple topic files.
 
 ---
 
 ## Integration with Other Commands
 
 ### After /map-efficient (recommended)
-
-/map-efficient does NOT include automatic learning. Use /map-learn to:
-- Extract patterns from completed implementation
-- Preserve successful approaches for future reference
-- Document any edge cases discovered
+/map-efficient prints: "Optional: Run /map-learn to preserve patterns."
 
 ### After /map-debug (recommended)
-
-/map-debug does NOT include automatic learning. Use /map-learn to:
-- Capture holistic debugging strategy
-- Preserve error investigation patterns
-- Document root cause analysis approach
+Preserves debugging patterns and root cause analysis approaches.
 
 ### After /map-fast (optional)
-
-/map-fast is a reduced-analysis workflow. Use /map-learn only if:
-- The work revealed patterns worth preserving
-- You want to retroactively capture learnings
+Only if the work revealed patterns worth preserving.
 
 ---
 
@@ -232,15 +294,8 @@ Reflector extracts:
 
 **This command is OPTIONAL.** You are not required to run it after every workflow.
 
-**When to skip /map-learn:**
-- No meaningful patterns emerged
-- Throwaway code with no reusable insights
-- Time constraints (learning can happen later)
+**Where rules are stored:** `.claude/rules/learned/` — committed with the project, shared with team, auto-loaded by Claude Code.
 
-**When to use /map-learn:**
-- Batching multiple workflows for efficient pattern extraction
-- Retroactively adding learning to /map-fast workflows
-- Capturing holistic patterns across subtasks
-- Custom workflows that didn't include learning
+**Rules are yours to edit.** Add context, fix inaccuracies, prune outdated patterns. They are project knowledge, not framework artifacts.
 
-**Remember:** The goal is to build organizational knowledge, not to learn from every single task. Quality over quantity.
+**Goal:** Each `/map-learn` invocation makes the next session stronger. If you're still explaining the same gotchas to Claude after running `/map-learn`, the rules need to be more specific.
