@@ -48,6 +48,28 @@
         ]
       }
     },
+    "map-learn": {
+      "type": "domain",
+      "enforcement": "suggest",
+      "priority": "low",
+      "description": "Extract and persist workflow lessons to .claude/rules/learned/",
+      "promptTriggers": {
+        "keywords": [
+          "extract lessons",
+          "save patterns",
+          "learn from workflow",
+          "preserve learnings",
+          "map-learn",
+          "project memory",
+          "capture gotchas"
+        ],
+        "intentPatterns": [
+          "(extract|save|preserve|capture).*(lesson|pattern|learning|gotcha)",
+          "(learn|remember).*(workflow|session|implementation)",
+          "map-learn"
+        ]
+      }
+    },
     "map-cli-reference": {
       "type": "domain",
       "enforcement": "suggest",

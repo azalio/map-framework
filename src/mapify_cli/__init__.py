@@ -123,6 +123,7 @@ from mapify_cli.delivery import (
     create_config_files,
     create_commands_dir,
     create_map_tools,
+    create_rules_dir,
 )
 from mapify_cli.config import (
     configure_global_permissions,
@@ -808,6 +809,15 @@ def init(
         tracker.complete("map-config", str(config_path.relative_to(project_path)))
     except Exception as e:
         tracker.error("map-config", f"skipped: {e}")
+
+    # Create .claude/rules/learned/ directory for /map-learn persistence
+    tracker.add("rules-dir", "Create learned rules directory")
+    tracker.start("rules-dir")
+    rules_count = create_rules_dir(project_path)
+    tracker.complete(
+        "rules-dir",
+        f"{rules_count} file" if rules_count <= 1 else f"{rules_count} files",
+    )
 
     if selected_mcp_servers:
         # Create internal MCP config (for MAP Framework agent mappings)

@@ -1,5 +1,7 @@
 ---
-description: Extract and preserve lessons from completed workflows (OPTIONAL learning step)
+name: map-learn
+description: Extract and preserve lessons from completed workflows. Use when you want to capture patterns after /map-efficient, /map-debug, or /map-fast completes. Do NOT use for active workflow execution or trivial tasks with no reusable patterns.
+disable-model-invocation: true
 ---
 
 # MAP Learn - Post-Workflow Learning with Persistence
@@ -18,6 +20,15 @@ description: Extract and preserve lessons from completed workflows (OPTIONAL lea
 4. Outputs a structured learning summary
 
 **Workflow Summary Input:** $ARGUMENTS
+
+## Templates
+
+Reference templates for the rules file format are bundled with this skill:
+- [rules-unconditional.md](templates/rules-unconditional.md) — format for cross-cutting rules (security, architecture, errors) that load in every session
+- [rules-with-paths.md](templates/rules-with-paths.md) — format for language-specific rules with `paths:` frontmatter scoping
+- [example-rules.md](templates/example-rules.md) — real-world example showing Go controller lessons with code snippets
+
+Use these templates when creating new rules files in Step 3. Copy the appropriate template structure, replace placeholders, and append bullets.
 
 ---
 
@@ -116,6 +127,11 @@ Only suggest genuinely new patterns not already captured.
 
 Transform Reflector output into `.claude/rules/learned/` markdown files.
 
+**Use the bundled templates** from `${CLAUDE_SKILL_DIR}/templates/` as the format reference:
+- `rules-unconditional.md` for sections without `paths:` frontmatter
+- `rules-with-paths.md` for language-scoped sections
+- `example-rules.md` for bullet format with code snippets
+
 ### Section-to-file mapping
 
 | Reflector section | File | `paths:` frontmatter |
@@ -140,21 +156,11 @@ For each `suggested_new_bullet` from the Reflector:
 
 1. **Determine target file** from the section mapping above.
 
-2. **If file does NOT exist**, create it with this structure:
-
-```markdown
----
-paths:
-  - "**/*.py"
----
-
-# {Section Title} (Learned)
-
-<!-- MAP-LEARN: populated by /map-learn. Edit freely. -->
-
-```
-
-Omit the `paths:` frontmatter block entirely for sections that load unconditionally.
+2. **If file does NOT exist**, create it using the template from `${CLAUDE_SKILL_DIR}/templates/`:
+   - Use `rules-with-paths.md` template for sections with path scoping
+   - Use `rules-unconditional.md` template for cross-cutting sections
+   - Replace `{SECTION_TITLE}` with the human-readable section name
+   - Replace `{EXT}` with the derived extension glob
 
 3. **Append the bullet** to the file:
 
@@ -162,7 +168,7 @@ Omit the `paths:` frontmatter block entirely for sections that load unconditiona
 - **{title}** ({YYYY-MM-DD}): {content} [workflow: {workflow_type}]
 ```
 
-If `code_example` is present, add it indented below:
+If `code_example` is present, add it indented below (see `example-rules.md` for format):
 
 ```markdown
 - **{title}** ({YYYY-MM-DD}): {content} [workflow: {workflow_type}]
@@ -287,6 +293,20 @@ Preserves debugging patterns and root cause analysis approaches.
 
 ### After /map-fast (optional)
 Only if the work revealed patterns worth preserving.
+
+---
+
+## Troubleshooting
+
+**No `.claude/rules/learned/` directory:** Run `mapify init` or create it manually: `mkdir -p .claude/rules/learned`
+
+**Rules not loading in next session:** Verify files are `.md` format in `.claude/rules/learned/`. Check that `paths:` frontmatter globs match your file structure. Run `/memory` to see loaded rules.
+
+**Too many rules (>50 per file):** Prune outdated lessons. Remove rules that no longer apply or are too project-specific. Keep only patterns that prevent real mistakes.
+
+**Duplicate rules appearing:** Ensure Step 2a reads existing rules before calling Reflector. If duplicates persist, manually remove them — the deduplication is LLM-based and not perfect.
+
+**Reflector returns empty results:** Provide more detail in the workflow summary. Include specific files changed, iterations, and key decisions.
 
 ---
 

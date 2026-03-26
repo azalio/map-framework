@@ -459,3 +459,42 @@ class TestMapConfigTypeCoercion:
         # Should get defaults since constructor will fail with bad types
         assert result.actor_monitor_max_retries == defaults.actor_monitor_max_retries
         assert result.confidence_threshold == defaults.confidence_threshold
+
+
+class TestRulesDir:
+    """Test .claude/rules/learned/ directory creation."""
+
+    def test_create_rules_dir_creates_directory(self, tmp_path):
+        from mapify_cli.delivery.file_copier import create_rules_dir
+
+        count = create_rules_dir(tmp_path)
+        rules_dir = tmp_path / ".claude" / "rules" / "learned"
+        assert rules_dir.is_dir()
+        readme = rules_dir / "README.md"
+        assert readme.exists()
+        assert "MAP Framework" in readme.read_text()
+        assert count == 1
+
+    def test_create_rules_dir_preserves_existing_readme(self, tmp_path):
+        from mapify_cli.delivery.file_copier import create_rules_dir
+
+        # Pre-create with custom content
+        rules_dir = tmp_path / ".claude" / "rules" / "learned"
+        rules_dir.mkdir(parents=True)
+        readme = rules_dir / "README.md"
+        readme.write_text("My custom README\n")
+
+        count = create_rules_dir(tmp_path)
+        assert readme.read_text() == "My custom README\n"
+        assert count == 0  # nothing installed
+
+    def test_create_rules_dir_idempotent(self, tmp_path):
+        from mapify_cli.delivery.file_copier import create_rules_dir
+
+        create_rules_dir(tmp_path)
+        create_rules_dir(tmp_path)  # second call
+        rules_dir = tmp_path / ".claude" / "rules" / "learned"
+        assert rules_dir.is_dir()
+        # Only README, no duplicates
+        files = list(rules_dir.iterdir())
+        assert len(files) == 1
