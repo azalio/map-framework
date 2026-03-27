@@ -95,6 +95,10 @@ The orchestration lives in `.claude/commands/map-*.md` prompts created by `mapif
 | [Architecture](docs/ARCHITECTURE.md) | Agents, MCP integration, customization |
 | [Platform Spec](docs/MAP_PLATFORM_SPEC.md) | Platform refactor roadmap, codebase analysis |
 
+## Case Study
+
+- [DevOpsConf 2026 case study](https://github.com/azalio/devopsconf-ai-develop) — real production case: SPEC -> PLAN -> TEST -> CODE -> REVIEW -> LEARN
+
 ## Trouble?
 
 - **Command not found** → Run `mapify init` in your project first
