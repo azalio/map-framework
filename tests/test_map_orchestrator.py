@@ -1294,8 +1294,12 @@ class TestMonitorFailed:
 
     def test_feedback_files_numbered_per_retry(self, branch_dir, tmp_path):
         """Each retry creates a separate feedback file, not overwriting."""
-        self._make_monitor_state(tmp_path, branch_dir)
+        state_file = self._make_monitor_state(tmp_path, branch_dir)
         r1 = map_orchestrator.monitor_failed(branch_dir, "issue 1")
+        # Reset phase back to MONITOR so the second call passes the guard
+        state = map_orchestrator.StepState.load(state_file)
+        state.current_step_phase = "MONITOR"
+        state.save(state_file)
         r2 = map_orchestrator.monitor_failed(branch_dir, "issue 2")
         assert r1["feedback_file"] != r2["feedback_file"]
         assert Path(r1["feedback_file"]).exists()
@@ -1309,6 +1313,24 @@ class TestMonitorFailed:
         map_orchestrator.monitor_failed(branch_dir, "")
         state = map_orchestrator.StepState.load(state_file)
         assert state.retry_count == 6  # incremented and saved
+
+    def test_phase_guard_rejects_non_monitor_phase(self, branch_dir, tmp_path):
+        """monitor_failed() returns error if called from non-MONITOR phase."""
+        self._make_monitor_state(
+            tmp_path, branch_dir, current_step_phase="ACTOR"
+        )
+        result = map_orchestrator.monitor_failed(branch_dir, "feedback")
+        assert result["status"] == "error"
+        assert "ACTOR" in result["message"]
+        assert "MONITOR" in result["message"]
+
+    def test_monitor_failed_then_get_next_step(self, branch_dir, tmp_path):
+        """Integration: after monitor_failed(), get_next_step() returns ACTOR."""
+        self._make_monitor_state(tmp_path, branch_dir)
+        map_orchestrator.monitor_failed(branch_dir, "fix the bug")
+        result = map_orchestrator.get_next_step(branch_dir)
+        assert result["phase"] == "ACTOR"
+        assert result["step_id"] == "2.3"
 
 
 class TestWaveMonitorFailed:
@@ -1382,6 +1404,87 @@ class TestWaveMonitorFailed:
         )
         result = map_orchestrator.wave_monitor_failed("ST-001", branch_dir, "")
         assert result["retry_count"] == 1
+
+    def test_max_retries_does_not_reset_subtask_phase(self, branch_dir, tmp_path):
+        """subtask_phases is NOT modified when max_retries is hit."""
+        state_file = self._make_wave_state(
+            tmp_path,
+            branch_dir,
+            subtask_retry_counts={"ST-001": 5, "ST-002": 0},
+        )
+        map_orchestrator.wave_monitor_failed("ST-001", branch_dir, "")
+        state = map_orchestrator.StepState.load(state_file)
+        assert state.subtask_phases["ST-001"] == "2.4"  # not reset on escalation
+
+    def test_wave_monitor_failed_then_get_wave_step(self, branch_dir, tmp_path):
+        """Integration: after wave_monitor_failed(), get_wave_step() shows ACTOR for reset subtask."""
+        self._make_wave_state(tmp_path, branch_dir)
+        map_orchestrator.wave_monitor_failed("ST-001", branch_dir, "fix type")
+        result = map_orchestrator.get_wave_step(branch_dir)
+        subtask_map = {s["subtask_id"]: s for s in result["subtasks"]}
+        assert subtask_map["ST-001"]["step_id"] == "2.3"
+        assert subtask_map["ST-001"]["phase"] == "ACTOR"
+        assert subtask_map["ST-002"]["step_id"] == "2.4"  # unchanged
+
+
+class TestReopenForFixes:
+    """Tests for reopen_for_fixes() — transition COMPLETE → ACTOR for review fixes."""
+
+    def _make_complete_state(self, tmp_path, branch, **overrides):
+        state = map_orchestrator.StepState()
+        state.current_step_id = "COMPLETE"
+        state.current_step_phase = "COMPLETE"
+        state.pending_steps = []
+        state.completed_steps = ["1.0", "1.5", "1.6", "2.3", "2.4"]
+        for k, v in overrides.items():
+            setattr(state, k, v)
+        state_file = tmp_path / ".map" / branch / "step_state.json"
+        state.save(state_file)
+        return state_file
+
+    def test_reopens_from_complete_to_actor(self, branch_dir, tmp_path):
+        state_file = self._make_complete_state(tmp_path, branch_dir)
+        result = map_orchestrator.reopen_for_fixes(branch_dir, "fix type error")
+        assert result["status"] == "reopened"
+        assert result["current_phase"] == "ACTOR"
+        state = map_orchestrator.StepState.load(state_file)
+        assert state.current_step_phase == "ACTOR"
+        assert state.current_step_id == "2.3"
+        assert state.pending_steps == ["2.3", "2.4"]
+
+    def test_resets_retry_count(self, branch_dir, tmp_path):
+        self._make_complete_state(tmp_path, branch_dir, retry_count=3)
+        map_orchestrator.reopen_for_fixes(branch_dir, "")
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state = map_orchestrator.StepState.load(state_file)
+        assert state.retry_count == 0
+
+    def test_rejects_non_complete_phase(self, branch_dir, tmp_path):
+        self._make_complete_state(
+            tmp_path, branch_dir, current_step_phase="MONITOR"
+        )
+        result = map_orchestrator.reopen_for_fixes(branch_dir, "")
+        assert result["status"] == "error"
+        assert "MONITOR" in result["message"]
+
+    def test_no_state_file_returns_error(self, branch_dir, tmp_path):
+        result = map_orchestrator.reopen_for_fixes(branch_dir, "")
+        assert result["status"] == "error"
+
+    def test_feedback_file_written(self, branch_dir, tmp_path):
+        self._make_complete_state(tmp_path, branch_dir)
+        result = map_orchestrator.reopen_for_fixes(branch_dir, "fix DRY violation")
+        assert result["feedback_file"] is not None
+        content = Path(result["feedback_file"]).read_text()
+        assert "fix DRY violation" in content
+
+    def test_reopen_then_get_next_step(self, branch_dir, tmp_path):
+        """Integration: after reopen, get_next_step returns ACTOR."""
+        self._make_complete_state(tmp_path, branch_dir)
+        map_orchestrator.reopen_for_fixes(branch_dir, "review fixes")
+        result = map_orchestrator.get_next_step(branch_dir)
+        assert result["phase"] == "ACTOR"
+        assert result["step_id"] == "2.3"
 
 
 if __name__ == "__main__":

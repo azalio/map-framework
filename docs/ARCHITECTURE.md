@@ -693,7 +693,9 @@ See [USAGE.md - Workflow Variants](./USAGE.md#workflow-variants) for detailed de
 │  • 8 step phases (DECOMPOSE → SUBTASK_APPROVAL + 2 TDD)     │
 │  • State file: .map/<branch>/step_state.json                │
 │  • Enforces: Sequential execution, no step skipping         │
-│  • CLI: get_next_step, validate_step, initialize            │
+│  • CLI: get_next_step, validate_step, initialize,            │
+│         monitor_failed, wave_monitor_failed, skip_step,      │
+│         set_waves, get_wave_step, advance_wave, + more       │
 └─────────────────────────────────────────────────────────────┘
 ```
 

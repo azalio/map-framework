@@ -299,7 +299,7 @@ loop:
 
     # Phase D: Retry handling
     # For each monitor that returned valid=false:
-    #   RETRY=$(python3 .map/scripts/map_orchestrator.py wave_monitor_failed SUBTASK_ID "feedback")
+    #   RETRY=$(python3 .map/scripts/map_orchestrator.py wave_monitor_failed $subtask_id --feedback "feedback")
     #   If RETRY.status == "max_retries": escalate to user
     #   Otherwise: re-run actor + monitor for that subtask (serially)
 
@@ -456,17 +456,17 @@ fi
 if monitor_output["valid"] == false:
     # Use orchestrator to handle retry: requeues ACTOR+MONITOR, increments retry_count,
     # switches phase so workflow-gate allows edits, persists feedback for Actor.
-    RETRY_RESULT=$(python3 .map/scripts/map_orchestrator.py monitor_failed "MONITOR_FEEDBACK_TEXT")
+    RETRY_RESULT=$(python3 .map/scripts/map_orchestrator.py monitor_failed --feedback "MONITOR_FEEDBACK_TEXT")
     # RETRY_RESULT.status is "retrying" or "max_retries"
     # RETRY_RESULT.retry_count shows current attempt number
-    # RETRY_RESULT.feedback_file points to .map/<branch>/monitor_feedback.md
+    # RETRY_RESULT.feedback_file points to .map/<branch>/monitor_feedback_retry{N}.md
 
     RETRY_STATUS=$(echo "$RETRY_RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',''))")
     RETRY_COUNT=$(echo "$RETRY_RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('retry_count',0))")
 
     if RETRY_STATUS == "max_retries":
         # Escalate to user (retry limit reached after 5 attempts)
-        AskUserQuestion(questions=[{"question": "Monitor retry limit reached (5 attempts). How to proceed?", "header": "Retry limit", "options": [{"label": "Continue", "description": "Reset retry counter and try again"}, {"label": "Skip", "description": "Skip this subtask and move to next"}, {"label": "Abort", "description": "Stop workflow"}], "multiSelect": false}])
+        AskUserQuestion(questions=[{"question": "Monitor retry limit reached (5 attempts). How to proceed?", "header": "Retry limit", "options": [{"label": "Continue", "description": "Continue with more retries (manually edit step_state.json retry_count)"}, {"label": "Skip", "description": "Skip this subtask and move to next"}, {"label": "Abort", "description": "Stop workflow"}], "multiSelect": false}])
 
     # === STUCK RECOVERY (at retry 3) ===
     # At retry 3, intercept with intermediate recovery before retries 4-5.
@@ -506,7 +506,7 @@ Analyze: why is the current approach failing? What dependencies are missed?"""
     # to Actor so it can read the monitor feedback explicitly.
 
 # For wave-based execution, use wave_monitor_failed instead:
-# python3 .map/scripts/map_orchestrator.py wave_monitor_failed ST-001 "feedback text"
+# python3 .map/scripts/map_orchestrator.py wave_monitor_failed ST-001 --feedback "feedback text"
 ```
 
 ### Monitor Artifact Rule
