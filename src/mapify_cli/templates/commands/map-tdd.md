@@ -135,6 +135,20 @@ STRICT RULES:
    (not inside type annotations). Run the project linter (ruff/eslint/golangci-lint)
    on test files before finishing. Fix any lint errors in your test files.
 
+TEST QUALITY REQUIREMENTS — avoid "2+2=4" tests:
+- Every test must verify SEMANTIC BEHAVIOR, not just that a single branch executes.
+  Bad: "returns error when input is nil" (trivial nil-check).
+  Good: "returns NotFound error and does NOT call downstream API when input is nil".
+- Tests must assert MULTIPLE CONSEQUENCES of an action (side effects, return values,
+  state changes, calls to dependencies). A test that asserts only one thing from
+  a single if-branch is trivial — combine it with assertions about what else
+  should or should NOT happen.
+- Prefer scenario-based tests that exercise a CHAIN of behavior (setup → action →
+  verify multiple outcomes) over unit-level tests that check one field.
+- For each test ask: "Would this test catch a real bug, or does it just confirm
+  the obvious?" If the answer is "obvious", merge it into a richer scenario or drop it.
+- Aim for at least 60% of tests being full semantic scenarios (multi-step, multi-assert).
+
 Output:
 - Test files written via Edit/Write tools
 """
@@ -188,9 +202,20 @@ fi
 
 **Then evaluate test results:**
 
-- **Tests FAIL with assertion/import errors** → GOOD. This is the expected TDD state ("Red" phase). Proceed to ACTOR.
+- **Tests FAIL with assertion/import errors** → GOOD. This is the expected TDD state ("Red" phase). But also run the quality check below before proceeding.
 - **Tests PASS** → PROBLEM. Tests are trivial or not testing real behavior. Go back to TEST_WRITER with feedback: "Tests pass without implementation. Tests must assert behavior that requires code to be written."
 - **Tests have syntax errors** → Go back to TEST_WRITER with feedback to fix syntax.
+
+**Quality gate (run even if tests correctly fail):**
+
+Review the test files and classify each test as:
+- **Semantic** — tests real behavior with multi-step scenario or multi-assert verification
+- **Trivial ("2+2=4")** — tests a single if-branch or obvious nil-check with one assert
+
+If more than 40% of tests are trivial, go back to TEST_WRITER with feedback:
+"Too many trivial tests. [N] of [M] tests are single-branch checks. Merge trivial
+tests into richer scenarios that verify multiple consequences. Each test should catch
+a real bug, not just confirm one obvious branch."
 
 ```bash
 python3 .map/scripts/map_orchestrator.py validate_step "2.26"
