@@ -969,6 +969,21 @@ def advance_wave(branch: str) -> dict:
     }
 
 
+def _write_feedback_file(
+    branch: str, filename: str, header: str, feedback: str
+) -> Optional[str]:
+    """Write monitor feedback to a file if feedback is non-empty.
+
+    Returns the file path string, or None if nothing was written.
+    """
+    if not feedback.strip():
+        return None
+    fb_path = Path(f".map/{branch}/{filename}")
+    fb_path.parent.mkdir(parents=True, exist_ok=True)
+    fb_path.write_text(f"# {header}\n\n{feedback}\n", encoding="utf-8")
+    return str(fb_path)
+
+
 def monitor_failed(branch: str, feedback: str = "") -> dict:
     """Handle Monitor valid=false: requeue ACTOR+MONITOR, increment retry_count.
 
@@ -1000,23 +1015,20 @@ def monitor_failed(branch: str, feedback: str = "") -> dict:
             ),
         }
 
-    # Requeue ACTOR (2.3) and MONITOR (2.4)
-    step_order = _get_step_order(state.tdd_mode)
-    actor_idx = step_order.index("2.3")
-    state.pending_steps = step_order[actor_idx:]  # ["2.3", "2.4"] (+ TDD steps if any)
+    # Requeue only ACTOR (2.3) and MONITOR (2.4) on retry.
+    # TDD pre-steps (2.25/2.26) are NOT re-run — tests were already written
+    # and validated before the first Actor attempt.
+    state.pending_steps = ["2.3", "2.4"]
     state.current_step_id = "2.3"
     state.current_step_phase = "ACTOR"
 
-    # Persist feedback so Actor can read it
-    feedback_file = None
-    if feedback.strip():
-        fb_path = Path(f".map/{branch}/monitor_feedback.md")
-        fb_path.parent.mkdir(parents=True, exist_ok=True)
-        fb_path.write_text(
-            f"# Monitor Feedback (retry {state.retry_count})\n\n{feedback}\n",
-            encoding="utf-8",
-        )
-        feedback_file = str(fb_path)
+    # Persist feedback so Actor can read it (numbered to preserve history)
+    feedback_file = _write_feedback_file(
+        branch,
+        f"monitor_feedback_retry{state.retry_count}.md",
+        f"Monitor Feedback (retry {state.retry_count})",
+        feedback,
+    )
 
     state.save(state_file)
 
@@ -1071,17 +1083,13 @@ def wave_monitor_failed(
     # Reset subtask phase back to ACTOR
     state.subtask_phases[subtask_id] = "2.3"
 
-    # Persist feedback
-    feedback_file = None
-    if feedback.strip():
-        fb_path = Path(f".map/{branch}/monitor_feedback_{subtask_id}.md")
-        fb_path.parent.mkdir(parents=True, exist_ok=True)
-        fb_path.write_text(
-            f"# Monitor Feedback for {subtask_id} (retry {current_retries})\n\n"
-            f"{feedback}\n",
-            encoding="utf-8",
-        )
-        feedback_file = str(fb_path)
+    # Persist feedback (numbered to preserve history)
+    feedback_file = _write_feedback_file(
+        branch,
+        f"monitor_feedback_{subtask_id}_retry{current_retries}.md",
+        f"Monitor Feedback for {subtask_id} (retry {current_retries})",
+        feedback,
+    )
 
     state.save(state_file)
 
@@ -1623,7 +1631,10 @@ def main():
             print(json.dumps(result, indent=2))
 
         elif args.command == "monitor_failed":
-            feedback = args.task_or_step or ""
+            parts = ([args.task_or_step] if args.task_or_step else []) + (
+                args.extra_args or []
+            )
+            feedback = " ".join(parts)
             result = monitor_failed(branch, feedback)
             print(json.dumps(result, indent=2))
 

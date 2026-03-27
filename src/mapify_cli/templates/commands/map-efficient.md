@@ -299,8 +299,9 @@ loop:
 
     # Phase D: Retry handling
     # For each monitor that returned valid=false:
-    #   Re-run actor + monitor for that subtask (serially)
-    #   Track retries per subtask: validate_wave_step SUBTASK_ID STEP_ID
+    #   RETRY=$(python3 .map/scripts/map_orchestrator.py wave_monitor_failed SUBTASK_ID "feedback")
+    #   If RETRY.status == "max_retries": escalate to user
+    #   Otherwise: re-run actor + monitor for that subtask (serially)
 
     # Phase E: Per-wave gates
     # Run tests + linter ONCE for the entire wave
@@ -501,7 +502,8 @@ Analyze: why is the current approach failing? What dependencies are missed?"""
     # === END STUCK RECOVERY ===
 
     # Phase is now ACTOR (set by orchestrator). Proceed to get_next_step
-    # which will return ACTOR instruction. Actor reads monitor_feedback.md automatically.
+    # which will return ACTOR instruction. Pass RETRY_RESULT.feedback_file path
+    # to Actor so it can read the monitor feedback explicitly.
 
 # For wave-based execution, use wave_monitor_failed instead:
 # python3 .map/scripts/map_orchestrator.py wave_monitor_failed ST-001 "feedback text"
