@@ -453,55 +453,58 @@ fi
 
 # After Monitor returns:
 if monitor_output["valid"] == false:
-    # Increment retry counter (also triggered when test gate fails above)
-    if retry_count < 5:
-        # Go back to Phase: ACTOR with Monitor feedback
-        # Actor will fix issues and re-apply code
+    # Use orchestrator to handle retry: requeues ACTOR+MONITOR, increments retry_count,
+    # switches phase so workflow-gate allows edits, persists feedback for Actor.
+    RETRY_RESULT=$(python3 .map/scripts/map_orchestrator.py monitor_failed "MONITOR_FEEDBACK_TEXT")
+    # RETRY_RESULT.status is "retrying" or "max_retries"
+    # RETRY_RESULT.retry_count shows current attempt number
+    # RETRY_RESULT.feedback_file points to .map/<branch>/monitor_feedback.md
 
-        # === STUCK RECOVERY (at retry 3) ===
-        # At retry 3, intercept with intermediate recovery before retries 4-5.
-        # This gives Actor better context to break out of a stuck loop.
-        if retry_count == 3:
-            # Step 1: Check if research-agent already ran for this subtask
-            findings_file = f".map/{branch}/findings_{branch}.md"
-            if findings_file exists and has content for this subtask:
-                # Reuse existing findings (Edge Case 12: skip re-invocation)
-                recovery_context = read(findings_file)
-            else:
-                # Invoke research-agent for alternative approaches
-                Task(
-                    subagent_type="research-agent",
-                    description="Stuck recovery: find alternative approach",
-                    prompt=f"""Subtask {subtask_id} failed 3 monitor retries.
+    RETRY_STATUS=$(echo "$RETRY_RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',''))")
+    RETRY_COUNT=$(echo "$RETRY_RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('retry_count',0))")
+
+    if RETRY_STATUS == "max_retries":
+        # Escalate to user (retry limit reached after 5 attempts)
+        AskUserQuestion(questions=[{"question": "Monitor retry limit reached (5 attempts). How to proceed?", "header": "Retry limit", "options": [{"label": "Continue", "description": "Reset retry counter and try again"}, {"label": "Skip", "description": "Skip this subtask and move to next"}, {"label": "Abort", "description": "Stop workflow"}], "multiSelect": false}])
+
+    # === STUCK RECOVERY (at retry 3) ===
+    # At retry 3, intercept with intermediate recovery before retries 4-5.
+    if RETRY_COUNT == 3:
+        # Step 1: Check if research-agent already ran for this subtask
+        findings_file = f".map/{branch}/findings_{branch}.md"
+        if findings_file exists and has content for this subtask:
+            recovery_context = read(findings_file)
+        else:
+            Task(
+                subagent_type="research-agent",
+                description="Stuck recovery: find alternative approach",
+                prompt=f"""Subtask {subtask_id} failed 3 monitor retries.
 Monitor feedback: {latest_monitor_feedback}
 Find an ALTERNATIVE approach. Current approach is not working.
 Focus on: different patterns, simpler implementations, existing utilities."""
-                )
-                recovery_context = research_agent_output
+            )
+            recovery_context = research_agent_output
 
-            # Step 2: Invoke predictor (skip for low-risk subtasks — Edge Case 7)
-            if subtask.risk_level != "low":
-                Task(
-                    subagent_type="predictor",
-                    description="Stuck recovery: analyze why approach fails",
-                    prompt=f"""Subtask {subtask_id} failed 3 retries.
+        # Step 2: Invoke predictor (skip for low-risk subtasks)
+        if subtask.risk_level != "low":
+            Task(
+                subagent_type="predictor",
+                description="Stuck recovery: analyze why approach fails",
+                prompt=f"""Subtask {subtask_id} failed 3 retries.
 Research findings: {recovery_context}
 Analyze: why is the current approach failing? What dependencies are missed?"""
-                )
-                recovery_context += predictor_output
+            )
+            recovery_context += predictor_output
 
-            # Step 3: Pass recovery context to Actor for retries 4-5
-            # Actor receives: original task + monitor feedback + recovery context
-            # This gives Actor a fresh perspective from research-agent/predictor
+        if recovery_context is empty or unhelpful:
+            AskUserQuestion(questions=[{"question": "Stuck recovery failed. How to proceed?", "header": "Stuck", "options": [{"label": "Continue", "description": "Try 2 more retries"}, {"label": "Skip", "description": "Skip subtask"}, {"label": "Abort", "description": "Stop workflow"}], "multiSelect": false}])
+    # === END STUCK RECOVERY ===
 
-            # If both research-agent and predictor found nothing useful:
-            if recovery_context is empty or unhelpful:
-                AskUserQuestion(questions=[{"question": "Stuck recovery: research-agent and predictor found no alternative. How to proceed?", "header": "Stuck", "options": [{"label": "Continue", "description": "Try 2 more retries with current approach"}, {"label": "Skip", "description": "Skip subtask, move to next"}, {"label": "Abort", "description": "Stop workflow"}], "multiSelect": false}])
-        # === END STUCK RECOVERY ===
+    # Phase is now ACTOR (set by orchestrator). Proceed to get_next_step
+    # which will return ACTOR instruction. Actor reads monitor_feedback.md automatically.
 
-    else:
-        # Escalate to user (retry limit reached after 5 attempts)
-        AskUserQuestion(questions=[{"question": "Monitor retry limit reached (5 attempts). How to proceed?", "header": "Retry limit", "options": [{"label": "Continue", "description": "Reset retry counter and try again"}, {"label": "Skip", "description": "Skip this subtask and move to next"}, {"label": "Abort", "description": "Stop workflow"}], "multiSelect": false}])
+# For wave-based execution, use wave_monitor_failed instead:
+# python3 .map/scripts/map_orchestrator.py wave_monitor_failed ST-001 "feedback text"
 ```
 
 ### Monitor Artifact Rule

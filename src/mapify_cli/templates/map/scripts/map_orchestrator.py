@@ -969,6 +969,137 @@ def advance_wave(branch: str) -> dict:
     }
 
 
+def monitor_failed(branch: str, feedback: str = "") -> dict:
+    """Handle Monitor valid=false: requeue ACTOR+MONITOR, increment retry_count.
+
+    Called by map-efficient.md when Monitor returns valid=false.
+    Switches phase back to ACTOR so workflow-gate allows edits.
+    Persists monitor feedback to a file that Actor can read on next invocation.
+
+    Args:
+        branch: Git branch name (sanitized)
+        feedback: Monitor's feedback_for_actor text (optional)
+
+    Returns:
+        Dict with status (retrying|max_retries), retry_count, feedback_file
+    """
+    state_file = Path(f".map/{branch}/step_state.json")
+    state = StepState.load(state_file)
+
+    state.retry_count += 1
+
+    if state.retry_count > state.max_retries:
+        state.save(state_file)
+        return {
+            "status": "max_retries",
+            "retry_count": state.retry_count,
+            "max_retries": state.max_retries,
+            "message": (
+                f"Monitor retry limit reached ({state.max_retries} attempts). "
+                "Escalate to user."
+            ),
+        }
+
+    # Requeue ACTOR (2.3) and MONITOR (2.4)
+    step_order = _get_step_order(state.tdd_mode)
+    actor_idx = step_order.index("2.3")
+    state.pending_steps = step_order[actor_idx:]  # ["2.3", "2.4"] (+ TDD steps if any)
+    state.current_step_id = "2.3"
+    state.current_step_phase = "ACTOR"
+
+    # Persist feedback so Actor can read it
+    feedback_file = None
+    if feedback.strip():
+        fb_path = Path(f".map/{branch}/monitor_feedback.md")
+        fb_path.parent.mkdir(parents=True, exist_ok=True)
+        fb_path.write_text(
+            f"# Monitor Feedback (retry {state.retry_count})\n\n{feedback}\n",
+            encoding="utf-8",
+        )
+        feedback_file = str(fb_path)
+
+    state.save(state_file)
+
+    return {
+        "status": "retrying",
+        "retry_count": state.retry_count,
+        "max_retries": state.max_retries,
+        "current_phase": "ACTOR",
+        "feedback_file": feedback_file,
+        "message": (
+            f"Monitor failed. Retry {state.retry_count}/{state.max_retries}. "
+            f"Phase reset to ACTOR for subtask {state.current_subtask_id}."
+        ),
+    }
+
+
+def wave_monitor_failed(
+    subtask_id: str, branch: str, feedback: str = ""
+) -> dict:
+    """Handle Monitor valid=false for a subtask within a wave.
+
+    Resets the subtask's phase back to ACTOR and increments its retry count.
+
+    Args:
+        subtask_id: Subtask ID (e.g., "ST-002")
+        branch: Git branch name (sanitized)
+        feedback: Monitor's feedback_for_actor text (optional)
+
+    Returns:
+        Dict with status, retry_count for the subtask
+    """
+    state_file = Path(f".map/{branch}/step_state.json")
+    state = StepState.load(state_file)
+
+    # Increment per-subtask retry count
+    current_retries = state.subtask_retry_counts.get(subtask_id, 0) + 1
+    state.subtask_retry_counts[subtask_id] = current_retries
+
+    if current_retries > state.max_retries:
+        state.save(state_file)
+        return {
+            "status": "max_retries",
+            "subtask_id": subtask_id,
+            "retry_count": current_retries,
+            "max_retries": state.max_retries,
+            "message": (
+                f"Monitor retry limit reached for {subtask_id} "
+                f"({state.max_retries} attempts). Escalate to user."
+            ),
+        }
+
+    # Reset subtask phase back to ACTOR
+    state.subtask_phases[subtask_id] = "2.3"
+
+    # Persist feedback
+    feedback_file = None
+    if feedback.strip():
+        fb_path = Path(f".map/{branch}/monitor_feedback_{subtask_id}.md")
+        fb_path.parent.mkdir(parents=True, exist_ok=True)
+        fb_path.write_text(
+            f"# Monitor Feedback for {subtask_id} (retry {current_retries})\n\n"
+            f"{feedback}\n",
+            encoding="utf-8",
+        )
+        feedback_file = str(fb_path)
+
+    state.save(state_file)
+
+    return {
+        "status": "retrying",
+        "subtask_id": subtask_id,
+        "retry_count": current_retries,
+        "max_retries": state.max_retries,
+        "current_phase": "ACTOR",
+        "feedback_file": feedback_file,
+        "message": (
+            f"Monitor failed for {subtask_id}. "
+            f"Retry {current_retries}/{state.max_retries}. "
+            f"Phase reset to ACTOR."
+        ),
+    }
+
+
 SKIPPABLE_STEPS = {"2.2", "2.25", "2.26"}
 
 
@@ -1330,6 +1461,8 @@ def main():
             "advance_wave",
             "resume_single_subtask",
             "get_plan_progress",
+            "monitor_failed",
+            "wave_monitor_failed",
         ],
         help="Command to execute",
     )
@@ -1487,6 +1620,24 @@ def main():
 
         elif args.command == "get_plan_progress":
             result = get_plan_progress(branch)
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "monitor_failed":
+            feedback = args.task_or_step or ""
+            result = monitor_failed(branch, feedback)
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "wave_monitor_failed":
+            if not args.task_or_step:
+                print(
+                    json.dumps(
+                        {"error": "subtask_id required. Usage: wave_monitor_failed ST-001 [feedback]"}
+                    ),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            feedback = " ".join(args.extra_args) if args.extra_args else ""
+            result = wave_monitor_failed(args.task_or_step, branch, feedback)
             print(json.dumps(result, indent=2))
 
     except Exception as e:
