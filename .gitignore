@@ -47,6 +47,7 @@ coverage.json
 .map/*
 !.map/static-analysis/
 !.map/scripts/
+.map/scripts/.map/
 
 # Temporary verification files
 mapify_cli_verification_*.json
