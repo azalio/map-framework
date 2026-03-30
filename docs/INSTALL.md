@@ -148,7 +148,7 @@ This will:
 
 - ✅ Create project directory
 - ✅ Install MAP agents (including Synthesizer, DebateArbiter, ResearchAgent, FinalVerifier)
-- ✅ Add 12 slash commands (/map-efficient, /map-debug, /map-fast, /map-debate, /map-learn, /map-review, /map-check, /map-plan, /map-task, /map-tdd, /map-release, /map-resume)
+- ✅ Add 11 slash commands (/map-efficient, /map-debug, /map-fast, /map-learn, /map-review, /map-check, /map-plan, /map-task, /map-tdd, /map-release, /map-resume)
 - ✅ Configure essential MCP servers
 - ✅ Initialize git repository
 - ✅ Install branch-scoped `.map/<branch>/` workflow runtime used by `/map-plan` and `/map-efficient`
@@ -227,9 +227,8 @@ If you prefer manual setup:
    │   │   ├── research-agent.md      # Isolated codebase research
    │   │   ├── final-verifier.md      # Adversarial verification (Ralph Loop)
    │   │   └── documentation-reviewer.md  # Reviews technical docs
-   │   ├── commands/                  # 12 slash commands
+   │   ├── commands/                  # 11 slash commands
    │   │   ├── map-efficient.md       # Optimized workflow (recommended)
-   │   │   ├── map-debate.md          # Multi-variant with Opus reasoning
    │   │   ├── map-debug.md           # Debug workflow
    │   │   ├── map-fast.md            # Minimal workflow (low-risk only)
    │   │   ├── map-learn.md           # Extract and save lessons
@@ -269,9 +268,6 @@ After installation, you can use MAP commands in Claude Code:
 # Standard production workflow (RECOMMENDED)
 /map-efficient Add user authentication with JWT tokens
 
-# Multi-variant with explicit reasoning (complex decisions)
-/map-debate Design caching strategy for user sessions
-
 # Debug an issue
 /map-debug Fix API timeout on large file uploads
 
@@ -290,7 +286,6 @@ After installation, you can use MAP commands in Claude Code:
 MAP Framework uses **slash commands** as entry points that coordinate specialized agents in the main Claude Code context:
 
 - **`/map-efficient`** ⭐ - Optimized workflow (5-6 agents): task-decomposer → actor → monitor → predictor (conditional)
-- **`/map-debate`** - Multi-variant with Opus arbiter (7 agents): 3 Actor variants → debate-arbiter synthesis
 - **`/map-debug`** - Diagnostic and fix workflows with agent coordination
 - **`/map-fast`** - Minimal workflow (3 agents) — small, low-risk changes (reduced analysis)
 - **`/map-review`** - Comprehensive review with Monitor, Predictor, and Evaluator agents

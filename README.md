@@ -48,7 +48,6 @@ claude
 | `/map-efficient` | Production features, refactoring, complex tasks (recommended) |
 | `/map-debug` | Bug fixes and debugging |
 | `/map-fast` | Small, low-risk changes |
-| `/map-debate` | Complex decisions with multi-variant synthesis |
 | `/map-review` | Pre-commit code review |
 | `/map-check` | Quality gates and verification |
 | `/map-plan` | Task decomposition without implementation |

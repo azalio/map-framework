@@ -843,18 +843,18 @@ MAP Framework offers three primary implementation workflows with different trade
 
 ### Comparison Table
 
-| Feature | /map-efficient ⭐ | /map-debate | /map-fast ⚠️ |
-|---------|-------------------|-------------|--------------|
-| **Agents Used** | 3-4 (task-decomposer, actor, monitor, final-verifier)) | 7 (multi-variant) | 3 (minimal) |
-| **Token Cost** | **Baseline** | 3x (Opus model) | 40-50% less |
-| **Learning** | Via `/map-learn` | Via `/map-learn` | ❌ None |
-| **Quality Gates** | Essential agents + Final-Verifier | Opus arbiter | Basic only |
-| **Impact Analysis** | ✅ Conditional (Predictor) | ✅ Conditional | ❌ Never |
-| **Multi-Variant** | ⚠️ Conditional (Self-MoA) | ✅ **Always 3 variants** | ❌ Never |
-| **Synthesis Model** | Synthesizer (sonnet) | **debate-arbiter (opus)** | N/A |
-| **Knowledge Updates** | Via `/map-learn` | Via `/map-learn` | ❌ None |
-| **Best For** | **Most tasks** | **Reasoning transparency** | Throwaway only |
-| **Production Ready** | ✅ Yes | ✅ Yes (expensive) | ❌ NO |
+| Feature | /map-efficient ⭐ | /map-fast ⚠️ |
+|---------|-------------------|--------------|
+| **Agents Used** | 3-4 (task-decomposer, actor, monitor, final-verifier)) | 3 (minimal) |
+| **Token Cost** | **Baseline** | 40-50% less |
+| **Learning** | Via `/map-learn` | ❌ None |
+| **Quality Gates** | Essential agents + Final-Verifier | Basic only |
+| **Impact Analysis** | ✅ Conditional (Predictor) | ❌ Never |
+| **Multi-Variant** | ⚠️ Conditional (Self-MoA) | ❌ Never |
+| **Synthesis Model** | Synthesizer (sonnet) | N/A |
+| **Knowledge Updates** | Via `/map-learn` | ❌ None |
+| **Best For** | **Most tasks** | Throwaway only |
+| **Production Ready** | ✅ Yes | ❌ NO |
 
 ### Decision Guide: Which Workflow Should I Use?
 
@@ -906,60 +906,6 @@ MAP Framework offers three primary implementation workflows with different trade
 # Complex feature
 /map-efficient --self-moa build real-time chat system with WebSocket support
 ```
-
-#### Use `/map-debate` (Multi-Variant with Reasoning)
-
-**When:**
-- 🧠 Decisions require explicit trade-off analysis
-- 🧠 You need to understand WHY a solution was chosen
-- 🧠 Stakeholders need documented reasoning for code review
-- 🧠 Complex architectural decisions with multiple valid approaches
-- 🧠 High-value features where reasoning transparency justifies cost
-
-**What makes it different:**
-- **ALWAYS generates 3 variants** (security/performance/simplicity focus)
-- **Uses Opus model** for debate-arbiter (deeper reasoning than Sonnet)
-- **Outputs explicit trade-offs** — what you gain AND what you lose
-- **Produces comparison matrix** — scores each variant on 4 dimensions
-- **Reasoning trace** — 8-step visible thinking process
-
-**Key outputs:**
-- `comparison_matrix` — variant × dimension scores (1-10)
-- `decision_rationales` — for each decision: alternatives, winner, trade-off accepted
-- `synthesis_reasoning` — step-by-step explanation of synthesis
-
-**Cost consideration:**
-- ~3-5x more expensive than `/map-efficient`
-- Uses Opus model (higher reasoning capability, higher cost)
-- Worth it when reasoning transparency is critical
-
-**Example use cases:**
-```bash
-# Architectural decision with stakeholder review
-/map-debate implement caching strategy for user sessions
-
-# Complex algorithm with multiple valid approaches
-/map-debate design rate limiting system for API endpoints
-
-# Decision requiring documented justification
-/map-debate implement authentication - JWT vs sessions vs OAuth
-```
-
-**Output example (decision_rationale):**
-```json
-{
-  "decision_id": "dec-v1-001",
-  "decision_statement": "Use Result type for explicit error handling",
-  "alternatives_evaluated": [
-    {"source_variant": "v2", "statement": "Raise exceptions", "why_rejected": "Less explicit"},
-    {"source_variant": "v3", "statement": "Return tuple", "why_rejected": "Less type-safe"}
-  ],
-  "selection_reasoning": "Result type provides explicit error handling that caller cannot ignore...",
-  "tradeoff_accepted": "Increased code verbosity"
-}
-```
-
----
 
 #### Use `/map-fast` (Minimal) ⚠️
 
@@ -1051,33 +997,29 @@ DECOMPOSE → TEST_WRITER (tests from spec) → TEST_FAIL_GATE (verify Red) → 
 **Small Task (1-2 subtasks):**
 - `/map-efficient`: ~12-20K tokens (baseline)
 - `/map-efficient --self-moa`: ~25-35K tokens (3 variants)
-- `/map-debate`: ~40-60K tokens (Opus arbiter)
 - `/map-fast`: ~8-12K tokens (minimal)
 
 **Medium Task (3-5 subtasks):**
 - `/map-efficient`: ~45-60K tokens (baseline)
 - `/map-efficient --self-moa`: ~100-130K tokens (3 variants)
-- `/map-debate`: ~150-200K tokens (Opus arbiter)
 - `/map-fast`: ~25-35K tokens (minimal)
 
 **Large Task (6-8 subtasks):**
 - `/map-efficient`: ~90-120K tokens (baseline)
 - `/map-efficient --self-moa`: ~200-260K tokens (3 variants)
-- `/map-debate`: ~300-400K tokens (Opus arbiter)
 - `/map-fast`: ~50-70K tokens (minimal)
 
-**Cost at $3/M input, $15/M output (Claude Sonnet) + Opus for debate:**
+**Cost at $3/M input, $15/M output (Claude Sonnet):**
 
-| Task Size | /map-efficient | /map-debate | /map-fast |
-|-----------|----------------|-------------|-----------|
-| Small | $0.18-0.30 | $0.60-0.90 | $0.12-0.18 |
-| Medium | $0.68-0.90 | $2.25-3.00 | $0.38-0.53 |
-| Large | $1.35-1.80 | $4.50-6.00 | $0.75-1.05 |
+| Task Size | /map-efficient | /map-fast |
+|-----------|----------------|-----------|
+| Small | $0.18-0.30 | $0.12-0.18 |
+| Medium | $0.68-0.90 | $0.38-0.53 |
+| Large | $1.35-1.80 | $0.75-1.05 |
 
 **For teams running 10 workflows/day with /map-efficient:**
 - Daily cost: ~$13.50
 - /map-fast would save ~40% but loses learning
-- /map-debate costs ~3x more but provides reasoning transparency
 
 ### How /map-efficient Works
 
@@ -1117,10 +1059,6 @@ START: I need to implement a feature
   |
   ├─ Is it security-critical or first-time complex feature?
   |    └─ YES → /map-efficient (maximum QA)
-  |    └─ NO → Continue
-  |
-  ├─ Do stakeholders need documented reasoning for decisions?
-  |    └─ YES → /map-debate (explicit trade-offs, Opus reasoning)
   |    └─ NO → Continue
   |
   ├─ Do I care about token costs?
@@ -1293,9 +1231,6 @@ Agents automatically use their configured model when invoked via slash commands:
 # Standard workflow - conditional predictor, optional learning via /map-learn
 /map-efficient implement authentication  # Recommended for most tasks
 
-# Multi-variant with explicit reasoning
-/map-debate design caching strategy      # Complex decisions
-
 # Fast workflow - minimal agents, no learning
 /map-fast Update error message wording
 ```
@@ -1308,7 +1243,6 @@ Agents automatically use their configured model when invoked via slash commands:
 |----------|----------------|-------|---------|-----------|-------------|-------------|
 | `/map-efficient` | sonnet | sonnet (4x) | sonnet (4x) | sonnet (0-2x) | skip | ~$0.22 |
 | `/map-efficient --self-moa` | sonnet | sonnet (12x) | sonnet (12x) | sonnet (0-2x) | sonnet (4x) | ~$0.45 |
-| `/map-debate` | sonnet | sonnet (12x) | sonnet (12x) | sonnet (0-2x) | opus (4x) | ~$0.75 |
 | `/map-fast` | sonnet | sonnet (4x) | sonnet (4x) | skip | skip | ~$0.12 |
 
 *Approximate costs based on typical token usage. Learning via `/map-learn` adds ~$0.05-0.10.
@@ -1316,7 +1250,6 @@ Agents automatically use their configured model when invoked via slash commands:
 **Key differences:**
 - `/map-efficient`: Standard workflow, conditional Self-MoA
 - `/map-efficient --self-moa`: Forces 3-variant generation + synthesis
-- `/map-debate`: 3 variants + Opus arbiter with explicit reasoning
 - `/map-fast`: Minimal, NO learning support
 
 ---
@@ -1448,7 +1381,6 @@ Skills follow the 500-line rule:
 **Workflow deep-dives:**
 - `map-fast-deep-dive.md` - Skip conditions, when to avoid
 - `map-efficient-deep-dive.md` - Optimization strategy, recommended default
-- `map-debate-deep-dive.md` - Multi-variant synthesis, Opus reasoning
 - `map-debug-deep-dive.md` - Debugging strategies, error analysis
 - `map-learn-deep-dive.md` - Lesson extraction, knowledge base updates
 - `map-release-deep-dive.md` - Release workflow, validation gates

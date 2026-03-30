@@ -392,7 +392,7 @@ language: ru  # optional: agent response language
 Add built-in profiles to reduce default complexity:
 
 - `core`: `/map-plan`, `/map-efficient`, `/map-check`, `/map-review`
-- `full`: all advanced workflows (`map-fast`, `map-debug`, `map-tdd`, `map-debate`, `map-release`, `map-learn`)
+- `full`: all advanced workflows (`map-fast`, `map-debug`, `map-tdd`, `map-release`, `map-learn`)
 - `custom`: explicit workflow selection
 
 Profiles should affect both generated delivery files and runtime defaults.
@@ -416,7 +416,7 @@ workflows:
   - map-efficient
   - map-check
   - map-tdd        # user opted into TDD
-  # map-debug, map-debate etc. — omitted, not installed
+  # map-debug etc. — omitted, not installed
 ```
 
 This reduces generated file count and cognitive load for users who don't need every workflow.
