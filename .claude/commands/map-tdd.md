@@ -134,6 +134,10 @@ STRICT RULES:
 9. Test files MUST be lint-clean. Use proper imports at the top of the file
    (not inside type annotations). Run the project linter (ruff/eslint/golangci-lint)
    on test files before finishing. Fix any lint errors in your test files.
+10. Do NOT add temporal or state-marking comments about test failure status
+   (e.g., "currently FAILS", "expected to FAIL until fix is applied",
+   "will PASS once fix is implemented", "Red phase"). Write tests as permanent,
+   clean code. The Red/Green state is transient — it must NOT leak into comments.
 
 TEST QUALITY REQUIREMENTS — avoid "2+2=4" tests:
 - Every test must verify SEMANTIC BEHAVIOR, not just that a single branch executes.
@@ -259,7 +263,20 @@ Output: standard Actor output (approach + code + trade-offs)
 )
 ```
 
-**CRITICAL: After ACTOR returns, you MUST call Monitor (2.4). Do NOT skip Monitor. Do NOT mark the subtask complete without Monitor validation.** This is not optional — Monitor is a mandatory phase in every workflow, including TDD.
+**CRITICAL: After ACTOR returns, run the TDD Refactor step below, then call Monitor (2.4). Do NOT skip Monitor. Do NOT mark the subtask complete without Monitor validation.** This is not optional — Monitor is a mandatory phase in every workflow, including TDD.
+
+### TDD Refactor: Clean Stale Red-Phase Comments
+
+After ACTOR completes and tests pass (Green), scan the test files created by TEST_WRITER for stale Red-phase markers. This is the **Refactor** step of Red-Green-Refactor.
+
+Look for and clean up:
+- Comments containing "currently FAILS", "expected to FAIL", "will PASS once", "Red phase", "TDD Red"
+- File-level docstrings saying tests "are expected to fail against current implementation"
+- Any temporal language that references the transient Red/Green state
+
+Rewrite matched comments as permanent, implementation-neutral descriptions. If a comment is only a state marker with no semantic value, remove it entirely.
+
+**This cleanup is done by the orchestrating agent (you), NOT by Actor.** Actor in code_only mode cannot modify test files, but you can.
 
 ```bash
 # Validate Actor step, then get_next_step will return MONITOR (2.4)

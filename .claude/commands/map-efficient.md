@@ -359,6 +359,8 @@ STRICT RULES:
 5. Tests SHOULD fail when run (implementation doesn't exist yet).
 6. Test files MUST be lint-clean. Use proper imports at the top of the file
    (not inside type annotations). Run the project linter on test files before finishing.
+7. Do NOT add temporal comments about test failure status (e.g., "currently FAILS",
+   "expected to FAIL"). Tests are permanent, clean code — the Red/Green state is transient.
 
 """
 )

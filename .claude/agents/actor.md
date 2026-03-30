@@ -276,6 +276,9 @@ Rules:
 5. Include edge cases from the spec's `## Edge Cases` section if available in the packet.
 6. Use standard test patterns for the project's language and framework.
 7. Tests SHOULD fail when run (implementation doesn't exist yet). This is expected.
+8. Do NOT add temporal comments about test failure status (e.g., "currently FAILS",
+   "expected to FAIL", "will PASS once fix is applied"). Write tests as permanent,
+   clean code — the Red/Green state is transient and must not leak into comments.
 
 Output:
 - Test files created via Write tool
