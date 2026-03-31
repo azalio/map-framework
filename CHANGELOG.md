@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Context-aware step injection**: Two-layer "active window" context system that replaces full plan injection with focused current-subtask context
+  - Hook layer: `workflow-context-injector.py` now includes goal + subtask title in ≤500 char reminders
+  - Actor prompt layer: structured `<map_context>` block with goal, current subtask details, sibling summaries, upstream results, and repo delta
+  - New helpers in `map_step_runner.py`: `load_blueprint()`, `get_subtask_from_blueprint()`, `get_upstream_ids()`, `build_context_block()`
+  - New `StepState` fields: `subtask_results` (per-subtask outcome tracking), `last_subtask_commit_sha` (differential insight baseline)
+  - New function `compute_differential_insight()` in `repo_insight.py` for git-diff-based file change tracking between subtasks
+
 ## [3.6.0] - 2026-03-26
 
 ### Changed

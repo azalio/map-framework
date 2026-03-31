@@ -943,6 +943,165 @@ def snapshot_code_state(branch: Optional[str] = None) -> dict:
     }
 
 
+def load_blueprint(branch: Optional[str] = None) -> Optional[dict]:
+    """Load blueprint.json for current branch."""
+    if branch is None:
+        branch = get_branch_name()
+    blueprint_path = Path(f".map/{branch}/blueprint.json")
+    if not blueprint_path.exists():
+        return None
+    try:
+        return json.loads(blueprint_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def get_subtask_from_blueprint(blueprint: dict, subtask_id: str) -> Optional[dict]:
+    """Extract single subtask from blueprint by ID."""
+    for subtask in blueprint.get("subtasks", []):
+        if subtask.get("id") == subtask_id:
+            return subtask
+    return None
+
+
+def get_upstream_ids(blueprint: dict, subtask_id: str) -> list[str]:
+    """Get dependency subtask IDs for a given subtask."""
+    subtask = get_subtask_from_blueprint(blueprint, subtask_id)
+    if not subtask:
+        return []
+    return subtask.get("dependencies", [])
+
+
+def build_context_block(branch: str, current_subtask_id: str) -> str:
+    """Build structured context block for Actor prompt.
+
+    Returns formatted string with:
+    - Goal (from task_plan.md)
+    - Current subtask full details (from blueprint)
+    - Plan overview (all subtasks as ID + title + status one-liners)
+    - Upstream results (from step_state.json subtask_results)
+    - Repo delta (differential insight, if last_subtask_commit_sha available)
+
+    Returns empty string if blueprint not found (graceful fallback).
+    """
+    blueprint = load_blueprint(branch)
+    if not blueprint:
+        return ""
+
+    # Goal
+    goal = read_current_goal(branch) or "No goal found"
+    # Truncate to first sentence
+    if ". " in goal:
+        goal = goal[: goal.index(". ") + 1]
+    if len(goal) > 200:
+        goal = goal[:197] + "..."
+
+    # Current subtask full details
+    current = get_subtask_from_blueprint(blueprint, current_subtask_id)
+    if not current:
+        return ""
+
+    current_details = []
+    current_details.append(f"AAG Contract: {current.get('aag_contract', 'N/A')}")
+    files = current.get("affected_files", [])
+    if files:
+        current_details.append(f"Affected files: {', '.join(files)}")
+    criteria = current.get("validation_criteria", [])
+    if criteria:
+        current_details.append("Validation criteria:")
+        for c in criteria:
+            current_details.append(f"  - {c}")
+
+    # Plan overview with statuses from step_state.json
+    state_path = Path(f".map/{branch}/step_state.json")
+    subtask_phases: dict = {}
+    subtask_results: dict = {}
+    last_sha: Optional[str] = None
+    try:
+        if state_path.exists():
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            subtask_phases = state.get("subtask_phases", {})
+            subtask_results = state.get("subtask_results", {})
+            last_sha = state.get("last_subtask_commit_sha")
+    except (json.JSONDecodeError, OSError):
+        pass
+
+    overview_lines = []
+    for st in blueprint.get("subtasks", []):
+        st_id = st.get("id", "?")
+        st_title = st.get("title", "Untitled")
+        if st_id == current_subtask_id:
+            overview_lines.append(
+                f"  [>>] {st_id}: {st_title} (IN PROGRESS) <- current"
+            )
+        elif st_id in subtask_results:
+            status = subtask_results[st_id].get("status", "done")
+            overview_lines.append(f"  [x] {st_id}: {st_title} ({status})")
+        else:
+            phase = subtask_phases.get(st_id, "pending")
+            overview_lines.append(f"  [ ] {st_id}: {st_title} ({phase})")
+
+    # Upstream results (only for dependencies)
+    upstream_ids = get_upstream_ids(blueprint, current_subtask_id)
+    upstream_lines = []
+    for up_id in upstream_ids:
+        if up_id in subtask_results:
+            result = subtask_results[up_id]
+            fc = result.get("files_changed", [])
+            status = result.get("status", "unknown")
+            summary = result.get("summary", "")
+            line = f"  {up_id}: files={fc}, status={status}"
+            if summary:
+                line += f", summary={summary}"
+            upstream_lines.append(line)
+        else:
+            upstream_lines.append(f"  {up_id}: (not yet completed)")
+
+    # Assemble block
+    parts = [
+        "<map_context>",
+        f"# Goal: {goal}",
+        "",
+        f"# Current Subtask: {current_subtask_id} — {current.get('title', 'Untitled')}",
+    ]
+    parts.extend(current_details)
+    parts.append("")
+    parts.append(f"# Plan Overview ({len(blueprint.get('subtasks', []))} subtasks):")
+    parts.extend(overview_lines)
+
+    if upstream_lines:
+        parts.append("")
+        parts.append(f"# Upstream Results (dependencies of {current_subtask_id}):")
+        parts.extend(upstream_lines)
+
+    # Repo Delta (differential insight)
+    if last_sha:
+        import subprocess
+
+        try:
+            result = subprocess.run(
+                ["git", "diff", "--name-only", "--diff-filter=ACMR", last_sha, "HEAD"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            if result.returncode == 0:
+                changed = [f for f in result.stdout.strip().split("\n") if f]
+                if changed:
+                    parts.append("")
+                    parts.append("# Repo Delta (files changed since last subtask):")
+                    for f in changed[:20]:
+                        parts.append(f"  {f}")
+                    if len(changed) > 20:
+                        parts.append(f"  ... +{len(changed) - 20} more")
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            pass
+
+    parts.append("</map_context>")
+
+    return "\n".join(parts)
+
+
 if __name__ == "__main__":
     # Simple CLI interface for testing
     import sys

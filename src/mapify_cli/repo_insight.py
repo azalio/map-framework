@@ -7,6 +7,7 @@ and key directories for workflow initialization.
 from pathlib import Path
 from typing import List
 import json
+import subprocess
 
 
 def detect_language(project_root: Path) -> str:
@@ -201,3 +202,73 @@ def _validate_repo_insight_schema(data: dict) -> None:
     for dir_path in data["key_dirs"]:
         if dir_path.startswith("/"):
             raise ValueError(f"key_dirs must be relative paths: {dir_path}")
+
+
+def compute_differential_insight(
+    project_root: Path, since_sha: str | None
+) -> dict:
+    """Compute file changes since a given git SHA.
+
+    Used for context-aware injection: shows Actor only files
+    that changed since the last subtask completed.
+
+    Args:
+        project_root: Path to project root
+        since_sha: Git SHA to diff against (None = no baseline)
+
+    Returns:
+        Dict with changed_files, deleted_files, since_sha, current_sha.
+        On error: dict with empty lists and error key.
+    """
+    if since_sha is None:
+        return {"changed_files": [], "deleted_files": [], "note": "no baseline SHA"}
+
+    try:
+        # Get changed/added/modified/renamed files
+        result = subprocess.run(
+            ["git", "diff", "--name-only", "--diff-filter=ACMR", since_sha, "HEAD"],
+            capture_output=True,
+            text=True,
+            cwd=project_root,
+            timeout=2,
+        )
+        if result.returncode != 0:
+            return {
+                "changed_files": [],
+                "deleted_files": [],
+                "error": f"git diff failed: {result.stderr.strip()}",
+            }
+        changed = [f for f in result.stdout.strip().split("\n") if f]
+
+        # Get deleted files
+        result_del = subprocess.run(
+            ["git", "diff", "--name-only", "--diff-filter=D", since_sha, "HEAD"],
+            capture_output=True,
+            text=True,
+            cwd=project_root,
+            timeout=2,
+        )
+        deleted = [f for f in result_del.stdout.strip().split("\n") if f] if result_del.returncode == 0 else []
+
+        # Get current HEAD SHA
+        head_result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            cwd=project_root,
+            timeout=2,
+        )
+        current_sha = head_result.stdout.strip() if head_result.returncode == 0 else "unknown"
+
+        return {
+            "changed_files": changed,
+            "deleted_files": deleted,
+            "since_sha": since_sha,
+            "current_sha": current_sha,
+        }
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+        return {
+            "changed_files": [],
+            "deleted_files": [],
+            "error": str(e),
+        }

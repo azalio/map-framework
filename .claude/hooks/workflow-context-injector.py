@@ -161,8 +161,51 @@ def required_action_for_step(step_id: str, step_phase: str, state: dict) -> str 
     return None
 
 
+def load_goal_and_title(branch: str, subtask_id: str) -> tuple[str, str]:
+    """Load goal from task_plan and subtask title from blueprint.
+
+    Returns (truncated_goal, subtask_title) or ("", "") on any error.
+    Fast: single json.load + single regex — target <20ms.
+    """
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+    goal = ""
+    title = ""
+
+    # Goal from task_plan.md (regex pattern from map_step_runner.read_current_goal)
+    plan_file = project_dir / ".map" / branch / f"task_plan_{branch}.md"
+    try:
+        if plan_file.exists():
+            content = plan_file.read_text(encoding="utf-8")
+            match = re.search(
+                r"## (?:Goal|Overview)\n(.*?)(?=\n##|\Z)", content, re.DOTALL
+            )
+            if match:
+                goal = match.group(1).strip()
+                # Truncate to first sentence
+                if ". " in goal:
+                    goal = goal[: goal.index(". ") + 1]
+                if len(goal) > 80:
+                    goal = goal[:77] + "..."
+    except OSError:
+        pass
+
+    # Title from blueprint.json
+    blueprint_file = project_dir / ".map" / branch / "blueprint.json"
+    try:
+        if blueprint_file.exists():
+            bp = json.loads(blueprint_file.read_text(encoding="utf-8"))
+            for st in bp.get("subtasks", []):
+                if st.get("id") == subtask_id:
+                    title = st.get("title", "")
+                    break
+    except (json.JSONDecodeError, OSError):
+        pass
+
+    return (goal, title)
+
+
 def format_reminder(state: dict, branch: str) -> str | None:
-    """Format terse workflow reminder (aim: ~150-200 chars)."""
+    """Format terse workflow reminder (aim: ≤500 chars)."""
     if not state:
         return None
 
@@ -216,9 +259,28 @@ def format_reminder(state: dict, branch: str) -> str | None:
     if not step_id and not step_phase:
         return None
 
-    base = f"[MAP] {step_id} {step_phase} | ST: {subtask_id} ({progress}) | plan:{plan_ok} mode:{mode}{wave_hint}{diag_hint}{files_hint}"
+    # Context-aware: add goal and subtask title
+    goal_hint = ""
+    title_hint = ""
+    if subtask_id != "-":
+        goal, title = load_goal_and_title(branch, subtask_id)
+        if goal:
+            goal_hint = f" | Goal: {goal}"
+        if title:
+            title_hint = f" {title}"
+
+    base = f"[MAP] {step_id} {step_phase}{goal_hint} | ST: {subtask_id}{title_hint} ({progress}) | plan:{plan_ok} mode:{mode}{wave_hint}{diag_hint}{files_hint}"
+
+    # Enforce 500-char limit: trim goal first, then hard-truncate
+    if len(base) > 500:
+        goal_hint = ""
+        base = f"[MAP] {step_id} {step_phase} | ST: {subtask_id}{title_hint} ({progress}) | plan:{plan_ok} mode:{mode}{wave_hint}{diag_hint}{files_hint}"
+    if len(base) > 500:
+        base = base[:497] + "..."
+
     if required:
-        return f"{base} | REQUIRED: {required}"
+        result = f"{base} | REQUIRED: {required}"
+        return result[:500] if len(result) > 500 else result
     return base
 
 

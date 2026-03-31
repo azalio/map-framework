@@ -1606,6 +1606,38 @@ Workflow state is managed through file-based persistence in `.map/` directory:
 - ✅ +50% observability (clear progress tracking)
 - ✅ Error context persistence (retry loops retain error history)
 
+### Context-Aware Step Injection (Phase 1.2)
+
+**Problem:** When a plan has 10+ subtasks, injecting the entire plan and all logs wastes tokens and dilutes attention on the current step.
+
+**Solution:** Two-layer "active window" injection that shows only relevant context:
+
+1. **Hook layer** (`workflow-context-injector.py` PreToolUse hook):
+   - Fires on every Edit/Write/significant Bash command
+   - Injects ≤500 char reminder: goal + current subtask title + progress
+   - Uses `load_goal_and_title()` to extract goal from `task_plan.md` and title from `blueprint.json`
+   - Graceful fallback to original format when blueprint missing
+
+2. **Actor prompt layer** (`map-efficient.md` ACTOR phase):
+   - Fires once per subtask when Actor agent is spawned
+   - Injects structured `<map_context>` block (≤4000 tokens) containing:
+     - `# Goal` — one sentence from task_plan.md
+     - `# Current Subtask` — full AAG contract, affected files, validation criteria
+     - `# Plan Overview` — all subtasks as one-liners with `[x]/[ ]/[>>]` status markers
+     - `# Upstream Results` — only results from dependency subtasks (from `step_state.json subtask_results`)
+     - `# Repo Delta` — files changed since last subtask (via `git diff` from `last_subtask_commit_sha`)
+   - Built by `build_context_block()` in `map_step_runner.py`
+
+**Key data sources:**
+- `blueprint.json` — subtask metadata (deps, files, criteria). Single source of truth.
+- `step_state.json` — `subtask_results` dict (per-subtask files_changed + status), `last_subtask_commit_sha`
+- `task_plan.md` — goal text only (never parsed for structured data)
+
+**Benefits:**
+- 30-60% fewer tokens in system prompt on long workflows
+- Actor focuses on current subtask criteria, not future steps
+- Dependency results passed explicitly — no re-reading completed files
+
 ### Compaction Resilience
 
 **Problem:** Context compaction (conversation history clearing) would normally lose workflow state, forcing restart from scratch.
