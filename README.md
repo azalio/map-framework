@@ -48,7 +48,6 @@ claude
 | `/map-efficient` | Production features, refactoring, complex tasks (recommended) |
 | `/map-debug` | Bug fixes and debugging |
 | `/map-fast` | Small, low-risk changes |
-| `/map-debate` | Complex decisions with multi-variant synthesis |
 | `/map-review` | Pre-commit code review |
 | `/map-check` | Quality gates and verification |
 | `/map-plan` | Task decomposition without implementation |
@@ -94,6 +93,10 @@ The orchestration lives in `.claude/commands/map-*.md` prompts created by `mapif
 | [Usage Guide](docs/USAGE.md) | Workflows, examples, cost optimization, playbook |
 | [Architecture](docs/ARCHITECTURE.md) | Agents, MCP integration, customization |
 | [Platform Spec](docs/MAP_PLATFORM_SPEC.md) | Platform refactor roadmap, codebase analysis |
+
+## Case Study
+
+- [DevOpsConf 2026 case study](https://github.com/azalio/devopsconf-ai-develop) — real production case: SPEC -> PLAN -> TEST -> CODE -> REVIEW -> LEARN
 
 ## Trouble?
 

@@ -109,7 +109,6 @@ class TestCommandTemplates:
         """Test that all 12 expected command template files exist."""
         expected_commands = [
             "map-check.md",  # Quality gates
-            "map-debate.md",  # Multi-variant with Opus arbiter
             "map-debug.md",  # Debugging workflow
             "map-efficient.md",  # Recommended workflow
             "map-fast.md",  # Minimal workflow

@@ -299,6 +299,20 @@ Present the verdict with a summary table:
 - Key issues resolved during interactive review
 - Remaining action items
 
+## Workflow Gate Unlock (REVISE/BLOCK only)
+
+If the verdict is **REVISE** or **BLOCK** and the user asks to fix the issues,
+the workflow gate may block edits because the workflow is in COMPLETE phase.
+
+**Before applying any fixes**, run:
+
+```bash
+python3 .map/scripts/map_orchestrator.py reopen_for_fixes --feedback "Review findings: [summary of issues to fix]"
+```
+
+This transitions the workflow from COMPLETE → ACTOR so the edit gate unlocks.
+Skip this step if the workflow is not in COMPLETE phase (e.g., review was run mid-workflow).
+
 ## Handoff Artifact Update
 
 After the final verdict, update branch-scoped handoff artifacts so review output survives beyond the chat:

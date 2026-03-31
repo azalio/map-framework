@@ -39,7 +39,6 @@ MAP (Modular Agentic Planner) is a cognitive architecture that orchestrates 11 s
 - `/map-efficient` — implement features, refactor code, complex tasks with full MAP workflow
 - `/map-debug` — debug issues using MAP analysis
 - `/map-fast` — small, low-risk changes with minimal overhead
-- `/map-debate` — multi-variant synthesis with Opus arbiter
 - `/map-review` — comprehensive review of changes
 - `/map-check` — quality gates and verification
 - `/map-plan` — architecture decomposition

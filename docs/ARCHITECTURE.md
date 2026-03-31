@@ -74,15 +74,6 @@ MAP Framework implements cognitive architecture inspired by prefrontal cortex fu
 │  │ Includes both investigation AND implementation phases     │   │
 │  └──────────────────────────────────────────────────────────┘   │
 │                                                                  │
-│  /map-debate (multi-variant with Opus arbiter):                 │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │ TaskDecomposer → For each subtask:                       │   │
-│  │   3×Actor (parallel: security/perf/simplicity)           │   │
-│  │   → 3×Monitor (parallel validation)                      │   │
-│  │   → DebateArbiter (Opus) → Monitor → [Predictor if risky]│   │
-│  │ Uses Claude Opus for cross-evaluation and synthesis      │   │
-│  └──────────────────────────────────────────────────────────┘   │
-│                                                                  │
 │  /map-review (interactive 4-section):                            │
 │  ┌──────────────────────────────────────────────────────────┐   │
 │  │ git diff analysis                                         │   │
@@ -410,7 +401,7 @@ print("Consider running /map-learn to save patterns")
 - Production code where token costs matter (RECOMMENDED)
 - Well-understood features (standard CRUD, APIs, UI)
 - Iterative development with frequent workflows
-- Any task where /map-fast feels too risky but /map-debate too expensive
+- Any task where /map-fast feels too risky
 
 #### 2. `/map-fast` - Minimal Pipeline (3 Agents) ⚠️
 
@@ -440,52 +431,6 @@ print("Consider running /map-learn to save patterns")
 - Broad refactors or multi-module changes
 - High uncertainty requirements
 
-#### 3. `/map-debate` - Debate-Based Multi-Variant (5-7 Agents)
-
-**Agent Sequence:** TaskDecomposer → [conditional ResearchAgent] → (3×Actor parallel → 3×Monitor parallel → DebateArbiter (Opus) → Monitor → [Predictor if risky]) per subtask
-
-**Multi-Variant Architecture:**
-
-1. **Parallel Actor Variants** (3 simultaneous implementations)
-   - Variant 1: Security-focused approach
-   - Variant 2: Performance-focused approach
-   - Variant 3: Simplicity-focused approach
-   - Each variant gets `approach_focus` parameter
-   - All variants solve same subtask with different optimization priorities
-
-2. **Parallel Monitor Validation** (3 validations)
-   - Each Actor variant validated independently
-   - Failures fed back to respective Actor for iteration
-   - Continue until all 3 variants pass validation
-
-3. **Debate-Arbiter Cross-Evaluation + Synthesis** (Opus model)
-   - Receives all 3 validated variants AND their Monitor outputs
-   - Cross-evaluates trade-offs with explicit reasoning matrix
-   - **Synthesizes unified solution directly** (no separate Synthesizer agent)
-   - Uses Claude Opus 4.5 for high-quality analysis
-   - Outputs: comparison_matrix, decision_rationales, synthesis_reasoning, synthesized code
-
-4. **Final Validation**
-   - Final Monitor validates the synthesized code
-   - Conditional Predictor for medium/high risk subtasks
-   - Max 2 DebateArbiter retries if Monitor fails
-
-**Token Usage:** 80-100% of baseline
-**Learning:** Optional via `/map-learn` (same as other workflows)
-**Quality Gates:** All agents (maximum variant exploration)
-
-**Key Features:**
-- **Opus-powered arbiter**: Higher reasoning quality for complex trade-off analysis
-- **Explicit decision tracking**: Each variant documents decisions made
-- **Multi-perspective synthesis**: Best-of-all-worlds solution
-- **Parallel execution**: 3 Actor/Monitor pairs run simultaneously
-
-**Use for:**
-- Architecture decisions with significant trade-offs
-- Complex features where optimal approach is unclear
-- Security-critical code requiring multiple review perspectives
-- Performance-sensitive implementations
-- Situations where you want to explore solution space thoroughly
 
 **Technical Details:**
 
@@ -639,8 +584,7 @@ Typical token consumption per subtask (estimated):
 | Predictor | 1.5K | 1K | 2.5K | Conditional in /map-efficient, always in /map-debug |
 | Evaluator | 2K | 1K | 3K | Only in /map-debug, /map-review |
 | Reflector | 2K | 1K | 3K | Only via /map-learn |
-| DebateArbiter | 3K | 2K | 5K | Opus model, /map-debate only (includes synthesis) |
-| Synthesizer | 2K | 3K | 5K | /map-efficient Self-MoA only (DebateArbiter handles this in /map-debate) |
+| Synthesizer | 2K | 3K | 5K | /map-efficient Self-MoA only |
 | ResearchAgent | 2K | 4K | 6K | Heavy codebase reading, on-demand in any workflow |
 
 **Per-subtask totals:**
@@ -649,12 +593,10 @@ Typical token consumption per subtask (estimated):
 - /map-fast: ~8-10K tokens (minimal, no learning)
 - /map-debug: ~15-20K tokens (full pipeline with Evaluator)
 - /map-review: ~15-25K tokens (parallel agents + interactive 4-section presentation; --ci mode ~12-15K)
-- /map-debate: ~30-40K tokens (3× Actor + Opus DebateArbiter)
 
 **For 5-subtask workflow:**
 - /map-efficient: ~45-60K tokens (learning optional via /map-learn: +5-8K)
 - /map-fast: ~40-50K tokens (no learning support)
-- /map-debate: ~150-200K tokens (3× variants + Opus analysis)
 
 #### Workflow Variant Selection
 
@@ -693,7 +635,9 @@ See [USAGE.md - Workflow Variants](./USAGE.md#workflow-variants) for detailed de
 │  • 8 step phases (DECOMPOSE → SUBTASK_APPROVAL + 2 TDD)     │
 │  • State file: .map/<branch>/step_state.json                │
 │  • Enforces: Sequential execution, no step skipping         │
-│  • CLI: get_next_step, validate_step, initialize            │
+│  • CLI: get_next_step, validate_step, initialize,            │
+│         monitor_failed, wave_monitor_failed, skip_step,      │
+│         set_waves, get_wave_step, advance_wave, + more       │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -1039,72 +983,9 @@ If you modified `.claude/commands/map-efficient.md`, you must manually integrate
 
 **Model Used:** Sonnet (requires strong reasoning for synthesis)
 
-**Usage Context:** Only invoked in `/map-debate` workflow after DebateArbiter completes cross-evaluation
+**Usage Context:** Invoked in `/map-efficient --self-moa` workflow for multi-variant synthesis
 
-### 9. DebateArbiter
-
-**Responsibility:** Cross-evaluate multiple Actor variants with explicit reasoning, identify best approaches for each decision point.
-
-**Input:** 3 Actor variants (security/performance/simplicity-focused) + Monitor validations
-
-**Output:**
-```json
-{
-  "cross_evaluation": {
-    "decision_points": [
-      {
-        "category": "algorithm",
-        "description": "Data structure choice for caching",
-        "variants_analysis": {
-          "v1_security": {
-            "approach": "HashMap with TTL tracking",
-            "pros": ["O(1) lookup", "Automatic expiration"],
-            "cons": ["Memory overhead for TTL metadata"],
-            "security_score": 9,
-            "performance_score": 7
-          },
-          "v2_performance": {
-            "approach": "LRU cache with size limit",
-            "pros": ["Bounded memory", "Fast eviction"],
-            "cons": ["No time-based expiration"],
-            "security_score": 6,
-            "performance_score": 10
-          },
-          "v3_simplicity": {
-            "approach": "Simple dictionary",
-            "pros": ["Minimal code", "Easy to understand"],
-            "cons": ["No eviction", "Unbounded growth"],
-            "security_score": 4,
-            "performance_score": 5
-          }
-        },
-        "recommendation": {
-          "best_variant": "v2_performance",
-          "reasoning": "LRU cache provides bounded memory (critical for production) with excellent performance. Add time-based expiration as enhancement.",
-          "synthesis_guidance": "Use v2's LRU implementation, add v1's TTL concept as optional feature"
-        }
-      }
-    ],
-    "synthesis_strategy": "Performance foundation with security enhancements"
-  }
-}
-```
-
-**Key Behaviors:**
-- Extracts decision points from variant outputs
-- Compares approaches across multiple dimensions
-- Uses Opus model for high-quality reasoning
-- Provides explicit synthesis guidance
-- Documents trade-off analysis for knowledge base
-
-**Model Used:** Opus 4.5 (highest reasoning quality for complex analysis)
-
-**Usage Context:** Only invoked in `/map-debate` workflow after all variants validated
-
-**MCP Tool Usage:**
-- `mcp__sequential-thinking__sequentialthinking`: Multi-step reasoning for complex trade-off analysis
-
-### 10. ResearchAgent
+### 9. ResearchAgent
 
 **Responsibility:** Heavy codebase reading with context isolation and compressed output for Actor/Monitor consumption.
 

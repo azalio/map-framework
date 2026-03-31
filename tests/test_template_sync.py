@@ -189,7 +189,6 @@ class TestCommandTemplateSynchronization:
         "command",
         [
             "map-check.md",
-            "map-debate.md",
             "map-debug.md",
             "map-efficient.md",
             "map-fast.md",

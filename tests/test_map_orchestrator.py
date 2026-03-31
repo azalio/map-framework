@@ -1218,5 +1218,274 @@ class TestBuildResumeBriefingExtended:
         assert result["branch"] == branch_dir
 
 
+class TestMonitorFailed:
+    """Tests for monitor_failed() — automatic ACTOR retry on Monitor failure."""
+
+    def _make_monitor_state(self, tmp_path, branch, **overrides):
+        """Create a step_state.json at MONITOR phase."""
+        state = map_orchestrator.StepState()
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.4"
+        state.current_step_phase = "MONITOR"
+        state.pending_steps = ["2.4"]
+        state.completed_steps = ["2.3"]
+        for k, v in overrides.items():
+            setattr(state, k, v)
+        state_file = tmp_path / ".map" / branch / "step_state.json"
+        state.save(state_file)
+        return state_file
+
+    def test_phase_resets_to_actor(self, branch_dir, tmp_path):
+        state_file = self._make_monitor_state(tmp_path, branch_dir)
+        result = map_orchestrator.monitor_failed(branch_dir, "fix it")
+        assert result["status"] == "retrying"
+        assert result["current_phase"] == "ACTOR"
+        state = map_orchestrator.StepState.load(state_file)
+        assert state.current_step_phase == "ACTOR"
+        assert state.current_step_id == "2.3"
+
+    def test_retry_count_increments(self, branch_dir, tmp_path):
+        state_file = self._make_monitor_state(tmp_path, branch_dir)
+        result = map_orchestrator.monitor_failed(branch_dir, "")
+        assert result["retry_count"] == 1
+        state = map_orchestrator.StepState.load(state_file)
+        assert state.retry_count == 1
+
+    def test_pending_steps_are_actor_and_monitor(self, branch_dir, tmp_path):
+        state_file = self._make_monitor_state(tmp_path, branch_dir)
+        map_orchestrator.monitor_failed(branch_dir, "")
+        state = map_orchestrator.StepState.load(state_file)
+        assert state.pending_steps == ["2.3", "2.4"]
+
+    def test_tdd_mode_still_requeues_only_actor_monitor(self, branch_dir, tmp_path):
+        """TDD pre-steps (2.25/2.26) are NOT re-run on retry."""
+        self._make_monitor_state(tmp_path, branch_dir, tdd_mode=True)
+        result = map_orchestrator.monitor_failed(branch_dir, "")
+        assert result["status"] == "retrying"
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state = map_orchestrator.StepState.load(state_file)
+        assert state.pending_steps == ["2.3", "2.4"]
+
+    def test_max_retries_escalation(self, branch_dir, tmp_path):
+        self._make_monitor_state(tmp_path, branch_dir, retry_count=5, max_retries=5)
+        result = map_orchestrator.monitor_failed(branch_dir, "still broken")
+        assert result["status"] == "max_retries"
+        assert result["retry_count"] == 6
+
+    def test_feedback_file_written_when_nonempty(self, branch_dir, tmp_path):
+        self._make_monitor_state(tmp_path, branch_dir)
+        result = map_orchestrator.monitor_failed(branch_dir, "Missing Reset()")
+        assert result["feedback_file"] is not None
+        fb = Path(result["feedback_file"])
+        assert fb.exists()
+        content = fb.read_text()
+        assert "Missing Reset()" in content
+        assert "retry 1" in content
+
+    def test_feedback_file_none_when_empty(self, branch_dir, tmp_path):
+        self._make_monitor_state(tmp_path, branch_dir)
+        result = map_orchestrator.monitor_failed(branch_dir, "")
+        assert result["feedback_file"] is None
+
+    def test_feedback_file_none_when_whitespace(self, branch_dir, tmp_path):
+        self._make_monitor_state(tmp_path, branch_dir)
+        result = map_orchestrator.monitor_failed(branch_dir, "   ")
+        assert result["feedback_file"] is None
+
+    def test_feedback_files_numbered_per_retry(self, branch_dir, tmp_path):
+        """Each retry creates a separate feedback file, not overwriting."""
+        state_file = self._make_monitor_state(tmp_path, branch_dir)
+        r1 = map_orchestrator.monitor_failed(branch_dir, "issue 1")
+        # Reset phase back to MONITOR so the second call passes the guard
+        state = map_orchestrator.StepState.load(state_file)
+        state.current_step_phase = "MONITOR"
+        state.save(state_file)
+        r2 = map_orchestrator.monitor_failed(branch_dir, "issue 2")
+        assert r1["feedback_file"] != r2["feedback_file"]
+        assert Path(r1["feedback_file"]).exists()
+        assert Path(r2["feedback_file"]).exists()
+
+    def test_state_saved_on_max_retries(self, branch_dir, tmp_path):
+        """State is persisted even in the max_retries early-return branch."""
+        state_file = self._make_monitor_state(
+            tmp_path, branch_dir, retry_count=5, max_retries=5
+        )
+        map_orchestrator.monitor_failed(branch_dir, "")
+        state = map_orchestrator.StepState.load(state_file)
+        assert state.retry_count == 6  # incremented and saved
+
+    def test_phase_guard_rejects_non_monitor_phase(self, branch_dir, tmp_path):
+        """monitor_failed() returns error if called from non-MONITOR phase."""
+        self._make_monitor_state(
+            tmp_path, branch_dir, current_step_phase="ACTOR"
+        )
+        result = map_orchestrator.monitor_failed(branch_dir, "feedback")
+        assert result["status"] == "error"
+        assert "ACTOR" in result["message"]
+        assert "MONITOR" in result["message"]
+
+    def test_monitor_failed_then_get_next_step(self, branch_dir, tmp_path):
+        """Integration: after monitor_failed(), get_next_step() returns ACTOR."""
+        self._make_monitor_state(tmp_path, branch_dir)
+        map_orchestrator.monitor_failed(branch_dir, "fix the bug")
+        result = map_orchestrator.get_next_step(branch_dir)
+        assert result["phase"] == "ACTOR"
+        assert result["step_id"] == "2.3"
+
+
+class TestWaveMonitorFailed:
+    """Tests for wave_monitor_failed() — per-subtask retry in wave execution."""
+
+    def _make_wave_state(self, tmp_path, branch, **overrides):
+        state = map_orchestrator.StepState()
+        state.execution_waves = [["ST-001", "ST-002"]]
+        state.current_wave_index = 0
+        state.subtask_phases = {"ST-001": "2.4", "ST-002": "2.4"}
+        state.subtask_retry_counts = {"ST-001": 0, "ST-002": 0}
+        for k, v in overrides.items():
+            setattr(state, k, v)
+        state_file = tmp_path / ".map" / branch / "step_state.json"
+        state.save(state_file)
+        return state_file
+
+    def test_subtask_phase_resets_to_actor(self, branch_dir, tmp_path):
+        state_file = self._make_wave_state(tmp_path, branch_dir)
+        result = map_orchestrator.wave_monitor_failed("ST-001", branch_dir, "fix")
+        assert result["status"] == "retrying"
+        assert result["current_phase"] == "ACTOR"
+        state = map_orchestrator.StepState.load(state_file)
+        assert state.subtask_phases["ST-001"] == "2.3"
+
+    def test_other_subtask_unaffected(self, branch_dir, tmp_path):
+        state_file = self._make_wave_state(tmp_path, branch_dir)
+        map_orchestrator.wave_monitor_failed("ST-001", branch_dir, "")
+        state = map_orchestrator.StepState.load(state_file)
+        assert state.subtask_phases["ST-002"] == "2.4"  # unchanged
+
+    def test_retry_count_per_subtask(self, branch_dir, tmp_path):
+        state_file = self._make_wave_state(tmp_path, branch_dir)
+        map_orchestrator.wave_monitor_failed("ST-001", branch_dir, "")
+        map_orchestrator.wave_monitor_failed("ST-001", branch_dir, "")
+        state = map_orchestrator.StepState.load(state_file)
+        assert state.subtask_retry_counts["ST-001"] == 2
+        assert state.subtask_retry_counts["ST-002"] == 0
+
+    def test_max_retries_escalation(self, branch_dir, tmp_path):
+        self._make_wave_state(
+            tmp_path,
+            branch_dir,
+            subtask_retry_counts={"ST-001": 5, "ST-002": 0},
+        )
+        result = map_orchestrator.wave_monitor_failed("ST-001", branch_dir, "")
+        assert result["status"] == "max_retries"
+        assert result["retry_count"] == 6
+
+    def test_feedback_file_includes_subtask_id(self, branch_dir, tmp_path):
+        self._make_wave_state(tmp_path, branch_dir)
+        result = map_orchestrator.wave_monitor_failed(
+            "ST-002", branch_dir, "type mismatch"
+        )
+        assert result["feedback_file"] is not None
+        assert "ST-002" in result["feedback_file"]
+        content = Path(result["feedback_file"]).read_text()
+        assert "type mismatch" in content
+
+    def test_feedback_file_none_when_empty(self, branch_dir, tmp_path):
+        self._make_wave_state(tmp_path, branch_dir)
+        result = map_orchestrator.wave_monitor_failed("ST-001", branch_dir, "")
+        assert result["feedback_file"] is None
+
+    def test_new_subtask_starts_at_zero_retries(self, branch_dir, tmp_path):
+        """A subtask not in subtask_retry_counts starts at 0."""
+        self._make_wave_state(
+            tmp_path,
+            branch_dir,
+            subtask_retry_counts={},
+        )
+        result = map_orchestrator.wave_monitor_failed("ST-001", branch_dir, "")
+        assert result["retry_count"] == 1
+
+    def test_max_retries_does_not_reset_subtask_phase(self, branch_dir, tmp_path):
+        """subtask_phases is NOT modified when max_retries is hit."""
+        state_file = self._make_wave_state(
+            tmp_path,
+            branch_dir,
+            subtask_retry_counts={"ST-001": 5, "ST-002": 0},
+        )
+        map_orchestrator.wave_monitor_failed("ST-001", branch_dir, "")
+        state = map_orchestrator.StepState.load(state_file)
+        assert state.subtask_phases["ST-001"] == "2.4"  # not reset on escalation
+
+    def test_wave_monitor_failed_then_get_wave_step(self, branch_dir, tmp_path):
+        """Integration: after wave_monitor_failed(), get_wave_step() shows ACTOR for reset subtask."""
+        self._make_wave_state(tmp_path, branch_dir)
+        map_orchestrator.wave_monitor_failed("ST-001", branch_dir, "fix type")
+        result = map_orchestrator.get_wave_step(branch_dir)
+        subtask_map = {s["subtask_id"]: s for s in result["subtasks"]}
+        assert subtask_map["ST-001"]["step_id"] == "2.3"
+        assert subtask_map["ST-001"]["phase"] == "ACTOR"
+        assert subtask_map["ST-002"]["step_id"] == "2.4"  # unchanged
+
+
+class TestReopenForFixes:
+    """Tests for reopen_for_fixes() — transition COMPLETE → ACTOR for review fixes."""
+
+    def _make_complete_state(self, tmp_path, branch, **overrides):
+        state = map_orchestrator.StepState()
+        state.current_step_id = "COMPLETE"
+        state.current_step_phase = "COMPLETE"
+        state.pending_steps = []
+        state.completed_steps = ["1.0", "1.5", "1.6", "2.3", "2.4"]
+        for k, v in overrides.items():
+            setattr(state, k, v)
+        state_file = tmp_path / ".map" / branch / "step_state.json"
+        state.save(state_file)
+        return state_file
+
+    def test_reopens_from_complete_to_actor(self, branch_dir, tmp_path):
+        state_file = self._make_complete_state(tmp_path, branch_dir)
+        result = map_orchestrator.reopen_for_fixes(branch_dir, "fix type error")
+        assert result["status"] == "reopened"
+        assert result["current_phase"] == "ACTOR"
+        state = map_orchestrator.StepState.load(state_file)
+        assert state.current_step_phase == "ACTOR"
+        assert state.current_step_id == "2.3"
+        assert state.pending_steps == ["2.3", "2.4"]
+
+    def test_resets_retry_count(self, branch_dir, tmp_path):
+        self._make_complete_state(tmp_path, branch_dir, retry_count=3)
+        map_orchestrator.reopen_for_fixes(branch_dir, "")
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state = map_orchestrator.StepState.load(state_file)
+        assert state.retry_count == 0
+
+    def test_rejects_non_complete_phase(self, branch_dir, tmp_path):
+        self._make_complete_state(
+            tmp_path, branch_dir, current_step_phase="MONITOR"
+        )
+        result = map_orchestrator.reopen_for_fixes(branch_dir, "")
+        assert result["status"] == "error"
+        assert "MONITOR" in result["message"]
+
+    def test_no_state_file_returns_error(self, branch_dir, tmp_path):
+        result = map_orchestrator.reopen_for_fixes(branch_dir, "")
+        assert result["status"] == "error"
+
+    def test_feedback_file_written(self, branch_dir, tmp_path):
+        self._make_complete_state(tmp_path, branch_dir)
+        result = map_orchestrator.reopen_for_fixes(branch_dir, "fix DRY violation")
+        assert result["feedback_file"] is not None
+        content = Path(result["feedback_file"]).read_text()
+        assert "fix DRY violation" in content
+
+    def test_reopen_then_get_next_step(self, branch_dir, tmp_path):
+        """Integration: after reopen, get_next_step returns ACTOR."""
+        self._make_complete_state(tmp_path, branch_dir)
+        map_orchestrator.reopen_for_fixes(branch_dir, "review fixes")
+        result = map_orchestrator.get_next_step(branch_dir)
+        assert result["phase"] == "ACTOR"
+        assert result["step_id"] == "2.3"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

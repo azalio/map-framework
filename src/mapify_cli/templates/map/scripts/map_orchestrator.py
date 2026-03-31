@@ -274,6 +274,11 @@ class StepState:
     current_step_phase: str = "DECOMPOSE"
     completed_steps: list[str] = field(default_factory=list)
     pending_steps: list[str] = field(default_factory=lambda: STEP_ORDER.copy())
+    # retry_count is for SERIAL mode only (single-subtask execution).
+    # subtask_retry_counts is for WAVE mode only (parallel wave execution).
+    # These counters are independent: advance_wave resets subtask_retry_counts
+    # but NOT retry_count, and get_next_step resets retry_count but NOT
+    # subtask_retry_counts. Never mix serial and wave retry tracking.
     retry_count: int = 0
     max_retries: int = 5
     plan_approved: bool = False
@@ -969,6 +974,245 @@ def advance_wave(branch: str) -> dict:
     }
 
 
+def _write_feedback_file(
+    branch: str, filename: str, header: str, feedback: str
+) -> Optional[str]:
+    """Write monitor feedback to a file if feedback is non-empty.
+
+    Returns the file path string, or None if nothing was written.
+    """
+    if not feedback.strip():
+        return None
+    fb_path = Path(f".map/{branch}/{filename}")
+    fb_path.parent.mkdir(parents=True, exist_ok=True)
+    fb_path.write_text(f"# {header}\n\n{feedback}\n", encoding="utf-8")
+    return str(fb_path)
+
+
+def _check_retry_limit(
+    current_retries: int, max_retries: int, context: dict
+) -> Optional[dict]:
+    """Return escalation dict if retry limit exceeded, else None.
+
+    Shared by monitor_failed() and wave_monitor_failed() to avoid
+    duplicating the limit-check + escalation-dict construction.
+
+    Args:
+        current_retries: Current retry count (already incremented).
+        max_retries: Maximum allowed retries.
+        context: Extra fields to include in the escalation dict
+                 (e.g., subtask_id for wave mode).
+
+    Returns:
+        Escalation dict with status="max_retries" if limit exceeded,
+        or None if still within limit.
+    """
+    if current_retries > max_retries:
+        return {
+            "status": "max_retries",
+            "retry_count": current_retries,
+            "max_retries": max_retries,
+            **context,
+        }
+    return None
+
+
+def monitor_failed(branch: str, feedback: str = "") -> dict:
+    """Handle Monitor valid=false: requeue ACTOR+MONITOR, increment retry_count.
+
+    Precondition: current_step_phase must be MONITOR. Called by map-efficient.md
+    when Monitor returns valid=false. Switches phase back to ACTOR so
+    workflow-gate allows edits. Persists monitor feedback to a file that Actor
+    can read on next invocation.
+
+    Args:
+        branch: Git branch name (sanitized)
+        feedback: Monitor's feedback_for_actor text (optional)
+
+    Returns:
+        Dict with status (retrying|max_retries), retry_count, feedback_file
+    """
+    state_file = Path(f".map/{branch}/step_state.json")
+    state = StepState.load(state_file)
+
+    if state.current_step_phase != "MONITOR":
+        return {
+            "status": "error",
+            "message": (
+                f"monitor_failed() called from phase '{state.current_step_phase}', "
+                "expected 'MONITOR'. Aborting to prevent state corruption."
+            ),
+        }
+
+    state.retry_count += 1
+
+    escalation = _check_retry_limit(
+        state.retry_count,
+        state.max_retries,
+        {
+            "message": (
+                f"Monitor retry limit reached ({state.max_retries} attempts). "
+                "Escalate to user."
+            ),
+        },
+    )
+    if escalation is not None:
+        state.save(state_file)
+        return escalation
+
+    # Requeue only ACTOR (2.3) and MONITOR (2.4) on retry.
+    # TDD pre-steps (2.25/2.26) are NOT re-run — tests were already written
+    # and validated before the first Actor attempt.
+    state.pending_steps = ["2.3", "2.4"]
+    state.current_step_id = "2.3"
+    state.current_step_phase = "ACTOR"
+
+    # Persist feedback so Actor can read it (numbered to preserve history)
+    feedback_file = _write_feedback_file(
+        branch,
+        f"monitor_feedback_retry{state.retry_count}.md",
+        f"Monitor Feedback (retry {state.retry_count})",
+        feedback,
+    )
+
+    state.save(state_file)
+
+    return {
+        "status": "retrying",
+        "retry_count": state.retry_count,
+        "max_retries": state.max_retries,
+        "current_phase": "ACTOR",
+        "feedback_file": feedback_file,
+        "message": (
+            f"Monitor failed. Retry {state.retry_count}/{state.max_retries}. "
+            f"Phase reset to ACTOR for subtask {state.current_subtask_id}."
+        ),
+    }
+
+
+def wave_monitor_failed(
+    subtask_id: str, branch: str, feedback: str = ""
+) -> dict:
+    """Handle Monitor valid=false for a subtask within a wave.
+
+    Resets the subtask's phase back to ACTOR and increments its retry count.
+
+    Args:
+        subtask_id: Subtask ID (e.g., "ST-002")
+        branch: Git branch name (sanitized)
+        feedback: Monitor's feedback_for_actor text (optional)
+
+    Returns:
+        Dict with status, retry_count for the subtask
+    """
+    state_file = Path(f".map/{branch}/step_state.json")
+    state = StepState.load(state_file)
+
+    # Increment per-subtask retry count
+    current_retries = state.subtask_retry_counts.get(subtask_id, 0) + 1
+    state.subtask_retry_counts[subtask_id] = current_retries
+
+    escalation = _check_retry_limit(
+        current_retries,
+        state.max_retries,
+        {
+            "subtask_id": subtask_id,
+            "message": (
+                f"Monitor retry limit reached for {subtask_id} "
+                f"({state.max_retries} attempts). Escalate to user."
+            ),
+        },
+    )
+    if escalation is not None:
+        state.save(state_file)
+        return escalation
+
+    # Reset subtask phase back to ACTOR
+    state.subtask_phases[subtask_id] = "2.3"
+
+    # Persist feedback (numbered to preserve history)
+    feedback_file = _write_feedback_file(
+        branch,
+        f"monitor_feedback_{subtask_id}_retry{current_retries}.md",
+        f"Monitor Feedback for {subtask_id} (retry {current_retries})",
+        feedback,
+    )
+
+    state.save(state_file)
+
+    return {
+        "status": "retrying",
+        "subtask_id": subtask_id,
+        "retry_count": current_retries,
+        "max_retries": state.max_retries,
+        "current_phase": "ACTOR",
+        "feedback_file": feedback_file,
+        "message": (
+            f"Monitor failed for {subtask_id}. "
+            f"Retry {current_retries}/{state.max_retries}. "
+            f"Phase reset to ACTOR."
+        ),
+    }
+
+
+def reopen_for_fixes(branch: str, feedback: str = "") -> dict:
+    """Transition from COMPLETE back to ACTOR for post-review fixes.
+
+    Called after /map-review finds issues in a completed workflow.
+    The workflow gate blocks edits during COMPLETE phase; this function
+    reopens the workflow so fixes can be applied.
+
+    Args:
+        branch: Git branch name (sanitized)
+        feedback: Review feedback text describing what needs fixing
+
+    Returns:
+        Dict with status and new phase info
+    """
+    state_file = Path(f".map/{branch}/step_state.json")
+    if not state_file.exists():
+        return {
+            "status": "error",
+            "message": "No step_state.json found. Nothing to reopen.",
+        }
+
+    state = StepState.load(state_file)
+
+    if state.current_step_phase != "COMPLETE":
+        return {
+            "status": "error",
+            "message": (
+                f"Workflow is in phase '{state.current_step_phase}', not COMPLETE. "
+                "Use monitor_failed for non-COMPLETE retry."
+            ),
+        }
+
+    # Reset to ACTOR+MONITOR cycle
+    state.current_step_id = "2.3"
+    state.current_step_phase = "ACTOR"
+    state.pending_steps = ["2.3", "2.4"]
+    state.retry_count = 0
+
+    feedback_file = _write_feedback_file(
+        branch,
+        "review_feedback.md",
+        "Review Feedback (post-COMPLETE reopen)",
+        feedback,
+    )
+
+    state.save(state_file)
+
+    return {
+        "status": "reopened",
+        "current_phase": "ACTOR",
+        "feedback_file": feedback_file,
+        "message": (
+            "Workflow reopened from COMPLETE to ACTOR. "
+            "Edit gate is now unlocked for review fixes."
+        ),
+    }
+
+
 SKIPPABLE_STEPS = {"2.2", "2.25", "2.26"}
 
 
@@ -1330,6 +1574,9 @@ def main():
             "advance_wave",
             "resume_single_subtask",
             "get_plan_progress",
+            "monitor_failed",
+            "wave_monitor_failed",
+            "reopen_for_fixes",
         ],
         help="Command to execute",
     )
@@ -1345,6 +1592,10 @@ def main():
     )
     parser.add_argument(
         "--tdd", action="store_true", help="Enable TDD mode (for resume_single_subtask)"
+    )
+    parser.add_argument(
+        "--feedback",
+        help="Monitor feedback text (for monitor_failed / wave_monitor_failed)",
     )
 
     args = parser.parse_args()
@@ -1487,6 +1738,29 @@ def main():
 
         elif args.command == "get_plan_progress":
             result = get_plan_progress(branch)
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "monitor_failed":
+            feedback = args.feedback or ""
+            result = monitor_failed(branch, feedback)
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "wave_monitor_failed":
+            if not args.task_or_step:
+                print(
+                    json.dumps(
+                        {"error": "subtask_id required. Usage: wave_monitor_failed ST-001 --feedback 'text'"}
+                    ),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            feedback = args.feedback or ""
+            result = wave_monitor_failed(args.task_or_step, branch, feedback)
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "reopen_for_fixes":
+            feedback = args.feedback or ""
+            result = reopen_for_fixes(branch, feedback)
             print(json.dumps(result, indent=2))
 
     except Exception as e:

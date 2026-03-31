@@ -312,7 +312,6 @@ This directory contains custom slash commands for Claude Code.
 - `/map-task` - Execute a single subtask from an existing plan
 - `/map-tdd` - Run a test-first workflow for one task or plan
 - `/map-debug` - Debug issues using MAP analysis
-- `/map-debate` - Generate variants and synthesize the best result
 - `/map-review` - Run a structured review workflow
 - `/map-check` - Run workflow quality gates and verification
 - `/map-fast` - Quick implementation with minimal validation
