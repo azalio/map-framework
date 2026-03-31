@@ -28,11 +28,15 @@ TESTING:
 """
 
 import json
+import os
 import re
 import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+# Keep in sync with workflow-context-injector.py GOAL_HEADING_RE
+GOAL_HEADING_RE = r"## (?:Goal|Overview)\n(.*?)(?=\n##|\Z)"
 
 
 HUMAN_ARTIFACT_DEFAULTS = {
@@ -792,7 +796,7 @@ def read_current_goal(branch: Optional[str] = None) -> Optional[str]:
 
     try:
         content = plan_file.read_text(encoding="utf-8")
-        match = re.search(r"## (?:Goal|Overview)\n(.*?)(?=\n##|\Z)", content, re.DOTALL)
+        match = re.search(GOAL_HEADING_RE, content, re.DOTALL)
         if match:
             return match.group(1).strip()
     except OSError:
@@ -971,6 +975,19 @@ def get_upstream_ids(blueprint: dict, subtask_id: str) -> list[str]:
     return subtask.get("dependencies", [])
 
 
+def _sanitize_branch(branch: str) -> str:
+    """Sanitize branch name for safe filesystem paths.
+
+    Keep in sync with sanitize_branch_name() in workflow-context-injector.py.
+    """
+    sanitized = branch.replace("/", "-")
+    sanitized = re.sub(r"[^a-zA-Z0-9_.-]", "-", sanitized)
+    sanitized = re.sub(r"-+", "-", sanitized).strip("-")
+    if ".." in sanitized or sanitized.startswith("."):
+        return "default"
+    return sanitized or "default"
+
+
 def build_context_block(branch: str, current_subtask_id: str) -> str:
     """Build structured context block for Actor prompt.
 
@@ -983,6 +1000,9 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
 
     Returns empty string if blueprint not found (graceful fallback).
     """
+    branch = _sanitize_branch(branch)
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+
     blueprint = load_blueprint(branch)
     if not blueprint:
         return ""
@@ -1012,7 +1032,7 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
             current_details.append(f"  - {c}")
 
     # Plan overview with statuses from step_state.json
-    state_path = Path(f".map/{branch}/step_state.json")
+    state_path = project_dir / ".map" / branch / "step_state.json"
     subtask_phases: dict = {}
     subtask_results: dict = {}
     last_sha: Optional[str] = None
@@ -1078,15 +1098,22 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
         try:
             from mapify_cli.repo_insight import compute_differential_insight
 
-            insight = compute_differential_insight(Path("."), last_sha)
+            insight = compute_differential_insight(project_dir, last_sha)
             changed = insight.get("changed_files", [])
-            if changed:
+            deleted = insight.get("deleted_files", [])
+            if changed or deleted:
                 parts.append("")
                 parts.append("# Repo Delta (files changed since last subtask):")
                 for f in changed[:20]:
                     parts.append(f"  {f}")
                 if len(changed) > 20:
                     parts.append(f"  ... +{len(changed) - 20} more")
+                if deleted:
+                    parts.append("# Deleted since last subtask:")
+                    for f in deleted[:10]:
+                        parts.append(f"  (deleted) {f}")
+                    if len(deleted) > 10:
+                        parts.append(f"  ... +{len(deleted) - 10} more")
         except ImportError:
             # Fallback: repo_insight not available in standalone .map/ context
             pass
@@ -1226,6 +1253,39 @@ if __name__ == "__main__":
     elif func_name == "snapshot_code_state":
         result = snapshot_code_state()
         print(json.dumps(result, indent=2))
+
+    elif func_name == "record_subtask_result":
+        # Read JSON from stdin to avoid shell injection: {"files": [...], "status": "...", "summary": "...", "commit_sha": "..."}
+        import sys as _sys
+        try:
+            data = json.loads(_sys.stdin.read())
+        except json.JSONDecodeError as e:
+            print(json.dumps({"status": "error", "message": f"Invalid JSON on stdin: {e}"}))
+            _sys.exit(1)
+        branch_name = get_branch_name()
+        state_path = Path(f".map/{branch_name}/step_state.json")
+        if not state_path.exists():
+            print(json.dumps({"status": "error", "message": "step_state.json not found"}))
+            _sys.exit(1)
+        from map_orchestrator import StepState
+        st = StepState.load(state_path)
+        subtask_id = data.get("subtask_id") or st.current_subtask_id or ""
+        if not subtask_id:
+            print(json.dumps({"status": "skipped", "message": "No subtask_id"}))
+            _sys.exit(0)
+        st.record_subtask_result(
+            subtask_id=subtask_id,
+            files_changed=data.get("files", []),
+            status=data.get("status", "valid"),
+            summary=data.get("summary", ""),
+            commit_sha=data.get("commit_sha"),
+        )
+        st.save(state_path)
+        print(json.dumps({"status": "success", "subtask_id": subtask_id}))
+
+    elif func_name == "build_context_block" and len(sys.argv) >= 4:
+        result = build_context_block(sys.argv[2], sys.argv[3])
+        print(result)
 
     else:
         print(f"Unknown function: {func_name}")

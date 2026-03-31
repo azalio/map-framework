@@ -364,13 +364,15 @@ class TestFormatReminderTruncation:
         assert "Goal:" not in result
 
     def test_required_suffix_truncated(self, hook_mod, tmp_path, branch_name):
-        """REQUIRED suffix should also be truncated to 500 chars total."""
+        """REQUIRED suffix should also be truncated to 500 chars total at word boundary."""
         branch = branch_name
         state_dir = tmp_path / ".map" / branch
         state_dir.mkdir(parents=True, exist_ok=True)
 
-        # Long title + required action pushes past 500
-        bp = {"subtasks": [{"id": "ST-001", "title": "Z" * 350}]}
+        # Use word-spaced title so truncation can find a word boundary
+        # "word " * 90 = 450 chars, plus prefix + REQUIRED pushes well past 500
+        long_title = ("word " * 90).strip()
+        bp = {"subtasks": [{"id": "ST-001", "title": long_title}]}
         (state_dir / "blueprint.json").write_text(json.dumps(bp))
 
         os.environ["CLAUDE_PROJECT_DIR"] = str(tmp_path)
@@ -386,3 +388,12 @@ class TestFormatReminderTruncation:
 
         assert result is not None
         assert len(result) <= 500
+        assert result.endswith("...")
+        # Word-boundary truncation: should not cut mid-word.
+        # The text before "..." ends at a space (rfind finds last space),
+        # so the remaining text should end with a non-alphanumeric char
+        # (space, pipe, paren) rather than cutting "wor..." mid-word.
+        before_ellipsis = result[:-3]
+        assert not before_ellipsis[-1].isalpha(), (
+            f"Truncation cut mid-word; last char before '...': {before_ellipsis[-1]!r}"
+        )

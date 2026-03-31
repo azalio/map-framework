@@ -1035,3 +1035,102 @@ class TestBuildContextBlockRepoDelta:
 
         assert "<map_context>" in result
         assert "# Repo Delta" not in result
+
+    def test_repo_delta_includes_deleted_files(self, branch_workspace):
+        """Deleted files from compute_differential_insight are shown in context block."""
+        self._setup_blueprint_and_state(branch_workspace, last_sha="abc123")
+        mock_insight = {
+            "changed_files": ["src/new.py"],
+            "deleted_files": ["src/old.py", "src/removed.py"],
+            "since_sha": "abc123",
+            "current_sha": "def456",
+        }
+        with patch.dict("sys.modules", {"mapify_cli": MagicMock(), "mapify_cli.repo_insight": MagicMock()}):
+            with patch(
+                "mapify_cli.repo_insight.compute_differential_insight",
+                return_value=mock_insight,
+            ):
+                result = map_step_runner.build_context_block("test-branch", "ST-001")
+
+        assert "# Repo Delta" in result
+        assert "src/new.py" in result
+        assert "# Deleted since last subtask:" in result
+        assert "(deleted) src/old.py" in result
+        assert "(deleted) src/removed.py" in result
+
+    def test_repo_delta_only_deleted_no_changed(self, branch_workspace):
+        """When only deletions occurred, Repo Delta still appears."""
+        self._setup_blueprint_and_state(branch_workspace, last_sha="abc123")
+        mock_insight = {
+            "changed_files": [],
+            "deleted_files": ["src/gone.py"],
+            "since_sha": "abc123",
+            "current_sha": "def456",
+        }
+        with patch.dict("sys.modules", {"mapify_cli": MagicMock(), "mapify_cli.repo_insight": MagicMock()}):
+            with patch(
+                "mapify_cli.repo_insight.compute_differential_insight",
+                return_value=mock_insight,
+            ):
+                result = map_step_runner.build_context_block("test-branch", "ST-001")
+
+        assert "# Repo Delta" in result
+        assert "# Deleted since last subtask:" in result
+        assert "(deleted) src/gone.py" in result
+
+
+class TestBuildContextBlockIntegration:
+    """Integration test: record_subtask_result → build_context_block → upstream results."""
+
+    def test_upstream_results_flow(self, branch_workspace):
+        """Subtask results recorded in step_state appear as upstream results in context block."""
+        branch = "test-branch"
+
+        # Set up blueprint with two subtasks, ST-002 depends on ST-001
+        bp = {
+            "subtasks": [
+                {
+                    "id": "ST-001",
+                    "title": "First task",
+                    "aag_contract": "A -> B -> C",
+                    "affected_files": ["a.py"],
+                    "validation_criteria": ["VC1"],
+                    "dependencies": [],
+                },
+                {
+                    "id": "ST-002",
+                    "title": "Second task",
+                    "aag_contract": "D -> E -> F",
+                    "affected_files": ["b.py"],
+                    "validation_criteria": ["VC2"],
+                    "dependencies": ["ST-001"],
+                },
+            ],
+        }
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+
+        plan = "## Goal\nBuild the feature.\n\n## Done"
+        (branch_workspace / f"task_plan_{branch}.md").write_text(plan)
+
+        # Simulate ST-001 completed with results via StepState
+        sys.path.insert(0, str(SCRIPTS_PATH))
+        import map_orchestrator  # noqa: E402
+
+        state = map_orchestrator.StepState()
+        state.current_subtask_id = "ST-002"
+        state.record_subtask_result(
+            "ST-001", ["a.py"], "valid", "All tests pass", commit_sha="abc123"
+        )
+        state_file = branch_workspace / "step_state.json"
+        state.save(state_file)
+
+        # Now build context for ST-002 — should see ST-001 upstream results
+        result = map_step_runner.build_context_block(branch, "ST-002")
+
+        assert "<map_context>" in result
+        assert "# Current Subtask: ST-002" in result
+        assert "# Upstream Results (dependencies of ST-002):" in result
+        assert "ST-001: files=['a.py'], status=valid" in result
+        assert "All tests pass" in result
+        assert "[x] ST-001: First task (valid)" in result
+        assert "[>>] ST-002: Second task (IN PROGRESS)" in result

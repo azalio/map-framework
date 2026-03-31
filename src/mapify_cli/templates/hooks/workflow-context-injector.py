@@ -18,6 +18,9 @@ import json
 import os
 import re
 import sys
+
+# Keep in sync with map_step_runner.py GOAL_HEADING_RE
+GOAL_HEADING_RE = r"## (?:Goal|Overview)\n(.*?)(?=\n##|\Z)"
 from pathlib import Path
 
 # Bash commands that don't need workflow reminders
@@ -176,9 +179,7 @@ def load_goal_and_title(branch: str, subtask_id: str) -> tuple[str, str]:
     try:
         if plan_file.exists():
             content = plan_file.read_text(encoding="utf-8")
-            match = re.search(
-                r"## (?:Goal|Overview)\n(.*?)(?=\n##|\Z)", content, re.DOTALL
-            )
+            match = re.search(GOAL_HEADING_RE, content, re.DOTALL)
             if match:
                 goal = match.group(1).strip()
                 # Truncate to first sentence
@@ -202,6 +203,18 @@ def load_goal_and_title(branch: str, subtask_id: str) -> tuple[str, str]:
         pass
 
     return (goal, title)
+
+
+def _truncate_at_word(text: str, limit: int) -> str:
+    """Truncate text at word boundary, appending '...' within limit."""
+    if len(text) <= limit:
+        return text
+    cut = text[: limit - 3]
+    # Find last space to avoid cutting mid-word
+    last_space = cut.rfind(" ")
+    if last_space > limit // 2:
+        cut = cut[:last_space]
+    return cut + "..."
 
 
 def format_reminder(state: dict, branch: str) -> str | None:
@@ -271,17 +284,17 @@ def format_reminder(state: dict, branch: str) -> str | None:
 
     base = f"[MAP] {step_id} {step_phase}{goal_hint} | ST: {subtask_id}{title_hint} ({progress}) | plan:{plan_ok} mode:{mode}{wave_hint}{diag_hint}{files_hint}"
 
-    # Enforce 500-char limit: trim goal first, then hard-truncate
+    # Enforce 500-char limit: trim goal first, then word-boundary truncate
     if len(base) > 500:
         goal_hint = ""
         base = f"[MAP] {step_id} {step_phase} | ST: {subtask_id}{title_hint} ({progress}) | plan:{plan_ok} mode:{mode}{wave_hint}{diag_hint}{files_hint}"
     if len(base) > 500:
-        base = base[:497] + "..."
+        base = _truncate_at_word(base, 500)
 
     if required:
         result = f"{base} | REQUIRED: {required}"
         if len(result) > 500:
-            result = result[:497] + "..."
+            result = _truncate_at_word(result, 500)
         return result
     return base
 

@@ -1546,6 +1546,20 @@ class TestSubtaskResults:
         assert restored.subtask_results == {}
         assert restored.last_subtask_commit_sha is None
 
+    def test_record_subtask_result_empty_files(self):
+        """record_subtask_result with empty files_changed list."""
+        state = map_orchestrator.StepState()
+        state.record_subtask_result("ST-003", [], "valid", "No files changed")
+        assert state.subtask_results["ST-003"]["files_changed"] == []
+        assert state.subtask_results["ST-003"]["status"] == "valid"
+        assert state.subtask_results["ST-003"]["summary"] == "No files changed"
+
+    def test_record_subtask_result_empty_summary(self):
+        """record_subtask_result with empty summary string."""
+        state = map_orchestrator.StepState()
+        state.record_subtask_result("ST-004", ["x.py"], "valid")
+        assert state.subtask_results["ST-004"]["summary"] == ""
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
