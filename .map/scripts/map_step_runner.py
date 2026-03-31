@@ -946,11 +946,14 @@ def snapshot_code_state(branch: Optional[str] = None) -> dict:
     }
 
 
-def load_blueprint(branch: Optional[str] = None) -> Optional[dict]:
+def load_blueprint(
+    branch: Optional[str] = None, project_dir: Optional[Path] = None
+) -> Optional[dict]:
     """Load blueprint.json for current branch."""
     if branch is None:
         branch = get_branch_name()
-    blueprint_path = Path(f".map/{branch}/blueprint.json")
+    base = project_dir or Path(".")
+    blueprint_path = base / ".map" / branch / "blueprint.json"
     if not blueprint_path.exists():
         return None
     try:
@@ -1003,12 +1006,22 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
     branch = _sanitize_branch(branch)
     project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
 
-    blueprint = load_blueprint(branch)
+    blueprint = load_blueprint(branch, project_dir=project_dir)
     if not blueprint:
         return ""
 
-    # Goal
-    goal = read_current_goal(branch) or "No goal found"
+    # Goal — read directly via project_dir for consistency
+    goal = None
+    plan_file = project_dir / ".map" / branch / f"task_plan_{branch}.md"
+    try:
+        if plan_file.exists():
+            content = plan_file.read_text(encoding="utf-8")
+            match = re.search(GOAL_HEADING_RE, content, re.DOTALL)
+            if match:
+                goal = match.group(1).strip()
+    except OSError:
+        pass
+    goal = goal or "No goal found"
     # Truncate to first sentence
     if ". " in goal:
         goal = goal[: goal.index(". ") + 1]

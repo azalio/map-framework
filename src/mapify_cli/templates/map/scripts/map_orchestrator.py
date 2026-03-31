@@ -315,7 +315,7 @@ class StepState:
             "status": status,
             "summary": summary,
         }
-        if commit_sha is not None:
+        if commit_sha:
             self.last_subtask_commit_sha = commit_sha
 
     def to_dict(self) -> dict:

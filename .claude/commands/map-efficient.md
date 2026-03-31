@@ -484,8 +484,12 @@ if echo "$TEST_GATE" | python3 -c "import sys,json; d=json.load(sys.stdin); sys.
     # Record subtask result for context-aware injection (Upstream Results + Repo Delta)
     # Uses record_subtask_result CLI dispatch via stdin JSON (injection-safe, single source of truth).
     FILES_JSON=$(echo "$SNAPSHOT" | python3 -c "import sys,json; print(json.dumps(json.load(sys.stdin).get('files_changed',[])))")
-    CURRENT_SHA=$(git rev-parse HEAD)
-    echo "{\"files\": ${FILES_JSON}, \"status\": \"valid\", \"summary\": \"Monitor passed + tests passed\", \"commit_sha\": \"${CURRENT_SHA}\"}" | python3 .map/scripts/map_step_runner.py record_subtask_result
+    CURRENT_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
+    if [ -n "$CURRENT_SHA" ]; then
+        echo "{\"files\": ${FILES_JSON}, \"status\": \"valid\", \"summary\": \"Monitor passed + tests passed\", \"commit_sha\": \"${CURRENT_SHA}\"}" | python3 .map/scripts/map_step_runner.py record_subtask_result
+    else
+        echo "{\"files\": ${FILES_JSON}, \"status\": \"valid\", \"summary\": \"Monitor passed + tests passed\"}" | python3 .map/scripts/map_step_runner.py record_subtask_result
+    fi
 fi
 
 # After Monitor returns:

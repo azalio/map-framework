@@ -217,8 +217,9 @@ def compute_differential_insight(
         since_sha: Git SHA to diff against (None = no baseline)
 
     Returns:
-        Dict with changed_files, deleted_files, since_sha, current_sha.
-        On error: dict with empty lists and error key.
+        Dict with changed_files, deleted_files. On success also includes
+        since_sha and current_sha. On error: empty lists and error key.
+        When since_sha is None: empty lists and note key.
     """
     if since_sha is None:
         return {"changed_files": [], "deleted_files": [], "note": "no baseline SHA"}
