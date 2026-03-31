@@ -1503,6 +1503,18 @@ class TestSubtaskResults:
         assert state.subtask_results["ST-001"]["status"] == "valid"
         assert state.subtask_results["ST-001"]["summary"] == "All tests pass"
 
+    def test_record_subtask_result_with_commit_sha(self):
+        state = map_orchestrator.StepState()
+        state.record_subtask_result("ST-001", ["a.py"], "valid", commit_sha="abc123")
+        assert state.subtask_results["ST-001"]["status"] == "valid"
+        assert state.last_subtask_commit_sha == "abc123"
+
+    def test_record_subtask_result_without_commit_sha_preserves_existing(self):
+        state = map_orchestrator.StepState()
+        state.last_subtask_commit_sha = "old_sha"
+        state.record_subtask_result("ST-002", ["b.py"], "valid")
+        assert state.last_subtask_commit_sha == "old_sha"
+
     def test_serialize_deserialize_roundtrip(self):
         state = map_orchestrator.StepState()
         state.record_subtask_result("ST-001", ["x.py"], "valid")

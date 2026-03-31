@@ -3,6 +3,7 @@
 import json
 import sys
 from pathlib import Path
+from unittest.mock import patch, MagicMock
 
 import pytest
 
@@ -934,3 +935,103 @@ class TestBuildContextBlock:
 
         assert "<map_context>" in result
         assert "# Upstream Results" not in result
+
+
+class TestBuildContextBlockRepoDelta:
+    """Tests for Repo Delta path in build_context_block (requires mocked compute_differential_insight)."""
+
+    def _setup_blueprint_and_state(self, branch_workspace, last_sha=None):
+        """Helper to set up blueprint + state with optional last_subtask_commit_sha."""
+        bp = {
+            "summary": "test",
+            "subtasks": [
+                {
+                    "id": "ST-001",
+                    "title": "First task",
+                    "aag_contract": "A -> B -> C",
+                    "affected_files": ["a.py"],
+                    "validation_criteria": ["VC1"],
+                    "dependencies": [],
+                },
+            ],
+        }
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        plan = "## Goal\nDo thing.\n\n## Done"
+        (branch_workspace / "task_plan_test-branch.md").write_text(plan)
+
+        state = {"subtask_phases": {}, "subtask_results": {}}
+        if last_sha is not None:
+            state["last_subtask_commit_sha"] = last_sha
+        (branch_workspace / "step_state.json").write_text(json.dumps(state))
+
+    def test_includes_repo_delta_when_sha_available(self, branch_workspace):
+        self._setup_blueprint_and_state(branch_workspace, last_sha="abc123")
+        mock_insight = {
+            "changed_files": ["src/foo.py", "src/bar.py"],
+            "deleted_files": [],
+            "since_sha": "abc123",
+            "current_sha": "def456",
+        }
+        with patch.dict("sys.modules", {"mapify_cli": MagicMock(), "mapify_cli.repo_insight": MagicMock()}):
+            with patch(
+                "mapify_cli.repo_insight.compute_differential_insight",
+                return_value=mock_insight,
+            ):
+                result = map_step_runner.build_context_block("test-branch", "ST-001")
+
+        assert "# Repo Delta" in result
+        assert "src/foo.py" in result
+        assert "src/bar.py" in result
+
+    def test_repo_delta_capped_at_20_files(self, branch_workspace):
+        self._setup_blueprint_and_state(branch_workspace, last_sha="abc123")
+        many_files = [f"file_{i}.py" for i in range(25)]
+        mock_insight = {
+            "changed_files": many_files,
+            "deleted_files": [],
+            "since_sha": "abc123",
+            "current_sha": "def456",
+        }
+        with patch.dict("sys.modules", {"mapify_cli": MagicMock(), "mapify_cli.repo_insight": MagicMock()}):
+            with patch(
+                "mapify_cli.repo_insight.compute_differential_insight",
+                return_value=mock_insight,
+            ):
+                result = map_step_runner.build_context_block("test-branch", "ST-001")
+
+        assert "# Repo Delta" in result
+        assert "file_19.py" in result
+        assert "file_20.py" not in result
+        assert "... +5 more" in result
+
+    def test_repo_delta_omitted_on_error(self, branch_workspace):
+        self._setup_blueprint_and_state(branch_workspace, last_sha="abc123")
+        mock_insight = {
+            "changed_files": [],
+            "deleted_files": [],
+            "error": "git diff failed",
+        }
+        with patch.dict("sys.modules", {"mapify_cli": MagicMock(), "mapify_cli.repo_insight": MagicMock()}):
+            with patch(
+                "mapify_cli.repo_insight.compute_differential_insight",
+                return_value=mock_insight,
+            ):
+                result = map_step_runner.build_context_block("test-branch", "ST-001")
+
+        assert "<map_context>" in result
+        assert "# Repo Delta" not in result
+
+    def test_repo_delta_omitted_when_no_sha(self, branch_workspace):
+        self._setup_blueprint_and_state(branch_workspace, last_sha=None)
+        result = map_step_runner.build_context_block("test-branch", "ST-001")
+        assert "<map_context>" in result
+        assert "# Repo Delta" not in result
+
+    def test_repo_delta_fallback_on_import_error(self, branch_workspace):
+        """When mapify_cli.repo_insight is not importable, Repo Delta is silently skipped."""
+        self._setup_blueprint_and_state(branch_workspace, last_sha="abc123")
+        with patch.dict("sys.modules", {"mapify_cli": None, "mapify_cli.repo_insight": None}):
+            result = map_step_runner.build_context_block("test-branch", "ST-001")
+
+        assert "<map_context>" in result
+        assert "# Repo Delta" not in result

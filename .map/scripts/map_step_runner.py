@@ -29,6 +29,7 @@ TESTING:
 
 import json
 import re
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -833,7 +834,6 @@ def run_test_gate() -> dict:
     Returns structured result with pass/fail, output, and exit code.
     Called AFTER Monitor returns valid=true, BEFORE validate_step advances state.
     """
-    import subprocess
 
     # Detect test runner
     runners = [
@@ -913,7 +913,6 @@ def snapshot_code_state(branch: Optional[str] = None) -> dict:
     Records git ref, changed files, and diff stat so review artifacts
     can be tied to actual code state. Populates subtask_files_changed.
     """
-    import subprocess
 
     branch_name = branch or get_branch_name()
 
@@ -1074,22 +1073,13 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
         parts.append(f"# Upstream Results (dependencies of {current_subtask_id}):")
         parts.extend(upstream_lines)
 
-    # Repo Delta (differential insight)
+    # Repo Delta (via compute_differential_insight from repo_insight)
     if last_sha:
-        import subprocess
-
         try:
-            diff_result = subprocess.run(
-                ["git", "diff", "--name-only", "--diff-filter=ACMR", last_sha, "HEAD"],
-                capture_output=True,
-                text=True,
-                timeout=2,
-            )
-            changed = (
-                [f for f in diff_result.stdout.strip().split("\n") if f]
-                if diff_result.returncode == 0
-                else []
-            )
+            from mapify_cli.repo_insight import compute_differential_insight
+
+            insight = compute_differential_insight(Path("."), last_sha)
+            changed = insight.get("changed_files", [])
             if changed:
                 parts.append("")
                 parts.append("# Repo Delta (files changed since last subtask):")
@@ -1097,7 +1087,8 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
                     parts.append(f"  {f}")
                 if len(changed) > 20:
                     parts.append(f"  ... +{len(changed) - 20} more")
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        except ImportError:
+            # Fallback: repo_insight not available in standalone .map/ context
             pass
 
     parts.append("</map_context>")

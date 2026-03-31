@@ -307,6 +307,7 @@ class StepState:
         files_changed: list[str],
         status: str,
         summary: str = "",
+        commit_sha: Optional[str] = None,
     ) -> None:
         """Record result of a completed subtask for context injection."""
         self.subtask_results[subtask_id] = {
@@ -314,6 +315,8 @@ class StepState:
             "status": status,
             "summary": summary,
         }
+        if commit_sha is not None:
+            self.last_subtask_commit_sha = commit_sha
 
     def to_dict(self) -> dict:
         """Serialize to dictionary."""

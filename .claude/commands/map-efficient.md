@@ -484,22 +484,23 @@ if echo "$TEST_GATE" | python3 -c "import sys,json; d=json.load(sys.stdin); sys.
     # Record subtask result for context-aware injection (Upstream Results + Repo Delta)
     # This populates subtask_results and last_subtask_commit_sha in step_state.json
     # so downstream subtasks see what this subtask produced.
+    # Uses stdin to avoid shell variable interpolation into Python source (injection-safe).
     FILES_JSON=$(echo "$SNAPSHOT" | python3 -c "import sys,json; print(json.dumps(json.load(sys.stdin).get('files_changed',[])))")
     CURRENT_SHA=$(git rev-parse HEAD)
-    python3 -c "
-import json
+    echo "{\"branch\": \"${BRANCH}\", \"files\": ${FILES_JSON}, \"sha\": \"${CURRENT_SHA}\"}" | python3 -c "
+import sys, json
 from pathlib import Path
-branch = '${BRANCH}'
-state_file = Path(f'.map/{branch}/step_state.json')
+data = json.load(sys.stdin)
+state_file = Path(f'.map/{data[\"branch\"]}/step_state.json')
 if state_file.exists():
     state = json.loads(state_file.read_text())
     sr = state.setdefault('subtask_results', {})
-    sr[state.get('current_subtask_id','')] = {
-        'files_changed': json.loads('${FILES_JSON}'),
+    sr[state.get('current_subtask_id', '')] = {
+        'files_changed': data['files'],
         'status': 'valid',
         'summary': 'Monitor passed + tests passed'
     }
-    state['last_subtask_commit_sha'] = '${CURRENT_SHA}'
+    state['last_subtask_commit_sha'] = data['sha']
     tmp = state_file.with_suffix('.tmp')
     tmp.write_text(json.dumps(state, indent=2))
     tmp.replace(state_file)
