@@ -171,7 +171,7 @@ def load_goal_and_title(branch: str, subtask_id: str) -> tuple[str, str]:
     goal = ""
     title = ""
 
-    # Goal from task_plan.md (regex pattern from map_step_runner.read_current_goal)
+    # Goal from task_plan.md — matches ## Goal or ## Overview headings
     plan_file = project_dir / ".map" / branch / f"task_plan_{branch}.md"
     try:
         if plan_file.exists():
@@ -280,7 +280,9 @@ def format_reminder(state: dict, branch: str) -> str | None:
 
     if required:
         result = f"{base} | REQUIRED: {required}"
-        return result[:500] if len(result) > 500 else result
+        if len(result) > 500:
+            result = result[:497] + "..."
+        return result
     return base
 
 

@@ -1487,5 +1487,53 @@ class TestReopenForFixes:
         assert result["step_id"] == "2.3"
 
 
+class TestSubtaskResults:
+    """Tests for StepState subtask_results and last_subtask_commit_sha fields."""
+
+    def test_subtask_results_default_empty(self):
+        state = map_orchestrator.StepState()
+        assert state.subtask_results == {}
+        assert state.last_subtask_commit_sha is None
+
+    def test_record_subtask_result(self):
+        state = map_orchestrator.StepState()
+        state.record_subtask_result("ST-001", ["a.py", "b.py"], "valid", "All tests pass")
+        assert "ST-001" in state.subtask_results
+        assert state.subtask_results["ST-001"]["files_changed"] == ["a.py", "b.py"]
+        assert state.subtask_results["ST-001"]["status"] == "valid"
+        assert state.subtask_results["ST-001"]["summary"] == "All tests pass"
+
+    def test_serialize_deserialize_roundtrip(self):
+        state = map_orchestrator.StepState()
+        state.record_subtask_result("ST-001", ["x.py"], "valid")
+        state.last_subtask_commit_sha = "abc123def"
+
+        data = state.to_dict()
+        assert data["subtask_results"]["ST-001"]["status"] == "valid"
+        assert data["last_subtask_commit_sha"] == "abc123def"
+
+        restored = map_orchestrator.StepState.from_dict(data)
+        assert restored.subtask_results["ST-001"]["files_changed"] == ["x.py"]
+        assert restored.last_subtask_commit_sha == "abc123def"
+
+    def test_save_load_roundtrip(self, tmp_path):
+        state_file = tmp_path / "step_state.json"
+        state = map_orchestrator.StepState()
+        state.record_subtask_result("ST-002", ["c.py"], "invalid", "Tests failed")
+        state.last_subtask_commit_sha = "deadbeef"
+        state.save(state_file)
+
+        loaded = map_orchestrator.StepState.load(state_file)
+        assert loaded.subtask_results["ST-002"]["status"] == "invalid"
+        assert loaded.last_subtask_commit_sha == "deadbeef"
+
+    def test_backward_compat_missing_fields(self):
+        """Old step_state.json without new fields should load safely."""
+        old_data = {"workflow": "map-efficient", "started_at": "2026-01-01"}
+        restored = map_orchestrator.StepState.from_dict(old_data)
+        assert restored.subtask_results == {}
+        assert restored.last_subtask_commit_sha is None
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

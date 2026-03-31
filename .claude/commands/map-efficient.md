@@ -480,6 +480,30 @@ if echo "$TEST_GATE" | python3 -c "import sys,json; d=json.load(sys.stdin); sys.
     # Tests passed — snapshot code state for artifact verification
     SNAPSHOT=$(python3 .map/scripts/map_step_runner.py snapshot_code_state)
     # Append git ref to review artifact header (if code-review file exists)
+
+    # Record subtask result for context-aware injection (Upstream Results + Repo Delta)
+    # This populates subtask_results and last_subtask_commit_sha in step_state.json
+    # so downstream subtasks see what this subtask produced.
+    FILES_JSON=$(echo "$SNAPSHOT" | python3 -c "import sys,json; print(json.dumps(json.load(sys.stdin).get('files_changed',[])))")
+    CURRENT_SHA=$(git rev-parse HEAD)
+    python3 -c "
+import json
+from pathlib import Path
+branch = '${BRANCH}'
+state_file = Path(f'.map/{branch}/step_state.json')
+if state_file.exists():
+    state = json.loads(state_file.read_text())
+    sr = state.setdefault('subtask_results', {})
+    sr[state.get('current_subtask_id','')] = {
+        'files_changed': json.loads('${FILES_JSON}'),
+        'status': 'valid',
+        'summary': 'Monitor passed + tests passed'
+    }
+    state['last_subtask_commit_sha'] = '${CURRENT_SHA}'
+    tmp = state_file.with_suffix('.tmp')
+    tmp.write_text(json.dumps(state, indent=2))
+    tmp.replace(state_file)
+"
 fi
 
 # After Monitor returns:

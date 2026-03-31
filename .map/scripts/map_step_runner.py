@@ -791,7 +791,7 @@ def read_current_goal(branch: Optional[str] = None) -> Optional[str]:
 
     try:
         content = plan_file.read_text(encoding="utf-8")
-        match = re.search(r"## Goal\n(.*?)(?=\n##|\Z)", content, re.DOTALL)
+        match = re.search(r"## (?:Goal|Overview)\n(.*?)(?=\n##|\Z)", content, re.DOTALL)
         if match:
             return match.group(1).strip()
     except OSError:
@@ -1079,21 +1079,24 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
         import subprocess
 
         try:
-            result = subprocess.run(
+            diff_result = subprocess.run(
                 ["git", "diff", "--name-only", "--diff-filter=ACMR", last_sha, "HEAD"],
                 capture_output=True,
                 text=True,
                 timeout=2,
             )
-            if result.returncode == 0:
-                changed = [f for f in result.stdout.strip().split("\n") if f]
-                if changed:
-                    parts.append("")
-                    parts.append("# Repo Delta (files changed since last subtask):")
-                    for f in changed[:20]:
-                        parts.append(f"  {f}")
-                    if len(changed) > 20:
-                        parts.append(f"  ... +{len(changed) - 20} more")
+            changed = (
+                [f for f in diff_result.stdout.strip().split("\n") if f]
+                if diff_result.returncode == 0
+                else []
+            )
+            if changed:
+                parts.append("")
+                parts.append("# Repo Delta (files changed since last subtask):")
+                for f in changed[:20]:
+                    parts.append(f"  {f}")
+                if len(changed) > 20:
+                    parts.append(f"  ... +{len(changed) - 20} more")
         except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
             pass
 

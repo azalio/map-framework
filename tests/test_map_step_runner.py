@@ -791,3 +791,146 @@ class TestSnapshotCodeState:
         result = map_step_runner.snapshot_code_state()
 
         assert len(result["git_ref"]) <= 12
+
+
+class TestLoadBlueprint:
+    """Tests for load_blueprint function."""
+
+    def test_returns_dict_for_valid_file(self, branch_workspace):
+        blueprint = {"summary": "test", "subtasks": [{"id": "ST-001", "title": "T1"}]}
+        (branch_workspace / "blueprint.json").write_text(json.dumps(blueprint))
+        result = map_step_runner.load_blueprint("test-branch")
+        assert result == blueprint
+
+    def test_returns_none_for_missing_file(self, branch_workspace):
+        result = map_step_runner.load_blueprint("test-branch")
+        assert result is None
+
+    def test_returns_none_for_invalid_json(self, branch_workspace):
+        (branch_workspace / "blueprint.json").write_text("not json")
+        result = map_step_runner.load_blueprint("test-branch")
+        assert result is None
+
+
+class TestGetSubtaskFromBlueprint:
+    """Tests for get_subtask_from_blueprint function."""
+
+    def test_finds_subtask_by_id(self):
+        bp = {"subtasks": [{"id": "ST-001", "title": "A"}, {"id": "ST-002", "title": "B"}]}
+        result = map_step_runner.get_subtask_from_blueprint(bp, "ST-002")
+        assert result is not None
+        assert result["title"] == "B"
+
+    def test_returns_none_for_missing_id(self):
+        bp = {"subtasks": [{"id": "ST-001", "title": "A"}]}
+        result = map_step_runner.get_subtask_from_blueprint(bp, "ST-999")
+        assert result is None
+
+    def test_returns_none_for_empty_subtasks(self):
+        result = map_step_runner.get_subtask_from_blueprint({}, "ST-001")
+        assert result is None
+
+
+class TestGetUpstreamIds:
+    """Tests for get_upstream_ids function."""
+
+    def test_returns_dependencies(self):
+        bp = {"subtasks": [{"id": "ST-002", "dependencies": ["ST-001"]}]}
+        result = map_step_runner.get_upstream_ids(bp, "ST-002")
+        assert result == ["ST-001"]
+
+    def test_returns_empty_for_no_deps(self):
+        bp = {"subtasks": [{"id": "ST-001", "dependencies": []}]}
+        result = map_step_runner.get_upstream_ids(bp, "ST-001")
+        assert result == []
+
+    def test_returns_empty_for_missing_subtask(self):
+        bp = {"subtasks": []}
+        result = map_step_runner.get_upstream_ids(bp, "ST-999")
+        assert result == []
+
+
+class TestBuildContextBlock:
+    """Tests for build_context_block function."""
+
+    def test_returns_empty_when_no_blueprint(self, branch_workspace):
+        result = map_step_runner.build_context_block("test-branch", "ST-001")
+        assert result == ""
+
+    def test_returns_empty_when_subtask_not_found(self, branch_workspace):
+        bp = {"summary": "test", "subtasks": [{"id": "ST-001", "title": "A"}]}
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        result = map_step_runner.build_context_block("test-branch", "ST-999")
+        assert result == ""
+
+    def test_builds_full_context_block(self, branch_workspace):
+        bp = {
+            "summary": "test goal",
+            "subtasks": [
+                {
+                    "id": "ST-001",
+                    "title": "First task",
+                    "aag_contract": "Actor -> do() -> done",
+                    "affected_files": ["a.py"],
+                    "validation_criteria": ["VC1: check"],
+                    "dependencies": [],
+                },
+                {
+                    "id": "ST-002",
+                    "title": "Second task",
+                    "aag_contract": "Actor -> do2() -> done2",
+                    "affected_files": ["b.py"],
+                    "validation_criteria": ["VC2: check"],
+                    "dependencies": ["ST-001"],
+                },
+            ],
+        }
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+
+        plan = "## Goal\nImplement the feature.\n\n## Subtasks\n..."
+        (branch_workspace / "task_plan_test-branch.md").write_text(plan)
+
+        state = {
+            "subtask_phases": {"ST-001": "COMPLETE"},
+            "subtask_results": {
+                "ST-001": {"files_changed": ["a.py"], "status": "valid", "summary": "done"}
+            },
+        }
+        (branch_workspace / "step_state.json").write_text(json.dumps(state))
+
+        result = map_step_runner.build_context_block("test-branch", "ST-002")
+
+        assert "<map_context>" in result
+        assert "</map_context>" in result
+        assert "# Goal:" in result
+        assert "Implement the feature." in result
+        assert "ST-002" in result
+        assert "Second task" in result
+        assert "Actor -> do2() -> done2" in result
+        assert "[>>] ST-002" in result
+        assert "[x] ST-001" in result
+        assert "# Upstream Results" in result
+        assert "ST-001: files=" in result
+
+    def test_upstream_results_omitted_when_no_deps(self, branch_workspace):
+        bp = {
+            "summary": "test",
+            "subtasks": [
+                {
+                    "id": "ST-001",
+                    "title": "Only task",
+                    "aag_contract": "A -> B -> C",
+                    "affected_files": [],
+                    "validation_criteria": [],
+                    "dependencies": [],
+                },
+            ],
+        }
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        plan = "## Goal\nDo thing.\n\n## Done"
+        (branch_workspace / "task_plan_test-branch.md").write_text(plan)
+
+        result = map_step_runner.build_context_block("test-branch", "ST-001")
+
+        assert "<map_context>" in result
+        assert "# Upstream Results" not in result
