@@ -3,6 +3,7 @@
 import json
 import sys
 from pathlib import Path
+from unittest.mock import patch, MagicMock
 
 import pytest
 
@@ -791,3 +792,345 @@ class TestSnapshotCodeState:
         result = map_step_runner.snapshot_code_state()
 
         assert len(result["git_ref"]) <= 12
+
+
+class TestLoadBlueprint:
+    """Tests for load_blueprint function."""
+
+    def test_returns_dict_for_valid_file(self, branch_workspace):
+        blueprint = {"summary": "test", "subtasks": [{"id": "ST-001", "title": "T1"}]}
+        (branch_workspace / "blueprint.json").write_text(json.dumps(blueprint))
+        result = map_step_runner.load_blueprint("test-branch")
+        assert result == blueprint
+
+    def test_returns_none_for_missing_file(self, branch_workspace):
+        result = map_step_runner.load_blueprint("test-branch")
+        assert result is None
+
+    def test_returns_none_for_invalid_json(self, branch_workspace):
+        (branch_workspace / "blueprint.json").write_text("not json")
+        result = map_step_runner.load_blueprint("test-branch")
+        assert result is None
+
+
+class TestGetSubtaskFromBlueprint:
+    """Tests for get_subtask_from_blueprint function."""
+
+    def test_finds_subtask_by_id(self):
+        bp = {"subtasks": [{"id": "ST-001", "title": "A"}, {"id": "ST-002", "title": "B"}]}
+        result = map_step_runner.get_subtask_from_blueprint(bp, "ST-002")
+        assert result is not None
+        assert result["title"] == "B"
+
+    def test_returns_none_for_missing_id(self):
+        bp = {"subtasks": [{"id": "ST-001", "title": "A"}]}
+        result = map_step_runner.get_subtask_from_blueprint(bp, "ST-999")
+        assert result is None
+
+    def test_returns_none_for_empty_subtasks(self):
+        result = map_step_runner.get_subtask_from_blueprint({}, "ST-001")
+        assert result is None
+
+
+class TestGetUpstreamIds:
+    """Tests for get_upstream_ids function."""
+
+    def test_returns_dependencies(self):
+        bp = {"subtasks": [{"id": "ST-002", "dependencies": ["ST-001"]}]}
+        result = map_step_runner.get_upstream_ids(bp, "ST-002")
+        assert result == ["ST-001"]
+
+    def test_returns_empty_for_no_deps(self):
+        bp = {"subtasks": [{"id": "ST-001", "dependencies": []}]}
+        result = map_step_runner.get_upstream_ids(bp, "ST-001")
+        assert result == []
+
+    def test_returns_empty_for_missing_subtask(self):
+        bp = {"subtasks": []}
+        result = map_step_runner.get_upstream_ids(bp, "ST-999")
+        assert result == []
+
+
+class TestBuildContextBlock:
+    """Tests for build_context_block function."""
+
+    def test_returns_empty_when_no_blueprint(self, branch_workspace):
+        result = map_step_runner.build_context_block("test-branch", "ST-001")
+        assert result == ""
+
+    def test_returns_empty_when_subtask_not_found(self, branch_workspace):
+        bp = {"summary": "test", "subtasks": [{"id": "ST-001", "title": "A"}]}
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        result = map_step_runner.build_context_block("test-branch", "ST-999")
+        assert result == ""
+
+    def test_builds_full_context_block(self, branch_workspace):
+        bp = {
+            "summary": "test goal",
+            "subtasks": [
+                {
+                    "id": "ST-001",
+                    "title": "First task",
+                    "aag_contract": "Actor -> do() -> done",
+                    "affected_files": ["a.py"],
+                    "validation_criteria": ["VC1: check"],
+                    "dependencies": [],
+                },
+                {
+                    "id": "ST-002",
+                    "title": "Second task",
+                    "aag_contract": "Actor -> do2() -> done2",
+                    "affected_files": ["b.py"],
+                    "validation_criteria": ["VC2: check"],
+                    "dependencies": ["ST-001"],
+                },
+            ],
+        }
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+
+        plan = "## Goal\nImplement the feature.\n\n## Subtasks\n..."
+        (branch_workspace / "task_plan_test-branch.md").write_text(plan)
+
+        state = {
+            "subtask_phases": {"ST-001": "COMPLETE"},
+            "subtask_results": {
+                "ST-001": {"files_changed": ["a.py"], "status": "valid", "summary": "done"}
+            },
+        }
+        (branch_workspace / "step_state.json").write_text(json.dumps(state))
+
+        result = map_step_runner.build_context_block("test-branch", "ST-002")
+
+        assert "<map_context>" in result
+        assert "</map_context>" in result
+        assert "# Goal:" in result
+        assert "Implement the feature." in result
+        assert "ST-002" in result
+        assert "Second task" in result
+        assert "Actor -> do2() -> done2" in result
+        assert "[>>] ST-002" in result
+        assert "[x] ST-001" in result
+        assert "# Upstream Results" in result
+        assert "ST-001: files=" in result
+
+    def test_upstream_results_omitted_when_no_deps(self, branch_workspace):
+        bp = {
+            "summary": "test",
+            "subtasks": [
+                {
+                    "id": "ST-001",
+                    "title": "Only task",
+                    "aag_contract": "A -> B -> C",
+                    "affected_files": [],
+                    "validation_criteria": [],
+                    "dependencies": [],
+                },
+            ],
+        }
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        plan = "## Goal\nDo thing.\n\n## Done"
+        (branch_workspace / "task_plan_test-branch.md").write_text(plan)
+
+        result = map_step_runner.build_context_block("test-branch", "ST-001")
+
+        assert "<map_context>" in result
+        assert "# Upstream Results" not in result
+
+
+class TestBuildContextBlockRepoDelta:
+    """Tests for Repo Delta path in build_context_block (requires mocked compute_differential_insight)."""
+
+    def _setup_blueprint_and_state(self, branch_workspace, last_sha=None):
+        """Helper to set up blueprint + state with optional last_subtask_commit_sha."""
+        bp = {
+            "summary": "test",
+            "subtasks": [
+                {
+                    "id": "ST-001",
+                    "title": "First task",
+                    "aag_contract": "A -> B -> C",
+                    "affected_files": ["a.py"],
+                    "validation_criteria": ["VC1"],
+                    "dependencies": [],
+                },
+            ],
+        }
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        plan = "## Goal\nDo thing.\n\n## Done"
+        (branch_workspace / "task_plan_test-branch.md").write_text(plan)
+
+        state = {"subtask_phases": {}, "subtask_results": {}}
+        if last_sha is not None:
+            state["last_subtask_commit_sha"] = last_sha
+        (branch_workspace / "step_state.json").write_text(json.dumps(state))
+
+    def test_includes_repo_delta_when_sha_available(self, branch_workspace):
+        self._setup_blueprint_and_state(branch_workspace, last_sha="abc123")
+        mock_insight = {
+            "changed_files": ["src/foo.py", "src/bar.py"],
+            "deleted_files": [],
+            "since_sha": "abc123",
+            "current_sha": "def456",
+        }
+        with patch.dict("sys.modules", {"mapify_cli": MagicMock(), "mapify_cli.repo_insight": MagicMock()}):
+            with patch(
+                "mapify_cli.repo_insight.compute_differential_insight",
+                return_value=mock_insight,
+            ):
+                result = map_step_runner.build_context_block("test-branch", "ST-001")
+
+        assert "# Repo Delta" in result
+        assert "src/foo.py" in result
+        assert "src/bar.py" in result
+
+    def test_repo_delta_capped_at_20_files(self, branch_workspace):
+        self._setup_blueprint_and_state(branch_workspace, last_sha="abc123")
+        many_files = [f"file_{i}.py" for i in range(25)]
+        mock_insight = {
+            "changed_files": many_files,
+            "deleted_files": [],
+            "since_sha": "abc123",
+            "current_sha": "def456",
+        }
+        with patch.dict("sys.modules", {"mapify_cli": MagicMock(), "mapify_cli.repo_insight": MagicMock()}):
+            with patch(
+                "mapify_cli.repo_insight.compute_differential_insight",
+                return_value=mock_insight,
+            ):
+                result = map_step_runner.build_context_block("test-branch", "ST-001")
+
+        assert "# Repo Delta" in result
+        assert "file_19.py" in result
+        assert "file_20.py" not in result
+        assert "... +5 more" in result
+
+    def test_repo_delta_omitted_on_error(self, branch_workspace):
+        self._setup_blueprint_and_state(branch_workspace, last_sha="abc123")
+        mock_insight = {
+            "changed_files": [],
+            "deleted_files": [],
+            "error": "git diff failed",
+        }
+        with patch.dict("sys.modules", {"mapify_cli": MagicMock(), "mapify_cli.repo_insight": MagicMock()}):
+            with patch(
+                "mapify_cli.repo_insight.compute_differential_insight",
+                return_value=mock_insight,
+            ):
+                result = map_step_runner.build_context_block("test-branch", "ST-001")
+
+        assert "<map_context>" in result
+        assert "# Repo Delta" not in result
+
+    def test_repo_delta_omitted_when_no_sha(self, branch_workspace):
+        self._setup_blueprint_and_state(branch_workspace, last_sha=None)
+        result = map_step_runner.build_context_block("test-branch", "ST-001")
+        assert "<map_context>" in result
+        assert "# Repo Delta" not in result
+
+    def test_repo_delta_fallback_on_import_error(self, branch_workspace):
+        """When mapify_cli.repo_insight is not importable, Repo Delta is silently skipped."""
+        self._setup_blueprint_and_state(branch_workspace, last_sha="abc123")
+        with patch.dict("sys.modules", {"mapify_cli": None, "mapify_cli.repo_insight": None}):
+            result = map_step_runner.build_context_block("test-branch", "ST-001")
+
+        assert "<map_context>" in result
+        assert "# Repo Delta" not in result
+
+    def test_repo_delta_includes_deleted_files(self, branch_workspace):
+        """Deleted files from compute_differential_insight are shown in context block."""
+        self._setup_blueprint_and_state(branch_workspace, last_sha="abc123")
+        mock_insight = {
+            "changed_files": ["src/new.py"],
+            "deleted_files": ["src/old.py", "src/removed.py"],
+            "since_sha": "abc123",
+            "current_sha": "def456",
+        }
+        with patch.dict("sys.modules", {"mapify_cli": MagicMock(), "mapify_cli.repo_insight": MagicMock()}):
+            with patch(
+                "mapify_cli.repo_insight.compute_differential_insight",
+                return_value=mock_insight,
+            ):
+                result = map_step_runner.build_context_block("test-branch", "ST-001")
+
+        assert "# Repo Delta" in result
+        assert "src/new.py" in result
+        assert "# Deleted since last subtask:" in result
+        assert "(deleted) src/old.py" in result
+        assert "(deleted) src/removed.py" in result
+
+    def test_repo_delta_only_deleted_no_changed(self, branch_workspace):
+        """When only deletions occurred, Repo Delta still appears."""
+        self._setup_blueprint_and_state(branch_workspace, last_sha="abc123")
+        mock_insight = {
+            "changed_files": [],
+            "deleted_files": ["src/gone.py"],
+            "since_sha": "abc123",
+            "current_sha": "def456",
+        }
+        with patch.dict("sys.modules", {"mapify_cli": MagicMock(), "mapify_cli.repo_insight": MagicMock()}):
+            with patch(
+                "mapify_cli.repo_insight.compute_differential_insight",
+                return_value=mock_insight,
+            ):
+                result = map_step_runner.build_context_block("test-branch", "ST-001")
+
+        assert "# Repo Delta" in result
+        assert "# Deleted since last subtask:" in result
+        assert "(deleted) src/gone.py" in result
+
+
+class TestBuildContextBlockIntegration:
+    """Integration test: record_subtask_result → build_context_block → upstream results."""
+
+    def test_upstream_results_flow(self, branch_workspace):
+        """Subtask results recorded in step_state appear as upstream results in context block."""
+        branch = "test-branch"
+
+        # Set up blueprint with two subtasks, ST-002 depends on ST-001
+        bp = {
+            "subtasks": [
+                {
+                    "id": "ST-001",
+                    "title": "First task",
+                    "aag_contract": "A -> B -> C",
+                    "affected_files": ["a.py"],
+                    "validation_criteria": ["VC1"],
+                    "dependencies": [],
+                },
+                {
+                    "id": "ST-002",
+                    "title": "Second task",
+                    "aag_contract": "D -> E -> F",
+                    "affected_files": ["b.py"],
+                    "validation_criteria": ["VC2"],
+                    "dependencies": ["ST-001"],
+                },
+            ],
+        }
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+
+        plan = "## Goal\nBuild the feature.\n\n## Done"
+        (branch_workspace / f"task_plan_{branch}.md").write_text(plan)
+
+        # Simulate ST-001 completed with results via StepState
+        sys.path.insert(0, str(SCRIPTS_PATH))
+        import map_orchestrator  # noqa: E402
+
+        state = map_orchestrator.StepState()
+        state.current_subtask_id = "ST-002"
+        state.record_subtask_result(
+            "ST-001", ["a.py"], "valid", "All tests pass", commit_sha="abc123"
+        )
+        state_file = branch_workspace / "step_state.json"
+        state.save(state_file)
+
+        # Now build context for ST-002 — should see ST-001 upstream results
+        result = map_step_runner.build_context_block(branch, "ST-002")
+
+        assert "<map_context>" in result
+        assert "# Current Subtask: ST-002" in result
+        assert "# Upstream Results (dependencies of ST-002):" in result
+        assert "ST-001: files=['a.py'], status=valid" in result
+        assert "All tests pass" in result
+        assert "[x] ST-001: First task (valid)" in result
+        assert "[>>] ST-002: Second task (IN PROGRESS)" in result

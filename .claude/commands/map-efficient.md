@@ -390,6 +390,10 @@ pytest --tb=short 2>&1 || true
 When TDD mode is active, Actor receives `<TDD_Mode>code_only</TDD_Mode>` and must NOT modify test files. When TDD is off, standard behavior.
 
 ```python
+# Context assembly: use build_context_block() from map_step_runner.py
+# to generate <map_context> when called programmatically.
+# For manual invocation, construct the block from blueprint.json + step_state.json.
+
 Task(
   subagent_type="actor",
   description="Implement subtask [ID]",
@@ -399,16 +403,40 @@ Task(
 [AAG contract from decomposition: Actor -> Action -> Goal]
 </MAP_Contract>
 
-Subtask: [ID] [title]
+<map_context>
+# Goal
+[Goal from task_plan.md — one sentence]
+
+# Current Subtask: [ID] — [title]
+AAG Contract: [contract from blueprint]
 Affected files: [from blueprint]
-Validation criteria: [from blueprint]
+Validation criteria:
+- [criteria from blueprint]
+
+# Plan Overview ([N] subtasks):
+[For each subtask in blueprint, show one-liner with status:]
+- [x] ST-001: Title (complete)
+- [ ] ST-002: Title (pending)
+- [>>] ST-003: Title (IN PROGRESS) <- current
+
+# Upstream Results (dependencies of current subtask):
+[Only for subtasks that current depends on, from step_state.json subtask_results:]
+ST-001: files=[a.py, b.py], status=valid
+
+# Repo Delta (files changed since last subtask):
+[From compute_differential_insight(), if last_subtask_commit_sha available]
+[Omit this section entirely if no previous SHA (first subtask)]
+</map_context>
 
 Protocol:
-1. Parse MAP_Contract — this is your compilation target
-2. Read affected files to understand current state
-3. Implement: translate MAP_Contract into code
-4. Apply code with Edit/Write tools
-5. Output: approach + files_changed + trade-offs"""
+1. SCOPE: Implement ONLY the Current Subtask. Do NOT modify files belonging to other subtasks.
+2. Plan Overview is for orientation — do NOT implement other subtasks.
+3. Upstream Results show what dependencies produced — use as input context.
+4. Parse MAP_Contract — this is your compilation target.
+5. Read affected files to understand current state.
+6. Implement: translate MAP_Contract into code.
+7. Apply code with Edit/Write tools.
+8. Output: approach + files_changed + trade-offs"""
 )
 ```
 
@@ -452,6 +480,16 @@ if echo "$TEST_GATE" | python3 -c "import sys,json; d=json.load(sys.stdin); sys.
     # Tests passed — snapshot code state for artifact verification
     SNAPSHOT=$(python3 .map/scripts/map_step_runner.py snapshot_code_state)
     # Append git ref to review artifact header (if code-review file exists)
+
+    # Record subtask result for context-aware injection (Upstream Results + Repo Delta)
+    # Uses record_subtask_result CLI dispatch via stdin JSON (injection-safe, single source of truth).
+    FILES_JSON=$(echo "$SNAPSHOT" | python3 -c "import sys,json; print(json.dumps(json.load(sys.stdin).get('files_changed',[])))")
+    CURRENT_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
+    if [ -n "$CURRENT_SHA" ]; then
+        echo "{\"files\": ${FILES_JSON}, \"status\": \"valid\", \"summary\": \"Monitor passed + tests passed\", \"commit_sha\": \"${CURRENT_SHA}\"}" | python3 .map/scripts/map_step_runner.py record_subtask_result
+    else
+        echo "{\"files\": ${FILES_JSON}, \"status\": \"valid\", \"summary\": \"Monitor passed + tests passed\"}" | python3 .map/scripts/map_step_runner.py record_subtask_result
+    fi
 fi
 
 # After Monitor returns:

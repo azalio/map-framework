@@ -4,11 +4,14 @@ import json
 import tempfile
 from pathlib import Path
 
+from unittest.mock import patch, MagicMock
+
 from mapify_cli.repo_insight import (
     detect_language,
     generate_suggested_checks,
     generate_key_dirs,
     create_repo_insight,
+    compute_differential_insight,
 )
 
 
@@ -366,3 +369,57 @@ class TestCreateRepoInsight:
 
             # Unknown language should still pass validation
             assert data["language"] == "unknown"
+
+
+class TestComputeDifferentialInsight:
+    """Tests for compute_differential_insight function."""
+
+    def test_none_sha_returns_note(self):
+        """Should return empty lists with note when since_sha is None."""
+        result = compute_differential_insight(Path("/tmp"), None)
+        assert result["changed_files"] == []
+        assert result["deleted_files"] == []
+        assert "note" in result
+
+    def test_valid_diff_returns_files(self):
+        """Should return changed and deleted files on successful git diff."""
+        mock_changed = MagicMock(returncode=0, stdout="a.py\nb.py\n")
+        mock_deleted = MagicMock(returncode=0, stdout="old.py\n")
+        mock_head = MagicMock(returncode=0, stdout="abc123\n")
+
+        with patch("subprocess.run", side_effect=[mock_changed, mock_deleted, mock_head]):
+            result = compute_differential_insight(Path("/tmp"), "def456")
+
+        assert result["changed_files"] == ["a.py", "b.py"]
+        assert result["deleted_files"] == ["old.py"]
+        assert result["since_sha"] == "def456"
+        assert result["current_sha"] == "abc123"
+
+    def test_git_failure_returns_error(self):
+        """Should return error dict when git diff fails."""
+        mock_fail = MagicMock(returncode=1, stderr="fatal: bad object")
+
+        with patch("subprocess.run", return_value=mock_fail):
+            result = compute_differential_insight(Path("/tmp"), "badsha")
+
+        assert result["changed_files"] == []
+        assert result["deleted_files"] == []
+        assert "error" in result
+
+    def test_timeout_returns_error(self):
+        """Should return error dict on subprocess timeout."""
+        import subprocess
+
+        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("git", 2)):
+            result = compute_differential_insight(Path("/tmp"), "abc123")
+
+        assert result["changed_files"] == []
+        assert "error" in result
+
+    def test_file_not_found_returns_error(self):
+        """Should return error dict when git is not available."""
+        with patch("subprocess.run", side_effect=FileNotFoundError("git")):
+            result = compute_differential_insight(Path("/tmp"), "abc123")
+
+        assert result["changed_files"] == []
+        assert "error" in result

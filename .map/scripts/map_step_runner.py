@@ -28,10 +28,15 @@ TESTING:
 """
 
 import json
+import os
 import re
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+# Keep in sync with workflow-context-injector.py GOAL_HEADING_RE
+GOAL_HEADING_RE = r"## (?:Goal|Overview)\n(.*?)(?=\n##|\Z)"
 
 
 HUMAN_ARTIFACT_DEFAULTS = {
@@ -791,7 +796,7 @@ def read_current_goal(branch: Optional[str] = None) -> Optional[str]:
 
     try:
         content = plan_file.read_text(encoding="utf-8")
-        match = re.search(r"## Goal\n(.*?)(?=\n##|\Z)", content, re.DOTALL)
+        match = re.search(GOAL_HEADING_RE, content, re.DOTALL)
         if match:
             return match.group(1).strip()
     except OSError:
@@ -833,7 +838,6 @@ def run_test_gate() -> dict:
     Returns structured result with pass/fail, output, and exit code.
     Called AFTER Monitor returns valid=true, BEFORE validate_step advances state.
     """
-    import subprocess
 
     # Detect test runner
     runners = [
@@ -913,7 +917,6 @@ def snapshot_code_state(branch: Optional[str] = None) -> dict:
     Records git ref, changed files, and diff stat so review artifacts
     can be tied to actual code state. Populates subtask_files_changed.
     """
-    import subprocess
 
     branch_name = branch or get_branch_name()
 
@@ -941,6 +944,196 @@ def snapshot_code_state(branch: Optional[str] = None) -> dict:
         "diff_stat": diff_stat,
         "branch": branch_name,
     }
+
+
+def load_blueprint(
+    branch: Optional[str] = None, project_dir: Optional[Path] = None
+) -> Optional[dict]:
+    """Load blueprint.json for current branch."""
+    if branch is None:
+        branch = get_branch_name()
+    base = project_dir or Path(".")
+    blueprint_path = base / ".map" / branch / "blueprint.json"
+    if not blueprint_path.exists():
+        return None
+    try:
+        return json.loads(blueprint_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def get_subtask_from_blueprint(blueprint: dict, subtask_id: str) -> Optional[dict]:
+    """Extract single subtask from blueprint by ID."""
+    for subtask in blueprint.get("subtasks", []):
+        if subtask.get("id") == subtask_id:
+            return subtask
+    return None
+
+
+def get_upstream_ids(blueprint: dict, subtask_id: str) -> list[str]:
+    """Get dependency subtask IDs for a given subtask."""
+    subtask = get_subtask_from_blueprint(blueprint, subtask_id)
+    if not subtask:
+        return []
+    return subtask.get("dependencies", [])
+
+
+def _sanitize_branch(branch: str) -> str:
+    """Sanitize branch name for safe filesystem paths.
+
+    Keep in sync with sanitize_branch_name() in workflow-context-injector.py.
+    """
+    sanitized = branch.replace("/", "-")
+    sanitized = re.sub(r"[^a-zA-Z0-9_.-]", "-", sanitized)
+    sanitized = re.sub(r"-+", "-", sanitized).strip("-")
+    if ".." in sanitized or sanitized.startswith("."):
+        return "default"
+    return sanitized or "default"
+
+
+def build_context_block(branch: str, current_subtask_id: str) -> str:
+    """Build structured context block for Actor prompt.
+
+    Returns formatted string with:
+    - Goal (from task_plan.md)
+    - Current subtask full details (from blueprint)
+    - Plan overview (all subtasks as ID + title + status one-liners)
+    - Upstream results (from step_state.json subtask_results)
+    - Repo delta (differential insight, if last_subtask_commit_sha available)
+
+    Returns empty string if blueprint not found (graceful fallback).
+    """
+    branch = _sanitize_branch(branch)
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+
+    blueprint = load_blueprint(branch, project_dir=project_dir)
+    if not blueprint:
+        return ""
+
+    # Goal — read directly via project_dir for consistency
+    goal = None
+    plan_file = project_dir / ".map" / branch / f"task_plan_{branch}.md"
+    try:
+        if plan_file.exists():
+            content = plan_file.read_text(encoding="utf-8")
+            match = re.search(GOAL_HEADING_RE, content, re.DOTALL)
+            if match:
+                goal = match.group(1).strip()
+    except OSError:
+        pass
+    goal = goal or "No goal found"
+    # Truncate to first sentence
+    if ". " in goal:
+        goal = goal[: goal.index(". ") + 1]
+    if len(goal) > 200:
+        goal = goal[:197] + "..."
+
+    # Current subtask full details
+    current = get_subtask_from_blueprint(blueprint, current_subtask_id)
+    if not current:
+        return ""
+
+    current_details = []
+    current_details.append(f"AAG Contract: {current.get('aag_contract', 'N/A')}")
+    files = current.get("affected_files", [])
+    if files:
+        current_details.append(f"Affected files: {', '.join(files)}")
+    criteria = current.get("validation_criteria", [])
+    if criteria:
+        current_details.append("Validation criteria:")
+        for c in criteria:
+            current_details.append(f"  - {c}")
+
+    # Plan overview with statuses from step_state.json
+    state_path = project_dir / ".map" / branch / "step_state.json"
+    subtask_phases: dict = {}
+    subtask_results: dict = {}
+    last_sha: Optional[str] = None
+    try:
+        if state_path.exists():
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            subtask_phases = state.get("subtask_phases", {})
+            subtask_results = state.get("subtask_results", {})
+            last_sha = state.get("last_subtask_commit_sha")
+    except (json.JSONDecodeError, OSError):
+        pass
+
+    overview_lines = []
+    for st in blueprint.get("subtasks", []):
+        st_id = st.get("id", "?")
+        st_title = st.get("title", "Untitled")
+        if st_id == current_subtask_id:
+            overview_lines.append(
+                f"  [>>] {st_id}: {st_title} (IN PROGRESS) <- current"
+            )
+        elif st_id in subtask_results:
+            status = subtask_results[st_id].get("status", "done")
+            overview_lines.append(f"  [x] {st_id}: {st_title} ({status})")
+        else:
+            phase = subtask_phases.get(st_id, "pending")
+            overview_lines.append(f"  [ ] {st_id}: {st_title} ({phase})")
+
+    # Upstream results (only for dependencies)
+    upstream_ids = get_upstream_ids(blueprint, current_subtask_id)
+    upstream_lines = []
+    for up_id in upstream_ids:
+        if up_id in subtask_results:
+            result = subtask_results[up_id]
+            fc = result.get("files_changed", [])
+            status = result.get("status", "unknown")
+            summary = result.get("summary", "")
+            line = f"  {up_id}: files={fc}, status={status}"
+            if summary:
+                line += f", summary={summary}"
+            upstream_lines.append(line)
+        else:
+            upstream_lines.append(f"  {up_id}: (not yet completed)")
+
+    # Assemble block
+    parts = [
+        "<map_context>",
+        f"# Goal: {goal}",
+        "",
+        f"# Current Subtask: {current_subtask_id} — {current.get('title', 'Untitled')}",
+    ]
+    parts.extend(current_details)
+    parts.append("")
+    parts.append(f"# Plan Overview ({len(blueprint.get('subtasks', []))} subtasks):")
+    parts.extend(overview_lines)
+
+    if upstream_lines:
+        parts.append("")
+        parts.append(f"# Upstream Results (dependencies of {current_subtask_id}):")
+        parts.extend(upstream_lines)
+
+    # Repo Delta (via compute_differential_insight from repo_insight)
+    if last_sha:
+        try:
+            from mapify_cli.repo_insight import compute_differential_insight
+
+            insight = compute_differential_insight(project_dir, last_sha)
+            changed = insight.get("changed_files", [])
+            deleted = insight.get("deleted_files", [])
+            if changed or deleted:
+                parts.append("")
+                parts.append("# Repo Delta (files changed since last subtask):")
+                for f in changed[:20]:
+                    parts.append(f"  {f}")
+                if len(changed) > 20:
+                    parts.append(f"  ... +{len(changed) - 20} more")
+                if deleted:
+                    parts.append("# Deleted since last subtask:")
+                    for f in deleted[:10]:
+                        parts.append(f"  (deleted) {f}")
+                    if len(deleted) > 10:
+                        parts.append(f"  ... +{len(deleted) - 10} more")
+        except ImportError:
+            # Fallback: repo_insight not available in standalone .map/ context
+            pass
+
+    parts.append("</map_context>")
+
+    return "\n".join(parts)
 
 
 if __name__ == "__main__":
@@ -1073,6 +1266,39 @@ if __name__ == "__main__":
     elif func_name == "snapshot_code_state":
         result = snapshot_code_state()
         print(json.dumps(result, indent=2))
+
+    elif func_name == "record_subtask_result":
+        # Read JSON from stdin to avoid shell injection: {"files": [...], "status": "...", "summary": "...", "commit_sha": "..."}
+        import sys as _sys
+        try:
+            data = json.loads(_sys.stdin.read())
+        except json.JSONDecodeError as e:
+            print(json.dumps({"status": "error", "message": f"Invalid JSON on stdin: {e}"}))
+            _sys.exit(1)
+        branch_name = get_branch_name()
+        state_path = Path(f".map/{branch_name}/step_state.json")
+        if not state_path.exists():
+            print(json.dumps({"status": "error", "message": "step_state.json not found"}))
+            _sys.exit(1)
+        from map_orchestrator import StepState
+        st = StepState.load(state_path)
+        subtask_id = data.get("subtask_id") or st.current_subtask_id or ""
+        if not subtask_id:
+            print(json.dumps({"status": "skipped", "message": "No subtask_id"}))
+            _sys.exit(0)
+        st.record_subtask_result(
+            subtask_id=subtask_id,
+            files_changed=data.get("files", []),
+            status=data.get("status", "valid"),
+            summary=data.get("summary", ""),
+            commit_sha=data.get("commit_sha"),
+        )
+        st.save(state_path)
+        print(json.dumps({"status": "success", "subtask_id": subtask_id}))
+
+    elif func_name == "build_context_block" and len(sys.argv) >= 4:
+        result = build_context_block(sys.argv[2], sys.argv[3])
+        print(result)
 
     else:
         print(f"Unknown function: {func_name}")

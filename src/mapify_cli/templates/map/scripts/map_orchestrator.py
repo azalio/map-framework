@@ -298,6 +298,25 @@ class StepState:
     subtask_files_changed: dict[str, list[str]] = field(default_factory=dict)
     guard_rework_counts: dict[str, int] = field(default_factory=dict)
     constraints: Optional[dict] = None
+    subtask_results: dict[str, dict] = field(default_factory=dict)
+    last_subtask_commit_sha: Optional[str] = None
+
+    def record_subtask_result(
+        self,
+        subtask_id: str,
+        files_changed: list[str],
+        status: str,
+        summary: str = "",
+        commit_sha: Optional[str] = None,
+    ) -> None:
+        """Record result of a completed subtask for context injection."""
+        self.subtask_results[subtask_id] = {
+            "files_changed": files_changed,
+            "status": status,
+            "summary": summary,
+        }
+        if commit_sha:
+            self.last_subtask_commit_sha = commit_sha
 
     def to_dict(self) -> dict:
         """Serialize to dictionary."""
@@ -325,6 +344,8 @@ class StepState:
             "subtask_files_changed": self.subtask_files_changed,
             "guard_rework_counts": self.guard_rework_counts,
             "constraints": self.constraints,
+            "subtask_results": self.subtask_results,
+            "last_subtask_commit_sha": self.last_subtask_commit_sha,
         }
 
     @classmethod
@@ -354,6 +375,8 @@ class StepState:
             subtask_files_changed=data.get("subtask_files_changed", {}),
             guard_rework_counts=data.get("guard_rework_counts", {}),
             constraints=data.get("constraints"),
+            subtask_results=data.get("subtask_results", {}),
+            last_subtask_commit_sha=data.get("last_subtask_commit_sha"),
         )
 
     @classmethod
