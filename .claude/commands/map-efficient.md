@@ -26,6 +26,8 @@ State machine enforces sequencing, Python validates completion, hooks inject rem
 
 This is NOT a violation of MAP agent rules. Learning is decoupled into `/map-learn` (optional, run after workflow completes) to reduce token usage during execution.
 
+**Conditional agent:** Predictor is invoked only during stuck recovery (retry 3+, non-low-risk subtasks).
+
 ## State File
 
 Single source of truth: `.map/<branch>/step_state.json`
@@ -234,8 +236,8 @@ State is managed by the orchestrator via `step_state.json` (created automaticall
 
 ### Wave Computation (after INIT_STATE) — REQUIRED
 
-**IMPORTANT: Always compute waves and execute subtasks in parallel when possible.**
-This is not optional — wave computation must run after every INIT_STATE.
+**IMPORTANT: Always compute waves after INIT_STATE.** Subtasks execute sequentially
+by default. Parallel execution is allowed only for small low-risk waves (see below).
 
 After INIT_STATE (1.6) completes, compute execution waves from the dependency DAG:
 
@@ -314,9 +316,9 @@ This file is the SOLE research artifact passed to Actor and future steps."""
 )
 ```
 
-The ONLY exception: if the orchestrator returns `skip_reason` for step 2.2 (set by
-`resume_from_plan` when `/map-plan` already completed research). In that case, the
-findings file already exists.
+The ONLY exception: if `/map-plan` already produced a findings file for this branch
+(`.map/<branch>/findings_<branch>.md` exists and has content). In that case, re-read
+the existing findings instead of re-running the research agent.
 
 ### Phase: TEST_WRITER (2.25) — TDD Mode Only
 
@@ -568,7 +570,10 @@ if [ -f "tsconfig.json" ]; then
 elif [ -f "package.json" ] && grep -q '"build"' package.json; then
   BUILD_OUTPUT=$(npm run build 2>&1); BUILD_EXIT=$?
 elif [ -f "setup.py" ] || [ -f "pyproject.toml" ]; then
-  BUILD_OUTPUT=$(python -m py_compile $(git diff --name-only --diff-filter=AM -- '*.py') 2>&1); BUILD_EXIT=$?
+  PY_FILES=$(git diff --name-only --diff-filter=AM -- '*.py')
+  if [ -n "$PY_FILES" ]; then
+    BUILD_OUTPUT=$(echo "$PY_FILES" | xargs python -m py_compile 2>&1); BUILD_EXIT=$?
+  fi
 elif [ -f "go.mod" ]; then
   BUILD_OUTPUT=$(go build ./... 2>&1); BUILD_EXIT=$?
 elif [ -f "Cargo.toml" ]; then
@@ -576,38 +581,38 @@ elif [ -f "Cargo.toml" ]; then
 fi
 echo "$BUILD_OUTPUT"
 
-# If build fails, stop here — no point running tests on code that doesn't compile
+# If build fails, skip tests/lint — no point running them on code that doesn't compile
 if [ "$BUILD_EXIT" -ne 0 ]; then
   echo "BUILD FAILED — fix compilation errors before proceeding"
-  # Treat as wave gate failure (see Guard Pattern below)
+  TESTS_EXIT=1; LINT_EXIT=1  # Force gate failure
 fi
 
-# 2. Run tests — capture exit code + output
-TESTS_EXIT=0
+# 2. Run tests — only if build passed
+TESTS_EXIT=${TESTS_EXIT:-0}
 TEST_OUTPUT=""
-if [ -f "pytest.ini" ] || [ -f "setup.py" ] || [ -f "pyproject.toml" ]; then
+if [ "$BUILD_EXIT" -eq 0 ] && { [ -f "pytest.ini" ] || [ -f "setup.py" ] || [ -f "pyproject.toml" ]; }; then
   TEST_OUTPUT=$(pytest 2>&1); TESTS_EXIT=$?
-elif [ -f "package.json" ]; then
+elif [ "$BUILD_EXIT" -eq 0 ] && [ -f "package.json" ]; then
   TEST_OUTPUT=$(npm test 2>&1); TESTS_EXIT=$?
-elif [ -f "go.mod" ]; then
+elif [ "$BUILD_EXIT" -eq 0 ] && [ -f "go.mod" ]; then
   TEST_OUTPUT=$(go test ./... 2>&1); TESTS_EXIT=$?
-elif [ -f "Cargo.toml" ]; then
+elif [ "$BUILD_EXIT" -eq 0 ] && [ -f "Cargo.toml" ]; then
   TEST_OUTPUT=$(cargo test 2>&1); TESTS_EXIT=$?
-else
+elif [ "$BUILD_EXIT" -eq 0 ]; then
   echo "No tests found, skipping test gate"
 fi
 echo "$TEST_OUTPUT"
 
-# 3. Run linter — capture exit code + output
-LINT_EXIT=0
+# 3. Run linter — only if build passed
+LINT_EXIT=${LINT_EXIT:-0}
 LINT_OUTPUT=""
-if command -v ruff &> /dev/null; then
+if [ "$BUILD_EXIT" -eq 0 ] && command -v ruff &> /dev/null; then
   LINT_OUTPUT=$(ruff check . 2>&1); LINT_EXIT=$?
-elif command -v eslint &> /dev/null; then
+elif [ "$BUILD_EXIT" -eq 0 ] && command -v eslint &> /dev/null; then
   LINT_OUTPUT=$(eslint . 2>&1); LINT_EXIT=$?
-elif command -v golangci-lint &> /dev/null; then
+elif [ "$BUILD_EXIT" -eq 0 ] && command -v golangci-lint &> /dev/null; then
   LINT_OUTPUT=$(golangci-lint run 2>&1); LINT_EXIT=$?
-else
+elif [ "$BUILD_EXIT" -eq 0 ]; then
   echo "No linter found, skipping lint gate"
 fi
 echo "$LINT_OUTPUT"

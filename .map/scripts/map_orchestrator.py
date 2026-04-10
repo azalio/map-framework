@@ -41,7 +41,7 @@ STEP PHASES (10 total, 8 standard + 2 TDD):
   1.55 REVIEW_PLAN        - User review + explicit approval checkpoint
   1.56 CHOOSE_MODE        - Auto-skipped (always batch mode)
   1.6  INIT_STATE         - Create step_state.json (single source of truth)
-  2.2  RESEARCH           - research-agent (conditional: 3+ existing files OR high risk)
+  2.2  RESEARCH           - research-agent (mandatory for all subtasks)
   2.25 TEST_WRITER        - TDD: write tests from spec (TDD mode only)
   2.26 TEST_FAIL_GATE     - TDD: verify tests fail without impl (TDD mode only)
   2.3  ACTOR              - Actor agent implementation
@@ -461,8 +461,8 @@ def get_step_instruction(step_id: str, state: StepState) -> str:
             "Single source of truth for workflow enforcement."
         ),
         "2.2": (
-            "Call Task(subagent_type='research-agent') if subtask touches "
-            "3+ existing files OR risk=high. Pass findings to Actor."
+            "Call Task(subagent_type='research-agent') to research the subtask. "
+            "MANDATORY for all subtasks. Pass findings to Actor."
         ),
         "2.25": (
             f"TDD TEST_WRITER: Call Task(subagent_type='actor') with "
