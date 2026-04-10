@@ -321,3 +321,80 @@ class TestDriftReport:
         assert report.has_drift
         assert len(report.drifted_files) == 1
         assert len(report.backed_up_files) == 1
+
+class TestFrontmatterPreservation:
+    """Tests that .md files with YAML frontmatter get MAP-MANAGED after closing ---."""
+
+    def test_inject_after_frontmatter(self):
+        src = "---\nname: actor\ndescription: test\n---\n\n# Content"
+        result = inject_metadata(src, ".md", "1.0.0", "abc123")
+        # Must start with --- (frontmatter intact)
+        assert result.startswith("---\n")
+        # MAP-MANAGED must come after closing ---
+        lines = result.split("\n")
+        fm_close_idx = None
+        for i, line in enumerate(lines):
+            if i > 0 and line == "---":
+                fm_close_idx = i
+                break
+        assert fm_close_idx is not None
+        # Next line after closing --- should be MAP-MANAGED comment
+        assert lines[fm_close_idx + 1].startswith("<!-- MAP-MANAGED:")
+        # Original content must be preserved
+        assert "# Content" in result
+
+    def test_inject_no_frontmatter_unchanged(self):
+        src = "# Just a heading\nNo frontmatter here."
+        result = inject_metadata(src, ".md", "1.0.0", "abc123")
+        # Should prepend as before (no frontmatter)
+        assert result.startswith("<!-- MAP-MANAGED:")
+
+    def test_extract_after_frontmatter_roundtrip(self):
+        original = "---\nname: monitor\ndescription: test agent\n---\n\n# Monitor"
+        injected = inject_metadata(original, ".md", "1.0.0", "abc123")
+        meta, clean = extract_metadata(injected, ".md")
+        assert meta is not None
+        assert meta["mapify_version"] == "1.0.0"
+        assert meta["template_hash"] == "abc123"
+        assert clean == original
+
+    def test_extract_legacy_prepended_still_works(self):
+        """Backward compat: files with MAP-MANAGED at start still extract."""
+        legacy = '<!-- MAP-MANAGED: {"mapify_version":"1.0.0","template_hash":"abc"} -->\n# Content'
+        meta, clean = extract_metadata(legacy, ".md")
+        assert meta is not None
+        assert meta["mapify_version"] == "1.0.0"
+        assert clean == "# Content"
+
+    def test_copy_managed_file_frontmatter(self, tmp_path):
+        src = tmp_path / "agent.md"
+        src.write_text("---\nname: actor\ndescription: Generates code\nmodel: sonnet\n---\n\n# Actor Agent\n")
+        dest = tmp_path / "output" / "actor.md"
+
+        result = copy_managed_file(src, dest, "3.6.0")
+        assert result.success
+        content = dest.read_text()
+        # File must start with --- for Claude Code to parse frontmatter
+        assert content.startswith("---\n")
+        assert "MAP-MANAGED" in content
+        assert "# Actor Agent" in content
+
+    def test_drift_detection_frontmatter(self, tmp_path):
+        """Drift detection works with frontmatter-aware metadata position."""
+        src = tmp_path / "agent.md"
+        original = "---\nname: test\n---\n\n# Content"
+        src.write_text(original)
+        template_hash = compute_hash(original)
+
+        dest = tmp_path / "dest.md"
+        dest.write_text(inject_metadata(original, ".md", "1.0.0", template_hash))
+
+        # No drift
+        result = detect_drift(src, dest)
+        assert not result.drifted
+
+        # User modifies
+        content = dest.read_text()
+        dest.write_text(content.replace("# Content", "# Modified by user"))
+        result = detect_drift(src, dest)
+        assert result.drifted
