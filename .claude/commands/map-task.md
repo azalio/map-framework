@@ -85,7 +85,7 @@ Route to the appropriate executor based on `$PHASE`. All phases from `/map-effic
 
 - **RESEARCH (2.2)** — Call research-agent if needed
 - **ACTOR (2.3)** — Implement the subtask
-- **MONITOR (2.4)** — Validate implementation
+- **MONITOR (2.4)** — MANDATORY: Validate implementation. NEVER skip.
 
 Single-subtask execution must keep using the shared branch workspace artifacts rather than creating task-local side files:
 

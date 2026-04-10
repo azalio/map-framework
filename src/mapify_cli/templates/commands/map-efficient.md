@@ -278,7 +278,7 @@ loop:
   for each subtask in WAVE.subtasks (one at a time):
     1. RESEARCH (2.2) — MANDATORY: run research-agent
     2. ACTOR (2.3) — implement subtask
-    3. MONITOR (2.4) — validate + BUILD GATE (see below)
+    3. MONITOR (2.4) — MANDATORY: validate + BUILD GATE (see below). NEVER skip.
     4. validate_step / advance to next subtask
 
   # After ALL subtasks in wave pass: run per-wave gates
@@ -429,7 +429,14 @@ Protocol:
 - If Actor reports diagnostics/errors — proceed directly to MONITOR.
 - Monitor will verify and report real issues. If `valid=false`, retry via Actor (not manual edits).
 
-### Phase: MONITOR (2.4)
+### Phase: MONITOR (2.4) — MANDATORY
+
+**CRITICAL: ALWAYS run Monitor after Actor. Do NOT skip this phase.**
+
+Monitor is the ONLY validation gate between Actor output and step completion.
+Even if tests already pass, Monitor checks contract compliance, code quality,
+security issues, and integration correctness that tests alone cannot verify.
+**Never skip Monitor because "tests pass" — passing tests is necessary but NOT sufficient.**
 
 ```python
 Task(
