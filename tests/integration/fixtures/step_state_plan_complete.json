@@ -1,0 +1,32 @@
+{
+  "workflow": "map-efficient",
+  "started_at": "2026-04-01T10:00:00",
+  "current_subtask_id": "ST-001",
+  "subtask_index": 0,
+  "subtask_sequence": ["ST-001", "ST-002", "ST-003", "ST-004"],
+  "current_step_id": "2.2",
+  "current_step_phase": "RESEARCH",
+  "completed_steps": ["1.0", "1.5", "1.55", "1.56", "1.6"],
+  "pending_steps": ["2.2", "2.3", "2.4"],
+  "retry_count": 0,
+  "max_retries": 5,
+  "plan_approved": true,
+  "execution_mode": "batch",
+  "tdd_mode": false,
+  "skipped_steps": [],
+  "execution_waves": [["ST-001"], ["ST-002", "ST-003"], ["ST-004"]],
+  "current_wave_index": 0,
+  "subtask_phases": {
+    "ST-001": "RESEARCH",
+    "ST-002": "PENDING",
+    "ST-003": "PENDING",
+    "ST-004": "PENDING"
+  },
+  "subtask_retry_counts": {},
+  "workflow_status": "EXECUTING",
+  "subtask_files_changed": {},
+  "guard_rework_counts": {},
+  "constraints": null,
+  "subtask_results": {},
+  "last_subtask_commit_sha": null
+}
