@@ -1,4 +1,4 @@
-.PHONY: help test install clean build release dev-install lint format check sync-templates
+.PHONY: help test install clean build release dev-install lint format check sync-templates test-e2e test-e2e-sdk test-integration
 
 # Default target
 help:
@@ -14,6 +14,9 @@ help:
 	@echo "  release      Create a new release"
 	@echo "  check        Run all checks (lint + test)"
 	@echo "  sync-templates Sync .claude/ into src/ templates"
+	@echo "  test-e2e     Run e2e artifact contract tests (no LLM, fast)"
+	@echo "  test-e2e-sdk Run e2e tests with real Claude SDK (slow, needs API key)"
+	@echo "  test-integration Run all integration tests"
 
 # Installation
 install:
@@ -31,6 +34,16 @@ test-cov:
 
 test-watch:
 	pytest-watch
+
+# E2E / Integration testing
+test-e2e:
+	pytest tests/integration/test_e2e_artifact_contracts.py -v
+
+test-e2e-sdk:
+	pytest tests/integration/test_e2e_claude_sdk.py -v -m slow
+
+test-integration:
+	pytest tests/integration/ -v
 
 # Code quality
 lint:

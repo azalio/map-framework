@@ -1,0 +1,63 @@
+{
+  "subtasks": [
+    {
+      "id": "ST-001",
+      "title": "Create User model with email/password fields",
+      "dependencies": [],
+      "affected_files": ["models/user.py"],
+      "complexity": "low",
+      "risk": "low",
+      "validation_criteria": [
+        "User model has email and hashed_password fields",
+        "Model includes created_at timestamp"
+      ],
+      "test_strategy": "unit",
+      "aag_contract": "UserModel -> define(email, password) -> User record with hashed password"
+    },
+    {
+      "id": "ST-002",
+      "title": "Add register endpoint",
+      "dependencies": ["ST-001"],
+      "affected_files": ["routes/auth.py", "schemas/auth.py"],
+      "complexity": "medium",
+      "risk": "medium",
+      "validation_criteria": [
+        "POST /register accepts email+password",
+        "Returns 201 with user_id on success",
+        "Returns 409 on duplicate email"
+      ],
+      "test_strategy": "integration",
+      "aag_contract": "AuthRouter -> register(email, password) -> 201 with user_id | 409 duplicate"
+    },
+    {
+      "id": "ST-003",
+      "title": "Add login endpoint with JWT",
+      "dependencies": ["ST-001"],
+      "affected_files": ["routes/auth.py", "utils/jwt.py"],
+      "complexity": "medium",
+      "risk": "high",
+      "validation_criteria": [
+        "POST /login returns JWT access token",
+        "Returns 401 on invalid credentials",
+        "Token contains user_id claim"
+      ],
+      "test_strategy": "integration",
+      "aag_contract": "AuthRouter -> login(email, password) -> JWT token | 401 unauthorized"
+    },
+    {
+      "id": "ST-004",
+      "title": "Add auth middleware for protected routes",
+      "dependencies": ["ST-002", "ST-003"],
+      "affected_files": ["middleware/auth.py"],
+      "complexity": "medium",
+      "risk": "high",
+      "validation_criteria": [
+        "Middleware validates JWT from Authorization header",
+        "Sets request.user on valid token",
+        "Returns 401 on missing/invalid token"
+      ],
+      "test_strategy": "unit",
+      "aag_contract": "AuthMiddleware -> validate(token) -> request.user | 401"
+    }
+  ]
+}
