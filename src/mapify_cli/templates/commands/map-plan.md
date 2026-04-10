@@ -210,6 +210,7 @@ Workflow execution limits. When no constraints specified, all default to null (u
 ```yaml
 constraints:
   max_files: null        # Maximum files Actor can modify per workflow (int or null)
+  max_subtasks: null     # Maximum subtasks in decomposition (int or null)
   time_budget: null      # Maximum minutes for entire workflow (int or null)
   scope_glob: null       # File glob restricting Actor's edit scope (string or null)
 ```
@@ -364,15 +365,9 @@ Break down this task into atomic, testable subtasks:
 
 {"Discovery notes from research-agent are available in this chat" if discovery_done else ""}
 
-Granularity rules:
-- One subtask = one independently testable unit of work, NOT one function or one class.
-- For a subgraph with N internal nodes, the subgraph as a whole is ONE subtask — internal node breakdown is an implementation detail for the executor.
-- Group tightly coupled code that cannot be meaningfully tested in isolation into a single subtask.
-- Do NOT create separate "assembly" or "wire together" subtasks — assembly is part of the subtask that builds the component.
-- Services that are only useful as dependencies of a subgraph belong in the same subtask as that subgraph, OR in a shared foundation subtask if used by multiple subgraphs.
-
 Output requirements:
 - Each subtask MUST include an aag_contract: "Actor -> Action(params) -> Goal"
+- Each subtask should be completable within ~4000 tokens (SFT comfort zone)
 - Include acceptance criteria for each
 - Each subtask should include an explicit verification approach (tests/commands)
 - Identify dependencies between subtasks
@@ -439,12 +434,6 @@ For each invariant in the spec, verify at least one subtask's acceptance criteri
 
 **5. Edge case / overflow rules:**
 Scan the spec for boundary conditions (format overflows, threshold transitions, fallback behaviors). Verify each has a corresponding test in at least one subtask's test_strategy.
-
-**6. Integration test completeness:**
-If the plan contains a dedicated integration/e2e test subtask (typically the last one), verify that its validation criteria reference ALL MVP acceptance criteria — not just the ones it "owns" in the coverage_map. The integration test subtask validates the full contract end-to-end, not only its implementation scope. Compare the integration subtask's validation_criteria list against the complete set of MVP ACs; any missing AC must be added.
-
-**7. Reference accuracy:**
-Spot-check that any numbered references to invariants, decisions, or edge cases in validation criteria text match the actual numbering in the spec. The decomposer agent may generate plausible-sounding but incorrect reference numbers (e.g., "Invariant 11" when it should be "Decision 11"). At minimum, verify references in HIGH-risk subtasks (concurrency, recovery, security) and in the integration test subtask.
 
 If gaps are found, update the decomposition (add validation criteria to existing subtasks or create new subtasks) BEFORE proceeding to Step 6.
 
@@ -563,6 +552,7 @@ Use the **Write** tool to create `.map/<branch>/step_state.json` with this struc
   },
   "constraints": {
     "max_files": null,
+    "max_subtasks": null,
     "time_budget": null,
     "scope_glob": null
   }
@@ -714,8 +704,8 @@ User: "Add JWT authentication with refresh tokens"
 
 ## Troubleshooting
 
-**Q: How many subtasks is the right number?**
-A: As many as the task naturally requires. Do not artificially cap or inflate the count. A bug fix may need 2 subtasks; a full-stack feature may need 30+. The right granularity is one subtask per independently testable unit of work.
+**Q: Task-decomposer created too many subtasks (10+)?**
+A: Subtasks are too granular. Ask task-decomposer to group related work into larger chunks (aim for 3-7 subtasks).
 
 **Q: User changed requirements after planning?**
 A: Re-run /map-plan. It will overwrite task_plan_<branch>.md and reset step_state.json.
