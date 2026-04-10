@@ -63,12 +63,29 @@ def _mapify_available() -> bool:
         return False
 
 
+def _api_key_available() -> bool:
+    """Check if Anthropic API key is set or claude CLI is authenticated."""
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return True
+    # Check if claude CLI is authenticated via `claude auth status`
+    try:
+        result = subprocess.run(
+            ["claude", "auth", "status"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
 def _e2e_ready() -> bool:
     """Check if all prerequisites for e2e tests are met."""
-    return _claude_available() and _mapify_available()
+    return _claude_available() and _mapify_available() and _api_key_available()
 
 
-SKIP_REASON = "claude CLI or mapify CLI not available"
+SKIP_REASON = "claude CLI, mapify CLI, or API key/auth not available"
 
 
 def _run_claude(prompt: str, cwd: str, timeout: int = 300, max_turns: int = 50) -> str:
@@ -177,27 +194,31 @@ def test_project(tmp_path):
     )
 
     # Init git repo
+    git_env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "Test",
+        "GIT_AUTHOR_EMAIL": "test@test.com",
+        "GIT_COMMITTER_NAME": "Test",
+        "GIT_COMMITTER_EMAIL": "test@test.com",
+    }
     subprocess.run(
         ["git", "init"],
         cwd=str(project_dir),
         capture_output=True,
+        check=True,
     )
     subprocess.run(
         ["git", "add", "."],
         cwd=str(project_dir),
         capture_output=True,
+        check=True,
     )
     subprocess.run(
         ["git", "commit", "-m", "Initial commit"],
         cwd=str(project_dir),
         capture_output=True,
-        env={
-            **os.environ,
-            "GIT_AUTHOR_NAME": "Test",
-            "GIT_AUTHOR_EMAIL": "test@test.com",
-            "GIT_COMMITTER_NAME": "Test",
-            "GIT_COMMITTER_EMAIL": "test@test.com",
-        },
+        check=True,
+        env=git_env,
     )
 
     # Create feature branch
@@ -205,6 +226,7 @@ def test_project(tmp_path):
         ["git", "checkout", "-b", "feat/add-multiply"],
         cwd=str(project_dir),
         capture_output=True,
+        check=True,
     )
 
     # Install MAP framework

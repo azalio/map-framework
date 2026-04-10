@@ -1620,7 +1620,7 @@ Workflow state is managed through file-based persistence in `.map/` directory:
 
 2. **Actor prompt layer** (`map-efficient.md` ACTOR phase):
    - Fires once per subtask when Actor agent is spawned
-   - Injects structured `<map_context>` block (≤4000 tokens) containing:
+   - Injects structured `<map_context>` block (target: ≤4 000 tokens, best-effort) containing:
      - `# Goal` — one sentence from task_plan.md
      - `# Current Subtask` — full AAG contract, affected files, validation criteria
      - `# Plan Overview` — all subtasks as one-liners with `[x]/[ ]/[>>]` status markers

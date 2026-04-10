@@ -37,7 +37,7 @@ def hook_mod():
     return _import_hook()
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def branch_name():
     return (
         subprocess.run(

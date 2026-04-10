@@ -16,7 +16,7 @@ help:
 	@echo "  sync-templates Sync .claude/ into src/ templates"
 	@echo "  test-e2e     Run e2e artifact contract tests (no LLM, fast)"
 	@echo "  test-e2e-sdk Run e2e tests with real Claude SDK (slow, needs API key)"
-	@echo "  test-integration Run all integration tests"
+	@echo "  test-integration Run integration tests (excludes slow SDK tests)"
 
 # Installation
 install:
@@ -43,7 +43,7 @@ test-e2e-sdk:
 	pytest tests/integration/test_e2e_claude_sdk.py -v -m slow
 
 test-integration:
-	pytest tests/integration/ -v
+	pytest tests/integration/ -v -m "not slow"
 
 # Code quality
 lint:
