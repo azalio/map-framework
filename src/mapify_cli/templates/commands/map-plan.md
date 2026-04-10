@@ -210,7 +210,6 @@ Workflow execution limits. When no constraints specified, all default to null (u
 ```yaml
 constraints:
   max_files: null        # Maximum files Actor can modify per workflow (int or null)
-  max_subtasks: null     # Maximum subtasks in decomposition (int or null)
   time_budget: null      # Maximum minutes for entire workflow (int or null)
   scope_glob: null       # File glob restricting Actor's edit scope (string or null)
 ```
@@ -558,7 +557,6 @@ Use the **Write** tool to create `.map/<branch>/step_state.json` with this struc
   },
   "constraints": {
     "max_files": null,
-    "max_subtasks": null,
     "time_budget": null,
     "scope_glob": null
   }
@@ -710,8 +708,8 @@ User: "Add JWT authentication with refresh tokens"
 
 ## Troubleshooting
 
-**Q: Task-decomposer created too many subtasks (10+)?**
-A: Subtasks are too granular. Ask task-decomposer to group related work into larger chunks (aim for 3-7 subtasks).
+**Q: How many subtasks is the right number?**
+A: As many as the task naturally requires. Do not artificially cap or inflate the count. A bug fix may need 2 subtasks; a full-stack feature may need 30+. The right granularity is one subtask per independently testable unit of work.
 
 **Q: User changed requirements after planning?**
 A: Re-run /map-plan. It will overwrite task_plan_<branch>.md and reset step_state.json.
