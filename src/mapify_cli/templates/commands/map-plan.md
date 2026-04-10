@@ -435,6 +435,12 @@ For each invariant in the spec, verify at least one subtask's acceptance criteri
 **5. Edge case / overflow rules:**
 Scan the spec for boundary conditions (format overflows, threshold transitions, fallback behaviors). Verify each has a corresponding test in at least one subtask's test_strategy.
 
+**6. Integration test completeness:**
+If the plan contains a dedicated integration/e2e test subtask (typically the last one), verify that its validation criteria reference ALL MVP acceptance criteria — not just the ones it "owns" in the coverage_map. The integration test subtask validates the full contract end-to-end, not only its implementation scope. Compare the integration subtask's validation_criteria list against the complete set of MVP ACs; any missing AC must be added.
+
+**7. Reference accuracy:**
+Spot-check that any numbered references to invariants, decisions, or edge cases in validation criteria text match the actual numbering in the spec. The decomposer agent may generate plausible-sounding but incorrect reference numbers (e.g., "Invariant 11" when it should be "Decision 11"). At minimum, verify references in HIGH-risk subtasks (concurrency, recovery, security) and in the integration test subtask.
+
 If gaps are found, update the decomposition (add validation criteria to existing subtasks or create new subtasks) BEFORE proceeding to Step 6.
 
 ### Step 6: Create Human-Readable Plan
