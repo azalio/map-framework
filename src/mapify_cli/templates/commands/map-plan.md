@@ -364,9 +364,15 @@ Break down this task into atomic, testable subtasks:
 
 {"Discovery notes from research-agent are available in this chat" if discovery_done else ""}
 
+Granularity rules:
+- One subtask = one independently testable unit of work, NOT one function or one class.
+- For a subgraph with N internal nodes, the subgraph as a whole is ONE subtask — internal node breakdown is an implementation detail for the executor.
+- Group tightly coupled code that cannot be meaningfully tested in isolation into a single subtask.
+- Do NOT create separate "assembly" or "wire together" subtasks — assembly is part of the subtask that builds the component.
+- Services that are only useful as dependencies of a subgraph belong in the same subtask as that subgraph, OR in a shared foundation subtask if used by multiple subgraphs.
+
 Output requirements:
 - Each subtask MUST include an aag_contract: "Actor -> Action(params) -> Goal"
-- Each subtask should be completable within ~4000 tokens (SFT comfort zone)
 - Include acceptance criteria for each
 - Each subtask should include an explicit verification approach (tests/commands)
 - Identify dependencies between subtasks
