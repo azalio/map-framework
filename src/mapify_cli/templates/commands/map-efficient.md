@@ -36,6 +36,11 @@ Written/read by `map_orchestrator.py`. Tracks: current phase, subtask states, wa
 retry counts, constraints, files changed per subtask. Used by `workflow-gate.py` for
 phase-based enforcement (Edit allowed only during ACTOR/APPLY/TEST_WRITER phases).
 
+**NEVER modify `step_state.json` directly.** Always use the orchestrator CLI
+(`map_orchestrator.py`, `map_step_runner.py`). Direct writes bypass validation and
+corrupt state transitions. If an orchestrator operation doesn't work — it's a bug,
+ask the user.
+
 ## Workflow Artifacts
 
 Branch-scoped markdown artifacts in `.map/<branch>/`:
@@ -264,11 +269,11 @@ WAVE=$(python3 .map/scripts/map_orchestrator.py get_wave_step)
 MODE=$(echo "$WAVE" | jq -r '.mode')
 ```
 
-**IMPORTANT:** Even when `mode` is `"parallel"`, prefer sequential execution unless the
-wave has ≤3 subtasks that are ALL low-risk AND create new files only. When in doubt,
-execute sequentially.
+**Two execution modes are supported:** sequential (default) and parallel (wave-based).
 
-**Sequential execution loop** (DEFAULT — use this):
+### Sequential execution loop (DEFAULT)
+
+Use when waves have >3 subtasks or subtasks modify existing files:
 
 ```
 loop:
@@ -276,9 +281,9 @@ loop:
   if WAVE.is_complete: goto final_verification
 
   for each subtask in WAVE.subtasks (one at a time):
-    1. RESEARCH (2.2) — MANDATORY: run research-agent
+    1. RESEARCH (2.2) — run research-agent
     2. ACTOR (2.3) — implement subtask
-    3. MONITOR (2.4) — MANDATORY: validate + BUILD GATE (see below). NEVER skip.
+    3. MONITOR (2.4) — MANDATORY: validate + BUILD GATE. NEVER skip.
     4. validate_step / advance to next subtask
 
   # After ALL subtasks in wave pass: run per-wave gates
@@ -288,6 +293,44 @@ loop:
 **DO NOT** write custom bash for-loops to iterate subtasks. Use the orchestrator:
 call `get_next_step` after each `validate_step` — it returns the next phase/subtask
 automatically. The state machine handles iteration.
+
+### Parallel execution loop (wave-based)
+
+Use when wave has ≤3 subtasks AND all are low-risk AND all create new files only.
+Also allowed for any wave size when the user explicitly requests parallel execution.
+
+**CRITICAL:** When running subtasks in parallel, use the **wave API** (`validate_wave_step`,
+`advance_wave`), NOT the sequential API (`validate_step`, `get_next_step`).
+The sequential API tracks only ONE `current_subtask_id` and will fail for parallel work.
+
+```
+loop:
+  WAVE = get_wave_step()
+  if WAVE.is_complete: goto final_verification
+
+  # 1. Run ALL Actors in parallel (one Agent per subtask)
+  for each subtask in WAVE.subtasks (in parallel):
+    Agent(subagent_type="actor", prompt="Implement subtask {subtask_id}...")
+
+  # 2. Run ALL Monitors in parallel (one Agent per subtask)
+  for each subtask in WAVE.subtasks (in parallel):
+    Agent(subagent_type="monitor", prompt="Validate subtask {subtask_id}...")
+
+  # 3. Record results and advance phases for EACH subtask:
+  for each subtask:
+    echo '{"subtask_id":"ST-XXX","files":[...],"status":"valid",...}' \
+      | python3 .map/scripts/map_step_runner.py record_subtask_result
+    python3 .map/scripts/map_orchestrator.py validate_wave_step ST-XXX 2.3
+    python3 .map/scripts/map_orchestrator.py validate_wave_step ST-XXX 2.4
+
+  # 4. Run per-wave gates (build + tests + lint), then advance
+  python3 .map/scripts/map_orchestrator.py advance_wave
+```
+
+**Key difference:** `validate_wave_step <subtask_id> <step_id>` works per-subtask
+and does NOT require `current_subtask_id` to match. After `advance_wave`, the state
+is synchronized for sequential API — you can switch back to `get_next_step` for
+subsequent waves.
 
 ### Phase: RESEARCH (2.2) — MANDATORY
 

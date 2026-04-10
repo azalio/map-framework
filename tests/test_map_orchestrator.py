@@ -263,6 +263,34 @@ class TestAdvanceWave:
         result = map_orchestrator.advance_wave(branch_dir)
         assert result["status"] == "error"
 
+    def test_resets_sequential_state_for_next_wave(self, branch_dir, sample_blueprint):
+        """After advance_wave, sequential API (get_next_step) works for the new wave."""
+        map_orchestrator.set_waves(branch_dir, sample_blueprint)
+        state_file = Path(f".map/{branch_dir}/step_state.json")
+
+        # Simulate completing wave 0 — leave pending_steps empty
+        state = map_orchestrator.StepState.load(state_file)
+        state.pending_steps = []
+        state.completed_steps = ["2.2", "2.3", "2.4"]
+        state.current_step_id = "COMPLETE"
+        state.current_step_phase = "COMPLETE"
+        state.save(state_file)
+
+        # Advance to wave 1
+        result = map_orchestrator.advance_wave(branch_dir)
+        assert result["status"] == "success"
+        assert result["is_complete"] is False
+
+        # Sequential state must be reset so get_next_step works
+        state = map_orchestrator.StepState.load(state_file)
+        assert state.current_step_id == "2.2"
+        assert state.current_step_phase == "RESEARCH"
+        assert "2.2" in state.pending_steps
+        assert "2.3" in state.pending_steps
+        assert "2.4" in state.pending_steps
+        assert state.completed_steps == []
+        assert state.retry_count == 0
+
 
 class TestBackwardCompat:
     """Verify get_next_step works when execution_waves is empty."""

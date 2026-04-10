@@ -976,7 +976,7 @@ def advance_wave(branch: str) -> dict:
 
     is_complete = state.current_wave_index >= len(state.execution_waves)
 
-    # Update subtask_index to track overall progress
+    # Update subtask_index and reset sequential state for next wave
     if not is_complete:
         next_wave = state.execution_waves[state.current_wave_index]
         if next_wave:
@@ -986,6 +986,15 @@ def advance_wave(branch: str) -> dict:
                 state.subtask_index = state.subtask_sequence.index(
                     state.current_subtask_id
                 )
+            # Reset sequential state so get_next_step works after advance_wave
+            step_order = _get_step_order(state.tdd_mode)
+            research_idx = step_order.index("2.2")
+            state.pending_steps = step_order[research_idx:]
+            state.completed_steps = []
+            state.skipped_steps = []
+            state.current_step_id = "2.2"
+            state.current_step_phase = "RESEARCH"
+            state.retry_count = 0
 
     state.save(state_file)
 
