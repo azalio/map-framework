@@ -200,10 +200,15 @@ Task(
    - Use Read(path, offset=lines[0], limit=lines[1]-lines[0]+1)  # lines = [start, end], inclusive
    - Don't read all locations — only what you actually need
 
-## Skip Research If
+## Research Usage
 
-- Task is self-contained (new file, no dependencies)
-- Existing patterns from context already cover the need
+Research is run by the orchestrator BEFORE Actor is invoked. The findings file
+(`.map/<branch>/findings_<branch>.md`) contains distilled context. If it exists,
+read it before implementation — it has import patterns, module structure, and
+build configuration that prevent integration failures.
+
+Do NOT skip reading the findings file even for "new file" tasks — new files still
+need correct imports, types, and build configuration from the existing project.
 
 ---
 

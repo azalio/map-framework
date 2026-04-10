@@ -1236,16 +1236,17 @@ def reopen_for_fixes(branch: str, feedback: str = "") -> dict:
     }
 
 
-SKIPPABLE_STEPS = {"2.2", "2.25", "2.26"}
+SKIPPABLE_STEPS = {"2.25", "2.26"}
 
 
 def skip_step(step_id: str, branch: str) -> dict:
     """Skip a conditional step without executing it.
 
     Only steps that are defined as conditional can be skipped:
-      - 2.2 (RESEARCH): conditional on 3+ existing files or high risk
       - 2.25 (TEST_WRITER): TDD mode only, auto-skipped otherwise
       - 2.26 (TEST_FAIL_GATE): TDD mode only, auto-skipped otherwise
+
+    Note: RESEARCH (2.2) is NOT skippable — it is mandatory for all subtasks.
 
     Args:
         step_id: Step identifier to skip
