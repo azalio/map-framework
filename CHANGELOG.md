@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.7.0] - 2026-04-11
+
 ### Added
 - **Context-aware step injection**: Two-layer "active window" context system that replaces full plan injection with focused current-subtask context
   - Hook layer: `workflow-context-injector.py` now includes goal + subtask title in ≤500 char reminders
