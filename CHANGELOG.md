@@ -14,6 +14,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - New helpers in `map_step_runner.py`: `load_blueprint()`, `get_subtask_from_blueprint()`, `get_upstream_ids()`, `build_context_block()`
   - New `StepState` fields: `subtask_results` (per-subtask outcome tracking), `last_subtask_commit_sha` (differential insight baseline)
   - New function `compute_differential_insight()` in `repo_insight.py` for git-diff-based file change tracking between subtasks
+- **Automatic ACTOR retry on Monitor failure**: Monitor `valid=false` now triggers automatic Actor retry instead of requiring manual intervention
+- **Integration awareness in agent templates**: MAP agent templates now include integration test and reference accuracy checks (Step 5.7 in `/map-plan`)
+- **Coverage verification in `/map-plan`**: Anti-compression guards ensure decomposer output preserves all subtasks and acceptance criteria
+- **Integration tests and e2e Make targets**: New `make e2e` targets for end-to-end testing of plan-to-execution pipeline
+- **Learned rules**: Added architecture patterns and error patterns from parallel wave and frontmatter bugfixes
+
+### Changed
+- **Mandatory research and sequential execution**: `/map-efficient` enforces mandatory research phase and build gate; sequential execution when parallel waves unavailable
+- **Decomposer granularity rules**: Removed artificial `max_subtasks` constraint; added granularity rules to prevent over-splitting or under-splitting
+
+### Fixed
+- **Parallel wave execution**: Orchestrator now correctly supports parallel wave execution without state corruption
+- **YAML frontmatter preservation**: Managed `.md` files no longer corrupt YAML frontmatter during metadata injection
+- **Monitor phase enforcement**: Monitor phase marked as MANDATORY — never skipped even if tests pass
+- **CLI dispatch and sanitization**: Fixed path consistency, injection safety, DRY violations, deleted file handling, and word truncation
+- **Template sync**: `map-plan.md` template synced with dev copy
+- **Code quality**: Resolved black formatting issues in 12 files and ruff lint errors (E402 import order, F841 unused variables)
 
 ## [3.6.0] - 2026-03-26
 
