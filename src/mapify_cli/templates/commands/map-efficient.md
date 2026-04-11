@@ -15,7 +15,7 @@ State machine enforces sequencing, Python validates completion, hooks inject rem
 2. Use exact `subagent_type` specified — never substitute
 3. Call each agent individually — no combining or skipping
 4. Max 5 retry iterations per subtask (note: /map-fast uses max 3)
-5. **Always batch mode, always parallel**: execution mode is always `batch` (no pauses). After INIT_STATE, always compute waves and execute independent subtasks in parallel (multiple `Task()` calls in one message). See "Wave Computation" section.
+5. **Always batch mode, sequential by default**: execution mode is always `batch` (no pauses). After INIT_STATE, compute waves but execute subtasks **one at a time** (sequential). Parallel execution within a wave is allowed ONLY when wave has ≤3 subtasks AND all are low-risk AND all create new files (no modifications to existing files). See "Wave Computation" section.
 6. After Monitor pass, record files changed in `step_state.json` for guard isolation.
 
 ## Intentional Agent Omissions
@@ -26,6 +26,8 @@ State machine enforces sequencing, Python validates completion, hooks inject rem
 
 This is NOT a violation of MAP agent rules. Learning is decoupled into `/map-learn` (optional, run after workflow completes) to reduce token usage during execution.
 
+**Conditional agent:** Predictor is invoked only during stuck recovery (retry 3+, non-low-risk subtasks).
+
 ## State File
 
 Single source of truth: `.map/<branch>/step_state.json`
@@ -33,6 +35,11 @@ Single source of truth: `.map/<branch>/step_state.json`
 Written/read by `map_orchestrator.py`. Tracks: current phase, subtask states, wave states,
 retry counts, constraints, files changed per subtask. Used by `workflow-gate.py` for
 phase-based enforcement (Edit allowed only during ACTOR/APPLY/TEST_WRITER phases).
+
+**NEVER modify `step_state.json` directly.** Always use the orchestrator CLI
+(`map_orchestrator.py`, `map_step_runner.py`). Direct writes bypass validation and
+corrupt state transitions. If an orchestrator operation doesn't work — it's a bug,
+ask the user.
 
 ## Workflow Artifacts
 
@@ -234,8 +241,8 @@ State is managed by the orchestrator via `step_state.json` (created automaticall
 
 ### Wave Computation (after INIT_STATE) — REQUIRED
 
-**IMPORTANT: Always compute waves and execute subtasks in parallel when possible.**
-This is not optional — wave computation must run after every INIT_STATE.
+**IMPORTANT: Always compute waves after INIT_STATE.** Waves determine execution
+order from the dependency graph. Subtasks execute **sequentially by default**.
 
 After INIT_STATE (1.6) completes, compute execution waves from the dependency DAG:
 
@@ -253,75 +260,95 @@ This reads the blueprint, builds a dependency graph, computes topological waves,
 and splits waves by file conflicts. The result is stored in `step_state.json`.
 If `blueprint.json` is missing (e.g., plan was created before v3.5), subtasks execute sequentially — this is safe but slower.
 
-**Wave execution**: If waves are computed, subtasks within a wave run their Actor
-and Monitor phases in parallel. Check wave status with:
+**Wave execution**: Subtasks execute **sequentially by default** (one at a time through
+the full RESEARCH → ACTOR → MONITOR cycle). This prevents accumulated errors that are
+hard to debug. Check wave status with:
 
 ```bash
 WAVE=$(python3 .map/scripts/map_orchestrator.py get_wave_step)
 MODE=$(echo "$WAVE" | jq -r '.mode')
 ```
 
-If `mode` is `"parallel"`, launch all actors in the wave in ONE message using
-multiple `Task()` calls, then all monitors in ONE message. If `mode` is
-`"sequential"`, use the standard single-subtask loop below.
+**Two execution modes are supported:** sequential (default) and parallel (wave-based).
 
-**Parallel wave execution loop**:
+### Sequential execution loop (DEFAULT)
+
+Use when waves have >3 subtasks or subtasks modify existing files:
 
 ```
 loop:
   WAVE = get_wave_step()
   if WAVE.is_complete: goto final_verification
 
-  if WAVE.mode == "sequential":
-    # Single subtask — same as standard behavior below
-    execute_current_sequential_loop()
-  else:
-    # === PARALLEL WAVE ===
-    # Phase A: Prep (sequential per subtask - lightweight)
-    for each subtask in WAVE.subtasks:
-      optional RESEARCH (if 3+ existing files or high risk)
+  for each subtask in WAVE.subtasks (one at a time):
+    1. RESEARCH (2.2) — run research-agent
+    2. ACTOR (2.3) — implement subtask
+    3. MONITOR (2.4) — MANDATORY: validate + BUILD GATE. NEVER skip.
+    4. validate_step / advance to next subtask
 
-    # Phase A.5: TDD phases (if --tdd mode)
-    # When TDD is enabled, run TEST_WRITER + TEST_FAIL_GATE per subtask
-    # BEFORE launching Actors. These run sequentially per subtask.
-    if TDD_FLAG:
-      for each subtask in WAVE.subtasks:
-        run TEST_WRITER (2.25) → validate_wave_step SUBTASK_ID "2.25"
-        run TEST_FAIL_GATE (2.26) → validate_wave_step SUBTASK_ID "2.26"
-
-    # Phase B: Parallel Actors
-    # Launch ALL Task(subagent_type="actor") calls in ONE message
-    # Example: Task(actor, "Implement ST-002") + Task(actor, "Implement ST-004")
-
-    # Phase C: Parallel Monitors
-    # After all actors return, launch ALL monitors in ONE message
-    # Example: Task(monitor, "Validate ST-002") + Task(monitor, "Validate ST-004")
-
-    # Phase D: Retry handling
-    # For each monitor that returned valid=false:
-    #   RETRY=$(python3 .map/scripts/map_orchestrator.py wave_monitor_failed $subtask_id --feedback "feedback")
-    #   If RETRY.status == "max_retries": escalate to user
-    #   Otherwise: re-run actor + monitor for that subtask (serially)
-
-    # Phase E: Per-wave gates
-    # Run tests + linter ONCE for the entire wave
-    # pytest / npm test / etc.
-
-    # Phase F: Advance wave — after all subtasks pass Monitor + per-wave gates
-    python3 .map/scripts/map_orchestrator.py advance_wave
+  # After ALL subtasks in wave pass: run per-wave gates
+  python3 .map/scripts/map_orchestrator.py advance_wave
 ```
 
-Linear DAGs naturally degrade to single-subtask waves (identical to current behavior).
+**DO NOT** write custom bash for-loops to iterate subtasks. Use the orchestrator:
+call `get_next_step` after each `validate_step` — it returns the next phase/subtask
+automatically. The state machine handles iteration.
 
-### Phase: RESEARCH (2.2)
+### Parallel execution loop (wave-based)
+
+Use when wave has ≤3 subtasks AND all are low-risk AND all create new files only.
+Also allowed for any wave size when the user explicitly requests parallel execution.
+
+**CRITICAL:** When running subtasks in parallel, use the **wave API** (`validate_wave_step`,
+`advance_wave`), NOT the sequential API (`validate_step`, `get_next_step`).
+The sequential API tracks only ONE `current_subtask_id` and will fail for parallel work.
+
+```
+loop:
+  WAVE = get_wave_step()
+  if WAVE.is_complete: goto final_verification
+
+  # 1. Run ALL Research in parallel (one Agent per subtask) — MANDATORY
+  for each subtask in WAVE.subtasks (in parallel):
+    Agent(subagent_type="research-agent", prompt="Research subtask {subtask_id}...")
+
+  # 2. Run ALL Actors in parallel (one Agent per subtask)
+  for each subtask in WAVE.subtasks (in parallel):
+    Agent(subagent_type="actor", prompt="Implement subtask {subtask_id}...")
+
+  # 3. Run ALL Monitors in parallel (one Agent per subtask)
+  for each subtask in WAVE.subtasks (in parallel):
+    Agent(subagent_type="monitor", prompt="Validate subtask {subtask_id}...")
+
+  # 4. Record results and advance phases for EACH subtask:
+  for each subtask:
+    echo '{"subtask_id":"ST-XXX","files":[...],"status":"valid",...}' \
+      | python3 .map/scripts/map_step_runner.py record_subtask_result
+    python3 .map/scripts/map_orchestrator.py validate_wave_step ST-XXX 2.2
+    python3 .map/scripts/map_orchestrator.py validate_wave_step ST-XXX 2.3
+    python3 .map/scripts/map_orchestrator.py validate_wave_step ST-XXX 2.4
+
+  # 5. Run per-wave gates (build + tests + lint), then advance
+  python3 .map/scripts/map_orchestrator.py advance_wave
+```
+
+**Key difference:** `validate_wave_step <subtask_id> <step_id>` works per-subtask
+and does NOT require `current_subtask_id` to match. After `advance_wave`, the state
+is synchronized for sequential API — you can switch back to `get_next_step` for
+subsequent waves.
+
+### Phase: RESEARCH (2.2) — MANDATORY
+
+**CRITICAL: ALWAYS run research. Do NOT skip this phase.**
+
+Research prevents the most common failure mode: Actor writing code that doesn't integrate
+with the existing codebase (wrong imports, missing types, incompatible APIs).
 
 ```python
-# Conditional: Call if subtask touches 3+ existing files OR risk=high
-if requires_research(subtask):
-    Task(
-      subagent_type="research-agent",
-      description="Research for subtask [ID]",
-      prompt=f"""Query: [subtask description]
+Task(
+  subagent_type="research-agent",
+  description="Research for subtask [ID]",
+  prompt=f"""Query: [subtask description]
 File patterns: [relevant globs]
 Intent: locate
 Max tokens: 1500
@@ -329,11 +356,18 @@ Findings file: .map/{branch}/findings_{branch}.md
 
 DISTILLATION RULE: Write ONLY actionable findings to the file:
 - file paths + line ranges + function signatures
+- existing import patterns and module structure
+- build/compile configuration (tsconfig, setup.py, Cargo.toml, etc.)
 - NO raw search output, NO full file contents
 - Target: <1500 tokens in findings file
 This file is the SOLE research artifact passed to Actor and future steps."""
-    )
+)
 ```
+
+**Re-use existing findings**: if `/map-plan` already produced a findings file for this
+branch (`.map/<branch>/findings_<branch>.md` exists and has content), the research agent
+should read and extend it rather than starting from scratch. RESEARCH still runs — it
+just builds on prior findings.
 
 ### Phase: TEST_WRITER (2.25) — TDD Mode Only
 
@@ -444,7 +478,14 @@ Protocol:
 - If Actor reports diagnostics/errors — proceed directly to MONITOR.
 - Monitor will verify and report real issues. If `valid=false`, retry via Actor (not manual edits).
 
-### Phase: MONITOR (2.4)
+### Phase: MONITOR (2.4) — MANDATORY
+
+**CRITICAL: ALWAYS run Monitor after Actor. Do NOT skip this phase.**
+
+Monitor is the ONLY validation gate between Actor output and step completion.
+Even if tests already pass, Monitor checks contract compliance, code quality,
+security issues, and integration correctness that tests alone cannot verify.
+**Never skip Monitor because "tests pass" — passing tests is necessary but NOT sufficient.**
 
 ```python
 Task(
@@ -462,11 +503,18 @@ Task(
 
 Protocol (execute in order):
 1. Read each file in MAP_Written — verify code exists and compiles/parses
-2. Check MAP_Contract compliance — does implementation satisfy the AAG assertion?
-3. Run tests: pytest/npm test/go test/cargo test
-4. Check inline contracts: preconditions, postconditions, invariants from packet
-5. Verify: no silent failures, no bare except, no hardcoded secrets
-6. Output: ONLY valid JSON per MonitorReviewOutput schema
+2. **BUILD GATE (MANDATORY):** Run the project build/compile command BEFORE any other checks:
+   - TypeScript: `npx tsc --noEmit` (or `npm run build`)
+   - Python: `python -m py_compile <files>` (or `python -m mypy <files>` if configured)
+   - Go: `go build ./...`
+   - Rust: `cargo check`
+   - If build fails → valid=false immediately, report compilation errors
+3. Check MAP_Contract compliance — does implementation satisfy the AAG assertion?
+4. Run tests: pytest/npm test/go test/cargo test
+5. Check inline contracts: preconditions, postconditions, invariants from packet
+6. Verify: no silent failures, no bare except, no hardcoded secrets
+7. Output: ONLY valid JSON per MonitorReviewOutput schema
+   - If build fails: valid=false + compilation errors
    - If MAP_Contract violated: valid=false + specific contract breach
    - If tests fail: valid=false + failure output
    - If all pass: valid=true + contract_compliant=true"""
@@ -567,36 +615,61 @@ Do not overwrite the previous review file; keep the loop history visible.
 
 ### Per-Wave Gates (after all subtasks in wave pass Monitor)
 
-After ALL subtasks in a wave have Monitor `valid=true`, run tests + linter ONCE for the entire wave:
+After ALL subtasks in a wave have Monitor `valid=true`, run build + tests + linter ONCE for the entire wave:
 
 ```bash
-# Run tests — capture exit code + output
-TESTS_EXIT=0
-TEST_OUTPUT=""
-if [ -f "pytest.ini" ] || [ -f "setup.py" ]; then
-  TEST_OUTPUT=$(pytest 2>&1); TESTS_EXIT=$?
-elif [ -f "package.json" ]; then
-  TEST_OUTPUT=$(npm test 2>&1); TESTS_EXIT=$?
+# 1. BUILD GATE (MANDATORY — run FIRST)
+BUILD_EXIT=0
+BUILD_OUTPUT=""
+if [ -f "tsconfig.json" ]; then
+  BUILD_OUTPUT=$(npx tsc --noEmit 2>&1); BUILD_EXIT=$?
+elif [ -f "package.json" ] && jq -e '.scripts.build' package.json > /dev/null 2>&1; then
+  BUILD_OUTPUT=$(npm run build 2>&1); BUILD_EXIT=$?
+elif [ -f "setup.py" ] || [ -f "pyproject.toml" ]; then
+  PY_FILES=$(git diff --name-only --diff-filter=AM -- '*.py')
+  if [ -n "$PY_FILES" ]; then
+    BUILD_OUTPUT=$(echo "$PY_FILES" | xargs python -m py_compile 2>&1); BUILD_EXIT=$?
+  fi
 elif [ -f "go.mod" ]; then
-  TEST_OUTPUT=$(go test ./... 2>&1); TESTS_EXIT=$?
+  BUILD_OUTPUT=$(go build ./... 2>&1); BUILD_EXIT=$?
 elif [ -f "Cargo.toml" ]; then
+  BUILD_OUTPUT=$(cargo check 2>&1); BUILD_EXIT=$?
+fi
+echo "$BUILD_OUTPUT"
+
+# If build fails, skip tests/lint — no point running them on code that doesn't compile
+if [ "$BUILD_EXIT" -ne 0 ]; then
+  echo "BUILD FAILED — fix compilation errors before proceeding"
+  TESTS_EXIT=1; LINT_EXIT=1  # Force gate failure
+fi
+
+# 2. Run tests — only if build passed
+TESTS_EXIT=${TESTS_EXIT:-0}
+TEST_OUTPUT=""
+if [ "$BUILD_EXIT" -eq 0 ] && { [ -f "pytest.ini" ] || [ -f "setup.py" ] || [ -f "pyproject.toml" ]; }; then
+  TEST_OUTPUT=$(pytest 2>&1); TESTS_EXIT=$?
+elif [ "$BUILD_EXIT" -eq 0 ] && [ -f "package.json" ]; then
+  TEST_OUTPUT=$(npm test 2>&1); TESTS_EXIT=$?
+elif [ "$BUILD_EXIT" -eq 0 ] && [ -f "go.mod" ]; then
+  TEST_OUTPUT=$(go test ./... 2>&1); TESTS_EXIT=$?
+elif [ "$BUILD_EXIT" -eq 0 ] && [ -f "Cargo.toml" ]; then
   TEST_OUTPUT=$(cargo test 2>&1); TESTS_EXIT=$?
-else
-  echo "No tests found, skipping gate"
+elif [ "$BUILD_EXIT" -eq 0 ]; then
+  echo "No tests found, skipping test gate"
 fi
 echo "$TEST_OUTPUT"
 
-# Run linter — capture exit code + output
-LINT_EXIT=0
+# 3. Run linter — only if build passed
+LINT_EXIT=${LINT_EXIT:-0}
 LINT_OUTPUT=""
-if command -v ruff &> /dev/null; then
+if [ "$BUILD_EXIT" -eq 0 ] && command -v ruff &> /dev/null; then
   LINT_OUTPUT=$(ruff check . 2>&1); LINT_EXIT=$?
-elif command -v eslint &> /dev/null; then
+elif [ "$BUILD_EXIT" -eq 0 ] && command -v eslint &> /dev/null; then
   LINT_OUTPUT=$(eslint . 2>&1); LINT_EXIT=$?
-elif command -v golangci-lint &> /dev/null; then
+elif [ "$BUILD_EXIT" -eq 0 ] && command -v golangci-lint &> /dev/null; then
   LINT_OUTPUT=$(golangci-lint run 2>&1); LINT_EXIT=$?
-else
-  echo "No linter found, skipping gate"
+elif [ "$BUILD_EXIT" -eq 0 ]; then
+  echo "No linter found, skipping lint gate"
 fi
 echo "$LINT_OUTPUT"
 ```
@@ -604,7 +677,7 @@ echo "$LINT_OUTPUT"
 **Guard Pattern Decision (per-wave):**
 
 ```
-IF TESTS_EXIT == 0 AND LINT_EXIT == 0:
+IF BUILD_EXIT == 0 AND TESTS_EXIT == 0 AND LINT_EXIT == 0:
   → Wave passed. Advance to next wave.
 
 ELSE (regression detected):

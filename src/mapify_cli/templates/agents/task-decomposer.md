@@ -278,12 +278,24 @@ Return **ONLY** valid JSON in this exact structure:
     - In that case: either add a FOUNDATION subtask to introduce a minimal test harness, or document the gap explicitly in risks/assumptions.
 **subtasks[].affected_files**: Precise file paths (NOT "backend", "frontend"); use [] if paths unknown
 
+### Integration & Runtime Bootstrapping Subtasks
+
+Feature subtasks implement components in isolation. To ensure they work together in the real runtime, you MUST also create:
+
+1. **Integration subtask** (one per runtime entrypoint): Wires real implementations into the runtime surface, replacing any stubs/placeholders. AAG contract must name the entrypoint and verify end-to-end data flow through it.
+   - Depends on ALL feature subtasks it integrates.
+
+2. **Bootstrapping subtask** (when components need external data at runtime): Ensures each workflow loads its own dependencies from configuration or persistent storage rather than requiring callers to pre-populate them.
+
+3. **Interface contracts between subtasks**: When subtask A produces output consumed by subtask B, document the data contract in BOTH subtasks' validation criteria so neither side can silently break it.
+
 ### Subtask Ordering
 
 Subtasks should be ordered by dependency:
 1. Foundation subtasks (no dependencies) first
 2. Dependent subtasks after their prerequisites
-3. Tests/docs can be parallel with implementation (same dependency level)
+3. Integration/wiring subtasks after ALL feature subtasks they integrate
+4. Tests/docs can be parallel with implementation (same dependency level)
 
 **CRITICAL**: If subtask B depends on subtask A, A must appear BEFORE B in the array.
 
@@ -528,6 +540,12 @@ When invoked with `mode: "re_decomposition"` from the orchestrator, you receive 
 - [ ] No placeholder values ("...", "TODO", "TBD")
 - [ ] Dependencies reference valid subtask IDs
 - [ ] Follows ordering constraint (dependencies before dependents)
+
+**Integration & Wiring**:
+- [ ] At least one integration subtask wires features into each runtime entrypoint
+- [ ] Interface contracts documented when one subtask produces output consumed by another
+- [ ] Bootstrapping subtask exists if components need data from disk/config at runtime
+- [ ] No subtask silently assumes its output is consumed — explicit consumer named in VC
 
 **Dependency Validation** (CRITICAL):
 - [ ] **Circular dependency check**: Verify dependency graph is acyclic (A→B→C→A is INVALID)

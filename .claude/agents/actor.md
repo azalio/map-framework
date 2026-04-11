@@ -200,10 +200,15 @@ Task(
    - Use Read(path, offset=lines[0], limit=lines[1]-lines[0]+1)  # lines = [start, end], inclusive
    - Don't read all locations — only what you actually need
 
-## Skip Research If
+## Research Usage
 
-- Task is self-contained (new file, no dependencies)
-- Existing patterns from context already cover the need
+Research is run by the orchestrator BEFORE Actor is invoked. The findings file
+(`.map/<branch>/findings_<branch>.md`) contains distilled context. If it exists,
+read it before implementation — it has import patterns, module structure, and
+build configuration that prevent integration failures.
+
+Do NOT skip reading the findings file even for "new file" tasks — new files still
+need correct imports, types, and build configuration from the existing project.
 
 ---
 
@@ -411,7 +416,17 @@ VC1: <criterion text>
 - Tests: path/to/test_file.ext::test_name (or N/A with reason)
 ```
 
-## 7. Integration Notes (If Applicable)
+## 7. Downstream Consumption Check
+
+When implementing a component whose output is consumed by another component:
+
+- **Identify the consumer**: What reads your output? Verify your output populates ALL fields it expects.
+- **Self-bootstrap**: Does your code load its own dependencies from config/storage, or does it silently return empty results when input is not pre-populated by the caller?
+- **Stub replacement**: If implementing a real version of a placeholder, verify it is wired into the runtime — not just available as a standalone function.
+
+Skip this section for leaf components with no downstream consumers.
+
+## 8. Integration Notes (If Applicable)
 
 Only include if changes affect:
 - Database schema (migrations needed?)

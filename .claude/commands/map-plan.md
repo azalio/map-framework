@@ -265,11 +265,26 @@ If interview was skipped (task is well-defined), still write `spec_<branch>.md` 
 - **Security Boundaries**: include if task touches auth/validation/user input
 - **Out of Scope**: explicitly state what is NOT being changed
 
+**Acceptance Criteria completeness rule:**
+
+If the source document (spec, issue, PRD, etc.) defines explicit acceptance criteria, enumerate ALL of them in the spec — either copy them verbatim or reference them by file + line range (e.g., `SPEC.md lines 2946-2988, 37 criteria`). Do NOT summarize N criteria as "key M" — the decomposer will treat M as the full scope, and uncovered criteria will silently drop from the plan.
+
+The same rule applies to result schema fields, invariants, and any other enumerated contract. If the source lists 20 fields in a result type, the spec must list all 20 or reference the authoritative list — not "key fields include X, Y, Z".
+
 This ensures every `/map-plan` run produces a spec, regardless of whether interview happened.
 
 ### Step 2b: Devil's Advocate Review (SPEC_REVIEW)
 
-**Skip if:** complexity < 5 (simple, well-defined tasks).
+**Skip if ALL of these are true:**
+- Source spec/requirements are under 200 lines
+- Fewer than 5 subtasks expected
+- No cross-cutting concerns involved (observability, security, concurrency, multi-service coordination)
+
+**ALWAYS run if ANY of these is true:**
+- Source spec/requirements exceed 500 lines
+- Source defines 10 or more acceptance criteria
+- Multiple subgraphs, services, or subsystems involved
+- Task includes concurrency, recovery, or multi-transport requirements
 
 After writing the spec, invoke Monitor agent to adversarially review it. The goal is to surface gaps, contradictions, and missing edge cases BEFORE decomposition.
 
@@ -358,6 +373,12 @@ Output requirements:
 - Identify dependencies between subtasks
 - Estimate complexity (low/medium/high)
 - Use architecture_graph_summary to map subtasks to affected modules
+
+Coverage requirements:
+- CRITICAL: Every acceptance criterion from the spec must appear as a validation_criteria in exactly one subtask. Do NOT silently drop spec criteria that seem minor.
+- For cross-cutting requirements (observability, error handling, budget tracking, structured logging), either create a dedicated subtask or explicitly add them as validation criteria to the subtask that implements the relevant infrastructure.
+- For each structured result type in the spec, verify ALL fields (including optional envelope fields like budget_state, deferred_work, recovery_state) are covered in validation criteria.
+- Output a `coverage_map` field: a dict mapping each spec AC identifier to the subtask ID that owns it, e.g. {{"MVP-AC-1": "ST-007", "MVP-AC-2": "ST-005", ...}}.
 """
 )
 ```
@@ -387,6 +408,34 @@ The blueprint JSON must include at minimum:
 ```
 
 If the decomposer returned structured JSON, save it directly. If it returned markdown, construct the JSON from the decomposed subtasks. **This step is mandatory** — without `blueprint.json`, `/map-efficient` cannot compute parallel execution waves.
+
+### Step 5.7: Decomposition Coverage Check
+
+Before writing the human-readable plan, verify the decomposition covers the full spec. The decomposer agent works with limited context and may silently drop requirements.
+
+**1. Acceptance criteria mapping:**
+For each acceptance criterion in the spec (or referenced source), identify which ST-XXX covers it. If an AC has no owner subtask, either add it to an existing subtask's validation_criteria or create a new subtask.
+
+**2. Result schema field check:**
+For each structured result type defined in the spec (e.g., IngestResult, ProjectSynthesisResult, ArchitectureRefreshResult, etc.), verify that ALL fields — including optional envelope fields like `budget_state`, `deferred_work`, `recovery_state` — appear in at least one subtask's validation criteria. Missing fields cause schema drift between implementation and spec.
+
+**3. Cross-cutting concerns scan:**
+Check whether these concerns have an explicit owner subtask or are distributed as validation criteria across subtasks:
+- Observability / structured logging
+- Error codes and structured error types
+- Concurrency / locking
+- Budget tracking and exhaustion
+- Recovery state for all write-capable workflows
+
+If any concern is orphaned (no subtask owns it), either create a dedicated subtask or explicitly add it as a deliverable to the most relevant existing subtask.
+
+**4. Invariant coverage:**
+For each invariant in the spec, verify at least one subtask's acceptance criteria would catch a violation.
+
+**5. Edge case / overflow rules:**
+Scan the spec for boundary conditions (format overflows, threshold transitions, fallback behaviors). Verify each has a corresponding test in at least one subtask's test_strategy.
+
+If gaps are found, update the decomposition (add validation criteria to existing subtasks or create new subtasks) BEFORE proceeding to Step 6.
 
 ### Step 6: Create Human-Readable Plan
 
@@ -432,6 +481,24 @@ Then use the **Write** tool to create `.map/<branch>/task_plan_<branch>.md` with
 
 1. ST-001 → ST-002 (ST-002 depends on ST-001)
 2. ST-003 (can run in parallel)
+
+## Spec Coverage
+
+Map every spec requirement to the subtask that owns its verification. This table is the primary review artifact — if a row has no owner, the plan has a gap.
+
+| Spec Section | Requirement ID | Description | Owner ST | Verified By |
+|-------------|---------------|-------------|----------|-------------|
+| MVP AC | AC-1 | [criterion text] | ST-XXX | [test or check] |
+| Invariant | INV-5 | [invariant text] | ST-YYY | [test or check] |
+| Result Schema | IngestResult.budget_state | [field exists and populated] | ST-ZZZ | [test] |
+| Cross-cutting | Observability | [structured logs with run_id] | ST-WWW | [test or check] |
+
+**Rules for this table:**
+- Every acceptance criterion from the spec MUST have a row
+- Every result schema field MUST have a row (group trivial fields if needed)
+- Every invariant MUST have a row
+- Cross-cutting concerns (observability, error codes, locking, budget) MUST have rows
+- If a row has no Owner ST, the plan is incomplete — add the requirement to a subtask before finalizing
 
 ## Notes
 
@@ -508,8 +575,10 @@ Print a clear checkpoint showing the plan is complete:
 WORKFLOW CHECKPOINT: PLAN PHASE COMPLETE
 ═══════════════════════════════════════════════════
 ✅ Deep interview completed (N decisions captured)
+✅ Devil's Advocate review completed (or skipped — state reason)
 ✅ Architecture graph written to spec_${BRANCH}.md
 ✅ Task decomposed into N subtasks with AAG contracts
+✅ Coverage check passed: M/M spec ACs mapped, 0 orphaned cross-cutting concerns
 ✅ Blueprint saved to .map/${BRANCH}/blueprint.json
 ✅ step_state.json initialized (with aag_contracts map)
 ✅ Plan written to .map/${BRANCH}/task_plan_${BRANCH}.md
@@ -533,14 +602,15 @@ Next Steps:
 
 ```
 DISTILLATION CHECKLIST:
-  [x] task_plan_<branch>.md — has AAG contracts for every subtask
+  [x] task_plan_<branch>.md — has AAG contracts for every subtask + Spec Coverage table
   [x] step_state.json   — has aag_contracts map + subtask_sequence
-  [x] blueprint.json     — raw decomposer output for wave computation
-  [x] spec_<branch>.md      — has architecture graph + decisions (if interview was done)
+  [x] blueprint.json     — raw decomposer output for wave computation (with coverage_map)
+  [x] spec_<branch>.md      — has architecture graph + decisions + COMPLETE acceptance criteria (if interview was done)
   [x] findings_<branch>.md  — has research pointers (if discovery was done)
 
 TARGET: Executor reads ≤4000 tokens of distilled state to start any subtask.
 If plan files exceed this, condense — remove redundant descriptions, keep AAG contracts + criteria.
+The Spec Coverage table in task_plan should NOT be condensed — it is the review contract.
 ```
 
 **This phase ends here.** Do NOT proceed to execution. The context should be flushed, and execution will start fresh with focused attention on individual subtasks.
@@ -646,8 +716,11 @@ A: Re-run /map-plan. It will overwrite task_plan_<branch>.md and reset step_stat
 
 This command succeeds when:
 - ✅ Deep interview completed (if scope warranted it) with spec_<branch>.md written
+- ✅ Spec acceptance criteria enumerated completely (not summarized)
+- ✅ Devil's Advocate review completed (if skip conditions not met)
 - ✅ Architecture graph written in spec_<branch>.md (for complexity >= 3)
-- ✅ task_plan_<branch>.md exists with AAG contracts for every subtask
+- ✅ Decomposition coverage check passed (Step 5.7) — no orphaned ACs, result fields, or cross-cutting concerns
+- ✅ task_plan_<branch>.md exists with AAG contracts for every subtask AND Spec Coverage table
 - ✅ step_state.json exists with valid subtask_sequence + aag_contracts map
 - ✅ CHECKPOINT shows subtask count and IDs
 - ✅ Context distilled (plan files self-contained for fresh session)

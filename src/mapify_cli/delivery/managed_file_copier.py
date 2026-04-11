@@ -103,6 +103,17 @@ def inject_metadata(content: str, ext: str, version: str, template_hash: str) ->
 
     if ext == ".md":
         header = f"<!-- {_MANAGED_TAG}: {meta_json} -->\n"
+        # If content has YAML frontmatter (starts with ---), insert after
+        # closing --- to preserve frontmatter parsing by tools like Claude Code.
+        if content.startswith("---\n"):
+            end_idx = content.find("\n---\n", 3)
+            if end_idx != -1:
+                insert_pos = end_idx + 5  # after \n---\n
+                return content[:insert_pos] + header + content[insert_pos:]
+            # Edge case: closing --- at very end (no trailing newline)
+            end_idx = content.find("\n---", 3)
+            if end_idx != -1 and end_idx + 4 == len(content):
+                return content + "\n" + header
         return header + content
 
     if ext == ".py":
@@ -135,6 +146,7 @@ def extract_metadata(content: str, ext: str) -> tuple[Optional[dict[str, Any]], 
     Returns (None, original_content) if no metadata found.
     """
     if ext == ".md":
+        # Try at start of file (non-frontmatter .md files)
         m = _MD_PATTERN.match(content)
         if m:
             try:
@@ -142,6 +154,27 @@ def extract_metadata(content: str, ext: str) -> tuple[Optional[dict[str, Any]], 
                 return meta, content[m.end() :]
             except json.JSONDecodeError:
                 pass
+        # Try after YAML frontmatter (agent .md files with ---)
+        if content.startswith("---\n"):
+            end_idx = content.find("\n---\n", 3)
+            if end_idx != -1:
+                after_fm = end_idx + 5
+                rest = content[after_fm:]
+                m = _MD_PATTERN.match(rest)
+                if m:
+                    try:
+                        meta = json.loads(m.group(1))
+                        clean = content[:after_fm] + rest[m.end() :]
+                        # If nothing followed the MAP-MANAGED comment (it was
+                        # at EOF) and clean ends with "\n---\n", the trailing
+                        # newline was injected by inject_metadata for the
+                        # frontmatter-at-EOF edge case.  Strip it to restore
+                        # the original content that had no trailing newline.
+                        if not rest[m.end() :] and clean.endswith("\n---\n"):
+                            clean = clean[:-1]
+                        return meta, clean
+                    except json.JSONDecodeError:
+                        pass
         return None, content
 
     if ext == ".py":

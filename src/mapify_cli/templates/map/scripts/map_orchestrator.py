@@ -41,7 +41,7 @@ STEP PHASES (10 total, 8 standard + 2 TDD):
   1.55 REVIEW_PLAN        - User review + explicit approval checkpoint
   1.56 CHOOSE_MODE        - Auto-skipped (always batch mode)
   1.6  INIT_STATE         - Create step_state.json (single source of truth)
-  2.2  RESEARCH           - research-agent (conditional: 3+ existing files OR high risk)
+  2.2  RESEARCH           - research-agent (mandatory for all subtasks)
   2.25 TEST_WRITER        - TDD: write tests from spec (TDD mode only)
   2.26 TEST_FAIL_GATE     - TDD: verify tests fail without impl (TDD mode only)
   2.3  ACTOR              - Actor agent implementation
@@ -461,8 +461,8 @@ def get_step_instruction(step_id: str, state: StepState) -> str:
             "Single source of truth for workflow enforcement."
         ),
         "2.2": (
-            "Call Task(subagent_type='research-agent') if subtask touches "
-            "3+ existing files OR risk=high. Pass findings to Actor."
+            "Call Task(subagent_type='research-agent') to research the subtask. "
+            "MANDATORY for all subtasks. Pass findings to Actor."
         ),
         "2.25": (
             f"TDD TEST_WRITER: Call Task(subagent_type='actor') with "
@@ -976,7 +976,7 @@ def advance_wave(branch: str) -> dict:
 
     is_complete = state.current_wave_index >= len(state.execution_waves)
 
-    # Update subtask_index to track overall progress
+    # Update subtask_index and reset sequential state for next wave
     if not is_complete:
         next_wave = state.execution_waves[state.current_wave_index]
         if next_wave:
@@ -986,6 +986,15 @@ def advance_wave(branch: str) -> dict:
                 state.subtask_index = state.subtask_sequence.index(
                     state.current_subtask_id
                 )
+            # Reset sequential state so get_next_step works after advance_wave
+            step_order = _get_step_order(state.tdd_mode)
+            research_idx = step_order.index("2.2")
+            state.pending_steps = step_order[research_idx:]
+            state.completed_steps = []
+            state.skipped_steps = []
+            state.current_step_id = "2.2"
+            state.current_step_phase = "RESEARCH"
+            state.retry_count = 0
 
     state.save(state_file)
 
@@ -1236,16 +1245,17 @@ def reopen_for_fixes(branch: str, feedback: str = "") -> dict:
     }
 
 
-SKIPPABLE_STEPS = {"2.2", "2.25", "2.26"}
+SKIPPABLE_STEPS = {"2.25", "2.26"}
 
 
 def skip_step(step_id: str, branch: str) -> dict:
     """Skip a conditional step without executing it.
 
     Only steps that are defined as conditional can be skipped:
-      - 2.2 (RESEARCH): conditional on 3+ existing files or high risk
       - 2.25 (TEST_WRITER): TDD mode only, auto-skipped otherwise
       - 2.26 (TEST_FAIL_GATE): TDD mode only, auto-skipped otherwise
+
+    Note: RESEARCH (2.2) is NOT skippable — it is mandatory for all subtasks.
 
     Args:
         step_id: Step identifier to skip
