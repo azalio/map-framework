@@ -324,7 +324,9 @@ def build_handoff_bundle(branch: Optional[str] = None) -> dict:
         if not path.exists():
             return ""
         try:
-            return _sanitize_for_json(path.read_text(encoding="utf-8", errors="replace"))
+            return _sanitize_for_json(
+                path.read_text(encoding="utf-8", errors="replace")
+            )
         except OSError:
             return ""
 
@@ -384,7 +386,9 @@ def build_review_handoff(branch: Optional[str] = None) -> dict:
         if not path.exists():
             return ""
         try:
-            return _sanitize_for_json(path.read_text(encoding="utf-8", errors="replace"))
+            return _sanitize_for_json(
+                path.read_text(encoding="utf-8", errors="replace")
+            )
         except OSError:
             return ""
 
@@ -408,22 +412,26 @@ def build_review_handoff(branch: Optional[str] = None) -> dict:
         "branch": branch_name,
         "plan_review_path": latest_plan_review_name or None,
         "code_review_path": latest_code_review_name or None,
-        "verification_summary_path": "verification-summary.md"
-        if (branch_dir / "verification-summary.md").exists()
-        else None,
+        "verification_summary_path": (
+            "verification-summary.md"
+            if (branch_dir / "verification-summary.md").exists()
+            else None
+        ),
         "qa_path": "qa-001.md" if (branch_dir / "qa-001.md").exists() else None,
-        "pr_draft_path": "pr-draft.md"
-        if (branch_dir / "pr-draft.md").exists()
-        else None,
-        "active_issues_path": "active-issues.json"
-        if (branch_dir / "active-issues.json").exists()
-        else None,
-        "plan_review": read(latest_plan_review_name)
-        if latest_plan_review_name
-        else None,
-        "code_review": read(latest_code_review_name)
-        if latest_code_review_name
-        else None,
+        "pr_draft_path": (
+            "pr-draft.md" if (branch_dir / "pr-draft.md").exists() else None
+        ),
+        "active_issues_path": (
+            "active-issues.json"
+            if (branch_dir / "active-issues.json").exists()
+            else None
+        ),
+        "plan_review": (
+            read(latest_plan_review_name) if latest_plan_review_name else None
+        ),
+        "code_review": (
+            read(latest_code_review_name) if latest_code_review_name else None
+        ),
         "verification_summary": read("verification-summary.md"),
         "qa": read("qa-001.md"),
         "pr_draft": read("pr-draft.md"),
@@ -841,7 +849,10 @@ def run_test_gate() -> dict:
 
     # Detect test runner
     runners = [
-        (["pytest.ini", "pyproject.toml", "setup.py", "setup.cfg"], ["pytest", "--tb=short", "-q"]),
+        (
+            ["pytest.ini", "pyproject.toml", "setup.py", "setup.cfg"],
+            ["pytest", "--tb=short", "-q"],
+        ),
         (["package.json"], ["npm", "test"]),
         (["go.mod"], ["go", "test", "./..."]),
         (["Cargo.toml"], ["cargo", "test"]),
@@ -935,7 +946,9 @@ def snapshot_code_state(branch: Optional[str] = None) -> dict:
     git_ref = _run_git(["rev-parse", "HEAD"])
     diff_stat = _run_git(["diff", "--stat", "HEAD"])
     diff_names = _run_git(["diff", "--name-only", "HEAD"])
-    files_changed = [f for f in diff_names.splitlines() if f.strip()] if diff_names else []
+    files_changed = (
+        [f for f in diff_names.splitlines() if f.strip()] if diff_names else []
+    )
 
     return {
         "status": "success",
@@ -1270,17 +1283,25 @@ if __name__ == "__main__":
     elif func_name == "record_subtask_result":
         # Read JSON from stdin to avoid shell injection: {"files": [...], "status": "...", "summary": "...", "commit_sha": "..."}
         import sys as _sys
+
         try:
             data = json.loads(_sys.stdin.read())
         except json.JSONDecodeError as e:
-            print(json.dumps({"status": "error", "message": f"Invalid JSON on stdin: {e}"}))
+            print(
+                json.dumps(
+                    {"status": "error", "message": f"Invalid JSON on stdin: {e}"}
+                )
+            )
             _sys.exit(1)
         branch_name = get_branch_name()
         state_path = Path(f".map/{branch_name}/step_state.json")
         if not state_path.exists():
-            print(json.dumps({"status": "error", "message": "step_state.json not found"}))
+            print(
+                json.dumps({"status": "error", "message": "step_state.json not found"})
+            )
             _sys.exit(1)
         from map_orchestrator import StepState
+
         st = StepState.load(state_path)
         subtask_id = data.get("subtask_id") or st.current_subtask_id or ""
         if not subtask_id:

@@ -817,7 +817,9 @@ class TestGetSubtaskFromBlueprint:
     """Tests for get_subtask_from_blueprint function."""
 
     def test_finds_subtask_by_id(self):
-        bp = {"subtasks": [{"id": "ST-001", "title": "A"}, {"id": "ST-002", "title": "B"}]}
+        bp = {
+            "subtasks": [{"id": "ST-001", "title": "A"}, {"id": "ST-002", "title": "B"}]
+        }
         result = map_step_runner.get_subtask_from_blueprint(bp, "ST-002")
         assert result is not None
         assert result["title"] == "B"
@@ -894,7 +896,11 @@ class TestBuildContextBlock:
         state = {
             "subtask_phases": {"ST-001": "COMPLETE"},
             "subtask_results": {
-                "ST-001": {"files_changed": ["a.py"], "status": "valid", "summary": "done"}
+                "ST-001": {
+                    "files_changed": ["a.py"],
+                    "status": "valid",
+                    "summary": "done",
+                }
             },
         }
         (branch_workspace / "step_state.json").write_text(json.dumps(state))
@@ -972,7 +978,10 @@ class TestBuildContextBlockRepoDelta:
             "since_sha": "abc123",
             "current_sha": "def456",
         }
-        with patch.dict("sys.modules", {"mapify_cli": MagicMock(), "mapify_cli.repo_insight": MagicMock()}):
+        with patch.dict(
+            "sys.modules",
+            {"mapify_cli": MagicMock(), "mapify_cli.repo_insight": MagicMock()},
+        ):
             with patch(
                 "mapify_cli.repo_insight.compute_differential_insight",
                 return_value=mock_insight,
@@ -992,7 +1001,10 @@ class TestBuildContextBlockRepoDelta:
             "since_sha": "abc123",
             "current_sha": "def456",
         }
-        with patch.dict("sys.modules", {"mapify_cli": MagicMock(), "mapify_cli.repo_insight": MagicMock()}):
+        with patch.dict(
+            "sys.modules",
+            {"mapify_cli": MagicMock(), "mapify_cli.repo_insight": MagicMock()},
+        ):
             with patch(
                 "mapify_cli.repo_insight.compute_differential_insight",
                 return_value=mock_insight,
@@ -1011,7 +1023,10 @@ class TestBuildContextBlockRepoDelta:
             "deleted_files": [],
             "error": "git diff failed",
         }
-        with patch.dict("sys.modules", {"mapify_cli": MagicMock(), "mapify_cli.repo_insight": MagicMock()}):
+        with patch.dict(
+            "sys.modules",
+            {"mapify_cli": MagicMock(), "mapify_cli.repo_insight": MagicMock()},
+        ):
             with patch(
                 "mapify_cli.repo_insight.compute_differential_insight",
                 return_value=mock_insight,
@@ -1030,7 +1045,9 @@ class TestBuildContextBlockRepoDelta:
     def test_repo_delta_fallback_on_import_error(self, branch_workspace):
         """When mapify_cli.repo_insight is not importable, Repo Delta is silently skipped."""
         self._setup_blueprint_and_state(branch_workspace, last_sha="abc123")
-        with patch.dict("sys.modules", {"mapify_cli": None, "mapify_cli.repo_insight": None}):
+        with patch.dict(
+            "sys.modules", {"mapify_cli": None, "mapify_cli.repo_insight": None}
+        ):
             result = map_step_runner.build_context_block("test-branch", "ST-001")
 
         assert "<map_context>" in result
@@ -1045,7 +1062,10 @@ class TestBuildContextBlockRepoDelta:
             "since_sha": "abc123",
             "current_sha": "def456",
         }
-        with patch.dict("sys.modules", {"mapify_cli": MagicMock(), "mapify_cli.repo_insight": MagicMock()}):
+        with patch.dict(
+            "sys.modules",
+            {"mapify_cli": MagicMock(), "mapify_cli.repo_insight": MagicMock()},
+        ):
             with patch(
                 "mapify_cli.repo_insight.compute_differential_insight",
                 return_value=mock_insight,
@@ -1067,7 +1087,10 @@ class TestBuildContextBlockRepoDelta:
             "since_sha": "abc123",
             "current_sha": "def456",
         }
-        with patch.dict("sys.modules", {"mapify_cli": MagicMock(), "mapify_cli.repo_insight": MagicMock()}):
+        with patch.dict(
+            "sys.modules",
+            {"mapify_cli": MagicMock(), "mapify_cli.repo_insight": MagicMock()},
+        ):
             with patch(
                 "mapify_cli.repo_insight.compute_differential_insight",
                 return_value=mock_insight,

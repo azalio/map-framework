@@ -104,9 +104,12 @@ def _run_claude(prompt: str, cwd: str, timeout: int = 300, max_turns: int = 50) 
         result = subprocess.run(
             [
                 "claude",
-                "-p", prompt,
-                "--output-format", "text",
-                "--max-turns", str(max_turns),
+                "-p",
+                prompt,
+                "--output-format",
+                "text",
+                "--max-turns",
+                str(max_turns),
             ],
             capture_output=True,
             text=True,
@@ -115,7 +118,7 @@ def _run_claude(prompt: str, cwd: str, timeout: int = 300, max_turns: int = 50) 
             env={**os.environ, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"},
         )
     except subprocess.TimeoutExpired as exc:
-        partial = (exc.stdout or b"")
+        partial = exc.stdout or b""
         if isinstance(partial, bytes):
             partial = partial.decode("utf-8", errors="replace")
         raise RuntimeError(
@@ -145,9 +148,7 @@ def _run_mapify_init(project_dir: str) -> None:
         timeout=60,
     )
     if result.returncode != 0:
-        raise RuntimeError(
-            f"mapify init failed:\n{result.stdout}\n{result.stderr}"
-        )
+        raise RuntimeError(f"mapify init failed:\n{result.stdout}\n{result.stderr}")
 
 
 @pytest.fixture
@@ -160,7 +161,8 @@ def test_project(tmp_path):
 
     # Create a tiny project
     (project_dir / "app.py").write_text(
-        textwrap.dedent("""\
+        textwrap.dedent(
+            """\
         \"\"\"Simple calculator app for e2e testing.\"\"\"
 
 
@@ -174,12 +176,14 @@ def test_project(tmp_path):
 
         if __name__ == "__main__":
             print(f"2 + 3 = {add(2, 3)}")
-        """),
+        """
+        ),
         encoding="utf-8",
     )
 
     (project_dir / "test_app.py").write_text(
-        textwrap.dedent("""\
+        textwrap.dedent(
+            """\
         from app import add, subtract
 
 
@@ -189,7 +193,8 @@ def test_project(tmp_path):
 
         def test_subtract():
             assert subtract(5, 3) == 2
-        """),
+        """
+        ),
         encoding="utf-8",
     )
 
@@ -281,8 +286,7 @@ class TestMapPlanE2E:
 
         # Check required artifacts exist
         assert (map_dir / "blueprint.json").exists(), (
-            f"blueprint.json not found in {map_dir}. "
-            f"Claude output: {output[:500]}"
+            f"blueprint.json not found in {map_dir}. " f"Claude output: {output[:500]}"
         )
         assert (map_dir / f"task_plan_{branch}.md").exists() or any(
             f.name.startswith("task_plan") for f in map_dir.glob("task_plan*.md")
@@ -324,13 +328,12 @@ class TestMapPlanE2E:
         )
 
         map_dir = _get_map_dir(test_project)
-        state = json.loads(
-            (map_dir / "step_state.json").read_text(encoding="utf-8")
-        )
+        state = json.loads((map_dir / "step_state.json").read_text(encoding="utf-8"))
 
-        assert state["workflow"] in ("map-plan", "map-efficient"), (
-            f"Unexpected workflow value: {state['workflow']}"
-        )
+        assert state["workflow"] in (
+            "map-plan",
+            "map-efficient",
+        ), f"Unexpected workflow value: {state['workflow']}"
         assert "subtask_sequence" in state
         assert isinstance(state["subtask_sequence"], list)
 
@@ -364,9 +367,9 @@ class TestMapEfficientE2E:
 
         # Verify: code was modified
         app_content = (test_project / "app.py").read_text(encoding="utf-8")
-        assert "multiply" in app_content.lower(), (
-            "Expected multiply function in app.py after execution"
-        )
+        assert (
+            "multiply" in app_content.lower()
+        ), "Expected multiply function in app.py after execution"
 
     def test_efficient_creates_review_artifacts(self, test_project):
         """map-efficient should produce code-review and verification artifacts."""
@@ -417,9 +420,9 @@ class TestMapEfficientE2E:
             text=True,
             timeout=60,
         )
-        assert result.returncode == 0, (
-            f"Project tests failed after map-efficient:\n{result.stdout[-2000:]}"
-        )
+        assert (
+            result.returncode == 0
+        ), f"Project tests failed after map-efficient:\n{result.stdout[-2000:]}"
 
     def test_efficient_multiply_works(self, test_project):
         """The generated multiply function must actually compute correctly."""
@@ -440,7 +443,8 @@ class TestMapEfficientE2E:
         # Directly invoke the generated code and verify correctness
         result = subprocess.run(
             [
-                "python3", "-c",
+                "python3",
+                "-c",
                 "from app import multiply; "
                 "assert multiply(2, 2) == 4, f'2*2={multiply(2,2)}'; "
                 "assert multiply(0, 5) == 0, f'0*5={multiply(0,5)}'; "
@@ -517,9 +521,7 @@ class TestMapReviewE2E:
         map_dir = _get_map_dir(test_project)
         reviews_before = set(map_dir.glob("code-review-*.md"))
         # Capture modification times of existing review files
-        mtimes_before = {
-            r.name: r.stat().st_mtime for r in reviews_before
-        }
+        mtimes_before = {r.name: r.stat().st_mtime for r in reviews_before}
 
         # Review
         review_output = _run_claude(
@@ -536,8 +538,7 @@ class TestMapReviewE2E:
         # existing one, OR produce its verdict via pr-draft / active-issues.
         # Accept any evidence that the review actually ran.
         updated_existing = any(
-            r.stat().st_mtime > mtimes_before.get(r.name, 0)
-            for r in reviews_after
+            r.stat().st_mtime > mtimes_before.get(r.name, 0) for r in reviews_after
         )
         has_pr_draft = (map_dir / "pr-draft.md").exists()
         has_active_issues = (map_dir / "active-issues.json").exists()
@@ -583,7 +584,7 @@ class TestFullFlowE2E:
         map_dir = _get_map_dir(test_project)
 
         # Phase 1: Plan
-        plan_output = _run_claude(
+        _run_claude(
             "/map-plan Add a multiply(a, b) function to app.py with tests",
             cwd=str(test_project),
             timeout=600,
@@ -593,16 +594,16 @@ class TestFullFlowE2E:
         assert (map_dir / "step_state.json").exists(), "Plan failed: no step_state"
 
         # Phase 2: Execute (needs more time — multi-subtask with Actor/Monitor loops)
-        efficient_output = _run_claude(
+        _run_claude(
             "/map-efficient",
             cwd=str(test_project),
             timeout=900,
             max_turns=120,
         )
         app_content = (test_project / "app.py").read_text(encoding="utf-8")
-        assert "multiply" in app_content.lower(), (
-            "Efficient failed: no multiply function"
-        )
+        assert (
+            "multiply" in app_content.lower()
+        ), "Efficient failed: no multiply function"
 
         # Phase 3: Review
         review_output = _run_claude(

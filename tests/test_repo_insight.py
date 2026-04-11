@@ -387,7 +387,9 @@ class TestComputeDifferentialInsight:
         mock_deleted = MagicMock(returncode=0, stdout="old.py\n")
         mock_head = MagicMock(returncode=0, stdout="abc123\n")
 
-        with patch("subprocess.run", side_effect=[mock_changed, mock_deleted, mock_head]):
+        with patch(
+            "subprocess.run", side_effect=[mock_changed, mock_deleted, mock_head]
+        ):
             result = compute_differential_insight(Path("/tmp"), "def456")
 
         assert result["changed_files"] == ["a.py", "b.py"]

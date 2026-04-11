@@ -18,10 +18,10 @@ import json
 import os
 import re
 import sys
+from pathlib import Path
 
 # Keep in sync with map_step_runner.py GOAL_HEADING_RE
 GOAL_HEADING_RE = r"## (?:Goal|Overview)\n(.*?)(?=\n##|\Z)"
-from pathlib import Path
 
 # Bash commands that don't need workflow reminders
 READONLY_COMMANDS = {

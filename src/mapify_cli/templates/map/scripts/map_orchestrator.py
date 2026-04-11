@@ -1122,9 +1122,7 @@ def monitor_failed(branch: str, feedback: str = "") -> dict:
     }
 
 
-def wave_monitor_failed(
-    subtask_id: str, branch: str, feedback: str = ""
-) -> dict:
+def wave_monitor_failed(subtask_id: str, branch: str, feedback: str = "") -> dict:
     """Handle Monitor valid=false for a subtask within a wave.
 
     Resets the subtask's phase back to ACTOR and increments its retry count.
@@ -1782,7 +1780,9 @@ def main():
             if not args.task_or_step:
                 print(
                     json.dumps(
-                        {"error": "subtask_id required. Usage: wave_monitor_failed ST-001 --feedback 'text'"}
+                        {
+                            "error": "subtask_id required. Usage: wave_monitor_failed ST-001 --feedback 'text'"
+                        }
                     ),
                     file=sys.stderr,
                 )

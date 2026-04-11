@@ -322,6 +322,7 @@ class TestDriftReport:
         assert len(report.drifted_files) == 1
         assert len(report.backed_up_files) == 1
 
+
 class TestFrontmatterPreservation:
     """Tests that .md files with YAML frontmatter get MAP-MANAGED after closing ---."""
 
@@ -368,7 +369,9 @@ class TestFrontmatterPreservation:
 
     def test_copy_managed_file_frontmatter(self, tmp_path):
         src = tmp_path / "agent.md"
-        src.write_text("---\nname: actor\ndescription: Generates code\nmodel: sonnet\n---\n\n# Actor Agent\n")
+        src.write_text(
+            "---\nname: actor\ndescription: Generates code\nmodel: sonnet\n---\n\n# Actor Agent\n"
+        )
         dest = tmp_path / "output" / "actor.md"
 
         result = copy_managed_file(src, dest, "3.6.0")
@@ -431,9 +434,9 @@ class TestFrontmatterPreservation:
         dest.write_text(inject_metadata(original, ".md", "1.0.0", template_hash))
 
         result = detect_drift(src, dest)
-        assert not result.drifted, (
-            f"False drift detected for frontmatter-at-EOF template: {result.reason}"
-        )
+        assert (
+            not result.drifted
+        ), f"False drift detected for frontmatter-at-EOF template: {result.reason}"
 
     def test_frontmatter_with_trailing_newline_still_works(self):
         """Ensure fix doesn't break the normal case (trailing newline present)."""

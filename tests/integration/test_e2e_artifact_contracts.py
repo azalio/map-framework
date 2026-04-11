@@ -100,14 +100,18 @@ class TestPlanArtifactProduction:
         for st in bp["subtasks"]:
             assert "id" in st, f"Subtask missing 'id': {st}"
             assert "dependencies" in st, f"Subtask {st['id']} missing 'dependencies'"
-            assert "affected_files" in st, f"Subtask {st['id']} missing 'affected_files'"
+            assert (
+                "affected_files" in st
+            ), f"Subtask {st['id']} missing 'affected_files'"
 
     def test_blueprint_aag_contracts_present(self):
         """Each subtask should carry an AAG contract string."""
         bp = _load_fixture_json("blueprint.json")
         for st in bp["subtasks"]:
             assert "aag_contract" in st, f"Subtask {st['id']} missing 'aag_contract'"
-            assert len(st["aag_contract"]) > 10, f"AAG contract too short for {st['id']}"
+            assert (
+                len(st["aag_contract"]) > 10
+            ), f"AAG contract too short for {st['id']}"
 
     def test_blueprint_dependency_ids_reference_existing_subtasks(self):
         """All dependency references must point to subtasks that exist."""
@@ -115,9 +119,9 @@ class TestPlanArtifactProduction:
         all_ids = {st["id"] for st in bp["subtasks"]}
         for st in bp["subtasks"]:
             for dep in st["dependencies"]:
-                assert dep in all_ids, (
-                    f"Subtask {st['id']} depends on '{dep}' which doesn't exist"
-                )
+                assert (
+                    dep in all_ids
+                ), f"Subtask {st['id']} depends on '{dep}' which doesn't exist"
 
     def test_task_plan_wrapped_in_map_tags(self):
         """task_plan.md must be wrapped in <MAP_Plan_v1_0> tags."""
@@ -136,9 +140,15 @@ class TestPlanArtifactProduction:
         """Initial step_state.json must have all required fields."""
         state = _load_fixture_json("step_state_initialized.json")
         required_fields = [
-            "workflow", "current_subtask_id", "subtask_sequence",
-            "current_step_id", "current_step_phase", "completed_steps",
-            "pending_steps", "plan_approved", "execution_waves",
+            "workflow",
+            "current_subtask_id",
+            "subtask_sequence",
+            "current_step_id",
+            "current_step_phase",
+            "completed_steps",
+            "pending_steps",
+            "plan_approved",
+            "execution_waves",
         ]
         for field in required_fields:
             assert field in state, f"step_state.json missing '{field}'"
@@ -453,9 +463,9 @@ class TestFullLifecycle:
         # 6. Walk subtask execution steps (RESEARCH → ACTOR → MONITOR)
         for step_id in ["2.2", "2.3", "2.4"]:
             step = map_orchestrator.get_next_step(branch)
-            assert step["step_id"] == step_id, (
-                f"Expected {step_id}, got {step['step_id']}"
-            )
+            assert (
+                step["step_id"] == step_id
+            ), f"Expected {step_id}, got {step['step_id']}"
             map_orchestrator.validate_step(step_id, branch)
 
         # 7. Should advance to next subtask
@@ -556,9 +566,7 @@ class TestDegradation:
     def test_set_waves_empty_subtasks(self, workspace, branch):
         """set_waves should return error when subtasks list is empty."""
         map_orchestrator.initialize_workflow("Add auth", branch)
-        (workspace / "blueprint.json").write_text(
-            '{"subtasks": []}', encoding="utf-8"
-        )
+        (workspace / "blueprint.json").write_text('{"subtasks": []}', encoding="utf-8")
         result = map_orchestrator.set_waves(branch)
         assert result["status"] == "error"
         assert "no subtasks" in result["message"].lower()

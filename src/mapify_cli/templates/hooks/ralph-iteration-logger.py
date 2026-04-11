@@ -364,14 +364,18 @@ def derive_summary(log_file: Path) -> None:
         is_thrashing = file_thrashing[f] >= THRASHING_WINDOW
         if is_thrashing:
             thrashing_alert_count += 1
-        file_stats.append({
-            "file": f,
-            "iterations": len(effs),
-            "avg_effectiveness": round(sum(effs) / len(effs), 3) if effs else 0.0,
-            "is_thrashing": is_thrashing,
-        })
+        file_stats.append(
+            {
+                "file": f,
+                "iterations": len(effs),
+                "avg_effectiveness": round(sum(effs) / len(effs), 3) if effs else 0.0,
+                "is_thrashing": is_thrashing,
+            }
+        )
 
-    all_effs = [e.get("effectiveness", 0.0) for e in entries if (e.get("file") or "").strip()]
+    all_effs = [
+        e.get("effectiveness", 0.0) for e in entries if (e.get("file") or "").strip()
+    ]
     summary: dict[str, object] = {
         "generated_at": datetime.now().isoformat(),
         "entry_count": len(entries),
@@ -380,7 +384,9 @@ def derive_summary(log_file: Path) -> None:
         "file_stats": file_stats,
         "aggregate": {
             "total_iterations": total_lines,
-            "avg_effectiveness": round(sum(all_effs) / len(all_effs), 3) if all_effs else 0.0,
+            "avg_effectiveness": (
+                round(sum(all_effs) / len(all_effs), 3) if all_effs else 0.0
+            ),
             "total_thrashing_alerts": thrashing_alert_count,
         },
     }

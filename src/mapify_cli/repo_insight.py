@@ -204,9 +204,7 @@ def _validate_repo_insight_schema(data: dict) -> None:
             raise ValueError(f"key_dirs must be relative paths: {dir_path}")
 
 
-def compute_differential_insight(
-    project_root: Path, since_sha: str | None
-) -> dict:
+def compute_differential_insight(project_root: Path, since_sha: str | None) -> dict:
     """Compute file changes since a given git SHA.
 
     Used for context-aware injection: shows Actor only files
@@ -249,7 +247,11 @@ def compute_differential_insight(
             cwd=project_root,
             timeout=2,
         )
-        deleted = [f for f in result_del.stdout.strip().split("\n") if f] if result_del.returncode == 0 else []
+        deleted = (
+            [f for f in result_del.stdout.strip().split("\n") if f]
+            if result_del.returncode == 0
+            else []
+        )
 
         # Get current HEAD SHA
         head_result = subprocess.run(
@@ -259,7 +261,9 @@ def compute_differential_insight(
             cwd=project_root,
             timeout=2,
         )
-        current_sha = head_result.stdout.strip() if head_result.returncode == 0 else "unknown"
+        current_sha = (
+            head_result.stdout.strip() if head_result.returncode == 0 else "unknown"
+        )
 
         return {
             "changed_files": changed,

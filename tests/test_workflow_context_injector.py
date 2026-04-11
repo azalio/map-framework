@@ -26,7 +26,9 @@ def _run_hook(tmp_project_dir: Path, stdin_payload: dict) -> tuple[int, str, str
 def _import_hook():
     """Import the hook module dynamically for direct function testing."""
     hook_path = Path(".claude/hooks/workflow-context-injector.py").resolve()
-    spec = importlib.util.spec_from_file_location("workflow_context_injector", hook_path)
+    spec = importlib.util.spec_from_file_location(
+        "workflow_context_injector", hook_path
+    )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -52,7 +54,9 @@ def branch_name():
     )
 
 
-def test_injects_for_edit_when_step_state_exists(tmp_path: Path, branch_name: str) -> None:
+def test_injects_for_edit_when_step_state_exists(
+    tmp_path: Path, branch_name: str
+) -> None:
     branch = branch_name
 
     state_dir = tmp_path / ".map" / branch
@@ -96,7 +100,9 @@ def test_skips_for_readonly_bash(tmp_path: Path) -> None:
     assert out == "{}"
 
 
-def test_injects_for_pytest_bash_when_step_state_exists(tmp_path: Path, branch_name: str) -> None:
+def test_injects_for_pytest_bash_when_step_state_exists(
+    tmp_path: Path, branch_name: str
+) -> None:
     branch = branch_name
 
     state_dir = tmp_path / ".map" / branch
@@ -196,7 +202,9 @@ class TestLoadGoalAndTitle:
 
         assert goal == "First sentence."
 
-    def test_returns_empty_title_for_missing_subtask(self, tmp_path, hook_mod, branch_name):
+    def test_returns_empty_title_for_missing_subtask(
+        self, tmp_path, hook_mod, branch_name
+    ):
         branch = branch_name
         state_dir = tmp_path / ".map" / branch
         state_dir.mkdir(parents=True, exist_ok=True)
@@ -351,7 +359,9 @@ class TestFormatReminderTruncation:
         # Goal should have been dropped
         assert "Goal:" not in result
 
-    def test_no_goal_or_title_when_subtask_is_dash(self, hook_mod, tmp_path, branch_name):
+    def test_no_goal_or_title_when_subtask_is_dash(
+        self, hook_mod, tmp_path, branch_name
+    ):
         """When subtask_id is '-', skip goal/title loading entirely."""
         os.environ["CLAUDE_PROJECT_DIR"] = str(tmp_path)
         try:
@@ -394,6 +404,8 @@ class TestFormatReminderTruncation:
         # so the remaining text should end with a non-alphanumeric char
         # (space, pipe, paren) rather than cutting "wor..." mid-word.
         before_ellipsis = result[:-3]
-        assert not before_ellipsis[-1].isalpha(), (
+        assert not before_ellipsis[
+            -1
+        ].isalpha(), (
             f"Truncation cut mid-word; last char before '...': {before_ellipsis[-1]!r}"
         )

@@ -1344,9 +1344,7 @@ class TestMonitorFailed:
 
     def test_phase_guard_rejects_non_monitor_phase(self, branch_dir, tmp_path):
         """monitor_failed() returns error if called from non-MONITOR phase."""
-        self._make_monitor_state(
-            tmp_path, branch_dir, current_step_phase="ACTOR"
-        )
+        self._make_monitor_state(tmp_path, branch_dir, current_step_phase="ACTOR")
         result = map_orchestrator.monitor_failed(branch_dir, "feedback")
         assert result["status"] == "error"
         assert "ACTOR" in result["message"]
@@ -1488,9 +1486,7 @@ class TestReopenForFixes:
         assert state.retry_count == 0
 
     def test_rejects_non_complete_phase(self, branch_dir, tmp_path):
-        self._make_complete_state(
-            tmp_path, branch_dir, current_step_phase="MONITOR"
-        )
+        self._make_complete_state(tmp_path, branch_dir, current_step_phase="MONITOR")
         result = map_orchestrator.reopen_for_fixes(branch_dir, "")
         assert result["status"] == "error"
         assert "MONITOR" in result["message"]
@@ -1525,7 +1521,9 @@ class TestSubtaskResults:
 
     def test_record_subtask_result(self):
         state = map_orchestrator.StepState()
-        state.record_subtask_result("ST-001", ["a.py", "b.py"], "valid", "All tests pass")
+        state.record_subtask_result(
+            "ST-001", ["a.py", "b.py"], "valid", "All tests pass"
+        )
         assert "ST-001" in state.subtask_results
         assert state.subtask_results["ST-001"]["files_changed"] == ["a.py", "b.py"]
         assert state.subtask_results["ST-001"]["status"] == "valid"
