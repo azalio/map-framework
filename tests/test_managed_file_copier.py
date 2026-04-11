@@ -398,3 +398,51 @@ class TestFrontmatterPreservation:
         dest.write_text(content.replace("# Content", "# Modified by user"))
         result = detect_drift(src, dest)
         assert result.drifted
+
+    def test_frontmatter_eof_no_trailing_newline_roundtrip(self):
+        """Regression: file ending with closing --- and no trailing newline.
+
+        inject_metadata must not alter the 'clean' content hash for templates
+        that end immediately after the closing frontmatter delimiter, otherwise
+        detect_drift reports false positives and triggers unnecessary backups.
+        """
+        original = "---\nname: test\ndescription: edge case\n---"
+        template_hash = compute_hash(original)
+
+        injected = inject_metadata(original, ".md", "1.0.0", template_hash)
+        meta, clean = extract_metadata(injected, ".md")
+
+        assert meta is not None
+        assert meta["template_hash"] == template_hash
+        assert clean == original, (
+            f"clean content differs from original after roundtrip: "
+            f"{clean!r} != {original!r}"
+        )
+        assert compute_hash(clean) == template_hash
+
+    def test_frontmatter_eof_no_trailing_newline_no_false_drift(self, tmp_path):
+        """Regression: no false drift for frontmatter-at-EOF templates."""
+        original = "---\nname: agent\n---"
+        src = tmp_path / "agent.md"
+        src.write_text(original)
+        template_hash = compute_hash(original)
+
+        dest = tmp_path / "dest.md"
+        dest.write_text(inject_metadata(original, ".md", "1.0.0", template_hash))
+
+        result = detect_drift(src, dest)
+        assert not result.drifted, (
+            f"False drift detected for frontmatter-at-EOF template: {result.reason}"
+        )
+
+    def test_frontmatter_with_trailing_newline_still_works(self):
+        """Ensure fix doesn't break the normal case (trailing newline present)."""
+        original = "---\nname: test\n---\n\n# Body content\n"
+        template_hash = compute_hash(original)
+
+        injected = inject_metadata(original, ".md", "1.0.0", template_hash)
+        meta, clean = extract_metadata(injected, ".md")
+
+        assert meta is not None
+        assert clean == original
+        assert compute_hash(clean) == template_hash

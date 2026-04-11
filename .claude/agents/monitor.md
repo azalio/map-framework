@@ -288,8 +288,8 @@ IF detected_language != "unknown":
   → Consider language-specific static analysis tools
 
 PHASE 3: EXHAUSTIVE DIMENSION VALIDATION (ALWAYS)
-Execute validation protocol for each of the 10 dimensions sequentially.
-Do NOT skip dimensions based on early findings — complete ALL 10.
+Execute validation protocol for each of the 11 dimensions sequentially.
+Do NOT skip dimensions based on early findings — complete ALL 11.
 For each dimension: parse criteria → verify against code → record PASS/FAIL.
 Apply language-specific validation rules per dimension.
 
@@ -860,11 +860,11 @@ Include in JSON output when validation_criteria provided:
 
 </Monitor_Contract_Validation>
 
-<Monitor_10D_Validation_v2_9>
+<Monitor_11D_Validation_v3_0>
 
-## 10-Dimension Quality Model
+## 11-Dimension Quality Model
 
-Execute validation protocol for EACH dimension sequentially. Do NOT short-circuit — complete ALL 10 dimensions even if early rejections found. Output structured findings per dimension.
+Execute validation protocol for EACH dimension sequentially. Do NOT short-circuit — complete ALL 11 dimensions even if early rejections found. Output structured findings per dimension. **Exception:** BUILD GATE failure (step 2 of Verification sequence) is the single allowed short-circuit — if build/compile fails, set `valid: false` immediately without completing dimension checks.
 
 ### 1. CORRECTNESS
 
@@ -1382,7 +1382,47 @@ ELSE:
 - Post-cutoff library + no research + outdated patterns
 </critical>
 
-</Monitor_10D_Validation_v2_9>
+### 11. INTEGRATION (When subtask has upstream/downstream dependencies)
+
+#### What to Check
+- Output consumed correctly by downstream components (not silently dropped)
+- Component self-bootstraps from config/storage (does not require caller to pre-populate dependencies)
+- Stubs/placeholders replaced by real implementations in the runtime entrypoint
+- Interface contracts between components are satisfied in both directions
+
+#### How to Check
+1. Identify downstream consumers of this subtask's output
+2. Trace the data path: does the output reach the consumer with the expected shape?
+3. Check if the component loads its own dependencies or silently returns empty/stub results
+4. Verify the runtime entrypoint uses the real implementation, not a placeholder
+
+#### Pass Criteria
+- Output is demonstrably consumed by at least one downstream component
+- Component works when invoked through the runtime entrypoint (not just direct calls)
+- No silent fallback to stub/empty results on missing dependencies
+
+#### Common Failures
+- Component writes to field A but consumer reads field B
+- Runtime entrypoint still wired to a stub despite real implementation existing
+- Component returns empty results when dependencies are not injected by test setup
+- Build/config failure masked as a successful stub response
+
+#### Severity Mapping
+- **Critical**: Runtime entrypoint returns stub/placeholder to end users
+- **High**: Component output not consumed by downstream (data silently lost)
+- **Medium**: Component requires caller injection instead of self-bootstrapping
+- **Low**: Interface contract undocumented but happens to work
+
+**Decision Framework**:
+```
+IF subtask has no downstream consumers AND no runtime entrypoint:
+  → Skip (leaf component)
+ELSE:
+  → Verify output reaches consumer through runtime path
+  → Verify self-bootstrapping from config/storage
+```
+
+</Monitor_11D_Validation_v3_0>
 
 
 <Monitor_Severity_Matrix>
@@ -1403,6 +1443,7 @@ This table provides quick reference for severity classification per dimension. U
 | **8. External Deps** | Missing critical dependency documentation | Incomplete CRD/adapter docs | Missing version constraints | Minor config details |
 | **9. Documentation** | Contradicts tech-design/source of truth | Missing key fields/logic, wrong ownership | Minor inconsistencies | Formatting issues |
 | **10. Research** | N/A (rarely critical) | Complex problem + no research + wrong impl | Post-cutoff lib + outdated patterns | Missing citations only |
+| **11. Integration** | Runtime entrypoint returns stub to users | Output not consumed by downstream (data lost) | Requires caller injection instead of self-bootstrap | Interface contract undocumented |
 
 ### Severity Decision Tree
 
@@ -1561,8 +1602,8 @@ Do NOT invent issues to justify review effort. Empty `issues` array is valid.
           },
           "category": {
             "type": "string",
-            "enum": ["correctness", "security", "code-quality", "performance", "testability", "cli-tool", "maintainability", "external-deps", "documentation", "research"],
-            "description": "Maps to 10-dimension model: 1=correctness, 2=security, 3=code-quality, 4=performance, 5=testability, 6=cli-tool, 7=maintainability, 8=external-deps, 9=documentation, 10=research"
+            "enum": ["correctness", "security", "code-quality", "performance", "testability", "cli-tool", "maintainability", "external-deps", "documentation", "research", "integration"],
+            "description": "Maps to 11-dimension model: 1=correctness, 2=security, 3=code-quality, 4=performance, 5=testability, 6=cli-tool, 7=maintainability, 8=external-deps, 9=documentation, 10=research, 11=integration"
           },
           "title": {
             "type": "string",
@@ -1609,7 +1650,7 @@ Do NOT invent issues to justify review effort. Empty `issues` array is valid.
       "type": "array",
       "items": {
         "type": "string",
-        "enum": ["correctness", "security", "code-quality", "performance", "testability", "cli-tool", "maintainability", "external-deps", "documentation", "research"]
+        "enum": ["correctness", "security", "code-quality", "performance", "testability", "cli-tool", "maintainability", "external-deps", "documentation", "research", "integration"]
       },
       "description": "Dimensions that passed completely"
     },
@@ -1617,7 +1658,7 @@ Do NOT invent issues to justify review effort. Empty `issues` array is valid.
       "type": "array",
       "items": {
         "type": "string",
-        "enum": ["correctness", "security", "code-quality", "performance", "testability", "cli-tool", "maintainability", "external-deps", "documentation", "research"]
+        "enum": ["correctness", "security", "code-quality", "performance", "testability", "cli-tool", "maintainability", "external-deps", "documentation", "research", "integration"]
       },
       "description": "Dimensions with issues"
     },
@@ -1916,7 +1957,7 @@ ARRAY POPULATION:
 - Ensure: passed_checks ∩ failed_checks = ∅ (no overlap)
 
 SPECIAL CASES:
-- If no issues found: all 10 categories go in passed_checks
+- If no issues found: all 11 categories go in passed_checks
 - If a dimension was skipped (large change): omit from both arrays
 ```
 
@@ -2024,6 +2065,7 @@ ELSE:
 | `external-deps` | Missing CRDs, undocumented dependencies | 8 |
 | `documentation` | Inconsistent with source, missing fields | 9 |
 | `research` | Missing research for unfamiliar patterns | 10 |
+| `integration` | Output not consumed downstream, stub in runtime | 11 |
 
 </Monitor_Decision_Rules>
 
@@ -2466,7 +2508,7 @@ def check_rate_limit(user_id, action, limit=100, window=3600):
 
 1. ✅ Did I use request_review for code implementations?
 2. ✅ Did I check for known issue patterns?
-3. ✅ Did I check all 10 validation dimensions systematically?
+3. ✅ Did I check all 11 validation dimensions systematically?
 4. ✅ Did I verify documentation against source of truth (if applicable)?
 5. ✅ Are all issues specific with location and actionable suggestions?
 6. ✅ Is severity classification correct per guidelines?

@@ -416,7 +416,17 @@ VC1: <criterion text>
 - Tests: path/to/test_file.ext::test_name (or N/A with reason)
 ```
 
-## 7. Integration Notes (If Applicable)
+## 7. Downstream Consumption Check
+
+When implementing a component whose output is consumed by another component:
+
+- **Identify the consumer**: What reads your output? Verify your output populates ALL fields it expects.
+- **Self-bootstrap**: Does your code load its own dependencies from config/storage, or does it silently return empty results when input is not pre-populated by the caller?
+- **Stub replacement**: If implementing a real version of a placeholder, verify it is wired into the runtime — not just available as a standalone function.
+
+Skip this section for leaf components with no downstream consumers.
+
+## 8. Integration Notes (If Applicable)
 
 Only include if changes affect:
 - Database schema (migrations needed?)

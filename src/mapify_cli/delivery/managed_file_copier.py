@@ -165,6 +165,13 @@ def extract_metadata(content: str, ext: str) -> tuple[Optional[dict[str, Any]], 
                     try:
                         meta = json.loads(m.group(1))
                         clean = content[:after_fm] + rest[m.end() :]
+                        # If nothing followed the MAP-MANAGED comment (it was
+                        # at EOF) and clean ends with "\n---\n", the trailing
+                        # newline was injected by inject_metadata for the
+                        # frontmatter-at-EOF edge case.  Strip it to restore
+                        # the original content that had no trailing newline.
+                        if not rest[m.end() :] and clean.endswith("\n---\n"):
+                            clean = clean[:-1]
                         return meta, clean
                     except json.JSONDecodeError:
                         pass

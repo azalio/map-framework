@@ -83,7 +83,7 @@ PHASE=$(echo "$NEXT_STEP" | jq -r '.phase')
 
 Route to the appropriate executor based on `$PHASE`. All phases from `/map-efficient` work identically:
 
-- **RESEARCH (2.2)** — Call research-agent if needed
+- **RESEARCH (2.2)** — MANDATORY: Gather context via research-agent. NEVER skip.
 - **ACTOR (2.3)** — Implement the subtask
 - **MONITOR (2.4)** — MANDATORY: Validate implementation. NEVER skip.
 

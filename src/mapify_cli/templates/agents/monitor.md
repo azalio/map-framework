@@ -288,8 +288,8 @@ IF detected_language != "unknown":
   → Consider language-specific static analysis tools
 
 PHASE 3: EXHAUSTIVE DIMENSION VALIDATION (ALWAYS)
-Execute validation protocol for each of the 10 dimensions sequentially.
-Do NOT skip dimensions based on early findings — complete ALL 10.
+Execute validation protocol for each of the 11 dimensions sequentially.
+Do NOT skip dimensions based on early findings — complete ALL 11.
 For each dimension: parse criteria → verify against code → record PASS/FAIL.
 Apply language-specific validation rules per dimension.
 
@@ -860,11 +860,11 @@ Include in JSON output when validation_criteria provided:
 
 </Monitor_Contract_Validation>
 
-<Monitor_10D_Validation_v2_9>
+<Monitor_11D_Validation_v3_0>
 
 ## 11-Dimension Quality Model
 
-Execute validation protocol for EACH dimension sequentially. Do NOT short-circuit — complete ALL 11 dimensions even if early rejections found. Output structured findings per dimension.
+Execute validation protocol for EACH dimension sequentially. Do NOT short-circuit — complete ALL 11 dimensions even if early rejections found. Output structured findings per dimension. **Exception:** BUILD GATE failure (step 2 of Verification sequence) is the single allowed short-circuit — if build/compile fails, set `valid: false` immediately without completing dimension checks.
 
 ### 1. CORRECTNESS
 
@@ -1422,7 +1422,7 @@ ELSE:
   → Verify self-bootstrapping from config/storage
 ```
 
-</Monitor_10D_Validation_v2_9>
+</Monitor_11D_Validation_v3_0>
 
 
 <Monitor_Severity_Matrix>
@@ -1957,7 +1957,7 @@ ARRAY POPULATION:
 - Ensure: passed_checks ∩ failed_checks = ∅ (no overlap)
 
 SPECIAL CASES:
-- If no issues found: all 10 categories go in passed_checks
+- If no issues found: all 11 categories go in passed_checks
 - If a dimension was skipped (large change): omit from both arrays
 ```
 
@@ -2065,6 +2065,7 @@ ELSE:
 | `external-deps` | Missing CRDs, undocumented dependencies | 8 |
 | `documentation` | Inconsistent with source, missing fields | 9 |
 | `research` | Missing research for unfamiliar patterns | 10 |
+| `integration` | Output not consumed downstream, stub in runtime | 11 |
 
 </Monitor_Decision_Rules>
 
@@ -2507,7 +2508,7 @@ def check_rate_limit(user_id, action, limit=100, window=3600):
 
 1. ✅ Did I use request_review for code implementations?
 2. ✅ Did I check for known issue patterns?
-3. ✅ Did I check all 10 validation dimensions systematically?
+3. ✅ Did I check all 11 validation dimensions systematically?
 4. ✅ Did I verify documentation against source of truth (if applicable)?
 5. ✅ Are all issues specific with location and actionable suggestions?
 6. ✅ Is severity classification correct per guidelines?

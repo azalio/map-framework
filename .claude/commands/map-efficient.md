@@ -241,8 +241,8 @@ State is managed by the orchestrator via `step_state.json` (created automaticall
 
 ### Wave Computation (after INIT_STATE) — REQUIRED
 
-**IMPORTANT: Always compute waves after INIT_STATE.** Subtasks execute sequentially
-by default. Parallel execution is allowed only for small low-risk waves (see below).
+**IMPORTANT: Always compute waves after INIT_STATE.** Waves determine execution
+order from the dependency graph. Subtasks execute **sequentially by default**.
 
 After INIT_STATE (1.6) completes, compute execution waves from the dependency DAG:
 
@@ -308,22 +308,27 @@ loop:
   WAVE = get_wave_step()
   if WAVE.is_complete: goto final_verification
 
-  # 1. Run ALL Actors in parallel (one Agent per subtask)
+  # 1. Run ALL Research in parallel (one Agent per subtask) — MANDATORY
+  for each subtask in WAVE.subtasks (in parallel):
+    Agent(subagent_type="research-agent", prompt="Research subtask {subtask_id}...")
+
+  # 2. Run ALL Actors in parallel (one Agent per subtask)
   for each subtask in WAVE.subtasks (in parallel):
     Agent(subagent_type="actor", prompt="Implement subtask {subtask_id}...")
 
-  # 2. Run ALL Monitors in parallel (one Agent per subtask)
+  # 3. Run ALL Monitors in parallel (one Agent per subtask)
   for each subtask in WAVE.subtasks (in parallel):
     Agent(subagent_type="monitor", prompt="Validate subtask {subtask_id}...")
 
-  # 3. Record results and advance phases for EACH subtask:
+  # 4. Record results and advance phases for EACH subtask:
   for each subtask:
     echo '{"subtask_id":"ST-XXX","files":[...],"status":"valid",...}' \
       | python3 .map/scripts/map_step_runner.py record_subtask_result
+    python3 .map/scripts/map_orchestrator.py validate_wave_step ST-XXX 2.2
     python3 .map/scripts/map_orchestrator.py validate_wave_step ST-XXX 2.3
     python3 .map/scripts/map_orchestrator.py validate_wave_step ST-XXX 2.4
 
-  # 4. Run per-wave gates (build + tests + lint), then advance
+  # 5. Run per-wave gates (build + tests + lint), then advance
   python3 .map/scripts/map_orchestrator.py advance_wave
 ```
 
@@ -359,9 +364,10 @@ This file is the SOLE research artifact passed to Actor and future steps."""
 )
 ```
 
-The ONLY exception: if `/map-plan` already produced a findings file for this branch
-(`.map/<branch>/findings_<branch>.md` exists and has content). In that case, re-read
-the existing findings instead of re-running the research agent.
+**Re-use existing findings**: if `/map-plan` already produced a findings file for this
+branch (`.map/<branch>/findings_<branch>.md` exists and has content), the research agent
+should read and extend it rather than starting from scratch. RESEARCH still runs — it
+just builds on prior findings.
 
 ### Phase: TEST_WRITER (2.25) — TDD Mode Only
 
@@ -617,7 +623,7 @@ BUILD_EXIT=0
 BUILD_OUTPUT=""
 if [ -f "tsconfig.json" ]; then
   BUILD_OUTPUT=$(npx tsc --noEmit 2>&1); BUILD_EXIT=$?
-elif [ -f "package.json" ] && grep -q '"build"' package.json; then
+elif [ -f "package.json" ] && jq -e '.scripts.build' package.json > /dev/null 2>&1; then
   BUILD_OUTPUT=$(npm run build 2>&1); BUILD_EXIT=$?
 elif [ -f "setup.py" ] || [ -f "pyproject.toml" ]; then
   PY_FILES=$(git diff --name-only --diff-filter=AM -- '*.py')
