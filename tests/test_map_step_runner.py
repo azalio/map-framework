@@ -243,11 +243,13 @@ def test_write_learning_handoff_creates_artifacts_and_manifest(branch_workspace)
     assert "Run `/map-learn` with no arguments" in markdown
     assert "Implement auth" in markdown
     assert "READY FOR REVIEW" in markdown
+    assert "artifact_manifest.json" in markdown
 
     payload = json.loads((branch_workspace / "learning-handoff.json").read_text())
     assert payload["workflow"] == "map-check"
     assert payload["task_title"] == "Implement auth"
     assert payload["outcome"] == "READY FOR REVIEW"
+    assert payload["artifacts"]["artifact_manifest"]["stages"]["learn_handoff"]["status"] == "ready"
 
     manifest = json.loads((branch_workspace / "artifact_manifest.json").read_text())
     stage = manifest["stages"]["learn_handoff"]

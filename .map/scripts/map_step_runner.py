@@ -838,7 +838,7 @@ def write_learning_handoff(
         path
         for path in [
             "workflow-fit.json" if workflow_fit else "",
-            "artifact_manifest.json" if manifest else "",
+            "artifact_manifest.json",
             review_handoff.get("plan_review_path") or "",
             review_handoff.get("code_review_path") or "",
             review_handoff.get("verification_summary_path") or "",
@@ -880,7 +880,6 @@ def write_learning_handoff(
             "pr_draft": review_handoff.get("pr_draft"),
         },
     }
-    _write_json_file(json_path, payload)
 
     markdown = (
         "# Learning Handoff\n\n"
@@ -908,7 +907,6 @@ def write_learning_handoff(
     )
     if notes_text:
         markdown += f"\n## Notes\n\n{notes_text}\n"
-    markdown_path.write_text(markdown, encoding="utf-8")
 
     manifest_payload = load_artifact_manifest(branch_name)
     _set_manifest_stage(
@@ -928,6 +926,9 @@ def write_learning_handoff(
         },
     )
     manifest_result = save_artifact_manifest(manifest_payload, branch_name)
+    payload["artifacts"]["artifact_manifest"] = manifest_result["manifest"]
+    _write_json_file(json_path, payload)
+    markdown_path.write_text(markdown, encoding="utf-8")
 
     return {
         "status": "success",
