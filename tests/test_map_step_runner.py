@@ -203,6 +203,15 @@ def test_build_handoff_bundle_reads_artifacts(branch_workspace):
     assert "follow up on edge case" in result["risks_follow_up"]
 
 
+def test_build_handoff_bundle_ignores_placeholder_human_artifacts(branch_workspace):
+    result = map_step_runner.build_handoff_bundle()
+
+    assert result["status"] == "success"
+    assert result["summary"] == "- [not recorded]"
+    assert result["validation"] == "- [not recorded]"
+    assert result["risks_follow_up"] == "- [not recorded]"
+
+
 def test_write_learning_handoff_creates_artifacts_and_manifest(branch_workspace):
     (branch_workspace / "verification-summary.md").write_text(
         "# Verification Summary\n\n- Verdict: READY FOR REVIEW\n",

@@ -651,31 +651,42 @@ def _sanitize_for_json(text: str) -> str:
     return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text)
 
 
+def _read_branch_artifact_text(branch_dir: Path, name: str) -> str:
+    """Read a branch artifact, treating untouched managed placeholders as empty."""
+    path = branch_dir / name
+    if not path.exists():
+        return ""
+    try:
+        content = _sanitize_for_json(path.read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        return ""
+
+    default_content = HUMAN_ARTIFACT_DEFAULTS.get(name)
+    if default_content and content.strip() == default_content.strip():
+        return ""
+    return content
+
+
 def build_handoff_bundle(branch: Optional[str] = None) -> dict:
     """Build a compact handoff bundle from branch-scoped human artifacts."""
     branch_name = branch or get_branch_name()
     branch_dir = get_branch_dir(branch_name)
     ensure_human_artifacts(branch_name)
 
-    def read(name: str) -> str:
-        path = branch_dir / name
-        if not path.exists():
-            return ""
-        try:
-            return _sanitize_for_json(path.read_text(encoding="utf-8", errors="replace"))
-        except OSError:
-            return ""
-
-    verification = read("verification-summary.md")
-    qa = read("qa-001.md")
-    active_issues = read("active-issues.json")
-    verification_gate = read("verification-gate.json")
+    verification = _read_branch_artifact_text(branch_dir, "verification-summary.md")
+    qa = _read_branch_artifact_text(branch_dir, "qa-001.md")
+    active_issues = _read_branch_artifact_text(branch_dir, "active-issues.json")
+    verification_gate = _read_branch_artifact_text(branch_dir, "verification-gate.json")
     review_path = next_numbered_artifact_path("code-review", branch_name)
     latest_review_index = max(0, review_path["index"] - 1)
     latest_review_name = (
         f"code-review-{latest_review_index:03d}.md" if latest_review_index > 0 else ""
     )
-    latest_review = read(latest_review_name) if latest_review_name else ""
+    latest_review = (
+        _read_branch_artifact_text(branch_dir, latest_review_name)
+        if latest_review_name
+        else ""
+    )
 
     summary = []
     if verification:
@@ -717,15 +728,6 @@ def build_review_handoff(branch: Optional[str] = None) -> dict:
     branch_name = branch or get_branch_name()
     branch_dir = get_branch_dir(branch_name)
 
-    def read(name: str) -> str:
-        path = branch_dir / name
-        if not path.exists():
-            return ""
-        try:
-            return _sanitize_for_json(path.read_text(encoding="utf-8", errors="replace"))
-        except OSError:
-            return ""
-
     plan_review_next = next_numbered_artifact_path("plan-review", branch_name)
     latest_plan_review_index = max(0, plan_review_next["index"] - 1)
     latest_plan_review_name = (
@@ -756,16 +758,19 @@ def build_review_handoff(branch: Optional[str] = None) -> dict:
         "active_issues_path": "active-issues.json"
         if (branch_dir / "active-issues.json").exists()
         else None,
-        "plan_review": read(latest_plan_review_name)
+        "plan_review": _read_branch_artifact_text(branch_dir, latest_plan_review_name)
         if latest_plan_review_name
         else None,
-        "code_review": read(latest_code_review_name)
+        "code_review": _read_branch_artifact_text(branch_dir, latest_code_review_name)
         if latest_code_review_name
         else None,
-        "verification_summary": read("verification-summary.md"),
-        "qa": read("qa-001.md"),
-        "pr_draft": read("pr-draft.md"),
-        "active_issues": read("active-issues.json") or None,
+        "verification_summary": _read_branch_artifact_text(
+            branch_dir, "verification-summary.md"
+        ),
+        "qa": _read_branch_artifact_text(branch_dir, "qa-001.md"),
+        "pr_draft": _read_branch_artifact_text(branch_dir, "pr-draft.md"),
+        "active_issues": _read_branch_artifact_text(branch_dir, "active-issues.json")
+        or None,
     }
     return payload
 
