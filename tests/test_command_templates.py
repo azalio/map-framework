@@ -369,6 +369,7 @@ class TestCommandTemplates:
         assert "Zero-argument mode" in content
         assert "learning-handoff.md" in content
         assert "resolved workflow summary" in content
+        assert "record_learning_consumption" in content
 
 
 class TestMapReviewStructure:

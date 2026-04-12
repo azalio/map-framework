@@ -4,7 +4,7 @@ import json
 import sys
 import types
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 
@@ -249,7 +249,16 @@ def test_write_learning_handoff_creates_artifacts_and_manifest(branch_workspace)
     assert payload["workflow"] == "map-check"
     assert payload["task_title"] == "Implement auth"
     assert payload["outcome"] == "READY FOR REVIEW"
-    assert payload["artifacts"]["artifact_manifest"]["stages"]["learn_handoff"]["status"] == "ready"
+    assert (
+        payload["artifacts"]["artifact_manifest"]["stages"]["learn_handoff"]["status"]
+        == "ready"
+    )
+    assert payload["artifacts"]["learning_metrics"]["counters"]["handoff_generated_count"] == 1
+
+    metrics = json.loads((branch_workspace / "learning-metrics.json").read_text())
+    assert metrics["counters"]["handoff_generated_count"] == 1
+    assert metrics["counters"]["pending_handoff_count"] == 1
+    assert metrics["current_handoff"]["workflow"] == "map-check"
 
     manifest = json.loads((branch_workspace / "artifact_manifest.json").read_text())
     stage = manifest["stages"]["learn_handoff"]
@@ -257,6 +266,111 @@ def test_write_learning_handoff_creates_artifacts_and_manifest(branch_workspace)
     recorded_paths = {artifact["path"] for artifact in stage["artifacts"]}
     assert f".map/{branch_workspace.name}/learning-handoff.md" in recorded_paths
     assert f".map/{branch_workspace.name}/learning-handoff.json" in recorded_paths
+    assert f".map/{branch_workspace.name}/learning-metrics.json" in recorded_paths
+    assert stage["metadata"]["learning_metrics_counters"]["handoff_generated_count"] == 1
+
+    event_log = (
+        Path(".claude/metrics/agent_metrics.jsonl").read_text(encoding="utf-8").splitlines()
+    )
+    assert any("learning_handoff_generated" in line for line in event_log)
+
+
+def test_write_learning_handoff_marks_replaced_pending_handoff_as_never_used(
+    branch_workspace,
+):
+    first = map_step_runner.write_learning_handoff(
+        "map-check",
+        "First task",
+        "READY FOR REVIEW",
+        "Run /map-review next",
+    )
+    second = map_step_runner.write_learning_handoff(
+        "map-review",
+        "Second task",
+        "READY FOR LEARN",
+        "Run /map-learn next",
+    )
+
+    assert first["status"] == "success"
+    assert second["status"] == "success"
+
+    metrics = json.loads((branch_workspace / "learning-metrics.json").read_text())
+    assert metrics["counters"]["handoff_generated_count"] == 2
+    assert metrics["counters"]["never_used_handoff_count"] == 1
+    assert metrics["counters"]["pending_handoff_count"] == 1
+    assert metrics["current_handoff"]["workflow"] == "map-review"
+    event_names = [event["event"] for event in metrics["events"]]
+    assert "learning_handoff_abandoned" in event_names
+    assert event_names.count("learning_handoff_generated") == 2
+
+
+def test_record_learning_consumption_records_immediate_usage_and_reuse(
+    branch_workspace,
+):
+    map_step_runner.write_learning_handoff(
+        "map-efficient",
+        "Auth workflow",
+        "READY FOR REVIEW",
+        "Run /map-review next",
+    )
+
+    result = map_step_runner.record_learning_consumption("auto-handoff")
+
+    assert result["status"] == "success"
+    assert result["usage_status"] == "recorded"
+    assert result["workflow"] == "map-efficient"
+    assert result["consumption_mode"] == "immediate"
+
+    metrics = json.loads((branch_workspace / "learning-metrics.json").read_text())
+    assert metrics["counters"]["handoff_generated_count"] == 1
+    assert metrics["counters"]["handoff_consumed_count"] == 1
+    assert metrics["counters"]["immediate_learn_count"] == 1
+    assert metrics["counters"]["pending_handoff_count"] == 0
+    assert metrics["current_handoff"]["consumption_source"] == "auto-handoff"
+    assert metrics["current_handoff"]["consumption_mode"] == "immediate"
+    assert metrics["current_handoff"]["consumed_at"]
+
+    second = map_step_runner.record_learning_consumption("auto-handoff")
+
+    assert second["status"] == "success"
+    assert second["usage_status"] == "already_recorded"
+
+    metrics_after_reuse = json.loads((branch_workspace / "learning-metrics.json").read_text())
+    assert metrics_after_reuse["counters"]["handoff_consumed_count"] == 1
+    assert metrics_after_reuse["counters"]["immediate_learn_count"] == 1
+    assert metrics_after_reuse["counters"]["pending_handoff_count"] == 0
+
+
+def test_record_learning_consumption_tracks_inline_summaries(branch_workspace):
+    result = map_step_runner.record_learning_consumption("inline-summary", "map-fast")
+
+    assert result["status"] == "success"
+    assert result["usage_status"] == "manual_summary"
+    assert result["workflow"] == "map-fast"
+
+    metrics = json.loads((branch_workspace / "learning-metrics.json").read_text())
+    assert metrics["counters"]["manual_summary_count"] == 1
+    assert metrics["counters"]["pending_handoff_count"] == 0
+    assert metrics["events"][-1]["event"] == "learning_manual_summary_recorded"
+
+
+def test_classify_learning_consumption_mode_distinguishes_immediate_vs_deferred():
+    assert (
+        map_step_runner._classify_learning_consumption_mode(
+            "2026-04-12T10:00:00Z", "2026-04-12T10:10:00Z"
+        )
+        == "immediate"
+    )
+    assert (
+        map_step_runner._classify_learning_consumption_mode(
+            "2026-04-12T10:00:00Z", "2026-04-12T10:45:00Z"
+        )
+        == "deferred"
+    )
+    assert (
+        map_step_runner._classify_learning_consumption_mode("bad", "2026-04-12T10:45:00Z")
+        == "deferred"
+    )
 
 
 def test_write_plan_review_creates_numbered_artifact(branch_workspace):

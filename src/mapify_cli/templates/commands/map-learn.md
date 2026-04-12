@@ -49,6 +49,14 @@ Resolve the workflow summary before validating input:
 
 If a branch-scoped learning handoff exists, prefer it over asking the user to reconstruct the workflow from memory.
 
+Track the resolved summary source for Step 4:
+
+- `auto-handoff` if zero-argument mode loaded `.map/<branch>/learning-handoff.md`
+- `file-handoff` if `$ARGUMENTS` resolved by reading a file path
+- `inline-summary` if the user supplied summary text directly
+
+Do not record consumption yet. Only record it after `/map-learn` finishes successfully.
+
 Check that the resolved workflow summary contains:
 
 **Required information:**
@@ -195,6 +203,14 @@ After writing, count bullets in each modified file. If any file exceeds 50 bulle
 ---
 
 ## Step 4: Summary Report
+
+Before printing the completion summary, record learning-usage metrics with the source you resolved in Step 1:
+
+- Zero-argument handoff: `python .map/scripts/map_step_runner.py record_learning_consumption auto-handoff`
+- File-backed summary: `python .map/scripts/map_step_runner.py record_learning_consumption file-handoff`
+- Inline summary text: `python .map/scripts/map_step_runner.py record_learning_consumption inline-summary "<workflow-type-if-known>"`
+
+Use the exact source that produced the resolved workflow summary. Do not downgrade an auto-loaded handoff to `inline-summary` just because the content is now in memory.
 
 Print the learning summary:
 

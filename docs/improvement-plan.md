@@ -310,19 +310,19 @@
 - Add metrics for learn adoption, deferred learn usage, and repeated learned-rule violations, so MAP can improve uptake without turning learning into a hard gate.
 
 
-## Learn adoption metrics and deferred-usage tracking [2604.035-2]
+## Repeated learned-rule violation tracking [2604.035-3]
 
 **Parent:** `2604.035`
-**Benefit Hypothesis**: Once branch-scoped learning handoffs exist, MAP should measure whether they are actually improving uptake and rule reuse. Tracking deferred `/map-learn` execution, handoff generation vs consumption, and repeated Monitor findings will show whether the softer runtime ergonomics materially improve memory capture instead of just creating more files.
-**Confidence**: 0.72
-**Reasoning**: The runtime can only tune learning ergonomics intelligently if it can observe them. Without usage metrics, MAP cannot tell whether users are deferring learning productively, silently ignoring the handoff, or repeatedly hitting the same issues despite preserved rules. The artifact manifest already has a `learn_handoff` stage, so the remaining gap is usage instrumentation rather than artifact plumbing.
+**Benefit Hypothesis**: Once MAP records handoff generation and `/map-learn` consumption, the next leverage point is measuring whether preserved lessons actually reduce repeated mistakes. Detecting when Monitor/review findings recur after relevant learned rules already exist will show whether `LEARN` is changing behavior or only producing documentation.
+**Confidence**: 0.58
+**Reasoning**: The newly added handoff adoption metrics answer whether users are invoking deferred learning, but they do not yet answer whether the learned rules are effective. That second question needs issue-to-rule correlation across Monitor/review artifacts and `.claude/rules/learned/`, which is a distinct implementation slice with different validation needs than the basic generation/consumption counters.
 
 ### Proposed Changes
 
-- Record when a workflow writes `learning-handoff.md` / `.json` and whether `/map-learn` later consumes that handoff.
-- Add counters for immediate learn vs deferred learn vs never-used handoff.
-- Track repeated Monitor findings or review issues after related learned rules already exist, so MAP can tell whether knowledge capture is actually reducing repeated mistakes.
-- Surface the metrics in `.claude/metrics/agent_metrics.jsonl` or a dedicated learning metrics artifact.
+- Define a lightweight correlation scheme between active findings (`active-issues.json`, review artifacts, verification summaries) and learned-rule files or rule bullet identifiers.
+- Record a metrics event when a finding repeats after a matching learned rule already exists, so MAP can distinguish “learning happened” from “learning changed future behavior”.
+- Add focused fixtures/tests covering at least one repeated-issue case and one non-match case, so the metric is not just a heuristic without regression coverage.
+- Surface the repeated-violation counts in `.claude/metrics/agent_metrics.jsonl` and, if needed, extend `learning-metrics.json` with a small derived summary.
 
 
 ## Clean-session TEST→CODE handoff for TDD workflows [2604.036]
