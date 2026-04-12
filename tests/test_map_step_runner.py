@@ -2,6 +2,7 @@
 
 import json
 import sys
+import types
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -77,6 +78,106 @@ def test_write_pr_draft_creates_report(branch_workspace):
     assert "Added auth flow" in content
     assert "pytest" in content
     assert "follow up on metrics" in content
+
+
+def test_record_workflow_fit_creates_decision_and_manifest(branch_workspace):
+    result = map_step_runner.record_workflow_fit(
+        "map-plan",
+        "large",
+        "true",
+        "true",
+        "false",
+        "true",
+        "New invariants and review justify planning",
+    )
+
+    assert result["status"] == "success"
+    decision = json.loads((branch_workspace / "workflow-fit.json").read_text())
+    assert decision["recommended_workflow"] == "map-plan"
+    assert decision["needs_map"] is True
+    assert decision["signals"]["test_first_required"] is True
+
+    manifest = json.loads((branch_workspace / "artifact_manifest.json").read_text())
+    stage = manifest["stages"]["workflow_fit"]
+    assert stage["status"] == "recorded"
+    assert stage["metadata"]["recommended_workflow"] == "map-plan"
+    assert decision["updated_at"].endswith("Z")
+    assert manifest["updated_at"].endswith("Z")
+    assert stage["updated_at"].endswith("Z")
+
+
+def test_record_plan_artifacts_updates_manifest(branch_workspace):
+    branch = branch_workspace.name
+    (branch_workspace / f"spec_{branch}.md").write_text("# Spec\n", encoding="utf-8")
+    (branch_workspace / f"task_plan_{branch}.md").write_text(
+        "# Task Plan\n", encoding="utf-8"
+    )
+    (branch_workspace / "blueprint.json").write_text(
+        '{"subtasks": [{"id": "ST-001", "dependencies": [], "affected_files": []}]}\n',
+        encoding="utf-8",
+    )
+    (branch_workspace / "step_state.json").write_text(
+        '{"current_step_phase": "INITIALIZED"}\n', encoding="utf-8"
+    )
+
+    result = map_step_runner.record_plan_artifacts()
+
+    assert result["status"] == "success"
+    manifest = json.loads((branch_workspace / "artifact_manifest.json").read_text())
+    assert manifest["stages"]["spec"]["status"] == "ready"
+    assert manifest["stages"]["plan"]["status"] == "ready"
+    recorded_paths = {
+        artifact["path"] for artifact in manifest["stages"]["plan"]["artifacts"]
+    }
+    assert f".map/{branch}/task_plan_{branch}.md" in recorded_paths
+    assert f".map/{branch}/blueprint.json" in recorded_paths
+
+
+def test_record_test_contract_handoff_creates_json_and_manifest(branch_workspace):
+    (branch_workspace / "test_contract_ST-001.md").write_text(
+        "# Test Contract\n", encoding="utf-8"
+    )
+
+    result = map_step_runner.record_test_contract_handoff(
+        "ST-001",
+        "pytest tests/test_auth.py -q",
+        "tests/test_auth.py,tests/test_api.py",
+        "Lock auth behavior before code generation",
+        "Resume with /map-task",
+    )
+
+    assert result["status"] == "success"
+    handoff = json.loads((branch_workspace / "test_handoff_ST-001.json").read_text())
+    assert handoff["status"] == "contract_ready"
+    assert handoff["subtask_id"] == "ST-001"
+    assert handoff["test_files"] == ["tests/test_auth.py", "tests/test_api.py"]
+    assert handoff["updated_at"].endswith("Z")
+
+    manifest = json.loads((branch_workspace / "artifact_manifest.json").read_text())
+    stage = manifest["stages"]["test_contract"]
+    assert stage["status"] == "contract_ready"
+    assert stage["metadata"]["subtask_id"] == "ST-001"
+    assert manifest["updated_at"].endswith("Z")
+    assert stage["updated_at"].endswith("Z")
+
+
+def test_load_artifact_manifest_normalizes_branch_name(branch_workspace):
+    (branch_workspace / "artifact_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "branch": "wrong-branch",
+                "updated_at": "2026-04-12T00:00:00Z",
+                "stages": {},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    manifest = map_step_runner.load_artifact_manifest()
+
+    assert manifest["branch"] == branch_workspace.name
 
 
 def test_build_handoff_bundle_reads_artifacts(branch_workspace):
@@ -978,15 +1079,11 @@ class TestBuildContextBlockRepoDelta:
             "since_sha": "abc123",
             "current_sha": "def456",
         }
-        with patch.dict(
-            "sys.modules",
-            {"mapify_cli": MagicMock(), "mapify_cli.repo_insight": MagicMock()},
-        ):
-            with patch(
-                "mapify_cli.repo_insight.compute_differential_insight",
-                return_value=mock_insight,
-            ):
-                result = map_step_runner.build_context_block("test-branch", "ST-001")
+        repo_insight = types.SimpleNamespace(
+            compute_differential_insight=lambda *_args, **_kwargs: mock_insight
+        )
+        with patch.dict("sys.modules", {"mapify_cli.repo_insight": repo_insight}):
+            result = map_step_runner.build_context_block("test-branch", "ST-001")
 
         assert "# Repo Delta" in result
         assert "src/foo.py" in result
@@ -1001,15 +1098,11 @@ class TestBuildContextBlockRepoDelta:
             "since_sha": "abc123",
             "current_sha": "def456",
         }
-        with patch.dict(
-            "sys.modules",
-            {"mapify_cli": MagicMock(), "mapify_cli.repo_insight": MagicMock()},
-        ):
-            with patch(
-                "mapify_cli.repo_insight.compute_differential_insight",
-                return_value=mock_insight,
-            ):
-                result = map_step_runner.build_context_block("test-branch", "ST-001")
+        repo_insight = types.SimpleNamespace(
+            compute_differential_insight=lambda *_args, **_kwargs: mock_insight
+        )
+        with patch.dict("sys.modules", {"mapify_cli.repo_insight": repo_insight}):
+            result = map_step_runner.build_context_block("test-branch", "ST-001")
 
         assert "# Repo Delta" in result
         assert "file_19.py" in result
@@ -1023,15 +1116,11 @@ class TestBuildContextBlockRepoDelta:
             "deleted_files": [],
             "error": "git diff failed",
         }
-        with patch.dict(
-            "sys.modules",
-            {"mapify_cli": MagicMock(), "mapify_cli.repo_insight": MagicMock()},
-        ):
-            with patch(
-                "mapify_cli.repo_insight.compute_differential_insight",
-                return_value=mock_insight,
-            ):
-                result = map_step_runner.build_context_block("test-branch", "ST-001")
+        repo_insight = types.SimpleNamespace(
+            compute_differential_insight=lambda *_args, **_kwargs: mock_insight
+        )
+        with patch.dict("sys.modules", {"mapify_cli.repo_insight": repo_insight}):
+            result = map_step_runner.build_context_block("test-branch", "ST-001")
 
         assert "<map_context>" in result
         assert "# Repo Delta" not in result
@@ -1062,15 +1151,11 @@ class TestBuildContextBlockRepoDelta:
             "since_sha": "abc123",
             "current_sha": "def456",
         }
-        with patch.dict(
-            "sys.modules",
-            {"mapify_cli": MagicMock(), "mapify_cli.repo_insight": MagicMock()},
-        ):
-            with patch(
-                "mapify_cli.repo_insight.compute_differential_insight",
-                return_value=mock_insight,
-            ):
-                result = map_step_runner.build_context_block("test-branch", "ST-001")
+        repo_insight = types.SimpleNamespace(
+            compute_differential_insight=lambda *_args, **_kwargs: mock_insight
+        )
+        with patch.dict("sys.modules", {"mapify_cli.repo_insight": repo_insight}):
+            result = map_step_runner.build_context_block("test-branch", "ST-001")
 
         assert "# Repo Delta" in result
         assert "src/new.py" in result
@@ -1087,15 +1172,11 @@ class TestBuildContextBlockRepoDelta:
             "since_sha": "abc123",
             "current_sha": "def456",
         }
-        with patch.dict(
-            "sys.modules",
-            {"mapify_cli": MagicMock(), "mapify_cli.repo_insight": MagicMock()},
-        ):
-            with patch(
-                "mapify_cli.repo_insight.compute_differential_insight",
-                return_value=mock_insight,
-            ):
-                result = map_step_runner.build_context_block("test-branch", "ST-001")
+        repo_insight = types.SimpleNamespace(
+            compute_differential_insight=lambda *_args, **_kwargs: mock_insight
+        )
+        with patch.dict("sys.modules", {"mapify_cli.repo_insight": repo_insight}):
+            result = map_step_runner.build_context_block("test-branch", "ST-001")
 
         assert "# Repo Delta" in result
         assert "# Deleted since last subtask:" in result

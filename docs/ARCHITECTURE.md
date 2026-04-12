@@ -175,6 +175,18 @@ MAP Framework implements cognitive architecture inspired by prefrontal cortex fu
 
 MAP Framework stores workflow artifacts in the `.map/` directory. All artifacts follow JSON schemas defined in `src/mapify_cli/schemas.py`.
 
+For branch-scoped workflows, MAP also keeps `.map/<branch>/artifact_manifest.json` as the high-level stage ledger for:
+- `workflow_fit`
+- `spec`
+- `plan`
+- `test_contract`
+- `implementation`
+- `review`
+- `verification`
+- `learn_handoff`
+
+Targeted TDD flows additionally persist `test_contract_<subtask>.md` and `test_handoff_<subtask>.json`. Those artifacts are what let `/map-task ST-001` resume implementation from a clean red-phase handoff instead of reusing the full test-authoring context.
+
 #### 1. State Artifact (`state_<branch>.json`)
 
 **Purpose:** Track workflow state including terminal status and early termination.

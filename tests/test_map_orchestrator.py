@@ -859,6 +859,111 @@ class TestResumeSingleSubtask:
         assert "fix auth edge case" in "\n".join(briefing["suggested_fixes"])
 
 
+class TestResumeFromTestContract:
+    """Tests for persisted TEST_FAIL_GATE -> ACTOR handoff."""
+
+    def _create_plan(self, tmp_path, branch, subtask_ids):
+        plan_dir = tmp_path / ".map" / branch
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        plan_content = "# Task Plan\n\n"
+        for st_id in subtask_ids:
+            plan_content += f"### {st_id}\n- **Status:** pending\n\n"
+        (plan_dir / f"task_plan_{branch}.md").write_text(plan_content, encoding="utf-8")
+        return plan_dir
+
+    def test_mark_contract_ready_updates_state(self, branch_dir, tmp_path):
+        plan_dir = self._create_plan(tmp_path, branch_dir, ["ST-001"])
+        (plan_dir / "test_contract_ST-001.md").write_text(
+            "# Test Contract\n", encoding="utf-8"
+        )
+        (plan_dir / "test_handoff_ST-001.json").write_text(
+            '{"subtask_id":"ST-001","status":"contract_ready"}\n',
+            encoding="utf-8",
+        )
+        state = map_orchestrator.StepState(
+            current_subtask_id="ST-001",
+            current_step_id="2.3",
+            current_step_phase="ACTOR",
+            pending_steps=["2.3", "2.4"],
+            tdd_mode=True,
+        )
+        state.save(plan_dir / "step_state.json")
+
+        result = map_orchestrator.mark_contract_ready("ST-001", branch_dir)
+
+        assert result["status"] == "success"
+        saved = map_orchestrator.StepState.load(plan_dir / "step_state.json")
+        assert saved.workflow_status == "CONTRACT_READY"
+        assert saved.current_step_phase == "CONTRACT_READY"
+        assert saved.pending_steps == ["CONTRACT_READY"]
+        assert "ST-001" in saved.contract_ready_subtasks
+        assert saved.contract_ready_subtasks["ST-001"]["ready_at"].endswith("Z")
+
+    def test_get_next_step_pauses_when_contract_ready(self, branch_dir, tmp_path):
+        plan_dir = self._create_plan(tmp_path, branch_dir, ["ST-001"])
+        state = map_orchestrator.StepState(
+            current_subtask_id="ST-001",
+            subtask_index=0,
+            subtask_sequence=["ST-001"],
+            current_step_id="CONTRACT_READY",
+            current_step_phase="CONTRACT_READY",
+            workflow_status="CONTRACT_READY",
+            pending_steps=["CONTRACT_READY"],
+        )
+        state.save(plan_dir / "step_state.json")
+
+        result = map_orchestrator.get_next_step(branch_dir)
+
+        assert result["step_id"] == "CONTRACT_READY"
+        assert result["phase"] == "CONTRACT_READY"
+        assert result["is_complete"] is False
+        assert "Resume implementation with /map-task" in result["instruction"]
+
+    def test_resume_from_test_contract_starts_at_actor(self, branch_dir, tmp_path):
+        plan_dir = self._create_plan(tmp_path, branch_dir, ["ST-001", "ST-002"])
+        (plan_dir / "test_contract_ST-001.md").write_text(
+            "# Test Contract\n", encoding="utf-8"
+        )
+        (plan_dir / "test_handoff_ST-001.json").write_text(
+            '{"subtask_id":"ST-001","status":"contract_ready"}\n',
+            encoding="utf-8",
+        )
+
+        result = map_orchestrator.resume_from_test_contract("ST-001", branch_dir)
+
+        assert result["status"] == "success"
+        state = map_orchestrator.StepState.load(plan_dir / "step_state.json")
+        assert state.current_subtask_id == "ST-001"
+        assert state.current_step_id == "2.3"
+        assert state.current_step_phase == "ACTOR"
+        assert state.pending_steps == ["2.3", "2.4"]
+        assert state.tdd_mode is True
+        assert state.completed_steps[-1] == "2.26"
+
+    def test_build_resume_briefing_surfaces_contract_ready_action(
+        self, branch_dir, tmp_path
+    ):
+        plan_dir = self._create_plan(tmp_path, branch_dir, [("ST-001")])
+        (plan_dir / "test_contract_ST-001.md").write_text(
+            "# Test Contract\n", encoding="utf-8"
+        )
+        (plan_dir / "test_handoff_ST-001.json").write_text(
+            '{"subtask_id":"ST-001","status":"contract_ready"}\n',
+            encoding="utf-8",
+        )
+        state = map_orchestrator.StepState(
+            current_subtask_id="ST-001",
+            current_step_id="CONTRACT_READY",
+            current_step_phase="CONTRACT_READY",
+            workflow_status="CONTRACT_READY",
+        )
+        state.save(plan_dir / "step_state.json")
+
+        result = map_orchestrator.build_resume_briefing(branch_dir)
+
+        assert any("persisted test contract" in item for item in result["next_action"])
+
+
 class TestGetPlanProgress:
     """Tests for get_plan_progress — plan status overview."""
 

@@ -91,7 +91,7 @@ import argparse
 import json
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -134,6 +134,11 @@ TDD_STEP_ORDER = [
     "2.3",
     "2.4",
 ]
+
+
+def _utc_timestamp() -> str:
+    """Return an unambiguous RFC3339 UTC timestamp."""
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _read_text_if_exists(path: Path) -> str:
@@ -220,6 +225,7 @@ def build_resume_briefing(branch: str) -> dict:
     completed_count = 0
     pending_count = 0
     current_subtask = None
+    workflow_status = None
     if plan_progress.get("status") == "success":
         suggested_next = plan_progress.get("suggested_next")
         completed_count = plan_progress.get("completed_count", 0)
@@ -230,10 +236,15 @@ def build_resume_briefing(branch: str) -> dict:
         state = StepState.load(state_file)
         current_subtask = state.current_subtask_id
         current_phase = state.current_step_phase
+        workflow_status = state.workflow_status
     else:
         current_phase = None
 
     next_action = []
+    if workflow_status == "CONTRACT_READY" and current_subtask:
+        next_action.append(
+            f"Resume {current_subtask} implementation from the persisted test contract"
+        )
     if briefing.get("latest_verification_verdict") == "NEEDS WORK":
         next_action.append(
             "Address issues from the latest verification before continuing"
@@ -253,6 +264,7 @@ def build_resume_briefing(branch: str) -> dict:
         "branch": branch,
         "current_subtask": current_subtask,
         "current_phase": current_phase,
+        "workflow_status": workflow_status,
         "completed_count": completed_count,
         "pending_count": pending_count,
         "suggested_next": suggested_next,
@@ -300,6 +312,7 @@ class StepState:
     constraints: Optional[dict] = None
     subtask_results: dict[str, dict] = field(default_factory=dict)
     last_subtask_commit_sha: Optional[str] = None
+    contract_ready_subtasks: dict[str, dict] = field(default_factory=dict)
 
     def record_subtask_result(
         self,
@@ -346,6 +359,7 @@ class StepState:
             "constraints": self.constraints,
             "subtask_results": self.subtask_results,
             "last_subtask_commit_sha": self.last_subtask_commit_sha,
+            "contract_ready_subtasks": self.contract_ready_subtasks,
         }
 
     @classmethod
@@ -377,6 +391,7 @@ class StepState:
             constraints=data.get("constraints"),
             subtask_results=data.get("subtask_results", {}),
             last_subtask_commit_sha=data.get("last_subtask_commit_sha"),
+            contract_ready_subtasks=data.get("contract_ready_subtasks", {}),
         )
 
     @classmethod
@@ -416,6 +431,8 @@ def _actor_step_instruction(state: StepState) -> str:
         context = (
             "TDD CODE_ONLY mode: pass <TDD_Mode>code_only</TDD_Mode>. "
             "Actor must make existing tests green without modifying test files. "
+            "When present, read test_contract_<subtask>.md and "
+            "test_handoff_<subtask>.json before editing. "
         )
     else:
         context = "Pass AAG contract and context. "
@@ -498,6 +515,22 @@ def get_next_step(branch: str) -> dict:
     """
     state_file = Path(f".map/{branch}/step_state.json")
     state = StepState.load(state_file)
+
+    if state.workflow_status == "CONTRACT_READY":
+        if state.pending_steps != ["CONTRACT_READY"]:
+            state.pending_steps = ["CONTRACT_READY"]
+            state.save(state_file)
+        return {
+            "step_id": "CONTRACT_READY",
+            "phase": "CONTRACT_READY",
+            "instruction": (
+                "Workflow paused at persisted test contract. "
+                "Resume implementation with /map-task for this subtask."
+            ),
+            "is_complete": False,
+            "current_subtask": state.current_subtask_id,
+            "subtask_progress": f"{state.subtask_index + 1}/{len(state.subtask_sequence)}",
+        }
 
     # Auto-skip CHOOSE_MODE: always batch, set mode automatically
     while state.pending_steps and state.pending_steps[0] == "1.56":
@@ -764,18 +797,13 @@ def set_waves(branch: str, blueprint_path: Optional[str] = None) -> dict:
     try:
         from mapify_cli.dependency_graph import DependencyGraph, SubtaskNode
     except ImportError:
-        # When running as a standalone script inside .map/scripts/,
-        # dependency_graph.py is not on the path. Try a relative import
-        # from the repo root (two levels up from .map/scripts/).
+        # When running as a standalone script, dependency_graph.py may not be
+        # importable from sys.path. Walk upward and look for src/mapify_cli/.
         import importlib.util
 
-        dg_candidates = [
-            Path("src/mapify_cli/dependency_graph.py"),
-            Path(__file__).resolve().parents[3]
-            / "src"
-            / "mapify_cli"
-            / "dependency_graph.py",
-        ]
+        dg_candidates = [Path("src/mapify_cli/dependency_graph.py")]
+        for parent in Path(__file__).resolve().parents:
+            dg_candidates.append(parent / "src" / "mapify_cli" / "dependency_graph.py")
         loaded = False
         for candidate in dg_candidates:
             if candidate.exists():
@@ -1361,6 +1389,146 @@ def set_subtasks(subtask_ids: list[str], branch: str) -> dict:
     }
 
 
+def _contract_artifact_paths(branch: str, subtask_id: str) -> tuple[Path, Path]:
+    """Return the expected persisted TDD contract artifact paths."""
+    plan_dir = Path(f".map/{branch}")
+    return (
+        plan_dir / f"test_contract_{subtask_id}.md",
+        plan_dir / f"test_handoff_{subtask_id}.json",
+    )
+
+
+def mark_contract_ready(subtask_id: str, branch: str) -> dict:
+    """Stop execution after TEST_FAIL_GATE and mark the test contract ready."""
+    state_file = Path(f".map/{branch}/step_state.json")
+    if not state_file.exists():
+        return {
+            "status": "error",
+            "message": "No step_state.json found. Initialize TDD workflow first.",
+        }
+
+    contract_path, handoff_path = _contract_artifact_paths(branch, subtask_id)
+    missing = [
+        str(path)
+        for path in (contract_path, handoff_path)
+        if not path.exists()
+    ]
+    if missing:
+        return {
+            "status": "error",
+            "message": "Missing persisted TDD artifacts: " + ", ".join(missing),
+        }
+
+    state = StepState.load(state_file)
+    if state.current_subtask_id and state.current_subtask_id != subtask_id:
+        return {
+            "status": "error",
+            "message": (
+                f"Current subtask is {state.current_subtask_id}, not {subtask_id}. "
+                "Refusing to mark the wrong contract ready."
+            ),
+        }
+
+    state.contract_ready_subtasks[subtask_id] = {
+        "contract_path": str(contract_path),
+        "handoff_path": str(handoff_path),
+        "ready_at": _utc_timestamp(),
+    }
+    state.workflow_status = "CONTRACT_READY"
+    state.current_step_id = "CONTRACT_READY"
+    state.current_step_phase = "CONTRACT_READY"
+    state.pending_steps = ["CONTRACT_READY"]
+    state.save(state_file)
+
+    return {
+        "status": "success",
+        "workflow_status": state.workflow_status,
+        "subtask_id": subtask_id,
+        "contract_path": str(contract_path),
+        "handoff_path": str(handoff_path),
+        "message": (
+            f"Persisted TDD contract ready for {subtask_id}. "
+            "Resume implementation with /map-task for a clean ACTOR session."
+        ),
+    }
+
+
+def resume_from_test_contract(subtask_id: str, branch: str) -> dict:
+    """Resume a single subtask at ACTOR using a persisted TDD handoff."""
+    plan_dir = Path(f".map/{branch}")
+    plan_file = plan_dir / f"task_plan_{branch}.md"
+    if not plan_file.exists():
+        return {
+            "status": "error",
+            "message": f"No plan found at {plan_file}. Run /map-plan first.",
+        }
+
+    contract_path, handoff_path = _contract_artifact_paths(branch, subtask_id)
+    missing = [
+        str(path)
+        for path in (contract_path, handoff_path)
+        if not path.exists()
+    ]
+    if missing:
+        return {
+            "status": "error",
+            "message": "Missing persisted TDD artifacts: " + ", ".join(missing),
+        }
+
+    import re
+
+    plan_content = plan_file.read_text(encoding="utf-8")
+    all_subtask_ids = re.findall(r"###\s+(ST-\d+)", plan_content)
+    if subtask_id not in all_subtask_ids:
+        return {
+            "status": "error",
+            "message": (
+                f"Subtask {subtask_id} not found in plan. "
+                f"Available: {', '.join(all_subtask_ids)}"
+            ),
+        }
+
+    previous_state = StepState.load(plan_dir / "step_state.json")
+    contract_entry = previous_state.contract_ready_subtasks.get(
+        subtask_id,
+        {
+            "contract_path": str(contract_path),
+            "handoff_path": str(handoff_path),
+            "ready_at": _utc_timestamp(),
+        },
+    )
+
+    state = StepState(
+        current_subtask_id=subtask_id,
+        subtask_index=0,
+        subtask_sequence=[subtask_id],
+        current_step_id="2.3",
+        current_step_phase="ACTOR",
+        completed_steps=["1.0", "1.5", "1.55", "1.56", "1.6", "2.2", "2.25", "2.26"],
+        pending_steps=["2.3", "2.4"],
+        plan_approved=True,
+        execution_mode="batch",
+        tdd_mode=True,
+        workflow_status="IN_PROGRESS",
+        contract_ready_subtasks={subtask_id: contract_entry},
+    )
+    state.save(plan_dir / "step_state.json")
+
+    briefing = get_resume_briefing(branch)
+    return {
+        "status": "success",
+        "message": (
+            f"Resuming {subtask_id} from persisted test contract. "
+            "Starting at ACTOR."
+        ),
+        "subtask_id": subtask_id,
+        "next_phase": "ACTOR",
+        "contract_path": str(contract_path),
+        "handoff_path": str(handoff_path),
+        "resume_briefing": briefing,
+    }
+
+
 def resume_from_plan(branch: str) -> dict:
     """Resume workflow from an existing /map-plan output, skipping init phases.
 
@@ -1599,7 +1767,9 @@ def main():
             "set_tdd_mode",
             "skip_step",
             "set_subtasks",
+            "mark_contract_ready",
             "resume_from_plan",
+            "resume_from_test_contract",
             "check_circuit_breaker",
             "set_waves",
             "get_wave_step",
@@ -1715,8 +1885,42 @@ def main():
             result = set_subtasks(subtask_ids, branch)
             print(json.dumps(result, indent=2))
 
+        elif args.command == "mark_contract_ready":
+            if not args.task_or_step:
+                print(
+                    json.dumps(
+                        {
+                            "error": (
+                                "subtask_id required. "
+                                "Usage: mark_contract_ready ST-001"
+                            )
+                        }
+                    ),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            result = mark_contract_ready(args.task_or_step, branch)
+            print(json.dumps(result, indent=2))
+
         elif args.command == "resume_from_plan":
             result = resume_from_plan(branch)
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "resume_from_test_contract":
+            if not args.task_or_step:
+                print(
+                    json.dumps(
+                        {
+                            "error": (
+                                "subtask_id required. "
+                                "Usage: resume_from_test_contract ST-001"
+                            )
+                        }
+                    ),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            result = resume_from_test_contract(args.task_or_step, branch)
             print(json.dumps(result, indent=2))
 
         elif args.command == "check_circuit_breaker":

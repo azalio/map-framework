@@ -35,8 +35,13 @@ fi
 ```bash
 BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
 
-# Set up state for single subtask execution
-RESULT=$(python3 .map/scripts/map_orchestrator.py resume_single_subtask "$SUBTASK_ID")
+# If a persisted TDD contract exists, resume implementation from ACTOR.
+# Otherwise start normal single-subtask execution from RESEARCH.
+if [ -f ".map/${BRANCH}/test_handoff_${SUBTASK_ID}.json" ] && [ -f ".map/${BRANCH}/test_contract_${SUBTASK_ID}.md" ]; then
+  RESULT=$(python3 .map/scripts/map_orchestrator.py resume_from_test_contract "$SUBTASK_ID")
+else
+  RESULT=$(python3 .map/scripts/map_orchestrator.py resume_single_subtask "$SUBTASK_ID")
+fi
 STATUS=$(echo "$RESULT" | jq -r '.status')
 
 if [ "$STATUS" = "error" ]; then
@@ -47,6 +52,7 @@ fi
 
 **If error mentions "No plan found":** Run `/map-plan` first to create a decomposition.
 **If error mentions "not found in plan":** The output lists available subtask IDs — pick one.
+**If persisted TDD artifacts exist:** `/map-task` resumes at `ACTOR` using `test_contract_<subtask>.md` + `test_handoff_<subtask>.json` instead of restarting research.
 
 ## Step 2: Load Subtask Context
 
@@ -56,6 +62,9 @@ Read the plan to get the subtask's details:
 BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
 # Read: .map/${BRANCH}/task_plan_${BRANCH}.md — find the ### ${SUBTASK_ID} section
 # Read: .map/${BRANCH}/blueprint.json — get AAG contract, validation_criteria, dependencies
+# If present, also read:
+# - .map/${BRANCH}/test_contract_${SUBTASK_ID}.md
+# - .map/${BRANCH}/test_handoff_${SUBTASK_ID}.json
 ```
 
 Display a brief summary:

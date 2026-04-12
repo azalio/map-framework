@@ -22,8 +22,10 @@ description: TDD workflow — test-first development with spec-driven tests writ
 ## Execution Flow
 
 ```
-Standard:  DECOMPOSE → ACTOR (code+tests) → MONITOR
-TDD:       DECOMPOSE → TEST_WRITER → TEST_FAIL_GATE → ACTOR (code only) → MONITOR
+Standard:          DECOMPOSE → ACTOR (code+tests) → MONITOR
+Targeted TDD:      DECOMPOSE → TEST_WRITER → TEST_FAIL_GATE → CONTRACT_HANDOFF → STOP
+Targeted Resume:   /map-task ST-001 → ACTOR (code only) → MONITOR
+Full-workflow TDD: DECOMPOSE → TEST_WRITER → TEST_FAIL_GATE → ACTOR (code only) → MONITOR
 ```
 
 **Task:** $ARGUMENTS
@@ -39,7 +41,7 @@ BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|
 ```
 
 **Two modes:**
-- **Single-subtask mode** (`/map-tdd ST-001`): Write tests + implement for ONE subtask only
+- **Single-subtask mode** (`/map-tdd ST-001`): Write tests, persist a red-phase contract, then resume implementation separately
 - **Full workflow mode** (`/map-tdd "task description"`): TDD for all subtasks
 
 ### Single-Subtask Mode (when `$SUBTASK_ID` is detected)
@@ -56,7 +58,7 @@ if [ "$STATUS" = "error" ]; then
 fi
 ```
 
-Then proceed directly to **Step 1: State Machine Loop** below.
+Then proceed directly to **Step 1: State Machine Loop** below. In single-subtask mode, the workflow should pause after `TEST_FAIL_GATE` once the persisted contract artifacts are written.
 
 ### Full Workflow Mode (no subtask ID)
 
@@ -225,11 +227,38 @@ a real bug, not just confirm one obvious branch."
 python3 .map/scripts/map_orchestrator.py validate_step "2.26"
 ```
 
+**Single-subtask mode only: persist the red-phase contract before any implementation starts.**
+
+When `$SUBTASK_ID` is non-empty, write `.map/${BRANCH}/test_contract_${SUBTASK_ID}.md` with:
+- the subtask ID and title
+- the AAG contract
+- the test files created by TEST_WRITER
+- the failing test command
+- the behavior locked by the tests
+- any constraints ACTOR must preserve
+
+Then record the machine-readable handoff and stop this session:
+
+```bash
+python3 .map/scripts/map_step_runner.py record_test_contract_handoff "$SUBTASK_ID" "<failing test command>" "<comma-separated test files>" "<one-sentence contract summary>" "<optional notes>"
+python3 .map/scripts/map_orchestrator.py mark_contract_ready "$SUBTASK_ID"
+```
+
+After that, STOP and tell the user to resume implementation with:
+
+```text
+/map-task ST-001
+```
+
+That follow-up command will detect `test_handoff_${SUBTASK_ID}.json` and resume at `ACTOR` with the persisted contract, instead of re-running research or test writing.
+
+When `$SUBTASK_ID` is empty (full-workflow mode), do **not** write `test_contract_.md`, do **not** call `mark_contract_ready ""`, and do **not** stop the workflow here. In full-workflow mode, `TEST_FAIL_GATE` continues directly into `ACTOR` for the current subtask.
+
 ---
 
 ## Phase: ACTOR in TDD Mode (2.3)
 
-When TDD mode is active, Actor receives a modified prompt:
+When implementation resumes from the persisted TDD contract, Actor receives a modified prompt:
 
 ```python
 Task(
@@ -303,12 +332,13 @@ Monitor verifies both implementation correctness AND that all tests pass.
 
 `/map-tdd` uses the same branch-scoped execution artifacts as `/map-efficient` because it runs through the same orchestrated state machine with extra TDD phases:
 
-
 - `code-review-00N.md`
 - `qa-001.md`
 - `pr-draft.md`
+- `test_contract_ST-00N.md`
+- `test_handoff_ST-00N.json`
 
-In TDD mode, `TEST_WRITER` and `TEST_FAIL_GATE` should append to the same branch workspace instead of creating a separate artifact universe.
+In TDD mode, `TEST_WRITER` and `TEST_FAIL_GATE` still write into the same branch workspace, but they must now leave behind a persisted contract that `/map-task` can resume from in a clean implementation session.
 
 ---
 
@@ -324,7 +354,7 @@ In TDD mode, `TEST_WRITER` and `TEST_FAIL_GATE` should append to the same branch
 ## Related Commands
 
 - **/map-plan** — Create spec with invariants and acceptance criteria (recommended before /map-tdd)
-- **/map-task ST-001** — Execute a single subtask without TDD (implementation only)
+- **/map-task ST-001** — Resume implementation from a persisted TDD contract or execute a normal single subtask
 - **/map-efficient** — Standard workflow without test-first constraint
 - **/map-check** — Final verification after all subtasks complete
 - **/map-learn** — Extract lessons from completed TDD workflow

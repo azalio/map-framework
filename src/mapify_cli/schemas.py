@@ -464,3 +464,159 @@ REPO_INSIGHT_SCHEMA = {
     "required": ["language", "suggested_checks", "key_dirs"],
     "additionalProperties": True,
 }
+
+
+WORKFLOW_FIT_DECISION_SCHEMA = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://mapframework.dev/schemas/workflow-fit-decision.json",
+    "title": "MAP Workflow Fit Decision",
+    "description": "Preflight workflow-fit decision stored in .map/<branch>/workflow-fit.json",
+    "type": "object",
+    "properties": {
+        "version": {"type": "string"},
+        "recommended_workflow": {
+            "type": "string",
+            "enum": [
+                "direct-edit",
+                "map-fast",
+                "map-efficient",
+                "map-tdd",
+                "map-plan",
+            ],
+        },
+        "needs_map": {"type": "boolean"},
+        "decision_summary": {"type": "string"},
+        "signals": {
+            "type": "object",
+            "properties": {
+                "expected_diff_size": {
+                    "type": "string",
+                    "enum": ["tiny", "small", "medium", "large"],
+                },
+                "has_new_invariants": {"type": "boolean"},
+                "needs_independent_review": {"type": "boolean"},
+                "has_clear_acceptance_criteria": {"type": "boolean"},
+                "test_first_required": {"type": "boolean"},
+            },
+            "required": [
+                "expected_diff_size",
+                "has_new_invariants",
+                "needs_independent_review",
+                "has_clear_acceptance_criteria",
+                "test_first_required",
+            ],
+            "additionalProperties": False,
+        },
+        "updated_at": {"type": "string", "format": "date-time"},
+    },
+    "required": [
+        "version",
+        "recommended_workflow",
+        "needs_map",
+        "decision_summary",
+        "signals",
+        "updated_at",
+    ],
+    "additionalProperties": False,
+}
+
+
+ARTIFACT_STAGE_SCHEMA = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://mapframework.dev/schemas/artifact-stage.json",
+    "title": "MAP Artifact Stage",
+    "description": "One stage entry inside artifact_manifest.json",
+    "type": "object",
+    "properties": {
+        "status": {"type": "string"},
+        "updated_at": {"type": "string", "format": "date-time"},
+        "artifacts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "kind": {"type": "string"},
+                },
+                "required": ["path", "kind"],
+                "additionalProperties": False,
+            },
+        },
+        "metadata": {"type": "object"},
+    },
+    "required": ["status", "updated_at", "artifacts", "metadata"],
+    "additionalProperties": False,
+}
+
+
+ARTIFACT_MANIFEST_SCHEMA = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://mapframework.dev/schemas/artifact-manifest.json",
+    "title": "MAP Artifact Manifest",
+    "description": "Branch-scoped artifact manifest stored in .map/<branch>/artifact_manifest.json",
+    "type": "object",
+    "properties": {
+        "schema_version": {"type": "string"},
+        "branch": {"type": "string"},
+        "updated_at": {"type": "string", "format": "date-time"},
+        "stages": {
+            "type": "object",
+            "properties": {
+                "workflow_fit": ARTIFACT_STAGE_SCHEMA,
+                "spec": ARTIFACT_STAGE_SCHEMA,
+                "plan": ARTIFACT_STAGE_SCHEMA,
+                "test_contract": ARTIFACT_STAGE_SCHEMA,
+                "implementation": ARTIFACT_STAGE_SCHEMA,
+                "review": ARTIFACT_STAGE_SCHEMA,
+                "verification": ARTIFACT_STAGE_SCHEMA,
+                "learn_handoff": ARTIFACT_STAGE_SCHEMA,
+            },
+            "required": [
+                "workflow_fit",
+                "spec",
+                "plan",
+                "test_contract",
+                "implementation",
+                "review",
+                "verification",
+                "learn_handoff",
+            ],
+            "additionalProperties": False,
+        },
+    },
+    "required": ["schema_version", "branch", "updated_at", "stages"],
+    "additionalProperties": False,
+}
+
+
+TEST_HANDOFF_SCHEMA = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://mapframework.dev/schemas/test-handoff.json",
+    "title": "MAP Test Handoff",
+    "description": "Persisted TDD handoff stored in .map/<branch>/test_handoff_<subtask>.json",
+    "type": "object",
+    "properties": {
+        "subtask_id": {"type": "string"},
+        "status": {"type": "string", "enum": ["contract_ready"]},
+        "contract_path": {"type": "string"},
+        "failing_test_command": {"type": ["string", "null"]},
+        "test_files": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+        "contract_summary": {"type": "string"},
+        "notes": {"type": "string"},
+        "updated_at": {"type": "string", "format": "date-time"},
+    },
+    "required": [
+        "subtask_id",
+        "status",
+        "contract_path",
+        "failing_test_command",
+        "test_files",
+        "contract_summary",
+        "notes",
+        "updated_at",
+    ],
+    "additionalProperties": False,
+}

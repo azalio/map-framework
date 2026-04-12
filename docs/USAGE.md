@@ -4,6 +4,8 @@ Complete usage examples, best practices, and optimization strategies for the MAP
 
 For long-running work, the canonical MAP flows maintain branch-scoped artifacts directly inside `.map/<branch>/`, so research, code-review lineage, verification summaries, PR drafts, and run dossiers survive context resets.
 
+`/map-plan` now performs a workflow-fit preflight before full planning. If the task is truly tiny, it can explicitly off-ramp to a direct edit or `/map-fast` instead of forcing `SPEC + PLAN`.
+
 ## Canonical Flows
 
 ### Standard flow
@@ -37,6 +39,8 @@ For long-running work, the canonical MAP flows maintain branch-scoped artifacts 
 ```
 
 The full TDD flow is the primary test-first path. The targeted subtask flow is the fine-grained variant when you want to drive one subtask at a time.
+
+In targeted TDD, `/map-tdd ST-001` now stops after the red phase once it has written `test_contract_ST-001.md` and `test_handoff_ST-001.json`. `/map-task ST-001` detects those artifacts and resumes at implementation time instead of re-running research or test authoring.
 
 ## Navigation
 

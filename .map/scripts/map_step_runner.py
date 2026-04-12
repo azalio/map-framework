@@ -31,7 +31,7 @@ import json
 import os
 import re
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -49,6 +49,344 @@ KNOWN_ISSUES_DEFAULT: dict[str, list[dict[str, object]]] = {"issues": []}
 ACTIVE_ISSUES_DEFAULT: dict[str, object] = {"updated_at": "", "issues": []}
 
 GATE_VERDICTS = {"ready", "needs-revision", "blocked"}
+ARTIFACT_STAGE_NAMES = (
+    "workflow_fit",
+    "spec",
+    "plan",
+    "test_contract",
+    "implementation",
+    "review",
+    "verification",
+    "learn_handoff",
+)
+WORKFLOW_FIT_ROUTES = {
+    "direct-edit",
+    "map-fast",
+    "map-efficient",
+    "map-tdd",
+    "map-plan",
+}
+DIFF_SIZE_LEVELS = {"tiny", "small", "medium", "large"}
+
+
+def _utc_timestamp() -> str:
+    """Return an unambiguous RFC3339 UTC timestamp."""
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _parse_boolish(value: object) -> bool:
+    """Convert common truthy/falsy string forms to bool."""
+    if isinstance(value, bool):
+        return value
+    normalized = str(value or "").strip().lower()
+    return normalized in {"1", "true", "yes", "y"}
+
+
+def _write_json_file(path: Path, payload: dict) -> None:
+    """Atomically write JSON payload to disk."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_file = path.with_suffix(".tmp")
+    tmp_file.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8"
+    )
+    tmp_file.replace(path)
+
+
+def artifact_manifest_path(branch: Optional[str] = None) -> Path:
+    """Return the branch-scoped artifact manifest path."""
+    return get_branch_dir(branch) / "artifact_manifest.json"
+
+
+def _default_stage_payload() -> dict[str, object]:
+    """Return an empty stage payload for artifact_manifest.json."""
+    return {
+        "status": "not_started",
+        "updated_at": "",
+        "artifacts": [],
+        "metadata": {},
+    }
+
+
+def default_artifact_manifest(branch: str) -> dict[str, object]:
+    """Return a fresh artifact manifest for a branch."""
+    return {
+        "schema_version": "1.0",
+        "branch": branch,
+        "updated_at": _utc_timestamp(),
+        "stages": {stage: _default_stage_payload() for stage in ARTIFACT_STAGE_NAMES},
+    }
+
+
+def load_artifact_manifest(branch: Optional[str] = None) -> dict[str, object]:
+    """Load artifact_manifest.json, filling missing stages with defaults."""
+    branch_name = branch or get_branch_name()
+    manifest_path = artifact_manifest_path(branch_name)
+    manifest = default_artifact_manifest(branch_name)
+
+    if not manifest_path.exists():
+        return manifest
+
+    try:
+        loaded = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return manifest
+
+    if isinstance(loaded, dict):
+        manifest.update(
+            {
+                "schema_version": loaded.get("schema_version", manifest["schema_version"]),
+                "branch": branch_name,
+                "updated_at": loaded.get("updated_at", manifest["updated_at"]),
+            }
+        )
+        loaded_stages = loaded.get("stages", {})
+        if isinstance(loaded_stages, dict):
+            for stage in ARTIFACT_STAGE_NAMES:
+                stage_payload = loaded_stages.get(stage, _default_stage_payload())
+                if isinstance(stage_payload, dict):
+                    manifest["stages"][stage] = {
+                        "status": stage_payload.get("status", "not_started"),
+                        "updated_at": stage_payload.get("updated_at", ""),
+                        "artifacts": stage_payload.get("artifacts", []),
+                        "metadata": stage_payload.get("metadata", {}),
+                    }
+
+    return manifest
+
+
+def save_artifact_manifest(
+    manifest: dict[str, object], branch: Optional[str] = None
+) -> dict[str, object]:
+    """Persist artifact_manifest.json and return status metadata."""
+    branch_name = branch or get_branch_name()
+    manifest["branch"] = branch_name
+    manifest["updated_at"] = _utc_timestamp()
+    path = artifact_manifest_path(branch_name)
+    _write_json_file(path, manifest)
+    return {"status": "success", "path": str(path), "manifest": manifest}
+
+
+def _set_manifest_stage(
+    manifest: dict[str, object],
+    stage: str,
+    status: str,
+    *,
+    artifacts: Optional[list[dict[str, str]]] = None,
+    metadata: Optional[dict[str, object]] = None,
+) -> None:
+    """Update one stage entry inside a manifest payload."""
+    if stage not in ARTIFACT_STAGE_NAMES:
+        raise ValueError(f"Unknown artifact stage: {stage}")
+    stages = manifest.setdefault("stages", {})
+    if not isinstance(stages, dict):
+        raise ValueError("artifact manifest stages payload is invalid")
+    stages[stage] = {
+        "status": status,
+        "updated_at": _utc_timestamp(),
+        "artifacts": artifacts or [],
+        "metadata": metadata or {},
+    }
+
+
+def _artifact_ref(path: Path, kind: str) -> dict[str, str]:
+    """Create a manifest artifact reference payload."""
+    return {"path": str(path), "kind": kind}
+
+
+def record_workflow_fit(
+    recommended_workflow: str,
+    expected_diff_size: str = "medium",
+    has_new_invariants: object = False,
+    needs_independent_review: object = False,
+    has_clear_acceptance_criteria: object = True,
+    test_first_required: object = False,
+    decision_summary: str = "",
+    branch: Optional[str] = None,
+) -> dict[str, object]:
+    """Persist workflow-fit decision and update the artifact manifest."""
+    branch_name = branch or get_branch_name()
+    route = (recommended_workflow or "").strip().lower()
+    diff_size = (expected_diff_size or "").strip().lower()
+
+    if route not in WORKFLOW_FIT_ROUTES:
+        return {
+            "status": "error",
+            "message": f"Invalid recommended_workflow: {recommended_workflow}",
+        }
+    if diff_size not in DIFF_SIZE_LEVELS:
+        return {
+            "status": "error",
+            "message": f"Invalid expected_diff_size: {expected_diff_size}",
+        }
+
+    signals = {
+        "expected_diff_size": diff_size,
+        "has_new_invariants": _parse_boolish(has_new_invariants),
+        "needs_independent_review": _parse_boolish(needs_independent_review),
+        "has_clear_acceptance_criteria": _parse_boolish(
+            has_clear_acceptance_criteria
+        ),
+        "test_first_required": _parse_boolish(test_first_required),
+    }
+    needs_map = route != "direct-edit"
+    payload = {
+        "version": "1.0",
+        "recommended_workflow": route,
+        "needs_map": needs_map,
+        "decision_summary": decision_summary or "No decision summary provided.",
+        "signals": signals,
+        "updated_at": _utc_timestamp(),
+    }
+
+    branch_dir = get_branch_dir(branch_name)
+    branch_dir.mkdir(parents=True, exist_ok=True)
+    decision_path = branch_dir / "workflow-fit.json"
+    _write_json_file(decision_path, payload)
+
+    manifest = load_artifact_manifest(branch_name)
+    _set_manifest_stage(
+        manifest,
+        "workflow_fit",
+        "recorded",
+        artifacts=[_artifact_ref(decision_path, "workflow-fit-decision")],
+        metadata={
+            "recommended_workflow": route,
+            "needs_map": needs_map,
+            "signals": signals,
+            "decision_summary": payload["decision_summary"],
+        },
+    )
+    manifest_result = save_artifact_manifest(manifest, branch_name)
+
+    return {
+        "status": "success",
+        "path": str(decision_path),
+        "recommended_workflow": route,
+        "needs_map": needs_map,
+        "manifest_path": manifest_result["path"],
+    }
+
+
+def record_plan_artifacts(branch: Optional[str] = None) -> dict[str, object]:
+    """Persist spec/plan artifact presence into artifact_manifest.json."""
+    branch_name = branch or get_branch_name()
+    branch_dir = get_branch_dir(branch_name)
+
+    spec_path = branch_dir / f"spec_{branch_name}.md"
+    task_plan_path = branch_dir / f"task_plan_{branch_name}.md"
+    blueprint_path = branch_dir / "blueprint.json"
+    step_state_path = branch_dir / "step_state.json"
+
+    manifest = load_artifact_manifest(branch_name)
+
+    spec_artifacts = []
+    if spec_path.exists():
+        spec_artifacts.append(_artifact_ref(spec_path, "spec"))
+    _set_manifest_stage(
+        manifest,
+        "spec",
+        "ready" if spec_artifacts else "missing",
+        artifacts=spec_artifacts,
+        metadata={},
+    )
+
+    plan_artifacts = []
+    if task_plan_path.exists():
+        plan_artifacts.append(_artifact_ref(task_plan_path, "task-plan"))
+    if blueprint_path.exists():
+        plan_artifacts.append(_artifact_ref(blueprint_path, "blueprint"))
+    if step_state_path.exists():
+        plan_artifacts.append(_artifact_ref(step_state_path, "step-state"))
+
+    if task_plan_path.exists() and blueprint_path.exists() and step_state_path.exists():
+        plan_status = "ready"
+    elif plan_artifacts:
+        plan_status = "partial"
+    else:
+        plan_status = "missing"
+
+    _set_manifest_stage(
+        manifest,
+        "plan",
+        plan_status,
+        artifacts=plan_artifacts,
+        metadata={
+            "has_task_plan": task_plan_path.exists(),
+            "has_blueprint": blueprint_path.exists(),
+            "has_step_state": step_state_path.exists(),
+        },
+    )
+
+    manifest_result = save_artifact_manifest(manifest, branch_name)
+    return {
+        "status": "success",
+        "manifest_path": manifest_result["path"],
+        "spec_status": manifest["stages"]["spec"]["status"],
+        "plan_status": manifest["stages"]["plan"]["status"],
+    }
+
+
+def record_test_contract_handoff(
+    subtask_id: str,
+    failing_test_command: str = "",
+    test_files_csv: str = "",
+    contract_summary: str = "",
+    notes: str = "",
+    branch: Optional[str] = None,
+) -> dict[str, object]:
+    """Create test_handoff_<subtask>.json from an existing test_contract file."""
+    branch_name = branch or get_branch_name()
+    branch_dir = get_branch_dir(branch_name)
+    contract_path = branch_dir / f"test_contract_{subtask_id}.md"
+    if not contract_path.exists():
+        return {
+            "status": "error",
+            "message": f"Missing test contract: {contract_path}",
+        }
+
+    test_files = [
+        item.strip()
+        for item in (test_files_csv or "").split(",")
+        if item.strip()
+    ]
+    handoff_payload = {
+        "subtask_id": subtask_id,
+        "status": "contract_ready",
+        "contract_path": str(contract_path),
+        "failing_test_command": failing_test_command or None,
+        "test_files": test_files,
+        "contract_summary": contract_summary or "No contract summary provided.",
+        "notes": notes or "",
+        "updated_at": _utc_timestamp(),
+    }
+    handoff_path = branch_dir / f"test_handoff_{subtask_id}.json"
+    _write_json_file(handoff_path, handoff_payload)
+
+    manifest = load_artifact_manifest(branch_name)
+    _set_manifest_stage(
+        manifest,
+        "test_contract",
+        "contract_ready",
+        artifacts=[
+            _artifact_ref(contract_path, "test-contract"),
+            _artifact_ref(handoff_path, "test-handoff"),
+        ],
+        metadata={
+            "subtask_id": subtask_id,
+            "failing_test_command": handoff_payload["failing_test_command"],
+            "test_files": test_files,
+            "contract_summary": handoff_payload["contract_summary"],
+        },
+    )
+    manifest_result = save_artifact_manifest(manifest, branch_name)
+
+    return {
+        "status": "success",
+        "contract_path": str(contract_path),
+        "handoff_path": str(handoff_path),
+        "manifest_path": manifest_result["path"],
+        "subtask_id": subtask_id,
+    }
 
 
 def get_branch_dir(branch: Optional[str] = None) -> Path:
@@ -1109,11 +1447,23 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
     # Repo Delta (via compute_differential_insight from repo_insight)
     if last_sha:
         try:
-            from mapify_cli.repo_insight import compute_differential_insight
+            import sys
+            import importlib
+
+            repo_insight = sys.modules.get("mapify_cli.repo_insight")
+            if repo_insight is None:
+                repo_insight = importlib.import_module("mapify_cli.repo_insight")
+            compute_differential_insight = getattr(
+                repo_insight, "compute_differential_insight", None
+            )
+            if compute_differential_insight is None:
+                raise ImportError("compute_differential_insight not available")
 
             insight = compute_differential_insight(project_dir, last_sha)
-            changed = insight.get("changed_files", [])
-            deleted = insight.get("deleted_files", [])
+            if insight.get("error"):
+                insight = {}
+            changed = insight.get("changed_files") or []
+            deleted = insight.get("deleted_files") or []
             if changed or deleted:
                 parts.append("")
                 parts.append("# Repo Delta (files changed since last subtask):")
@@ -1227,6 +1577,48 @@ if __name__ == "__main__":
         source_artifact = sys.argv[4] if len(sys.argv) >= 5 else ""
         notes = sys.argv[5] if len(sys.argv) >= 6 else ""
         result = write_stage_gate(stage, verdict, source_artifact, notes)
+        print(json.dumps(result, indent=2))
+
+    elif func_name == "load_artifact_manifest":
+        result = load_artifact_manifest()
+        print(json.dumps(result, indent=2, ensure_ascii=True))
+
+    elif func_name == "record_workflow_fit" and len(sys.argv) >= 8:
+        recommended_workflow = sys.argv[2]
+        expected_diff_size = sys.argv[3]
+        has_new_invariants = sys.argv[4]
+        needs_independent_review = sys.argv[5]
+        has_clear_acceptance_criteria = sys.argv[6]
+        test_first_required = sys.argv[7]
+        decision_summary = sys.argv[8] if len(sys.argv) >= 9 else ""
+        result = record_workflow_fit(
+            recommended_workflow,
+            expected_diff_size,
+            has_new_invariants,
+            needs_independent_review,
+            has_clear_acceptance_criteria,
+            test_first_required,
+            decision_summary,
+        )
+        print(json.dumps(result, indent=2))
+
+    elif func_name == "record_plan_artifacts":
+        result = record_plan_artifacts()
+        print(json.dumps(result, indent=2))
+
+    elif func_name == "record_test_contract_handoff" and len(sys.argv) >= 3:
+        subtask_id = sys.argv[2]
+        failing_test_command = sys.argv[3] if len(sys.argv) >= 4 else ""
+        test_files_csv = sys.argv[4] if len(sys.argv) >= 5 else ""
+        contract_summary = sys.argv[5] if len(sys.argv) >= 6 else ""
+        notes = sys.argv[6] if len(sys.argv) >= 7 else ""
+        result = record_test_contract_handoff(
+            subtask_id,
+            failing_test_command,
+            test_files_csv,
+            contract_summary,
+            notes,
+        )
         print(json.dumps(result, indent=2))
 
     elif func_name == "build_handoff_bundle":
