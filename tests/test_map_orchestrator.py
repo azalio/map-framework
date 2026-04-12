@@ -895,8 +895,28 @@ class TestResumeFromTestContract:
         saved = map_orchestrator.StepState.load(plan_dir / "step_state.json")
         assert saved.workflow_status == "CONTRACT_READY"
         assert saved.current_step_phase == "CONTRACT_READY"
-        assert saved.pending_steps == []
+        assert saved.pending_steps == ["CONTRACT_READY"]
         assert "ST-001" in saved.contract_ready_subtasks
+
+    def test_get_next_step_pauses_when_contract_ready(self, branch_dir, tmp_path):
+        plan_dir = self._create_plan(tmp_path, branch_dir, ["ST-001"])
+        state = map_orchestrator.StepState(
+            current_subtask_id="ST-001",
+            subtask_index=0,
+            subtask_sequence=["ST-001"],
+            current_step_id="CONTRACT_READY",
+            current_step_phase="CONTRACT_READY",
+            workflow_status="CONTRACT_READY",
+            pending_steps=["CONTRACT_READY"],
+        )
+        state.save(plan_dir / "step_state.json")
+
+        result = map_orchestrator.get_next_step(branch_dir)
+
+        assert result["step_id"] == "CONTRACT_READY"
+        assert result["phase"] == "CONTRACT_READY"
+        assert result["is_complete"] is False
+        assert "Resume implementation with /map-task" in result["instruction"]
 
     def test_resume_from_test_contract_starts_at_actor(self, branch_dir, tmp_path):
         plan_dir = self._create_plan(tmp_path, branch_dir, ["ST-001", "ST-002"])

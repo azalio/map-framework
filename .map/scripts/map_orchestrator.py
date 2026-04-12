@@ -511,6 +511,22 @@ def get_next_step(branch: str) -> dict:
     state_file = Path(f".map/{branch}/step_state.json")
     state = StepState.load(state_file)
 
+    if state.workflow_status == "CONTRACT_READY":
+        if state.pending_steps != ["CONTRACT_READY"]:
+            state.pending_steps = ["CONTRACT_READY"]
+            state.save(state_file)
+        return {
+            "step_id": "CONTRACT_READY",
+            "phase": "CONTRACT_READY",
+            "instruction": (
+                "Workflow paused at persisted test contract. "
+                "Resume implementation with /map-task for this subtask."
+            ),
+            "is_complete": False,
+            "current_subtask": state.current_subtask_id,
+            "subtask_progress": f"{state.subtask_index + 1}/{len(state.subtask_sequence)}",
+        }
+
     # Auto-skip CHOOSE_MODE: always batch, set mode automatically
     while state.pending_steps and state.pending_steps[0] == "1.56":
         state.execution_mode = "batch"
@@ -1416,7 +1432,7 @@ def mark_contract_ready(subtask_id: str, branch: str) -> dict:
     state.workflow_status = "CONTRACT_READY"
     state.current_step_id = "CONTRACT_READY"
     state.current_step_phase = "CONTRACT_READY"
-    state.pending_steps = []
+    state.pending_steps = ["CONTRACT_READY"]
     state.save(state_file)
 
     return {

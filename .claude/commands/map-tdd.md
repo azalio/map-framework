@@ -22,9 +22,10 @@ description: TDD workflow — test-first development with spec-driven tests writ
 ## Execution Flow
 
 ```
-Standard:  DECOMPOSE → ACTOR (code+tests) → MONITOR
-TDD:       DECOMPOSE → TEST_WRITER → TEST_FAIL_GATE → CONTRACT_HANDOFF → STOP
-Resume:    /map-task ST-001 → ACTOR (code only) → MONITOR
+Standard:          DECOMPOSE → ACTOR (code+tests) → MONITOR
+Targeted TDD:      DECOMPOSE → TEST_WRITER → TEST_FAIL_GATE → CONTRACT_HANDOFF → STOP
+Targeted Resume:   /map-task ST-001 → ACTOR (code only) → MONITOR
+Full-workflow TDD: DECOMPOSE → TEST_WRITER → TEST_FAIL_GATE → ACTOR (code only) → MONITOR
 ```
 
 **Task:** $ARGUMENTS
@@ -226,9 +227,9 @@ a real bug, not just confirm one obvious branch."
 python3 .map/scripts/map_orchestrator.py validate_step "2.26"
 ```
 
-**Persist the red-phase contract before any implementation starts.**
+**Single-subtask mode only: persist the red-phase contract before any implementation starts.**
 
-Write `.map/${BRANCH}/test_contract_${SUBTASK_ID}.md` with:
+When `$SUBTASK_ID` is non-empty, write `.map/${BRANCH}/test_contract_${SUBTASK_ID}.md` with:
 - the subtask ID and title
 - the AAG contract
 - the test files created by TEST_WRITER
@@ -250,6 +251,8 @@ After that, STOP and tell the user to resume implementation with:
 ```
 
 That follow-up command will detect `test_handoff_${SUBTASK_ID}.json` and resume at `ACTOR` with the persisted contract, instead of re-running research or test writing.
+
+When `$SUBTASK_ID` is empty (full-workflow mode), do **not** write `test_contract_.md`, do **not** call `mark_contract_ready ""`, and do **not** stop the workflow here. In full-workflow mode, `TEST_FAIL_GATE` continues directly into `ACTOR` for the current subtask.
 
 ---
 

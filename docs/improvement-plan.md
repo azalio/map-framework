@@ -1,5 +1,7 @@
 # map-framework Improvement Plan
 
+> Note: This file is the active product/runtime backlog for MAP philosophy alignment. For the separate research note about self-execution simulation in Monitor, see [docs/improvements-plan.md](./improvements-plan.md).
+
 ## Dual-Mode Orchestrator with REGISTRY/FOCUS States [2604.019]
 
 **Benefit Hypothesis**: For workflows with ≥3 concurrent/parallel agent prompts (e.g., `/map-review` launches Monitor+Predictor+Evaluator in parallel) or workflows with conditional research + self-audit, REGISTRY/FOCUS context isolation will reduce step/tool mis-steering and invalid agent sequencing events by at least 30% relative to the current Phase 1.2 “best-effort” context injection, measurable via fewer orchestrator guardrail triggers (“Infinite loop detection at orchestrator level” and “no step skipping” enforcement) and a reduction in average tokens entering tool calls without reducing Monitor approval rate (target remains >80% first try per Success Metrics).

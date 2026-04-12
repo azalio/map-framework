@@ -1,48 +1,48 @@
 # MAP Framework Roadmap
 
-Этот документ переводит [improvement-plan](./improvement-plan.md) в рабочий порядок внедрения для `map-framework`.
+This document turns the [improvement-plan](./improvement-plan.md) into an implementation roadmap for `map-framework`.
 
-Он опирается на 4 исходника:
+It is based on four source documents:
 
-- [Improvement Plan](./improvement-plan.md) — полный список идей и rationale
-- [Architecture](./ARCHITECTURE.md) — как MAP устроен сейчас
-- [Usage](./USAGE.md) — как MAP подаётся пользователю сейчас
-- [MAP philosophy / DevOpsConf draft](./devopsconf_2026_ai_operator_presentation_rewrite-v2.md) — целевая философия `SPEC -> PLAN -> TEST -> CODE -> REVIEW -> LEARN`
+- [Improvement Plan](./improvement-plan.md) — the full list of ideas and rationale
+- [Architecture](./ARCHITECTURE.md) — how MAP is structured today
+- [Usage](./USAGE.md) — how MAP is currently presented to users
+- [MAP philosophy / DevOpsConf draft](./devopsconf_2026_ai_operator_presentation_rewrite-v2.md) — the target philosophy: `SPEC -> PLAN -> TEST -> CODE -> REVIEW -> LEARN`
 
-## Зафиксированные продуктовые решения
+## Fixed Product Decisions
 
-- Для нетривиальных задач MAP должен требовать `SPEC + PLAN` как обязательный минимум.
-- Для серьёзных изменений `REVIEW` должен оставаться обязательным этапом.
-- `LEARN` обязателен в философии MAP, но не должен быть hard runtime gate: пользователи экономят токены.
-- Для тривиальных задач нужен явный off-ramp: не каждая работа должна запускать MAP orchestration.
-- Сначала надо выровнять runtime под философию процесса, и только потом aggressively шлифовать prompts, skills и advanced orchestration.
+- For non-trivial tasks, MAP should require `SPEC + PLAN` as the mandatory minimum.
+- For serious changes, `REVIEW` should remain a mandatory stage.
+- `LEARN` is mandatory in MAP philosophy, but it should not be a hard runtime gate because users optimize for token cost.
+- Trivial tasks need an explicit off-ramp: not every piece of work should trigger MAP orchestration.
+- First align the runtime with the process philosophy, and only then aggressively refine prompts, skills, and advanced orchestration.
 
-## Что делать сначала
+## What To Do First
 
-Главный вывод из [improvement-plan](./improvement-plan.md): улучшать надо не “всё подряд”, а в таком порядке:
+The main conclusion from the [improvement-plan](./improvement-plan.md) is that improvements should not happen everywhere at once, but in this order:
 
-1. Сделать MAP честной реализацией своей процессной философии.
-2. Потом модернизировать командный слой под Claude 4.6.
-3. Потом дочистить skills и command/skill drift.
-4. Только потом идти в дорогой orchestration R&D.
+1. Make MAP a faithful implementation of its process philosophy.
+2. Then modernize the command layer for Claude 4.6.
+3. Then clean up skills and command/skill drift.
+4. Only after that move on to expensive orchestration R&D.
 
 ## Iteration 1: Runtime Alignment With MAP Philosophy
 
-**Почему это first:** сейчас главный риск MAP не в wording, а в том, что runtime местами расходится с философией `SPEC -> PLAN -> TEST -> CODE -> REVIEW -> LEARN`.
+**Why this comes first:** the main risk in MAP today is not wording, but the fact that the runtime still diverges in places from the philosophy `SPEC -> PLAN -> TEST -> CODE -> REVIEW -> LEARN`.
 
 **Improvement-plan items:** `2604.038`, `2604.039`, `2604.036`
 
 ### Scope
 
-- Ввести workflow-fit classifier и явный off-ramp для тривиальных задач.
-- Сделать artifact pipeline явным: `spec`, `plan`, `test contract`, `implementation`, `review`, `verification`, `learn handoff`.
-- Усилить разрыв между `TEST` и `CODE`: persisted handoff вместо слитного “одна сессия всё делает”.
+- Introduce a workflow-fit classifier and an explicit off-ramp for trivial tasks.
+- Make the artifact pipeline explicit: `spec`, `plan`, `test contract`, `implementation`, `review`, `verification`, `learn handoff`.
+- Strengthen the separation between `TEST` and `CODE`: use a persisted handoff instead of a merged “one session does everything” flow.
 
 ### Main deliverables
 
 - Preflight decision matrix: `direct edit` vs `/map-fast` vs `/map-efficient` vs `/map-tdd`
 - Branch-scoped `artifact_manifest`
-- `test_contract_<branch>.md` / `test_handoff_<subtask>.json` или эквивалентный persisted handoff
+- `test_contract_<branch>.md` / `test_handoff_<subtask>.json` or an equivalent persisted handoff
 - Updated docs that describe one canonical artifact pipeline for serious work
 
 ### Primary files
@@ -60,26 +60,26 @@
 
 ### Exit criteria
 
-- Нетривиальная задача больше не стартует “сразу в implementation”.
-- У complex/TDD flows есть явный persisted contract between planning, tests, and code.
-- MAP умеет честно сказать: “для этой задачи orchestration не нужен”.
+- Non-trivial tasks no longer jump straight into implementation.
+- Complex and TDD flows have an explicit persisted contract between planning, tests, and code.
+- MAP can honestly say: “this task does not need orchestration.”
 
 ### How We Will Achieve It
 
 #### Step 1. Add a workflow-fit preflight
 
-Сначала ввести простой classifier перед полноценным MAP flow.
+Introduce a simple classifier before the full MAP flow.
 
-Он должен отвечать на вопрос:
-- нужен ли вообще MAP
-- если нужен, то какой именно surface запускать: `/map-fast`, `/map-efficient`, `/map-tdd`
+It should answer:
+- whether MAP is needed at all
+- if it is needed, which surface should run: `/map-fast`, `/map-efficient`, or `/map-tdd`
 
-Это не должен быть “умный черный ящик”. Это должен быть короткий decision gate на основе:
+This should not be a black box. It should be a short decision gate based on:
 - blast radius
 - expected diff size
-- есть ли новая модель / инварианты
-- нужен ли независимый review
-- есть ли ясные acceptance criteria
+- whether new models or invariants are introduced
+- whether independent review is needed
+- whether acceptance criteria are already clear
 
 **Implementation surfaces:**
 - [src/mapify_cli/templates/commands/map-plan.md](../src/mapify_cli/templates/commands/map-plan.md)
@@ -92,9 +92,9 @@
 
 #### Step 2. Make the artifact pipeline explicit
 
-Сейчас у MAP уже есть `spec_<branch>.md`, `task_plan_<branch>.md`, `step_state.json`, verification/state artifacts, но они ещё не оформлены как один stage contract.
+MAP already has `spec_<branch>.md`, `task_plan_<branch>.md`, `step_state.json`, and verification/state artifacts, but they are not yet presented as one stage contract.
 
-Нужно добавить явный `artifact_manifest` уровня workflow, который фиксирует статус стадий:
+Add an explicit workflow-level `artifact_manifest` that tracks:
 - `spec`
 - `plan`
 - `test_contract`
@@ -103,7 +103,7 @@
 - `verification`
 - `learn_handoff`
 
-Этот манифест должен обновляться orchestrator/runtime layer, а не вручную пользователем.
+This manifest must be updated by the orchestrator/runtime layer, not by the user.
 
 **Implementation surfaces:**
 - [src/mapify_cli/schemas.py](../src/mapify_cli/schemas.py)
@@ -112,25 +112,25 @@
 - [src/mapify_cli/templates/map/scripts/map_step_runner.py](../src/mapify_cli/templates/map/scripts/map_step_runner.py)
 
 **Expected result:**
-- MAP знает, какой stage artifact produced and consumed at each step
-- review and later stages stop reconstructing intent from raw diff alone
+- MAP knows which stage artifact is produced and consumed at each step
+- review and later stages stop reconstructing intent from the raw diff alone
 
 #### Step 3. Split TEST and CODE with a persisted handoff
 
-Это ключевой runtime change Iteration 1.
+This is the key runtime change in Iteration 1.
 
-Сейчас `/map-tdd` правильно делает `TEST_WRITER -> TEST_FAIL_GATE -> ACTOR`, но всё ещё внутри одного orchestration stream. Этого недостаточно для философии clean-session testing.
+Today `/map-tdd` correctly runs `TEST_WRITER -> TEST_FAIL_GATE -> ACTOR`, but it still does so inside one orchestration stream. That is not enough for a clean-session testing philosophy.
 
-Нужно сделать persisted handoff между TEST и CODE:
-- после `TEST_FAIL_GATE` можно завершить run в состоянии `contract_ready`
-- создаются `test_contract_<branch>.md` и `test_handoff_<subtask>.json` или эквивалентные artifacts
-- следующий implementation run читает только:
+Add a persisted handoff between TEST and CODE:
+- after `TEST_FAIL_GATE`, the run can stop in `contract_ready`
+- `test_contract_<branch>.md` and `test_handoff_<subtask>.json` (or equivalent artifacts) are created
+- the next implementation run reads only:
   - spec
   - plan
   - failing tests
   - compact test handoff
 
-То есть implementation stage должен работать от контракта, а не от полной test-authoring deliberation.
+The implementation stage should work from the contract, not from the full test-authoring deliberation.
 
 **Implementation surfaces:**
 - [src/mapify_cli/templates/commands/map-tdd.md](../src/mapify_cli/templates/commands/map-tdd.md)
@@ -139,21 +139,21 @@
 - [src/mapify_cli/templates/map/scripts/map_step_runner.py](../src/mapify_cli/templates/map/scripts/map_step_runner.py)
 
 **Expected result:**
-- tests become a real reviewable artifact
+- tests become real reviewable artifacts
 - implementation no longer continues inside the same context that authored the tests
 - MAP gets closer to `TEST -> CODE in separate sessions` without forcing awkward manual ceremony
 
 #### Step 4. Add guardrails for contract-sized subtasks
 
-Когда artifact pipeline уже есть, можно вводить process guardrails не через rhetoric, а через runtime data.
+Once the artifact pipeline exists, MAP can add process guardrails through runtime data rather than rhetoric.
 
-Нужно добавить в planning/decomposition layer:
+Add these fields to planning and decomposition:
 - `expected_diff_size`
 - `concern_type`
 - one-logical-step expectations per subtask
 
-А потом использовать это в Monitor / final verification for warnings or blocks when:
-- subtask diff is too large to review comfortably
+Then use them in Monitor and final verification to warn or block when:
+- a subtask diff is too large to review comfortably
 - one subtask mixes too many concern types without justification
 
 **Implementation surfaces:**
@@ -178,13 +178,13 @@ Iteration 1 is not complete if it exists only in docs and prompts. It needs runt
 **Tests to add:**
 - workflow-fit classifier routes trivial vs non-trivial tasks correctly
 - artifact manifest is created and updated through stage transitions
-- TDD flow can stop after `TEST_FAIL_GATE` and resume implementation from persisted contract
-- resuming from persisted test contract survives context reset / restart
+- TDD flow can stop after `TEST_FAIL_GATE` and resume implementation from a persisted contract
+- resuming from a persisted test contract survives context reset and restart
 - oversized or mixed-concern subtasks are surfaced as warnings or blocked states according to the chosen policy
 
 #### Recommended PR sequence
 
-Чтобы это не развалилось в один огромный refactor, внедрять лучше так:
+To avoid turning this into one large refactor, implement it in this order:
 
 1. workflow-fit classifier + docs routing
 2. artifact manifest schema + runtime updates
@@ -194,21 +194,21 @@ Iteration 1 is not complete if it exists only in docs and prompts. It needs runt
 
 ## Iteration 2: Review Independence And Soft LEARN Ergonomics
 
-**Почему next:** когда task-fit и artifact flow уже выровнены, следующий приоритет — сделать review действительно независимым и вернуть `LEARN` на правильное место без hard enforcement.
+**Why this comes next:** once task-fit and artifact flow are aligned, the next priority is to make review truly independent and to put `LEARN` back in the right place without hard enforcement.
 
 **Improvement-plan items:** `2604.037`, `2604.035`
 
 ### Scope
 
-- Detached review context: review bundle, optional detached/worktree mode.
-- Cheap closeout path for `LEARN`: handoff artifact, prefilled invocation, batch learning.
+- Detached review context: review bundle, optional detached/worktree mode
+- Cheap closeout path for `LEARN`: handoff artifact, prefilled invocation, batch learning
 
 ### Main deliverables
 
 - Canonical `review_bundle` artifact that consumes spec + tests + diff + verification context
 - Optional detached review mode for serious changes
 - `learning_handoff_<branch>.md` or `.json`
-- Docs that say: `LEARN` is philosophically required, but runtime leaves token spend to the user
+- Docs that say `LEARN` is philosophically required, but runtime leaves token spend to the user
 
 ### Primary files
 
@@ -222,23 +222,23 @@ Iteration 1 is not complete if it exists only in docs and prompts. It needs runt
 
 ### Exit criteria
 
-- `/map-review` больше не зависит в основном от implementer context.
-- `LEARN` больше не выглядит как случайная “optional hint at the end”.
-- Пользователь может отложить learning без потери контекста и без ручной пересборки summary.
+- `/map-review` no longer depends primarily on implementer context
+- `LEARN` no longer looks like a random optional hint at the end
+- users can defer learning without losing context or manually rebuilding the summary
 
 ## Iteration 3: Command Layer Modernization For Claude 4.6
 
-**Почему только теперь:** prompt tuning полезен, но он не должен маскировать structural issues в runtime.
+**Why only after that:** prompt tuning is useful, but it should not mask structural issues in the runtime.
 
 **Improvement-plan items:** `2604.025`, `2604.026`, `2604.027`, `2604.028`, `2604.029`
 
 ### Scope
 
-- Смягчить overbearing guardrails и calibrate command tone.
-- Унифицировать XML/context envelopes.
-- Добавить few-shot examples и evidence-first output contracts.
-- Перевести lightweight flows в action-first tool use.
-- Ввести command-specific thinking/parallelism policies.
+- Soften overbearing guardrails and calibrate command tone
+- Standardize XML/context envelopes
+- Add few-shot examples and evidence-first output contracts
+- Convert lightweight flows to action-first tool use
+- Introduce command-specific thinking and parallelism policies
 
 ### Main deliverables
 
@@ -260,23 +260,23 @@ Iteration 1 is not complete if it exists only in docs and prompts. It needs runt
 
 ### Exit criteria
 
-- Commands stop sounding like they are compensating for older model behavior.
-- Lightweight workflows write code via tools, not via serialized full-file payloads.
-- Long-context commands share one readable, repeatable prompt structure.
+- Commands stop sounding like they are compensating for older model behavior
+- Lightweight workflows write code via tools instead of serialized full-file payloads
+- Long-context commands share one readable, repeatable prompt structure
 
 ## Iteration 4: Skills Consolidation And Catalog Hygiene
 
-**Почему после command layer:** skills matter, but right now they are not the biggest source of product drift.
+**Why after the command layer:** skills matter, but right now they are not the largest source of product drift.
 
 **Improvement-plan items:** `2604.030`, `2604.031`, `2604.032`, `2604.033`, `2604.034`
 
 ### Scope
 
-- Eliminate command/skill drift.
-- Fix metadata quality and frontmatter hygiene.
-- Explicitly define `reference` vs `task` skills.
-- Move heavy content into supporting files.
-- Add trigger/invocation regression tests.
+- Eliminate command/skill drift
+- Fix metadata quality and frontmatter hygiene
+- Explicitly define `reference` vs `task` skills
+- Move heavy content into supporting files
+- Add trigger/invocation regression tests
 
 ### Main deliverables
 
@@ -298,13 +298,13 @@ Iteration 1 is not complete if it exists only in docs and prompts. It needs runt
 
 ### Exit criteria
 
-- У MAP нет непонятного duality между command и skill surface.
-- Skills documentation matches runtime reality.
-- Skill triggering/invocation regressions are caught by tests, not by users.
+- MAP no longer has a confusing duality between command and skill surfaces
+- skills documentation matches runtime reality
+- skill triggering and invocation regressions are caught by tests instead of users
 
 ## Iteration 5: Orchestrator R&D And Deep Optimization
 
-**Почему это last:** advanced orchestration only pays off after the product model is already stable.
+**Why this is last:** advanced orchestration only pays off after the product model is already stable.
 
 **Improvement-plan items:** `2604.019`, `2604.020`, `2604.021`, `2604.022`, `2604.023`, `2604.024`, `2604.014`, `2604.017`
 
@@ -316,7 +316,7 @@ Iteration 1 is not complete if it exists only in docs and prompts. It needs runt
 - agent registry snapshots
 - multi-phase evaluation harness
 - family-specific model scaling analysis
-- deeper resiliency/health reporting
+- deeper resiliency and health reporting
 
 ### Main deliverables
 
@@ -339,30 +339,30 @@ Iteration 1 is not complete if it exists only in docs and prompts. It needs runt
 
 ### Exit criteria
 
-- Advanced context/orchestration ideas are measured, not just described.
-- MAP can prove which orchestration mechanisms actually improve approval rate, latency, and context discipline.
+- Advanced context and orchestration ideas are measured, not just described
+- MAP can prove which orchestration mechanisms actually improve approval rate, latency, and context discipline
 
 ## What Not To Do First
 
-- Не начинать с `REGISTRY/FOCUS`, пока artifact pipeline и workflow-fit ещё не выровнены.
-- Не начинать с skills cleanup, пока product/runtime still violates the main philosophy.
-- Не пытаться “исправить MAP” только через wording changes в prompts.
-- Не делать `LEARN` hard-gated.
+- Do not start with `REGISTRY/FOCUS` while artifact pipeline and workflow-fit are still not aligned
+- Do not start with skills cleanup while the product/runtime still violates the main philosophy
+- Do not try to “fix MAP” only through wording changes in prompts
+- Do not make `LEARN` hard-gated
 
 ## Practical Execution Notes
 
-- Если меняются `.claude/commands/`, `.claude/hooks/` или `.claude/skills/`, нужно держать их синхронными с `src/mapify_cli/templates/`.
-- Предпочтительный путь синка: `make sync-templates`.
-- Для agent template sync already exists a guard: [tests/test_template_sync.py](../tests/test_template_sync.py).
-- Для command/skill/runtime changes roadmap implicitly assumes новые тесты рядом с существующими:
+- If `.claude/commands/`, `.claude/hooks/`, or `.claude/skills/` change, keep them synchronized with `src/mapify_cli/templates/`
+- The preferred sync path is `make sync-templates`
+- Agent template sync already has a guard: [tests/test_template_sync.py](../tests/test_template_sync.py)
+- For command, skill, and runtime changes, this roadmap assumes new tests will live next to the existing suites:
   [tests/test_map_orchestrator.py](../tests/test_map_orchestrator.py),
   [tests/test_map_step_runner.py](../tests/test_map_step_runner.py),
   [tests/test_workflow_state.py](../tests/test_workflow_state.py),
   [tests/test_verification_recorder.py](../tests/test_verification_recorder.py),
-  [tests/test_skills.py](../tests/test_skills.py).
+  [tests/test_skills.py](../tests/test_skills.py)
 
 ## Short Version
 
-Если свести roadmap к одному предложению:
+If you compress the roadmap to one sentence:
 
-**Сначала сделать MAP process-correct и artifact-first, потом modernize commands, потом clean up skills, и только потом инвестировать в advanced orchestration research.**
+**First make MAP process-correct and artifact-first, then modernize commands, then clean up skills, and only after that invest in advanced orchestration research.**

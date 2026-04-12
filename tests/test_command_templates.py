@@ -264,6 +264,16 @@ class TestCommandTemplates:
         assert "record_test_contract_handoff" in content
         assert "mark_contract_ready" in content
 
+    def test_map_tdd_scopes_contract_handoff_to_targeted_mode(
+        self, templates_commands_dir
+    ):
+        """/map-tdd should only persist contract handoffs in single-subtask mode."""
+        content = (templates_commands_dir / "map-tdd.md").read_text()
+
+        assert "Single-subtask mode only" in content
+        assert "When `$SUBTASK_ID` is empty (full-workflow mode)" in content
+        assert "continues directly into `ACTOR`" in content
+
     def test_map_task_can_resume_from_persisted_tdd_contract(
         self, templates_commands_dir
     ):

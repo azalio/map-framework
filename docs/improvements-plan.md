@@ -1,5 +1,7 @@
 # Improvements Plan: Self-Execution Simulation for MAP Framework
 
+> Note: This file is a focused research plan for self-execution simulation. For the broader product/runtime backlog, see [docs/improvement-plan.md](./improvement-plan.md).
+
 Based on the research paper "Self-Execution Simulation Improves Coding Models" (arXiv:2604.03253v1, April 2025).
 
 The paper demonstrates that LLMs can be trained to mentally simulate code execution (predict stdout given code + stdin), and use this capability for **self-verification** (selecting the best solution from candidates without running code) and **self-fixing** (iteratively improving code using predicted execution output instead of real execution). Key results: up to +8 points on competitive programming via self-verification, minimal simulation gap compared to real execution.
