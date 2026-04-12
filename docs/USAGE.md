@@ -15,6 +15,7 @@ For long-running work, the canonical MAP flows maintain branch-scoped artifacts 
 /map-efficient implement the approved plan
 /map-check
 /map-review
+/map-learn   # immediately, or later from the generated handoff
 ```
 
 ### Full TDD flow
@@ -24,6 +25,7 @@ For long-running work, the canonical MAP flows maintain branch-scoped artifacts 
 /map-tdd implement with test-first phases enabled
 /map-check
 /map-review
+/map-learn
 ```
 
 ### Targeted subtask TDD flow
@@ -36,11 +38,14 @@ For long-running work, the canonical MAP flows maintain branch-scoped artifacts 
 /map-task ST-002
 /map-check
 /map-review
+/map-learn
 ```
 
 The full TDD flow is the primary test-first path. The targeted subtask flow is the fine-grained variant when you want to drive one subtask at a time.
 
 In targeted TDD, `/map-tdd ST-001` now stops after the red phase once it has written `test_contract_ST-001.md` and `test_handoff_ST-001.json`. `/map-task ST-001` detects those artifacts and resumes at implementation time instead of re-running research or test authoring.
+
+Philosophically, MAP still ends with `LEARN`. Runtime keeps that step soft and token-aware by auto-writing `.map/<branch>/learning-handoff.md` and `.json` after `/map-efficient`, `/map-debug`, `/map-check`, and `/map-review`, so `/map-learn` can auto-load the workflow context with no manual reconstruction.
 
 ## Navigation
 

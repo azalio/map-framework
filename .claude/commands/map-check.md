@@ -338,6 +338,19 @@ python3 .map/scripts/map_step_runner.py write_pr_draft "$SUMMARY" "$VALIDATION" 
 This ensures `pr-draft.md` is built from actual workflow artifacts instead of freeform memory.
 It also means `/map-review` can consume a single consolidated verification handoff instead of re-deriving the branch state from scratch.
 
+Then write the deferred learning handoff so the philosophical `LEARN` stage stays cheap at runtime:
+
+```bash
+python3 .map/scripts/map_step_runner.py write_learning_handoff \
+  map-check \
+  "<task title>" \
+  "READY FOR REVIEW|NEEDS WORK" \
+  "<run /map-review next, or rework and rerun /map-check>" \
+  "<optional verification note>"
+```
+
+This writes `.map/<branch>/learning-handoff.md` and `.json`, updates `artifact_manifest.json`, and lets `/map-learn` auto-load the workflow context later with no manual reconstruction.
+
 Recommended format:
 
 ```markdown

@@ -61,13 +61,15 @@ claude
 
 Canonical MAP flows:
 
-- Standard: `/map-plan` -> `/map-efficient` -> `/map-check` -> `/map-review`
-- Full TDD: `/map-plan` -> `/map-tdd` -> `/map-check` -> `/map-review`
-- Targeted subtask TDD: `/map-plan` -> `/map-tdd ST-001` -> `/map-task ST-001` -> ... -> `/map-check` -> `/map-review`
+- Standard: `/map-plan` -> `/map-efficient` -> `/map-check` -> `/map-review` -> `/map-learn` (when you want to pay the learning cost)
+- Full TDD: `/map-plan` -> `/map-tdd` -> `/map-check` -> `/map-review` -> `/map-learn`
+- Targeted subtask TDD: `/map-plan` -> `/map-tdd ST-001` -> `/map-task ST-001` -> ... -> `/map-check` -> `/map-review` -> `/map-learn`
 
 `/map-plan` now records a workflow-fit decision first, so trivial work can exit early with a direct edit or `/map-fast` recommendation instead of forcing full MAP planning.
 
 These workflows maintain branch-scoped artifacts like `code-review-001.md`, `qa-001.md`, `verification-summary.md`, `pr-draft.md`, `artifact_manifest.json`, and run dossiers under `.map/<branch>/`. Targeted TDD flows also persist `test_contract_ST-00N.md` and `test_handoff_ST-00N.json` so `/map-task` can resume implementation from a clean red-phase handoff.
+
+`LEARN` is still the philosophical end of the MAP cycle, but runtime keeps it soft: `/map-efficient`, `/map-debug`, `/map-check`, and `/map-review` now write `learning-handoff.md` / `.json` under `.map/<branch>/`, so `/map-learn` can run immediately or later without rebuilding context by hand.
 
 ## How It Works
 

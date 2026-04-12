@@ -11,6 +11,7 @@ disable-model-invocation: true
 **When to use:**
 - After `/map-efficient` completes (to preserve patterns from the workflow)
 - After `/map-debug` completes (to preserve debugging patterns)
+- After `/map-review` or `/map-check` completes (to preserve review/verification patterns)
 - After `/map-fast` completes (to retroactively add learning when learning was skipped)
 
 **What it does:**
@@ -20,6 +21,8 @@ disable-model-invocation: true
 4. Outputs a structured learning summary
 
 **Workflow Summary Input:** $ARGUMENTS
+
+**Zero-argument mode:** If `$ARGUMENTS` is empty and `.map/<branch>/learning-handoff.md` exists, load that artifact automatically. If `$ARGUMENTS` is a readable file path, load the file contents and treat them as the workflow summary. Inline summary text still works when you want to override the artifact.
 
 ## Templates
 
@@ -37,7 +40,7 @@ Use these templates when creating new rules files in Step 3. Copy the appropriat
 **You are NOT required to run this command.** No MAP workflow includes automatic learning — learning is always a separate step via this command.
 
 Use /map-learn when:
-- You completed /map-efficient, /map-debug, or /map-fast and want to extract lessons
+- You completed /map-efficient, /map-debug, /map-review, /map-check, or /map-fast and want to extract lessons
 - You want to batch-learn from multiple workflows at once
 - You want to manually trigger learning for custom workflows
 
@@ -49,7 +52,23 @@ Use /map-learn when:
 
 ## Step 1: Validate Input
 
-Check that $ARGUMENTS contains workflow summary:
+Resolve the workflow summary before validating input:
+
+1. If `$ARGUMENTS` is empty, look for `.map/<branch>/learning-handoff.md`
+2. If `$ARGUMENTS` looks like a file path, read that file
+3. Otherwise treat `$ARGUMENTS` as inline workflow summary text
+
+If a branch-scoped learning handoff exists, prefer it over asking the user to reconstruct the workflow from memory.
+
+Track the resolved summary source for Step 4:
+
+- `auto-handoff` if zero-argument mode loaded `.map/<branch>/learning-handoff.md`
+- `file-handoff` if `$ARGUMENTS` resolved by reading a file path
+- `inline-summary` if the user supplied summary text directly
+
+Do not record consumption yet. Only record it after `/map-learn` finishes successfully.
+
+Check that the resolved workflow summary contains:
 
 **Required information:**
 - Workflow type (feature, debug, refactor, review, custom)
@@ -58,7 +77,7 @@ Check that $ARGUMENTS contains workflow summary:
 - Analysis results (Predictor/Evaluator outputs, if available)
 - Workflow metrics (total subtasks, iterations, files changed)
 
-**If input is incomplete:** Ask user to provide missing information before proceeding.
+**If no summary can be resolved:** Ask the user for a workflow summary before proceeding.
 
 ---
 
@@ -85,7 +104,7 @@ Task(
   prompt="Extract structured lessons from this workflow:
 
 **Workflow Summary:**
-$ARGUMENTS
+[resolved workflow summary from Step 1]
 
 **Existing learned rules (do NOT duplicate these):**
 [paste extracted bullets from Step 2a, or 'None — first learning session' if no files exist]
@@ -190,6 +209,14 @@ After writing, count bullets in each modified file. If any file exceeds 50 bulle
 ---
 
 ## Step 4: Summary Report
+
+Before printing the completion summary, record learning-usage metrics with the source you resolved in Step 1:
+
+- Zero-argument handoff: `python .map/scripts/map_step_runner.py record_learning_consumption auto-handoff`
+- File-backed summary: `python .map/scripts/map_step_runner.py record_learning_consumption file-handoff`
+- Inline summary text: `python .map/scripts/map_step_runner.py record_learning_consumption inline-summary "<workflow-type-if-known>"`
+
+Use the exact source that produced the resolved workflow summary. Do not downgrade an auto-loaded handoff to `inline-summary` just because the content is now in memory.
 
 Print the learning summary:
 

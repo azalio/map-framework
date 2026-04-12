@@ -67,6 +67,18 @@ WORKFLOW_FIT_ROUTES = {
     "map-plan",
 }
 DIFF_SIZE_LEVELS = {"tiny", "small", "medium", "large"}
+LEARNING_CONSUMPTION_SOURCES = {"auto-handoff", "file-handoff", "inline-summary"}
+LEARNING_IMMEDIATE_WINDOW_SECONDS = 30 * 60
+
+LEARNING_METRICS_COUNTER_DEFAULTS = {
+    "handoff_generated_count": 0,
+    "handoff_consumed_count": 0,
+    "immediate_learn_count": 0,
+    "deferred_learn_count": 0,
+    "never_used_handoff_count": 0,
+    "manual_summary_count": 0,
+    "pending_handoff_count": 0,
+}
 
 
 def _utc_timestamp() -> str:
@@ -95,6 +107,11 @@ def _write_json_file(path: Path, payload: dict) -> None:
 def artifact_manifest_path(branch: Optional[str] = None) -> Path:
     """Return the branch-scoped artifact manifest path."""
     return get_branch_dir(branch) / "artifact_manifest.json"
+
+
+def learning_metrics_path(branch: Optional[str] = None) -> Path:
+    """Return the branch-scoped learning metrics path."""
+    return get_branch_dir(branch) / "learning-metrics.json"
 
 
 def _default_stage_payload() -> dict[str, object]:
@@ -191,6 +208,317 @@ def _set_manifest_stage(
 def _artifact_ref(path: Path, kind: str) -> dict[str, str]:
     """Create a manifest artifact reference payload."""
     return {"path": str(path), "kind": kind}
+
+
+def _metrics_event_log_path() -> Path:
+    """Return the append-only metrics JSONL path."""
+    return Path(".claude/metrics/agent_metrics.jsonl")
+
+
+def _append_metrics_event(event: dict[str, object]) -> None:
+    """Append one metrics event to .claude/metrics/agent_metrics.jsonl."""
+    path = _metrics_event_log_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event, ensure_ascii=True) + "\n")
+
+
+def _parse_rfc3339_timestamp(value: object) -> Optional[datetime]:
+    """Parse RFC3339 timestamps, accepting a trailing Z."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    normalized = value.strip().replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+
+
+def _default_learning_metrics(branch: str) -> dict[str, object]:
+    """Return an empty learning metrics payload for a branch."""
+    return {
+        "schema_version": "1.0",
+        "branch": branch,
+        "updated_at": _utc_timestamp(),
+        "counters": dict(LEARNING_METRICS_COUNTER_DEFAULTS),
+        "current_handoff": None,
+        "events": [],
+    }
+
+
+def _refresh_learning_metrics_counters(metrics: dict[str, object]) -> None:
+    """Recompute derived counters for the learning metrics payload."""
+    counters = metrics.setdefault("counters", {})
+    if not isinstance(counters, dict):
+        counters = {}
+        metrics["counters"] = counters
+    for key, value in LEARNING_METRICS_COUNTER_DEFAULTS.items():
+        counters[key] = int(counters.get(key, value) or 0)
+
+    current_handoff = metrics.get("current_handoff")
+    counters["pending_handoff_count"] = (
+        1
+        if isinstance(current_handoff, dict) and not current_handoff.get("consumed_at")
+        else 0
+    )
+
+
+def load_learning_metrics(branch: Optional[str] = None) -> dict[str, object]:
+    """Load branch-scoped learning metrics, filling missing defaults."""
+    branch_name = branch or get_branch_name()
+    metrics_path = learning_metrics_path(branch_name)
+    metrics = _default_learning_metrics(branch_name)
+
+    if metrics_path.exists():
+        try:
+            loaded = json.loads(metrics_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            loaded = {}
+
+        if isinstance(loaded, dict):
+            metrics["updated_at"] = loaded.get("updated_at", metrics["updated_at"])
+            counters = loaded.get("counters")
+            if isinstance(counters, dict):
+                metrics["counters"].update(counters)
+            current_handoff = loaded.get("current_handoff")
+            if isinstance(current_handoff, dict):
+                metrics["current_handoff"] = current_handoff
+            events = loaded.get("events")
+            if isinstance(events, list):
+                metrics["events"] = [item for item in events if isinstance(item, dict)][
+                    -25:
+                ]
+
+    _refresh_learning_metrics_counters(metrics)
+    return metrics
+
+
+def save_learning_metrics(
+    metrics: dict[str, object], branch: Optional[str] = None
+) -> dict[str, object]:
+    """Persist learning metrics and return status metadata."""
+    branch_name = branch or get_branch_name()
+    metrics["branch"] = branch_name
+    metrics["updated_at"] = _utc_timestamp()
+    _refresh_learning_metrics_counters(metrics)
+    path = learning_metrics_path(branch_name)
+    _write_json_file(path, metrics)
+    return {"status": "success", "path": str(path), "metrics": metrics}
+
+
+def _append_learning_metrics_event(
+    metrics: dict[str, object], event: dict[str, object]
+) -> None:
+    """Append a learning metrics event to the branch summary payload."""
+    events = metrics.setdefault("events", [])
+    if not isinstance(events, list):
+        events = []
+        metrics["events"] = events
+    events.append(event)
+    del events[:-25]
+
+
+def _classify_learning_consumption_mode(
+    generated_at: object, consumed_at: object
+) -> str:
+    """Classify a learn invocation as immediate or deferred based on handoff age."""
+    generated_dt = _parse_rfc3339_timestamp(generated_at)
+    consumed_dt = _parse_rfc3339_timestamp(consumed_at)
+    if not generated_dt or not consumed_dt:
+        return "deferred"
+    delta_seconds = (consumed_dt - generated_dt).total_seconds()
+    if delta_seconds <= LEARNING_IMMEDIATE_WINDOW_SECONDS:
+        return "immediate"
+    return "deferred"
+
+
+def _record_learning_handoff_generation_metrics(
+    workflow: str,
+    generated_at: str,
+    markdown_path: Path,
+    json_path: Path,
+    branch: Optional[str] = None,
+) -> dict[str, object]:
+    """Update branch/global metrics when a new learning handoff is generated."""
+    branch_name = branch or get_branch_name()
+    metrics = load_learning_metrics(branch_name)
+    counters = metrics["counters"]
+    current_handoff = metrics.get("current_handoff")
+
+    if isinstance(current_handoff, dict) and not current_handoff.get("consumed_at"):
+        counters["never_used_handoff_count"] += 1
+        abandoned_event = {
+            "event": "learning_handoff_abandoned",
+            "timestamp": generated_at,
+            "branch": branch_name,
+            "workflow": current_handoff.get("workflow"),
+            "generated_at": current_handoff.get("generated_at"),
+            "handoff_json_path": current_handoff.get("handoff_json_path"),
+        }
+        _append_learning_metrics_event(metrics, abandoned_event)
+        _append_metrics_event(
+            {
+                "event": "learning_handoff_abandoned",
+                "category": "learning",
+                "timestamp": generated_at,
+                "branch": branch_name,
+                "workflow": current_handoff.get("workflow"),
+                "generated_at": current_handoff.get("generated_at"),
+                "handoff_json_path": current_handoff.get("handoff_json_path"),
+            }
+        )
+
+    counters["handoff_generated_count"] += 1
+    metrics["current_handoff"] = {
+        "workflow": workflow,
+        "generated_at": generated_at,
+        "consumed_at": "",
+        "consumption_mode": "",
+        "consumption_source": "",
+        "handoff_markdown_path": str(markdown_path),
+        "handoff_json_path": str(json_path),
+    }
+    generation_event = {
+        "event": "learning_handoff_generated",
+        "timestamp": generated_at,
+        "branch": branch_name,
+        "workflow": workflow,
+        "handoff_markdown_path": str(markdown_path),
+        "handoff_json_path": str(json_path),
+    }
+    _append_learning_metrics_event(metrics, generation_event)
+    metrics_result = save_learning_metrics(metrics, branch_name)
+    _append_metrics_event(
+        {
+            "event": "learning_handoff_generated",
+            "category": "learning",
+            "timestamp": generated_at,
+            "branch": branch_name,
+            "workflow": workflow,
+            "handoff_markdown_path": str(markdown_path),
+            "handoff_json_path": str(json_path),
+            "counters": dict(metrics_result["metrics"]["counters"]),
+        }
+    )
+    return metrics_result
+
+
+def record_learning_consumption(
+    summary_source: str = "inline-summary",
+    workflow: str = "",
+    branch: Optional[str] = None,
+) -> dict[str, object]:
+    """Record a completed /map-learn invocation for adoption/deferred-use metrics."""
+    branch_name = branch or get_branch_name()
+    source = (summary_source or "").strip().lower()
+    if source not in LEARNING_CONSUMPTION_SOURCES:
+        return {"status": "error", "message": f"Invalid summary_source: {summary_source}"}
+
+    metrics = load_learning_metrics(branch_name)
+    counters = metrics["counters"]
+    timestamp = _utc_timestamp()
+    current_handoff = metrics.get("current_handoff")
+    workflow_name = workflow.strip() or ""
+
+    result: dict[str, object] = {
+        "status": "success",
+        "branch": branch_name,
+        "summary_source": source,
+    }
+
+    if source in {"auto-handoff", "file-handoff"} and isinstance(current_handoff, dict):
+        workflow_name = current_handoff.get("workflow") or workflow_name
+        result["workflow"] = workflow_name
+        if current_handoff.get("consumed_at"):
+            event = {
+                "event": "learning_handoff_reused",
+                "timestamp": timestamp,
+                "branch": branch_name,
+                "workflow": workflow_name,
+                "summary_source": source,
+                "consumption_mode": current_handoff.get("consumption_mode") or "",
+            }
+            _append_learning_metrics_event(metrics, event)
+            metrics_result = save_learning_metrics(metrics, branch_name)
+            _append_metrics_event(
+                {
+                    "event": "learning_handoff_reused",
+                    "category": "learning",
+                    "timestamp": timestamp,
+                    "branch": branch_name,
+                    "workflow": workflow_name,
+                    "summary_source": source,
+                    "counters": dict(metrics_result["metrics"]["counters"]),
+                }
+            )
+            result["usage_status"] = "already_recorded"
+            result["consumption_mode"] = current_handoff.get("consumption_mode") or ""
+            result["metrics_path"] = metrics_result["path"]
+            return result
+
+        consumption_mode = _classify_learning_consumption_mode(
+            current_handoff.get("generated_at"), timestamp
+        )
+        current_handoff["consumed_at"] = timestamp
+        current_handoff["consumption_mode"] = consumption_mode
+        current_handoff["consumption_source"] = source
+        counters["handoff_consumed_count"] += 1
+        counters[f"{consumption_mode}_learn_count"] += 1
+        event = {
+            "event": "learning_handoff_consumed",
+            "timestamp": timestamp,
+            "branch": branch_name,
+            "workflow": workflow_name,
+            "summary_source": source,
+            "consumption_mode": consumption_mode,
+            "generated_at": current_handoff.get("generated_at"),
+        }
+        _append_learning_metrics_event(metrics, event)
+        metrics_result = save_learning_metrics(metrics, branch_name)
+        _append_metrics_event(
+            {
+                "event": "learning_handoff_consumed",
+                "category": "learning",
+                "timestamp": timestamp,
+                "branch": branch_name,
+                "workflow": workflow_name,
+                "summary_source": source,
+                "consumption_mode": consumption_mode,
+                "generated_at": current_handoff.get("generated_at"),
+                "counters": dict(metrics_result["metrics"]["counters"]),
+            }
+        )
+        result["usage_status"] = "recorded"
+        result["consumption_mode"] = consumption_mode
+        result["metrics_path"] = metrics_result["path"]
+        return result
+
+    counters["manual_summary_count"] += 1
+    event = {
+        "event": "learning_manual_summary_recorded",
+        "timestamp": timestamp,
+        "branch": branch_name,
+        "workflow": workflow_name or None,
+        "summary_source": source,
+    }
+    _append_learning_metrics_event(metrics, event)
+    metrics_result = save_learning_metrics(metrics, branch_name)
+    _append_metrics_event(
+        {
+            "event": "learning_manual_summary_recorded",
+            "category": "learning",
+            "timestamp": timestamp,
+            "branch": branch_name,
+            "workflow": workflow_name or None,
+            "summary_source": source,
+            "counters": dict(metrics_result["metrics"]["counters"]),
+        }
+    )
+    result["usage_status"] = "manual_summary"
+    result["metrics_path"] = metrics_result["path"]
+    if workflow_name:
+        result["workflow"] = workflow_name
+    return result
 
 
 def record_workflow_fit(
@@ -651,31 +979,42 @@ def _sanitize_for_json(text: str) -> str:
     return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text)
 
 
+def _read_branch_artifact_text(branch_dir: Path, name: str) -> str:
+    """Read a branch artifact, treating untouched managed placeholders as empty."""
+    path = branch_dir / name
+    if not path.exists():
+        return ""
+    try:
+        content = _sanitize_for_json(path.read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        return ""
+
+    default_content = HUMAN_ARTIFACT_DEFAULTS.get(name)
+    if default_content and content.strip() == default_content.strip():
+        return ""
+    return content
+
+
 def build_handoff_bundle(branch: Optional[str] = None) -> dict:
     """Build a compact handoff bundle from branch-scoped human artifacts."""
     branch_name = branch or get_branch_name()
     branch_dir = get_branch_dir(branch_name)
     ensure_human_artifacts(branch_name)
 
-    def read(name: str) -> str:
-        path = branch_dir / name
-        if not path.exists():
-            return ""
-        try:
-            return _sanitize_for_json(path.read_text(encoding="utf-8", errors="replace"))
-        except OSError:
-            return ""
-
-    verification = read("verification-summary.md")
-    qa = read("qa-001.md")
-    active_issues = read("active-issues.json")
-    verification_gate = read("verification-gate.json")
+    verification = _read_branch_artifact_text(branch_dir, "verification-summary.md")
+    qa = _read_branch_artifact_text(branch_dir, "qa-001.md")
+    active_issues = _read_branch_artifact_text(branch_dir, "active-issues.json")
+    verification_gate = _read_branch_artifact_text(branch_dir, "verification-gate.json")
     review_path = next_numbered_artifact_path("code-review", branch_name)
     latest_review_index = max(0, review_path["index"] - 1)
     latest_review_name = (
         f"code-review-{latest_review_index:03d}.md" if latest_review_index > 0 else ""
     )
-    latest_review = read(latest_review_name) if latest_review_name else ""
+    latest_review = (
+        _read_branch_artifact_text(branch_dir, latest_review_name)
+        if latest_review_name
+        else ""
+    )
 
     summary = []
     if verification:
@@ -717,15 +1056,6 @@ def build_review_handoff(branch: Optional[str] = None) -> dict:
     branch_name = branch or get_branch_name()
     branch_dir = get_branch_dir(branch_name)
 
-    def read(name: str) -> str:
-        path = branch_dir / name
-        if not path.exists():
-            return ""
-        try:
-            return _sanitize_for_json(path.read_text(encoding="utf-8", errors="replace"))
-        except OSError:
-            return ""
-
     plan_review_next = next_numbered_artifact_path("plan-review", branch_name)
     latest_plan_review_index = max(0, plan_review_next["index"] - 1)
     latest_plan_review_name = (
@@ -756,18 +1086,199 @@ def build_review_handoff(branch: Optional[str] = None) -> dict:
         "active_issues_path": "active-issues.json"
         if (branch_dir / "active-issues.json").exists()
         else None,
-        "plan_review": read(latest_plan_review_name)
+        "plan_review": _read_branch_artifact_text(branch_dir, latest_plan_review_name)
         if latest_plan_review_name
         else None,
-        "code_review": read(latest_code_review_name)
+        "code_review": _read_branch_artifact_text(branch_dir, latest_code_review_name)
         if latest_code_review_name
         else None,
-        "verification_summary": read("verification-summary.md"),
-        "qa": read("qa-001.md"),
-        "pr_draft": read("pr-draft.md"),
-        "active_issues": read("active-issues.json") or None,
+        "verification_summary": _read_branch_artifact_text(
+            branch_dir, "verification-summary.md"
+        ),
+        "qa": _read_branch_artifact_text(branch_dir, "qa-001.md"),
+        "pr_draft": _read_branch_artifact_text(branch_dir, "pr-draft.md"),
+        "active_issues": _read_branch_artifact_text(branch_dir, "active-issues.json")
+        or None,
     }
     return payload
+
+
+def write_learning_handoff(
+    workflow: str,
+    task_title: str = "",
+    outcome: str = "",
+    next_action: str = "",
+    notes: str = "",
+    branch: Optional[str] = None,
+) -> dict:
+    """Write a reusable learning handoff artifact for deferred /map-learn runs."""
+    branch_name = branch or get_branch_name()
+    branch_dir = get_branch_dir(branch_name)
+    branch_dir.mkdir(parents=True, exist_ok=True)
+
+    def read(name: str) -> str:
+        path = branch_dir / name
+        if not path.exists():
+            return ""
+        try:
+            return _sanitize_for_json(path.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            return ""
+
+    def read_json(name: str) -> Optional[dict[str, object]]:
+        raw = read(name)
+        if not raw:
+            return None
+        try:
+            loaded = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+        return loaded if isinstance(loaded, dict) else None
+
+    workflow_name = workflow.strip() or "map-workflow"
+    goal = task_title.strip() or read_current_goal(branch_name) or "Workflow summary"
+    outcome_text = outcome.strip() or "Learning handoff generated"
+    next_action_text = (
+        next_action.strip()
+        or "Run /map-learn now, or batch it later when you want to pay the learning cost."
+    )
+    notes_text = notes.strip()
+    generated_at = _utc_timestamp()
+
+    review_handoff = build_review_handoff(branch_name)
+    bundle = build_handoff_bundle(branch_name)
+    code_state = snapshot_code_state(branch_name)
+    workflow_fit = read_json("workflow-fit.json")
+    manifest = read_json("artifact_manifest.json")
+    known_issues = read_json("known-issues.json")
+    active_issues = read_json("active-issues.json")
+
+    markdown_path = branch_dir / "learning-handoff.md"
+    json_path = branch_dir / "learning-handoff.json"
+
+    files_changed = code_state.get("files_changed") or []
+    if isinstance(files_changed, list):
+        files_section = "\n".join(f"- {path}" for path in files_changed) or "- [not recorded]"
+    else:
+        files_section = "- [not recorded]"
+
+    artifact_paths = [
+        path
+        for path in [
+            "workflow-fit.json" if workflow_fit else "",
+            "artifact_manifest.json",
+            review_handoff.get("plan_review_path") or "",
+            review_handoff.get("code_review_path") or "",
+            review_handoff.get("verification_summary_path") or "",
+            review_handoff.get("qa_path") or "",
+            review_handoff.get("pr_draft_path") or "",
+            review_handoff.get("active_issues_path") or "",
+            "known-issues.json" if known_issues else "",
+        ]
+        if path
+    ]
+    artifacts_section = "\n".join(f"- {path}" for path in artifact_paths) or "- [not recorded]"
+
+    payload = {
+        "schema_version": "1.0",
+        "generated_at": generated_at,
+        "workflow": workflow_name,
+        "branch": branch_name,
+        "task_title": goal,
+        "outcome": outcome_text,
+        "next_action": next_action_text,
+        "notes": notes_text,
+        "git_ref": code_state.get("git_ref", "unknown"),
+        "files_changed": files_changed if isinstance(files_changed, list) else [],
+        "summary": bundle.get("summary", "- [not recorded]"),
+        "validation": bundle.get("validation", "- [not recorded]"),
+        "risks_follow_up": bundle.get("risks_follow_up", "- [not recorded]"),
+        "artifacts": {
+            "workflow_fit": workflow_fit,
+            "artifact_manifest": manifest,
+            "review_handoff": review_handoff,
+            "known_issues": known_issues,
+            "active_issues": active_issues,
+        },
+        "documents": {
+            "plan_review": review_handoff.get("plan_review"),
+            "code_review": review_handoff.get("code_review"),
+            "verification_summary": review_handoff.get("verification_summary"),
+            "qa": review_handoff.get("qa"),
+            "pr_draft": review_handoff.get("pr_draft"),
+        },
+    }
+
+    markdown = (
+        "# Learning Handoff\n\n"
+        f"- Workflow: `{workflow_name}`\n"
+        f"- Branch: `{branch_name}`\n"
+        f"- Task: {goal}\n"
+        f"- Outcome: {outcome_text}\n"
+        f"- Generated: {generated_at}\n"
+        f"- Git ref: `{code_state.get('git_ref', 'unknown')}`\n"
+        f"- Next action: {next_action_text}\n\n"
+        "## Recommended Invocation\n\n"
+        "Run `/map-learn` with no arguments to auto-load this handoff.\n\n"
+        "If you want to pass the artifact explicitly:\n\n"
+        f"`/map-learn .map/{branch_name}/learning-handoff.md`\n\n"
+        "## Summary\n\n"
+        f"{bundle.get('summary', '- [not recorded]')}\n\n"
+        "## Validation\n\n"
+        f"{bundle.get('validation', '- [not recorded]')}\n\n"
+        "## Risks / Follow-up\n\n"
+        f"{bundle.get('risks_follow_up', '- [not recorded]')}\n\n"
+        "## Files Changed\n\n"
+        f"{files_section}\n\n"
+        "## Source Artifacts\n\n"
+        f"{artifacts_section}\n"
+    )
+    if notes_text:
+        markdown += f"\n## Notes\n\n{notes_text}\n"
+
+    metrics_result = _record_learning_handoff_generation_metrics(
+        workflow_name, generated_at, markdown_path, json_path, branch_name
+    )
+
+    manifest_payload = load_artifact_manifest(branch_name)
+    _set_manifest_stage(
+        manifest_payload,
+        "learn_handoff",
+        "ready",
+        artifacts=[
+            _artifact_ref(markdown_path, "learning-handoff-markdown"),
+            _artifact_ref(json_path, "learning-handoff-json"),
+            _artifact_ref(
+                Path(metrics_result["path"]), "learning-handoff-metrics"
+            ),
+        ],
+        metadata={
+            "workflow": workflow_name,
+            "task_title": goal,
+            "outcome": outcome_text,
+            "next_action": next_action_text,
+            "git_ref": code_state.get("git_ref", "unknown"),
+            "learning_metrics_path": metrics_result["path"],
+            "learning_metrics_counters": dict(metrics_result["metrics"]["counters"]),
+        },
+    )
+    manifest_result = save_artifact_manifest(manifest_payload, branch_name)
+    payload["artifacts"]["artifact_manifest"] = manifest_result["manifest"]
+    payload["artifacts"]["learning_metrics"] = metrics_result["metrics"]
+    _write_json_file(json_path, payload)
+    markdown_path.write_text(markdown, encoding="utf-8")
+
+    return {
+        "status": "success",
+        "branch": branch_name,
+        "workflow": workflow_name,
+        "task_title": goal,
+        "markdown_path": str(markdown_path),
+        "json_path": str(json_path),
+        "manifest_path": manifest_result["path"],
+        "learning_metrics_path": metrics_result["path"],
+        "generated_at": generated_at,
+    }
 
 
 def ensure_known_issues_file(branch: Optional[str] = None) -> dict:
@@ -1627,6 +2138,23 @@ if __name__ == "__main__":
 
     elif func_name == "build_review_handoff":
         result = build_review_handoff()
+        print(json.dumps(result, indent=2, ensure_ascii=True))
+
+    elif func_name == "write_learning_handoff":
+        workflow = sys.argv[2] if len(sys.argv) >= 3 else ""
+        task_title = sys.argv[3] if len(sys.argv) >= 4 else ""
+        outcome = sys.argv[4] if len(sys.argv) >= 5 else ""
+        next_action = sys.argv[5] if len(sys.argv) >= 6 else ""
+        notes = sys.argv[6] if len(sys.argv) >= 7 else ""
+        result = write_learning_handoff(
+            workflow, task_title, outcome, next_action, notes
+        )
+        print(json.dumps(result, indent=2, ensure_ascii=True))
+
+    elif func_name == "record_learning_consumption":
+        summary_source = sys.argv[2] if len(sys.argv) >= 3 else "inline-summary"
+        workflow = sys.argv[3] if len(sys.argv) >= 4 else ""
+        result = record_learning_consumption(summary_source, workflow)
         print(json.dumps(result, indent=2, ensure_ascii=True))
 
     elif func_name == "ensure_known_issues_file":
