@@ -1,7 +1,5 @@
 # map-framework Improvement Plan
 
-_No recommendations yet._
-
 ## Dual-Mode Orchestrator with REGISTRY/FOCUS States [2604.019]
 
 **Benefit Hypothesis**: For workflows with ≥3 concurrent/parallel agent prompts (e.g., `/map-review` launches Monitor+Predictor+Evaluator in parallel) or workflows with conditional research + self-audit, REGISTRY/FOCUS context isolation will reduce step/tool mis-steering and invalid agent sequencing events by at least 30% relative to the current Phase 1.2 “best-effort” context injection, measurable via fewer orchestrator guardrail triggers (“Infinite loop detection at orchestrator level” and “no step skipping” enforcement) and a reduction in average tokens entering tool calls without reducing Monitor approval rate (target remains >80% first try per Success Metrics).
@@ -132,3 +130,241 @@ _No recommendations yet._
 - Add CI assertions that the resiliency artifacts are always produced: for workflows using AI agents (/map-efficient, /map-debug, /map-review, /map-learn), validate the health report JSON exists and includes terminal_status values (pending/complete/blocked/won't_do/superseded) exactly as specified in the state artifact section.
 - Create a small set of resiliency regression tests: (1) simulate compaction/no checkpoint and confirm hook injection continues without blocking session start (architecture explicitly says session start must always succeed), (2) simulate oversized checkpoint file >256KB and confirm injection is skipped but workflow proceeds, (3) simulate invalid UTF-8 and confirm injection is rejected but session continues, using the existing security validation rules and stated performance characteristics (e.g., <0.5s total hook time).
 
+
+## Claude 4.6 command simplification and verb calibration [2604.025]
+
+**Benefit Hypothesis**: Rewriting MAP slash-command prompts to use targeted, high-signal guardrails instead of blanket prohibitions will reduce unnecessary subagent/tool overtriggering and lower median workflow latency without hurting sequencing compliance. A reasonable target is a 10-15% reduction in average tool calls for `/map-fast`, `/map-debug`, and `/map-review` while preserving the current hard-stop guarantees for Monitor failures and irreversible release actions.
+**Confidence**: 0.76
+**Reasoning**: Anthropic’s prompting guidance for Claude 4.6 explicitly warns that prompts written to fight under-triggering in older models can now cause overtriggering. MAP’s command set still leans heavily on that older style: a quick audit of `.claude/commands/*.md` found 40 occurrences of `CRITICAL`, `MUST`, `ABSOLUTELY FORBIDDEN`, or `STRICTLY PROHIBITED`. This is especially visible in `/map-debug`, `/map-release`, `/map-efficient`, and `/map-tdd`, where large “forbidden” blocks are mixed with command semantics that are not actually high-risk. Some hard constraints are valid, but the current wording likely amplifies Claude 4.6’s tendency to over-explore, over-call agents, and spend tokens policing itself instead of executing.
+**Why Not Already Tried**: These command prompts appear to have been tuned around earlier MAP pain points such as skipped steps, skipped research, and missing Monitor passes. The architecture solved those failures with state machines and hooks, but the prompt language remained maximally forceful. The missing adaptation is recalibrating prompt tone now that orchestration safety is enforced elsewhere.
+
+### Proposed Changes
+
+- Create a shared “command guardrail baseline” snippet used by all slash commands, with normal language such as “Use the required agent when…” and “Ask before irreversible actions…”, and reserve all-caps hard-stop phrasing for true hard-stop cases only: `Monitor.valid=false`, tag push/release, destructive state resets, and user-confirmation gates.
+- Rewrite command intros to replace negative framing (“ABSOLUTELY FORBIDDEN”, “NO ADDITIONAL OPTIMIZATION ALLOWED”) with positive, contextual instructions that explain why the rule exists. Anthropic’s guidance explicitly recommends motivation/context over bare prohibitions.
+- Split each command’s safety policy into two tiers: `non_negotiable_rules` and `default_behavior`. This keeps truly critical constraints visible without making every instruction look equally severe.
+- Add a targeted “when not to do extra work” clause to `/map-fast`, `/map-check`, `/map-resume`, and `/map-task`, so the model does not over-research or over-decompose simple requests just because a long prompt exists.
+- Add prompt-lint checks that fail if command files exceed a configurable threshold of blanket modal language (`MUST`, `NEVER`, `ALWAYS`) without being under a whitelisted section such as release safety or workflow gate enforcement.
+
+
+## Context-first XML envelopes for slash commands [2604.026]
+
+**Benefit Hypothesis**: Standardizing MAP command prompts around a shared XML envelope and moving long-form context above instructions will improve requirement retention and reduce ambiguous agent output on long-context tasks such as `/map-plan`, `/map-review`, `/map-debug`, and `/map-efficient`. The success metric is fewer dropped acceptance criteria in decompositions and fewer review/debug outputs that miss the primary artifact set.
+**Confidence**: 0.79
+**Reasoning**: Anthropic’s guide is explicit on two points: for long contexts, put documents/data first and put the query at the end; and structure mixed prompt content with consistent XML tags. MAP only applies that pattern partially today. `/map-efficient` and `/map-tdd` use some XML blocks (`<MAP_Contract>`, `<map_context>`, `<MAP_Written>`), but most commands still rely on ad hoc prose and markdown. `/map-review`, `/map-debug`, `/map-fast`, and large parts of `/map-plan` pass instructions, policies, and data in inconsistent layouts, which increases prompt ambiguity exactly in the commands that carry the most context.
+**Why Not Already Tried**: MAP already invested in state injection and context-window management, so the next iteration naturally focused on orchestration and hooks rather than prompt formatting. The remaining gap is not “more context”, but a more consistent and parseable arrangement of the context that already exists.
+
+### Proposed Changes
+
+- Introduce a shared slash-command prompt envelope with tags such as `<task>`, `<workflow_policy>`, `<artifacts>`, `<constraints>`, `<expected_output>`, and `<decision_rule>`, and apply it consistently across all `.claude/commands/map-*.md`.
+- For any prompt that includes large artifacts, move those artifacts to the top of the actual subagent prompt. For example, wrap plan specs, diffs, findings files, and prior review handoffs in `<documents>` or `<artifacts>` blocks before the instructions and query.
+- Refactor `/map-review` so the canonical handoff, diff, and review preferences are passed as separate tagged sections rather than inline prose. Do the same for `/map-plan` when passing spec + findings + architecture graph to the decomposer.
+- Replace ad hoc markdown headings like “**Context:**” or “**Task:**” inside quoted subagent prompts with explicit machine-readable tags. This aligns with Anthropic’s guidance that XML reduces misinterpretation when instructions and variable input are mixed.
+- Centralize the common envelope in a small template helper or generator so the structure is maintained in one place and synced into `src/mapify_cli/templates/commands/`.
+
+
+## Few-shot command examples and evidence-quoted outputs [2604.027]
+
+**Benefit Hypothesis**: Adding a compact library of few-shot examples and making evidence extraction explicit before judgment will reduce malformed JSON, unsupported verdicts, and vague decomposition/review outputs. A practical target is fewer schema-correction retries and a measurable increase in outputs that include concrete file/line grounding on the first pass.
+**Confidence**: 0.83
+**Reasoning**: Anthropic’s guide recommends 3-5 examples for reliability and suggests asking the model to quote relevant source material before reasoning on long documents. MAP currently uses neither pattern consistently. A command audit found zero `<example>` or `<examples>` tags across `.claude/commands/*.md`, `.claude/settings.json`, and `.claude/workflow-rules.json`, despite at least 12 separate places where commands say “Output JSON with …”. That means most agent contracts depend on schema prose alone. At the same time, review, debug, and planning prompts often ask for judgments without first requiring quoted evidence from files, diffs, or specs.
+**Why Not Already Tried**: MAP already has extensive schema descriptions and relies on agent specialization, which may have seemed sufficient. Claude 4.6’s prompting guidance changes the tradeoff: examples are now a relatively cheap way to stabilize both structure and tone, especially for tool-heavy agent systems.
+
+### Proposed Changes
+
+- Add a shared examples section for the most reused contracts: TaskDecomposer output, Monitor verdicts, Predictor risk outputs, Evaluator scorecards, and Reflector lessons. Keep each example short and diverse rather than exhaustive.
+- For `/map-review`, require each agent to emit an `evidence` or `quotes` array before any verdict fields. Each item should include `file_path`, `line_range` or diff hunk reference, and a short note explaining relevance.
+- For `/map-debug` investigation steps, require the actor to quote the exact error/log/code fragments that support the proposed root cause before proposing the fix path.
+- For `/map-plan`, require the spec-review Monitor to cite spec sections or lines for every HIGH-severity gap so the user resolves concrete contradictions rather than generic warnings.
+- Extend template linting so command files that define a new JSON contract without either a reusable schema reference or at least one compact example are flagged for review.
+
+
+## Action-first tool use in lightweight workflows [2604.028]
+
+**Benefit Hypothesis**: Converting `/map-fast` and `/map-debug` from “serialize full file contents into JSON” workflows to direct tool-using workflows will reduce prompt size, reduce patch drift on large files, and make lightweight workflows more consistent with Claude 4.6’s stronger tool-use behavior. The expected result is lower token usage per iteration and fewer failures caused by stale file snapshots between Actor and Apply steps.
+**Confidence**: 0.81
+**Reasoning**: Anthropic’s guidance explicitly says that if you want Claude to act, tell it to act; otherwise it may suggest instead of implementing. MAP applies that principle inconsistently. `/map-efficient` already instructs the actor to “Implement and APPLY CODE with Edit/Write tools”, but `/map-fast` and `/map-debug` still ask the actor to return `code_changes` plus full file contents, after which another step applies them. That is an older, serialization-heavy workflow style. It wastes context, scales poorly with large files, and creates opportunities for the filesystem to diverge between generation and application.
+**Why Not Already Tried**: The lighter workflows were likely created as low-overhead variants before tool-acting reliability improved. MAP later evolved `/map-efficient` toward direct tool use, but the smaller workflows did not receive the same modernization pass.
+
+### Proposed Changes
+
+- Update `/map-fast` and `/map-debug` so write-capable Actor steps read relevant files, edit them directly with tools, and return only a compact execution summary: `approach`, `files_changed`, `tests_run`, `remaining_risks`.
+- Remove “Provide FULL file content” requirements from lightweight command prompts. Retain structured summaries, but do not force the model to serialize entire file bodies when the tool layer can edit safely.
+- Align Monitor prompts in those workflows with the `written files + contract + validation` pattern already used in `/map-efficient`, so the validator reads actual repo state instead of pasted Actor JSON.
+- Keep planning-only and analysis-only phases explicitly read-only. The goal is not “always edit”, but consistent action-first behavior whenever the phase is supposed to modify code.
+- Add regression cases for files that change between Actor proposal and application, and confirm that the action-first flow eliminates those stale-snapshot failures.
+
+
+## Command-specific thinking and parallelism profiles [2604.029]
+
+**Benefit Hypothesis**: Adding explicit thinking/effort and parallelism guidance per workflow will reduce latency and wasted reasoning on simple commands while preserving deeper reasoning for plan/review/release flows. Success would show up as lower runtime for `/map-fast`, `/map-check`, and `/map-resume` without lowering verification quality, plus fewer unstable parallel execution paths in commands that mix sequential and parallel logic.
+**Confidence**: 0.74
+**Reasoning**: Anthropic’s guide recommends adaptive thinking with explicit effort calibration, and it also warns that Claude 4.6 can both overthink and over-parallelize if prompted too aggressively. MAP’s command layer currently lacks a consistent command-specific thinking policy. It also mixes several parallelism styles: `/map-review` requires three agent calls in one message; `/map-release` says validation gates should run in parallel where possible; `/map-efficient` has both sequential-by-default language and elaborate parallel-wave exceptions. The missing piece is a stable per-command policy that says when to think more, when to answer directly, and when parallelism is worth the complexity.
+**Why Not Already Tried**: Existing MAP work focused on orchestrator correctness and state continuity, not on prompt-level effort calibration. Earlier Claude generations also had less nuanced adaptive-thinking behavior, so explicit effort profiles were less relevant than they are now.
+
+### Proposed Changes
+
+- Add a short `thinking_policy` block to each command: `low/direct` for `/map-fast`, `/map-check`, `/map-resume`; `medium/adaptive` for `/map-efficient`, `/map-task`, `/map-debug`; `high/adaptive` only for `/map-plan`, `/map-review`, and `/map-release`.
+- Add explicit language mirroring Anthropic’s recommendation: use deeper reasoning only when it materially improves quality, otherwise respond directly and continue.
+- Standardize a `parallel_tool_policy` block across commands: parallelize only when there are no dependencies, side effects are disjoint, and the result does not need immediate local integration. This should replace ad hoc wording like “in ONE message” or “parallel where possible” with a shared rule set.
+- Log per-command latency, tool-call count, and parallel fan-out in `.claude/metrics/agent_metrics.jsonl` so MAP can compare pre/post prompt changes rather than tuning by anecdote.
+- Update `workflow-rules.json` and command docs to reflect that “small/simple/quick” workflows should bias toward lower effort and minimal orchestration, while planning/review/release workflows intentionally permit more reasoning depth.
+
+
+## Skill-first slash command consolidation [2604.030]
+
+**Benefit Hypothesis**: Consolidating overlapping MAP command and skill definitions into a single source of truth will reduce prompt drift and make runtime behavior match author intent. The most immediate measurable benefit is eliminating the risk that a stale command prompt is silently ignored because the same-named skill takes precedence at runtime.
+**Confidence**: 0.86
+**Reasoning**: The official Claude Code skills documentation states that custom commands have been merged into skills, that both `.claude/commands/deploy.md` and `.claude/skills/deploy/SKILL.md` create `/deploy`, and that if a skill and a command share the same name, the skill takes precedence. MAP currently ships both `/map-learn` as a slash command and `map-learn` as a skill, with substantial overlap but not identical content. That creates a real maintenance hazard: authors can update the command prompt and assume behavior changed, while Claude Code will continue using the skill version.
+**Why Not Already Tried**: MAP appears to have grown commands first and skills later. That was reasonable before Claude Code documented skills as the preferred superset, but now the overlap is explicit platform behavior rather than an implementation detail.
+
+### Proposed Changes
+
+- Designate one canonical implementation for each slash surface. For `/map-learn`, either keep the skill and generate the command from it for backwards compatibility, or drop the duplicate command file entirely.
+- Add a sync/lint rule that fails when a skill and command share the same invocation name but differ semantically. This should compare frontmatter intent and core body sections, not just filenames.
+- Document a migration path from “command-first” to “skill-first” in `docs/USAGE.md` and `docs/ARCHITECTURE.md`, using `/map-learn` as the first concrete conversion.
+- If MAP intends to keep duplicate surfaces for compatibility, generate one from the other during template build so authors never hand-edit both.
+
+
+## Official-frontmatter hygiene for MAP skills [2604.031]
+
+**Benefit Hypothesis**: Bringing MAP skill metadata in line with the official Claude Code skill frontmatter guidance will improve discoverability, autocomplete quality, and trigger accuracy, while reducing misleading or truncated descriptions. The immediate target is more reliable manual invocation and better automatic loading decisions.
+**Confidence**: 0.82
+**Reasoning**: The official skills docs define a broader frontmatter surface than the older open-standard validator: `disable-model-invocation`, `allowed-tools`, `hooks`, `argument-hint`, `user-invocable`, `paths`, `model`, `effort`, and `context` are all valid Claude Code fields. That means MAP’s use of `disable-model-invocation`, `allowed-tools`, and skill-local hooks is legitimate. The real issue is metadata quality. The docs also note that descriptions longer than 250 characters are truncated in the skill listing. MAP’s `map-planning` description is currently 371 characters, which means part of its trigger guidance is likely being cut off in the UI/context. It also references `map-workflows-guide` and `map-cli-reference`, which are not actually shipped in the current skill set.
+**Why Not Already Tried**: Existing MAP work focused on capability and orchestration, not on the UX and trigger behavior of the skill catalog itself. The platform guidance on description truncation and invocation-control fields is also newer than many command-era prompt patterns.
+
+### Proposed Changes
+
+- Shorten every skill description to front-load the core use case within the first 150-200 characters, and keep the total under the official 250-character truncation threshold.
+- Remove references to non-shipped skills from frontmatter descriptions, especially in `map-planning`. If those skills are planned, reference docs or concepts instead of unresolved skill names.
+- Add `argument-hint` to manually invoked task skills. For example, `map-learn` should advertise something like `[workflow-summary]` so `/map-learn` is easier to use correctly from the slash menu.
+- Review whether `user-invocable` and `paths` would improve future MAP skills. Reference skills that should load automatically but not clutter the slash menu can use `user-invocable: false`, while file-scoped skills can use `paths` for more precise activation.
+- Add a metadata lint pass for names, description length, missing/broken cross-skill references, and unsupported frontmatter relative to MAP’s chosen target runtime.
+
+
+## Explicit reference-vs-task skill architecture [2604.032]
+
+**Benefit Hypothesis**: Reclassifying MAP skills according to the official Claude Code split between reference content and task content will reduce conceptual confusion, improve skill authoring discipline, and make MAP’s documentation match actual runtime behavior. This should lower accidental misuse of skills and make it easier to decide when a new behavior belongs in a skill versus a subagent or command.
+**Confidence**: 0.84
+**Reasoning**: The official docs explicitly distinguish reference skills, which add knowledge inline, from task skills, which provide step-by-step procedures and are often manually invoked with `disable-model-invocation: true`. MAP’s current `skills/README.md` still describes skills as passive documentation modules and “NOT agents”, but `map-learn` is clearly a task skill: it has a manual workflow surface, procedural steps, file writes, and an invocation-control flag. `map-planning` is closer to a hybrid reference/task guide because it explains the file-based planning model and also defines operational behavior via scripts and hooks.
+**Why Not Already Tried**: MAP’s skills system was originally documented around passive guidance and auto-suggestion. Claude Code’s official skills model is broader and now makes task-like skills a first-class concept, so the original documentation model is lagging behind the platform.
+
+### Proposed Changes
+
+- Update `src/mapify_cli/templates/skills/README.md` and related docs to define two supported skill classes: `reference` and `task`.
+- Classify `map-learn` explicitly as a manual task skill, and explain why `disable-model-invocation: true` is appropriate for it.
+- Classify `map-planning` explicitly as a reference or hybrid operational skill, and document what behavior comes from SKILL instructions versus hook/script side effects.
+- Add authoring guidance for future MAP skills: use reference skills for conventions, heuristics, and domain knowledge; use task skills for deterministic procedures that should behave like slash workflows.
+- Reflect this taxonomy in `skill-rules.json`, tests, and any future skill-generation helpers so the distinction is operational, not just descriptive.
+
+
+## Supporting-file and lifecycle optimization for skills [2604.033]
+
+**Benefit Hypothesis**: Restructuring MAP skills around the official skill content lifecycle and supporting-file model will keep invoked skill bodies lean, reduce compaction loss, and make long-running skills more durable across sessions. The measurable outcome is a smaller average SKILL body with equal or better task completion quality.
+**Confidence**: 0.77
+**Reasoning**: The official docs emphasize that invoked skill content stays in the conversation, is reattached after compaction within a token budget, and should therefore keep `SKILL.md` focused while moving detailed material into supporting files. MAP already does this reasonably well for `map-planning` and parts of `map-learn`, but the skills still contain a lot of command-like procedural detail that can drift away from supporting templates and increase retained token load. The same docs also recommend referencing supporting files explicitly so Claude knows when to load them.
+**Why Not Already Tried**: MAP adopted supporting scripts and templates, but not yet a systematic skill-body minimization pass informed by Claude Code’s persistence and compaction behavior.
+
+### Proposed Changes
+
+- Move low-frequency sections such as long examples, troubleshooting matrices, and token budget estimates out of task-heavy SKILL bodies into supporting files where practical.
+- Keep the main SKILL body focused on invocation policy, decision rules, and navigation to scripts/templates/references.
+- For `map-learn`, prefer a short top-level playbook plus explicit links to rule templates and any future examples/reference files, rather than embedding all operational detail inline.
+- Add a “retained after invocation” lint heuristic for skills: flag large sections that are better expressed as supporting files because they do not need to remain in-context across the whole task.
+- If MAP later adds more task skills, evaluate whether some should use `context: fork` and `agent` to isolate long procedures into subagent execution, as supported by the official docs.
+
+
+## Skill trigger and invocation regression testing [2604.034]
+
+**Benefit Hypothesis**: Adding skill-specific trigger and invocation tests will prevent regressions where a skill stops loading automatically, becomes too noisy, or exposes a broken slash UX. The measurable gain is earlier detection of metadata regressions before template release.
+**Confidence**: 0.8
+**Reasoning**: Both the official skills docs and Anthropic’s `skill-creator` guidance emphasize realistic triggering, direct invocation, and example-based validation. MAP currently tests commands heavily but has much less explicit coverage around skill trigger quality, description ergonomics, and slash invocation metadata. Given that descriptions are the primary auto-trigger surface and skills now double as commands, this is an avoidable blind spot.
+**Why Not Already Tried**: Skills appear to be a newer layer in MAP than commands, and most existing validation effort has gone into prompt-template sync and workflow correctness rather than catalog behavior.
+
+### Proposed Changes
+
+- Add tests that validate both automatic trigger phrasing and direct `/skill-name` invocation for each shipped skill.
+- Add negative-trigger tests so `map-planning` and `map-learn` do not activate on unrelated prompts.
+- Test that every skill’s documented supporting files actually exist and that intra-skill references resolve.
+- Add fixture-based tests for frontmatter behavior that MAP relies on: `disable-model-invocation`, `allowed-tools`, hooks, and any future `argument-hint`, `paths`, or `user-invocable` usage.
+- Add a small benchmark set of realistic user utterances, following `skill-creator` guidance, to detect undertriggering and overtriggering before release.
+
+
+## LEARN as a philosophical requirement with soft runtime ergonomics [2604.035]
+
+**Benefit Hypothesis**: Treating `LEARN` as a required part of the MAP philosophy, while keeping runtime ergonomics soft and token-aware, will preserve the long-term memory benefits of the framework without making users feel forced into extra token spend on every workflow. The measurable target is higher voluntary `/map-learn` adoption on meaningful tasks and fewer repeated Monitor findings in subsequent sessions.
+**Confidence**: 0.85
+**Reasoning**: The philosophy document treats `LEARN` as a first-class stage in `SPEC → PLAN → TEST → CODE → REVIEW → LEARN`, explicitly stating that reusable project memory is the output of the pipeline and that re-explaining the same gotchas a week later means `LEARN` failed. At the same time, MAP users are cost-sensitive and often skip optional post-processing when it burns extra tokens. So the gap is real, but the fix should not be hard enforcement. MAP’s runtime still treats learning as a weak afterthought: `README.md` canonical flows end at `/map-review`, `docs/ARCHITECTURE.md` repeatedly calls learning “optional via /map-learn”, and `map-efficient`, `map-debug`, `map-release`, `map-resume`, and `map-fast` all frame `/map-learn` as a generic suggestion rather than a normal, cheap closeout path.
+**Why Not Already Tried**: MAP intentionally decoupled Reflector from execution to save tokens and keep implementation loops faster. That optimization was correct for token economy, but it left the system without a lightweight bridge between “LEARN matters” and “users do not want mandatory extra spend”.
+
+### Proposed Changes
+
+- Keep `LEARN` mandatory in philosophy/docs, but do not block workflow completion on `/map-learn` or require an explicit skip confirmation.
+- Generate a branch-scoped `learning_handoff_<branch>.md` or `.json` artifact automatically at the end of `/map-efficient`, `/map-debug`, `/map-review`, and `/map-check`, so the expensive part becomes optional execution, not manual reconstruction of context.
+- Make `/map-learn` cheap and ergonomic: support prefilled invocation from the generated handoff and encourage batched learning across several workflows instead of per-run mandatory reflection.
+- Update canonical docs (`README.md`, `docs/USAGE.md`, `docs/ARCHITECTURE.md`) to say: philosophically the cycle ends with `LEARN`, but runtime leaves it to the user when to pay that cost.
+- Add metrics for learn adoption, deferred learn usage, and repeated learned-rule violations, so MAP can improve uptake without turning learning into a hard gate.
+
+
+## Clean-session TEST→CODE handoff for TDD workflows [2604.036]
+
+**Benefit Hypothesis**: Forcing test authoring and implementation to happen in separate sessions/contexts will reduce “tests that merely bless the implementation”, catch spec misunderstandings earlier, and improve contract quality on risky subtasks. The measurable target is fewer trivial/pass-without-code tests and fewer post-implementation revisions caused by weak test contracts.
+**Confidence**: 0.82
+**Reasoning**: The philosophy document is explicit that tests should be written in a clean session, reviewed by a human, and then implemented in another session so the model does not see its own code while inventing tests. MAP is test-first, but not context-isolated: `map-tdd` and `map-efficient --tdd` run `TEST_WRITER → TEST_FAIL_GATE → ACTOR` inside the same workflow state machine, and `map-tdd.md` explicitly says test phases should append to the same branch workspace rather than creating a separate artifact universe. That preserves convenience, but it does not preserve the clean-room property the philosophy relies on.
+**Why Not Already Tried**: Current TDD design optimizes for continuity, lower friction, and fewer restarts. It assumes phase separation inside one workflow is enough, but the presentation’s claim is stronger: the value comes from separating contexts, not just labels.
+
+### Proposed Changes
+
+- Add a split-session TDD mode that stops after `TEST_FAIL_GATE`, writes a persisted `test_contract_<branch>.md` and `test_handoff_<subtask>.json`, and exits instead of continuing directly into implementation.
+- Add a resume path for code generation (`/map-task`, `/map-efficient --resume-contract`, or equivalent) that loads only spec, plan, failing tests, and concise contract notes, not the full TEST_WRITER deliberation.
+- Optionally require a commit checkpoint for generated tests before code implementation begins, so the test contract becomes a reviewable artifact instead of transient context.
+- Introduce separate prompt personas and success criteria for test-authoring versus code-authoring, with explicit guarantees that the implementer step does not author or silently weaken tests.
+- Add regression tests proving that split-session TDD survives context reset/compaction and still resumes deterministically from persisted test artifacts.
+
+
+## Detached reviewer context and worktree-assisted review [2604.037]
+
+**Benefit Hypothesis**: Reviewing from a fresh context or detached worktree instead of the implementer session will improve detection of semantic/API design issues, reduce self-review bias, and lower false `PROCEED` verdicts on non-trivial changes.
+**Confidence**: 0.8
+**Reasoning**: The philosophy document states `Reviewer ≠ Implementer` and recommends separate terminals/sessions via `git worktree`, precisely because many important review issues are semantic rather than syntactic. MAP’s `/map-review` already uses multiple reviewer agents and loads a review handoff, but it is still designed as an in-place command, with no strong support for isolated reviewer context. In practice that means the same session that planned or implemented the change can still be the session that drives review, which weakens the intended adversarial separation.
+**Why Not Already Tried**: MAP prioritized reviewer diversity (Monitor/Predictor/Evaluator) and artifact reuse first. Context isolation ergonomics were left to the user, so the framework has strong review content but weak enforcement of reviewer independence.
+
+### Proposed Changes
+
+- Add a detached review mode (`/map-review --detached` or helper script) that creates a temporary read-only worktree or snapshot and runs review from that clean context.
+- Build a canonical review bundle artifact that includes spec, plan, relevant tests, verification summary, review handoff, and diff, so review consumes the full contract instead of mostly reconstructing intent from the patch.
+- Update reviewer prompts to explicitly state they are not the implementer and must challenge architectural shortcuts, API convention drift, and undocumented tradeoffs.
+- Document when detached review is recommended or required: high-risk changes, new APIs, CRD/schema changes, security-sensitive code, and large diffs.
+- Add integration tests that validate review bundle generation and detached review startup, so this mode does not become a paper feature.
+
+
+## Workflow fit classifier and explicit off-ramp for trivial work [2604.038]
+
+**Benefit Hypothesis**: A short suitability check at workflow entry will reduce unnecessary MAP overhead on trivial work, improve latency for simple tasks, and make the framework more credible for the complex tasks where it actually pays off. The measurable target is fewer low-value orchestrated runs and better task-to-workflow matching.
+**Confidence**: 0.78
+**Reasoning**: The philosophy document explicitly says not to drag the full framework onto README typos or 50-line scripts, and limits the strongest payoff to domains with clear models, invariants, and review cost: operators, platform tooling, API/CRD-driven systems, and backend work with real contracts. MAP documentation does distinguish `/map-fast` and `/map-efficient`, but it still mostly assumes some MAP workflow is appropriate. There is no first-class “do this directly, MAP is not needed” off-ramp in runtime behavior.
+**Why Not Already Tried**: Product messaging has focused on demonstrating the power of the framework, not on teaching restraint. That is common for new systems, but it creates avoidable overhead and makes MAP look heavier than its philosophy intends.
+
+### Proposed Changes
+
+- Add a lightweight workflow-fit classifier to `/map-plan` and the workflow guide, using criteria such as blast radius, model complexity, expected diff size, need for explicit acceptance criteria, and cost of independent review.
+- Introduce an explicit off-ramp outcome: `direct edit / no MAP orchestration recommended`, alongside the existing choices of `/map-fast`, `/map-efficient`, and `/map-tdd`.
+- Update docs and skills with concrete examples of good MAP candidates versus bad ones, grounded in the same categories used in the presentation.
+- Record when a task was intentionally routed away from MAP, so future tuning can compare overhead saved versus quality lost.
+- Use this classifier to sharpen `/map-fast` guidance: it should be one option in the decision tree, not the silent default for every “smallish” task.
+
+
+## Contract-sized subtasks and artifact stage gates [2604.039]
+
+**Benefit Hypothesis**: Making artifact lineage and small-diff budgets explicit across workflows will reduce scope creep, oversized diffs, and stage skipping, leading to more reviewable changes and more reliable recovery. The measurable target is smaller median subtask diffs, fewer mixed-concern subtasks, and fewer workflows that reach review without a full contract trail.
+**Confidence**: 0.84
+**Reasoning**: The philosophy document treats MAP as a pipeline of artifacts: `SPEC` produces model + invariants, `PLAN` produces tasks, `TEST` produces executable contract, `CODE` produces passing implementation, `REVIEW` consumes spec + tests + diff, and `LEARN` produces reusable memory. It also emphasizes one logical step at a time and reviewable diffs, citing ~155-line median PRs and warning against mixing multiple architecture surfaces in one step. MAP already persists rich branch artifacts, but its runtime still leaves too much implicit: `docs/ARCHITECTURE.md` says there is no single standard workflow, `/map-fast` can implement without spec/test artifacts, and there is no explicit subtask diff budget or concern-mixing guard tied to stage completion.
+**Why Not Already Tried**: MAP invested first in orchestration correctness, persistence, and agent specialization. Artifact contracts and diff-budget enforcement remained partially implied by author intent rather than enforced by the framework.
+
+### Proposed Changes
+
+- Add a branch-scoped `artifact_manifest.json` that records the status of spec, plan, test contract, implementation summary, review verdict, verification, and learn closeout for the current workflow.
+- Require complex workflows to consume the prior stage artifact explicitly before proceeding; for example, review should load spec + tests + diff, and code execution should record which test/spec contract it is satisfying.
+- Extend decomposition/planning artifacts with `expected_diff_size`, `concern_type`, and a one-concern-per-subtask rule, so Monitor/FinalVerifier can detect when a task has grown beyond “one logical step”.
+- Add guardrails that warn or block when a subtask diff exceeds a configured reviewable budget or mixes incompatible concern types (for example schema + runtime + tests + docs in one subtask without justification).
+- Update canonical docs so MAP has a visible default artifact pipeline even if individual commands still differ in internal implementation details.

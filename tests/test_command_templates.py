@@ -242,6 +242,8 @@ class TestCommandTemplates:
         assert "step_state.json" in content
         assert "blueprint.json" in content
         assert "spec_" in content
+        assert "artifact_manifest.json" in content
+        assert "record_workflow_fit" in content
 
     def test_map_efficient_tracks_review_loop_artifacts(self, templates_commands_dir):
         """/map-efficient should preserve review/devlog/qa artifacts in branch workspace."""
@@ -257,6 +259,20 @@ class TestCommandTemplates:
 
         assert "code-review-00N.md" in content
         assert "pr-draft.md" in content
+        assert "test_contract_ST-00N.md" in content
+        assert "test_handoff_ST-00N.json" in content
+        assert "record_test_contract_handoff" in content
+        assert "mark_contract_ready" in content
+
+    def test_map_task_can_resume_from_persisted_tdd_contract(
+        self, templates_commands_dir
+    ):
+        """/map-task should detect persisted TDD handoff artifacts and resume ACTOR."""
+        content = (templates_commands_dir / "map-task.md").read_text()
+
+        assert "resume_from_test_contract" in content
+        assert "test_handoff_" in content
+        assert "test_contract_" in content
 
     def test_map_task_uses_shared_execution_artifacts(self, templates_commands_dir):
         """/map-task should keep using shared branch execution artifacts."""

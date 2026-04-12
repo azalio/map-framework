@@ -8,10 +8,12 @@
 - Want to establish clear task boundaries before execution
 
 **What this command does:**
+- Records a workflow-fit decision before planning so trivial work can exit early
 - Optionally runs a short discovery pass (research-agent) to identify key files/patterns
 - Calls task-decomposer agent to break down the user's request into subtasks
 - Creates `.map/<branch>/task_plan_<branch>.md` with subtask list
 - Initializes `.map/<branch>/step_state.json` with subtask sequence
+- Updates `.map/<branch>/artifact_manifest.json` with the planning artifacts
 - **STOPS** after planning (forces context flush)
 
 **What this command CANNOT do:**
@@ -42,6 +44,35 @@ echo "state:       $(test -f .map/${BRANCH}/step_state.json && echo EXISTS || ec
 - If `step_state.json` EXISTS → plan is already complete, print checkpoint and STOP
 
 This prevents redundant work when the user restarts Claude mid-plan.
+
+### Pre-flight: Workflow-Fit Gate
+
+Before discovery or interview, decide whether MAP planning is actually warranted for this task.
+
+Assess these signals explicitly:
+- `expected_diff_size`: `tiny` / `small` / `medium` / `large`
+- `has_new_invariants`: does the task introduce or change domain model / contracts / schema rules?
+- `needs_independent_review`: would this change be risky enough that independent review should be required?
+- `has_clear_acceptance_criteria`: can the task already be executed without a planning pass?
+- `test_first_required`: should later implementation use TDD because the behavior contract matters more than code speed?
+
+For `/map-plan`, pick one of these outcomes:
+- `direct-edit` — tiny, isolated work with clear acceptance criteria and no new invariants
+- `map-fast` — small bounded change where MAP planning overhead is not justified
+- `map-plan` — non-trivial work that should go through `SPEC + PLAN` before execution
+
+Persist the decision:
+
+```bash
+python3 .map/scripts/map_step_runner.py record_workflow_fit "<direct-edit|map-fast|map-plan>" "<tiny|small|medium|large>" "<true|false>" "<true|false>" "<true|false>" "<true|false>" "<one-sentence decision summary>"
+```
+
+**Decision rules:**
+- If the outcome is `direct-edit`: print a short off-ramp message explaining MAP is not needed and STOP.
+- If the outcome is `map-fast`: recommend `/map-fast` and STOP.
+- If the outcome is `map-plan`: continue with the steps below.
+
+This is not a black box. The decision summary must state which signal(s) forced planning or justified the off-ramp.
 
 ### Step 0: Quick Discovery (Optional but Recommended)
 
@@ -566,6 +597,12 @@ Use the **Write** tool to create `.map/<branch>/step_state.json` with this struc
 - Populate `aag_contracts` map with each subtask's AAG contract from the decomposer output — executors read this to set context for each subtask
 - Populate `constraints` from the spec's Constraints section. null = unlimited (hook skips enforcement)
 
+After writing `spec_<branch>.md`, `task_plan_<branch>.md`, `blueprint.json`, and `step_state.json`, record them in the artifact manifest:
+
+```bash
+python3 .map/scripts/map_step_runner.py record_plan_artifacts
+```
+
 ### Step 8: Output Checkpoint
 
 Print a clear checkpoint showing the plan is complete:
@@ -582,6 +619,7 @@ WORKFLOW CHECKPOINT: PLAN PHASE COMPLETE
 ✅ Blueprint saved to .map/${BRANCH}/blueprint.json
 ✅ step_state.json initialized (with aag_contracts map)
 ✅ Plan written to .map/${BRANCH}/task_plan_${BRANCH}.md
+✅ artifact_manifest.json updated for spec + plan artifacts
 ✅ Context distilled (plan files ≤4000 tokens per subtask)
 
 Next Steps:
@@ -606,6 +644,7 @@ DISTILLATION CHECKLIST:
   [x] step_state.json   — has aag_contracts map + subtask_sequence
   [x] blueprint.json     — raw decomposer output for wave computation (with coverage_map)
   [x] spec_<branch>.md      — has architecture graph + decisions + COMPLETE acceptance criteria (if interview was done)
+  [x] artifact_manifest.json — records workflow_fit + spec + plan stage artifacts
   [x] findings_<branch>.md  — has research pointers (if discovery was done)
 
 TARGET: Executor reads ≤4000 tokens of distilled state to start any subtask.

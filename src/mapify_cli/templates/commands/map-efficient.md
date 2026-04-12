@@ -77,6 +77,7 @@ Branch-scoped markdown artifacts in `.map/<branch>/`:
 Parse optional flags from `$ARGUMENTS`:
 
 - **`--tdd`**: Enable TDD mode (test-first workflow). Inserts TEST_WRITER and TEST_FAIL_GATE phases before ACTOR. Tests are written from spec before implementation.
+- If you need a persisted clean-session handoff between tests and implementation, prefer `/map-tdd ST-001` and then resume with `/map-task ST-001`.
 
 ```bash
 # Extract flags and clean task description
@@ -418,6 +419,8 @@ pytest --tb=short 2>&1 || true
 # If tests PASS → go back to TEST_WRITER (tests are trivial)
 # If tests FAIL with assertion errors → proceed to ACTOR (expected TDD state)
 ```
+
+If you want to stop after the red phase and resume implementation in a clean session, persist `test_contract_<subtask>.md` + `test_handoff_<subtask>.json` via `/map-tdd ST-001`, then continue later with `/map-task ST-001`.
 
 ### Phase: ACTOR (2.3)
 

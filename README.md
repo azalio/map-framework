@@ -65,7 +65,9 @@ Canonical MAP flows:
 - Full TDD: `/map-plan` -> `/map-tdd` -> `/map-check` -> `/map-review`
 - Targeted subtask TDD: `/map-plan` -> `/map-tdd ST-001` -> `/map-task ST-001` -> ... -> `/map-check` -> `/map-review`
 
-These workflows maintain branch-scoped artifacts like `code-review-001.md`, `qa-001.md`, `verification-summary.md`, `pr-draft.md`, and run dossiers under `.map/<branch>/`.
+`/map-plan` now records a workflow-fit decision first, so trivial work can exit early with a direct edit or `/map-fast` recommendation instead of forcing full MAP planning.
+
+These workflows maintain branch-scoped artifacts like `code-review-001.md`, `qa-001.md`, `verification-summary.md`, `pr-draft.md`, `artifact_manifest.json`, and run dossiers under `.map/<branch>/`. Targeted TDD flows also persist `test_contract_ST-00N.md` and `test_handoff_ST-00N.json` so `/map-task` can resume implementation from a clean red-phase handoff.
 
 ## How It Works
 
