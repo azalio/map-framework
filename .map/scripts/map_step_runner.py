@@ -31,7 +31,7 @@ import json
 import os
 import re
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -67,6 +67,11 @@ WORKFLOW_FIT_ROUTES = {
     "map-plan",
 }
 DIFF_SIZE_LEVELS = {"tiny", "small", "medium", "large"}
+
+
+def _utc_timestamp() -> str:
+    """Return an unambiguous RFC3339 UTC timestamp."""
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _parse_boolish(value: object) -> bool:
@@ -107,7 +112,7 @@ def default_artifact_manifest(branch: str) -> dict[str, object]:
     return {
         "schema_version": "1.0",
         "branch": branch,
-        "updated_at": datetime.now().isoformat(),
+        "updated_at": _utc_timestamp(),
         "stages": {stage: _default_stage_payload() for stage in ARTIFACT_STAGE_NAMES},
     }
 
@@ -130,7 +135,7 @@ def load_artifact_manifest(branch: Optional[str] = None) -> dict[str, object]:
         manifest.update(
             {
                 "schema_version": loaded.get("schema_version", manifest["schema_version"]),
-                "branch": loaded.get("branch", branch_name),
+                "branch": branch_name,
                 "updated_at": loaded.get("updated_at", manifest["updated_at"]),
             }
         )
@@ -155,7 +160,7 @@ def save_artifact_manifest(
     """Persist artifact_manifest.json and return status metadata."""
     branch_name = branch or get_branch_name()
     manifest["branch"] = branch_name
-    manifest["updated_at"] = datetime.now().isoformat()
+    manifest["updated_at"] = _utc_timestamp()
     path = artifact_manifest_path(branch_name)
     _write_json_file(path, manifest)
     return {"status": "success", "path": str(path), "manifest": manifest}
@@ -177,7 +182,7 @@ def _set_manifest_stage(
         raise ValueError("artifact manifest stages payload is invalid")
     stages[stage] = {
         "status": status,
-        "updated_at": datetime.now().isoformat(),
+        "updated_at": _utc_timestamp(),
         "artifacts": artifacts or [],
         "metadata": metadata or {},
     }
@@ -230,7 +235,7 @@ def record_workflow_fit(
         "needs_map": needs_map,
         "decision_summary": decision_summary or "No decision summary provided.",
         "signals": signals,
-        "updated_at": datetime.now().isoformat(),
+        "updated_at": _utc_timestamp(),
     }
 
     branch_dir = get_branch_dir(branch_name)
@@ -352,7 +357,7 @@ def record_test_contract_handoff(
         "test_files": test_files,
         "contract_summary": contract_summary or "No contract summary provided.",
         "notes": notes or "",
-        "updated_at": datetime.now().isoformat(),
+        "updated_at": _utc_timestamp(),
     }
     handoff_path = branch_dir / f"test_handoff_{subtask_id}.json"
     _write_json_file(handoff_path, handoff_payload)

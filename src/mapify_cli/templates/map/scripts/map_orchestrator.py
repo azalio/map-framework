@@ -91,7 +91,7 @@ import argparse
 import json
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -134,6 +134,11 @@ TDD_STEP_ORDER = [
     "2.3",
     "2.4",
 ]
+
+
+def _utc_timestamp() -> str:
+    """Return an unambiguous RFC3339 UTC timestamp."""
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _read_text_if_exists(path: Path) -> str:
@@ -1427,7 +1432,7 @@ def mark_contract_ready(subtask_id: str, branch: str) -> dict:
     state.contract_ready_subtasks[subtask_id] = {
         "contract_path": str(contract_path),
         "handoff_path": str(handoff_path),
-        "ready_at": datetime.now().isoformat(),
+        "ready_at": _utc_timestamp(),
     }
     state.workflow_status = "CONTRACT_READY"
     state.current_step_id = "CONTRACT_READY"
@@ -1489,7 +1494,7 @@ def resume_from_test_contract(subtask_id: str, branch: str) -> dict:
         {
             "contract_path": str(contract_path),
             "handoff_path": str(handoff_path),
-            "ready_at": datetime.now().isoformat(),
+            "ready_at": _utc_timestamp(),
         },
     )
 

@@ -897,6 +897,7 @@ class TestResumeFromTestContract:
         assert saved.current_step_phase == "CONTRACT_READY"
         assert saved.pending_steps == ["CONTRACT_READY"]
         assert "ST-001" in saved.contract_ready_subtasks
+        assert saved.contract_ready_subtasks["ST-001"]["ready_at"].endswith("Z")
 
     def test_get_next_step_pauses_when_contract_ready(self, branch_dir, tmp_path):
         plan_dir = self._create_plan(tmp_path, branch_dir, ["ST-001"])

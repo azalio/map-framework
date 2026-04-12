@@ -101,6 +101,9 @@ def test_record_workflow_fit_creates_decision_and_manifest(branch_workspace):
     stage = manifest["stages"]["workflow_fit"]
     assert stage["status"] == "recorded"
     assert stage["metadata"]["recommended_workflow"] == "map-plan"
+    assert decision["updated_at"].endswith("Z")
+    assert manifest["updated_at"].endswith("Z")
+    assert stage["updated_at"].endswith("Z")
 
 
 def test_record_plan_artifacts_updates_manifest(branch_workspace):
@@ -148,11 +151,33 @@ def test_record_test_contract_handoff_creates_json_and_manifest(branch_workspace
     assert handoff["status"] == "contract_ready"
     assert handoff["subtask_id"] == "ST-001"
     assert handoff["test_files"] == ["tests/test_auth.py", "tests/test_api.py"]
+    assert handoff["updated_at"].endswith("Z")
 
     manifest = json.loads((branch_workspace / "artifact_manifest.json").read_text())
     stage = manifest["stages"]["test_contract"]
     assert stage["status"] == "contract_ready"
     assert stage["metadata"]["subtask_id"] == "ST-001"
+    assert manifest["updated_at"].endswith("Z")
+    assert stage["updated_at"].endswith("Z")
+
+
+def test_load_artifact_manifest_normalizes_branch_name(branch_workspace):
+    (branch_workspace / "artifact_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "branch": "wrong-branch",
+                "updated_at": "2026-04-12T00:00:00Z",
+                "stages": {},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    manifest = map_step_runner.load_artifact_manifest()
+
+    assert manifest["branch"] == branch_workspace.name
 
 
 def test_build_handoff_bundle_reads_artifacts(branch_workspace):
