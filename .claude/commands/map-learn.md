@@ -9,6 +9,7 @@ description: Extract and preserve lessons from completed workflows (OPTIONAL lea
 **When to use:**
 - After `/map-efficient` completes (to preserve patterns from the workflow)
 - After `/map-debug` completes (to preserve debugging patterns)
+- After `/map-review` or `/map-check` completes (to preserve review/verification patterns)
 - After `/map-fast` completes (to retroactively add learning when learning was skipped)
 
 **What it does:**
@@ -19,6 +20,8 @@ description: Extract and preserve lessons from completed workflows (OPTIONAL lea
 
 **Workflow Summary Input:** $ARGUMENTS
 
+**Zero-argument mode:** If `$ARGUMENTS` is empty and `.map/<branch>/learning-handoff.md` exists, load that file automatically. If `$ARGUMENTS` is a readable file path, load the file contents and treat them as the workflow summary. Inline summary text still works when you want to override the artifact.
+
 ---
 
 ## IMPORTANT: This is an OPTIONAL step
@@ -26,7 +29,7 @@ description: Extract and preserve lessons from completed workflows (OPTIONAL lea
 **You are NOT required to run this command.** No MAP workflow includes automatic learning — learning is always a separate step via this command.
 
 Use /map-learn when:
-- You completed /map-efficient, /map-debug, or /map-fast and want to extract lessons
+- You completed /map-efficient, /map-debug, /map-review, /map-check, or /map-fast and want to extract lessons
 - You want to batch-learn from multiple workflows at once
 - You want to manually trigger learning for custom workflows
 
@@ -38,7 +41,15 @@ Use /map-learn when:
 
 ## Step 1: Validate Input
 
-Check that $ARGUMENTS contains workflow summary:
+Resolve the workflow summary before validating input:
+
+1. If `$ARGUMENTS` is empty, look for `.map/<branch>/learning-handoff.md`
+2. If `$ARGUMENTS` looks like a file path, read that file
+3. Otherwise treat `$ARGUMENTS` as inline workflow summary text
+
+If a branch-scoped learning handoff exists, prefer it over asking the user to reconstruct the workflow from memory.
+
+Check that the resolved workflow summary contains:
 
 **Required information:**
 - Workflow type (feature, debug, refactor, review, custom)
@@ -47,7 +58,7 @@ Check that $ARGUMENTS contains workflow summary:
 - Analysis results (Predictor/Evaluator outputs, if available)
 - Workflow metrics (total subtasks, iterations, files changed)
 
-**If input is incomplete:** Ask user to provide missing information before proceeding.
+**If no summary can be resolved:** Ask the user for a workflow summary before proceeding.
 
 ---
 
@@ -74,7 +85,7 @@ Task(
   prompt="Extract structured lessons from this workflow:
 
 **Workflow Summary:**
-$ARGUMENTS
+[resolved workflow summary from Step 1]
 
 **Existing learned rules (do NOT duplicate these):**
 [paste extracted bullets from Step 2a, or 'None — first learning session' if no files exist]

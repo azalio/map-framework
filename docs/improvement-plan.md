@@ -299,6 +299,8 @@
 **Reasoning**: The philosophy document treats `LEARN` as a first-class stage in `SPEC → PLAN → TEST → CODE → REVIEW → LEARN`, explicitly stating that reusable project memory is the output of the pipeline and that re-explaining the same gotchas a week later means `LEARN` failed. At the same time, MAP users are cost-sensitive and often skip optional post-processing when it burns extra tokens. So the gap is real, but the fix should not be hard enforcement. MAP’s runtime still treats learning as a weak afterthought: `README.md` canonical flows end at `/map-review`, `docs/ARCHITECTURE.md` repeatedly calls learning “optional via /map-learn”, and `map-efficient`, `map-debug`, `map-release`, `map-resume`, and `map-fast` all frame `/map-learn` as a generic suggestion rather than a normal, cheap closeout path.
 **Why Not Already Tried**: MAP intentionally decoupled Reflector from execution to save tokens and keep implementation loops faster. That optimization was correct for token economy, but it left the system without a lightweight bridge between “LEARN matters” and “users do not want mandatory extra spend”.
 
+**Execution note:** Do not execute this umbrella item directly. Use the child slices below.
+
 ### Proposed Changes
 
 - Keep `LEARN` mandatory in philosophy/docs, but do not block workflow completion on `/map-learn` or require an explicit skip confirmation.
@@ -306,6 +308,21 @@
 - Make `/map-learn` cheap and ergonomic: support prefilled invocation from the generated handoff and encourage batched learning across several workflows instead of per-run mandatory reflection.
 - Update canonical docs (`README.md`, `docs/USAGE.md`, `docs/ARCHITECTURE.md`) to say: philosophically the cycle ends with `LEARN`, but runtime leaves it to the user when to pay that cost.
 - Add metrics for learn adoption, deferred learn usage, and repeated learned-rule violations, so MAP can improve uptake without turning learning into a hard gate.
+
+
+## Learn adoption metrics and deferred-usage tracking [2604.035-2]
+
+**Parent:** `2604.035`
+**Benefit Hypothesis**: Once branch-scoped learning handoffs exist, MAP should measure whether they are actually improving uptake and rule reuse. Tracking deferred `/map-learn` execution, handoff generation vs consumption, and repeated Monitor findings will show whether the softer runtime ergonomics materially improve memory capture instead of just creating more files.
+**Confidence**: 0.72
+**Reasoning**: The runtime can only tune learning ergonomics intelligently if it can observe them. Without usage metrics, MAP cannot tell whether users are deferring learning productively, silently ignoring the handoff, or repeatedly hitting the same issues despite preserved rules. The artifact manifest already has a `learn_handoff` stage, so the remaining gap is usage instrumentation rather than artifact plumbing.
+
+### Proposed Changes
+
+- Record when a workflow writes `learning-handoff.md` / `.json` and whether `/map-learn` later consumes that handoff.
+- Add counters for immediate learn vs deferred learn vs never-used handoff.
+- Track repeated Monitor findings or review issues after related learned rules already exist, so MAP can tell whether knowledge capture is actually reducing repeated mistakes.
+- Surface the metrics in `.claude/metrics/agent_metrics.jsonl` or a dedicated learning metrics artifact.
 
 
 ## Clean-session TEST→CODE handoff for TDD workflows [2604.036]

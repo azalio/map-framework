@@ -208,6 +208,18 @@ If evaluator recommends proceeding:
 - Apply code changes using Write/Edit tools
 - Run tests to verify fix
 - Check that original issue is resolved
+- Write a deferred learning handoff so `/map-learn` can reuse the debug context later:
+
+```bash
+python3 .map/scripts/map_step_runner.py write_learning_handoff \
+  map-debug \
+  "$ARGUMENTS" \
+  "Debugging workflow complete" \
+  "Ship the fix, or run /map-review if you want independent scrutiny" \
+  "<root cause + fix summary>"
+```
+
+This writes `.map/<branch>/learning-handoff.md` and `.json`, updates `artifact_manifest.json`, and keeps post-debug learning cheap.
 
 ## Step 4: Verification
 
@@ -225,9 +237,7 @@ After all fixes applied:
 **If you want to save debugging patterns for future use:**
 
 ```
-/map-learn Debugged [issue description]. Root cause: [cause].
-Fix: [summary]. Prevention strategies: [list].
-Files changed: [files]. Iterations: [count].
+/map-learn
 ```
 
 This is **completely optional**. Run it when debugging patterns are valuable for future reference.

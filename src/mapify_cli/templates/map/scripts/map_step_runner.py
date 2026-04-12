@@ -770,6 +770,172 @@ def build_review_handoff(branch: Optional[str] = None) -> dict:
     return payload
 
 
+def write_learning_handoff(
+    workflow: str,
+    task_title: str = "",
+    outcome: str = "",
+    next_action: str = "",
+    notes: str = "",
+    branch: Optional[str] = None,
+) -> dict:
+    """Write a reusable learning handoff artifact for deferred /map-learn runs."""
+    branch_name = branch or get_branch_name()
+    branch_dir = get_branch_dir(branch_name)
+    branch_dir.mkdir(parents=True, exist_ok=True)
+
+    def read(name: str) -> str:
+        path = branch_dir / name
+        if not path.exists():
+            return ""
+        try:
+            return _sanitize_for_json(path.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            return ""
+
+    def read_json(name: str) -> Optional[dict[str, object]]:
+        raw = read(name)
+        if not raw:
+            return None
+        try:
+            loaded = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+        return loaded if isinstance(loaded, dict) else None
+
+    workflow_name = workflow.strip() or "map-workflow"
+    goal = task_title.strip() or read_current_goal(branch_name) or "Workflow summary"
+    outcome_text = outcome.strip() or "Learning handoff generated"
+    next_action_text = (
+        next_action.strip()
+        or "Run /map-learn now, or batch it later when you want to pay the learning cost."
+    )
+    notes_text = notes.strip()
+    generated_at = _utc_timestamp()
+
+    review_handoff = build_review_handoff(branch_name)
+    bundle = build_handoff_bundle(branch_name)
+    code_state = snapshot_code_state(branch_name)
+    workflow_fit = read_json("workflow-fit.json")
+    manifest = read_json("artifact_manifest.json")
+    known_issues = read_json("known-issues.json")
+    active_issues = read_json("active-issues.json")
+
+    markdown_path = branch_dir / "learning-handoff.md"
+    json_path = branch_dir / "learning-handoff.json"
+
+    files_changed = code_state.get("files_changed") or []
+    if isinstance(files_changed, list):
+        files_section = "\n".join(f"- {path}" for path in files_changed) or "- [not recorded]"
+    else:
+        files_section = "- [not recorded]"
+
+    artifact_paths = [
+        path
+        for path in [
+            "workflow-fit.json" if workflow_fit else "",
+            "artifact_manifest.json" if manifest else "",
+            review_handoff.get("plan_review_path") or "",
+            review_handoff.get("code_review_path") or "",
+            review_handoff.get("verification_summary_path") or "",
+            review_handoff.get("qa_path") or "",
+            review_handoff.get("pr_draft_path") or "",
+            review_handoff.get("active_issues_path") or "",
+            "known-issues.json" if known_issues else "",
+        ]
+        if path
+    ]
+    artifacts_section = "\n".join(f"- {path}" for path in artifact_paths) or "- [not recorded]"
+
+    payload = {
+        "schema_version": "1.0",
+        "generated_at": generated_at,
+        "workflow": workflow_name,
+        "branch": branch_name,
+        "task_title": goal,
+        "outcome": outcome_text,
+        "next_action": next_action_text,
+        "notes": notes_text,
+        "git_ref": code_state.get("git_ref", "unknown"),
+        "files_changed": files_changed if isinstance(files_changed, list) else [],
+        "summary": bundle.get("summary", "- [not recorded]"),
+        "validation": bundle.get("validation", "- [not recorded]"),
+        "risks_follow_up": bundle.get("risks_follow_up", "- [not recorded]"),
+        "artifacts": {
+            "workflow_fit": workflow_fit,
+            "artifact_manifest": manifest,
+            "review_handoff": review_handoff,
+            "known_issues": known_issues,
+            "active_issues": active_issues,
+        },
+        "documents": {
+            "plan_review": review_handoff.get("plan_review"),
+            "code_review": review_handoff.get("code_review"),
+            "verification_summary": review_handoff.get("verification_summary"),
+            "qa": review_handoff.get("qa"),
+            "pr_draft": review_handoff.get("pr_draft"),
+        },
+    }
+    _write_json_file(json_path, payload)
+
+    markdown = (
+        "# Learning Handoff\n\n"
+        f"- Workflow: `{workflow_name}`\n"
+        f"- Branch: `{branch_name}`\n"
+        f"- Task: {goal}\n"
+        f"- Outcome: {outcome_text}\n"
+        f"- Generated: {generated_at}\n"
+        f"- Git ref: `{code_state.get('git_ref', 'unknown')}`\n"
+        f"- Next action: {next_action_text}\n\n"
+        "## Recommended Invocation\n\n"
+        "Run `/map-learn` with no arguments to auto-load this handoff.\n\n"
+        "If you want to pass the artifact explicitly:\n\n"
+        f"`/map-learn .map/{branch_name}/learning-handoff.md`\n\n"
+        "## Summary\n\n"
+        f"{bundle.get('summary', '- [not recorded]')}\n\n"
+        "## Validation\n\n"
+        f"{bundle.get('validation', '- [not recorded]')}\n\n"
+        "## Risks / Follow-up\n\n"
+        f"{bundle.get('risks_follow_up', '- [not recorded]')}\n\n"
+        "## Files Changed\n\n"
+        f"{files_section}\n\n"
+        "## Source Artifacts\n\n"
+        f"{artifacts_section}\n"
+    )
+    if notes_text:
+        markdown += f"\n## Notes\n\n{notes_text}\n"
+    markdown_path.write_text(markdown, encoding="utf-8")
+
+    manifest_payload = load_artifact_manifest(branch_name)
+    _set_manifest_stage(
+        manifest_payload,
+        "learn_handoff",
+        "ready",
+        artifacts=[
+            _artifact_ref(markdown_path, "learning-handoff-markdown"),
+            _artifact_ref(json_path, "learning-handoff-json"),
+        ],
+        metadata={
+            "workflow": workflow_name,
+            "task_title": goal,
+            "outcome": outcome_text,
+            "next_action": next_action_text,
+            "git_ref": code_state.get("git_ref", "unknown"),
+        },
+    )
+    manifest_result = save_artifact_manifest(manifest_payload, branch_name)
+
+    return {
+        "status": "success",
+        "branch": branch_name,
+        "workflow": workflow_name,
+        "task_title": goal,
+        "markdown_path": str(markdown_path),
+        "json_path": str(json_path),
+        "manifest_path": manifest_result["path"],
+        "generated_at": generated_at,
+    }
+
+
 def ensure_known_issues_file(branch: Optional[str] = None) -> dict:
     """Ensure known-issues.json exists for accepted blockers / known limitations."""
     branch_dir = get_branch_dir(branch)
@@ -1627,6 +1793,17 @@ if __name__ == "__main__":
 
     elif func_name == "build_review_handoff":
         result = build_review_handoff()
+        print(json.dumps(result, indent=2, ensure_ascii=True))
+
+    elif func_name == "write_learning_handoff":
+        workflow = sys.argv[2] if len(sys.argv) >= 3 else ""
+        task_title = sys.argv[3] if len(sys.argv) >= 4 else ""
+        outcome = sys.argv[4] if len(sys.argv) >= 5 else ""
+        next_action = sys.argv[5] if len(sys.argv) >= 6 else ""
+        notes = sys.argv[6] if len(sys.argv) >= 7 else ""
+        result = write_learning_handoff(
+            workflow, task_title, outcome, next_action, notes
+        )
         print(json.dumps(result, indent=2, ensure_ascii=True))
 
     elif func_name == "ensure_known_issues_file":

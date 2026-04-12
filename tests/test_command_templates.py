@@ -314,6 +314,13 @@ class TestCommandTemplates:
         assert "build_handoff_bundle" in content
         assert "write_pr_draft" in content
 
+    def test_map_check_writes_learning_handoff(self, templates_commands_dir):
+        """/map-check should leave a deferred learning artifact for /map-learn."""
+        content = (templates_commands_dir / "map-check.md").read_text()
+
+        assert "write_learning_handoff" in content
+        assert "learning-handoff.md" in content
+
     def test_map_review_refreshes_pr_draft(self, templates_commands_dir):
         """/map-review should refresh PR handoff after review verdict."""
         content = (templates_commands_dir / "map-review.md").read_text()
@@ -324,6 +331,13 @@ class TestCommandTemplates:
         assert "write_stage_gate" in content
         assert "build_review_handoff" in content
         assert "active-issues.json" in content
+
+    def test_map_review_writes_learning_handoff(self, templates_commands_dir):
+        """/map-review should preserve a deferred learning handoff."""
+        content = (templates_commands_dir / "map-review.md").read_text()
+
+        assert "write_learning_handoff" in content
+        assert "/map-learn" in content
 
     def test_map_resume_is_briefing_oriented(self, templates_commands_dir):
         """/map-resume should surface resume briefing and next action guidance."""
@@ -345,6 +359,16 @@ class TestCommandTemplates:
         assert "runs/<timestamp>/RESULTS.md" in content
         assert "write_stage_gate" in content
         assert "replace_active_issues" in content
+
+    def test_map_learn_supports_learning_handoff_autoload(
+        self, templates_commands_dir
+    ):
+        """/map-learn should auto-load the deferred learning handoff when available."""
+        content = (templates_commands_dir / "map-learn.md").read_text()
+
+        assert "Zero-argument mode" in content
+        assert "learning-handoff.md" in content
+        assert "resolved workflow summary" in content
 
 
 class TestMapReviewStructure:

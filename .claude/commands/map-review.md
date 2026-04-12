@@ -353,6 +353,19 @@ This keeps `pr-draft.md` aligned with the latest review verdict and follow-up wo
 
 `active-issues.json` is the current unresolved set. Historical issues remain in `plan-review-00N.md`, `code-review-00N.md`, `qa-001.md`, and run dossiers under `.map/<branch>/runs/`.
 
+3. Write the deferred learning handoff so review lessons can be preserved later without hand-writing a summary:
+
+```bash
+python3 .map/scripts/map_step_runner.py write_learning_handoff \
+  map-review \
+  "$ARGUMENTS" \
+  "<PROCEED|REVISE|BLOCK>" \
+  "<next action based on the verdict>" \
+  "<brief note about the most reusable review lesson>"
+```
+
+This writes `.map/<branch>/learning-handoff.md` and `.json`, updates `artifact_manifest.json`, and allows `/map-learn` to auto-load the review context later with no extra reconstruction.
+
 ## CI/Auto Mode Behavior
 
 When `CI_MODE = true` (triggered by `--ci` or `--auto` in $ARGUMENTS):
@@ -367,7 +380,7 @@ When `CI_MODE = true` (triggered by `--ci` or `--auto` in $ARGUMENTS):
 If the review revealed valuable patterns or common issues worth preserving:
 
 ```
-/map-learn [review summary with key findings, resolution patterns, and verdict rationale]
+/map-learn
 ```
 
 ## MCP Tools Used

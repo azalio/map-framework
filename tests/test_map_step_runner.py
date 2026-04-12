@@ -203,6 +203,51 @@ def test_build_handoff_bundle_reads_artifacts(branch_workspace):
     assert "follow up on edge case" in result["risks_follow_up"]
 
 
+def test_write_learning_handoff_creates_artifacts_and_manifest(branch_workspace):
+    (branch_workspace / "verification-summary.md").write_text(
+        "# Verification Summary\n\n- Verdict: READY FOR REVIEW\n",
+        encoding="utf-8",
+    )
+    (branch_workspace / "qa-001.md").write_text(
+        "# QA 001\n\n- Commands Run: pytest\n",
+        encoding="utf-8",
+    )
+    (branch_workspace / "code-review-001.md").write_text(
+        "# Code Review 001\n\n- follow up on edge case\n",
+        encoding="utf-8",
+    )
+    (branch_workspace / "workflow-fit.json").write_text(
+        json.dumps({"recommended_workflow": "map-efficient"}) + "\n",
+        encoding="utf-8",
+    )
+
+    result = map_step_runner.write_learning_handoff(
+        "map-check",
+        "Implement auth",
+        "READY FOR REVIEW",
+        "Run /map-review next",
+        "Capture auth lessons after review.",
+    )
+
+    assert result["status"] == "success"
+    markdown = (branch_workspace / "learning-handoff.md").read_text(encoding="utf-8")
+    assert "Run `/map-learn` with no arguments" in markdown
+    assert "Implement auth" in markdown
+    assert "READY FOR REVIEW" in markdown
+
+    payload = json.loads((branch_workspace / "learning-handoff.json").read_text())
+    assert payload["workflow"] == "map-check"
+    assert payload["task_title"] == "Implement auth"
+    assert payload["outcome"] == "READY FOR REVIEW"
+
+    manifest = json.loads((branch_workspace / "artifact_manifest.json").read_text())
+    stage = manifest["stages"]["learn_handoff"]
+    assert stage["status"] == "ready"
+    recorded_paths = {artifact["path"] for artifact in stage["artifacts"]}
+    assert f".map/{branch_workspace.name}/learning-handoff.md" in recorded_paths
+    assert f".map/{branch_workspace.name}/learning-handoff.json" in recorded_paths
+
+
 def test_write_plan_review_creates_numbered_artifact(branch_workspace):
     result = map_step_runner.write_plan_review(
         "Planning looks solid overall",

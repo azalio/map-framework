@@ -789,6 +789,19 @@ Also update `.map/<branch>/pr-draft.md` with:
 
 Update `.map/<branch>/pr-draft.md` with final summary and verification results.
 
+Then write the deferred learning handoff so `LEARN` remains part of the philosophy without paying Reflector cost inline:
+
+```bash
+python3 .map/scripts/map_step_runner.py write_learning_handoff \
+  map-efficient \
+  "<task title>" \
+  "READY FOR REVIEW" \
+  "Run /map-review next, or defer /map-learn until you want to preserve patterns" \
+  "<optional implementation note>"
+```
+
+This writes `.map/<branch>/learning-handoff.md` and `.json`, updates `artifact_manifest.json`, and lets `/map-learn` auto-load the workflow context later.
+
 ### 3.3 Evaluate Results
 
 ```python
@@ -820,6 +833,7 @@ else:
 
 - Update Terminal State in task_plan: **Status:** complete
 - Report features implemented, files changed, verification confidence
-- **Optional:** Run `/map-learn [summary]` to preserve patterns
+- `learning-handoff.md` / `.json` should already be written for deferred learning
+- **Optional:** Run `/map-learn` now, or batch it later when the workflow is worth preserving
 
 Begin execution now.
