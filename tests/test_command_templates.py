@@ -9,8 +9,9 @@ only validate src/mapify_cli/templates/commands/ which is the source of truth.
 """
 
 import json
-import pytest
 from pathlib import Path
+
+import pytest
 
 
 class TestCommandTemplates:
@@ -25,6 +26,11 @@ class TestCommandTemplates:
     def templates_commands_dir(self, project_root):
         """Get src/mapify_cli/templates/commands directory (canonical source)."""
         return project_root / "src" / "mapify_cli" / "templates" / "commands"
+
+    @pytest.fixture
+    def templates_skills_dir(self, project_root):
+        """Get src/mapify_cli/templates/skills directory."""
+        return project_root / "src" / "mapify_cli" / "templates" / "skills"
 
     def test_map_fast_exists_in_templates(self, templates_commands_dir):
         """Test that map-fast.md exists in templates/commands/."""
@@ -85,34 +91,33 @@ class TestCommandTemplates:
         map_efficient = templates_commands_dir / "map-efficient.md"
         content = map_efficient.read_text()
 
-        # Learning is now in separate /map-learn command
-        # map-efficient should suggest it as optional
+        # Learning is now a separate /map-learn slash surface backed by a skill.
+        # map-efficient should still suggest it as optional.
         assert "/map-learn" in content, "Should suggest /map-learn for learning"
         assert "optional" in content.lower(), "Should mention /map-learn is optional"
 
-    def test_map_learn_persists_to_rules(self, templates_commands_dir):
-        """Test that map-learn.md writes to .claude/rules/learned/ for persistence."""
-        map_learn = templates_commands_dir / "map-learn.md"
+    def test_map_learn_skill_persists_to_rules(self, templates_skills_dir):
+        """map-learn skill should write to .claude/rules/learned/ for persistence."""
+        map_learn = templates_skills_dir / "map-learn" / "SKILL.md"
         content = map_learn.read_text()
 
         assert (
             ".claude/rules/learned/" in content
-        ), "map-learn should write to .claude/rules/learned/"
+        ), "map-learn skill should write to .claude/rules/learned/"
         assert (
             "Write Rules Files" in content
-        ), "map-learn should have a 'Write Rules Files' step"
+        ), "map-learn skill should have a 'Write Rules Files' step"
         assert (
             "deduplication" in content.lower() or "duplicate" in content.lower()
-        ), "map-learn should handle deduplication"
+        ), "map-learn skill should handle deduplication"
 
     def test_all_command_templates_exist(self, templates_commands_dir):
-        """Test that all 12 expected command template files exist."""
+        """Test that all expected command template files exist."""
         expected_commands = [
             "map-check.md",  # Quality gates
             "map-debug.md",  # Debugging workflow
             "map-efficient.md",  # Recommended workflow
             "map-fast.md",  # Minimal workflow
-            "map-learn.md",  # Optional learning
             "map-plan.md",  # Decomposition only
             "map-release.md",  # Release workflow
             "map-resume.md",  # Resume interrupted workflow
@@ -141,6 +146,7 @@ class TestCommandTemplates:
 
         for command in commands:
             assert f"`/{command}`" in readme, f"README missing /{command}"
+        assert "`/map-learn`" in readme, "README missing skill-backed /map-learn"
 
     def test_readme_mentions_canonical_flows(self, project_root):
         """README should document the standard and TDD canonical flows."""
@@ -207,7 +213,7 @@ class TestCommandTemplates:
         assert "Predictor" in content or "predictor" in content
 
         # Should mention /map-learn as optional
-        assert "/map-learn" in content, "Should reference optional /map-learn command"
+        assert "/map-learn" in content, "Should reference optional /map-learn surface"
 
         # Should mention conditional Predictor
         assert "conditional" in content.lower()
@@ -360,11 +366,11 @@ class TestCommandTemplates:
         assert "write_stage_gate" in content
         assert "replace_active_issues" in content
 
-    def test_map_learn_supports_learning_handoff_autoload(
-        self, templates_commands_dir
+    def test_map_learn_skill_supports_learning_handoff_autoload(
+        self, templates_skills_dir
     ):
-        """/map-learn should auto-load the deferred learning handoff when available."""
-        content = (templates_commands_dir / "map-learn.md").read_text()
+        """map-learn skill should auto-load the deferred learning handoff when available."""
+        content = (templates_skills_dir / "map-learn" / "SKILL.md").read_text()
 
         assert "Zero-argument mode" in content
         assert "learning-handoff.md" in content

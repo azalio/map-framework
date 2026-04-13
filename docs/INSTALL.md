@@ -148,7 +148,7 @@ This will:
 
 - ✅ Create project directory
 - ✅ Install MAP agents (including Synthesizer, DebateArbiter, ResearchAgent, FinalVerifier)
-- ✅ Add 11 slash commands (/map-efficient, /map-debug, /map-fast, /map-learn, /map-review, /map-check, /map-plan, /map-task, /map-tdd, /map-release, /map-resume)
+- ✅ Add 10 command files plus the skill-backed `/map-learn` slash surface
 - ✅ Configure essential MCP servers
 - ✅ Initialize git repository
 - ✅ Install branch-scoped `.map/<branch>/` workflow runtime used by `/map-plan` and `/map-efficient`
@@ -227,16 +227,24 @@ If you prefer manual setup:
    │   │   ├── research-agent.md      # Isolated codebase research
    │   │   ├── final-verifier.md      # Adversarial verification (Ralph Loop)
    │   │   └── documentation-reviewer.md  # Reviews technical docs
-   │   ├── commands/                  # 11 slash commands
+   │   ├── commands/                  # 10 command-backed slash commands
    │   │   ├── map-efficient.md       # Optimized workflow (recommended)
    │   │   ├── map-debug.md           # Debug workflow
    │   │   ├── map-fast.md            # Minimal workflow (low-risk only)
-   │   │   ├── map-learn.md           # Extract and save lessons
    │   │   ├── map-review.md          # Review workflow
    │   │   ├── map-release.md         # Release workflow
    │   │   ├── map-check.md           # Quality gates & verification
    │   │   ├── map-plan.md            # Architecture decomposition
+   │   │   ├── map-task.md            # Execute one planned subtask
+   │   │   ├── map-tdd.md             # Test-first workflow
    │   │   └── map-resume.md          # Resume interrupted workflows
+   │   ├── skills/
+   │   │   ├── README.md
+   │   │   ├── skill-rules.json
+   │   │   ├── map-planning/
+   │   │   │   └── SKILL.md           # Planning/reference skill
+   │   │   └── map-learn/
+   │   │       └── SKILL.md           # Skill-backed /map-learn workflow
    │   └── mcp_config.json
    ```
 
@@ -293,7 +301,7 @@ MAP Framework uses **slash commands** as entry points that coordinate specialize
 - **`/map-plan`** - Architect phase only: decompose task without implementation
 - **`/map-release`** - Package release workflow with validation gates
 - **`/map-resume`** - Resume incomplete MAP workflow from checkpoint
-- **`/map-learn`** - Extract lessons from completed workflows
+- **`/map-learn`** - Extract lessons from completed workflows (implemented as a skill, not a command file)
 
 **Note:** Agents are invoked automatically by slash commands. Direct agent invocation is not the recommended approach—use the slash commands above for proper workflow orchestration.
 

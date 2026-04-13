@@ -213,21 +213,6 @@
 - Update `workflow-rules.json` and command docs to reflect that “small/simple/quick” workflows should bias toward lower effort and minimal orchestration, while planning/review/release workflows intentionally permit more reasoning depth.
 
 
-## Skill-first slash command consolidation [2604.030]
-
-**Benefit Hypothesis**: Consolidating overlapping MAP command and skill definitions into a single source of truth will reduce prompt drift and make runtime behavior match author intent. The most immediate measurable benefit is eliminating the risk that a stale command prompt is silently ignored because the same-named skill takes precedence at runtime.
-**Confidence**: 0.86
-**Reasoning**: The official Claude Code skills documentation states that custom commands have been merged into skills, that both `.claude/commands/deploy.md` and `.claude/skills/deploy/SKILL.md` create `/deploy`, and that if a skill and a command share the same name, the skill takes precedence. MAP currently ships both `/map-learn` as a slash command and `map-learn` as a skill, with substantial overlap but not identical content. That creates a real maintenance hazard: authors can update the command prompt and assume behavior changed, while Claude Code will continue using the skill version.
-**Why Not Already Tried**: MAP appears to have grown commands first and skills later. That was reasonable before Claude Code documented skills as the preferred superset, but now the overlap is explicit platform behavior rather than an implementation detail.
-
-### Proposed Changes
-
-- Designate one canonical implementation for each slash surface. For `/map-learn`, either keep the skill and generate the command from it for backwards compatibility, or drop the duplicate command file entirely.
-- Add a sync/lint rule that fails when a skill and command share the same invocation name but differ semantically. This should compare frontmatter intent and core body sections, not just filenames.
-- Document a migration path from “command-first” to “skill-first” in `docs/USAGE.md` and `docs/ARCHITECTURE.md`, using `/map-learn` as the first concrete conversion.
-- If MAP intends to keep duplicate surfaces for compatibility, generate one from the other during template build so authors never hand-edit both.
-
-
 ## Official-frontmatter hygiene for MAP skills [2604.031]
 
 **Benefit Hypothesis**: Bringing MAP skill metadata in line with the official Claude Code skill frontmatter guidance will improve discoverability, autocomplete quality, and trigger accuracy, while reducing misleading or truncated descriptions. The immediate target is more reliable manual invocation and better automatic loading decisions.

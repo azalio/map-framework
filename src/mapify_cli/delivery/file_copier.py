@@ -185,16 +185,6 @@ $ARGUMENTS
 Implement quickly with basic monitor validation only. No learning, no predictor.
     Use for small, low-risk changes where speed matters.
 """,
-            "map-learn": """---
-description: Extract lessons from completed workflows
----
-
-Extract and preserve lessons from recent workflow:
-
-$ARGUMENTS
-
-Call Reflector to extract patterns from recent workflow.
-""",
         }
 
         for name, content in commands.items():
@@ -315,9 +305,12 @@ This directory contains custom slash commands for Claude Code.
 - `/map-review` - Run a structured review workflow
 - `/map-check` - Run workflow quality gates and verification
 - `/map-fast` - Quick implementation with minimal validation
-- `/map-learn` - Extract lessons from completed workflows
 - `/map-release` - Execute MAP Framework package release workflow
 - `/map-resume` - Resume an interrupted workflow from `.map/`
+
+## Skill-Backed Slash Surfaces
+
+- `/map-learn` - Extract lessons from completed workflows (implemented via `.claude/skills/map-learn/SKILL.md`)
 
 ## Creating Custom Commands
 

@@ -192,7 +192,6 @@ class TestCommandTemplateSynchronization:
             "map-debug.md",
             "map-efficient.md",
             "map-fast.md",
-            "map-learn.md",
             "map-plan.md",
             "map-release.md",
             "map-resume.md",

@@ -214,7 +214,6 @@ To avoid turning this into one large refactor, implement it in this order:
 
 - [src/mapify_cli/templates/commands/map-review.md](../src/mapify_cli/templates/commands/map-review.md)
 - [src/mapify_cli/templates/commands/map-check.md](../src/mapify_cli/templates/commands/map-check.md)
-- [src/mapify_cli/templates/commands/map-learn.md](../src/mapify_cli/templates/commands/map-learn.md)
 - [src/mapify_cli/templates/skills/map-learn/SKILL.md](../src/mapify_cli/templates/skills/map-learn/SKILL.md)
 - [docs/USAGE.md](./USAGE.md)
 - [docs/ARCHITECTURE.md](./ARCHITECTURE.md)
@@ -291,7 +290,6 @@ To avoid turning this into one large refactor, implement it in this order:
 - [src/mapify_cli/templates/skills/skill-rules.json](../src/mapify_cli/templates/skills/skill-rules.json)
 - [src/mapify_cli/templates/skills/map-planning/SKILL.md](../src/mapify_cli/templates/skills/map-planning/SKILL.md)
 - [src/mapify_cli/templates/skills/map-learn/SKILL.md](../src/mapify_cli/templates/skills/map-learn/SKILL.md)
-- [src/mapify_cli/templates/commands/map-learn.md](../src/mapify_cli/templates/commands/map-learn.md)
 - [tests/test_skills.py](../tests/test_skills.py)
 - [docs/USAGE.md](./USAGE.md)
 - [docs/ARCHITECTURE.md](./ARCHITECTURE.md)
