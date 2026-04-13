@@ -15,7 +15,7 @@ For long-running work, the canonical MAP flows maintain branch-scoped artifacts 
 /map-efficient implement the approved plan
 /map-check
 /map-review
-/map-learn   # immediately, or later from the generated handoff
+/map-learn [workflow-summary]   # optional; omit to auto-load the generated handoff
 ```
 
 ### Full TDD flow
@@ -47,7 +47,7 @@ In targeted TDD, `/map-tdd ST-001` now stops after the red phase once it has wri
 
 Philosophically, MAP still ends with `LEARN`. Runtime keeps that step soft and token-aware by auto-writing `.map/<branch>/learning-handoff.md` and `.json` after `/map-efficient`, `/map-debug`, `/map-check`, and `/map-review`, so `/map-learn` can auto-load the workflow context with no manual reconstruction. The same handoff write also updates `learning-metrics.json` with repeated learned-rule violation signals when current findings overlap existing rules, so teams can tell whether saved lessons are actually reducing repeat mistakes.
 
-Implementation note: `/map-learn` is now maintained skill-first. The canonical slash surface lives in `.claude/skills/map-learn/SKILL.md`; MAP no longer ships a duplicate `.claude/commands/map-learn.md`, so there is only one place to update the learning workflow.
+Implementation note: `/map-learn` is now maintained skill-first. The canonical slash surface lives in `.claude/skills/map-learn/SKILL.md`; MAP no longer ships a duplicate `.claude/commands/map-learn.md`, so there is only one place to update the learning workflow. The slash surface now advertises an optional `[workflow-summary]` argument, but zero-argument mode still auto-loads `.map/<branch>/learning-handoff.md` when present.
 
 ## Navigation
 

@@ -55,7 +55,7 @@ claude
 | `/map-tdd` | Test-first implementation workflow |
 | `/map-release` | Package release workflow |
 | `/map-resume` | Resume interrupted workflows |
-| `/map-learn` | Extract lessons after workflow completion |
+| `/map-learn` | Extract lessons after workflow completion; optional `[workflow-summary]` |
 
 [Detailed usage and options →](docs/USAGE.md)
 
@@ -69,7 +69,7 @@ Canonical MAP flows:
 
 These workflows maintain branch-scoped artifacts like `code-review-001.md`, `qa-001.md`, `verification-summary.md`, `pr-draft.md`, `artifact_manifest.json`, and run dossiers under `.map/<branch>/`. Targeted TDD flows also persist `test_contract_ST-00N.md` and `test_handoff_ST-00N.json` so `/map-task` can resume implementation from a clean red-phase handoff.
 
-`LEARN` is still the philosophical end of the MAP cycle, but runtime keeps it soft: `/map-efficient`, `/map-debug`, `/map-check`, and `/map-review` now write `learning-handoff.md` / `.json` under `.map/<branch>/`, so `/map-learn` can run immediately or later without rebuilding context by hand.
+`LEARN` is still the philosophical end of the MAP cycle, but runtime keeps it soft: `/map-efficient`, `/map-debug`, `/map-check`, and `/map-review` now write `learning-handoff.md` / `.json` under `.map/<branch>/`, so `/map-learn [workflow-summary]` can run immediately with an explicit summary or later with no argument by auto-loading the generated handoff.
 
 ## How It Works
 

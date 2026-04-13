@@ -1,10 +1,13 @@
 """
 Tests for MAP Framework skill structure, frontmatter, and trigger compliance.
 
-Validates that all skills follow the Anthropic Skills Guide best practices:
+Validates that shipped skills keep a clean, Claude-compatible metadata surface:
 - Valid YAML frontmatter with --- delimiters
 - Descriptions include trigger phrases ("Use when")
 - Descriptions include negative triggers ("Do NOT use")
+- Descriptions stay within the Claude skill listing truncation limit
+- Frontmatter only uses the MAP-supported key set
+- map-* references in descriptions resolve to shipped commands or skills
 - Skill folder names use kebab-case
 - No README.md inside skill folders (per Anthropic guide)
 - skill-rules.json has entries for all skills
@@ -17,6 +20,22 @@ from pathlib import Path
 
 import pytest
 import yaml
+
+SUPPORTED_FRONTMATTER_FIELDS = {
+    "allowed-tools",
+    "argument-hint",
+    "context",
+    "description",
+    "disable-model-invocation",
+    "effort",
+    "hooks",
+    "metadata",
+    "model",
+    "name",
+    "paths",
+    "user-invocable",
+    "version",
+}
 
 
 class TestSkillStructure:
@@ -35,6 +54,10 @@ class TestSkillStructure:
         return project_root / "src" / "mapify_cli" / "templates" / "skills"
 
     @pytest.fixture
+    def templates_commands_dir(self, project_root):
+        return project_root / "src" / "mapify_cli" / "templates" / "commands"
+
+    @pytest.fixture
     def skill_folders(self, skills_dir):
         """Return list of skill folder names (excluding files)."""
         if not skills_dir.exists():
@@ -51,6 +74,13 @@ class TestSkillStructure:
         if not rules_file.exists():
             pytest.skip("skill-rules.json doesn't exist")
         return json.loads(rules_file.read_text())
+
+    @pytest.fixture
+    def known_map_surfaces(self, skill_folders, templates_commands_dir):
+        command_names = {
+            path.stem for path in templates_commands_dir.glob("map-*.md")
+        }
+        return set(skill_folders) | command_names
 
     def _parse_frontmatter(self, skill_md_path: Path) -> dict:
         """Parse YAML frontmatter from a SKILL.md file."""
@@ -156,6 +186,62 @@ class TestSkillStructure:
             assert has_negative, (
                 f"Skill '{folder}' description doesn't include negative triggers. "
                 f"Add 'Do NOT use for ...' to the description."
+            )
+
+    def test_descriptions_fit_claude_skill_listing_limit(
+        self, skills_dir, skill_folders
+    ):
+        """Descriptions should stay under the 250-char Claude listing limit."""
+        for folder in skill_folders:
+            skill_file = skills_dir / folder / "SKILL.md"
+            fm = self._parse_frontmatter(skill_file)
+            desc = fm.get("description", "")
+            assert len(desc) <= 250, (
+                f"Skill '{folder}' description is {len(desc)} chars; "
+                "keep it at or under 250 chars to avoid UI truncation."
+            )
+
+    def test_frontmatter_uses_supported_fields(self, skills_dir, skill_folders):
+        """Skill frontmatter should stay within MAP's supported key set."""
+        for folder in skill_folders:
+            skill_file = skills_dir / folder / "SKILL.md"
+            fm = self._parse_frontmatter(skill_file)
+            unsupported = sorted(set(fm) - SUPPORTED_FRONTMATTER_FIELDS)
+            assert not unsupported, (
+                f"Skill '{folder}' uses unsupported frontmatter fields: "
+                f"{', '.join(unsupported)}"
+            )
+
+    def test_description_map_references_resolve(
+        self, skills_dir, skill_folders, known_map_surfaces
+    ):
+        """map-* references in descriptions should point at shipped surfaces."""
+        for folder in skill_folders:
+            skill_file = skills_dir / folder / "SKILL.md"
+            fm = self._parse_frontmatter(skill_file)
+            desc = fm.get("description", "")
+            referenced = set(re.findall(r"\b(map-[a-z0-9-]+)\b", desc))
+            unknown = sorted(referenced - known_map_surfaces)
+            assert not unknown, (
+                f"Skill '{folder}' references non-shipped MAP surfaces in its "
+                f"description: {', '.join(unknown)}"
+            )
+
+    def test_manual_skills_advertise_argument_hint(self, skills_dir, skill_folders):
+        """Manual slash skills should expose an argument hint for the UI."""
+        for folder in skill_folders:
+            skill_file = skills_dir / folder / "SKILL.md"
+            fm = self._parse_frontmatter(skill_file)
+            if not fm.get("disable-model-invocation"):
+                continue
+            hint = fm.get("argument-hint", "")
+            assert hint, (
+                f"Skill '{folder}' disables model invocation but has no "
+                "argument-hint for manual use."
+            )
+            assert hint.startswith("[") and hint.endswith("]"), (
+                f"Skill '{folder}' argument-hint '{hint}' should document the "
+                "manual invocation shape."
             )
 
     # --- Content section tests ---
