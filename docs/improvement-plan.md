@@ -310,21 +310,6 @@
 - Add metrics for learn adoption, deferred learn usage, and repeated learned-rule violations, so MAP can improve uptake without turning learning into a hard gate.
 
 
-## Repeated learned-rule violation tracking [2604.035-3]
-
-**Parent:** `2604.035`
-**Benefit Hypothesis**: Once MAP records handoff generation and `/map-learn` consumption, the next leverage point is measuring whether preserved lessons actually reduce repeated mistakes. Detecting when Monitor/review findings recur after relevant learned rules already exist will show whether `LEARN` is changing behavior or only producing documentation.
-**Confidence**: 0.58
-**Reasoning**: The newly added handoff adoption metrics answer whether users are invoking deferred learning, but they do not yet answer whether the learned rules are effective. That second question needs issue-to-rule correlation across Monitor/review artifacts and `.claude/rules/learned/`, which is a distinct implementation slice with different validation needs than the basic generation/consumption counters.
-
-### Proposed Changes
-
-- Define a lightweight correlation scheme between active findings (`active-issues.json`, review artifacts, verification summaries) and learned-rule files or rule bullet identifiers.
-- Record a metrics event when a finding repeats after a matching learned rule already exists, so MAP can distinguish “learning happened” from “learning changed future behavior”.
-- Add focused fixtures/tests covering at least one repeated-issue case and one non-match case, so the metric is not just a heuristic without regression coverage.
-- Surface the repeated-violation counts in `.claude/metrics/agent_metrics.jsonl` and, if needed, extend `learning-metrics.json` with a small derived summary.
-
-
 ## Clean-session TEST→CODE handoff for TDD workflows [2604.036]
 
 **Benefit Hypothesis**: Forcing test authoring and implementation to happen in separate sessions/contexts will reduce “tests that merely bless the implementation”, catch spec misunderstandings earlier, and improve contract quality on risky subtasks. The measurable target is fewer trivial/pass-without-code tests and fewer post-implementation revisions caused by weak test contracts.

@@ -1,6 +1,7 @@
 """Tests for map_step_runner human-readable artifact helpers."""
 
 import json
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -352,6 +353,171 @@ def test_record_learning_consumption_tracks_inline_summaries(branch_workspace):
     assert metrics["counters"]["manual_summary_count"] == 1
     assert metrics["counters"]["pending_handoff_count"] == 0
     assert metrics["events"][-1]["event"] == "learning_manual_summary_recorded"
+
+
+def test_write_learning_handoff_records_repeated_rule_violations(branch_workspace):
+    learned_rules_dir = Path(".claude/rules/learned")
+    learned_rules_dir.mkdir(parents=True)
+    (learned_rules_dir / "implementation-patterns.md").write_text(
+        "---\n"
+        "paths:\n"
+        '  - "**/*.py"\n'
+        "---\n\n"
+        "# Implementation Patterns (Learned)\n\n"
+        "- **Validation Functions Must Return None on Invalid** (2026-04-12): "
+        "When validation functions receive invalid input, return None because "
+        "callers rely on None as the failure signal. [workflow: map-learn]\n",
+        encoding="utf-8",
+    )
+    (branch_workspace / "active-issues.json").write_text(
+        json.dumps(
+            {
+                "updated_at": "2026-04-13T08:00:00Z",
+                "issues": [
+                    {
+                        "id": "VER-001",
+                        "stage": "verification",
+                        "source_artifact": "verification-summary.md",
+                        "status": "open",
+                        "summary": "src/service.py:12 validation function returned data on invalid input",
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = map_step_runner.write_learning_handoff(
+        "map-check",
+        "Auth validation",
+        "NEEDS WORK",
+        "Fix the validation contract",
+    )
+
+    assert result["status"] == "success"
+    payload = json.loads((branch_workspace / "learning-handoff.json").read_text())
+    repeated = payload["artifacts"]["repeated_violation_summary"]
+    assert repeated["finding_count"] == 1
+    assert repeated["matched_count"] == 1
+    assert repeated["matches"][0]["rule_title"] == "Validation Functions Must Return None on Invalid"
+    assert repeated["matches"][0]["path_match"] is True
+
+    metrics = json.loads((branch_workspace / "learning-metrics.json").read_text())
+    assert metrics["counters"]["repeated_violation_scan_count"] == 1
+    assert metrics["counters"]["repeated_violation_match_count"] == 1
+    assert metrics["events"][-1]["event"] == "learning_repeated_violation_detected"
+
+    markdown = (branch_workspace / "learning-handoff.md").read_text(encoding="utf-8")
+    assert "Learning Effectiveness Signals" in markdown
+    assert "Validation Functions Must Return None on Invalid" in markdown
+
+
+def test_write_learning_handoff_leaves_repeated_violation_summary_empty_on_non_match(
+    branch_workspace,
+):
+    learned_rules_dir = Path(".claude/rules/learned")
+    learned_rules_dir.mkdir(parents=True)
+    (learned_rules_dir / "error-patterns.md").write_text(
+        "# Error Patterns (Learned)\n\n"
+        "- **Idempotent File Backups Need Timestamps** (2026-04-12): "
+        "When creating backups, use timestamps so repeated upgrades do not overwrite "
+        "customizations. [workflow: map-learn]\n",
+        encoding="utf-8",
+    )
+    (branch_workspace / "active-issues.json").write_text(
+        json.dumps(
+            {
+                "updated_at": "2026-04-13T08:00:00Z",
+                "issues": [
+                    {
+                        "id": "VER-001",
+                        "stage": "verification",
+                        "source_artifact": "verification-summary.md",
+                        "status": "open",
+                        "summary": "OAuth callback misses CSRF state verification",
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = map_step_runner.write_learning_handoff(
+        "map-review",
+        "OAuth review",
+        "NEEDS WORK",
+        "Add CSRF protection",
+    )
+
+    assert result["status"] == "success"
+    payload = json.loads((branch_workspace / "learning-handoff.json").read_text())
+    repeated = payload["artifacts"]["repeated_violation_summary"]
+    assert repeated["finding_count"] == 1
+    assert repeated["matched_count"] == 0
+    assert repeated["matches"] == []
+
+    metrics = json.loads((branch_workspace / "learning-metrics.json").read_text())
+    assert metrics["counters"]["repeated_violation_scan_count"] == 1
+    assert metrics["counters"]["repeated_violation_match_count"] == 0
+
+    event_log = Path(".claude/metrics/agent_metrics.jsonl").read_text(encoding="utf-8")
+    assert "learning_repeated_violation_detected" not in event_log
+
+
+def test_map_step_runner_cli_write_learning_handoff_records_repeated_violation_smoke(
+    tmp_path,
+):
+    (tmp_path / ".map" / "default").mkdir(parents=True)
+    learned_rules_dir = tmp_path / ".claude" / "rules" / "learned"
+    learned_rules_dir.mkdir(parents=True)
+    (learned_rules_dir / "implementation-patterns.md").write_text(
+        "# Implementation Patterns (Learned)\n\n"
+        "- **Validation Functions Must Return None on Invalid** (2026-04-12): "
+        "When validation functions receive invalid input, return None because "
+        "callers rely on None as the failure signal. [workflow: map-learn]\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".map" / "default" / "active-issues.json").write_text(
+        json.dumps(
+            {
+                "updated_at": "2026-04-13T08:00:00Z",
+                "issues": [
+                    {
+                        "id": "VER-001",
+                        "stage": "verification",
+                        "source_artifact": "verification-summary.md",
+                        "status": "open",
+                        "summary": "validation function returned data on invalid input",
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS_PATH / "map_step_runner.py"),
+            "write_learning_handoff",
+            "map-check",
+            "CLI smoke task",
+            "NEEDS WORK",
+            "Fix validation handling",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "success"
+    handoff = json.loads((tmp_path / payload["json_path"]).read_text())
+    assert handoff["artifacts"]["repeated_violation_summary"]["matched_count"] == 1
 
 
 def test_classify_learning_consumption_mode_distinguishes_immediate_vs_deferred():

@@ -45,7 +45,7 @@ The full TDD flow is the primary test-first path. The targeted subtask flow is t
 
 In targeted TDD, `/map-tdd ST-001` now stops after the red phase once it has written `test_contract_ST-001.md` and `test_handoff_ST-001.json`. `/map-task ST-001` detects those artifacts and resumes at implementation time instead of re-running research or test authoring.
 
-Philosophically, MAP still ends with `LEARN`. Runtime keeps that step soft and token-aware by auto-writing `.map/<branch>/learning-handoff.md` and `.json` after `/map-efficient`, `/map-debug`, `/map-check`, and `/map-review`, so `/map-learn` can auto-load the workflow context with no manual reconstruction.
+Philosophically, MAP still ends with `LEARN`. Runtime keeps that step soft and token-aware by auto-writing `.map/<branch>/learning-handoff.md` and `.json` after `/map-efficient`, `/map-debug`, `/map-check`, and `/map-review`, so `/map-learn` can auto-load the workflow context with no manual reconstruction. The same handoff write also updates `learning-metrics.json` with repeated learned-rule violation signals when current findings overlap existing rules, so teams can tell whether saved lessons are actually reducing repeat mistakes.
 
 ## Navigation
 
