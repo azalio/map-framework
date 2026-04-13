@@ -2,12 +2,10 @@
 name: map-planning
 version: "1.0.0"
 description: >-
-  File-based planning for MAP Framework with branch-scoped task tracking
-  in .map/ directory. Use when user says "create a plan", "track progress",
-  "show task status", or needs persistent planning across agent sessions.
-  Prevents goal drift via automatic plan synchronization. Do NOT use for
-  workflow selection (use map-workflows-guide) or CLI errors (use
-  map-cli-reference).
+  Branch-scoped MAP planning in `.map/`. Use when the user needs a
+  persistent task plan, progress tracking, or resume support across
+  sessions. Keeps focus synced before edits. Do NOT use for tiny one-shot
+  tasks.
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 metadata:
   author: azalio

@@ -1,5 +1,13 @@
 # MAP Framework Improvement Done
 
+## Official-frontmatter hygiene for MAP skills [2604.031]
+
+- Date: 2026-04-13
+- Shortened the shipped `map-planning` and `map-learn` skill descriptions to stay under Claude's 250-character listing limit, while removing stale references to non-shipped `map-*` surfaces from frontmatter.
+- Added `argument-hint: "[workflow-summary]"` to the skill-backed `/map-learn` surface so manual invocation now advertises its optional workflow summary input without changing zero-argument handoff loading.
+- Added focused metadata lint coverage in `tests/test_skills.py` for description length, supported frontmatter keys, broken `map-*` description references, and manual-skill argument hints.
+- Synced the `.claude/skills/` changes into `src/mapify_cli/templates/skills/`, updated `README.md` and `docs/USAGE.md`, and confirmed the repo-built `uv run mapify init ...` flow emits the new skill frontmatter.
+
 ## Learning handoff artifacts and zero-argument `/map-learn` [2604.035-1]
 
 - Date: 2026-04-12

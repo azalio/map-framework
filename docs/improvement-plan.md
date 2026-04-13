@@ -213,22 +213,6 @@
 - Update `workflow-rules.json` and command docs to reflect that “small/simple/quick” workflows should bias toward lower effort and minimal orchestration, while planning/review/release workflows intentionally permit more reasoning depth.
 
 
-## Official-frontmatter hygiene for MAP skills [2604.031]
-
-**Benefit Hypothesis**: Bringing MAP skill metadata in line with the official Claude Code skill frontmatter guidance will improve discoverability, autocomplete quality, and trigger accuracy, while reducing misleading or truncated descriptions. The immediate target is more reliable manual invocation and better automatic loading decisions.
-**Confidence**: 0.82
-**Reasoning**: The official skills docs define a broader frontmatter surface than the older open-standard validator: `disable-model-invocation`, `allowed-tools`, `hooks`, `argument-hint`, `user-invocable`, `paths`, `model`, `effort`, and `context` are all valid Claude Code fields. That means MAP’s use of `disable-model-invocation`, `allowed-tools`, and skill-local hooks is legitimate. The real issue is metadata quality. The docs also note that descriptions longer than 250 characters are truncated in the skill listing. MAP’s `map-planning` description is currently 371 characters, which means part of its trigger guidance is likely being cut off in the UI/context. It also references `map-workflows-guide` and `map-cli-reference`, which are not actually shipped in the current skill set.
-**Why Not Already Tried**: Existing MAP work focused on capability and orchestration, not on the UX and trigger behavior of the skill catalog itself. The platform guidance on description truncation and invocation-control fields is also newer than many command-era prompt patterns.
-
-### Proposed Changes
-
-- Shorten every skill description to front-load the core use case within the first 150-200 characters, and keep the total under the official 250-character truncation threshold.
-- Remove references to non-shipped skills from frontmatter descriptions, especially in `map-planning`. If those skills are planned, reference docs or concepts instead of unresolved skill names.
-- Add `argument-hint` to manually invoked task skills. For example, `map-learn` should advertise something like `[workflow-summary]` so `/map-learn` is easier to use correctly from the slash menu.
-- Review whether `user-invocable` and `paths` would improve future MAP skills. Reference skills that should load automatically but not clutter the slash menu can use `user-invocable: false`, while file-scoped skills can use `paths` for more precise activation.
-- Add a metadata lint pass for names, description length, missing/broken cross-skill references, and unsupported frontmatter relative to MAP’s chosen target runtime.
-
-
 ## Explicit reference-vs-task skill architecture [2604.032]
 
 **Benefit Hypothesis**: Reclassifying MAP skills according to the official Claude Code split between reference content and task content will reduce conceptual confusion, improve skill authoring discipline, and make MAP’s documentation match actual runtime behavior. This should lower accidental misuse of skills and make it easier to decide when a new behavior belongs in a skill versus a subagent or command.

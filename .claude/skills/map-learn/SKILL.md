@@ -1,7 +1,12 @@
 ---
 name: map-learn
-description: Extract and preserve lessons from completed workflows. Use when you want to capture patterns after /map-efficient, /map-debug, or /map-fast completes. Do NOT use for active workflow execution or trivial tasks with no reusable patterns.
+description: >-
+  Capture reusable lessons after a completed MAP workflow. Use when a MAP
+  run has finished and you want rules written to
+  `.claude/rules/learned/` from a workflow summary or handoff. Do NOT use
+  during active implementation.
 disable-model-invocation: true
+argument-hint: "[workflow-summary]"
 ---
 
 # MAP Learn - Post-Workflow Learning with Persistence
