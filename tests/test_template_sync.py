@@ -196,6 +196,8 @@ class TestCommandTemplateSynchronization:
             "map-release.md",
             "map-resume.md",
             "map-review.md",
+            "map-task.md",
+            "map-tdd.md",
         ],
     )
     def test_command_content_matches(
