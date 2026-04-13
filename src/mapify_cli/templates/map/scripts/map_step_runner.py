@@ -27,10 +27,12 @@ TESTING:
     update_step_state('ST-001', 'actor', 'ACTOR_CALLED')"
 """
 
+import fnmatch
 import json
 import os
 import re
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -78,7 +80,56 @@ LEARNING_METRICS_COUNTER_DEFAULTS = {
     "never_used_handoff_count": 0,
     "manual_summary_count": 0,
     "pending_handoff_count": 0,
+    "repeated_violation_scan_count": 0,
+    "repeated_violation_match_count": 0,
 }
+LEARNING_MATCH_STOPWORDS = {
+    "after",
+    "always",
+    "before",
+    "branch",
+    "because",
+    "between",
+    "could",
+    "failed",
+    "failure",
+    "false",
+    "file",
+    "files",
+    "from",
+    "have",
+    "into",
+    "issue",
+    "just",
+    "later",
+    "must",
+    "needs",
+    "none",
+    "only",
+    "path",
+    "paths",
+    "return",
+    "should",
+    "that",
+    "their",
+    "them",
+    "then",
+    "there",
+    "these",
+    "this",
+    "true",
+    "when",
+    "with",
+    "workflow",
+}
+LEARNED_RULE_BULLET_RE = re.compile(
+    r"^- \*\*(?P<title>.+?)\*\* \((?P<date>\d{4}-\d{2}-\d{2})\): (?P<body>.+?)(?: \[workflow: .+?\])?$"
+)
+SECTION_HEADING_RE = re.compile(r"^##\s+(?P<title>.+?)\s*$")
+PATH_HINT_RE = re.compile(
+    r"(?P<path>(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+)(?::\d+)?"
+)
+TOKEN_RE = re.compile(r"[a-z0-9]{4,}")
 
 
 def _utc_timestamp() -> str:
@@ -102,6 +153,17 @@ def _write_json_file(path: Path, payload: dict) -> None:
         json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8"
     )
     tmp_file.replace(path)
+
+
+def _read_json_file(path: Path) -> Optional[dict[str, object]]:
+    """Read a JSON object from disk, returning None on invalid or missing files."""
+    if not path.exists():
+        return None
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    return loaded if isinstance(loaded, dict) else None
 
 
 def artifact_manifest_path(branch: Optional[str] = None) -> Path:
@@ -519,6 +581,328 @@ def record_learning_consumption(
     if workflow_name:
         result["workflow"] = workflow_name
     return result
+
+
+def _normalize_learning_token(token: str) -> str:
+    """Normalize lightweight text tokens for repeated-violation matching."""
+    normalized = token.lower()
+    if normalized.endswith("ies") and len(normalized) > 5:
+        normalized = normalized[:-3] + "y"
+    elif normalized.endswith("es") and len(normalized) > 5:
+        normalized = normalized[:-2]
+    elif normalized.endswith("s") and len(normalized) > 4:
+        normalized = normalized[:-1]
+    return normalized
+
+
+def _tokenize_learning_text(text: str) -> set[str]:
+    """Extract normalized non-trivial tokens from free-form learning text."""
+    tokens = {
+        _normalize_learning_token(match.group(0))
+        for match in TOKEN_RE.finditer((text or "").lower())
+    }
+    return {
+        token
+        for token in tokens
+        if token and token not in LEARNING_MATCH_STOPWORDS
+    }
+
+
+def _slugify_learning_text(text: str) -> str:
+    """Build a stable slug for lightweight identifiers."""
+    slug = re.sub(r"[^a-z0-9]+", "-", (text or "").strip().lower()).strip("-")
+    return slug or "rule"
+
+
+def _parse_rule_paths(content: str) -> list[str]:
+    """Extract optional paths frontmatter globs from a learned-rule markdown file."""
+    lines = content.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return []
+
+    paths: list[str] = []
+    in_paths = False
+    for raw_line in lines[1:]:
+        line = raw_line.rstrip()
+        stripped = line.strip()
+        if stripped == "---":
+            break
+        if stripped == "paths:":
+            in_paths = True
+            continue
+        if not in_paths:
+            continue
+        if stripped.startswith("- "):
+            candidate = stripped[2:].strip().strip("\"'")
+            if candidate:
+                paths.append(candidate)
+            continue
+        if stripped:
+            in_paths = False
+    return paths
+
+
+def _load_learned_rules() -> list[dict[str, object]]:
+    """Load learned-rule bullets plus their optional path scopes."""
+    rules_dir = Path(".claude/rules/learned")
+    if not rules_dir.exists():
+        return []
+
+    rules: list[dict[str, object]] = []
+    for rule_file in sorted(rules_dir.glob("*.md")):
+        if rule_file.name == "README.md":
+            continue
+        try:
+            content = rule_file.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+
+        rule_paths = _parse_rule_paths(content)
+        for raw_line in content.splitlines():
+            match = LEARNED_RULE_BULLET_RE.match(raw_line.strip())
+            if not match:
+                continue
+            title = match.group("title").strip()
+            body = match.group("body").strip()
+            rules.append(
+                {
+                    "rule_id": f"{rule_file.stem}:{_slugify_learning_text(title)}",
+                    "title": title,
+                    "body": body,
+                    "file": str(rule_file),
+                    "paths": rule_paths,
+                    "title_tokens": _tokenize_learning_text(title),
+                    "body_tokens": _tokenize_learning_text(body),
+                }
+            )
+    return rules
+
+
+def _normalize_section_title(title: str) -> str:
+    """Normalize markdown section headings for comparison."""
+    return re.sub(r"\s+", " ", (title or "").strip().lower())
+
+
+def _extract_section_bullets(content: str, headings: set[str]) -> list[str]:
+    """Extract bullet items from selected markdown sections."""
+    allowed = {_normalize_section_title(item) for item in headings}
+    bullets: list[str] = []
+    current_heading = ""
+
+    for raw_line in content.splitlines():
+        heading_match = SECTION_HEADING_RE.match(raw_line.strip())
+        if heading_match:
+            current_heading = _normalize_section_title(heading_match.group("title"))
+            continue
+
+        stripped = raw_line.strip()
+        if current_heading not in allowed or not stripped.startswith("- "):
+            continue
+
+        bullet = stripped[2:].strip()
+        if bullet.lower() in {"(none)", "[not recorded]"}:
+            continue
+        bullets.append(bullet)
+
+    return bullets
+
+
+def _extract_path_hints(text: str) -> list[str]:
+    """Extract likely repo-relative file paths from finding text."""
+    hints: list[str] = []
+    seen: set[str] = set()
+    for match in PATH_HINT_RE.finditer(text or ""):
+        candidate = match.group("path").strip("`'\"").rstrip(".,)]")
+        normalized = candidate.lstrip("./")
+        if not normalized or normalized in seen:
+            continue
+        hints.append(normalized)
+        seen.add(normalized)
+    return hints
+
+
+def _collect_repeated_violation_findings(branch: str) -> list[dict[str, object]]:
+    """Collect findings from branch artifacts that can be correlated with learned rules."""
+    branch_dir = get_branch_dir(branch)
+    findings: list[dict[str, object]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def append_finding(source: str, text: str, source_artifact: str = "") -> None:
+        normalized_text = (text or "").strip()
+        if not normalized_text:
+            return
+        dedupe_key = (source, normalized_text)
+        if dedupe_key in seen:
+            return
+        seen.add(dedupe_key)
+        findings.append(
+            {
+                "source": source,
+                "source_artifact": source_artifact or source,
+                "text": normalized_text,
+                "path_hints": _extract_path_hints(normalized_text),
+            }
+        )
+
+    active_issues_payload = _read_json_file(branch_dir / "active-issues.json") or {}
+    active_issues = active_issues_payload.get("issues", [])
+    if isinstance(active_issues, list):
+        for issue in active_issues:
+            if not isinstance(issue, dict):
+                continue
+            append_finding(
+                "active-issues.json",
+                str(issue.get("summary") or issue.get("title") or ""),
+                str(issue.get("source_artifact") or "active-issues.json"),
+            )
+
+    verification_summary = _read_branch_artifact_text(branch_dir, "verification-summary.md")
+    for bullet in _extract_section_bullets(verification_summary, {"Findings"}):
+        append_finding("verification-summary.md", bullet)
+
+    review_handoff = build_review_handoff(branch)
+    code_review = str(review_handoff.get("code_review") or "")
+    code_review_path = str(review_handoff.get("code_review_path") or "code-review")
+    for bullet in _extract_section_bullets(
+        code_review, {"High", "Medium", "Low", "Open Concerns"}
+    ):
+        append_finding(code_review_path, bullet, code_review_path)
+
+    return findings
+
+
+def _paths_match_rule_scope(rule_paths: list[str], path_hints: list[str]) -> bool:
+    """Return True when a finding path fits at least one learned-rule glob."""
+    for path_hint in path_hints:
+        for pattern in rule_paths:
+            if fnmatch.fnmatch(path_hint, pattern) or fnmatch.fnmatch(
+                f"./{path_hint}", pattern
+            ):
+                return True
+    return False
+
+
+def _match_finding_to_learned_rule(
+    finding: dict[str, object], learned_rules: list[dict[str, object]]
+) -> Optional[dict[str, object]]:
+    """Find the best learned-rule match for one finding, if any."""
+    finding_text = str(finding.get("text") or "")
+    finding_tokens = _tokenize_learning_text(finding_text)
+    if not finding_tokens:
+        return None
+
+    path_hints = [
+        str(path)
+        for path in finding.get("path_hints", [])
+        if isinstance(path, str) and path.strip()
+    ]
+    best_match: Optional[dict[str, object]] = None
+
+    for rule in learned_rules:
+        rule_paths = [
+            str(path)
+            for path in rule.get("paths", [])
+            if isinstance(path, str) and path.strip()
+        ]
+        path_match = _paths_match_rule_scope(rule_paths, path_hints) if path_hints else False
+        if rule_paths and path_hints and not path_match:
+            continue
+
+        title_tokens = set(rule.get("title_tokens", set()))
+        body_tokens = set(rule.get("body_tokens", set()))
+        title_overlap = sorted(finding_tokens & title_tokens)
+        body_overlap = sorted((finding_tokens & body_tokens) - set(title_overlap))
+        score = len(title_overlap) * 3 + len(body_overlap)
+        if path_match:
+            score += 2
+
+        qualifies = len(title_overlap) >= 2 or score >= 4
+        if not qualifies:
+            continue
+
+        match = {
+            "rule_id": str(rule["rule_id"]),
+            "rule_title": str(rule["title"]),
+            "rule_file": str(rule["file"]),
+            "rule_paths": rule_paths,
+            "finding_source": str(finding.get("source") or ""),
+            "finding_source_artifact": str(finding.get("source_artifact") or ""),
+            "finding_text": finding_text,
+            "finding_path_hints": path_hints,
+            "matched_tokens": title_overlap + body_overlap,
+            "score": score,
+            "path_match": path_match,
+        }
+        if not best_match or int(match["score"]) > int(best_match["score"]):
+            best_match = match
+
+    return best_match
+
+
+def record_repeated_learning_violations(
+    branch: Optional[str] = None, metrics: Optional[dict[str, object]] = None
+) -> dict[str, object]:
+    """Correlate current findings with learned rules and persist a summary."""
+    branch_name = branch or get_branch_name()
+    learned_rules = _load_learned_rules()
+    findings = _collect_repeated_violation_findings(branch_name)
+    matches = []
+    for finding in findings:
+        match = _match_finding_to_learned_rule(finding, learned_rules)
+        if match:
+            matches.append(match)
+
+    summary = {
+        "checked_at": _utc_timestamp(),
+        "finding_count": len(findings),
+        "learned_rule_count": len(learned_rules),
+        "matched_count": len(matches),
+        "matches": matches[:10],
+    }
+
+    metrics_payload = metrics if isinstance(metrics, dict) else load_learning_metrics(branch_name)
+    counters = metrics_payload.setdefault("counters", {})
+    if not isinstance(counters, dict):
+        counters = {}
+        metrics_payload["counters"] = counters
+    counters["repeated_violation_scan_count"] = (
+        int(counters.get("repeated_violation_scan_count", 0) or 0) + 1
+    )
+    counters["repeated_violation_match_count"] = (
+        int(counters.get("repeated_violation_match_count", 0) or 0) + len(matches)
+    )
+    metrics_payload["repeated_violation_summary"] = summary
+
+    if matches:
+        event = {
+            "event": "learning_repeated_violation_detected",
+            "timestamp": summary["checked_at"],
+            "branch": branch_name,
+            "match_count": len(matches),
+            "matches": matches[:5],
+        }
+        _append_learning_metrics_event(metrics_payload, event)
+
+    metrics_result = save_learning_metrics(metrics_payload, branch_name)
+    if matches:
+        _append_metrics_event(
+            {
+                "event": "learning_repeated_violation_detected",
+                "category": "learning",
+                "timestamp": summary["checked_at"],
+                "branch": branch_name,
+                "match_count": len(matches),
+                "matches": matches[:5],
+                "counters": dict(metrics_result["metrics"]["counters"]),
+            }
+        )
+
+    return {
+        "status": "success",
+        "summary": summary,
+        "metrics": metrics_result["metrics"],
+        "path": metrics_result["path"],
+    }
 
 
 def record_workflow_fit(
@@ -1239,6 +1623,20 @@ def write_learning_handoff(
     metrics_result = _record_learning_handoff_generation_metrics(
         workflow_name, generated_at, markdown_path, json_path, branch_name
     )
+    repeated_violation_result = record_repeated_learning_violations(
+        branch_name, metrics_result["metrics"]
+    )
+    repeated_violation_summary = repeated_violation_result["summary"]
+
+    repeated_violation_lines = [
+        f"- Findings checked: {repeated_violation_summary['finding_count']}",
+        f"- Learned rules considered: {repeated_violation_summary['learned_rule_count']}",
+        f"- Repeated-rule matches: {repeated_violation_summary['matched_count']}",
+    ]
+    for match in repeated_violation_summary["matches"]:
+        repeated_violation_lines.append(
+            f"- {match['rule_title']} <= {match['finding_text']}"
+        )
 
     manifest_payload = load_artifact_manifest(branch_name)
     _set_manifest_stage(
@@ -1249,7 +1647,7 @@ def write_learning_handoff(
             _artifact_ref(markdown_path, "learning-handoff-markdown"),
             _artifact_ref(json_path, "learning-handoff-json"),
             _artifact_ref(
-                Path(metrics_result["path"]), "learning-handoff-metrics"
+                Path(repeated_violation_result["path"]), "learning-handoff-metrics"
             ),
         ],
         metadata={
@@ -1258,14 +1656,22 @@ def write_learning_handoff(
             "outcome": outcome_text,
             "next_action": next_action_text,
             "git_ref": code_state.get("git_ref", "unknown"),
-            "learning_metrics_path": metrics_result["path"],
-            "learning_metrics_counters": dict(metrics_result["metrics"]["counters"]),
+            "learning_metrics_path": repeated_violation_result["path"],
+            "learning_metrics_counters": dict(
+                repeated_violation_result["metrics"]["counters"]
+            ),
+            "repeated_violation_summary": repeated_violation_summary,
         },
     )
     manifest_result = save_artifact_manifest(manifest_payload, branch_name)
     payload["artifacts"]["artifact_manifest"] = manifest_result["manifest"]
-    payload["artifacts"]["learning_metrics"] = metrics_result["metrics"]
+    payload["artifacts"]["learning_metrics"] = repeated_violation_result["metrics"]
+    payload["artifacts"]["repeated_violation_summary"] = repeated_violation_summary
     _write_json_file(json_path, payload)
+    markdown += (
+        "\n## Learning Effectiveness Signals\n\n"
+        f"{chr(10).join(repeated_violation_lines)}\n"
+    )
     markdown_path.write_text(markdown, encoding="utf-8")
 
     return {
@@ -1276,7 +1682,7 @@ def write_learning_handoff(
         "markdown_path": str(markdown_path),
         "json_path": str(json_path),
         "manifest_path": manifest_result["path"],
-        "learning_metrics_path": metrics_result["path"],
+        "learning_metrics_path": repeated_violation_result["path"],
         "generated_at": generated_at,
     }
 

@@ -383,10 +383,11 @@ TaskDecomposer → [conditional ResearchAgent] → (3×Actor parallel → 3×Mon
 3. **Learning is a deferred closeout via /map-learn**
    - Workflow does NOT include Reflector inline
    - Completion writes `learning-handoff.md` / `.json` under `.map/<branch>/`
+   - Completion also updates `learning-metrics.json` with repeated learned-rule violation signals when current findings overlap existing learned rules
    - Separation keeps workflows fast while preserving the context needed for later learning
 
 **Token Usage:** Baseline for production workflows
-**Learning:** Deferred via `/map-learn`, powered by branch-scoped learning handoff artifacts
+**Learning:** Deferred via `/map-learn`, powered by branch-scoped learning handoff artifacts and learning-effectiveness metrics
 **Quality Gates:** Essential agents (Monitor, conditional Predictor)
 
 **Technical Details:**
@@ -405,7 +406,7 @@ for subtask in subtasks:
         # Apply changes
         apply_code_changes(actor_output)
 
-# At end: write branch-scoped learning handoff, then suggest /map-learn
+# At end: write branch-scoped learning handoff, record repeated-rule signals, then suggest /map-learn
 write_learning_handoff(...)
 print("Run /map-learn now, or later from the generated handoff")
 ```
