@@ -22,7 +22,7 @@ Deep technical documentation for MAP (Modular Agentic Planner) implementation.
 
 MAP Framework implements cognitive architecture inspired by prefrontal cortex functions, orchestrating 11 specialized agents for software development with automatic quality validation.
 
-**Key Design Principle:** Each slash command has its own unique workflow with different agent sequences. There is no single "standard" workflow — the orchestration logic is defined in `.claude/commands/map-*.md` files.
+**Key Design Principle:** Each slash surface has its own unique workflow with different agent sequences. There is no single "standard" workflow. Most orchestration logic lives in `.claude/commands/map-*.md`; `/map-learn` is maintained skill-first in `.claude/skills/map-learn/SKILL.md` so the learning workflow has a single source of truth.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -122,7 +122,8 @@ MAP Framework implements cognitive architecture inspired by prefrontal cortex fu
 ### Orchestration Model
 
 **Command-Driven Workflow:**
-- Orchestration logic implemented in slash command prompts (`.claude/commands/map-*.md`)
+- Most orchestration logic is implemented in slash command prompts (`.claude/commands/map-*.md`)
+- `/map-learn` is the exception: its canonical implementation lives in `.claude/skills/map-learn/SKILL.md` instead of a duplicate command file
 - NOT a separate agent file
 - When you run `/map-efficient`, the command prompt coordinates the workflow by calling agents sequentially via the Task tool
 

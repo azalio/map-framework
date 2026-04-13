@@ -24,3 +24,11 @@
 - Updated `write_learning_handoff` to record repeated learned-rule violation summaries in both `learning-handoff.json` and `learning-metrics.json`, including per-run match details and cumulative repeated-violation counters.
 - Emitted `learning_repeated_violation_detected` events to `.claude/metrics/agent_metrics.jsonl` whenever current findings overlap an existing learned rule, so repo-wide metrics can distinguish “we wrote rules” from “the same issue still came back”.
 - Added focused regression coverage for one repeated-issue match, one non-match, and a CLI smoke flow that exercises `python map_step_runner.py write_learning_handoff ...` end to end.
+
+## Skill-first slash command consolidation [2604.030]
+
+- Date: 2026-04-13
+- Removed the duplicate `.claude/commands/map-learn.md` and `src/mapify_cli/templates/commands/map-learn.md` files so `/map-learn` now has a single canonical implementation in `.claude/skills/map-learn/SKILL.md`.
+- Updated template sync and regression tests to treat `/map-learn` as a skill-backed slash surface while keeping the rest of the command template suite intact.
+- Updated `docs/USAGE.md`, `docs/ARCHITECTURE.md`, `docs/INSTALL.md`, and `docs/roadmap.md` to document the skill-first migration and the new installed project structure.
+- Updated `src/mapify_cli/delivery/file_copier.py` so fresh installs advertise `/map-learn` under skill-backed surfaces instead of command files, and the fallback inline command set no longer recreates the duplicate command.

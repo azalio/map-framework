@@ -192,11 +192,12 @@ class TestCommandTemplateSynchronization:
             "map-debug.md",
             "map-efficient.md",
             "map-fast.md",
-            "map-learn.md",
             "map-plan.md",
             "map-release.md",
             "map-resume.md",
             "map-review.md",
+            "map-task.md",
+            "map-tdd.md",
         ],
     )
     def test_command_content_matches(
