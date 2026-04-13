@@ -1647,7 +1647,7 @@ def write_learning_handoff(
             _artifact_ref(markdown_path, "learning-handoff-markdown"),
             _artifact_ref(json_path, "learning-handoff-json"),
             _artifact_ref(
-                Path(metrics_result["path"]), "learning-handoff-metrics"
+                Path(repeated_violation_result["path"]), "learning-handoff-metrics"
             ),
         ],
         metadata={
