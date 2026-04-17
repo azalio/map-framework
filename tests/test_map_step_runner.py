@@ -254,7 +254,10 @@ def test_write_learning_handoff_creates_artifacts_and_manifest(branch_workspace)
         payload["artifacts"]["artifact_manifest"]["stages"]["learn_handoff"]["status"]
         == "ready"
     )
-    assert payload["artifacts"]["learning_metrics"]["counters"]["handoff_generated_count"] == 1
+    assert (
+        payload["artifacts"]["learning_metrics"]["counters"]["handoff_generated_count"]
+        == 1
+    )
 
     metrics = json.loads((branch_workspace / "learning-metrics.json").read_text())
     assert metrics["counters"]["handoff_generated_count"] == 1
@@ -268,10 +271,14 @@ def test_write_learning_handoff_creates_artifacts_and_manifest(branch_workspace)
     assert f".map/{branch_workspace.name}/learning-handoff.md" in recorded_paths
     assert f".map/{branch_workspace.name}/learning-handoff.json" in recorded_paths
     assert f".map/{branch_workspace.name}/learning-metrics.json" in recorded_paths
-    assert stage["metadata"]["learning_metrics_counters"]["handoff_generated_count"] == 1
+    assert (
+        stage["metadata"]["learning_metrics_counters"]["handoff_generated_count"] == 1
+    )
 
     event_log = (
-        Path(".claude/metrics/agent_metrics.jsonl").read_text(encoding="utf-8").splitlines()
+        Path(".claude/metrics/agent_metrics.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
     )
     assert any("learning_handoff_generated" in line for line in event_log)
 
@@ -336,7 +343,9 @@ def test_record_learning_consumption_records_immediate_usage_and_reuse(
     assert second["status"] == "success"
     assert second["usage_status"] == "already_recorded"
 
-    metrics_after_reuse = json.loads((branch_workspace / "learning-metrics.json").read_text())
+    metrics_after_reuse = json.loads(
+        (branch_workspace / "learning-metrics.json").read_text()
+    )
     assert metrics_after_reuse["counters"]["handoff_consumed_count"] == 1
     assert metrics_after_reuse["counters"]["immediate_learn_count"] == 1
     assert metrics_after_reuse["counters"]["pending_handoff_count"] == 0
@@ -400,7 +409,10 @@ def test_write_learning_handoff_records_repeated_rule_violations(branch_workspac
     repeated = payload["artifacts"]["repeated_violation_summary"]
     assert repeated["finding_count"] == 1
     assert repeated["matched_count"] == 1
-    assert repeated["matches"][0]["rule_title"] == "Validation Functions Must Return None on Invalid"
+    assert (
+        repeated["matches"][0]["rule_title"]
+        == "Validation Functions Must Return None on Invalid"
+    )
     assert repeated["matches"][0]["path_match"] is True
 
     metrics = json.loads((branch_workspace / "learning-metrics.json").read_text())
@@ -534,7 +546,9 @@ def test_classify_learning_consumption_mode_distinguishes_immediate_vs_deferred(
         == "deferred"
     )
     assert (
-        map_step_runner._classify_learning_consumption_mode("bad", "2026-04-12T10:45:00Z")
+        map_step_runner._classify_learning_consumption_mode(
+            "bad", "2026-04-12T10:45:00Z"
+        )
         == "deferred"
     )
 

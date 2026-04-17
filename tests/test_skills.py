@@ -77,9 +77,7 @@ class TestSkillStructure:
 
     @pytest.fixture
     def known_map_surfaces(self, skill_folders, templates_commands_dir):
-        command_names = {
-            path.stem for path in templates_commands_dir.glob("map-*.md")
-        }
+        command_names = {path.stem for path in templates_commands_dir.glob("map-*.md")}
         return set(skill_folders) | command_names
 
     def _parse_frontmatter(self, skill_md_path: Path) -> dict:

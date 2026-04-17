@@ -943,7 +943,7 @@ class TestResumeFromTestContract:
     def test_build_resume_briefing_surfaces_contract_ready_action(
         self, branch_dir, tmp_path
     ):
-        plan_dir = self._create_plan(tmp_path, branch_dir, [("ST-001")])
+        plan_dir = self._create_plan(tmp_path, branch_dir, ["ST-001"])
         (plan_dir / "test_contract_ST-001.md").write_text(
             "# Test Contract\n", encoding="utf-8"
         )

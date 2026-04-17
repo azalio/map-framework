@@ -56,7 +56,9 @@ def test_validate_artifact_manifest_schema():
         },
     }
 
-    is_valid, errors = MODULE.validate_artifact(artifact, MODULE.ARTIFACT_MANIFEST_SCHEMA)
+    is_valid, errors = MODULE.validate_artifact(
+        artifact, MODULE.ARTIFACT_MANIFEST_SCHEMA
+    )
     assert is_valid, f"Errors: {errors}"
 
 
