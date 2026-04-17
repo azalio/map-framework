@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.0] - 2026-04-17
+
 ### Added
 - **Skill frontmatter hygiene**: Automated validation and cleanup of skill frontmatter across all MAP skills (#100)
 - **Skill-first map-learn**: `/map-learn` now operates as a skill-first workflow for better integration (#99)
