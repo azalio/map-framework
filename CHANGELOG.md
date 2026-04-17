@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Skill frontmatter hygiene**: Automated validation and cleanup of skill frontmatter across all MAP skills (#100)
+- **Skill-first map-learn**: `/map-learn` now operates as a skill-first workflow for better integration (#99)
+- **Repeated learned-rule violation tracking**: System now detects and tracks when learned rules are violated repeatedly (#98)
+- **Learning handoff artifacts**: New artifacts for preserving learning context across workflow handoffs (#97)
+
+### Changed
+- **MAP runtime alignment**: Aligned runtime with workflow-fit handoffs for smoother transitions
+- **Handoff flow improvements**: Addressed review feedback on handoff flow
+
+### Fixed
+- **Artifact timestamps and manifest branch loading**: Fixed timestamp handling in artifacts and branch loading in manifest
+
 ## [3.7.0] - 2026-04-11
 
 ### Added
