@@ -1050,6 +1050,7 @@ def doctor(debug: bool = typer.Option(False, "--debug", help="Enable debug loggi
             ".codex/config.toml": codex_dir / "config.toml",
             ".codex/skills": codex_dir / "skills",
             ".codex/agents": codex_dir / "agents",
+            ".map/scripts": project_path / ".map" / "scripts",
         }
         codex_missing = [n for n, p in codex_checks.items() if not p.exists()]
         if not codex_missing:

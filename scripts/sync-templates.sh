@@ -53,13 +53,17 @@ if [[ -d .codex ]]; then
         cp -a .codex/agents/*.toml "$templates_root/codex/agents/"
     fi
 
-    # Config + hooks
-    cp -a .codex/config.toml "$templates_root/codex/"
-    cp -a .codex/hooks.json "$templates_root/codex/"
-    find .codex/hooks -maxdepth 1 -type f | xargs -I{} cp -a {} "$templates_root/codex/hooks/"
+    # Config
+    [[ -f .codex/config.toml ]] && cp -a .codex/config.toml "$templates_root/codex/"
+    [[ -f .codex/hooks.json ]] && cp -a .codex/hooks.json "$templates_root/codex/"
+
+    # Hooks directory
+    if [[ -d .codex/hooks ]]; then
+        find .codex/hooks -maxdepth 1 -type f | xargs -I{} cp -a {} "$templates_root/codex/hooks/"
+    fi
 
     # AGENTS.md
-    cp -a .codex/AGENTS.md "$templates_root/codex/"
+    [[ -f .codex/AGENTS.md ]] && cp -a .codex/AGENTS.md "$templates_root/codex/"
 fi
 
 echo "✅ Synced .claude/*, .codex/*, and .map/scripts/* → $templates_root/"

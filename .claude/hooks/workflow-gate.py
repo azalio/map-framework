@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
-Claude Code PreToolUse Hook: Workflow Enforcement Gate
+MAP Workflow Enforcement Gate (PreToolUse Hook)
+
+Provider-agnostic: works with both Claude Code and Codex CLI.
 
 Blocks Edit/Write/MultiEdit outside of Actor-related phases.
 Uses step_state.json (orchestrator canonical state) as single source of truth.
@@ -9,7 +11,7 @@ ENFORCEMENT:
   - Edit allowed during phases: ACTOR, APPLY, TEST_WRITER
   - Edit blocked during all other phases (DECOMPOSE, MONITOR, PREDICTOR, etc.)
   - Fail-open: missing or unreadable step_state.json → allow
-  - Always allows: .map/ artifacts, ~/.claude/ memory, non-editing tools
+  - Always allows: .map/ artifacts, non-editing tools
 
 CONSTRAINTS (from step_state.json):
   - scope_glob: restrict edits to matching file patterns

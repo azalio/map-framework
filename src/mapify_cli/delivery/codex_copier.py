@@ -141,7 +141,11 @@ def create_codex_files(project_path: Path) -> dict[str, int]:
         if not agents_md_dst.exists():
             claude_md = project_path / "CLAUDE.md"
             if claude_md.exists() and not claude_md.is_symlink():
-                agents_md_dst.symlink_to("CLAUDE.md")
+                try:
+                    agents_md_dst.symlink_to("CLAUDE.md")
+                except OSError:
+                    # Symlinks unavailable (Windows/restricted fs) — copy instead
+                    shutil.copy2(claude_md, agents_md_dst)
             else:
                 shutil.copy2(agents_md_src, agents_md_dst)
             counts["docs"] += 1
