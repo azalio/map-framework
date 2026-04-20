@@ -299,6 +299,53 @@ class TestWorkflowGate:
         assert code == 0
         self._assert_denied(stdout)
 
+    # --- Step ID translation (subtask_phases stores step IDs, not phase names) ---
+
+    def test_allows_edit_when_subtask_has_step_id_actor(self, tmp_path: Path) -> None:
+        """Step ID '2.3' must translate to ACTOR (editing phase) and allow."""
+        self._setup_step_state(
+            tmp_path,
+            "master",
+            "MONITOR",
+            subtask_phases={"ST-001": "2.3"},
+        )
+        code, stdout, _ = self.run_hook(
+            {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}},
+            tmp_path,
+        )
+        assert code == 0
+        self._assert_allowed(stdout)
+
+    def test_allows_edit_when_subtask_has_step_id_test_writer(self, tmp_path: Path) -> None:
+        """Step ID '2.25' must translate to TEST_WRITER (editing phase) and allow."""
+        self._setup_step_state(
+            tmp_path,
+            "master",
+            "MONITOR",
+            subtask_phases={"ST-001": "2.25"},
+        )
+        code, stdout, _ = self.run_hook(
+            {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}},
+            tmp_path,
+        )
+        assert code == 0
+        self._assert_allowed(stdout)
+
+    def test_blocks_edit_when_subtask_has_step_id_research(self, tmp_path: Path) -> None:
+        """Step ID '2.2' must translate to RESEARCH (non-editing) and block."""
+        self._setup_step_state(
+            tmp_path,
+            "master",
+            "MONITOR",
+            subtask_phases={"ST-001": "2.2"},
+        )
+        code, stdout, _ = self.run_hook(
+            {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}},
+            tmp_path,
+        )
+        assert code == 0
+        self._assert_denied(stdout)
+
     # --- Exempt paths ---
 
     def test_allows_map_dir_edits_always(self, tmp_path: Path) -> None:

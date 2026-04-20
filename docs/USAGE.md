@@ -49,6 +49,47 @@ Philosophically, MAP still ends with `LEARN`. Runtime keeps that step soft and t
 
 Implementation note: `/map-learn` is now maintained skill-first. The canonical slash surface lives in `.claude/skills/map-learn/SKILL.md`; MAP no longer ships a duplicate `.claude/commands/map-learn.md`, so there is only one place to update the learning workflow. The slash surface now advertises an optional `[workflow-summary]` argument, but zero-argument mode still auto-loads `.map/<branch>/learning-handoff.md` when present.
 
+## Codex CLI Provider
+
+MAP Framework supports OpenAI's Codex CLI as an alternative to Claude Code.
+
+### Initializing with Codex
+
+```bash
+mapify init . --provider codex
+```
+
+This creates a `.codex/` layout instead of `.claude/`:
+- `.codex/skills/map-plan/SKILL.md` — main planning skill
+- `.codex/skills/map-fast/SKILL.md` — quick implementation
+- `.codex/skills/map-check/SKILL.md` — quality gates
+- `.codex/agents/*.toml` — agent definitions (researcher, decomposer, monitor)
+- `.codex/config.toml` — project configuration
+- `.codex/hooks.json` + `.codex/hooks/workflow-gate.py` — edit gate enforcement
+- `.map/scripts/` — shared orchestrator scripts (same as Claude provider)
+
+### Using MAP with Codex
+
+```bash
+$map-plan    # Plan and decompose complex tasks
+$map-fast    # Quick implementation with minimal validation
+$map-check   # Quality gates and verification
+```
+
+### Diagnostics
+
+All diagnostic commands auto-detect the active provider:
+
+```bash
+mapify check    # Shows codex-specific tool checks
+mapify doctor   # Validates .codex/ structure
+mapify upgrade  # Guides re-init for codex projects
+```
+
+### Provider coexistence
+
+Both `.claude/` and `.codex/` can exist in the same project. When both are present, `mapify check`/`doctor`/`upgrade` operate in codex mode. The default provider (without `--provider` flag) remains Claude Code.
+
 ## Navigation
 
 - [Usage Examples](#usage-examples)

@@ -1,0 +1,8 @@
+# Codex project configuration for MAP Framework
+[sandbox]
+# Network access needed for MCP servers
+allow_network = false
+
+[features]
+# Enable hooks for MAP workflow enforcement
+codex_hooks = true

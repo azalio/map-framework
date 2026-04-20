@@ -26,7 +26,7 @@ BANNER = """
 ╩ ╩╩ ╩╩    ╩ ╩╩ ╩
 """
 
-TAGLINE = "MAP Kit - Modular Agentic Planner Framework for Claude Code"
+TAGLINE = "MAP Kit - Modular Agentic Planner Framework"
 
 console = Console()
 

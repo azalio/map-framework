@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Codex CLI provider**: `mapify init . --provider codex` installs `.codex/` layout (skills, TOML agents, hooks) for OpenAI Codex CLI
+- **Provider abstraction**: `BaseProvider` ABC and `ClaudeProvider`/`CodexProvider` in `mapify_cli.delivery.providers`
+- **Provider-aware commands**: `mapify check`, `mapify doctor`, `mapify upgrade` now detect and adapt to the active provider
+
+### Fixed
+- **Workflow gate step-ID translation**: `subtask_phases` values (step IDs like "2.3") are now properly translated to phase names via `STEP_ID_TO_PHASE` dict before comparison against `EDITING_PHASES`
+- **get_project_health provider awareness**: No longer reports `.claude/*` as missing paths for Codex-initialized projects
+
+### Changed
+- **Tagline**: Changed from "MAP Kit - for Claude Code" to "MAP Kit - Modular Agentic Planner Framework"
+- **init() uses ClaudeProvider**: The claude path in `init()` now delegates to `ClaudeProvider.install()` instead of calling individual file creation functions directly
+
 ## [3.8.0] - 2026-04-17
 
 ### Added
