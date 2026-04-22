@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
-Claude Code PreToolUse Hook: Workflow Enforcement Gate
+MAP Workflow Enforcement Gate (PreToolUse Hook)
+
+Provider-agnostic: works with both Claude Code and Codex CLI.
 
 Blocks Edit/Write/MultiEdit outside of Actor-related phases.
 Uses step_state.json (orchestrator canonical state) as single source of truth.
@@ -9,7 +11,7 @@ ENFORCEMENT:
   - Edit allowed during phases: ACTOR, APPLY, TEST_WRITER
   - Edit blocked during all other phases (DECOMPOSE, MONITOR, PREDICTOR, etc.)
   - Fail-open: missing or unreadable step_state.json → allow
-  - Always allows: .map/ artifacts, ~/.claude/ memory, non-editing tools
+  - Always allows: .map/ artifacts, non-editing tools
 
 CONSTRAINTS (from step_state.json):
   - scope_glob: restrict edits to matching file patterns
@@ -30,6 +32,20 @@ EDITING_TOOLS = {"Edit", "Write", "MultiEdit"}
 
 # Phases where Edit/Write is expected (Actor applies code)
 EDITING_PHASES = {"ACTOR", "APPLY", "TEST_WRITER"}
+
+# Map step IDs (used in subtask_phases parallel dict) to phase names
+STEP_ID_TO_PHASE = {
+    "1.0": "DECOMPOSE",
+    "1.5": "INIT_PLAN",
+    "1.55": "REVIEW_PLAN",
+    "1.56": "CHOOSE_MODE",
+    "1.6": "INIT_STATE",
+    "2.2": "RESEARCH",
+    "2.25": "TEST_WRITER",
+    "2.26": "TEST_FAIL_GATE",
+    "2.3": "ACTOR",
+    "2.4": "MONITOR",
+}
 
 
 def extract_target_file_paths(tool_call: dict) -> list[str]:
@@ -129,9 +145,11 @@ def is_editing_phase(branch: str) -> tuple[bool, Optional[str]]:
         return True, None  # Corrupt/unreadable → fail-open
 
     # Parallel wave mode: check subtask_phases dict
+    # Values are step IDs (e.g. "2.3") — translate to phase names before comparing
     subtask_phases = state.get("subtask_phases", {})
     if subtask_phases:
-        for phase in subtask_phases.values():
+        for step_id in subtask_phases.values():
+            phase = STEP_ID_TO_PHASE.get(step_id, step_id)
             if phase in EDITING_PHASES:
                 return True, None
 

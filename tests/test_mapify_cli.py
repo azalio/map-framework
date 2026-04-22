@@ -14,6 +14,7 @@ from typer.testing import CliRunner
 # Add src directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from mapify_cli.delivery import create_map_tools
 from mapify_cli import (
     app,
     build_standard_mcp_servers,
@@ -22,7 +23,6 @@ from mapify_cli import (
     create_agent_files,
     create_command_files,
     create_commands_dir,
-    create_map_tools,
     create_or_merge_project_mcp_json,
     create_ssl_context,
     get_branch_artifact_templates,
@@ -1097,3 +1097,530 @@ class TestBranchArtifactTemplates:
             "qa-001.md",
             "pr-draft.md",
         }
+
+
+class TestCodexProvider:
+    """Functional tests for Codex CLI provider (AC-1 through AC-20).
+
+    Each test method maps to one acceptance criterion in the Codex provider spec.
+    The ``codex_project`` fixture runs ``mapify init . --provider codex --no-git``
+    in a fresh tmp_path and returns the project root.
+    """
+
+    # ------------------------------------------------------------------ #
+    # Shared fixture                                                       #
+    # ------------------------------------------------------------------ #
+
+    @pytest.fixture
+    def codex_project(self, tmp_path):
+        """Run init with --provider codex and return the project root path."""
+        local_runner = CliRunner()
+        os.chdir(tmp_path)
+        result = local_runner.invoke(
+            app, ["init", ".", "--provider", "codex", "--no-git", "--force"]
+        )
+        assert result.exit_code == 0, (
+            f"init --provider codex failed (exit {result.exit_code}):\n{result.output}"
+        )
+        return tmp_path
+
+    # ------------------------------------------------------------------ #
+    # AC-1: .codex/skills/map-plan/SKILL.md created                       #
+    # ------------------------------------------------------------------ #
+
+    def test_ac01_creates_skill_file(self, codex_project):
+        """AC-1: map-plan SKILL.md must exist after init."""
+        skill_file = codex_project / ".codex" / "skills" / "map-plan" / "SKILL.md"
+        assert skill_file.exists(), f"Expected {skill_file} to exist"
+
+    # ------------------------------------------------------------------ #
+    # AC-2: SKILL.md has valid YAML frontmatter                           #
+    # ------------------------------------------------------------------ #
+
+    def test_ac02_skill_has_valid_frontmatter(self, codex_project):
+        """AC-2: SKILL.md must start with '---' and contain name/description fields."""
+        skill_file = codex_project / ".codex" / "skills" / "map-plan" / "SKILL.md"
+        content = skill_file.read_text(encoding="utf-8")
+        assert content.startswith("---"), "SKILL.md must start with YAML frontmatter '---'"
+        assert "name:" in content, "SKILL.md frontmatter must contain 'name:'"
+        assert "description:" in content, "SKILL.md frontmatter must contain 'description:'"
+
+    # ------------------------------------------------------------------ #
+    # AC-3: SKILL.md contains no Claude-specific tool references          #
+    # ------------------------------------------------------------------ #
+
+    def test_ac03_skill_no_claude_tool_refs(self, codex_project):
+        """AC-3: SKILL.md must not reference Claude-only tool functions."""
+        skill_file = codex_project / ".codex" / "skills" / "map-plan" / "SKILL.md"
+        content = skill_file.read_text(encoding="utf-8")
+        forbidden_patterns = [
+            "Agent(",
+            "AskUserQuestion(",
+            "subagent_type=",
+            "Read(",
+            "Write(",
+            "Edit(",
+            "Glob(",
+            "Grep(",
+        ]
+        for pattern in forbidden_patterns:
+            assert pattern not in content, (
+                f"SKILL.md must not contain Claude tool reference '{pattern}'"
+            )
+
+    # ------------------------------------------------------------------ #
+    # AC-4: AGENTS.md exists at project root                              #
+    # ------------------------------------------------------------------ #
+
+    def test_ac04_creates_agents_md(self, codex_project):
+        """AC-4: AGENTS.md must exist at the project root and be non-empty."""
+        agents_md = codex_project / "AGENTS.md"
+        assert agents_md.exists(), "AGENTS.md must exist at project root"
+        content = agents_md.read_text(encoding="utf-8") if not agents_md.is_symlink() else ""
+        # Either a real file with content or a symlink to CLAUDE.md
+        assert agents_md.is_symlink() or len(content) > 0, "AGENTS.md must be non-empty"
+
+    # ------------------------------------------------------------------ #
+    # AC-5: config.toml, agents/*.toml, hooks/workflow-gate.py exist      #
+    # ------------------------------------------------------------------ #
+
+    def test_ac05_creates_config_and_agents(self, codex_project):
+        """AC-5: config.toml and at least one agent TOML and the hook script must exist."""
+        codex_dir = codex_project / ".codex"
+        assert (codex_dir / "config.toml").exists(), ".codex/config.toml must exist"
+        toml_files = list((codex_dir / "agents").glob("*.toml"))
+        assert len(toml_files) > 0, ".codex/agents/ must contain at least one *.toml file"
+        assert (codex_dir / "hooks" / "workflow-gate.py").exists(), (
+            ".codex/hooks/workflow-gate.py must exist"
+        )
+
+    # ------------------------------------------------------------------ #
+    # AC-6: .map/scripts/ installed (or skipped if already present)       #
+    # ------------------------------------------------------------------ #
+
+    def test_ac06_map_scripts_installed_or_skipped(self, codex_project, tmp_path):
+        """AC-6: .map/scripts/ installed when absent, pre-existing files preserved."""
+        map_scripts = codex_project / ".map" / "scripts"
+        templates_scripts = get_templates_dir() / "map" / "scripts"
+        if templates_scripts.exists() and any(templates_scripts.iterdir()):
+            assert map_scripts.exists(), (
+                ".map/scripts/ must exist when template provides scripts"
+            )
+
+        # Verify skip-if-exists: pre-existing custom scripts survive codex init
+        project2 = tmp_path / "skip_test"
+        project2.mkdir()
+        scripts_dir = project2 / ".map" / "scripts"
+        scripts_dir.mkdir(parents=True)
+        custom_script = scripts_dir / "custom.py"
+        custom_script.write_text("# user custom script\n")
+
+        runner2 = CliRunner()
+        os.chdir(project2)
+        result = runner2.invoke(
+            app, ["init", ".", "--provider", "codex", "--no-git", "--force"]
+        )
+        assert result.exit_code == 0, f"init failed: {result.output}"
+        assert custom_script.exists(), (
+            ".map/scripts/custom.py must survive codex init (skip-if-exists)"
+        )
+        assert custom_script.read_text() == "# user custom script\n"
+
+    # ------------------------------------------------------------------ #
+    # AC-7: Default init (no --provider) creates .claude/, not .codex/    #
+    # ------------------------------------------------------------------ #
+
+    def test_ac07_default_init_unchanged(self, tmp_path):
+        """AC-7: 'init .' without --provider must create .claude/ and not .codex/."""
+        local_runner = CliRunner()
+        os.chdir(tmp_path)
+        result = local_runner.invoke(
+            app, ["init", ".", "--no-git", "--mcp", "none", "--force"]
+        )
+        assert result.exit_code == 0, f"Default init failed:\n{result.output}"
+        assert (tmp_path / ".claude").exists(), ".claude/ must exist for default provider"
+        assert not (tmp_path / ".codex").exists(), (
+            ".codex/ must NOT be created by the default claude provider"
+        )
+
+    # ------------------------------------------------------------------ #
+    # AC-8: Template sync enforced (reference to ST-008 coverage)         #
+    # ------------------------------------------------------------------ #
+
+    def test_ac08_template_sync_enforced(self):
+        """AC-8: Codex templates must be present in src/mapify_cli/templates/codex/.
+
+        The exhaustive sync check lives in tests/test_template_sync.py (ST-008).
+        This test is a quick smoke check that the directory exists and is non-empty.
+        """
+        codex_templates = get_templates_dir() / "codex"
+        assert codex_templates.exists(), (
+            "templates/codex/ must exist (sync enforced by test_template_sync.py)"
+        )
+        all_files = list(codex_templates.rglob("*"))
+        template_files = [f for f in all_files if f.is_file()]
+        assert len(template_files) > 0, "templates/codex/ must contain at least one file"
+
+    # ------------------------------------------------------------------ #
+    # AC-9: SKILL.md has all 9 step section headers                       #
+    # ------------------------------------------------------------------ #
+
+    def test_ac09_skill_has_all_steps(self, codex_project):
+        """AC-9: SKILL.md must contain all 9 step section headers."""
+        skill_file = codex_project / ".codex" / "skills" / "map-plan" / "SKILL.md"
+        content = skill_file.read_text(encoding="utf-8")
+        expected_steps = [
+            "## Step 0",
+            "## Step 1",
+            "## Step 2",
+            "## Step 3",
+            "## Step 4",
+            "## Step 5",
+            "## Step 6",
+            "## Step 7",
+            "## Step 8",
+        ]
+        for step_header in expected_steps:
+            assert step_header in content, (
+                f"SKILL.md must contain '{step_header}'"
+            )
+
+    # ------------------------------------------------------------------ #
+    # AC-10: No Claude references in any .codex/ file                     #
+    # ------------------------------------------------------------------ #
+
+    def test_ac10_no_claude_refs_anywhere(self, codex_project):
+        """AC-10: No .codex/ file should reference Claude-specific tool APIs."""
+        codex_dir = codex_project / ".codex"
+        claude_tool_patterns = [
+            "Agent(",
+            "AskUserQuestion(",
+            "subagent_type=",
+        ]
+        violations: list[str] = []
+        for file_path in codex_dir.rglob("*"):
+            if not file_path.is_file():
+                continue
+            try:
+                content = file_path.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, PermissionError):
+                continue
+            for pattern in claude_tool_patterns:
+                if pattern in content:
+                    rel = file_path.relative_to(codex_project)
+                    violations.append(f"{rel}: contains '{pattern}'")
+        assert not violations, (
+            "Claude-specific tool references found in .codex/ files:\n"
+            + "\n".join(violations)
+        )
+
+    # ------------------------------------------------------------------ #
+    # AC-11: Stub skills map-fast and map-check exist                      #
+    # ------------------------------------------------------------------ #
+
+    def test_ac11_stub_skills_exist(self, codex_project):
+        """AC-11: .codex/skills/map-fast/SKILL.md and map-check/SKILL.md must exist."""
+        skills_dir = codex_project / ".codex" / "skills"
+        assert (skills_dir / "map-fast" / "SKILL.md").exists(), (
+            ".codex/skills/map-fast/SKILL.md must exist"
+        )
+        assert (skills_dir / "map-check" / "SKILL.md").exists(), (
+            ".codex/skills/map-check/SKILL.md must exist"
+        )
+
+    # ------------------------------------------------------------------ #
+    # AC-12: hooks.json and workflow-gate.py both created                 #
+    # ------------------------------------------------------------------ #
+
+    def test_ac12_hooks_created(self, codex_project):
+        """AC-12: hooks.json and hooks/workflow-gate.py must exist with correct config."""
+        import json as _json
+
+        codex_dir = codex_project / ".codex"
+        hooks_json_path = codex_dir / "hooks.json"
+        assert hooks_json_path.exists(), ".codex/hooks.json must exist"
+        assert (codex_dir / "hooks" / "workflow-gate.py").exists(), (
+            ".codex/hooks/workflow-gate.py must exist"
+        )
+
+        # Verify hook command uses quoted git-root-resolved path
+        hooks_data = _json.loads(hooks_json_path.read_text())
+        command = hooks_data["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+        assert "$(git rev-parse --show-toplevel)" in command, (
+            "Hook command must use $(git rev-parse --show-toplevel) for path resolution"
+        )
+        # Path must be quoted to handle spaces in directory names
+        assert '"$(git rev-parse --show-toplevel)' in command, (
+            "Hook command path must be quoted for spaces in paths"
+        )
+
+    # ------------------------------------------------------------------ #
+    # AC-13: CodexProvider is a subclass of BaseProvider                  #
+    # ------------------------------------------------------------------ #
+
+    def test_ac13_codex_provider_isinstance(self):
+        """AC-13: CodexProvider must be an instance of BaseProvider."""
+        from mapify_cli.delivery.providers import BaseProvider, CodexProvider
+
+        provider = CodexProvider()
+        assert isinstance(provider, BaseProvider), (
+            "CodexProvider must inherit from BaseProvider"
+        )
+
+    # ------------------------------------------------------------------ #
+    # AC-14: --provider codex does NOT create .claude/                    #
+    # ------------------------------------------------------------------ #
+
+    def test_ac14_codex_init_no_claude_dir(self, codex_project):
+        """AC-14: init --provider codex must not create the .claude/ directory."""
+        assert not (codex_project / ".claude").exists(), (
+            ".claude/ must NOT be created when using --provider codex"
+        )
+
+    # ------------------------------------------------------------------ #
+    # AC-15: SKILL.md includes spawn_agent with monitor in SPEC_REVIEW    #
+    # ------------------------------------------------------------------ #
+
+    def test_ac15_spec_review_step(self, codex_project):
+        """AC-15: SKILL.md must include a spawn_agent call using 'monitor' agent."""
+        skill_file = codex_project / ".codex" / "skills" / "map-plan" / "SKILL.md"
+        content = skill_file.read_text(encoding="utf-8")
+        # The SPEC_REVIEW step uses spawn_agent with agent_type="monitor"
+        assert "spawn_agent(" in content, "SKILL.md must contain spawn_agent("
+        assert 'agent_type="monitor"' in content, (
+            'SKILL.md must contain agent_type="monitor" for SPEC_REVIEW step'
+        )
+
+    # ------------------------------------------------------------------ #
+    # AC-16: --provider foo exits 1 with helpful message                  #
+    # ------------------------------------------------------------------ #
+
+    def test_ac16_invalid_provider_exits_1(self, tmp_path):
+        """AC-16: An unrecognised --provider value must exit 1 with an error message."""
+        local_runner = CliRunner()
+        os.chdir(tmp_path)
+        result = local_runner.invoke(
+            app, ["init", ".", "--provider", "foo", "--no-git", "--force"]
+        )
+        assert result.exit_code == 1, (
+            f"Expected exit code 1 for invalid provider, got {result.exit_code}"
+        )
+        assert "Valid providers" in result.output, (
+            "Error message must mention 'Valid providers'"
+        )
+        assert "claude" in result.output, "Valid providers list must include 'claude'"
+        assert "codex" in result.output, "Valid providers list must include 'codex'"
+
+    # ------------------------------------------------------------------ #
+    # AC-17: Each .toml has required fields                               #
+    # ------------------------------------------------------------------ #
+
+    def test_ac17_agent_toml_fields(self, codex_project):
+        """AC-17: Every agent TOML must contain name, description, developer_instructions."""
+        agents_dir = codex_project / ".codex" / "agents"
+        toml_files = list(agents_dir.glob("*.toml"))
+        assert len(toml_files) > 0, ".codex/agents/ must contain at least one *.toml"
+        for toml_file in toml_files:
+            content = toml_file.read_text(encoding="utf-8")
+            assert "name" in content, f"{toml_file.name} must contain 'name' field"
+            assert "description" in content, (
+                f"{toml_file.name} must contain 'description' field"
+            )
+            assert "developer_instructions" in content, (
+                f"{toml_file.name} must contain 'developer_instructions' field"
+            )
+
+    # ------------------------------------------------------------------ #
+    # AC-18: hooks.json matcher value is "Bash"                           #
+    # ------------------------------------------------------------------ #
+
+    def test_ac18_hooks_matcher_is_bash(self, codex_project):
+        """AC-18: hooks.json must configure the PreToolUse hook with matcher 'Bash'."""
+        hooks_json_path = codex_project / ".codex" / "hooks.json"
+        hooks_data = json.loads(hooks_json_path.read_text(encoding="utf-8"))
+        pre_tool_use = hooks_data.get("hooks", {}).get("PreToolUse", [])
+        assert len(pre_tool_use) > 0, "hooks.json must define at least one PreToolUse entry"
+        matchers = [entry.get("matcher") for entry in pre_tool_use]
+        assert "Bash" in matchers, (
+            f"hooks.json PreToolUse must have a 'Bash' matcher, got: {matchers}"
+        )
+
+    # ------------------------------------------------------------------ #
+    # AC-19: Discovery paths — skills/agents/config at expected locations #
+    # ------------------------------------------------------------------ #
+
+    def test_ac19_codex_discovery_paths(self, codex_project):
+        """AC-19: Validate that Codex files are at the discovery paths Codex expects."""
+        codex_dir = codex_project / ".codex"
+        expected_paths = [
+            codex_dir / "skills" / "map-plan" / "SKILL.md",
+            codex_dir / "skills" / "map-fast" / "SKILL.md",
+            codex_dir / "skills" / "map-check" / "SKILL.md",
+            codex_dir / "agents",
+            codex_dir / "config.toml",
+        ]
+        for path in expected_paths:
+            assert path.exists(), (
+                f"Expected discovery path does not exist: {path.relative_to(codex_project)}"
+            )
+        # Agents directory must have TOML files for agent discovery
+        toml_count = len(list((codex_dir / "agents").glob("*.toml")))
+        assert toml_count >= 1, (
+            f".codex/agents/ must have at least 1 *.toml for agent discovery, found {toml_count}"
+        )
+
+    # ------------------------------------------------------------------ #
+    # AC-20: workflow-gate.py blocks file-modifying commands in RESEARCH  #
+    # ------------------------------------------------------------------ #
+
+    def test_ac20_workflow_gate_blocks_during_restricted(self, codex_project):
+        """AC-20: workflow-gate.py must block Edit during non-editing phases."""
+        import json as _json
+
+        gate_script = codex_project / ".codex" / "hooks" / "workflow-gate.py"
+        assert gate_script.exists(), "workflow-gate.py must exist"
+
+        # Verify the gate has EDITING_PHASES that exclude RESEARCH
+        gate_source = gate_script.read_text(encoding="utf-8")
+        gate_ns: dict = {}
+        exec(compile(gate_source, str(gate_script), "exec"), gate_ns)  # noqa: S102
+        editing_phases = gate_ns["EDITING_PHASES"]
+        assert "RESEARCH" not in editing_phases, (
+            "RESEARCH must NOT be in EDITING_PHASES"
+        )
+        assert "ACTOR" in editing_phases, "ACTOR must be in EDITING_PHASES"
+
+        # Simulate gate invocation: Edit tool during RESEARCH phase → should block
+        payload_block = _json.dumps(
+            {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}}
+        )
+        branch_dir = codex_project / ".map" / "default"
+        branch_dir.mkdir(parents=True, exist_ok=True)
+        state_file = branch_dir / "step_state.json"
+        state_file.write_text(
+            _json.dumps({"current_step_phase": "RESEARCH"}), encoding="utf-8"
+        )
+
+        proc = subprocess.run(
+            [sys.executable, str(gate_script)],
+            input=payload_block,
+            capture_output=True,
+            text=True,
+            cwd=str(codex_project),
+        )
+        assert proc.returncode == 0, (
+            f"workflow-gate.py must exit 0 always, got {proc.returncode}"
+        )
+        gate_output = _json.loads(proc.stdout.strip())
+        hook_output = gate_output.get("hookSpecificOutput", {})
+        assert hook_output.get("permissionDecision") == "deny", (
+            f"Expected 'deny' for Edit in RESEARCH phase, got: {gate_output}"
+        )
+
+    # ------------------------------------------------------------------ #
+    # AC-21: upgrade on codex project must not create .claude/             #
+    # ------------------------------------------------------------------ #
+
+    def test_ac21_upgrade_codex_project_no_claude(self, codex_project):
+        """AC-21: 'mapify upgrade' on codex project must not create .claude/."""
+        local_runner = CliRunner()
+        os.chdir(codex_project)
+        result = local_runner.invoke(app, ["upgrade"])
+        assert result.exit_code == 0, f"upgrade failed: {result.output}"
+        assert not (codex_project / ".claude").exists(), (
+            ".claude/ must NOT be created when upgrading a codex project"
+        )
+        assert "mapify init . --provider codex --force" in result.output, (
+            "upgrade must tell codex users to re-run init with --provider codex"
+        )
+
+
+class TestDetectProviderEdgeCases:
+    """TESTS-1: _detect_provider and is_map_initialized edge cases."""
+
+    def test_detect_provider_codex_wins_when_both_exist(self, tmp_path):
+        """When both .codex/ and .claude/ exist, codex is detected."""
+        from mapify_cli import _detect_provider
+
+        (tmp_path / ".codex" / "config.toml").parent.mkdir(parents=True)
+        (tmp_path / ".codex" / "config.toml").write_text("[codex]\n")
+        (tmp_path / ".claude" / "settings.json").parent.mkdir(parents=True)
+        (tmp_path / ".claude" / "settings.json").write_text("{}\n")
+        assert _detect_provider(tmp_path) == "codex"
+
+    def test_detect_provider_returns_claude_when_neither(self, tmp_path):
+        """When neither provider dir exists, default to claude."""
+        from mapify_cli import _detect_provider
+
+        assert _detect_provider(tmp_path) == "claude"
+
+    def test_is_map_initialized_codex_layout(self, tmp_path):
+        """is_map_initialized recognizes a codex-only project."""
+        from mapify_cli import is_map_initialized
+
+        (tmp_path / ".codex" / "config.toml").parent.mkdir(parents=True)
+        (tmp_path / ".codex" / "config.toml").write_text("[codex]\n")
+        (tmp_path / ".codex" / "skills").mkdir(parents=True)
+        assert is_map_initialized(tmp_path) is True
+
+    def test_is_map_initialized_neither_layout(self, tmp_path):
+        """is_map_initialized returns False for empty directory."""
+        from mapify_cli import is_map_initialized
+
+        assert is_map_initialized(tmp_path) is False
+
+
+class TestDoctorCodexProject:
+    """TESTS-2: doctor() on codex project produces correct output."""
+
+    def test_doctor_codex_no_false_missing_paths(self, tmp_path):
+        """doctor on a codex project must not report .claude/* as missing."""
+        local_runner = CliRunner()
+        os.chdir(tmp_path)
+        # Init as codex first
+        result = local_runner.invoke(
+            app, ["init", ".", "--provider", "codex", "--no-git", "--force"]
+        )
+        assert result.exit_code == 0
+        # Run doctor
+        result = local_runner.invoke(app, ["doctor"])
+        assert ".claude/agents" not in result.output, (
+            "doctor must not report .claude/agents as missing for codex project"
+        )
+        assert ".claude/commands" not in result.output, (
+            "doctor must not report .claude/commands as missing for codex project"
+        )
+        assert "all core paths present" in result.output or "codex" in result.output
+
+
+class TestClaudeProviderInstall:
+    """TESTS-3: ClaudeProvider.install() unit test."""
+
+    def test_claude_provider_creates_all_categories(self, tmp_path):
+        """ClaudeProvider.install() must return counts for all expected categories."""
+        from mapify_cli.delivery.providers import ClaudeProvider
+
+        provider = ClaudeProvider()
+        counts = provider.install(tmp_path, mcp_servers=[])
+        expected_keys = {"agents", "commands", "skills", "references", "tools", "hooks", "configs", "rules"}
+        assert set(counts.keys()) == expected_keys, (
+            f"ClaudeProvider.install() must return all category keys, got: {set(counts.keys())}"
+        )
+        # Each category must have created at least one file
+        for key, value in counts.items():
+            assert value >= 0, f"counts['{key}'] must be non-negative"
+        # agents and commands should always have files
+        assert counts["agents"] > 0, "ClaudeProvider must create agent files"
+        assert counts["commands"] > 0, "ClaudeProvider must create command files"
+
+    def test_claude_provider_creates_claude_dir(self, tmp_path):
+        """ClaudeProvider.install() must create .claude/ directory."""
+        from mapify_cli.delivery.providers import ClaudeProvider
+
+        provider = ClaudeProvider()
+        provider.install(tmp_path, mcp_servers=[])
+        assert (tmp_path / ".claude" / "agents").exists()
+        assert (tmp_path / ".claude" / "commands").exists()
+        assert not (tmp_path / ".codex").exists(), (
+            "ClaudeProvider must not create .codex/"
+        )

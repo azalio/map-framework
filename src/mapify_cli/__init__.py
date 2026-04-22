@@ -76,8 +76,6 @@ from mapify_cli.delivery import (
     create_hook_files,
     create_config_files,
     create_commands_dir as create_commands_dir,
-    create_map_tools,
-    create_rules_dir,
 )
 from mapify_cli.config import (
     configure_global_permissions,
@@ -265,14 +263,28 @@ def count_project_markdown_files(
 
 
 def is_map_initialized(project_path: Path) -> bool:
-    """Return True when the current directory looks like a MAP project."""
-    required_paths = [
+    """Return True when the current directory looks like a MAP project.
+
+    Recognises both Claude Code layout (.claude/) and Codex layout (.codex/).
+    """
+    claude_paths = [
         project_path / ".claude" / "agents",
         project_path / ".claude" / "commands",
         project_path / ".claude" / "settings.json",
         project_path / ".claude" / "workflow-rules.json",
     ]
-    return all(path.exists() for path in required_paths)
+    codex_paths = [
+        project_path / ".codex" / "config.toml",
+        project_path / ".codex" / "skills",
+    ]
+    return all(p.exists() for p in claude_paths) or all(p.exists() for p in codex_paths)
+
+
+def _detect_provider(project_path: Path) -> str:
+    """Detect which provider was used to initialise this project."""
+    if (project_path / ".codex" / "config.toml").exists():
+        return "codex"
+    return "claude"
 
 
 def get_project_health(project_path: Path) -> Dict[str, Any]:
@@ -280,13 +292,23 @@ def get_project_health(project_path: Path) -> Dict[str, Any]:
     agent_exclude = {"README.md", "CHANGELOG.md", "MCP-PATTERNS.md"}
     current_branch = sanitize_identifier(get_current_branch_name())
     branch_dir = project_path / ".map" / current_branch
-    required_paths = {
-        ".claude/agents": project_path / ".claude" / "agents",
-        ".claude/commands": project_path / ".claude" / "commands",
-        ".claude/settings.json": project_path / ".claude" / "settings.json",
-        ".claude/workflow-rules.json": project_path / ".claude" / "workflow-rules.json",
-        ".map/scripts": project_path / ".map" / "scripts",
-    }
+    detected = _detect_provider(project_path)
+
+    if detected == "codex":
+        required_paths = {
+            ".codex/config.toml": project_path / ".codex" / "config.toml",
+            ".codex/skills": project_path / ".codex" / "skills",
+            ".codex/agents": project_path / ".codex" / "agents",
+            ".map/scripts": project_path / ".map" / "scripts",
+        }
+    else:
+        required_paths = {
+            ".claude/agents": project_path / ".claude" / "agents",
+            ".claude/commands": project_path / ".claude" / "commands",
+            ".claude/settings.json": project_path / ".claude" / "settings.json",
+            ".claude/workflow-rules.json": project_path / ".claude" / "workflow-rules.json",
+            ".map/scripts": project_path / ".map" / "scripts",
+        }
     missing_paths = [name for name, path in required_paths.items() if not path.exists()]
 
     agents_dir = project_path / ".claude" / "agents"
@@ -617,6 +639,11 @@ def init(
     debug: bool = typer.Option(
         False, "--debug", help="Enable debug logging (creates .map/logs/workflow_*.log)"
     ),
+    provider: str = typer.Option(
+        "claude",
+        "--provider",
+        help="Delivery provider: claude (default) or codex",
+    ),
 ):
     """
     Initialize a new MAP Framework project.
@@ -655,6 +682,15 @@ def init(
             f"mapify init {project_name or '.'}",
             metadata={"debug": debug, "mcp": mcp},
         )
+
+    # Validate provider
+    valid_providers = ("claude", "codex")
+    if provider not in valid_providers:
+        console.print(
+            f"[red]Error:[/red] Invalid provider '{provider}'. "
+            f"Valid providers: {', '.join(valid_providers)}"
+        )
+        raise typer.Exit(1)
 
     # Handle '.' as shorthand for current directory
     use_current_dir = project_name == "."
@@ -707,122 +743,108 @@ def init(
     tracker.start("check-tools")
 
     git_available = check_tool("git")
-    claude_available = check_tool("claude")
 
-    if claude_available:
-        tracker.complete("check-tools", "git, claude")
-    elif git_available:
-        tracker.complete("check-tools", "git")
+    if provider == "codex":
+        codex_available = check_tool("codex")
+        if codex_available:
+            tracker.complete("check-tools", "git, codex" if git_available else "codex")
+        elif git_available:
+            tracker.complete("check-tools", "git")
+        else:
+            tracker.complete("check-tools", "minimal")
     else:
-        tracker.complete("check-tools", "minimal")
+        claude_available = check_tool("claude")
+        if claude_available:
+            tracker.complete("check-tools", "git, claude")
+        elif git_available:
+            tracker.complete("check-tools", "git")
+        else:
+            tracker.complete("check-tools", "minimal")
 
-    # Use Claude Code (the only supported AI assistant)
-    tracker.add("ai-select", "Select AI assistant")
-    selected_ai = "claude"
+    # Select provider
+    tracker.add("ai-select", "Select provider")
+    selected_ai = provider
     tracker.complete("ai-select", selected_ai)
 
-    # Select MCP servers
-    tracker.add("mcp-select", "Select MCP servers")
-    tracker.start("mcp-select")
-
+    # Select MCP servers (Claude only — Codex uses TOML agent config)
     selected_mcp_servers = []
 
-    if mcp == "all":
-        selected_mcp_servers = list(INDIVIDUAL_MCP_SERVERS.keys())
-    elif mcp == "essential":
-        selected_mcp_servers = ["sequential-thinking", "deepwiki"]
-    elif mcp == "none":
-        selected_mcp_servers = []
+    if provider != "codex":
+        tracker.add("mcp-select", "Select MCP servers")
+        tracker.start("mcp-select")
+
+        if mcp == "all":
+            selected_mcp_servers = list(INDIVIDUAL_MCP_SERVERS.keys())
+        elif mcp == "essential":
+            selected_mcp_servers = ["sequential-thinking", "deepwiki"]
+        elif mcp == "none":
+            selected_mcp_servers = []
+        else:
+            # Parse comma-separated list
+            requested = [s.strip() for s in mcp.split(",") if s.strip()]
+            invalid = [s for s in requested if s not in INDIVIDUAL_MCP_SERVERS]
+            if invalid:
+                console.print(
+                    f"[yellow]Warning:[/yellow] Unrecognized MCP servers ignored: {', '.join(invalid)}"
+                )
+                console.print(f"Valid servers: {', '.join(INDIVIDUAL_MCP_SERVERS.keys())}")
+            selected_mcp_servers = [s for s in requested if s in INDIVIDUAL_MCP_SERVERS]
+
+        tracker.complete("mcp-select", f"{len(selected_mcp_servers)} servers")
+
+    if provider == "codex":
+        # Codex provider: install .codex/ files + .map/scripts/ (skip-if-exists)
+        from mapify_cli.delivery.providers import CodexProvider
+
+        tracker.add("create-codex", "Create Codex files")
+        tracker.start("create-codex")
+        codex_provider = CodexProvider()
+        counts = codex_provider.install(project_path)
+        total = sum(counts.values())
+        tracker.complete("create-codex", f"{total} files")
     else:
-        # Parse comma-separated list
-        requested = [s.strip() for s in mcp.split(",") if s.strip()]
-        invalid = [s for s in requested if s not in INDIVIDUAL_MCP_SERVERS]
-        if invalid:
-            console.print(
-                f"[yellow]Warning:[/yellow] Unrecognized MCP servers ignored: {', '.join(invalid)}"
-            )
-            console.print(f"Valid servers: {', '.join(INDIVIDUAL_MCP_SERVERS.keys())}")
-        selected_mcp_servers = [s for s in requested if s in INDIVIDUAL_MCP_SERVERS]
+        # Claude provider: use ClaudeProvider abstraction
+        from mapify_cli.delivery.providers import ClaudeProvider
 
-    tracker.complete("mcp-select", f"{len(selected_mcp_servers)} servers")
+        tracker.add("create-claude", "Create Claude Code files")
+        tracker.start("create-claude")
+        claude_provider = ClaudeProvider()
+        claude_counts = claude_provider.install(
+            project_path, mcp_servers=selected_mcp_servers
+        )
+        total_claude = sum(claude_counts.values())
+        tracker.complete("create-claude", f"{total_claude} files")
 
-    # Create MAP files
-    tracker.add("create-agents", "Create MAP agents")
-    tracker.start("create-agents")
-    agent_count = create_agent_files(project_path, selected_mcp_servers)
-    agent_word = "agent" if agent_count == 1 else "agents"
-    tracker.complete("create-agents", f"{agent_count} {agent_word}")
+        # Create default .map/config.yaml (project-level settings)
+        tracker.add("map-config", "Create .map/config.yaml")
+        tracker.start("map-config")
+        try:
+            from mapify_cli.config.project_config import write_default_config
 
-    tracker.add("create-commands", "Create slash commands")
-    tracker.start("create-commands")
-    command_count = create_command_files(project_path)
-    command_word = "command" if command_count == 1 else "commands"
-    tracker.complete("create-commands", f"{command_count} {command_word}")
+            config_path = write_default_config(project_path)
+            tracker.complete("map-config", str(config_path.relative_to(project_path)))
+        except Exception as e:
+            tracker.error("map-config", f"skipped: {e}")
 
-    tracker.add("create-skills", "Create skills")
-    tracker.start("create-skills")
-    skill_count = create_skill_files(project_path)
-    skill_word = "skill" if skill_count == 1 else "skills"
-    tracker.complete("create-skills", f"{skill_count} {skill_word}")
+        if selected_mcp_servers:
+            # Create internal MCP config (for MAP Framework agent mappings)
+            tracker.add("mcp-config", "Create internal MCP config")
+            tracker.start("mcp-config")
+            create_mcp_config(project_path, selected_mcp_servers)
+            tracker.complete("mcp-config", f"{len(selected_mcp_servers)} servers")
 
-    tracker.add("create-references", "Create reference files")
-    tracker.start("create-references")
-    ref_count = create_reference_files(project_path)
-    ref_word = "file" if ref_count == 1 else "files"
-    tracker.complete("create-references", f"{ref_count} {ref_word}")
+            # Create/merge project .mcp.json (for Claude Code MCP server registration)
+            tracker.add("mcp-project", "Create/merge .mcp.json")
+            tracker.start("mcp-project")
+            create_or_merge_project_mcp_json(project_path, selected_mcp_servers)
+            tracker.complete("mcp-project", "Claude Code MCP config")
 
-    tracker.add("create-map-tools", "Create MAP tools")
-    tracker.start("create-map-tools")
-    tool_count = create_map_tools(project_path)
-    tool_word = "script" if tool_count == 1 else "scripts"
-    tracker.complete("create-map-tools", f"{tool_count} {tool_word}")
+        tracker.add("project-permissions", "Configure project approvals")
+        tracker.start("project-permissions")
+        create_or_merge_project_settings_local(project_path)
+        tracker.complete("project-permissions", ".claude/settings.local.json")
 
-    tracker.add("create-hooks", "Create MAP hooks")
-    tracker.start("create-hooks")
-    hook_count = create_hook_files(project_path)
-    hook_word = "hook" if hook_count == 1 else "hooks"
-    tracker.complete("create-hooks", f"{hook_count} {hook_word}")
-
-    tracker.add("create-configs", "Create config files")
-    tracker.start("create-configs")
-    config_count = create_config_files(project_path)
-    config_word = "file" if config_count == 1 else "files"
-    tracker.complete("create-configs", f"{config_count} {config_word}")
-
-    # Create default .map/config.yaml (project-level settings)
-    tracker.add("map-config", "Create .map/config.yaml")
-    tracker.start("map-config")
-    try:
-        from mapify_cli.config.project_config import write_default_config
-
-        config_path = write_default_config(project_path)
-        tracker.complete("map-config", str(config_path.relative_to(project_path)))
-    except Exception as e:
-        tracker.error("map-config", f"skipped: {e}")
-
-    # Create .claude/rules/learned/ directory for /map-learn persistence
-    tracker.add("rules-dir", "Create learned rules directory")
-    tracker.start("rules-dir")
-    rules_count = create_rules_dir(project_path)
-    tracker.complete(
-        "rules-dir",
-        f"{rules_count} file" if rules_count <= 1 else f"{rules_count} files",
-    )
-
-    if selected_mcp_servers:
-        # Create internal MCP config (for MAP Framework agent mappings)
-        tracker.add("mcp-config", "Create internal MCP config")
-        tracker.start("mcp-config")
-        create_mcp_config(project_path, selected_mcp_servers)
-        tracker.complete("mcp-config", f"{len(selected_mcp_servers)} servers")
-
-        # Create/merge project .mcp.json (for Claude Code MCP server registration)
-        tracker.add("mcp-project", "Create/merge .mcp.json")
-        tracker.start("mcp-project")
-        create_or_merge_project_mcp_json(project_path, selected_mcp_servers)
-        tracker.complete("mcp-project", "Claude Code MCP config")
-
-    # Initialize git
+    # Initialize git (shared, provider-agnostic)
     if not no_git and git_available:
         tracker.add("git", "Initialize git repository")
         tracker.start("git")
@@ -834,17 +856,13 @@ def init(
             else:
                 tracker.error("git", "failed")
 
-    tracker.add("project-permissions", "Configure project approvals")
-    tracker.start("project-permissions")
-    create_or_merge_project_settings_local(project_path)
-    tracker.complete("project-permissions", ".claude/settings.local.json")
-
     tracker.add("finalize", "Finalize")
     tracker.complete("finalize", "project ready")
 
-    # Configure global permissions for read-only commands
-    console.print()  # Add spacing
-    configure_global_permissions()
+    # Configure global permissions for read-only commands (Claude only)
+    if provider != "codex":
+        console.print()  # Add spacing
+        configure_global_permissions()
 
     # Show final tree
     with Live(tracker.render(), console=console, transient=True) as live:
@@ -864,20 +882,35 @@ def init(
         steps_lines.append("1. You're already in the project directory!")
         step_num = 2
 
-    steps_lines.append(f"{step_num}. Start using MAP commands with Claude Code:")
-    steps_lines.append(
-        "   • [cyan]/map-efficient[/] - Implement features with optimized workflow (recommended)"
-    )
-    steps_lines.append("   • [cyan]/map-debug[/] - Debug issue using MAP analysis")
-    steps_lines.append(
-        "   • [cyan]/map-fast[/] - Quick implementation with minimal validation"
-    )
-    steps_lines.append(
-        "   • [cyan]/map-learn[/] - Extract lessons from completed workflows"
-    )
-    steps_lines.append(
-        f"{step_num + 1}. Run [cyan]/map-plan[/cyan] first when you want branch-scoped research, spec, and plan artifacts in `.map/<branch>/`"
-    )
+    if provider == "codex":
+        steps_lines.append(f"{step_num}. Start using MAP skills with Codex:")
+        steps_lines.append(
+            "   • [cyan]$map-plan[/] - Plan and decompose complex tasks"
+        )
+        steps_lines.append(
+            "   • [cyan]$map-fast[/] - Quick implementation with minimal validation"
+        )
+        steps_lines.append(
+            "   • [cyan]$map-check[/] - Quality gates and verification"
+        )
+        steps_lines.append(
+            f"{step_num + 1}. Trust this project in Codex settings for .codex/ config to take effect"
+        )
+    else:
+        steps_lines.append(f"{step_num}. Start using MAP commands with Claude Code:")
+        steps_lines.append(
+            "   • [cyan]/map-efficient[/] - Implement features with optimized workflow (recommended)"
+        )
+        steps_lines.append("   • [cyan]/map-debug[/] - Debug issue using MAP analysis")
+        steps_lines.append(
+            "   • [cyan]/map-fast[/] - Quick implementation with minimal validation"
+        )
+        steps_lines.append(
+            "   • [cyan]/map-learn[/] - Extract lessons from completed workflows"
+        )
+        steps_lines.append(
+            f"{step_num + 1}. Run [cyan]/map-plan[/cyan] first when you want branch-scoped research, spec, and plan artifacts in `.map/<branch>/`"
+        )
 
     steps_panel = Panel(
         "\n".join(steps_lines), title="Next Steps", border_style="cyan", padding=(1, 2)
@@ -906,10 +939,17 @@ def check(debug: bool = typer.Option(False, "--debug", help="Enable debug loggin
 
     tracker = StepTracker("Check Available Tools")
 
-    tools = [
-        ("git", "Git version control"),
-        ("claude", "Claude Code CLI"),
-    ]
+    detected = _detect_provider(Path.cwd())
+    if detected == "codex":
+        tools = [
+            ("git", "Git version control"),
+            ("codex", "Codex CLI"),
+        ]
+    else:
+        tools = [
+            ("git", "Git version control"),
+            ("claude", "Claude Code CLI"),
+        ]
 
     # Add tools to tracker
     for tool, description in tools:
@@ -929,7 +969,7 @@ def check(debug: bool = typer.Option(False, "--debug", help="Enable debug loggin
 
     tracker.add("project", "Detect MAP project")
     if health["initialized"]:
-        tracker.complete("project", "initialized")
+        tracker.complete("project", f"initialized ({detected} provider)")
     else:
         tracker.error("project", "not initialized")
 
@@ -942,9 +982,10 @@ def check(debug: bool = typer.Option(False, "--debug", help="Enable debug loggin
     else:
         tracker.error("templates", "missing bundled templates")
 
-    tracker.add("mcp", "Check supported MCP servers")
-    supported_servers = sorted(build_standard_mcp_servers().keys())
-    tracker.complete("mcp", ", ".join(supported_servers) or "none")
+    if detected != "codex":
+        tracker.add("mcp", "Check supported MCP servers")
+        supported_servers = sorted(build_standard_mcp_servers().keys())
+        tracker.complete("mcp", ", ".join(supported_servers) or "none")
 
     console.print(tracker.render())
     console.print()
@@ -957,7 +998,9 @@ def check(debug: bool = typer.Option(False, "--debug", help="Enable debug loggin
         console.print("[yellow]MAP environment needs attention:[/yellow]")
         if not results.get("git"):
             console.print("  • Install git: https://git-scm.com/downloads")
-        if not results.get("claude"):
+        if detected == "codex" and not results.get("codex"):
+            console.print("  • Install Codex CLI: https://github.com/openai/codex")
+        elif not results.get("claude"):
             console.print(
                 "  • Install Claude Code: https://docs.anthropic.com/en/docs/claude-code/setup"
             )
@@ -984,13 +1027,16 @@ def doctor(debug: bool = typer.Option(False, "--debug", help="Enable debug loggi
     console.print("[bold]Running MAP doctor...[/bold]\n")
 
     project_path = Path.cwd()
+    detected = _detect_provider(project_path)
     health = get_project_health(project_path)
     tracker = StepTracker("MAP Doctor")
 
-    for tool_name, description in [
-        ("git", "Git version control"),
-        ("claude", "Claude Code CLI"),
-    ]:
+    if detected == "codex":
+        tool_list = [("git", "Git version control"), ("codex", "Codex CLI")]
+    else:
+        tool_list = [("git", "Git version control"), ("claude", "Claude Code CLI")]
+
+    for tool_name, description in tool_list:
         tracker.add(tool_name, description)
         if check_tool(tool_name):
             tracker.complete(tool_name, "available")
@@ -998,27 +1044,41 @@ def doctor(debug: bool = typer.Option(False, "--debug", help="Enable debug loggi
             tracker.error(tool_name, "not found")
 
     tracker.add("project", "MAP project structure")
-    if not health["missing_paths"]:
+    if detected == "codex":
+        codex_dir = project_path / ".codex"
+        codex_checks = {
+            ".codex/config.toml": codex_dir / "config.toml",
+            ".codex/skills": codex_dir / "skills",
+            ".codex/agents": codex_dir / "agents",
+            ".map/scripts": project_path / ".map" / "scripts",
+        }
+        codex_missing = [n for n, p in codex_checks.items() if not p.exists()]
+        if not codex_missing:
+            tracker.complete("project", "all core paths present (codex)")
+        else:
+            tracker.error("project", f"missing {len(codex_missing)} path(s)")
+    elif not health["missing_paths"]:
         tracker.complete("project", "all core paths present")
     else:
         tracker.error("project", f"missing {len(health['missing_paths'])} path(s)")
 
-    tracker.add("templates", "Installed template counts")
-    if (
-        health["installed_agents"] == health["expected_agents"]
-        and health["installed_commands"] == health["expected_commands"]
-    ):
-        tracker.complete(
-            "templates",
-            f"{health['installed_agents']}/{health['expected_agents']} agents, "
-            f"{health['installed_commands']}/{health['expected_commands']} commands",
-        )
-    else:
-        tracker.error(
-            "templates",
-            f"agents {health['installed_agents']}/{health['expected_agents']}, "
-            f"commands {health['installed_commands']}/{health['expected_commands']}",
-        )
+    if detected != "codex":
+        tracker.add("templates", "Installed template counts")
+        if (
+            health["installed_agents"] == health["expected_agents"]
+            and health["installed_commands"] == health["expected_commands"]
+        ):
+            tracker.complete(
+                "templates",
+                f"{health['installed_agents']}/{health['expected_agents']} agents, "
+                f"{health['installed_commands']}/{health['expected_commands']} commands",
+            )
+        else:
+            tracker.error(
+                "templates",
+                f"agents {health['installed_agents']}/{health['expected_agents']}, "
+                f"commands {health['installed_commands']}/{health['expected_commands']}",
+            )
 
     tracker.add("planning", "Branch workspace artifacts")
     if health["branch_workspace_exists"]:
@@ -1029,16 +1089,17 @@ def doctor(debug: bool = typer.Option(False, "--debug", help="Enable debug loggi
     else:
         tracker.error("planning", f"missing .map/{health['current_branch']}")
 
-    tracker.add("mcp", "Project MCP configuration")
-    if health["has_project_mcp"]:
-        if health["project_mcp_valid"]:
-            tracker.complete("mcp", ".mcp.json valid")
+    if detected != "codex":
+        tracker.add("mcp", "Project MCP configuration")
+        if health["has_project_mcp"]:
+            if health["project_mcp_valid"]:
+                tracker.complete("mcp", ".mcp.json valid")
+            else:
+                tracker.error("mcp", ".mcp.json unreadable")
+        elif health["has_internal_mcp"]:
+            tracker.complete("mcp", "internal config only")
         else:
-            tracker.error("mcp", ".mcp.json unreadable")
-    elif health["has_internal_mcp"]:
-        tracker.complete("mcp", "internal config only")
-    else:
-        tracker.complete("mcp", "no MCP config")
+            tracker.complete("mcp", "no MCP config")
 
     console.print(tracker.render())
     console.print()
@@ -1051,21 +1112,22 @@ def doctor(debug: bool = typer.Option(False, "--debug", help="Enable debug loggi
         "Project",
         "OK" if health["initialized"] else "Needs init",
         (
-            ".claude + workflow configs detected"
+            f".{detected} + workflow configs detected"
             if health["initialized"]
             else "Run `mapify init .`"
         ),
     )
-    details.add_row(
-        "Agents",
-        f"{health['installed_agents']}/{health['expected_agents']}",
-        "Installed vs bundled agent templates",
-    )
-    details.add_row(
-        "Commands",
-        f"{health['installed_commands']}/{health['expected_commands']}",
-        "Installed vs bundled slash commands",
-    )
+    if detected != "codex":
+        details.add_row(
+            "Agents",
+            f"{health['installed_agents']}/{health['expected_agents']}",
+            "Installed vs bundled agent templates",
+        )
+        details.add_row(
+            "Commands",
+            f"{health['installed_commands']}/{health['expected_commands']}",
+            "Installed vs bundled slash commands",
+        )
     details.add_row(
         "Planning",
         (
@@ -1075,14 +1137,15 @@ def doctor(debug: bool = typer.Option(False, "--debug", help="Enable debug loggi
         ),
         f"Current branch workspace: .map/{health['current_branch']}/",
     )
-    details.add_row(
-        "MCP",
-        (
-            "valid"
-            if health["project_mcp_valid"]
-            else ("present" if health["has_project_mcp"] else "not configured")
-        ),
-        ".mcp.json status",
+    if detected != "codex":
+        details.add_row(
+            "MCP",
+            (
+                "valid"
+                if health["project_mcp_valid"]
+                else ("present" if health["has_project_mcp"] else "not configured")
+            ),
+            ".mcp.json status",
     )
     console.print(details)
 
@@ -1104,6 +1167,13 @@ def upgrade():
             "[yellow]MAP Framework not initialized in this directory.[/yellow]"
         )
         console.print("Run: [cyan]mapify init .[/cyan]")
+        raise typer.Exit(0)
+
+    if _detect_provider(project_path) == "codex":
+        console.print(
+            "[yellow]Codex projects: re-run "
+            "[cyan]mapify init . --provider codex --force[/cyan] to refresh.[/yellow]"
+        )
         raise typer.Exit(0)
 
     console.print("[cyan]Checking for updates...[/cyan]")
