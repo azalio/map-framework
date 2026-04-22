@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.9.0] - 2026-04-22
+
 ### Added
 - **Codex CLI provider**: `mapify init . --provider codex` installs `.codex/` layout (skills, TOML agents, hooks) for OpenAI Codex CLI
 - **Provider abstraction**: `BaseProvider` ABC and `ClaudeProvider`/`CodexProvider` in `mapify_cli.delivery.providers`
