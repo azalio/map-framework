@@ -316,7 +316,9 @@ class TestWorkflowGate:
         assert code == 0
         self._assert_allowed(stdout)
 
-    def test_allows_edit_when_subtask_has_step_id_test_writer(self, tmp_path: Path) -> None:
+    def test_allows_edit_when_subtask_has_step_id_test_writer(
+        self, tmp_path: Path
+    ) -> None:
         """Step ID '2.25' must translate to TEST_WRITER (editing phase) and allow."""
         self._setup_step_state(
             tmp_path,
@@ -331,7 +333,9 @@ class TestWorkflowGate:
         assert code == 0
         self._assert_allowed(stdout)
 
-    def test_blocks_edit_when_subtask_has_step_id_research(self, tmp_path: Path) -> None:
+    def test_blocks_edit_when_subtask_has_step_id_research(
+        self, tmp_path: Path
+    ) -> None:
         """Step ID '2.2' must translate to RESEARCH (non-editing) and block."""
         self._setup_step_state(
             tmp_path,

@@ -1,4 +1,5 @@
 """Provider abstraction for MAP Framework delivery."""
+
 from __future__ import annotations
 
 import abc

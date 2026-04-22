@@ -1150,9 +1150,7 @@ def monitor_failed(branch: str, feedback: str = "") -> dict:
     }
 
 
-def wave_monitor_failed(
-    subtask_id: str, branch: str, feedback: str = ""
-) -> dict:
+def wave_monitor_failed(subtask_id: str, branch: str, feedback: str = "") -> dict:
     """Handle Monitor valid=false for a subtask within a wave.
 
     Resets the subtask's phase back to ACTOR and increments its retry count.
@@ -1408,11 +1406,7 @@ def mark_contract_ready(subtask_id: str, branch: str) -> dict:
         }
 
     contract_path, handoff_path = _contract_artifact_paths(branch, subtask_id)
-    missing = [
-        str(path)
-        for path in (contract_path, handoff_path)
-        if not path.exists()
-    ]
+    missing = [str(path) for path in (contract_path, handoff_path) if not path.exists()]
     if missing:
         return {
             "status": "error",
@@ -1464,11 +1458,7 @@ def resume_from_test_contract(subtask_id: str, branch: str) -> dict:
         }
 
     contract_path, handoff_path = _contract_artifact_paths(branch, subtask_id)
-    missing = [
-        str(path)
-        for path in (contract_path, handoff_path)
-        if not path.exists()
-    ]
+    missing = [str(path) for path in (contract_path, handoff_path) if not path.exists()]
     if missing:
         return {
             "status": "error",
@@ -1518,8 +1508,7 @@ def resume_from_test_contract(subtask_id: str, branch: str) -> dict:
     return {
         "status": "success",
         "message": (
-            f"Resuming {subtask_id} from persisted test contract. "
-            "Starting at ACTOR."
+            f"Resuming {subtask_id} from persisted test contract. " "Starting at ACTOR."
         ),
         "subtask_id": subtask_id,
         "next_phase": "ACTOR",
@@ -1986,7 +1975,9 @@ def main():
             if not args.task_or_step:
                 print(
                     json.dumps(
-                        {"error": "subtask_id required. Usage: wave_monitor_failed ST-001 --feedback 'text'"}
+                        {
+                            "error": "subtask_id required. Usage: wave_monitor_failed ST-001 --feedback 'text'"
+                        }
                     ),
                     file=sys.stderr,
                 )

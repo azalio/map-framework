@@ -5,6 +5,7 @@ and installs AGENTS.md at the project root.
 
 Never touches .claude/.
 """
+
 from __future__ import annotations
 
 import shutil

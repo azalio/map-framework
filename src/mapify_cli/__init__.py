@@ -306,7 +306,9 @@ def get_project_health(project_path: Path) -> Dict[str, Any]:
             ".claude/agents": project_path / ".claude" / "agents",
             ".claude/commands": project_path / ".claude" / "commands",
             ".claude/settings.json": project_path / ".claude" / "settings.json",
-            ".claude/workflow-rules.json": project_path / ".claude" / "workflow-rules.json",
+            ".claude/workflow-rules.json": project_path
+            / ".claude"
+            / "workflow-rules.json",
             ".map/scripts": project_path / ".map" / "scripts",
         }
     missing_paths = [name for name, path in required_paths.items() if not path.exists()]
@@ -787,7 +789,9 @@ def init(
                 console.print(
                     f"[yellow]Warning:[/yellow] Unrecognized MCP servers ignored: {', '.join(invalid)}"
                 )
-                console.print(f"Valid servers: {', '.join(INDIVIDUAL_MCP_SERVERS.keys())}")
+                console.print(
+                    f"Valid servers: {', '.join(INDIVIDUAL_MCP_SERVERS.keys())}"
+                )
             selected_mcp_servers = [s for s in requested if s in INDIVIDUAL_MCP_SERVERS]
 
         tracker.complete("mcp-select", f"{len(selected_mcp_servers)} servers")
@@ -884,15 +888,11 @@ def init(
 
     if provider == "codex":
         steps_lines.append(f"{step_num}. Start using MAP skills with Codex:")
-        steps_lines.append(
-            "   • [cyan]$map-plan[/] - Plan and decompose complex tasks"
-        )
+        steps_lines.append("   • [cyan]$map-plan[/] - Plan and decompose complex tasks")
         steps_lines.append(
             "   • [cyan]$map-fast[/] - Quick implementation with minimal validation"
         )
-        steps_lines.append(
-            "   • [cyan]$map-check[/] - Quality gates and verification"
-        )
+        steps_lines.append("   • [cyan]$map-check[/] - Quality gates and verification")
         steps_lines.append(
             f"{step_num + 1}. Trust this project in Codex settings for .codex/ config to take effect"
         )
@@ -1146,7 +1146,7 @@ def doctor(debug: bool = typer.Option(False, "--debug", help="Enable debug loggi
                 else ("present" if health["has_project_mcp"] else "not configured")
             ),
             ".mcp.json status",
-    )
+        )
     console.print(details)
 
     if health["missing_paths"]:

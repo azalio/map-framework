@@ -387,17 +387,16 @@ class TestCodexAgentTomlFormat:
             pytest.skip(f"{filename} not found")
         data = tomllib.loads(agent_file.read_text(encoding="utf-8"))
         di = data.get("developer_instructions")
-        assert di is not None, (
-            f"{filename} must have 'developer_instructions' field"
-        )
+        assert di is not None, f"{filename} must have 'developer_instructions' field"
         assert isinstance(di, str), (
             f"{filename}: developer_instructions must be a string, "
             f"got {type(di).__name__}. Use 'developer_instructions = "
-            f'\"\"\"...\"\"\"' "' not '[developer_instructions]\\ncontent = ...' "
+            f'"""..."""'
+            "' not '[developer_instructions]\\ncontent = ...' "
         )
-        assert len(di) > 50, (
-            f"{filename}: developer_instructions too short ({len(di)} chars)"
-        )
+        assert (
+            len(di) > 50
+        ), f"{filename}: developer_instructions too short ({len(di)} chars)"
 
     @pytest.mark.parametrize("filename", AGENT_FILES)
     def test_template_agent_matches_source(
