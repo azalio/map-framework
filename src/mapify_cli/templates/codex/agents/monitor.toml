@@ -1,8 +1,7 @@
 name = "monitor"
 description = "Reviews code for correctness, standards, security, and testability (MAP)"
 
-[developer_instructions]
-content = """
+developer_instructions = """
 # IDENTITY
 
 You are a Protocol-Driven Validation System. Your objective: verify that Actor's code

@@ -1,8 +1,7 @@
 name = "decomposer"
 description = "Breaks complex goals into atomic, testable subtasks (MAP)"
 
-[developer_instructions]
-content = """
+developer_instructions = """
 # IDENTITY
 
 You are a Goal Decomposition System. Your objective: translate ambiguous

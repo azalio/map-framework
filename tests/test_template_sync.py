@@ -330,3 +330,85 @@ class TestCodexTemplateSynchronization:
             "workflow-gate.py differs between .claude/hooks/ and .codex/hooks/. "
             "Run 'make sync-templates' to fix"
         )
+
+
+class TestCodexAgentTomlFormat:
+    """Validate that Codex agent TOMLs parse correctly and have the schema Codex expects.
+
+    Codex CLI rejects agent files where developer_instructions is a table
+    instead of a string (e.g., [developer_instructions] + content = '...'
+    vs developer_instructions = '...'). This test catches the issue in CI.
+    """
+
+    AGENT_FILES = [
+        "decomposer.toml",
+        "monitor.toml",
+        "researcher.toml",
+    ]
+
+    @pytest.fixture
+    def codex_agents_dir(self):
+        return Path(__file__).parent.parent / ".codex" / "agents"
+
+    @pytest.fixture
+    def template_agents_dir(self):
+        return (
+            Path(__file__).parent.parent
+            / "src"
+            / "mapify_cli"
+            / "templates"
+            / "codex"
+            / "agents"
+        )
+
+    @pytest.mark.parametrize("filename", AGENT_FILES)
+    def test_agent_toml_parses(self, codex_agents_dir, filename):
+        """Each agent TOML must be valid TOML."""
+        import tomllib
+
+        agent_file = codex_agents_dir / filename
+        if not agent_file.exists():
+            pytest.skip(f"{filename} not found")
+        data = tomllib.loads(agent_file.read_text(encoding="utf-8"))
+        assert "name" in data, f"{filename} must have 'name' field"
+        assert "description" in data, f"{filename} must have 'description' field"
+
+    @pytest.mark.parametrize("filename", AGENT_FILES)
+    def test_developer_instructions_is_string(self, codex_agents_dir, filename):
+        """developer_instructions must be a plain string, not a table.
+
+        Codex CLI error: 'invalid type: map, expected a string' when
+        developer_instructions is defined as [developer_instructions] table.
+        """
+        import tomllib
+
+        agent_file = codex_agents_dir / filename
+        if not agent_file.exists():
+            pytest.skip(f"{filename} not found")
+        data = tomllib.loads(agent_file.read_text(encoding="utf-8"))
+        di = data.get("developer_instructions")
+        assert di is not None, (
+            f"{filename} must have 'developer_instructions' field"
+        )
+        assert isinstance(di, str), (
+            f"{filename}: developer_instructions must be a string, "
+            f"got {type(di).__name__}. Use 'developer_instructions = "
+            f'\"\"\"...\"\"\"' "' not '[developer_instructions]\\ncontent = ...' "
+        )
+        assert len(di) > 50, (
+            f"{filename}: developer_instructions too short ({len(di)} chars)"
+        )
+
+    @pytest.mark.parametrize("filename", AGENT_FILES)
+    def test_template_agent_matches_source(
+        self, codex_agents_dir, template_agents_dir, filename
+    ):
+        """Template copy must be byte-identical to .codex/ source."""
+        source = codex_agents_dir / filename
+        template = template_agents_dir / filename
+        if not source.exists() or not template.exists():
+            pytest.skip(f"{filename} not in both locations")
+        assert filecmp.cmp(source, template, shallow=False), (
+            f"{filename} differs between .codex/agents/ and templates/codex/agents/. "
+            f"Run 'make sync-templates' to fix"
+        )
