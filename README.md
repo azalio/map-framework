@@ -1,23 +1,54 @@
-# MAP Framework for Claude Code
+# MAP Framework
 
 [![PyPI version](https://badge.fury.io/py/mapify-cli.svg)](https://pypi.org/project/mapify-cli/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 
-> Structured AI development workflows that replace ad-hoc prompting with **plan → execute → validate** loops.
+> A structured AI development workflow for engineers who need control, not just generated code.
 
-Based on [MAP cognitive architecture](https://github.com/Shanka123/MAP) (Nature Communications, 2025) — 74% improvement in planning tasks.
+MAP turns Claude Code and Codex CLI from ad-hoc coding assistants into a repeatable engineering loop with explicit artifacts, review points, and project memory.
 
-## Why MAP?
+Without MAP:
 
-- **Structured workflows** — 11 specialized agents instead of single-prompt chaos
-- **Quality gates** — automatic validation catches errors before they compound
-- **40-60% cost savings** — prevents circular reasoning and scope creep
-- **Learning system** — captures patterns for reuse across projects
-- **Persistent artifacts** — `/map-plan`, `/map-efficient`, and `/map-check` keep branch-scoped research, session, review, QA, and verification artifacts inside `.map/<branch>/`
+```text
+idea -> prompt -> code -> hope
+```
+
+With MAP:
+
+```text
+SPEC -> PLAN -> TEST -> CODE -> REVIEW -> LEARN
+```
+
+AI already writes code quickly. MAP helps you keep the architecture, scope, tests, and review process under control while it does.
+
+## Why MAP Exists
+
+Ad-hoc prompting feels fast on simple tasks. On complex systems, it often creates a different problem: code appears quickly, but the engineering process disappears.
+
+Common failure modes:
+
+- AI silently makes architecture decisions you did not approve.
+- One prompt produces a large diff that is hard to review.
+- Tests are written around the generated implementation, including its mistakes.
+- The output compiles, but you cannot explain why the design is correct.
+- The next session forgets the gotchas you already paid to discover.
+
+MAP is a lightweight workflow for moving engineering judgment earlier: write down the behavior, split the work into small contracts, verify each stage, review against the spec, and save lessons for the next run.
+
+## When To Use MAP
+
+| Good fits | Poor fits |
+|-----------|-----------|
+| Complex backend features | Typos and tiny edits |
+| Kubernetes controllers and operators | Small one-off scripts |
+| Internal platform tooling | Product ideas where the desired behavior is still unknown |
+| API, CRD, or domain-model changes with invariants | Broad rewrites without clear boundaries |
+| Refactoring with a meaningful test harness | Tasks cheaper to do directly than to plan |
 
 ## Quick Start
 
 **1. Install**
+
 ```bash
 uv tool install mapify-cli
 
@@ -25,69 +56,122 @@ uv tool install mapify-cli
 pip install mapify-cli
 ```
 
-**2. Initialize** (in your project)
+**2. Initialize your project**
+
+Claude Code is the default provider:
+
 ```bash
 cd your-project
 mapify init
-```
-
-**3. Start Claude Code and run your first workflow**
-```bash
 claude
 ```
-```
-/map-efficient implement user authentication with JWT tokens
+
+Codex CLI is also supported:
+
+```bash
+cd your-project
+mapify init . --provider codex
+codex
 ```
 
-**You'll know it's working when:** Claude spawns specialized agents (TaskDecomposer → Actor → Monitor) with structured output instead of freeform responses.
+**3. Use the golden path for serious work**
+
+When a task has unclear behavior, multiple files, or real review risk, run the full loop:
+
+```text
+/map-plan define the behavior and split the task
+/map-efficient implement the approved plan
+/map-check
+/map-review
+/map-learn
+```
+
+Direct `/map-efficient` is for already-scoped tasks. If you are unsure, start with `/map-plan`.
+
+Codex projects expose three MAP skills today: `$map-plan`, `$map-fast`, and `$map-check`. See the [Usage Guide](docs/USAGE.md#codex-cli-provider) for provider details.
+
+## What Success Looks Like
+
+After a good first workflow, you should see:
+
+- a written plan or spec before implementation starts;
+- small implementation contracts instead of one giant AI diff;
+- verification and review artifacts under `.map/<branch>/`;
+- review comments focused on correctness and semantics, not formatting noise;
+- `/map-learn` preserving project rules, gotchas, and handoffs for future sessions.
+
+MAP review is useful, but it is not a replacement for engineering judgment. Serious changes still need human review. The goal is to make that review smaller, earlier, and better grounded.
+
+## Why Engineers Stick With It
+
+- **Daily-driver speed** - optimized for repeated use, not occasional demo workflows.
+- **Low overhead** - structured enough to prevent chaos, lightweight enough to keep token and time cost under control.
+- **Reviewable diffs** - planning and task contracts keep changes small enough to inspect.
+- **Useful quality gates** - `/map-check` and `/map-review` validate against the plan instead of just asking whether code "looks fine".
+- **Project memory** - `/map-learn` turns hard-won fixes and gotchas into reusable context for the next session.
 
 ## Core Commands
 
 | Command | Use For |
 |---------|---------|
-| `/map-efficient` | Production features, refactoring, complex tasks (recommended) |
+| `/map-plan` | Start here for non-trivial work; clarify behavior and decompose tasks |
+| `/map-efficient` | Implement an approved plan or already-scoped task |
+| `/map-fast` | Small, low-risk changes where full planning would be overhead |
+| `/map-check` | Quality gates, verification, and artifact checks |
+| `/map-review` | Pre-commit semantic review against the plan, tests, and diff |
+| `/map-learn` | Capture project memory and reusable lessons |
 | `/map-debug` | Bug fixes and debugging |
-| `/map-fast` | Small, low-risk changes |
-| `/map-review` | Pre-commit code review |
-| `/map-check` | Quality gates and verification |
-| `/map-plan` | Task decomposition without implementation |
 | `/map-task` | Execute a single subtask from an existing plan |
 | `/map-tdd` | Test-first implementation workflow |
 | `/map-release` | Package release workflow |
 | `/map-resume` | Resume interrupted workflows |
-| `/map-learn` | Extract lessons after workflow completion; optional `[workflow-summary]` |
 
-[Detailed usage and options →](docs/USAGE.md)
+[Detailed usage and options ->](docs/USAGE.md)
 
 Canonical MAP flows:
 
-- Standard: `/map-plan` -> `/map-efficient` -> `/map-check` -> `/map-review` -> `/map-learn` (when you want to pay the learning cost)
+- Standard: `/map-plan` -> `/map-efficient` -> `/map-check` -> `/map-review` -> `/map-learn`
 - Full TDD: `/map-plan` -> `/map-tdd` -> `/map-check` -> `/map-review` -> `/map-learn`
 - Targeted subtask TDD: `/map-plan` -> `/map-tdd ST-001` -> `/map-task ST-001` -> ... -> `/map-check` -> `/map-review` -> `/map-learn`
 
-`/map-plan` now records a workflow-fit decision first, so trivial work can exit early with a direct edit or `/map-fast` recommendation instead of forcing full MAP planning.
+`/map-plan` records a workflow-fit decision first, so trivial work can exit early with a direct edit or `/map-fast` recommendation instead of forcing full MAP planning.
 
 These workflows maintain branch-scoped artifacts like `code-review-001.md`, `qa-001.md`, `verification-summary.md`, `pr-draft.md`, `artifact_manifest.json`, and run dossiers under `.map/<branch>/`. Targeted TDD flows also persist `test_contract_ST-00N.md` and `test_handoff_ST-00N.json` so `/map-task` can resume implementation from a clean red-phase handoff.
 
-`LEARN` is still the philosophical end of the MAP cycle, but runtime keeps it soft: `/map-efficient`, `/map-debug`, `/map-check`, and `/map-review` now write `learning-handoff.md` / `.json` under `.map/<branch>/`, so `/map-learn [workflow-summary]` can run immediately with an explicit summary or later with no argument by auto-loading the generated handoff.
+`LEARN` is the memory step of the MAP cycle. After implementation, checks, or review, MAP writes a learning handoff under `.map/<branch>/` so `/map-learn` can run later without reconstructing context. Pass `/map-learn [workflow-summary]` when you want to provide an explicit summary.
+
+## Case Study
+
+The DevOpsConf 2026 case study applies this process to a production Kubernetes Project Operator, not a toy CRUD app:
+
+- human estimate: 90 days;
+- MAP-style delivery: 7 days;
+- workflow: `SPEC -> PLAN -> TEST -> CODE -> REVIEW -> LEARN`;
+- small reviewable PRs instead of one giant generated diff;
+- tests before implementation for critical pieces;
+- semantic bugs caught in review before merge.
+
+[DevOpsConf 2026 case study ->](https://github.com/azalio/devopsconf-ai-develop)
 
 ## How It Works
 
-MAP orchestrates specialized agents through slash commands:
+MAP orchestrates specialized roles through slash commands and skills:
 
-```
-TaskDecomposer → breaks goal into subtasks
-     ↓
-   Actor → generates code
-     ↓
-  Monitor → validates quality (loop if needed)
-     ↓
- Predictor → analyzes impact (for risky changes)
+```text
+TaskDecomposer -> breaks goals into subtasks
+Actor          -> implements scoped tasks
+Monitor        -> validates quality and blocks invalid output
+Predictor      -> analyzes impact for risky changes
+Learner        -> captures reusable project memory
 ```
 
-The orchestration lives in `.claude/commands/map-*.md` prompts created by `mapify init`.
+For Claude Code, the orchestration lives in `.claude/commands/map-*.md` prompts created by `mapify init`.
 
-[Architecture deep-dive →](docs/ARCHITECTURE.md)
+For Codex CLI, `mapify init . --provider codex` creates `.codex/skills/`, `.codex/agents/`, `.codex/config.toml`, hooks, and shared `.map/scripts/`.
+
+MAP is inspired by [MAP cognitive architecture](https://github.com/Shanka123/MAP) (Nature Communications, 2025), which reported a 74% improvement in planning tasks. The CLI turns that idea into a practical software development workflow.
+
+[Architecture deep-dive ->](docs/ARCHITECTURE.md)
 
 ## Documentation
 
@@ -98,19 +182,16 @@ The orchestration lives in `.claude/commands/map-*.md` prompts created by `mapif
 | [Architecture](docs/ARCHITECTURE.md) | Agents, MCP integration, customization |
 | [Platform Spec](docs/MAP_PLATFORM_SPEC.md) | Platform refactor roadmap, codebase analysis |
 
-## Case Study
-
-- [DevOpsConf 2026 case study](https://github.com/azalio/devopsconf-ai-develop) — real production case: SPEC -> PLAN -> TEST -> CODE -> REVIEW -> LEARN
-
 ## Trouble?
 
-- **Command not found** → Run `mapify init` in your project first
-- **Agent errors** → Check `.claude/agents/` has all 11 shipped agent `.md` files
-- [More help →](docs/INSTALL.md#troubleshooting)
+- **Command not found** -> Run `mapify init` in your project first.
+- **Agent errors** -> Check `.claude/agents/` has all shipped agent `.md` files, or run `mapify doctor`.
+- **Poor output on a complex task** -> Start with `/map-plan` and feed `/map-efficient` the approved plan instead of asking it to infer the architecture.
+- [More help ->](docs/INSTALL.md#troubleshooting)
 
 ## Contributing
 
-Improvements welcome: prompts for specific languages, new agents, CI/CD integrations.
+Improvements welcome: prompts for specific languages, new agents, provider integrations, and CI/CD workflow support.
 
 ## License
 
@@ -118,4 +199,4 @@ MIT
 
 ---
 
-**MAP brings structure to AI-assisted development.** Start with `/map-efficient` and see the difference.
+Start with `/map-plan`. Keep the model inside your engineering process, not the other way around.
