@@ -117,9 +117,6 @@ def test_record_plan_artifacts_updates_manifest(branch_workspace):
         '{"subtasks": [{"id": "ST-001", "dependencies": [], "affected_files": []}]}\n',
         encoding="utf-8",
     )
-    (branch_workspace / "step_state.json").write_text(
-        '{"current_step_phase": "INITIALIZED"}\n', encoding="utf-8"
-    )
 
     result = map_step_runner.record_plan_artifacts()
 
@@ -132,6 +129,17 @@ def test_record_plan_artifacts_updates_manifest(branch_workspace):
     }
     assert f".map/{branch}/task_plan_{branch}.md" in recorded_paths
     assert f".map/{branch}/blueprint.json" in recorded_paths
+
+
+def test_record_plan_artifacts_is_partial_when_only_step_state_exists(branch_workspace):
+    (branch_workspace / "step_state.json").write_text(
+        '{"current_step_phase": "INITIALIZED"}\n', encoding="utf-8"
+    )
+
+    result = map_step_runner.record_plan_artifacts()
+
+    assert result["status"] == "success"
+    assert result["plan_status"] == "partial"
 
 
 def test_record_test_contract_handoff_creates_json_and_manifest(branch_workspace):

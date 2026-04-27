@@ -175,6 +175,46 @@ def _latest_numbered_artifact(plan_dir: Path, prefix: str) -> Optional[Path]:
     return max(numbered, key=lambda item: item[0])[1]
 
 
+def _load_constraints_from_spec(plan_dir: Path, branch: str) -> Optional[dict]:
+    """Parse the optional YAML-like constraints block from spec_<branch>.md."""
+    spec_path = plan_dir / f"spec_{branch}.md"
+    if not spec_path.exists():
+        return None
+
+    content = _read_text_if_exists(spec_path)
+    if not content:
+        return None
+
+    import re
+
+    match = re.search(
+        r"## Constraints\n\n```yaml\nconstraints:\n(?P<body>.*?)```",
+        content,
+        re.DOTALL,
+    )
+    if not match:
+        return None
+
+    parsed: dict[str, object] = {}
+    for raw_line in match.group("body").splitlines():
+        line = raw_line.split("#", 1)[0].rstrip()
+        if not line.strip() or ":" not in line:
+            continue
+        key, value = line.strip().split(":", 1)
+        normalized = value.strip()
+        if normalized in {"null", "None", ""}:
+            parsed[key] = None
+        elif key in {"max_files", "max_subtasks", "time_budget"}:
+            try:
+                parsed[key] = int(normalized)
+            except ValueError:
+                parsed[key] = normalized
+        else:
+            parsed[key] = normalized.strip('"\'')
+
+    return parsed or None
+
+
 def get_resume_briefing(branch: str) -> dict:
     """Collect human-readable artifact context for resume and handoff flows."""
     plan_dir = Path(f".map/{branch}")
@@ -313,6 +353,7 @@ class StepState:
     subtask_results: dict[str, dict] = field(default_factory=dict)
     last_subtask_commit_sha: Optional[str] = None
     contract_ready_subtasks: dict[str, dict] = field(default_factory=dict)
+    aag_contracts: dict[str, str] = field(default_factory=dict)
 
     def record_subtask_result(
         self,
@@ -360,6 +401,7 @@ class StepState:
             "subtask_results": self.subtask_results,
             "last_subtask_commit_sha": self.last_subtask_commit_sha,
             "contract_ready_subtasks": self.contract_ready_subtasks,
+            "aag_contracts": self.aag_contracts,
         }
 
     @classmethod
@@ -392,6 +434,7 @@ class StepState:
             subtask_results=data.get("subtask_results", {}),
             last_subtask_commit_sha=data.get("last_subtask_commit_sha"),
             contract_ready_subtasks=data.get("contract_ready_subtasks", {}),
+            aag_contracts=data.get("aag_contracts", {}),
         )
 
     @classmethod
@@ -1562,6 +1605,14 @@ def resume_from_plan(branch: str) -> dict:
             try:
                 src_data = json.loads(source_file.read_text(encoding="utf-8"))
                 aag_contracts = src_data.get("aag_contracts", {})
+                if not aag_contracts and isinstance(src_data.get("subtasks"), list):
+                    aag_contracts = {
+                        subtask.get("id"): subtask.get("aag_contract", "")
+                        for subtask in src_data["subtasks"]
+                        if isinstance(subtask, dict)
+                        and subtask.get("id")
+                        and subtask.get("aag_contract")
+                    }
             except (json.JSONDecodeError, KeyError):
                 pass
 
@@ -1571,10 +1622,12 @@ def resume_from_plan(branch: str) -> dict:
     execution_start = [s for s in STEP_ORDER if s not in skipped_phases]
 
     state_file = plan_dir / "step_state.json"
+    constraints = _load_constraints_from_spec(plan_dir, branch)
     state = StepState(
         current_subtask_id=subtask_ids[0],
         subtask_index=0,
         subtask_sequence=subtask_ids,
+        aag_contracts=aag_contracts,
         current_step_id=execution_start[0] if execution_start else "1.6",
         current_step_phase=(
             STEP_PHASES.get(execution_start[0], "INIT_STATE")
@@ -1586,6 +1639,7 @@ def resume_from_plan(branch: str) -> dict:
         plan_approved=True,
         execution_mode="batch",
         workflow_status="IN_PROGRESS",
+        constraints=constraints,
     )
     state.save(state_file)
 

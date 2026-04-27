@@ -1017,7 +1017,7 @@ def record_plan_artifacts(branch: Optional[str] = None) -> dict[str, object]:
     if step_state_path.exists():
         plan_artifacts.append(_artifact_ref(step_state_path, "step-state"))
 
-    if task_plan_path.exists() and blueprint_path.exists() and step_state_path.exists():
+    if task_plan_path.exists() and blueprint_path.exists():
         plan_status = "ready"
     elif plan_artifacts:
         plan_status = "partial"

@@ -228,6 +228,89 @@ class TestValidateWaveStep:
         assert result["valid"] is True
 
 
+class TestPlanResumeContract:
+    """Regression tests for /map-plan -> /map-efficient handoff."""
+
+    def test_get_next_step_on_planning_only_state_skips_first_subtask(self, branch_dir):
+        """A planning-only state file is not execution-safe without resume_from_plan."""
+        state_file = Path(f".map/{branch_dir}/step_state.json")
+        planning_state = {
+            "_semantic_tag": "MAP_State_v1_0",
+            "workflow": "map-plan",
+            "started_at": "2026-01-01T00:00:00Z",
+            "current_subtask_id": None,
+            "current_step_phase": "INITIALIZED",
+            "completed_steps": [],
+            "pending_steps": [],
+            "subtask_sequence": ["ST-001", "ST-002", "ST-003"],
+            "aag_contracts": {"ST-001": "Actor -> Action -> Goal"},
+            "constraints": {
+                "max_files": None,
+                "max_subtasks": None,
+                "time_budget": None,
+                "scope_glob": None,
+            },
+        }
+        state_file.write_text(json.dumps(planning_state), encoding="utf-8")
+
+        result = map_orchestrator.get_next_step(branch_dir)
+
+        assert result["current_subtask"] == "ST-002"
+        assert result["phase"] == "RESEARCH"
+
+    def test_resume_from_plan_extracts_aag_contracts_from_blueprint_subtasks(
+        self, branch_dir
+    ):
+        """resume_from_plan should recover contracts from blueprint subtasks."""
+        plan_dir = Path(f".map/{branch_dir}")
+        (plan_dir / f"task_plan_{branch_dir}.md").write_text(
+            "### ST-001: First\n- **Status:** pending\n\n### ST-002: Second\n- **Status:** pending\n",
+            encoding="utf-8",
+        )
+        (plan_dir / "blueprint.json").write_text(
+            json.dumps(
+                {
+                    "subtasks": [
+                        {
+                            "id": "ST-001",
+                            "aag_contract": "Service -> do_first() -> first done",
+                            "dependencies": [],
+                            "affected_files": ["one.py"],
+                        },
+                        {
+                            "id": "ST-002",
+                            "aag_contract": "Service -> do_second() -> second done",
+                            "dependencies": ["ST-001"],
+                            "affected_files": ["two.py"],
+                        },
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / f"spec_{branch_dir}.md").write_text(
+            "## Constraints\n\n```yaml\nconstraints:\n  max_files: 3\n  max_subtasks: null\n  time_budget: 45\n  scope_glob: \"src/auth/**\"\n```\n",
+            encoding="utf-8",
+        )
+
+        result = map_orchestrator.resume_from_plan(branch_dir)
+
+        assert result["status"] == "success"
+        assert result["aag_contracts_found"] == 2
+
+        state = map_orchestrator.StepState.load(plan_dir / "step_state.json")
+        assert state.aag_contracts == {
+            "ST-001": "Service -> do_first() -> first done",
+            "ST-002": "Service -> do_second() -> second done",
+        }
+        assert state.constraints == {
+            "max_files": 3,
+            "max_subtasks": None,
+            "time_budget": 45,
+            "scope_glob": "src/auth/**",
+        }
+
+
 class TestAdvanceWave:
     """Tests for advance_wave command."""
 
