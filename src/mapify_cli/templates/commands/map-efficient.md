@@ -104,61 +104,19 @@ fi
 
 Before starting the state machine, check if `/map-plan` already produced artifacts for this branch:
 
-Use this exact detection logic instead of trusting the presence of `step_state.json` alone:
+Ask the orchestrator whether runtime state should be rehydrated from the saved plan artifacts:
 
 ```bash
 BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
 if [ -f ".map/${BRANCH}/task_plan_${BRANCH}.md" ]; then
-  SHOULD_RESUME=$(BRANCH="$BRANCH" python3 - <<'PY'
-import json
-import os
-from pathlib import Path
-
-branch = Path(".map") / os.environ["BRANCH"]
-state_path = branch / "step_state.json"
-
-if not state_path.exists():
-    print("true")
-else:
-    try:
-        state = json.loads(state_path.read_text(encoding="utf-8"))
-    except Exception:
-        print("true")
-    else:
-        workflow_name = str(state.get("workflow") or "").strip()
-        workflow_status = str(state.get("workflow_status") or "").strip().upper()
-        current_phase = str(state.get("current_step_phase") or "").strip().upper()
-        pending_steps = state.get("pending_steps")
-        subtask_sequence = state.get("subtask_sequence") or []
-        planning_only_workflow = workflow_name == "map-plan"
-        is_complete = workflow_status == "COMPLETE" or current_phase == "COMPLETE"
-        planning_shaped_pending_state = (
-            pending_steps == []
-            and bool(subtask_sequence)
-            and current_phase != "COMPLETE"
-            and (
-                workflow_status in {"", "INITIALIZED"}
-                or planning_only_workflow
-            )
-        )
-
-        should_resume = (
-            not is_complete
-            and (
-                workflow_status in {"", "INITIALIZED"}
-                or current_phase in {"", "INITIALIZED"}
-                or planning_shaped_pending_state
-            )
-        )
-        print("true" if should_resume else "false")
-PY
-)
-
+  SHOULD_RESUME=$(python3 .map/scripts/map_orchestrator.py should_resume_from_plan | jq -r '.should_resume')
   if [ "$SHOULD_RESUME" = "true" ]; then
     python3 .map/scripts/map_orchestrator.py resume_from_plan
   fi
 fi
 ```
+
+`should_resume_from_plan` is the canonical place for this decision logic. Keep the command template thin: it should ask the orchestrator, not embed plan-state parsing inline.
 
 If `resume_from_plan` succeeds, the orchestrator skips DECOMPOSE, INIT_PLAN, REVIEW_PLAN, and CHOOSE_MODE (plan already approved, batch mode auto-set) and starts from INIT_STATE. This reinitialization is REQUIRED when the existing `step_state.json` is only a planning artifact or otherwise not in an execution-ready runtime shape.
 

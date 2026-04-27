@@ -231,6 +231,60 @@ class TestValidateWaveStep:
 class TestPlanResumeContract:
     """Regression tests for /map-plan -> /map-efficient handoff."""
 
+    def test_should_resume_from_plan_for_planning_only_state(self, branch_dir):
+        """Planning-shaped state should be rehydrated via resume_from_plan."""
+        plan_dir = Path(f".map/{branch_dir}")
+        (plan_dir / f"task_plan_{branch_dir}.md").write_text(
+            "### ST-001: First\n- **Status:** pending\n", encoding="utf-8"
+        )
+        state_file = plan_dir / "step_state.json"
+        planning_state = {
+            "_semantic_tag": "MAP_State_v1_0",
+            "workflow": "map-plan",
+            "started_at": "2026-01-01T00:00:00Z",
+            "current_subtask_id": None,
+            "current_step_phase": "INITIALIZED",
+            "completed_steps": [],
+            "pending_steps": [],
+            "subtask_sequence": ["ST-001", "ST-002", "ST-003"],
+            "aag_contracts": {"ST-001": "Actor -> Action -> Goal"},
+            "constraints": {
+                "max_files": None,
+                "max_subtasks": None,
+                "scope_glob": None,
+            },
+        }
+        state_file.write_text(json.dumps(planning_state), encoding="utf-8")
+
+        result = map_orchestrator.should_resume_from_plan(branch_dir)
+
+        assert result["should_resume"] is True
+        assert result["reason"] == "planning_only_workflow"
+
+    def test_should_resume_from_plan_false_for_complete_runtime_state(self, branch_dir):
+        """Completed execution state must not be rehydrated from plan artifacts."""
+        plan_dir = Path(f".map/{branch_dir}")
+        (plan_dir / f"task_plan_{branch_dir}.md").write_text(
+            "### ST-001: First\n- **Status:** complete\n", encoding="utf-8"
+        )
+        (plan_dir / "step_state.json").write_text(
+            json.dumps(
+                {
+                    "workflow": "map-efficient",
+                    "workflow_status": "COMPLETE",
+                    "current_step_phase": "COMPLETE",
+                    "pending_steps": [],
+                    "subtask_sequence": ["ST-001"],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = map_orchestrator.should_resume_from_plan(branch_dir)
+
+        assert result["should_resume"] is False
+        assert result["reason"] == "execution_state_ready"
+
     def test_get_next_step_on_planning_only_state_skips_first_subtask(self, branch_dir):
         """A planning-only state file is not execution-safe without resume_from_plan."""
         state_file = Path(f".map/{branch_dir}/step_state.json")

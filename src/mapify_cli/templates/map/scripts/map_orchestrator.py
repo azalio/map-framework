@@ -1605,6 +1605,79 @@ def resume_from_test_contract(subtask_id: str, branch: str) -> dict:
     }
 
 
+def should_resume_from_plan(branch: str) -> dict:
+    """Decide whether existing plan artifacts require runtime state rehydration."""
+    plan_dir = Path(f".map/{branch}")
+    plan_file = plan_dir / f"task_plan_{branch}.md"
+    state_file = plan_dir / "step_state.json"
+
+    if not plan_file.exists():
+        return {
+            "status": "success",
+            "should_resume": False,
+            "reason": "no_plan_artifacts",
+        }
+
+    if not state_file.exists():
+        return {
+            "status": "success",
+            "should_resume": True,
+            "reason": "missing_step_state",
+        }
+
+    try:
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+    except Exception:
+        return {
+            "status": "success",
+            "should_resume": True,
+            "reason": "invalid_step_state",
+        }
+
+    workflow_name = str(state.get("workflow") or "").strip()
+    workflow_status = str(state.get("workflow_status") or "").strip().upper()
+    current_phase = str(state.get("current_step_phase") or "").strip().upper()
+    pending_steps = state.get("pending_steps")
+    subtask_sequence = state.get("subtask_sequence") or []
+    planning_only_workflow = workflow_name == "map-plan"
+    is_complete = workflow_status == "COMPLETE" or current_phase == "COMPLETE"
+    planning_shaped_pending_state = (
+        pending_steps == []
+        and bool(subtask_sequence)
+        and current_phase != "COMPLETE"
+        and (
+            workflow_status in {"", "INITIALIZED"}
+            or planning_only_workflow
+        )
+    )
+
+    should_resume = (
+        not is_complete
+        and (
+            workflow_status in {"", "INITIALIZED"}
+            or current_phase in {"", "INITIALIZED"}
+            or planning_shaped_pending_state
+        )
+    )
+
+    reason = "execution_state_ready"
+    if should_resume:
+        if planning_only_workflow:
+            reason = "planning_only_workflow"
+        elif planning_shaped_pending_state:
+            reason = "planning_shaped_pending_state"
+        elif workflow_status in {"", "INITIALIZED"}:
+            reason = "workflow_status_initial"
+        elif current_phase in {"", "INITIALIZED"}:
+            reason = "current_phase_initial"
+
+    return {
+        "status": "success",
+        "should_resume": should_resume,
+        "reason": reason,
+    }
+
+
 def resume_from_plan(branch: str) -> dict:
     """Resume workflow from an existing /map-plan output, skipping init phases.
 
@@ -1863,6 +1936,7 @@ def main():
             "validate_wave_step",
             "advance_wave",
             "resume_single_subtask",
+            "should_resume_from_plan",
             "get_plan_progress",
             "monitor_failed",
             "wave_monitor_failed",
@@ -1991,6 +2065,10 @@ def main():
 
         elif args.command == "resume_from_plan":
             result = resume_from_plan(branch)
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "should_resume_from_plan":
+            result = should_resume_from_plan(branch)
             print(json.dumps(result, indent=2))
 
         elif args.command == "resume_from_test_contract":
