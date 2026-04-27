@@ -246,10 +246,12 @@ class TestCommandTemplates:
 
         assert "task_plan_" in content
         assert "blueprint.json" in content
+        assert "plan_handoff.json" in content
         assert "spec_" in content
         assert "artifact_manifest.json" in content
         assert "record_workflow_fit" in content
         assert "Do **NOT** create `step_state.json` in `/map-plan`" in content
+        assert "write_plan_handoff" in content
 
     def test_map_efficient_reinitializes_when_plan_state_is_stale(
         self, templates_commands_dir

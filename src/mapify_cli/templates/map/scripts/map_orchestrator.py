@@ -175,88 +175,81 @@ def _latest_numbered_artifact(plan_dir: Path, prefix: str) -> Optional[Path]:
     return max(numbered, key=lambda item: item[0])[1]
 
 
-def _parse_numeric_constraint(raw_value: str) -> Optional[int]:
-    """Parse integer constraint values, accepting quoted ints/floats like 3.0."""
-    normalized = raw_value.strip().strip('"\'')
-    if normalized in {"", "null", "None"}:
+def _load_plan_handoff(branch: str) -> Optional[dict[str, object]]:
+    """Load canonical plan_handoff.json when present and valid."""
+    handoff_path = Path(f".map/{branch}/plan_handoff.json")
+    if not handoff_path.exists():
         return None
-
     try:
-        numeric = float(normalized)
-    except ValueError:
+        payload = json.loads(handoff_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
         return None
-
-    if not numeric.is_integer():
-        return None
-    return int(numeric)
+    return payload if isinstance(payload, dict) else None
 
 
-def _strip_yaml_comment(raw_line: str) -> str:
-    """Strip YAML comments while preserving # characters inside quotes."""
-    in_single = False
-    in_double = False
-    escaped = False
-    result: list[str] = []
+def _load_legacy_plan_data(branch: str) -> dict[str, object]:
+    """Compatibility loader for older branches without plan_handoff.json."""
+    plan_dir = Path(f".map/{branch}")
+    plan_file = plan_dir / f"task_plan_{branch}.md"
+    blueprint_file = plan_dir / "blueprint.json"
 
-    for ch in raw_line:
-        if escaped:
-            result.append(ch)
-            escaped = False
-            continue
-        if ch == "\\" and in_double:
-            result.append(ch)
-            escaped = True
-            continue
-        if ch == '"' and not in_single:
-            in_double = not in_double
-            result.append(ch)
-            continue
-        if ch == "'" and not in_double:
-            in_single = not in_single
-            result.append(ch)
-            continue
-        if ch == "#" and not in_single and not in_double:
-            break
-        result.append(ch)
-
-    return "".join(result).rstrip()
-
-
-def _load_constraints_from_spec(plan_dir: Path, branch: str) -> Optional[dict]:
-    """Parse the optional YAML-like constraints block from spec_<branch>.md."""
-    spec_path = plan_dir / f"spec_{branch}.md"
-    if not spec_path.exists():
-        return None
-
-    content = _read_text_if_exists(spec_path)
-    if not content:
-        return None
+    if not plan_file.exists():
+        return {"status": "error", "message": f"No plan found at {plan_file}. Run /map-plan first."}
 
     import re
 
-    match = re.search(
-        r"## Constraints\n\n```yaml\nconstraints:\n(?P<body>.*?)```",
-        content,
-        re.DOTALL,
-    )
-    if not match:
-        return None
+    plan_content = plan_file.read_text(encoding="utf-8")
+    subtask_ids = re.findall(r"###\s+(ST-\d+)", plan_content)
+    if not subtask_ids:
+        return {"status": "error", "message": f"No subtask IDs (ST-XXX) found in {plan_file}."}
 
-    parsed: dict[str, object] = {}
-    for raw_line in match.group("body").splitlines():
-        line = _strip_yaml_comment(raw_line)
-        if not line.strip() or ":" not in line:
-            continue
-        key, value = line.strip().split(":", 1)
-        normalized = value.strip()
-        if normalized in {"null", "None", ""}:
-            parsed[key] = None
-        elif key in {"max_files", "max_subtasks"}:
-            parsed[key] = _parse_numeric_constraint(normalized)
-        else:
-            parsed[key] = normalized.strip('"\'')
+    aag_contracts: dict[str, str] = {}
+    step_state_file = plan_dir / "step_state.json"
+    for source_file in [blueprint_file, step_state_file]:
+        if source_file.exists() and not aag_contracts:
+            try:
+                src_data = json.loads(source_file.read_text(encoding="utf-8"))
+                if isinstance(src_data, dict) and isinstance(src_data.get("blueprint"), dict):
+                    src_data = src_data["blueprint"]
+                aag_contracts = src_data.get("aag_contracts", {})
+                if not aag_contracts and isinstance(src_data.get("subtasks"), list):
+                    aag_contracts = {
+                        subtask.get("id"): subtask.get("aag_contract", "")
+                        for subtask in src_data["subtasks"]
+                        if isinstance(subtask, dict)
+                        and subtask.get("id")
+                        and subtask.get("aag_contract")
+                    }
+            except (json.JSONDecodeError, KeyError, OSError, TypeError):
+                pass
 
-    return parsed or None
+    return {
+        "status": "success",
+        "source": "legacy",
+        "subtask_sequence": subtask_ids,
+        "aag_contracts": aag_contracts,
+        "constraints": load_constraints_from_spec(plan_dir, branch),
+    }
+
+
+def _get_plan_bootstrap_data(branch: str) -> dict[str, object]:
+    """Return canonical bootstrap data for runtime execution state."""
+    handoff = _load_plan_handoff(branch)
+    if handoff is not None:
+        subtask_sequence = handoff.get("subtask_sequence") or []
+        if not isinstance(subtask_sequence, list) or not subtask_sequence:
+            return {"status": "error", "message": "plan_handoff.json missing subtask_sequence"}
+        aag_contracts = handoff.get("aag_contracts") or {}
+        if not isinstance(aag_contracts, dict):
+            aag_contracts = {}
+        return {
+            "status": "success",
+            "source": "plan_handoff",
+            "subtask_sequence": subtask_sequence,
+            "aag_contracts": aag_contracts,
+            "constraints": handoff.get("constraints"),
+        }
+    return _load_legacy_plan_data(branch)
 
 
 def get_resume_briefing(branch: str) -> dict:
@@ -508,7 +501,7 @@ def _get_step_order(tdd_mode: bool = False) -> list[str]:
     return TDD_STEP_ORDER if tdd_mode else STEP_ORDER
 
 
-from map_utils import get_branch_name  # noqa: E402 — shared across .map/scripts/
+from map_utils import get_branch_name, load_constraints_from_spec  # noqa: E402 — shared across .map/scripts/
 
 
 def _actor_step_instruction(state: StepState) -> str:
@@ -1608,10 +1601,11 @@ def resume_from_test_contract(subtask_id: str, branch: str) -> dict:
 def should_resume_from_plan(branch: str) -> dict:
     """Decide whether existing plan artifacts require runtime state rehydration."""
     plan_dir = Path(f".map/{branch}")
+    handoff_file = plan_dir / "plan_handoff.json"
     plan_file = plan_dir / f"task_plan_{branch}.md"
     state_file = plan_dir / "step_state.json"
 
-    if not plan_file.exists():
+    if not handoff_file.exists() and not plan_file.exists():
         return {
             "status": "success",
             "should_resume": False,
@@ -1681,57 +1675,16 @@ def should_resume_from_plan(branch: str) -> dict:
 def resume_from_plan(branch: str) -> dict:
     """Resume workflow from an existing /map-plan output, skipping init phases.
 
-    Detects task_plan_<branch>.md and step_state.json created by /map-plan.
-    Extracts subtask IDs from the plan, marks init phases as completed, and
-    starts execution from INIT_STATE (batch mode auto-set).
-
-    Args:
-        branch: Git branch name (sanitized)
-
-    Returns:
-        Dict with status and skipped phases
+    Prefer the canonical `plan_handoff.json` bootstrap artifact. Fall back to
+    older plan/blueprint/spec artifacts only for backward compatibility.
     """
     plan_dir = Path(f".map/{branch}")
-    plan_file = plan_dir / f"task_plan_{branch}.md"
+    bootstrap = _get_plan_bootstrap_data(branch)
+    if bootstrap.get("status") != "success":
+        return bootstrap
 
-    # Verify plan artifacts exist
-    if not plan_file.exists():
-        return {
-            "status": "error",
-            "message": f"No plan found at {plan_file}. Run /map-plan first.",
-        }
-
-    # Extract subtask IDs from plan file (ST-XXX pattern)
-    import re
-
-    plan_content = plan_file.read_text(encoding="utf-8")
-    subtask_ids = re.findall(r"###\s+(ST-\d+)", plan_content)
-
-    if not subtask_ids:
-        return {
-            "status": "error",
-            "message": f"No subtask IDs (ST-XXX) found in {plan_file}.",
-        }
-
-    # Extract AAG contracts from canonical planning artifacts first.
-    aag_contracts: dict[str, str] = {}
-    step_state_file = plan_dir / "step_state.json"
-    blueprint_file = plan_dir / "blueprint.json"
-    for source_file in [blueprint_file, step_state_file]:
-        if source_file.exists() and not aag_contracts:
-            try:
-                src_data = json.loads(source_file.read_text(encoding="utf-8"))
-                aag_contracts = src_data.get("aag_contracts", {})
-                if not aag_contracts and isinstance(src_data.get("subtasks"), list):
-                    aag_contracts = {
-                        subtask.get("id"): subtask.get("aag_contract", "")
-                        for subtask in src_data["subtasks"]
-                        if isinstance(subtask, dict)
-                        and subtask.get("id")
-                        and subtask.get("aag_contract")
-                    }
-            except (json.JSONDecodeError, KeyError):
-                pass
+    subtask_ids = bootstrap.get("subtask_sequence") or []
+    aag_contracts = bootstrap.get("aag_contracts") or {}
 
     # Create state that skips DECOMPOSE, INIT_PLAN, REVIEW_PLAN, CHOOSE_MODE
     # (plan already approved, execution mode is always batch)
@@ -1739,7 +1692,7 @@ def resume_from_plan(branch: str) -> dict:
     execution_start = [s for s in STEP_ORDER if s not in skipped_phases]
 
     state_file = plan_dir / "step_state.json"
-    constraints = _load_constraints_from_spec(plan_dir, branch)
+    constraints = bootstrap.get("constraints")
     state = StepState(
         current_subtask_id=subtask_ids[0],
         subtask_index=0,
@@ -1764,10 +1717,11 @@ def resume_from_plan(branch: str) -> dict:
 
     return {
         "status": "success",
-        "message": "Resumed from /map-plan. Skipped DECOMPOSE, INIT_PLAN, REVIEW_PLAN, CHOOSE_MODE. Mode: batch.",
+        "message": "Resumed from /map-plan artifacts. Skipped DECOMPOSE, INIT_PLAN, REVIEW_PLAN, CHOOSE_MODE. Mode: batch.",
         "subtask_sequence": subtask_ids,
         "current_subtask_id": subtask_ids[0],
         "aag_contracts_found": len(aag_contracts),
+        "bootstrap_source": bootstrap.get("source"),
         "next_phase": "INIT_STATE",
         "resume_briefing": briefing,
     }

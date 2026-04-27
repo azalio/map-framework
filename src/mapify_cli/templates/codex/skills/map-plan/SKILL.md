@@ -521,6 +521,7 @@ Do **NOT** create `step_state.json` in `$map-plan`.
 - `spec_<branch>.md`
 - `task_plan_<branch>.md`
 - `blueprint.json`
+- `plan_handoff.json`
 - `artifact_manifest.json`
 - optional `findings_<branch>.md` and `workflow-fit.json`
 
@@ -531,11 +532,15 @@ shell_command:
   cmd: python3 .map/scripts/map_orchestrator.py resume_from_plan
 ```
 
-Record artifacts in the manifest:
+That runtime bootstrap should come from `plan_handoff.json`, not from parsing reviewer-facing markdown.
+
+Create the canonical handoff artifact and record artifacts in the manifest:
 
 ```
 shell_command:
-  cmd: python3 .map/scripts/map_step_runner.py record_plan_artifacts
+  cmd: |
+    python3 .map/scripts/map_step_runner.py write_plan_handoff
+    python3 .map/scripts/map_step_runner.py record_plan_artifacts
 ```
 
 ---
@@ -557,6 +562,7 @@ shell_command:
     echo "[ok] Devil's Advocate review completed (or skipped)"
     echo "[ok] Architecture graph written to spec_${BRANCH}.md"
     echo "[ok] Blueprint saved to .map/${BRANCH}/blueprint.json"
+    echo "[ok] plan_handoff.json saved with canonical runtime bootstrap data"
     echo "[ok] Coverage check passed"
     echo "[ok] Plan written to .map/${BRANCH}/task_plan_${BRANCH}.md"
     echo "[ok] artifact_manifest.json updated"
@@ -580,6 +586,7 @@ Before stopping, verify distilled state is self-contained. The next session star
 DISTILLATION CHECKLIST:
   [x] task_plan_<branch>.md   — AAG contracts for every subtask + Spec Coverage table
   [x] blueprint.json          — raw decomposer output with coverage_map + per-subtask aag_contract (for map-efficient)
+  [x] plan_handoff.json       — canonical runtime bootstrap (subtask_sequence + aag_contracts + constraints)
   [x] spec_<branch>.md        — architecture graph + decisions + COMPLETE acceptance criteria
   [x] artifact_manifest.json  — records workflow_fit + spec + plan stage artifacts
   [x] findings_<branch>.md    — research pointers (if discovery was done)

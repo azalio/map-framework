@@ -320,6 +320,32 @@ class TestPlanResumeContract:
             "### ST-001: First\n- **Status:** pending\n\n### ST-002: Second\n- **Status:** pending\n",
             encoding="utf-8",
         )
+        (plan_dir / "plan_handoff.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "1.0",
+                    "source": "map-plan",
+                    "branch": branch_dir,
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "subtask_sequence": ["ST-001", "ST-002"],
+                    "aag_contracts": {
+                        "ST-001": "Service -> do_first() -> first done",
+                        "ST-002": "Service -> do_second() -> second done",
+                    },
+                    "constraints": {
+                        "max_files": 3,
+                        "max_subtasks": None,
+                        "scope_glob": "src/auth/**",
+                    },
+                    "artifacts": {
+                        "blueprint": f".map/{branch_dir}/blueprint.json",
+                        "task_plan": f".map/{branch_dir}/task_plan_{branch_dir}.md",
+                        "spec": f".map/{branch_dir}/spec_{branch_dir}.md",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
         (plan_dir / "blueprint.json").write_text(
             json.dumps(
                 {
@@ -350,6 +376,7 @@ class TestPlanResumeContract:
 
         assert result["status"] == "success"
         assert result["aag_contracts_found"] == 2
+        assert result["bootstrap_source"] == "plan_handoff"
 
         state = map_orchestrator.StepState.load(plan_dir / "step_state.json")
         assert state.aag_contracts == {

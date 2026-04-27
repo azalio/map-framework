@@ -569,6 +569,7 @@ Do **NOT** create `step_state.json` in `/map-plan`.
 - `spec_<branch>.md`
 - `task_plan_<branch>.md`
 - `blueprint.json`
+- `plan_handoff.json`
 - `artifact_manifest.json`
 - optional `findings_<branch>.md` and `workflow-fit.json`
 
@@ -578,9 +579,10 @@ The execution state must be initialized later by:
 python3 .map/scripts/map_orchestrator.py resume_from_plan
 ```
 
-After writing `spec_<branch>.md`, `task_plan_<branch>.md`, and `blueprint.json`, record them in the artifact manifest:
+After writing `spec_<branch>.md`, `task_plan_<branch>.md`, and `blueprint.json`, create the canonical handoff artifact and then record everything in the manifest:
 
 ```bash
+python3 .map/scripts/map_step_runner.py write_plan_handoff
 python3 .map/scripts/map_step_runner.py record_plan_artifacts
 ```
 
@@ -598,6 +600,7 @@ WORKFLOW CHECKPOINT: PLAN PHASE COMPLETE
 ✅ Task decomposed into N subtasks with AAG contracts
 ✅ Coverage check passed: M/M spec ACs mapped, 0 orphaned cross-cutting concerns
 ✅ Blueprint saved to .map/${BRANCH}/blueprint.json
+✅ plan_handoff.json saved with canonical runtime bootstrap data
 ✅ Plan written to .map/${BRANCH}/task_plan_${BRANCH}.md
 ✅ artifact_manifest.json updated for spec + plan artifacts
 ✅ Context distilled (plan files ≤4000 tokens per subtask)
@@ -626,7 +629,7 @@ Start execution with:
 The executor must call:
   python3 .map/scripts/map_orchestrator.py resume_from_plan
 
-This ensures runtime state is derived from task_plan_<branch>.md + blueprint.json,
+This ensures runtime state is derived from plan_handoff.json (and blueprint.json for execution waves),
 not from a stale planning-state snapshot.
 ```
 
@@ -638,6 +641,7 @@ not from a stale planning-state snapshot.
 DISTILLATION CHECKLIST:
   [x] task_plan_<branch>.md — has AAG contracts for every subtask + Spec Coverage table
   [x] blueprint.json     — raw decomposer output for wave computation (with coverage_map and per-subtask aag_contract)
+  [x] plan_handoff.json  — canonical runtime bootstrap (subtask_sequence + aag_contracts + constraints)
   [x] spec_<branch>.md      — has architecture graph + decisions + COMPLETE acceptance criteria (if interview was done)
   [x] artifact_manifest.json — records workflow_fit + spec + plan stage artifacts
   [x] findings_<branch>.md  — has research pointers (if discovery was done)
