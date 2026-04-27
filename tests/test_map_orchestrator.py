@@ -247,7 +247,6 @@ class TestPlanResumeContract:
             "constraints": {
                 "max_files": None,
                 "max_subtasks": None,
-                "time_budget": None,
                 "scope_glob": None,
             },
         }
@@ -289,7 +288,7 @@ class TestPlanResumeContract:
             encoding="utf-8",
         )
         (plan_dir / f"spec_{branch_dir}.md").write_text(
-            "## Constraints\n\n```yaml\nconstraints:\n  max_files: \"3\"\n  max_subtasks: null\n  time_budget: 45.0\n  scope_glob: \"src/auth/**\"\n```\n",
+            "## Constraints\n\n```yaml\nconstraints:\n  max_files: \"3\"\n  max_subtasks: null\n  scope_glob: \"src/auth/**\"\n```\n",
             encoding="utf-8",
         )
 
@@ -306,7 +305,6 @@ class TestPlanResumeContract:
         assert state.constraints == {
             "max_files": 3,
             "max_subtasks": None,
-            "time_budget": 45,
             "scope_glob": "src/auth/**",
         }
 

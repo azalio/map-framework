@@ -242,7 +242,6 @@ Workflow execution limits. When no constraints specified, all default to null (u
 constraints:
   max_files: null        # Maximum files Actor can modify per workflow (int or null)
   max_subtasks: null     # Maximum subtasks in decomposition (int or null)
-  time_budget: null      # Maximum minutes for entire workflow (int or null)
   scope_glob: null       # File glob restricting Actor's edit scope (string or null)
 ```
 

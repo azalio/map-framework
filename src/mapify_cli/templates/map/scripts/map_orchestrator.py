@@ -175,8 +175,8 @@ def _latest_numbered_artifact(plan_dir: Path, prefix: str) -> Optional[Path]:
     return max(numbered, key=lambda item: item[0])[1]
 
 
-def _parse_numeric_constraint(raw_value: str) -> Optional[float | int]:
-    """Parse numeric constraint values, accepting quoted ints/floats."""
+def _parse_numeric_constraint(raw_value: str) -> Optional[int]:
+    """Parse integer constraint values, accepting quoted ints/floats like 3.0."""
     normalized = raw_value.strip().strip('"\'')
     if normalized in {"", "null", "None"}:
         return None
@@ -186,9 +186,40 @@ def _parse_numeric_constraint(raw_value: str) -> Optional[float | int]:
     except ValueError:
         return None
 
-    if numeric.is_integer():
-        return int(numeric)
-    return numeric
+    if not numeric.is_integer():
+        return None
+    return int(numeric)
+
+
+def _strip_yaml_comment(raw_line: str) -> str:
+    """Strip YAML comments while preserving # characters inside quotes."""
+    in_single = False
+    in_double = False
+    escaped = False
+    result: list[str] = []
+
+    for ch in raw_line:
+        if escaped:
+            result.append(ch)
+            escaped = False
+            continue
+        if ch == "\\" and in_double:
+            result.append(ch)
+            escaped = True
+            continue
+        if ch == '"' and not in_single:
+            in_double = not in_double
+            result.append(ch)
+            continue
+        if ch == "'" and not in_double:
+            in_single = not in_single
+            result.append(ch)
+            continue
+        if ch == "#" and not in_single and not in_double:
+            break
+        result.append(ch)
+
+    return "".join(result).rstrip()
 
 
 def _load_constraints_from_spec(plan_dir: Path, branch: str) -> Optional[dict]:
@@ -213,14 +244,14 @@ def _load_constraints_from_spec(plan_dir: Path, branch: str) -> Optional[dict]:
 
     parsed: dict[str, object] = {}
     for raw_line in match.group("body").splitlines():
-        line = raw_line.split("#", 1)[0].rstrip()
+        line = _strip_yaml_comment(raw_line)
         if not line.strip() or ":" not in line:
             continue
         key, value = line.strip().split(":", 1)
         normalized = value.strip()
         if normalized in {"null", "None", ""}:
             parsed[key] = None
-        elif key in {"max_files", "max_subtasks", "time_budget"}:
+        elif key in {"max_files", "max_subtasks"}:
             parsed[key] = _parse_numeric_constraint(normalized)
         else:
             parsed[key] = normalized.strip('"\'')

@@ -202,7 +202,6 @@ Predictor is inline within stuck recovery, not a separate phase.
 
   "constraints": {
     "scope_glob": null,
-    "time_budget": null
   },
 
   "workflow_status": "IN_PROGRESS",

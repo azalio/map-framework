@@ -15,7 +15,6 @@ ENFORCEMENT:
 
 CONSTRAINTS (from step_state.json):
   - scope_glob: restrict edits to matching file patterns
-  - time_budget: block after N minutes elapsed
 
 Exit code 0 always (fail-open on errors).
 """
@@ -209,22 +208,6 @@ def check_constraints(branch: str, target_paths: list[str]) -> Optional[str]:
                     f"Constraint: scope_glob='{scope_glob}'\n"
                     f"File '{rel}' is outside allowed scope."
                 )
-
-    # time_budget
-    time_budget = constraints.get("time_budget")
-    if time_budget is not None:
-        started_at = state.get("started_at")
-        if started_at:
-            try:
-                start = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
-                elapsed = (datetime.now(timezone.utc) - start).total_seconds() / 60
-                if elapsed > time_budget:
-                    return (
-                        f"Constraint: time_budget={time_budget} min, "
-                        f"elapsed={elapsed:.0f} min."
-                    )
-            except (ValueError, TypeError):
-                pass
 
     return None
 

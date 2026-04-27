@@ -212,7 +212,6 @@ Hard constraints — violating any invariant is a blocker.
 constraints:
   max_files: null
   max_subtasks: null
-  time_budget: null
   scope_glob: null
 ```
 
