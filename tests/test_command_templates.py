@@ -259,9 +259,9 @@ class TestCommandTemplates:
 
         assert "Use this exact detection logic instead of trusting the presence of `step_state.json` alone" in content
         assert "python3 .map/scripts/map_orchestrator.py resume_from_plan" in content
-        assert 'state.get("workflow") == "map-plan"' in content
-        assert 'pending_steps == [] and bool(subtask_sequence)' in content
-        assert 'workflow_status in {"", "INITIALIZED"}' in content
+        assert 'workflow_name = str(state.get("workflow") or "").strip()' in content
+        assert 'planning_shaped_pending_state = (' in content
+        assert 'not is_complete' in content
 
     def test_map_efficient_tracks_review_loop_artifacts(self, templates_commands_dir):
         """/map-efficient should preserve review/devlog/qa artifacts in branch workspace."""

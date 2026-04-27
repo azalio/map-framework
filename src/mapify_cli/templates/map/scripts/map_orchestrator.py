@@ -175,6 +175,22 @@ def _latest_numbered_artifact(plan_dir: Path, prefix: str) -> Optional[Path]:
     return max(numbered, key=lambda item: item[0])[1]
 
 
+def _parse_numeric_constraint(raw_value: str) -> Optional[float | int]:
+    """Parse numeric constraint values, accepting quoted ints/floats."""
+    normalized = raw_value.strip().strip('"\'')
+    if normalized in {"", "null", "None"}:
+        return None
+
+    try:
+        numeric = float(normalized)
+    except ValueError:
+        return None
+
+    if numeric.is_integer():
+        return int(numeric)
+    return numeric
+
+
 def _load_constraints_from_spec(plan_dir: Path, branch: str) -> Optional[dict]:
     """Parse the optional YAML-like constraints block from spec_<branch>.md."""
     spec_path = plan_dir / f"spec_{branch}.md"
@@ -205,10 +221,7 @@ def _load_constraints_from_spec(plan_dir: Path, branch: str) -> Optional[dict]:
         if normalized in {"null", "None", ""}:
             parsed[key] = None
         elif key in {"max_files", "max_subtasks", "time_budget"}:
-            try:
-                parsed[key] = int(normalized)
-            except ValueError:
-                parsed[key] = normalized
+            parsed[key] = _parse_numeric_constraint(normalized)
         else:
             parsed[key] = normalized.strip('"\'')
 
@@ -1596,11 +1609,11 @@ def resume_from_plan(branch: str) -> dict:
             "message": f"No subtask IDs (ST-XXX) found in {plan_file}.",
         }
 
-    # Extract AAG contracts from step_state.json or blueprint.json if present
+    # Extract AAG contracts from canonical planning artifacts first.
     aag_contracts: dict[str, str] = {}
     step_state_file = plan_dir / "step_state.json"
     blueprint_file = plan_dir / "blueprint.json"
-    for source_file in [step_state_file, blueprint_file]:
+    for source_file in [blueprint_file, step_state_file]:
         if source_file.exists() and not aag_contracts:
             try:
                 src_data = json.loads(source_file.read_text(encoding="utf-8"))

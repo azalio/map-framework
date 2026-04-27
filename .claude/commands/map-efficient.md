@@ -125,17 +125,30 @@ else:
     except Exception:
         print("true")
     else:
+        workflow_name = str(state.get("workflow") or "").strip()
         workflow_status = str(state.get("workflow_status") or "").strip().upper()
         current_phase = str(state.get("current_step_phase") or "").strip().upper()
         pending_steps = state.get("pending_steps")
         subtask_sequence = state.get("subtask_sequence") or []
-        planning_only_workflow = state.get("workflow") == "map-plan"
+        planning_only_workflow = workflow_name == "map-plan"
+        is_complete = workflow_status == "COMPLETE" or current_phase == "COMPLETE"
+        planning_shaped_pending_state = (
+            pending_steps == []
+            and bool(subtask_sequence)
+            and current_phase != "COMPLETE"
+            and (
+                workflow_status in {"", "INITIALIZED"}
+                or planning_only_workflow
+            )
+        )
 
         should_resume = (
-            workflow_status in {"", "INITIALIZED"}
-            or current_phase in {"", "INITIALIZED"}
-            or (pending_steps == [] and bool(subtask_sequence))
-            or planning_only_workflow
+            not is_complete
+            and (
+                workflow_status in {"", "INITIALIZED"}
+                or current_phase in {"", "INITIALIZED"}
+                or planning_shaped_pending_state
+            )
         )
         print("true" if should_resume else "false")
 PY
