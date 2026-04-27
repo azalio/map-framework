@@ -85,7 +85,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Guard pattern**: Decision table for regression detection (monitor pass + guard fail → retry Actor max 2)
 - **Stuck recovery protocol**: At monitor retry 3, invoke research-agent → predictor before retries 4-5
 - **Scenario dimensions**: `test_strategy.scenario_dimensions` (happy_path, error, edge_case, security) in TaskDecomposer
-- **Constraint enforcement**: `scope_glob`, `time_budget` in workflow-gate.py hook
+- **Constraint enforcement**: `scope_glob` in workflow-gate.py hook
 - **Flaky-aware verification**: FinalVerifier re-runs failed tests 3x with 2/3 majority rule
 - **Iteration summary**: `iteration_summary.json` derived from ralph-iteration-logger
 - **Git-as-memory**: Conditional `{{git_history}}` context in Actor for debug/retry/resume

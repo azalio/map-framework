@@ -994,7 +994,11 @@ def record_plan_artifacts(branch: Optional[str] = None) -> dict[str, object]:
     spec_path = branch_dir / f"spec_{branch_name}.md"
     task_plan_path = branch_dir / f"task_plan_{branch_name}.md"
     blueprint_path = branch_dir / "blueprint.json"
+    handoff_path = plan_handoff_path(branch_name)
     step_state_path = branch_dir / "step_state.json"
+
+    if task_plan_path.exists() and blueprint_path.exists():
+        write_plan_handoff(branch_name)
 
     manifest = load_artifact_manifest(branch_name)
 
@@ -1014,10 +1018,12 @@ def record_plan_artifacts(branch: Optional[str] = None) -> dict[str, object]:
         plan_artifacts.append(_artifact_ref(task_plan_path, "task-plan"))
     if blueprint_path.exists():
         plan_artifacts.append(_artifact_ref(blueprint_path, "blueprint"))
+    if handoff_path.exists():
+        plan_artifacts.append(_artifact_ref(handoff_path, "plan-handoff"))
     if step_state_path.exists():
         plan_artifacts.append(_artifact_ref(step_state_path, "step-state"))
 
-    if task_plan_path.exists() and blueprint_path.exists() and step_state_path.exists():
+    if task_plan_path.exists() and blueprint_path.exists() and handoff_path.exists():
         plan_status = "ready"
     elif plan_artifacts:
         plan_status = "partial"
@@ -1032,6 +1038,7 @@ def record_plan_artifacts(branch: Optional[str] = None) -> dict[str, object]:
         metadata={
             "has_task_plan": task_plan_path.exists(),
             "has_blueprint": blueprint_path.exists(),
+            "has_plan_handoff": handoff_path.exists(),
             "has_step_state": step_state_path.exists(),
         },
     )
@@ -1103,6 +1110,81 @@ def record_test_contract_handoff(
         "handoff_path": str(handoff_path),
         "manifest_path": manifest_result["path"],
         "subtask_id": subtask_id,
+    }
+
+
+def plan_handoff_path(branch: Optional[str] = None) -> Path:
+    """Return the canonical plan handoff artifact path."""
+    return get_branch_dir(branch) / "plan_handoff.json"
+
+
+def _extract_blueprint_payload(raw: dict[str, object]) -> Optional[dict[str, object]]:
+    """Normalize blueprint payloads that may nest subtasks under `blueprint`."""
+    if not isinstance(raw, dict):
+        return None
+    if isinstance(raw.get("subtasks"), list):
+        return raw
+    nested = raw.get("blueprint")
+    if isinstance(nested, dict) and isinstance(nested.get("subtasks"), list):
+        return nested
+    return None
+
+
+def write_plan_handoff(branch: Optional[str] = None) -> dict[str, object]:
+    """Create canonical plan_handoff.json from structured planning artifacts."""
+    branch_name = branch or get_branch_name()
+    branch_dir = get_branch_dir(branch_name)
+    blueprint_path = branch_dir / "blueprint.json"
+    task_plan_path = branch_dir / f"task_plan_{branch_name}.md"
+    spec_path = branch_dir / f"spec_{branch_name}.md"
+
+    if not blueprint_path.exists():
+        return {"status": "error", "message": f"Missing blueprint: {blueprint_path}"}
+    if not task_plan_path.exists():
+        return {"status": "error", "message": f"Missing task plan: {task_plan_path}"}
+
+    try:
+        raw_blueprint = json.loads(blueprint_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return {"status": "error", "message": f"Invalid blueprint JSON: {exc}"}
+
+    blueprint = _extract_blueprint_payload(raw_blueprint)
+    if blueprint is None:
+        return {"status": "error", "message": "Blueprint payload missing subtasks list"}
+
+    subtasks = [st for st in blueprint.get("subtasks", []) if isinstance(st, dict)]
+    if not subtasks:
+        return {"status": "error", "message": "Blueprint contains no subtasks"}
+
+    subtask_sequence = [st.get("id") for st in subtasks if st.get("id")]
+    aag_contracts = {
+        st.get("id"): st.get("aag_contract", "")
+        for st in subtasks
+        if st.get("id") and st.get("aag_contract")
+    }
+
+    payload = {
+        "schema_version": "1.0",
+        "source": "map-plan",
+        "branch": branch_name,
+        "created_at": _utc_timestamp(),
+        "subtask_sequence": subtask_sequence,
+        "aag_contracts": aag_contracts,
+        "constraints": load_constraints_from_spec(branch_dir, branch_name),
+        "artifacts": {
+            "blueprint": str(blueprint_path),
+            "task_plan": str(task_plan_path),
+            "spec": str(spec_path) if spec_path.exists() else None,
+        },
+    }
+
+    handoff_path = plan_handoff_path(branch_name)
+    _write_json_file(handoff_path, payload)
+    return {
+        "status": "success",
+        "path": str(handoff_path),
+        "subtask_count": len(subtask_sequence),
+        "aag_contract_count": len(aag_contracts),
     }
 
 
@@ -1748,7 +1830,7 @@ def add_known_issue(
     }
 
 
-from map_utils import get_branch_name  # noqa: E402 — shared across .map/scripts/
+from map_utils import get_branch_name, load_constraints_from_spec  # noqa: E402 — shared across .map/scripts/
 
 
 def update_step_state(
@@ -2541,6 +2623,10 @@ if __name__ == "__main__":
             test_first_required,
             decision_summary,
         )
+        print(json.dumps(result, indent=2))
+
+    elif func_name == "write_plan_handoff":
+        result = write_plan_handoff()
         print(json.dumps(result, indent=2))
 
     elif func_name == "record_plan_artifacts":

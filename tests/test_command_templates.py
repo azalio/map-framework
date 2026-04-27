@@ -245,11 +245,24 @@ class TestCommandTemplates:
         content = (templates_commands_dir / "map-plan.md").read_text()
 
         assert "task_plan_" in content
-        assert "step_state.json" in content
         assert "blueprint.json" in content
+        assert "plan_handoff.json" in content
         assert "spec_" in content
         assert "artifact_manifest.json" in content
         assert "record_workflow_fit" in content
+        assert "Do **NOT** create `step_state.json` in `/map-plan`" in content
+        assert "write_plan_handoff" in content
+
+    def test_map_efficient_reinitializes_when_plan_state_is_stale(
+        self, templates_commands_dir
+    ):
+        """/map-efficient should rehydrate runtime state from plan artifacts when needed."""
+        content = (templates_commands_dir / "map-efficient.md").read_text()
+
+        assert "Ask the orchestrator whether runtime state should be rehydrated from the saved plan artifacts" in content
+        assert "python3 .map/scripts/map_orchestrator.py should_resume_from_plan" in content
+        assert "Keep the command template thin: it should ask the orchestrator" in content
+        assert 'planning_shaped_pending_state = (' not in content
 
     def test_map_efficient_tracks_review_loop_artifacts(self, templates_commands_dir):
         """/map-efficient should preserve review/devlog/qa artifacts in branch workspace."""

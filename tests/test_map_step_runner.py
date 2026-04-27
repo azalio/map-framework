@@ -107,6 +107,45 @@ def test_record_workflow_fit_creates_decision_and_manifest(branch_workspace):
     assert stage["updated_at"].endswith("Z")
 
 
+def test_write_plan_handoff_creates_canonical_artifact(branch_workspace):
+    branch = branch_workspace.name
+    (branch_workspace / f"task_plan_{branch}.md").write_text(
+        "# Task Plan\n", encoding="utf-8"
+    )
+    (branch_workspace / "blueprint.json").write_text(
+        json.dumps(
+            {
+                "subtasks": [
+                    {
+                        "id": "ST-001",
+                        "aag_contract": "Service -> do_work() -> done",
+                        "dependencies": [],
+                        "affected_files": ["src/service.py"],
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (branch_workspace / f"spec_{branch}.md").write_text(
+        "## Constraints\n\n```yaml\nconstraints:\n  max_files: 3\n  max_subtasks: null\n  scope_glob: \"src/**\"\n```\n",
+        encoding="utf-8",
+    )
+
+    result = map_step_runner.write_plan_handoff()
+
+    assert result["status"] == "success"
+    payload = json.loads((branch_workspace / "plan_handoff.json").read_text())
+    assert payload["subtask_sequence"] == ["ST-001"]
+    assert payload["aag_contracts"] == {"ST-001": "Service -> do_work() -> done"}
+    assert payload["constraints"] == {
+        "max_files": 3,
+        "max_subtasks": None,
+        "scope_glob": "src/**",
+    }
+
+
 def test_record_plan_artifacts_updates_manifest(branch_workspace):
     branch = branch_workspace.name
     (branch_workspace / f"spec_{branch}.md").write_text("# Spec\n", encoding="utf-8")
@@ -114,11 +153,8 @@ def test_record_plan_artifacts_updates_manifest(branch_workspace):
         "# Task Plan\n", encoding="utf-8"
     )
     (branch_workspace / "blueprint.json").write_text(
-        '{"subtasks": [{"id": "ST-001", "dependencies": [], "affected_files": []}]}\n',
+        '{"subtasks": [{"id": "ST-001", "aag_contract": "Service -> go() -> done", "dependencies": [], "affected_files": []}]}\n',
         encoding="utf-8",
-    )
-    (branch_workspace / "step_state.json").write_text(
-        '{"current_step_phase": "INITIALIZED"}\n', encoding="utf-8"
     )
 
     result = map_step_runner.record_plan_artifacts()
@@ -132,6 +168,19 @@ def test_record_plan_artifacts_updates_manifest(branch_workspace):
     }
     assert f".map/{branch}/task_plan_{branch}.md" in recorded_paths
     assert f".map/{branch}/blueprint.json" in recorded_paths
+    assert f".map/{branch}/plan_handoff.json" in recorded_paths
+    assert manifest["stages"]["plan"]["metadata"]["has_plan_handoff"] is True
+
+
+def test_record_plan_artifacts_is_partial_when_only_step_state_exists(branch_workspace):
+    (branch_workspace / "step_state.json").write_text(
+        '{"current_step_phase": "INITIALIZED"}\n', encoding="utf-8"
+    )
+
+    result = map_step_runner.record_plan_artifacts()
+
+    assert result["status"] == "success"
+    assert result["plan_status"] == "partial"
 
 
 def test_record_test_contract_handoff_creates_json_and_manifest(branch_workspace):

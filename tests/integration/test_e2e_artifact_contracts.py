@@ -136,6 +136,15 @@ class TestPlanArtifactProduction:
         for st in bp["subtasks"]:
             assert st["id"] in plan, f"task_plan.md missing reference to {st['id']}"
 
+    def test_plan_handoff_has_required_fields(self):
+        """plan_handoff.json must carry canonical runtime bootstrap data."""
+        handoff = _load_fixture_json("plan_handoff.json")
+        assert handoff["source"] == "map-plan"
+        assert handoff["subtask_sequence"] == ["ST-001", "ST-002", "ST-003", "ST-004"]
+        assert "aag_contracts" in handoff
+        assert "artifacts" in handoff
+        assert handoff["artifacts"]["blueprint"].endswith("blueprint.json")
+
     def test_step_state_initialized_matches_schema(self):
         """Initial step_state.json must have all required fields."""
         state = _load_fixture_json("step_state_initialized.json")

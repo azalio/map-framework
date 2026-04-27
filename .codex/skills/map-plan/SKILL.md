@@ -212,7 +212,6 @@ Hard constraints — violating any invariant is a blocker.
 constraints:
   max_files: null
   max_subtasks: null
-  time_budget: null
   scope_glob: null
 ```
 
@@ -493,9 +492,9 @@ PLAN_EOF
 
 ---
 
-## Step 6.5: Validate Constraints (Before State Init)
+## Step 6.5: Validate Constraints
 
-If the spec has a `## Constraints` section with non-null `scope_glob`, validate before writing `step_state.json`:
+If the spec has a `## Constraints` section with non-null `scope_glob`, validate before finalizing the planning artifacts:
 
 ```
 shell_command:
@@ -508,56 +507,40 @@ shell_command:
     echo "scope_glob OK: $SCOPE_GLOB"
 ```
 
-On validation failure: print error and STOP. Do not create `step_state.json`.
+On validation failure: print error and STOP. Do not finalize the plan handoff.
 
 ---
 
-## Step 7: Initialize Workflow State
+## Step 7: Record Planning Artifacts
 
-Write `step_state.json` AFTER writing `task_plan_<branch>.md` so planning artifacts exist before the state gate activates.
+Do **NOT** create `step_state.json` in `$map-plan`.
+
+`step_state.json` is the execution runtime state owned by `map_orchestrator.py`. Writing a planning-only state file here creates a contract mismatch with `$map-efficient` and can cause execution to skip the first subtask or bypass `resume_from_plan`.
+
+`$map-plan` must stop after producing planning artifacts only:
+- `spec_<branch>.md`
+- `task_plan_<branch>.md`
+- `blueprint.json`
+- `plan_handoff.json`
+- `artifact_manifest.json`
+- optional `findings_<branch>.md` and `workflow-fit.json`
+
+The execution state must be initialized later by:
+
+```
+shell_command:
+  cmd: python3 .map/scripts/map_orchestrator.py resume_from_plan
+```
+
+That runtime bootstrap should come from `plan_handoff.json`, not from parsing reviewer-facing markdown.
+
+Create the canonical handoff artifact and record artifacts in the manifest:
 
 ```
 shell_command:
   cmd: |
-    BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
-    TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    cat > .map/${BRANCH}/step_state.json << 'STATE_EOF'
-{
-  "_semantic_tag": "MAP_State_v1_0",
-  "workflow": "map-plan",
-  "started_at": "<TIMESTAMP>",
-  "current_subtask_id": null,
-  "current_step_phase": "INITIALIZED",
-  "completed_steps": [],
-  "pending_steps": [],
-  "subtask_sequence": ["ST-001", "ST-002"],
-  "aag_contracts": {
-    "ST-001": "Actor -> Action(params) -> Goal",
-    "ST-002": "Actor -> Action(params) -> Goal"
-  },
-  "constraints": {
-    "max_files": null,
-    "max_subtasks": null,
-    "time_budget": null,
-    "scope_glob": null
-  }
-}
-STATE_EOF
-    echo "Saved step_state.json"
-```
-
-**Field names:** Use `current_subtask_id` (not `current_subtask`) and `current_step_phase` (not `current_state`). These must match what `workflow-gate.py` reads — mismatched names block all edits.
-
-**Populate:**
-- `subtask_sequence` with actual IDs from decomposition
-- `aag_contracts` with each subtask's AAG contract from decomposer output
-- `constraints` from spec's Constraints section (null = unlimited)
-
-Record artifacts in the manifest:
-
-```
-shell_command:
-  cmd: python3 .map/scripts/map_step_runner.py record_plan_artifacts
+    python3 .map/scripts/map_step_runner.py write_plan_handoff
+    python3 .map/scripts/map_step_runner.py record_plan_artifacts
 ```
 
 ---
@@ -579,8 +562,8 @@ shell_command:
     echo "[ok] Devil's Advocate review completed (or skipped)"
     echo "[ok] Architecture graph written to spec_${BRANCH}.md"
     echo "[ok] Blueprint saved to .map/${BRANCH}/blueprint.json"
+    echo "[ok] plan_handoff.json saved with canonical runtime bootstrap data"
     echo "[ok] Coverage check passed"
-    echo "[ok] step_state.json initialized with aag_contracts map"
     echo "[ok] Plan written to .map/${BRANCH}/task_plan_${BRANCH}.md"
     echo "[ok] artifact_manifest.json updated"
     echo ""
@@ -589,15 +572,7 @@ shell_command:
     echo "  2. Execute subtasks sequentially (map-task or map-efficient)"
     echo "  3. Verify completion: \$map-check"
     echo ""
-    python3 -c "
-import json, sys
-try:
-    s = json.load(open('.map/${BRANCH}/step_state.json'))
-    seq = s.get('subtask_sequence', [])
-    print(f'Subtask sequence ({len(seq)}): {seq}')
-except Exception as e:
-    print(f'Could not read step_state.json: {e}', file=sys.stderr)
-"
+    echo "Execution state intentionally deferred to $map-efficient / resume_from_plan"
     echo "==================================================="
 ```
 
@@ -605,13 +580,13 @@ except Exception as e:
 
 ## Step 9: Context Distillation + STOP
 
-Before stopping, verify distilled state is self-contained. The next session starts fresh — it will ONLY see files, not this conversation.
+Before stopping, verify distilled state is self-contained. The next session starts fresh — it will ONLY see files, not this conversation. Runtime execution state will be rebuilt later via `resume_from_plan`.
 
 ```
 DISTILLATION CHECKLIST:
   [x] task_plan_<branch>.md   — AAG contracts for every subtask + Spec Coverage table
-  [x] step_state.json         — aag_contracts map + subtask_sequence
-  [x] blueprint.json          — raw decomposer output with coverage_map (for map-efficient)
+  [x] blueprint.json          — raw decomposer output with coverage_map + per-subtask aag_contract (for map-efficient)
+  [x] plan_handoff.json       — canonical runtime bootstrap (subtask_sequence + aag_contracts + constraints)
   [x] spec_<branch>.md        — architecture graph + decisions + COMPLETE acceptance criteria
   [x] artifact_manifest.json  — records workflow_fit + spec + plan stage artifacts
   [x] findings_<branch>.md    — research pointers (if discovery was done)

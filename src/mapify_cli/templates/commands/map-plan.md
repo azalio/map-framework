@@ -242,7 +242,6 @@ Workflow execution limits. When no constraints specified, all default to null (u
 constraints:
   max_files: null        # Maximum files Actor can modify per workflow (int or null)
   max_subtasks: null     # Maximum subtasks in decomposition (int or null)
-  time_budget: null      # Maximum minutes for entire workflow (int or null)
   scope_glob: null       # File glob restricting Actor's edit scope (string or null)
 ```
 
@@ -540,15 +539,15 @@ Map every spec requirement to the subtask that owns its verification. This table
 
 **AAG Contract is REQUIRED** for every subtask. Copy directly from task-decomposer output's `aag_contract` field. This is the primary handoff to the Actor agent — without it, the Actor reasons instead of compiles.
 
-### Step 6.5: Validate Constraints (Before State Initialization)
+### Step 6.5: Validate Constraints
 
-If the spec includes a `## Constraints` section with non-null values, validate before writing step_state.json:
+If the spec includes a `## Constraints` section with non-null values, validate before finalizing the planning artifacts:
 
 **scope_glob validation** (REQUIRED if scope_glob is non-null):
 - Reject if contains `..` (path traversal)
 - Reject if starts with `/` (absolute path)
 - Reject if contains `{` (brace expansion — Python version-dependent behavior)
-- On validation failure: print error and STOP — do not create step_state.json
+- On validation failure: print error and STOP — do not finalize the plan handoff
 
 ```bash
 # Example validation (run in Bash)
@@ -559,47 +558,31 @@ if echo "$SCOPE_GLOB" | grep -qE '(\.\.)|^/|\{'; then
 fi
 ```
 
-### Step 7: Initialize Workflow State (Do This Last)
+### Step 7: Record Planning Artifacts (Do This Last)
 
-Create `.map/<branch>/step_state.json` with the decomposition results. Wrap in `MAP_State_v1_0` tag for executor parsing.
+Do **NOT** create `step_state.json` in `/map-plan`.
 
-Do this AFTER writing `task_plan_<branch>.md` so planning artifacts are created before the state gate becomes active.
+`step_state.json` is the execution runtime state owned by `map_orchestrator.py`. Writing a planning-only state file here creates a contract mismatch with `/map-efficient` and can cause execution to skip the first subtask or bypass `resume_from_plan`.
 
-Use the **Write** tool to create `.map/<branch>/step_state.json` with this structure (substitute actual values):
+`/map-plan` must stop after producing planning artifacts only:
 
-```json
-{
-  "_semantic_tag": "MAP_State_v1_0",
-  "workflow": "map-plan",
-  "started_at": "<current UTC timestamp in ISO 8601>",
-  "current_subtask_id": null,
-  "current_step_phase": "INITIALIZED",
-  "completed_steps": [],
-  "pending_steps": [],
-  "subtask_sequence": ["ST-001", "ST-002", "ST-003"],
-  "aag_contracts": {
-    "ST-001": "Actor -> Action(params) -> Goal",
-    "ST-002": "Actor -> Action(params) -> Goal"
-  },
-  "constraints": {
-    "max_files": null,
-    "max_subtasks": null,
-    "time_budget": null,
-    "scope_glob": null
-  }
-}
-```
+- `spec_<branch>.md`
+- `task_plan_<branch>.md`
+- `blueprint.json`
+- `plan_handoff.json`
+- `artifact_manifest.json`
+- optional `findings_<branch>.md` and `workflow-fit.json`
 
-**IMPORTANT field names:** Use `current_subtask_id` (not `current_subtask`) and `current_step_phase` (not `current_state`). These field names must match what `workflow-gate.py` reads — mismatched names cause the gate to block all edits.
-
-**IMPORTANT:**
-- Replace `subtask_sequence` with actual IDs from the decomposition
-- Populate `aag_contracts` map with each subtask's AAG contract from the decomposer output — executors read this to set context for each subtask
-- Populate `constraints` from the spec's Constraints section. null = unlimited (hook skips enforcement)
-
-After writing `spec_<branch>.md`, `task_plan_<branch>.md`, `blueprint.json`, and `step_state.json`, record them in the artifact manifest:
+The execution state must be initialized later by:
 
 ```bash
+python3 .map/scripts/map_orchestrator.py resume_from_plan
+```
+
+After writing `spec_<branch>.md`, `task_plan_<branch>.md`, and `blueprint.json`, create the canonical handoff artifact and then record everything in the manifest:
+
+```bash
+python3 .map/scripts/map_step_runner.py write_plan_handoff
 python3 .map/scripts/map_step_runner.py record_plan_artifacts
 ```
 
@@ -617,7 +600,7 @@ WORKFLOW CHECKPOINT: PLAN PHASE COMPLETE
 ✅ Task decomposed into N subtasks with AAG contracts
 ✅ Coverage check passed: M/M spec ACs mapped, 0 orphaned cross-cutting concerns
 ✅ Blueprint saved to .map/${BRANCH}/blueprint.json
-✅ step_state.json initialized (with aag_contracts map)
+✅ plan_handoff.json saved with canonical runtime bootstrap data
 ✅ Plan written to .map/${BRANCH}/task_plan_${BRANCH}.md
 ✅ artifact_manifest.json updated for spec + plan artifacts
 ✅ Context distilled (plan files ≤4000 tokens per subtask)
@@ -634,6 +617,22 @@ Next Steps:
 
 **Note:** If interview was skipped (small/well-defined task), the spec line will not appear.
 
+### Step 8.5: Execution Handoff Note
+
+Before stopping, print a short handoff note that execution must start by rehydrating runtime state from the saved plan:
+
+```text
+Execution state was intentionally NOT initialized by /map-plan.
+Start execution with:
+  /map-efficient
+
+The executor must call:
+  python3 .map/scripts/map_orchestrator.py resume_from_plan
+
+This ensures runtime state is derived from plan_handoff.json (and blueprint.json for execution waves),
+not from a stale planning-state snapshot.
+```
+
 ### Step 9: Context Distillation + STOP
 
 **Before stopping, verify the distilled state is self-contained.** The next session starts fresh — it will ONLY see files, not this conversation. Ensure these files contain everything needed:
@@ -641,8 +640,8 @@ Next Steps:
 ```
 DISTILLATION CHECKLIST:
   [x] task_plan_<branch>.md — has AAG contracts for every subtask + Spec Coverage table
-  [x] step_state.json   — has aag_contracts map + subtask_sequence
-  [x] blueprint.json     — raw decomposer output for wave computation (with coverage_map)
+  [x] blueprint.json     — raw decomposer output for wave computation (with coverage_map and per-subtask aag_contract)
+  [x] plan_handoff.json  — canonical runtime bootstrap (subtask_sequence + aag_contracts + constraints)
   [x] spec_<branch>.md      — has architecture graph + decisions + COMPLETE acceptance criteria (if interview was done)
   [x] artifact_manifest.json — records workflow_fit + spec + plan stage artifacts
   [x] findings_<branch>.md  — has research pointers (if discovery was done)
@@ -681,19 +680,17 @@ The Spec Coverage table in task_plan should NOT be condensed — it is the revie
 ## Related Commands
 
 - **/map-check** - Verify all subtasks completed successfully
-- **/map-efficient** - Monolithic workflow (all phases in one command)
+- **/map-efficient** - Initialize runtime state from the saved plan and execute subtasks
 
 ---
 
 ## State Machine Integration
 
-This command transitions step_state.json through these states:
+This command does **not** transition `step_state.json` directly.
 
-```
-(none) → INITIALIZED
-```
+Instead it produces planning artifacts that `/map-efficient` converts into runtime state.
 
-Subtask execution will transition:
+Subtask execution will later transition:
 ```
 INITIALIZED → IN_PROGRESS → ... → SUBTASK_COMPLETE
 ```
@@ -711,7 +708,7 @@ workflow-gate.py is designed to prevent code edits during execution phases until
 
 /map-plan should:
 - avoid editing repo code (outside `.map/`)
-- finish writing planning artifacts (spec/task_plan) before creating `step_state.json`
+- finish writing planning artifacts (spec/task_plan/blueprint) before any execution state is created
 
 ---
 
@@ -747,7 +744,7 @@ User: "Add JWT authentication with refresh tokens"
 A: Subtasks are too granular. Ask task-decomposer to group related work into larger chunks (aim for 3-7 subtasks).
 
 **Q: User changed requirements after planning?**
-A: Re-run /map-plan. It will overwrite task_plan_<branch>.md and reset step_state.json.
+A: Re-run /map-plan. It will overwrite the planning artifacts. Then re-run `/map-efficient`, which will rebuild runtime state via `resume_from_plan`.
 
 ---
 
@@ -760,7 +757,6 @@ This command succeeds when:
 - ✅ Architecture graph written in spec_<branch>.md (for complexity >= 3)
 - ✅ Decomposition coverage check passed (Step 5.7) — no orphaned ACs, result fields, or cross-cutting concerns
 - ✅ task_plan_<branch>.md exists with AAG contracts for every subtask AND Spec Coverage table
-- ✅ step_state.json exists with valid subtask_sequence + aag_contracts map
 - ✅ CHECKPOINT shows subtask count and IDs
 - ✅ Context distilled (plan files self-contained for fresh session)
 - ✅ You STOPPED (did not proceed to execution)
