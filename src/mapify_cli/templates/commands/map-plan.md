@@ -150,14 +150,23 @@ If discovery is not needed (new greenfield code or already-provided spec), skip 
 
 Read the user's requirements and decide if deep interview is needed.
 
-**Interview REQUIRED when:**
+**Override (always wins, evaluate FIRST):**
+If the user prompt contains explicit clarification-invitation language, the interview is REQUIRED regardless of any other signal. The user has explicitly opened the door; not walking through it is a bug, not a judgment call.
+
+Trigger patterns (case-insensitive, English + Russian):
+- English: `ask if unclear`, `ask if not clear`, `ask before`, `do not assume`, `don't assume`, `clarify`, `feel free to ask`, `if anything is unclear`
+- Russian: `если что-то непонятно`, `если не ясно`, `спрашивай`, `уточняй`, `задавай вопросы`, `не предполагай`
+
+If any of these phrases appear in the user's prompt, skip the heuristic below and go straight to Step 2.
+
+**Interview REQUIRED when (heuristic, used only if Override did not fire):**
 - Large increment: 2+ features in one request
 - Vague product idea without clear technical approach
 - New project (stack + features undefined)
 - Batch of bugs/issues to fix together
 - User's requirements have obvious gaps or unstated assumptions
 
-**Interview SKIPPED when:**
+**Interview SKIPPED when (heuristic, used only if Override did not fire):**
 - Task is already well-defined with clear acceptance criteria
 - Small isolated change (single bug fix, test update)
 - User explicitly provided a spec or detailed description
@@ -183,6 +192,7 @@ Use AskUserQuestion to systematically interview the user. The goal is to surface
 5. **Scope:** What's explicitly OUT of scope? Minimal scope vs extended scope?
 6. **Integration:** How does this interact with existing code? Migration needed?
 7. **Contract Clarity:** Are ALL goals stated as outcomes (not processes)? Reject "improve auth" — require "AuthService returns 401 for expired tokens". Every goal must be verifiable.
+8. **Durability & State Lifecycle:** For any operation longer than a request-response cycle (>5 s), where does state live? Does it survive process restart, redeploy, host migration, or autoscaler eviction? What is the recovery contract on crash mid-operation? What identifier lets a caller resume a result that was started before a session boundary? In-process memory is NOT a valid answer for any operation that may outlive a single request.
 
 **Example AskUserQuestion call:**
 ```
@@ -305,16 +315,21 @@ This ensures every `/map-plan` run produces a spec, regardless of whether interv
 
 ### Step 2b: Devil's Advocate Review (SPEC_REVIEW)
 
-**Skip if ALL of these are true:**
-- Source spec/requirements are under 200 lines
-- Fewer than 5 subtasks expected
-- No cross-cutting concerns involved (observability, security, concurrency, multi-service coordination)
+**Skip ONLY if no cross-cutting concerns are involved.** Length and subtask-count are NOT skip signals — durability bugs hide in short specs and small task graphs. The previous "<200 lines AND <5 subtasks" gate is removed because it caused 5-minute async tool integrations to skip review entirely.
+
+**Cross-cutting concerns (presence of ANY blocks the skip):**
+- Observability, security
+- Concurrency, recovery, durability
+- Asynchronous operations longer than 30 seconds (long-running tools, batch jobs, polling, webhook delivery, callbacks)
+- Multi-service coordination, retry/backoff logic, queueing
+- Any operation where state must survive a single request-response cycle
 
 **ALWAYS run if ANY of these is true:**
 - Source spec/requirements exceed 500 lines
 - Source defines 10 or more acceptance criteria
 - Multiple subgraphs, services, or subsystems involved
 - Task includes concurrency, recovery, or multi-transport requirements
+- Subtask description or user prompt matches `/async|long.running|background|webhook|callback|poll|durab|persist|state.*survive|run.*id/i`
 
 After writing the spec, invoke Monitor agent to adversarially review it. The goal is to surface gaps, contradictions, and missing edge cases BEFORE decomposition.
 
