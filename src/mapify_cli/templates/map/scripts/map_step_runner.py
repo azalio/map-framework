@@ -213,9 +213,7 @@ def load_artifact_manifest(branch: Optional[str] = None) -> dict[str, object]:
     if isinstance(loaded, dict):
         manifest.update(
             {
-                "schema_version": loaded.get(
-                    "schema_version", manifest["schema_version"]
-                ),
+                "schema_version": loaded.get("schema_version", manifest["schema_version"]),
                 "branch": branch_name,
                 "updated_at": loaded.get("updated_at", manifest["updated_at"]),
             }
@@ -476,10 +474,7 @@ def record_learning_consumption(
     branch_name = branch or get_branch_name()
     source = (summary_source or "").strip().lower()
     if source not in LEARNING_CONSUMPTION_SOURCES:
-        return {
-            "status": "error",
-            "message": f"Invalid summary_source: {summary_source}",
-        }
+        return {"status": "error", "message": f"Invalid summary_source: {summary_source}"}
 
     metrics = load_learning_metrics(branch_name)
     counters = metrics["counters"]
@@ -607,7 +602,9 @@ def _tokenize_learning_text(text: str) -> set[str]:
         for match in TOKEN_RE.finditer((text or "").lower())
     }
     return {
-        token for token in tokens if token and token not in LEARNING_MATCH_STOPWORDS
+        token
+        for token in tokens
+        if token and token not in LEARNING_MATCH_STOPWORDS
     }
 
 
@@ -759,9 +756,7 @@ def _collect_repeated_violation_findings(branch: str) -> list[dict[str, object]]
                 str(issue.get("source_artifact") or "active-issues.json"),
             )
 
-    verification_summary = _read_branch_artifact_text(
-        branch_dir, "verification-summary.md"
-    )
+    verification_summary = _read_branch_artifact_text(branch_dir, "verification-summary.md")
     for bullet in _extract_section_bullets(verification_summary, {"Findings"}):
         append_finding("verification-summary.md", bullet)
 
@@ -809,9 +804,7 @@ def _match_finding_to_learned_rule(
             for path in rule.get("paths", [])
             if isinstance(path, str) and path.strip()
         ]
-        path_match = (
-            _paths_match_rule_scope(rule_paths, path_hints) if path_hints else False
-        )
+        path_match = _paths_match_rule_scope(rule_paths, path_hints) if path_hints else False
         if rule_paths and path_hints and not path_match:
             continue
 
@@ -867,9 +860,7 @@ def record_repeated_learning_violations(
         "matches": matches[:10],
     }
 
-    metrics_payload = (
-        metrics if isinstance(metrics, dict) else load_learning_metrics(branch_name)
-    )
+    metrics_payload = metrics if isinstance(metrics, dict) else load_learning_metrics(branch_name)
     counters = metrics_payload.setdefault("counters", {})
     if not isinstance(counters, dict):
         counters = {}
@@ -877,9 +868,9 @@ def record_repeated_learning_violations(
     counters["repeated_violation_scan_count"] = (
         int(counters.get("repeated_violation_scan_count", 0) or 0) + 1
     )
-    counters["repeated_violation_match_count"] = int(
-        counters.get("repeated_violation_match_count", 0) or 0
-    ) + len(matches)
+    counters["repeated_violation_match_count"] = (
+        int(counters.get("repeated_violation_match_count", 0) or 0) + len(matches)
+    )
     metrics_payload["repeated_violation_summary"] = summary
 
     if matches:
@@ -944,7 +935,9 @@ def record_workflow_fit(
         "expected_diff_size": diff_size,
         "has_new_invariants": _parse_boolish(has_new_invariants),
         "needs_independent_review": _parse_boolish(needs_independent_review),
-        "has_clear_acceptance_criteria": _parse_boolish(has_clear_acceptance_criteria),
+        "has_clear_acceptance_criteria": _parse_boolish(
+            has_clear_acceptance_criteria
+        ),
         "test_first_required": _parse_boolish(test_first_required),
     }
     needs_map = route != "direct-edit"
@@ -994,11 +987,7 @@ def record_plan_artifacts(branch: Optional[str] = None) -> dict[str, object]:
     spec_path = branch_dir / f"spec_{branch_name}.md"
     task_plan_path = branch_dir / f"task_plan_{branch_name}.md"
     blueprint_path = branch_dir / "blueprint.json"
-    handoff_path = plan_handoff_path(branch_name)
     step_state_path = branch_dir / "step_state.json"
-
-    if task_plan_path.exists() and blueprint_path.exists():
-        write_plan_handoff(branch_name)
 
     manifest = load_artifact_manifest(branch_name)
 
@@ -1018,12 +1007,10 @@ def record_plan_artifacts(branch: Optional[str] = None) -> dict[str, object]:
         plan_artifacts.append(_artifact_ref(task_plan_path, "task-plan"))
     if blueprint_path.exists():
         plan_artifacts.append(_artifact_ref(blueprint_path, "blueprint"))
-    if handoff_path.exists():
-        plan_artifacts.append(_artifact_ref(handoff_path, "plan-handoff"))
     if step_state_path.exists():
         plan_artifacts.append(_artifact_ref(step_state_path, "step-state"))
 
-    if task_plan_path.exists() and blueprint_path.exists() and handoff_path.exists():
+    if task_plan_path.exists() and blueprint_path.exists() and step_state_path.exists():
         plan_status = "ready"
     elif plan_artifacts:
         plan_status = "partial"
@@ -1038,7 +1025,6 @@ def record_plan_artifacts(branch: Optional[str] = None) -> dict[str, object]:
         metadata={
             "has_task_plan": task_plan_path.exists(),
             "has_blueprint": blueprint_path.exists(),
-            "has_plan_handoff": handoff_path.exists(),
             "has_step_state": step_state_path.exists(),
         },
     )
@@ -1071,7 +1057,9 @@ def record_test_contract_handoff(
         }
 
     test_files = [
-        item.strip() for item in (test_files_csv or "").split(",") if item.strip()
+        item.strip()
+        for item in (test_files_csv or "").split(",")
+        if item.strip()
     ]
     handoff_payload = {
         "subtask_id": subtask_id,
@@ -1110,81 +1098,6 @@ def record_test_contract_handoff(
         "handoff_path": str(handoff_path),
         "manifest_path": manifest_result["path"],
         "subtask_id": subtask_id,
-    }
-
-
-def plan_handoff_path(branch: Optional[str] = None) -> Path:
-    """Return the canonical plan handoff artifact path."""
-    return get_branch_dir(branch) / "plan_handoff.json"
-
-
-def _extract_blueprint_payload(raw: dict[str, object]) -> Optional[dict[str, object]]:
-    """Normalize blueprint payloads that may nest subtasks under `blueprint`."""
-    if not isinstance(raw, dict):
-        return None
-    if isinstance(raw.get("subtasks"), list):
-        return raw
-    nested = raw.get("blueprint")
-    if isinstance(nested, dict) and isinstance(nested.get("subtasks"), list):
-        return nested
-    return None
-
-
-def write_plan_handoff(branch: Optional[str] = None) -> dict[str, object]:
-    """Create canonical plan_handoff.json from structured planning artifacts."""
-    branch_name = branch or get_branch_name()
-    branch_dir = get_branch_dir(branch_name)
-    blueprint_path = branch_dir / "blueprint.json"
-    task_plan_path = branch_dir / f"task_plan_{branch_name}.md"
-    spec_path = branch_dir / f"spec_{branch_name}.md"
-
-    if not blueprint_path.exists():
-        return {"status": "error", "message": f"Missing blueprint: {blueprint_path}"}
-    if not task_plan_path.exists():
-        return {"status": "error", "message": f"Missing task plan: {task_plan_path}"}
-
-    try:
-        raw_blueprint = json.loads(blueprint_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        return {"status": "error", "message": f"Invalid blueprint JSON: {exc}"}
-
-    blueprint = _extract_blueprint_payload(raw_blueprint)
-    if blueprint is None:
-        return {"status": "error", "message": "Blueprint payload missing subtasks list"}
-
-    subtasks = [st for st in blueprint.get("subtasks", []) if isinstance(st, dict)]
-    if not subtasks:
-        return {"status": "error", "message": "Blueprint contains no subtasks"}
-
-    subtask_sequence = [st.get("id") for st in subtasks if st.get("id")]
-    aag_contracts = {
-        st.get("id"): st.get("aag_contract", "")
-        for st in subtasks
-        if st.get("id") and st.get("aag_contract")
-    }
-
-    payload = {
-        "schema_version": "1.0",
-        "source": "map-plan",
-        "branch": branch_name,
-        "created_at": _utc_timestamp(),
-        "subtask_sequence": subtask_sequence,
-        "aag_contracts": aag_contracts,
-        "constraints": load_constraints_from_spec(branch_dir, branch_name),
-        "artifacts": {
-            "blueprint": str(blueprint_path),
-            "task_plan": str(task_plan_path),
-            "spec": str(spec_path) if spec_path.exists() else None,
-        },
-    }
-
-    handoff_path = plan_handoff_path(branch_name)
-    _write_json_file(handoff_path, payload)
-    return {
-        "status": "success",
-        "path": str(handoff_path),
-        "subtask_count": len(subtask_sequence),
-        "aag_contract_count": len(aag_contracts),
     }
 
 
@@ -1547,30 +1460,22 @@ def build_review_handoff(branch: Optional[str] = None) -> dict:
         "branch": branch_name,
         "plan_review_path": latest_plan_review_name or None,
         "code_review_path": latest_code_review_name or None,
-        "verification_summary_path": (
-            "verification-summary.md"
-            if (branch_dir / "verification-summary.md").exists()
-            else None
-        ),
+        "verification_summary_path": "verification-summary.md"
+        if (branch_dir / "verification-summary.md").exists()
+        else None,
         "qa_path": "qa-001.md" if (branch_dir / "qa-001.md").exists() else None,
-        "pr_draft_path": (
-            "pr-draft.md" if (branch_dir / "pr-draft.md").exists() else None
-        ),
-        "active_issues_path": (
-            "active-issues.json"
-            if (branch_dir / "active-issues.json").exists()
-            else None
-        ),
-        "plan_review": (
-            _read_branch_artifact_text(branch_dir, latest_plan_review_name)
-            if latest_plan_review_name
-            else None
-        ),
-        "code_review": (
-            _read_branch_artifact_text(branch_dir, latest_code_review_name)
-            if latest_code_review_name
-            else None
-        ),
+        "pr_draft_path": "pr-draft.md"
+        if (branch_dir / "pr-draft.md").exists()
+        else None,
+        "active_issues_path": "active-issues.json"
+        if (branch_dir / "active-issues.json").exists()
+        else None,
+        "plan_review": _read_branch_artifact_text(branch_dir, latest_plan_review_name)
+        if latest_plan_review_name
+        else None,
+        "code_review": _read_branch_artifact_text(branch_dir, latest_code_review_name)
+        if latest_code_review_name
+        else None,
         "verification_summary": _read_branch_artifact_text(
             branch_dir, "verification-summary.md"
         ),
@@ -1600,9 +1505,7 @@ def write_learning_handoff(
         if not path.exists():
             return ""
         try:
-            return _sanitize_for_json(
-                path.read_text(encoding="utf-8", errors="replace")
-            )
+            return _sanitize_for_json(path.read_text(encoding="utf-8", errors="replace"))
         except OSError:
             return ""
 
@@ -1639,9 +1542,7 @@ def write_learning_handoff(
 
     files_changed = code_state.get("files_changed") or []
     if isinstance(files_changed, list):
-        files_section = (
-            "\n".join(f"- {path}" for path in files_changed) or "- [not recorded]"
-        )
+        files_section = "\n".join(f"- {path}" for path in files_changed) or "- [not recorded]"
     else:
         files_section = "- [not recorded]"
 
@@ -1660,9 +1561,7 @@ def write_learning_handoff(
         ]
         if path
     ]
-    artifacts_section = (
-        "\n".join(f"- {path}" for path in artifact_paths) or "- [not recorded]"
-    )
+    artifacts_section = "\n".join(f"- {path}" for path in artifact_paths) or "- [not recorded]"
 
     payload = {
         "schema_version": "1.0",
@@ -1830,7 +1729,7 @@ def add_known_issue(
     }
 
 
-from map_utils import get_branch_name, load_constraints_from_spec  # noqa: E402 — shared across .map/scripts/
+from map_utils import get_branch_name  # noqa: E402 — shared across .map/scripts/
 
 
 def update_step_state(
@@ -2197,10 +2096,7 @@ def run_test_gate() -> dict:
 
     # Detect test runner
     runners = [
-        (
-            ["pytest.ini", "pyproject.toml", "setup.py", "setup.cfg"],
-            ["pytest", "--tb=short", "-q"],
-        ),
+        (["pytest.ini", "pyproject.toml", "setup.py", "setup.cfg"], ["pytest", "--tb=short", "-q"]),
         (["package.json"], ["npm", "test"]),
         (["go.mod"], ["go", "test", "./..."]),
         (["Cargo.toml"], ["cargo", "test"]),
@@ -2294,9 +2190,7 @@ def snapshot_code_state(branch: Optional[str] = None) -> dict:
     git_ref = _run_git(["rev-parse", "HEAD"])
     diff_stat = _run_git(["diff", "--stat", "HEAD"])
     diff_names = _run_git(["diff", "--name-only", "HEAD"])
-    files_changed = (
-        [f for f in diff_names.splitlines() if f.strip()] if diff_names else []
-    )
+    files_changed = [f for f in diff_names.splitlines() if f.strip()] if diff_names else []
 
     return {
         "status": "success",
@@ -2625,10 +2519,6 @@ if __name__ == "__main__":
         )
         print(json.dumps(result, indent=2))
 
-    elif func_name == "write_plan_handoff":
-        result = write_plan_handoff()
-        print(json.dumps(result, indent=2))
-
     elif func_name == "record_plan_artifacts":
         result = record_plan_artifacts()
         print(json.dumps(result, indent=2))
@@ -2706,25 +2596,17 @@ if __name__ == "__main__":
     elif func_name == "record_subtask_result":
         # Read JSON from stdin to avoid shell injection: {"files": [...], "status": "...", "summary": "...", "commit_sha": "..."}
         import sys as _sys
-
         try:
             data = json.loads(_sys.stdin.read())
         except json.JSONDecodeError as e:
-            print(
-                json.dumps(
-                    {"status": "error", "message": f"Invalid JSON on stdin: {e}"}
-                )
-            )
+            print(json.dumps({"status": "error", "message": f"Invalid JSON on stdin: {e}"}))
             _sys.exit(1)
         branch_name = get_branch_name()
         state_path = Path(f".map/{branch_name}/step_state.json")
         if not state_path.exists():
-            print(
-                json.dumps({"status": "error", "message": "step_state.json not found"})
-            )
+            print(json.dumps({"status": "error", "message": "step_state.json not found"}))
             _sys.exit(1)
         from map_orchestrator import StepState
-
         st = StepState.load(state_path)
         subtask_id = data.get("subtask_id") or st.current_subtask_id or ""
         if not subtask_id:

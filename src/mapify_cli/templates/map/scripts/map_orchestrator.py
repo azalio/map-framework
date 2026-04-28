@@ -175,83 +175,6 @@ def _latest_numbered_artifact(plan_dir: Path, prefix: str) -> Optional[Path]:
     return max(numbered, key=lambda item: item[0])[1]
 
 
-def _load_plan_handoff(branch: str) -> Optional[dict[str, object]]:
-    """Load canonical plan_handoff.json when present and valid."""
-    handoff_path = Path(f".map/{branch}/plan_handoff.json")
-    if not handoff_path.exists():
-        return None
-    try:
-        payload = json.loads(handoff_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return None
-    return payload if isinstance(payload, dict) else None
-
-
-def _load_legacy_plan_data(branch: str) -> dict[str, object]:
-    """Compatibility loader for older branches without plan_handoff.json."""
-    plan_dir = Path(f".map/{branch}")
-    plan_file = plan_dir / f"task_plan_{branch}.md"
-    blueprint_file = plan_dir / "blueprint.json"
-
-    if not plan_file.exists():
-        return {"status": "error", "message": f"No plan found at {plan_file}. Run /map-plan first."}
-
-    import re
-
-    plan_content = plan_file.read_text(encoding="utf-8")
-    subtask_ids = re.findall(r"###\s+(ST-\d+)", plan_content)
-    if not subtask_ids:
-        return {"status": "error", "message": f"No subtask IDs (ST-XXX) found in {plan_file}."}
-
-    aag_contracts: dict[str, str] = {}
-    step_state_file = plan_dir / "step_state.json"
-    for source_file in [blueprint_file, step_state_file]:
-        if source_file.exists() and not aag_contracts:
-            try:
-                src_data = json.loads(source_file.read_text(encoding="utf-8"))
-                if isinstance(src_data, dict) and isinstance(src_data.get("blueprint"), dict):
-                    src_data = src_data["blueprint"]
-                aag_contracts = src_data.get("aag_contracts", {})
-                if not aag_contracts and isinstance(src_data.get("subtasks"), list):
-                    aag_contracts = {
-                        subtask.get("id"): subtask.get("aag_contract", "")
-                        for subtask in src_data["subtasks"]
-                        if isinstance(subtask, dict)
-                        and subtask.get("id")
-                        and subtask.get("aag_contract")
-                    }
-            except (json.JSONDecodeError, KeyError, OSError, TypeError):
-                pass
-
-    return {
-        "status": "success",
-        "source": "legacy",
-        "subtask_sequence": subtask_ids,
-        "aag_contracts": aag_contracts,
-        "constraints": load_constraints_from_spec(plan_dir, branch),
-    }
-
-
-def _get_plan_bootstrap_data(branch: str) -> dict[str, object]:
-    """Return canonical bootstrap data for runtime execution state."""
-    handoff = _load_plan_handoff(branch)
-    if handoff is not None:
-        subtask_sequence = handoff.get("subtask_sequence") or []
-        if not isinstance(subtask_sequence, list) or not subtask_sequence:
-            return {"status": "error", "message": "plan_handoff.json missing subtask_sequence"}
-        aag_contracts = handoff.get("aag_contracts") or {}
-        if not isinstance(aag_contracts, dict):
-            aag_contracts = {}
-        return {
-            "status": "success",
-            "source": "plan_handoff",
-            "subtask_sequence": subtask_sequence,
-            "aag_contracts": aag_contracts,
-            "constraints": handoff.get("constraints"),
-        }
-    return _load_legacy_plan_data(branch)
-
-
 def get_resume_briefing(branch: str) -> dict:
     """Collect human-readable artifact context for resume and handoff flows."""
     plan_dir = Path(f".map/{branch}")
@@ -390,7 +313,6 @@ class StepState:
     subtask_results: dict[str, dict] = field(default_factory=dict)
     last_subtask_commit_sha: Optional[str] = None
     contract_ready_subtasks: dict[str, dict] = field(default_factory=dict)
-    aag_contracts: dict[str, str] = field(default_factory=dict)
 
     def record_subtask_result(
         self,
@@ -438,7 +360,6 @@ class StepState:
             "subtask_results": self.subtask_results,
             "last_subtask_commit_sha": self.last_subtask_commit_sha,
             "contract_ready_subtasks": self.contract_ready_subtasks,
-            "aag_contracts": self.aag_contracts,
         }
 
     @classmethod
@@ -471,7 +392,6 @@ class StepState:
             subtask_results=data.get("subtask_results", {}),
             last_subtask_commit_sha=data.get("last_subtask_commit_sha"),
             contract_ready_subtasks=data.get("contract_ready_subtasks", {}),
-            aag_contracts=data.get("aag_contracts", {}),
         )
 
     @classmethod
@@ -501,7 +421,7 @@ def _get_step_order(tdd_mode: bool = False) -> list[str]:
     return TDD_STEP_ORDER if tdd_mode else STEP_ORDER
 
 
-from map_utils import get_branch_name, load_constraints_from_spec  # noqa: E402 — shared across .map/scripts/
+from map_utils import get_branch_name  # noqa: E402 — shared across .map/scripts/
 
 
 def _actor_step_instruction(state: StepState) -> str:
@@ -1230,7 +1150,9 @@ def monitor_failed(branch: str, feedback: str = "") -> dict:
     }
 
 
-def wave_monitor_failed(subtask_id: str, branch: str, feedback: str = "") -> dict:
+def wave_monitor_failed(
+    subtask_id: str, branch: str, feedback: str = ""
+) -> dict:
     """Handle Monitor valid=false for a subtask within a wave.
 
     Resets the subtask's phase back to ACTOR and increments its retry count.
@@ -1486,7 +1408,11 @@ def mark_contract_ready(subtask_id: str, branch: str) -> dict:
         }
 
     contract_path, handoff_path = _contract_artifact_paths(branch, subtask_id)
-    missing = [str(path) for path in (contract_path, handoff_path) if not path.exists()]
+    missing = [
+        str(path)
+        for path in (contract_path, handoff_path)
+        if not path.exists()
+    ]
     if missing:
         return {
             "status": "error",
@@ -1538,7 +1464,11 @@ def resume_from_test_contract(subtask_id: str, branch: str) -> dict:
         }
 
     contract_path, handoff_path = _contract_artifact_paths(branch, subtask_id)
-    missing = [str(path) for path in (contract_path, handoff_path) if not path.exists()]
+    missing = [
+        str(path)
+        for path in (contract_path, handoff_path)
+        if not path.exists()
+    ]
     if missing:
         return {
             "status": "error",
@@ -1588,7 +1518,8 @@ def resume_from_test_contract(subtask_id: str, branch: str) -> dict:
     return {
         "status": "success",
         "message": (
-            f"Resuming {subtask_id} from persisted test contract. " "Starting at ACTOR."
+            f"Resuming {subtask_id} from persisted test contract. "
+            "Starting at ACTOR."
         ),
         "subtask_id": subtask_id,
         "next_phase": "ACTOR",
@@ -1598,93 +1529,52 @@ def resume_from_test_contract(subtask_id: str, branch: str) -> dict:
     }
 
 
-def should_resume_from_plan(branch: str) -> dict:
-    """Decide whether existing plan artifacts require runtime state rehydration."""
-    plan_dir = Path(f".map/{branch}")
-    handoff_file = plan_dir / "plan_handoff.json"
-    plan_file = plan_dir / f"task_plan_{branch}.md"
-    state_file = plan_dir / "step_state.json"
-
-    if not handoff_file.exists() and not plan_file.exists():
-        return {
-            "status": "success",
-            "should_resume": False,
-            "reason": "no_plan_artifacts",
-        }
-
-    if not state_file.exists():
-        return {
-            "status": "success",
-            "should_resume": True,
-            "reason": "missing_step_state",
-        }
-
-    try:
-        state = json.loads(state_file.read_text(encoding="utf-8"))
-    except Exception:
-        return {
-            "status": "success",
-            "should_resume": True,
-            "reason": "invalid_step_state",
-        }
-
-    workflow_name = str(state.get("workflow") or "").strip()
-    workflow_status = str(state.get("workflow_status") or "").strip().upper()
-    current_phase = str(state.get("current_step_phase") or "").strip().upper()
-    pending_steps = state.get("pending_steps")
-    subtask_sequence = state.get("subtask_sequence") or []
-    planning_only_workflow = workflow_name == "map-plan"
-    is_complete = workflow_status == "COMPLETE" or current_phase == "COMPLETE"
-    planning_shaped_pending_state = (
-        pending_steps == []
-        and bool(subtask_sequence)
-        and current_phase != "COMPLETE"
-        and (
-            workflow_status in {"", "INITIALIZED"}
-            or planning_only_workflow
-        )
-    )
-
-    should_resume = (
-        not is_complete
-        and (
-            workflow_status in {"", "INITIALIZED"}
-            or current_phase in {"", "INITIALIZED"}
-            or planning_shaped_pending_state
-        )
-    )
-
-    reason = "execution_state_ready"
-    if should_resume:
-        if planning_only_workflow:
-            reason = "planning_only_workflow"
-        elif planning_shaped_pending_state:
-            reason = "planning_shaped_pending_state"
-        elif workflow_status in {"", "INITIALIZED"}:
-            reason = "workflow_status_initial"
-        elif current_phase in {"", "INITIALIZED"}:
-            reason = "current_phase_initial"
-
-    return {
-        "status": "success",
-        "should_resume": should_resume,
-        "reason": reason,
-    }
-
-
 def resume_from_plan(branch: str) -> dict:
     """Resume workflow from an existing /map-plan output, skipping init phases.
 
-    Prefer the canonical `plan_handoff.json` bootstrap artifact. Fall back to
-    older plan/blueprint/spec artifacts only for backward compatibility.
+    Detects task_plan_<branch>.md and step_state.json created by /map-plan.
+    Extracts subtask IDs from the plan, marks init phases as completed, and
+    starts execution from INIT_STATE (batch mode auto-set).
+
+    Args:
+        branch: Git branch name (sanitized)
+
+    Returns:
+        Dict with status and skipped phases
     """
     plan_dir = Path(f".map/{branch}")
-    bootstrap = _get_plan_bootstrap_data(branch)
-    if bootstrap.get("status") != "success":
-        return bootstrap
+    plan_file = plan_dir / f"task_plan_{branch}.md"
 
-    subtask_ids = bootstrap.get("subtask_sequence") or []
-    aag_contracts = bootstrap.get("aag_contracts") or {}
+    # Verify plan artifacts exist
+    if not plan_file.exists():
+        return {
+            "status": "error",
+            "message": f"No plan found at {plan_file}. Run /map-plan first.",
+        }
+
+    # Extract subtask IDs from plan file (ST-XXX pattern)
+    import re
+
+    plan_content = plan_file.read_text(encoding="utf-8")
+    subtask_ids = re.findall(r"###\s+(ST-\d+)", plan_content)
+
+    if not subtask_ids:
+        return {
+            "status": "error",
+            "message": f"No subtask IDs (ST-XXX) found in {plan_file}.",
+        }
+
+    # Extract AAG contracts from step_state.json or blueprint.json if present
+    aag_contracts: dict[str, str] = {}
+    step_state_file = plan_dir / "step_state.json"
+    blueprint_file = plan_dir / "blueprint.json"
+    for source_file in [step_state_file, blueprint_file]:
+        if source_file.exists() and not aag_contracts:
+            try:
+                src_data = json.loads(source_file.read_text(encoding="utf-8"))
+                aag_contracts = src_data.get("aag_contracts", {})
+            except (json.JSONDecodeError, KeyError):
+                pass
 
     # Create state that skips DECOMPOSE, INIT_PLAN, REVIEW_PLAN, CHOOSE_MODE
     # (plan already approved, execution mode is always batch)
@@ -1692,12 +1582,10 @@ def resume_from_plan(branch: str) -> dict:
     execution_start = [s for s in STEP_ORDER if s not in skipped_phases]
 
     state_file = plan_dir / "step_state.json"
-    constraints = bootstrap.get("constraints")
     state = StepState(
         current_subtask_id=subtask_ids[0],
         subtask_index=0,
         subtask_sequence=subtask_ids,
-        aag_contracts=aag_contracts,
         current_step_id=execution_start[0] if execution_start else "1.6",
         current_step_phase=(
             STEP_PHASES.get(execution_start[0], "INIT_STATE")
@@ -1709,7 +1597,6 @@ def resume_from_plan(branch: str) -> dict:
         plan_approved=True,
         execution_mode="batch",
         workflow_status="IN_PROGRESS",
-        constraints=constraints,
     )
     state.save(state_file)
 
@@ -1717,11 +1604,10 @@ def resume_from_plan(branch: str) -> dict:
 
     return {
         "status": "success",
-        "message": "Resumed from /map-plan artifacts. Skipped DECOMPOSE, INIT_PLAN, REVIEW_PLAN, CHOOSE_MODE. Mode: batch.",
+        "message": "Resumed from /map-plan. Skipped DECOMPOSE, INIT_PLAN, REVIEW_PLAN, CHOOSE_MODE. Mode: batch.",
         "subtask_sequence": subtask_ids,
         "current_subtask_id": subtask_ids[0],
         "aag_contracts_found": len(aag_contracts),
-        "bootstrap_source": bootstrap.get("source"),
         "next_phase": "INIT_STATE",
         "resume_briefing": briefing,
     }
@@ -1890,7 +1776,6 @@ def main():
             "validate_wave_step",
             "advance_wave",
             "resume_single_subtask",
-            "should_resume_from_plan",
             "get_plan_progress",
             "monitor_failed",
             "wave_monitor_failed",
@@ -2021,10 +1906,6 @@ def main():
             result = resume_from_plan(branch)
             print(json.dumps(result, indent=2))
 
-        elif args.command == "should_resume_from_plan":
-            result = should_resume_from_plan(branch)
-            print(json.dumps(result, indent=2))
-
         elif args.command == "resume_from_test_contract":
             if not args.task_or_step:
                 print(
@@ -2105,9 +1986,7 @@ def main():
             if not args.task_or_step:
                 print(
                     json.dumps(
-                        {
-                            "error": "subtask_id required. Usage: wave_monitor_failed ST-001 --feedback 'text'"
-                        }
+                        {"error": "subtask_id required. Usage: wave_monitor_failed ST-001 --feedback 'text'"}
                     ),
                     file=sys.stderr,
                 )
