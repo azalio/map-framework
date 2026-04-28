@@ -2,8 +2,11 @@
 name: monitor
 description: Reviews code for correctness, standards, security, and testability (MAP)
 model: sonnet  # Balanced: quality validation requires good reasoning
-version: 2.9.0
-last_updated: 2025-11-27
+# 2026-04-28: high effort — Monitor's adversarial-review quality scales
+# with effort more than with raw model strength.
+effort: high
+version: 2.10.0
+last_updated: 2026-04-28
 ---
 
 # IDENTITY

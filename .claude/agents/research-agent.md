@@ -1,9 +1,12 @@
 ---
 name: research-agent
 description: Heavy codebase reading with compressed output. Use PROACTIVELY before Actor implementation to gather context without polluting implementation context.
-model: inherit
-version: 1.0.0
-last_updated: 2025-12-08
+# 2026-04-28: pinned to haiku. Research is read-mostly (Glob/Grep/Read) and
+# benefits more from latency and parallelism than from reasoning depth.
+# Frees Opus/Sonnet budget for the load-bearing decision agents.
+model: haiku
+version: 1.1.0
+last_updated: 2026-04-28
 ---
 
 # QUICK REFERENCE

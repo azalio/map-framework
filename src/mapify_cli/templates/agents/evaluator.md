@@ -2,8 +2,11 @@
 name: evaluator
 description: Evaluates solution quality and completeness (MAP)
 model: sonnet  # Evaluation requires nuanced judgment for trade-off analysis and weighted scoring
-version: 3.0.0
-last_updated: 2025-11-27
+# 2026-04-28: high effort — weighted scoring across multiple dimensions
+# benefits from extra deliberation budget.
+effort: high
+version: 3.1.0
+last_updated: 2026-04-28
 ---
 
 # QUICK REFERENCE (Read First)
