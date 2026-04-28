@@ -497,10 +497,7 @@ class TestCheckCommand:
         )
         assert "initialized" in result.stdout
         expected_agents = count_agent_templates()
-        expected_commands = count_command_templates()
-        assert (
-            f"{expected_agents} agents, {expected_commands} commands" in result.stdout
-        )
+        assert f"{expected_agents} agents" in result.stdout
 
     @mock.patch("mapify_cli.check_tool")
     def test_check_with_mcp_servers(self, mock_check_tool, tmp_path):
@@ -706,14 +703,16 @@ class TestCommandCreation:
         assert (commands_dir / "README.md").exists()
 
     def test_create_command_files(self, tmp_path):
-        """Test creating command files."""
+        """Test creating command files — commands migrated to skills, only README remains."""
         create_command_files(tmp_path)
 
         commands_dir = tmp_path / ".claude" / "commands"
         assert commands_dir.exists()
-        # Check for at least one command file
-        command_files = list(commands_dir.glob("*.md"))
-        assert len(command_files) > 0
+        # After skills migration, commands/ has only README.md (no map-*.md)
+        command_files = [
+            p for p in commands_dir.glob("*.md") if p.name != "README.md"
+        ]
+        assert len(command_files) == 0
 
 
 class TestHelperFunctions:
@@ -1631,9 +1630,8 @@ class TestClaudeProviderInstall:
         # Each category must have created at least one file
         for key, value in counts.items():
             assert value >= 0, f"counts['{key}'] must be non-negative"
-        # agents and commands should always have files
+        # agents should always have files; commands migrated to skills
         assert counts["agents"] > 0, "ClaudeProvider must create agent files"
-        assert counts["commands"] > 0, "ClaudeProvider must create command files"
 
     def test_claude_provider_creates_claude_dir(self, tmp_path):
         """ClaudeProvider.install() must create .claude/ directory."""

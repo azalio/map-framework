@@ -974,10 +974,10 @@ def check(debug: bool = typer.Option(False, "--debug", help="Enable debug loggin
         tracker.error("project", "not initialized")
 
     tracker.add("templates", "Inspect bundled templates")
-    if health["expected_agents"] and health["expected_commands"]:
+    if health["expected_agents"]:
         tracker.complete(
             "templates",
-            f"{health['expected_agents']} agents, {health['expected_commands']} commands",
+            f"{health['expected_agents']} agents",
         )
     else:
         tracker.error("templates", "missing bundled templates")
