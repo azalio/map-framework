@@ -285,7 +285,7 @@ def create_map_tools(project_path: Path) -> int:
 
 
 def create_commands_dir(project_path: Path) -> None:
-    """Create commands directory with README."""
+    """Create commands directory with README pointing at skill-backed surfaces."""
     commands_dir = project_path / ".claude" / "commands"
     commands_dir.mkdir(parents=True, exist_ok=True)
 
@@ -293,24 +293,26 @@ def create_commands_dir(project_path: Path) -> None:
     readme.write_text(
         """# Claude Code Commands
 
-This directory contains custom slash commands for Claude Code.
+This directory exists for **user-custom** slash commands. All MAP slash
+commands now ship as Skills (`.claude/skills/map-*/SKILL.md`) which give
+the same `/map-*` interface but with progressive disclosure (skill body
+loads on demand instead of always living in context).
 
-## Available Commands
+## MAP Slash Commands (skill-backed)
 
-- `/map-efficient` - Implement features with optimized workflow (recommended)
+All of these are implemented via `.claude/skills/<name>/SKILL.md`:
+
 - `/map-plan` - Decompose work without implementing it yet
+- `/map-efficient` - Implement features with optimized workflow (recommended)
+- `/map-fast` - Quick implementation with minimal validation
 - `/map-task` - Execute a single subtask from an existing plan
 - `/map-tdd` - Run a test-first workflow for one task or plan
 - `/map-debug` - Debug issues using MAP analysis
 - `/map-review` - Run a structured review workflow
 - `/map-check` - Run workflow quality gates and verification
-- `/map-fast` - Quick implementation with minimal validation
 - `/map-release` - Execute MAP Framework package release workflow
 - `/map-resume` - Resume an interrupted workflow from `.map/`
-
-## Skill-Backed Slash Surfaces
-
-- `/map-learn` - Extract lessons from completed workflows (implemented via `.claude/skills/map-learn/SKILL.md`)
+- `/map-learn` - Extract lessons from completed workflows
 
 ## Creating Custom Commands
 
@@ -325,6 +327,9 @@ Your command prompt here
 ```
 
 The filename becomes the command name (without the `.md` extension).
+Per the Claude Code docs, a skill at `.claude/skills/<name>/SKILL.md`
+takes precedence over a command at `.claude/commands/<name>.md` with
+the same name.
 """
     )
 

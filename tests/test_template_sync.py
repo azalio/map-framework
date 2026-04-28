@@ -171,7 +171,18 @@ class TestTemplateSynchronization:
 
 
 class TestCommandTemplateSynchronization:
-    """Test that command templates are synchronized between .claude/commands/ and templates/commands/."""
+    """Sync invariants for `.claude/commands/` and `templates/commands/`.
+
+    MAP slash commands now ship as Skills (`.claude/skills/map-*/SKILL.md`),
+    not as `.claude/commands/map-*.md` files. The `commands/` directory is
+    preserved for user-custom commands. These tests therefore enforce two
+    invariants:
+
+      1. NO `map-*.md` should exist in either commands directory — they're
+         a regression of the skills migration if they reappear.
+      2. ANY non-map `.md` files in `.claude/commands/` (user customs)
+         must be byte-identical to their `templates/commands/` mirrors.
+    """
 
     @pytest.fixture
     def project_root(self):
@@ -185,71 +196,49 @@ class TestCommandTemplateSynchronization:
     def templates_commands_dir(self, project_root):
         return project_root / "src" / "mapify_cli" / "templates" / "commands"
 
-    @pytest.mark.parametrize(
-        "command",
-        [
-            "map-check.md",
-            "map-debug.md",
-            "map-efficient.md",
-            "map-fast.md",
-            "map-plan.md",
-            "map-release.md",
-            "map-resume.md",
-            "map-review.md",
-            "map-task.md",
-            "map-tdd.md",
-        ],
-    )
-    def test_command_content_matches(
-        self, claude_commands_dir, templates_commands_dir, command
-    ):
-        """Test that command file content is identical between directories."""
-        claude_file = claude_commands_dir / command
-        template_file = templates_commands_dir / command
-
-        if not claude_file.exists() or not template_file.exists():
-            pytest.skip(f"{command} doesn't exist in both directories")
-
-        assert filecmp.cmp(claude_file, template_file, shallow=False), (
-            f"{command} content differs between .claude/commands/ and templates/commands/. "
-            f"Run: make sync-templates"
-        )
-
-    def test_command_file_count_matches(
+    def test_no_map_command_files_remain(
         self, claude_commands_dir, templates_commands_dir
     ):
-        """Test that both directories have the same number of command .md files."""
+        """MAP commands moved to skills; map-*.md must not exist in commands/."""
+        offenders = []
+        if claude_commands_dir.exists():
+            offenders.extend(str(p) for p in claude_commands_dir.glob("map-*.md"))
+        if templates_commands_dir.exists():
+            offenders.extend(str(p) for p in templates_commands_dir.glob("map-*.md"))
+        assert not offenders, (
+            "MAP slash commands have been migrated to Skills "
+            "(.claude/skills/map-*/SKILL.md). Found stray map-*.md command "
+            f"files: {offenders}. Delete them or move the content into the "
+            "matching skill."
+        )
+
+    def test_non_map_commands_in_sync(
+        self, claude_commands_dir, templates_commands_dir
+    ):
+        """Any user-custom command in .claude/commands/ must match the template mirror."""
         if not claude_commands_dir.exists() or not templates_commands_dir.exists():
-            pytest.skip("One or both directories don't exist")
+            pytest.skip("commands/ directory missing in source or templates")
 
-        claude_count = len(list(claude_commands_dir.glob("map-*.md")))
-        template_count = len(list(templates_commands_dir.glob("map-*.md")))
+        claude_files = {p.name for p in claude_commands_dir.glob("*.md")}
+        template_files = {p.name for p in templates_commands_dir.glob("*.md")}
 
-        assert claude_count == template_count, (
-            f"Command file count mismatch: .claude/commands/ has {claude_count} map-*.md files, "
-            f"templates/commands/ has {template_count} map-*.md files. "
-            f"Run: make sync-templates"
-        )
-
-    def test_no_orphaned_command_templates(
-        self, claude_commands_dir, templates_commands_dir
-    ):
-        """Test that templates/commands/ doesn't have map-* files missing from .claude/commands/."""
-        if not templates_commands_dir.exists():
-            pytest.skip("Templates directory doesn't exist")
-
-        claude_files = (
-            {f.name for f in claude_commands_dir.glob("map-*.md")}
-            if claude_commands_dir.exists()
-            else set()
-        )
-        template_files = {f.name for f in templates_commands_dir.glob("map-*.md")}
-
-        orphaned = template_files - claude_files
-        assert not orphaned, (
-            f"Orphaned command files in templates/commands/ not in .claude/commands/: {orphaned}. "
-            f"Run: make sync-templates"
-        )
+        # Compare the union — any file present in either side must exist in
+        # both and have identical content.
+        for name in sorted(claude_files | template_files):
+            claude_file = claude_commands_dir / name
+            template_file = templates_commands_dir / name
+            assert claude_file.exists(), (
+                f"{name} present in templates/commands/ but missing from "
+                ".claude/commands/. Run: make sync-templates"
+            )
+            assert template_file.exists(), (
+                f"{name} present in .claude/commands/ but missing from "
+                "templates/commands/. Run: make sync-templates"
+            )
+            assert filecmp.cmp(claude_file, template_file, shallow=False), (
+                f"{name} differs between .claude/commands/ and "
+                "templates/commands/. Run: make sync-templates"
+            )
 
 
 class TestCodexTemplateSynchronization:
