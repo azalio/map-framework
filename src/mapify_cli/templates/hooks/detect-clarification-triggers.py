@@ -59,11 +59,8 @@ CLARIFICATION_PATTERNS = [
 ]
 
 # Bilingual async / long-running / durability language.
-# Two groups for scoring:
-#   "kind"     — operation kind / verb that is itself ambiguous about state
-#   "duration" — explicit duration markers ("5 min", "30 seconds")
-# A single duration alone does not fire; we want at least one "kind"
-# match OR multiple duration markers.
+# Either a "kind" word (async, webhook, polling, ...) OR a significant
+# duration (>=30 s, any minutes/hours) is sufficient to trigger.
 KIND_PATTERNS = [
     # English
     r"\basync\b",
