@@ -141,67 +141,14 @@ def create_command_files(
     project_path: Path,
     drift_report: DriftReport | None = None,
 ) -> int:
-    """Create MAP slash commands in .claude/commands/."""
-    commands_dir = project_path / ".claude" / "commands"
-    commands_dir.mkdir(parents=True, exist_ok=True)
+    """Create .claude/commands/ directory structure.
 
-    # Get templates directory
-    templates_dir = get_templates_dir()
-    commands_template_dir = templates_dir / "commands"
-
-    if not commands_template_dir.exists():
-        # Fallback to inline generation if templates not found
-        commands = {
-            "map-efficient": """---
-description: Implement features with optimized workflow (recommended)
----
-
-Implement the following with efficient MAP workflow:
-
-$ARGUMENTS
-
-Start with task decomposition (task-decomposer), then iterate through actor-monitor for each subtask.
-Predictor is called conditionally for high-risk subtasks only.
-Run /map-learn after workflow if you want to preserve lessons learned.
-""",
-            "map-debug": """---
-description: Debug issue using MAP analysis
----
-
-Debug the following issue using MAP workflow:
-
-$ARGUMENTS
-
-Decompose the debugging process (task-decomposer), implement fixes (actor), validate with monitor, and assess impact (predictor).
-""",
-            "map-fast": """---
-description: Quick implementation with minimal validation
----
-
-Use minimal workflow to implement:
-
-$ARGUMENTS
-
-Implement quickly with basic monitor validation only. No learning, no predictor.
-    Use for small, low-risk changes where speed matters.
-""",
-        }
-
-        for name, content in commands.items():
-            command_file = commands_dir / f"{name}.md"
-            command_file.write_text(content)
-        return len(commands)
-    else:
-        # Copy templates from bundled directory
-        version = _get_version()
-        count = 0
-        for command_template in commands_template_dir.glob("*.md"):
-            dest_file = commands_dir / command_template.name
-            result = copy_managed_file(command_template, dest_file, version)
-            if drift_report is not None:
-                drift_report.results.append(result)
-            count += 1
-        return count
+    MAP slash commands are now delivered as skills (.claude/skills/).
+    This function creates only the commands directory with a README
+    pointing users at the skill-backed surfaces.
+    """
+    create_commands_dir(project_path)
+    return 0
 
 
 def create_skill_files(project_path: Path) -> int:
