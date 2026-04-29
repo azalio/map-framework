@@ -47,3 +47,29 @@
       def install(self, project_path, **kw):
           return create_codex_files(project_path)  # handles .map/scripts/ internally
   ```
+
+- **Long-Running Operations Need Durable State by Default** (2026-04-28): Any operation lasting longer than a single request-response cycle (>5 s) MUST persist its state to durable storage (DB, queue, KV with persistence) — never to in-process memory or class attributes. Process restart, redeploy, autoscaler eviction, OOM kill, and crash all happen during a 5-minute call in production; in-memory state silently evaporates. The default question for any async API is "what survives `kill -9` mid-call?" not "where is this convenient to put?" — provide a stable resume identifier (e.g., `run_id`) so callers can recover results across the process boundary. [workflow: map-learn-improvement]
+  ```python
+  # WRONG — state evaporates on restart, results lost mid-call
+  class ToolRunner:
+      _runs: dict[str, Result] = {}  # in-memory, lost on redeploy
+
+      def run(self, payload):
+          run_id = uuid4().hex
+          self._runs[run_id] = Result(status="running")
+          return run_id
+
+  # CORRECT — state lives outside the process, survives restart
+  class ToolRunner:
+      def __init__(self, db):
+          self.db = db
+
+      def run(self, payload):
+          run_id = uuid4().hex
+          self.db.insert("runs", run_id=run_id, status="running",
+                         started_at=now(), payload=payload)
+          return run_id  # caller can poll get_result(run_id) after redeploy
+
+      def get_result(self, run_id):
+          return self.db.fetch_one("runs", run_id=run_id)
+  ```

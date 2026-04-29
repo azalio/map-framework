@@ -141,67 +141,14 @@ def create_command_files(
     project_path: Path,
     drift_report: DriftReport | None = None,
 ) -> int:
-    """Create MAP slash commands in .claude/commands/."""
-    commands_dir = project_path / ".claude" / "commands"
-    commands_dir.mkdir(parents=True, exist_ok=True)
+    """Create .claude/commands/ directory structure.
 
-    # Get templates directory
-    templates_dir = get_templates_dir()
-    commands_template_dir = templates_dir / "commands"
-
-    if not commands_template_dir.exists():
-        # Fallback to inline generation if templates not found
-        commands = {
-            "map-efficient": """---
-description: Implement features with optimized workflow (recommended)
----
-
-Implement the following with efficient MAP workflow:
-
-$ARGUMENTS
-
-Start with task decomposition (task-decomposer), then iterate through actor-monitor for each subtask.
-Predictor is called conditionally for high-risk subtasks only.
-Run /map-learn after workflow if you want to preserve lessons learned.
-""",
-            "map-debug": """---
-description: Debug issue using MAP analysis
----
-
-Debug the following issue using MAP workflow:
-
-$ARGUMENTS
-
-Decompose the debugging process (task-decomposer), implement fixes (actor), validate with monitor, and assess impact (predictor).
-""",
-            "map-fast": """---
-description: Quick implementation with minimal validation
----
-
-Use minimal workflow to implement:
-
-$ARGUMENTS
-
-Implement quickly with basic monitor validation only. No learning, no predictor.
-    Use for small, low-risk changes where speed matters.
-""",
-        }
-
-        for name, content in commands.items():
-            command_file = commands_dir / f"{name}.md"
-            command_file.write_text(content)
-        return len(commands)
-    else:
-        # Copy templates from bundled directory
-        version = _get_version()
-        count = 0
-        for command_template in commands_template_dir.glob("*.md"):
-            dest_file = commands_dir / command_template.name
-            result = copy_managed_file(command_template, dest_file, version)
-            if drift_report is not None:
-                drift_report.results.append(result)
-            count += 1
-        return count
+    MAP slash commands are now delivered as skills (.claude/skills/).
+    This function creates only the commands directory with a README
+    pointing users at the skill-backed surfaces.
+    """
+    create_commands_dir(project_path)
+    return 0
 
 
 def create_skill_files(project_path: Path) -> int:
@@ -285,7 +232,7 @@ def create_map_tools(project_path: Path) -> int:
 
 
 def create_commands_dir(project_path: Path) -> None:
-    """Create commands directory with README."""
+    """Create commands directory with README pointing at skill-backed surfaces."""
     commands_dir = project_path / ".claude" / "commands"
     commands_dir.mkdir(parents=True, exist_ok=True)
 
@@ -293,24 +240,26 @@ def create_commands_dir(project_path: Path) -> None:
     readme.write_text(
         """# Claude Code Commands
 
-This directory contains custom slash commands for Claude Code.
+This directory exists for **user-custom** slash commands. All MAP slash
+commands now ship as Skills (`.claude/skills/map-*/SKILL.md`) which give
+the same `/map-*` interface but with progressive disclosure (skill body
+loads on demand instead of always living in context).
 
-## Available Commands
+## MAP Slash Commands (skill-backed)
 
-- `/map-efficient` - Implement features with optimized workflow (recommended)
+All of these are implemented via `.claude/skills/<name>/SKILL.md`:
+
 - `/map-plan` - Decompose work without implementing it yet
+- `/map-efficient` - Implement features with optimized workflow (recommended)
+- `/map-fast` - Quick implementation with minimal validation
 - `/map-task` - Execute a single subtask from an existing plan
 - `/map-tdd` - Run a test-first workflow for one task or plan
 - `/map-debug` - Debug issues using MAP analysis
 - `/map-review` - Run a structured review workflow
 - `/map-check` - Run workflow quality gates and verification
-- `/map-fast` - Quick implementation with minimal validation
 - `/map-release` - Execute MAP Framework package release workflow
 - `/map-resume` - Resume an interrupted workflow from `.map/`
-
-## Skill-Backed Slash Surfaces
-
-- `/map-learn` - Extract lessons from completed workflows (implemented via `.claude/skills/map-learn/SKILL.md`)
+- `/map-learn` - Extract lessons from completed workflows
 
 ## Creating Custom Commands
 
@@ -325,6 +274,9 @@ Your command prompt here
 ```
 
 The filename becomes the command name (without the `.md` extension).
+Per the Claude Code docs, a skill at `.claude/skills/<name>/SKILL.md`
+takes precedence over a command at `.claude/commands/<name>.md` with
+the same name.
 """
     )
 

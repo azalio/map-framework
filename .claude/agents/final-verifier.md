@@ -1,9 +1,12 @@
 ---
 name: final-verifier
 description: Adversarial verifier with Root Cause Analysis (Ralph Loop)
-model: sonnet
-version: 1.0.0
-last_updated: 2026-01-26
+# 2026-04-28: bumped to opus + high effort. Final verification is the last
+# gate before merge — false negatives here ship bugs to production.
+model: opus
+effort: high
+version: 1.1.0
+last_updated: 2026-04-28
 ---
 
 # IDENTITY

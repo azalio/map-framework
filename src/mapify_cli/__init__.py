@@ -974,10 +974,10 @@ def check(debug: bool = typer.Option(False, "--debug", help="Enable debug loggin
         tracker.error("project", "not initialized")
 
     tracker.add("templates", "Inspect bundled templates")
-    if health["expected_agents"] and health["expected_commands"]:
+    if health["expected_agents"]:
         tracker.complete(
             "templates",
-            f"{health['expected_agents']} agents, {health['expected_commands']} commands",
+            f"{health['expected_agents']} agents",
         )
     else:
         tracker.error("templates", "missing bundled templates")
@@ -1064,20 +1064,15 @@ def doctor(debug: bool = typer.Option(False, "--debug", help="Enable debug loggi
 
     if detected != "codex":
         tracker.add("templates", "Installed template counts")
-        if (
-            health["installed_agents"] == health["expected_agents"]
-            and health["installed_commands"] == health["expected_commands"]
-        ):
+        if health["installed_agents"] == health["expected_agents"]:
             tracker.complete(
                 "templates",
-                f"{health['installed_agents']}/{health['expected_agents']} agents, "
-                f"{health['installed_commands']}/{health['expected_commands']} commands",
+                f"{health['installed_agents']}/{health['expected_agents']} agents",
             )
         else:
             tracker.error(
                 "templates",
-                f"agents {health['installed_agents']}/{health['expected_agents']}, "
-                f"commands {health['installed_commands']}/{health['expected_commands']}",
+                f"agents {health['installed_agents']}/{health['expected_agents']}",
             )
 
     tracker.add("planning", "Branch workspace artifacts")
@@ -1124,9 +1119,9 @@ def doctor(debug: bool = typer.Option(False, "--debug", help="Enable debug loggi
             "Installed vs bundled agent templates",
         )
         details.add_row(
-            "Commands",
-            f"{health['installed_commands']}/{health['expected_commands']}",
-            "Installed vs bundled slash commands",
+            "Skills",
+            "via .claude/skills/",
+            "Slash commands delivered as skills",
         )
     details.add_row(
         "Planning",

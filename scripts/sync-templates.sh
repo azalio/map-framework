@@ -9,7 +9,14 @@ templates_root="src/mapify_cli/templates"
 mkdir -p "$templates_root/agents" "$templates_root/commands" "$templates_root/hooks" "$templates_root/references"
 
 cp -a .claude/agents/*.md "$templates_root/agents/"
-cp -a .claude/commands/*.md "$templates_root/commands/"
+# .claude/commands/ may be empty (MAP commands moved to skills/). Use a glob
+# guard so the script doesn't fail when there are no .md files to copy.
+shopt -s nullglob
+command_files=(.claude/commands/*.md)
+shopt -u nullglob
+if (( ${#command_files[@]} > 0 )); then
+    cp -a "${command_files[@]}" "$templates_root/commands/"
+fi
 cp -a .claude/hooks/* "$templates_root/hooks/"
 cp -a .claude/references/* "$templates_root/references/"
 cp -a .claude/settings.json .claude/workflow-rules.json .claude/ralph-loop-config.json "$templates_root/"

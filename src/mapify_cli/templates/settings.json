@@ -145,6 +145,19 @@
           }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "description": "Clarification & Durability Trigger Detection",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/detect-clarification-triggers.py",
+            "timeout": 3,
+            "description": "Detects user-invited clarification language and async/durability language; injects guidance for /map-plan and task-decomposer"
+          }
+        ]
+      }
     ]
   }
 }
