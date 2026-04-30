@@ -74,6 +74,15 @@ mapify init . --provider codex
 codex
 ```
 
+Pick a context-compression policy if you want non-default behaviour
+(`auto` is the default; see [docs/USAGE.md#context-budget-policy](docs/USAGE.md)):
+
+```bash
+mapify init . --compression never                 # quality > cost
+mapify init . --compression aggressive            # cost > quality
+mapify init . --compression-threshold 250000      # Opus 1M project
+```
+
 **3. Use the golden path for serious work**
 
 When a task has unclear behavior, multiple files, or real review risk, run the full loop:

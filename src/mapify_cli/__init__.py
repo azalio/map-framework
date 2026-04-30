@@ -646,6 +646,22 @@ def init(
         "--provider",
         help="Delivery provider: claude (default) or codex",
     ),
+    compression: str = typer.Option(
+        "auto",
+        "--compression",
+        help=(
+            "Context-compression policy: never (quality), auto (default), "
+            "or aggressive (cost). See docs/USAGE.md."
+        ),
+    ),
+    compression_threshold: int = typer.Option(
+        120_000,
+        "--compression-threshold",
+        help=(
+            "Token threshold for the compression nudge. Default 120000 "
+            "(~60% of a 200k window). Raise to ~250000 for Opus 1M."
+        ),
+    ),
 ):
     """
     Initialize a new MAP Framework project.
@@ -691,6 +707,22 @@ def init(
         console.print(
             f"[red]Error:[/red] Invalid provider '{provider}'. "
             f"Valid providers: {', '.join(valid_providers)}"
+        )
+        raise typer.Exit(1)
+
+    # Validate compression policy & threshold (fail fast — wrong values here
+    # would silently fall back to defaults at load time, which is confusing
+    # when the user explicitly passed a flag).
+    valid_policies = ("never", "auto", "aggressive")
+    if compression not in valid_policies:
+        console.print(
+            f"[red]Error:[/red] Invalid compression policy '{compression}'. "
+            f"Valid: {', '.join(valid_policies)}"
+        )
+        raise typer.Exit(1)
+    if compression_threshold <= 0:
+        console.print(
+            "[red]Error:[/red] --compression-threshold must be > 0"
         )
         raise typer.Exit(1)
 
@@ -806,6 +838,26 @@ def init(
         counts = codex_provider.install(project_path)
         total = sum(counts.values())
         tracker.complete("create-codex", f"{total} files")
+
+        # Codex provider also gets .map/config.yaml so context-compression
+        # policy is honoured by the orchestrator on Codex sessions too.
+        tracker.add("map-config", "Create .map/config.yaml")
+        tracker.start("map-config")
+        try:
+            from mapify_cli.config.project_config import (
+                apply_compression_overrides,
+                write_default_config,
+            )
+
+            config_path = write_default_config(project_path)
+            apply_compression_overrides(
+                config_path, compression, compression_threshold
+            )
+            tracker.complete(
+                "map-config", str(config_path.relative_to(project_path))
+            )
+        except Exception as e:
+            tracker.error("map-config", f"skipped: {e}")
     else:
         # Claude provider: use ClaudeProvider abstraction
         from mapify_cli.delivery.providers import ClaudeProvider
@@ -823,9 +875,15 @@ def init(
         tracker.add("map-config", "Create .map/config.yaml")
         tracker.start("map-config")
         try:
-            from mapify_cli.config.project_config import write_default_config
+            from mapify_cli.config.project_config import (
+                apply_compression_overrides,
+                write_default_config,
+            )
 
             config_path = write_default_config(project_path)
+            apply_compression_overrides(
+                config_path, compression, compression_threshold
+            )
             tracker.complete("map-config", str(config_path.relative_to(project_path)))
         except Exception as e:
             tracker.error("map-config", f"skipped: {e}")

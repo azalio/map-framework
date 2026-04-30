@@ -89,7 +89,9 @@ TESTING:
 
 import argparse
 import json
+import os
 import sys
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1751,6 +1753,67 @@ def resume_single_subtask(subtask_id: str, branch: str, tdd_mode: bool = False) 
     }
 
 
+def _emit_context_budget_warning(branch: str, transcript_path: Optional[str]) -> None:
+    """Print a /compact recommendation to stderr when the budget is crossed.
+
+    Provider-agnostic: works for any caller that can supply ``transcript_path``
+    (Claude Code via env, Codex via CLI flag, future providers similarly).
+    Designed to fail closed and never raise — orchestrator dispatch must not
+    be blocked by a missing transcript or a missing mapify_cli install.
+    """
+    if not transcript_path:
+        return
+    path = Path(transcript_path)
+    if not path.is_file():
+        return
+
+    try:
+        from mapify_cli.config.project_config import load_map_config
+        from mapify_cli.token_budget import (
+            count_last_turn_tokens,
+            effective_threshold,
+            format_compact_instruction,
+            should_nudge,
+        )
+    except ImportError:
+        return
+
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+    try:
+        config = load_map_config(project_dir)
+    except Exception:
+        return
+
+    threshold = effective_threshold(
+        config.compression_policy, config.compression_threshold_tokens
+    )
+    if threshold is None:
+        return
+
+    # Same cooldown semantic as context-meter.py: skip if a compaction
+    # marker has been touched in the last 5 minutes.
+    marker = project_dir / ".map" / branch / "last-compact.marker"
+    if marker.is_file():
+        try:
+            if (time.time() - marker.stat().st_mtime) < 5 * 60:
+                return
+        except OSError:
+            pass
+
+    used = count_last_turn_tokens(path)
+    if not should_nudge(used, threshold):
+        return
+
+    message = format_compact_instruction(
+        used=used,
+        threshold=threshold,
+        focus=config.compression_focus,
+    )
+    # stderr keeps stdout clean for JSON consumers (the orchestrator's
+    # contract is JSON-on-stdout for every command).
+    print(message, file=sys.stderr)
+
+
 def main():
     """CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -1800,11 +1863,26 @@ def main():
         "--feedback",
         help="Monitor feedback text (for monitor_failed / wave_monitor_failed)",
     )
+    parser.add_argument(
+        "--transcript-path",
+        default=os.environ.get("MAPIFY_TRANSCRIPT_PATH"),
+        help=(
+            "Optional path to the LLM transcript JSONL. When provided, the "
+            "orchestrator emits a /compact recommendation to stderr if the "
+            "compression policy threshold is crossed. Falls back to env "
+            "MAPIFY_TRANSCRIPT_PATH."
+        ),
+    )
 
     args = parser.parse_args()
 
     # Get branch
     branch = args.branch if args.branch else get_branch_name()
+
+    # Provider-agnostic context-budget warning. No-op when no transcript is
+    # available (Codex without explicit --transcript-path, etc.) or when the
+    # mapify_cli package is not importable from this script's environment.
+    _emit_context_budget_warning(branch, args.transcript_path)
 
     try:
         if args.command == "get_next_step":

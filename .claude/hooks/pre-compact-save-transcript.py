@@ -174,6 +174,16 @@ def main() -> None:
     except (IOError, OSError):
         pass
 
+    # Cooldown marker for context-meter.py - prevents the meter from injecting
+    # a fresh /compact nudge immediately after Claude Code's built-in
+    # auto-compact (~83.5%) has just run. mtime is what the meter compares
+    # against, so the file content is informational only.
+    marker = branch_dir / "last-compact.marker"
+    try:
+        marker.write_text(datetime.now().isoformat(), encoding="utf-8")
+    except (IOError, OSError):
+        pass
+
     print("{}")
     sys.exit(0)
 
