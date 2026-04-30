@@ -712,12 +712,14 @@ def init(
 
     # Validate compression policy & threshold (fail fast — wrong values here
     # would silently fall back to defaults at load time, which is confusing
-    # when the user explicitly passed a flag).
-    valid_policies = ("never", "auto", "aggressive")
-    if compression not in valid_policies:
+    # when the user explicitly passed a flag). The canonical policy set lives
+    # in ``token_budget`` so this validation cannot drift from config-load
+    # validation or the budgeting logic.
+    from mapify_cli.token_budget import VALID_POLICIES
+    if compression not in VALID_POLICIES:
         console.print(
             f"[red]Error:[/red] Invalid compression policy '{compression}'. "
-            f"Valid: {', '.join(valid_policies)}"
+            f"Valid: {', '.join(VALID_POLICIES)}"
         )
         raise typer.Exit(1)
     if compression_threshold <= 0:

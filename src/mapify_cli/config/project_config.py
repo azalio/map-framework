@@ -6,6 +6,8 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from mapify_cli.token_budget import VALID_POLICIES
+
 try:
     import yaml
 except ImportError:
@@ -164,15 +166,15 @@ def load_map_config(project_path: Path) -> MapConfig:
 
         # Post-load validation for enum-like fields. We do not raise — a bad
         # value falls back to the default so a typo does not break the user's
-        # workflow.
-        valid_policies = ("never", "auto", "aggressive")
-        if cfg.compression_policy not in valid_policies:
+        # workflow. The canonical policy set lives in ``token_budget`` so
+        # config validation, CLI validation, and budget logic cannot drift.
+        if cfg.compression_policy not in VALID_POLICIES:
             logger.warning(
                 "Invalid compression_policy %r in %s (expected one of %s). "
                 "Using default 'auto'.",
                 cfg.compression_policy,
                 config_file,
-                ", ".join(valid_policies),
+                ", ".join(VALID_POLICIES),
             )
             cfg.compression_policy = "auto"
         if cfg.compression_threshold_tokens <= 0:

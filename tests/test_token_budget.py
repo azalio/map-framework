@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 
@@ -262,5 +263,5 @@ class TestTokenUsage:
 
     def test_is_frozen(self) -> None:
         u = TokenUsage()
-        with pytest.raises(Exception):  # noqa: PT011 — dataclasses.FrozenInstanceError
+        with pytest.raises(dataclasses.FrozenInstanceError):
             u.input_tokens = 5  # type: ignore[misc]
