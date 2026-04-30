@@ -4,6 +4,25 @@ import re
 import subprocess
 
 
+def sanitize_branch_name(branch: str) -> str:
+    """Normalize a branch name for safe use as a filesystem path component.
+
+    Replaces ``/`` and any non-``[a-zA-Z0-9_.-]`` character with ``-``,
+    collapses runs of hyphens, and strips leading/trailing hyphens. Refuses
+    path-traversal patterns (``..`` anywhere, or a leading ``.``) by
+    returning ``"default"``. Empty or all-stripped input also yields
+    ``"default"`` so callers always get a non-empty, traversal-safe segment.
+    """
+    if not isinstance(branch, str):
+        return "default"
+    sanitized = branch.replace("/", "-")
+    sanitized = re.sub(r"[^a-zA-Z0-9_.-]", "-", sanitized)
+    sanitized = re.sub(r"-+", "-", sanitized).strip("-")
+    if ".." in sanitized or sanitized.startswith("."):
+        return "default"
+    return sanitized or "default"
+
+
 def get_branch_name() -> str:
     """Get sanitized git branch name.
 
@@ -18,13 +37,7 @@ def get_branch_name() -> str:
             timeout=1,
         )
         if result.returncode == 0:
-            branch = result.stdout.strip()
-            sanitized = branch.replace("/", "-")
-            sanitized = re.sub(r"[^a-zA-Z0-9_.-]", "-", sanitized)
-            sanitized = re.sub(r"-+", "-", sanitized).strip("-")
-            if ".." in sanitized or sanitized.startswith("."):
-                return "default"
-            return sanitized or "default"
+            return sanitize_branch_name(result.stdout.strip())
         return "default"
     except Exception:
         return "default"

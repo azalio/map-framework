@@ -292,8 +292,8 @@ profile: full
 
 def apply_compression_overrides(
     config_path: Path,
-    policy: str,
-    threshold: int,
+    policy: str | None,
+    threshold: int | None,
 ) -> None:
     """Write user-supplied compression flags into an existing .map/config.yaml.
 
@@ -304,13 +304,21 @@ def apply_compression_overrides(
     Idempotent: if the file already has uncommented entries for these keys,
     they are replaced rather than appended.
 
+    Each parameter is independently optional. ``None`` means "leave that key
+    untouched" — so re-running ``mapify init`` without flags does not rewrite
+    a key the user has already customised. Callers should skip this function
+    entirely when both arguments are ``None``.
+
     Args:
         config_path: path to the .map/config.yaml that ``write_default_config``
             just produced.
-        policy: validated policy string (caller is responsible for validation).
-        threshold: validated positive integer.
+        policy: validated policy string, or ``None`` to leave it unchanged.
+        threshold: validated positive integer, or ``None`` to leave it
+            unchanged.
     """
     if not config_path.is_file():
+        return
+    if policy is None and threshold is None:
         return
 
     text = config_path.read_text(encoding="utf-8")
@@ -333,8 +341,10 @@ def apply_compression_overrides(
         sep = "" if body.endswith("\n") else "\n"
         return f"{body}{sep}{new_line}\n"
 
-    text = _set("compression_policy", policy, text)
-    text = _set("compression_threshold_tokens", str(int(threshold)), text)
+    if policy is not None:
+        text = _set("compression_policy", policy, text)
+    if threshold is not None:
+        text = _set("compression_threshold_tokens", str(int(threshold)), text)
     config_path.write_text(text, encoding="utf-8")
 
 

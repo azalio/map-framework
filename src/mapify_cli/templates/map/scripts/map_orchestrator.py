@@ -423,7 +423,10 @@ def _get_step_order(tdd_mode: bool = False) -> list[str]:
     return TDD_STEP_ORDER if tdd_mode else STEP_ORDER
 
 
-from map_utils import get_branch_name  # noqa: E402 — shared across .map/scripts/
+from map_utils import (  # noqa: E402 — shared across .map/scripts/
+    get_branch_name,
+    sanitize_branch_name,
+)
 
 
 def _actor_step_instruction(state: StepState) -> str:
@@ -1876,8 +1879,12 @@ def main():
 
     args = parser.parse_args()
 
-    # Get branch
-    branch = args.branch if args.branch else get_branch_name()
+    # Get branch. ``--branch`` arrives unsanitized from the CLI; route it
+    # through the same sanitiser used by ``get_branch_name()`` so the value
+    # cannot escape the ``.map/<branch>/`` directory via ``..`` or differ
+    # from the auto-detected directory for the same logical branch
+    # (``feature/foo`` vs ``feature-foo``).
+    branch = sanitize_branch_name(args.branch) if args.branch else get_branch_name()
 
     # Provider-agnostic context-budget warning. No-op when no transcript is
     # available (Codex without explicit --transcript-path, etc.) or when the

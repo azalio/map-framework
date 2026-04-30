@@ -512,6 +512,52 @@ class TestProjectConfig:
         apply_compression_overrides(missing, "auto", 120_000)
         assert not missing.exists()
 
+    def test_apply_compression_overrides_no_op_when_both_none(self, tmp_path):
+        # Re-running ``mapify init`` without --compression flags must not
+        # rewrite an existing user-customised config.
+        from mapify_cli.config.project_config import apply_compression_overrides
+
+        config_file = tmp_path / "config.yaml"
+        original = (
+            "profile: full\n"
+            "compression_policy: never\n"
+            "compression_threshold_tokens: 90000\n"
+        )
+        config_file.write_text(original)
+
+        apply_compression_overrides(config_file, None, None)
+        assert config_file.read_text() == original
+
+    def test_apply_compression_overrides_partial_policy_only(self, tmp_path):
+        from mapify_cli.config.project_config import apply_compression_overrides
+
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "profile: full\n"
+            "compression_policy: never\n"
+            "compression_threshold_tokens: 90000\n"
+        )
+        apply_compression_overrides(config_file, "aggressive", None)
+        content = config_file.read_text()
+        assert "compression_policy: aggressive" in content
+        # Threshold must remain at the user's previous value.
+        assert "compression_threshold_tokens: 90000" in content
+
+    def test_apply_compression_overrides_partial_threshold_only(self, tmp_path):
+        from mapify_cli.config.project_config import apply_compression_overrides
+
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "profile: full\n"
+            "compression_policy: never\n"
+            "compression_threshold_tokens: 90000\n"
+        )
+        apply_compression_overrides(config_file, None, 250_000)
+        content = config_file.read_text()
+        # Policy must remain at the user's previous value.
+        assert "compression_policy: never" in content
+        assert "compression_threshold_tokens: 250000" in content
+
 
 class TestSafetyGuardrailsHookConfig:
     """Test that safety-guardrails.py reads config overrides."""
