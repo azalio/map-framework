@@ -27,8 +27,10 @@ logger = logging.getLogger(__name__)
 # tests can import it instead of duplicating a magic number.
 AGGRESSIVE_MULTIPLIER = 0.4
 
-# Valid policy values. ``unknown`` policies are treated as ``never`` (fail
-# safe — never inject the nudge if config is wrong).
+# Valid policy values. Unknown policies are treated as ``auto`` (with a debug
+# log in ``effective_threshold``) so misconfiguration does not silently
+# disable the nudge — see ``effective_threshold`` and the matching test
+# ``test_unknown_policy_treated_as_auto``.
 VALID_POLICIES = ("never", "auto", "aggressive")
 
 
@@ -173,8 +175,13 @@ def format_compact_instruction(used: int, threshold: int, focus: str) -> str:
     can recognise where the message came from.
     """
     pct = int(round(100 * used / threshold)) if threshold > 0 else 0
+    # Fallback must match the documented default in
+    # ``docs/context-compression-plan.md`` (Defaults table) so the user gets
+    # the same /compact instruction whether they leave compression_focus blank
+    # in config or never set it at all.
     focus_clean = (focus or "").strip() or (
-        "MAP step state, last 2 monitor verdicts, pending subtasks"
+        "MAP step state, last 2 monitor verdicts, pending subtasks; "
+        "drop tool-result bodies older than 3 turns"
     )
     return (
         f"[MAP context-meter] Context is at {used:,} / {threshold:,} tokens "

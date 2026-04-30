@@ -229,9 +229,13 @@ class TestFormatCompactInstruction:
 
     def test_blank_focus_falls_back_to_default(self) -> None:
         msg = format_compact_instruction(used=130_000, threshold=120_000, focus="")
-        # Default focus is the string used in the design doc.
-        assert "MAP step state" in msg
-        assert "/compact " in msg
+        # Default focus must match the Defaults table in
+        # docs/context-compression-plan.md verbatim — keep this assertion
+        # tight so doc/code drift trips a test, not a Copilot review.
+        assert (
+            "/compact MAP step state, last 2 monitor verdicts, "
+            "pending subtasks; drop tool-result bodies older than 3 turns"
+        ) in msg
 
     def test_zero_threshold_does_not_divide(self) -> None:
         # Defensive: format must not crash even if a bad threshold reaches it.

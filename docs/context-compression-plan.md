@@ -1,8 +1,8 @@
 # Context Compression — Implementation Plan
 
-Status: approved, not yet started
-Owner: TBD
-Last updated: 2026-04-29
+Status: shipped (PR #104)
+Owner: azalio
+Last updated: 2026-04-30
 
 ## Decisions (locked)
 
