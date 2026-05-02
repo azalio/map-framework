@@ -157,6 +157,17 @@
             "description": "Detects user-invited clarification language and async/durability language; injects guidance for /map-plan and task-decomposer"
           }
         ]
+      },
+      {
+        "description": "Context Meter - inject /compact nudge when token threshold crossed",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/context-meter.py",
+            "timeout": 5,
+            "description": "Reads transcript token usage; if compression_policy=auto/aggressive and threshold crossed, injects additionalContext suggesting /compact"
+          }
+        ]
       }
     ]
   }

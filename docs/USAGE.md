@@ -314,6 +314,40 @@ git commit --no-verify  # NOT RECOMMENDED
 
 MAP workflows automatically save progress to the `.map/` directory, which persists across context compactions. This ensures your work is never lost, even if the conversation context is cleared.
 
+### Context budget policy
+
+MAP ships a token-aware nudge that tells Claude to run `/compact` *before* quality
+starts to degrade — well below Claude Code's built-in 83.5% auto-compact floor.
+Pick a policy at `mapify init` time, or edit `.map/config.yaml` later.
+
+| Policy       | When the nudge fires                              | Use this when                          |
+| ------------ | ------------------------------------------------- | -------------------------------------- |
+| `never`      | never                                             | quality matters more than token cost   |
+| `auto`       | last assistant turn input ≥ threshold (default)   | balanced (recommended)                 |
+| `aggressive` | last assistant turn input ≥ 0.4 × threshold       | minimise cost on long sessions         |
+
+Default threshold: `120000` tokens (~60% of a 200k Sonnet window). For Opus 1M
+projects raise it to `~250000`.
+
+```bash
+# At init time:
+mapify init my-project --compression auto --compression-threshold 120000
+mapify init my-project --compression never           # quality mode
+mapify init my-project --compression aggressive      # cost mode
+
+# Or edit .map/config.yaml afterwards:
+# compression_policy: auto
+# compression_threshold_tokens: 120000
+# compression_focus: ""   # appended to the generated /compact command
+```
+
+When the threshold is crossed, the `context-meter` hook injects a
+`[MAP context-meter] ...` notice with a ready-to-run `/compact` line. The
+five-minute cooldown via `.map/<branch>/last-compact.marker` prevents
+double-firing right after a built-in auto-compact has already run. For Codex
+sessions the same recommendation is emitted to stderr by `map_orchestrator.py`
+when invoked with `--transcript-path` (or env `MAPIFY_TRANSCRIPT_PATH`).
+
 ### What is Context Compaction?
 
 Context compaction occurs when Claude's conversation memory reaches its limit. When this happens:

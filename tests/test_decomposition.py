@@ -399,6 +399,165 @@ class TestProjectConfig:
         path = write_default_config(tmp_path)
         assert path.read_text() == "profile: core\n"  # not overwritten
 
+    # ---- compression policy validation ----
+
+    def test_load_map_config_invalid_compression_policy_falls_back_to_auto(
+        self, tmp_path
+    ):
+        from mapify_cli.config.project_config import load_map_config
+
+        map_dir = tmp_path / ".map"
+        map_dir.mkdir()
+        (map_dir / "config.yaml").write_text("compression_policy: paranoid\n")
+        cfg = load_map_config(tmp_path)
+        # Typo must not break the user — silently fall back to the default.
+        assert cfg.compression_policy == "auto"
+
+    def test_load_map_config_zero_compression_threshold_resets_to_default(
+        self, tmp_path
+    ):
+        from mapify_cli.config.project_config import load_map_config
+
+        map_dir = tmp_path / ".map"
+        map_dir.mkdir()
+        (map_dir / "config.yaml").write_text("compression_threshold_tokens: 0\n")
+        cfg = load_map_config(tmp_path)
+        assert cfg.compression_threshold_tokens == 120_000
+
+    def test_load_map_config_negative_compression_threshold_resets_to_default(
+        self, tmp_path
+    ):
+        from mapify_cli.config.project_config import load_map_config
+
+        map_dir = tmp_path / ".map"
+        map_dir.mkdir()
+        (map_dir / "config.yaml").write_text(
+            "compression_threshold_tokens: -42\n"
+        )
+        cfg = load_map_config(tmp_path)
+        assert cfg.compression_threshold_tokens == 120_000
+
+    def test_load_map_config_valid_compression_overrides_pass_through(
+        self, tmp_path
+    ):
+        from mapify_cli.config.project_config import load_map_config
+
+        map_dir = tmp_path / ".map"
+        map_dir.mkdir()
+        (map_dir / "config.yaml").write_text(
+            "compression_policy: aggressive\n"
+            "compression_threshold_tokens: 250000\n"
+        )
+        cfg = load_map_config(tmp_path)
+        assert cfg.compression_policy == "aggressive"
+        assert cfg.compression_threshold_tokens == 250_000
+
+    # ---- apply_compression_overrides ----
+
+    def test_apply_compression_overrides_replaces_commented_placeholder(
+        self, tmp_path
+    ):
+        from mapify_cli.config.project_config import (
+            apply_compression_overrides,
+            write_default_config,
+        )
+
+        config_file = write_default_config(tmp_path)
+        # Default config has the keys commented out.
+        assert "# compression_policy: auto" in config_file.read_text()
+
+        apply_compression_overrides(config_file, "aggressive", 200_000)
+        content = config_file.read_text()
+        assert "compression_policy: aggressive" in content
+        assert "compression_threshold_tokens: 200000" in content
+        # The commented placeholders are replaced, not duplicated.
+        assert "# compression_policy:" not in content
+        assert "# compression_threshold_tokens:" not in content
+
+    def test_apply_compression_overrides_replaces_active_entry(self, tmp_path):
+        from mapify_cli.config.project_config import apply_compression_overrides
+
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "profile: full\n"
+            "compression_policy: never\n"
+            "compression_threshold_tokens: 90000\n"
+        )
+
+        apply_compression_overrides(config_file, "auto", 150_000)
+        content = config_file.read_text()
+        assert content.count("compression_policy:") == 1
+        assert content.count("compression_threshold_tokens:") == 1
+        assert "compression_policy: auto" in content
+        assert "compression_threshold_tokens: 150000" in content
+
+    def test_apply_compression_overrides_appends_when_keys_missing(
+        self, tmp_path
+    ):
+        from mapify_cli.config.project_config import apply_compression_overrides
+
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("profile: full\n")
+
+        apply_compression_overrides(config_file, "auto", 120_000)
+        content = config_file.read_text()
+        assert "compression_policy: auto" in content
+        assert "compression_threshold_tokens: 120000" in content
+
+    def test_apply_compression_overrides_no_op_when_file_missing(self, tmp_path):
+        from mapify_cli.config.project_config import apply_compression_overrides
+
+        missing = tmp_path / "nope.yaml"
+        # Should not raise; file simply does not exist.
+        apply_compression_overrides(missing, "auto", 120_000)
+        assert not missing.exists()
+
+    def test_apply_compression_overrides_no_op_when_both_none(self, tmp_path):
+        # Re-running ``mapify init`` without --compression flags must not
+        # rewrite an existing user-customised config.
+        from mapify_cli.config.project_config import apply_compression_overrides
+
+        config_file = tmp_path / "config.yaml"
+        original = (
+            "profile: full\n"
+            "compression_policy: never\n"
+            "compression_threshold_tokens: 90000\n"
+        )
+        config_file.write_text(original)
+
+        apply_compression_overrides(config_file, None, None)
+        assert config_file.read_text() == original
+
+    def test_apply_compression_overrides_partial_policy_only(self, tmp_path):
+        from mapify_cli.config.project_config import apply_compression_overrides
+
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "profile: full\n"
+            "compression_policy: never\n"
+            "compression_threshold_tokens: 90000\n"
+        )
+        apply_compression_overrides(config_file, "aggressive", None)
+        content = config_file.read_text()
+        assert "compression_policy: aggressive" in content
+        # Threshold must remain at the user's previous value.
+        assert "compression_threshold_tokens: 90000" in content
+
+    def test_apply_compression_overrides_partial_threshold_only(self, tmp_path):
+        from mapify_cli.config.project_config import apply_compression_overrides
+
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "profile: full\n"
+            "compression_policy: never\n"
+            "compression_threshold_tokens: 90000\n"
+        )
+        apply_compression_overrides(config_file, None, 250_000)
+        content = config_file.read_text()
+        # Policy must remain at the user's previous value.
+        assert "compression_policy: never" in content
+        assert "compression_threshold_tokens: 250000" in content
+
 
 class TestSafetyGuardrailsHookConfig:
     """Test that safety-guardrails.py reads config overrides."""

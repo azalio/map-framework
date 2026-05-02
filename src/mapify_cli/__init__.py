@@ -646,6 +646,26 @@ def init(
         "--provider",
         help="Delivery provider: claude (default) or codex",
     ),
+    compression: Optional[str] = typer.Option(
+        None,
+        "--compression",
+        help=(
+            "Context-compression policy: never (quality), auto (default), "
+            "or aggressive (cost). When omitted the existing config value "
+            "is preserved and re-running ``mapify init`` does not overwrite "
+            "user choices. See docs/USAGE.md."
+        ),
+    ),
+    compression_threshold: Optional[int] = typer.Option(
+        None,
+        "--compression-threshold",
+        help=(
+            "Token threshold for the compression nudge. Default 120000 "
+            "(~60% of a 200k window) when no value has been set. Raise to "
+            "~250000 for Opus 1M. When omitted, the existing config value "
+            "is preserved on re-run."
+        ),
+    ),
 ):
     """
     Initialize a new MAP Framework project.
@@ -691,6 +711,24 @@ def init(
         console.print(
             f"[red]Error:[/red] Invalid provider '{provider}'. "
             f"Valid providers: {', '.join(valid_providers)}"
+        )
+        raise typer.Exit(1)
+
+    # Validate compression policy & threshold only when the user actually
+    # passed the flag — None means "leave existing config alone", which is
+    # the correct behaviour on re-run in an existing project. The canonical
+    # policy set lives in ``token_budget`` so this validation cannot drift
+    # from config-load validation or the budgeting logic.
+    from mapify_cli.token_budget import VALID_POLICIES
+    if compression is not None and compression not in VALID_POLICIES:
+        console.print(
+            f"[red]Error:[/red] Invalid compression policy '{compression}'. "
+            f"Valid: {', '.join(VALID_POLICIES)}"
+        )
+        raise typer.Exit(1)
+    if compression_threshold is not None and compression_threshold <= 0:
+        console.print(
+            "[red]Error:[/red] --compression-threshold must be > 0"
         )
         raise typer.Exit(1)
 
@@ -806,6 +844,31 @@ def init(
         counts = codex_provider.install(project_path)
         total = sum(counts.values())
         tracker.complete("create-codex", f"{total} files")
+
+        # Codex provider also gets .map/config.yaml so context-compression
+        # policy is honoured by the orchestrator on Codex sessions too.
+        tracker.add("map-config", "Create .map/config.yaml")
+        tracker.start("map-config")
+        try:
+            from mapify_cli.config.project_config import (
+                apply_compression_overrides,
+                write_default_config,
+            )
+
+            config_path = write_default_config(project_path)
+            # Only persist compression overrides when the user explicitly
+            # passed a flag. ``write_default_config`` is idempotent and a
+            # bare ``mapify init .`` re-run must NOT silently rewrite
+            # existing compression_policy / threshold to CLI defaults.
+            if compression is not None or compression_threshold is not None:
+                apply_compression_overrides(
+                    config_path, compression, compression_threshold
+                )
+            tracker.complete(
+                "map-config", str(config_path.relative_to(project_path))
+            )
+        except Exception as e:
+            tracker.error("map-config", f"skipped: {e}")
     else:
         # Claude provider: use ClaudeProvider abstraction
         from mapify_cli.delivery.providers import ClaudeProvider
@@ -823,9 +886,20 @@ def init(
         tracker.add("map-config", "Create .map/config.yaml")
         tracker.start("map-config")
         try:
-            from mapify_cli.config.project_config import write_default_config
+            from mapify_cli.config.project_config import (
+                apply_compression_overrides,
+                write_default_config,
+            )
 
             config_path = write_default_config(project_path)
+            # Only persist compression overrides when the user explicitly
+            # passed a flag. ``write_default_config`` is idempotent and a
+            # bare ``mapify init .`` re-run must NOT silently rewrite
+            # existing compression_policy / threshold to CLI defaults.
+            if compression is not None or compression_threshold is not None:
+                apply_compression_overrides(
+                    config_path, compression, compression_threshold
+                )
             tracker.complete("map-config", str(config_path.relative_to(project_path)))
         except Exception as e:
             tracker.error("map-config", f"skipped: {e}")

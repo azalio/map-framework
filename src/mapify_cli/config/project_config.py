@@ -6,6 +6,8 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from mapify_cli.token_budget import VALID_POLICIES
+
 try:
     import yaml
 except ImportError:
@@ -74,6 +76,19 @@ class MapConfig:
 
     # Language preference for agent responses
     language: str = ""
+
+    # Context compression policy (see docs/context-compression-plan.md)
+    # "never"      = never inject /compact nudge (quality-leaning)
+    # "auto"       = nudge when used >= compression_threshold_tokens
+    # "aggressive" = nudge at 0.4 * threshold (cost-leaning)
+    compression_policy: str = "auto"
+    # Token threshold above which the meter injects a /compact instruction.
+    # Default = 120_000 (~60% of Sonnet-200k window, below the Chroma
+    # context-rot zone). Override to ~250_000 for Opus/Sonnet 1M projects.
+    compression_threshold_tokens: int = 120_000
+    # Free-form focus text appended to the auto-generated /compact command.
+    # Empty string = use the built-in MAP-aware default.
+    compression_focus: str = ""
 
 
 def load_map_config(project_path: Path) -> MapConfig:
@@ -147,7 +162,31 @@ def load_map_config(project_path: Path) -> MapConfig:
             config_dict[key] = value
 
         # Create config with overrides; missing fields use dataclass defaults
-        return MapConfig(**config_dict)
+        cfg = MapConfig(**config_dict)
+
+        # Post-load validation for enum-like fields. We do not raise — a bad
+        # value falls back to the default so a typo does not break the user's
+        # workflow. The canonical policy set lives in ``token_budget`` so
+        # config validation, CLI validation, and budget logic cannot drift.
+        if cfg.compression_policy not in VALID_POLICIES:
+            logger.warning(
+                "Invalid compression_policy %r in %s (expected one of %s). "
+                "Using default 'auto'.",
+                cfg.compression_policy,
+                config_file,
+                ", ".join(VALID_POLICIES),
+            )
+            cfg.compression_policy = "auto"
+        if cfg.compression_threshold_tokens <= 0:
+            logger.warning(
+                "compression_threshold_tokens must be > 0 in %s "
+                "(got %d). Using default 120000.",
+                config_file,
+                cfg.compression_threshold_tokens,
+            )
+            cfg.compression_threshold_tokens = 120_000
+
+        return cfg
 
     except yaml.YAMLError as e:
         logger.warning(
@@ -233,7 +272,80 @@ profile: full
 
 # Language for agent responses (e.g., "ru", "en", "de")
 # language: ""
+
+# Context compression policy.
+#   never      = never inject a /compact nudge (best for quality)
+#   auto       = nudge when last assistant turn input >= threshold (default)
+#   aggressive = nudge at 0.4 x threshold (best for cost)
+# compression_policy: auto
+
+# Token threshold for the auto/aggressive policies.
+# 120_000 ~= 60% of a 200k Sonnet window; raise to ~250_000 for Opus 1M.
+# compression_threshold_tokens: 120000
+
+# Free-form focus text appended to the generated /compact command.
+# Leave empty to use the built-in MAP-aware default
+# ("MAP step state, last 2 monitor verdicts, pending subtasks ...").
+# compression_focus: ""
 """
+
+
+def apply_compression_overrides(
+    config_path: Path,
+    policy: str | None,
+    threshold: int | None,
+) -> None:
+    """Write user-supplied compression flags into an existing .map/config.yaml.
+
+    Called by ``mapify init`` when the user passes ``--compression`` /
+    ``--compression-threshold``. Replaces the commented placeholder lines so
+    the values become active without duplicating keys.
+
+    Idempotent: if the file already has uncommented entries for these keys,
+    they are replaced rather than appended.
+
+    Each parameter is independently optional. ``None`` means "leave that key
+    untouched" — so re-running ``mapify init`` without flags does not rewrite
+    a key the user has already customised. Callers should skip this function
+    entirely when both arguments are ``None``.
+
+    Args:
+        config_path: path to the .map/config.yaml that ``write_default_config``
+            just produced.
+        policy: validated policy string, or ``None`` to leave it unchanged.
+        threshold: validated positive integer, or ``None`` to leave it
+            unchanged.
+    """
+    if not config_path.is_file():
+        return
+    if policy is None and threshold is None:
+        return
+
+    text = config_path.read_text(encoding="utf-8")
+
+    def _set(key: str, value: str, body: str) -> str:
+        # Match either an active entry ('key: ...') at the start of a line, or a
+        # commented placeholder ('# key: ...'). DOTALL not needed — anchored
+        # to line start via the leading newline.
+        import re
+
+        active_re = re.compile(rf"(?m)^{re.escape(key)}\s*:.*$")
+        commented_re = re.compile(rf"(?m)^#\s*{re.escape(key)}\s*:.*$")
+        new_line = f"{key}: {value}"
+        if active_re.search(body):
+            return active_re.sub(new_line, body, count=1)
+        if commented_re.search(body):
+            return commented_re.sub(new_line, body, count=1)
+        # No placeholder found — append at end with a leading newline if the
+        # file does not already end with one.
+        sep = "" if body.endswith("\n") else "\n"
+        return f"{body}{sep}{new_line}\n"
+
+    if policy is not None:
+        text = _set("compression_policy", policy, text)
+    if threshold is not None:
+        text = _set("compression_threshold_tokens", str(int(threshold)), text)
+    config_path.write_text(text, encoding="utf-8")
 
 
 def write_default_config(project_path: Path) -> Path:

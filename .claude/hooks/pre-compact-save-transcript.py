@@ -15,7 +15,7 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -171,6 +171,20 @@ def main() -> None:
     pointer = branch_dir / "last-transcript.txt"
     try:
         pointer.write_text(str(outfile.relative_to(PROJECT_DIR)), encoding="utf-8")
+    except (IOError, OSError):
+        pass
+
+    # Cooldown marker for context-meter.py - prevents the meter from injecting
+    # a fresh /compact nudge immediately after Claude Code's built-in
+    # auto-compact (~83.5%) has just run. mtime is what the meter compares
+    # against, so the file content is informational only — written in UTC
+    # RFC3339 so cross-machine debugging is unambiguous.
+    marker = branch_dir / "last-compact.marker"
+    try:
+        marker.write_text(
+            datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            encoding="utf-8",
+        )
     except (IOError, OSError):
         pass
 

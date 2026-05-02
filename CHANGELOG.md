@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Context compression policy**: New `compression_policy` setting in `.map/config.yaml`
+  with three modes — `never` (quality-leaning), `auto` (default, nudges at 120k tokens),
+  and `aggressive` (nudges at 0.4 × threshold = 48k by default).
+- **`mapify init --compression {never,auto,aggressive} --compression-threshold N`**:
+  set the policy and absolute threshold at project init time. Persisted into
+  `.map/config.yaml`.
+- **`context-meter.py` hook (UserPromptSubmit)**: counts tokens from the last
+  assistant turn in `transcript_path` and injects a `/compact <focus>`
+  recommendation into the assistant's context when the threshold is crossed.
+  Honours a 5-minute cooldown via `.map/<branch>/last-compact.marker` so it
+  does not double-fire after Claude Code's built-in 83.5% auto-compact.
+- **`mapify_cli.token_budget`**: pure module exposing
+  `count_last_turn_tokens`, `effective_threshold`, `should_nudge`,
+  `format_compact_instruction`. 25 unit tests in `tests/test_token_budget.py`.
+- **Orchestrator `--transcript-path` flag**: `map_orchestrator.py` accepts
+  `--transcript-path` (or env `MAPIFY_TRANSCRIPT_PATH`) and emits the same
+  `/compact` recommendation to stderr at every command. Provider-agnostic —
+  works for both Claude Code and Codex sessions.
+- **Design doc**: `docs/context-compression-plan.md`.
+
 ## [3.9.0] - 2026-04-22
 
 ### Added
