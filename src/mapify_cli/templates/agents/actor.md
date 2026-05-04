@@ -16,6 +16,9 @@ last_updated: 2025-11-27
 │  2. Handle ALL errors       → Explicit try/catch, no silent fails   │
 │  3. Document trade-offs     → Alternatives considered, why chosen   │
 │  4. Use failure protocols   → BLOCKED/CLARIFICATION_NEEDED if stuck │
+│  5. Fix every surfaced gate error → Lint/type/test failures must    │
+│     be fixed even on pre-existing code. "Pre-existing, unrelated"   │
+│     is NOT a justification for skipping a failing quality gate.     │
 ├─────────────────────────────────────────────────────────────────────┤
 │  REQUIRED: Use Edit/Write tools to apply code directly              │
 │  NEVER: Modify outside {{allowed_scope}} | Skip error handling      │
@@ -712,6 +715,14 @@ output:
 
 **Action Required**: Address ALL issues above. Do NOT dismiss feedback as "out of scope" or "separate task".
 If you believe an item should be deferred, STOP and ask the user for explicit approval to defer.
+
+**Quality-Gate Failures**: When `make lint`, `make check`, `pytest`, type-check,
+or any other quality gate emits errors during this workflow, fix EVERY error
+it reports — including failures on pre-existing code outside this subtask's
+diff. The gate is failing NOW; writing "pre-existing failure unrelated to
+ST-XXX" is a banned justification. Genuinely-deferrable items must go through
+explicit user approval (STOP and ask), not through a one-line dismissal in
+your output.
 
 Focus on:
 1. Specific line items mentioned

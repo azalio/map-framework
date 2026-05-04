@@ -2,7 +2,6 @@
 name: map-plan
 description: |
   ARCHITECT phase only: decompose a complex task into atomic subtasks via task-decomposer. Use when starting a feature, refactor, or complex bug fix and you need a plan first. Do NOT use to execute work; use map-task or map-efficient.
-disable-model-invocation: true
 argument-hint: "[task description]"
 ---
 # /map-plan — ARCHITECT Phase (Decomposition Only)

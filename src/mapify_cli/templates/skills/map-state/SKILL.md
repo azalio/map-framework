@@ -1,5 +1,5 @@
 ---
-name: map-planning
+name: map-state
 version: "1.0.0"
 description: >-
   Branch-scoped MAP planning in `.map/`. Use when the user needs a

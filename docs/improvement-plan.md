@@ -217,14 +217,14 @@
 
 **Benefit Hypothesis**: Reclassifying MAP skills according to the official Claude Code split between reference content and task content will reduce conceptual confusion, improve skill authoring discipline, and make MAP’s documentation match actual runtime behavior. This should lower accidental misuse of skills and make it easier to decide when a new behavior belongs in a skill versus a subagent or command.
 **Confidence**: 0.84
-**Reasoning**: The official docs explicitly distinguish reference skills, which add knowledge inline, from task skills, which provide step-by-step procedures and are often manually invoked with `disable-model-invocation: true`. MAP’s current `skills/README.md` still describes skills as passive documentation modules and “NOT agents”, but `map-learn` is clearly a task skill: it has a manual workflow surface, procedural steps, file writes, and an invocation-control flag. `map-planning` is closer to a hybrid reference/task guide because it explains the file-based planning model and also defines operational behavior via scripts and hooks.
+**Reasoning**: The official docs explicitly distinguish reference skills, which add knowledge inline, from task skills, which provide step-by-step procedures and are often manually invoked with `disable-model-invocation: true`. MAP’s current `skills/README.md` still describes skills as passive documentation modules and “NOT agents”, but `map-learn` is clearly a task skill: it has a manual workflow surface, procedural steps, file writes, and an invocation-control flag. `map-state` is closer to a hybrid reference/task guide because it explains the file-based planning model and also defines operational behavior via scripts and hooks.
 **Why Not Already Tried**: MAP’s skills system was originally documented around passive guidance and auto-suggestion. Claude Code’s official skills model is broader and now makes task-like skills a first-class concept, so the original documentation model is lagging behind the platform.
 
 ### Proposed Changes
 
 - Update `src/mapify_cli/templates/skills/README.md` and related docs to define two supported skill classes: `reference` and `task`.
 - Classify `map-learn` explicitly as a manual task skill, and explain why `disable-model-invocation: true` is appropriate for it.
-- Classify `map-planning` explicitly as a reference or hybrid operational skill, and document what behavior comes from SKILL instructions versus hook/script side effects.
+- Classify `map-state` explicitly as a reference or hybrid operational skill, and document what behavior comes from SKILL instructions versus hook/script side effects.
 - Add authoring guidance for future MAP skills: use reference skills for conventions, heuristics, and domain knowledge; use task skills for deterministic procedures that should behave like slash workflows.
 - Reflect this taxonomy in `skill-rules.json`, tests, and any future skill-generation helpers so the distinction is operational, not just descriptive.
 
@@ -233,7 +233,7 @@
 
 **Benefit Hypothesis**: Restructuring MAP skills around the official skill content lifecycle and supporting-file model will keep invoked skill bodies lean, reduce compaction loss, and make long-running skills more durable across sessions. The measurable outcome is a smaller average SKILL body with equal or better task completion quality.
 **Confidence**: 0.77
-**Reasoning**: The official docs emphasize that invoked skill content stays in the conversation, is reattached after compaction within a token budget, and should therefore keep `SKILL.md` focused while moving detailed material into supporting files. MAP already does this reasonably well for `map-planning` and parts of `map-learn`, but the skills still contain a lot of command-like procedural detail that can drift away from supporting templates and increase retained token load. The same docs also recommend referencing supporting files explicitly so Claude knows when to load them.
+**Reasoning**: The official docs emphasize that invoked skill content stays in the conversation, is reattached after compaction within a token budget, and should therefore keep `SKILL.md` focused while moving detailed material into supporting files. MAP already does this reasonably well for `map-state` and parts of `map-learn`, but the skills still contain a lot of command-like procedural detail that can drift away from supporting templates and increase retained token load. The same docs also recommend referencing supporting files explicitly so Claude knows when to load them.
 **Why Not Already Tried**: MAP adopted supporting scripts and templates, but not yet a systematic skill-body minimization pass informed by Claude Code’s persistence and compaction behavior.
 
 ### Proposed Changes
@@ -255,7 +255,7 @@
 ### Proposed Changes
 
 - Add tests that validate both automatic trigger phrasing and direct `/skill-name` invocation for each shipped skill.
-- Add negative-trigger tests so `map-planning` and `map-learn` do not activate on unrelated prompts.
+- Add negative-trigger tests so `map-state` and `map-learn` do not activate on unrelated prompts.
 - Test that every skill’s documented supporting files actually exist and that intra-skill references resolve.
 - Add fixture-based tests for frontmatter behavior that MAP relies on: `disable-model-invocation`, `allowed-tools`, hooks, and any future `argument-hint`, `paths`, or `user-invocable` usage.
 - Add a small benchmark set of realistic user utterances, following `skill-creator` guidance, to detect undertriggering and overtriggering before release.

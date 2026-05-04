@@ -10,6 +10,7 @@ Validates:
 """
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -1763,6 +1764,241 @@ class TestSubtaskResults:
         state = map_orchestrator.StepState()
         state.record_subtask_result("ST-004", ["x.py"], "valid")
         assert state.subtask_results["ST-004"]["summary"] == ""
+
+
+class TestCwdIndependence:
+    """Regression coverage for the project-root anchor in `main()` (PR #105).
+
+    Invoking the orchestrator via an absolute path from a foreign cwd must
+    operate on the project the script lives in, not the caller's cwd. The
+    fix uses ``Path(__file__).resolve().parents[2]`` before any state
+    lookup. This was previously not covered, and the symptom — a misleading
+    ``Step mismatch: expected 1.0, got 2.3`` — is silent at the unit-test
+    layer because in-process tests always import the module and bypass
+    ``main()``.
+    """
+
+    @staticmethod
+    def _make_project(root: Path) -> Path:
+        """Create ``<root>/.map/scripts/`` populated from the template.
+
+        The fix relies on ``__file__`` being inside ``<project>/.map/scripts/``,
+        so we copy every sibling .py module the orchestrator imports
+        (map_utils, diagnostics, etc.) — not just the entry-point script.
+        """
+        import shutil
+
+        scripts_dir = root / ".map" / "scripts"
+        scripts_dir.mkdir(parents=True)
+        for py_file in ORCHESTRATOR_PATH.glob("*.py"):
+            shutil.copy(py_file, scripts_dir / py_file.name)
+        return scripts_dir / "map_orchestrator.py"
+
+    @staticmethod
+    def _seed_state(
+        project: Path,
+        branch: str,
+        *,
+        current_step_id: str,
+        current_step_phase: str,
+        completed: list[str],
+        pending: list[str],
+    ) -> None:
+        branch_dir = project / ".map" / branch
+        branch_dir.mkdir(parents=True, exist_ok=True)
+        state = {
+            "workflow": "map-efficient",
+            "current_subtask_id": "ST-001",
+            "subtask_index": 0,
+            "subtask_sequence": ["ST-001"],
+            "current_step_id": current_step_id,
+            "current_step_phase": current_step_phase,
+            "completed_steps": completed,
+            "pending_steps": pending,
+        }
+        (branch_dir / "step_state.json").write_text(json.dumps(state))
+
+    def test_get_next_step_reads_state_from_script_project_not_cwd(
+        self, tmp_path
+    ):
+        """The orchestrator script lives in project_a; the caller's cwd is
+        an unrelated project_b. With the cwd-anchor in place the script
+        must read project_a/.map/<branch>/step_state.json, not project_b's.
+
+        We seed project_a in a fully-completed terminal state (workflow
+        finished). project_b has no .map/ at all — so a broken anchor
+        would fall back to default-initialised state and return step
+        ``1.0`` / ``DECOMPOSE``. The two outcomes are structurally
+        distinct, so the assertion uniquely identifies which project was
+        read.
+        """
+        project_a = tmp_path / "project_a"
+        project_a.mkdir()
+        script = self._make_project(project_a)
+        self._seed_state(
+            project_a,
+            "test-branch",
+            current_step_id="2.4",
+            current_step_phase="MONITOR",
+            completed=["1.0", "1.5", "1.55", "1.56", "1.6", "2.2", "2.3"],
+            pending=[],
+        )
+
+        # Foreign cwd with no .map/ at all
+        project_b = tmp_path / "project_b"
+        project_b.mkdir()
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "get_next_step",
+                "--branch",
+                "test-branch",
+            ],
+            cwd=str(project_b),
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, (
+            f"orchestrator failed: stdout={result.stdout!r} "
+            f"stderr={result.stderr!r}"
+        )
+        out = json.loads(result.stdout)
+        # Anchor working: state read from project_a → COMPLETE / is_complete
+        # Anchor broken: state read from cwd (no state) → default 1.0
+        assert out.get("step_id") == "COMPLETE" and out.get("is_complete") is True, (
+            f"orchestrator did not read project_a state (cwd-anchor broken). "
+            f"got: {out}"
+        )
+
+    def test_validate_step_uses_script_project_state_under_foreign_cwd(
+        self, tmp_path
+    ):
+        """Validating the step that project_a is currently on must succeed
+        regardless of cwd. Caller's cwd has a state at a DIFFERENT step —
+        if the anchor were broken, validate_step would emit a step mismatch.
+        """
+        project_a = tmp_path / "project_a"
+        project_a.mkdir()
+        script = self._make_project(project_a)
+        self._seed_state(
+            project_a,
+            "test-branch",
+            current_step_id="1.0",
+            current_step_phase="DECOMPOSE",
+            completed=[],
+            pending=["1.5", "1.55", "1.56", "1.6"],
+        )
+
+        project_b = tmp_path / "project_b"
+        # project_b's state claims we're already at step 2.3 — validating
+        # "1.0" against this would fail with "Step mismatch".
+        self._seed_state(
+            project_b,
+            "test-branch",
+            current_step_id="2.3",
+            current_step_phase="ACTOR",
+            completed=["1.0", "1.5", "1.55", "1.56", "1.6", "2.2"],
+            pending=["2.4"],
+        )
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "validate_step",
+                "1.0",
+                "--branch",
+                "test-branch",
+            ],
+            cwd=str(project_b),
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, (
+            f"orchestrator failed: stdout={result.stdout!r} "
+            f"stderr={result.stderr!r}"
+        )
+        out = json.loads(result.stdout)
+        assert out.get("valid") is True, (
+            f"validate_step read state from cwd (project_b is at step 2.3) "
+            f"instead of project_a (at step 1.0). got: {out}"
+        )
+
+    def test_set_waves_resolves_relative_blueprint_in_script_project(
+        self, tmp_path
+    ):
+        """``set_waves --blueprint .map/<branch>/blueprint.json`` uses a
+        relative path. The cwd-anchor must rebase that relative argument
+        against the script's project (project_a), not the caller's cwd
+        (project_b). Without the anchor, the orchestrator would either
+        fail to find the blueprint or — worse — read a different
+        blueprint from the caller's directory.
+        """
+        project_a = tmp_path / "project_a"
+        project_a.mkdir()
+        script = self._make_project(project_a)
+        # Seed project_a state at INIT_STATE so set_waves is a valid
+        # transition, plus a 3-subtask blueprint with a fan-out.
+        self._seed_state(
+            project_a,
+            "test-branch",
+            current_step_id="1.6",
+            current_step_phase="INIT_STATE",
+            completed=["1.0", "1.5", "1.55", "1.56"],
+            pending=[],
+        )
+        blueprint = {
+            "subtasks": [
+                {"id": "ST-001", "dependencies": [], "affected_files": ["a.py"]},
+                {"id": "ST-002", "dependencies": ["ST-001"], "affected_files": ["b.py"]},
+                {"id": "ST-003", "dependencies": ["ST-001"], "affected_files": ["c.py"]},
+            ]
+        }
+        (project_a / ".map" / "test-branch" / "blueprint.json").write_text(
+            json.dumps(blueprint)
+        )
+
+        # Caller's cwd has its OWN .map/<branch>/blueprint.json with a
+        # different shape (single subtask). If the anchor were broken, the
+        # relative blueprint argument would resolve here.
+        project_b = tmp_path / "project_b"
+        (project_b / ".map" / "test-branch").mkdir(parents=True)
+        (project_b / ".map" / "test-branch" / "blueprint.json").write_text(
+            json.dumps({"subtasks": [{"id": "ST-X", "dependencies": []}]})
+        )
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "set_waves",
+                "--branch",
+                "test-branch",
+                "--blueprint",
+                ".map/test-branch/blueprint.json",
+            ],
+            cwd=str(project_b),
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, (
+            f"orchestrator failed: stdout={result.stdout!r} "
+            f"stderr={result.stderr!r}"
+        )
+        out = json.loads(result.stdout)
+        # Anchor working: project_a's blueprint (3 subtasks, 2 waves)
+        # Anchor broken: project_b's blueprint (1 subtask, 1 wave with ST-X)
+        assert out.get("status") == "success", (
+            f"set_waves did not succeed: {out}"
+        )
+        waves = out.get("execution_waves") or []
+        flat = [st for wave in waves for st in wave]
+        assert "ST-001" in flat and "ST-X" not in flat, (
+            f"set_waves resolved blueprint relative to cwd (project_b) "
+            f"instead of script project (project_a). got: {out}"
+        )
 
 
 if __name__ == "__main__":
