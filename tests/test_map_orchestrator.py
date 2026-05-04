@@ -1926,6 +1926,80 @@ class TestCwdIndependence:
             f"instead of project_a (at step 1.0). got: {out}"
         )
 
+    def test_set_waves_resolves_relative_blueprint_in_script_project(
+        self, tmp_path
+    ):
+        """``set_waves --blueprint .map/<branch>/blueprint.json`` uses a
+        relative path. The cwd-anchor must rebase that relative argument
+        against the script's project (project_a), not the caller's cwd
+        (project_b). Without the anchor, the orchestrator would either
+        fail to find the blueprint or — worse — read a different
+        blueprint from the caller's directory.
+        """
+        project_a = tmp_path / "project_a"
+        project_a.mkdir()
+        script = self._make_project(project_a)
+        # Seed project_a state at INIT_STATE so set_waves is a valid
+        # transition, plus a 3-subtask blueprint with a fan-out.
+        self._seed_state(
+            project_a,
+            "test-branch",
+            current_step_id="1.6",
+            current_step_phase="INIT_STATE",
+            completed=["1.0", "1.5", "1.55", "1.56"],
+            pending=[],
+        )
+        blueprint = {
+            "subtasks": [
+                {"id": "ST-001", "dependencies": [], "affected_files": ["a.py"]},
+                {"id": "ST-002", "dependencies": ["ST-001"], "affected_files": ["b.py"]},
+                {"id": "ST-003", "dependencies": ["ST-001"], "affected_files": ["c.py"]},
+            ]
+        }
+        (project_a / ".map" / "test-branch" / "blueprint.json").write_text(
+            json.dumps(blueprint)
+        )
+
+        # Caller's cwd has its OWN .map/<branch>/blueprint.json with a
+        # different shape (single subtask). If the anchor were broken, the
+        # relative blueprint argument would resolve here.
+        project_b = tmp_path / "project_b"
+        (project_b / ".map" / "test-branch").mkdir(parents=True)
+        (project_b / ".map" / "test-branch" / "blueprint.json").write_text(
+            json.dumps({"subtasks": [{"id": "ST-X", "dependencies": []}]})
+        )
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "set_waves",
+                "--branch",
+                "test-branch",
+                "--blueprint",
+                ".map/test-branch/blueprint.json",
+            ],
+            cwd=str(project_b),
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, (
+            f"orchestrator failed: stdout={result.stdout!r} "
+            f"stderr={result.stderr!r}"
+        )
+        out = json.loads(result.stdout)
+        # Anchor working: project_a's blueprint (3 subtasks, 2 waves)
+        # Anchor broken: project_b's blueprint (1 subtask, 1 wave with ST-X)
+        assert out.get("status") == "success", (
+            f"set_waves did not succeed: {out}"
+        )
+        waves = out.get("execution_waves") or []
+        flat = [st for wave in waves for st in wave]
+        assert "ST-001" in flat and "ST-X" not in flat, (
+            f"set_waves resolved blueprint relative to cwd (project_b) "
+            f"instead of script project (project_a). got: {out}"
+        )
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

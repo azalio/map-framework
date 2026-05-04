@@ -227,26 +227,28 @@ If you prefer manual setup:
    │   │   ├── research-agent.md      # Isolated codebase research
    │   │   ├── final-verifier.md      # Adversarial verification (Ralph Loop)
    │   │   └── documentation-reviewer.md  # Reviews technical docs
-   │   ├── commands/                  # 10 command-backed slash commands
-   │   │   ├── map-efficient.md       # Optimized workflow (recommended)
-   │   │   ├── map-debug.md           # Debug workflow
-   │   │   ├── map-fast.md            # Minimal workflow (low-risk only)
-   │   │   ├── map-review.md          # Review workflow
-   │   │   ├── map-release.md         # Release workflow
-   │   │   ├── map-check.md           # Quality gates & verification
-   │   │   ├── map-plan.md            # Architecture decomposition
-   │   │   ├── map-task.md            # Execute one planned subtask
-   │   │   ├── map-tdd.md             # Test-first workflow
-   │   │   └── map-resume.md          # Resume interrupted workflows
-   │   ├── skills/
+   │   ├── skills/                    # All MAP slash surfaces ship as skills
    │   │   ├── README.md
    │   │   ├── skill-rules.json
-   │   │   ├── map-state/
-   │   │   │   └── SKILL.md           # Branch-scoped planning state skill
-   │   │   └── map-learn/
-   │   │       └── SKILL.md           # Skill-backed /map-learn workflow
+   │   │   ├── map-plan/SKILL.md      # ARCHITECT phase (decomposition)
+   │   │   ├── map-efficient/SKILL.md # Optimized workflow (recommended)
+   │   │   ├── map-fast/SKILL.md      # Minimal workflow (low-risk only)
+   │   │   ├── map-task/SKILL.md      # Execute one planned subtask
+   │   │   ├── map-tdd/SKILL.md       # Test-first workflow
+   │   │   ├── map-debug/SKILL.md     # Debug workflow
+   │   │   ├── map-review/SKILL.md    # Review workflow
+   │   │   ├── map-check/SKILL.md     # Quality gates & verification
+   │   │   ├── map-release/SKILL.md   # Release workflow
+   │   │   ├── map-resume/SKILL.md    # Resume interrupted workflows
+   │   │   ├── map-learn/SKILL.md     # Persist lessons to .claude/rules/learned/
+   │   │   └── map-state/SKILL.md     # Branch-scoped planning state skill
    │   └── mcp_config.json
    ```
+
+   *Note*: There is no `.claude/commands/` directory — every `/map-*`
+   slash surface lives under `.claude/skills/<name>/SKILL.md`. The
+   `tests/test_template_sync.py::test_no_map_command_files_remain` test
+   enforces this invariant.
 
 ## Verify Installation
 
