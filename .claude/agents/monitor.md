@@ -333,10 +333,14 @@ IN SCOPE (block if issues found):
 - Direct dependencies in same repository
 - Test files accompanying the change
 - Documentation modified in this change
+- ANY lint / type-check / test failure surfaced by current quality
+  gates, even if the failing code predates this change. The gate is
+  failing NOW; "pre-existing, unrelated" is not a downgrade reason.
 
 OUT OF SCOPE (note but don't block):
 - External service implementations
-- Pre-existing issues outside the diff
+- Pre-existing DORMANT tech debt that does NOT surface in current
+  lint / type-check / test runs
 - Performance at scale (requires load testing)
 - Third-party library internals
 ```
@@ -346,8 +350,12 @@ OUT OF SCOPE (note but don't block):
 ```
 IF reviewing a diff/PR (partial code):
   → Prioritize issues IN the changed lines
-  → Pre-existing issues: flag as LOW unless CRITICAL security
-  → Note: "Issue predates this change" in description
+  → Pre-existing DORMANT issues (code smell, no gate failure):
+    flag as LOW unless CRITICAL security; note "Issue predates this change"
+  → Pre-existing SURFACED failures (lint/type/test gate is failing now):
+    do NOT downgrade — block until fixed. The gate result is binary;
+    Actor must fix every error reported by the gate, not just those
+    introduced by this subtask.
 
 IF reviewing full file:
   → Review everything, no severity discount
@@ -1468,9 +1476,11 @@ START → Is there a security vulnerability or data loss risk?
 
 ```
 IF {{review_mode}} == "diff":
-  → Pre-existing issues outside changed lines: cap at LOW
+  → Pre-existing DORMANT issues outside changed lines: cap at LOW
+  → Pre-existing SURFACED failures (lint/type/test failing now):
+    NOT capped — keep at the severity the failure deserves and block
   → Exception: CRITICAL security issues stay CRITICAL
-  → Note: "Issue predates this change" in description
+  → Note: "Issue predates this change" in description (dormant only)
 
 IF {{review_mode}} == "full":
   → No severity discount
@@ -1753,7 +1763,7 @@ Do NOT invent issues to justify review effort. Empty `issues` array is valid.
     },
     "status_update": {
       "type": "object",
-      "description": "Plan file update when subtask validation succeeds (map-planning integration)",
+      "description": "Plan file update when subtask validation succeeds (map-state integration)",
       "properties": {
         "subtask_id": {
           "type": "string",
@@ -1806,7 +1816,7 @@ IF ≥1 MCP tool failed:
 IF recovery_mode == "manual_only":
   → recovery_notes MUST explain limitations
 
-IF map-planning workflow active AND valid === true:
+IF map-state workflow active AND valid === true:
   → status_update SHOULD be present with subtask_id and new_status
   → Orchestrator uses this to update task_plan file (Single-Writer Governance)
 ```

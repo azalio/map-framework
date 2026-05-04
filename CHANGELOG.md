@@ -28,6 +28,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   works for both Claude Code and Codex sessions.
 - **Design doc**: `docs/context-compression-plan.md`.
 
+### Changed
+- **Skill rename `map-planning` → `map-state`**: resolves a slash-command
+  collision where `/map-plan` was fuzzy-matched to the longer `map-planning`
+  name when `map-plan` was hidden via `disable-model-invocation`. The skill
+  body, hooks, and scripts are unchanged — only the directory and the entry
+  in `skill-rules.json` are renamed. Existing `.map/<branch>/` artifacts
+  remain compatible.
+- **`map-plan` becomes model-invocable**: removed `disable-model-invocation:
+  true` from `map-plan` SKILL frontmatter so the model sees `map-plan` and
+  `map-state` as distinct skills and `/map-plan` resolves to the ARCHITECT
+  decomposition skill instead of the planning-state skill.
+- **`map_orchestrator.py` is now cwd-independent**: anchors itself to the
+  project root via `Path(__file__).resolve().parents[2]` before any state
+  lookup. Previously, invoking the orchestrator via an absolute path from a
+  different cwd silently read `.map/<branch>/` from the caller's directory
+  and returned misleading "step mismatch" errors.
+- **Block "pre-existing, unrelated" excuse for surfaced quality-gate
+  failures**: Monitor scope now distinguishes pre-existing DORMANT tech
+  debt (still OUT OF SCOPE) from pre-existing SURFACED failures —
+  lint/type/test errors that fail in the current run, regardless of
+  whether the failing code predates the diff, must be fixed and are not
+  downgraded to LOW. Actor's QUICK REFERENCE and Subtask Intent now ban
+  one-line "pre-existing, unrelated" dismissals; deferral requires explicit
+  user approval. Captured as a learned rule in
+  `.claude/rules/learned/error-patterns.md`.
+- **Hardened `map_step_runner._sanitize_for_json`**: the previous regex
+  preserved `\t \n \r` and relied on `json.dumps` to escape them, but
+  bash command substitution (`BUNDLE=$(... build_handoff_bundle)`) does
+  not preserve byte-perfect roundtrip in all locales — `jq` then aborts
+  with `Invalid string: control characters from U+0000 through U+001F
+  must be escaped`. The function now flattens newline variants to spaces
+  and strips the entire `\x00-\x1f\x7f` range so the bundle is robust
+  through bash pipelines. Learned rule updated with WRONG/CORRECT
+  example.
+
 ## [3.9.0] - 2026-04-22
 
 ### Added

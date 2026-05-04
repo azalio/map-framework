@@ -241,8 +241,8 @@ If you prefer manual setup:
    │   ├── skills/
    │   │   ├── README.md
    │   │   ├── skill-rules.json
-   │   │   ├── map-planning/
-   │   │   │   └── SKILL.md           # Planning/reference skill
+   │   │   ├── map-state/
+   │   │   │   └── SKILL.md           # Branch-scoped planning state skill
    │   │   └── map-learn/
    │   │       └── SKILL.md           # Skill-backed /map-learn workflow
    │   └── mcp_config.json

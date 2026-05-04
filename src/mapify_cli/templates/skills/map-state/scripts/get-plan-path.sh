@@ -8,15 +8,15 @@
 #   Defaults to 'main' branch when not in a git repository.
 #
 # Usage:
-#   PLAN_PATH=$(bash .claude/skills/map-planning/scripts/get-plan-path.sh)
+#   PLAN_PATH=$(bash .claude/skills/map-state/scripts/get-plan-path.sh)
 #
 # Output:
 #   .map/<sanitized_branch>/task_plan_<sanitized_branch>.md
 #
 # Examples:
-#   Branch: feature/map-planning -> .map/feature-map-planning/task_plan_feature-map-planning.md
-#   Branch: main                 -> .map/main/task_plan_main.md
-#   Not in repo                  -> .map/main/task_plan_main.md
+#   Branch: feature/auth -> .map/feature-auth/task_plan_feature-auth.md
+#   Branch: main         -> .map/main/task_plan_main.md
+#   Not in repo          -> .map/main/task_plan_main.md
 
 set -euo pipefail
 

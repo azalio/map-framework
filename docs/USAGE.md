@@ -1354,7 +1354,7 @@ MAP includes interactive skills to help you navigate workflows and understand th
 
 ### Available Skills
 
-#### map-planning
+#### map-state
 
 Persistent session state for MAP workflows using file-based planning.
 
@@ -1378,7 +1378,7 @@ Persistent session state for MAP workflows using file-based planning.
 
 **Initialization:**
 ```bash
-.claude/skills/map-planning/scripts/init-session.sh
+.claude/skills/map-state/scripts/init-session.sh
 ```
 
 **Plan file structure:**

@@ -288,7 +288,7 @@ To avoid turning this into one large refactor, implement it in this order:
 
 - [src/mapify_cli/templates/skills/README.md](../src/mapify_cli/templates/skills/README.md)
 - [src/mapify_cli/templates/skills/skill-rules.json](../src/mapify_cli/templates/skills/skill-rules.json)
-- [src/mapify_cli/templates/skills/map-planning/SKILL.md](../src/mapify_cli/templates/skills/map-planning/SKILL.md)
+- [src/mapify_cli/templates/skills/map-state/SKILL.md](../src/mapify_cli/templates/skills/map-state/SKILL.md)
 - [src/mapify_cli/templates/skills/map-learn/SKILL.md](../src/mapify_cli/templates/skills/map-learn/SKILL.md)
 - [tests/test_skills.py](../tests/test_skills.py)
 - [docs/USAGE.md](./USAGE.md)

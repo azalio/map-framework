@@ -1879,6 +1879,14 @@ def main():
 
     args = parser.parse_args()
 
+    # Anchor cwd to the project root before any state lookup or branch
+    # detection. The script lives at ``<project>/.map/scripts/map_orchestrator.py``,
+    # so ``parents[2]`` is the project root regardless of how the script was
+    # invoked. Without this chdir, an absolute-path call from a different cwd
+    # silently reads ``.map/<branch>/`` from the caller's directory and
+    # returns misleading "step mismatch" errors.
+    os.chdir(Path(__file__).resolve().parents[2])
+
     # Get branch. ``--branch`` arrives unsanitized from the CLI; route it
     # through the same sanitiser used by ``get_branch_name()`` so the value
     # cannot escape the ``.map/<branch>/`` directory via ``..`` or differ

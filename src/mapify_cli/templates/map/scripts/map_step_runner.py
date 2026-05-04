@@ -1355,12 +1355,26 @@ def replace_active_issues(
 
 
 def _sanitize_for_json(text: str) -> str:
-    """Remove control characters (U+0000-U+001F except \\n \\r \\t) that break JSON consumers.
+    """Remove every C0 control character (U+0000-U+001F) and U+007F from text.
 
-    Python's json.dumps escapes these correctly, but downstream tools
-    (jq via bash pipes, shell variable expansion) can corrupt them.
+    Python's ``json.dumps`` does escape these correctly for strict JSON
+    output, but the bundle is then piped through bash command substitution
+    (``BUNDLE=$(... step_runner ...)``) and consumed by ``jq``. Bash
+    expansion does not preserve byte-perfect roundtrip for embedded
+    literal control characters in all locales, so jq receives a string
+    with raw controls and rejects it with::
+
+        jq: parse error: Invalid string: control characters from U+0000
+        through U+001F must be escaped at line N, column M
+
+    Stripping at source is the only robust fix. We additionally
+    normalise newline variants (``\\r\\n``, ``\\r``) into spaces to keep
+    word boundaries when multi-line artifact bodies are flattened into a
+    single bundle field.
     """
-    return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text)
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = text.replace("\n", " ").replace("\t", " ")
+    return re.sub(r"[\x00-\x1f\x7f]", "", text)
 
 
 def _read_branch_artifact_text(branch_dir: Path, name: str) -> str:

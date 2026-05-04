@@ -2,7 +2,7 @@
   "version": "1.0",
   "description": "Skill activation triggers for MAP Framework",
   "skills": {
-    "map-planning": {
+    "map-state": {
       "type": "domain",
       "enforcement": "suggest",
       "priority": "medium",
