@@ -1601,3 +1601,102 @@ class TestBuildContextBlockIntegration:
         assert "All tests pass" in result
         assert "[x] ST-001: First task (valid)" in result
         assert "[>>] ST-002: Second task (IN PROGRESS)" in result
+
+
+class TestSanitizeForJson:
+    """Regression coverage for `_sanitize_for_json` hardening (PR #105).
+
+    Earlier version preserved ``\\t \\n \\r`` and relied on ``json.dumps`` to
+    escape them. Bash command substitution (``BUNDLE=$(... step_runner ...)``)
+    does not preserve byte-perfect roundtrip in all locales, so ``jq``
+    received raw control bytes and aborted with::
+
+        Invalid string: control characters from U+0000 through U+001F
+        must be escaped at line N, column M
+
+    Hardened function flattens newline variants to spaces and strips the
+    full ``\\x00-\\x1f\\x7f`` range. These tests pin that contract.
+    """
+
+    @pytest.mark.parametrize(
+        "control_char",
+        [
+            "\x00",
+            "\x01",
+            "\x02",
+            "\x07",
+            "\x08",
+            "\x0b",
+            "\x0c",
+            "\x0e",
+            "\x1f",
+            "\x7f",
+        ],
+    )
+    def test_strips_other_c0_and_del(self, control_char):
+        result = map_step_runner._sanitize_for_json(f"a{control_char}b")
+        assert control_char not in result
+        assert result == "ab"
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("line1\r\nline2", "line1 line2"),
+            ("line1\rline2", "line1 line2"),
+            ("line1\nline2", "line1 line2"),
+            ("col1\tcol2", "col1 col2"),
+            ("multi\r\n\nlines\twith\ttabs", "multi  lines with tabs"),
+        ],
+    )
+    def test_flattens_newlines_and_tabs_to_spaces(self, raw, expected):
+        assert map_step_runner._sanitize_for_json(raw) == expected
+
+    def test_preserves_printable_ascii_and_unicode(self):
+        text = "plain ASCII + Кириллица + 中文 + 🚀"
+        assert map_step_runner._sanitize_for_json(text) == text
+
+    def test_output_round_trips_through_json_with_no_raw_controls(self):
+        """End-to-end: nasty input → sanitize → json.dumps → json.loads.
+
+        Decoded value must be free of any C0 control or DEL byte —
+        otherwise a downstream bash pipeline + jq would reject it.
+        """
+        nasty = "header\r\n\t\x07details\x00with\x1fnoise\x7f end"
+        sanitized = map_step_runner._sanitize_for_json(nasty)
+        encoded = json.dumps({"k": sanitized}, indent=2, ensure_ascii=True)
+        decoded = json.loads(encoded)
+        for c in decoded["k"]:
+            assert ord(c) >= 0x20 and c != "\x7f", (
+                f"control char leaked through sanitize: {c!r}"
+            )
+
+    def test_handoff_bundle_strips_artifact_control_chars(
+        self, branch_workspace
+    ):
+        """Integration check: bundle fields built from on-disk artifacts must
+        not carry the source's raw C0/DEL bytes through to the JSON output.
+
+        ``build_handoff_bundle`` itself uses ``"\\n".join(...)`` as a separator
+        between summary/validation/risks lines — those Python newlines are
+        correctly escaped by ``json.dumps`` and survive jq, so we don't
+        forbid them. What we forbid is ``\\r``, ``\\t``, NUL, or other C0/DEL
+        bytes that came from the artifact body before sanitisation.
+        """
+        nasty = "fail\r\n\tdetails\x00with\x1fnoise\x07 end\x7f"
+        (branch_workspace / "verification-summary.md").write_text(
+            nasty, encoding="utf-8"
+        )
+
+        bundle = map_step_runner.build_handoff_bundle()
+        encoded = json.dumps(bundle, indent=2, ensure_ascii=True)
+        decoded = json.loads(encoded)  # round-trip must succeed (jq would too)
+
+        validation = decoded["validation"]
+        for ch in ("\x00", "\x07", "\x1f", "\x7f", "\r", "\t"):
+            assert ch not in validation, (
+                f"raw {ch!r} from artifact leaked into bundle.validation"
+            )
+        # Words from the original artifact must still appear (just flattened)
+        assert "fail" in validation
+        assert "details" in validation
+        assert "noise" in validation
