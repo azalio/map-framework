@@ -1664,11 +1664,37 @@ class TestReopenForFixes:
         state = map_orchestrator.StepState.load(state_file)
         assert state.retry_count == 0
 
-    def test_rejects_non_complete_phase(self, branch_dir, tmp_path):
-        self._make_complete_state(tmp_path, branch_dir, current_step_phase="MONITOR")
+    def test_rejects_in_progress_workflow(self, branch_dir, tmp_path):
+        """Reopen must refuse when no completion signal is set."""
+        state = map_orchestrator.StepState()
+        state.current_step_id = "2.3"
+        state.current_step_phase = "MONITOR"
+        state.workflow_status = "IN_PROGRESS"
+        state.pending_steps = ["2.3", "2.4"]
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
         result = map_orchestrator.reopen_for_fixes(branch_dir, "")
         assert result["status"] == "error"
         assert "MONITOR" in result["message"]
+
+    def test_accepts_canonical_workflow_status_with_stale_phase(
+        self, branch_dir, tmp_path
+    ):
+        """Regression for the STACKLAND-1591 bug: reopen must accept a workflow
+        marked complete via ``workflow_status == "WORKFLOW_COMPLETE"`` even
+        when ``current_step_phase`` is stale (left on "ACTOR" by a partial
+        ``jq`` mutation in older map-check)."""
+        state = map_orchestrator.StepState()
+        state.current_step_id = "COMPLETE"
+        state.current_step_phase = "ACTOR"  # stale!
+        state.workflow_status = "WORKFLOW_COMPLETE"
+        state.pending_steps = []
+        state.completed_steps = ["1.0", "1.5", "1.6", "2.3", "2.4"]
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        result = map_orchestrator.reopen_for_fixes(branch_dir, "fix REVIEW-1")
+        assert result["status"] == "reopened", result
+        assert result["current_phase"] == "ACTOR"
 
     def test_no_state_file_returns_error(self, branch_dir, tmp_path):
         result = map_orchestrator.reopen_for_fixes(branch_dir, "")
@@ -1688,6 +1714,89 @@ class TestReopenForFixes:
         result = map_orchestrator.get_next_step(branch_dir)
         assert result["phase"] == "ACTOR"
         assert result["step_id"] == "2.3"
+
+
+class TestMarkWorkflowComplete:
+    """Tests for mark_workflow_complete() — atomic completion transition.
+
+    Replaces the historical ``jq '.current_state = "WORKFLOW_COMPLETE"'``
+    mutation in map-check that left ``current_step_phase`` stale and broke
+    ``reopen_for_fixes`` in the next ``/map-review``.
+    """
+
+    def test_atomic_transition_from_actor_phase(self, branch_dir, tmp_path):
+        """Happy path: pending=[], stale ACTOR phase → all four canonical
+        completion fields are set in a single save."""
+        state = map_orchestrator.StepState()
+        state.current_step_id = "2.3"
+        state.current_step_phase = "ACTOR"
+        state.workflow_status = "IN_PROGRESS"
+        state.pending_steps = []
+        state.completed_steps = ["1.0", "1.5", "1.6", "2.3", "2.4"]
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+
+        result = map_orchestrator.mark_workflow_complete(branch_dir)
+
+        assert result["status"] == "success", result
+        assert result["workflow_status"] == "WORKFLOW_COMPLETE"
+        assert result["current_step_id"] == "COMPLETE"
+        assert result["current_step_phase"] == "COMPLETE"
+        assert result["completed_at"].endswith("Z")
+
+        reloaded = map_orchestrator.StepState.load(state_file)
+        assert reloaded.workflow_status == "WORKFLOW_COMPLETE"
+        assert reloaded.current_step_id == "COMPLETE"
+        assert reloaded.current_step_phase == "COMPLETE"
+        assert reloaded.completed_at == result["completed_at"]
+
+    def test_rejects_when_pending_steps_remain(self, branch_dir, tmp_path):
+        """Refuse to close an in-flight workflow."""
+        state = map_orchestrator.StepState()
+        state.pending_steps = ["2.3", "2.4"]
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+
+        result = map_orchestrator.mark_workflow_complete(branch_dir)
+
+        assert result["status"] == "error"
+        assert "pending" in result["message"]
+
+    def test_no_state_file_returns_error(self, branch_dir, tmp_path):
+        result = map_orchestrator.mark_workflow_complete(branch_dir)
+        assert result["status"] == "error"
+
+    def test_completed_at_round_trips_through_save_load(self, branch_dir, tmp_path):
+        """completed_at must serialize via to_dict / from_dict."""
+        state = map_orchestrator.StepState()
+        state.pending_steps = []
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+
+        map_orchestrator.mark_workflow_complete(branch_dir)
+        reloaded = map_orchestrator.StepState.load(state_file)
+
+        assert reloaded.completed_at is not None
+        assert reloaded.completed_at.endswith("Z")
+
+    def test_then_reopen_for_fixes_works(self, branch_dir, tmp_path):
+        """Integration: mark_workflow_complete → reopen_for_fixes succeeds.
+
+        This is the end-to-end path for ``/map-check`` → ``/map-review`` →
+        post-review fix; it must work without manual state surgery.
+        """
+        state = map_orchestrator.StepState()
+        state.pending_steps = []
+        state.completed_steps = ["1.0", "1.5", "1.6", "2.3", "2.4"]
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+
+        mark_result = map_orchestrator.mark_workflow_complete(branch_dir)
+        assert mark_result["status"] == "success"
+
+        reopen_result = map_orchestrator.reopen_for_fixes(branch_dir, "fix lint")
+        assert reopen_result["status"] == "reopened"
+        assert reopen_result["current_phase"] == "ACTOR"
 
 
 class TestSubtaskResults:
