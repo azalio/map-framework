@@ -1257,7 +1257,7 @@ def mark_workflow_complete(branch: str) -> dict:
     state.workflow_status = "WORKFLOW_COMPLETE"
     state.current_step_id = "COMPLETE"
     state.current_step_phase = "COMPLETE"
-    state.completed_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    state.completed_at = _utc_timestamp()
     state.save(state_file)
 
     return {
@@ -1317,11 +1317,16 @@ def reopen_for_fixes(branch: str, feedback: str = "") -> dict:
             ),
         }
 
-    # Reset to ACTOR+MONITOR cycle
+    # Reset to ACTOR+MONITOR cycle. Reset every completion field atomically —
+    # the same rule that ``mark_workflow_complete`` enforces in the forward
+    # direction. Leaving ``workflow_status="WORKFLOW_COMPLETE"`` here would
+    # leave the very inconsistency we are trying to eradicate.
     state.current_step_id = "2.3"
     state.current_step_phase = "ACTOR"
     state.pending_steps = ["2.3", "2.4"]
     state.retry_count = 0
+    state.workflow_status = "IN_PROGRESS"
+    state.completed_at = None
 
     feedback_file = _write_feedback_file(
         branch,

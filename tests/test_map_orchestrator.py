@@ -1696,6 +1696,30 @@ class TestReopenForFixes:
         assert result["status"] == "reopened", result
         assert result["current_phase"] == "ACTOR"
 
+    def test_resets_workflow_status_and_completed_at(self, branch_dir, tmp_path):
+        """Reopen must reset every completion field atomically — the same
+        rule mark_workflow_complete enforces in the forward direction.
+        Otherwise reopen leaves workflow_status="WORKFLOW_COMPLETE" while
+        the workflow is back in ACTOR, defeating the whole point of using
+        workflow_status as the canonical completion signal."""
+        state = map_orchestrator.StepState()
+        state.current_step_id = "COMPLETE"
+        state.current_step_phase = "COMPLETE"
+        state.workflow_status = "WORKFLOW_COMPLETE"
+        state.completed_at = "2026-05-07T15:00:00Z"
+        state.pending_steps = []
+        state.completed_steps = ["1.0", "1.5", "1.6", "2.3", "2.4"]
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+
+        map_orchestrator.reopen_for_fixes(branch_dir, "fix lint")
+
+        reloaded = map_orchestrator.StepState.load(state_file)
+        assert reloaded.workflow_status == "IN_PROGRESS"
+        assert reloaded.completed_at is None
+        assert reloaded.current_step_phase == "ACTOR"
+        assert reloaded.current_step_id == "2.3"
+
     def test_no_state_file_returns_error(self, branch_dir, tmp_path):
         result = map_orchestrator.reopen_for_fixes(branch_dir, "")
         assert result["status"] == "error"
