@@ -365,3 +365,22 @@
 - Refactor generated provider rules toward concrete negative constraints at mutation boundaries, especially around unrelated refactors, dependency changes, artifact deletion, and stage skipping.
 - Add snapshot tests for representative Claude and Codex scaffolds to keep constraint-first wording stable across `mapify init`.
 - Document rule-writing guidance in template maintenance docs so manual edits preserve the same constraint-first style.
+
+## Compile-time skill IR and anti-injection audit for provider surfaces [2605.221]
+
+**Source**: [[2605.221]], [[2605.222]], [[2605.223]], [[2605.226]] (ideas from vault)
+**Implementation Layer**: `src/mapify_cli/templates/skills/`, `src/mapify_cli/delivery/`, generated `.claude/skills/` and `.codex/skills/` surfaces, template lint tests, and release validation commands
+**Missing Capability**: A compile-time representation and audit pass that validates shipped skill semantics before emitting provider-specific `SKILL.md` / prompt surfaces.
+**Architecture Evidence**: `docs/architecture.md` defines provider portability as a quality goal; `Core Structure` identifies `src/mapify_cli/templates/` and generated `.claude/.codex` provider surfaces; `Known Risks/Gaps` names prompt/template drift and provider runtime constraints.
+**Benefit Hypothesis**: A shared skill IR plus anti-injection/static-validation pass will reduce template drift and unsafe community/template edits before `mapify init` emits them. Pass criteria: template tests parse every shipped skill into the IR, reject forbidden instruction patterns and unresolved supporting-file references, and produce byte-stable provider emissions for Claude and Codex fixtures.
+**Confidence**: 0.73
+**Reasoning**: MAP already owns the provider-emission layer: `mapify init` copies skill, command, hook, and rule templates into target repos for Claude Code and Codex. Existing plan items cover skill taxonomy, lifecycle optimization, trigger testing, and constraint-first rule wording, but they still treat each provider file as a hand-authored Markdown artifact. The SkCC ideas add a concrete missing layer for this repo: parse skill intent once, validate it, then emit provider-specific formats while retaining hashes/audit metadata.
+**Why Not Already Tried**: Completed work fixed frontmatter hygiene and consolidated `/map-learn` into a skill-backed surface; active plan items test triggers and supporting files. None of the plan or done entries introduces a typed intermediate representation, content hashing, or a compile-time anti-skill-injection gate across generated provider outputs.
+
+### Proposed Changes
+
+- Define a minimal `SkillIR` schema for shipped skills: name, trigger/description, invocation mode, allowed tools, supporting-file references, safety constraints, emitted provider targets, and content hash.
+- Add a parser/linter that lowers existing `src/mapify_cli/templates/skills/**/SKILL.md` files into `SkillIR`, fails on unresolved relative references, unsupported frontmatter keys, hidden prompt-injection patterns, or safety constraints buried only in prose.
+- Add provider emitters that render Claude and Codex skill/prompt surfaces from the IR or validate current hand-authored files against the IR until full generation is worth the migration.
+- Store or print deterministic content hashes for emitted skill artifacts so release checks can detect drift between development `.claude/` surfaces and `src/mapify_cli/templates/`.
+- Extend template snapshot tests to cover a safe skill, a malicious/injection-like skill fixture, a nested supporting-file reference, and byte-stable Claude/Codex emission.
