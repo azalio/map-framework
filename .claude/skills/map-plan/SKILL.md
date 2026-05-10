@@ -241,6 +241,30 @@ AskUserQuestion(questions=[
 | 1 | Token storage | Server-side (Redis) | Need revocation support |
 | 2 | Session expiry UX | Silent refresh | Better UX, no data loss |
 
+## Contradiction
+
+State the central design tension in TRIZ form. Every non-trivial spec should hold a tension that naive trade-off cannot resolve — that tension is what makes the design choices meaningful.
+
+> **The system must `<X>` AND NOT `<X>`.**
+
+- **Side A (functional requirement):** [what the system must achieve]
+- **Side B (constraint to preserve):** [what the obvious solution would violate]
+- **Why naive trade-off fails:** [cost, UX, safety, latency, or another reason "just pick one" is unacceptable here]
+- **Ideal Final Result (optional):** [what the system looks like if both sides hold without added complexity — function present, mechanism absent]
+
+Examples from prior MAP runs (for shape, not copy-paste):
+- "Plan must be reviewable AND not block fast iteration on small edits." → resolved via the workflow-fit off-ramp above.
+- "Monitor must reject incomplete diffs AND not punish surfaced pre-existing failures." → resolved via CLARIFICATION_NEEDED escalation.
+- "Long-running operations must survive `kill -9` AND not add transaction overhead per call." → resolved via durable `run_id` + idempotent writes.
+
+If, after honest analysis, no non-trivial contradiction exists, write:
+
+> No non-trivial contradiction. Single dominant requirement.
+
+and re-check whether the workflow-fit gate above should have returned `direct-edit` or `map-fast`. An empty Contradiction section is a signal, not a shortcut.
+
+Cross-reference relevant TRIZ principles from `docs/triz-cheatsheet.md` if a known principle (1–40) maps cleanly onto the chosen resolution; this makes the design discoverable by the Reflector and reusable across the codebase.
+
 ## Invariants
 
 Conditions that MUST remain true throughout implementation and after deployment.
@@ -305,6 +329,7 @@ Formal, testable conditions that define "done". Each criterion must be verifiabl
 If interview was skipped (task is well-defined), still write `spec_<branch>.md` using the same template as Step 2. Populate it from the user's requirements and discovery findings:
 
 - **Decisions Made**: extract from user's request (may be short or N/A)
+- **Contradiction**: REQUIRED — state the design tension in `<X> AND NOT <X>` form, or explicitly write "No non-trivial contradiction" and verify the workflow-fit gate should not have off-ramped this task
 - **Invariants**: derive from existing code patterns found in discovery
 - **Edge Cases**: identify from the task description and affected code
 - **Acceptance Criteria**: REQUIRED — must be testable conditions that define "done"
@@ -351,9 +376,10 @@ Check for:
 1. **Race conditions / concurrency gaps**: Are there shared resources without defined conflict resolution?
 2. **Ownership ambiguity**: Are responsibilities clearly assigned? Could two components both assume the other handles something?
 3. **Missing edge cases**: Compare the Edge Cases section against Invariants — are there invariant violations not covered by edge cases?
-4. **Contradictions**: Do any decisions contradict invariants or acceptance criteria?
+4. **Decision/invariant contradictions**: Do any decisions contradict invariants or acceptance criteria?
 5. **Security gaps**: Are trust boundaries complete? Are there injection vectors not addressed?
 6. **Implicit assumptions**: What is assumed but not stated?
+7. **Trivial or false design contradiction**: Does the `## Contradiction` section state a real tension (both sides have independent forces — separate stakeholders, conflicting cost axes, or genuine physics) or a tautology like "fast AND correct" with no constraint binding the trade-off? If trivial, demand a sharper formulation or explicit "No non-trivial contradiction" with justification.
 
 Output format:
 - For each finding: severity (HIGH/MEDIUM/LOW), category, description, suggested fix
@@ -485,6 +511,9 @@ For each invariant in the spec, verify at least one subtask's acceptance criteri
 
 **5. Edge case / overflow rules:**
 Scan the spec for boundary conditions (format overflows, threshold transitions, fallback behaviors). Verify each has a corresponding test in at least one subtask's test_strategy.
+
+**6. Contradiction preservation:**
+Read the spec's `## Contradiction` section. For each side of the stated tension (A and B), identify at least one subtask whose validation criteria would catch a regression on that side. If a side has no defender subtask, the decomposition risks silently dropping it during implementation — that is the typical failure mode that turns a TRIZ-style design into a one-sided trade-off in the diff. Either add validation criteria to an existing subtask or create a new one. If the spec stated "No non-trivial contradiction", skip this check.
 
 If gaps are found, update the decomposition (add validation criteria to existing subtasks or create new subtasks) BEFORE proceeding to Step 6.
 
@@ -659,7 +688,7 @@ not from a stale planning-state snapshot.
 DISTILLATION CHECKLIST:
   [x] task_plan_<branch>.md — has AAG contracts for every subtask + Spec Coverage table
   [x] blueprint.json     — raw decomposer output for wave computation (with coverage_map and per-subtask aag_contract)
-  [x] spec_<branch>.md      — has architecture graph + decisions + COMPLETE acceptance criteria (if interview was done)
+  [x] spec_<branch>.md      — has architecture graph + decisions + COMPLETE acceptance criteria + Contradiction section (or explicit "No non-trivial contradiction")
   [x] artifact_manifest.json — records workflow_fit + spec + plan stage artifacts
   [x] findings_<branch>.md  — has research pointers (if discovery was done)
 
@@ -770,9 +799,10 @@ A: Re-run /map-plan. It will overwrite the planning artifacts. Then re-run `/map
 This command succeeds when:
 - ✅ Deep interview completed (if scope warranted it) with spec_<branch>.md written
 - ✅ Spec acceptance criteria enumerated completely (not summarized)
-- ✅ Devil's Advocate review completed (if skip conditions not met)
+- ✅ Spec includes a `## Contradiction` section (real `<X> AND NOT <X>` tension, or explicit "No non-trivial contradiction" with justification)
+- ✅ Devil's Advocate review completed (if skip conditions not met) — including the trivial-contradiction check
 - ✅ Architecture graph written in spec_<branch>.md (for complexity >= 3)
-- ✅ Decomposition coverage check passed (Step 5.7) — no orphaned ACs, result fields, or cross-cutting concerns
+- ✅ Decomposition coverage check passed (Step 5.7) — no orphaned ACs, result fields, or cross-cutting concerns; both sides of the spec contradiction have at least one defender subtask
 - ✅ task_plan_<branch>.md exists with AAG contracts for every subtask AND Spec Coverage table
 - ✅ CHECKPOINT shows subtask count and IDs
 - ✅ Context distilled (plan files self-contained for fresh session)
