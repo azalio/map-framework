@@ -315,6 +315,7 @@ class StepState:
     subtask_results: dict[str, dict] = field(default_factory=dict)
     last_subtask_commit_sha: Optional[str] = None
     contract_ready_subtasks: dict[str, dict] = field(default_factory=dict)
+    completed_at: Optional[str] = None
 
     def record_subtask_result(
         self,
@@ -362,6 +363,7 @@ class StepState:
             "subtask_results": self.subtask_results,
             "last_subtask_commit_sha": self.last_subtask_commit_sha,
             "contract_ready_subtasks": self.contract_ready_subtasks,
+            "completed_at": self.completed_at,
         }
 
     @classmethod
@@ -394,6 +396,7 @@ class StepState:
             subtask_results=data.get("subtask_results", {}),
             last_subtask_commit_sha=data.get("last_subtask_commit_sha"),
             contract_ready_subtasks=data.get("contract_ready_subtasks", {}),
+            completed_at=data.get("completed_at"),
         )
 
     @classmethod
@@ -1220,6 +1223,67 @@ def wave_monitor_failed(
     }
 
 
+def mark_workflow_complete(branch: str) -> dict:
+    """Atomically mark the workflow as complete.
+
+    Sets every canonical completion field in a single save:
+      - workflow_status   = "WORKFLOW_COMPLETE"
+      - current_step_id   = "COMPLETE"
+      - current_step_phase = "COMPLETE"
+      - completed_at      = ISO-8601 UTC timestamp
+
+    Replaces ad-hoc ``jq`` mutations that left ``current_step_phase`` stale on
+    "ACTOR" and broke ``reopen_for_fixes``. Refuses if any work is still
+    pending so callers cannot prematurely close an in-flight workflow.
+    """
+    state_file = Path(f".map/{branch}/step_state.json")
+    if not state_file.exists():
+        return {
+            "status": "error",
+            "message": f"No step_state.json at {state_file}",
+        }
+
+    state = StepState.load(state_file)
+
+    if state.pending_steps:
+        return {
+            "status": "error",
+            "message": (
+                f"Cannot mark complete: {len(state.pending_steps)} pending "
+                f"step(s) remain: {state.pending_steps}"
+            ),
+        }
+
+    state.workflow_status = "WORKFLOW_COMPLETE"
+    state.current_step_id = "COMPLETE"
+    state.current_step_phase = "COMPLETE"
+    state.completed_at = _utc_timestamp()
+    state.save(state_file)
+
+    return {
+        "status": "success",
+        "workflow_status": state.workflow_status,
+        "current_step_id": state.current_step_id,
+        "current_step_phase": state.current_step_phase,
+        "completed_at": state.completed_at,
+    }
+
+
+def _is_workflow_complete(state: "StepState") -> bool:
+    """Return True if any canonical completion signal is set.
+
+    The canonical signal is ``workflow_status == "WORKFLOW_COMPLETE"`` (set by
+    ``mark_workflow_complete``). The two fallbacks accept legacy state files
+    that were marked complete via partial mutations (e.g., the historical
+    ``jq`` line in ``map-check`` that bypassed this API).
+    """
+    return (
+        state.workflow_status == "WORKFLOW_COMPLETE"
+        or state.current_step_id == "COMPLETE"
+        or state.current_step_phase == "COMPLETE"
+    )
+
+
 def reopen_for_fixes(branch: str, feedback: str = "") -> dict:
     """Transition from COMPLETE back to ACTOR for post-review fixes.
 
@@ -1243,20 +1307,26 @@ def reopen_for_fixes(branch: str, feedback: str = "") -> dict:
 
     state = StepState.load(state_file)
 
-    if state.current_step_phase != "COMPLETE":
+    if not _is_workflow_complete(state):
         return {
             "status": "error",
             "message": (
-                f"Workflow is in phase '{state.current_step_phase}', not COMPLETE. "
+                f"Workflow is in phase '{state.current_step_phase}' "
+                f"(workflow_status='{state.workflow_status}'), not COMPLETE. "
                 "Use monitor_failed for non-COMPLETE retry."
             ),
         }
 
-    # Reset to ACTOR+MONITOR cycle
+    # Reset to ACTOR+MONITOR cycle. Reset every completion field atomically —
+    # the same rule that ``mark_workflow_complete`` enforces in the forward
+    # direction. Leaving ``workflow_status="WORKFLOW_COMPLETE"`` here would
+    # leave the very inconsistency we are trying to eradicate.
     state.current_step_id = "2.3"
     state.current_step_phase = "ACTOR"
     state.pending_steps = ["2.3", "2.4"]
     state.retry_count = 0
+    state.workflow_status = "IN_PROGRESS"
+    state.completed_at = None
 
     feedback_file = _write_feedback_file(
         branch,
@@ -1846,6 +1916,7 @@ def main():
             "monitor_failed",
             "wave_monitor_failed",
             "reopen_for_fixes",
+            "mark_workflow_complete",
         ],
         help="Command to execute",
     )
@@ -2091,6 +2162,10 @@ def main():
         elif args.command == "reopen_for_fixes":
             feedback = args.feedback or ""
             result = reopen_for_fixes(branch, feedback)
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "mark_workflow_complete":
+            result = mark_workflow_complete(branch)
             print(json.dumps(result, indent=2))
 
     except Exception as e:

@@ -428,12 +428,48 @@ Skip if: trivial fix, no technical knowledge, no clear entities.
 2. **Why immediate?** - Point to code, API, decision (lines/functions)
 3. **Why root cause?** - Use sequential-thinking, dig beyond symptoms (5 Whys)
 4. **What pattern?** - Extract generalizable principle, format as rule
-5. **How prevent/amplify?** - Create suggested_new_bullets, update existing bullets
-6. **Extract knowledge graph** - Optional, high-confidence entities/relationships
+5. **What contradiction did this resolve?** - Frame the pattern in TRIZ form: name the tension `<X> AND NOT <X>` the code was trying to hold, why naive trade-off failed, and which TRIZ principle (1–40 from `docs/triz-cheatsheet.md`) the resolution embodies. This makes patterns discoverable across domains — the same principle (e.g., "asymmetry", "harm into benefit", "preliminary anti-action") shows up under different surface symptoms.
+6. **How prevent/amplify?** - Create suggested_new_bullets, update existing bullets
+7. **Extract knowledge graph** - Optional, high-confidence entities/relationships
 
 <rationale>
-5-step analysis prevents shallow conclusions. Inspired by SRE post-mortems: learning, not blame.
+Step-by-step analysis prevents shallow conclusions. Inspired by SRE post-mortems: learning, not blame. Step 5 (contradiction framing) is what lifts a one-off fix into a transferable design principle — the same shape recurs in unrelated subsystems, and naming it makes the recurrence visible.
 </rationale>
+
+<decision_framework name="contradiction_framing">
+
+## Contradiction Framing (Step 5 detail)
+
+Most non-trivial bugs and design wins are a system holding (or failing to hold) a contradiction between two desirable properties. Surface it.
+
+### Heuristics for spotting a real contradiction
+
+```
+IF the fix added a small mechanism (gate, retry, lock, fallback, off-ramp) instead of changing a primary requirement:
+  → likely a contradiction was being held; name both sides
+IF the failure was "we picked A, but B silently mattered":
+  → the missing side IS the contradiction; name "must A AND not break B"
+IF the bug was a simple typo, off-by-one, or missing null check:
+  → no real contradiction; leave contradiction_resolved null
+```
+
+### Output format
+
+When a non-trivial contradiction is present, set `contradiction_resolved` to a single sentence in this shape:
+
+```
+"<system component> must <X> AND NOT <X>, where naive trade-off fails because <constraint>."
+```
+
+Set `triz_principle` to up to 3 integer IDs (1–40) from `docs/triz-cheatsheet.md` whose application in the fix is genuine — not decorative. Skip principles that only "kinda fit"; partial fit dilutes the catalog.
+
+Examples (for shape, not copy-paste):
+- "Monitor must reject incomplete diffs AND NOT punish pre-existing failures the diff merely surfaced, where naive trade-off fails because suppressing pre-existing errors silently disables the gate." → principle 22 (harm into benefit: pre-existing failures become learning signal via CLARIFICATION_NEEDED).
+- "State must survive `kill -9` AND NOT pay transaction overhead per call, where naive trade-off fails because per-call ACID kills throughput." → principles 10 (preliminary action — durable write at start) + 11 (cushion — idempotent recovery).
+
+If no non-trivial contradiction applies (trivial fix, single dominant requirement), set both fields to `null` rather than inventing one. False contradictions corrupt the principle catalog faster than missing ones starve it.
+
+</decision_framework>
 
 # OUTPUT FORMAT (Strict JSON)
 
@@ -452,6 +488,10 @@ Skip if: trivial fix, no technical knowledge, no clear entities.
   "correct_approach": "Detailed code (5+ lines). Incorrect + correct side-by-side. Why works, principle followed. {{language}} syntax. Minimum 150 chars.",
 
   "key_insight": "Reusable principle. 'When X, always Y because Z'. Memorable, actionable, broad. Minimum 50 chars.",
+
+  "contradiction_resolved": "Optional. Single sentence: '<component> must <X> AND NOT <X>, where naive trade-off fails because <constraint>.' Set to null for trivial fixes with no real contradiction.",
+
+  "triz_principle": [22],
 
   "bullet_updates": [
     {
@@ -479,6 +519,8 @@ Skip if: trivial fix, no technical knowledge, no clear entities.
 - **root_cause_analysis** (REQUIRED, ≥150 chars): 5 Whys, beyond symptoms, principle/misconception
 - **correct_approach** (REQUIRED, ≥150 chars, 5+ lines): Incorrect + correct code, why works, principle, {{language}} syntax
 - **key_insight** (REQUIRED, ≥50 chars): "When X, always Y because Z", actionable, memorable
+- **contradiction_resolved** (OPTIONAL, ≥40 chars when set, else null): TRIZ-style "<component> must <X> AND NOT <X>" framing. Null for trivial fixes — do NOT fabricate a contradiction.
+- **triz_principle** (OPTIONAL, list of 1–3 ints in [1,40]): principle IDs from `docs/triz-cheatsheet.md` whose application in the fix is genuine. Empty/absent for trivial fixes.
 - **bullet_updates** (OPTIONAL): Only if Actor used bullets, tag helpful/harmful with reason
 - **suggested_new_bullets** (OPTIONAL): Only if genuinely new, meet quality framework, code_example for SECURITY/IMPL/PERF
 
@@ -514,6 +556,16 @@ Skip if: trivial fix, no technical knowledge, no clear entities.
       "type": "string",
       "minLength": 50,
       "description": "Reusable principle: 'When X, always Y because Z'"
+    },
+    "contradiction_resolved": {
+      "type": ["string", "null"],
+      "description": "TRIZ-style framing: '<component> must <X> AND NOT <X>, where naive trade-off fails because <constraint>.' Null for trivial fixes — never fabricate."
+    },
+    "triz_principle": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {"type": "integer", "minimum": 1, "maximum": 40},
+      "description": "Principle IDs from docs/triz-cheatsheet.md whose application is genuine in this fix"
     },
     "bullet_updates": {
       "type": "array",
@@ -682,6 +734,10 @@ Use {{language}}/{{framework}} syntax. Show specific library, configuration, exp
   "correct_approach": "Use asyncio-native synchronization:\n\n```python\nimport asyncio\n\nclass BatchProcessor:\n    def __init__(self):\n        self.results = {}\n        self._lock = asyncio.Lock()  # asyncio Lock, not threading\n    \n    async def process_items(self, items):\n        # ❌ INCORRECT - race condition\n        # for item in items:\n        #     result = await self.process_one(item)\n        #     self.results[item.id] = result  # Unsafe!\n        \n        # ✅ CORRECT - synchronized access\n        async def safe_process(item):\n            result = await self.process_one(item)\n            async with self._lock:\n                self.results[item.id] = result\n            return result\n        \n        return await asyncio.gather(*[safe_process(i) for i in items])\n```\n\nPrefer returning values over mutating shared state.",
 
   "key_insight": "When using asyncio with shared mutable state, ALWAYS use asyncio.Lock for synchronization. Asyncio is single-threaded but concurrent - race conditions occur at await points. Better pattern: design to return values rather than mutate shared state.",
+
+  "contradiction_resolved": "BatchProcessor must aggregate results from concurrent coroutines AND NOT corrupt shared state via interleaved writes, where naive trade-off fails because dropping concurrency loses throughput while shared-state mutation without synchronization loses correctness.",
+
+  "triz_principle": [24, 13],
 
   "bullet_updates": [
     {"bullet_id": "async-0023", "tag": "helpful", "reason": "Pattern correctly identified async concurrency risk, referenced for context"}

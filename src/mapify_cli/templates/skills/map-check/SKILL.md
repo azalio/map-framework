@@ -288,11 +288,13 @@ Run dossier contract:
 
 ### Step 6: Update Workflow State (Complete)
 
-If verification passes, mark workflow complete:
+If verification passes, mark workflow complete via the orchestrator. **Never edit `step_state.json` directly with `jq` / `sed`** — partial mutations leave `current_step_phase` stale and break `reopen_for_fixes` in the next `/map-review`.
 
 ```bash
-jq '.current_state = "WORKFLOW_COMPLETE" | .completed_at = "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"' "$STATE_FILE" > "${STATE_FILE}.tmp" && mv "${STATE_FILE}.tmp" "$STATE_FILE"
+python3 .map/scripts/map_orchestrator.py mark_workflow_complete
 ```
+
+This atomically sets `workflow_status=WORKFLOW_COMPLETE`, `current_step_id=COMPLETE`, `current_step_phase=COMPLETE`, and `completed_at=<UTC ISO-8601>`. Refuses if any work is still pending.
 
 ### Step 7: Output Verification Report
 
