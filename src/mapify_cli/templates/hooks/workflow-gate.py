@@ -30,6 +30,8 @@ EDITING_TOOLS = {"Edit", "Write", "MultiEdit"}
 
 # Phases where Edit/Write is expected (Actor applies code)
 EDITING_PHASES = {"ACTOR", "APPLY", "TEST_WRITER"}
+TERMINAL_PHASES = {"COMPLETE"}  # Workflow closed — gate is permissive.
+ALLOWED_PHASES = EDITING_PHASES | TERMINAL_PHASES
 
 # Map step IDs (used in subtask_phases parallel dict) to phase names
 STEP_ID_TO_PHASE = {
@@ -70,7 +72,7 @@ def extract_target_file_paths(tool_call: dict) -> list[str]:
 
 
 def is_exempt_path(file_path: str) -> bool:
-    """Return True if path is exempt from enforcement (.map/, ~/.claude/memory/)."""
+    """Return True if path is exempt from enforcement (.map/, .claude/rules/learned/, ~/.claude/projects/*/memory/)."""
     if not isinstance(file_path, str) or not file_path.strip():
         return False
 
@@ -90,13 +92,20 @@ def is_exempt_path(file_path: str) -> bool:
     except ValueError:
         pass
 
-    # Allow .map/
+    # Allow .map/ and .claude/rules/learned/ (MAP-generated artifacts)
     try:
         rel = resolved.relative_to(Path.cwd().resolve())
     except ValueError:
         return False
 
-    return bool(rel.parts) and rel.parts[0] == ".map"
+    parts = rel.parts
+    if not parts:
+        return False
+    if parts[0] == ".map":
+        return True
+    if parts[:3] == (".claude", "rules", "learned"):
+        return True
+    return False
 
 
 def sanitize_branch_name(branch: str) -> str:
@@ -148,12 +157,12 @@ def is_editing_phase(branch: str) -> tuple[bool, Optional[str]]:
     if subtask_phases:
         for step_id in subtask_phases.values():
             phase = STEP_ID_TO_PHASE.get(step_id, step_id)
-            if phase in EDITING_PHASES:
+            if phase in ALLOWED_PHASES:
                 return True, None
 
     # Sequential mode: check current_step_phase
     current_phase = state.get("current_step_phase", "")
-    if current_phase in EDITING_PHASES:
+    if current_phase in ALLOWED_PHASES:
         return True, None
 
     # Not in an editing phase → block

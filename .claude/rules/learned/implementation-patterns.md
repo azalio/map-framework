@@ -25,3 +25,21 @@ paths:
               return content[:pos] + comment + "\n" + content[pos:]
       return comment + "\n" + content  # fallback: no frontmatter
   ```
+
+- **`del` Is Illegal Inside a Python Lambda Body** (2026-05-12): When suppressing Pyright `reportUnusedParameter` on a lambda with variadic args (`*_args, **_kwargs`), never insert `del _args, _kwargs` inside the lambda body — `del` is a STATEMENT and lambda bodies are limited to a single expression. The insertion produces `SyntaxError`. Correct alternatives: an inline `# pyright: ignore[reportUnusedParameter]` on the lambda line, OR rely on the `_` prefix convention (Pyright honors `_`-prefixed names without warning in most configurations). For regular `def` functions `del` works fine. [workflow: map-efficient]
+  ```python
+  # WRONG — del is a statement; illegal in lambda expression body
+  types.SimpleNamespace(
+      compute=lambda *_args, **_kwargs: del _args, _kwargs or mock_result  # SyntaxError!
+  )
+
+  # CORRECT — inline pyright suppression comment
+  types.SimpleNamespace(
+      compute=lambda *_args, **_kwargs: mock_result  # pyright: ignore[reportUnusedParameter]
+  )
+
+  # In a regular def (NOT lambda), del is valid:
+  def compute(*_args: object, **_kwargs: object) -> Result:
+      del _args, _kwargs
+      return mock_result
+  ```

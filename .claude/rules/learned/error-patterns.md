@@ -33,3 +33,30 @@
       "make lint reports <error> on <file:line>, predates ST-001.
        Fix here, defer with user approval, or treat as new subtask?"
   ```
+
+- **Static-Analysis Tool Output Is a Workflow Gate Regardless of CI Scope** (2026-05-12): When an Actor or Monitor runs a static-analysis tool (Pyright/Pylance/mypy/ruff) during a workflow — even if that tool is absent from the formal CI gate — its output is a mandatory workflow gate and `0 errors / 0 warnings / 0 informations` is the required bar. Classifying the output as "pre-existing static-analysis noise outside CI" is dismissal that bypasses the gate. The previous rule covers pytest/lint gates already in CI; this extends to dev-time tools that surface diagnostics in the conversation (IDE language servers, `<new-diagnostics>` blocks). Enforcing 0/0/0 in this workflow revealed a REAL bug: variable `entry` simultaneously typed as `Path` and `dict[str, object]` in the same scope — a logic error the "noise" verdict would have hidden indefinitely. [workflow: map-efficient]
+  ```
+  WRONG (Monitor verdict):
+    "Pyright diagnostics are pre-existing and outside the CI gate; proceeding."
+    → real type-safety bugs accumulate; loop variable reuse hides under the noise label.
+
+  CORRECT (Monitor verdict):
+    python -m pyright src/ tests/
+    Expected: 0 errors, 0 warnings, 0 informations
+    If non-zero → valid=false, list every line, route back to Actor.
+    Bug caught this way: `entry: Path | dict[str, object]` — split into two named variables
+    via cast() at the narrowing boundary.
+  ```
+
+- **Broad Revert Commands Destroy Uncommitted Work** (2026-05-12): Before running any broad automated batch-fix (regex replacement, `sed -i`, automated import insertion) on a file that holds in-progress work from earlier subtasks, COMMIT or STASH first — `git checkout -- <file>` or `git restore <file>` used to undo a bad batch-fix will also erase every uncommitted line on that file. In this workflow a Python regex script inserted `del branch_workspace` indiscriminately, breaking tests that DO use the fixture; the rescue `git checkout -- tests/test_map_step_runner.py` destroyed 451 lines of test work written across three previous subtasks that had never been committed. Recovery required a full Actor pass re-deriving assertions from source. [workflow: map-efficient]
+  ```bash
+  # WRONG — batch-fix on uncommitted multi-subtask work, then revert on failure:
+  python3 batch_fix.py tests/test_map_step_runner.py   # breaks tests
+  git checkout -- tests/test_map_step_runner.py        # destroys ALL uncommitted work
+
+  # CORRECT — commit (or stash) first; revert then only undoes the batch-fix:
+  git add tests/test_map_step_runner.py
+  git commit -m "wip: ST-001/ST-002 test work — save before batch fix"
+  python3 batch_fix.py tests/test_map_step_runner.py
+  git checkout -- tests/test_map_step_runner.py        # safe: only undoes the batch
+  ```
