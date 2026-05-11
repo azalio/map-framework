@@ -160,7 +160,7 @@ mapify upgrade
 
 Refreshes shipped MAP files in the current project:
 - `.claude/agents/`
-- `.claude/commands/`
+- `.claude/commands/README.md` custom-command guidance
 - `.claude/skills/`
 - `.claude/references/`
 - `.claude/hooks/`

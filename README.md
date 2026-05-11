@@ -174,7 +174,7 @@ Predictor      -> analyzes impact for risky changes
 Learner        -> captures reusable project memory
 ```
 
-For Claude Code, the orchestration lives in `.claude/commands/map-*.md` prompts created by `mapify init`.
+For Claude Code, MAP slash surfaces live in `.claude/skills/map-*/SKILL.md` files created by `mapify init`. The `.claude/commands/` directory is reserved for user-custom commands and a README that points back to the skill-backed MAP surfaces.
 
 For Codex CLI, `mapify init . --provider codex` creates `.codex/skills/`, `.codex/agents/`, `.codex/config.toml`, hooks, and shared `.map/scripts/`.
 
