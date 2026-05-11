@@ -6,8 +6,8 @@ from pathlib import Path
 
 SCHEMAS_PATH = Path(__file__).resolve().parents[1] / "src" / "mapify_cli" / "schemas.py"
 SPEC = importlib.util.spec_from_file_location("artifact_schemas", SCHEMAS_PATH)
-MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC is not None and SPEC.loader is not None
+MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 
 
@@ -75,4 +75,172 @@ def test_validate_test_handoff_schema():
     }
 
     is_valid, errors = MODULE.validate_artifact(artifact, MODULE.TEST_HANDOFF_SCHEMA)
+    assert is_valid, f"Errors: {errors}"
+
+
+def test_validate_review_bundle_schema():
+    """Minimal-conformant review bundle validates against REVIEW_BUNDLE_SCHEMA."""
+    artifact_entry = {
+        "present": True,
+        "path": ".map/test-branch/spec_test-branch.md",
+        "sanitized_text": "# Spec content",
+        "truncated": False,
+        "reason": None,
+        "kind": "spec",
+    }
+    missing_entry = {
+        "present": False,
+        "path": None,
+        "sanitized_text": None,
+        "reason": "not found",
+        "kind": "blueprint",
+    }
+    numbered_entry = {
+        "present": True,
+        "path": ".map/test-branch/plan-review-001.md",
+        "sanitized_text": "Review notes",
+        "truncated": False,
+        "index": 1,
+        "reason": None,
+    }
+    missing_numbered = {
+        "present": False,
+        "path": None,
+        "sanitized_text": None,
+        "index": None,
+        "reason": "none recorded",
+    }
+    multi_entry = {
+        "path": ".map/test-branch/test_handoff_ST001.json",
+        "sanitized_text": '{"subtask_id": "ST-001"}',
+        "truncated": False,
+    }
+
+    bundle = {
+        "status": "success",
+        "branch": "test-branch",
+        "bundle_path_json": ".map/test-branch/review-bundle.json",
+        "bundle_path_md": ".map/test-branch/review-bundle.md",
+        "generated_at": "2026-05-11T12:00:00Z",
+        "artifacts": {
+            "spec": artifact_entry,
+            "task_plan": {**artifact_entry, "kind": "task_plan", "path": ".map/test-branch/task_plan_test-branch.md"},
+            "blueprint": missing_entry,
+            "verification_summary": {**artifact_entry, "kind": "verification_summary", "path": ".map/test-branch/verification-summary.md"},
+            "qa": {**artifact_entry, "kind": "qa", "path": ".map/test-branch/qa-001.md"},
+            "pr_draft": {**artifact_entry, "kind": "pr_draft", "path": ".map/test-branch/pr-draft.md"},
+            "active_issues": {**artifact_entry, "kind": "active_issues", "path": ".map/test-branch/active-issues.json"},
+            "artifact_manifest": {**artifact_entry, "kind": "artifact_manifest", "path": ".map/test-branch/artifact_manifest.json"},
+            "latest_plan_review": numbered_entry,
+            "latest_code_review": missing_numbered,
+            "test_handoffs": [multi_entry],
+            "test_contracts": [],
+        },
+        "code_state": {
+            "status": "success",
+            "git_ref": "abc123def456",
+            "files_changed": ["src/foo.py"],
+            "diff_stat": "1 file changed",
+            "branch": "test-branch",
+        },
+        "review_handoff": {
+            "plan_review": "Plan looks good.",
+            "code_review": None,
+            "verification_summary": "All checks passed.",
+            "qa": None,
+            "pr_draft": None,
+            "active_issues": None,
+        },
+        "pr_handoff": {
+            "summary": "- Verification summary available",
+            "validation": "All checks passed.",
+            "risks_follow_up": "- [not recorded]",
+        },
+    }
+
+    is_valid, errors = MODULE.validate_artifact(bundle, MODULE.REVIEW_BUNDLE_SCHEMA)
+    assert is_valid, f"Errors: {errors}"
+
+
+def test_validate_review_bundle_schema_with_manifest_status_ready():
+    """manifest_status.status=ready with path field validates."""
+    minimal = {
+        "status": "success",
+        "branch": "test-branch",
+        "bundle_path_json": ".map/test-branch/review-bundle.json",
+        "bundle_path_md": ".map/test-branch/review-bundle.md",
+        "generated_at": "2026-05-11T12:00:00Z",
+        "artifacts": {
+            "spec": {"present": False, "path": None, "sanitized_text": None},
+            "task_plan": {"present": False, "path": None, "sanitized_text": None},
+            "blueprint": {"present": False, "path": None, "sanitized_text": None},
+            "verification_summary": {"present": False, "path": None, "sanitized_text": None},
+            "qa": {"present": False, "path": None, "sanitized_text": None},
+            "pr_draft": {"present": False, "path": None, "sanitized_text": None},
+            "active_issues": {"present": False, "path": None, "sanitized_text": None},
+            "artifact_manifest": {"present": False, "path": None, "sanitized_text": None},
+            "latest_plan_review": {"present": False, "path": None, "sanitized_text": None},
+            "latest_code_review": {"present": False, "path": None, "sanitized_text": None},
+            "test_handoffs": [],
+            "test_contracts": [],
+        },
+        "code_state": {"status": "unavailable"},
+        "review_handoff": {
+            "plan_review": None,
+            "code_review": None,
+            "verification_summary": None,
+            "qa": None,
+            "pr_draft": None,
+            "active_issues": None,
+        },
+        "pr_handoff": {
+            "summary": "- [not recorded]",
+            "validation": "- [not recorded]",
+            "risks_follow_up": "- [not recorded]",
+        },
+        "manifest_status": {"status": "ready", "path": ".map/test-branch/artifact_manifest.json"},
+    }
+    is_valid, errors = MODULE.validate_artifact(minimal, MODULE.REVIEW_BUNDLE_SCHEMA)
+    assert is_valid, f"Errors: {errors}"
+
+
+def test_validate_review_bundle_schema_with_manifest_status_error():
+    """manifest_status.status=error with reason field validates."""
+    minimal = {
+        "status": "success",
+        "branch": "test-branch",
+        "bundle_path_json": ".map/test-branch/review-bundle.json",
+        "bundle_path_md": ".map/test-branch/review-bundle.md",
+        "generated_at": "2026-05-11T12:00:00Z",
+        "artifacts": {
+            "spec": {"present": False, "path": None, "sanitized_text": None},
+            "task_plan": {"present": False, "path": None, "sanitized_text": None},
+            "blueprint": {"present": False, "path": None, "sanitized_text": None},
+            "verification_summary": {"present": False, "path": None, "sanitized_text": None},
+            "qa": {"present": False, "path": None, "sanitized_text": None},
+            "pr_draft": {"present": False, "path": None, "sanitized_text": None},
+            "active_issues": {"present": False, "path": None, "sanitized_text": None},
+            "artifact_manifest": {"present": False, "path": None, "sanitized_text": None},
+            "latest_plan_review": {"present": False, "path": None, "sanitized_text": None},
+            "latest_code_review": {"present": False, "path": None, "sanitized_text": None},
+            "test_handoffs": [],
+            "test_contracts": [],
+        },
+        "code_state": {"status": "unavailable"},
+        "review_handoff": {
+            "plan_review": None,
+            "code_review": None,
+            "verification_summary": None,
+            "qa": None,
+            "pr_draft": None,
+            "active_issues": None,
+        },
+        "pr_handoff": {
+            "summary": "- [not recorded]",
+            "validation": "- [not recorded]",
+            "risks_follow_up": "- [not recorded]",
+        },
+        "manifest_status": {"status": "error", "reason": "disk full"},
+    }
+    is_valid, errors = MODULE.validate_artifact(minimal, MODULE.REVIEW_BUNDLE_SCHEMA)
     assert is_valid, f"Errors: {errors}"

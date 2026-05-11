@@ -117,6 +117,7 @@ MAP review is useful, but it is not a replacement for engineering judgment. Seri
 - **Low overhead** - structured enough to prevent chaos, lightweight enough to keep token and time cost under control.
 - **Reviewable diffs** - planning and task contracts keep changes small enough to inspect.
 - **Useful quality gates** - `/map-check` and `/map-review` validate against the plan instead of just asking whether code "looks fine".
+- **Review bundle** - `/map-review` auto-generates `.map/<branch>/review-bundle.json` and `.map/<branch>/review-bundle.md` before launching reviewer agents, bundling spec, plan, tests, verification, and latest code review into a single durable input contract. Reviewers read the bundle first; raw diff is secondary. Use `/map-review --detached` to open an isolated read-only git worktree at `.map/<branch>/detached-review/` for clean-room inspection without touching the source branch. Bundle generation records the `review` stage in `.map/<branch>/artifact_manifest.json`.
 - **Project memory** - `/map-learn` turns hard-won fixes and gotchas into reusable context for the next session.
 
 ## Core Commands

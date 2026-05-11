@@ -284,14 +284,18 @@ class TestMapPlanE2E:
         map_dir = _get_map_dir(test_project)
         branch = _get_branch_name(test_project)
 
-        # Check required artifacts exist
+        # /map-plan produces planning artifacts; step_state.json is intentionally
+        # created later by /map-efficient (see .claude/skills/map-plan/SKILL.md:613).
         assert (map_dir / "blueprint.json").exists(), (
             f"blueprint.json not found in {map_dir}. " f"Claude output: {output[:500]}"
         )
         assert (map_dir / f"task_plan_{branch}.md").exists() or any(
             f.name.startswith("task_plan") for f in map_dir.glob("task_plan*.md")
         ), "task_plan not found"
-        assert (map_dir / "step_state.json").exists(), "step_state.json not found"
+        assert not (map_dir / "step_state.json").exists(), (
+            "step_state.json must NOT be created by /map-plan; it is initialized "
+            "by /map-efficient INIT_STATE per the documented contract."
+        )
 
     def test_plan_blueprint_is_valid_json(self, test_project):
         """Blueprint should be valid JSON with subtasks."""
@@ -319,7 +323,10 @@ class TestMapPlanE2E:
             assert "dependencies" in st, f"Subtask missing 'dependencies': {st}"
 
     def test_plan_step_state_initialized(self, test_project):
-        """step_state.json should be initialized at DECOMPOSE or later."""
+        """step_state.json must NOT exist after /map-plan; the planning contract
+        explicitly defers state initialization to /map-efficient (see
+        .claude/skills/map-plan/SKILL.md:613). This test pins the contract.
+        """
         _run_claude(
             "/map-plan Add a multiply(a, b) function to app.py with tests",
             cwd=str(test_project),
@@ -328,14 +335,13 @@ class TestMapPlanE2E:
         )
 
         map_dir = _get_map_dir(test_project)
-        state = json.loads((map_dir / "step_state.json").read_text(encoding="utf-8"))
-
-        assert state["workflow"] in (
-            "map-plan",
-            "map-efficient",
-        ), f"Unexpected workflow value: {state['workflow']}"
-        assert "subtask_sequence" in state
-        assert isinstance(state["subtask_sequence"], list)
+        assert not (map_dir / "step_state.json").exists(), (
+            "step_state.json must NOT be created by /map-plan. "
+            "Initialization is the responsibility of /map-efficient INIT_STATE."
+        )
+        # Planning artifacts must still be present so /map-efficient can resume.
+        assert (map_dir / "blueprint.json").exists(), "blueprint.json missing"
+        assert (map_dir / "artifact_manifest.json").exists(), "artifact_manifest.json missing"
 
 
 # =====================================================================

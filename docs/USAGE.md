@@ -49,6 +49,18 @@ Philosophically, MAP still ends with `LEARN`. Runtime keeps that step soft and t
 
 Implementation note: `/map-learn` is now maintained skill-first. The canonical slash surface lives in `.claude/skills/map-learn/SKILL.md`; MAP no longer ships a duplicate `.claude/commands/map-learn.md`, so there is only one place to update the learning workflow. The slash surface now advertises an optional `[workflow-summary]` argument, but zero-argument mode still auto-loads `.map/<branch>/learning-handoff.md` when present.
 
+## Review Workflow: Context Persistence and Detached Mode
+
+`/map-review` auto-generates `.map/<branch>/review-bundle.json` (machine-readable) and `.map/<branch>/review-bundle.md` (human-readable) before launching reviewer agents. The bundle consolidates spec, task plan, test contracts, verification summary, QA results, and latest code review artifacts into a single durable input contract. This decouples review from implementer session context — reviewer agents read the bundle first; raw diff is used only to confirm or expand bundle findings. When an artifact is absent, the bundle records an explicit `present: false` entry so generation always succeeds regardless of workflow stage.
+
+**Optional detached mode:**
+
+```bash
+/map-review --detached
+```
+
+Creates an isolated read-only git worktree at `.map/<branch>/detached-review/` via `git worktree add --detach` so reviewers can inspect the change in a clean sandbox without touching the source branch. If detached preparation is unavailable (path already exists, no HEAD commit, or git error), the review still proceeds using the persisted bundle. The `review` stage in `.map/<branch>/artifact_manifest.json` is updated on every `/map-review` run regardless of detached mode.
+
 ## Codex CLI Provider
 
 MAP Framework supports OpenAI's Codex CLI as an alternative to Claude Code.

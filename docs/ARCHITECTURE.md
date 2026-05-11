@@ -294,6 +294,12 @@ For branch-scoped workflows, MAP also keeps `.map/<branch>/artifact_manifest.jso
 
 Targeted TDD flows additionally persist `test_contract_<subtask>.md` and `test_handoff_<subtask>.json`. Those artifacts are what let `/map-task ST-001` resume implementation from a clean red-phase handoff instead of reusing the full test-authoring context.
 
+**Review artifacts** (`review` stage in manifest): The `review` stage is populated by `create_review_bundle()` in `.map/scripts/map_step_runner.py` (synced to `src/mapify_cli/templates/map/scripts/map_step_runner.py`). It produces two branch-scoped files:
+- `.map/<branch>/review-bundle.json` — machine-readable review input contract bundling spec, plan, blueprint, test contracts, verification summary, QA, PR draft, active issues, and latest plan/code review. JSON schema: `REVIEW_BUNDLE_SCHEMA` in `src/mapify_cli/schemas.py`.
+- `.map/<branch>/review-bundle.md` — human-readable summary of bundled artifacts for quick reviewer orientation.
+
+Missing artifacts are recorded with `present: false` rather than omitted, so bundle generation succeeds at any workflow stage. An optional detached worktree at `.map/<branch>/detached-review/` is created by `prepare_detached_review()` when `/map-review --detached` is invoked.
+
 #### 1. State Artifact (`state_<branch>.json`)
 
 **Purpose:** Track workflow state including terminal status and early termination.
@@ -646,6 +652,8 @@ for subtask in subtasks:
    - REVISE: Monitor needs_revision OR Evaluator improve
    - BLOCK: Monitor rejected OR Evaluator reconsider OR security/functionality < 5 OR (Predictor high risk + breaking changes)
    - Priority: BLOCK > REVISE > PROCEED
+
+**Review-Bundle-First Context:** `/map-review` persists the durable review bundle (`.map/<branch>/review-bundle.json` / `.map/<branch>/review-bundle.md`) via `create_review_bundle()` before launching reviewer agents. Monitor, Predictor, and Evaluator receive the bundle as primary context — containing spec, task plan, test contracts, verification summary, and code-review history — and use raw diff only to confirm or expand bundle findings. When detached preparation is unavailable, the review still proceeds from the persisted bundle. Bundle generation always updates `artifact_manifest.json["stages"]["review"]`.
 
 **Token Usage:** ~15-25K tokens (parallel agents + interactive 4-section presentation; `--ci` mode ~12-15K)
 **Learning:** Optional via `/map-learn`

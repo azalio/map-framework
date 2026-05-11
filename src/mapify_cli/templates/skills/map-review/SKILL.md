@@ -3,13 +3,22 @@ name: map-review
 description: |
   Interactive 4-section code review using Monitor, Predictor, and Evaluator agents on current changes. Use when reviewing a diff, PR, or staged work before merge. Do NOT use to plan or implement; use map-plan or map-efficient.
 disable-model-invocation: true
-argument-hint: "[review focus]"
+argument-hint: "[review focus] [--detached] [--ci]"
 ---
 # MAP Review Workflow
 
 Interactive, structured code review of current changes using Monitor, Predictor, and Evaluator agents.
 
 **Task:** $ARGUMENTS
+
+## Flags
+
+- `--ci` / `--auto` — Non-interactive mode; auto-select recommended options. Suitable for CI pipelines.
+- `--detached` — Prepare an isolated git worktree for the review so reviewer agents read source files
+  from a clean detached context. The source branch is **never mutated** (no `git checkout`, no `git stash`,
+  no working-tree edits). If the detached path already exists, the helper reports `unavailable` and the
+  review **still proceeds** using the in-place bundle (graceful degradation). The detached worktree is
+  created at `.map/<branch>/detached-review/`.
 
 ## Execution Rules
 
@@ -77,11 +86,20 @@ This protocol is used identically by all 4 review sections below. Do NOT deviate
 4. **Summarize decisions** from this section in 3-5 lines before proceeding to the next section
    - Include: which issues were addressed, which options were chosen, what remains
 
-## Step 0: Detect CI Mode
+## Step 0: Detect CI Mode and Flags
 
 **Parse $ARGUMENTS for `--ci` or `--auto`:**
 - If `--ci` or `--auto` is present in $ARGUMENTS → set CI_MODE=true
 - CI_MODE skips all AskUserQuestion calls and auto-selects recommended options
+
+**Parse $ARGUMENTS for `--detached`:**
+```bash
+DETACHED_FLAG=false
+if echo "$ARGUMENTS" | grep -q -- '--detached'; then
+  DETACHED_FLAG=true
+  ARGUMENTS=$(echo "$ARGUMENTS" | sed 's/--detached//g' | xargs)
+fi
+```
 
 **Always use comprehensive review** — up to 4 issues per section, no mode selection menu.
 
@@ -96,40 +114,83 @@ git status
 
 Save the diff output — it will be passed to all 3 agents.
 
-### Step A.1b: Load canonical review handoff
+### Step A.1b: Load canonical review context (bundle + handoff)
 
-Before launching agents, load the branch-scoped review handoff so review works from accumulated MAP artifacts instead of reconstructing context ad hoc:
+Before launching agents, build and load the persisted review bundle so review works
+from all accumulated MAP artifacts rather than reconstructing context ad hoc.
+
+**MANDATORY — run `create_review_bundle` first:**
+
+```bash
+BUNDLE_JSON=$(python3 .map/scripts/map_step_runner.py create_review_bundle)
+```
+
+This produces two durable files:
+- `.map/<branch>/review-bundle.json` — machine-readable PRIMARY review contract
+- `.map/<branch>/review-bundle.md` — human-readable summary of the same data
+
+Read `.map/<branch>/review-bundle.md` now and pass its content to all three agents
+as their **primary context**. The bundle surfaces, when present:
+- `spec` and `task_plan` artifacts (what was planned)
+- latest `plan-review-00N.md` and `code-review-00N.md` (prior review history)
+- `verification-summary.md` and `qa-001.md`
+- `pr-draft.md` and `active-issues.json`
+- artifact manifest status and git code state
+
+Then also load the legacy handoff for any supplementary fields:
 
 ```bash
 HANDOFF=$(python3 .map/scripts/map_step_runner.py build_review_handoff)
 ```
 
-This handoff should surface, when present:
-- latest `plan-review-00N.md`
-- latest `code-review-00N.md`
-- `verification-summary.md`
-- `qa-001.md`
-- `pr-draft.md`
-- `active-issues.json`
+**Priority rule:** bundle artifacts are PRIMARY context; raw diff is SECONDARY
+(use diff only to confirm or expand specific findings the bundle surfaces).
 
-Use these artifacts as the primary reviewer context before relying on raw diff analysis alone.
+### Step A.1c: Prepare detached review context (optional, `--detached` only)
+
+If `DETACHED_FLAG=true`, invoke the helper and parse the result:
+
+```bash
+DETACHED_RESULT=$(python3 .map/scripts/map_step_runner.py prepare_detached_review "$BUNDLE_JSON_PATH")
+DETACHED_STATUS=$(echo "$DETACHED_RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['status'])")
+DETACHED_PATH=$(echo "$DETACHED_RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('worktree_path') or '')")
+DETACHED_REASON=$(echo "$DETACHED_RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('reason') or '')")
+```
+
+Handle all three outcomes — the workflow **still proceeds** in every case:
+
+- **`status=success`**: Announce the detached worktree path to the user. Instruct reviewer agents
+  to read source files from `$DETACHED_PATH` (read-only — do NOT edit files in the detached
+  worktree). Pass `DETACHED_PATH` as additional context in each agent prompt.
+- **`status=unavailable`**: Announce the reason (e.g., path already exists — does NOT overwrite).
+  Continue review using the in-place bundle. The review still proceeds normally.
+- **`status=error`**: Announce the error reason. Continue review using the in-place bundle.
+  The review still proceeds normally.
+
+The source branch is **never mutated** by `prepare_detached_review` — no `git checkout`,
+`git stash`, `git reset`, or any working-tree edits are performed.
 
 ### Step A.2: Launch all parallel calls
 
 In **ONE message**, launch all 3 calls in parallel (no dependencies between them):
 
-**3 agent Task calls** (pass the git diff + Review Preferences to each):
+**3 agent Task calls** (pass the bundle summary + git diff + Review Preferences to each):
 
 ```
 Task(
   subagent_type="monitor",
   description="Review code changes",
-  prompt="Review the following changes for code quality, security, and correctness.
+  prompt="Your primary context is the persisted review bundle at `.map/<branch>/review-bundle.json`
+(human-readable summary at `.map/<branch>/review-bundle.md`). Read the bundle first.
+Use the raw diff only to confirm or expand specific findings the bundle surfaces.
+
+**Review Bundle Summary:**
+[paste contents of .map/<branch>/review-bundle.md]
 
 **Review Preferences:**
 [paste Review Preferences section above]
 
-**Changes:**
+**Changes (secondary — use to confirm bundle findings):**
 [paste git diff output]
 
 Check for:
@@ -151,12 +212,17 @@ Output JSON with:
 Task(
   subagent_type="predictor",
   description="Analyze change impact",
-  prompt="Analyze the impact of these changes on the broader codebase.
+  prompt="Your primary context is the persisted review bundle at `.map/<branch>/review-bundle.json`
+(human-readable summary at `.map/<branch>/review-bundle.md`). Read the bundle first.
+Use the raw diff only to confirm or expand specific findings the bundle surfaces.
+
+**Review Bundle Summary:**
+[paste contents of .map/<branch>/review-bundle.md]
 
 **Review Preferences:**
 [paste Review Preferences section above]
 
-**Changes:**
+**Changes (secondary — use to confirm bundle findings):**
 [paste git diff output]
 
 Analyze:
@@ -179,12 +245,17 @@ Output JSON with:
 Task(
   subagent_type="evaluator",
   description="Score change quality",
-  prompt="Evaluate the overall quality of these changes.
+  prompt="Your primary context is the persisted review bundle at `.map/<branch>/review-bundle.json`
+(human-readable summary at `.map/<branch>/review-bundle.md`). Read the bundle first.
+Use the raw diff only to confirm or expand specific findings the bundle surfaces.
+
+**Review Bundle Summary:**
+[paste contents of .map/<branch>/review-bundle.md]
 
 **Review Preferences:**
 [paste Review Preferences section above]
 
-**Changes:**
+**Changes (secondary — use to confirm bundle findings):**
 [paste git diff output]
 
 Provide quality assessment using 1-10 scoring:

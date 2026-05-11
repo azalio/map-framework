@@ -35,7 +35,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, Mapping, Optional, cast
 
 # Keep in sync with workflow-context-injector.py GOAL_HEADING_RE
 GOAL_HEADING_RE = r"## (?:Goal|Overview)\n(.*?)(?=\n##|\Z)"
@@ -220,10 +220,11 @@ def load_artifact_manifest(branch: Optional[str] = None) -> dict[str, object]:
         )
         loaded_stages = loaded.get("stages", {})
         if isinstance(loaded_stages, dict):
+            stages = cast(dict[str, dict[str, object]], manifest["stages"])
             for stage in ARTIFACT_STAGE_NAMES:
                 stage_payload = loaded_stages.get(stage, _default_stage_payload())
                 if isinstance(stage_payload, dict):
-                    manifest["stages"][stage] = {
+                    stages[stage] = {
                         "status": stage_payload.get("status", "not_started"),
                         "updated_at": stage_payload.get("updated_at", ""),
                         "artifacts": stage_payload.get("artifacts", []),
@@ -341,7 +342,7 @@ def load_learning_metrics(branch: Optional[str] = None) -> dict[str, object]:
             metrics["updated_at"] = loaded.get("updated_at", metrics["updated_at"])
             counters = loaded.get("counters")
             if isinstance(counters, dict):
-                metrics["counters"].update(counters)
+                cast(dict[str, int], metrics["counters"]).update(counters)
             current_handoff = loaded.get("current_handoff")
             if isinstance(current_handoff, dict):
                 metrics["current_handoff"] = current_handoff
@@ -404,12 +405,12 @@ def _record_learning_handoff_generation_metrics(
     """Update branch/global metrics when a new learning handoff is generated."""
     branch_name = branch or get_branch_name()
     metrics = load_learning_metrics(branch_name)
-    counters = metrics["counters"]
+    counters = cast(dict[str, int], metrics["counters"])
     current_handoff = metrics.get("current_handoff")
 
     if isinstance(current_handoff, dict) and not current_handoff.get("consumed_at"):
         counters["never_used_handoff_count"] += 1
-        abandoned_event = {
+        abandoned_event: dict[str, object] = {
             "event": "learning_handoff_abandoned",
             "timestamp": generated_at,
             "branch": branch_name,
@@ -440,7 +441,7 @@ def _record_learning_handoff_generation_metrics(
         "handoff_markdown_path": str(markdown_path),
         "handoff_json_path": str(json_path),
     }
-    generation_event = {
+    generation_event: dict[str, object] = {
         "event": "learning_handoff_generated",
         "timestamp": generated_at,
         "branch": branch_name,
@@ -459,7 +460,7 @@ def _record_learning_handoff_generation_metrics(
             "workflow": workflow,
             "handoff_markdown_path": str(markdown_path),
             "handoff_json_path": str(json_path),
-            "counters": dict(metrics_result["metrics"]["counters"]),
+            "counters": dict(cast(Mapping[str, int], cast(Mapping[str, Mapping[str, int]], metrics_result["metrics"])["counters"])),
         }
     )
     return metrics_result
@@ -477,7 +478,7 @@ def record_learning_consumption(
         return {"status": "error", "message": f"Invalid summary_source: {summary_source}"}
 
     metrics = load_learning_metrics(branch_name)
-    counters = metrics["counters"]
+    counters = cast(dict[str, int], metrics["counters"])
     timestamp = _utc_timestamp()
     current_handoff = metrics.get("current_handoff")
     workflow_name = workflow.strip() or ""
@@ -492,7 +493,7 @@ def record_learning_consumption(
         workflow_name = current_handoff.get("workflow") or workflow_name
         result["workflow"] = workflow_name
         if current_handoff.get("consumed_at"):
-            event = {
+            event: dict[str, object] = {
                 "event": "learning_handoff_reused",
                 "timestamp": timestamp,
                 "branch": branch_name,
@@ -510,7 +511,7 @@ def record_learning_consumption(
                     "branch": branch_name,
                     "workflow": workflow_name,
                     "summary_source": source,
-                    "counters": dict(metrics_result["metrics"]["counters"]),
+                    "counters": dict(cast(Mapping[str, int], cast(Mapping[str, Mapping[str, int]], metrics_result["metrics"])["counters"])),
                 }
             )
             result["usage_status"] = "already_recorded"
@@ -547,7 +548,7 @@ def record_learning_consumption(
                 "summary_source": source,
                 "consumption_mode": consumption_mode,
                 "generated_at": current_handoff.get("generated_at"),
-                "counters": dict(metrics_result["metrics"]["counters"]),
+                "counters": dict(cast(Mapping[str, int], cast(Mapping[str, Mapping[str, int]], metrics_result["metrics"])["counters"])),
             }
         )
         result["usage_status"] = "recorded"
@@ -573,7 +574,7 @@ def record_learning_consumption(
             "branch": branch_name,
             "workflow": workflow_name or None,
             "summary_source": source,
-            "counters": dict(metrics_result["metrics"]["counters"]),
+            "counters": dict(cast(Mapping[str, int], cast(Mapping[str, Mapping[str, int]], metrics_result["metrics"])["counters"])),
         }
     )
     result["usage_status"] = "manual_summary"
@@ -793,7 +794,7 @@ def _match_finding_to_learned_rule(
 
     path_hints = [
         str(path)
-        for path in finding.get("path_hints", [])
+        for path in cast(list[object], finding.get("path_hints", []))
         if isinstance(path, str) and path.strip()
     ]
     best_match: Optional[dict[str, object]] = None
@@ -801,15 +802,15 @@ def _match_finding_to_learned_rule(
     for rule in learned_rules:
         rule_paths = [
             str(path)
-            for path in rule.get("paths", [])
+            for path in cast(list[object], rule.get("paths", []))
             if isinstance(path, str) and path.strip()
         ]
         path_match = _paths_match_rule_scope(rule_paths, path_hints) if path_hints else False
         if rule_paths and path_hints and not path_match:
             continue
 
-        title_tokens = set(rule.get("title_tokens", set()))
-        body_tokens = set(rule.get("body_tokens", set()))
+        title_tokens = set(cast(Iterable[str], rule.get("title_tokens", set())))
+        body_tokens = set(cast(Iterable[str], rule.get("body_tokens", set())))
         title_overlap = sorted(finding_tokens & title_tokens)
         body_overlap = sorted((finding_tokens & body_tokens) - set(title_overlap))
         score = len(title_overlap) * 3 + len(body_overlap)
@@ -820,7 +821,7 @@ def _match_finding_to_learned_rule(
         if not qualifies:
             continue
 
-        match = {
+        match: dict[str, object] = {
             "rule_id": str(rule["rule_id"]),
             "rule_title": str(rule["title"]),
             "rule_file": str(rule["file"]),
@@ -833,7 +834,7 @@ def _match_finding_to_learned_rule(
             "score": score,
             "path_match": path_match,
         }
-        if not best_match or int(match["score"]) > int(best_match["score"]):
+        if not best_match or int(cast(int, match["score"])) > int(cast(int, best_match["score"])):
             best_match = match
 
     return best_match
@@ -893,7 +894,7 @@ def record_repeated_learning_violations(
                 "branch": branch_name,
                 "match_count": len(matches),
                 "matches": matches[:5],
-                "counters": dict(metrics_result["metrics"]["counters"]),
+                "counters": dict(cast(Mapping[str, int], cast(Mapping[str, Mapping[str, int]], metrics_result["metrics"])["counters"])),
             }
         )
 
@@ -1030,11 +1031,12 @@ def record_plan_artifacts(branch: Optional[str] = None) -> dict[str, object]:
     )
 
     manifest_result = save_artifact_manifest(manifest, branch_name)
+    stages = cast(dict[str, dict[str, object]], manifest["stages"])
     return {
         "status": "success",
         "manifest_path": manifest_result["path"],
-        "spec_status": manifest["stages"]["spec"]["status"],
-        "plan_status": manifest["stages"]["plan"]["status"],
+        "spec_status": stages["spec"]["status"],
+        "plan_status": stages["plan"]["status"],
     }
 
 
@@ -1167,6 +1169,7 @@ def append_session_log(
     Returns {"status": "deprecated", "path": "", "deprecated": True}.
     Kept for CLI backward compatibility — callers should stop using this function.
     """
+    del phase, outcome, subtask_id, details, artifact_refs, branch
     return {"status": "deprecated", "path": "", "deprecated": True}
 
 
@@ -1501,6 +1504,384 @@ def build_review_handoff(branch: Optional[str] = None) -> dict:
     return payload
 
 
+_REVIEW_BUNDLE_TRUNCATE_CHARS = 4000
+"""Max sanitized characters to embed per artifact text field.
+
+Reviewers need enough context to assess the artifact, not a full copy.
+Files larger than this threshold are truncated; ``truncated: true`` is
+recorded so the reviewer knows to open the full file on disk.
+"""
+
+
+def _collect_numbered_artifact(
+    branch_dir: Path,
+    prefix: str,
+) -> dict:
+    """Scan branch_dir for ``<prefix>-NNN.md`` files and return the highest one.
+
+    Returns a dict with keys: ``present``, ``path`` (str or None),
+    ``index`` (int or None), ``sanitized_text`` (str or None),
+    ``truncated`` (bool, omitted when not applicable), ``reason`` (str or None).
+    """
+    pattern = re.compile(rf"^{re.escape(prefix)}-(\d{{3}})\.md$")
+    best_index = 0
+    best_name = ""
+    try:
+        for dir_entry in branch_dir.iterdir():
+            m = pattern.match(dir_entry.name)
+            if m:
+                idx = int(m.group(1))
+                if idx > best_index:
+                    best_index = idx
+                    best_name = dir_entry.name
+    except OSError:
+        pass
+
+    if not best_name:
+        return {
+            "present": False,
+            "path": None,
+            "index": None,
+            "sanitized_text": None,
+            "reason": "none recorded",
+        }
+
+    full_path = branch_dir / best_name
+    raw = _read_branch_artifact_text(branch_dir, best_name)
+    entry: dict = {
+        "present": True,
+        "path": str(full_path),
+        "index": best_index,
+    }
+    if len(raw) > _REVIEW_BUNDLE_TRUNCATE_CHARS:
+        entry["sanitized_text"] = raw[:_REVIEW_BUNDLE_TRUNCATE_CHARS]
+        entry["truncated"] = True
+    else:
+        entry["sanitized_text"] = raw or None
+        entry["truncated"] = False
+    entry["reason"] = None
+    return entry
+
+
+def _collect_multi_artifacts(
+    branch_dir: Path,
+    glob_pattern: str,
+) -> list[dict]:
+    """Collect all files matching glob_pattern and return a list of artifact entries.
+
+    Each entry: ``{path, sanitized_text, truncated}``.
+    Returns an empty list when no files match.
+    """
+    results = []
+    try:
+        for entry in sorted(branch_dir.glob(glob_pattern)):
+            if not entry.is_file():
+                continue
+            raw = _sanitize_for_json(
+                entry.read_text(encoding="utf-8", errors="replace")
+            )
+            item: dict = {"path": str(entry)}
+            if len(raw) > _REVIEW_BUNDLE_TRUNCATE_CHARS:
+                item["sanitized_text"] = raw[:_REVIEW_BUNDLE_TRUNCATE_CHARS]
+                item["truncated"] = True
+            else:
+                item["sanitized_text"] = raw or None
+                item["truncated"] = False
+            results.append(item)
+    except OSError:
+        pass
+    return results
+
+
+def _fixed_artifact_entry(branch_dir: Path, name: str, kind: str) -> dict:
+    """Return a single artifact entry for a fixed-name file.
+
+    Keys: ``present``, ``path``, ``sanitized_text`` (or None), ``truncated``
+    (omitted if not applicable), ``reason`` (or None), ``kind``.
+    """
+    full_path = branch_dir / name
+    if not full_path.exists():
+        return {
+            "present": False,
+            "path": None,
+            "sanitized_text": None,
+            "kind": kind,
+            "reason": "not found",
+        }
+    raw = _read_branch_artifact_text(branch_dir, name)
+    entry: dict = {
+        "present": True,
+        "path": str(full_path),
+        "kind": kind,
+        "reason": None,
+    }
+    if len(raw) > _REVIEW_BUNDLE_TRUNCATE_CHARS:
+        entry["sanitized_text"] = raw[:_REVIEW_BUNDLE_TRUNCATE_CHARS]
+        entry["truncated"] = True
+    else:
+        entry["sanitized_text"] = raw or None
+        entry["truncated"] = False
+    return entry
+
+
+def _bundle_review_handoff_text_fields(handoff: dict) -> dict:
+    """Extract only the sanitized text content fields from build_review_handoff output."""
+    return {
+        "plan_review": handoff.get("plan_review"),
+        "code_review": handoff.get("code_review"),
+        "verification_summary": handoff.get("verification_summary") or None,
+        "qa": handoff.get("qa") or None,
+        "pr_draft": handoff.get("pr_draft") or None,
+        "active_issues": handoff.get("active_issues"),
+    }
+
+
+def _bundle_pr_handoff_fields(bundle: dict) -> dict:
+    """Extract PR handoff summary fields from build_handoff_bundle output."""
+    return {
+        "summary": bundle.get("summary", "- [not recorded]"),
+        "validation": bundle.get("validation", "- [not recorded]"),
+        "risks_follow_up": bundle.get("risks_follow_up", "- [not recorded]"),
+    }
+
+
+def _render_bundle_markdown(result: dict) -> str:
+    """Render the review bundle as a human-readable Markdown document."""
+    branch = result.get("branch", "unknown")
+    generated_at = result.get("generated_at", "")
+    artifacts = result.get("artifacts", {})
+    code_state = result.get("code_state", {})
+    review_handoff = result.get("review_handoff", {})
+    pr_handoff = result.get("pr_handoff", {})
+
+    lines = [
+        f"# Review Bundle — `{branch}`",
+        "",
+        f"Generated: {generated_at}",
+        f"Bundle JSON: `{result.get('bundle_path_json', '')}`",
+        "",
+    ]
+
+    # Missing artifacts section (INV-4: every absent artifact listed)
+    missing = []
+    for key, val in artifacts.items():
+        if key in ("test_handoffs", "test_contracts"):
+            if isinstance(val, list) and not val:
+                missing.append(f"- `{key}`: none recorded")
+        elif isinstance(val, dict) and not val.get("present", True):
+            reason = val.get("reason", "not found")
+            missing.append(f"- `{key}`: {reason}")
+
+    if missing:
+        lines += ["## Missing Artifacts", ""]
+        lines += missing
+        lines += [""]
+
+    # Artifact inventory
+    lines += ["## Artifact Inventory", ""]
+    for key, val in artifacts.items():
+        if key in ("test_handoffs", "test_contracts"):
+            count = len(val) if isinstance(val, list) else 0
+            lines.append(f"- **{key}**: {count} file(s)")
+        elif isinstance(val, dict):
+            status = "present" if val.get("present") else "MISSING"
+            path = val.get("path") or "—"
+            lines.append(f"- **{key}** [{status}]: `{path}`")
+    lines += [""]
+
+    # Code state
+    lines += ["## Code State", ""]
+    cs_status = code_state.get("status", "unknown")
+    if cs_status == "success":
+        lines.append(f"- Git ref: `{code_state.get('git_ref', 'unknown')}`")
+        lines.append(f"- Branch: `{code_state.get('branch', 'unknown')}`")
+        files = code_state.get("files_changed", [])
+        lines.append(f"- Files changed: {len(files)}")
+        diff_stat = code_state.get("diff_stat", "")
+        if diff_stat:
+            lines.append(f"- Diff stat: {diff_stat[:200]}")
+    else:
+        lines.append(f"- Status: {cs_status}")
+        reason = code_state.get("reason", "")
+        if reason:
+            lines.append(f"- Reason: {reason}")
+    lines += [""]
+
+    # Review handoff text summaries
+    lines += ["## Review Handoff Context", ""]
+    for field in ("plan_review", "code_review", "verification_summary", "qa", "pr_draft", "active_issues"):
+        val = review_handoff.get(field)
+        if val:
+            label = field.replace("_", " ").title()
+            lines.append(f"### {label}")
+            lines.append("")
+            lines.append(val[:500] + ("…" if len(val) > 500 else ""))
+            lines.append("")
+
+    # PR handoff
+    lines += ["## PR Handoff Summary", ""]
+    lines.append(pr_handoff.get("summary", "- [not recorded]"))
+    lines += [""]
+
+    return "\n".join(lines)
+
+
+def create_review_bundle(branch: Optional[str] = None) -> dict:
+    """Write a durable reviewer-facing bundle under .map/<branch>/.
+
+    Collects all branch-scoped artifacts into a structured inventory,
+    sanitizes text content, and writes both ``review-bundle.json`` and
+    ``review-bundle.md``.  Missing optional artifacts are recorded
+    explicitly (INV-4) rather than silently omitted.  Control characters
+    are stripped via ``_sanitize_for_json`` so the JSON file remains
+    parseable by downstream tools (INV-8).
+    """
+    branch_name = branch or get_branch_name()
+    branch_dir = get_branch_dir(branch_name)
+    branch_dir.mkdir(parents=True, exist_ok=True)
+    generated_at = _utc_timestamp()
+
+    bundle_json_path = branch_dir / "review-bundle.json"
+    bundle_md_path = branch_dir / "review-bundle.md"
+
+    # --- Artifact inventory ---
+    fixed_artifacts: dict[str, dict] = {
+        "spec": _fixed_artifact_entry(
+            branch_dir, f"spec_{branch_name}.md", "spec"
+        ),
+        "task_plan": _fixed_artifact_entry(
+            branch_dir, f"task_plan_{branch_name}.md", "task_plan"
+        ),
+        "blueprint": _fixed_artifact_entry(
+            branch_dir, "blueprint.json", "blueprint"
+        ),
+        "verification_summary": _fixed_artifact_entry(
+            branch_dir, "verification-summary.md", "verification_summary"
+        ),
+        "qa": _fixed_artifact_entry(
+            branch_dir, "qa-001.md", "qa"
+        ),
+        "pr_draft": _fixed_artifact_entry(
+            branch_dir, "pr-draft.md", "pr_draft"
+        ),
+        "active_issues": _fixed_artifact_entry(
+            branch_dir, "active-issues.json", "active_issues"
+        ),
+        "artifact_manifest": _fixed_artifact_entry(
+            branch_dir, "artifact_manifest.json", "artifact_manifest"
+        ),
+    }
+
+    latest_plan_review = _collect_numbered_artifact(branch_dir, "plan-review")
+    latest_code_review = _collect_numbered_artifact(branch_dir, "code-review")
+
+    test_handoffs = _collect_multi_artifacts(branch_dir, "test_handoff_*.json")
+    test_contracts = _collect_multi_artifacts(branch_dir, "test_contract_*.md")
+
+    artifacts: dict = {}
+    artifacts.update(fixed_artifacts)
+    artifacts["latest_plan_review"] = latest_plan_review
+    artifacts["latest_code_review"] = latest_code_review
+    artifacts["test_handoffs"] = test_handoffs
+    artifacts["test_contracts"] = test_contracts
+
+    # --- Code state ---
+    try:
+        code_state = snapshot_code_state(branch_name)
+    except Exception as exc:
+        code_state = {"status": "unavailable", "reason": str(exc)}
+
+    # --- Review handoff context (text fields only) ---
+    try:
+        review_handoff_raw = build_review_handoff(branch_name)
+        review_handoff = _bundle_review_handoff_text_fields(review_handoff_raw)
+    except Exception as exc:
+        review_handoff = {
+            "plan_review": None,
+            "code_review": None,
+            "verification_summary": None,
+            "qa": None,
+            "pr_draft": None,
+            "active_issues": None,
+            "_error": str(exc),
+        }
+
+    # --- PR handoff summary ---
+    try:
+        pr_bundle_raw = build_handoff_bundle(branch_name)
+        pr_handoff = _bundle_pr_handoff_fields(pr_bundle_raw)
+    except Exception as exc:
+        pr_handoff = {
+            "summary": "- [not recorded]",
+            "validation": "- [not recorded]",
+            "risks_follow_up": "- [not recorded]",
+            "_error": str(exc),
+        }
+
+    result: dict = {
+        "status": "success",
+        "branch": branch_name,
+        "bundle_path_json": str(bundle_json_path),
+        "bundle_path_md": str(bundle_md_path),
+        "generated_at": generated_at,
+        "artifacts": artifacts,
+        "code_state": code_state,
+        "review_handoff": review_handoff,
+        "pr_handoff": pr_handoff,
+    }
+
+    # Write JSON bundle (ensure_ascii=True for jq-safe output per INV-8)
+    bundle_json_path.write_text(
+        json.dumps(result, indent=2, ensure_ascii=True) + "\n",
+        encoding="utf-8",
+    )
+
+    # Write human-readable Markdown bundle
+    bundle_md_path.write_text(
+        _render_bundle_markdown(result),
+        encoding="utf-8",
+    )
+
+    # --- Manifest integration (AC-4 / INV-5) ---
+    # Both bundle files are written; now record them in artifact_manifest.json.
+    # Failure here must NOT prevent the caller from receiving the bundle result.
+    try:
+        manifest = load_artifact_manifest(branch_name)
+        artifacts_list = [
+            _artifact_ref(bundle_json_path, "review-bundle"),
+            _artifact_ref(bundle_md_path, "review-bundle"),
+        ]
+
+        # Count present/missing entries from the inventory already built above.
+        present_count = 0
+        missing_count = 0
+        for key, val in artifacts.items():
+            if key in ("test_handoffs", "test_contracts"):
+                present_count += len(val) if isinstance(val, list) else 0
+            elif isinstance(val, dict):
+                if val.get("present"):
+                    present_count += 1
+                else:
+                    missing_count += 1
+
+        metadata: dict = {
+            "bundle_status": result["status"],
+            "selected_artifacts": present_count,
+            "missing_artifacts": missing_count,
+            "branch": branch_name,
+            "generated_at": result["generated_at"],
+        }
+        _set_manifest_stage(
+            manifest, "review", "ready", artifacts=artifacts_list, metadata=metadata
+        )
+        save_result = save_artifact_manifest(manifest, branch_name)
+        result["manifest_status"] = {"status": "ready", "path": save_result["path"]}
+    except Exception as exc:
+        result["manifest_status"] = {"status": "error", "reason": str(exc)}
+
+    return result
+
+
 def write_learning_handoff(
     workflow: str,
     task_title: str = "",
@@ -1638,16 +2019,18 @@ def write_learning_handoff(
         workflow_name, generated_at, markdown_path, json_path, branch_name
     )
     repeated_violation_result = record_repeated_learning_violations(
-        branch_name, metrics_result["metrics"]
+        branch_name, cast(dict[str, object], metrics_result["metrics"])
     )
-    repeated_violation_summary = repeated_violation_result["summary"]
+    repeated_violation_summary = cast(dict[str, object], repeated_violation_result["summary"])
+    rvr_path = str(repeated_violation_result["path"])
+    rvr_metrics = cast(dict[str, object], repeated_violation_result["metrics"])
 
     repeated_violation_lines = [
         f"- Findings checked: {repeated_violation_summary['finding_count']}",
         f"- Learned rules considered: {repeated_violation_summary['learned_rule_count']}",
         f"- Repeated-rule matches: {repeated_violation_summary['matched_count']}",
     ]
-    for match in repeated_violation_summary["matches"]:
+    for match in cast(list[dict[str, object]], repeated_violation_summary["matches"]):
         repeated_violation_lines.append(
             f"- {match['rule_title']} <= {match['finding_text']}"
         )
@@ -1661,7 +2044,7 @@ def write_learning_handoff(
             _artifact_ref(markdown_path, "learning-handoff-markdown"),
             _artifact_ref(json_path, "learning-handoff-json"),
             _artifact_ref(
-                Path(repeated_violation_result["path"]), "learning-handoff-metrics"
+                Path(rvr_path), "learning-handoff-metrics"
             ),
         ],
         metadata={
@@ -1670,9 +2053,9 @@ def write_learning_handoff(
             "outcome": outcome_text,
             "next_action": next_action_text,
             "git_ref": code_state.get("git_ref", "unknown"),
-            "learning_metrics_path": repeated_violation_result["path"],
+            "learning_metrics_path": rvr_path,
             "learning_metrics_counters": dict(
-                repeated_violation_result["metrics"]["counters"]
+                cast(Mapping[str, int], rvr_metrics["counters"])
             ),
             "repeated_violation_summary": repeated_violation_summary,
         },
@@ -1743,7 +2126,7 @@ def add_known_issue(
     }
 
 
-from map_utils import get_branch_name  # noqa: E402 — shared across .map/scripts/
+from map_utils import get_branch_name  # noqa: E402  # type: ignore[import-not-found]
 
 
 def update_step_state(
@@ -2219,10 +2602,9 @@ def load_blueprint(
     branch: Optional[str] = None, project_dir: Optional[Path] = None
 ) -> Optional[dict]:
     """Load blueprint.json for current branch."""
-    if branch is None:
-        branch = get_branch_name()
+    branch_name: str = branch if branch is not None else get_branch_name()
     base = project_dir or Path(".")
-    blueprint_path = base / ".map" / branch / "blueprint.json"
+    blueprint_path = base / ".map" / branch_name / "blueprint.json"
     if not blueprint_path.exists():
         return None
     try:
@@ -2417,6 +2799,102 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
     return "\n".join(parts)
 
 
+def prepare_detached_review(
+    bundle_path: Optional[str] = None,
+    *,
+    branch: Optional[str] = None,
+    commit: Optional[str] = None,
+    target_dir: Optional[str] = None,
+) -> dict[str, object]:
+    """Prepare a clean review context via git worktree add --detach.
+
+    Returns a dict with:
+      status: "success" | "unavailable" | "error"
+      reason: human-readable explanation
+      worktree_path: absolute str path (only on success, else None)
+      commit: short SHA used (only on success, else None)
+      bundle_path: input bundle path echoed back if provided
+      mutated_source: bool — MUST be False; the source branch is never mutated
+    """
+    _base: dict[str, object] = {
+        "bundle_path": bundle_path,
+        "worktree_path": None,
+        "commit": None,
+        "reason": "",
+        "mutated_source": False,
+    }
+
+    # Resolve target directory
+    branch_name = branch or get_branch_name()
+    if target_dir is not None:
+        resolved_target = Path(target_dir).resolve()
+    else:
+        resolved_target = get_branch_dir(branch_name).resolve() / "detached-review"
+
+    # Edge Case 6 + INV-6: never overwrite an existing path
+    if resolved_target.exists():
+        return {
+            **_base,
+            "status": "unavailable",
+            "reason": f"Detached worktree path already exists: {resolved_target}",
+        }
+
+    # Resolve commit SHA (short) — abort if not in a git repo
+    if commit is not None:
+        short_sha = commit
+    else:
+        try:
+            rev_result = subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        except OSError as e:
+            return {
+                **_base,
+                "status": "unavailable",
+                "reason": f"git rev-parse failed: {e}",
+            }
+        if rev_result.returncode != 0:
+            return {
+                **_base,
+                "status": "unavailable",
+                "reason": f"git rev-parse failed: {rev_result.stderr.strip()}",
+            }
+        short_sha = rev_result.stdout.strip()
+
+    # Create the detached worktree — the only git mutation is a new worktree entry
+    try:
+        wt_result = subprocess.run(
+            ["git", "worktree", "add", "--detach", str(resolved_target), short_sha],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except OSError as e:
+        return {
+            **_base,
+            "status": "error",
+            "reason": f"git worktree add failed: {e}",
+        }
+
+    if wt_result.returncode != 0:
+        return {
+            **_base,
+            "status": "error",
+            "reason": f"git worktree add failed: {wt_result.stderr.strip()}",
+        }
+
+    return {
+        **_base,
+        "status": "success",
+        "worktree_path": str(resolved_target),
+        "commit": short_sha,
+        "reason": "",
+    }
+
+
 if __name__ == "__main__":
     # Simple CLI interface for testing
     import sys
@@ -2552,6 +3030,10 @@ if __name__ == "__main__":
         )
         print(json.dumps(result, indent=2))
 
+    elif func_name == "create_review_bundle":
+        result = create_review_bundle()
+        print(json.dumps(result, indent=2, ensure_ascii=True))
+
     elif func_name == "build_handoff_bundle":
         result = build_handoff_bundle()
         print(json.dumps(result, indent=2, ensure_ascii=True))
@@ -2620,7 +3102,7 @@ if __name__ == "__main__":
         if not state_path.exists():
             print(json.dumps({"status": "error", "message": "step_state.json not found"}))
             _sys.exit(1)
-        from map_orchestrator import StepState
+        from map_orchestrator import StepState  # type: ignore[import-not-found]
         st = StepState.load(state_path)
         subtask_id = data.get("subtask_id") or st.current_subtask_id or ""
         if not subtask_id:
@@ -2639,6 +3121,23 @@ if __name__ == "__main__":
     elif func_name == "build_context_block" and len(sys.argv) >= 4:
         result = build_context_block(sys.argv[2], sys.argv[3])
         print(result)
+
+    elif func_name == "prepare_detached_review":
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py prepare_detached_review")
+        _p.add_argument("bundle_path", nargs="?", default=None)
+        _p.add_argument("--commit", default=None)
+        _p.add_argument("--target-dir", default=None)
+        _p.add_argument("--branch", default=None)
+        _args = _p.parse_args(sys.argv[2:])
+        result = prepare_detached_review(
+            _args.bundle_path,
+            branch=_args.branch,
+            commit=_args.commit,
+            target_dir=_args.target_dir,
+        )
+        print(json.dumps(result, indent=2))
 
     else:
         print(f"Unknown function: {func_name}")

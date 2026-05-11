@@ -45,6 +45,17 @@ Verification:
   - Do NOT dismiss Monitor feedback as "out of scope" / "separate task".
   - If you're unsure whether fixing it is in scope: ask the user explicitly and wait for a decision.
 
+## Fix every surfaced error — no exceptions
+
+- Every error surfaced by ANY tool during a workflow must be fixed before the workflow can complete. This includes:
+  - `make lint`, `make check`, `make test`, `pytest`, `ruff`, `mypy`
+  - **IDE / type-checker diagnostics surfaced in the conversation** (Pyright, Pylance, language-server diagnostics)
+  - Hook output and tool-result diagnostics
+- "Pre-existing" is NOT a valid reason to skip. If the diagnostic surfaces in the current run, it is current.
+- "Not in the CI gate" is NOT a valid reason to skip. The error is real if any tool reported it.
+- "Static-analysis noise" is NOT a category. Either the type system is correct and the code is wrong, or the annotation needs fixing — pick one and fix it.
+- Only legitimate skip: the user explicitly approves deferral in the current conversation. Document the deferral in writing.
+
 ## Bash Command Guidelines
 
 **CRITICAL:** Avoid output buffering issues that cause commands to hang.
