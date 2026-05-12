@@ -2,7 +2,7 @@
 
 ## What this repo is
 
-- **Purpose:** `mapify` is a Python 3.11+ CLI that installs the MAP Framework into a target project (it writes `.claude/` prompts/config and `.map/` workflow artifacts).
+- **Purpose:** `mapify` is a Python 3.11+ CLI that installs the MAP Framework into a target project (it writes `.claude/` skill-backed slash surfaces/config and `.map/` workflow artifacts).
 - **Runtime code:** `src/mapify_cli/`
 - **Bundled templates (what users get from `mapify init`):** `src/mapify_cli/templates/`
 - **Dev templates/config used in this repo:** `.claude/` (keep it in sync with `src/mapify_cli/templates/`)
@@ -13,7 +13,8 @@ If you change anything under `.claude/` that is shipped to users, you MUST copy 
 
 Common synced paths:
 - `.claude/agents/` → `src/mapify_cli/templates/agents/`
-- `.claude/commands/` → `src/mapify_cli/templates/commands/`
+- `.claude/commands/` → `src/mapify_cli/templates/commands/` (custom-command scaffolding only; MAP `/map-*` surfaces live in skills)
+- `.claude/skills/` → `src/mapify_cli/templates/skills/`
 - `.claude/hooks/` → `src/mapify_cli/templates/hooks/`
 - `.claude/references/` → `src/mapify_cli/templates/references/`
 - `.claude/settings.json`, `.claude/workflow-rules.json` → `src/mapify_cli/templates/`

@@ -227,6 +227,8 @@ If you prefer manual setup:
    │   │   ├── research-agent.md      # Isolated codebase research
    │   │   ├── final-verifier.md      # Adversarial verification (Ralph Loop)
    │   │   └── documentation-reviewer.md  # Reviews technical docs
+   │   ├── commands/                  # User-custom commands + MAP skills README
+   │   │   └── README.md              # Points /map-* users to skill-backed surfaces
    │   ├── skills/                    # All MAP slash surfaces ship as skills
    │   │   ├── README.md
    │   │   ├── skill-rules.json
@@ -245,7 +247,8 @@ If you prefer manual setup:
    │   └── mcp_config.json
    ```
 
-   *Note*: There is no `.claude/commands/` directory — every `/map-*`
+   *Note*: MAP may create `.claude/commands/README.md` for custom command
+   guidance, but it does not ship `.claude/commands/map-*.md`. Every `/map-*`
    slash surface lives under `.claude/skills/<name>/SKILL.md`. The
    `tests/test_template_sync.py::test_no_map_command_files_remain` test
    enforces this invariant.

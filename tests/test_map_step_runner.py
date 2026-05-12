@@ -20,7 +20,7 @@ SCRIPTS_PATH = (
 
 sys.path.insert(0, str(SCRIPTS_PATH))
 
-import map_step_runner  # noqa: E402
+import map_step_runner  # noqa: E402  # type: ignore[import-not-found]
 
 
 @pytest.fixture
@@ -218,6 +218,7 @@ def test_build_handoff_bundle_reads_artifacts(branch_workspace):
 
 
 def test_build_handoff_bundle_ignores_placeholder_human_artifacts(branch_workspace):
+    del branch_workspace  # fixture only needed for chdir + monkeypatch side effects
     result = map_step_runner.build_handoff_bundle()
 
     assert result["status"] == "success"
@@ -665,6 +666,7 @@ class TestAppendSessionLog:
 
     def test_returns_deprecated_status(self, branch_workspace):
         """Deprecated function returns correct status and flag."""
+        del branch_workspace  # fixture only needed for chdir + monkeypatch side effects
         result = map_step_runner.append_session_log("ACTOR", "success")
 
         assert result["status"] == "deprecated"
@@ -673,6 +675,7 @@ class TestAppendSessionLog:
 
     def test_accepts_all_arguments_without_error(self, branch_workspace):
         """All original arguments are accepted (backward compat) even though ignored."""
+        del branch_workspace  # fixture only needed for chdir + monkeypatch side effects
         result = map_step_runner.append_session_log(
             "MONITOR", "passed", "ST-001", "details", ["ref1", "ref2"]
         )
@@ -723,6 +726,7 @@ class TestWriteStageGate:
 
     def test_all_valid_verdicts_accepted(self, branch_workspace):
         """All three GATE_VERDICTS are accepted without error."""
+        del branch_workspace  # fixture only needed for chdir + monkeypatch side effects
         for verdict in ("ready", "needs-revision", "blocked"):
             res = map_step_runner.write_stage_gate(f"stage-{verdict}", verdict)
             assert (
@@ -773,6 +777,7 @@ class TestEnsureActiveIssuesFile:
 
     def test_returns_created_false_when_file_exists(self, branch_workspace):
         """Returns created=False when active-issues.json already present."""
+        del branch_workspace  # fixture only needed for chdir + monkeypatch side effects
         # Create the file first
         map_step_runner.ensure_active_issues_file()
 
@@ -845,6 +850,7 @@ class TestReplaceActiveIssues:
 
     def test_empty_issues_text_produces_empty_list(self, branch_workspace):
         """Completely empty issues_text results in zero issues."""
+        del branch_workspace  # fixture only needed for chdir + monkeypatch side effects
         result = map_step_runner.replace_active_issues("code", "code-review-001.md", "")
 
         assert result["count"] == 0
@@ -898,6 +904,7 @@ class TestBuildReviewHandoff:
 
     def test_returns_none_paths_when_no_artifacts(self, branch_workspace):
         """Returns None for paths when no numbered artifacts exist."""
+        del branch_workspace  # fixture only needed for chdir + monkeypatch side effects
         result = map_step_runner.build_review_handoff()
 
         assert result["status"] == "success"
@@ -922,6 +929,7 @@ class TestBuildReviewHandoff:
 
     def test_verification_summary_none_when_absent(self, branch_workspace):
         """verification_summary_path is None when file does not exist."""
+        del branch_workspace  # fixture only needed for chdir + monkeypatch side effects
         result = map_step_runner.build_review_handoff()
 
         assert result["verification_summary_path"] is None
@@ -957,6 +965,7 @@ class TestBuildHandoffBundle:
         Note: build_handoff_bundle calls ensure_human_artifacts which creates qa-001.md,
         so validation will contain at least the QA stub rather than '[not recorded]'.
         """
+        del branch_workspace  # fixture only needed for chdir + monkeypatch side effects
         result = map_step_runner.build_handoff_bundle()
 
         assert result["status"] == "success"
@@ -969,6 +978,7 @@ class TestBuildHandoffBundle:
 
     def test_branch_field_in_response(self, branch_workspace):
         """Response includes the branch name."""
+        del branch_workspace  # fixture only needed for chdir + monkeypatch side effects
         result = map_step_runner.build_handoff_bundle()
 
         assert result["branch"] == "test-branch"
@@ -1037,6 +1047,7 @@ class TestWritePlanReview:
 
     def test_sequential_numbering(self, branch_workspace):
         """Second call creates plan-review-002.md."""
+        del branch_workspace
         map_step_runner.write_plan_review(recommendation="ready")
         result = map_step_runner.write_plan_review(recommendation="needs-revision")
 
@@ -1053,6 +1064,7 @@ class TestWritePlanReview:
 
     def test_all_valid_recommendations_accepted(self, branch_workspace):
         """All three GATE_VERDICTS are accepted as recommendation values."""
+        del branch_workspace
         for verdict in ("ready", "needs-revision", "blocked"):
             res = map_step_runner.write_plan_review(
                 summary=f"Review for {verdict}", recommendation=verdict
@@ -1084,6 +1096,7 @@ class TestEnsureKnownIssuesFile:
 
     def test_returns_created_false_when_exists(self, branch_workspace):
         """Returns created=False when known-issues.json already present."""
+        del branch_workspace
         map_step_runner.ensure_known_issues_file()
         result = map_step_runner.ensure_known_issues_file()
 
@@ -1186,6 +1199,7 @@ class TestRunTestGate:
         import subprocess as real_subprocess
 
         def mock_run(cmd, **kwargs):
+            del kwargs
             result = real_subprocess.CompletedProcess(cmd, 0, "1 passed\n", "")
             return result
 
@@ -1205,6 +1219,7 @@ class TestRunTestGate:
         import subprocess as real_subprocess
 
         def mock_run(cmd, **kwargs):
+            del kwargs
             return real_subprocess.CompletedProcess(cmd, 1, "FAILED test_foo\n", "")
 
         monkeypatch.setattr("subprocess.run", mock_run)
@@ -1223,6 +1238,7 @@ class TestRunTestGate:
         import subprocess
 
         def mock_run(cmd, **kwargs):
+            del kwargs
             raise subprocess.TimeoutExpired(cmd, 300)
 
         monkeypatch.setattr("subprocess.run", mock_run)
@@ -1243,6 +1259,7 @@ class TestSnapshotCodeState:
 
     def test_returns_expected_structure(self, branch_workspace):
         """Returns dict with git_ref, files_changed, diff_stat, branch."""
+        del branch_workspace
         result = map_step_runner.snapshot_code_state()
 
         assert result["status"] == "success"
@@ -1253,6 +1270,7 @@ class TestSnapshotCodeState:
 
     def test_git_ref_is_truncated(self, branch_workspace):
         """git_ref is at most 12 characters."""
+        del branch_workspace
         result = map_step_runner.snapshot_code_state()
 
         assert len(result["git_ref"]) <= 12
@@ -1268,6 +1286,7 @@ class TestLoadBlueprint:
         assert result == blueprint
 
     def test_returns_none_for_missing_file(self, branch_workspace):
+        del branch_workspace
         result = map_step_runner.load_blueprint("test-branch")
         assert result is None
 
@@ -1321,6 +1340,7 @@ class TestBuildContextBlock:
     """Tests for build_context_block function."""
 
     def test_returns_empty_when_no_blueprint(self, branch_workspace):
+        del branch_workspace
         result = map_step_runner.build_context_block("test-branch", "ST-001")
         assert result == ""
 
@@ -1443,7 +1463,7 @@ class TestBuildContextBlockRepoDelta:
             "current_sha": "def456",
         }
         repo_insight = types.SimpleNamespace(
-            compute_differential_insight=lambda *_args, **_kwargs: mock_insight
+            compute_differential_insight=lambda *_args, **_kwargs: mock_insight  # pyright: ignore[reportUnusedParameter]
         )
         with patch.dict("sys.modules", {"mapify_cli.repo_insight": repo_insight}):
             result = map_step_runner.build_context_block("test-branch", "ST-001")
@@ -1462,7 +1482,7 @@ class TestBuildContextBlockRepoDelta:
             "current_sha": "def456",
         }
         repo_insight = types.SimpleNamespace(
-            compute_differential_insight=lambda *_args, **_kwargs: mock_insight
+            compute_differential_insight=lambda *_args, **_kwargs: mock_insight  # pyright: ignore[reportUnusedParameter]
         )
         with patch.dict("sys.modules", {"mapify_cli.repo_insight": repo_insight}):
             result = map_step_runner.build_context_block("test-branch", "ST-001")
@@ -1480,7 +1500,7 @@ class TestBuildContextBlockRepoDelta:
             "error": "git diff failed",
         }
         repo_insight = types.SimpleNamespace(
-            compute_differential_insight=lambda *_args, **_kwargs: mock_insight
+            compute_differential_insight=lambda *_args, **_kwargs: mock_insight  # pyright: ignore[reportUnusedParameter]
         )
         with patch.dict("sys.modules", {"mapify_cli.repo_insight": repo_insight}):
             result = map_step_runner.build_context_block("test-branch", "ST-001")
@@ -1515,7 +1535,7 @@ class TestBuildContextBlockRepoDelta:
             "current_sha": "def456",
         }
         repo_insight = types.SimpleNamespace(
-            compute_differential_insight=lambda *_args, **_kwargs: mock_insight
+            compute_differential_insight=lambda *_args, **_kwargs: mock_insight  # pyright: ignore[reportUnusedParameter]
         )
         with patch.dict("sys.modules", {"mapify_cli.repo_insight": repo_insight}):
             result = map_step_runner.build_context_block("test-branch", "ST-001")
@@ -1536,7 +1556,7 @@ class TestBuildContextBlockRepoDelta:
             "current_sha": "def456",
         }
         repo_insight = types.SimpleNamespace(
-            compute_differential_insight=lambda *_args, **_kwargs: mock_insight
+            compute_differential_insight=lambda *_args, **_kwargs: mock_insight  # pyright: ignore[reportUnusedParameter]
         )
         with patch.dict("sys.modules", {"mapify_cli.repo_insight": repo_insight}):
             result = map_step_runner.build_context_block("test-branch", "ST-001")
@@ -1581,7 +1601,7 @@ class TestBuildContextBlockIntegration:
 
         # Simulate ST-001 completed with results via StepState
         sys.path.insert(0, str(SCRIPTS_PATH))
-        import map_orchestrator  # noqa: E402
+        import map_orchestrator  # noqa: E402  # type: ignore[import-not-found]
 
         state = map_orchestrator.StepState()
         state.current_subtask_id = "ST-002"
@@ -1700,3 +1720,556 @@ class TestSanitizeForJson:
         assert "fail" in validation
         assert "details" in validation
         assert "noise" in validation
+
+
+class TestSanitizeForJsonProperty:
+    """Property-based coverage for ``_sanitize_for_json`` via Hypothesis."""
+
+    def test_strips_every_control_byte_for_arbitrary_strings(self):
+        from hypothesis import given, strategies as st
+
+        @given(st.text())
+        def _prop(raw: str) -> None:
+            sanitized = map_step_runner._sanitize_for_json(raw)
+            # Function must never raise on arbitrary text inputs.
+            # All C0 (U+0000 — U+001F) and DEL (U+007F) bytes must be absent.
+            for ch in sanitized:
+                code = ord(ch)
+                assert not (0x00 <= code <= 0x1F), (
+                    f"C0 control U+{code:04X} leaked into output: {sanitized!r}"
+                )
+                assert code != 0x7F, (
+                    f"DEL U+007F leaked into output: {sanitized!r}"
+                )
+
+        _prop()
+
+
+# ---------------------------------------------------------------------------
+# create_review_bundle — focused unit tests (ST-001 / ST-002)
+# ---------------------------------------------------------------------------
+
+
+class TestCreateReviewBundle:
+    """Focused tests for create_review_bundle."""
+
+    def test_create_review_bundle_full_workspace(self, branch_workspace):
+        """Populate workspace with every artifact kind, assert files + status."""
+        branch = "test-branch"
+        # Fixed artifacts
+        (branch_workspace / f"spec_{branch}.md").write_text("# Spec\n", encoding="utf-8")
+        (branch_workspace / f"task_plan_{branch}.md").write_text("# Task Plan\n", encoding="utf-8")
+        (branch_workspace / "blueprint.json").write_text('{"waves":[]}', encoding="utf-8")
+        (branch_workspace / "verification-summary.md").write_text("# Verification\n", encoding="utf-8")
+        (branch_workspace / "qa-001.md").write_text("# QA\n", encoding="utf-8")
+        (branch_workspace / "pr-draft.md").write_text("# PR Draft\n", encoding="utf-8")
+        (branch_workspace / "active-issues.json").write_text('{"issues":[]}', encoding="utf-8")
+        # Numbered artifacts
+        (branch_workspace / "plan-review-001.md").write_text("# Plan Review\n", encoding="utf-8")
+        (branch_workspace / "code-review-001.md").write_text("# Code Review\n", encoding="utf-8")
+        # Multi-artifacts
+        (branch_workspace / "test_handoff_001.json").write_text('{"tests":[]}', encoding="utf-8")
+        (branch_workspace / "test_contract_001.md").write_text("# Contract\n", encoding="utf-8")
+
+        result = map_step_runner.create_review_bundle()
+
+        assert result["status"] == "success"
+        assert (branch_workspace / "review-bundle.json").exists()
+        assert (branch_workspace / "review-bundle.md").exists()
+        # Every fixed-kind entry must be present=True
+        artifacts = result["artifacts"]
+        for key in ("spec", "task_plan", "blueprint", "verification_summary",
+                    "qa", "pr_draft", "active_issues"):
+            assert artifacts[key]["present"] is True, f"{key} should be present"
+
+    def test_create_review_bundle_empty_workspace(self, branch_workspace):
+        """Empty workspace: status==success, fixed entries present=False, files written."""
+        del branch_workspace  # fixture only needed for chdir + monkeypatch side effects
+
+        result = map_step_runner.create_review_bundle()
+
+        assert result["status"] == "success"
+        assert Path(result["bundle_path_json"]).exists()
+        assert Path(result["bundle_path_md"]).exists()
+        artifacts = result["artifacts"]
+        for key in ("spec", "task_plan", "blueprint", "verification_summary",
+                    "qa", "pr_draft", "active_issues"):
+            entry = artifacts[key]
+            assert entry["present"] is False, f"{key} should be absent"
+            assert entry.get("reason") is not None, f"{key} should have a reason"
+        # review_handoff and pr_handoff must always be present in result
+        assert "review_handoff" in result
+        assert "pr_handoff" in result
+
+    def test_create_review_bundle_sanitizes_control_characters(self, branch_workspace):
+        """Artifact with control characters must produce a JSON-parseable bundle."""
+        nasty = "header\r\n\tdetails\x00with\x1fnoise\x07 end\x7f"
+        (branch_workspace / "qa-001.md").write_text(nasty, encoding="utf-8")
+
+        result = map_step_runner.create_review_bundle()
+
+        bundle_path = Path(result["bundle_path_json"])
+        with bundle_path.open(encoding="utf-8") as fh:
+            loaded = json.load(fh)  # must not raise
+        # The sanitized text must not contain raw C0/DEL bytes
+        qa_text = loaded["artifacts"]["qa"]["sanitized_text"] or ""
+        for ch in ("\x00", "\x07", "\x1f", "\x7f", "\r", "\t"):
+            assert ch not in qa_text, f"control char {ch!r} leaked into bundle"
+        assert "details" in qa_text
+
+    def test_create_review_bundle_picks_latest_numbered_review(self, branch_workspace):
+        """With plan-review-001 and plan-review-003, latest_plan_review.index == 3."""
+        (branch_workspace / "plan-review-001.md").write_text("Old review\n", encoding="utf-8")
+        (branch_workspace / "plan-review-003.md").write_text("Latest review\n", encoding="utf-8")
+
+        result = map_step_runner.create_review_bundle()
+
+        entry = result["artifacts"]["latest_plan_review"]
+        assert entry["present"] is True
+        assert entry["index"] == 3
+        assert entry["path"].endswith("plan-review-003.md")
+
+    def test_create_review_bundle_updates_manifest_review_stage(self, branch_workspace):
+        """Manifest review stage is set to 'ready' with 2 review-bundle artifacts."""
+        manifest = map_step_runner.default_artifact_manifest("test-branch")
+        map_step_runner.save_artifact_manifest(manifest, "test-branch")
+
+        map_step_runner.create_review_bundle()
+
+        reloaded = map_step_runner.load_artifact_manifest("test-branch")
+        stages = reloaded["stages"]
+        assert isinstance(stages, dict)
+        review_stage = stages["review"]
+        assert review_stage["status"] == "ready"
+        artifacts_list = review_stage["artifacts"]
+        assert len(artifacts_list) == 2
+        kinds = {a["kind"] for a in artifacts_list}
+        assert kinds == {"review-bundle"}
+        meta = review_stage["metadata"]
+        assert "bundle_status" in meta
+        assert "selected_artifacts" in meta
+        assert "missing_artifacts" in meta
+        assert isinstance(meta["selected_artifacts"], int)
+        assert isinstance(meta["missing_artifacts"], int)
+
+    def test_create_review_bundle_handles_manifest_write_error(
+        self, monkeypatch, branch_workspace
+    ):
+        """OSError from save_artifact_manifest is captured; bundle files still written."""
+        del branch_workspace  # fixture only needed for chdir + monkeypatch side effects
+
+        def _raise(*args: object, **kwargs: object) -> None:
+            raise OSError("disk full")
+
+        monkeypatch.setattr(map_step_runner, "save_artifact_manifest", _raise)
+
+        result = map_step_runner.create_review_bundle()
+
+        # Bundle files must still be written despite manifest failure
+        assert Path(result["bundle_path_json"]).exists()
+        assert Path(result["bundle_path_md"]).exists()
+        assert result["manifest_status"]["status"] == "error"
+        assert "disk full" in result["manifest_status"]["reason"]
+
+    def test_create_review_bundle_creates_manifest_when_absent(self, branch_workspace):
+        """No pre-existing manifest: helper creates it and sets review stage to ready."""
+        manifest_file = branch_workspace / "artifact_manifest.json"
+        assert not manifest_file.exists()
+
+        map_step_runner.create_review_bundle()
+
+        assert manifest_file.exists()
+        reloaded = map_step_runner.load_artifact_manifest("test-branch")
+        stages = reloaded["stages"]
+        assert isinstance(stages, dict)
+        assert stages["review"]["status"] == "ready"
+
+    def test_create_review_bundle_warns_on_schema_drift(
+        self, monkeypatch, branch_workspace
+    ):
+        """Soft validation: schema failure surfaces ``schema_validation_error`` and
+        downgrades the manifest stage from ``ready`` to ``warn`` without dropping the
+        bundle file write.
+        """
+        del branch_workspace  # fixture only needed for chdir + monkeypatch side effects
+
+        try:
+            import mapify_cli.schemas as schemas_module
+        except ImportError:
+            pytest.skip("mapify_cli.schemas not importable in this environment")
+
+        def _force_invalid(
+            data: dict, schema: dict, *, raise_on_error: bool = False
+        ) -> tuple[bool, list[str]]:
+            return (False, ["forced-invalid: drift sentinel"])
+
+        monkeypatch.setattr(schemas_module, "validate_artifact", _force_invalid)
+
+        result = map_step_runner.create_review_bundle()
+
+        assert Path(result["bundle_path_json"]).exists()
+        assert result["schema_validation_error"] == ["forced-invalid: drift sentinel"]
+        assert result["manifest_status"]["status"] == "warn"
+        reloaded = map_step_runner.load_artifact_manifest("test-branch")
+        stages = reloaded["stages"]
+        assert isinstance(stages, dict)
+        assert stages["review"]["status"] == "warn"
+
+        bundle = json.loads(Path(result["bundle_path_json"]).read_text(encoding="utf-8"))
+        assert bundle["schema_validation_error"] == ["forced-invalid: drift sentinel"]
+
+    def test_create_review_bundle_marks_stub_artifacts_absent(self, branch_workspace):
+        """Stub verification-summary.md and pr-draft.md must surface as ``present=False``.
+
+        Covers both detection paths:
+          * Strict ``HUMAN_ARTIFACT_DEFAULTS`` byte-match (initial stub).
+          * ``_is_soft_stub_text`` fingerprint (writer-emitted placeholder body).
+        """
+        map_step_runner.write_pr_draft()
+        map_step_runner.write_verification_summary("", "", "", "", "")
+        (branch_workspace / "spec_test-branch.md").write_text(
+            "# Spec\n\nReal content.\n", encoding="utf-8"
+        )
+
+        result = map_step_runner.create_review_bundle()
+
+        artifacts = result["artifacts"]
+        assert artifacts["pr_draft"]["present"] is False
+        assert "stub" in (artifacts["pr_draft"].get("reason") or "")
+        assert artifacts["verification_summary"]["present"] is False
+        assert "stub" in (artifacts["verification_summary"].get("reason") or "")
+        assert artifacts["spec"]["present"] is True
+
+    def test_create_review_bundle_with_slash_branch(self, branch_workspace):
+        """Explicit ``branch='feat/foo'`` must sanitize to ``feat-foo`` rather than nesting."""
+        del branch_workspace  # fixture only needed for chdir + monkeypatch side effects
+
+        result = map_step_runner.create_review_bundle(branch="feat/foo")
+
+        assert result["branch"] == "feat-foo"
+        bundle_json = Path(result["bundle_path_json"])
+        assert "feat-foo" in str(bundle_json)
+        assert "feat/foo" not in str(bundle_json)
+        assert bundle_json.exists()
+        assert not Path(".map/feat/foo").exists()
+
+    def test_create_review_bundle_caps_large_diff(self, monkeypatch, branch_workspace):
+        """Oversize diff_stat / files_changed snapshot must be truncated with a marker."""
+        del branch_workspace  # fixture only needed for chdir + monkeypatch side effects
+
+        huge_diff = "X" * (map_step_runner._DIFF_STAT_MAX_CHARS + 10_000)
+        huge_files = [f"path/file_{i}.py" for i in range(
+            map_step_runner._FILES_CHANGED_MAX_ENTRIES + 50
+        )]
+
+        def fake_snapshot(branch=None):
+            return {
+                "status": "success",
+                "git_ref": "abcdef123456",
+                "files_changed": huge_files[:map_step_runner._FILES_CHANGED_MAX_ENTRIES],
+                "diff_stat": huge_diff[:map_step_runner._DIFF_STAT_MAX_CHARS] + "\n... [truncated]",
+                "branch": branch or "test-branch",
+                "diff_truncated": True,
+            }
+
+        monkeypatch.setattr(map_step_runner, "snapshot_code_state", fake_snapshot)
+
+        result = map_step_runner.create_review_bundle()
+
+        code_state = result["code_state"]
+        assert code_state["diff_truncated"] is True
+        assert len(code_state["diff_stat"]) <= map_step_runner._DIFF_STAT_MAX_CHARS + 32
+        assert len(code_state["files_changed"]) <= map_step_runner._FILES_CHANGED_MAX_ENTRIES
+
+    def test_snapshot_code_state_truncates_when_diff_oversize(self, monkeypatch):
+        """Direct ``snapshot_code_state`` call truncates oversize git output in-place."""
+        import subprocess as real_subprocess
+
+        huge = "X" * (map_step_runner._DIFF_STAT_MAX_CHARS + 100)
+        many_files = "\n".join(
+            f"path/file_{i}.py"
+            for i in range(map_step_runner._FILES_CHANGED_MAX_ENTRIES + 50)
+        )
+
+        def mock_run(cmd, **kwargs):
+            if "rev-parse" in cmd:
+                return real_subprocess.CompletedProcess(cmd, 0, "deadbeef\n", "")
+            if "--stat" in cmd:
+                return real_subprocess.CompletedProcess(cmd, 0, huge, "")
+            if "--name-only" in cmd:
+                return real_subprocess.CompletedProcess(cmd, 0, many_files, "")
+            return real_subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr("subprocess.run", mock_run)
+        result = map_step_runner.snapshot_code_state(branch="any")
+        assert result["diff_truncated"] is True
+        assert result["diff_stat"].endswith("[truncated]")
+        assert (
+            len(result["files_changed"]) == map_step_runner._FILES_CHANGED_MAX_ENTRIES
+        )
+
+
+# ---------------------------------------------------------------------------
+# prepare_detached_review — focused unit tests (ST-004)
+# ---------------------------------------------------------------------------
+
+
+class TestPrepareDetachedReview:
+    """Focused tests for prepare_detached_review."""
+
+    def test_prepare_detached_review_success(self, monkeypatch, branch_workspace):
+        """Happy path: rev-parse succeeds, worktree add succeeds."""
+        import subprocess as real_subprocess
+
+        def mock_run(cmd: list[str], **kwargs: object) -> real_subprocess.CompletedProcess:  # type: ignore[type-arg]
+            if "rev-parse" in cmd:
+                return real_subprocess.CompletedProcess(cmd, 0, "abc1234\n", "")
+            if "worktree" in cmd and "add" in cmd:
+                return real_subprocess.CompletedProcess(cmd, 0, "", "")
+            return real_subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr("subprocess.run", mock_run)
+        target = branch_workspace / "detached-review"
+
+        result = map_step_runner.prepare_detached_review(
+            "bundle.json", target_dir=str(target)
+        )
+
+        assert result["status"] == "success"
+        assert str(result["worktree_path"]).endswith("detached-review")
+        assert result["commit"] == "abc1234"
+        assert result["mutated_source"] is False
+
+    def test_prepare_detached_review_existing_path_unavailable(
+        self, monkeypatch, branch_workspace
+    ):
+        """Path already exists: returns unavailable without calling worktree add."""
+        import subprocess as real_subprocess
+
+        calls: list[list[str]] = []
+
+        def mock_run(cmd: list[str], **kwargs: object) -> real_subprocess.CompletedProcess:  # type: ignore[type-arg]
+            calls.append(list(cmd))
+            return real_subprocess.CompletedProcess(cmd, 0, "abc1234\n", "")
+
+        monkeypatch.setattr("subprocess.run", mock_run)
+        target = branch_workspace / "detached-review"
+        target.mkdir()
+
+        result = map_step_runner.prepare_detached_review(
+            "bundle.json", target_dir=str(target)
+        )
+
+        assert result["status"] == "unavailable"
+        assert "already exists" in result["reason"]
+        assert result["mutated_source"] is False
+        worktree_add_calls = [c for c in calls if "worktree" in c and "add" in c]
+        assert worktree_add_calls == [], "worktree add must never be called when path exists"
+
+    def test_prepare_detached_review_git_rev_parse_fails(
+        self, monkeypatch, branch_workspace
+    ):
+        """rev-parse exits non-zero: returns unavailable with stderr in reason."""
+        del branch_workspace  # fixture only needed for chdir + monkeypatch side effects
+        import subprocess as real_subprocess
+
+        def mock_run(cmd: list[str], **kwargs: object) -> real_subprocess.CompletedProcess:  # type: ignore[type-arg]
+            if "rev-parse" in cmd:
+                return real_subprocess.CompletedProcess(
+                    cmd, 128, "", "fatal: not a git repository"
+                )
+            return real_subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr("subprocess.run", mock_run)
+
+        result = map_step_runner.prepare_detached_review("bundle.json")
+
+        assert result["status"] == "unavailable"
+        assert "fatal: not a git repository" in result["reason"]
+
+    def test_prepare_detached_review_worktree_add_fails(
+        self, monkeypatch, branch_workspace
+    ):
+        """worktree add exits non-zero: returns error with stderr in reason."""
+        del branch_workspace  # fixture only needed for chdir + monkeypatch side effects
+        import subprocess as real_subprocess
+
+        def mock_run(cmd: list[str], **kwargs: object) -> real_subprocess.CompletedProcess:  # type: ignore[type-arg]
+            if "rev-parse" in cmd:
+                return real_subprocess.CompletedProcess(cmd, 0, "abc1234\n", "")
+            if "worktree" in cmd and "add" in cmd:
+                return real_subprocess.CompletedProcess(
+                    cmd, 1, "", "fatal: <path> invalid"
+                )
+            return real_subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr("subprocess.run", mock_run)
+
+        result = map_step_runner.prepare_detached_review("bundle.json")
+
+        assert result["status"] == "error"
+        assert "fatal: <path> invalid" in result["reason"]
+
+    def test_prepare_detached_review_never_calls_mutating_git_commands(
+        self, monkeypatch, branch_workspace
+    ):
+        """No checkout, stash, reset, restore, commit, rm, or 'git add ' called."""
+        del branch_workspace  # fixture only needed for chdir + monkeypatch side effects
+        import subprocess as real_subprocess
+
+        recorded_calls: list[list[str]] = []
+
+        def mock_run(cmd: list[str], **kwargs: object) -> real_subprocess.CompletedProcess:  # type: ignore[type-arg]
+            recorded_calls.append(list(cmd))
+            if "rev-parse" in cmd:
+                return real_subprocess.CompletedProcess(cmd, 0, "abc1234\n", "")
+            return real_subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr("subprocess.run", mock_run)
+
+        map_step_runner.prepare_detached_review("bundle.json")
+
+        # "worktree add" is the one permitted mutation (creates a new worktree entry).
+        # All other staging/checkout/destructive git subcommands must never appear.
+        mutating = ("checkout", "stash", "reset", "restore", "commit", "rm")
+        for call in recorded_calls:
+            joined = " ".join(call)
+            for bad in mutating:
+                assert bad not in joined, (
+                    f"mutating git command {bad!r} found in call: {call}"
+                )
+            # bare "git add <path>" (staging) must not appear; "worktree add" is fine
+            if "worktree" not in call:
+                assert "add" not in call, (
+                    f"bare 'git add' (staging) found in call: {call}"
+                )
+
+    def test_prepare_detached_review_rejects_path_traversal(
+        self, monkeypatch, branch_workspace
+    ):
+        """target_dir outside .map/<branch>/ scope is rejected without git mutation."""
+        del branch_workspace  # fixture only needed for chdir + monkeypatch side effects
+        import subprocess as real_subprocess
+
+        recorded_calls: list[list[str]] = []
+
+        def mock_run(cmd: list[str], **kwargs: object) -> real_subprocess.CompletedProcess:  # type: ignore[type-arg]
+            recorded_calls.append(list(cmd))
+            return real_subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr("subprocess.run", mock_run)
+
+        result = map_step_runner.prepare_detached_review(
+            "bundle.json", target_dir="../../tmp/evil"
+        )
+
+        assert result["status"] == "error"
+        assert "escapes" in result["reason"]
+        assert result["mutated_source"] is False
+        # No git command of any kind must have been invoked — the guard returns before
+        # rev-parse and worktree add.
+        worktree_or_rev = [
+            c for c in recorded_calls if "worktree" in c or "rev-parse" in c
+        ]
+        assert worktree_or_rev == [], (
+            f"git was invoked after path-traversal rejection: {worktree_or_rev}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Regression: build_handoff_bundle + write_learning_handoff remain compatible
+# after create_review_bundle has populated the review stage (ST-005 / AC-7)
+# ---------------------------------------------------------------------------
+
+
+def test_build_handoff_bundle_compatible_after_review_bundle_created(
+    branch_workspace,
+):
+    """build_handoff_bundle() still returns the expected shape after create_review_bundle()
+    has written review-bundle.json and updated artifact_manifest review stage (AC-7 / INV-7)."""
+    # Populate artifacts that build_handoff_bundle() reads
+    (branch_workspace / "verification-summary.md").write_text(
+        "# Verification Summary\n\n- Verdict: READY FOR REVIEW\n",
+        encoding="utf-8",
+    )
+    (branch_workspace / "qa-001.md").write_text(
+        "# QA 001\n\n- Commands Run: pytest\n",
+        encoding="utf-8",
+    )
+    (branch_workspace / "code-review-001.md").write_text(
+        "# Code Review 001\n\n- follow up on edge case\n",
+        encoding="utf-8",
+    )
+
+    # Run create_review_bundle first — this populates review stage in the manifest
+    bundle_result = map_step_runner.create_review_bundle()
+    assert bundle_result["status"] == "success", (
+        "create_review_bundle should succeed before the compatibility check"
+    )
+
+    # Now verify build_handoff_bundle still works and returns the expected shape
+    result = map_step_runner.build_handoff_bundle()
+
+    assert result["status"] == "success"
+    # Required fields must all be present with their expected types
+    for field in ("status", "branch", "summary", "validation", "risks_follow_up"):
+        assert field in result, f"build_handoff_bundle result missing field '{field}'"
+    # Content must still reflect the artifacts written above
+    assert "READY FOR REVIEW" in result["validation"]
+    assert "follow up on edge case" in result["risks_follow_up"]
+    assert "Verification summary available" in result["summary"]
+
+
+def test_write_learning_handoff_compatible_after_review_bundle_created(
+    branch_workspace,
+):
+    """write_learning_handoff() succeeds and produces expected files after create_review_bundle()
+    has updated the artifact_manifest review stage (AC-7 / INV-7)."""
+    # Populate artifacts consumed by write_learning_handoff and create_review_bundle
+    (branch_workspace / "verification-summary.md").write_text(
+        "# Verification Summary\n\n- Verdict: READY FOR REVIEW\n",
+        encoding="utf-8",
+    )
+    (branch_workspace / "qa-001.md").write_text(
+        "# QA 001\n\n- Commands Run: pytest\n",
+        encoding="utf-8",
+    )
+    (branch_workspace / "code-review-001.md").write_text(
+        "# Code Review 001\n\n- looks good\n",
+        encoding="utf-8",
+    )
+    (branch_workspace / "workflow-fit.json").write_text(
+        json.dumps({"recommended_workflow": "map-efficient"}) + "\n",
+        encoding="utf-8",
+    )
+
+    # Run create_review_bundle first — updates manifest review stage to "ready"
+    bundle_result = map_step_runner.create_review_bundle()
+    assert bundle_result["status"] == "success", (
+        "create_review_bundle should succeed before the compatibility check"
+    )
+
+    # Confirm the manifest review stage was actually populated
+    manifest_after_bundle = map_step_runner.load_artifact_manifest()
+    assert manifest_after_bundle["stages"]["review"]["status"] == "ready"
+
+    # Now run write_learning_handoff and verify it still succeeds
+    result = map_step_runner.write_learning_handoff(
+        "map-efficient",
+        task_title="t",
+        outcome="OK",
+        next_action="run review",
+    )
+
+    assert result["status"] == "success"
+    # Both output files must be produced
+    assert (branch_workspace / "learning-handoff.md").exists(), (
+        "learning-handoff.md was not created"
+    )
+    assert (branch_workspace / "learning-handoff.json").exists(), (
+        "learning-handoff.json was not created"
+    )
+    # The markdown must reflect the passed arguments
+    markdown = (branch_workspace / "learning-handoff.md").read_text(encoding="utf-8")
+    assert "map-efficient" in markdown
+    assert "run review" in markdown

@@ -24,6 +24,7 @@ import os
 import subprocess
 import textwrap
 from pathlib import Path
+from typing import Optional
 
 import pytest
 
@@ -88,8 +89,28 @@ def _e2e_ready() -> bool:
 SKIP_REASON = "claude CLI, mapify CLI, or API key/auth not available"
 
 
+_TRANSIENT_API_ERROR_PATTERNS = (
+    "Stream idle timeout",
+    "Internal server error",
+    "rate_limit_error",
+    "overloaded_error",
+    "ConnectionError",
+    "Read timed out",
+)
+
+
+def _is_transient_api_error(stdout: str, stderr: str) -> bool:
+    blob = (stdout or "") + "\n" + (stderr or "")
+    return any(p in blob for p in _TRANSIENT_API_ERROR_PATTERNS)
+
+
 def _run_claude(prompt: str, cwd: str, timeout: int = 300, max_turns: int = 50) -> str:
     """Run claude -p with a prompt and return the output.
+
+    Retries up to ``max_attempts`` times when the Anthropic API returns a known
+    transient failure (e.g., "Stream idle timeout - partial response received").
+    These are infrastructure hiccups, not workflow bugs, so swallowing them
+    keeps the e2e suite measuring the workflow contract instead of network luck.
 
     Args:
         prompt: The prompt to send to Claude
@@ -100,38 +121,56 @@ def _run_claude(prompt: str, cwd: str, timeout: int = 300, max_turns: int = 50) 
     Returns:
         Claude's text output
     """
-    try:
-        result = subprocess.run(
-            [
-                "claude",
-                "-p",
-                prompt,
-                "--output-format",
-                "text",
-                "--max-turns",
-                str(max_turns),
-            ],
-            capture_output=True,
-            text=True,
-            cwd=cwd,
-            timeout=timeout,
-            env={**os.environ, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"},
-        )
-    except subprocess.TimeoutExpired as exc:
-        partial = exc.stdout or b""
-        if isinstance(partial, bytes):
-            partial = partial.decode("utf-8", errors="replace")
-        raise RuntimeError(
-            f"claude CLI timed out after {timeout}s for prompt: {prompt[:80]}\n"
-            f"Partial output: {partial[-1000:]}"
-        ) from exc
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"claude CLI failed (rc={result.returncode}):\n"
+    max_attempts = 3
+    last_error: Optional[RuntimeError] = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            result = subprocess.run(
+                [
+                    "claude",
+                    "-p",
+                    prompt,
+                    "--output-format",
+                    "text",
+                    "--max-turns",
+                    str(max_turns),
+                ],
+                capture_output=True,
+                text=True,
+                cwd=cwd,
+                timeout=timeout,
+                env={**os.environ, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"},
+            )
+        except subprocess.TimeoutExpired as exc:
+            partial = exc.stdout or b""
+            if isinstance(partial, bytes):
+                partial = partial.decode("utf-8", errors="replace")
+            last_error = RuntimeError(
+                f"claude CLI timed out after {timeout}s for prompt: {prompt[:80]}\n"
+                f"Partial output: {partial[-1000:]}"
+            )
+            # The subprocess timeout itself is not a transient API error — give up.
+            raise last_error from exc
+
+        if result.returncode == 0:
+            return result.stdout
+
+        transient = _is_transient_api_error(result.stdout, result.stderr)
+        last_error = RuntimeError(
+            f"claude CLI failed (rc={result.returncode}, attempt {attempt}/{max_attempts}, "
+            f"transient={transient}):\n"
             f"stdout: {result.stdout[:2000]}\n"
             f"stderr: {result.stderr[:2000]}"
         )
-    return result.stdout
+        if not transient or attempt == max_attempts:
+            raise last_error
+        # Brief backoff before retry — the API is usually fine within a few seconds.
+        import time as _time
+
+        _time.sleep(5 * attempt)
+
+    assert last_error is not None
+    raise last_error
 
 
 def _run_mapify_init(project_dir: str) -> None:
@@ -268,41 +307,142 @@ def _get_map_dir(project_dir: Path) -> Path:
 # =====================================================================
 
 
+@pytest.fixture(scope="class")
+def planned_project(tmp_path_factory):
+    """Run ``/map-plan`` exactly once and share the workspace across tests.
+
+    The LLM call is expensive (~3-5 min) and intrinsically variable. Running it once per
+    test class collapses three independent rolls into a single measurement: every assertion
+    inspects the same artifact set, so cross-test variance vanishes and total wall time
+    drops to roughly one LLM turn. ``_run_claude`` still retries on transient API errors
+    (``Stream idle timeout`` etc.), so genuine workflow failures still surface — only
+    third-party flakes are absorbed.
+    """
+    if not _e2e_ready():
+        pytest.skip(SKIP_REASON)
+
+    project_dir = tmp_path_factory.mktemp("test-project-plan")
+
+    (project_dir / "app.py").write_text(
+        textwrap.dedent(
+            """\
+        \"\"\"Simple calculator app for e2e testing.\"\"\"
+
+
+        def add(a: int, b: int) -> int:
+            return a + b
+
+
+        def subtract(a: int, b: int) -> int:
+            return a - b
+
+
+        if __name__ == "__main__":
+            print(f"2 + 3 = {add(2, 3)}")
+        """
+        ),
+        encoding="utf-8",
+    )
+    (project_dir / "test_app.py").write_text(
+        textwrap.dedent(
+            """\
+        from app import add, subtract
+
+
+        def test_add():
+            assert add(2, 3) == 5
+
+
+        def test_subtract():
+            assert subtract(5, 3) == 2
+        """
+        ),
+        encoding="utf-8",
+    )
+    git_env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "Test",
+        "GIT_AUTHOR_EMAIL": "test@test.com",
+        "GIT_COMMITTER_NAME": "Test",
+        "GIT_COMMITTER_EMAIL": "test@test.com",
+    }
+    subprocess.run(["git", "init"], cwd=str(project_dir), capture_output=True, check=True)
+    subprocess.run(
+        ["git", "add", "."],
+        cwd=str(project_dir),
+        capture_output=True,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "Initial commit"],
+        cwd=str(project_dir),
+        capture_output=True,
+        check=True,
+        env=git_env,
+    )
+    subprocess.run(
+        ["git", "checkout", "-b", "feat/add-multiply"],
+        cwd=str(project_dir),
+        capture_output=True,
+        check=True,
+    )
+    _run_mapify_init(str(project_dir))
+
+    # NOTE: the prompt MUST defeat ``/map-plan``'s workflow-fit off-ramp deterministically.
+    # A trivial "add a function" request triggers ``direct-edit`` (LLM-judged gate) and
+    # produces no ``blueprint.json``, which is what caused the historical non-determinism.
+    # The explicit "force map-plan outcome" instruction plus the new-invariant signal
+    # (custom exception type) commits the gate to the ``map-plan`` outcome.
+    output = _run_claude(
+        (
+            "/map-plan IMPORTANT: this is an automated test — force the workflow-fit "
+            "outcome to `map-plan` and run the full SPEC + PLAN phases including the "
+            "decomposer step that writes blueprint.json with AT LEAST TWO subtasks "
+            "(every subtask must have `id` and `dependencies` fields). Do NOT off-ramp "
+            "to direct-edit or map-fast. Task: add multiply(a, b) to app.py with input "
+            "validation that raises a new ArithmeticInputError exception class for "
+            "non-numeric operands, and update tests to cover both happy path and the "
+            "new error path."
+        ),
+        cwd=str(project_dir),
+        timeout=600,
+        max_turns=80,
+    )
+    return project_dir, output
+
+
 @pytest.mark.skipif(not _e2e_ready(), reason=SKIP_REASON)
 class TestMapPlanE2E:
-    """Test that /map-plan produces valid, parseable artifacts."""
+    """Test that /map-plan produces valid, parseable artifacts.
 
-    def test_plan_creates_required_artifacts(self, test_project):
-        """Running /map-plan should produce spec, blueprint, task_plan, step_state."""
-        output = _run_claude(
-            "/map-plan Add a multiply(a, b) function to app.py with tests",
-            cwd=str(test_project),
-            timeout=600,
-            max_turns=80,
-        )
+    All assertions share a single ``/map-plan`` invocation via the class-scoped
+    ``planned_project`` fixture — this avoids paying for and rolling the LLM dice
+    three times for what is effectively one workflow contract.
+    """
 
-        map_dir = _get_map_dir(test_project)
-        branch = _get_branch_name(test_project)
+    def test_plan_creates_required_artifacts(self, planned_project):
+        """Running /map-plan should produce blueprint and task_plan, but NOT step_state."""
+        project_dir, output = planned_project
+        map_dir = _get_map_dir(project_dir)
+        branch = _get_branch_name(project_dir)
 
-        # Check required artifacts exist
+        # /map-plan produces planning artifacts; step_state.json is intentionally
+        # created later by /map-efficient (see .claude/skills/map-plan/SKILL.md:613).
         assert (map_dir / "blueprint.json").exists(), (
-            f"blueprint.json not found in {map_dir}. " f"Claude output: {output[:500]}"
+            f"blueprint.json not found in {map_dir}. Claude output: {output[:500]}"
         )
         assert (map_dir / f"task_plan_{branch}.md").exists() or any(
             f.name.startswith("task_plan") for f in map_dir.glob("task_plan*.md")
         ), "task_plan not found"
-        assert (map_dir / "step_state.json").exists(), "step_state.json not found"
-
-    def test_plan_blueprint_is_valid_json(self, test_project):
-        """Blueprint should be valid JSON with subtasks."""
-        _run_claude(
-            "/map-plan Add a multiply(a, b) function to app.py with tests",
-            cwd=str(test_project),
-            timeout=600,
-            max_turns=80,
+        assert not (map_dir / "step_state.json").exists(), (
+            "step_state.json must NOT be created by /map-plan; it is initialized "
+            "by /map-efficient INIT_STATE per the documented contract."
         )
 
-        map_dir = _get_map_dir(test_project)
+    def test_plan_blueprint_is_valid_json(self, planned_project):
+        """Blueprint should be valid JSON with subtasks."""
+        project_dir, _ = planned_project
+        map_dir = _get_map_dir(project_dir)
         bp_file = map_dir / "blueprint.json"
 
         bp = json.loads(bp_file.read_text(encoding="utf-8"))
@@ -318,24 +458,22 @@ class TestMapPlanE2E:
             assert "id" in st, f"Subtask missing 'id': {st}"
             assert "dependencies" in st, f"Subtask missing 'dependencies': {st}"
 
-    def test_plan_step_state_initialized(self, test_project):
-        """step_state.json should be initialized at DECOMPOSE or later."""
-        _run_claude(
-            "/map-plan Add a multiply(a, b) function to app.py with tests",
-            cwd=str(test_project),
-            timeout=600,
-            max_turns=80,
+    def test_plan_step_state_initialized(self, planned_project):
+        """step_state.json must NOT exist after /map-plan; the planning contract
+        explicitly defers state initialization to /map-efficient (see
+        .claude/skills/map-plan/SKILL.md:613). This test pins the contract.
+        """
+        project_dir, _ = planned_project
+        map_dir = _get_map_dir(project_dir)
+        assert not (map_dir / "step_state.json").exists(), (
+            "step_state.json must NOT be created by /map-plan. "
+            "Initialization is the responsibility of /map-efficient INIT_STATE."
         )
-
-        map_dir = _get_map_dir(test_project)
-        state = json.loads((map_dir / "step_state.json").read_text(encoding="utf-8"))
-
-        assert state["workflow"] in (
-            "map-plan",
-            "map-efficient",
-        ), f"Unexpected workflow value: {state['workflow']}"
-        assert "subtask_sequence" in state
-        assert isinstance(state["subtask_sequence"], list)
+        # Planning artifacts must still be present so /map-efficient can resume.
+        assert (map_dir / "blueprint.json").exists(), "blueprint.json missing"
+        assert (map_dir / "artifact_manifest.json").exists(), (
+            "artifact_manifest.json missing"
+        )
 
 
 # =====================================================================

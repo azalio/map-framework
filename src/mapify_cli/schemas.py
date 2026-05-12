@@ -620,3 +620,151 @@ TEST_HANDOFF_SCHEMA = {
     ],
     "additionalProperties": False,
 }
+
+# Sub-schema reused for each fixed-name artifact entry in REVIEW_BUNDLE_SCHEMA.
+_ARTIFACT_ENTRY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "present": {"type": "boolean"},
+        "path": {"type": ["string", "null"]},
+        "sanitized_text": {"type": ["string", "null"]},
+        "truncated": {"type": "boolean"},
+        "reason": {"type": ["string", "null"]},
+        "kind": {"type": "string"},
+        "index": {"type": ["integer", "null"]},
+    },
+    "required": ["present", "path", "sanitized_text"],
+}
+
+# Sub-schema for each entry in the test_handoffs / test_contracts arrays.
+_MULTI_ARTIFACT_ENTRY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "path": {"type": "string"},
+        "sanitized_text": {"type": ["string", "null"]},
+        "truncated": {"type": "boolean"},
+    },
+    "required": ["path", "sanitized_text"],
+}
+
+REVIEW_BUNDLE_SCHEMA = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://mapframework.dev/schemas/review-bundle.json",
+    "title": "MAP Review Bundle",
+    "description": (
+        "Durable reviewer-facing bundle written to .map/<branch>/review-bundle.json. "
+        "Collects all branch-scoped artifacts, sanitized text, and code-state metadata "
+        "so /map-review can run from a fresh context without implementer session memory."
+    ),
+    "type": "object",
+    "properties": {
+        "status": {"type": "string", "enum": ["success", "error"]},
+        "branch": {"type": "string"},
+        "bundle_path_json": {"type": "string"},
+        "bundle_path_md": {"type": "string"},
+        "generated_at": {"type": "string"},
+        "artifacts": {
+            "type": "object",
+            "properties": {
+                "spec": _ARTIFACT_ENTRY_SCHEMA,
+                "task_plan": _ARTIFACT_ENTRY_SCHEMA,
+                "blueprint": _ARTIFACT_ENTRY_SCHEMA,
+                "verification_summary": _ARTIFACT_ENTRY_SCHEMA,
+                "qa": _ARTIFACT_ENTRY_SCHEMA,
+                "pr_draft": _ARTIFACT_ENTRY_SCHEMA,
+                "active_issues": _ARTIFACT_ENTRY_SCHEMA,
+                "artifact_manifest": _ARTIFACT_ENTRY_SCHEMA,
+                "latest_plan_review": _ARTIFACT_ENTRY_SCHEMA,
+                "latest_code_review": _ARTIFACT_ENTRY_SCHEMA,
+                "test_handoffs": {
+                    "type": "array",
+                    "items": _MULTI_ARTIFACT_ENTRY_SCHEMA,
+                },
+                "test_contracts": {
+                    "type": "array",
+                    "items": _MULTI_ARTIFACT_ENTRY_SCHEMA,
+                },
+            },
+            "required": [
+                "spec",
+                "task_plan",
+                "blueprint",
+                "verification_summary",
+                "qa",
+                "pr_draft",
+                "active_issues",
+                "artifact_manifest",
+                "latest_plan_review",
+                "latest_code_review",
+                "test_handoffs",
+                "test_contracts",
+            ],
+        },
+        "code_state": {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string"},
+                "git_ref": {"type": "string"},
+                "files_changed": {"type": "array", "items": {"type": "string"}},
+                "diff_stat": {"type": "string"},
+                "branch": {"type": "string"},
+                "reason": {"type": "string"},
+                "diff_truncated": {"type": "boolean"},
+            },
+            "required": ["status"],
+        },
+        "review_handoff": {
+            "type": "object",
+            "properties": {
+                "plan_review": {"type": ["string", "null"]},
+                "code_review": {"type": ["string", "null"]},
+                "verification_summary": {"type": ["string", "null"]},
+                "qa": {"type": ["string", "null"]},
+                "pr_draft": {"type": ["string", "null"]},
+                "active_issues": {"type": ["string", "null"]},
+            },
+            "required": [
+                "plan_review",
+                "code_review",
+                "verification_summary",
+                "qa",
+                "pr_draft",
+                "active_issues",
+            ],
+        },
+        "pr_handoff": {
+            "type": "object",
+            "properties": {
+                "summary": {"type": "string"},
+                "validation": {"type": "string"},
+                "risks_follow_up": {"type": "string"},
+            },
+            "required": ["summary", "validation", "risks_follow_up"],
+        },
+        "manifest_status": {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string"},
+                "path": {"type": "string"},
+                "reason": {"type": "string"},
+            },
+            "required": ["status"],
+        },
+        "schema_validation_error": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+    },
+    "required": [
+        "status",
+        "branch",
+        "bundle_path_json",
+        "bundle_path_md",
+        "generated_at",
+        "artifacts",
+        "code_state",
+        "review_handoff",
+        "pr_handoff",
+    ],
+    "additionalProperties": False,
+}
