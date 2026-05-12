@@ -85,6 +85,30 @@
         ]
       }
     },
+    "map-explain": {
+      "type": "manual",
+      "enforcement": "manual",
+      "priority": "medium",
+      "description": "Deep code/PR explanation that builds a complete mental model — problem, entities, execution and data flow, line-by-line rationale, side effects, assumptions, breakage modes; for PRs also before/after behavior.",
+      "promptTriggers": {
+        "keywords": [
+          "map-explain",
+          "explain this code",
+          "explain this pr",
+          "explain this diff",
+          "mental model",
+          "walk me through",
+          "line by line"
+        ],
+        "intentPatterns": [
+          "map-explain",
+          "explain.*(code|file|function|class|module|pr|diff|commit)",
+          "(walk|teach) me through",
+          "build.*mental model",
+          "line.by.line"
+        ]
+      }
+    },
     "map-efficient": {
       "type": "manual",
       "enforcement": "manual",
