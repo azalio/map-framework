@@ -1,9 +1,9 @@
 ---
 name: map-explain
 description: |
-  Deep code/PR explanation that builds a complete mental model — not a summary. Walks through problem, entities, execution flow, data flow, every important line with rationale, side effects, assumptions, and breakage modes. For PRs, also explains before/after behavior and how the diff changes runtime behavior. With no arguments, explains the current branch's diff against `origin/main` (fallback `origin/master`) — or, when run on `main`/`master`, explains the project as a whole. Use when learning unfamiliar code, onboarding to a module, or auditing a diff. Do NOT use to plan or implement; use map-plan or map-efficient.
+  Deep walkthrough that builds a mental model of code, a diff, or the project — flow, side effects, assumptions, breakage. Use when learning unfamiliar code or auditing a diff. Do NOT use to plan or implement; use map-plan or map-efficient.
 disable-model-invocation: true
-argument-hint: "[file path | symbol | PR ref | code snippet] (empty = branch diff vs origin/main; or project overview when on main/master)"
+argument-hint: "[file path | symbol | PR ref | code snippet | empty for branch diff vs origin/main, or project overview on main/master]"
 ---
 # MAP Explain
 
@@ -18,7 +18,14 @@ Pick mode by inspecting the current branch and its relation to the upstream base
 BASE=$(git rev-parse --verify --quiet origin/main >/dev/null && echo origin/main \
        || (git rev-parse --verify --quiet origin/master >/dev/null && echo origin/master))
 
-# 2. Refresh the base so the comparison reflects what would actually merge.
+# 2. Stop early if neither base exists — do not run a fetch/diff against an
+#    empty ref (otherwise `git fetch origin ""` raises a confusing error).
+if [ -z "$BASE" ]; then
+  echo "map-explain: neither origin/main nor origin/master exists; aborting." >&2
+  exit 1
+fi
+
+# 3. Refresh the base so the comparison reflects what would actually merge.
 git fetch origin "${BASE#origin/}" --quiet
 
 CURRENT=$(git rev-parse --abbrev-ref HEAD)
@@ -64,7 +71,6 @@ git --no-pager diff "$BASE"...HEAD
 
 ### Edge cases (apply to both modes)
 
-- If neither `origin/main` nor `origin/master` exists, stop and report it — do not silently fall back to `HEAD~1`.
 - If the working tree has uncommitted changes you also want explained, say so and include `git diff` (unstaged) and `git diff --cached` (staged) on top of whatever the chosen mode produced.
 
 Explain it so I can build a complete mental model of it, not just a summary.
@@ -120,3 +126,10 @@ I want you to teach it step by step:
 /map-explain #108
 /map-explain HEAD~1..HEAD
 ```
+
+## Troubleshooting
+
+- **"neither origin/main nor origin/master exists"** — the repo has no upstream named `origin`, or its default branch is not `main`/`master`. Either add an `origin` remote, or pass an explicit target (file path / symbol / PR ref) instead of running with no arguments.
+- **"HEAD == $BASE"** — the current branch already matches the upstream base, so there is no diff. The skill falls into Mode A (project overview); if that is not what you wanted, check `git status` and confirm your commits are on this branch.
+- **Diff is enormous and the walkthrough turns shallow** — pass a narrower target (single file, single symbol, or `HEAD~1..HEAD`) instead of the full branch diff so each line can be explained without truncation.
+- **Output mixes inference with source claims** — every non-explicit assertion must be prefixed with `Inferred:`. If you see un-marked guesses, ask the skill to re-emit with explicit confidence tags.
