@@ -486,6 +486,50 @@ The blueprint JSON must include at minimum:
 
 If the decomposer returned structured JSON, save it directly. If it returned markdown, construct the JSON from the decomposed subtasks. **This step is mandatory** — without `blueprint.json`, `/map-efficient` cannot compute parallel execution waves.
 
+### Step 5.6: Post-Save Blueprint Validation (MANDATORY)
+
+After writing `blueprint.json`, run this deterministic shell check to verify the
+file contains AT LEAST ONE subtask with the required fields. Do NOT proceed to
+Step 5.7 if the check reports a problem.
+
+```bash
+python3 - <<'PY'
+import json, sys
+from pathlib import Path
+BRANCH = Path(__file__).resolve()  # placeholder, the skill will substitute below
+PY
+```
+
+Use the **Bash** tool with the following one-liner, substituting `${BRANCH}`
+with the sanitized branch name resolved earlier:
+
+```bash
+python3 -c "
+import json, sys
+data = json.loads(open('.map/${BRANCH}/blueprint.json').read())
+subs = data.get('subtasks') or (data.get('blueprint') or {}).get('subtasks') or []
+if not isinstance(subs, list) or len(subs) < 1:
+    print('BLUEPRINT_INVALID: subtasks empty or missing', file=sys.stderr); sys.exit(2)
+required = {'id', 'dependencies'}
+missing = [i for i, s in enumerate(subs) if not isinstance(s, dict) or not required.issubset(s)]
+if missing:
+    print(f'BLUEPRINT_INVALID: subtasks {missing} missing required fields', file=sys.stderr); sys.exit(2)
+print(f'BLUEPRINT_OK: {len(subs)} subtask(s)')
+"
+```
+
+**On failure (exit code != 0):**
+- The decomposer wrote an empty or malformed blueprint. Re-run **Step 5** (the
+  decomposer subagent) with the same prompt, but explicitly note in the prompt:
+  "Previous decomposer run produced an invalid blueprint (subtasks empty or
+  missing required fields). Produce AT LEAST 2 subtasks; each subtask MUST
+  include `id` and `dependencies` fields."
+- After the second decomposer run, save the new output to `blueprint.json` and
+  re-run this validation. If it fails a second time, STOP and report the issue
+  to the user — do not proceed to plan-write or downstream steps.
+
+**On success (exit code 0):** proceed to Step 5.7.
+
 ### Step 5.7: Decomposition Coverage Check
 
 Before writing the human-readable plan, verify the decomposition covers the full spec. The decomposer agent works with limited context and may silently drop requirements.

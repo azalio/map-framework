@@ -1722,6 +1722,29 @@ class TestSanitizeForJson:
         assert "noise" in validation
 
 
+class TestSanitizeForJsonProperty:
+    """Property-based coverage for ``_sanitize_for_json`` via Hypothesis."""
+
+    def test_strips_every_control_byte_for_arbitrary_strings(self):
+        from hypothesis import given, strategies as st
+
+        @given(st.text())
+        def _prop(raw: str) -> None:
+            sanitized = map_step_runner._sanitize_for_json(raw)
+            # Function must never raise on arbitrary text inputs.
+            # All C0 (U+0000 — U+001F) and DEL (U+007F) bytes must be absent.
+            for ch in sanitized:
+                code = ord(ch)
+                assert not (0x00 <= code <= 0x1F), (
+                    f"C0 control U+{code:04X} leaked into output: {sanitized!r}"
+                )
+                assert code != 0x7F, (
+                    f"DEL U+007F leaked into output: {sanitized!r}"
+                )
+
+        _prop()
+
+
 # ---------------------------------------------------------------------------
 # create_review_bundle — focused unit tests (ST-001 / ST-002)
 # ---------------------------------------------------------------------------
@@ -1861,6 +1884,130 @@ class TestCreateReviewBundle:
         assert isinstance(stages, dict)
         assert stages["review"]["status"] == "ready"
 
+    def test_create_review_bundle_warns_on_schema_drift(
+        self, monkeypatch, branch_workspace
+    ):
+        """Soft validation: schema failure surfaces ``schema_validation_error`` and
+        downgrades the manifest stage from ``ready`` to ``warn`` without dropping the
+        bundle file write.
+        """
+        del branch_workspace  # fixture only needed for chdir + monkeypatch side effects
+
+        try:
+            import mapify_cli.schemas as schemas_module
+        except ImportError:
+            pytest.skip("mapify_cli.schemas not importable in this environment")
+
+        def _force_invalid(
+            data: dict, schema: dict, *, raise_on_error: bool = False
+        ) -> tuple[bool, list[str]]:
+            return (False, ["forced-invalid: drift sentinel"])
+
+        monkeypatch.setattr(schemas_module, "validate_artifact", _force_invalid)
+
+        result = map_step_runner.create_review_bundle()
+
+        assert Path(result["bundle_path_json"]).exists()
+        assert result["schema_validation_error"] == ["forced-invalid: drift sentinel"]
+        assert result["manifest_status"]["status"] == "warn"
+        reloaded = map_step_runner.load_artifact_manifest("test-branch")
+        stages = reloaded["stages"]
+        assert isinstance(stages, dict)
+        assert stages["review"]["status"] == "warn"
+
+        bundle = json.loads(Path(result["bundle_path_json"]).read_text(encoding="utf-8"))
+        assert bundle["schema_validation_error"] == ["forced-invalid: drift sentinel"]
+
+    def test_create_review_bundle_marks_stub_artifacts_absent(self, branch_workspace):
+        """Stub verification-summary.md and pr-draft.md must surface as ``present=False``.
+
+        Covers both detection paths:
+          * Strict ``HUMAN_ARTIFACT_DEFAULTS`` byte-match (initial stub).
+          * ``_is_soft_stub_text`` fingerprint (writer-emitted placeholder body).
+        """
+        map_step_runner.write_pr_draft()
+        map_step_runner.write_verification_summary("", "", "", "", "")
+        (branch_workspace / "spec_test-branch.md").write_text(
+            "# Spec\n\nReal content.\n", encoding="utf-8"
+        )
+
+        result = map_step_runner.create_review_bundle()
+
+        artifacts = result["artifacts"]
+        assert artifacts["pr_draft"]["present"] is False
+        assert "stub" in (artifacts["pr_draft"].get("reason") or "")
+        assert artifacts["verification_summary"]["present"] is False
+        assert "stub" in (artifacts["verification_summary"].get("reason") or "")
+        assert artifacts["spec"]["present"] is True
+
+    def test_create_review_bundle_with_slash_branch(self, branch_workspace):
+        """Explicit ``branch='feat/foo'`` must sanitize to ``feat-foo`` rather than nesting."""
+        del branch_workspace  # fixture only needed for chdir + monkeypatch side effects
+
+        result = map_step_runner.create_review_bundle(branch="feat/foo")
+
+        assert result["branch"] == "feat-foo"
+        bundle_json = Path(result["bundle_path_json"])
+        assert "feat-foo" in str(bundle_json)
+        assert "feat/foo" not in str(bundle_json)
+        assert bundle_json.exists()
+        assert not Path(".map/feat/foo").exists()
+
+    def test_create_review_bundle_caps_large_diff(self, monkeypatch, branch_workspace):
+        """Oversize diff_stat / files_changed snapshot must be truncated with a marker."""
+        del branch_workspace  # fixture only needed for chdir + monkeypatch side effects
+
+        huge_diff = "X" * (map_step_runner._DIFF_STAT_MAX_CHARS + 10_000)
+        huge_files = [f"path/file_{i}.py" for i in range(
+            map_step_runner._FILES_CHANGED_MAX_ENTRIES + 50
+        )]
+
+        def fake_snapshot(branch=None):
+            return {
+                "status": "success",
+                "git_ref": "abcdef123456",
+                "files_changed": huge_files[:map_step_runner._FILES_CHANGED_MAX_ENTRIES],
+                "diff_stat": huge_diff[:map_step_runner._DIFF_STAT_MAX_CHARS] + "\n... [truncated]",
+                "branch": branch or "test-branch",
+                "diff_truncated": True,
+            }
+
+        monkeypatch.setattr(map_step_runner, "snapshot_code_state", fake_snapshot)
+
+        result = map_step_runner.create_review_bundle()
+
+        code_state = result["code_state"]
+        assert code_state["diff_truncated"] is True
+        assert len(code_state["diff_stat"]) <= map_step_runner._DIFF_STAT_MAX_CHARS + 32
+        assert len(code_state["files_changed"]) <= map_step_runner._FILES_CHANGED_MAX_ENTRIES
+
+    def test_snapshot_code_state_truncates_when_diff_oversize(self, monkeypatch):
+        """Direct ``snapshot_code_state`` call truncates oversize git output in-place."""
+        import subprocess as real_subprocess
+
+        huge = "X" * (map_step_runner._DIFF_STAT_MAX_CHARS + 100)
+        many_files = "\n".join(
+            f"path/file_{i}.py"
+            for i in range(map_step_runner._FILES_CHANGED_MAX_ENTRIES + 50)
+        )
+
+        def mock_run(cmd, **kwargs):
+            if "rev-parse" in cmd:
+                return real_subprocess.CompletedProcess(cmd, 0, "deadbeef\n", "")
+            if "--stat" in cmd:
+                return real_subprocess.CompletedProcess(cmd, 0, huge, "")
+            if "--name-only" in cmd:
+                return real_subprocess.CompletedProcess(cmd, 0, many_files, "")
+            return real_subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr("subprocess.run", mock_run)
+        result = map_step_runner.snapshot_code_state(branch="any")
+        assert result["diff_truncated"] is True
+        assert result["diff_stat"].endswith("[truncated]")
+        assert (
+            len(result["files_changed"]) == map_step_runner._FILES_CHANGED_MAX_ENTRIES
+        )
+
 
 # ---------------------------------------------------------------------------
 # prepare_detached_review — focused unit tests (ST-004)
@@ -1996,6 +2143,37 @@ class TestPrepareDetachedReview:
                 assert "add" not in call, (
                     f"bare 'git add' (staging) found in call: {call}"
                 )
+
+    def test_prepare_detached_review_rejects_path_traversal(
+        self, monkeypatch, branch_workspace
+    ):
+        """target_dir outside .map/<branch>/ scope is rejected without git mutation."""
+        del branch_workspace  # fixture only needed for chdir + monkeypatch side effects
+        import subprocess as real_subprocess
+
+        recorded_calls: list[list[str]] = []
+
+        def mock_run(cmd: list[str], **kwargs: object) -> real_subprocess.CompletedProcess:  # type: ignore[type-arg]
+            recorded_calls.append(list(cmd))
+            return real_subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr("subprocess.run", mock_run)
+
+        result = map_step_runner.prepare_detached_review(
+            "bundle.json", target_dir="../../tmp/evil"
+        )
+
+        assert result["status"] == "error"
+        assert "escapes" in result["reason"]
+        assert result["mutated_source"] is False
+        # No git command of any kind must have been invoked — the guard returns before
+        # rev-parse and worktree add.
+        worktree_or_rev = [
+            c for c in recorded_calls if "worktree" in c or "rev-parse" in c
+        ]
+        assert worktree_or_rev == [], (
+            f"git was invoked after path-traversal rejection: {worktree_or_rev}"
+        )
 
 
 # ---------------------------------------------------------------------------

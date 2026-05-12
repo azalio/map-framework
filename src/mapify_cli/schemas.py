@@ -709,6 +709,7 @@ REVIEW_BUNDLE_SCHEMA = {
                 "diff_stat": {"type": "string"},
                 "branch": {"type": "string"},
                 "reason": {"type": "string"},
+                "diff_truncated": {"type": "boolean"},
             },
             "required": ["status"],
         },
@@ -748,6 +749,10 @@ REVIEW_BUNDLE_SCHEMA = {
                 "reason": {"type": "string"},
             },
             "required": ["status"],
+        },
+        "schema_validation_error": {
+            "type": "array",
+            "items": {"type": "string"},
         },
     },
     "required": [

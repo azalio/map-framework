@@ -44,6 +44,7 @@ GOAL_HEADING_RE = r"## (?:Goal|Overview)\n(.*?)(?=\n##|\Z)"
 HUMAN_ARTIFACT_DEFAULTS = {
     "qa-001.md": "# QA 001\n\n",
     "pr-draft.md": "# PR Draft\n\n## Summary\n\n## Validation\n\n## Risks / Follow-up\n",
+    "verification-summary.md": "# Verification Summary\n\n",
 }
 
 
@@ -1593,6 +1594,38 @@ def _collect_multi_artifacts(
     return results
 
 
+def _is_soft_stub_text(name: str, text: str) -> bool:
+    """Detect whether artifact text is a soft stub (writer output with no real data).
+
+    Differs from the strict ``HUMAN_ARTIFACT_DEFAULTS`` byte-match: this catches the case
+    where ``write_verification_summary`` / ``write_pr_draft`` were called with empty args,
+    which produces section bodies of ``- [not recorded]`` while the branch name and/or
+    verdict line are dynamically interpolated. Reviewers should treat such artifacts as
+    absent (``present=false``) rather than as filled content.
+
+    Note: the input ``text`` has been flattened by ``_sanitize_for_json`` (newlines and
+    tabs collapsed to spaces), so the section markers are matched in their post-sanitize
+    form (e.g., ``## Summary - [not recorded]`` rather than ``## Summary\n- [not recorded]``).
+    """
+    if not text:
+        return False
+    if name == "pr-draft.md":
+        return (
+            text.lstrip().startswith("# PR Draft")
+            and "## Summary - [not recorded]" in text
+            and "## Validation - [not recorded]" in text
+            and "## Risks / Follow-up - [not recorded]" in text
+        )
+    if name == "verification-summary.md":
+        return (
+            text.lstrip().startswith("# Verification Summary")
+            and "## Checks Run - [not recorded]" in text
+            and "## Findings - [not recorded]" in text
+            and "## Next Action - [not recorded]" in text
+        )
+    return False
+
+
 def _fixed_artifact_entry(branch_dir: Path, name: str, kind: str) -> dict:
     """Return a single artifact entry for a fixed-name file.
 
@@ -1609,6 +1642,25 @@ def _fixed_artifact_entry(branch_dir: Path, name: str, kind: str) -> dict:
             "reason": "not found",
         }
     raw = _read_branch_artifact_text(branch_dir, name)
+    # Stub detection: ``raw`` is "" when content matches ``HUMAN_ARTIFACT_DEFAULTS[name]``
+    # (initial stub from ``ensure_human_artifacts``). ``_is_soft_stub_text`` catches the
+    # case where the writer was called with empty args, producing a placeholder body.
+    if not raw and HUMAN_ARTIFACT_DEFAULTS.get(name) is not None:
+        return {
+            "present": False,
+            "path": str(full_path),
+            "sanitized_text": None,
+            "kind": kind,
+            "reason": "stub: matches initial placeholder",
+        }
+    if raw and _is_soft_stub_text(name, raw):
+        return {
+            "present": False,
+            "path": str(full_path),
+            "sanitized_text": None,
+            "kind": kind,
+            "reason": "stub: writer emitted placeholder body",
+        }
     entry: dict = {
         "present": True,
         "path": str(full_path),
@@ -1736,7 +1788,10 @@ def create_review_bundle(branch: Optional[str] = None) -> dict:
     are stripped via ``_sanitize_for_json`` so the JSON file remains
     parseable by downstream tools (INV-8).
     """
-    branch_name = branch or get_branch_name()
+    # ``get_branch_name`` already sanitizes; explicit ``branch`` callers must be
+    # sanitized too so e.g. ``feat/foo`` lands at ``.map/feat-foo/`` instead of a
+    # nested ``.map/feat/foo/`` directory.
+    branch_name = _sanitize_branch(branch) if branch else get_branch_name()
     branch_dir = get_branch_dir(branch_name)
     branch_dir.mkdir(parents=True, exist_ok=True)
     generated_at = _utc_timestamp()
@@ -1830,6 +1885,26 @@ def create_review_bundle(branch: Optional[str] = None) -> dict:
         "pr_handoff": pr_handoff,
     }
 
+    # Soft schema validation: warn on drift but still write the bundle.
+    # Uses optional ``mapify_cli.schemas`` import (graceful fallback if the package is
+    # absent in a standalone .map/ install). On validation failure the errors are recorded
+    # on the result under ``schema_validation_error`` and the manifest stage status is
+    # downgraded from "ready" to "warn" below.
+    try:
+        import importlib as _importlib
+
+        _schemas_mod = sys.modules.get("mapify_cli.schemas")
+        if _schemas_mod is None:
+            _schemas_mod = _importlib.import_module("mapify_cli.schemas")
+        _review_bundle_schema = getattr(_schemas_mod, "REVIEW_BUNDLE_SCHEMA", None)
+        _validate_artifact_fn = getattr(_schemas_mod, "validate_artifact", None)
+        if _review_bundle_schema is not None and _validate_artifact_fn is not None:
+            _is_valid, _errors = _validate_artifact_fn(result, _review_bundle_schema)
+            if not _is_valid:
+                result["schema_validation_error"] = _errors
+    except ImportError:
+        pass
+
     # Write JSON bundle (ensure_ascii=True for jq-safe output per INV-8)
     bundle_json_path.write_text(
         json.dumps(result, indent=2, ensure_ascii=True) + "\n",
@@ -1871,11 +1946,12 @@ def create_review_bundle(branch: Optional[str] = None) -> dict:
             "branch": branch_name,
             "generated_at": result["generated_at"],
         }
+        stage_status = "warn" if "schema_validation_error" in result else "ready"
         _set_manifest_stage(
-            manifest, "review", "ready", artifacts=artifacts_list, metadata=metadata
+            manifest, "review", stage_status, artifacts=artifacts_list, metadata=metadata
         )
         save_result = save_artifact_manifest(manifest, branch_name)
-        result["manifest_status"] = {"status": "ready", "path": save_result["path"]}
+        result["manifest_status"] = {"status": stage_status, "path": save_result["path"]}
     except Exception as exc:
         result["manifest_status"] = {"status": "error", "reason": str(exc)}
 
@@ -2563,11 +2639,20 @@ def run_test_gate() -> dict:
         }
 
 
+_DIFF_STAT_MAX_CHARS = 65_536
+_FILES_CHANGED_MAX_ENTRIES = 500
+
+
 def snapshot_code_state(branch: Optional[str] = None) -> dict:
     """Capture current git state for artifact-to-code verification.
 
     Records git ref, changed files, and diff stat so review artifacts
     can be tied to actual code state. Populates subtask_files_changed.
+
+    Very large repos can produce huge ``diff_stat`` and ``files_changed`` outputs that
+    bloat the bundle JSON. Both are capped here (``_DIFF_STAT_MAX_CHARS`` /
+    ``_FILES_CHANGED_MAX_ENTRIES``) with a ``diff_truncated=True`` marker so reviewers
+    can see at a glance that the snapshot was clipped.
     """
 
     branch_name = branch or get_branch_name()
@@ -2589,12 +2674,21 @@ def snapshot_code_state(branch: Optional[str] = None) -> dict:
     diff_names = _run_git(["diff", "--name-only", "HEAD"])
     files_changed = [f for f in diff_names.splitlines() if f.strip()] if diff_names else []
 
+    diff_truncated = False
+    if len(diff_stat) > _DIFF_STAT_MAX_CHARS:
+        diff_stat = diff_stat[:_DIFF_STAT_MAX_CHARS] + "\n... [truncated]"
+        diff_truncated = True
+    if len(files_changed) > _FILES_CHANGED_MAX_ENTRIES:
+        files_changed = files_changed[:_FILES_CHANGED_MAX_ENTRIES]
+        diff_truncated = True
+
     return {
         "status": "success",
         "git_ref": git_ref[:12] if git_ref else "unknown",
         "files_changed": files_changed,
         "diff_stat": diff_stat,
         "branch": branch_name,
+        "diff_truncated": diff_truncated,
     }
 
 
@@ -2825,11 +2919,28 @@ def prepare_detached_review(
     }
 
     # Resolve target directory
-    branch_name = branch or get_branch_name()
+    # ``get_branch_name`` already sanitizes; explicit ``branch`` callers must be
+    # sanitized too (same rationale as ``create_review_bundle``).
+    branch_name = _sanitize_branch(branch) if branch else get_branch_name()
     if target_dir is not None:
         resolved_target = Path(target_dir).resolve()
     else:
         resolved_target = get_branch_dir(branch_name).resolve() / "detached-review"
+
+    # Path-traversal guard: resolved_target MUST stay under .map/<branch>/ or the .map/
+    # root. A user-supplied target_dir like "../../tmp/evil" resolves outside both and is
+    # rejected to keep the worktree mutation contained to MAP-owned scope.
+    branch_dir_resolved = get_branch_dir(branch_name).resolve()
+    map_root_resolved = (Path.cwd().resolve() / ".map").resolve()
+    if not (
+        resolved_target.is_relative_to(branch_dir_resolved)
+        or resolved_target.is_relative_to(map_root_resolved)
+    ):
+        return {
+            **_base,
+            "status": "error",
+            "reason": "target_dir escapes .map/<branch>/ scope",
+        }
 
     # Edge Case 6 + INV-6: never overwrite an existing path
     if resolved_target.exists():

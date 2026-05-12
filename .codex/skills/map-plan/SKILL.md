@@ -407,6 +407,38 @@ If `blueprint.json` already exists and only needs a partial update, use `apply_p
 
 ---
 
+## Step 5.2: Post-Save Blueprint Validation (MANDATORY)
+
+After writing `blueprint.json`, run this deterministic check. If it reports an
+invalid blueprint, re-run Step 4 (the decomposer) BEFORE proceeding to Step 5.5.
+
+```
+shell_command:
+  cmd: |
+    BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
+    python3 -c "
+    import json, sys
+    data = json.loads(open('.map/${BRANCH}/blueprint.json').read())
+    subs = data.get('subtasks') or (data.get('blueprint') or {}).get('subtasks') or []
+    if not isinstance(subs, list) or len(subs) < 1:
+        print('BLUEPRINT_INVALID: subtasks empty or missing', file=sys.stderr); sys.exit(2)
+    required = {'id', 'dependencies'}
+    missing = [i for i, s in enumerate(subs) if not isinstance(s, dict) or not required.issubset(s)]
+    if missing:
+        print(f'BLUEPRINT_INVALID: subtasks {missing} missing required fields', file=sys.stderr); sys.exit(2)
+    print(f'BLUEPRINT_OK: {len(subs)} subtask(s)')
+    "
+```
+
+If the validator exits non-zero, return to Step 4 with the prompt: "Previous
+decomposer run produced an invalid blueprint (subtasks empty or missing
+required fields). Produce AT LEAST 2 subtasks; each subtask MUST include `id`
+and `dependencies` fields." After the second decomposer run, re-save
+`blueprint.json` and re-run this validator. Two consecutive failures = STOP
+and report to the user.
+
+---
+
 ## Step 5.5: Decomposition Coverage Check
 
 Before writing the human-readable plan, verify coverage. The decomposer may silently drop requirements.

@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Persisted review bundle**: `create_review_bundle()` writes durable
+  `review-bundle.json` and `review-bundle.md` under `.map/<branch>/` so
+  `/map-review` runs from a fresh chat context without relying on implementer
+  session memory. Bundle JSON contract is captured in `REVIEW_BUNDLE_SCHEMA`
+  (`src/mapify_cli/schemas.py`).
+- **`/map-review --detached` flag**: `prepare_detached_review()` opens an
+  isolated `git worktree add --detach` worktree at
+  `.map/<branch>/detached-review/` so reviewer agents read source from a clean
+  copy. The source branch is never mutated; graceful degradation to in-place
+  bundle on `unavailable`/`error`.
+- **Soft schema validation in `create_review_bundle()`**: bundle JSON is
+  validated against `REVIEW_BUNDLE_SCHEMA` after assembly. On failure the file
+  is still written, gains a `schema_validation_error` array, and the manifest
+  review stage is downgraded from `ready` to `warn`.
+- **Path-traversal guard on `prepare_detached_review`**: explicit `target_dir`
+  values that resolve outside `.map/<branch>/` (or the `.map/` root) are
+  rejected with `status="error"` before any git mutation.
+- **`code_state.diff_truncated` flag**: `snapshot_code_state` caps `diff_stat`
+  at 64 KiB and `files_changed` at 500 entries, surfacing a `diff_truncated`
+  marker so reviewers can see the snapshot was clipped on very large repos.
+- **`hypothesis` test dependency**: added to `[project.optional-dependencies]`
+  `test` / `dev` extras for property-based coverage of `_sanitize_for_json`.
 - **Context compression policy**: New `compression_policy` setting in `.map/config.yaml`
   with three modes — `never` (quality-leaning), `auto` (default, nudges at 120k tokens),
   and `aggressive` (nudges at 0.4 × threshold = 48k by default).
@@ -29,6 +51,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Design doc**: `docs/context-compression-plan.md`.
 
 ### Changed
+- **Workflow gate `COMPLETE` phase is permissive**: post-workflow polish and
+  follow-up review fixes are no longer blocked. The atomic-completion invariant
+  in `map_orchestrator.mark_workflow_complete` is the only writer of
+  `current_step_phase=COMPLETE`, so the trust boundary is documented in-line
+  on `TERMINAL_PHASES`.
+- **Workflow gate `.claude/rules/learned/` exemption tightened to `*.md`**:
+  the exemption now requires a markdown filename so the directory cannot
+  quietly widen into a general bypass for arbitrary file types.
+- **Stub detection in review bundle**: `_fixed_artifact_entry` now flags
+  `verification-summary.md` and `pr-draft.md` as `present=False` when their
+  content matches the strict initial placeholder (from `HUMAN_ARTIFACT_DEFAULTS`)
+  or the writer-emitted soft stub (all sections `- [not recorded]`).
 - **Skill rename `map-planning` → `map-state`**: resolves a slash-command
   collision where `/map-plan` was fuzzy-matched to the longer `map-planning`
   name when `map-plan` was hidden via `disable-model-invocation`. The skill

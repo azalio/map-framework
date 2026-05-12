@@ -383,6 +383,38 @@ git commit -m "chore: prepare for release"
 
 ---
 
+## Upgrading existing projects to bundle-first `/map-review`
+
+Projects initialised before the persisted review bundle landed must refresh the
+shipped runtime helper and the `map-review` skill so the new flow takes effect.
+
+The recommended path is to re-run the installer:
+
+```bash
+mapify init . --force
+```
+
+This overwrites only the framework-owned surfaces; user content under `.map/`
+(workflow artifacts, run dossiers) is preserved.
+
+If `--force` is undesirable, the minimum manual steps are:
+
+1. Overwrite `.map/scripts/map_step_runner.py` from this repo's
+   `src/mapify_cli/templates/map/scripts/map_step_runner.py` to pick up
+   `create_review_bundle()` and `prepare_detached_review()`.
+2. Overwrite `.claude/skills/map-review/SKILL.md` (and the Codex mirror at
+   `.codex/skills/map-review/SKILL.md` if applicable) so the skill invokes the
+   bundle helpers and surfaces the `--detached` flag.
+3. Re-run `make sync-templates` (or `scripts/sync-templates.sh`) inside the
+   MAP repo if you maintain a fork — the synchronisation gate is enforced by
+   `pytest tests/test_template_sync.py`.
+
+After upgrading, the first `/map-review` invocation will materialise
+`.map/<branch>/review-bundle.json` and `.md`; subsequent reviews read the
+bundle as their primary context.
+
+---
+
 ## Appendix: Release Workflow Reference
 
 ### Complete Release Command Sequence

@@ -30,6 +30,21 @@ EDITING_TOOLS = {"Edit", "Write", "MultiEdit"}
 
 # Phases where Edit/Write is expected (Actor applies code)
 EDITING_PHASES = {"ACTOR", "APPLY", "TEST_WRITER"}
+
+# TERMINAL_PHASES contains phases where the workflow is considered closed.
+# Edits during COMPLETE are intentionally permissive because:
+#   1. Post-workflow polish (doc tweaks, follow-up review fixes) must not be gated —
+#      blocking them would force users to flip the workflow state back to ACTOR for every
+#      tiny edit after merge readiness.
+#   2. The orchestrator (``.map/scripts/map_orchestrator.py:mark_workflow_complete``)
+#      is the sole authorised writer of ``current_step_phase=COMPLETE`` /
+#      ``workflow_status=WORKFLOW_COMPLETE``. The atomic-completion invariant guarantees
+#      that COMPLETE is set only when ``pending_steps`` is empty.
+#
+# TRUST BOUNDARY: any code path that sets ``current_step_phase=COMPLETE`` outside
+# ``mark_workflow_complete`` (or its sanctioned equivalents) silently widens this gate
+# for every editing tool. Treat any ad-hoc mutation of ``current_step_phase`` (jq, manual
+# JSON edit, third-party tool) as a security regression on this gate.
 TERMINAL_PHASES = {"COMPLETE"}  # Workflow closed — gate is permissive.
 ALLOWED_PHASES = EDITING_PHASES | TERMINAL_PHASES
 
@@ -103,7 +118,15 @@ def is_exempt_path(file_path: str) -> bool:
         return False
     if parts[0] == ".map":
         return True
-    if parts[:3] == (".claude", "rules", "learned"):
+    # POLICY: ``.claude/rules/learned/`` is the destination for MAP-generated learned
+    # rules written by ``/map-learn``. The exemption is restricted to ``*.md`` files to
+    # prevent the directory from quietly broadening into a general bypass for arbitrary
+    # file types (executables, configs, secrets-bearing JSON, etc.).
+    if (
+        len(parts) >= 4
+        and parts[:3] == (".claude", "rules", "learned")
+        and parts[-1].endswith(".md")
+    ):
         return True
     return False
 

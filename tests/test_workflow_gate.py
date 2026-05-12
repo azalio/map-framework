@@ -543,3 +543,51 @@ class TestWorkflowGate:
         assert code == 0
         reason = self._assert_denied(stdout)
         assert "MONITOR" in reason
+
+    def test_allows_edit_when_subtask_phase_is_complete(self, tmp_path: Path) -> None:
+        """Parallel-wave mode: COMPLETE subtask phase counts as an ALLOWED_PHASE.
+
+        Matches the sequential ``test_allows_edit_when_phase_is_complete`` contract,
+        but exercises the ``subtask_phases`` dict path used by parallel waves.
+        """
+        self._setup_step_state(
+            tmp_path,
+            "master",
+            "MONITOR",
+            subtask_phases={"ST-001": "COMPLETE"},
+        )
+        code, stdout, _ = self.run_hook(
+            {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}},
+            tmp_path,
+        )
+        assert code == 0
+        self._assert_allowed(stdout)
+
+    def test_learned_rules_exemption_only_covers_markdown(self, tmp_path: Path) -> None:
+        """Non-markdown files under .claude/rules/learned/ are NOT exempt."""
+        self._setup_step_state(tmp_path, "master", "MONITOR")
+        target = tmp_path / ".claude" / "rules" / "learned" / "foo.py"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("# python\n", encoding="utf-8")
+        code, stdout, _ = self.run_hook(
+            {"tool_name": "Edit", "tool_input": {"file_path": str(target)}},
+            tmp_path,
+        )
+        assert code == 0
+        reason = self._assert_denied(stdout)
+        assert "MONITOR" in reason
+
+    def test_learned_rules_exemption_allows_nested_markdown(
+        self, tmp_path: Path
+    ) -> None:
+        """Markdown files in subdirectories under .claude/rules/learned/ are exempt."""
+        self._setup_step_state(tmp_path, "master", "MONITOR")
+        target = tmp_path / ".claude" / "rules" / "learned" / "deep" / "nested.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("# learned\n", encoding="utf-8")
+        code, stdout, _ = self.run_hook(
+            {"tool_name": "Edit", "tool_input": {"file_path": str(target)}},
+            tmp_path,
+        )
+        assert code == 0
+        self._assert_allowed(stdout)

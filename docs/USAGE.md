@@ -61,6 +61,14 @@ Implementation note: `/map-learn` is now maintained skill-first. The canonical s
 
 Creates an isolated read-only git worktree at `.map/<branch>/detached-review/` via `git worktree add --detach` so reviewers can inspect the change in a clean sandbox without touching the source branch. If detached preparation is unavailable (path already exists, no HEAD commit, or git error), the review still proceeds using the persisted bundle. The `review` stage in `.map/<branch>/artifact_manifest.json` is updated on every `/map-review` run regardless of detached mode.
 
+**Cleanup between detached runs.** The detached worktree is intentionally left in place so reviewers can re-open it. Remove it before re-running `/map-review --detached` on the same branch:
+
+```bash
+git worktree remove .map/<branch>/detached-review/
+```
+
+If `git worktree remove` reports the path is missing or already pruned, delete the directory manually with `rm -rf .map/<branch>/detached-review/`.
+
 ## Codex CLI Provider
 
 MAP Framework supports OpenAI's Codex CLI as an alternative to Claude Code.

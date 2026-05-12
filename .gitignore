@@ -73,3 +73,6 @@ docs/claude-code-prompt-improver
 docs/planning-with-files.txt
 docs/research/
 docs/superpowers/
+
+# Hypothesis test cache
+.hypothesis/
