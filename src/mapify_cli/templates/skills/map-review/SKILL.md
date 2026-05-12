@@ -123,6 +123,7 @@ from all accumulated MAP artifacts rather than reconstructing context ad hoc.
 
 ```bash
 BUNDLE_JSON=$(python3 .map/scripts/map_step_runner.py create_review_bundle)
+BUNDLE_JSON_PATH=$(echo "$BUNDLE_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['bundle_path_json'])")
 ```
 
 This produces two durable files:

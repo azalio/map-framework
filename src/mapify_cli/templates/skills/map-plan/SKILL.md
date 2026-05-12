@@ -492,18 +492,10 @@ After writing `blueprint.json`, run this deterministic shell check to verify the
 file contains AT LEAST ONE subtask with the required fields. Do NOT proceed to
 Step 5.7 if the check reports a problem.
 
-```bash
-python3 - <<'PY'
-import json, sys
-from pathlib import Path
-BRANCH = Path(__file__).resolve()  # placeholder, the skill will substitute below
-PY
-```
-
-Use the **Bash** tool with the following one-liner, substituting `${BRANCH}`
-with the sanitized branch name resolved earlier:
+Use the **Bash** tool:
 
 ```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
 python3 -c "
 import json, sys
 data = json.loads(open('.map/${BRANCH}/blueprint.json').read())
