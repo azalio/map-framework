@@ -249,6 +249,7 @@ class TestCodexTemplateSynchronization:
         ("skills/map-plan/SKILL.md", "skills/map-plan/SKILL.md"),
         ("skills/map-fast/SKILL.md", "skills/map-fast/SKILL.md"),
         ("skills/map-check/SKILL.md", "skills/map-check/SKILL.md"),
+        ("skills/map-explain/SKILL.md", "skills/map-explain/SKILL.md"),
         ("agents/researcher.toml", "agents/researcher.toml"),
         ("agents/decomposer.toml", "agents/decomposer.toml"),
         ("agents/monitor.toml", "agents/monitor.toml"),
