@@ -85,6 +85,11 @@ shell_command:
   cmd: |
     BASE=$(git rev-parse --verify --quiet origin/main >/dev/null && echo origin/main \
            || (git rev-parse --verify --quiet origin/master >/dev/null && echo origin/master))
+    if [ -z "$BASE" ]; then
+      echo "map-explain: neither origin/main nor origin/master exists; aborting." >&2
+      exit 1
+    fi
+    git fetch origin "${BASE#origin/}" --quiet
     # Three-dot diff = "what this branch changed relative to base".
     git --no-pager diff --stat "$BASE"...HEAD
     git --no-pager log --oneline "$BASE"..HEAD
