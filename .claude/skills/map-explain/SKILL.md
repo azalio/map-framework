@@ -3,7 +3,7 @@ name: map-explain
 description: |
   Deep walkthrough that builds a mental model of code, a diff, or the project — flow, side effects, assumptions, breakage. Use when learning unfamiliar code or auditing a diff. Do NOT use to plan or implement; use map-plan or map-efficient.
 disable-model-invocation: true
-argument-hint: "[file path | symbol | PR ref | code snippet | empty for branch diff vs origin/main, or project overview on main/master]"
+argument-hint: "[file path | symbol | PR ref | code snippet | empty for branch diff vs origin/main (fallback origin/master), or project overview on main/master]"
 ---
 # MAP Explain
 
