@@ -754,6 +754,36 @@ REVIEW_BUNDLE_SCHEMA = {
             "type": "array",
             "items": {"type": "string"},
         },
+        "ordering": {
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "enum": [
+                        "default",
+                        "reverse-sections",
+                        "shuffle-sections",
+                        "compare-orderings",
+                    ],
+                },
+                "seed": {"type": ["integer", "null"]},
+                "runs": {"type": "array"},
+                "drift_detected": {"type": "boolean"},
+                "drift_summary": {"type": ["string", "null"]},
+                "final_verdict": {"type": ["string", "null"]},
+                "compare_status": {"type": ["string", "null"]},
+            },
+            "required": [
+                "mode",
+                "seed",
+                "runs",
+                "drift_detected",
+                "drift_summary",
+                "final_verdict",
+                "compare_status",
+            ],
+            "additionalProperties": False,
+        },
     },
     "required": [
         "status",

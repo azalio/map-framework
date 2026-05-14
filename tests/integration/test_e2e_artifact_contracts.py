@@ -29,13 +29,14 @@ SRC_PATH = REPO_ROOT / "src"
 sys.path.insert(0, str(SRC_PATH))
 sys.path.insert(0, str(SCRIPTS_PATH))
 
-import map_orchestrator  # noqa: E402
-import map_step_runner  # noqa: E402
+import map_orchestrator  # noqa: E402  # type: ignore[import-not-found]
+import map_step_runner  # noqa: E402  # type: ignore[import-not-found]
 
 # DependencyGraph may not be importable if mapify_cli deps are missing (e.g. Python <3.11)
 try:
     from mapify_cli.dependency_graph import DependencyGraph  # noqa: F401
 
+    del DependencyGraph
     _HAS_DEPENDENCY_GRAPH = True
 except (ImportError, ModuleNotFoundError):
     _HAS_DEPENDENCY_GRAPH = False
@@ -75,14 +76,6 @@ def _load_fixture(name: str) -> str:
 def _load_fixture_json(name: str) -> dict:
     """Read a fixture file as JSON."""
     return json.loads(_load_fixture(name))
-
-
-def _copy_fixture(name: str, dest: Path) -> Path:
-    """Copy a fixture file to destination."""
-    src = FIXTURES_DIR / name
-    target = dest / src.name
-    shutil.copy2(src, target)
-    return target
 
 
 # =====================================================================
@@ -205,6 +198,7 @@ class TestPlanToEfficientHandoff:
 
     def test_get_next_step_walks_plan_phases(self, workspace, branch):
         """Orchestrator should walk through plan phases 1.0 → 1.5 → 1.55 → 1.6."""
+        del workspace
         map_orchestrator.initialize_workflow("Add auth", branch)
 
         # Step 1.0: DECOMPOSE
@@ -265,6 +259,7 @@ class TestEfficientExecutionLifecycle:
 
     def _setup_plan_complete_state(self, workspace, branch):
         """Load the 'plan complete' fixture into workspace."""
+        del branch
         state_data = _load_fixture_json("step_state_plan_complete.json")
         state_file = workspace / "step_state.json"
         state_file.write_text(json.dumps(state_data, indent=2), encoding="utf-8")
@@ -329,6 +324,7 @@ class TestEfficientExecutionLifecycle:
         self._setup_plan_complete_state(workspace, branch)
 
         # Hit max retries
+        result: dict[str, object] = {}
         for i in range(6):
             result = map_orchestrator.wave_monitor_failed("ST-001", branch, f"Fail {i}")
 
@@ -336,6 +332,7 @@ class TestEfficientExecutionLifecycle:
 
     def test_human_artifacts_created(self, workspace, branch):
         """ensure_human_artifacts should create qa and pr-draft files."""
+        del branch
         result = map_step_runner.ensure_human_artifacts()
         assert result["status"] == "success"
         assert (workspace / "qa-001.md").exists()
@@ -343,6 +340,7 @@ class TestEfficientExecutionLifecycle:
 
     def test_numbered_artifact_increments(self, workspace, branch):
         """Code review artifacts should auto-increment: 001 → 002 → 003."""
+        del branch
         (workspace / "code-review-001.md").write_text("review 1", encoding="utf-8")
 
         result = map_step_runner.next_numbered_artifact_path("code-review")
@@ -515,7 +513,7 @@ class TestFullLifecycle:
         waves = result["execution_waves"]
 
         # 4. Execute waves
-        for wave_idx, wave in enumerate(waves):
+        for wave_idx in range(len(waves)):
             wave_step = map_orchestrator.get_wave_step(branch)
             assert not wave_step["is_complete"]
             assert wave_step["wave_index"] == wave_idx
@@ -548,6 +546,7 @@ class TestDegradation:
     @needs_dependency_graph
     def test_set_waves_missing_blueprint(self, workspace, branch):
         """set_waves should return error when blueprint is missing."""
+        del workspace
         map_orchestrator.initialize_workflow("Add auth", branch)
         result = map_orchestrator.set_waves(branch)
         assert result["status"] == "error"
@@ -573,6 +572,7 @@ class TestDegradation:
 
     def test_load_state_from_corrupt_file(self, workspace, branch):
         """Loading corrupt step_state.json should return fresh state, not crash."""
+        del branch
         state_file = workspace / "step_state.json"
         state_file.write_text("not json at all", encoding="utf-8")
 
@@ -582,6 +582,7 @@ class TestDegradation:
 
     def test_resume_briefing_missing_artifacts(self, workspace, branch):
         """get_resume_briefing should handle missing artifacts gracefully."""
+        del workspace
         briefing = map_orchestrator.get_resume_briefing(branch)
         assert briefing["branch"] == branch
         assert briefing["latest_review_path"] is None
@@ -590,6 +591,7 @@ class TestDegradation:
 
     def test_validate_step_mismatch(self, workspace, branch):
         """Validating a step that isn't current should fail."""
+        del workspace
         map_orchestrator.initialize_workflow("Add auth", branch)
         result = map_orchestrator.validate_step("2.3", branch)
         assert not result["valid"]
@@ -597,7 +599,205 @@ class TestDegradation:
 
     def test_monitor_failed_wrong_phase(self, workspace, branch):
         """monitor_failed from non-MONITOR phase should error."""
+        del workspace
         map_orchestrator.initialize_workflow("Add auth", branch)
         result = map_orchestrator.monitor_failed(branch, "some feedback")
         assert result["status"] == "error"
         assert "MONITOR" in result["message"]
+
+
+# =====================================================================
+# Ordering backward compatibility + round-trip (AC-14)
+# =====================================================================
+
+
+def _setup_review_bundle_prerequisites(workspace: Path, branch: str) -> None:
+    """Populate workspace with minimal artifacts needed by create_review_bundle.
+
+    Mirrors the minimal-fixture pattern from TestEfficientExecutionLifecycle but
+    targets the map-review phase helpers.  All files use placeholder text so
+    create_review_bundle() can inventory them without failing.
+    """
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    # Spec and task plan
+    (workspace / f"spec_{branch}.md").write_text("# Spec\nMinimal spec.", encoding="utf-8")
+    (workspace / f"task_plan_{branch}.md").write_text("# Plan\nMinimal plan.", encoding="utf-8")
+
+    # Copy a real blueprint so dependency-graph helpers don't blow up
+    shutil.copy2(FIXTURES_DIR / "blueprint.json", workspace / "blueprint.json")
+
+    # Execution-phase artifacts
+    (workspace / "verification-summary.md").write_text(
+        "# Verification\nVERDICT: READY FOR REVIEW", encoding="utf-8"
+    )
+    (workspace / "qa-001.md").write_text("# QA\nAll checks passed.", encoding="utf-8")
+    (workspace / "pr-draft.md").write_text(
+        "# PR Draft\n\n## Summary\n- Auth added.\n\n## Validation\n- Tests pass.\n\n## Risks / Follow-up\n- None.\n",
+        encoding="utf-8",
+    )
+    (workspace / "active-issues.json").write_text(
+        '{"updated_at": "2026-01-01T00:00:00Z", "issues": []}', encoding="utf-8"
+    )
+    shutil.copy2(FIXTURES_DIR / "code_review.md", workspace / "code-review-001.md")
+
+    # Artifact manifest (empty dict is acceptable; create_review_bundle merges into it)
+    (workspace / "artifact_manifest.json").write_text("{}", encoding="utf-8")
+
+
+class TestOrderingBackwardCompat:
+    """AC-14(a) — legacy bundle without 'ordering' still loads (EC-7 defaults)."""
+
+    def test_ordering_backward_compat(self, workspace, branch):
+        """Legacy bundle (no ordering key) returns EC-7 safe defaults from build_review_handoff."""
+        _setup_review_bundle_prerequisites(workspace, branch)
+
+        # Step 1: produce a fresh bundle (ordering key will be present; we remove it to simulate legacy).
+        result = map_step_runner.create_review_bundle(branch)
+        assert result["status"] in ("success", "warn"), f"Bundle creation failed: {result}"
+
+        bundle_json_path = workspace / "review-bundle.json"
+        assert bundle_json_path.exists(), "review-bundle.json must exist after create_review_bundle"
+
+        # Step 2: strip the 'ordering' key to simulate a legacy bundle from before ST-003.
+        bundle_data = json.loads(bundle_json_path.read_text(encoding="utf-8"))
+        bundle_data.pop("ordering", None)
+        bundle_json_path.write_text(json.dumps(bundle_data, indent=2), encoding="utf-8")
+        assert "ordering" not in bundle_data, "Ordering key must be absent for this test"
+
+        # Step 3: call build_review_handoff; it must not crash and must return EC-7 defaults.
+        handoff = map_step_runner.build_review_handoff(branch)
+
+        assert handoff["review_order_mode"] == "default"
+        assert handoff["review_order_seed"] is None
+        assert handoff["drift_detected"] is False
+        assert handoff["compare_status"] is None
+
+
+class TestOrderingRoundtrip:
+    """AC-14(b) — write bundle WITH ordering -> reload -> handoff matches -> schema clean."""
+
+    def test_ordering_roundtrip(self, workspace, branch, monkeypatch):
+        """Staged ordering round-trips through create_review_bundle -> review-bundle.json -> build_review_handoff."""
+        _setup_review_bundle_prerequisites(workspace, branch)
+
+        # Stage a non-default ordering payload (simulates what record_review_ordering would set).
+        staged_ordering: dict = {
+            "mode": "compare-orderings",
+            "seed": 42,
+            "runs": [
+                {
+                    "run_id": "run-1",
+                    "section_order": ["architecture", "code_quality", "tests", "performance"],
+                    "verdict": "REVISE",
+                    "primary_issues": ["AUTH-01", "AUTH-02"],
+                },
+                {
+                    "run_id": "run-2",
+                    "section_order": ["performance", "tests", "code_quality", "architecture"],
+                    "verdict": "BLOCK",
+                    "primary_issues": ["AUTH-01", "AUTH-03"],
+                },
+            ],
+            "drift_detected": True,
+            "drift_summary": "Verdict changed REVISE->BLOCK across orderings.",
+            "final_verdict": "BLOCK",
+            "compare_status": "complete",
+        }
+        monkeypatch.setattr(map_step_runner, "_PENDING_REVIEW_ORDERING", staged_ordering)
+
+        # create_review_bundle consumes _PENDING_REVIEW_ORDERING (clears it after read).
+        result = map_step_runner.create_review_bundle(branch)
+        assert result["status"] in ("success", "warn"), f"Bundle creation failed: {result}"
+
+        # AC-14(b)-1: bundle result dict has ordering key with staged values.
+        assert "ordering" in result, "result must contain 'ordering' key"
+        assert result["ordering"]["mode"] == "compare-orderings"
+        assert result["ordering"]["seed"] == 42
+        assert result["ordering"]["drift_detected"] is True
+
+        # AC-14(b)-2: review-bundle.json on disk contains the ordering object.
+        bundle_json_path = workspace / "review-bundle.json"
+        bundle_on_disk = json.loads(bundle_json_path.read_text(encoding="utf-8"))
+        assert "ordering" in bundle_on_disk, "review-bundle.json must persist ordering key"
+        disk_ordering = bundle_on_disk["ordering"]
+        assert disk_ordering["mode"] == "compare-orderings"
+        assert disk_ordering["seed"] == 42
+        assert disk_ordering["drift_detected"] is True
+        assert disk_ordering["compare_status"] == "complete"
+
+        # AC-14(b)-3: build_review_handoff reads from the on-disk bundle and surfaces the 4 fields.
+        handoff = map_step_runner.build_review_handoff(branch)
+        assert handoff["review_order_mode"] == "compare-orderings"
+        assert handoff["review_order_seed"] == 42
+        assert handoff["drift_detected"] is True
+        assert handoff["compare_status"] == "complete"
+
+        # AC-14(b)-4: no schema validation error means schema accepted the new format.
+        assert result.get("schema_validation_error") is None, (
+            f"Schema rejected the ordering object: {result.get('schema_validation_error')}"
+        )
+
+        # AC-14(b)-5: manifest review stage status is 'ready', not 'warn'.
+        manifest_status = result.get("manifest_status", {})
+        assert manifest_status.get("status") == "ready", (
+            f"Manifest stage must be 'ready'; got: {manifest_status}"
+        )
+
+
+class TestPrDraftUnaffectedByOrdering:
+    """AC-14(c) + AC-13 OOS — pr-draft.md content is unchanged by ordering metadata."""
+
+    def test_pr_draft_unaffected_by_ordering(self, workspace, branch, monkeypatch):
+        """PR draft content is byte-identical with and without an ordering payload."""
+        _setup_review_bundle_prerequisites(workspace, branch)
+
+        # Path 1: build pr-draft WITHOUT staged ordering.
+        # Ensure ordering state is clean (no pending payload).
+        monkeypatch.setattr(map_step_runner, "_PENDING_REVIEW_ORDERING", None)
+
+        pr_result_1 = map_step_runner.write_pr_draft(
+            summary="Auth feature added.",
+            validation="All tests pass.",
+            risks_follow_up="Monitor rate-limit edge cases.",
+            branch=branch,
+        )
+        assert pr_result_1["status"] == "success"
+        content_without_ordering = Path(pr_result_1["path"]).read_text(encoding="utf-8")
+
+        # Path 2: stage a non-default ordering, then build pr-draft again.
+        staged_ordering_2: dict = {
+            "mode": "shuffle-sections",
+            "seed": 99,
+            "runs": [],
+            "drift_detected": False,
+            "drift_summary": None,
+            "final_verdict": "PROCEED",
+            "compare_status": None,
+        }
+        monkeypatch.setattr(map_step_runner, "_PENDING_REVIEW_ORDERING", staged_ordering_2)
+
+        pr_result_2 = map_step_runner.write_pr_draft(
+            summary="Auth feature added.",
+            validation="All tests pass.",
+            risks_follow_up="Monitor rate-limit edge cases.",
+            branch=branch,
+        )
+        assert pr_result_2["status"] == "success"
+        content_with_ordering = Path(pr_result_2["path"]).read_text(encoding="utf-8")
+
+        # Assert: pr-draft content is byte-identical regardless of ordering state.
+        assert content_without_ordering == content_with_ordering, (
+            "pr-draft.md must be identical with and without ordering payload.\n"
+            f"Without: {content_without_ordering!r}\n"
+            f"With:    {content_with_ordering!r}"
+        )
+
+        # AC-13 OOS: build_handoff_bundle output must NOT contain ordering-specific keys.
+        handoff_bundle = map_step_runner.build_handoff_bundle(branch)
+        assert "review_order_mode" not in handoff_bundle, (
+            "build_handoff_bundle must NOT surface review_order_mode (AC-13 OOS)"
+        )
+        assert "drift_detected" not in handoff_bundle, (
+            "build_handoff_bundle must NOT surface drift_detected (AC-13 OOS)"
+        )

@@ -30,6 +30,7 @@ TESTING:
 import fnmatch
 import json
 import os
+import random
 import re
 import subprocess
 import sys
@@ -71,6 +72,8 @@ WORKFLOW_FIT_ROUTES = {
 }
 DIFF_SIZE_LEVELS = {"tiny", "small", "medium", "large"}
 LEARNING_CONSUMPTION_SOURCES = {"auto-handoff", "file-handoff", "inline-summary"}
+REVIEW_SECTION_IDS: tuple[str, ...] = ("architecture", "code_quality", "tests", "performance")
+REVIEW_VALID_MODES: tuple[str, ...] = ("default", "reverse-sections", "shuffle-sections")
 LEARNING_IMMEDIATE_WINDOW_SECONDS = 30 * 60
 
 LEARNING_METRICS_COUNTER_DEFAULTS = {
@@ -127,6 +130,11 @@ LEARNED_RULE_BULLET_RE = re.compile(
     r"^- \*\*(?P<title>.+?)\*\* \((?P<date>\d{4}-\d{2}-\d{2})\): (?P<body>.+?)(?: \[workflow: .+?\])?$"
 )
 SECTION_HEADING_RE = re.compile(r"^##\s+(?P<title>.+?)\s*$")
+
+# Module-level singleton holding the staging payload set by record_review_ordering()
+# and consumed (then cleared) by create_review_bundle().  None means no ordering has
+# been staged yet; create_review_bundle() uses the EC-7 default in that case.
+_PENDING_REVIEW_ORDERING: dict[str, object] | None = None
 PATH_HINT_RE = re.compile(
     r"(?P<path>(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+)(?::\d+)?"
 )
@@ -1381,6 +1389,214 @@ def _sanitize_for_json(text: str) -> str:
     return re.sub(r"[\x00-\x1f\x7f]", "", text)
 
 
+def get_review_section_order(mode: str, seed: int | None = None) -> list[str]:
+    """Return canonical/reverse/seeded-shuffle section list for /map-review.
+
+    AC-1: 'default' returns canonical; 'reverse-sections' returns reversed;
+    'shuffle-sections' uses random.Random(seed).
+    AC-2: Same seed -> identical order; different seeds may differ.
+    EC-9: Unknown mode -> ValueError listing allowed modes.
+    """
+    if mode not in REVIEW_VALID_MODES:
+        raise ValueError(
+            f"unknown mode {mode!r}; expected one of {REVIEW_VALID_MODES}"
+        )
+    sections = list(REVIEW_SECTION_IDS)
+    if mode == "default":
+        return sections
+    if mode == "reverse-sections":
+        return list(reversed(sections))
+    # shuffle-sections
+    if seed is not None and seed < 0:
+        raise ValueError(f"seed must be >= 0, got {seed}")
+    rng = random.Random(seed)
+    rng.shuffle(sections)
+    return sections
+
+
+def default_shuffle_seed(branch: str, commit_sha: str | None) -> int:
+    """Derive a stable per-branch shuffle seed.
+
+    AC-3: stable for fixed inputs; commit_sha=None falls back to
+    hash(branch + 'detached').
+    """
+    if commit_sha is None:
+        return hash(branch + "detached")
+    return hash(f"{branch}|{commit_sha}")
+
+
+def compare_review_runs(runs: list[dict[str, object]]) -> dict[str, object]:
+    """Aggregate ordering-variant review runs with strict-wins verdict + drift detection.
+
+    INV-4 strict-wins: final_verdict = max over runs of rank BLOCK>REVISE>PROCEED.
+    INV-5: drift NEVER auto-escalates beyond the strictest individual verdict.
+    EC-10: intra-run issue order irrelevant (set-based overlap).
+    EC-11 partial-failure: len(runs)==1 -> compare_status='partial_failure', drift_detected=True.
+    EC-13: drift_summary truncated to 2000 chars then sanitized (INV-8).
+    """
+    _RANK: dict[str, int] = {"PROCEED": 0, "REVISE": 1, "BLOCK": 2}
+
+    if not isinstance(runs, list) or len(runs) == 0:
+        raise ValueError("runs must be a non-empty list")
+
+    # Partial failure (EC-11): exactly one run survived
+    if len(runs) == 1:
+        only = runs[0]
+        verdict = only.get("verdict", "PROCEED")
+        if verdict not in _RANK:
+            raise ValueError(f"unknown verdict {verdict!r}; expected one of {list(_RANK)}")
+        raw_issues: Iterable[object] = cast(Iterable[object], only.get("primary_issues") or [])
+        issues = [str(i) for i in raw_issues]
+        summary_raw = (
+            "one ordering run failed; drift could not be confirmed; verdict is provisional"
+        )
+        return {
+            "drift_detected": True,
+            "verdicts": [verdict],
+            "shared_primary_issues": issues,
+            "unique_primary_issues": {str(only.get("ordering_label", "run_0")): []},
+            "drift_summary": _sanitize_for_json(summary_raw[:2000]),
+            "final_verdict": verdict,
+            "compare_status": "partial_failure",
+        }
+
+    # Multi-run path
+    verdicts: list[str] = []
+    issue_sets: list[set[str]] = []
+    labels: list[str] = []
+    for idx, run in enumerate(runs):
+        v = run.get("verdict")
+        if v not in _RANK:
+            raise ValueError(f"unknown verdict {v!r}; expected one of {list(_RANK)}")
+        verdicts.append(str(v))
+        run_issues: Iterable[object] = cast(Iterable[object], run.get("primary_issues") or [])
+        issue_sets.append({str(i) for i in run_issues})
+        labels.append(str(run.get("ordering_label", f"run_{idx}")))
+
+    # Strict-wins (AC-7, INV-4)
+    final_verdict = max(verdicts, key=lambda x: _RANK[x])
+
+    # Shared / unique issue computation (EC-10: set-based, order-agnostic)
+    shared_set: set[str] = set.intersection(*issue_sets) if issue_sets else set()
+    shared_primary_issues = sorted(shared_set)
+    unique_primary_issues: dict[str, list[str]] = {}
+    for label, s in zip(labels, issue_sets):
+        unique_primary_issues[label] = sorted(s - shared_set)
+
+    # Drift detection (AC-6): verdict mismatch OR Jaccard overlap < 0.5
+    verdict_mismatch = len(set(verdicts)) > 1
+    union_set: set[str] = set.union(*issue_sets) if issue_sets else set()
+    overlap = (len(shared_set) / len(union_set)) if union_set else 1.0
+    overlap_low = overlap < 0.5
+    drift_detected = verdict_mismatch or overlap_low
+
+    # Drift summary (EC-13: truncate BEFORE sanitize; INV-8: sanitize after)
+    summary_raw_opt: str | None
+    if drift_detected:
+        reasons: list[str] = []
+        if verdict_mismatch:
+            reasons.append(f"verdicts disagree: {verdicts}")
+        if overlap_low:
+            reasons.append(f"primary-issue overlap {overlap:.2f} < 0.50")
+        summary_raw_opt = "; ".join(reasons)
+    else:
+        summary_raw_opt = None
+
+    drift_summary: str | None = (
+        _sanitize_for_json(summary_raw_opt[:2000]) if summary_raw_opt is not None else None
+    )
+
+    return {
+        "drift_detected": drift_detected,
+        "verdicts": verdicts,
+        "shared_primary_issues": shared_primary_issues,
+        "unique_primary_issues": unique_primary_issues,
+        "drift_summary": drift_summary,
+        "final_verdict": final_verdict,
+        "compare_status": None,
+    }
+
+
+# Modes accepted by record_review_ordering (broader than REVIEW_VALID_MODES because
+# 'compare-orderings' is set at the SKILL.md aggregator layer, not the helper layer).
+_ORDERING_RECORD_MODES: tuple[str, ...] = (
+    "default",
+    "reverse-sections",
+    "shuffle-sections",
+    "compare-orderings",
+)
+
+
+def record_review_ordering(
+    mode: str,
+    seed: int | None = None,
+    runs: list[dict[str, object]] | None = None,
+    drift: dict[str, object] | None = None,
+    branch: str | None = None,
+) -> dict[str, object]:
+    """Stage an ordering payload for the next create_review_bundle call (INV-10).
+
+    Stores the payload in the module-level ``_PENDING_REVIEW_ORDERING`` singleton,
+    which create_review_bundle() consumes and clears in a single atomic read.
+
+    CRITICAL: this function MUST NOT call ``_set_manifest_stage``,
+    ``save_artifact_manifest``, ``load_artifact_manifest``, or ``_write_json_file``.
+    The single-writer rule (INV-10) reserves all manifest writes for
+    create_review_bundle().
+    """
+    global _PENDING_REVIEW_ORDERING
+
+    if mode not in _ORDERING_RECORD_MODES:
+        raise ValueError(
+            f"unknown mode {mode!r}; expected one of {_ORDERING_RECORD_MODES}"
+        )
+
+    runs_payload: list[dict[str, object]] = (
+        [dict(run) for run in runs] if runs is not None else []
+    )
+
+    # Drift sub-payload: pull fields from the compare_review_runs result dict
+    drift_detected = bool((drift or {}).get("drift_detected", False))
+    drift_summary_raw = (drift or {}).get("drift_summary")
+    final_verdict = (drift or {}).get("final_verdict")
+    compare_status = (drift or {}).get("compare_status")
+
+    # Sanitize string fields (INV-8). Truncate drift_summary to 2000 chars first (EC-13).
+    drift_summary: str | None
+    if drift_summary_raw is None:
+        drift_summary = None
+    else:
+        drift_summary = _sanitize_for_json(str(drift_summary_raw)[:2000])
+
+    final_verdict_str: str | None = (
+        _sanitize_for_json(str(final_verdict)) if final_verdict is not None else None
+    )
+    compare_status_str: str | None = (
+        _sanitize_for_json(str(compare_status)) if compare_status is not None else None
+    )
+
+    payload: dict[str, object] = {
+        "mode": mode,
+        "seed": seed,
+        "runs": runs_payload,
+        "drift_detected": drift_detected,
+        "drift_summary": drift_summary,
+        "final_verdict": final_verdict_str,
+        "compare_status": compare_status_str,
+    }
+
+    _PENDING_REVIEW_ORDERING = payload
+
+    # branch is accepted for API symmetry but not embedded in the staged payload;
+    # it is surfaced in the return dict for CLI consumers.
+    return {
+        "status": "ok",
+        "staged": True,
+        "mode": mode,
+        "branch": branch,
+    }
+
+
 def _read_branch_artifact_text(branch_dir: Path, name: str) -> str:
     """Read a branch artifact, treating untouched managed placeholders as empty."""
     path = branch_dir / name
@@ -1502,6 +1718,30 @@ def build_review_handoff(branch: Optional[str] = None) -> dict:
         "active_issues": _read_branch_artifact_text(branch_dir, "active-issues.json")
         or None,
     }
+
+    # Surface ordering metadata for /map-learn consumers (AC-13).
+    # Read review-bundle.json if present; fall back to safe defaults (EC-7)
+    # when the file is absent, unreadable, or from a legacy bundle without
+    # the "ordering" key.  No exception must escape — handoff must always
+    # succeed regardless of ordering availability.
+    bundle_path = branch_dir / "review-bundle.json"
+    ordering: dict[str, object] = {}
+    if bundle_path.exists():
+        try:
+            with bundle_path.open(encoding="utf-8") as fh:
+                bundle_data = json.load(fh)
+            if isinstance(bundle_data, dict):
+                raw_ordering = bundle_data.get("ordering")
+                if isinstance(raw_ordering, dict):
+                    ordering = raw_ordering
+        except (OSError, ValueError):
+            ordering = {}
+
+    payload["review_order_mode"] = str(ordering.get("mode", "default")) if ordering else "default"
+    payload["review_order_seed"] = ordering.get("seed") if ordering else None
+    payload["drift_detected"] = bool(ordering.get("drift_detected", False)) if ordering else False
+    payload["compare_status"] = ordering.get("compare_status") if ordering else None
+
     return payload
 
 
@@ -1873,6 +2113,25 @@ def create_review_bundle(branch: Optional[str] = None) -> dict:
             "_error": str(exc),
         }
 
+    # --- Ordering payload (INV-10 single-writer staging) ---
+    # Consume-on-read: clear immediately to prevent stale reuse on a second call.
+    global _PENDING_REVIEW_ORDERING
+    pending = _PENDING_REVIEW_ORDERING
+    _PENDING_REVIEW_ORDERING = None
+    if pending is None:
+        # EC-7 default: normal single-pass review with no ordering staged
+        ordering_payload: dict[str, object] = {
+            "mode": "default",
+            "seed": None,
+            "runs": [],
+            "drift_detected": False,
+            "drift_summary": None,
+            "final_verdict": None,
+            "compare_status": None,
+        }
+    else:
+        ordering_payload = pending
+
     result: dict = {
         "status": "success",
         "branch": branch_name,
@@ -1883,6 +2142,7 @@ def create_review_bundle(branch: Optional[str] = None) -> dict:
         "code_state": code_state,
         "review_handoff": review_handoff,
         "pr_handoff": pr_handoff,
+        "ordering": ordering_payload,
     }
 
     # Soft schema validation: warn on drift but still write the bundle.
@@ -1945,6 +2205,7 @@ def create_review_bundle(branch: Optional[str] = None) -> dict:
             "missing_artifacts": missing_count,
             "branch": branch_name,
             "generated_at": result["generated_at"],
+            "ordering": ordering_payload,
         }
         stage_status = "warn" if "schema_validation_error" in result else "ready"
         _set_manifest_stage(
@@ -3233,6 +3494,36 @@ if __name__ == "__main__":
         result = build_context_block(sys.argv[2], sys.argv[3])
         print(result)
 
+    elif func_name == "shuffle-sections":
+        # CLI: shuffle-sections <mode> [seed]
+        if len(sys.argv) < 3:
+            print(json.dumps({"status": "error", "message": "usage: shuffle-sections <mode> [seed]"}))
+            sys.exit(1)
+        mode_arg = sys.argv[2]
+        seed_arg: int | None = None
+        if len(sys.argv) >= 4:
+            try:
+                seed_arg = int(sys.argv[3])  # EC-16: int() rejects non-int via ValueError
+            except ValueError as exc:
+                print(json.dumps({"status": "error", "message": f"invalid seed: {exc}"}))
+                sys.exit(1)
+        try:
+            order = get_review_section_order(mode_arg, seed_arg)
+        except ValueError as exc:
+            print(json.dumps({"status": "error", "message": str(exc)}))
+            sys.exit(1)
+        print(json.dumps({"status": "ok", "mode": mode_arg, "seed": seed_arg, "order": order}))
+
+    elif func_name == "default-shuffle-seed":
+        # CLI: default-shuffle-seed <branch> [commit_sha]
+        if len(sys.argv) < 3:
+            print(json.dumps({"status": "error", "message": "usage: default-shuffle-seed <branch> [commit_sha]"}))
+            sys.exit(1)
+        branch_arg = sys.argv[2]
+        commit_sha_arg = sys.argv[3] if len(sys.argv) >= 4 and sys.argv[3] else None
+        seed_val = default_shuffle_seed(branch_arg, commit_sha_arg)
+        print(json.dumps({"status": "ok", "branch": branch_arg, "commit_sha": commit_sha_arg, "seed": seed_val}))
+
     elif func_name == "prepare_detached_review":
         import argparse as _ap
 
@@ -3249,6 +3540,67 @@ if __name__ == "__main__":
             target_dir=_args.target_dir,
         )
         print(json.dumps(result, indent=2))
+
+    elif func_name == "compare-review-runs":
+        # CLI: compare-review-runs <runs_json|->
+        # runs_json: JSON-encoded list of run dicts. Pass "-" to read from stdin.
+        if len(sys.argv) < 3:
+            print(json.dumps({"status": "error", "message": "usage: compare-review-runs <runs_json|->"}))
+            sys.exit(1)
+        raw = sys.stdin.read() if sys.argv[2] == "-" else sys.argv[2]
+        try:
+            runs_payload = json.loads(raw)
+        except (ValueError, TypeError) as exc:
+            print(json.dumps({"status": "error", "message": f"invalid JSON: {exc}"}))
+            sys.exit(1)
+        try:
+            cmp_result = compare_review_runs(runs_payload)
+        except ValueError as exc:
+            print(json.dumps({"status": "error", "message": str(exc)}))
+            sys.exit(1)
+        print(json.dumps({"status": "ok", **cmp_result}))
+
+    elif func_name == "record-review-ordering":
+        # CLI: record-review-ordering <mode> [seed] [<json: {runs, drift}>|"-" for stdin]
+        if len(sys.argv) < 3:
+            print(json.dumps({"status": "error", "message": "usage: record-review-ordering <mode> [seed] [runs_drift_json|-]"}))
+            sys.exit(1)
+        mode_arg = sys.argv[2]
+        seed_arg: int | None = None
+        if len(sys.argv) >= 4 and sys.argv[3] != "":
+            try:
+                seed_arg = int(sys.argv[3])
+            except ValueError as exc:
+                print(json.dumps({"status": "error", "message": f"invalid seed: {exc}"}))
+                sys.exit(1)
+        runs_arg: list[dict[str, object]] | None = None
+        drift_arg: dict[str, object] | None = None
+        if len(sys.argv) >= 5:
+            raw_ord = sys.stdin.read() if sys.argv[4] == "-" else sys.argv[4]
+            try:
+                ord_payload = json.loads(raw_ord)
+            except (ValueError, TypeError) as exc:
+                print(json.dumps({"status": "error", "message": f"invalid JSON: {exc}"}))
+                sys.exit(1)
+            if not isinstance(ord_payload, dict):
+                print(json.dumps({"status": "error", "message": "JSON payload must be an object"}))
+                sys.exit(1)
+            runs_field = ord_payload.get("runs")
+            if runs_field is not None and not isinstance(runs_field, list):
+                print(json.dumps({"status": "error", "message": "payload.runs must be a list"}))
+                sys.exit(1)
+            runs_arg = cast(list[dict[str, object]], runs_field) if runs_field is not None else None
+            drift_field = ord_payload.get("drift")
+            if drift_field is not None and not isinstance(drift_field, dict):
+                print(json.dumps({"status": "error", "message": "payload.drift must be a dict"}))
+                sys.exit(1)
+            drift_arg = cast(dict[str, object], drift_field) if drift_field is not None else None
+        try:
+            ord_result = record_review_ordering(mode_arg, seed_arg, runs_arg, drift_arg, branch=None)
+        except ValueError as exc:
+            print(json.dumps({"status": "error", "message": str(exc)}))
+            sys.exit(1)
+        print(json.dumps(ord_result))
 
     else:
         print(f"Unknown function: {func_name}")

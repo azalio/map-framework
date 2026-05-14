@@ -69,6 +69,35 @@ git worktree remove .map/<branch>/detached-review/
 
 If `git worktree remove` reports the path is missing or already pruned, delete the directory manually with `rm -rf .map/<branch>/detached-review/`.
 
+**Optional section-order flags:**
+
+Long-context LLM reviewers are susceptible to anchoring: sections presented early receive more attention and can disproportionately influence the final verdict. The following flags let you vary section presentation order to probe verdict stability without changing any section content.
+
+```bash
+# Invert the canonical section order (Performance → Tests → Code Quality → Architecture)
+claude /map-review --reverse-sections
+
+# Seeded random order — same seed always produces the same order
+claude /map-review --shuffle-sections --seed 42
+
+# Run review twice (default order + reverse), aggregate via strict-wins, surface drift
+claude /map-review --compare-orderings
+
+# Compare-orderings with a clean-room detached worktree (prepared once, shared across both runs)
+claude /map-review --compare-orderings --detached
+```
+
+- `--reverse-sections` — inverts the canonical Architecture → Code Quality → Tests → Performance order.
+- `--shuffle-sections` — applies a seeded random permutation. If `--seed N` is omitted, a deterministic per-branch seed is derived from `hash(branch + commit_sha)` so the same commit always shuffles identically.
+- `--seed N` — explicit integer seed; companion to `--shuffle-sections`. Accepts any non-negative integer.
+- `--compare-orderings` — runs the review twice (default order, then reverse), then aggregates results using strict-wins (BLOCK > REVISE > PROCEED). Records `drift_detected`, `drift_summary`, and `final_verdict` in the `ordering` object of `.map/<branch>/review-bundle.json`.
+
+**EC-1 / EC-17 precedence:** `--compare-orderings` always uses `default + reverse-sections`. Combining `--compare-orderings` with `--shuffle-sections` is rejected with a structured error at parse time.
+
+**EC-15 detached interaction:** When `--compare-orderings` is combined with `--detached`, `prepare_detached_review` is called once before the compare loop; both runs reuse the same detached worktree path. Detached preparation is a bundle-collection concern, not a per-run concern.
+
+**Default behavior unchanged:** A plain `/map-review` invocation (no flags) continues to work exactly as before — section order is Architecture → Code Quality → Tests → Performance, single run, same verdict surface. The only unconditional change in all modes is neutral option presentation (options listed as A/B/C with the recommendation marker placed after the list, not first).
+
 ## Codex CLI Provider
 
 MAP Framework supports OpenAI's Codex CLI as an alternative to Claude Code.

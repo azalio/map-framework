@@ -455,3 +455,216 @@ class TestMapReviewSkillBundleWiring:
             "map-review/SKILL.md must document that the review still proceeds when "
             "detached preparation is unavailable (graceful degradation, AC-6)"
         )
+
+
+class TestMapReviewSkillOrderingWiring:
+    """Validate ST-006 ordering/bias-hardening changes in map-review SKILL.md.
+
+    AC-9:  argument-hint lists all four new flags; Step 0 parses each.
+    AC-10: 'Recommended option is always listed first' absent; (Recommended) marker
+           placed AFTER option label; CI auto-select uses marker, not position (INV-11).
+    AC-11: Phase B iterates helper-returned order; 'Section N+1' phrasing replaced with
+           'next section'.
+    AC-12: --compare-orderings flow invokes agents twice, calls compare_review_runs,
+           then record-review-ordering.
+    EC-1/EC-17: mutual exclusion block present.
+    EC-15:  prepare_detached_review called exactly once; EC-15 note present.
+    EC-16:  --seed extraction uses grep/sed pattern; no $(...)-expansion of seed token.
+    INV-6:  neutral option listing rule present; (Recommended) AFTER option label.
+    INV-7:  default no-flag path unchanged (MODE_FLAG defaults to 'default').
+    """
+
+    @pytest.fixture
+    def skill_md(self):
+        skills_dir = Path(__file__).parent.parent / ".claude" / "skills"
+        path = skills_dir / "map-review" / "SKILL.md"
+        assert path.exists(), "map-review/SKILL.md not found"
+        return path.read_text()
+
+    # --- AC-9: argument-hint and Step 0 flag parsing ---
+
+    def test_vc9_argument_hint_lists_new_flags(self, skill_md):
+        """AC-9: argument-hint frontmatter must include all four new flags."""
+        # Extract frontmatter argument-hint line
+        hint_match = re.search(r'^argument-hint:\s*"([^"]+)"', skill_md, re.MULTILINE)
+        assert hint_match, "argument-hint field not found in frontmatter"
+        hint = hint_match.group(1)
+        for flag in ("--reverse-sections", "--shuffle-sections", "--seed", "--compare-orderings"):
+            assert flag in hint, (
+                f"argument-hint missing '{flag}' (AC-9). Current hint: {hint!r}"
+            )
+
+    def test_vc9_step0_parses_reverse_sections(self, skill_md):
+        """AC-9: Step 0 must contain bash parsing block for --reverse-sections."""
+        assert "--reverse-sections" in skill_md, (
+            "Step 0 does not parse --reverse-sections flag (AC-9)"
+        )
+        assert "REVERSE_FLAG" in skill_md, (
+            "Step 0 does not set REVERSE_FLAG variable for --reverse-sections (AC-9)"
+        )
+
+    def test_vc9_step0_parses_shuffle_sections(self, skill_md):
+        """AC-9: Step 0 must contain bash parsing block for --shuffle-sections."""
+        assert "--shuffle-sections" in skill_md, (
+            "Step 0 does not parse --shuffle-sections flag (AC-9)"
+        )
+        assert "SHUFFLE_FLAG" in skill_md, (
+            "Step 0 does not set SHUFFLE_FLAG variable for --shuffle-sections (AC-9)"
+        )
+
+    def test_vc9_step0_parses_seed_flag(self, skill_md):
+        """AC-9: Step 0 must parse --seed using grep/sed pattern (EC-16: no $(...)-expansion)."""
+        assert "--seed" in skill_md, (
+            "Step 0 does not parse --seed flag (AC-9)"
+        )
+        assert "SEED_RAW" in skill_md, (
+            "Step 0 does not set SEED_RAW variable for --seed (AC-9 / EC-16)"
+        )
+        # EC-16: extraction must use sed pattern-match, not eval or bare $()
+        assert "sed -nE" in skill_md or "sed -n" in skill_md, (
+            "Step 0 --seed extraction must use sed for pattern-matched extraction (EC-16)"
+        )
+        # EC-16: the regex must constrain to digits only
+        assert "[0-9]" in skill_md, (
+            "Step 0 --seed sed pattern must constrain to [0-9]+ digits (EC-16)"
+        )
+
+    def test_vc9_step0_parses_compare_orderings(self, skill_md):
+        """AC-9: Step 0 must contain bash parsing block for --compare-orderings."""
+        assert "--compare-orderings" in skill_md, (
+            "Step 0 does not parse --compare-orderings flag (AC-9)"
+        )
+        assert "COMPARE_FLAG" in skill_md, (
+            "Step 0 does not set COMPARE_FLAG variable for --compare-orderings (AC-9)"
+        )
+
+    # --- AC-10 / INV-6: neutral option presentation; (Recommended) marker after label ---
+
+    def test_vc10_anchoring_footgun_removed(self, skill_md):
+        """AC-10 / INV-6: literal phrase 'Recommended option is always listed first' must be absent."""
+        assert "Recommended option is always listed first" not in skill_md, (
+            "AC-10/INV-6: anchoring phrase 'Recommended option is always listed first' "
+            "must be removed from SKILL.md"
+        )
+
+    def test_vc10_neutral_listing_rule_present(self, skill_md):
+        """INV-6: SKILL.md must describe neutral A/B/C listing with (Recommended) AFTER the label."""
+        lower = skill_md.lower()
+        # Must mention neutral listing
+        has_neutral = "neutral" in lower or "a/b/c" in lower
+        assert has_neutral, (
+            "INV-6: SKILL.md must describe neutral option listing (A/B/C) — not found"
+        )
+        # (Recommended) marker must appear after option label, not before
+        assert "(Recommended)" in skill_md, (
+            "INV-6: '(Recommended)' marker text must be present in SKILL.md"
+        )
+
+    def test_vc10_ci_uses_marker_not_position(self, skill_md):
+        """AC-10 / INV-11: CI auto-select must identify recommended option by (Recommended) marker,
+        not by positional index (e.g., 'first option')."""
+        lower = skill_md.lower()
+        # Must mention marker-based selection
+        has_marker_select = (
+            "recommended) marker" in lower
+            or "recommended) substring" in lower
+            or "(recommended)" in lower and "scan" in lower
+            or "(recommended)" in lower and "marker" in lower
+        )
+        assert has_marker_select, (
+            "AC-10/INV-11: CI auto-select must use (Recommended) marker lookup, "
+            "not positional index — explicit marker-based selection wording not found"
+        )
+
+    # --- AC-11: Phase B iterates helper-returned order; "next section" wording ---
+
+    def test_vc11_phase_b_calls_shuffle_sections_helper(self, skill_md):
+        """AC-11: Phase B must call shuffle-sections helper to determine section order."""
+        assert "shuffle-sections" in skill_md, (
+            "AC-11: Phase B must reference 'shuffle-sections' helper call to get section order"
+        )
+        assert "SECTIONS_JSON" in skill_md, (
+            "AC-11: Phase B must capture result of shuffle-sections into SECTIONS_JSON variable"
+        )
+
+    def test_vc11_no_hardcoded_section_n_plus_1(self, skill_md):
+        """AC-11: 'Section 2', 'Section 3', 'Section 4' hand-off phrasing must be absent."""
+        for phrase in ("Section 2", "Section 3", "Section 4"):
+            assert phrase not in skill_md, (
+                f"AC-11: hardcoded '{phrase}' hand-off reference found — "
+                "replace with 'next section' wording"
+            )
+
+    def test_vc11_next_section_wording_present(self, skill_md):
+        """AC-11: 'next section' wording must appear in Phase B summaries."""
+        assert "next section" in skill_md, (
+            "AC-11: 'next section' wording must replace 'Section N+1' in Phase B hand-offs"
+        )
+
+    # --- AC-12: --compare-orderings flow ---
+
+    def test_vc12_compare_mode_runs_agents_twice(self, skill_md):
+        """AC-12: SKILL.md must describe launching agents with default order AND reverse order."""
+        has_default_run = "ordering_label" in skill_md and "'default'" in skill_md
+        has_reverse_run = "ordering_label" in skill_md and "'reverse'" in skill_md
+        assert has_default_run, (
+            "AC-12: compare-mode must document default-order agent run with ordering_label='default'"
+        )
+        assert has_reverse_run, (
+            "AC-12: compare-mode must document reverse-order agent run with ordering_label='reverse'"
+        )
+
+    def test_vc12_compare_mode_calls_compare_review_runs(self, skill_md):
+        """AC-12: SKILL.md must instruct calling compare-review-runs to aggregate drift."""
+        assert "compare-review-runs" in skill_md, (
+            "AC-12: SKILL.md must call compare-review-runs to aggregate compare-mode results"
+        )
+
+    def test_vc12_compare_mode_calls_record_review_ordering(self, skill_md):
+        """AC-12: SKILL.md must instruct calling record-review-ordering to stage the payload."""
+        assert "record-review-ordering" in skill_md, (
+            "AC-12: SKILL.md must call record-review-ordering after compare aggregation"
+        )
+
+    # --- EC-1/EC-17: mutual exclusion ---
+
+    def test_ec1_ec17_mutual_exclusion_block_present(self, skill_md):
+        """EC-1/EC-17: SKILL.md must have a structured-error exit when both
+        --compare-orderings and --shuffle-sections are set."""
+        assert "EC-1/EC-17" in skill_md or (
+            "cannot combine" in skill_md.lower() and "compare-orderings" in skill_md
+        ), (
+            "EC-1/EC-17: mutual exclusion error block for --compare-orderings + "
+            "--shuffle-sections not found in SKILL.md"
+        )
+        # Must have an exit 1 path
+        assert "exit 1" in skill_md, (
+            "EC-1/EC-17: mutual exclusion block must contain 'exit 1' to abort the workflow"
+        )
+
+    # --- EC-15: prepare_detached_review called exactly once ---
+
+    def test_ec15_detached_worktree_prepared_once(self, skill_md):
+        """EC-15: the actual bash invocation of prepare_detached_review must appear
+        exactly once in SKILL.md (prose mentions and comments don't count),
+        and the EC-15 note about single-prep reuse must be present."""
+        # Count only the actual CLI invocation line, not prose or comment mentions
+        invocation_count = skill_md.count("map_step_runner.py prepare_detached_review")
+        assert invocation_count == 1, (
+            f"EC-15: 'map_step_runner.py prepare_detached_review' CLI invocation must "
+            f"appear exactly once in SKILL.md (found {invocation_count} occurrences). "
+            "EC-15 requires a single-prep shared across compare runs."
+        )
+        assert "EC-15" in skill_md, (
+            "EC-15: a comment/note referencing EC-15 must be present near "
+            "the prepare_detached_review call"
+        )
+
+    # --- INV-7: default no-flag path uses MODE_FLAG='default' ---
+
+    def test_inv7_default_mode_flag_is_default(self, skill_md):
+        """INV-7: MODE_FLAG must default to 'default' so no-flag invocation is unchanged."""
+        assert 'MODE_FLAG="default"' in skill_md or "MODE_FLAG='default'" in skill_md, (
+            "INV-7: Step 0 must set MODE_FLAG to 'default' as the base value so that "
+            "plain /map-review (no flags) uses canonical section order"
+        )
