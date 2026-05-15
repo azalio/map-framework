@@ -24,10 +24,10 @@ Minimal agent sequence (token-optimized, reduced analysis depth):
 ```
 1. DECOMPOSE → task-decomposer
 2. FOR each subtask:
-   3. IMPLEMENT → actor
-   4. VALIDATE → monitor
+   3. IMPLEMENT → actor (edits files directly)
+   4. VALIDATE → monitor (reads written files)
    5. If invalid: provide feedback, go to step 3 (max 3 iterations)
-   6. ACCEPT and apply changes
+   6. ACCEPT Actor's already-written changes
 ```
 
 **Agents INTENTIONALLY SKIPPED:**
@@ -74,12 +74,13 @@ Task(
 **Acceptance Criteria:** [criteria]
 
 Output JSON with:
-- approach: string (implementation strategy)
-- code_changes: array of {file_path, change_type, content, rationale}
-- trade_offs: array of strings
-- testing_approach: string
+  - approach: string (implementation strategy)
+  - files_changed: array of file paths actually edited
+  - tests_run: array of commands run, or [] if deferred to the orchestrator
+  - trade_offs: array of strings
+  - remaining_risks: array of strings
 
-Provide FULL file content for each change, not diffs."
+Apply changes directly with Edit/Write tools. Do not serialize full file contents in your response."
 )
 ```
 
@@ -89,11 +90,14 @@ Provide FULL file content for each change, not diffs."
 Task(
   subagent_type="monitor",
   description="Validate implementation",
-  prompt="Review this implementation:
+  prompt="Validate written code for this subtask:
 
-**Actor Output:** [paste actor JSON]
+**Written Files:** [files_changed from Actor]
+**Subtask:** [description]
+**Acceptance Criteria:** [criteria]
 
 Check for:
+- Actual repo state in each written file
 - Basic code correctness
 - Obvious errors
 - Test coverage
@@ -113,7 +117,7 @@ Output JSON with:
 - Go back to step 2.1 (max 3 iterations)
 
 **If monitor.valid === true:**
-- Apply code changes using Write/Edit tools
+- Changes are already applied by Actor
 - Move to next subtask
 
 ## Step 3: Final Summary

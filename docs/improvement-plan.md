@@ -181,22 +181,6 @@
 - Extend template linting so command files that define a new JSON contract without either a reusable schema reference or at least one compact example are flagged for review.
 
 
-## Action-first tool use in lightweight workflows [2604.028]
-
-**Benefit Hypothesis**: Converting `/map-fast` and `/map-debug` from “serialize full file contents into JSON” workflows to direct tool-using workflows will reduce prompt size, reduce patch drift on large files, and make lightweight workflows more consistent with Claude 4.6’s stronger tool-use behavior. The expected result is lower token usage per iteration and fewer failures caused by stale file snapshots between Actor and Apply steps.
-**Confidence**: 0.81
-**Reasoning**: Anthropic’s guidance explicitly says that if you want Claude to act, tell it to act; otherwise it may suggest instead of implementing. MAP applies that principle inconsistently. `/map-efficient` already instructs the actor to “Implement and APPLY CODE with Edit/Write tools”, but `/map-fast` and `/map-debug` still ask the actor to return `code_changes` plus full file contents, after which another step applies them. That is an older, serialization-heavy workflow style. It wastes context, scales poorly with large files, and creates opportunities for the filesystem to diverge between generation and application.
-**Why Not Already Tried**: The lighter workflows were likely created as low-overhead variants before tool-acting reliability improved. MAP later evolved `/map-efficient` toward direct tool use, but the smaller workflows did not receive the same modernization pass.
-
-### Proposed Changes
-
-- Update `/map-fast` and `/map-debug` so write-capable Actor steps read relevant files, edit them directly with tools, and return only a compact execution summary: `approach`, `files_changed`, `tests_run`, `remaining_risks`.
-- Remove “Provide FULL file content” requirements from lightweight command prompts. Retain structured summaries, but do not force the model to serialize entire file bodies when the tool layer can edit safely.
-- Align Monitor prompts in those workflows with the `written files + contract + validation` pattern already used in `/map-efficient`, so the validator reads actual repo state instead of pasted Actor JSON.
-- Keep planning-only and analysis-only phases explicitly read-only. The goal is not “always edit”, but consistent action-first behavior whenever the phase is supposed to modify code.
-- Add regression cases for files that change between Actor proposal and application, and confirm that the action-first flow eliminates those stale-snapshot failures.
-
-
 ## Command-specific thinking and parallelism profiles [2604.029]
 
 **Benefit Hypothesis**: Adding explicit thinking/effort and parallelism guidance per workflow will reduce latency and wasted reasoning on simple commands while preserving deeper reasoning for plan/review/release flows. Success would show up as lower runtime for `/map-fast`, `/map-check`, and `/map-resume` without lowering verification quality, plus fewer unstable parallel execution paths in commands that mix sequential and parallel logic.

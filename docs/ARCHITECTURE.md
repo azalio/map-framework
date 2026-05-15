@@ -510,16 +510,14 @@ TaskDecomposer → [conditional ResearchAgent] → (3×Actor parallel → 3×Mon
 ```python
 # Conditional Predictor Logic (Orchestrator)
 for subtask in subtasks:
-    actor_output = call_actor(subtask)
-    monitor_output = call_monitor(actor_output)
+    actor_output = call_actor_apply_with_edit_write(subtask)
+    monitor_output = call_monitor_written_files(actor_output.files_changed)
 
     if monitor_output.valid:
         # Only call Predictor if high risk
         if (subtask.risk_level in ['high', 'medium'] or
             monitor_output.escalation_required):
             predictor_output = call_predictor(actor_output)
-        # Apply changes
-        apply_code_changes(actor_output)
 
 # At end: write branch-scoped learning handoff, record repeated-rule signals, then suggest /map-learn
 write_learning_handoff(...)
@@ -544,6 +542,8 @@ print("Run /map-learn now, or later from the generated handoff")
 **Token Usage:** 50-60% of baseline
 **Learning:** None (defeats MAP's purpose)
 **Quality Gates:** Basic only (Monitor validation)
+
+**Execution Model:** Actor applies changes directly with Edit/Write tools and returns a compact written-file summary. Monitor validates the actual written files instead of reviewing serialized full-file JSON.
 
 **Architectural Consequences:**
 - Knowledge base remains static (no continuous improvement)
@@ -616,7 +616,7 @@ for subtask in subtasks:
 
 2. **Step Types** (defined by TaskDecomposer):
    - `investigation`: Analyze code, logs, reproduce issue (Actor read-only)
-   - `fix`: Implement solution (Actor generates code changes)
+   - `fix`: Implement solution (Actor edits files directly)
    - `verification`: Test fix, check for regressions
 
 3. **Full Agent Pipeline for Fixes**

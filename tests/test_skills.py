@@ -615,6 +615,76 @@ class TestSkillStructure:
                         )
 
 
+class TestLightweightWorkflowSkillContracts:
+    """Regression tests for action-first lightweight workflow prompts."""
+
+    @pytest.fixture
+    def project_root(self):
+        return Path(__file__).parent.parent
+
+    def _section(self, content: str, start_heading: str, next_heading: str) -> str:
+        assert start_heading in content, f"Missing section heading: {start_heading}"
+        start = content.index(start_heading)
+        assert next_heading in content[start:], (
+            f"Missing section end marker after {start_heading}: {next_heading}"
+        )
+        end = content.index(next_heading, start)
+        return content[start:end]
+
+    @pytest.mark.parametrize("skill_name", ["map-fast", "map-debug"])
+    def test_lightweight_actors_apply_changes_directly(self, project_root, skill_name):
+        skill_md = project_root / ".claude" / "skills" / skill_name / "SKILL.md"
+        content = skill_md.read_text()
+        if skill_name == "map-fast":
+            actor_section = self._section(content, "### 2.1", "### 2.2")
+        else:
+            actor_section = self._section(content, "### Fix Steps", "### Monitor")
+
+        assert "Apply" in actor_section and "Edit/Write tools" in actor_section
+        assert "files_changed" in actor_section
+        assert "tests_run" in actor_section
+        assert "remaining_risks" in actor_section
+        assert "code_changes" not in actor_section
+        assert "Provide FULL file content" not in actor_section
+
+    @pytest.mark.parametrize("skill_name", ["map-fast", "map-debug"])
+    def test_lightweight_monitors_validate_written_repo_state(
+        self, project_root, skill_name
+    ):
+        skill_md = project_root / ".claude" / "skills" / skill_name / "SKILL.md"
+        content = skill_md.read_text()
+        if skill_name == "map-fast":
+            monitor_section = self._section(content, "### 2.2", "### 2.3")
+        else:
+            monitor_section = self._section(
+                content,
+                "### Monitor Validation",
+                "### Predictor Impact Analysis",
+            )
+
+        assert "Written Files" in monitor_section
+        assert "written files" in monitor_section.lower()
+        assert "Actor Output" not in monitor_section
+        assert "paste actor JSON" not in monitor_section
+
+    @pytest.mark.parametrize("skill_name", ["map-fast", "map-debug"])
+    def test_lightweight_workflows_do_not_have_post_review_apply_step(
+        self, project_root, skill_name
+    ):
+        skill_md = project_root / ".claude" / "skills" / skill_name / "SKILL.md"
+        content = skill_md.read_text()
+        lower_content = content.lower()
+
+        assert "apply code changes using write/edit tools" not in lower_content
+        assert "accept and apply changes" not in lower_content
+        assert "apply fix" not in lower_content
+        assert "### apply" not in lower_content
+        assert (
+            "Changes are already applied by Actor" in content
+            or "already-written changes" in content
+        )
+
+
 class TestMapReviewSkillBundleWiring:
     """Validate that map-review SKILL.md is wired to consume the persisted review bundle.
 

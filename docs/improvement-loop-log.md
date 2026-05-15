@@ -1,3 +1,17 @@
+## 2026-05-15 - Action-first tool use in lightweight workflows [2604.028]
+
+- Decision: `implemented`
+- Branch: `codex/2604-028-action-first-lightweight`
+- Baseline: `map-fast` and `map-debug` asked Actor to return `code_changes` with full file content, then told the orchestrator to apply changes after validation, while `map-efficient` already used direct Actor Edit/Write behavior.
+- Forward Change: Converted the lightweight Actor prompts to apply edits directly, changed Monitor prompts to read written files from the repo, removed stale post-validation apply steps, synced templates, and documented the action-first behavior.
+- Decisive Validation: `pytest tests/test_skills.py::TestLightweightWorkflowSkillContracts tests/test_template_sync.py -v`, `make lint`, `pytest -m "not slow"`, and `uv run mapify init <temp-path> --no-git --mcp none` with generated-file inspection passed. Unfiltered `pytest` was attempted twice but timed out in real Claude SDK slow e2e tests.
+- Next Trigger: Reuse this learning whenever changing workflow prompts that describe Actor output, Monitor validation inputs, or generated skill templates.
+- Reusable Learnings:
+  - command: `pytest tests/test_skills.py::TestLightweightWorkflowSkillContracts tests/test_template_sync.py -v`
+  - command: `uv run mapify init <new-dir> --no-git --mcp none`
+  - invariant: `If Actor applies edits directly, no workflow overview, decision point, or post-review step may still describe a separate apply phase.`
+  - review-check: `Prompt regression tests should reject both old schema terms like code_changes and natural-language leftovers such as "Apply fix" or "ACCEPT and apply changes".`
+
 ## 2026-04-13 - Official-frontmatter hygiene for MAP skills [2604.031]
 
 - Decision: `implemented`

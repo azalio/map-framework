@@ -1057,6 +1057,8 @@ MAP Framework offers three primary implementation workflows with different trade
 - No quality scoring → Security/performance issues missed
 - No knowledge integration → Knowledge lost forever
 
+**Execution model:** Actor edits files directly with Edit/Write tools and returns a compact summary (`files_changed`, `tests_run`, `remaining_risks`). Monitor then reads the written files from the repo; `/map-fast` no longer asks Actor to serialize full file contents for a separate apply step.
+
 **Example use cases (acceptable):**
 ```bash
 # Small UI tweak
