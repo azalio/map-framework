@@ -3,6 +3,14 @@
 import importlib.util
 from pathlib import Path
 
+import pytest
+
+pytest.importorskip(
+    "jsonschema",
+    reason="jsonschema required for type/enum/additionalProperties validation; "
+    "validate_artifact falls back to required-field checking otherwise.",
+)
+
 
 SCHEMAS_PATH = Path(__file__).resolve().parents[1] / "src" / "mapify_cli" / "schemas.py"
 SPEC = importlib.util.spec_from_file_location("artifact_schemas", SCHEMAS_PATH)

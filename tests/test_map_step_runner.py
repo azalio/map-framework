@@ -2362,12 +2362,13 @@ def test_default_shuffle_seed_with_sha():
 
 
 def test_default_shuffle_seed_detached_fallback():
-    # commit_sha=None must produce the same value as hash(branch + 'detached').
-    # Both calls happen in the same process so PYTHONHASHSEED is identical.
+    # commit_sha=None must produce sha256(branch + '|detached')[:16] interpreted as hex int.
+    import hashlib
+
     seed_none = map_step_runner.default_shuffle_seed("main", None)
-    seed_explicit = hash("main" + "detached")
-    assert seed_none == seed_explicit
-    # Also verify it is stable across two in-process calls
+    expected = int(hashlib.sha256(b"main|detached").hexdigest()[:16], 16)
+    assert seed_none == expected
+    # Cross-process stability: same value any call, any process
     assert map_step_runner.default_shuffle_seed("main", None) == seed_none
 
 
@@ -2439,10 +2440,8 @@ def test_cli_default_shuffle_seed_ok():
 
 def test_cli_default_shuffle_seed_detached_when_no_sha():
     # Empty string sha argument should fall back to the detached path (commit_sha=None).
-    # We verify: status ok, commit_sha is null, seed is an int, and the value is
-    # stable across two invocations (same inputs -> same seed within one interpreter
-    # session — note: Python hash() is process-local, so we compare two CLI calls
-    # rather than recomputing hash() in the test process).
+    # Verify: status ok, commit_sha is null, seed is an int, and cross-process stable
+    # (sha256-based — works without PYTHONHASHSEED pinning).
     def _call() -> dict:  # type: ignore[type-arg]
         r = subprocess.run(
             [
@@ -2454,7 +2453,6 @@ def test_cli_default_shuffle_seed_detached_when_no_sha():
             ],
             capture_output=True,
             text=True,
-            env={**__import__("os").environ, "PYTHONHASHSEED": "42"},
         )
         return json.loads(r.stdout)
 
@@ -2463,7 +2461,7 @@ def test_cli_default_shuffle_seed_detached_when_no_sha():
     assert p1["status"] == "ok"
     assert p1["commit_sha"] is None
     assert isinstance(p1["seed"], int)
-    # Stable across calls with fixed PYTHONHASHSEED
+    # Cross-process stability via sha256
     assert p1["seed"] == p2["seed"]
 
 
@@ -2666,7 +2664,13 @@ def test_cli_compare_review_runs_invalid_json_errors():
 
 
 @pytest.fixture
-def reset_pending_ordering():
+def reset_pending_ordering(tmp_path, monkeypatch):
+    # Run under tmp_path so the durable pending-ordering.json file lands in a
+    # disposable location, not in the real .map/<branch>/ of the repo.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
+    branch_dir = tmp_path / ".map" / "test-branch"
+    branch_dir.mkdir(parents=True, exist_ok=True)
     map_step_runner._PENDING_REVIEW_ORDERING = None
     yield
     map_step_runner._PENDING_REVIEW_ORDERING = None
@@ -2680,7 +2684,10 @@ def test_record_review_ordering_stages_pending(reset_pending_ordering):
         runs=[{"verdict": "PROCEED", "primary_issues": ["A"]}],
         drift={"drift_detected": True, "drift_summary": "x", "final_verdict": "PROCEED", "compare_status": None},
     )
-    assert result == {"status": "ok", "staged": True, "mode": "shuffle-sections", "branch": None}
+    assert result["status"] == "ok"
+    assert result["staged"] is True
+    assert result["mode"] == "shuffle-sections"
+    assert result["branch_in"] is None
     pending = map_step_runner._PENDING_REVIEW_ORDERING
     assert pending is not None
     assert pending["mode"] == "shuffle-sections"

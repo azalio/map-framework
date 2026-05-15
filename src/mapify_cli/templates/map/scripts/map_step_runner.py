@@ -28,6 +28,7 @@ TESTING:
 """
 
 import fnmatch
+import hashlib
 import json
 import os
 import random
@@ -131,10 +132,15 @@ LEARNED_RULE_BULLET_RE = re.compile(
 )
 SECTION_HEADING_RE = re.compile(r"^##\s+(?P<title>.+?)\s*$")
 
-# Module-level singleton holding the staging payload set by record_review_ordering()
-# and consumed (then cleared) by create_review_bundle().  None means no ordering has
-# been staged yet; create_review_bundle() uses the EC-7 default in that case.
+# Module-level singleton kept for in-process pytest paths only. The durable staging
+# path is the file ``.map/<branch>/pending-ordering.json`` — see
+# record_review_ordering() / create_review_bundle() — because the SKILL.md workflow
+# calls them across separate ``python3 ...`` subprocesses, and a module-level dict
+# evaporates between processes. The in-memory singleton supplements the file for
+# tests that mutate it directly with ``map_step_runner._PENDING_REVIEW_ORDERING = ...``.
 _PENDING_REVIEW_ORDERING: dict[str, object] | None = None
+
+PENDING_ORDERING_FILENAME = "pending-ordering.json"
 PATH_HINT_RE = re.compile(
     r"(?P<path>(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+)(?::\d+)?"
 )
@@ -1417,12 +1423,14 @@ def get_review_section_order(mode: str, seed: int | None = None) -> list[str]:
 def default_shuffle_seed(branch: str, commit_sha: str | None) -> int:
     """Derive a stable per-branch shuffle seed.
 
-    AC-3: stable for fixed inputs; commit_sha=None falls back to
-    hash(branch + 'detached').
+    AC-3: stable for fixed inputs across processes and machines. Uses sha256
+    (not built-in hash() — which is randomized per process via PYTHONHASHSEED
+    and breaks reproducibility). commit_sha=None falls back to
+    sha256(branch + '|detached').
     """
-    if commit_sha is None:
-        return hash(branch + "detached")
-    return hash(f"{branch}|{commit_sha}")
+    key = f"{branch}|detached" if commit_sha is None else f"{branch}|{commit_sha}"
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
+    return int(digest[:16], 16)
 
 
 def compare_review_runs(runs: list[dict[str, object]]) -> dict[str, object]:
@@ -1585,15 +1593,32 @@ def record_review_ordering(
         "compare_status": compare_status_str,
     }
 
+    # Stage to BOTH the module-level dict (for in-process pytest tests) AND a
+    # branch-scoped file (for the real cross-subprocess SKILL.md workflow).
+    # See PENDING_ORDERING_FILENAME comment.
     _PENDING_REVIEW_ORDERING = payload
+    branch_name = _sanitize_branch(branch) if branch else get_branch_name()
+    pending_path: Path | None = None
+    if branch_name:
+        try:
+            branch_dir = get_branch_dir(branch_name)
+            branch_dir.mkdir(parents=True, exist_ok=True)
+            pending_path = branch_dir / PENDING_ORDERING_FILENAME
+            pending_path.write_text(
+                json.dumps(payload, indent=2, ensure_ascii=True) + "\n",
+                encoding="utf-8",
+            )
+        except OSError:
+            pending_path = None
 
-    # branch is accepted for API symmetry but not embedded in the staged payload;
-    # it is surfaced in the return dict for CLI consumers.
     return {
         "status": "ok",
         "staged": True,
         "mode": mode,
-        "branch": branch,
+        "branch": branch_name,
+        "pending_path": str(pending_path) if pending_path else None,
+        # legacy field for callers that referenced the old API
+        "branch_in": branch,
     }
 
 
@@ -2114,10 +2139,31 @@ def create_review_bundle(branch: Optional[str] = None) -> dict:
         }
 
     # --- Ordering payload (INV-10 single-writer staging) ---
-    # Consume-on-read: clear immediately to prevent stale reuse on a second call.
+    # Consume from BOTH the file (cross-subprocess durable path) and the module
+    # dict (in-process pytest path), preferring whichever is present. Clear both
+    # immediately to prevent stale reuse on a second call.
     global _PENDING_REVIEW_ORDERING
-    pending = _PENDING_REVIEW_ORDERING
+    pending_in_memory = _PENDING_REVIEW_ORDERING
     _PENDING_REVIEW_ORDERING = None
+
+    pending_file_path = branch_dir / PENDING_ORDERING_FILENAME
+    pending_from_file: dict[str, object] | None = None
+    if pending_file_path.exists():
+        try:
+            with pending_file_path.open(encoding="utf-8") as fh:
+                loaded = json.load(fh)
+            if isinstance(loaded, dict):
+                pending_from_file = loaded
+        except (OSError, ValueError):
+            pending_from_file = None
+        finally:
+            # Delete unconditionally — staging is one-shot per AC-4 / EC-11 semantics
+            try:
+                pending_file_path.unlink()
+            except OSError:
+                pass
+
+    pending = pending_in_memory or pending_from_file
     if pending is None:
         # EC-7 default: normal single-pass review with no ordering staged
         ordering_payload: dict[str, object] = {
@@ -3496,12 +3542,13 @@ if __name__ == "__main__":
 
     elif func_name == "shuffle-sections":
         # CLI: shuffle-sections <mode> [seed]
+        # Empty string seed is treated as "unset" (None) so SKILL.md can pass "" unconditionally.
         if len(sys.argv) < 3:
             print(json.dumps({"status": "error", "message": "usage: shuffle-sections <mode> [seed]"}))
             sys.exit(1)
         mode_arg = sys.argv[2]
         seed_arg: int | None = None
-        if len(sys.argv) >= 4:
+        if len(sys.argv) >= 4 and sys.argv[3] != "":
             try:
                 seed_arg = int(sys.argv[3])  # EC-16: int() rejects non-int via ValueError
             except ValueError as exc:
@@ -3555,8 +3602,8 @@ if __name__ == "__main__":
             sys.exit(1)
         try:
             cmp_result = compare_review_runs(runs_payload)
-        except ValueError as exc:
-            print(json.dumps({"status": "error", "message": str(exc)}))
+        except (ValueError, AttributeError, TypeError) as exc:
+            print(json.dumps({"status": "error", "message": f"compare-review-runs: {exc}"}))
             sys.exit(1)
         print(json.dumps({"status": "ok", **cmp_result}))
 

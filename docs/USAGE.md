@@ -88,7 +88,7 @@ claude /map-review --compare-orderings --detached
 ```
 
 - `--reverse-sections` — inverts the canonical Architecture → Code Quality → Tests → Performance order.
-- `--shuffle-sections` — applies a seeded random permutation. If `--seed N` is omitted, a deterministic per-branch seed is derived from `hash(branch + commit_sha)` so the same commit always shuffles identically.
+- `--shuffle-sections` — applies a seeded random permutation. If `--seed N` is omitted, a deterministic per-branch seed is derived from `sha256(branch + "|" + commit_sha)` (stable across machines and processes) so the same commit always shuffles identically.
 - `--seed N` — explicit integer seed; companion to `--shuffle-sections`. Accepts any non-negative integer.
 - `--compare-orderings` — runs the review twice (default order, then reverse), then aggregates results using strict-wins (BLOCK > REVISE > PROCEED). Records `drift_detected`, `drift_summary`, and `final_verdict` in the `ordering` object of `.map/<branch>/review-bundle.json`.
 

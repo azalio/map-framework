@@ -22,7 +22,7 @@ Interactive, structured code review of current changes using Monitor, Predictor,
 - `--reverse-sections` — Present the four review sections in reverse canonical order
   (Performance → Tests → Code Quality → Architecture). Useful for bias detection across sequential reviews.
 - `--shuffle-sections` — Randomize the section presentation order using a branch+commit derived seed.
-  The seed is recorded in `.map/<branch>/review-ordering.json` for reproducibility.
+  The seed is recorded under the `ordering` key in `.map/<branch>/review-bundle.json` for reproducibility.
 - `--seed <int>` — Override the shuffle seed with an explicit non-negative integer. Only meaningful when
   `--shuffle-sections` is also set. The integer is validated server-side; non-integer values are rejected.
 - `--compare-orderings` — Run the full review twice (default order, then reverse order) and aggregate
@@ -154,15 +154,18 @@ fi
 ```
 
 **Determine MODE_FLAG for section-order helper:**
+MODE_FLAG values MUST match `REVIEW_VALID_MODES` in `map_step_runner.py`:
+`default` / `reverse-sections` / `shuffle-sections`. `--compare-orderings` is NOT
+a helper mode — it is handled separately at Step A.1d and internally launches
+default + reverse runs.
 ```bash
 MODE_FLAG="default"
 if [ "$REVERSE_FLAG" = "true" ]; then
-  MODE_FLAG="reverse"
+  MODE_FLAG="reverse-sections"
 elif [ "$SHUFFLE_FLAG" = "true" ]; then
-  MODE_FLAG="random"
-elif [ "$COMPARE_FLAG" = "true" ]; then
-  MODE_FLAG="compare"
+  MODE_FLAG="shuffle-sections"
 fi
+# COMPARE_FLAG does not set MODE_FLAG; compare flow drives its own two runs.
 ```
 
 **Always use comprehensive review** — up to 4 issues per section, no mode selection menu.
@@ -261,7 +264,7 @@ result set as `RUN_DEFAULT` dict with keys:
 
 Call the ordering helper for reverse order:
 ```bash
-SECTIONS_REVERSE=$(python3 .map/scripts/map_step_runner.py shuffle-sections "reverse" "")
+SECTIONS_REVERSE=$(python3 .map/scripts/map_step_runner.py shuffle-sections "reverse-sections" "")
 ```
 
 Launch all 3 agents again in a single message (same prompts, reverse section sequence).
@@ -272,10 +275,14 @@ Capture result set as `RUN_REVERSE` dict with keys:
 
 **Step A.1d.3 — Aggregate runs:**
 
+`compare-review-runs` expects a JSON array of run *objects* (not strings), each with
+`verdict` / `primary_issues` / `ordering_label` keys. Build the array by parsing each
+captured run text back to a dict.
+
 ```bash
-RUNS_JSON=$(python3 -c "import json,sys; print(json.dumps([sys.argv[1], sys.argv[2]]))" \
-  "$(echo "$RUN_DEFAULT" | python3 -c 'import sys,json; print(json.dumps(json.load(sys.stdin)))')" \
-  "$(echo "$RUN_REVERSE" | python3 -c 'import sys,json; print(json.dumps(json.load(sys.stdin)))')")
+RUNS_JSON=$(python3 -c "import json,sys; \
+  print(json.dumps([json.loads(sys.argv[1]), json.loads(sys.argv[2])]))" \
+  "$RUN_DEFAULT" "$RUN_REVERSE")
 DRIFT_RESULT=$(python3 .map/scripts/map_step_runner.py compare-review-runs "$RUNS_JSON")
 ```
 
@@ -288,14 +295,14 @@ DRIFT_SUMMARY=$(echo "$DRIFT_RESULT" | python3 -c "import sys,json; d=json.load(
 
 **Step A.1d.4 — Stage ordering payload:**
 
+`record-review-ordering` expects a wrapper object with two keys: `runs` (the run list)
+and `drift` (the `compare-review-runs` output). Build that wrapper:
+
 ```bash
 RUNS_AND_DRIFT_JSON=$(python3 -c "import json,sys; \
-  drift=json.loads(sys.argv[1]); \
-  drift['runs']=[json.loads(sys.argv[2]), json.loads(sys.argv[3])]; \
-  print(json.dumps(drift))" \
-  "$DRIFT_RESULT" \
-  "$(echo "$RUN_DEFAULT" | python3 -c 'import sys,json; print(json.dumps(json.load(sys.stdin)))')" \
-  "$(echo "$RUN_REVERSE" | python3 -c 'import sys,json; print(json.dumps(json.load(sys.stdin)))')")
+  print(json.dumps({'runs':[json.loads(sys.argv[1]), json.loads(sys.argv[2])], \
+                    'drift':json.loads(sys.argv[3])}))" \
+  "$RUN_DEFAULT" "$RUN_REVERSE" "$DRIFT_RESULT")
 python3 .map/scripts/map_step_runner.py record-review-ordering compare-orderings "" "$RUNS_AND_DRIFT_JSON"
 ```
 
@@ -440,7 +447,8 @@ For default (no ordering flag), the helper returns canonical order. For `--rever
 SECTIONS_JSON=$(python3 .map/scripts/map_step_runner.py shuffle-sections "$MODE_FLAG" "$SEED_RAW")
 ```
 
-The result is a JSON array of section IDs, e.g. `["architecture","code-quality","tests","performance"]`.
+The result is a JSON array of section IDs, e.g. `["architecture","code_quality","tests","performance"]`
+(underscore, NOT hyphen — matches `REVIEW_SECTION_IDS` in `map_step_runner.py`).
 **Iterate over this returned list** — do not hard-code a presentation sequence.
 The four section blocks below describe each section's content; they are not a fixed presentation order.
 
