@@ -208,7 +208,7 @@ Output JSON with:
 )
 ```
 
-### Apply Fix
+### Proceed After Evaluation
 
 If evaluator recommends proceeding:
 - Keep Actor's already-written changes

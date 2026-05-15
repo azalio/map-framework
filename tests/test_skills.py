@@ -623,7 +623,11 @@ class TestLightweightWorkflowSkillContracts:
         return Path(__file__).parent.parent
 
     def _section(self, content: str, start_heading: str, next_heading: str) -> str:
+        assert start_heading in content, f"Missing section heading: {start_heading}"
         start = content.index(start_heading)
+        assert next_heading in content[start:], (
+            f"Missing section end marker after {start_heading}: {next_heading}"
+        )
         end = content.index(next_heading, start)
         return content[start:end]
 
@@ -669,10 +673,12 @@ class TestLightweightWorkflowSkillContracts:
     ):
         skill_md = project_root / ".claude" / "skills" / skill_name / "SKILL.md"
         content = skill_md.read_text()
+        lower_content = content.lower()
 
-        assert "Apply code changes using Write/Edit tools" not in content
-        assert "ACCEPT and apply changes" not in content
-        assert "Apply fix" not in content
+        assert "apply code changes using write/edit tools" not in lower_content
+        assert "accept and apply changes" not in lower_content
+        assert "apply fix" not in lower_content
+        assert "### apply" not in lower_content
         assert (
             "Changes are already applied by Actor" in content
             or "already-written changes" in content
