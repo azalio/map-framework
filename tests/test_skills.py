@@ -52,6 +52,8 @@ NEGATIVE_TRIGGER_FIXTURES = {
     ],
 }
 
+SUPPORTED_SKILL_CLASSES = {"reference", "task", "hybrid"}
+
 
 class TestSkillStructure:
     """Test that all skill directories follow the expected structure."""
@@ -316,6 +318,86 @@ class TestSkillStructure:
             assert len(patterns) >= 2, (
                 f"Skill '{name}' has fewer than 2 intent patterns in skill-rules.json. "
                 f"Add more patterns for reliable triggering."
+            )
+
+    def test_skill_rules_have_supported_skill_class(self, skill_rules):
+        """Every skill must declare whether it is reference, task, or hybrid."""
+        for name, rule in skill_rules.get("skills", {}).items():
+            skill_class = rule.get("skillClass")
+            assert skill_class in SUPPORTED_SKILL_CLASSES, (
+                f"Skill '{name}' has unsupported skillClass {skill_class!r}. "
+                f"Use one of: {', '.join(sorted(SUPPORTED_SKILL_CLASSES))}."
+            )
+
+    def test_task_skill_class_matches_manual_runtime_metadata(
+        self, skills_dir, skill_folders, skill_rules
+    ):
+        """Task skills behave like slash workflows and must be cataloged as manual."""
+        for folder in skill_folders:
+            skill_file = skills_dir / folder / "SKILL.md"
+            fm = self._parse_frontmatter(skill_file)
+            rule = skill_rules.get("skills", {}).get(folder, {})
+            skill_class = rule.get("skillClass")
+            is_manual_rule = (
+                rule.get("type") == "manual" or rule.get("enforcement") == "manual"
+            )
+
+            if fm.get("disable-model-invocation"):
+                assert skill_class == "task", (
+                    f"Skill '{folder}' disables model invocation for direct slash use, "
+                    "so skill-rules.json must classify it as skillClass='task'."
+                )
+
+            if skill_class == "task":
+                assert is_manual_rule, (
+                    f"Skill '{folder}' is skillClass='task' but is not manual in "
+                    "skill-rules.json."
+                )
+
+    def test_reference_skill_class_has_no_runtime_side_effects(
+        self, skills_dir, skill_folders, skill_rules
+    ):
+        """Reference skills should remain guidance-only, not hidden workflows."""
+        for folder in skill_folders:
+            rule = skill_rules.get("skills", {}).get(folder, {})
+            if rule.get("skillClass") != "reference":
+                continue
+
+            skill_file = skills_dir / folder / "SKILL.md"
+            fm = self._parse_frontmatter(skill_file)
+            is_manual_rule = (
+                rule.get("type") == "manual" or rule.get("enforcement") == "manual"
+            )
+
+            assert not is_manual_rule, (
+                f"Reference skill '{folder}' is classified as manual in "
+                "skill-rules.json; use skillClass='task' for slash workflows."
+            )
+            assert not fm.get("disable-model-invocation"), (
+                f"Reference skill '{folder}' disables model invocation; use "
+                "skillClass='task' for direct slash workflows."
+            )
+            assert not fm.get("hooks"), (
+                f"Reference skill '{folder}' declares hooks; use skillClass='hybrid' "
+                "and list runtimeEffects."
+            )
+            assert not rule.get("runtimeEffects"), (
+                f"Reference skill '{folder}' declares runtimeEffects; use "
+                "skillClass='hybrid' for operational side effects."
+            )
+
+    def test_hybrid_skills_document_runtime_effects(self, skill_rules):
+        """Hybrid skills need explicit runtime-effect metadata so docs are not misleading."""
+        for name, rule in skill_rules.get("skills", {}).items():
+            if rule.get("skillClass") != "hybrid":
+                continue
+            effects = rule.get("runtimeEffects", [])
+            assert effects, (
+                f"Hybrid skill '{name}' must list runtimeEffects that distinguish "
+                "operational side effects from reference guidance."
+            )
+            assert all(isinstance(effect, str) and effect for effect in effects), (
+                f"Hybrid skill '{name}' has invalid runtimeEffects entries."
             )
 
     def test_manual_skill_rules_match_frontmatter(

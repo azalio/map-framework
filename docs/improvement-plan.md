@@ -213,22 +213,6 @@
 - Update `workflow-rules.json` and command docs to reflect that “small/simple/quick” workflows should bias toward lower effort and minimal orchestration, while planning/review/release workflows intentionally permit more reasoning depth.
 
 
-## Explicit reference-vs-task skill architecture [2604.032]
-
-**Benefit Hypothesis**: Reclassifying MAP skills according to the official Claude Code split between reference content and task content will reduce conceptual confusion, improve skill authoring discipline, and make MAP’s documentation match actual runtime behavior. This should lower accidental misuse of skills and make it easier to decide when a new behavior belongs in a skill versus a subagent or command.
-**Confidence**: 0.84
-**Reasoning**: The official docs explicitly distinguish reference skills, which add knowledge inline, from task skills, which provide step-by-step procedures and are often manually invoked with `disable-model-invocation: true`. MAP’s current `skills/README.md` still describes skills as passive documentation modules and “NOT agents”, but `map-learn` is clearly a task skill: it has a manual workflow surface, procedural steps, file writes, and an invocation-control flag. `map-state` is closer to a hybrid reference/task guide because it explains the file-based planning model and also defines operational behavior via scripts and hooks.
-**Why Not Already Tried**: MAP’s skills system was originally documented around passive guidance and auto-suggestion. Claude Code’s official skills model is broader and now makes task-like skills a first-class concept, so the original documentation model is lagging behind the platform.
-
-### Proposed Changes
-
-- Update `src/mapify_cli/templates/skills/README.md` and related docs to define two supported skill classes: `reference` and `task`.
-- Classify `map-learn` explicitly as a manual task skill, and explain why `disable-model-invocation: true` is appropriate for it.
-- Classify `map-state` explicitly as a reference or hybrid operational skill, and document what behavior comes from SKILL instructions versus hook/script side effects.
-- Add authoring guidance for future MAP skills: use reference skills for conventions, heuristics, and domain knowledge; use task skills for deterministic procedures that should behave like slash workflows.
-- Reflect this taxonomy in `skill-rules.json`, tests, and any future skill-generation helpers so the distinction is operational, not just descriptive.
-
-
 ## Supporting-file and lifecycle optimization for skills [2604.033]
 
 **Benefit Hypothesis**: Restructuring MAP skills around the official skill content lifecycle and supporting-file model will keep invoked skill bodies lean, reduce compaction loss, and make long-running skills more durable across sessions. The measurable outcome is a smaller average SKILL body with equal or better task completion quality.

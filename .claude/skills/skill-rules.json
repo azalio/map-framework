@@ -4,9 +4,14 @@
   "skills": {
     "map-state": {
       "type": "domain",
+      "skillClass": "hybrid",
       "enforcement": "suggest",
       "priority": "medium",
       "description": "File-based planning with branch-scoped task tracking",
+      "runtimeEffects": [
+        "hooks",
+        "branch-scoped .map artifacts"
+      ],
       "promptTriggers": {
         "keywords": [
           "create plan",
@@ -27,6 +32,7 @@
     },
     "map-learn": {
       "type": "manual",
+      "skillClass": "task",
       "enforcement": "manual",
       "priority": "medium",
       "description": "Extract and persist workflow lessons to .claude/rules/learned/",
@@ -49,6 +55,7 @@
     },
     "map-check": {
       "type": "manual",
+      "skillClass": "task",
       "enforcement": "manual",
       "priority": "high",
       "description": "Run quality gates (lint, types, tests) and verify MAP workflow completion.",
@@ -68,6 +75,7 @@
     },
     "map-debug": {
       "type": "manual",
+      "skillClass": "task",
       "enforcement": "manual",
       "priority": "high",
       "description": "Structured MAP debugging via task-decomposer, actor, monitor agents.",
@@ -87,6 +95,7 @@
     },
     "map-explain": {
       "type": "manual",
+      "skillClass": "task",
       "enforcement": "manual",
       "priority": "medium",
       "description": "Deep code/PR explanation that builds a complete mental model — problem, entities, execution and data flow, line-by-line rationale, side effects, assumptions, breakage modes; for PRs also before/after behavior.",
@@ -111,6 +120,7 @@
     },
     "map-efficient": {
       "type": "manual",
+      "skillClass": "task",
       "enforcement": "manual",
       "priority": "high",
       "description": "Token-efficient MAP workflow with state-machine orchestration.",
@@ -130,6 +140,7 @@
     },
     "map-fast": {
       "type": "manual",
+      "skillClass": "task",
       "enforcement": "manual",
       "priority": "high",
       "description": "Minimal MAP workflow for small low-risk changes (no Predictor/Reflector).",
@@ -149,6 +160,7 @@
     },
     "map-plan": {
       "type": "manual",
+      "skillClass": "task",
       "enforcement": "manual",
       "priority": "high",
       "description": "ARCHITECT phase: decompose a complex task into atomic subtasks.",
@@ -168,6 +180,7 @@
     },
     "map-release": {
       "type": "manual",
+      "skillClass": "task",
       "enforcement": "manual",
       "priority": "high",
       "description": "Execute mapify-cli package release workflow with validation gates.",
@@ -187,6 +200,7 @@
     },
     "map-resume": {
       "type": "manual",
+      "skillClass": "task",
       "enforcement": "manual",
       "priority": "high",
       "description": "Resume an interrupted MAP workflow from step_state.json checkpoint.",
@@ -206,6 +220,7 @@
     },
     "map-review": {
       "type": "manual",
+      "skillClass": "task",
       "enforcement": "manual",
       "priority": "high",
       "description": "Interactive code review using Monitor, Predictor, Evaluator agents.",
@@ -225,6 +240,7 @@
     },
     "map-task": {
       "type": "manual",
+      "skillClass": "task",
       "enforcement": "manual",
       "priority": "high",
       "description": "Execute a single subtask from an existing MAP plan.",
@@ -244,6 +260,7 @@
     },
     "map-tdd": {
       "type": "manual",
+      "skillClass": "task",
       "enforcement": "manual",
       "priority": "high",
       "description": "TDD MAP workflow: spec-driven tests written before implementation.",

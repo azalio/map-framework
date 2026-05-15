@@ -1,199 +1,82 @@
 # MAP Skills System
 
-## What are Skills?
+MAP ships Claude Code skills as the runtime slash surface for MAP workflows and as supporting reference material. Skills are not agents, but they are not all passive documentation either: some skills define task procedures that call agents, run scripts, or write workflow artifacts.
 
-**Skills** = Passive documentation modules (NOT agents!)
+## Skill Classes
 
-Skills provide specialized guidance without executing code. They help users understand MAP Framework concepts and make informed decisions.
+MAP uses `skillClass` in `skill-rules.json` to make the runtime role explicit.
+
+| Class | Use For | Runtime Boundary |
+|-------|---------|------------------|
+| `reference` | Conventions, heuristics, explanations, and decision support | Loads knowledge into the current session; should not own a deterministic workflow |
+| `task` | Manual slash workflows such as `/map-efficient`, `/map-review`, and `/map-learn` | May orchestrate agents, run validation, and write artifacts when invoked |
+| `hybrid` | Operational guidance with supporting hooks/scripts, currently `map-state` | Provides reference guidance and declares explicit `runtimeEffects` for hook or artifact side effects |
+
+`type` and `enforcement` still describe activation behavior. `skillClass` describes what the skill is allowed to do after it is invoked.
+
+## Current Classification
+
+| Skill | Class | Notes |
+|-------|-------|-------|
+| `map-state` | `hybrid` | Explains branch-scoped planning and ships hooks/scripts that surface focus and completion checks |
+| `map-learn` | `task` | Manual slash workflow with `disable-model-invocation: true`; writes learned rules from a completed workflow handoff |
+| `map-plan`, `map-efficient`, `map-fast`, `map-debug`, `map-tdd`, `map-task`, `map-check`, `map-review`, `map-resume`, `map-release`, `map-explain` | `task` | Skill-backed slash workflows invoked directly by the user |
 
 ## Skills vs Agents
 
 | Skills | Agents |
 |--------|--------|
-| **Passive** documentation | **Active** execution |
-| Load via Skill tool | Execute via Task tool |
-| Provide guidance | Write code |
-| Progressive disclosure (<500 lines) | Full specification (orchestrated) |
-| User-initiated | Workflow-initiated |
-
-**Example:**
-- **Skill:** map-workflows-guide (explains when to use each workflow)
-- **Agent:** actor.md (implements code based on workflow)
-
----
-
-## Available Skills
-
-### map-workflows-guide
-
-**Purpose:** Help users choose the right MAP workflow for their task
-
-**Triggers:** (auto-suggested when user prompts match)
-- Keywords: "which workflow", "difference between", "when to use"
-- Intent patterns: Questions about workflow selection
-
-**Content:**
-- Quick decision tree (5 questions)
-- Workflow comparison matrix (4 implemented + 2 planned)
-- Detailed workflow descriptions
-- Agent architecture overview
-- 8 deep-dive resource files
-
-**How to use:**
-```
-User: "Which workflow should I use for implementing auth?"
-MAP: [Auto-suggests map-workflows-guide skill]
-User: "Load map-workflows-guide"
-MAP: [Shows decision tree and comparison matrix]
-```
-
-**Resources available:**
-- `map-fast-deep-dive.md` - When (not) to use /map-fast
-- `map-efficient-deep-dive.md` - Optimization strategies
-- `map-debug-deep-dive.md` - Debugging techniques
-- `map-feature-deep-dive.md` - Full validation workflow (PLANNED)
-- `map-refactor-deep-dive.md` - Dependency analysis (PLANNED)
-- `agent-architecture.md` - How 12 agents orchestrate
-
----
-
-## Creating New Skills
-
-See [docs/P1_SKILLS_SYSTEM_IMPLEMENTATION.md](../docs/P1_SKILLS_SYSTEM_IMPLEMENTATION.md) for:
-- Skill structure (SKILL.md + resources/)
-- 500-line rule (progressive disclosure pattern)
-- Integration with auto-activation
-- Testing procedures
-
-### Skill Structure Template
-
-```
-.claude/skills/my-skill/
-├── SKILL.md                      # Main entry (<500 lines)
-│   ├── Frontmatter (YAML)
-│   ├── Quick overview
-│   ├── Decision support
-│   └── Links to resources/
-└── resources/
-    ├── topic-1-deep-dive.md     # Detailed exploration
-    ├── topic-2-deep-dive.md
-    └── reference-guide.md       # Quick reference
-```
-
-### Frontmatter Format
-
-```yaml
----
-name: my-skill
-description: Brief description of what this skill provides
-version: 1.0
----
-```
-
----
-
-## Integration with Auto-Activation
-
-Skills work seamlessly with the prompt improvement system:
-
-**How it works:**
-1. User prompt analyzed by `improve-prompt.py` hook
-2. Hook evaluates prompt clarity and context
-3. If skill-related keywords found: Suggests relevant skill
-4. User can load skill for detailed guidance
-
-**Configuration:**
-- **Trigger definitions:** `.claude/skills/skill-rules.json`
-- **Prompt improvement hook:** `.claude/hooks/improve-prompt.py`
-
----
+| Loaded through the Skill surface or invoked as slash workflows | Launched through the Task tool by a workflow |
+| Define instructions, policies, hooks, scripts, and supporting files | Perform specialized analysis, implementation, review, or learning work |
+| Own provider-facing runtime contracts under `.claude/skills/` | Own role-specific prompts under `.claude/agents/` |
+| May call agents when the skill is a task workflow | Do not define slash surfaces themselves |
 
 ## File Structure
 
-```
+```text
 .claude/skills/
-├── skill-rules.json                  # Trigger configuration for all skills
+├── skill-rules.json                  # Activation and skillClass metadata
 ├── README.md                         # This file
-└── map-workflows-guide/
-    ├── SKILL.md                      # Main entry (<500 lines)
-    └── resources/
-        ├── map-fast-deep-dive.md
-        ├── map-efficient-deep-dive.md
-        ├── map-feature-deep-dive.md
-        ├── map-debug-deep-dive.md
-        ├── map-refactor-deep-dive.md
-        ├── agent-architecture.md
+├── map-state/
+│   ├── SKILL.md
+│   └── scripts/
+├── map-learn/
+│   ├── SKILL.md
+│   └── templates/
+└── map-*/SKILL.md                    # Skill-backed MAP slash workflows
 ```
 
----
+## Authoring Guidance
 
-## Best Practices
+Use a `reference` skill when the content is mostly durable knowledge: conventions, decision trees, examples, troubleshooting, or domain guidance. Reference skills should be safe to load opportunistically and should avoid owning multi-step mutation procedures.
 
-### For Skill Authors
+Use a `task` skill when the skill behaves like a workflow: it has required steps, validation gates, agent calls, file writes, commits, releases, or other deterministic procedures. Manual slash task skills should normally use `disable-model-invocation: true` and an `argument-hint` so users see a clear invocation shape.
 
-1. **Follow 500-line rule** - Main SKILL.md should be scannable (~5 min read)
-2. **Progressive disclosure** - Details in resources/, linked from main
-3. **Clear triggers** - Define specific keywords and intent patterns
-4. **Examples over theory** - Show concrete use cases
-5. **Link related resources** - Cross-reference other skills/docs
+Use `hybrid` only when both are true: the skill is useful as reference material, and it also ships runtime helpers such as hooks or scripts. Hybrid skills must list `runtimeEffects` in `skill-rules.json` so users can tell which behavior comes from reading instructions and which behavior comes from installed hooks or scripts.
 
-### For Users
+Keep `SKILL.md` focused on invocation policy, decision rules, and navigation to supporting files. Move long examples, troubleshooting matrices, and templates into supporting files so invoked skill content stays compact.
 
-1. **Trust auto-suggestions** - Skills are triggered for good reasons
-2. **Load skills proactively** - Don't guess, get guidance
-3. **Explore resources** - Deep-dives provide comprehensive context
-4. **Apply patterns** - Skills show "why" and "when", not just "how"
+## Template Sync
 
----
+The development copy under `.claude/skills/` must stay byte-for-byte synced with `src/mapify_cli/templates/skills/`, because `mapify init` installs the template copy into user projects.
+
+Use:
+
+```bash
+make sync-templates
+pytest tests/test_skills.py tests/test_template_sync.py -v
+```
 
 ## Troubleshooting
 
-### Skill not auto-suggesting
+### Skill metadata drift
 
-**Check:**
-1. `skill-rules.json` has correct triggers
-2. `improve-prompt.py` hook is enabled in `.claude/settings.json`
-3. Hook processes UserPromptSubmit events
+Run `pytest tests/test_skills.py -v`. The suite checks frontmatter, direct invocation metadata, skillClass values, hybrid runtime effects, trigger rules, supporting-file links, hook script paths, and template sync.
 
-**Fix:**
-- Update trigger patterns in `skill-rules.json`
-- Verify hook configuration in `.claude/settings.json`
+### Generated project does not match this branch
 
-### Skill content too long
+Run `uv run mapify init <new-temp-path> --no-git --mcp none` from this repo. Do not use a globally installed `mapify` binary for branch validation because it can lag behind local templates.
 
-**Problem:** Main SKILL.md exceeds 500 lines
+### New task skill is not invocable
 
-**Solution:**
-1. Move detailed sections to `resources/`
-2. Keep only overview + navigation in main file
-3. Add links to resources for deep dives
-
-### Resources not loading
-
-**Check:**
-1. Resource files exist in `resources/` directory
-2. Links in SKILL.md use correct paths
-3. Markdown link syntax is valid
-
----
-
-## Metrics
-
-**Track skill effectiveness:**
-- Activation rate (how often skills are suggested)
-- Load rate (how often users load suggested skills)
-- Resource access (which deep-dives are most popular)
-- Workflow confusion reduction (before/after P1)
-
-**Target metrics:**
-- >30% of sessions load a skill
-- ~50% reduction in "which workflow?" questions
-- Correct workflow selection rate >80%
-
----
-
-## See Also
-
-- [P1 Implementation Plan](../docs/P1_SKILLS_SYSTEM_IMPLEMENTATION.md)
-- [Auto-Activation System](../docs/auto-activation-comparison.md)
-- [MAP Architecture](../docs/ARCHITECTURE.md)
+Check that the skill has `argument-hint`, the direct `map-*` name appears in `skill-rules.json` keywords and intent patterns, and `skillClass` is `task`.

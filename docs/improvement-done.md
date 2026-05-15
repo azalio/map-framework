@@ -47,3 +47,12 @@
 - Added skill-catalog regression tests that assert manual slash skill classification matches frontmatter, direct invocation names are present in trigger keywords/patterns, selected negative-trigger fixtures do not match noisy skills, local Markdown supporting-file links resolve, hook commands using `CLAUDE_PLUGIN_ROOT` point at bundled scripts, and non-`SKILL.md` supporting files stay synced into templates.
 - Reclassified `map-learn` in `.claude/skills/skill-rules.json` and the shipped template copy from suggested domain skill to manual slash skill, matching its `disable-model-invocation` and `argument-hint` frontmatter.
 - Verified template sync and generated-project behavior with `pytest tests/test_skills.py tests/test_template_sync.py -v`, `pytest -m "not slow"`, and a repo-built `uv run mapify init <temp-dir> --no-git --mcp none` smoke that inspected the emitted `.claude/skills/skill-rules.json` and `map-learn` supporting templates.
+
+## Explicit reference-vs-task skill architecture [2604.032]
+
+- Date: 2026-05-15
+- Added explicit `skillClass` metadata to `.claude/skills/skill-rules.json` and the shipped template copy: MAP slash workflows are `task`, while `map-state` is `hybrid` with declared hook and `.map` artifact runtime effects.
+- Rewrote the shipped skills README and user-facing docs so skills are no longer described as passive-only documentation; the docs now distinguish task, reference, and hybrid skill runtime boundaries.
+- Added skill-catalog regression tests that require supported `skillClass` values, enforce task/manual consistency, prevent future reference skills from silently becoming hook-backed/manual workflows, and require hybrid skills to declare `runtimeEffects`.
+- Removed stale docs that pointed users at non-existent `map-workflows-guide` and `map-cli-reference` skill paths.
+- Verified with `pytest tests/test_skills.py tests/test_template_sync.py -v`, `pytest -m "not slow"`, `make lint`, and a repo-built `uv run mapify init <temp-dir> --no-git --mcp none` smoke that inspected generated `skillClass` metadata.

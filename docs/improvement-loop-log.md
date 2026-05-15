@@ -26,3 +26,18 @@
   - invariant: `A skill with manual slash invocation must have an argument-hint and its direct map-* name in skill-rules keywords and intent patterns.`
   - invariant: `Relative Markdown links, non-SKILL supporting files, and CLAUDE_PLUGIN_ROOT hook commands must resolve and stay synced before template release.`
   - gotcha: `When linting Markdown links in skill bodies, strip fenced code blocks first so regex snippets like [ =]([0-9]+) are not mistaken for Markdown links.`
+
+## 2026-05-15 - Explicit reference-vs-task skill architecture [2604.032]
+
+- Decision: `implemented`
+- Branch: `codex/2604-032-skill-taxonomy`
+- Baseline: The shipped skills README still said skills were passive documentation only, referenced non-existent `map-workflows-guide`, and `skill-rules.json` had no machine-readable way to distinguish task workflows from reference guidance or `map-state` hook side effects.
+- Forward Change: Added `skillClass` metadata, classified MAP slash workflows as `task`, classified `map-state` as `hybrid` with `runtimeEffects`, rewrote skill taxonomy docs, removed stale skill references, and added regression tests for task/reference/hybrid boundaries.
+- Decisive Validation: `pytest tests/test_skills.py tests/test_template_sync.py -v`, `pytest -m "not slow"`, and `make lint` passed. `uv run mapify init <new-dir> --no-git --mcp none` emitted `map-state` as `hybrid`, `map-learn` as `task`, and the generated skills README included the taxonomy.
+- Next Trigger: Reuse this learning whenever a change adds, removes, or reclassifies a shipped skill, especially if it changes manual invocation, hooks, scripts, or file-writing behavior.
+- Reusable Learnings:
+  - command: `pytest tests/test_skills.py tests/test_template_sync.py -v`
+  - command: `uv run mapify init <new-dir> --no-git --mcp none`
+  - invariant: `Every shipped skill-rules.json entry must declare skillClass as reference, task, or hybrid.`
+  - invariant: `Task skills must be manual slash workflows; reference skills must not hide manual invocation, hooks, or runtime effects; hybrid skills must declare runtimeEffects.`
+  - gotcha: `Docs can retain stale skill names even after catalog tests pass; grep for removed/non-shipped skill names such as map-workflows-guide and map-cli-reference when changing skill taxonomy.`

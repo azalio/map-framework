@@ -26,6 +26,17 @@ Verification:
 - Run `pytest tests/test_template_sync.py -v` (enforces agent template sync).
 - For other `.claude/` files, use `git diff`/`git status` to ensure the template copy was updated too.
 
+## Skill catalog invariant
+
+When changing shipped skills, keep `.claude/skills/skill-rules.json` and `src/mapify_cli/templates/skills/skill-rules.json` explicit about `skillClass`:
+- `task` for manual slash workflows that may call agents, run checks, or write artifacts.
+- `reference` for guidance-only skills with no manual invocation, hooks, or runtime effects.
+- `hybrid` only when reference guidance ships hooks/scripts or artifact side effects; list `runtimeEffects`.
+
+Validation:
+- Run `pytest tests/test_skills.py tests/test_template_sync.py -v`.
+- Run `uv run mapify init <new-temp-path> --no-git --mcp none` and inspect generated `.claude/skills/skill-rules.json` for shipped metadata changes.
+
 ## How to work in this repo
 
 - Prefer deterministic tooling over “manual review”: run `make check` (or `make lint` / `make test`) after changes.
