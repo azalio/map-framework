@@ -1,5 +1,13 @@
 # MAP Framework Improvement Done
 
+## Action-first tool use in lightweight workflows [2604.028]
+
+- Date: 2026-05-15
+- Rewrote `/map-fast` and `/map-debug` so write-capable Actor steps edit files directly with Edit/Write tools and return compact summaries (`files_changed`, `tests_run`, `remaining_risks`) instead of serialized full-file `code_changes`.
+- Updated Monitor prompts in both lightweight workflows to validate written repo state from `Written Files`, and removed stale post-validation apply instructions from the workflow overviews and decision points.
+- Synced the changed `.claude/skills/` prompts into `src/mapify_cli/templates/skills/`, updated `docs/USAGE.md` and `docs/ARCHITECTURE.md`, and added regression tests that reject any return to full-file serialization or post-review apply wording.
+- Verified with focused skill/template tests, lint, the non-slow suite, and a repo-built `uv run mapify init <temp-path> --no-git --mcp none` smoke that inspected generated `map-fast` and `map-debug` skill files.
+
 ## Official-frontmatter hygiene for MAP skills [2604.031]
 
 - Date: 2026-04-13

@@ -33,11 +33,11 @@ Debugging workflow focuses on analysis before implementation:
 ```
 1. DECOMPOSE → task-decomposer (break down debugging steps)
 2. FOR each debugging step:
-   3. IMPLEMENT → actor (create fix)
-   4. VALIDATE → monitor (check fix correctness)
+   3. IMPLEMENT → actor (edit files directly)
+   4. VALIDATE → monitor (check written files)
    5. PREDICT → predictor (assess impact of fix)
    6. EVALUATE → evaluator (verify fix quality)
-   7. Apply fix
+   7. Keep Actor's already-written fix
 3. DONE → Suggest /map-learn if user wants to preserve patterns
 ```
 
@@ -113,14 +113,15 @@ Task(
 **Issue:** [from investigation]
 **Root Cause:** [identified root cause]
 
-Output JSON with:
+Apply the fix directly with Edit/Write tools, then output JSON with:
 - approach: string (fix strategy)
-- code_changes: array of {file_path, change_type, content, rationale}
+- files_changed: array of file paths actually edited
+- tests_run: array of commands run, or [] if deferred to the orchestrator
 - why_this_fixes_it: string (explain the fix)
 - potential_side_effects: array of strings
-- testing_approach: string
+- remaining_risks: array of strings
 
-Provide FULL file content for changes."
+Do not serialize full file contents in your response."
 )
 ```
 
@@ -132,12 +133,14 @@ After each fix (max 5 Actor->Monitor retry iterations per subtask):
 Task(
   subagent_type="monitor",
   description="Validate fix",
-  prompt="Review this debugging fix:
+  prompt="Validate this debugging fix in the written repo state:
 
 **Original Issue:** [description]
-**Actor Fix:** [paste actor JSON]
+**Written Files:** [files_changed from Actor]
+**Root Cause:** [identified root cause]
 
 Check:
+- Read the written files and verify the code exists in the repo
 - Does the fix address the root cause?
 - Are there any security issues introduced?
 - Are there proper error handling?
@@ -208,7 +211,7 @@ Output JSON with:
 ### Apply Fix
 
 If evaluator recommends proceeding:
-- Apply code changes using Write/Edit tools
+- Keep Actor's already-written changes
 - Run tests to verify fix
 - Check that original issue is resolved
 - Write a deferred learning handoff so `/map-learn` can reuse the debug context later:
