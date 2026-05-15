@@ -325,15 +325,11 @@ This section documents frequently encountered CLI command errors and their corre
 
 For comprehensive CLI documentation, see:
 
-- **Quick reference skill**: `.claude/skills/map-cli-reference/SKILL.md`
-  - Auto-suggests when CLI errors occur
-  - Provides immediate corrections
-  - ~250 lines, follows 500-line skill rule
-
 - **Complete CLI guide**: `docs/CLI_COMMAND_REFERENCE.md`
-  - Full command reference with examples
+  - Full command reference with examples and immediate corrections for MAP CLI command syntax
   - FTS5 query syntax guide
   - Exit codes and troubleshooting
+  - Use this as the canonical reference; MAP no longer ships a `map-cli-reference` skill
 
 - **Machine-readable spec**: `docs/CLI_REFERENCE.json`
   - JSON schema for all commands
@@ -1397,139 +1393,69 @@ Agents automatically use their configured model when invoked via slash commands:
 
 ---
 
-## 📚 Skills System
+## Skills System
 
-MAP includes interactive skills to help you navigate workflows and understand the framework.
+MAP's Claude Code slash surfaces are implemented as skills under `.claude/skills/map-*/SKILL.md`. Skills are not agents, but they can be more than passive documentation: task skills define slash workflows that call agents, run validation, and write artifacts.
 
-### Available Skills
+### Skill Classes
 
-#### map-state
+`skill-rules.json` declares a `skillClass` for every shipped skill:
 
-Persistent session state for MAP workflows using file-based planning.
+| Class | Use For | Runtime Boundary |
+|-------|---------|------------------|
+| `reference` | Conventions, heuristics, examples, and decision support | Loads knowledge only; does not own mutation workflows |
+| `task` | Manual slash workflows such as `/map-efficient`, `/map-review`, and `/map-learn` | May orchestrate agents, run checks, and write branch artifacts when invoked |
+| `hybrid` | Reference guidance plus installed runtime helpers, currently `map-state` | Must list `runtimeEffects` so hook/script side effects are explicit |
 
-**When to use planning:**
-- 📋 **Long workflows** — Tasks with 50+ tool calls where context may reset
-- 📋 **Multi-phase projects** — Work spanning multiple sessions or days
-- 📋 **Complex features** — 5+ subtasks that need explicit tracking
-- 📋 **Team handoffs** — When another person may need to continue your work
-- 📋 **Compliance/audit** — When you need documented decision trail
+Current MAP installs classify all slash workflows as `task` skills. `map-state` is `hybrid` because its `SKILL.md` explains branch-scoped planning while its bundled hooks/scripts surface focus and completion checks around `.map/<branch>/` artifacts.
 
-**When NOT to use:**
-- Quick bug fixes (1-3 subtasks)
-- Single-session tasks that complete in <30 minutes
-- Exploratory work where the goal may change frequently
+### map-state
 
-**How it works:**
-- Creates `.map/` directory with branch-scoped plan files
-- Files: `task_plan_<branch>.md`, `findings_<branch>.md`, `progress_<branch>.md`
-- Prevents goal drift in long workflows (50+ tool calls)
-- Enables resumption after context reset
+`map-state` provides persistent session state for MAP workflows using file-based planning.
 
-**Initialization:**
+Use it for long workflows, multi-phase projects, complex features, team handoffs, and audit trails. Do not use it for trivial one-shot edits or short single-session fixes.
+
+Runtime effects:
+
+- Creates and reads branch-scoped `.map/<branch>/` planning artifacts when its scripts are invoked.
+- Installs hooks that display current focus before write/edit/bash actions and check terminal state before exit.
+- Keeps workflow state in files such as `task_plan_<branch>.md`, `findings_<branch>.md`, `progress_<branch>.md`, and `step_state.json`.
+
+Initialization script:
+
 ```bash
 .claude/skills/map-state/scripts/init-session.sh
 ```
 
-**Plan file structure:**
-```markdown
-# Task Plan: [goal]
+Terminal states are `complete`, `blocked`, `won't_do`, and `superseded`.
 
-## Goal
-[One sentence describing end state]
+### Task Skills
 
-## Current Phase
-ST-001
+Task skills behave like MAP slash workflows. They are manually invoked by the user and normally advertise an `argument-hint` in frontmatter so the provider UI shows the invocation shape.
 
-## Phases
+Examples:
 
-### ST-001: [title]
-**Status:** in_progress
-Risk: low|medium|high
-Complexity: 1-10
-Files: [paths]
+- `/map-plan` decomposes non-trivial work and records workflow fit.
+- `/map-efficient` implements scoped work through Actor/Monitor loops.
+- `/map-review` builds a review bundle and launches reviewer agents.
+- `/map-learn` consumes a workflow handoff and writes reusable learned rules.
 
-Validation:
-- [ ] [criterion]
+### Skills vs Agents
 
-## Terminal State
-**Status:** pending
-```
-
-**Terminal states:** `complete`, `blocked`, `won't_do`, `superseded`
-
-**Note:** MAP workflows (`/map-efficient`, etc.) automatically use this skill. The `.map/` directory is gitignored.
-
-#### map-workflows-guide
-
-Get help choosing the right workflow for your task.
-
-**How to access:**
-```
-User: "Which workflow should I use?"
-MAP: [Loads map-workflows-guide skill automatically]
-```
-
-**What you get:**
-- **Quick decision tree** - Answer 5 questions to find your workflow
-- **Comparison matrix** - Token cost, learning, agents, best-for columns
-- **Detailed guides** - When to use each workflow, trade-offs, examples
-- **8 deep-dive resources** - Progressive disclosure for comprehensive learning
-
-**Skills vs Agents:**
-- **Skills** provide passive guidance (documentation)
-- **Agents** execute active tasks (code generation)
-- Skills load via Skill tool, agents execute via Task tool
-
-### Auto-Activation
-
-Skills automatically suggest themselves when relevant:
-
-**Keywords that trigger map-workflows-guide:**
-- "which workflow"
-- "difference between workflows"
-- "when to use map-efficient"
-- "workflow comparison"
-
-**Example flow:**
-```
-User: "I need to add a feature"
-MAP: 🎯 "Consider /map-efficient"
-
-User: "What's the difference between efficient and debate?"
-MAP: 📚 "Loading map-workflows-guide skill"
-[Shows comparison: efficient = production, debate = reasoning transparency]
-```
-
-### Progressive Disclosure
-
-Skills follow the 500-line rule:
-- **Main SKILL.md** (<500 lines) - High-level overview, quick decisions
-- **Resources/** (8 files) - Deep-dive topics loaded on demand
-
-**Benefits:**
-- Fast scanning (5-10 min for main skill)
-- Comprehensive when needed (25+ min with all resources)
-- Prevents context limit issues
-
-### Resources Available
-
-**Workflow deep-dives:**
-- `map-fast-deep-dive.md` - Skip conditions, when to avoid
-- `map-efficient-deep-dive.md` - Optimization strategy, recommended default
-- `map-debug-deep-dive.md` - Debugging strategies, error analysis
-- `map-learn-deep-dive.md` - Lesson extraction, knowledge base updates
-- `map-release-deep-dive.md` - Release workflow, validation gates
-
-**System architecture:**
-- `agent-architecture.md` - How 12 agents orchestrate
+| Skills | Agents |
+|--------|--------|
+| Define provider-facing slash surfaces, instructions, policies, hooks, scripts, and supporting files | Perform specialized analysis, implementation, review, or learning work |
+| May call agents when the skill is a task workflow | Are launched by skills or commands through the Task tool |
+| Live under `.claude/skills/` in Claude installs | Live under `.claude/agents/` |
 
 ### Creating Custom Skills
 
 See `.claude/skills/README.md` for:
-- Skill structure (SKILL.md + resources/)
-- Trigger configuration (skill-rules.json)
-- Integration with auto-activation
-- Best practices and examples
+
+- Skill structure (`SKILL.md` plus supporting files)
+- `skillClass` taxonomy and `runtimeEffects` guidance
+- Trigger configuration in `skill-rules.json`
+- Template sync and validation commands
 
 ---
 
