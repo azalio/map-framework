@@ -12,6 +12,8 @@ Validates that shipped skills keep a clean, Claude-compatible metadata surface:
 - No README.md inside skill folders (per Anthropic guide)
 - skill-rules.json has entries for all skills
 - Required sections (Examples, Troubleshooting) present
+- Manual slash invocation metadata matches skill frontmatter
+- Local supporting-file references and skill hook commands resolve
 """
 
 import json
@@ -35,6 +37,19 @@ SUPPORTED_FRONTMATTER_FIELDS = {
     "paths",
     "user-invocable",
     "version",
+}
+
+NEGATIVE_TRIGGER_FIXTURES = {
+    "map-state": [
+        "Fix the typo in README.md",
+        "Explain what this helper function does",
+        "Update package metadata",
+    ],
+    "map-learn": [
+        "Implement a learning dashboard component",
+        "Remember to update the changelog after the release",
+        "Explain the implementation strategy for this function",
+    ],
 }
 
 
@@ -303,6 +318,131 @@ class TestSkillStructure:
                 f"Add more patterns for reliable triggering."
             )
 
+    def test_manual_skill_rules_match_frontmatter(
+        self, skills_dir, skill_folders, skill_rules
+    ):
+        """Manual slash skills must be classified consistently across metadata files."""
+        for folder in skill_folders:
+            skill_file = skills_dir / folder / "SKILL.md"
+            fm = self._parse_frontmatter(skill_file)
+            rule = skill_rules.get("skills", {}).get(folder, {})
+            is_manual_rule = (
+                rule.get("type") == "manual" or rule.get("enforcement") == "manual"
+            )
+
+            if fm.get("disable-model-invocation"):
+                assert is_manual_rule, (
+                    f"Skill '{folder}' disables model invocation for direct slash use, "
+                    "but skill-rules.json does not classify it as manual."
+                )
+
+            if is_manual_rule:
+                assert fm.get("argument-hint"), (
+                    f"Skill '{folder}' is manual in skill-rules.json, but its "
+                    "frontmatter does not advertise an argument-hint."
+                )
+
+    def test_manual_skills_have_direct_invocation_triggers(
+        self, skill_folders, skill_rules
+    ):
+        """Manual slash skills need explicit direct invocation trigger coverage."""
+        for folder in skill_folders:
+            rule = skill_rules.get("skills", {}).get(folder, {})
+            is_manual_rule = (
+                rule.get("type") == "manual" or rule.get("enforcement") == "manual"
+            )
+            if not is_manual_rule:
+                continue
+
+            triggers = rule.get("promptTriggers", {})
+            keywords = triggers.get("keywords", [])
+            patterns = triggers.get("intentPatterns", [])
+
+            assert folder in keywords, (
+                f"Manual skill '{folder}' should list its direct invocation name "
+                "as a trigger keyword."
+            )
+            assert any(folder in pattern for pattern in patterns), (
+                f"Manual skill '{folder}' should list its direct invocation name "
+                "in at least one intent pattern."
+            )
+
+    def test_selected_skills_do_not_match_negative_trigger_fixtures(
+        self, skill_rules
+    ):
+        """Representative unrelated utterances should not trigger noisy skills."""
+
+        def matches_rule(rule, utterance: str) -> bool:
+            triggers = rule.get("promptTriggers", {})
+            text = utterance.lower()
+            for keyword in triggers.get("keywords", []):
+                if keyword.lower() in text:
+                    return True
+            for pattern in triggers.get("intentPatterns", []):
+                if re.search(pattern, utterance, flags=re.IGNORECASE):
+                    return True
+            return False
+
+        for skill_name, utterances in NEGATIVE_TRIGGER_FIXTURES.items():
+            rule = skill_rules.get("skills", {}).get(skill_name)
+            assert rule, f"Missing skill-rules.json entry for {skill_name}"
+            for utterance in utterances:
+                assert not matches_rule(rule, utterance), (
+                    f"Skill '{skill_name}' should not trigger for unrelated "
+                    f"utterance: {utterance!r}"
+                )
+
+    def test_local_markdown_supporting_links_resolve(self, skills_dir, skill_folders):
+        """Relative Markdown links inside SKILL.md should point to bundled files."""
+        link_re = re.compile(r"(?<!!)\[[^\]\n]+\]\(([^)\n]+)\)")
+        external_prefixes = ("http://", "https://", "mailto:", "#")
+
+        for folder in skill_folders:
+            skill_file = skills_dir / folder / "SKILL.md"
+            content = re.sub(r"```.*?```", "", skill_file.read_text(), flags=re.DOTALL)
+            for href in link_re.findall(content):
+                target = href.split("#", 1)[0].strip()
+                if not target or target.startswith(external_prefixes):
+                    continue
+                if target.startswith("/") or "$" in target or "<" in target:
+                    continue
+
+                resolved = (skill_file.parent / target).resolve()
+                assert resolved.exists(), (
+                    f"Skill '{folder}' links to missing bundled supporting file: "
+                    f"{href}"
+                )
+
+    def test_skill_hook_commands_reference_bundled_scripts(
+        self, skills_dir, skill_folders
+    ):
+        """Hook commands using CLAUDE_PLUGIN_ROOT should resolve inside the skill."""
+
+        def iter_hook_commands(value):
+            if isinstance(value, dict):
+                command = value.get("command")
+                if isinstance(command, str):
+                    yield command
+                for nested in value.values():
+                    yield from iter_hook_commands(nested)
+            elif isinstance(value, list):
+                for item in value:
+                    yield from iter_hook_commands(item)
+
+        marker = "${CLAUDE_PLUGIN_ROOT}/"
+        for folder in skill_folders:
+            skill_file = skills_dir / folder / "SKILL.md"
+            fm = self._parse_frontmatter(skill_file)
+            for command in iter_hook_commands(fm.get("hooks", {})):
+                if marker not in command:
+                    continue
+                rel_path = command.split(marker, 1)[1].split()[0]
+                script_path = skills_dir / folder / rel_path
+                assert script_path.exists(), (
+                    f"Skill '{folder}' hook command references missing bundled "
+                    f"script: {rel_path}"
+                )
+
     # --- Template sync tests ---
 
     def test_skill_templates_in_sync(
@@ -338,6 +478,40 @@ class TestSkillStructure:
             "skill-rules.json differs between .claude/skills/ and templates/skills/. "
             "Run: make sync-templates"
         )
+
+    def test_skill_supporting_files_in_sync(self, skills_dir, template_skills_dir):
+        """Bundled skill supporting files should ship with mapify init."""
+        if not template_skills_dir.exists():
+            pytest.skip("Template skills directory doesn't exist")
+
+        def supporting_files(root: Path) -> dict[Path, Path]:
+            return {
+                path.relative_to(root): path
+                for path in root.rglob("*")
+                if path.is_file()
+                and path.name not in {"SKILL.md", "skill-rules.json"}
+            }
+
+        source_files = supporting_files(skills_dir)
+        target_files = supporting_files(template_skills_dir)
+        missing = sorted(source_files.keys() - target_files.keys())
+        extra = sorted(target_files.keys() - source_files.keys())
+
+        assert not missing, (
+            "Skill supporting files missing from templates: "
+            + ", ".join(str(path) for path in missing)
+        )
+        assert not extra, (
+            "Skill supporting files present only in templates: "
+            + ", ".join(str(path) for path in extra)
+        )
+
+        for rel_path, source in source_files.items():
+            target = target_files[rel_path]
+            assert source.read_bytes() == target.read_bytes(), (
+                f"Skill supporting file '{rel_path}' differs between .claude/skills/ "
+                "and templates/skills/. Run: make sync-templates"
+            )
 
     # --- Validation script tests ---
 

@@ -245,22 +245,6 @@
 - If MAP later adds more task skills, evaluate whether some should use `context: fork` and `agent` to isolate long procedures into subagent execution, as supported by the official docs.
 
 
-## Skill trigger and invocation regression testing [2604.034]
-
-**Benefit Hypothesis**: Adding skill-specific trigger and invocation tests will prevent regressions where a skill stops loading automatically, becomes too noisy, or exposes a broken slash UX. The measurable gain is earlier detection of metadata regressions before template release.
-**Confidence**: 0.8
-**Reasoning**: Both the official skills docs and Anthropic’s `skill-creator` guidance emphasize realistic triggering, direct invocation, and example-based validation. MAP currently tests commands heavily but has much less explicit coverage around skill trigger quality, description ergonomics, and slash invocation metadata. Given that descriptions are the primary auto-trigger surface and skills now double as commands, this is an avoidable blind spot.
-**Why Not Already Tried**: Skills appear to be a newer layer in MAP than commands, and most existing validation effort has gone into prompt-template sync and workflow correctness rather than catalog behavior.
-
-### Proposed Changes
-
-- Add tests that validate both automatic trigger phrasing and direct `/skill-name` invocation for each shipped skill.
-- Add negative-trigger tests so `map-state` and `map-learn` do not activate on unrelated prompts.
-- Test that every skill’s documented supporting files actually exist and that intra-skill references resolve.
-- Add fixture-based tests for frontmatter behavior that MAP relies on: `disable-model-invocation`, `allowed-tools`, hooks, and any future `argument-hint`, `paths`, or `user-invocable` usage.
-- Add a small benchmark set of realistic user utterances, following `skill-creator` guidance, to detect undertriggering and overtriggering before release.
-
-
 ## LEARN as a philosophical requirement with soft runtime ergonomics [2604.035]
 
 **Benefit Hypothesis**: Treating `LEARN` as a required part of the MAP philosophy, while keeping runtime ergonomics soft and token-aware, will preserve the long-term memory benefits of the framework without making users feel forced into extra token spend on every workflow. The measurable target is higher voluntary `/map-learn` adoption on meaningful tasks and fewer repeated Monitor findings in subsequent sessions.

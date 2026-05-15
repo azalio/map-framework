@@ -40,3 +40,10 @@
 - Updated template sync and regression tests to treat `/map-learn` as a skill-backed slash surface while keeping the rest of the command template suite intact.
 - Updated `docs/USAGE.md`, `docs/ARCHITECTURE.md`, `docs/INSTALL.md`, and `docs/roadmap.md` to document the skill-first migration and the new installed project structure.
 - Updated `src/mapify_cli/delivery/file_copier.py` so fresh installs advertise `/map-learn` under skill-backed surfaces instead of command files, and the fallback inline command set no longer recreates the duplicate command.
+
+## Skill trigger and invocation regression testing [2604.034]
+
+- Date: 2026-05-15
+- Added skill-catalog regression tests that assert manual slash skill classification matches frontmatter, direct invocation names are present in trigger keywords/patterns, selected negative-trigger fixtures do not match noisy skills, local Markdown supporting-file links resolve, hook commands using `CLAUDE_PLUGIN_ROOT` point at bundled scripts, and non-`SKILL.md` supporting files stay synced into templates.
+- Reclassified `map-learn` in `.claude/skills/skill-rules.json` and the shipped template copy from suggested domain skill to manual slash skill, matching its `disable-model-invocation` and `argument-hint` frontmatter.
+- Verified template sync and generated-project behavior with `pytest tests/test_skills.py tests/test_template_sync.py -v`, `pytest -m "not slow"`, and a repo-built `uv run mapify init <temp-dir> --no-git --mcp none` smoke that inspected the emitted `.claude/skills/skill-rules.json` and `map-learn` supporting templates.

@@ -26,9 +26,9 @@
       }
     },
     "map-learn": {
-      "type": "domain",
-      "enforcement": "suggest",
-      "priority": "low",
+      "type": "manual",
+      "enforcement": "manual",
+      "priority": "medium",
       "description": "Extract and persist workflow lessons to .claude/rules/learned/",
       "promptTriggers": {
         "keywords": [
