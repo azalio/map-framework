@@ -3,7 +3,7 @@ name: map-review
 description: |
   Interactive 4-section code review using Monitor, Predictor, and Evaluator agents on current changes. Use when reviewing a diff, PR, or staged work before merge. Do NOT use to plan or implement; use map-plan or map-efficient.
 disable-model-invocation: true
-argument-hint: "[review focus] [--detached] [--ci]"
+argument-hint: "[review focus] [--detached] [--ci] [--reverse-sections] [--shuffle-sections] [--seed <int>] [--compare-orderings]"
 ---
 # MAP Review Workflow
 
@@ -19,6 +19,15 @@ Interactive, structured code review of current changes using Monitor, Predictor,
   no working-tree edits). If the detached path already exists, the helper reports `unavailable` and the
   review **still proceeds** using the in-place bundle (graceful degradation). The detached worktree is
   created at `.map/<branch>/detached-review/`.
+- `--reverse-sections` — Present the four review sections in reverse canonical order
+  (Performance → Tests → Code Quality → Architecture). Useful for bias detection across sequential reviews.
+- `--shuffle-sections` — Randomize the section presentation order using a branch+commit derived seed.
+  The seed is recorded under the `ordering` key in `.map/<branch>/review-bundle.json` for reproducibility.
+- `--seed <int>` — Override the shuffle seed with an explicit non-negative integer. Only meaningful when
+  `--shuffle-sections` is also set. The integer is validated server-side; non-integer values are rejected.
+- `--compare-orderings` — Run the full review twice (default order, then reverse order) and aggregate
+  results via `compare_review_runs`. Records drift metrics in the ordering artifact. Cannot be combined
+  with `--shuffle-sections` (EC-1/EC-17: conflicting ordering strategies; use one or the other).
 
 ## Execution Rules
 
@@ -79,10 +88,13 @@ This protocol is used identically by all 4 review sections below. Do NOT deviate
 2. **For each issue:**
    - Describe the problem with `file:line` references where available
    - Present 2-3 options with tradeoffs (pros/cons for each)
-   - **Recommended option is always listed first** (marked with "(Recommended)")
+   - List options neutrally as A/B/C/... Append `(Recommended)` AFTER the recommended
+     option's label — NOT as a positional preference. Example: "Option B (Recommended)".
 3. **AskUserQuestion** with numbered issues and lettered options for each
-   - Example: "ARCH-1: Option A (Recommended) / Option B / Option C"
-   - **Skip AskUserQuestion in CI mode** — auto-select recommended options
+   - Example: "ARCH-1: Option A / Option B (Recommended) / Option C"
+   - **Skip AskUserQuestion in CI mode** — scan options for the line whose text contains
+     the `(Recommended)` substring and auto-select that option (INV-11). If multiple options
+     carry the marker, pick the first match. If no option carries the marker, default to PROCEED.
 4. **Summarize decisions** from this section in 3-5 lines before proceeding to the next section
    - Include: which issues were addressed, which options were chosen, what remains
 
@@ -99,6 +111,61 @@ if echo "$ARGUMENTS" | grep -q -- '--detached'; then
   DETACHED_FLAG=true
   ARGUMENTS=$(echo "$ARGUMENTS" | sed 's/--detached//g' | xargs)
 fi
+```
+
+**Parse $ARGUMENTS for `--reverse-sections`:**
+```bash
+REVERSE_FLAG=false
+if echo "$ARGUMENTS" | grep -q -- '--reverse-sections'; then
+  REVERSE_FLAG=true
+fi
+```
+
+**Parse $ARGUMENTS for `--shuffle-sections`:**
+```bash
+SHUFFLE_FLAG=false
+if echo "$ARGUMENTS" | grep -q -- '--shuffle-sections'; then
+  SHUFFLE_FLAG=true
+fi
+```
+
+**Parse $ARGUMENTS for `--seed <int>` (EC-16: never $(...)-expand user-supplied token):**
+```bash
+SEED_RAW=""
+if echo "$ARGUMENTS" | grep -qE -- '--seed[ =][0-9]+'; then
+  SEED_RAW=$(echo "$ARGUMENTS" | sed -nE 's/.*--seed[ =]([0-9]+).*/\1/p')
+fi
+```
+
+**Parse $ARGUMENTS for `--compare-orderings`:**
+```bash
+COMPARE_FLAG=false
+if echo "$ARGUMENTS" | grep -q -- '--compare-orderings'; then
+  COMPARE_FLAG=true
+fi
+```
+
+**EC-1/EC-17 mutual exclusion: --compare-orderings and --shuffle-sections cannot be combined:**
+```bash
+if [ "$COMPARE_FLAG" = "true" ] && [ "$SHUFFLE_FLAG" = "true" ]; then
+  echo '{"status":"error","reason":"--compare-orderings always uses default+reverse; cannot combine with --shuffle-sections (EC-1/EC-17)"}'
+  exit 1
+fi
+```
+
+**Determine MODE_FLAG for section-order helper:**
+MODE_FLAG values MUST match `REVIEW_VALID_MODES` in `map_step_runner.py`:
+`default` / `reverse-sections` / `shuffle-sections`. `--compare-orderings` is NOT
+a helper mode — it is handled separately at Step A.1d and internally launches
+default + reverse runs.
+```bash
+MODE_FLAG="default"
+if [ "$REVERSE_FLAG" = "true" ]; then
+  MODE_FLAG="reverse-sections"
+elif [ "$SHUFFLE_FLAG" = "true" ]; then
+  MODE_FLAG="shuffle-sections"
+fi
+# COMPARE_FLAG does not set MODE_FLAG; compare flow drives its own two runs.
 ```
 
 **Always use comprehensive review** — up to 4 issues per section, no mode selection menu.
@@ -152,6 +219,9 @@ HANDOFF=$(python3 .map/scripts/map_step_runner.py build_review_handoff)
 If `DETACHED_FLAG=true`, invoke the helper and parse the result:
 
 ```bash
+# EC-15: prepare_detached_review is called ONCE here. When --compare-orderings is also
+# set, both compare runs reuse the same DETACHED_PATH (detached is a bundle-collection
+# concern, not a per-run concern).
 DETACHED_RESULT=$(python3 .map/scripts/map_step_runner.py prepare_detached_review "$BUNDLE_JSON_PATH")
 DETACHED_STATUS=$(echo "$DETACHED_RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['status'])")
 DETACHED_PATH=$(echo "$DETACHED_RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('worktree_path') or '')")
@@ -170,6 +240,87 @@ Handle all three outcomes — the workflow **still proceeds** in every case:
 
 The source branch is **never mutated** by `prepare_detached_review` — no `git checkout`,
 `git stash`, `git reset`, or any working-tree edits are performed.
+
+### Step A.1d: Prepare compare-mode ordering (optional, `--compare-orderings` only)
+
+If `COMPARE_FLAG=true`, perform two full agent runs and aggregate before Phase B.
+
+**This step replaces the single-run Phase A.2 + Phase B sequence when compare-mode is active.**
+
+**Run 1 — default order:**
+
+Call the ordering helper for default order:
+```bash
+SECTIONS_DEFAULT=$(python3 .map/scripts/map_step_runner.py shuffle-sections "default" "")
+```
+
+Launch all 3 agents (same prompts as Step A.2) in a single message. Capture the full agent
+result set as `RUN_DEFAULT` dict with keys:
+- `verdict`: `'PROCEED'|'REVISE'|'BLOCK'` (derived per Final Verdict rules)
+- `primary_issues`: array of top issue IDs surfaced
+- `ordering_label`: `'default'`
+
+**Run 2 — reverse order:**
+
+Call the ordering helper for reverse order:
+```bash
+SECTIONS_REVERSE=$(python3 .map/scripts/map_step_runner.py shuffle-sections "reverse-sections" "")
+```
+
+Launch all 3 agents again in a single message (same prompts, reverse section sequence).
+Capture result set as `RUN_REVERSE` dict with keys:
+- `verdict`: `'PROCEED'|'REVISE'|'BLOCK'`
+- `primary_issues`: array of top issue IDs surfaced
+- `ordering_label`: `'reverse'`
+
+**Step A.1d.3 — Aggregate runs:**
+
+`compare-review-runs` expects a JSON array of run *objects* (not strings), each with
+`verdict` / `primary_issues` / `ordering_label` keys. Build the array by parsing each
+captured run text back to a dict.
+
+```bash
+RUNS_JSON=$(python3 -c "import json,sys; \
+  print(json.dumps([json.loads(sys.argv[1]), json.loads(sys.argv[2])]))" \
+  "$RUN_DEFAULT" "$RUN_REVERSE")
+DRIFT_RESULT=$(python3 .map/scripts/map_step_runner.py compare-review-runs "$RUNS_JSON")
+```
+
+Parse the aggregated result:
+```bash
+DRIFT_DETECTED=$(echo "$DRIFT_RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['drift_detected'])")
+FINAL_VERDICT=$(echo "$DRIFT_RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['final_verdict'])")
+DRIFT_SUMMARY=$(echo "$DRIFT_RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('drift_summary') or '')")
+```
+
+**Step A.1d.4 — Stage ordering payload:**
+
+`record-review-ordering` expects a wrapper object with two keys: `runs` (the run list)
+and `drift` (the `compare-review-runs` output). Build that wrapper:
+
+```bash
+RUNS_AND_DRIFT_JSON=$(python3 -c "import json,sys; \
+  print(json.dumps({'runs':[json.loads(sys.argv[1]), json.loads(sys.argv[2])], \
+                    'drift':json.loads(sys.argv[3])}))" \
+  "$RUN_DEFAULT" "$RUN_REVERSE" "$DRIFT_RESULT")
+python3 .map/scripts/map_step_runner.py record-review-ordering compare-orderings "" "$RUNS_AND_DRIFT_JSON"
+```
+
+**Step A.1d.5 — Announce drift and proceed to bundle:**
+
+Announce to the user:
+- Whether drift was detected (`DRIFT_DETECTED`)
+- The final aggregated verdict (`FINAL_VERDICT`)
+- The drift summary if drift was detected (`DRIFT_SUMMARY`)
+
+Then call `create_review_bundle` (existing flow at Step A.1b) — it will consume the staged
+ordering payload. Skip the second Phase A.2 parallel launch (agents already ran above).
+Proceed directly to Phase B using `FINAL_VERDICT` as the authoritative verdict.
+
+**EC-11 partial failure:** If one of the two runs fails mid-flight, record the successful
+run's verdict as provisional, set `compare_status='partial_failure'` in the ordering artifact,
+and announce that drift could not be confirmed. The review still proceeds with the provisional
+verdict.
 
 ### Step A.2: Launch all parallel calls
 
@@ -286,9 +437,25 @@ After all agents complete, check Monitor output:
 
 ## Phase B: Interactive Presentation (4 Sections)
 
-Present findings section by section. Each section follows the **Review Section Protocol** defined above.
+### Step B.0: Determine section presentation order
 
-### Section 1: Architecture
+Before presenting any section, call the ordering helper to get the section sequence.
+For default (no ordering flag), the helper returns canonical order. For `--reverse-sections`,
+`--shuffle-sections`, or compare-mode runs, the helper returns the chosen order.
+
+```bash
+SECTIONS_JSON=$(python3 .map/scripts/map_step_runner.py shuffle-sections "$MODE_FLAG" "$SEED_RAW")
+```
+
+The result is a JSON array of section IDs, e.g. `["architecture","code_quality","tests","performance"]`
+(underscore, NOT hyphen — matches `REVIEW_SECTION_IDS` in `map_step_runner.py`).
+**Iterate over this returned list** — do not hard-code a presentation sequence.
+The four section blocks below describe each section's content; they are not a fixed presentation order.
+
+Present findings section by section in the order returned above. Each section follows the
+**Review Section Protocol** defined above.
+
+### Section: Architecture
 
 **Primary source:** Predictor (`breaking_changes`, `affected_components`, `risk_assessment`)
 **Cross-reference:** Evaluator `scores.completeness`
@@ -301,9 +468,9 @@ Focus on:
 - Completeness of the change set (are all affected areas updated?)
 
 → Follow **Review Section Protocol**
-→ Summarize decisions before proceeding to Section 2
+→ Summarize decisions before proceeding to the next section
 
-### Section 2: Code Quality
+### Section: Code Quality
 
 **Primary source:** Monitor (`issues` filtered by category: correctness, code-quality, maintainability)
 **Cross-reference:** Evaluator `scores.code_quality`
@@ -316,9 +483,9 @@ Focus on:
 - Standards compliance
 
 → Follow **Review Section Protocol**
-→ Summarize decisions before proceeding to Section 3
+→ Summarize decisions before proceeding to the next section
 
-### Section 3: Tests
+### Section: Tests
 
 **Primary source:** Monitor (`issues` filtered by category: testability, test-coverage)
 **Cross-reference:** Evaluator `scores.testability`
@@ -330,9 +497,9 @@ Focus on:
 - Testability of the implementation (dependency injection, mocking seams)
 
 → Follow **Review Section Protocol**
-→ Summarize decisions before proceeding to Section 4
+→ Summarize decisions before proceeding to the next section
 
-### Section 4: Performance
+### Section: Performance
 
 **Primary source:** Monitor (`issues` filtered by category: performance)
 **Cross-reference:** Evaluator `scores.performance` + Predictor `risk_assessment`

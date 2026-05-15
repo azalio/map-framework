@@ -23,6 +23,13 @@ sys.path.insert(0, str(SCRIPTS_PATH))
 import map_step_runner  # noqa: E402  # type: ignore[import-not-found]
 
 
+def _stub_compute_insight(payload: dict[str, object]):
+    def _stub(*args: object, **kwargs: object) -> dict[str, object]:
+        del args, kwargs
+        return payload
+    return _stub
+
+
 @pytest.fixture
 def branch_workspace(tmp_path, monkeypatch):
     branch = "test-branch"
@@ -1463,7 +1470,7 @@ class TestBuildContextBlockRepoDelta:
             "current_sha": "def456",
         }
         repo_insight = types.SimpleNamespace(
-            compute_differential_insight=lambda *_args, **_kwargs: mock_insight  # pyright: ignore[reportUnusedParameter]
+            compute_differential_insight=_stub_compute_insight(mock_insight)
         )
         with patch.dict("sys.modules", {"mapify_cli.repo_insight": repo_insight}):
             result = map_step_runner.build_context_block("test-branch", "ST-001")
@@ -1482,7 +1489,7 @@ class TestBuildContextBlockRepoDelta:
             "current_sha": "def456",
         }
         repo_insight = types.SimpleNamespace(
-            compute_differential_insight=lambda *_args, **_kwargs: mock_insight  # pyright: ignore[reportUnusedParameter]
+            compute_differential_insight=_stub_compute_insight(mock_insight)
         )
         with patch.dict("sys.modules", {"mapify_cli.repo_insight": repo_insight}):
             result = map_step_runner.build_context_block("test-branch", "ST-001")
@@ -1500,7 +1507,7 @@ class TestBuildContextBlockRepoDelta:
             "error": "git diff failed",
         }
         repo_insight = types.SimpleNamespace(
-            compute_differential_insight=lambda *_args, **_kwargs: mock_insight  # pyright: ignore[reportUnusedParameter]
+            compute_differential_insight=_stub_compute_insight(mock_insight)
         )
         with patch.dict("sys.modules", {"mapify_cli.repo_insight": repo_insight}):
             result = map_step_runner.build_context_block("test-branch", "ST-001")
@@ -1535,7 +1542,7 @@ class TestBuildContextBlockRepoDelta:
             "current_sha": "def456",
         }
         repo_insight = types.SimpleNamespace(
-            compute_differential_insight=lambda *_args, **_kwargs: mock_insight  # pyright: ignore[reportUnusedParameter]
+            compute_differential_insight=_stub_compute_insight(mock_insight)
         )
         with patch.dict("sys.modules", {"mapify_cli.repo_insight": repo_insight}):
             result = map_step_runner.build_context_block("test-branch", "ST-001")
@@ -1556,7 +1563,7 @@ class TestBuildContextBlockRepoDelta:
             "current_sha": "def456",
         }
         repo_insight = types.SimpleNamespace(
-            compute_differential_insight=lambda *_args, **_kwargs: mock_insight  # pyright: ignore[reportUnusedParameter]
+            compute_differential_insight=_stub_compute_insight(mock_insight)
         )
         with patch.dict("sys.modules", {"mapify_cli.repo_insight": repo_insight}):
             result = map_step_runner.build_context_block("test-branch", "ST-001")
@@ -1831,6 +1838,7 @@ class TestCreateReviewBundle:
 
     def test_create_review_bundle_updates_manifest_review_stage(self, branch_workspace):
         """Manifest review stage is set to 'ready' with 2 review-bundle artifacts."""
+        del branch_workspace
         manifest = map_step_runner.default_artifact_manifest("test-branch")
         map_step_runner.save_artifact_manifest(manifest, "test-branch")
 
@@ -1859,6 +1867,7 @@ class TestCreateReviewBundle:
         del branch_workspace  # fixture only needed for chdir + monkeypatch side effects
 
         def _raise(*args: object, **kwargs: object) -> None:
+            del args, kwargs
             raise OSError("disk full")
 
         monkeypatch.setattr(map_step_runner, "save_artifact_manifest", _raise)
@@ -1901,6 +1910,7 @@ class TestCreateReviewBundle:
         def _force_invalid(
             data: dict, schema: dict, *, raise_on_error: bool = False
         ) -> tuple[bool, list[str]]:
+            del data, schema, raise_on_error
             return (False, ["forced-invalid: drift sentinel"])
 
         monkeypatch.setattr(schemas_module, "validate_artifact", _force_invalid)
@@ -1992,6 +2002,7 @@ class TestCreateReviewBundle:
         )
 
         def mock_run(cmd, **kwargs):
+            del kwargs
             if "rev-parse" in cmd:
                 return real_subprocess.CompletedProcess(cmd, 0, "deadbeef\n", "")
             if "--stat" in cmd:
@@ -2022,6 +2033,7 @@ class TestPrepareDetachedReview:
         import subprocess as real_subprocess
 
         def mock_run(cmd: list[str], **kwargs: object) -> real_subprocess.CompletedProcess:  # type: ignore[type-arg]
+            del kwargs
             if "rev-parse" in cmd:
                 return real_subprocess.CompletedProcess(cmd, 0, "abc1234\n", "")
             if "worktree" in cmd and "add" in cmd:
@@ -2049,6 +2061,7 @@ class TestPrepareDetachedReview:
         calls: list[list[str]] = []
 
         def mock_run(cmd: list[str], **kwargs: object) -> real_subprocess.CompletedProcess:  # type: ignore[type-arg]
+            del kwargs
             calls.append(list(cmd))
             return real_subprocess.CompletedProcess(cmd, 0, "abc1234\n", "")
 
@@ -2074,6 +2087,7 @@ class TestPrepareDetachedReview:
         import subprocess as real_subprocess
 
         def mock_run(cmd: list[str], **kwargs: object) -> real_subprocess.CompletedProcess:  # type: ignore[type-arg]
+            del kwargs
             if "rev-parse" in cmd:
                 return real_subprocess.CompletedProcess(
                     cmd, 128, "", "fatal: not a git repository"
@@ -2095,6 +2109,7 @@ class TestPrepareDetachedReview:
         import subprocess as real_subprocess
 
         def mock_run(cmd: list[str], **kwargs: object) -> real_subprocess.CompletedProcess:  # type: ignore[type-arg]
+            del kwargs
             if "rev-parse" in cmd:
                 return real_subprocess.CompletedProcess(cmd, 0, "abc1234\n", "")
             if "worktree" in cmd and "add" in cmd:
@@ -2120,6 +2135,7 @@ class TestPrepareDetachedReview:
         recorded_calls: list[list[str]] = []
 
         def mock_run(cmd: list[str], **kwargs: object) -> real_subprocess.CompletedProcess:  # type: ignore[type-arg]
+            del kwargs
             recorded_calls.append(list(cmd))
             if "rev-parse" in cmd:
                 return real_subprocess.CompletedProcess(cmd, 0, "abc1234\n", "")
@@ -2154,6 +2170,7 @@ class TestPrepareDetachedReview:
         recorded_calls: list[list[str]] = []
 
         def mock_run(cmd: list[str], **kwargs: object) -> real_subprocess.CompletedProcess:  # type: ignore[type-arg]
+            del kwargs
             recorded_calls.append(list(cmd))
             return real_subprocess.CompletedProcess(cmd, 0, "", "")
 
@@ -2273,3 +2290,721 @@ def test_write_learning_handoff_compatible_after_review_bundle_created(
     markdown = (branch_workspace / "learning-handoff.md").read_text(encoding="utf-8")
     assert "map-efficient" in markdown
     assert "run review" in markdown
+
+
+# ---------------------------------------------------------------------------
+# ST-001: deterministic section-ordering helpers
+# ---------------------------------------------------------------------------
+
+# Unit tests — get_review_section_order
+
+
+def test_get_review_section_order_default():
+    result = map_step_runner.get_review_section_order("default")
+    assert result == list(map_step_runner.REVIEW_SECTION_IDS)
+
+
+def test_get_review_section_order_reverse():
+    result = map_step_runner.get_review_section_order("reverse-sections")
+    assert result == list(reversed(map_step_runner.REVIEW_SECTION_IDS))
+
+
+def test_get_review_section_order_shuffle_with_seed():
+    result = map_step_runner.get_review_section_order("shuffle-sections", seed=42)
+    # Must contain all sections
+    assert sorted(result) == sorted(map_step_runner.REVIEW_SECTION_IDS)
+    # Must be deterministic: second call with same seed yields same order
+    result2 = map_step_runner.get_review_section_order("shuffle-sections", seed=42)
+    assert result == result2
+
+
+def test_get_review_section_order_invalid_raises():
+    with pytest.raises(ValueError, match="unknown mode"):
+        map_step_runner.get_review_section_order("bogus-mode")
+
+
+def test_get_review_section_order_negative_seed_raises():
+    with pytest.raises(ValueError, match="seed must be >= 0"):
+        map_step_runner.get_review_section_order("shuffle-sections", seed=-1)
+
+
+# Unit tests — shuffle seed stability and variation
+
+
+def test_shuffle_seed_stable():
+    r1 = map_step_runner.get_review_section_order("shuffle-sections", seed=99)
+    r2 = map_step_runner.get_review_section_order("shuffle-sections", seed=99)
+    assert r1 == r2
+
+
+def test_shuffle_seed_varies():
+    # Over a range of seeds, at least one pair must differ from the default order.
+    # This is a probabilistic sanity check; with 4 elements and 10 seeds it is
+    # astronomically unlikely to fail.
+    default = list(map_step_runner.REVIEW_SECTION_IDS)
+    results = [
+        map_step_runner.get_review_section_order("shuffle-sections", seed=s)
+        for s in range(10)
+    ]
+    assert any(r != default for r in results), (
+        "All seeds produced the canonical order — shuffle is not functioning"
+    )
+
+
+# Unit tests — default_shuffle_seed
+
+
+def test_default_shuffle_seed_with_sha():
+    seed = map_step_runner.default_shuffle_seed("main", "abc123")
+    assert isinstance(seed, int)
+    # Stable for fixed inputs
+    assert map_step_runner.default_shuffle_seed("main", "abc123") == seed
+
+
+def test_default_shuffle_seed_detached_fallback():
+    # commit_sha=None must produce sha256(branch + '|detached')[:16] interpreted as hex int.
+    import hashlib
+
+    seed_none = map_step_runner.default_shuffle_seed("main", None)
+    expected = int(hashlib.sha256(b"main|detached").hexdigest()[:16], 16)
+    assert seed_none == expected
+    # Cross-process stability: same value any call, any process
+    assert map_step_runner.default_shuffle_seed("main", None) == seed_none
+
+
+# CLI integration tests
+
+
+def test_cli_shuffle_sections_default_ok():
+    result = subprocess.run(
+        [sys.executable, str(SCRIPTS_PATH / "map_step_runner.py"), "shuffle-sections", "default"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["mode"] == "default"
+    assert len(payload["order"]) == len(map_step_runner.REVIEW_SECTION_IDS)
+
+
+def test_cli_shuffle_sections_invalid_mode_errors():
+    result = subprocess.run(
+        [sys.executable, str(SCRIPTS_PATH / "map_step_runner.py"), "shuffle-sections", "bad-mode"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "error"
+
+
+def test_cli_shuffle_sections_non_int_seed_errors():
+    # EC-16: non-int seed must be rejected by int() with exit 1
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS_PATH / "map_step_runner.py"),
+            "shuffle-sections",
+            "shuffle-sections",
+            "abc",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "error"
+    assert "invalid seed" in payload["message"]
+
+
+def test_cli_default_shuffle_seed_ok():
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS_PATH / "map_step_runner.py"),
+            "default-shuffle-seed",
+            "my-branch",
+            "deadbeef",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert isinstance(payload["seed"], int)
+    assert payload["branch"] == "my-branch"
+    assert payload["commit_sha"] == "deadbeef"
+
+
+def test_cli_default_shuffle_seed_detached_when_no_sha():
+    # Empty string sha argument should fall back to the detached path (commit_sha=None).
+    # Verify: status ok, commit_sha is null, seed is an int, and cross-process stable
+    # (sha256-based — works without PYTHONHASHSEED pinning).
+    def _call() -> dict:  # type: ignore[type-arg]
+        r = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPTS_PATH / "map_step_runner.py"),
+                "default-shuffle-seed",
+                "my-branch",
+                "",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        return json.loads(r.stdout)
+
+    p1 = _call()
+    p2 = _call()
+    assert p1["status"] == "ok"
+    assert p1["commit_sha"] is None
+    assert isinstance(p1["seed"], int)
+    # Cross-process stability via sha256
+    assert p1["seed"] == p2["seed"]
+
+
+# ---------------------------------------------------------------------------
+# ST-002: compare_review_runs unit tests (AC-5, AC-6, AC-7, EC-10, EC-11, EC-13, INV-8)
+# ---------------------------------------------------------------------------
+
+_REQUIRED_KEYS = {
+    "drift_detected",
+    "verdicts",
+    "shared_primary_issues",
+    "unique_primary_issues",
+    "drift_summary",
+    "final_verdict",
+    "compare_status",
+}
+
+
+def _run(verdict: str, issues: list[str], label: str | None = None) -> dict[str, object]:
+    """Build a minimal run dict for compare_review_runs."""
+    r: dict[str, object] = {"verdict": verdict, "primary_issues": issues}
+    if label is not None:
+        r["ordering_label"] = label
+    return r
+
+
+# AC-5: output dict has the 7 documented fields
+def test_compare_review_runs_has_all_keys():
+    result = map_step_runner.compare_review_runs(
+        [_run("PROCEED", ["A", "B"], "run_0"), _run("PROCEED", ["A", "B"], "run_1")]
+    )
+    assert _REQUIRED_KEYS == set(result.keys())
+
+
+# AC-5 + EC-4: identical verdicts AND identical issues → no drift, correct verdict
+def test_compare_review_runs_identical_no_drift():
+    result = map_step_runner.compare_review_runs(
+        [_run("REVISE", ["X", "Y"], "r0"), _run("REVISE", ["X", "Y"], "r1")]
+    )
+    assert result["drift_detected"] is False
+    assert result["final_verdict"] == "REVISE"
+    assert result["compare_status"] is None
+
+
+# AC-6 / EC-6: verdict mismatch → drift_detected=True; strict-wins gives BLOCK
+def test_compare_review_runs_drift_verdict_mismatch():
+    result = map_step_runner.compare_review_runs(
+        [_run("PROCEED", ["A"], "r0"), _run("BLOCK", ["A"], "r1")]
+    )
+    assert result["drift_detected"] is True
+    assert result["final_verdict"] == "BLOCK"
+
+
+# AC-6 / EC-5: same verdict but Jaccard overlap < 50% → drift_detected=True
+def test_compare_review_runs_drift_low_overlap():
+    # issues: {A} vs {B,C,D,E} → shared={}, union={A,B,C,D,E}, Jaccard=0.0
+    result = map_step_runner.compare_review_runs(
+        [_run("REVISE", ["A"], "r0"), _run("REVISE", ["B", "C", "D", "E"], "r1")]
+    )
+    assert result["drift_detected"] is True
+    assert result["final_verdict"] == "REVISE"
+
+
+# AC-6 / EC-4: same verdict AND Jaccard ≥ 50% → drift_detected=False
+def test_compare_review_runs_no_drift_high_overlap():
+    # issues: {A,B,C} vs {A,B,C,D} → shared={A,B,C}, union={A,B,C,D}, Jaccard=0.75
+    result = map_step_runner.compare_review_runs(
+        [_run("PROCEED", ["A", "B", "C"], "r0"), _run("PROCEED", ["A", "B", "C", "D"], "r1")]
+    )
+    assert result["drift_detected"] is False
+    assert result["final_verdict"] == "PROCEED"
+
+
+# AC-7 / INV-4: strict-wins — BLOCK beats REVISE
+def test_strict_wins_block_beats_revise():
+    result = map_step_runner.compare_review_runs(
+        [_run("BLOCK", ["I1"], "r0"), _run("REVISE", ["I1"], "r1")]
+    )
+    assert result["final_verdict"] == "BLOCK"
+
+
+# AC-7: strict-wins — REVISE beats PROCEED (never downgrades)
+def test_strict_wins_never_downgrades():
+    result = map_step_runner.compare_review_runs(
+        [_run("PROCEED", ["I1"], "r0"), _run("REVISE", ["I1"], "r1")]
+    )
+    assert result["final_verdict"] == "REVISE"
+
+
+# AC-7 / INV-5: drift must NOT auto-escalate verdict beyond strictest individual run
+def test_drift_does_not_escalate():
+    # Both PROCEED but disjoint issues → drift=True, but verdict stays PROCEED
+    result = map_step_runner.compare_review_runs(
+        [_run("PROCEED", ["A"], "r0"), _run("PROCEED", ["B"], "r1")]
+    )
+    assert result["drift_detected"] is True
+    assert result["final_verdict"] == "PROCEED"  # INV-5: not bumped to REVISE or BLOCK
+
+
+# EC-11: partial failure (single run) → provisional verdict + compare_status
+def test_compare_partial_failure_single_run():
+    result = map_step_runner.compare_review_runs([_run("REVISE", ["X"], "only")])
+    assert result["compare_status"] == "partial_failure"
+    assert result["drift_detected"] is True
+    assert result["final_verdict"] == "REVISE"
+    assert isinstance(result["drift_summary"], str)
+    assert "provisional" in result["drift_summary"]  # type: ignore[operator]
+
+
+# EC-10: intra-run issue order is irrelevant
+def test_issue_order_within_run_irrelevant():
+    result = map_step_runner.compare_review_runs(
+        [_run("BLOCK", ["Z", "A", "M"], "r0"), _run("BLOCK", ["M", "Z", "A"], "r1")]
+    )
+    assert result["drift_detected"] is False
+    assert result["final_verdict"] == "BLOCK"
+
+
+# EC-13: drift_summary truncated at 2000 chars BEFORE sanitization
+def test_drift_summary_truncation():
+    # Construct two runs with disjoint huge issue lists to force a long drift summary.
+    issues_a = [f"ISSUE-A-{i:04d}" for i in range(300)]
+    issues_b = [f"ISSUE-B-{i:04d}" for i in range(300)]
+    result = map_step_runner.compare_review_runs(
+        [_run("PROCEED", issues_a, "r0"), _run("PROCEED", issues_b, "r1")]
+    )
+    assert result["drift_detected"] is True
+    assert result["drift_summary"] is not None
+    assert len(result["drift_summary"]) <= 2000  # type: ignore[arg-type]
+
+
+# INV-8: drift_summary passes through _sanitize_for_json (no control chars in output)
+def test_drift_summary_sanitization():
+    # Embed control characters in issue IDs; they must be absent from the output.
+    result = map_step_runner.compare_review_runs(
+        [
+            _run("REVISE", ["ID\x00X", "clean"], "r0"),
+            _run("PROCEED", ["ID\nY", "other"], "r1"),
+        ]
+    )
+    assert result["drift_detected"] is True
+    summary = result["drift_summary"]
+    assert summary is not None
+    for ch in summary:  # type: ignore[union-attr]
+        cp = ord(ch)
+        assert not (0x00 <= cp <= 0x1F or cp == 0x7F), (
+            f"control char U+{cp:04X} found in drift_summary"
+        )
+
+
+# Error cases
+def test_compare_review_runs_empty_raises():
+    with pytest.raises(ValueError, match="non-empty"):
+        map_step_runner.compare_review_runs([])
+
+
+def test_compare_review_runs_unknown_verdict_raises():
+    with pytest.raises(ValueError, match="unknown verdict"):
+        map_step_runner.compare_review_runs(
+            [_run("WAT", ["I1"], "r0"), _run("PROCEED", ["I1"], "r1")]
+        )
+
+
+# ---------------------------------------------------------------------------
+# ST-002: CLI integration tests
+# ---------------------------------------------------------------------------
+
+def test_cli_compare_review_runs_ok_argv():
+    runs_json = json.dumps(
+        [
+            {"verdict": "REVISE", "primary_issues": ["A", "B"], "ordering_label": "r0"},
+            {"verdict": "REVISE", "primary_issues": ["A", "B"], "ordering_label": "r1"},
+        ]
+    )
+    result = subprocess.run(
+        [sys.executable, str(SCRIPTS_PATH / "map_step_runner.py"), "compare-review-runs", runs_json],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert set(payload.keys()) >= _REQUIRED_KEYS | {"status"}
+
+
+def test_cli_compare_review_runs_invalid_json_errors():
+    result = subprocess.run(
+        [sys.executable, str(SCRIPTS_PATH / "map_step_runner.py"), "compare-review-runs", "not-json"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "error"
+
+
+# ---------------------------------------------------------------------------
+# ST-003: record_review_ordering + create_review_bundle integration
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def reset_pending_ordering(tmp_path, monkeypatch):
+    # Run under tmp_path so the durable pending-ordering.json file lands in a
+    # disposable location, not in the real .map/<branch>/ of the repo.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(map_step_runner, "get_branch_name", lambda: "test-branch")
+    branch_dir = tmp_path / ".map" / "test-branch"
+    branch_dir.mkdir(parents=True, exist_ok=True)
+    map_step_runner._PENDING_REVIEW_ORDERING = None
+    yield
+    map_step_runner._PENDING_REVIEW_ORDERING = None
+
+
+def test_record_review_ordering_stages_pending(reset_pending_ordering):
+    del reset_pending_ordering
+    result = map_step_runner.record_review_ordering(
+        mode="shuffle-sections",
+        seed=42,
+        runs=[{"verdict": "PROCEED", "primary_issues": ["A"]}],
+        drift={"drift_detected": True, "drift_summary": "x", "final_verdict": "PROCEED", "compare_status": None},
+    )
+    assert result["status"] == "ok"
+    assert result["staged"] is True
+    assert result["mode"] == "shuffle-sections"
+    assert result["branch_in"] is None
+    pending = map_step_runner._PENDING_REVIEW_ORDERING
+    assert pending is not None
+    assert pending["mode"] == "shuffle-sections"
+    assert pending["seed"] == 42
+    assert pending["drift_detected"] is True
+    assert pending["drift_summary"] == "x"
+    assert pending["final_verdict"] == "PROCEED"
+
+
+def test_record_review_ordering_no_direct_manifest_write(monkeypatch, reset_pending_ordering):
+    del reset_pending_ordering
+
+    def _explode(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise AssertionError("INV-10 violation: record_review_ordering called manifest helper")
+
+    monkeypatch.setattr(map_step_runner, "_set_manifest_stage", _explode)
+    monkeypatch.setattr(map_step_runner, "save_artifact_manifest", _explode)
+    monkeypatch.setattr(map_step_runner, "load_artifact_manifest", _explode)
+
+    map_step_runner.record_review_ordering(
+        mode="default",
+        runs=[{"verdict": "PROCEED"}],
+        drift={"drift_detected": False, "final_verdict": "PROCEED"},
+    )
+
+
+def test_bundle_consumes_pending_and_clears(branch_workspace, reset_pending_ordering):
+    del branch_workspace
+    del reset_pending_ordering
+    payload = {
+        "mode": "shuffle-sections",
+        "seed": 7,
+        "runs": [{"verdict": "PROCEED"}],
+        "drift_detected": False,
+        "drift_summary": None,
+        "final_verdict": "PROCEED",
+        "compare_status": None,
+    }
+    map_step_runner._PENDING_REVIEW_ORDERING = payload
+
+    result = map_step_runner.create_review_bundle()
+
+    assert result["ordering"] == payload
+    assert map_step_runner._PENDING_REVIEW_ORDERING is None
+
+
+def test_bundle_has_ordering_default_when_no_record(branch_workspace, reset_pending_ordering):
+    del branch_workspace
+    del reset_pending_ordering
+    result = map_step_runner.create_review_bundle()
+    assert result["ordering"] == {
+        "mode": "default",
+        "seed": None,
+        "runs": [],
+        "drift_detected": False,
+        "drift_summary": None,
+        "final_verdict": None,
+        "compare_status": None,
+    }
+
+
+def test_bundle_ordering_records_compare_results(branch_workspace, reset_pending_ordering):
+    del branch_workspace
+    del reset_pending_ordering
+    map_step_runner.record_review_ordering(
+        mode="compare-orderings",
+        runs=[{"verdict": "REVISE"}, {"verdict": "BLOCK"}],
+        drift={
+            "drift_detected": True,
+            "drift_summary": "verdicts disagree",
+            "final_verdict": "BLOCK",
+            "compare_status": None,
+        },
+    )
+    result = map_step_runner.create_review_bundle()
+    ordering = result["ordering"]
+    assert ordering["mode"] == "compare-orderings"
+    assert ordering["drift_detected"] is True
+    assert ordering["final_verdict"] == "BLOCK"
+    assert ordering["drift_summary"] == "verdicts disagree"
+    assert len(ordering["runs"]) == 2
+
+
+def test_bundle_review_stage_status_ready_on_valid_ordering(branch_workspace, reset_pending_ordering):
+    del reset_pending_ordering
+    map_step_runner.record_review_ordering(mode="default")
+    map_step_runner.create_review_bundle()
+    manifest = map_step_runner.load_artifact_manifest("test-branch")
+    stages = manifest["stages"]
+    assert isinstance(stages, dict)
+    assert stages["review"]["status"] == "ready"
+    del branch_workspace
+
+
+def test_no_schema_validation_error_on_valid_ordering(branch_workspace, reset_pending_ordering):
+    del branch_workspace
+    del reset_pending_ordering
+    map_step_runner.record_review_ordering(mode="default")
+    result = map_step_runner.create_review_bundle()
+    assert "schema_validation_error" not in result
+
+
+def test_bundle_manifest_metadata_contains_ordering(branch_workspace, reset_pending_ordering):
+    del reset_pending_ordering
+    map_step_runner.record_review_ordering(
+        mode="reverse-sections",
+        seed=None,
+        runs=[{"verdict": "PROCEED"}],
+        drift={"drift_detected": False, "final_verdict": "PROCEED"},
+    )
+    map_step_runner.create_review_bundle()
+    manifest = map_step_runner.load_artifact_manifest("test-branch")
+    stages = manifest["stages"]
+    assert isinstance(stages, dict)
+    metadata = stages["review"]["metadata"]
+    assert "ordering" in metadata
+    assert metadata["ordering"]["mode"] == "reverse-sections"
+    del branch_workspace
+
+
+def test_record_review_ordering_unknown_mode_raises(reset_pending_ordering):
+    del reset_pending_ordering
+    with pytest.raises(ValueError, match="unknown mode"):
+        map_step_runner.record_review_ordering(mode="xyz")
+
+
+def test_record_review_ordering_drift_summary_truncated(reset_pending_ordering):
+    del reset_pending_ordering
+    big = "x" * 3000
+    map_step_runner.record_review_ordering(
+        mode="default",
+        drift={"drift_detected": True, "drift_summary": big, "final_verdict": "BLOCK"},
+    )
+    pending = map_step_runner._PENDING_REVIEW_ORDERING
+    assert pending is not None
+    summary = pending["drift_summary"]
+    assert isinstance(summary, str)
+    assert len(summary) <= 2000
+
+
+def test_record_review_ordering_drift_summary_sanitized(reset_pending_ordering):
+    del reset_pending_ordering
+    dirty = "before\x00\x01\x07after"
+    map_step_runner.record_review_ordering(
+        mode="default",
+        drift={"drift_detected": True, "drift_summary": dirty, "final_verdict": "BLOCK"},
+    )
+    pending = map_step_runner._PENDING_REVIEW_ORDERING
+    assert pending is not None
+    summary = pending["drift_summary"]
+    assert isinstance(summary, str)
+    for ch in summary:
+        assert ord(ch) >= 0x20 and ord(ch) != 0x7F, f"control char {ord(ch):#x} not sanitized"
+
+
+def test_cli_record_review_ordering_ok():
+    result = subprocess.run(
+        [sys.executable, str(SCRIPTS_PATH / "map_step_runner.py"), "record-review-ordering", "default"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["mode"] == "default"
+
+
+def test_cli_record_review_ordering_invalid_mode_errors():
+    result = subprocess.run(
+        [sys.executable, str(SCRIPTS_PATH / "map_step_runner.py"), "record-review-ordering", "xyz"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "error"
+
+
+# ---------------------------------------------------------------------------
+# ST-007: build_review_handoff ordering metadata (AC-13)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildReviewHandoffWithOrdering:
+    """Tests that build_review_handoff surfaces ordering metadata from review-bundle.json."""
+
+    def test_handoff_surfaces_ordering_when_present(self, branch_workspace):
+        """When bundle has ordering, all 4 fields reflect bundle values."""
+        bundle = {
+            "status": "ready",
+            "branch": "test-branch",
+            "ordering": {
+                "mode": "shuffle-sections",
+                "seed": 42,
+                "drift_detected": True,
+                "compare_status": "diverged",
+            },
+        }
+        (branch_workspace / "review-bundle.json").write_text(
+            json.dumps(bundle), encoding="utf-8"
+        )
+
+        result = map_step_runner.build_review_handoff()
+
+        assert result["review_order_mode"] == "shuffle-sections"
+        assert result["review_order_seed"] == 42
+        assert result["drift_detected"] is True
+        assert result["compare_status"] == "diverged"
+
+    def test_handoff_legacy_bundle_no_ordering_returns_defaults(self, branch_workspace):
+        """Legacy bundle without 'ordering' key returns safe defaults (EC-7)."""
+        bundle = {
+            "status": "ready",
+            "branch": "test-branch",
+            # intentionally no "ordering" key
+        }
+        (branch_workspace / "review-bundle.json").write_text(
+            json.dumps(bundle), encoding="utf-8"
+        )
+
+        result = map_step_runner.build_review_handoff()
+
+        assert result["review_order_mode"] == "default"
+        assert result["review_order_seed"] is None
+        assert result["drift_detected"] is False
+        assert result["compare_status"] is None
+
+    def test_handoff_no_bundle_file_returns_defaults(self, branch_workspace):
+        """When review-bundle.json does not exist, safe defaults are returned."""
+        del branch_workspace  # fixture only needed for chdir + monkeypatch side effects
+        # No review-bundle.json written — simulates first run or missing artifact.
+        result = map_step_runner.build_review_handoff()
+
+        assert result["review_order_mode"] == "default"
+        assert result["review_order_seed"] is None
+        assert result["drift_detected"] is False
+        assert result["compare_status"] is None
+
+    def test_handoff_malformed_bundle_returns_defaults(self, branch_workspace):
+        """Invalid JSON in bundle file is silently ignored; defaults are returned."""
+        (branch_workspace / "review-bundle.json").write_text(
+            "{ this is not valid json }", encoding="utf-8"
+        )
+
+        result = map_step_runner.build_review_handoff()
+
+        assert result["review_order_mode"] == "default"
+        assert result["review_order_seed"] is None
+        assert result["drift_detected"] is False
+        assert result["compare_status"] is None
+
+    def test_handoff_ordering_with_null_seed_and_status(self, branch_workspace):
+        """Ordering present but seed and compare_status are None — fields propagated correctly."""
+        bundle = {
+            "ordering": {
+                "mode": "default",
+                "seed": None,
+                "drift_detected": False,
+                "compare_status": None,
+            }
+        }
+        (branch_workspace / "review-bundle.json").write_text(
+            json.dumps(bundle), encoding="utf-8"
+        )
+
+        result = map_step_runner.build_review_handoff()
+
+        assert result["review_order_mode"] == "default"
+        assert result["review_order_seed"] is None
+        assert result["drift_detected"] is False
+        assert result["compare_status"] is None
+
+    def test_handoff_does_not_modify_pr_draft_output(self, branch_workspace):
+        """OOS guarantee: build_handoff_bundle output is unchanged when ordering is present."""
+        bundle = {
+            "ordering": {
+                "mode": "shuffle-sections",
+                "seed": 7,
+                "drift_detected": True,
+                "compare_status": "diverged",
+            }
+        }
+        (branch_workspace / "review-bundle.json").write_text(
+            json.dumps(bundle), encoding="utf-8"
+        )
+
+        # build_handoff_bundle must not expose ordering keys.
+        handoff_bundle = map_step_runner.build_handoff_bundle()
+
+        assert "review_order_mode" not in handoff_bundle
+        assert "review_order_seed" not in handoff_bundle
+        assert "drift_detected" not in handoff_bundle
+        assert "compare_status" not in handoff_bundle
+
+    def test_handoff_four_fields_always_present(self, branch_workspace):
+        """The 4 ordering fields are present in every call regardless of bundle state."""
+        del branch_workspace  # fixture only needed for chdir + monkeypatch side effects
+        result = map_step_runner.build_review_handoff()
+
+        for key in ("review_order_mode", "review_order_seed", "drift_detected", "compare_status"):
+            assert key in result, f"Expected key '{key}' missing from handoff result"
+
+    def test_handoff_status_still_success_with_ordering(self, branch_workspace):
+        """Adding ordering fields must not change the top-level status field."""
+        bundle = {
+            "ordering": {
+                "mode": "reverse-sections",
+                "seed": None,
+                "drift_detected": False,
+                "compare_status": None,
+            }
+        }
+        (branch_workspace / "review-bundle.json").write_text(
+            json.dumps(bundle), encoding="utf-8"
+        )
+
+        result = map_step_runner.build_review_handoff()
+
+        assert result["status"] == "success"

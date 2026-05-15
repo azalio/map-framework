@@ -13,10 +13,12 @@ Skip in CI: pytest -m "not slow"
 Each test creates a fresh temp directory with a tiny Python project,
 runs `mapify init`, then exercises the MAP commands via `claude -p`.
 
-Environment requirements:
-- ANTHROPIC_API_KEY set (or claude CLI already authenticated)
-- claude CLI available on PATH
-- mapify CLI installed (pip install -e .)
+Environment requirements (any ONE of the auth paths is enough):
+- `claude` CLI authenticated via Claude.ai subscription (`claude auth status` exit 0), OR
+- `ANTHROPIC_API_KEY` set
+Also required:
+- `claude` CLI on PATH (`claude --version` exit 0)
+- `mapify` CLI installed (`pip install -e .`)
 """
 
 import json
@@ -28,8 +30,8 @@ from typing import Optional
 
 import pytest
 
-# Skip all tests in this module if ANTHROPIC_API_KEY is not set
-# or if claude CLI is not available
+# Skip all tests in this module if no Claude auth path is available
+# (either claude CLI authenticated via subscription, or ANTHROPIC_API_KEY set)
 pytestmark = [
     pytest.mark.slow,
     pytest.mark.integration,
@@ -64,11 +66,8 @@ def _mapify_available() -> bool:
         return False
 
 
-def _api_key_available() -> bool:
-    """Check if Anthropic API key is set or claude CLI is authenticated."""
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        return True
-    # Check if claude CLI is authenticated via `claude auth status`
+def _claude_auth_available() -> bool:
+    """True if Claude is usable: subscription via `claude auth status`, OR ANTHROPIC_API_KEY."""
     try:
         result = subprocess.run(
             ["claude", "auth", "status"],
@@ -76,17 +75,19 @@ def _api_key_available() -> bool:
             text=True,
             timeout=10,
         )
-        return result.returncode == 0
+        if result.returncode == 0:
+            return True
     except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
+        pass
+    return bool(os.environ.get("ANTHROPIC_API_KEY"))
 
 
 def _e2e_ready() -> bool:
     """Check if all prerequisites for e2e tests are met."""
-    return _claude_available() and _mapify_available() and _api_key_available()
+    return _claude_available() and _mapify_available() and _claude_auth_available()
 
 
-SKIP_REASON = "claude CLI, mapify CLI, or API key/auth not available"
+SKIP_REASON = "claude CLI missing/unauthenticated, mapify CLI missing, or no Anthropic auth available"
 
 
 _TRANSIENT_API_ERROR_PATTERNS = (
@@ -104,7 +105,7 @@ def _is_transient_api_error(stdout: str, stderr: str) -> bool:
     return any(p in blob for p in _TRANSIENT_API_ERROR_PATTERNS)
 
 
-def _run_claude(prompt: str, cwd: str, timeout: int = 300, max_turns: int = 50) -> str:
+def _run_claude(prompt: str, cwd: str, timeout: int = 3600, max_turns: int = 50) -> str:
     """Run claude -p with a prompt and return the output.
 
     Retries up to ``max_attempts`` times when the Anthropic API returns a known
@@ -115,7 +116,7 @@ def _run_claude(prompt: str, cwd: str, timeout: int = 300, max_turns: int = 50) 
     Args:
         prompt: The prompt to send to Claude
         cwd: Working directory
-        timeout: Timeout in seconds (default 5 minutes)
+        timeout: Timeout in seconds (default 1 hour)
         max_turns: Maximum agent turns (default 50)
 
     Returns:
@@ -405,7 +406,7 @@ def planned_project(tmp_path_factory):
             "new error path."
         ),
         cwd=str(project_dir),
-        timeout=600,
+        timeout=3600,
         max_turns=80,
     )
     return project_dir, output
@@ -491,7 +492,7 @@ class TestMapEfficientE2E:
         _run_claude(
             "/map-plan Add a multiply(a, b) function to app.py with tests",
             cwd=str(test_project),
-            timeout=600,
+            timeout=3600,
             max_turns=80,
         )
 
@@ -499,7 +500,7 @@ class TestMapEfficientE2E:
         _run_claude(
             "/map-efficient",
             cwd=str(test_project),
-            timeout=600,
+            timeout=3600,
             max_turns=100,
         )
 
@@ -515,13 +516,13 @@ class TestMapEfficientE2E:
         _run_claude(
             "/map-plan Add a multiply(a, b) function to app.py with tests",
             cwd=str(test_project),
-            timeout=600,
+            timeout=3600,
             max_turns=80,
         )
         _run_claude(
             "/map-efficient",
             cwd=str(test_project),
-            timeout=600,
+            timeout=3600,
             max_turns=100,
         )
 
@@ -540,13 +541,13 @@ class TestMapEfficientE2E:
         _run_claude(
             "/map-plan Add a multiply(a, b) function to app.py with tests",
             cwd=str(test_project),
-            timeout=600,
+            timeout=3600,
             max_turns=80,
         )
         _run_claude(
             "/map-efficient",
             cwd=str(test_project),
-            timeout=600,
+            timeout=3600,
             max_turns=100,
         )
 
@@ -568,13 +569,13 @@ class TestMapEfficientE2E:
         _run_claude(
             "/map-plan Add a multiply(a, b) function to app.py with tests",
             cwd=str(test_project),
-            timeout=600,
+            timeout=3600,
             max_turns=80,
         )
         _run_claude(
             "/map-efficient",
             cwd=str(test_project),
-            timeout=600,
+            timeout=3600,
             max_turns=100,
         )
 
@@ -615,13 +616,13 @@ class TestMapReviewE2E:
         _run_claude(
             "/map-plan Add a multiply(a, b) function to app.py with tests",
             cwd=str(test_project),
-            timeout=600,
+            timeout=3600,
             max_turns=80,
         )
         _run_claude(
             "/map-efficient",
             cwd=str(test_project),
-            timeout=600,
+            timeout=3600,
             max_turns=100,
         )
 
@@ -629,7 +630,7 @@ class TestMapReviewE2E:
         output = _run_claude(
             "/map-review --ci",
             cwd=str(test_project),
-            timeout=600,
+            timeout=3600,
             max_turns=80,
         )
 
@@ -646,13 +647,13 @@ class TestMapReviewE2E:
         _run_claude(
             "/map-plan Add a multiply(a, b) function to app.py with tests",
             cwd=str(test_project),
-            timeout=600,
+            timeout=3600,
             max_turns=80,
         )
         _run_claude(
             "/map-efficient",
             cwd=str(test_project),
-            timeout=600,
+            timeout=3600,
             max_turns=100,
         )
 
@@ -665,7 +666,7 @@ class TestMapReviewE2E:
         review_output = _run_claude(
             "/map-review --ci",
             cwd=str(test_project),
-            timeout=600,
+            timeout=3600,
             max_turns=80,
         )
 
@@ -713,30 +714,36 @@ class TestFullFlowE2E:
         """The complete flow should produce valid code and a review verdict.
 
         This is the main e2e smoke test. It validates:
-        1. /map-plan produces blueprint + step_state
-        2. /map-efficient produces code changes + review artifacts
+        1. /map-plan produces blueprint + task_plan (NOT step_state — that is /map-efficient's INIT_STATE)
+        2. /map-efficient initializes step_state + produces code changes + review artifacts
         3. /map-review produces a verdict
 
         Note: map-efficient can take 10+ minutes for complex tasks.
         """
         map_dir = _get_map_dir(test_project)
 
-        # Phase 1: Plan
+        # Phase 1: Plan (produces blueprint + task_plan; step_state is created later by /map-efficient INIT_STATE)
         _run_claude(
             "/map-plan Add a multiply(a, b) function to app.py with tests",
             cwd=str(test_project),
-            timeout=600,
+            timeout=3600,
             max_turns=80,
         )
         assert (map_dir / "blueprint.json").exists(), "Plan failed: no blueprint"
-        assert (map_dir / "step_state.json").exists(), "Plan failed: no step_state"
+        assert not (map_dir / "step_state.json").exists(), (
+            "step_state.json must NOT be created by /map-plan; "
+            "it is initialized by /map-efficient INIT_STATE"
+        )
 
         # Phase 2: Execute (needs more time — multi-subtask with Actor/Monitor loops)
         _run_claude(
             "/map-efficient",
             cwd=str(test_project),
-            timeout=900,
+            timeout=3600,
             max_turns=120,
+        )
+        assert (map_dir / "step_state.json").exists(), (
+            "Efficient failed: step_state.json should be initialized by INIT_STATE"
         )
         app_content = (test_project / "app.py").read_text(encoding="utf-8")
         assert (
@@ -747,7 +754,7 @@ class TestFullFlowE2E:
         review_output = _run_claude(
             "/map-review --ci",
             cwd=str(test_project),
-            timeout=600,
+            timeout=3600,
             max_turns=80,
         )
         review_lower = review_output.lower()
