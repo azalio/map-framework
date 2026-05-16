@@ -62,8 +62,16 @@ ARTIFACT_STAGE_NAMES = (
     "implementation",
     "review",
     "verification",
+    "run_health",
     "learn_handoff",
 )
+RUN_HEALTH_TERMINAL_STATUSES = {
+    "pending",
+    "complete",
+    "blocked",
+    "won't_do",
+    "superseded",
+}
 WORKFLOW_FIT_ROUTES = {
     "direct-edit",
     "map-fast",
@@ -1218,6 +1226,195 @@ def write_verification_summary(
     return {"status": "success", "path": str(summary_file)}
 
 
+def _count_step_entries(value: object) -> int:
+    """Count step entries across legacy list and per-subtask dict shapes."""
+    if isinstance(value, list):
+        return len(value)
+    if isinstance(value, dict):
+        total = 0
+        for item in value.values():
+            total += len(item) if isinstance(item, list) else 1
+        return total
+    return 0
+
+
+def _as_dict(value: object) -> dict[str, object]:
+    """Return value when it is a dict, otherwise an empty dict."""
+    return value if isinstance(value, dict) else {}
+
+
+def _as_int(value: object) -> int:
+    """Best-effort integer coercion for counters loaded from JSON artifacts."""
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _derive_terminal_status(state: dict[str, object]) -> str:
+    """Derive a stable terminal status from step_state.json when not explicit."""
+    existing = str(state.get("terminal_status") or "").strip().lower()
+    if existing in RUN_HEALTH_TERMINAL_STATUSES:
+        return existing
+
+    workflow_status = str(state.get("workflow_status") or "").strip().upper()
+    current_phase = str(state.get("current_step_phase") or "").strip().upper()
+    if (
+        workflow_status in {"COMPLETE", "COMPLETED", "WORKFLOW_COMPLETE"}
+        or current_phase == "COMPLETE"
+    ):
+        return "complete"
+    if workflow_status in {"BLOCKED", "MAX_RETRIES"}:
+        return "blocked"
+    if workflow_status in {"SUPERSEDED"}:
+        return "superseded"
+    if workflow_status in {"WONT_DO", "WON'T_DO"}:
+        return "won't_do"
+    return "pending"
+
+
+def _artifact_health_entry(path: Path, kind: str) -> dict[str, object]:
+    """Return compact presence metadata for a workflow artifact."""
+    try:
+        size_bytes = path.stat().st_size
+        present = True
+    except OSError:
+        size_bytes = 0
+        present = False
+
+    return {
+        "kind": kind,
+        "path": str(path),
+        "present": present,
+        "size_bytes": size_bytes,
+    }
+
+
+def _run_health_artifact_inventory(
+    branch_dir: Path, branch: str
+) -> dict[str, dict[str, object]]:
+    """Collect the artifact set that proves workflow resumability/reviewability."""
+    return {
+        "step_state": _artifact_health_entry(branch_dir / "step_state.json", "state"),
+        "artifact_manifest": _artifact_health_entry(
+            branch_dir / "artifact_manifest.json", "manifest"
+        ),
+        "verification_summary": _artifact_health_entry(
+            branch_dir / "verification-summary.md", "verification"
+        ),
+        "qa": _artifact_health_entry(branch_dir / "qa-001.md", "qa"),
+        "pr_draft": _artifact_health_entry(branch_dir / "pr-draft.md", "pr-draft"),
+        "review_bundle": _artifact_health_entry(
+            branch_dir / "review-bundle.json", "review-bundle"
+        ),
+        "learning_handoff": _artifact_health_entry(
+            branch_dir / "learning-handoff.json", "learning-handoff"
+        ),
+        "task_plan": _artifact_health_entry(
+            branch_dir / f"task_plan_{branch}.md", "task-plan"
+        ),
+        "blueprint": _artifact_health_entry(branch_dir / "blueprint.json", "blueprint"),
+        "active_issues": _artifact_health_entry(
+            branch_dir / "active-issues.json", "active-issues"
+        ),
+        "known_issues": _artifact_health_entry(
+            branch_dir / "known-issues.json", "known-issues"
+        ),
+    }
+
+
+def write_run_health_report(
+    workflow: str = "map-efficient",
+    terminal_status: str = "",
+    branch: Optional[str] = None,
+) -> dict[str, object]:
+    """Write a machine-readable workflow health report for diagnosis/resume.
+
+    The report intentionally summarizes existing branch artifacts instead of
+    inventing a new workflow state source. Callers can run it at normal closeout,
+    after a blocked run, or during resume diagnostics.
+    """
+    branch_name = branch or get_branch_name()
+    branch_dir = get_branch_dir(branch_name)
+    branch_dir.mkdir(parents=True, exist_ok=True)
+    step_state_path = branch_dir / "step_state.json"
+    state = _read_json_file(step_state_path) or {}
+
+    status = (terminal_status or "").strip().lower() or _derive_terminal_status(state)
+    if status not in RUN_HEALTH_TERMINAL_STATUSES:
+        return {
+            "status": "error",
+            "message": f"Invalid terminal_status: {terminal_status}",
+        }
+
+    completed_steps = state.get("completed_steps")
+    pending_steps = state.get("pending_steps")
+    retry_count = _as_int(state.get("retry_count"))
+    subtask_retry_counts = _as_dict(state.get("subtask_retry_counts"))
+    guard_rework_counts = _as_dict(state.get("guard_rework_counts"))
+    hook_injection = _as_dict(state.get("hook_injection"))
+    artifact_inventory = _run_health_artifact_inventory(branch_dir, branch_name)
+
+    payload: dict[str, object] = {
+        "schema_version": "1.0",
+        "generated_at": _utc_timestamp(),
+        "workflow": (workflow or state.get("workflow") or "map-workflow"),
+        "branch": branch_name,
+        "terminal_status": status,
+        "current_step_id": state.get("current_step_id") or None,
+        "current_step_phase": state.get("current_step_phase") or None,
+        "current_subtask_id": state.get("current_subtask_id") or None,
+        "completed_step_count": _count_step_entries(completed_steps),
+        "pending_step_count": _count_step_entries(pending_steps),
+        "artifacts": artifact_inventory,
+        "resiliency_signals": {
+            "hook_injection": hook_injection
+            or {"status": "unknown", "reason": "not recorded"},
+            "hook_injection_counts": _as_dict(state.get("hook_injection_counts")),
+            "retry_count": retry_count,
+            "max_retries": _as_int(state.get("max_retries")),
+            "subtask_retry_counts": subtask_retry_counts,
+            "max_subtask_retry_count": max(
+                [_as_int(value) for value in subtask_retry_counts.values()] or [0]
+            ),
+            "guard_rework_counts": guard_rework_counts,
+            "predictor_called": bool(state.get("predictor_called")),
+            "predictor_skipped": bool(state.get("predictor_skipped")),
+            "final_verifier_executed": bool(
+                state.get("final_verifier_executed")
+                or artifact_inventory["verification_summary"]["present"]
+            ),
+        },
+    }
+
+    report_path = branch_dir / "run_health_report.json"
+    _write_json_file(report_path, payload)
+
+    manifest = load_artifact_manifest(branch_name)
+    _set_manifest_stage(
+        manifest,
+        "run_health",
+        "ready",
+        artifacts=[_artifact_ref(report_path, "run-health-report")],
+        metadata={
+            "terminal_status": status,
+            "workflow": payload["workflow"],
+            "current_step_phase": payload["current_step_phase"],
+            "hook_injection_status": cast(
+                Mapping[str, object],
+                payload["resiliency_signals"],
+            )["hook_injection"],
+        },
+    )
+    manifest_result = save_artifact_manifest(manifest, branch_name)
+    return {
+        "status": "success",
+        "path": str(report_path),
+        "manifest_path": manifest_result["path"],
+        "terminal_status": status,
+    }
+
+
 def write_pr_draft(
     summary: str = "",
     validation: str = "",
@@ -2090,6 +2287,9 @@ def create_review_bundle(branch: Optional[str] = None) -> dict:
         "artifact_manifest": _fixed_artifact_entry(
             branch_dir, "artifact_manifest.json", "artifact_manifest"
         ),
+        "run_health_report": _fixed_artifact_entry(
+            branch_dir, "run_health_report.json", "run_health_report"
+        ),
     }
 
     latest_plan_review = _collect_numbered_artifact(branch_dir, "plan-review")
@@ -2312,6 +2512,7 @@ def write_learning_handoff(
     code_state = snapshot_code_state(branch_name)
     workflow_fit = read_json("workflow-fit.json")
     manifest = read_json("artifact_manifest.json")
+    run_health_report = read_json("run_health_report.json")
     known_issues = read_json("known-issues.json")
     active_issues = read_json("active-issues.json")
 
@@ -2329,6 +2530,7 @@ def write_learning_handoff(
         for path in [
             "workflow-fit.json" if workflow_fit else "",
             "artifact_manifest.json",
+            "run_health_report.json" if run_health_report else "",
             review_handoff.get("plan_review_path") or "",
             review_handoff.get("code_review_path") or "",
             review_handoff.get("verification_summary_path") or "",
@@ -2358,6 +2560,7 @@ def write_learning_handoff(
         "artifacts": {
             "workflow_fit": workflow_fit,
             "artifact_manifest": manifest,
+            "run_health_report": run_health_report,
             "review_handoff": review_handoff,
             "known_issues": known_issues,
             "active_issues": active_issues,
@@ -3447,6 +3650,12 @@ if __name__ == "__main__":
             notes,
         )
         print(json.dumps(result, indent=2))
+
+    elif func_name == "write_run_health_report":
+        workflow = sys.argv[2] if len(sys.argv) >= 3 else "map-efficient"
+        terminal_status = sys.argv[3] if len(sys.argv) >= 4 else ""
+        result = write_run_health_report(workflow, terminal_status)
+        print(json.dumps(result, indent=2, ensure_ascii=True))
 
     elif func_name == "create_review_bundle":
         result = create_review_bundle()

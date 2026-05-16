@@ -89,6 +89,12 @@ def test_injects_for_edit_when_step_state_exists(
     assert "ST-001" in additional
     assert "REQUIRED" in additional
 
+    state = json.loads((state_dir / "step_state.json").read_text(encoding="utf-8"))
+    assert state["hook_injection"]["status"] == "injected"
+    assert state["hook_injection"]["tool_name"] == "Edit"
+    assert state["hook_injection"]["additional_context_chars"] == len(additional)
+    assert state["hook_injection_counts"]["injected"] == 1
+
 
 def test_skips_for_readonly_bash(tmp_path: Path) -> None:
     code, out, err = _run_hook(
@@ -133,6 +139,41 @@ def test_injects_for_pytest_bash_when_step_state_exists(
     assert "2.8" in additional
     assert "TESTS_GATE" in additional
     assert "ST-002" in additional
+
+    state = json.loads((state_dir / "step_state.json").read_text(encoding="utf-8"))
+    assert state["hook_injection"]["status"] == "injected"
+    assert state["hook_injection_counts"]["injected"] == 1
+
+
+def test_records_skipped_when_state_has_no_reminder(
+    tmp_path: Path, branch_name: str
+) -> None:
+    branch = branch_name
+
+    state_dir = tmp_path / ".map" / branch
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "step_state.json").write_text(
+        json.dumps(
+            {
+                "current_step_id": "",
+                "current_step_phase": "",
+                "current_subtask_id": "ST-001",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    code, out, err = _run_hook(
+        tmp_path, {"tool_name": "Edit", "tool_input": {"file_path": "x"}}
+    )
+
+    assert code == 0
+    assert err == ""
+    assert out == "{}"
+    state = json.loads((state_dir / "step_state.json").read_text(encoding="utf-8"))
+    assert state["hook_injection"]["status"] == "skipped"
+    assert state["hook_injection"]["reason"] == "no reminder formatted"
+    assert state["hook_injection_counts"]["skipped"] == 1
 
 
 class TestLoadGoalAndTitle:

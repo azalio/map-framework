@@ -89,6 +89,17 @@ def _e2e_ready() -> bool:
 
 SKIP_REASON = "claude CLI missing/unauthenticated, mapify CLI missing, or no Anthropic auth available"
 
+MAP_PLAN_E2E_PROMPT = (
+    "/map-plan IMPORTANT: this is an automated test — force the workflow-fit "
+    "outcome to `map-plan` and run the full SPEC + PLAN phases including the "
+    "decomposer step that writes blueprint.json with AT LEAST TWO subtasks "
+    "(every subtask must have `id` and `dependencies` fields). Do NOT off-ramp "
+    "to direct-edit or map-fast. Task: add multiply(a, b) to app.py with input "
+    "validation that raises a new ArithmeticInputError exception class for "
+    "non-numeric operands, and update tests to cover both happy path and the "
+    "new error path."
+)
+
 
 _TRANSIENT_API_ERROR_PATTERNS = (
     "Stream idle timeout",
@@ -303,6 +314,19 @@ def _get_map_dir(project_dir: Path) -> Path:
     return project_dir / ".map" / branch
 
 
+def _get_blueprint_subtasks(blueprint: dict) -> list:
+    """Return subtasks from either supported blueprint layout."""
+    root_subtasks = blueprint.get("subtasks", [])
+    if root_subtasks:
+        return root_subtasks
+
+    nested = blueprint.get("blueprint")
+    if isinstance(nested, dict):
+        return nested.get("subtasks", [])
+
+    return []
+
+
 # =====================================================================
 # Test: map-plan produces valid artifacts
 # =====================================================================
@@ -395,16 +419,7 @@ def planned_project(tmp_path_factory):
     # The explicit "force map-plan outcome" instruction plus the new-invariant signal
     # (custom exception type) commits the gate to the ``map-plan`` outcome.
     output = _run_claude(
-        (
-            "/map-plan IMPORTANT: this is an automated test — force the workflow-fit "
-            "outcome to `map-plan` and run the full SPEC + PLAN phases including the "
-            "decomposer step that writes blueprint.json with AT LEAST TWO subtasks "
-            "(every subtask must have `id` and `dependencies` fields). Do NOT off-ramp "
-            "to direct-edit or map-fast. Task: add multiply(a, b) to app.py with input "
-            "validation that raises a new ArithmeticInputError exception class for "
-            "non-numeric operands, and update tests to cover both happy path and the "
-            "new error path."
-        ),
+        MAP_PLAN_E2E_PROMPT,
         cwd=str(project_dir),
         timeout=3600,
         max_turns=80,
@@ -448,13 +463,9 @@ class TestMapPlanE2E:
 
         bp = json.loads(bp_file.read_text(encoding="utf-8"))
 
-        # Support nested format
-        if "blueprint" in bp and isinstance(bp["blueprint"], dict):
-            subtasks = bp["blueprint"].get("subtasks", [])
-        else:
-            subtasks = bp.get("subtasks", [])
+        subtasks = _get_blueprint_subtasks(bp)
 
-        assert len(subtasks) >= 1, "Blueprint should have at least one subtask"
+        assert len(subtasks) >= 2, "Blueprint should have at least two subtasks"
         for st in subtasks:
             assert "id" in st, f"Subtask missing 'id': {st}"
             assert "dependencies" in st, f"Subtask missing 'dependencies': {st}"
@@ -490,7 +501,7 @@ class TestMapEfficientE2E:
         """Running /map-efficient after /map-plan should produce actual code changes."""
         # Step 1: Plan
         _run_claude(
-            "/map-plan Add a multiply(a, b) function to app.py with tests",
+            MAP_PLAN_E2E_PROMPT,
             cwd=str(test_project),
             timeout=3600,
             max_turns=80,
@@ -514,7 +525,7 @@ class TestMapEfficientE2E:
         """map-efficient should produce code-review and verification artifacts."""
         # Plan + Execute
         _run_claude(
-            "/map-plan Add a multiply(a, b) function to app.py with tests",
+            MAP_PLAN_E2E_PROMPT,
             cwd=str(test_project),
             timeout=3600,
             max_turns=80,
@@ -539,7 +550,7 @@ class TestMapEfficientE2E:
         """After execution, project tests should pass."""
         # Plan + Execute
         _run_claude(
-            "/map-plan Add a multiply(a, b) function to app.py with tests",
+            MAP_PLAN_E2E_PROMPT,
             cwd=str(test_project),
             timeout=3600,
             max_turns=80,
@@ -567,7 +578,7 @@ class TestMapEfficientE2E:
         """The generated multiply function must actually compute correctly."""
         # Plan + Execute
         _run_claude(
-            "/map-plan Add a multiply(a, b) function to app.py with tests",
+            MAP_PLAN_E2E_PROMPT,
             cwd=str(test_project),
             timeout=3600,
             max_turns=80,
@@ -614,7 +625,7 @@ class TestMapReviewE2E:
         """map-review --ci should produce a verdict without interaction."""
         # Plan + Execute
         _run_claude(
-            "/map-plan Add a multiply(a, b) function to app.py with tests",
+            MAP_PLAN_E2E_PROMPT,
             cwd=str(test_project),
             timeout=3600,
             max_turns=80,
@@ -645,7 +656,7 @@ class TestMapReviewE2E:
         """map-review should produce a numbered code-review artifact."""
         # Plan + Execute
         _run_claude(
-            "/map-plan Add a multiply(a, b) function to app.py with tests",
+            MAP_PLAN_E2E_PROMPT,
             cwd=str(test_project),
             timeout=3600,
             max_turns=80,
@@ -724,7 +735,7 @@ class TestFullFlowE2E:
 
         # Phase 1: Plan (produces blueprint + task_plan; step_state is created later by /map-efficient INIT_STATE)
         _run_claude(
-            "/map-plan Add a multiply(a, b) function to app.py with tests",
+            MAP_PLAN_E2E_PROMPT,
             cwd=str(test_project),
             timeout=3600,
             max_turns=80,

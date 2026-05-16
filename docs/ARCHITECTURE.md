@@ -292,6 +292,7 @@ For branch-scoped workflows, MAP also keeps `.map/<branch>/artifact_manifest.jso
 - `implementation`
 - `review`
 - `verification`
+- `run_health`
 - `learn_handoff`
 
 Targeted TDD flows additionally persist `test_contract_<subtask>.md` and `test_handoff_<subtask>.json`. Those artifacts are what let `/map-task ST-001` resume implementation from a clean red-phase handoff instead of reusing the full test-authoring context.
@@ -301,6 +302,8 @@ Targeted TDD flows additionally persist `test_contract_<subtask>.md` and `test_h
 - `.map/<branch>/review-bundle.md` — human-readable summary of bundled artifacts for quick reviewer orientation.
 
 Missing artifacts are recorded with `present: false` rather than omitted, so bundle generation succeeds at any workflow stage. An optional detached worktree at `.map/<branch>/detached-review/` is created by `prepare_detached_review()` when `/map-review --detached` is invoked.
+
+**Run health artifact** (`run_health` stage in manifest): `write_run_health_report()` in `.map/scripts/map_step_runner.py` writes `.map/<branch>/run_health_report.json` as the machine-readable diagnosis snapshot for the current workflow. It records `terminal_status`, current step/subtask, completed and pending step counts, artifact presence, retry counters, latest hook-injection status, Predictor skip/call flags when present, and whether final verification evidence exists. The report is a compact index over existing branch artifacts, not a second workflow source of truth.
 
 #### 1. State Artifact (`state_<branch>.json`)
 
