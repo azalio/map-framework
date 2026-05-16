@@ -8,13 +8,17 @@ import pytest
 
 
 def _run_hook(tmp_project_dir: Path, stdin_payload: dict) -> tuple[int, str, str]:
+    return _run_hook_raw(tmp_project_dir, json.dumps(stdin_payload))
+
+
+def _run_hook_raw(tmp_project_dir: Path, stdin_payload: str) -> tuple[int, str, str]:
     hook_path = Path(".claude/hooks/workflow-context-injector.py")
     env = os.environ.copy()
     env["CLAUDE_PROJECT_DIR"] = str(tmp_project_dir)
 
     proc = subprocess.run(
         ["python3", str(hook_path)],
-        input=json.dumps(stdin_payload),
+        input=stdin_payload,
         text=True,
         capture_output=True,
         env=env,
@@ -104,6 +108,195 @@ def test_skips_for_readonly_bash(tmp_path: Path) -> None:
     assert code == 0
     assert err == ""
     assert out == "{}"
+
+
+def test_records_skipped_for_insignificant_bash_when_state_exists(
+    tmp_path: Path, branch_name: str
+) -> None:
+    branch = branch_name
+    state_dir = tmp_path / ".map" / branch
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "step_state.json").write_text(
+        json.dumps(
+            {
+                "current_step_id": "2.3",
+                "current_step_phase": "ACTOR",
+                "current_subtask_id": "ST-001",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    code, out, err = _run_hook(
+        tmp_path,
+        {"tool_name": "Bash", "tool_input": {"command": "ls"}},
+    )
+
+    assert code == 0
+    assert err == ""
+    assert out == "{}"
+    state = json.loads((state_dir / "step_state.json").read_text(encoding="utf-8"))
+    assert state["hook_injection"]["status"] == "skipped"
+    assert state["hook_injection"]["reason"] == "bash command not significant"
+    assert state["hook_injection"]["tool_name"] == "Bash"
+    assert state["hook_injection_counts"]["skipped"] == 1
+
+
+def test_records_malformed_hook_input_when_state_exists(
+    tmp_path: Path, branch_name: str
+) -> None:
+    branch = branch_name
+    state_dir = tmp_path / ".map" / branch
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "step_state.json").write_text(
+        json.dumps(
+            {
+                "current_step_id": "2.3",
+                "current_step_phase": "ACTOR",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    code, out, err = _run_hook_raw(tmp_path, "{")
+
+    assert code == 0
+    assert err == ""
+    assert out == "{}"
+    state = json.loads((state_dir / "step_state.json").read_text(encoding="utf-8"))
+    assert state["hook_injection"]["status"] == "skipped"
+    assert state["hook_injection"]["reason"] == "invalid hook input JSON"
+    assert state["hook_injection"]["tool_name"] == "unknown"
+    assert state["hook_injection_counts"]["skipped"] == 1
+
+
+def test_non_string_bash_command_remains_non_blocking(
+    tmp_path: Path, branch_name: str
+) -> None:
+    branch = branch_name
+    state_dir = tmp_path / ".map" / branch
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "step_state.json").write_text(
+        json.dumps(
+            {
+                "current_step_id": "2.3",
+                "current_step_phase": "ACTOR",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    code, out, err = _run_hook(
+        tmp_path,
+        {"tool_name": "Bash", "tool_input": {"command": ["pytest"]}},
+    )
+
+    assert code == 0
+    assert err == ""
+    assert out == "{}"
+    state = json.loads((state_dir / "step_state.json").read_text(encoding="utf-8"))
+    assert state["hook_injection"]["status"] == "skipped"
+    assert state["hook_injection"]["reason"] == "bash command is not a string"
+    assert state["hook_injection_counts"]["skipped"] == 1
+
+
+def test_records_unsupported_tool_when_state_exists(
+    tmp_path: Path, branch_name: str
+) -> None:
+    branch = branch_name
+    state_dir = tmp_path / ".map" / branch
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "step_state.json").write_text(
+        json.dumps(
+            {
+                "current_step_id": "2.3",
+                "current_step_phase": "ACTOR",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    code, out, err = _run_hook(
+        tmp_path,
+        {"tool_name": "Read", "tool_input": {"file_path": "x"}},
+    )
+
+    assert code == 0
+    assert err == ""
+    assert out == "{}"
+    state = json.loads((state_dir / "step_state.json").read_text(encoding="utf-8"))
+    assert state["hook_injection"]["status"] == "skipped"
+    assert state["hook_injection"]["reason"] == "tool not configured for workflow injection"
+    assert state["hook_injection"]["tool_name"] == "Read"
+    assert state["hook_injection_counts"]["skipped"] == 1
+
+
+def test_schema_invalid_step_state_fields_remain_non_blocking(
+    tmp_path: Path, branch_name: str
+) -> None:
+    branch = branch_name
+    state_dir = tmp_path / ".map" / branch
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "step_state.json").write_text(
+        json.dumps(
+            {
+                "current_step_id": 23,
+                "current_step_phase": ["ACTOR"],
+                "current_subtask_id": {"id": "ST-001"},
+                "execution_mode": {"mode": "batch"},
+                "subtask_sequence": "ST-001",
+                "execution_waves": {"wave": ["ST-001"]},
+                "subtask_files_changed": ["src/example.py"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    code, out, err = _run_hook(
+        tmp_path, {"tool_name": "Edit", "tool_input": {"file_path": "x"}}
+    )
+
+    assert code == 0
+    assert err == ""
+    assert out == "{}"
+    state = json.loads((state_dir / "step_state.json").read_text(encoding="utf-8"))
+    assert state["hook_injection"]["status"] == "skipped"
+    assert state["hook_injection"]["reason"] == "no reminder formatted"
+    assert state["hook_injection_counts"]["skipped"] == 1
+
+
+def test_missing_step_state_remains_non_blocking_without_creating_state(
+    tmp_path: Path, branch_name: str
+) -> None:
+    state_file = tmp_path / ".map" / branch_name / "step_state.json"
+
+    code, out, err = _run_hook(
+        tmp_path, {"tool_name": "Edit", "tool_input": {"file_path": "x"}}
+    )
+
+    assert code == 0
+    assert err == ""
+    assert out == "{}"
+    assert not state_file.exists()
+
+
+def test_invalid_step_state_remains_non_blocking_without_clobbering_state(
+    tmp_path: Path, branch_name: str
+) -> None:
+    branch = branch_name
+    state_dir = tmp_path / ".map" / branch
+    state_dir.mkdir(parents=True, exist_ok=True)
+    state_file = state_dir / "step_state.json"
+    state_file.write_text("{", encoding="utf-8")
+
+    code, out, err = _run_hook(
+        tmp_path, {"tool_name": "Edit", "tool_input": {"file_path": "x"}}
+    )
+
+    assert code == 0
+    assert err == ""
+    assert out == "{}"
+    assert state_file.read_text(encoding="utf-8") == "{"
 
 
 def test_injects_for_pytest_bash_when_step_state_exists(

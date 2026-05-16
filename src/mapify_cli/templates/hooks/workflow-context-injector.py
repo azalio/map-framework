@@ -106,19 +106,30 @@ def get_branch_name() -> str:
     return "default"
 
 
-def load_step_state(branch: str) -> dict | None:
-    """Load step state from .map/<branch>/step_state.json."""
+def read_step_state(branch: str) -> tuple[dict | None, str | None]:
+    """Load step state and return a non-throwing degradation reason on failure."""
     project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
     state_file = project_dir / ".map" / branch / "step_state.json"
 
     if not state_file.exists():
-        return None
+        return (None, "missing step_state.json")
 
     try:
         with open(state_file, encoding="utf-8") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, IOError):
-        return None
+            state = json.load(f)
+        if isinstance(state, dict):
+            return (state, None)
+        return (None, "step_state.json is not an object")
+    except json.JSONDecodeError:
+        return (None, "invalid step_state.json")
+    except (OSError, UnicodeDecodeError):
+        return (None, "unreadable step_state.json")
+
+
+def load_step_state(branch: str) -> dict | None:
+    """Load step state from .map/<branch>/step_state.json."""
+    state, _reason = read_step_state(branch)
+    return state
 
 
 def step_state_path(branch: str) -> Path:
@@ -161,6 +172,13 @@ def record_hook_injection_status(
         pass
 
 
+def record_skip_if_state_available(branch: str, reason: str, tool_name: str) -> None:
+    """Persist a skipped hook outcome only when existing state is safe to update."""
+    state, _state_error = read_step_state(branch)
+    if state is not None:
+        record_hook_injection_status(branch, state, "skipped", reason, tool_name)
+
+
 def should_inject_for_bash(command: str) -> bool:
     """Determine if Bash command needs workflow reminder."""
     if not command:
@@ -184,6 +202,14 @@ def should_inject_for_bash(command: str) -> bool:
 
     # Default: don't inject for unknown commands
     return False
+
+
+def state_string(state: dict, key: str, default: str = "") -> str:
+    """Return a stripped state string without trusting persisted JSON field types."""
+    value = state.get(key)
+    if isinstance(value, str):
+        return value.strip()
+    return default
 
 
 def required_action_for_step(step_id: str, step_phase: str, state: dict) -> str | None:
@@ -263,28 +289,30 @@ def format_reminder(state: dict, branch: str) -> str | None:
     if not state:
         return None
 
-    step_id = (state.get("current_step_id") or "").strip()
-    step_phase = (state.get("current_step_phase") or "").strip()
-    subtask_id = (state.get("current_subtask_id") or "-").strip() or "-"
+    step_id = state_string(state, "current_step_id")
+    step_phase = state_string(state, "current_step_phase")
+    subtask_id = state_string(state, "current_subtask_id", "-") or "-"
 
-    seq = state.get("subtask_sequence") or []
+    seq_value = state.get("subtask_sequence")
+    seq = seq_value if isinstance(seq_value, list) else []
     idx = state.get("subtask_index")
     progress = "-"
     if isinstance(idx, int) and seq:
         progress = f"{min(idx + 1, len(seq))}/{len(seq)}"
 
     plan_ok = "y" if state.get("plan_approved") else "n"
-    mode = (state.get("execution_mode") or "").strip() or "batch"
+    mode = state_string(state, "execution_mode") or "batch"
 
     # Wave progress display
-    waves = state.get("execution_waves") or []
+    waves_value = state.get("execution_waves")
+    waves = waves_value if isinstance(waves_value, list) else []
     wave_idx = state.get("current_wave_index", 0)
     wave_hint = ""
-    if waves:
+    if waves and isinstance(wave_idx, int):
         wave_hint = f" | WAVE {wave_idx + 1}/{len(waves)}"
         current_wave = waves[wave_idx] if wave_idx < len(waves) else []
-        if len(current_wave) > 1:
-            wave_hint += f" ({', '.join(current_wave)})"
+        if isinstance(current_wave, list) and len(current_wave) > 1:
+            wave_hint += f" ({', '.join(str(item) for item in current_wave)})"
             mode = "batch:parallel"
 
     required = required_action_for_step(step_id, step_phase, state)
@@ -301,12 +329,15 @@ def format_reminder(state: dict, branch: str) -> str | None:
 
     # Show recently changed files for context freshness
     files_hint = ""
-    files_changed = state.get("subtask_files_changed", {})
+    files_changed_value = state.get("subtask_files_changed", {})
+    files_changed = files_changed_value if isinstance(files_changed_value, dict) else {}
     if files_changed and subtask_id != "-":
         current_files = files_changed.get(subtask_id, [])
-        if current_files:
+        if isinstance(current_files, list) and current_files:
             shown = current_files[:5]
-            files_hint = " | Files: " + ", ".join(Path(f).name for f in shown)
+            files_hint = " | Files: " + ", ".join(
+                Path(f).name for f in shown if isinstance(f, str)
+            )
             if len(current_files) > 5:
                 files_hint += f" +{len(current_files) - 5}"
 
@@ -341,33 +372,52 @@ def format_reminder(state: dict, branch: str) -> str | None:
 
 
 def main() -> None:
+    branch = get_branch_name()
     try:
         input_data = json.load(sys.stdin)
     except json.JSONDecodeError:
+        record_skip_if_state_available(branch, "invalid hook input JSON", "unknown")
         print("{}")
         sys.exit(0)
 
-    tool_name = input_data.get("tool_name", "")
+    if not isinstance(input_data, dict):
+        record_skip_if_state_available(branch, "hook input is not an object", "unknown")
+        print("{}")
+        sys.exit(0)
+
+    tool_name_value = input_data.get("tool_name", "")
+    tool_name = tool_name_value if isinstance(tool_name_value, str) else ""
     tool_input = input_data.get("tool_input", {})
+    if not isinstance(tool_input, dict):
+        tool_input = {}
 
     # Determine if we should inject
     should_inject = False
+    skip_reason = ""
 
     if tool_name in ("Edit", "Write", "MultiEdit"):
         should_inject = True
     elif tool_name == "Bash":
         command = tool_input.get("command", "")
-        should_inject = should_inject_for_bash(command)
+        if not isinstance(command, str):
+            skip_reason = "bash command is not a string"
+        else:
+            should_inject = should_inject_for_bash(command)
 
     if not should_inject:
+        reason = skip_reason or "tool not configured for workflow injection"
+        if tool_name == "Bash":
+            reason = skip_reason or "bash command not significant"
+        elif not tool_name:
+            reason = "missing tool_name"
+        record_skip_if_state_available(branch, reason, tool_name or "unknown")
         print("{}")
         sys.exit(0)
 
     # Load and format workflow step state
-    branch = get_branch_name()
-    state = load_step_state(branch)
+    state, _state_error = read_step_state(branch)
 
-    if not state:
+    if state is None:
         print("{}")
         sys.exit(0)
 

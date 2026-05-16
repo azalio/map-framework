@@ -1,3 +1,19 @@
+## 2026-05-16 - Expand hook degradation status coverage [2604.017-3]
+
+- Decision: `implemented`
+- Branch: `2604.017-3-hook-degradation-status`
+- Baseline: The PreToolUse hook wrote `hook_injection` for emitted reminders and no-reminder formatting skips, but malformed hook input and insignificant Bash commands were silent when safe branch state existed.
+- Forward Change: Added safe state reads with explicit degradation reasons, persisted skipped outcomes for malformed hook payloads and insignificant Bash commands when `step_state.json` is parseable, preserved non-blocking/no-clobber behavior for missing or invalid state, synced the shipped hook template, and documented the new diagnostic signal.
+- Decisive Validation: `pytest tests/test_workflow_context_injector.py tests/test_template_sync.py -v`, `pytest tests/test_map_step_runner.py::test_write_run_health_report_creates_report_and_manifest tests/test_artifact_schemas.py::test_validate_run_health_report_schema -v`, `make lint`, `pytest -m "not slow"`, and generated-project `uv run --no-sync mapify init <new-dir> --no-git --mcp none` hook smokes passed.
+- Review Result: Diff-scoped review found a malformed payload gap where non-string Bash commands could still raise; fixed by normalizing `tool_name` and `command` before classification and added a regression test.
+- Next Trigger: Reuse this learning whenever hook code accepts JSON from Claude/tooling before deciding whether to mutate branch state.
+- Reusable Learnings:
+  - command: `pytest tests/test_workflow_context_injector.py tests/test_template_sync.py -v`
+  - command: `uv run --no-sync mapify init <new-dir> --no-git --mcp none`
+  - invariant: `Hook inputs are untrusted even after JSON parsing; normalize field types before calling string-specific helpers.`
+  - invariant: `Hook degradation status may update only parseable existing branch state; missing or invalid state must not be created or clobbered by a diagnostic write.`
+  - review-check: `When adding a skipped/degraded hook path, test both the persisted reason and the non-blocking/no-state-mutation failure path.`
+
 ## 2026-05-16 - Auto-write run health reports from workflow closeout paths [2604.017-2]
 
 - Decision: `implemented`
