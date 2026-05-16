@@ -1,3 +1,18 @@
+## 2026-05-16 - Auto-write run health reports from workflow closeout paths [2604.017-2]
+
+- Decision: `implemented`
+- Branch: `2604.017-2-run-health-closeout`
+- Baseline: `write_run_health_report` existed and had schema/writer tests, but `/map-efficient`, `/map-debug`, `/map-check`, and `/map-review` closeout prompts did not call it, so `run_health_report.json` was optional/manual.
+- Forward Change: Added closeout prompt wiring in the four workflow skills, required `RUN_HEALTH_STATUS` to be set from the final verdict before invoking the helper, synced templates, and documented automatic closeout-time report generation.
+- Decisive Validation: `pytest tests/test_skills.py::TestRunHealthCloseoutWiring -v`, `pytest tests/test_template_sync.py tests/test_skills.py::TestSkillStructure::test_skill_templates_in_sync -v`, `make lint`, `pytest -m "not slow"`, and a repo-built `uv run --no-sync mapify init <new-dir> --no-git --mcp none` smoke that wrote and inspected `.map/default/run_health_report.json` passed. Read-only review found and then confirmed fixes for prompt sequencing/status-default issues.
+- Validation Boundary: Unfiltered `pytest` and `pytest tests/integration/test_e2e_claude_sdk.py -v -m slow` were attempted against live Claude SDK tests, but both exceeded tool timeouts after partial progress. This slice's no-LLM artifact contract was validated directly in a generated project.
+- Next Trigger: Reuse this learning whenever adding prompt-level closeout commands whose arguments depend on workflow verdicts or terminal states.
+- Reusable Learnings:
+  - command: `pytest tests/test_skills.py::TestRunHealthCloseoutWiring -v`
+  - command: `uv run --no-sync mapify init <new-dir> --no-git --mcp none`
+  - invariant: `Prompt closeout snippets that write terminal artifacts must appear after the section that determines the final verdict/status.`
+  - review-check: `Tests must reject both direct hard-coded happy-path arguments and variable defaults such as RUN_HEALTH_STATUS="complete" when non-happy terminal statuses are valid.`
+
 ## 2026-05-15 - Action-first tool use in lightweight workflows [2604.028]
 
 - Decision: `implemented`

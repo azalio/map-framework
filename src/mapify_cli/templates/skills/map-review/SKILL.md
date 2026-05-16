@@ -608,6 +608,18 @@ python3 .map/scripts/map_step_runner.py write_learning_handoff \
 
 This writes `.map/<branch>/learning-handoff.md` and `.json`, updates `artifact_manifest.json`, and allows `/map-learn` to auto-load the review context later with no extra reconstruction.
 
+4. Write the run health report using the final review verdict's terminal status:
+
+```bash
+# PROCEED -> complete; REVISE -> pending; BLOCK -> blocked.
+RUN_HEALTH_STATUS="${RUN_HEALTH_STATUS:?set RUN_HEALTH_STATUS from the review verdict}"
+python3 .map/scripts/map_step_runner.py write_run_health_report \
+  map-review \
+  "$RUN_HEALTH_STATUS"
+```
+
+This writes `.map/<branch>/run_health_report.json`, updates the `run_health` stage in `artifact_manifest.json`, and keeps review closeout evidence machine-readable for CI, `/map-resume`, and follow-up reviewers.
+
 ## CI/Auto Mode Behavior
 
 When `CI_MODE = true` (triggered by `--ci` or `--auto` in $ARGUMENTS):

@@ -360,6 +360,18 @@ python3 .map/scripts/map_step_runner.py write_learning_handoff \
 
 This writes `.map/<branch>/learning-handoff.md` and `.json`, updates `artifact_manifest.json`, and lets `/map-learn` auto-load the workflow context later with no manual reconstruction.
 
+Then write the run health report using the verification verdict's terminal status:
+
+```bash
+# READY FOR REVIEW -> complete; NEEDS WORK -> pending; external/tooling blocker -> blocked.
+RUN_HEALTH_STATUS="${RUN_HEALTH_STATUS:?set RUN_HEALTH_STATUS from the verification verdict}"
+python3 .map/scripts/map_step_runner.py write_run_health_report \
+  map-check \
+  "$RUN_HEALTH_STATUS"
+```
+
+This writes `.map/<branch>/run_health_report.json`, updates the `run_health` stage in `artifact_manifest.json`, and makes the `/map-check` closeout inspectable without replaying the console transcript.
+
 Recommended format:
 
 ```markdown

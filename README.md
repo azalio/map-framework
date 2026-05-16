@@ -118,7 +118,7 @@ MAP review is useful, but it is not a replacement for engineering judgment. Seri
 - **Reviewable diffs** - planning and task contracts keep changes small enough to inspect.
 - **Useful quality gates** - `/map-check` and `/map-review` validate against the plan instead of just asking whether code "looks fine".
 - **Review bundle** - `/map-review` auto-generates `.map/<branch>/review-bundle.json` and `.map/<branch>/review-bundle.md` before launching reviewer agents, bundling spec, plan, tests, verification, and latest code review into a single durable input contract. Reviewers read the bundle first; raw diff is secondary. Use `/map-review --detached` to open an isolated read-only git worktree at `.map/<branch>/detached-review/` for clean-room inspection without touching the source branch. Bundle generation records the `review` stage in `.map/<branch>/artifact_manifest.json`. Section-order flags reduce anchoring bias: `--reverse-sections` (invert order), `--shuffle-sections [--seed N]` (seeded random order), `--compare-orderings` (run default + reverse, aggregate via strict-wins, surface drift).
-- **Run health report** - `.map/scripts/map_step_runner.py write_run_health_report` writes `.map/<branch>/run_health_report.json`, a machine-readable snapshot of terminal status, step progress, retry counters, artifact presence, and latest hook-injection status. This gives `/map-check`, `/map-resume`, and reviewers one place to inspect why a workflow is complete, pending, or blocked.
+- **Run health report** - `/map-efficient`, `/map-debug`, `/map-check`, and `/map-review` write `.map/<branch>/run_health_report.json` during closeout via `.map/scripts/map_step_runner.py write_run_health_report`. The report is a machine-readable snapshot of terminal status, step progress, retry counters, artifact presence, and latest hook-injection status, giving `/map-resume` and reviewers one place to inspect why a workflow is complete, pending, or blocked.
 - **Project memory** - `/map-learn` turns hard-won fixes and gotchas into reusable context for the next session.
 
 ## Core Commands
@@ -147,7 +147,7 @@ Canonical MAP flows:
 
 `/map-plan` records a workflow-fit decision first, so trivial work can exit early with a direct edit or `/map-fast` recommendation instead of forcing full MAP planning.
 
-These workflows maintain branch-scoped artifacts like `code-review-001.md`, `qa-001.md`, `verification-summary.md`, `pr-draft.md`, `artifact_manifest.json`, optional `run_health_report.json` diagnostics, and run dossiers under `.map/<branch>/`. Targeted TDD flows also persist `test_contract_ST-00N.md` and `test_handoff_ST-00N.json` so `/map-task` can resume implementation from a clean red-phase handoff.
+These workflows maintain branch-scoped artifacts like `code-review-001.md`, `qa-001.md`, `verification-summary.md`, `pr-draft.md`, `artifact_manifest.json`, `run_health_report.json` diagnostics, and run dossiers under `.map/<branch>/`. Targeted TDD flows also persist `test_contract_ST-00N.md` and `test_handoff_ST-00N.json` so `/map-task` can resume implementation from a clean red-phase handoff.
 
 `LEARN` is the memory step of the MAP cycle. After implementation, checks, or review, MAP writes a learning handoff under `.map/<branch>/` so `/map-learn` can run later without reconstructing context. Pass `/map-learn [workflow-summary]` when you want to provide an explicit summary.
 

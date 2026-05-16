@@ -836,6 +836,18 @@ else:
     AskUserQuestion(questions=[{"question": "Max iterations reached. How to proceed?", "header": "Max iterations", "options": [{"label": "Reset limits", "description": "Reset counters and continue"}, {"label": "Abort", "description": "Stop workflow"}], "multiSelect": false}])
 ```
 
+After the final workflow decision is known, write the run health report with the matching terminal status:
+
+```bash
+# Set from the final decision above: complete, pending, blocked, won't_do, or superseded.
+RUN_HEALTH_STATUS="${RUN_HEALTH_STATUS:?set RUN_HEALTH_STATUS from the final workflow decision}"
+python3 .map/scripts/map_step_runner.py write_run_health_report \
+  map-efficient \
+  "$RUN_HEALTH_STATUS"
+```
+
+Use `complete` only when final verification passed. Use `pending` when more implementation work remains, `blocked` when an external/tooling issue prevents safe completion, `won't_do` when the workflow is intentionally stopped, and `superseded` when another workflow owns it. This writes `.map/<branch>/run_health_report.json`, updates the `run_health` stage in `artifact_manifest.json`, and preserves a machine-readable diagnosis snapshot for `/map-check`, `/map-review`, or `/map-resume`.
+
 ## Step 4: Summary
 
 - Update Terminal State in task_plan: **Status:** complete

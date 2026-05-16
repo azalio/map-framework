@@ -134,11 +134,6 @@
 - Add CI assertions that the resiliency artifacts are always produced: for workflows using AI agents (/map-efficient, /map-debug, /map-review, /map-learn), validate the health report JSON exists and includes terminal_status values (pending/complete/blocked/won't_do/superseded) exactly as specified in the state artifact section.
 - Create a small set of resiliency regression tests: (1) simulate compaction/no checkpoint and confirm hook injection continues without blocking session start (architecture explicitly says session start must always succeed), (2) simulate oversized checkpoint file >256KB and confirm injection is skipped but workflow proceeds, (3) simulate invalid UTF-8 and confirm injection is rejected but session continues, using the existing security validation rules and stated performance characteristics (e.g., <0.5s total hook time).
 
-## Auto-write run health reports from workflow closeout paths [2604.017-2]
-
-**Benefit Hypothesis**: Wiring `write_run_health_report` into `/map-efficient`, `/map-debug`, `/map-check`, and `/map-review` closeout paths will make the new health artifact appear without manual CLI calls, reducing missing diagnostic context after blocked or interrupted workflows.
-**Scope**: Update the relevant skill closeout instructions or deterministic helper calls so terminal statuses (`pending`, `complete`, `blocked`, `won't_do`, `superseded`) are passed intentionally. Validate with generated-project smoke tests and at least one no-LLM lifecycle flow that inspects `.map/<branch>/run_health_report.json`.
-
 ## Expand hook degradation status coverage [2604.017-3]
 
 **Benefit Hypothesis**: Recording explicit hook outcomes for invalid JSON, missing state, oversized or unreadable context inputs, and skipped-significance decisions will make hook resilience auditable instead of only best-effort.
