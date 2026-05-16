@@ -421,6 +421,28 @@ def test_record_workflow_fit_creates_decision_and_manifest(branch_workspace):
     assert stage["updated_at"].endswith("Z")
 
 
+def test_record_workflow_fit_direct_edit_marks_needs_map_false(branch_workspace):
+    result = map_step_runner.record_workflow_fit(
+        "direct-edit",
+        "tiny",
+        "false",
+        "false",
+        "true",
+        "false",
+        "Trivial isolated edit should not use MAP orchestration",
+    )
+
+    assert result["status"] == "success"
+    decision = json.loads((branch_workspace / "workflow-fit.json").read_text())
+    assert decision["recommended_workflow"] == "direct-edit"
+    assert decision["needs_map"] is False
+
+    manifest = json.loads((branch_workspace / "artifact_manifest.json").read_text())
+    stage = manifest["stages"]["workflow_fit"]
+    assert stage["metadata"]["recommended_workflow"] == "direct-edit"
+    assert stage["metadata"]["needs_map"] is False
+
+
 def test_record_plan_artifacts_updates_manifest(branch_workspace):
     branch = branch_workspace.name
     (branch_workspace / f"spec_{branch}.md").write_text("# Spec\n", encoding="utf-8")

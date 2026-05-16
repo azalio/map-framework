@@ -1,3 +1,16 @@
+## 2026-05-16 - Workflow fit classifier and explicit off-ramp for trivial work [2604.038]
+
+- Decision: `rejected`
+- Branch: `codex/2604-038-close-workflow-fit-plan`
+- Baseline: The idea remained active in `docs/improvement-plan.md`, but runtime, schema, skill, docs, and test evidence showed workflow-fit routing had already shipped.
+- Forward Change: Removed the stale active plan section and recorded the exact `[2604.038]` heading in `docs/improvement-done.md` with repo-grounded evidence instead of rebuilding existing behavior.
+- Decisive Validation: the improvement-plan-loop idea indexer, focused workflow-fit regression tests, template sync tests, `make lint`, `pytest -m "not slow"`, and a repo-built generated-project smoke verified the plan/done state and shipped off-ramp artifacts.
+- Validation Boundary: Full `pytest` was attempted and progressed through deterministic tests plus the first three live Claude SDK checks, then exceeded the tool timeout at `TestMapEfficientE2E::test_efficient_produces_code_changes`; rerunning that single live SDK test also exceeded 15 minutes without a deterministic assertion failure.
+- Review Result: Diff review confirmed the change is documentation/ledger-only and does not alter runtime behavior.
+- Next Trigger: Reuse this learning whenever an active plan item references behavior already visible in runtime code, generated templates, docs, and tests.
+- Reusable Learnings:
+  - review-check: `Before implementing an active idea, inspect active and done headings, then search runtime, shipped templates, docs, and tests for the core artifact/route names; close stale plan entries instead of rebuilding shipped behavior.`
+
 ## 2026-05-16 - Health report analytics and CI assertions [2604.017-4]
 
 - Decision: `implemented`

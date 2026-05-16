@@ -264,22 +264,6 @@
 - Add integration tests that validate review bundle generation and detached review startup, so this mode does not become a paper feature.
 
 
-## Workflow fit classifier and explicit off-ramp for trivial work [2604.038]
-
-**Benefit Hypothesis**: A short suitability check at workflow entry will reduce unnecessary MAP overhead on trivial work, improve latency for simple tasks, and make the framework more credible for the complex tasks where it actually pays off. The measurable target is fewer low-value orchestrated runs and better task-to-workflow matching.
-**Confidence**: 0.78
-**Reasoning**: The philosophy document explicitly says not to drag the full framework onto README typos or 50-line scripts, and limits the strongest payoff to domains with clear models, invariants, and review cost: operators, platform tooling, API/CRD-driven systems, and backend work with real contracts. MAP documentation does distinguish `/map-fast` and `/map-efficient`, but it still mostly assumes some MAP workflow is appropriate. There is no first-class “do this directly, MAP is not needed” off-ramp in runtime behavior.
-**Why Not Already Tried**: Product messaging has focused on demonstrating the power of the framework, not on teaching restraint. That is common for new systems, but it creates avoidable overhead and makes MAP look heavier than its philosophy intends.
-
-### Proposed Changes
-
-- Add a lightweight workflow-fit classifier to `/map-plan` and the workflow guide, using criteria such as blast radius, model complexity, expected diff size, need for explicit acceptance criteria, and cost of independent review.
-- Introduce an explicit off-ramp outcome: `direct edit / no MAP orchestration recommended`, alongside the existing choices of `/map-fast`, `/map-efficient`, and `/map-tdd`.
-- Update docs and skills with concrete examples of good MAP candidates versus bad ones, grounded in the same categories used in the presentation.
-- Record when a task was intentionally routed away from MAP, so future tuning can compare overhead saved versus quality lost.
-- Use this classifier to sharpen `/map-fast` guidance: it should be one option in the decision tree, not the silent default for every “smallish” task.
-
-
 ## Contract-sized subtasks and artifact stage gates [2604.039]
 
 **Source**: [[acai-sh]] (article note), [[u-define-designing-user-workflows-for-hard-and-soft-constraints-in-llm-based-planning]] (paper note), plus existing MAP philosophy and artifact-pipeline backlog context
