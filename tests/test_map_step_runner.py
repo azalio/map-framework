@@ -40,6 +40,55 @@ def branch_workspace(tmp_path, monkeypatch):
     return workspace
 
 
+def _valid_run_health_payload() -> dict[str, object]:
+    artifact_entry = {
+        "kind": "state",
+        "path": ".map/test-branch/step_state.json",
+        "present": True,
+        "size_bytes": 1,
+    }
+    return {
+        "schema_version": "1.0",
+        "generated_at": "2026-05-16T10:00:00Z",
+        "workflow": "map-check",
+        "branch": "test-branch",
+        "terminal_status": "complete",
+        "current_step_id": None,
+        "current_step_phase": "COMPLETE",
+        "current_subtask_id": None,
+        "completed_step_count": 1,
+        "pending_step_count": 0,
+        "artifacts": {
+            key: artifact_entry
+            for key in (
+                "step_state",
+                "artifact_manifest",
+                "verification_summary",
+                "qa",
+                "pr_draft",
+                "review_bundle",
+                "learning_handoff",
+                "task_plan",
+                "blueprint",
+                "active_issues",
+                "known_issues",
+            )
+        },
+        "resiliency_signals": {
+            "hook_injection": {"status": "injected"},
+            "hook_injection_counts": {"injected": 1},
+            "retry_count": 0,
+            "max_retries": 5,
+            "subtask_retry_counts": {},
+            "max_subtask_retry_count": 0,
+            "guard_rework_counts": {},
+            "predictor_called": False,
+            "predictor_skipped": False,
+            "final_verifier_executed": True,
+        },
+    }
+
+
 def test_ensure_human_artifacts_creates_defaults(branch_workspace):
     result = map_step_runner.ensure_human_artifacts()
 
@@ -210,6 +259,126 @@ def test_write_run_health_report_counts_legacy_dict_steps(branch_workspace):
     report = json.loads((branch_workspace / "run_health_report.json").read_text())
     assert report["completed_step_count"] == 3
     assert report["pending_step_count"] == 2
+
+
+def test_validate_run_health_report_accepts_valid_complete(branch_workspace):
+    (branch_workspace / "step_state.json").write_text(
+        json.dumps(
+            {
+                "workflow": "map-efficient",
+                "workflow_status": "WORKFLOW_COMPLETE",
+                "completed_steps": ["1.0", "2.0"],
+                "pending_steps": [],
+                "retry_count": 1,
+                "max_retries": 5,
+                "hook_injection": {"status": "injected", "tool_name": "Bash"},
+                "final_verifier_executed": True,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    map_step_runner.write_run_health_report("map-efficient")
+    result = map_step_runner.validate_run_health_report()
+
+    assert result["status"] == "success"
+    assert result["valid"] is True
+    assert result["errors"] == []
+
+
+def test_validate_run_health_report_rejects_inconsistent_complete(branch_workspace):
+    (branch_workspace / "step_state.json").write_text(
+        json.dumps(
+            {
+                "workflow": "map-efficient",
+                "completed_steps": ["1.0"],
+                "pending_steps": ["2.0"],
+                "retry_count": 0,
+                "max_retries": 5,
+                "hook_injection": {"status": "injected"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    map_step_runner.write_run_health_report("map-efficient", "complete")
+    result = map_step_runner.validate_run_health_report()
+
+    assert result["status"] == "error"
+    assert result["valid"] is False
+    assert "complete report must not have pending steps" in result["errors"]
+    assert any("verification summary" in error for error in result["errors"])
+
+
+def test_validate_run_health_report_rejects_retry_and_hook_degradation(branch_workspace):
+    (branch_workspace / "step_state.json").write_text(
+        json.dumps(
+            {
+                "workflow": "map-debug",
+                "completed_steps": ["1.0"],
+                "pending_steps": ["2.0"],
+                "retry_count": 6,
+                "max_retries": 5,
+                "subtask_retry_counts": {"ST-001": 7},
+                "hook_injection": {"status": "skipped"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    map_step_runner.write_run_health_report("map-debug", "blocked")
+    result = map_step_runner.validate_run_health_report()
+
+    assert result["status"] == "error"
+    assert "retry_count 6 exceeds max_retries 5" in result["errors"]
+    assert "max_subtask_retry_count 7 exceeds max_retries 5" in result["errors"]
+    assert any("hook_injection degradation" in error for error in result["errors"])
+
+
+def test_validate_run_health_report_rejects_schema_drift_without_package_schema(
+    branch_workspace, monkeypatch
+):
+    payload = _valid_run_health_payload()
+    payload["terminal_status"] = "done"
+    payload["extra"] = "unexpected"
+    (branch_workspace / "run_health_report.json").write_text(
+        json.dumps(payload) + "\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        map_step_runner, "_load_run_health_schema_validator", lambda: (None, None)
+    )
+
+    result = map_step_runner.validate_run_health_report()
+
+    assert result["status"] == "error"
+    assert "invalid terminal_status: done" in result["errors"]
+    assert "unexpected field: extra" in result["errors"]
+
+
+def test_map_step_runner_cli_validate_run_health_report_exits_nonzero(tmp_path):
+    report = tmp_path / "bad-run-health.json"
+    report.write_text('{"terminal_status": "complete"}\n', encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS_PATH / "map_step_runner.py"),
+            "validate_run_health_report",
+            str(report),
+        ],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    assert payload["valid"] is False
+    assert payload["errors"]
 
 
 def test_write_pr_draft_creates_report(branch_workspace):

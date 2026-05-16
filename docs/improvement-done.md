@@ -25,6 +25,14 @@
 - Synced the shipped hook template, updated README/usage/architecture/roadmap docs, and added regression tests for skipped Bash commands, malformed hook input, non-string Bash command payloads, missing `step_state.json`, and invalid `step_state.json` preservation.
 - Verified with focused hook/template tests, run-health schema/writer tests, `make lint`, `pytest -m "not slow"`, and repo-built `uv run --no-sync mapify init <temp-path> --no-git --mcp none` generated-project smokes that executed the shipped hook and inspected the persisted skipped reason.
 
+## Health report analytics and CI assertions [2604.017-4]
+
+- Date: 2026-05-16
+- Added `validate_run_health_report` to `.map/scripts/map_step_runner.py` and the shipped template copy so CI/operator flows can fail inconsistent `.map/<branch>/run_health_report.json` artifacts with a non-zero CLI exit.
+- The validator checks package schema when available and also enforces built-in shape semantics for generated projects without `mapify_cli.schemas`: required fields, terminal-status enum, artifact inventory entries, resiliency signal types, complete-without-pending-steps, complete-without-verification, retry overflow, and hook degradation without a reason.
+- Updated README, usage, and architecture docs with the validator command and failure boundaries.
+- Verified with focused run-health writer/validator tests, template sync tests, `make lint`, `pytest -m "not slow"`, and repo-built generated-project pass/fail smoke. Full `pytest` and the slow Claude SDK suite were attempted, but live Claude SDK e2e timed out at `TestMapEfficientE2E::test_efficient_produces_code_changes` after earlier slow tests passed.
+
 ## Action-first tool use in lightweight workflows [2604.028]
 
 - Date: 2026-05-15
