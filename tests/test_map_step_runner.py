@@ -74,6 +74,132 @@ def test_write_verification_summary_creates_report(branch_workspace):
     assert "open PR" in content
 
 
+def test_write_run_health_report_creates_report_and_manifest(branch_workspace):
+    (branch_workspace / "step_state.json").write_text(
+        json.dumps(
+            {
+                "workflow": "map-efficient",
+                "current_step_id": "2.4",
+                "current_step_phase": "MONITOR",
+                "current_subtask_id": "ST-001",
+                "completed_steps": ["1.0", "1.5", "2.3"],
+                "pending_steps": ["2.4"],
+                "retry_count": 2,
+                "max_retries": 5,
+                "subtask_retry_counts": {"ST-001": 1},
+                "hook_injection": {"status": "injected", "tool_name": "Edit"},
+                "hook_injection_counts": {"injected": 3},
+                "predictor_skipped": True,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (branch_workspace / "verification-summary.md").write_text(
+        "# Verification Summary\n", encoding="utf-8"
+    )
+
+    result = map_step_runner.write_run_health_report("map-efficient", "blocked")
+
+    assert result["status"] == "success"
+    report = json.loads((branch_workspace / "run_health_report.json").read_text())
+    assert report["terminal_status"] == "blocked"
+    assert report["completed_step_count"] == 3
+    assert report["pending_step_count"] == 1
+    assert report["artifacts"]["step_state"]["present"] is True
+    assert report["artifacts"]["verification_summary"]["present"] is True
+    signals = report["resiliency_signals"]
+    assert signals["hook_injection"]["status"] == "injected"
+    assert signals["retry_count"] == 2
+    assert signals["max_subtask_retry_count"] == 1
+    assert signals["predictor_skipped"] is True
+    assert signals["final_verifier_executed"] is True
+
+    manifest = json.loads((branch_workspace / "artifact_manifest.json").read_text())
+    stage = manifest["stages"]["run_health"]
+    assert stage["status"] == "ready"
+    assert stage["metadata"]["terminal_status"] == "blocked"
+
+
+def test_map_step_runner_cli_write_run_health_report_smoke(tmp_path):
+    branch = "default"
+    branch_dir = tmp_path / ".map" / branch
+    branch_dir.mkdir(parents=True)
+    (branch_dir / "step_state.json").write_text(
+        json.dumps(
+            {
+                "workflow": "map-check",
+                "current_step_phase": "COMPLETE",
+                "completed_steps": ["1.0"],
+                "pending_steps": [],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS_PATH / "map_step_runner.py"),
+            "write_run_health_report",
+            "map-check",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "success"
+    report = json.loads((tmp_path / payload["path"]).read_text())
+    assert report["terminal_status"] == "complete"
+    assert report["workflow"] == "map-check"
+
+
+def test_write_run_health_report_derives_workflow_complete(branch_workspace):
+    (branch_workspace / "step_state.json").write_text(
+        json.dumps(
+            {
+                "workflow": "map-efficient",
+                "workflow_status": "WORKFLOW_COMPLETE",
+                "completed_steps": ["1.0"],
+                "pending_steps": [],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = map_step_runner.write_run_health_report("map-efficient")
+
+    assert result["status"] == "success"
+    assert result["terminal_status"] == "complete"
+    report = json.loads((branch_workspace / "run_health_report.json").read_text())
+    assert report["terminal_status"] == "complete"
+
+
+def test_write_run_health_report_counts_legacy_dict_steps(branch_workspace):
+    (branch_workspace / "step_state.json").write_text(
+        json.dumps(
+            {
+                "completed_steps": {"ST-001": ["1.0", "1.1"], "ST-002": ["2.0"]},
+                "pending_steps": {"ST-001": [], "ST-002": ["2.1", "2.2"]},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = map_step_runner.write_run_health_report("map-efficient", "pending")
+
+    assert result["status"] == "success"
+    report = json.loads((branch_workspace / "run_health_report.json").read_text())
+    assert report["completed_step_count"] == 3
+    assert report["pending_step_count"] == 2
+
+
 def test_write_pr_draft_creates_report(branch_workspace):
     result = map_step_runner.write_pr_draft(
         "- Added auth flow",
@@ -251,6 +377,10 @@ def test_write_learning_handoff_creates_artifacts_and_manifest(branch_workspace)
         json.dumps({"recommended_workflow": "map-efficient"}) + "\n",
         encoding="utf-8",
     )
+    (branch_workspace / "run_health_report.json").write_text(
+        json.dumps({"terminal_status": "complete"}) + "\n",
+        encoding="utf-8",
+    )
 
     result = map_step_runner.write_learning_handoff(
         "map-check",
@@ -275,6 +405,7 @@ def test_write_learning_handoff_creates_artifacts_and_manifest(branch_workspace)
         payload["artifacts"]["artifact_manifest"]["stages"]["learn_handoff"]["status"]
         == "ready"
     )
+    assert payload["artifacts"]["run_health_report"]["terminal_status"] == "complete"
     assert (
         payload["artifacts"]["learning_metrics"]["counters"]["handoff_generated_count"]
         == 1

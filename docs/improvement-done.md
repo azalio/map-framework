@@ -1,5 +1,14 @@
 # MAP Framework Improvement Done
 
+## Run health report artifact and hook injection status [2604.017-1]
+
+- Date: 2026-05-15
+- Added `write_run_health_report` to `.map/scripts/map_step_runner.py` and the shipped template copy so workflows can emit `.map/<branch>/run_health_report.json` with terminal status, step progress, artifact presence, retry counters, Predictor/final-verifier signals when present, and latest hook-injection state.
+- Extended the branch `artifact_manifest.json` ledger with a `run_health` stage and added `RUN_HEALTH_REPORT_SCHEMA` plus manifest/review-bundle schema awareness for the new artifact.
+- Updated `workflow-context-injector.py` in `.claude/hooks/` and templates to record non-blocking `hook_injection` and `hook_injection_counts` fields in `step_state.json` whenever it emits or skips a workflow reminder.
+- Updated README, usage, architecture, and roadmap docs so `run_health_report.json` is documented as the compact diagnostic snapshot, while leaving automatic closeout wiring and broader analytics as child slices in `docs/improvement-plan.md`.
+- Verified with focused step-runner/hook/schema/template tests, lint, `pytest -m "not slow"`, `pytest tests/integration/test_e2e_claude_sdk.py -v -m slow` through real `claude -p` commands, and a repo-built `uv run mapify init <temp-path> --no-git --mcp none` smoke that inspected the generated hook and map step runner.
+
 ## Action-first tool use in lightweight workflows [2604.028]
 
 - Date: 2026-05-15

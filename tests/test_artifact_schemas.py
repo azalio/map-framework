@@ -52,6 +52,7 @@ def test_validate_artifact_manifest_schema():
             "implementation": stage,
             "review": stage,
             "verification": stage,
+            "run_health": stage,
             "learn_handoff": stage,
         },
     }
@@ -60,6 +61,142 @@ def test_validate_artifact_manifest_schema():
         artifact, MODULE.ARTIFACT_MANIFEST_SCHEMA
     )
     assert is_valid, f"Errors: {errors}"
+
+
+def test_validate_artifact_manifest_schema_accepts_legacy_without_run_health():
+    stage = {
+        "status": "ready",
+        "updated_at": "2026-04-12T13:30:00",
+        "artifacts": [],
+        "metadata": {},
+    }
+    artifact = {
+        "schema_version": "1.0",
+        "branch": "test-branch",
+        "updated_at": "2026-04-12T13:30:00",
+        "stages": {
+            "workflow_fit": stage,
+            "spec": stage,
+            "plan": stage,
+            "test_contract": stage,
+            "implementation": stage,
+            "review": stage,
+            "verification": stage,
+            "learn_handoff": stage,
+        },
+    }
+
+    is_valid, errors = MODULE.validate_artifact(
+        artifact, MODULE.ARTIFACT_MANIFEST_SCHEMA
+    )
+    assert is_valid, f"Errors: {errors}"
+
+
+def test_validate_run_health_report_schema():
+    artifact_entry = {
+        "kind": "state",
+        "path": ".map/test-branch/step_state.json",
+        "present": True,
+        "size_bytes": 123,
+    }
+    artifact = {
+        "schema_version": "1.0",
+        "generated_at": "2026-05-15T10:00:00Z",
+        "workflow": "map-efficient",
+        "branch": "test-branch",
+        "terminal_status": "blocked",
+        "current_step_id": "2.4",
+        "current_step_phase": "MONITOR",
+        "current_subtask_id": "ST-001",
+        "completed_step_count": 3,
+        "pending_step_count": 1,
+        "artifacts": {
+            "step_state": artifact_entry,
+            "artifact_manifest": artifact_entry,
+            "verification_summary": artifact_entry,
+            "qa": artifact_entry,
+            "pr_draft": artifact_entry,
+            "review_bundle": artifact_entry,
+            "learning_handoff": artifact_entry,
+            "task_plan": artifact_entry,
+            "blueprint": artifact_entry,
+            "active_issues": artifact_entry,
+            "known_issues": artifact_entry,
+        },
+        "resiliency_signals": {
+            "hook_injection": {"status": "injected"},
+            "hook_injection_counts": {"injected": 1},
+            "retry_count": 2,
+            "max_retries": 5,
+            "subtask_retry_counts": {"ST-001": 1},
+            "max_subtask_retry_count": 1,
+            "guard_rework_counts": {},
+            "predictor_called": False,
+            "predictor_skipped": True,
+            "final_verifier_executed": False,
+        },
+    }
+
+    is_valid, errors = MODULE.validate_artifact(
+        artifact, MODULE.RUN_HEALTH_REPORT_SCHEMA
+    )
+    assert is_valid, f"Errors: {errors}"
+
+
+def test_run_health_report_schema_rejects_missing_inventory_and_hook_status():
+    artifact = {
+        "schema_version": "1.0",
+        "generated_at": "2026-05-15T10:00:00Z",
+        "workflow": "map-efficient",
+        "branch": "test-branch",
+        "terminal_status": "pending",
+        "completed_step_count": 0,
+        "pending_step_count": 0,
+        "artifacts": {},
+        "resiliency_signals": {
+            "hook_injection": {},
+            "hook_injection_counts": {},
+            "retry_count": 0,
+            "max_retries": 0,
+            "subtask_retry_counts": {},
+            "max_subtask_retry_count": 0,
+            "guard_rework_counts": {},
+            "predictor_called": False,
+            "predictor_skipped": False,
+            "final_verifier_executed": False,
+        },
+    }
+
+    is_valid = MODULE.validate_artifact(artifact, MODULE.RUN_HEALTH_REPORT_SCHEMA)[0]
+    assert not is_valid
+
+
+def test_run_health_report_schema_rejects_invalid_terminal_status():
+    artifact = {
+        "schema_version": "1.0",
+        "generated_at": "2026-05-15T10:00:00Z",
+        "workflow": "map-efficient",
+        "branch": "test-branch",
+        "terminal_status": "done",
+        "completed_step_count": 0,
+        "pending_step_count": 0,
+        "artifacts": {},
+        "resiliency_signals": {
+            "hook_injection": {},
+            "hook_injection_counts": {},
+            "retry_count": 0,
+            "max_retries": 0,
+            "subtask_retry_counts": {},
+            "max_subtask_retry_count": 0,
+            "guard_rework_counts": {},
+            "predictor_called": False,
+            "predictor_skipped": False,
+            "final_verifier_executed": False,
+        },
+    }
+
+    is_valid = MODULE.validate_artifact(artifact, MODULE.RUN_HEALTH_REPORT_SCHEMA)[0]
+    assert not is_valid
 
 
 def test_validate_test_handoff_schema():
@@ -131,6 +268,7 @@ def test_validate_review_bundle_schema():
             "pr_draft": {**artifact_entry, "kind": "pr_draft", "path": ".map/test-branch/pr-draft.md"},
             "active_issues": {**artifact_entry, "kind": "active_issues", "path": ".map/test-branch/active-issues.json"},
             "artifact_manifest": {**artifact_entry, "kind": "artifact_manifest", "path": ".map/test-branch/artifact_manifest.json"},
+            "run_health_report": {**artifact_entry, "kind": "run_health_report", "path": ".map/test-branch/run_health_report.json"},
             "latest_plan_review": numbered_entry,
             "latest_code_review": missing_numbered,
             "test_handoffs": [multi_entry],

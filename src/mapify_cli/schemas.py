@@ -569,6 +569,7 @@ ARTIFACT_MANIFEST_SCHEMA = {
                 "implementation": ARTIFACT_STAGE_SCHEMA,
                 "review": ARTIFACT_STAGE_SCHEMA,
                 "verification": ARTIFACT_STAGE_SCHEMA,
+                "run_health": ARTIFACT_STAGE_SCHEMA,
                 "learn_handoff": ARTIFACT_STAGE_SCHEMA,
             },
             "required": [
@@ -617,6 +618,111 @@ TEST_HANDOFF_SCHEMA = {
         "contract_summary",
         "notes",
         "updated_at",
+    ],
+    "additionalProperties": False,
+}
+
+
+_RUN_HEALTH_ARTIFACT_ENTRY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "kind": {"type": "string"},
+        "path": {"type": "string"},
+        "present": {"type": "boolean"},
+        "size_bytes": {"type": "integer", "minimum": 0},
+    },
+    "required": ["kind", "path", "present", "size_bytes"],
+    "additionalProperties": False,
+}
+
+_RUN_HEALTH_ARTIFACT_KEYS = [
+    "step_state",
+    "artifact_manifest",
+    "verification_summary",
+    "qa",
+    "pr_draft",
+    "review_bundle",
+    "learning_handoff",
+    "task_plan",
+    "blueprint",
+    "active_issues",
+    "known_issues",
+]
+
+
+RUN_HEALTH_REPORT_SCHEMA = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://mapframework.dev/schemas/run-health-report.json",
+    "title": "MAP Run Health Report",
+    "description": "Branch-scoped workflow observability report stored in .map/<branch>/run_health_report.json",
+    "type": "object",
+    "properties": {
+        "schema_version": {"type": "string"},
+        "generated_at": {"type": "string", "format": "date-time"},
+        "workflow": {"type": "string"},
+        "branch": {"type": "string"},
+        "terminal_status": {
+            "type": "string",
+            "enum": ["pending", "complete", "blocked", "won't_do", "superseded"],
+        },
+        "current_step_id": {"type": ["string", "null"]},
+        "current_step_phase": {"type": ["string", "null"]},
+        "current_subtask_id": {"type": ["string", "null"]},
+        "completed_step_count": {"type": "integer", "minimum": 0},
+        "pending_step_count": {"type": "integer", "minimum": 0},
+        "artifacts": {
+            "type": "object",
+            "properties": {
+                key: _RUN_HEALTH_ARTIFACT_ENTRY_SCHEMA
+                for key in _RUN_HEALTH_ARTIFACT_KEYS
+            },
+            "required": _RUN_HEALTH_ARTIFACT_KEYS,
+            "additionalProperties": _RUN_HEALTH_ARTIFACT_ENTRY_SCHEMA,
+        },
+        "resiliency_signals": {
+            "type": "object",
+            "properties": {
+                "hook_injection": {
+                    "type": "object",
+                    "properties": {"status": {"type": "string"}},
+                    "required": ["status"],
+                    "additionalProperties": True,
+                },
+                "hook_injection_counts": {"type": "object"},
+                "retry_count": {"type": "integer", "minimum": 0},
+                "max_retries": {"type": "integer", "minimum": 0},
+                "subtask_retry_counts": {"type": "object"},
+                "max_subtask_retry_count": {"type": "integer", "minimum": 0},
+                "guard_rework_counts": {"type": "object"},
+                "predictor_called": {"type": "boolean"},
+                "predictor_skipped": {"type": "boolean"},
+                "final_verifier_executed": {"type": "boolean"},
+            },
+            "required": [
+                "hook_injection",
+                "hook_injection_counts",
+                "retry_count",
+                "max_retries",
+                "subtask_retry_counts",
+                "max_subtask_retry_count",
+                "guard_rework_counts",
+                "predictor_called",
+                "predictor_skipped",
+                "final_verifier_executed",
+            ],
+            "additionalProperties": False,
+        },
+    },
+    "required": [
+        "schema_version",
+        "generated_at",
+        "workflow",
+        "branch",
+        "terminal_status",
+        "completed_step_count",
+        "pending_step_count",
+        "artifacts",
+        "resiliency_signals",
     ],
     "additionalProperties": False,
 }
@@ -674,6 +780,7 @@ REVIEW_BUNDLE_SCHEMA = {
                 "pr_draft": _ARTIFACT_ENTRY_SCHEMA,
                 "active_issues": _ARTIFACT_ENTRY_SCHEMA,
                 "artifact_manifest": _ARTIFACT_ENTRY_SCHEMA,
+                "run_health_report": _ARTIFACT_ENTRY_SCHEMA,
                 "latest_plan_review": _ARTIFACT_ENTRY_SCHEMA,
                 "latest_code_review": _ARTIFACT_ENTRY_SCHEMA,
                 "test_handoffs": {

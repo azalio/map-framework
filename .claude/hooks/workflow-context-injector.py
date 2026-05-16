@@ -18,6 +18,7 @@ import json
 import os
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Keep in sync with map_step_runner.py GOAL_HEADING_RE
@@ -118,6 +119,46 @@ def load_step_state(branch: str) -> dict | None:
             return json.load(f)
     except (json.JSONDecodeError, IOError):
         return None
+
+
+def step_state_path(branch: str) -> Path:
+    """Return the branch step_state.json path."""
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+    return project_dir / ".map" / branch / "step_state.json"
+
+
+def record_hook_injection_status(
+    branch: str,
+    state: dict,
+    status: str,
+    reason: str,
+    tool_name: str,
+    additional_context_chars: int = 0,
+) -> None:
+    """Best-effort status write; hook failures must never block tool execution."""
+    path = step_state_path(branch)
+    try:
+        counts = state.get("hook_injection_counts")
+        if not isinstance(counts, dict):
+            counts = {}
+        counts[status] = int(counts.get(status, 0) or 0) + 1
+        state["hook_injection_counts"] = counts
+        state["hook_injection"] = {
+            "status": status,
+            "reason": reason,
+            "tool_name": tool_name,
+            "additional_context_chars": additional_context_chars,
+            "updated_at": datetime.now(timezone.utc).isoformat().replace(
+                "+00:00", "Z"
+            ),
+        }
+        tmp_file = path.with_suffix(".tmp")
+        tmp_file.write_text(
+            json.dumps(state, indent=2, ensure_ascii=True), encoding="utf-8"
+        )
+        tmp_file.replace(path)
+    except Exception:
+        pass
 
 
 def should_inject_for_bash(command: str) -> bool:
@@ -332,6 +373,9 @@ def main() -> None:
 
     reminder = format_reminder(state, branch)
     if reminder:
+        record_hook_injection_status(
+            branch, state, "injected", "reminder emitted", tool_name, len(reminder)
+        )
         output = {
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
@@ -340,6 +384,9 @@ def main() -> None:
         }
         print(json.dumps(output))
     else:
+        record_hook_injection_status(
+            branch, state, "skipped", "no reminder formatted", tool_name
+        )
         print("{}")
 
     sys.exit(0)
