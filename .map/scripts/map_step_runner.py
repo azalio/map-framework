@@ -1226,11 +1226,6 @@ def write_verification_summary(
     return {"status": "success", "path": str(summary_file)}
 
 
-def _as_list(value: object) -> list[object]:
-    """Return value when it is a list, otherwise an empty list."""
-    return value if isinstance(value, list) else []
-
-
 def _count_step_entries(value: object) -> int:
     """Count step entries across legacy list and per-subtask dict shapes."""
     if isinstance(value, list):
