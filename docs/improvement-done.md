@@ -107,3 +107,13 @@
 - Added skill-catalog regression tests that require supported `skillClass` values, enforce task/manual consistency, prevent future reference skills from silently becoming hook-backed/manual workflows, and require hybrid skills to declare `runtimeEffects`.
 - Removed stale docs that pointed users at non-existent `map-workflows-guide` and `map-cli-reference` skill paths.
 - Verified with `pytest tests/test_skills.py tests/test_template_sync.py -v`, `pytest -m "not slow"`, `make lint`, and a repo-built `uv run mapify init <temp-dir> --no-git --mcp none` smoke that inspected generated `skillClass` metadata.
+
+## Detached reviewer context and worktree-assisted review [2604.037]
+
+- Date: 2026-05-17
+- Decision: rejected as an active-plan item because the requested review-isolation capability is already implemented in the repo.
+- Repo evidence: `.claude/skills/map-review/SKILL.md` and the shipped template copy expose `/map-review --detached`, document graceful degradation, and tell reviewer agents to use the detached worktree read-only when available.
+- Repo evidence: `.map/scripts/map_step_runner.py` and the shipped template copy define `create_review_bundle` plus `prepare_detached_review`, producing `.map/<branch>/review-bundle.json`, `.map/<branch>/review-bundle.md`, and an optional `.map/<branch>/detached-review/` worktree without mutating the source branch.
+- Repo evidence: `tests/test_skills.py` and `tests/test_map_step_runner.py` cover review bundle wiring, detached flag documentation, no-source-mutation guarantees, unavailable detached fallback, path traversal rejection, and worktree-add failures.
+- Repo evidence: README, `docs/USAGE.md`, `docs/ARCHITECTURE.md`, and `docs/roadmap.md` already document the review bundle and detached review path for users and maintainers.
+- No runtime change was needed; this loop removed the stale active backlog section so future loops do not rebuild shipped detached-review behavior.
