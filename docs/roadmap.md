@@ -52,7 +52,7 @@ The old "Iteration 1" is mostly complete:
 - `/map-task ST-00N` can resume implementation from the persisted TDD contract.
 - `learning-handoff.md` / `.json` preserves context for deferred `/map-learn`.
 - Learning metrics and repeated learned-rule violation tracking exist.
-- `run_health_report.json` records terminal status, retry counters, artifact presence, and latest hook-injection status for diagnosis and resume handoff.
+- `run_health_report.json` records terminal status, retry counters, artifact presence, latest hook-injection status, and auditable skipped hook reasons for diagnosis and resume handoff.
 
 Useful follow-up from that iteration:
 

@@ -134,11 +134,6 @@
 - Add CI assertions that the resiliency artifacts are always produced: for workflows using AI agents (/map-efficient, /map-debug, /map-review, /map-learn), validate the health report JSON exists and includes terminal_status values (pending/complete/blocked/won't_do/superseded) exactly as specified in the state artifact section.
 - Create a small set of resiliency regression tests: (1) simulate compaction/no checkpoint and confirm hook injection continues without blocking session start (architecture explicitly says session start must always succeed), (2) simulate oversized checkpoint file >256KB and confirm injection is skipped but workflow proceeds, (3) simulate invalid UTF-8 and confirm injection is rejected but session continues, using the existing security validation rules and stated performance characteristics (e.g., <0.5s total hook time).
 
-## Expand hook degradation status coverage [2604.017-3]
-
-**Benefit Hypothesis**: Recording explicit hook outcomes for invalid JSON, missing state, oversized or unreadable context inputs, and skipped-significance decisions will make hook resilience auditable instead of only best-effort.
-**Scope**: Keep hook exit behavior non-blocking, but persist structured `hook_injection` reasons whenever a branch state file can be safely updated. Add regression tests for malformed input, missing `step_state.json`, and skipped Bash commands.
-
 ## Health report analytics and CI assertions [2604.017-4]
 
 **Benefit Hypothesis**: A deterministic validation command over `run_health_report.json` will catch workflows that claim completion without verification artifacts or with unexplained retry/hook degradation, improving CI and post-mortem signal quality.

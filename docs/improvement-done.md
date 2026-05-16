@@ -17,6 +17,14 @@
 - Synced the shipped skill templates, updated README/usage/architecture docs, and added prompt-contract tests that reject hard-coded `complete` snippets and assert `map-efficient`/`map-debug` sequencing.
 - Verified with focused skill/template tests, `make lint`, `pytest -m "not slow"`, a repo-built `uv run --no-sync mapify init <temp-path> --no-git --mcp none` generated-project smoke that inspected `run_health_report.json`, and a read-only review pass. Full unfiltered `pytest` and the slow Claude SDK suite were attempted, but live SDK tests exceeded tool timeouts after making progress; deterministic and no-LLM artifact checks passed.
 
+## Expand hook degradation status coverage [2604.017-3]
+
+- Date: 2026-05-16
+- Added explicit skipped hook status recording for malformed hook input, non-object hook payloads, non-injected tools, and insignificant Bash commands when an existing branch `step_state.json` can be safely parsed and updated.
+- Preserved the non-blocking hook contract for missing, invalid, non-object, or unreadable `step_state.json` by returning `{}` without creating or clobbering state.
+- Synced the shipped hook template, updated README/usage/architecture/roadmap docs, and added regression tests for skipped Bash commands, malformed hook input, non-string Bash command payloads, missing `step_state.json`, and invalid `step_state.json` preservation.
+- Verified with focused hook/template tests, run-health schema/writer tests, `make lint`, `pytest -m "not slow"`, and repo-built `uv run --no-sync mapify init <temp-path> --no-git --mcp none` generated-project smokes that executed the shipped hook and inspected the persisted skipped reason.
+
 ## Action-first tool use in lightweight workflows [2604.028]
 
 - Date: 2026-05-15
