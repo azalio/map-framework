@@ -72,6 +72,42 @@ RUN_HEALTH_TERMINAL_STATUSES = {
     "won't_do",
     "superseded",
 }
+RUN_HEALTH_REQUIRED_KEYS = {
+    "schema_version",
+    "generated_at",
+    "workflow",
+    "branch",
+    "terminal_status",
+    "completed_step_count",
+    "pending_step_count",
+    "artifacts",
+    "resiliency_signals",
+}
+RUN_HEALTH_ARTIFACT_KEYS = {
+    "step_state",
+    "artifact_manifest",
+    "verification_summary",
+    "qa",
+    "pr_draft",
+    "review_bundle",
+    "learning_handoff",
+    "task_plan",
+    "blueprint",
+    "active_issues",
+    "known_issues",
+}
+RUN_HEALTH_SIGNAL_KEYS = {
+    "hook_injection",
+    "hook_injection_counts",
+    "retry_count",
+    "max_retries",
+    "subtask_retry_counts",
+    "max_subtask_retry_count",
+    "guard_rework_counts",
+    "predictor_called",
+    "predictor_skipped",
+    "final_verifier_executed",
+}
 WORKFLOW_FIT_ROUTES = {
     "direct-edit",
     "map-fast",
@@ -1412,6 +1448,195 @@ def write_run_health_report(
         "path": str(report_path),
         "manifest_path": manifest_result["path"],
         "terminal_status": status,
+    }
+
+
+def _load_run_health_schema_validator() -> tuple[object, object] | tuple[None, None]:
+    """Return optional package schema validator for generated-project installs."""
+    try:
+        import importlib as _importlib
+
+        _schemas_mod = sys.modules.get("mapify_cli.schemas")
+        if _schemas_mod is None:
+            _schemas_mod = _importlib.import_module("mapify_cli.schemas")
+        return (
+            getattr(_schemas_mod, "RUN_HEALTH_REPORT_SCHEMA", None),
+            getattr(_schemas_mod, "validate_artifact", None),
+        )
+    except ImportError:
+        return (None, None)
+
+
+def _artifact_present(report: Mapping[str, object], key: str) -> bool:
+    artifacts = report.get("artifacts")
+    if not isinstance(artifacts, Mapping):
+        return False
+    entry = artifacts.get(key)
+    return isinstance(entry, Mapping) and bool(entry.get("present"))
+
+
+def _validate_run_health_report_shape(report: Mapping[str, object]) -> list[str]:
+    """Validate the stable run-health contract without optional dependencies."""
+    errors: list[str] = []
+    unexpected_keys = set(report) - RUN_HEALTH_REQUIRED_KEYS - {
+        "current_step_id",
+        "current_step_phase",
+        "current_subtask_id",
+    }
+    for key in sorted(RUN_HEALTH_REQUIRED_KEYS - set(report)):
+        errors.append(f"missing required field: {key}")
+    for key in sorted(unexpected_keys):
+        errors.append(f"unexpected field: {key}")
+
+    terminal_status = str(report.get("terminal_status") or "").strip().lower()
+    if terminal_status not in RUN_HEALTH_TERMINAL_STATUSES:
+        errors.append(f"invalid terminal_status: {terminal_status or '[missing]'}")
+
+    for key in ("schema_version", "generated_at", "workflow", "branch"):
+        if key in report and not isinstance(report.get(key), str):
+            errors.append(f"{key} must be a string")
+    for key in ("completed_step_count", "pending_step_count"):
+        value = report.get(key)
+        if key in report and (not isinstance(value, int) or value < 0):
+            errors.append(f"{key} must be a non-negative integer")
+
+    artifacts = report.get("artifacts")
+    if not isinstance(artifacts, Mapping):
+        errors.append("artifacts must be an object")
+    else:
+        for key in sorted(RUN_HEALTH_ARTIFACT_KEYS - set(artifacts)):
+            errors.append(f"artifacts.{key} is required")
+        for key, value in artifacts.items():
+            if not isinstance(value, Mapping):
+                errors.append(f"artifacts.{key} must be an object")
+                continue
+            for field in ("kind", "path"):
+                if not isinstance(value.get(field), str):
+                    errors.append(f"artifacts.{key}.{field} must be a string")
+            if not isinstance(value.get("present"), bool):
+                errors.append(f"artifacts.{key}.present must be a boolean")
+            size_bytes = value.get("size_bytes")
+            if not isinstance(size_bytes, int) or size_bytes < 0:
+                errors.append(f"artifacts.{key}.size_bytes must be a non-negative integer")
+
+    signals = report.get("resiliency_signals")
+    if not isinstance(signals, Mapping):
+        errors.append("resiliency_signals must be an object")
+    else:
+        for key in sorted(RUN_HEALTH_SIGNAL_KEYS - set(signals)):
+            errors.append(f"resiliency_signals.{key} is required")
+        hook = signals.get("hook_injection")
+        if not isinstance(hook, Mapping):
+            errors.append("resiliency_signals.hook_injection must be an object")
+        elif not isinstance(hook.get("status"), str):
+            errors.append("resiliency_signals.hook_injection.status must be a string")
+        for key in ("hook_injection_counts", "subtask_retry_counts", "guard_rework_counts"):
+            if key in signals and not isinstance(signals.get(key), Mapping):
+                errors.append(f"resiliency_signals.{key} must be an object")
+        for key in ("retry_count", "max_retries", "max_subtask_retry_count"):
+            value = signals.get(key)
+            if key in signals and (not isinstance(value, int) or value < 0):
+                errors.append(f"resiliency_signals.{key} must be a non-negative integer")
+        for key in ("predictor_called", "predictor_skipped", "final_verifier_executed"):
+            if key in signals and not isinstance(signals.get(key), bool):
+                errors.append(f"resiliency_signals.{key} must be a boolean")
+
+    return errors
+
+
+def validate_run_health_report(
+    report_path: str = "",
+    branch: Optional[str] = None,
+) -> dict[str, object]:
+    """Validate run_health_report.json for CI/operator closeout checks."""
+    branch_name = branch or get_branch_name()
+    path = Path(report_path) if report_path else get_branch_dir(branch_name) / "run_health_report.json"
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    try:
+        report = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {
+            "status": "error",
+            "valid": False,
+            "path": str(path),
+            "errors": [f"run health report not found: {path}"],
+            "warnings": [],
+        }
+    except (json.JSONDecodeError, OSError) as exc:
+        return {
+            "status": "error",
+            "valid": False,
+            "path": str(path),
+            "errors": [f"cannot read run health report: {exc}"],
+            "warnings": [],
+        }
+
+    if not isinstance(report, dict):
+        return {
+            "status": "error",
+            "valid": False,
+            "path": str(path),
+            "errors": ["run health report must be a JSON object"],
+            "warnings": [],
+        }
+
+    errors.extend(_validate_run_health_report_shape(report))
+
+    schema, validate_artifact = _load_run_health_schema_validator()
+    if schema is not None and validate_artifact is not None:
+        is_valid, schema_errors = validate_artifact(report, schema)
+        if not is_valid:
+            errors.extend(f"schema: {error}" for error in schema_errors)
+    else:
+        warnings.append("schema validator unavailable; semantic checks only")
+
+    terminal_status = str(report.get("terminal_status") or "").strip().lower()
+    pending_step_count = _as_int(report.get("pending_step_count"))
+    signals = _as_dict(report.get("resiliency_signals"))
+    hook_injection = _as_dict(signals.get("hook_injection"))
+    hook_status = str(hook_injection.get("status") or "").strip().lower()
+    hook_reason = str(hook_injection.get("reason") or "").strip()
+    retry_count = _as_int(signals.get("retry_count"))
+    max_retries = _as_int(signals.get("max_retries"))
+    max_subtask_retry_count = _as_int(signals.get("max_subtask_retry_count"))
+    final_verifier_executed = bool(signals.get("final_verifier_executed"))
+    verification_present = _artifact_present(report, "verification_summary")
+
+    if terminal_status == "complete":
+        if pending_step_count:
+            errors.append("complete report must not have pending steps")
+        if not (final_verifier_executed or verification_present):
+            errors.append(
+                "complete report must include a final verifier signal or verification summary artifact"
+            )
+
+    if max_retries > 0 and retry_count > max_retries:
+        errors.append(f"retry_count {retry_count} exceeds max_retries {max_retries}")
+    if max_retries > 0 and max_subtask_retry_count > max_retries:
+        errors.append(
+            f"max_subtask_retry_count {max_subtask_retry_count} exceeds max_retries {max_retries}"
+        )
+
+    if hook_status in {"", "unknown", "skipped", "degraded", "error"} and not hook_reason:
+        errors.append(
+            "hook_injection degradation must include a reason when status is unknown, skipped, degraded, or error"
+        )
+
+    if terminal_status == "pending" and pending_step_count == 0:
+        warnings.append("pending report has no pending steps")
+    if terminal_status in {"blocked", "superseded"} and not _artifact_present(report, "step_state"):
+        warnings.append(f"{terminal_status} report has no step_state artifact")
+
+    valid = not errors
+    return {
+        "status": "success" if valid else "error",
+        "valid": valid,
+        "path": str(path),
+        "terminal_status": terminal_status,
+        "errors": errors,
+        "warnings": warnings,
     }
 
 
@@ -3656,6 +3881,13 @@ if __name__ == "__main__":
         terminal_status = sys.argv[3] if len(sys.argv) >= 4 else ""
         result = write_run_health_report(workflow, terminal_status)
         print(json.dumps(result, indent=2, ensure_ascii=True))
+
+    elif func_name == "validate_run_health_report":
+        report_path = sys.argv[2] if len(sys.argv) >= 3 else ""
+        result = validate_run_health_report(report_path)
+        print(json.dumps(result, indent=2, ensure_ascii=True))
+        if not result.get("valid"):
+            sys.exit(1)
 
     elif func_name == "create_review_bundle":
         result = create_review_bundle()

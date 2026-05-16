@@ -124,7 +124,7 @@
 **Reasoning**: The architecture already treats resiliency/observability as important but primarily as implementation detail: workflows persist state to disk via .map/progress.md and state_<branch>.json (State Artifact + terminal_status table), hooks are explicitly non-blocking and security validated with a 4-layer approach (path traversal/size/UTF-8/control chars) and "Session start must always succeed" in the bash hook section, and structured workflow logging exists via MapWorkflowLogger with workflow context in .map/workflow_logs/. However, the brief does not define a single first-class, end-to-end "health report" artifact nor a schema that ties these signals together per run. This limits the ability to reliably assert resiliency behavior across workflows and to automate diagnosis. The proposed changes directly build on the existing artifacts (state_<branch>.json; verification_results_<branch>.json) and the documented hook resiliency behavior (skip injection but continue; exit 0; validation constraints) to make it measurable and enforceable in CI.
 **Why Not Already Tried**: Completed/attempted ideas listed (2604.019, 2604.020, 2604.021, 2604.023) do not include a gap that consolidates resiliency/observability into a single standardized, CI-validated artifact. The architecture evidence shows logging and hook resiliency exist, but they are scattered across .map/progress.md, state_<branch>.json, and .map/workflow_logs/ without a unified health report schema. The missing piece is an explicit cross-workflow contract and CI checks that validate resiliency behavior end-to-end; that integration appears absent from the provided evidence of already completed ideas.
 
-**Execution note:** Do not execute this umbrella item directly. The first shipped slice created the report writer and hook status producer as `2604.017-1`; use the child slices below for remaining workflow wiring and analytics.
+**Execution note:** Do not execute this umbrella item directly. It was decomposed into follow-up slices for report creation, closeout wiring, hook degradation coverage, and validation. Add a new child slice only if future analytics or post-mortem reporting needs another reviewable branch.
 
 ### Proposed Changes
 
@@ -133,12 +133,6 @@
 - Introduce a fault-tolerance "graceful degradation contract" for hook injection in workflow-context-injector.py: instead of only non-blocking behavior (exit 0; skip injection on validator failures), explicitly emit a structured per-tool-call status field into step_state.json (e.g., research_agent_called=true/false, injection_status=skipped|injected|sanitized) derived from the hook’s existing 4-layer validation (path traversal, size bomb, UTF-8, content sanitization).
 - Add CI assertions that the resiliency artifacts are always produced: for workflows using AI agents (/map-efficient, /map-debug, /map-review, /map-learn), validate the health report JSON exists and includes terminal_status values (pending/complete/blocked/won't_do/superseded) exactly as specified in the state artifact section.
 - Create a small set of resiliency regression tests: (1) simulate compaction/no checkpoint and confirm hook injection continues without blocking session start (architecture explicitly says session start must always succeed), (2) simulate oversized checkpoint file >256KB and confirm injection is skipped but workflow proceeds, (3) simulate invalid UTF-8 and confirm injection is rejected but session continues, using the existing security validation rules and stated performance characteristics (e.g., <0.5s total hook time).
-
-## Health report analytics and CI assertions [2604.017-4]
-
-**Benefit Hypothesis**: A deterministic validation command over `run_health_report.json` will catch workflows that claim completion without verification artifacts or with unexplained retry/hook degradation, improving CI and post-mortem signal quality.
-**Scope**: Add a focused validator or `map-check` subcommand that validates the health report schema, terminal-status/artifact combinations, and retry threshold signals. Document how teams should inspect or fail CI on the report.
-
 
 ## Claude 4.6 command simplification and verb calibration [2604.025]
 

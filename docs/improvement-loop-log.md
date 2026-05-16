@@ -1,3 +1,19 @@
+## 2026-05-16 - Health report analytics and CI assertions [2604.017-4]
+
+- Decision: `implemented`
+- Branch: `2604.017-4-health-report-validation`
+- Baseline: `run_health_report.json` was written during workflow closeout, but teams had no deterministic command to fail inconsistent reports in CI or operator handoff.
+- Forward Change: Added `validate_run_health_report` with schema checks when available plus built-in shape and semantic checks for generated projects, synced the shipped script template, documented the command, and added regressions for valid reports, complete-with-pending steps, missing verification evidence, retry overflow, unexplained hook degradation, invalid terminal status, and CLI non-zero exit.
+- Decisive Validation: `pytest tests/test_map_step_runner.py::test_write_run_health_report_creates_report_and_manifest tests/test_map_step_runner.py::test_validate_run_health_report_accepts_valid_complete tests/test_map_step_runner.py::test_validate_run_health_report_rejects_inconsistent_complete tests/test_map_step_runner.py::test_validate_run_health_report_rejects_retry_and_hook_degradation tests/test_map_step_runner.py::test_validate_run_health_report_rejects_schema_drift_without_package_schema tests/test_map_step_runner.py::test_map_step_runner_cli_validate_run_health_report_exits_nonzero tests/test_template_sync.py -v`, `make lint`, `pytest -m "not slow"`, and generated-project pass/fail smoke passed.
+- Validation Boundary: Full `pytest` and `pytest tests/integration/test_e2e_claude_sdk.py -v -m slow` were attempted, but live Claude SDK e2e timed out at `TestMapEfficientE2E::test_efficient_produces_code_changes`; no deterministic failure surfaced before the timeout.
+- Review Result: Diff review found schema drift could pass when package schema/jsonschema was unavailable; fixed by adding built-in run-health shape checks and a regression that disables package schema loading.
+- Next Trigger: Reuse this learning whenever adding generated-project validators that must fail CI without optional package dependencies.
+- Reusable Learnings:
+  - command: `python3 .map/scripts/map_step_runner.py validate_run_health_report [path]`
+  - command: `uv run --no-sync mapify init <new-dir> --no-git --mcp none`
+  - invariant: `Generated-project validators must enforce critical schema shape locally, not only through optional package imports or optional jsonschema behavior.`
+  - review-check: `When documenting a validator as CI-failing schema enforcement, test the dependency-unavailable path and at least one malformed-but-semantically-benign artifact.`
+
 ## 2026-05-16 - Expand hook degradation status coverage [2604.017-3]
 
 - Decision: `implemented`
