@@ -9,6 +9,14 @@
 - Updated README, usage, architecture, and roadmap docs so `run_health_report.json` is documented as the compact diagnostic snapshot, while leaving automatic closeout wiring and broader analytics as child slices in `docs/improvement-plan.md`.
 - Verified with focused step-runner/hook/schema/template tests, lint, `pytest -m "not slow"`, `pytest tests/integration/test_e2e_claude_sdk.py -v -m slow` through real `claude -p` commands, and a repo-built `uv run mapify init <temp-path> --no-git --mcp none` smoke that inspected the generated hook and map step runner.
 
+## Auto-write run health reports from workflow closeout paths [2604.017-2]
+
+- Date: 2026-05-16
+- Wired `/map-efficient`, `/map-debug`, `/map-check`, and `/map-review` closeout prompts to write `.map/<branch>/run_health_report.json` via `write_run_health_report` after the terminal verdict is known.
+- Required each closeout snippet to set `RUN_HEALTH_STATUS` from the workflow/review/debug verdict instead of defaulting to `complete`, preserving `pending`, `blocked`, `won't_do`, and `superseded` paths.
+- Synced the shipped skill templates, updated README/usage/architecture docs, and added prompt-contract tests that reject hard-coded `complete` snippets and assert `map-efficient`/`map-debug` sequencing.
+- Verified with focused skill/template tests, `make lint`, `pytest -m "not slow"`, a repo-built `uv run --no-sync mapify init <temp-path> --no-git --mcp none` generated-project smoke that inspected `run_health_report.json`, and a read-only review pass. Full unfiltered `pytest` and the slow Claude SDK suite were attempted, but live SDK tests exceeded tool timeouts after making progress; deterministic and no-LLM artifact checks passed.
+
 ## Action-first tool use in lightweight workflows [2604.028]
 
 - Date: 2026-05-15

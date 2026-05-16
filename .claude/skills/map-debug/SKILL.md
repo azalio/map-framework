@@ -235,6 +235,17 @@ After all fixes applied:
 2. **Verify original issue is resolved**
 3. **Check predictor's similar_issues** - fix those too if relevant
 4. **Create commit** with clear description of fix and root cause
+5. **Write a run health report** with the terminal status that matches the verified debug outcome:
+
+```bash
+# Set from verification: complete, pending, blocked, won't_do, or superseded.
+RUN_HEALTH_STATUS="${RUN_HEALTH_STATUS:?set RUN_HEALTH_STATUS from the debug verification outcome}"
+python3 .map/scripts/map_step_runner.py write_run_health_report \
+  map-debug \
+  "$RUN_HEALTH_STATUS"
+```
+
+Use `complete` only when the bug is fixed and verified. Use `pending` when more code work remains, `blocked` when an external/tooling dependency prevents verification, `won't_do` when the fix is intentionally abandoned, and `superseded` when another branch/workflow owns the resolution. This writes `.map/<branch>/run_health_report.json`, updates the `run_health` stage in `artifact_manifest.json`, and gives reviewers one machine-readable snapshot of retries, artifact presence, hook status, and terminal state.
 
 ---
 

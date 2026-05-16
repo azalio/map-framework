@@ -685,6 +685,74 @@ class TestLightweightWorkflowSkillContracts:
         )
 
 
+class TestRunHealthCloseoutWiring:
+    """Regression tests for auto-written run health reports in closeout prompts."""
+
+    @pytest.fixture
+    def project_root(self):
+        return Path(__file__).parent.parent
+
+    @pytest.mark.parametrize(
+        ("skill_name", "status_markers"),
+        [
+            (
+                "map-efficient",
+                ["complete", "pending", "blocked", "won't_do", "superseded"],
+            ),
+            (
+                "map-debug",
+                ["complete", "pending", "blocked", "won't_do", "superseded"],
+            ),
+            (
+                "map-check",
+                ["READY FOR REVIEW -> complete", "NEEDS WORK -> pending", "blocked"],
+            ),
+            (
+                "map-review",
+                ["PROCEED -> complete", "REVISE -> pending", "BLOCK -> blocked"],
+            ),
+        ],
+    )
+    def test_closeout_prompts_write_run_health_report(
+        self, project_root, skill_name, status_markers
+    ):
+        skill_md = project_root / ".claude" / "skills" / skill_name / "SKILL.md"
+        content = skill_md.read_text(encoding="utf-8")
+
+        assert "write_run_health_report" in content
+        expected_invocation = f'''write_run_health_report \\
+  {skill_name} \\
+  "$RUN_HEALTH_STATUS"'''
+        assert expected_invocation in content
+        hardcoded_complete = f"""write_run_health_report \\
+  {skill_name} \\
+  complete"""
+        assert hardcoded_complete not in content
+        assert "run_health_report.json" in content
+        assert "run_health" in content
+        assert "RUN_HEALTH_STATUS" in content
+        assert 'RUN_HEALTH_STATUS="complete"' not in content
+        assert 'RUN_HEALTH_STATUS="${RUN_HEALTH_STATUS:?' in content
+        for marker in status_markers:
+            assert marker in content
+
+    def test_map_efficient_writes_run_health_after_final_decision(self, project_root):
+        skill_md = project_root / ".claude" / "skills" / "map-efficient" / "SKILL.md"
+        content = skill_md.read_text(encoding="utf-8")
+
+        assert content.index("### 3.3 Evaluate Results") < content.index(
+            "write_run_health_report"
+        )
+
+    def test_map_debug_writes_run_health_after_verification(self, project_root):
+        skill_md = project_root / ".claude" / "skills" / "map-debug" / "SKILL.md"
+        content = skill_md.read_text(encoding="utf-8")
+
+        assert content.index("## Step 4: Verification") < content.index(
+            "write_run_health_report"
+        )
+
+
 class TestMapReviewSkillBundleWiring:
     """Validate that map-review SKILL.md is wired to consume the persisted review bundle.
 
