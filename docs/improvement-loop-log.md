@@ -1,3 +1,16 @@
+## 2026-05-17 - Detached reviewer context and worktree-assisted review [2604.037]
+
+- Decision: `rejected`
+- Branch: `codex/2604-037-close-detached-review-plan`
+- Baseline: The idea remained active in `docs/improvement-plan.md`, but runtime, shipped template, docs, and tests showed `/map-review --detached` and the canonical review bundle had already shipped.
+- Forward Change: Removed the stale active plan section, recorded the exact `[2604.037]` heading in `docs/improvement-done.md` with repo-grounded evidence, and changed `docs/roadmap.md` from open follow-up to shipped status instead of rebuilding existing behavior.
+- Decisive Validation: the improvement-plan-loop idea indexer, focused detached-review skill tests, focused `prepare_detached_review` tests, and a repo-built generated-project smoke verified the plan/done state and shipped review-isolation artifacts.
+- Review Result: Diff review found `docs/roadmap.md` still listed `2604.037` as open; fixed by marking the review-independence iteration shipped and keeping contract-sized subtasks as the next active roadmap work.
+- Next Trigger: Reuse this learning whenever an active plan item describes a workflow capability that may already be visible in skill prompts, generated templates, helper scripts, user docs, and focused regression tests.
+- Reusable Learnings:
+  - review-check: `Before implementing a review-workflow backlog item, inspect both the user-facing skill surface and generated template copy, then verify helper-script and focused-test coverage for the advertised flags/artifacts.`
+  - review-check: `When closing stale plan items, reconcile secondary ledgers such as roadmap status tables, not only docs/improvement-plan.md and docs/improvement-done.md.`
+
 ## 2026-05-16 - Workflow fit classifier and explicit off-ramp for trivial work [2604.038]
 
 - Decision: `rejected`

@@ -248,22 +248,6 @@
 - Add regression tests proving that split-session TDD survives context reset/compaction and still resumes deterministically from persisted test artifacts.
 
 
-## Detached reviewer context and worktree-assisted review [2604.037]
-
-**Benefit Hypothesis**: Reviewing from a fresh context or detached worktree instead of the implementer session will improve detection of semantic/API design issues, reduce self-review bias, and lower false `PROCEED` verdicts on non-trivial changes.
-**Confidence**: 0.8
-**Reasoning**: The philosophy document states `Reviewer ≠ Implementer` and recommends separate terminals/sessions via `git worktree`, precisely because many important review issues are semantic rather than syntactic. MAP’s `/map-review` already uses multiple reviewer agents and loads a review handoff, but it is still designed as an in-place command, with no strong support for isolated reviewer context. In practice that means the same session that planned or implemented the change can still be the session that drives review, which weakens the intended adversarial separation.
-**Why Not Already Tried**: MAP prioritized reviewer diversity (Monitor/Predictor/Evaluator) and artifact reuse first. Context isolation ergonomics were left to the user, so the framework has strong review content but weak enforcement of reviewer independence.
-
-### Proposed Changes
-
-- Add a detached review mode (`/map-review --detached` or helper script) that creates a temporary read-only worktree or snapshot and runs review from that clean context.
-- Build a canonical review bundle artifact that includes spec, plan, relevant tests, verification summary, review handoff, and diff, so review consumes the full contract instead of mostly reconstructing intent from the patch.
-- Update reviewer prompts to explicitly state they are not the implementer and must challenge architectural shortcuts, API convention drift, and undocumented tradeoffs.
-- Document when detached review is recommended or required: high-risk changes, new APIs, CRD/schema changes, security-sensitive code, and large diffs.
-- Add integration tests that validate review bundle generation and detached review startup, so this mode does not become a paper feature.
-
-
 ## Contract-sized subtasks and artifact stage gates [2604.039]
 
 **Source**: [[acai-sh]] (article note), [[u-define-designing-user-workflows-for-hard-and-soft-constraints-in-llm-based-planning]] (paper note), plus existing MAP philosophy and artifact-pipeline backlog context
