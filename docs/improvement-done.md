@@ -7,8 +7,8 @@
 - Repo evidence: `.map/scripts/map_step_runner.py` and the shipped template copy define `WORKFLOW_FIT_ROUTES`, persist `.map/<branch>/workflow-fit.json` through `record_workflow_fit`, and mark `direct-edit` as `needs_map=false`.
 - Repo evidence: `src/mapify_cli/schemas.py` includes `WORKFLOW_FIT_DECISION_SCHEMA` with `direct-edit`, `map-fast`, `map-efficient`, `map-tdd`, and `map-plan` routes.
 - Repo evidence: `.claude/skills/map-plan/SKILL.md` and shipped template copies require the workflow-fit gate before planning and explicitly stop on `direct-edit` or `map-fast` off-ramp outcomes.
-- Repo evidence: README, `docs/USAGE.md`, `docs/ARCHITECTURE.md`, `docs/roadmap.md`, and regression/e2e tests already document and validate the off-ramp behavior.
-- No code change was needed; this loop removed the stale active backlog section so future loops do not rebuild the same shipped route.
+- Repo evidence: README, `docs/USAGE.md`, `docs/ARCHITECTURE.md`, `docs/roadmap.md`, and e2e prompt coverage already document the off-ramp behavior; this loop added a focused checked-in regression for `direct-edit` recording `needs_map=false`.
+- No runtime change was needed; this loop removed the stale active backlog section so future loops do not rebuild the same shipped route.
 
 ## Run health report artifact and hook injection status [2604.017-1]
 
