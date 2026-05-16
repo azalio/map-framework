@@ -204,6 +204,14 @@ def should_inject_for_bash(command: str) -> bool:
     return False
 
 
+def state_string(state: dict, key: str, default: str = "") -> str:
+    """Return a stripped state string without trusting persisted JSON field types."""
+    value = state.get(key)
+    if isinstance(value, str):
+        return value.strip()
+    return default
+
+
 def required_action_for_step(step_id: str, step_phase: str, state: dict) -> str | None:
     """Return a short required-next-action hint for common steps."""
     if step_id == "1.55":
@@ -281,28 +289,30 @@ def format_reminder(state: dict, branch: str) -> str | None:
     if not state:
         return None
 
-    step_id = (state.get("current_step_id") or "").strip()
-    step_phase = (state.get("current_step_phase") or "").strip()
-    subtask_id = (state.get("current_subtask_id") or "-").strip() or "-"
+    step_id = state_string(state, "current_step_id")
+    step_phase = state_string(state, "current_step_phase")
+    subtask_id = state_string(state, "current_subtask_id", "-") or "-"
 
-    seq = state.get("subtask_sequence") or []
+    seq_value = state.get("subtask_sequence")
+    seq = seq_value if isinstance(seq_value, list) else []
     idx = state.get("subtask_index")
     progress = "-"
     if isinstance(idx, int) and seq:
         progress = f"{min(idx + 1, len(seq))}/{len(seq)}"
 
     plan_ok = "y" if state.get("plan_approved") else "n"
-    mode = (state.get("execution_mode") or "").strip() or "batch"
+    mode = state_string(state, "execution_mode") or "batch"
 
     # Wave progress display
-    waves = state.get("execution_waves") or []
+    waves_value = state.get("execution_waves")
+    waves = waves_value if isinstance(waves_value, list) else []
     wave_idx = state.get("current_wave_index", 0)
     wave_hint = ""
-    if waves:
+    if waves and isinstance(wave_idx, int):
         wave_hint = f" | WAVE {wave_idx + 1}/{len(waves)}"
         current_wave = waves[wave_idx] if wave_idx < len(waves) else []
-        if len(current_wave) > 1:
-            wave_hint += f" ({', '.join(current_wave)})"
+        if isinstance(current_wave, list) and len(current_wave) > 1:
+            wave_hint += f" ({', '.join(str(item) for item in current_wave)})"
             mode = "batch:parallel"
 
     required = required_action_for_step(step_id, step_phase, state)
@@ -319,12 +329,15 @@ def format_reminder(state: dict, branch: str) -> str | None:
 
     # Show recently changed files for context freshness
     files_hint = ""
-    files_changed = state.get("subtask_files_changed", {})
+    files_changed_value = state.get("subtask_files_changed", {})
+    files_changed = files_changed_value if isinstance(files_changed_value, dict) else {}
     if files_changed and subtask_id != "-":
         current_files = files_changed.get(subtask_id, [])
-        if current_files:
+        if isinstance(current_files, list) and current_files:
             shown = current_files[:5]
-            files_hint = " | Files: " + ", ".join(Path(f).name for f in shown)
+            files_hint = " | Files: " + ", ".join(
+                Path(f).name for f in shown if isinstance(f, str)
+            )
             if len(current_files) > 5:
                 files_hint += f" +{len(current_files) - 5}"
 
@@ -380,19 +393,21 @@ def main() -> None:
 
     # Determine if we should inject
     should_inject = False
+    skip_reason = ""
 
     if tool_name in ("Edit", "Write", "MultiEdit"):
         should_inject = True
     elif tool_name == "Bash":
         command = tool_input.get("command", "")
         if not isinstance(command, str):
-            command = ""
-        should_inject = should_inject_for_bash(command)
+            skip_reason = "bash command is not a string"
+        else:
+            should_inject = should_inject_for_bash(command)
 
     if not should_inject:
-        reason = "tool not configured for workflow injection"
+        reason = skip_reason or "tool not configured for workflow injection"
         if tool_name == "Bash":
-            reason = "bash command not significant"
+            reason = skip_reason or "bash command not significant"
         elif not tool_name:
             reason = "missing tool_name"
         record_skip_if_state_available(branch, reason, tool_name or "unknown")

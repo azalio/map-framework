@@ -196,7 +196,72 @@ def test_non_string_bash_command_remains_non_blocking(
     assert out == "{}"
     state = json.loads((state_dir / "step_state.json").read_text(encoding="utf-8"))
     assert state["hook_injection"]["status"] == "skipped"
-    assert state["hook_injection"]["reason"] == "bash command not significant"
+    assert state["hook_injection"]["reason"] == "bash command is not a string"
+    assert state["hook_injection_counts"]["skipped"] == 1
+
+
+def test_records_unsupported_tool_when_state_exists(
+    tmp_path: Path, branch_name: str
+) -> None:
+    branch = branch_name
+    state_dir = tmp_path / ".map" / branch
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "step_state.json").write_text(
+        json.dumps(
+            {
+                "current_step_id": "2.3",
+                "current_step_phase": "ACTOR",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    code, out, err = _run_hook(
+        tmp_path,
+        {"tool_name": "Read", "tool_input": {"file_path": "x"}},
+    )
+
+    assert code == 0
+    assert err == ""
+    assert out == "{}"
+    state = json.loads((state_dir / "step_state.json").read_text(encoding="utf-8"))
+    assert state["hook_injection"]["status"] == "skipped"
+    assert state["hook_injection"]["reason"] == "tool not configured for workflow injection"
+    assert state["hook_injection"]["tool_name"] == "Read"
+    assert state["hook_injection_counts"]["skipped"] == 1
+
+
+def test_schema_invalid_step_state_fields_remain_non_blocking(
+    tmp_path: Path, branch_name: str
+) -> None:
+    branch = branch_name
+    state_dir = tmp_path / ".map" / branch
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "step_state.json").write_text(
+        json.dumps(
+            {
+                "current_step_id": 23,
+                "current_step_phase": ["ACTOR"],
+                "current_subtask_id": {"id": "ST-001"},
+                "execution_mode": {"mode": "batch"},
+                "subtask_sequence": "ST-001",
+                "execution_waves": {"wave": ["ST-001"]},
+                "subtask_files_changed": ["src/example.py"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    code, out, err = _run_hook(
+        tmp_path, {"tool_name": "Edit", "tool_input": {"file_path": "x"}}
+    )
+
+    assert code == 0
+    assert err == ""
+    assert out == "{}"
+    state = json.loads((state_dir / "step_state.json").read_text(encoding="utf-8"))
+    assert state["hook_injection"]["status"] == "skipped"
+    assert state["hook_injection"]["reason"] == "no reminder formatted"
     assert state["hook_injection_counts"]["skipped"] == 1
 
 
