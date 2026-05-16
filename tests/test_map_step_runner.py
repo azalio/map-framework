@@ -121,6 +121,18 @@ def test_write_run_health_report_creates_report_and_manifest(branch_workspace):
     assert stage["metadata"]["terminal_status"] == "blocked"
 
 
+def test_artifact_health_entry_handles_disappearing_file():
+    with patch.object(Path, "stat", side_effect=FileNotFoundError):
+        entry = map_step_runner._artifact_health_entry(Path("transient.json"), "state")
+
+    assert entry == {
+        "kind": "state",
+        "path": "transient.json",
+        "present": False,
+        "size_bytes": 0,
+    }
+
+
 def test_map_step_runner_cli_write_run_health_report_smoke(tmp_path):
     branch = "default"
     branch_dir = tmp_path / ".map" / branch

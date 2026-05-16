@@ -1275,11 +1275,18 @@ def _derive_terminal_status(state: dict[str, object]) -> str:
 
 def _artifact_health_entry(path: Path, kind: str) -> dict[str, object]:
     """Return compact presence metadata for a workflow artifact."""
+    try:
+        size_bytes = path.stat().st_size
+        present = True
+    except OSError:
+        size_bytes = 0
+        present = False
+
     return {
         "kind": kind,
         "path": str(path),
-        "present": path.exists(),
-        "size_bytes": path.stat().st_size if path.exists() else 0,
+        "present": present,
+        "size_bytes": size_bytes,
     }
 
 
