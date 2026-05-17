@@ -214,24 +214,6 @@
 - If MAP later adds more task skills, evaluate whether some should use `context: fork` and `agent` to isolate long procedures into subagent execution, as supported by the official docs.
 
 
-## LEARN as a philosophical requirement with soft runtime ergonomics [2604.035]
-
-**Benefit Hypothesis**: Treating `LEARN` as a required part of the MAP philosophy, while keeping runtime ergonomics soft and token-aware, will preserve the long-term memory benefits of the framework without making users feel forced into extra token spend on every workflow. The measurable target is higher voluntary `/map-learn` adoption on meaningful tasks and fewer repeated Monitor findings in subsequent sessions.
-**Confidence**: 0.85
-**Reasoning**: The philosophy document treats `LEARN` as a first-class stage in `SPEC → PLAN → TEST → CODE → REVIEW → LEARN`, explicitly stating that reusable project memory is the output of the pipeline and that re-explaining the same gotchas a week later means `LEARN` failed. At the same time, MAP users are cost-sensitive and often skip optional post-processing when it burns extra tokens. So the gap is real, but the fix should not be hard enforcement. MAP’s runtime still treats learning as a weak afterthought: `README.md` canonical flows end at `/map-review`, `docs/ARCHITECTURE.md` repeatedly calls learning “optional via /map-learn”, and `map-efficient`, `map-debug`, `map-release`, `map-resume`, and `map-fast` all frame `/map-learn` as a generic suggestion rather than a normal, cheap closeout path.
-**Why Not Already Tried**: MAP intentionally decoupled Reflector from execution to save tokens and keep implementation loops faster. That optimization was correct for token economy, but it left the system without a lightweight bridge between “LEARN matters” and “users do not want mandatory extra spend”.
-
-**Execution note:** Do not execute this umbrella item directly. Use the child slices below.
-
-### Proposed Changes
-
-- Keep `LEARN` mandatory in philosophy/docs, but do not block workflow completion on `/map-learn` or require an explicit skip confirmation.
-- Generate a branch-scoped `learning_handoff_<branch>.md` or `.json` artifact automatically at the end of `/map-efficient`, `/map-debug`, `/map-review`, and `/map-check`, so the expensive part becomes optional execution, not manual reconstruction of context.
-- Make `/map-learn` cheap and ergonomic: support prefilled invocation from the generated handoff and encourage batched learning across several workflows instead of per-run mandatory reflection.
-- Update canonical docs (`README.md`, `docs/USAGE.md`, `docs/ARCHITECTURE.md`) to say: philosophically the cycle ends with `LEARN`, but runtime leaves it to the user when to pay that cost.
-- Add metrics for learn adoption, deferred learn usage, and repeated learned-rule violations, so MAP can improve uptake without turning learning into a hard gate.
-
-
 ## Clean-session TEST→CODE handoff for TDD workflows [2604.036]
 
 **Benefit Hypothesis**: Forcing test authoring and implementation to happen in separate sessions/contexts will reduce “tests that merely bless the implementation”, catch spec misunderstandings earlier, and improve contract quality on risky subtasks. The measurable target is fewer trivial/pass-without-code tests and fewer post-implementation revisions caused by weak test contracts.

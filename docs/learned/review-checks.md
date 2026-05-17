@@ -3,4 +3,4 @@
 <!-- IMPROVEMENT-PLAN-LOOP: promoted from loop learnings. Edit freely and commit with the project. -->
 
 - **Reconcile secondary ledgers when closing stale plan items** (2026-05-17): When reviewing a stale-plan closure, verify roadmap/status docs do not still list the same idea id as open because future loops can rediscover it as active work. [workflow: improvement-plan-loop]
-
+- **Close completed umbrella parents from shipped child evidence** (2026-05-17): Before selecting an active umbrella item, compare its proposed changes against shipped child slice ids in `docs/*-done.md`; if all value-bearing children are already complete, close the parent with evidence rather than executing it again. [workflow: improvement-plan-loop]

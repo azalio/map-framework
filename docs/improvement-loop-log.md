@@ -1,3 +1,15 @@
+## 2026-05-17 - LEARN as a philosophical requirement with soft runtime ergonomics [2604.035]
+
+- Decision: `rejected`
+- Branch: `codex/2604-035-close-learn-parent`
+- Baseline: The parent item remained active in `docs/improvement-plan.md`, but its executable child slices `2604.035-1`, `2604.035-2`, and `2604.035-3` were already recorded as shipped and the runtime/docs evidence showed the soft-LEARN user payoff was live.
+- Forward Change: Removed the stale active parent section and recorded the exact `[2604.035]` heading in `docs/improvement-done.md` with repo-grounded evidence instead of rebuilding the learning handoff, zero-argument `/map-learn`, metrics, or repeated-rule tracking behavior.
+- Decisive Validation: the improvement-plan-loop idea indexer, focused learning handoff regression tests, and repo evidence searches verified the parent is no longer active while shipped learning artifacts remain covered.
+- Review Result: Diff review confirmed this is a ledger-only stale-parent closure with no runtime or template mutations.
+- Next Trigger: Reuse this learning whenever an active umbrella item says to use child slices and all children are already shipped in `docs/*-done.md`.
+- Reusable Learnings:
+  - review-check: `Before selecting an active umbrella item, compare its proposed changes against shipped child slice ids in docs/*-done.md; if all value-bearing children are already complete, close the parent with evidence rather than executing it again.`
+
 ## 2026-05-17 - Detached reviewer context and worktree-assisted review [2604.037]
 
 - Decision: `rejected`
