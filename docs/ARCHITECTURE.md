@@ -1758,16 +1758,18 @@ Workflow state is managed through file-based persistence in `.map/` directory:
    - Fires once per subtask when Actor agent is spawned
    - Injects structured `<map_context>` block (target: ≤4 000 tokens, best-effort) containing:
      - `# Goal` — one sentence from task_plan.md
-     - `# Current Subtask` — full AAG contract, affected files, validation criteria
+     - `# Current Subtask` — full AAG contract, affected files, validation criteria, expected diff size, concern type, and one-logical-step flag
      - `# Plan Overview` — all subtasks as one-liners with `[x]/[ ]/[>>]` status markers
      - `# Upstream Results` — only results from dependency subtasks (from `step_state.json subtask_results`)
      - `# Repo Delta` — files changed since last subtask (via `git diff` from `last_subtask_commit_sha`)
    - Built by `build_context_block()` in `map_step_runner.py`
 
 **Key data sources:**
-- `blueprint.json` — subtask metadata (deps, files, criteria). Single source of truth.
+- `blueprint.json` — subtask metadata (deps, files, criteria, `expected_diff_size`, `concern_type`, `one_logical_step`, `coverage_map`). Single source of truth.
 - `step_state.json` — `subtask_results` dict (per-subtask files_changed + status), `last_subtask_commit_sha`
 - `task_plan.md` — goal text only (never parsed for structured data)
+
+**Contract-sized subtask gate:** before `/map-plan` or `/map-efficient` proceeds from decomposition into execution, `python3 .map/scripts/map_step_runner.py validate_blueprint_contract` checks that each subtask has size/concern metadata, one logical purpose, AAG and validation criteria, and coverage ownership. Oversized `large` subtasks require `split_rationale`; `mixed` concern subtasks require `concern_justification`. This moves scope-creep detection to planning time, where users can fix the plan before Actor produces an unreviewable diff.
 
 **Benefits:**
 - 30-60% fewer tokens in system prompt on long workflows

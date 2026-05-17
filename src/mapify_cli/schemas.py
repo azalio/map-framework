@@ -374,7 +374,7 @@ BLUEPRINT_SCHEMA = {
                     "dependencies": {
                         "type": "array",
                         "description": "List of subtask IDs this task depends on",
-                        "items": {"type": "string"},
+                        "items": {"type": "string", "pattern": "^ST-\\d{3,}$"},
                     },
                     "affected_files": {
                         "type": "array",
@@ -386,15 +386,88 @@ BLUEPRINT_SCHEMA = {
                         "description": "Criteria that must be met for the subtask to be considered complete",
                         "items": {"type": "string"},
                     },
+                    "validation_criteria": {
+                        "type": "array",
+                        "description": "Commands or checks that prove the subtask contract is complete",
+                        "items": {"type": "string"},
+                        "minItems": 1,
+                    },
+                    "aag_contract": {
+                        "type": "string",
+                        "description": "Actor -> Action(params) -> Goal contract for the subtask",
+                    },
                     "risk": {
                         "type": "string",
                         "enum": ["low", "medium", "high"],
                         "description": "Risk level of this subtask",
                     },
+                    "expected_diff_size": {
+                        "type": "string",
+                        "enum": ["tiny", "small", "medium", "large"],
+                        "description": "Expected implementation size for this subtask, used to catch oversized plan slices before execution",
+                    },
+                    "concern_type": {
+                        "type": "string",
+                        "enum": [
+                            "api",
+                            "config",
+                            "data",
+                            "docs",
+                            "infra",
+                            "observability",
+                            "refactor",
+                            "release",
+                            "runtime",
+                            "security",
+                            "tests",
+                            "ui",
+                            "mixed",
+                        ],
+                        "description": "Primary concern owned by this subtask; mixed requires explicit justification in MAP validation",
+                    },
+                    "one_logical_step": {
+                        "type": "boolean",
+                        "description": "True when the subtask has one reviewable logical purpose",
+                    },
+                    "split_rationale": {
+                        "type": "string",
+                        "description": "Required by MAP validation when expected_diff_size is large",
+                    },
+                    "concern_justification": {
+                        "type": "string",
+                        "description": "Required by MAP validation when concern_type is mixed",
+                    },
                 },
-                "required": ["id", "title", "dependencies", "affected_files"],
+                "required": [
+                    "id",
+                    "title",
+                    "dependencies",
+                    "affected_files",
+                    "aag_contract",
+                    "expected_diff_size",
+                    "concern_type",
+                    "one_logical_step",
+                    "validation_criteria",
+                ],
                 "additionalProperties": True,
             },
+        },
+        "coverage_map": {
+            "type": "object",
+            "description": "Maps spec acceptance criteria, invariants, and cross-cutting requirements to owning subtask IDs",
+            "minProperties": 1,
+            "additionalProperties": {"type": "string", "pattern": "^ST-\\d{3,}$"},
+        },
+        "blueprint": {
+            "type": "object",
+            "description": "Wrapped TaskDecomposer blueprint body",
+            "properties": {
+                "subtasks": {"$ref": "#/properties/subtasks"},
+                "coverage_map": {"$ref": "#/properties/coverage_map"},
+                "metadata": {"$ref": "#/properties/metadata"},
+            },
+            "required": ["subtasks", "coverage_map"],
+            "additionalProperties": True,
         },
         "metadata": {
             "type": "object",
@@ -407,7 +480,10 @@ BLUEPRINT_SCHEMA = {
             "additionalProperties": True,
         },
     },
-    "required": ["subtasks"],
+    "anyOf": [
+        {"required": ["subtasks", "coverage_map"]},
+        {"required": ["blueprint"]},
+    ],
     "additionalProperties": True,
 }
 

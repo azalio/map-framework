@@ -116,6 +116,21 @@ WORKFLOW_FIT_ROUTES = {
     "map-plan",
 }
 DIFF_SIZE_LEVELS = {"tiny", "small", "medium", "large"}
+SUBTASK_CONCERN_TYPES = {
+    "api",
+    "config",
+    "data",
+    "docs",
+    "infra",
+    "observability",
+    "refactor",
+    "release",
+    "runtime",
+    "security",
+    "tests",
+    "ui",
+    "mixed",
+}
 LEARNING_CONSUMPTION_SOURCES = {"auto-handoff", "file-handoff", "inline-summary"}
 REVIEW_SECTION_IDS: tuple[str, ...] = ("architecture", "code_quality", "tests", "performance")
 REVIEW_VALID_MODES: tuple[str, ...] = ("default", "reverse-sections", "shuffle-sections")
@@ -1096,6 +1111,164 @@ def record_plan_artifacts(branch: Optional[str] = None) -> dict[str, object]:
         "manifest_path": manifest_result["path"],
         "spec_status": stages["spec"]["status"],
         "plan_status": stages["plan"]["status"],
+    }
+
+
+def validate_blueprint_contract(
+    blueprint_path: str = "", branch: Optional[str] = None
+) -> dict[str, object]:
+    """Validate that a blueprint is executable as contract-sized subtasks.
+
+    This is stricter than BLUEPRINT_SCHEMA because it is a user/operator gate:
+    plans should fail before implementation when subtasks are oversized,
+    mixed-concern without rationale, or impossible to trace back to acceptance
+    criteria.
+    """
+    branch_name = branch or get_branch_name()
+    path = Path(blueprint_path) if blueprint_path else get_branch_dir(branch_name) / "blueprint.json"
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {
+            "valid": False,
+            "errors": [f"blueprint not found: {path}"],
+            "warnings": [],
+            "path": str(path),
+        }
+    except (json.JSONDecodeError, OSError) as exc:
+        return {
+            "valid": False,
+            "errors": [f"cannot read blueprint {path}: {exc}"],
+            "warnings": [],
+            "path": str(path),
+        }
+
+    blueprint_body = payload.get("blueprint") if isinstance(payload.get("blueprint"), dict) else payload
+    subtasks = blueprint_body.get("subtasks")
+    if not isinstance(subtasks, list) or not subtasks:
+        return {
+            "valid": False,
+            "errors": ["blueprint must contain at least one subtask"],
+            "warnings": [],
+            "path": str(path),
+        }
+
+    subtask_id_counts: dict[str, int] = {}
+    for subtask in subtasks:
+        if not isinstance(subtask, dict):
+            continue
+        raw_subtask_id = subtask.get("id")
+        if isinstance(raw_subtask_id, str) and re.fullmatch(r"ST-\d{3,}", raw_subtask_id):
+            subtask_id_counts[raw_subtask_id] = subtask_id_counts.get(raw_subtask_id, 0) + 1
+
+    subtask_ids = set(subtask_id_counts)
+    duplicate_subtask_ids = {
+        subtask_id for subtask_id, count in subtask_id_counts.items() if count > 1
+    }
+    oversized_subtasks: list[str] = []
+    mixed_concern_subtasks: list[str] = []
+
+    for index, subtask in enumerate(subtasks):
+        label = f"subtasks[{index}]"
+        if not isinstance(subtask, dict):
+            errors.append(f"{label}: must be an object")
+            continue
+
+        raw_subtask_id = subtask.get("id")
+        if not isinstance(raw_subtask_id, str) or not re.fullmatch(r"ST-\d{3,}", raw_subtask_id):
+            errors.append(f"{label}: id must match ST-NNN")
+            subtask_id = label
+        elif raw_subtask_id in duplicate_subtask_ids:
+            errors.append(f"{raw_subtask_id}: duplicate subtask id")
+            subtask_id = raw_subtask_id
+        else:
+            subtask_id = raw_subtask_id
+        label = subtask_id
+
+        dependencies = subtask.get("dependencies")
+        if not isinstance(dependencies, list):
+            errors.append(f"{label}: dependencies must be an array")
+        else:
+            for dependency in dependencies:
+                if not isinstance(dependency, str) or not re.fullmatch(r"ST-\d{3,}", dependency):
+                    errors.append(f"{label}: dependency {dependency!r} must match ST-NNN")
+                elif dependency not in subtask_ids:
+                    errors.append(f"{label}: dependency {dependency!r} points to unknown subtask")
+
+        expected_diff_size = str(subtask.get("expected_diff_size") or "").strip().lower()
+        concern_type = str(subtask.get("concern_type") or "").strip().lower()
+        validation_criteria = subtask.get("validation_criteria")
+
+        if expected_diff_size not in DIFF_SIZE_LEVELS:
+            errors.append(
+                f"{label}: expected_diff_size must be one of {sorted(DIFF_SIZE_LEVELS)}"
+            )
+        elif expected_diff_size == "large":
+            split_rationale = str(subtask.get("split_rationale") or "").strip()
+            if not split_rationale:
+                errors.append(
+                    f"{label}: large subtasks require split_rationale or must be decomposed"
+                )
+            oversized_subtasks.append(subtask_id)
+
+        if concern_type not in SUBTASK_CONCERN_TYPES:
+            errors.append(
+                f"{label}: concern_type must be one of {sorted(SUBTASK_CONCERN_TYPES)}"
+            )
+        elif concern_type == "mixed":
+            concern_justification = str(subtask.get("concern_justification") or "").strip()
+            if not concern_justification:
+                errors.append(
+                    f"{label}: mixed concern_type requires concern_justification"
+                )
+            mixed_concern_subtasks.append(subtask_id)
+
+        one_logical_step = subtask.get("one_logical_step")
+        if one_logical_step is not True:
+            errors.append(f"{label}: one_logical_step must be true")
+
+        if not str(subtask.get("aag_contract") or "").strip():
+            errors.append(f"{label}: missing aag_contract")
+
+        if not isinstance(validation_criteria, list) or not validation_criteria:
+            errors.append(f"{label}: validation_criteria must contain at least one item")
+        elif len(validation_criteria) > 6:
+            warnings.append(
+                f"{label}: has {len(validation_criteria)} validation criteria; consider splitting if ownership is unclear"
+            )
+
+        affected_files = subtask.get("affected_files")
+        if isinstance(affected_files, list) and len(affected_files) > 8:
+            warnings.append(
+                f"{label}: touches {len(affected_files)} files; verify this is still one reviewable concern"
+            )
+
+    coverage_map = payload.get("coverage_map") or blueprint_body.get("coverage_map")
+    if not isinstance(coverage_map, dict) or not coverage_map:
+        errors.append("coverage_map is required and must map each spec AC/invariant to an owning subtask")
+    else:
+        for requirement_id, owner in coverage_map.items():
+            if not isinstance(owner, str):
+                errors.append(
+                    f"coverage_map[{requirement_id!r}] must point to a single ST-NNN subtask id"
+                )
+                continue
+            if owner not in subtask_ids:
+                errors.append(
+                    f"coverage_map[{requirement_id!r}] points to unknown subtask {owner!r}"
+                )
+
+    return {
+        "valid": not errors,
+        "errors": errors,
+        "warnings": warnings,
+        "path": str(path),
+        "subtask_count": len(subtasks),
+        "oversized_subtasks": oversized_subtasks,
+        "mixed_concern_subtasks": mixed_concern_subtasks,
     }
 
 
@@ -3201,6 +3374,9 @@ def create_xml_packet(subtask: dict) -> str:
     risk_level = subtask.get("risk_level", "low")
     security_critical = subtask.get("security_critical", False)
     complexity_score = subtask.get("complexity_score", 1)
+    expected_diff_size = subtask.get("expected_diff_size", "medium")
+    concern_type = subtask.get("concern_type", "runtime")
+    one_logical_step = subtask.get("one_logical_step", "unknown")
     affected_files = ";".join(subtask.get("affected_files", []))
     validation_criteria = "\n".join(
         f"- {c}" for c in subtask.get("validation_criteria", [])
@@ -3215,6 +3391,9 @@ def create_xml_packet(subtask: dict) -> str:
   <SUBTASK_{tag_id}__RISK_LEVEL>{risk_level}</SUBTASK_{tag_id}__RISK_LEVEL>
   <SUBTASK_{tag_id}__SECURITY_CRITICAL>{str(security_critical).lower()}</SUBTASK_{tag_id}__SECURITY_CRITICAL>
   <SUBTASK_{tag_id}__COMPLEXITY_SCORE>{complexity_score}</SUBTASK_{tag_id}__COMPLEXITY_SCORE>
+  <SUBTASK_{tag_id}__EXPECTED_DIFF_SIZE>{expected_diff_size}</SUBTASK_{tag_id}__EXPECTED_DIFF_SIZE>
+  <SUBTASK_{tag_id}__CONCERN_TYPE>{concern_type}</SUBTASK_{tag_id}__CONCERN_TYPE>
+  <SUBTASK_{tag_id}__ONE_LOGICAL_STEP>{one_logical_step}</SUBTASK_{tag_id}__ONE_LOGICAL_STEP>
 
   <SUBTASK_{tag_id}__AFFECTED_FILES>{affected_files}</SUBTASK_{tag_id}__AFFECTED_FILES>
   <SUBTASK_{tag_id}__VALIDATION_CRITERIA>
@@ -3437,7 +3616,13 @@ def load_blueprint(
     if not blueprint_path.exists():
         return None
     try:
-        return json.loads(blueprint_path.read_text(encoding="utf-8"))
+        payload = json.loads(blueprint_path.read_text(encoding="utf-8"))
+        if isinstance(payload.get("blueprint"), dict):
+            blueprint = dict(payload["blueprint"])
+            if "coverage_map" not in blueprint and isinstance(payload.get("coverage_map"), dict):
+                blueprint["coverage_map"] = payload["coverage_map"]
+            return blueprint
+        return payload
     except (json.JSONDecodeError, OSError):
         return None
 
@@ -3515,6 +3700,11 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
 
     current_details = []
     current_details.append(f"AAG Contract: {current.get('aag_contract', 'N/A')}")
+    current_details.append(
+        f"Subtask contract: expected_diff_size={current.get('expected_diff_size', 'unknown')}, "
+        f"concern_type={current.get('concern_type', 'unknown')}, "
+        f"one_logical_step={current.get('one_logical_step', 'unknown')}"
+    )
     files = current.get("affected_files", [])
     if files:
         current_details.append(f"Affected files: {', '.join(files)}")
@@ -3860,6 +4050,13 @@ if __name__ == "__main__":
     elif func_name == "record_plan_artifacts":
         result = record_plan_artifacts()
         print(json.dumps(result, indent=2))
+
+    elif func_name == "validate_blueprint_contract":
+        blueprint_path = sys.argv[2] if len(sys.argv) >= 3 else ""
+        result = validate_blueprint_contract(blueprint_path)
+        print(json.dumps(result, indent=2, ensure_ascii=True))
+        if not result.get("valid"):
+            sys.exit(1)
 
     elif func_name == "record_test_contract_handoff" and len(sys.argv) >= 3:
         subtask_id = sys.argv[2]

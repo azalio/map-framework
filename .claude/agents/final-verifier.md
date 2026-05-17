@@ -23,6 +23,7 @@ You catch premature completion and hallucinated success.
 |------|--------|-------------|
 | Original Goal | `.map/<branch>/task_plan_<branch>.md` | Section "## Goal" or first paragraph |
 | Acceptance Criteria | `.map/<branch>/task_plan_<branch>.md` | Section "## Acceptance Criteria" (table) |
+| Subtask Contracts | `.map/<branch>/blueprint.json` | `expected_diff_size`, `concern_type`, `one_logical_step`, `coverage_map` |
 | Completed Subtasks | `.map/<branch>/progress_<branch>.md` | Checkboxes marked `[x]` |
 | Global Validation | Task argument `$VALIDATION_CRITERIA` | Passed from map-efficient.md |
 
@@ -59,6 +60,7 @@ Read `.map/<branch>/task_plan_<branch>.md` to extract:
 - Check MCP tools for ground-truth if applicable
 - Review integration points between subtasks
 - Verify ALL validation_criteria are met
+- Verify completed work still matches the blueprint's subtask contract metadata: no unjustified large subtask expansion, no mixed-concern drift, and every coverage_map owner has evidence
 
 #### Noise Handling Protocol (Flaky Test Re-runs)
 When tests fail on first run, apply the confirmation policy:
@@ -74,6 +76,7 @@ When tests fail on first run, apply the confirmation policy:
 - Do subtask outputs integrate correctly?
 - Would this pass a real user acceptance test?
 - Are there silent errors in "completed" subtasks?
+- Did any subtask grow beyond its expected_diff_size or mix unrelated concern_type work without an explicit plan rationale?
 
 ### Step 4: Confidence Assessment
 Score confidence (0.0-1.0):

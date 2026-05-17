@@ -444,6 +444,11 @@ Break down this task into atomic, testable subtasks:
 
 Output requirements:
 - Each subtask MUST include an aag_contract: "Actor -> Action(params) -> Goal"
+- Each subtask MUST include `expected_diff_size`: `tiny`, `small`, `medium`, or `large`
+- Each subtask MUST include `concern_type`: `api`, `config`, `data`, `docs`, `infra`, `observability`, `refactor`, `release`, `runtime`, `security`, `tests`, `ui`, or `mixed`
+- Each subtask MUST include `one_logical_step: true`
+- If `expected_diff_size` is `large`, split the subtask unless it has a concrete `split_rationale`
+- If `concern_type` is `mixed`, split the subtask unless it has a concrete `concern_justification`
 - Each subtask should be completable within ~4000 tokens (SFT comfort zone)
 - Include acceptance criteria for each
 - Each subtask should include an explicit verification approach (tests/commands)
@@ -456,6 +461,7 @@ Coverage requirements:
 - For cross-cutting requirements (observability, error handling, budget tracking, structured logging), either create a dedicated subtask or explicitly add them as validation criteria to the subtask that implements the relevant infrastructure.
 - For each structured result type in the spec, verify ALL fields (including optional envelope fields like budget_state, deferred_work, recovery_state) are covered in validation criteria.
 - Output a `coverage_map` field: a dict mapping each spec AC identifier to the subtask ID that owns it, e.g. {{"MVP-AC-1": "ST-007", "MVP-AC-2": "ST-005", ...}}.
+- The `coverage_map` is mandatory and must include acceptance criteria, invariants, and cross-cutting requirements that a reviewer would expect to trace before implementation.
 """
 )
 ```
@@ -475,12 +481,16 @@ The blueprint JSON must include at minimum:
       "aag_contract": "Actor -> Action(params) -> Goal",
       "dependencies": [],
       "affected_files": ["path/to/file.py"],
+      "expected_diff_size": "small",
+      "concern_type": "runtime",
+      "one_logical_step": true,
       "complexity_score": 5,
       "risk_level": "medium",
       "validation_criteria": ["VC1: ...", "VC2: ..."],
       "test_strategy": {"unit": ["test description"]}
     }
-  ]
+  ],
+  "coverage_map": {"AC-1": "ST-001", "INV-1": "ST-001"}
 }
 ```
 
@@ -489,36 +499,24 @@ If the decomposer returned structured JSON, save it directly. If it returned mar
 ### Step 5.6: Post-Save Blueprint Validation (MANDATORY)
 
 After writing `blueprint.json`, run this deterministic shell check to verify the
-file contains AT LEAST ONE subtask with the required fields. Do NOT proceed to
-Step 5.7 if the check reports a problem.
+file contains contract-sized subtasks with size, concern, one-logical-step, AAG,
+validation, and coverage ownership metadata. Do NOT proceed to Step 5.7 if the
+check reports a problem.
 
 Use the **Bash** tool:
 
 ```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
-python3 -c "
-import json, sys
-data = json.loads(open('.map/${BRANCH}/blueprint.json').read())
-subs = data.get('subtasks') or (data.get('blueprint') or {}).get('subtasks') or []
-if not isinstance(subs, list) or len(subs) < 1:
-    print('BLUEPRINT_INVALID: subtasks empty or missing', file=sys.stderr); sys.exit(2)
-required = {'id', 'dependencies'}
-missing = [i for i, s in enumerate(subs) if not isinstance(s, dict) or not required.issubset(s)]
-if missing:
-    print(f'BLUEPRINT_INVALID: subtasks {missing} missing required fields', file=sys.stderr); sys.exit(2)
-print(f'BLUEPRINT_OK: {len(subs)} subtask(s)')
-"
+python3 .map/scripts/map_step_runner.py validate_blueprint_contract
 ```
 
 **On failure (exit code != 0):**
-- The decomposer wrote an empty or malformed blueprint. Re-run **Step 5** (the
-  decomposer subagent) with the same prompt, but explicitly note in the prompt:
-  "Previous decomposer run produced an invalid blueprint (subtasks empty or
-  missing required fields). Produce AT LEAST 2 subtasks; each subtask MUST
-  include `id` and `dependencies` fields."
+- The decomposer wrote an empty, malformed, oversized, mixed-concern, or
+  untraceable blueprint. Read the JSON output's `errors` and `warnings`. Re-run
+  **Step 5** with the same prompt, but explicitly paste the validation errors
+  and ask the decomposer to fix them.
 - After the second decomposer run, save the new output to `blueprint.json` and
-  re-run this validation. If it fails a second time, STOP and report the issue
-  to the user — do not proceed to plan-write or downstream steps.
+  re-run this validation. If it fails a second time, STOP and report the exact
+  validator errors to the user — do not proceed to plan-write or downstream steps.
 
 **On success (exit code 0):** proceed to Step 5.7.
 
@@ -581,6 +579,9 @@ Then use the **Write** tool to create `.map/<branch>/task_plan_<branch>.md` with
 - **Status:** pending
 - **AAG Contract:** `Actor -> Action(params) -> Goal`
 - **Complexity:** [low/medium/high]
+- **Expected Diff Size:** [tiny|small|medium|large]
+- **Concern Type:** [api|config|data|docs|infra|observability|refactor|release|runtime|security|tests|ui|mixed]
+- **One Logical Step:** [true|false]
 - **Dependencies:** [none | ST-XXX, ST-YYY]
 - **Description:** [What needs to be done]
 - **Acceptance Criteria:**
@@ -682,6 +683,7 @@ WORKFLOW CHECKPOINT: PLAN PHASE COMPLETE
 ✅ Devil's Advocate review completed (or skipped — state reason)
 ✅ Architecture graph written to spec_${BRANCH}.md
 ✅ Task decomposed into N subtasks with AAG contracts
+✅ Blueprint contract validated: size/concern/coverage metadata present, 0 oversized or unjustified mixed-concern subtasks
 ✅ Coverage check passed: M/M spec ACs mapped, 0 orphaned cross-cutting concerns
 ✅ Blueprint saved to .map/${BRANCH}/blueprint.json
 ✅ Plan written to .map/${BRANCH}/task_plan_${BRANCH}.md

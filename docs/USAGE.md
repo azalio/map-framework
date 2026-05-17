@@ -508,6 +508,7 @@ The checkpoint format (`.map/progress.md`) is designed with security in mind:
    ```
    .map/progress.md         - Workflow state (YAML frontmatter + markdown)
    .map/*/task_plan_*.md    - Task decomposition with validation criteria
+   .map/*/blueprint.json    - Machine-readable subtasks with size/concern contracts
    ```
 
 2. **After compaction**, manually reference files:
@@ -515,12 +516,22 @@ The checkpoint format (`.map/progress.md`) is designed with security in mind:
    ```
    User: continue MAP workflow
          @.map/progress.md
-         @.map/map-to-enchance/task_plan_map-to-enchance.md
+           @.map/map-to-enchance/task_plan_map-to-enchance.md
 
    Claude: [reads files]
            Resuming subtask 4: "Add refresh token logic"
            [continues implementation from saved state]
-   ```
+```
+
+### Contract-Sized Subtask Validation
+
+Before implementation starts, MAP validates `.map/<branch>/blueprint.json` with:
+
+```bash
+python3 .map/scripts/map_step_runner.py validate_blueprint_contract
+```
+
+Each subtask must carry `expected_diff_size`, `concern_type`, `one_logical_step: true`, an `aag_contract`, and testable `validation_criteria`. The blueprint also needs a top-level `coverage_map` that assigns spec acceptance criteria, invariants, and cross-cutting requirements to owner subtasks. `large` subtasks require `split_rationale`, and `mixed` concern subtasks require `concern_justification`; otherwise planning stops before Actor can start. This makes oversized or mixed-scope work visible while the plan is cheap to fix, instead of after a reviewer receives an unreviewable diff.
 
 ### Before/After Comparison
 

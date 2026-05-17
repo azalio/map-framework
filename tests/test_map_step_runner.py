@@ -483,6 +483,222 @@ def test_record_plan_artifacts_is_partial_when_only_step_state_exists(branch_wor
     assert result["plan_status"] == "partial"
 
 
+def test_validate_blueprint_contract_accepts_contract_sized_plan(branch_workspace):
+    blueprint = {
+        "summary": "Deliver a user-visible fix",
+        "subtasks": [
+            {
+                "id": "ST-001",
+                "title": "Fix checkout timeout message",
+                "aag_contract": "CheckoutService -> handle_timeout() -> user sees retryable error",
+                "dependencies": [],
+                "affected_files": ["src/checkout.py"],
+                "expected_diff_size": "small",
+                "concern_type": "runtime",
+                "one_logical_step": True,
+                "validation_criteria": ["VC1: timeout shows retryable message"],
+            }
+        ],
+        "coverage_map": {"AC-1": "ST-001", "INV-1": "ST-001"},
+    }
+    (branch_workspace / "blueprint.json").write_text(json.dumps(blueprint))
+
+    result = map_step_runner.validate_blueprint_contract()
+
+    assert result["valid"] is True
+    assert result["errors"] == []
+    assert result["subtask_count"] == 1
+
+
+def test_validate_blueprint_contract_rejects_non_noticeable_plumbing_slice(
+    branch_workspace,
+):
+    blueprint = {
+        "subtasks": [
+            {
+                "id": "ST-001",
+                "title": "Add dormant helper",
+                "dependencies": [],
+                "affected_files": ["src/helper.py"],
+                "expected_diff_size": "large",
+                "concern_type": "mixed",
+                "one_logical_step": False,
+                "validation_criteria": [],
+            }
+        ],
+        "coverage_map": {"AC-1": "ST-999"},
+    }
+    (branch_workspace / "blueprint.json").write_text(json.dumps(blueprint))
+
+    result = map_step_runner.validate_blueprint_contract()
+
+    assert result["valid"] is False
+    joined_errors = "\n".join(result["errors"])
+    assert "large subtasks require split_rationale" in joined_errors
+    assert "mixed concern_type requires concern_justification" in joined_errors
+    assert "one_logical_step must be true" in joined_errors
+    assert "missing aag_contract" in joined_errors
+    assert "validation_criteria must contain at least one item" in joined_errors
+    assert "unknown subtask" in joined_errors
+
+
+def test_validate_blueprint_contract_accepts_nested_decomposer_blueprint(
+    branch_workspace,
+):
+    blueprint = {
+        "schema_version": "2.0",
+        "blueprint": {
+            "summary": "Deliver a user-visible fix",
+            "coverage_map": {"AC-1": "ST-001"},
+            "subtasks": [
+                {
+                    "id": "ST-001",
+                    "title": "Fix checkout timeout message",
+                    "aag_contract": "CheckoutService -> handle_timeout() -> user sees retryable error",
+                    "dependencies": [],
+                    "affected_files": ["src/checkout.py"],
+                    "expected_diff_size": "small",
+                    "concern_type": "runtime",
+                    "one_logical_step": True,
+                    "validation_criteria": ["VC1: timeout shows retryable message"],
+                }
+            ],
+        },
+    }
+    (branch_workspace / "blueprint.json").write_text(json.dumps(blueprint))
+
+    result = map_step_runner.validate_blueprint_contract()
+
+    assert result["valid"] is True
+
+
+def test_validate_blueprint_contract_rejects_missing_or_invalid_subtask_id(
+    branch_workspace,
+):
+    blueprint = {
+        "subtasks": [
+            {
+                "title": "Missing ID",
+                "aag_contract": "Service -> do() -> done",
+                "dependencies": [],
+                "affected_files": [],
+                "expected_diff_size": "small",
+                "concern_type": "runtime",
+                "one_logical_step": True,
+                "validation_criteria": ["VC1: check"],
+            }
+        ],
+        "coverage_map": {"AC-1": "subtasks[0]"},
+    }
+    (branch_workspace / "blueprint.json").write_text(json.dumps(blueprint))
+
+    result = map_step_runner.validate_blueprint_contract()
+
+    assert result["valid"] is False
+    assert any("id must match ST-NNN" in error for error in result["errors"])
+
+
+def test_validate_blueprint_contract_rejects_non_string_coverage_owner(
+    branch_workspace,
+):
+    blueprint = {
+        "subtasks": [
+            {
+                "id": "ST-001",
+                "title": "Fix checkout timeout message",
+                "aag_contract": "CheckoutService -> handle_timeout() -> user sees retryable error",
+                "dependencies": [],
+                "affected_files": ["src/checkout.py"],
+                "expected_diff_size": "small",
+                "concern_type": "runtime",
+                "one_logical_step": True,
+                "validation_criteria": ["VC1: timeout shows retryable message"],
+            }
+        ],
+        "coverage_map": {"AC-1": ["ST-001"]},
+    }
+    (branch_workspace / "blueprint.json").write_text(json.dumps(blueprint))
+
+    result = map_step_runner.validate_blueprint_contract()
+
+    assert result["valid"] is False
+    assert any("must point to a single ST-NNN" in error for error in result["errors"])
+
+
+def test_validate_blueprint_contract_requires_validation_criteria(branch_workspace):
+    blueprint = {
+        "subtasks": [
+            {
+                "id": "ST-001",
+                "title": "Fix checkout timeout message",
+                "aag_contract": "CheckoutService -> handle_timeout() -> user sees retryable error",
+                "dependencies": [],
+                "affected_files": ["src/checkout.py"],
+                "expected_diff_size": "small",
+                "concern_type": "runtime",
+                "one_logical_step": True,
+                "acceptance_criteria": ["AC1: timeout shows retryable message"],
+            }
+        ],
+        "coverage_map": {"AC-1": "ST-001"},
+    }
+    (branch_workspace / "blueprint.json").write_text(json.dumps(blueprint))
+
+    result = map_step_runner.validate_blueprint_contract()
+
+    assert result["valid"] is False
+    assert any("validation_criteria must contain" in error for error in result["errors"])
+
+
+def test_validate_blueprint_contract_rejects_duplicate_subtask_ids(branch_workspace):
+    subtask = {
+        "id": "ST-001",
+        "title": "Fix checkout timeout message",
+        "aag_contract": "CheckoutService -> handle_timeout() -> user sees retryable error",
+        "dependencies": [],
+        "affected_files": ["src/checkout.py"],
+        "expected_diff_size": "small",
+        "concern_type": "runtime",
+        "one_logical_step": True,
+        "validation_criteria": ["VC1: timeout shows retryable message"],
+    }
+    blueprint = {
+        "subtasks": [subtask, {**subtask, "title": "Duplicate timeout fix"}],
+        "coverage_map": {"AC-1": "ST-001"},
+    }
+    (branch_workspace / "blueprint.json").write_text(json.dumps(blueprint))
+
+    result = map_step_runner.validate_blueprint_contract()
+
+    assert result["valid"] is False
+    assert any("duplicate subtask id" in error for error in result["errors"])
+
+
+def test_validate_blueprint_contract_rejects_unknown_dependencies(branch_workspace):
+    blueprint = {
+        "subtasks": [
+            {
+                "id": "ST-001",
+                "title": "Fix checkout timeout message",
+                "aag_contract": "CheckoutService -> handle_timeout() -> user sees retryable error",
+                "dependencies": ["ST-999"],
+                "affected_files": ["src/checkout.py"],
+                "expected_diff_size": "small",
+                "concern_type": "runtime",
+                "one_logical_step": True,
+                "validation_criteria": ["VC1: timeout shows retryable message"],
+            }
+        ],
+        "coverage_map": {"AC-1": "ST-001"},
+    }
+    (branch_workspace / "blueprint.json").write_text(json.dumps(blueprint))
+
+    result = map_step_runner.validate_blueprint_contract()
+
+    assert result["valid"] is False
+    assert any("dependency 'ST-999' points to unknown subtask" in error for error in result["errors"])
+
+
 def test_record_test_contract_handoff_creates_json_and_manifest(branch_workspace):
     (branch_workspace / "test_contract_ST-001.md").write_text(
         "# Test Contract\n", encoding="utf-8"
@@ -1708,6 +1924,9 @@ class TestBuildContextBlock:
                     "title": "Second task",
                     "aag_contract": "Actor -> do2() -> done2",
                     "affected_files": ["b.py"],
+                    "expected_diff_size": "small",
+                    "concern_type": "runtime",
+                    "one_logical_step": True,
                     "validation_criteria": ["VC2: check"],
                     "dependencies": ["ST-001"],
                 },
@@ -1739,6 +1958,9 @@ class TestBuildContextBlock:
         assert "ST-002" in result
         assert "Second task" in result
         assert "Actor -> do2() -> done2" in result
+        assert "expected_diff_size=small" in result
+        assert "concern_type=runtime" in result
+        assert "one_logical_step=True" in result
         assert "[>>] ST-002" in result
         assert "[x] ST-001" in result
         assert "# Upstream Results" in result
