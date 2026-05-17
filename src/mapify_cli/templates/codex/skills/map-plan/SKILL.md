@@ -360,6 +360,11 @@ Output requirements per subtask:
 - dependencies: [] or [ST-NNN, ...]
 - complexity_score: 1-10
 - risk_level: low | medium | high
+- expected_diff_size: tiny | small | medium | large
+- concern_type: api | config | data | docs | infra | observability | refactor | release | runtime | security | tests | ui | mixed
+- one_logical_step: true
+- split_rationale: required when expected_diff_size is large, otherwise omit
+- concern_justification: required when concern_type is mixed, otherwise omit
 - validation_criteria: ["VC1: ...", "VC2: ..."]
 - test_strategy: {unit: [...], integration: [...]}
 
@@ -373,7 +378,7 @@ Coverage requirements:
   to the subtask that implements the relevant infrastructure.
 - For each structured result type, ALL fields (including optional envelope fields
   like budget_state, deferred_work, recovery_state) must be in validation_criteria.
-- Output a coverage_map field: {"AC-1": "ST-NNN", "AC-2": "ST-MMM", ...}
+- Output a coverage_map field for every acceptance criterion, invariant, and cross-cutting requirement: {"AC-1": "ST-NNN", "AC-2": "ST-MMM", ...}
 
 Return structured JSON:
 {
@@ -415,27 +420,14 @@ invalid blueprint, re-run Step 4 (the decomposer) BEFORE proceeding to Step 5.5.
 ```
 shell_command:
   cmd: |
-    BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
-    python3 -c "
-    import json, sys
-    data = json.loads(open('.map/${BRANCH}/blueprint.json').read())
-    subs = data.get('subtasks') or (data.get('blueprint') or {}).get('subtasks') or []
-    if not isinstance(subs, list) or len(subs) < 1:
-        print('BLUEPRINT_INVALID: subtasks empty or missing', file=sys.stderr); sys.exit(2)
-    required = {'id', 'dependencies'}
-    missing = [i for i, s in enumerate(subs) if not isinstance(s, dict) or not required.issubset(s)]
-    if missing:
-        print(f'BLUEPRINT_INVALID: subtasks {missing} missing required fields', file=sys.stderr); sys.exit(2)
-    print(f'BLUEPRINT_OK: {len(subs)} subtask(s)')
-    "
+    python3 .map/scripts/map_step_runner.py validate_blueprint_contract
 ```
 
-If the validator exits non-zero, return to Step 4 with the prompt: "Previous
-decomposer run produced an invalid blueprint (subtasks empty or missing
-required fields). Produce AT LEAST 2 subtasks; each subtask MUST include `id`
-and `dependencies` fields." After the second decomposer run, re-save
+If the validator exits non-zero, return to Step 4 with the exact JSON `errors`
+and `warnings`. Ask the decomposer to fix the oversized, mixed-concern,
+untraceable, or malformed subtasks. After the second decomposer run, re-save
 `blueprint.json` and re-run this validator. Two consecutive failures = STOP
-and report to the user.
+and report the validator errors to the user.
 
 ---
 
@@ -485,6 +477,9 @@ shell_command:
 - **Status:** pending
 - **AAG Contract:** `Actor -> Action(params) -> Goal`
 - **Complexity:** [low/medium/high]
+- **Expected Diff Size:** [tiny|small|medium|large]
+- **Concern Type:** [api|config|data|docs|infra|observability|refactor|release|runtime|security|tests|ui|mixed]
+- **One Logical Step:** [true|false]
 - **Dependencies:** [none | ST-XXX]
 - **Description:** [what needs to be done]
 - **Acceptance Criteria:**

@@ -685,6 +685,64 @@ class TestLightweightWorkflowSkillContracts:
         )
 
 
+class TestContractSizedSubtaskSkillContracts:
+    """Regression tests for user-visible subtask size and concern guardrails."""
+
+    @pytest.fixture
+    def project_root(self):
+        return Path(__file__).parent.parent
+
+    @pytest.mark.parametrize("skill_name", ["map-plan", "map-efficient"])
+    def test_planning_prompts_require_contract_size_metadata(
+        self, project_root, skill_name
+    ):
+        skill_md = project_root / ".claude" / "skills" / skill_name / "SKILL.md"
+        content = skill_md.read_text(encoding="utf-8")
+
+        assert "expected_diff_size" in content
+        assert "concern_type" in content
+        assert "one_logical_step" in content
+        assert "split_rationale" in content
+        assert "concern_justification" in content
+        assert "coverage_map" in content
+
+    @pytest.mark.parametrize("skill_name", ["map-plan", "map-efficient"])
+    def test_planning_prompts_run_blueprint_contract_validator(
+        self, project_root, skill_name
+    ):
+        skill_md = project_root / ".claude" / "skills" / skill_name / "SKILL.md"
+        content = skill_md.read_text(encoding="utf-8")
+
+        assert "validate_blueprint_contract" in content
+
+    def test_map_plan_human_plan_surfaces_scope_metadata(self, project_root):
+        skill_md = project_root / ".claude" / "skills" / "map-plan" / "SKILL.md"
+        content = skill_md.read_text(encoding="utf-8")
+
+        assert "**Expected Diff Size:**" in content
+        assert "**Concern Type:**" in content
+        assert "**One Logical Step:**" in content
+
+    @pytest.mark.parametrize(
+        "relative_path",
+        [
+            Path(".claude/agents/task-decomposer.md"),
+            Path(".codex/agents/decomposer.toml"),
+        ],
+    )
+    def test_decomposer_agent_schema_matches_blueprint_contract(
+        self, project_root, relative_path
+    ):
+        content = (project_root / relative_path).read_text(encoding="utf-8")
+
+        assert "coverage_map" in content
+        assert "expected_diff_size" in content
+        assert "concern_type" in content
+        assert "one_logical_step" in content
+        assert "split_rationale" in content
+        assert "concern_justification" in content
+
+
 class TestRunHealthCloseoutWiring:
     """Regression tests for auto-written run health reports in closeout prompts."""
 

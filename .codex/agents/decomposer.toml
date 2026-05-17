@@ -100,6 +100,11 @@ Return **ONLY** valid JSON in this exact structure:
       "error_handling_required": true,
       "rationale": "Production deployment to critical infrastructure requires non-negotiable quality thresholds"
     },
+    "coverage_map": {
+      "AC-1": "ST-001",
+      "INV-1": "ST-001",
+      "Cross-cutting: observability": "ST-002"
+    },
     "subtasks": [
       {
         "id": "ST-001",
@@ -111,6 +116,11 @@ Return **ONLY** valid JSON in this exact structure:
         "security_critical": false,
         "complexity_score": 3,
         "complexity_rationale": "Score N: Base(1) + Novelty(+X) + Deps(+Y) + Scope(+Z) + Risk(+W) = Total",
+        "expected_diff_size": "tiny|small|medium|large",
+        "concern_type": "api|config|data|docs|infra|observability|refactor|release|runtime|security|tests|ui|mixed",
+        "one_logical_step": true,
+        "split_rationale": "Required only when expected_diff_size is large; otherwise omit",
+        "concern_justification": "Required only when concern_type is mixed; otherwise omit",
         "validation_criteria": [
           "Testable condition that proves completion (e.g., 'Returns 401 for expired token')",
           "Another specific, verifiable outcome",
@@ -180,6 +190,10 @@ Return **ONLY** valid JSON in this exact structure:
     - Enforced in: Actor quality checklist, Monitor validation
   - **rationale**: String explaining why these thresholds are set
     - Example: "Production deployment to critical infrastructure requires non-negotiable quality thresholds"
+**blueprint.coverage_map**: REQUIRED object mapping every spec acceptance criterion, invariant, result schema field, and cross-cutting requirement to exactly one owning `ST-NNN` subtask
+  - Purpose: lets reviewers see requirement ownership before implementation starts
+  - Values MUST match an existing `subtasks[].id`
+  - Include entries such as `"AC-1": "ST-001"`, `"INV-2": "ST-003"`, `"Cross-cutting: observability": "ST-004"`
 
 **subtasks[].id**: Namespaced string ID (e.g., "ST-001", "ST-002") - prevents collision across blueprints
 **subtasks[].title**: Action-oriented, specific (e.g., "Add validateToken() to AuthService", NOT "update auth")
@@ -197,6 +211,13 @@ Return **ONLY** valid JSON in this exact structure:
 **subtasks[].complexity_score**: Numeric 1-10 (PRIMARY complexity indicator)
   - 1-4: Simple | 5-6: Moderate | 7-10: Complex (consider splitting if ≥8)
 **subtasks[].complexity_rationale**: MUST reference factors: "Score N: factor (+X), factor (+Y)..."
+**subtasks[].expected_diff_size**: REQUIRED size estimate: "tiny" | "small" | "medium" | "large"
+  - Use "large" only when splitting would destroy the user-visible payoff; include `split_rationale`
+  - If the work is merely broad because it is convenient, split it before returning the blueprint
+**subtasks[].concern_type**: REQUIRED primary concern: "api" | "config" | "data" | "docs" | "infra" | "observability" | "refactor" | "release" | "runtime" | "security" | "tests" | "ui" | "mixed"
+  - Use "mixed" only when the concerns cannot be separated without losing user value; include `concern_justification`
+**subtasks[].one_logical_step**: REQUIRED boolean, normally `true`
+  - If this would be `false`, split the subtask instead of returning it
 **subtasks[].validation_criteria**: Array of **testable conditions** that prove completion
   - REQUIRED: 2-4 specific, verifiable outcomes
   - Format (recommended): Prefix each item with `VC1:`, `VC2:`, ... for stable cross-agent reference.
@@ -437,6 +458,7 @@ OK Subtasks are atomic (independently implementable + testable)
 OK Dependencies are explicit and accurate
 OK Acceptance criteria are specific and measurable
 OK File paths are precise (not "backend" or "frontend")
+OK Size/concern metadata makes scope creep visible before implementation
 OK Complexity estimates are realistic (based on actual effort)
 OK Risks are identified (not empty)
 OK 5-8 subtasks (neither too granular nor too coarse)
@@ -450,6 +472,7 @@ X "Add functionality and tests" (coupled, not atomic)
 X Missing dependencies (parallel subtasks that should be sequential)
 X "Tests pass" (vague acceptance criteria)
 X "Code" or "backend" (vague file paths)
+X Large or mixed-concern subtask with no rationale
 X All subtasks marked "low" complexity (unrealistic)
 X Empty risks array for complex feature
 X 2 giant subtasks or 20 tiny subtasks
@@ -478,6 +501,10 @@ X Random order (subtask 5 must be done before subtask 2)
 - [ ] 5-8 subtasks (not too granular or too coarse)
 - [ ] Titles are action-oriented (start with verb)
 - [ ] Descriptions explain HOW, not just WHAT
+- [ ] Each subtask has expected_diff_size, concern_type, and one_logical_step=true
+- [ ] Large subtasks have split_rationale, or were split before returning
+- [ ] Mixed-concern subtasks have concern_justification, or were split before returning
+- [ ] coverage_map assigns every AC/invariant/cross-cutting requirement to an existing ST-NNN
 
 **Acceptance Criteria**:
 - [ ] Each subtask has 2-4 specific criteria

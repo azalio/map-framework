@@ -1,5 +1,14 @@
 # MAP Framework Improvement Done
 
+## Contract-sized subtask guardrails [2604.039]
+
+- Date: 2026-05-17
+- Added `validate_blueprint_contract` to `.map/scripts/map_step_runner.py` and the shipped template copy so `/map-plan` and `/map-efficient` can fail oversized, mixed-concern, untraceable, duplicate-ID, dangling-dependency, or non-logical subtasks before implementation starts.
+- Extended blueprint contracts with `expected_diff_size`, `concern_type`, `one_logical_step`, `aag_contract`, `validation_criteria`, and `coverage_map`, including nested TaskDecomposer output support in `BLUEPRINT_SCHEMA`.
+- Updated Claude and Codex planner/decomposer surfaces plus Monitor and FinalVerifier prompts so contract metadata is generated, carried into Actor context, and checked for scope drift after planning.
+- Synced `.claude/`, `.codex/`, and `.map/scripts/` changes into `src/mapify_cli/templates/`, updated README/usage/architecture/roadmap docs, and added regression coverage for weak blueprint contracts, template sync, schema alignment, nested decomposer output, bad coverage owners, duplicate IDs, and unknown dependencies.
+- Verified with focused contract/template tests, `make lint`, `pytest -m "not slow"`, generated-project `mapify init` smoke tests for valid and invalid blueprints, and two independent review passes. Remaining artifact lineage and hard/soft constraint typing are tracked as follow-up work.
+
 ## Workflow fit classifier and explicit off-ramp for trivial work [2604.038]
 
 - Date: 2026-05-16

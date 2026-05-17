@@ -159,11 +159,15 @@ Hard requirements:
   - Include a concrete anchor per VC (endpoint/function + file path)
 - Use `blueprint.subtasks[].dependencies` (array of subtask IDs)
 - Include `complexity_score` (1-10) and `risk_level` (low|medium|high)
+- Include `expected_diff_size` (tiny|small|medium|large), `concern_type` (api|config|data|docs|infra|observability|refactor|release|runtime|security|tests|ui|mixed), and `one_logical_step: true`
+- Split large subtasks unless a concrete `split_rationale` explains why the user payoff requires that scope in one subtask
+- Split mixed-concern subtasks unless a concrete `concern_justification` explains why the concerns cannot be separated without losing user value
 - Include `security_critical` (true for auth/crypto/validation)
 - Include `test_strategy` with unit/integration/e2e keys
   - Map every `VCn:` to ≥1 planned test case (prefer test name contains `vc<n>`)
   - Recommended format: `path/to/test_file.ext::test_name_or_symbol`
 - Include `aag_contract` (one-line pseudocode: Actor -> Action -> Goal)
+- Include top-level `coverage_map` mapping each acceptance criterion, invariant, and cross-cutting requirement to its owning subtask ID
 
 AAG Contract format (REQUIRED per subtask):
   "aag_contract": "AuthService -> validate(token) -> returns 401|200 with user_id"
@@ -177,9 +181,11 @@ This eliminates reasoning overhead — the contract IS the specification."""
 # After decomposer returns:
 # 1. Save the full blueprint JSON for wave computation:
 #    Write the decomposer output to .map/<branch>/blueprint.json
-# 2. Extract subtask IDs from blueprint and register them in state:
+# 2. Validate contract-sized subtask metadata before execution can start:
+#    python3 .map/scripts/map_step_runner.py validate_blueprint_contract
+# 3. Extract subtask IDs from blueprint and register them in state:
 #    python3 .map/scripts/map_orchestrator.py set_subtasks ST-001 ST-002 ST-003
-# 3. Validate step completion:
+# 4. Validate step completion:
 #    python3 .map/scripts/map_orchestrator.py validate_step "1.0"
 ```
 
@@ -188,6 +194,7 @@ This eliminates reasoning overhead — the contract IS the specification."""
 Generate `.map/<branch>/task_plan_<branch>.md` from blueprint:
 - Header: Goal from blueprint.summary
 - For each subtask: ### ST-XXX section with `- **Status:** pending`
+- Include each subtask's `expected_diff_size`, `concern_type`, and `one_logical_step` so reviewers can spot scope creep before Actor starts
 - First subtask: `- **Status:** in_progress`
 - Terminal State: `- **Status:** pending`
 

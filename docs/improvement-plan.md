@@ -248,10 +248,11 @@
 - Add regression tests proving that split-session TDD survives context reset/compaction and still resumes deterministically from persisted test artifacts.
 
 
-## Contract-sized subtasks and artifact stage gates [2604.039]
+## Artifact lineage and hard/soft constraint typing [2604.039-followup]
 
 **Source**: [[acai-sh]] (article note), [[u-define-designing-user-workflows-for-hard-and-soft-constraints-in-llm-based-planning]] (paper note), plus existing MAP philosophy and artifact-pipeline backlog context
 **Implementation Layer**: `src/mapify_cli/schemas.py`, `src/mapify_cli/templates/`, generated provider surfaces, `.map/<branch>/artifact_manifest.json`, and workflow verification helpers
+**Shipped context**: The contract-sized subtask guardrail slice is complete and recorded in [docs/improvement-done.md](./improvement-done.md): `/map-plan` and `/map-efficient` now validate per-subtask size, concern, one logical step, dependencies, validation criteria, and coverage ownership before implementation.
 **Missing Capability**: Stable acceptance-criteria IDs that connect specs, generated subtask contracts, tests, review findings, and verification summaries across the MAP artifact pipeline, plus explicit hard/soft constraint typing so Monitor and FinalVerifier can distinguish non-negotiable gates from negotiable preferences.
 **Architecture Evidence**: `docs/ARCHITECTURE.md` defines reviewable diffs, artifact traceability, generated provider surfaces, branch-scoped `.map/<branch>/` manifests, and verification/review gates as core runtime concerns.
 **Benefit Hypothesis**: Making artifact lineage and small-diff budgets explicit across workflows will reduce scope creep, oversized diffs, and stage skipping, leading to more reviewable changes and more reliable recovery. The measurable target is smaller median subtask diffs, fewer mixed-concern subtasks, and fewer workflows that reach review without a full contract trail.
@@ -261,12 +262,9 @@
 
 ### Proposed Changes
 
-- Add a branch-scoped `artifact_manifest.json` that records the status of spec, plan, test contract, implementation summary, review verdict, verification, and learn closeout for the current workflow.
 - Add stable acceptance-criteria IDs to spec and plan artifacts, propagate them into generated test contracts, review dossiers, and verification summaries, and report acceptance coverage before a workflow can be marked complete.
 - Extend spec/plan artifacts with `hard_constraints` and `soft_constraints` fields. Hard constraints block stage completion or force replanning when violated; soft constraints are logged with explicit tradeoff rationale when a workflow chooses not to satisfy them.
 - Require complex workflows to consume the prior stage artifact explicitly before proceeding; for example, review should load spec + tests + diff, and code execution should record which test/spec contract it is satisfying.
-- Extend decomposition/planning artifacts with `expected_diff_size`, `concern_type`, and a one-concern-per-subtask rule, so Monitor/FinalVerifier can detect when a task has grown beyond “one logical step”.
-- Add guardrails that warn or block when a subtask diff exceeds a configured reviewable budget or mixes incompatible concern types (for example schema + runtime + tests + docs in one subtask without justification).
 - Update canonical docs so MAP has a visible default artifact pipeline even if individual commands still differ in internal implementation details.
 
 ## Constraint-first provider rule templates

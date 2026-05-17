@@ -211,11 +211,117 @@ class TestBlueprintSchema:
                     "title": "Add schema validation",
                     "dependencies": [],
                     "affected_files": ["src/schemas.py"],
+                    "aag_contract": "Schema module -> validate_artifact() -> contract errors",
+                    "expected_diff_size": "small",
+                    "concern_type": "runtime",
+                    "one_logical_step": True,
+                    "validation_criteria": ["VC1: invalid artifacts return errors"],
                 }
-            ]
+            ],
+            "coverage_map": {"AC-1": "ST-001"},
         }
         is_valid, errors = validate_artifact(blueprint, BLUEPRINT_SCHEMA)
         assert is_valid, f"Errors: {errors}"
+
+    def test_validate_blueprint_accepts_subtask_contract_metadata(self):
+        from mapify_cli.schemas import BLUEPRINT_SCHEMA, validate_artifact
+
+        blueprint = {
+            "subtasks": [
+                {
+                    "id": "ST-001",
+                    "title": "Add checkout timeout message",
+                    "dependencies": [],
+                    "affected_files": ["src/checkout.py"],
+                    "aag_contract": "CheckoutService -> handle_timeout() -> user sees retryable error",
+                    "expected_diff_size": "small",
+                    "concern_type": "runtime",
+                    "one_logical_step": True,
+                    "validation_criteria": ["VC1: user sees retryable timeout"],
+                }
+            ],
+            "coverage_map": {"AC-1": "ST-001"},
+        }
+
+        is_valid, errors = validate_artifact(blueprint, BLUEPRINT_SCHEMA)
+        assert is_valid, f"Errors: {errors}"
+
+    def test_validate_blueprint_accepts_nested_decomposer_output(self):
+        from mapify_cli.schemas import BLUEPRINT_SCHEMA, validate_artifact
+
+        blueprint = {
+            "schema_version": "2.0",
+            "blueprint": {
+                "subtasks": [
+                    {
+                        "id": "ST-001",
+                        "title": "Add checkout timeout message",
+                        "dependencies": [],
+                        "affected_files": ["src/checkout.py"],
+                        "aag_contract": "CheckoutService -> handle_timeout() -> user sees retryable error",
+                        "expected_diff_size": "small",
+                        "concern_type": "runtime",
+                        "one_logical_step": True,
+                        "validation_criteria": ["VC1: user sees retryable timeout"],
+                    }
+                ],
+                "coverage_map": {"AC-1": "ST-001"},
+            },
+        }
+
+        is_valid, errors = validate_artifact(blueprint, BLUEPRINT_SCHEMA)
+        assert is_valid, f"Errors: {errors}"
+
+    def test_validate_blueprint_rejects_malformed_dependency_and_coverage_ids(self):
+        from mapify_cli.schemas import BLUEPRINT_SCHEMA, validate_artifact
+
+        blueprint = {
+            "subtasks": [
+                {
+                    "id": "ST-001",
+                    "title": "Bad IDs",
+                    "dependencies": ["one"],
+                    "affected_files": [],
+                    "aag_contract": "Actor -> bad() -> bad",
+                    "expected_diff_size": "small",
+                    "concern_type": "runtime",
+                    "one_logical_step": True,
+                    "validation_criteria": ["VC1: check"],
+                }
+            ],
+            "coverage_map": {"AC-1": "one"},
+        }
+
+        is_valid, errors = validate_artifact(blueprint, BLUEPRINT_SCHEMA)
+        assert not is_valid
+        joined_errors = "\n".join(errors)
+        assert "dependencies" in joined_errors
+        assert "coverage_map" in joined_errors
+
+    def test_validate_blueprint_rejects_invalid_contract_metadata_enum(self):
+        from mapify_cli.schemas import BLUEPRINT_SCHEMA, validate_artifact
+
+        blueprint = {
+            "subtasks": [
+                {
+                    "id": "ST-001",
+                    "title": "Bad metadata",
+                    "dependencies": [],
+                    "affected_files": [],
+                    "aag_contract": "Actor -> bad() -> bad",
+                    "expected_diff_size": "huge",
+                    "concern_type": "everything",
+                    "one_logical_step": True,
+                    "validation_criteria": ["VC1: check"],
+                }
+            ],
+            "coverage_map": {"AC-1": "ST-001"},
+        }
+
+        is_valid, errors = validate_artifact(blueprint, BLUEPRINT_SCHEMA)
+        assert not is_valid
+        assert any("expected_diff_size" in error for error in errors)
+        assert any("concern_type" in error for error in errors)
 
     def test_validate_invalid_blueprint(self):
         from mapify_cli.schemas import BLUEPRINT_SCHEMA, validate_artifact
@@ -223,7 +329,7 @@ class TestBlueprintSchema:
         blueprint = {"metadata": {"goal": "test"}}  # missing required 'subtasks'
         is_valid, errors = validate_artifact(blueprint, BLUEPRINT_SCHEMA)
         assert not is_valid
-        assert any("subtasks" in e for e in errors)
+        assert errors
 
 
 class TestValidateArtifact:
@@ -261,8 +367,14 @@ class TestValidateArtifact:
                     "title": "Test",
                     "dependencies": [],
                     "affected_files": ["a.py"],
+                    "aag_contract": "Actor -> test() -> done",
+                    "expected_diff_size": "small",
+                    "concern_type": "runtime",
+                    "one_logical_step": True,
+                    "validation_criteria": ["VC1: check"],
                 }
-            ]
+            ],
+            "coverage_map": {"AC-1": "ST-001"},
         }
         path = tmp_path / "blueprint.json"
         path.write_text(json.dumps(bp))
