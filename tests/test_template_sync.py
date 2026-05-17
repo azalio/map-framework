@@ -241,6 +241,63 @@ class TestCommandTemplateSynchronization:
             )
 
 
+class TestReferenceTemplateSynchronization:
+    """Sync invariants for shared references consumed by shipped skills."""
+
+    @pytest.fixture
+    def project_root(self):
+        return Path(__file__).parent.parent
+
+    @pytest.fixture
+    def claude_references_dir(self, project_root):
+        return project_root / ".claude" / "references"
+
+    @pytest.fixture
+    def templates_references_dir(self, project_root):
+        return project_root / "src" / "mapify_cli" / "templates" / "references"
+
+    def test_reference_files_in_sync(
+        self, claude_references_dir, templates_references_dir
+    ):
+        """Shared reference files should ship exactly as authored."""
+        if not claude_references_dir.exists():
+            pytest.skip(".claude/references/ directory doesn't exist")
+
+        source_files = {
+            path.relative_to(claude_references_dir): path
+            for path in claude_references_dir.rglob("*")
+            if path.is_file()
+        }
+        target_files = (
+            {
+                path.relative_to(templates_references_dir): path
+                for path in templates_references_dir.rglob("*")
+                if path.is_file()
+            }
+            if templates_references_dir.exists()
+            else {}
+        )
+
+        missing = sorted(source_files.keys() - target_files.keys())
+        extra = sorted(target_files.keys() - source_files.keys())
+
+        assert not missing, (
+            "Reference files missing from templates: "
+            + ", ".join(str(path) for path in missing)
+        )
+        assert not extra, (
+            "Reference files present only in templates: "
+            + ", ".join(str(path) for path in extra)
+        )
+
+        for rel_path, source in source_files.items():
+            target = target_files[rel_path]
+            assert source.read_bytes() == target.read_bytes(), (
+                f"Reference file '{rel_path}' differs between .claude/references/ "
+                "and templates/references/. Run: make sync-templates"
+            )
+
+
 class TestCodexTemplateSynchronization:
     """Test that Codex templates are synchronized between .codex/ and templates/codex/."""
 

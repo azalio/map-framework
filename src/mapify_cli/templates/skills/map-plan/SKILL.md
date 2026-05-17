@@ -8,6 +8,8 @@ argument-hint: "[task description]"
 
 **Purpose:** Plan and decompose complex tasks into atomic subtasks. This command ONLY plans - it does NOT execute or verify.
 
+Use compact evidence-first examples from [Evidence-First Output Examples](../../references/map-output-examples.md) when spec review or decomposition output depends on quoted requirements, source files, or prior artifacts.
+
 **When to use:**
 - Starting a new feature, refactoring, or complex bug fix
 - Need to break down work into manageable pieces
@@ -382,6 +384,7 @@ Check for:
 7. **Trivial or false design contradiction**: Does the `## Contradiction` section state a real tension (both sides have independent forces — separate stakeholders, conflicting cost axes, or genuine physics) or a tautology like "fast AND correct" with no constraint binding the trade-off? If trivial, demand a sharper formulation or explicit "No non-trivial contradiction" with justification.
 
 Output format:
+- Evidence first: for every finding, include `evidence` with `file_path`, `line_range` or section, `quote`, and `relevance`. HIGH-severity findings must cite the exact spec section or source lines that make the gap concrete.
 - For each finding: severity (HIGH/MEDIUM/LOW), category, description, suggested fix
 - If NO high-severity issues found: output "SPEC APPROVED"
 - If HIGH-severity issues found: list them clearly for user resolution
@@ -443,6 +446,7 @@ Break down this task into atomic, testable subtasks:
 {"Discovery notes from research-agent are available in this chat" if discovery_done else ""}
 
 Output requirements:
+- Include an `evidence` array before `subtasks`: quote the spec, user request, discovery notes, or source files that justify the decomposition boundaries
 - Each subtask MUST include an aag_contract: "Actor -> Action(params) -> Goal"
 - Each subtask MUST include `expected_diff_size`: `tiny`, `small`, `medium`, or `large`
 - Each subtask MUST include `concern_type`: `api`, `config`, `data`, `docs`, `infra`, `observability`, `refactor`, `release`, `runtime`, `security`, `tests`, `ui`, or `mixed`

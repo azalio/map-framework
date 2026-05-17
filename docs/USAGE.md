@@ -55,6 +55,8 @@ Implementation note: `/map-learn` is now maintained skill-first. The canonical s
 
 `/map-review` auto-generates `.map/<branch>/review-bundle.json` (machine-readable) and `.map/<branch>/review-bundle.md` (human-readable) before launching reviewer agents. The bundle consolidates spec, task plan, test contracts, verification summary, QA results, and latest code review artifacts into a single durable input contract. This decouples review from implementer session context — reviewer agents read the bundle first; raw diff is used only to confirm or expand bundle findings. When an artifact is absent, the bundle records an explicit `present: false` entry so generation always succeeds regardless of workflow stage.
 
+Reviewer agents now use evidence-first output contracts: Monitor, Predictor, and Evaluator quote concrete file paths, line ranges, and relevant source/diff text before verdict, risk, or score fields. The same evidence-first pattern is used by `/map-debug` root-cause and validation prompts and by `/map-plan` spec-review/decomposition prompts, making failures easier to audit instead of asking users to trust unsupported summaries.
+
 **Optional detached mode:**
 
 ```bash

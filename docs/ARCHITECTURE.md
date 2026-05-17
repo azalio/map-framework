@@ -627,6 +627,10 @@ for subtask in subtasks:
    - Predictor checks for similar issues elsewhere in codebase
    - Evaluator verifies fix quality and edge case coverage
 
+4. **Evidence-first Root Cause and Validation Output**
+   - Investigation prompts require exact log, test-output, or code quotes before `root_cause`
+   - Monitor, Predictor, and Evaluator prompts cite changed code or test evidence before verdict/risk/score fields
+
 **Token Usage:** 70-80% of baseline
 **Learning:** Optional via `/map-learn`
 **Quality Gates:** All agents for fixes, reduced for investigation
@@ -661,6 +665,8 @@ for subtask in subtasks:
 **Review Order Bias Hardening:** Long-context LLM reviewers exhibit anchoring effects: sections presented early in a review session receive disproportionate attention and can skew the final verdict. `/map-review` exposes three operational modes to probe verdict stability: canonical order (Architecture → Code Quality → Tests → Performance, the default), reverse order (`--reverse-sections`), and seeded random order (`--shuffle-sections [--seed N]`). Compare mode (`--compare-orderings`) runs both default and reverse passes, then aggregates using strict-wins (BLOCK > REVISE > PROCEED — never downgrade). The `ordering` top-level object in `.map/<branch>/review-bundle.json` records mode, seed, per-run verdicts, and drift detection result. INV-10 ensures `create_review_bundle` is the sole manifest writer for the `review` stage; ordering data is staged via a module-level pending dict and consumed in a single atomic write. INV-7 guarantees default behavior is unchanged when no flags are passed. Design rationale follows two TRIZ principles: **Principle 22** ("convert harm into a probe" / "blessing in disguise") — section-ordering sensitivity, instead of being hidden, becomes a first-class diagnostic signal for verdict stability; **Principle 35** ("parameter changes") — varying only the presentation order (a low-cost parameter change) while holding section content constant isolates order as the single varying parameter and yields high-signal drift output.
 
 **Review-Bundle-First Context:** `/map-review` persists the durable review bundle (`.map/<branch>/review-bundle.json` / `.map/<branch>/review-bundle.md`) via `create_review_bundle()` before launching reviewer agents. Monitor, Predictor, and Evaluator receive the bundle as primary context — containing spec, task plan, test contracts, verification summary, and code-review history — and use raw diff only to confirm or expand bundle findings. When detached preparation is unavailable, the review still proceeds from the persisted bundle. Bundle generation always updates `artifact_manifest.json["stages"]["review"]`.
+
+**Evidence-First Review Contracts:** Monitor, Predictor, and Evaluator prompts require `evidence[]` before verdict, risk, or score fields. Evidence entries include file path, line range, quote, and relevance so reviewers can trace HIGH/CRITICAL issues, breaking-change claims, and low quality scores back to concrete bundle or diff material.
 
 **Token Usage:** ~15-25K tokens (parallel agents + interactive 4-section presentation; `--ci` mode ~12-15K)
 **Learning:** Optional via `/map-learn`

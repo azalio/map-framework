@@ -811,6 +811,73 @@ class TestRunHealthCloseoutWiring:
         )
 
 
+class TestEvidenceFirstPromptContracts:
+    """Regression tests for evidence-grounded agent outputs.
+
+    These protect the user-visible review/debug/planning payoff from regressing
+    back to unsupported verdicts or vague root-cause claims.
+    """
+
+    @pytest.fixture
+    def project_root(self):
+        return Path(__file__).parent.parent
+
+    @pytest.mark.parametrize(
+        ("skill_name", "required_terms"),
+        [
+            (
+                "map-review",
+                [
+                    "Evidence-First Output Examples",
+                    "evidence: array of {file_path, line_range, quote, relevance}",
+                    "populate this before verdict fields",
+                    "populate this before risk_assessment",
+                    "populate this before scores",
+                ],
+            ),
+            (
+                "map-debug",
+                [
+                    "Evidence-First Output Examples",
+                    "quotes: array of {source, locator, quote, relevance}",
+                    "quote exact logs, test output, or code fragments before root_cause",
+                    "cite the changed code or failing/passing test before verdict fields",
+                    "include support for each similar issue or high-risk claim",
+                ],
+            ),
+            (
+                "map-plan",
+                [
+                    "Evidence-First Output Examples",
+                    "Evidence first: for every finding",
+                    "HIGH-severity findings must cite the exact spec section",
+                    "Include an `evidence` array before `subtasks`",
+                ],
+            ),
+        ],
+    )
+    def test_high_risk_agent_prompts_require_evidence_first_outputs(
+        self, project_root, skill_name, required_terms
+    ):
+        content = (
+            project_root / ".claude" / "skills" / skill_name / "SKILL.md"
+        ).read_text(encoding="utf-8")
+
+        for term in required_terms:
+            assert term in content
+
+    def test_shared_evidence_examples_cover_core_workflows(self, project_root):
+        examples = (
+            project_root / ".claude" / "references" / "map-output-examples.md"
+        ).read_text(encoding="utf-8")
+
+        assert "## Review Finding" in examples
+        assert "## Debug Root Cause" in examples
+        assert "## Spec Review Finding" in examples
+        assert '"evidence"' in examples
+        assert '"quotes"' in examples
+
+
 class TestMapReviewSkillBundleWiring:
     """Validate that map-review SKILL.md is wired to consume the persisted review bundle.
 

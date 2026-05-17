@@ -26,6 +26,8 @@ Debug the following issue using the MAP framework:
 
 **Debug Request:** $ARGUMENTS
 
+Use compact evidence-first examples from [Evidence-First Output Examples](../../references/map-output-examples.md) when asking agents to report root causes, validation failures, or impact risks.
+
 ## Workflow Overview
 
 Debugging workflow focuses on analysis before implementation:
@@ -91,6 +93,7 @@ Task(
 **Goal:** [acceptance_criteria]
 
 Perform analysis and provide:
+- quotes: array of {source, locator, quote, relevance}; quote exact logs, test output, or code fragments before root_cause
 - findings: array of observations
 - root_cause: string (if identified)
 - next_steps: array of recommended actions
@@ -148,6 +151,7 @@ Check:
 - Are there any edge cases missed?
 
 Output JSON with:
+- evidence: array of {file_path, line_range, quote, relevance}; cite the changed code or failing/passing test before verdict fields
 - valid: boolean
 - issues: array of {severity, category, description}
 - verdict: 'approved'|'needs_revision'|'rejected'
@@ -175,6 +179,7 @@ Analyze:
 - Are there performance implications?
 
 Output JSON with:
+- evidence: array of {file_path, line_range, quote, relevance}; include support for each similar issue or high-risk claim
 - similar_issues: array of {file, line, description}
 - risk_level: 'low'|'medium'|'high'
 - recommended_additional_changes: array of strings
@@ -201,6 +206,7 @@ Score (0-10):
 - testing: is it properly tested?
 
 Output JSON with:
+- evidence: array of {file_path, line_range, quote, relevance}; cite changed code or test output for any score below 7
 - scores: object
 - overall_score: number
 - recommendation: 'proceed'|'improve'|'reject'
