@@ -68,6 +68,16 @@
 - Added focused metadata lint coverage in `tests/test_skills.py` for description length, supported frontmatter keys, broken `map-*` description references, and manual-skill argument hints.
 - Synced the `.claude/skills/` changes into `src/mapify_cli/templates/skills/`, updated `README.md` and `docs/USAGE.md`, and confirmed the repo-built `uv run mapify init ...` flow emits the new skill frontmatter.
 
+## LEARN as a philosophical requirement with soft runtime ergonomics [2604.035]
+
+- Date: 2026-05-17
+- Decision: rejected as an active-plan parent because every executable child slice needed for the promised soft-LEARN payoff is already implemented and recorded below.
+- Repo evidence: `docs/improvement-done.md` records `2604.035-1`, `2604.035-2`, and `2604.035-3` as shipped child slices for learning handoff artifacts, zero-argument `/map-learn`, learning adoption metrics, deferred-usage tracking, and repeated learned-rule violation tracking.
+- Repo evidence: `.map/scripts/map_step_runner.py` writes `.map/<branch>/learning-handoff.md`, `.json`, and `learning-metrics.json`, records handoff generation/consumption metrics, and records repeated learned-rule violation summaries during `write_learning_handoff`.
+- Repo evidence: `.claude/skills/map-efficient/SKILL.md`, `.claude/skills/map-debug/SKILL.md`, `.claude/skills/map-check/SKILL.md`, and `.claude/skills/map-review/SKILL.md` already write learning handoffs at closeout, while `.claude/skills/map-learn/SKILL.md` already documents zero-argument handoff loading.
+- Repo evidence: README, `docs/USAGE.md`, `docs/ARCHITECTURE.md`, and `docs/roadmap.md` already document soft runtime learning, learning handoff artifacts, learning metrics, and repeated-rule signals.
+- No runtime change was needed; this loop removed the stale parent section so future improvement-plan loops do not reselect the already-shipped LEARN ergonomics bundle.
+
 ## Learning handoff artifacts and zero-argument `/map-learn` [2604.035-1]
 
 - Date: 2026-04-12
