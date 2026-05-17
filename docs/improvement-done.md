@@ -1,5 +1,15 @@
 # MAP Framework Improvement Done
 
+## Few-shot command examples and evidence-quoted outputs [2604.027]
+
+- Date: 2026-05-17
+- Added a shared `.claude/references/map-output-examples.md` evidence-first examples file and synced it into shipped templates so MAP prompts have compact review, debug, and spec-review JSON examples.
+- Updated `/map-review` Monitor, Predictor, and Evaluator prompts to require `evidence[]` before verdict, risk, or score fields, with HIGH/CRITICAL issues, high-risk claims, breaking changes, and sub-7 scores tied to concrete quotes.
+- Updated `/map-debug` investigation, Monitor, Predictor, and Evaluator prompts to quote logs, test output, changed code, or similar issue evidence before root-cause, verdict, risk, or score fields.
+- Updated `/map-plan` spec-review and decomposition prompts to cite exact spec/source evidence for findings and decomposition boundaries.
+- Added regression tests that fail if the high-risk prompts lose their evidence-first contracts or the shared examples stop covering review, debug, and spec-review workflows.
+- Left generic linting for future JSON prompt contracts as active follow-up `2604.027-1`; this entry closes the user-visible evidence-output slice, not every possible prompt-lint rule.
+
 ## Contract-sized subtask guardrails [2604.039]
 
 - Date: 2026-05-17

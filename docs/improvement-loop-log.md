@@ -140,3 +140,17 @@
   - invariant: `Every shipped skill-rules.json entry must declare skillClass as reference, task, or hybrid.`
   - invariant: `Task skills must be manual slash workflows; reference skills must not hide manual invocation, hooks, or runtime effects; hybrid skills must declare runtimeEffects.`
   - gotcha: `Docs can retain stale skill names even after catalog tests pass; grep for removed/non-shipped skill names such as map-workflows-guide and map-cli-reference when changing skill taxonomy.`
+## 2026-05-17 - Few-shot command examples and evidence-quoted outputs [2604.027]
+
+- Decision: `implemented`
+- Branch: `codex/2604-027-evidence-outputs`
+- PR: `https://github.com/azalio/map-framework/pull/122`
+- Baseline: MAP review, debug, and planning prompts asked agents for JSON verdicts, risks, root causes, and decomposition results without consistently requiring quoted evidence first. The active plan also bundled future generic JSON-contract linting with the user-visible evidence-output behavior.
+- Forward Change: Shipped a compact shared evidence examples reference and wired `/map-review`, `/map-debug`, and `/map-plan` to require quotes/evidence before high-risk judgments. After review, split the broader generic JSON-contract linting ask into active follow-up `2604.027-1` instead of claiming it shipped in this PR.
+- Decisive Validation: Focused prompt/template tests passed, the generated-project `mapify init` smoke emitted the new reference and prompt lines, reference template sync now has a regression, and `pytest -m "not slow"` plus `make lint` passed. Unfiltered `pytest` was attempted and timed out at the known live Claude SDK boundary after deterministic tests and the first three slow SDK tests passed.
+- Next Trigger: Reuse this when changing MAP skill prompts that ask agents for JSON judgments, verdicts, risks, root causes, scores, or decomposition boundaries.
+- Reusable Learnings:
+  - command: `pytest tests/test_skills.py::TestEvidenceFirstPromptContracts tests/test_template_sync.py::TestReferenceTemplateSynchronization -v`
+  - command: `uv run --no-sync mapify init <new-dir> --no-git --mcp none`
+  - invariant: `If shipped skills link to .claude/references files, the matching src/mapify_cli/templates/references files must exist, be byte-identical, and be covered by template-sync tests.`
+  - review-check: `When a plan item mixes user-visible prompt behavior with future generic lint tooling, close only the shipped behavior and leave the lint rule as a child follow-up.`

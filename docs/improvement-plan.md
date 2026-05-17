@@ -166,20 +166,12 @@
 - Centralize the common envelope in a small template helper or generator so the structure is maintained in one place and synced into `src/mapify_cli/templates/commands/`.
 
 
-## Few-shot command examples and evidence-quoted outputs [2604.027]
+## Generic JSON prompt-contract lint for future MAP skills [2604.027-1]
 
-**Benefit Hypothesis**: Adding a compact library of few-shot examples and making evidence extraction explicit before judgment will reduce malformed JSON, unsupported verdicts, and vague decomposition/review outputs. A practical target is fewer schema-correction retries and a measurable increase in outputs that include concrete file/line grounding on the first pass.
-**Confidence**: 0.83
-**Reasoning**: Anthropic’s guide recommends 3-5 examples for reliability and suggests asking the model to quote relevant source material before reasoning on long documents. MAP currently uses neither pattern consistently. A command audit found zero `<example>` or `<examples>` tags across `.claude/commands/*.md`, `.claude/settings.json`, and `.claude/workflow-rules.json`, despite at least 12 separate places where commands say “Output JSON with …”. That means most agent contracts depend on schema prose alone. At the same time, review, debug, and planning prompts often ask for judgments without first requiring quoted evidence from files, diffs, or specs.
-**Why Not Already Tried**: MAP already has extensive schema descriptions and relies on agent specialization, which may have seemed sufficient. Claude 4.6’s prompting guidance changes the tradeoff: examples are now a relatively cheap way to stabilize both structure and tone, especially for tool-heavy agent systems.
-
-### Proposed Changes
-
-- Add a shared examples section for the most reused contracts: TaskDecomposer output, Monitor verdicts, Predictor risk outputs, Evaluator scorecards, and Reflector lessons. Keep each example short and diverse rather than exhaustive.
-- For `/map-review`, require each agent to emit an `evidence` or `quotes` array before any verdict fields. Each item should include `file_path`, `line_range` or diff hunk reference, and a short note explaining relevance.
-- For `/map-debug` investigation steps, require the actor to quote the exact error/log/code fragments that support the proposed root cause before proposing the fix path.
-- For `/map-plan`, require the spec-review Monitor to cite spec sections or lines for every HIGH-severity gap so the user resolves concrete contradictions rather than generic warnings.
-- Extend template linting so command files that define a new JSON contract without either a reusable schema reference or at least one compact example are flagged for review.
+**Parent context**: Evidence-first examples and quoted outputs shipped under `2604.027`; `/map-review`, `/map-debug`, and `/map-plan` now require concrete evidence before high-risk verdicts, root causes, risks, scores, and decomposition boundaries.
+**Benefit Hypothesis**: A generic lint rule for future or changed JSON prompt contracts will prevent MAP from adding new unsupported verdict surfaces after the evidence-first workflow contracts have shipped.
+**Scope**: Add a template/prompt lint that scans newly introduced or edited MAP skill prompt sections containing `Output JSON with:` and requires either a reusable schema/reference link or a compact example/evidence contract. Keep this as a tooling slice only when it produces a clear maintainer payoff: reviewers should get an actionable lint failure before a prompt with unsupported JSON judgments can ship.
+**Validation**: Add fixtures for a valid evidence-backed JSON contract, a valid schema-backed contract, and an invalid vague JSON contract. Run the lint against `.claude/skills/` and the shipped template copy.
 
 
 ## Command-specific thinking and parallelism profiles [2604.029]

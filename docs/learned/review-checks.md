@@ -4,3 +4,4 @@
 
 - **Reconcile secondary ledgers when closing stale plan items** (2026-05-17): When reviewing a stale-plan closure, verify roadmap/status docs do not still list the same idea id as open because future loops can rediscover it as active work. [workflow: improvement-plan-loop]
 - **Close completed umbrella parents from shipped child evidence** (2026-05-17): Before selecting an active umbrella item, compare its proposed changes against shipped child slice ids in `docs/*-done.md`; if all value-bearing children are already complete, close the parent with evidence rather than executing it again. [workflow: improvement-plan-loop]
+- **Split prompt behavior from lint-tooling scope** (2026-05-17): When reviewing prompt-improvement plan closures, verify user-visible prompt behavior and generic future lint tooling are not collapsed into one done claim unless both shipped. [workflow: improvement-plan-loop]

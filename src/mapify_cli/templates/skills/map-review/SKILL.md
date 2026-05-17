@@ -52,7 +52,10 @@ These defaults guide how agents weigh findings. Override by editing this section
 
 These are the fields each agent is expected to return. The command prompt explicitly requests them.
 
+Use compact evidence-first examples from [Evidence-First Output Examples](../../references/map-output-examples.md) when constructing reviewer prompts or interpreting agent output.
+
 **Monitor:**
+- `evidence[]`: array of `{file_path, line_range, quote, relevance}` — quote concrete source or diff material before verdict fields
 - `valid`: boolean — overall pass/fail
 - `summary`: string — brief description of findings
 - `verdict`: `'approved'` | `'needs_revision'` | `'rejected'` — requested explicitly (not in base schema, `additionalProperties: true`)
@@ -61,6 +64,7 @@ These are the fields each agent is expected to return. The command prompt explic
 - `failed_checks[]`: array of strings — checks that failed
 
 **Predictor:**
+- `evidence[]`: array of `{file_path, line_range, quote, relevance}` — quote the concrete change or artifact that supports each risk claim
 - `risk_assessment`: `'low'` | `'medium'` | `'high'` | `'critical'`
 - `predicted_state.affected_components[]`: array of affected components/files
 - `predicted_state.breaking_changes[]`: array of `{type, description, mitigation}`
@@ -68,6 +72,7 @@ These are the fields each agent is expected to return. The command prompt explic
 - `confidence.score`: float 0.0-1.0
 
 **Evaluator:**
+- `evidence[]`: array of `{file_path, line_range, quote, relevance}` — quote source/test/review-bundle facts before scoring
 - `scores.functionality`: int 0-10
 - `scores.code_quality`: int 0-10
 - `scores.performance`: int 0-10
@@ -353,6 +358,7 @@ Check for:
 - Performance issues
 
 Output JSON with:
+- evidence: array of {file_path, line_range, quote, relevance}; populate this before verdict fields and include at least one item for every HIGH/CRITICAL issue
 - valid: boolean
 - summary: string
 - verdict: 'approved' | 'needs_revision' | 'rejected'
@@ -385,6 +391,7 @@ Analyze:
 - Integration points affected
 
 Output JSON with:
+- evidence: array of {file_path, line_range, quote, relevance}; populate this before risk_assessment and include evidence for each breaking change or high-risk claim
 - risk_assessment: 'low' | 'medium' | 'high' | 'critical'
 - predicted_state:
     affected_components: array of affected files/modules
@@ -419,6 +426,7 @@ Provide quality assessment using 1-10 scoring:
 - Completeness score (1-10)
 
 Output JSON with:
+- evidence: array of {file_path, line_range, quote, relevance}; populate this before scores and include evidence for any score below 7
 - scores: {functionality, code_quality, performance, security, testability, completeness}
 - overall_score: weighted float (1.0-10.0)
 - recommendation: 'proceed' | 'improve' | 'reconsider'
