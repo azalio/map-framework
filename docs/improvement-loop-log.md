@@ -144,7 +144,7 @@
 
 - Decision: `implemented`
 - Branch: `codex/2604-027-evidence-outputs`
-- PR: `pending`
+- PR: `https://github.com/azalio/map-framework/pull/122`
 - Baseline: MAP review, debug, and planning prompts asked agents for JSON verdicts, risks, root causes, and decomposition results without consistently requiring quoted evidence first. The active plan also bundled future generic JSON-contract linting with the user-visible evidence-output behavior.
 - Forward Change: Shipped a compact shared evidence examples reference and wired `/map-review`, `/map-debug`, and `/map-plan` to require quotes/evidence before high-risk judgments. After review, split the broader generic JSON-contract linting ask into active follow-up `2604.027-1` instead of claiming it shipped in this PR.
 - Decisive Validation: Focused prompt/template tests passed, the generated-project `mapify init` smoke emitted the new reference and prompt lines, reference template sync now has a regression, and `pytest -m "not slow"` plus `make lint` passed. Unfiltered `pytest` was attempted and timed out at the known live Claude SDK boundary after deterministic tests and the first three slow SDK tests passed.
