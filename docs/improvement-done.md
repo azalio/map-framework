@@ -10,6 +10,15 @@
 - Added regression tests that fail if the high-risk prompts lose their evidence-first contracts or the shared examples stop covering review, debug, and spec-review workflows.
 - Left generic linting for future JSON prompt contracts as active follow-up `2604.027-1`; this entry closes the user-visible evidence-output slice, not every possible prompt-lint rule.
 
+## Generic JSON prompt-contract lint for future MAP skills [2604.027-1]
+
+- Date: 2026-05-17
+- Added `.claude/references/map-json-output-contracts.md` and the shipped template copy as the reusable backing reference for non-evidence JSON prompt sections.
+- Annotated existing `/map-fast`, `/map-debug`, and `/map-learn` non-evidence `Output JSON with:` sections with explicit contract references while leaving evidence-first review/debug/plan judgment outputs backed by evidence or quotes.
+- Extended `tests/test_skills.py::TestEvidenceFirstPromptContracts` with valid reference-backed, valid evidence-backed, and invalid vague prompt fixtures, plus a generic scanner over both `.claude/skills/**/SKILL.md` and `src/mapify_cli/templates/skills/**/SKILL.md`.
+- Updated user and architecture docs so maintainers know the prompt-contract lint is the release guardrail for future JSON output sections.
+- Verified with focused skill/template tests, `make lint`, `pytest -m "not slow"`, and a repo-built `uv run --no-sync mapify init <temp-path> --no-git --mcp none` smoke that inspected the generated reference and skill links.
+
 ## Contract-sized subtask guardrails [2604.039]
 
 - Date: 2026-05-17

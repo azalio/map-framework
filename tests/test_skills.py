@@ -54,6 +54,35 @@ NEGATIVE_TRIGGER_FIXTURES = {
 
 SUPPORTED_SKILL_CLASSES = {"reference", "task", "hybrid"}
 
+JSON_OUTPUT_PATTERN = re.compile(r"\bOutput JSON with:\*?", re.IGNORECASE)
+JSON_CONTRACT_REFERENCE_PATTERN = re.compile(
+    r"JSON contract reference: \[[^\]]+\]"
+    r"\(\.\./\.\./references/map-json-output-contracts\.md#[^)]+\)"
+)
+EVIDENCE_FIRST_JSON_PATTERN = re.compile(
+    r"(?:evidence|quotes): array of \{[^\n]+(?:quote|relevance)[^\n]+\}"
+    r".*(?:before|cite|quote|include)",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _json_output_contract_contexts(content: str) -> list[tuple[int, str]]:
+    lines = content.splitlines()
+    contexts: list[tuple[int, str]] = []
+    for index, line in enumerate(lines):
+        if JSON_OUTPUT_PATTERN.search(line):
+            start = max(0, index - 5)
+            end = min(len(lines), index + 8)
+            contexts.append((index + 1, "\n".join(lines[start:end])))
+    return contexts
+
+
+def _has_json_contract_backing(context: str) -> bool:
+    return bool(
+        JSON_CONTRACT_REFERENCE_PATTERN.search(context)
+        or EVIDENCE_FIRST_JSON_PATTERN.search(context)
+    )
+
 
 class TestSkillStructure:
     """Test that all skill directories follow the expected structure."""
@@ -876,6 +905,72 @@ class TestEvidenceFirstPromptContracts:
         assert "## Spec Review Finding" in examples
         assert '"evidence"' in examples
         assert '"quotes"' in examples
+
+    @pytest.mark.parametrize(
+        "prompt_context",
+        [
+            """
+JSON contract reference: [Decomposition Output](../../references/map-json-output-contracts.md#decomposition-output).
+
+Output JSON with:
+- subtasks: array of {id, description, acceptance_criteria, depends_on}
+""",
+            """
+Output JSON with:
+- evidence: array of {file_path, line_range, quote, relevance}; populate this before verdict fields
+- valid: boolean
+""",
+        ],
+    )
+    def test_json_contract_lint_accepts_backed_contracts(self, prompt_context):
+        assert _has_json_contract_backing(prompt_context)
+
+    def test_json_contract_lint_rejects_vague_contracts(self):
+        prompt_context = """
+Output JSON with:
+- verdict: string
+- summary: string
+- risks: array of strings
+"""
+
+        assert not _has_json_contract_backing(prompt_context)
+
+    @pytest.mark.parametrize(
+        "skills_root",
+        [
+            Path(".claude") / "skills",
+            Path("src") / "mapify_cli" / "templates" / "skills",
+        ],
+    )
+    def test_every_json_prompt_contract_is_evidence_or_reference_backed(
+        self, project_root, skills_root
+    ):
+        failures: list[str] = []
+        for skill_file in sorted((project_root / skills_root).glob("*/SKILL.md")):
+            content = skill_file.read_text(encoding="utf-8")
+            for line_number, context in _json_output_contract_contexts(content):
+                if not _has_json_contract_backing(context):
+                    failures.append(
+                        f"{skill_file.relative_to(project_root)}:{line_number}"
+                    )
+
+        assert not failures, (
+            "Every `Output JSON with:` prompt contract must cite "
+            "map-json-output-contracts.md or include evidence/quotes before "
+            f"judgment fields. Missing backing: {', '.join(failures)}"
+        )
+
+    def test_shared_json_contract_reference_covers_non_evidence_contracts(
+        self, project_root
+    ):
+        reference = (
+            project_root / ".claude" / "references" / "map-json-output-contracts.md"
+        ).read_text(encoding="utf-8")
+
+        assert "## Decomposition Output" in reference
+        assert "## Actor Change Summary" in reference
+        assert "## Monitor Verdict" in reference
+        assert "## Learning Summary" in reference
 
 
 class TestMapReviewSkillBundleWiring:

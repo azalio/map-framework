@@ -57,6 +57,8 @@ Implementation note: `/map-learn` is now maintained skill-first. The canonical s
 
 Reviewer agents now use evidence-first output contracts: Monitor, Predictor, and Evaluator quote concrete file paths, line ranges, and relevant source/diff text before verdict, risk, or score fields. The same evidence-first pattern is used by `/map-debug` root-cause and validation prompts and by `/map-plan` spec-review/decomposition prompts, making failures easier to audit instead of asking users to trust unsupported summaries.
 
+Maintainer guardrail: every skill prompt section that says `Output JSON with:` must now either include evidence/quotes before judgment fields or cite `.claude/references/map-json-output-contracts.md`. `tests/test_skills.py::TestEvidenceFirstPromptContracts` scans both `.claude/skills/` and shipped template skills so vague JSON contracts fail before release.
+
 **Optional detached mode:**
 
 ```bash

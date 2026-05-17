@@ -1,3 +1,18 @@
+## 2026-05-17 - Generic JSON prompt-contract lint for future MAP skills [2604.027-1]
+
+- Decision: `implemented`
+- Branch: `codex/2604-027-json-contract-lint`
+- Baseline: Evidence-first tests protected selected review/debug/plan prompts, but no generic scanner failed future MAP skill prompt sections that introduced `Output JSON with:` without evidence, quotes, or a reusable output contract.
+- Forward Change: Added `map-json-output-contracts.md`, annotated existing non-evidence JSON output sections in `/map-fast`, `/map-debug`, and `/map-learn`, synced templates, documented the guardrail, and added fixtures plus a scanner over source and shipped template skills.
+- Decisive Validation: Focused prompt-contract tests, template sync tests, generated-project `mapify init` smoke, `make lint`, and `pytest -m "not slow"` covered the source, template, and installed-project paths.
+- Review Result: Diff review confirmed the shipped user/operator payoff is a maintainer-facing release guardrail, not another prompt-polish-only change.
+- Next Trigger: Reuse this learning whenever adding or editing `Output JSON with:` prompt sections in MAP skills.
+- Reusable Learnings:
+  - command: `pytest tests/test_skills.py::TestEvidenceFirstPromptContracts tests/test_template_sync.py -v`
+  - command: `uv run --no-sync mapify init <new-dir> --no-git --mcp none`
+  - invariant: `Every MAP skill prompt section containing Output JSON with: must either be evidence-first or cite .claude/references/map-json-output-contracts.md before listing fields.`
+  - review-check: `Prompt-contract tests must scan both .claude/skills and src/mapify_cli/templates/skills so generated users get the same guardrail as the repo working set.`
+
 ## 2026-05-17 - LEARN as a philosophical requirement with soft runtime ergonomics [2604.035]
 
 - Decision: `rejected`

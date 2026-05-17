@@ -48,6 +48,8 @@ Task(
 
 Task: $ARGUMENTS
 
+JSON contract reference: [Decomposition Output](../../references/map-json-output-contracts.md#decomposition-output).
+
 Output JSON with:
 - subtasks: array of {id, description, acceptance_criteria, estimated_complexity, depends_on}
 - total_subtasks: number
@@ -72,6 +74,8 @@ Task(
 
 **Subtask:** [description]
 **Acceptance Criteria:** [criteria]
+
+JSON contract reference: [Actor Change Summary](../../references/map-json-output-contracts.md#actor-change-summary).
 
 Output JSON with:
   - approach: string (implementation strategy)
@@ -101,6 +105,8 @@ Check for:
 - Basic code correctness
 - Obvious errors
 - Test coverage
+
+JSON contract reference: [Monitor Verdict](../../references/map-json-output-contracts.md#monitor-verdict).
 
 Output JSON with:
 - valid: boolean
