@@ -1,5 +1,13 @@
 # MAP Framework Improvement Done
 
+## Prior-stage artifact consumption gates [2604.039-followup-3]
+
+- Date: 2026-05-18
+- Added `build_prior_stage_consumption_report` and `validate_prior_stage_consumption <implementation|review>` to `.map/scripts/map_step_runner.py` and the shipped template copy so MAP closeout can prove whether spec, task plan, blueprint, test contract, code diff, and review-time verification summary were consumed.
+- Extended `write_verification_summary` and `create_review_bundle` so human Markdown and machine-readable review bundles include `prior_stage_consumption`; review manifest status now downgrades to `warn` when required prior-stage inputs are missing instead of hiding stage skipping.
+- Updated `REVIEW_BUNDLE_SCHEMA`, `/map-efficient`, `/map-review`, README, usage, and architecture docs so generated projects expose the same validator-backed artifact pipeline.
+- Verified with helper/schema/skill/template tests, `make lint`, `pytest -m "not slow"`, and a repo-built generated-project smoke that passed both implementation and review validators with real branch artifacts plus a git diff.
+
 ## Acceptance coverage in review and verification artifacts [2604.039-followup-4]
 
 - Date: 2026-05-18

@@ -136,6 +136,8 @@ def test_write_verification_summary_creates_report(branch_workspace):
     assert "READY FOR REVIEW" in content
     assert "Implement auth" in content
     assert "open PR" in content
+    assert "## Prior-Stage Consumption" in content
+    assert result["prior_stage_consumption"]["stage"] == "implementation"
 
 
 def test_write_run_health_report_creates_report_and_manifest(branch_workspace):
@@ -638,6 +640,49 @@ def test_write_verification_summary_appends_acceptance_coverage(branch_workspace
     assert "## Acceptance Coverage" in summary
     assert "Covered tags: 1/1" in summary
     assert "[covered] AC-1 owned by ST-001" in summary
+
+
+def test_build_prior_stage_consumption_report_accepts_complete_inputs(branch_workspace):
+    branch = "test-branch"
+    (branch_workspace / f"spec_{branch}.md").write_text("# Spec\n", encoding="utf-8")
+    (branch_workspace / f"task_plan_{branch}.md").write_text("# Plan\n", encoding="utf-8")
+    (branch_workspace / "blueprint.json").write_text('{"subtasks":[]}', encoding="utf-8")
+    (branch_workspace / "test_contract_ST-001.md").write_text("# Contract\n", encoding="utf-8")
+    code_state = {
+        "status": "success",
+        "files_changed": ["src/app.py"],
+        "diff_stat": "src/app.py | 1 +",
+    }
+
+    result = map_step_runner.build_prior_stage_consumption_report(
+        "implementation", code_state=code_state
+    )
+
+    assert result["valid"] is True
+    assert result["status"] == "ready"
+    assert result["summary"] == {"required": 5, "consumed": 5, "missing": 0}
+
+
+def test_validate_prior_stage_consumption_cli_exits_nonzero_on_missing(tmp_path):
+    branch_dir = tmp_path / ".map" / "default"
+    branch_dir.mkdir(parents=True)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS_PATH / "map_step_runner.py"),
+            "validate_prior_stage_consumption",
+            "review",
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    assert payload["valid"] is False
+    assert "missing required artifact" in "\n".join(payload["errors"])
 
 
 def test_validate_blueprint_contract_rejects_non_noticeable_plumbing_slice(
@@ -2602,6 +2647,7 @@ class TestCreateReviewBundle:
         assert result["status"] == "success"
         assert (branch_workspace / "review-bundle.json").exists()
         assert (branch_workspace / "review-bundle.md").exists()
+        assert result["prior_stage_consumption"]["stage"] == "review"
         # Every fixed-kind entry must be present=True
         artifacts = result["artifacts"]
         for key in ("spec", "task_plan", "blueprint", "verification_summary",
@@ -2656,7 +2702,7 @@ class TestCreateReviewBundle:
         assert entry["path"].endswith("plan-review-003.md")
 
     def test_create_review_bundle_updates_manifest_review_stage(self, branch_workspace):
-        """Manifest review stage is set to 'ready' with 2 review-bundle artifacts."""
+        """Manifest review stage records missing prior-stage inputs as warn."""
         del branch_workspace
         manifest = map_step_runner.default_artifact_manifest("test-branch")
         map_step_runner.save_artifact_manifest(manifest, "test-branch")
@@ -2667,7 +2713,7 @@ class TestCreateReviewBundle:
         stages = reloaded["stages"]
         assert isinstance(stages, dict)
         review_stage = stages["review"]
-        assert review_stage["status"] == "ready"
+        assert review_stage["status"] == "warn"
         artifacts_list = review_stage["artifacts"]
         assert len(artifacts_list) == 2
         kinds = {a["kind"] for a in artifacts_list}
@@ -2700,7 +2746,7 @@ class TestCreateReviewBundle:
         assert "disk full" in result["manifest_status"]["reason"]
 
     def test_create_review_bundle_creates_manifest_when_absent(self, branch_workspace):
-        """No pre-existing manifest: helper creates it and sets review stage to ready."""
+        """No pre-existing manifest: helper creates it and records review status."""
         manifest_file = branch_workspace / "artifact_manifest.json"
         assert not manifest_file.exists()
 
@@ -2710,7 +2756,7 @@ class TestCreateReviewBundle:
         reloaded = map_step_runner.load_artifact_manifest("test-branch")
         stages = reloaded["stages"]
         assert isinstance(stages, dict)
-        assert stages["review"]["status"] == "ready"
+        assert stages["review"]["status"] == "warn"
 
     def test_create_review_bundle_warns_on_schema_drift(
         self, monkeypatch, branch_workspace
@@ -3123,7 +3169,8 @@ def test_write_learning_handoff_compatible_after_review_bundle_created(
         encoding="utf-8",
     )
 
-    # Run create_review_bundle first — updates manifest review stage to "ready"
+    # Run create_review_bundle first — updates manifest review stage even when
+    # prior-stage inputs are incomplete.
     bundle_result = map_step_runner.create_review_bundle()
     assert bundle_result["status"] == "success", (
         "create_review_bundle should succeed before the compatibility check"
@@ -3131,7 +3178,7 @@ def test_write_learning_handoff_compatible_after_review_bundle_created(
 
     # Confirm the manifest review stage was actually populated
     manifest_after_bundle = map_step_runner.load_artifact_manifest()
-    assert manifest_after_bundle["stages"]["review"]["status"] == "ready"
+    assert manifest_after_bundle["stages"]["review"]["status"] == "warn"
 
     # Now run write_learning_handoff and verify it still succeeds
     result = map_step_runner.write_learning_handoff(
@@ -3635,14 +3682,16 @@ def test_bundle_ordering_records_compare_results(branch_workspace, reset_pending
     assert len(ordering["runs"]) == 2
 
 
-def test_bundle_review_stage_status_ready_on_valid_ordering(branch_workspace, reset_pending_ordering):
+def test_bundle_review_stage_status_warns_on_missing_prior_stage_inputs(
+    branch_workspace, reset_pending_ordering
+):
     del reset_pending_ordering
     map_step_runner.record_review_ordering(mode="default")
     map_step_runner.create_review_bundle()
     manifest = map_step_runner.load_artifact_manifest("test-branch")
     stages = manifest["stages"]
     assert isinstance(stages, dict)
-    assert stages["review"]["status"] == "ready"
+    assert stages["review"]["status"] == "warn"
     del branch_workspace
 
 

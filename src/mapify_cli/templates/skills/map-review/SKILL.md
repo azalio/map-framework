@@ -202,9 +202,20 @@ This produces two durable files:
 - `.map/<branch>/review-bundle.json` — machine-readable PRIMARY review contract
 - `.map/<branch>/review-bundle.md` — human-readable summary of the same data
 
+The bundle includes a `prior_stage_consumption` report. If it reports
+`status=blocked`, treat that as review context, not invisible setup noise: the
+review can still continue, but reviewers must call out that the branch did not
+prove consumption of all expected prior-stage inputs. To enforce the gate before
+launching reviewers, run:
+
+```bash
+python3 .map/scripts/map_step_runner.py validate_prior_stage_consumption review
+```
+
 Read `.map/<branch>/review-bundle.md` now and pass its content to all three agents
 as their **primary context**. The bundle surfaces, when present:
 - `spec` and `task_plan` artifacts (what was planned)
+- prior-stage consumption status for spec/plan/blueprint/test/diff/verification inputs
 - latest `plan-review-00N.md` and `code-review-00N.md` (prior review history)
 - `verification-summary.md` and `qa-001.md`
 - `pr-draft.md` and `active-issues.json`

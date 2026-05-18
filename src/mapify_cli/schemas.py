@@ -880,6 +880,67 @@ _MULTI_ARTIFACT_ENTRY_SCHEMA = {
     "required": ["path", "sanitized_text"],
 }
 
+_PRIOR_STAGE_CONSUMPTION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "status": {"type": "string", "enum": ["ready", "blocked", "error"]},
+        "valid": {"type": "boolean"},
+        "stage": {"type": "string"},
+        "branch": {"type": "string"},
+        "required_artifacts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "key": {"type": "string"},
+                    "label": {"type": "string"},
+                    "kind": {"type": "string"},
+                    "path": {"type": "string"},
+                    "paths": {"type": "array", "items": {"type": "string"}},
+                    "required": {"type": "boolean"},
+                    "present": {"type": "boolean"},
+                    "consumed": {"type": "boolean"},
+                    "count": {"type": "integer", "minimum": 0},
+                    "reason": {"type": "string"},
+                },
+                "required": [
+                    "key",
+                    "label",
+                    "kind",
+                    "path",
+                    "required",
+                    "present",
+                    "consumed",
+                    "count",
+                    "reason",
+                ],
+                "additionalProperties": False,
+            },
+        },
+        "summary": {
+            "type": "object",
+            "properties": {
+                "required": {"type": "integer", "minimum": 0},
+                "consumed": {"type": "integer", "minimum": 0},
+                "missing": {"type": "integer", "minimum": 0},
+            },
+            "required": ["required", "consumed", "missing"],
+            "additionalProperties": False,
+        },
+        "errors": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": [
+        "status",
+        "valid",
+        "stage",
+        "branch",
+        "required_artifacts",
+        "summary",
+        "errors",
+    ],
+    "additionalProperties": False,
+}
+
 REVIEW_BUNDLE_SCHEMA = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://mapframework.dev/schemas/review-bundle.json",
@@ -1027,6 +1088,7 @@ REVIEW_BUNDLE_SCHEMA = {
             "required": ["status", "branch", "requirements", "summary"],
             "additionalProperties": True,
         },
+        "prior_stage_consumption": _PRIOR_STAGE_CONSUMPTION_SCHEMA,
         "manifest_status": {
             "type": "object",
             "properties": {
@@ -1082,6 +1144,7 @@ REVIEW_BUNDLE_SCHEMA = {
         "review_handoff",
         "pr_handoff",
         "acceptance_coverage",
+        "prior_stage_consumption",
     ],
     "additionalProperties": False,
 }

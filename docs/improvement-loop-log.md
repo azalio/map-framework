@@ -1,3 +1,18 @@
+## 2026-05-18 - Prior-stage artifact consumption gates [2604.039-followup-3]
+
+- Decision: `implemented`
+- Branch: `codex/2604-039-prior-artifact-gates`
+- Baseline: verification summaries and review bundles recorded artifact presence and acceptance coverage, but they did not explicitly state which prior-stage inputs were consumed before closeout, so maintainers still had to infer stage skipping from scattered files or chat history.
+- Forward Change: Added `prior_stage_consumption` reporting for implementation and review closeout, including a nonzero `validate_prior_stage_consumption` CLI gate, Markdown rendering in verification summaries/review bundles, review manifest warn status for missing inputs, schema support, prompt guidance, synced templates, and user/architecture docs.
+- Decisive Validation: Focused prior-stage helper/schema/template/skill tests passed, `make lint` passed, `pytest -m "not slow"` passed, and a repo-built generated-project smoke confirmed both implementation and review validators return `ready` when spec, task plan, blueprint, test contract, verification summary, and a real git diff are present.
+- Review Result: Inline diff review checked the schema, generated-template sync, prompt docs, manifest status semantics, and test fixture drift; no blocking issues remained after updating legacy tests to expect `warn` when prior-stage inputs are missing.
+- Next Trigger: Reuse this learning whenever adding a new branch-scoped closeout or review artifact that claims workflow readiness from prior-stage evidence.
+- Reusable Learnings:
+  - command: `python3 .map/scripts/map_step_runner.py validate_prior_stage_consumption implementation`
+  - command: `python3 .map/scripts/map_step_runner.py validate_prior_stage_consumption review`
+  - invariant: `Review bundles may still be generated with missing artifacts, but the review manifest must warn when required prior-stage inputs are missing.`
+  - review-check: `When adding required fields to review-bundle schema, update source helper output, shipped template helper, schema fixtures, integration tests, docs, and generated-project smoke together.`
+
 ## 2026-05-18 - Acceptance coverage in review and verification artifacts [2604.039-followup-4]
 
 - Decision: `implemented`

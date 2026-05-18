@@ -108,6 +108,7 @@ RUN_HEALTH_SIGNAL_KEYS = {
     "predictor_skipped",
     "final_verifier_executed",
 }
+PRIOR_STAGE_CONSUMPTION_STAGES = {"implementation", "review"}
 WORKFLOW_FIT_ROUTES = {
     "direct-edit",
     "map-fast",
@@ -346,6 +347,176 @@ def _set_manifest_stage(
 def _artifact_ref(path: Path, kind: str) -> dict[str, str]:
     """Create a manifest artifact reference payload."""
     return {"path": str(path), "kind": kind}
+
+
+def _prior_stage_file_entry(
+    key: str,
+    label: str,
+    path: Path,
+    *,
+    required: bool = True,
+) -> dict[str, object]:
+    """Return one prior-stage artifact consumption entry."""
+    present = path.exists() and path.is_file()
+    return {
+        "key": key,
+        "label": label,
+        "kind": "file",
+        "path": str(path),
+        "required": required,
+        "present": present,
+        "consumed": present,
+        "count": 1 if present else 0,
+        "reason": "" if present else f"missing required artifact: {path}",
+    }
+
+
+def _prior_stage_glob_entry(
+    key: str,
+    label: str,
+    branch_dir: Path,
+    pattern: str,
+    *,
+    required: bool = True,
+) -> dict[str, object]:
+    """Return one prior-stage glob artifact consumption entry."""
+    try:
+        paths = sorted(
+            path for path in branch_dir.glob(pattern) if path.exists() and path.is_file()
+        )
+    except OSError:
+        paths = []
+    present = bool(paths)
+    return {
+        "key": key,
+        "label": label,
+        "kind": "glob",
+        "path": str(branch_dir / pattern),
+        "paths": [str(path) for path in paths],
+        "required": required,
+        "present": present,
+        "consumed": present,
+        "count": len(paths),
+        "reason": "" if present else f"missing required artifact matching: {branch_dir / pattern}",
+    }
+
+
+def _prior_stage_diff_entry(
+    code_state: Mapping[str, object], *, required: bool = True
+) -> dict[str, object]:
+    """Return the current diff snapshot as a prior-stage consumption entry."""
+    files_changed = code_state.get("files_changed")
+    file_count = len(files_changed) if isinstance(files_changed, list) else 0
+    diff_stat = code_state.get("diff_stat")
+    present = code_state.get("status") == "success" and (file_count > 0 or bool(diff_stat))
+    return {
+        "key": "code_diff",
+        "label": "code diff",
+        "kind": "git-diff",
+        "path": "git diff --stat HEAD",
+        "required": required,
+        "present": present,
+        "consumed": present,
+        "count": file_count,
+        "reason": "" if present else "missing code diff snapshot; no changed files were visible against HEAD",
+    }
+
+
+def build_prior_stage_consumption_report(
+    stage: str = "review",
+    branch: Optional[str] = None,
+    code_state: Optional[Mapping[str, object]] = None,
+) -> dict[str, object]:
+    """Report whether closeout consumed the prior-stage artifacts it depends on."""
+    normalized_stage = (stage or "review").strip().lower().replace("-", "_")
+    if normalized_stage not in PRIOR_STAGE_CONSUMPTION_STAGES:
+        return {
+            "status": "error",
+            "valid": False,
+            "stage": normalized_stage,
+            "branch": branch or get_branch_name(),
+            "errors": [
+                "stage must be one of: "
+                + ", ".join(sorted(PRIOR_STAGE_CONSUMPTION_STAGES))
+            ],
+            "required_artifacts": [],
+            "summary": {"required": 0, "consumed": 0, "missing": 0},
+        }
+
+    branch_name = branch or get_branch_name()
+    branch_dir = get_branch_dir(branch_name)
+    current_code_state = code_state or snapshot_code_state(branch_name)
+    required_artifacts = [
+        _prior_stage_file_entry(
+            "spec", "specification", branch_dir / f"spec_{branch_name}.md"
+        ),
+        _prior_stage_file_entry(
+            "task_plan", "task plan", branch_dir / f"task_plan_{branch_name}.md"
+        ),
+        _prior_stage_file_entry("blueprint", "blueprint", branch_dir / "blueprint.json"),
+        _prior_stage_glob_entry(
+            "test_contract", "test contract", branch_dir, "test_contract_*.md"
+        ),
+        _prior_stage_diff_entry(current_code_state),
+    ]
+    if normalized_stage == "review":
+        required_artifacts.append(
+            _prior_stage_file_entry(
+                "verification_summary",
+                "verification summary",
+                branch_dir / "verification-summary.md",
+            )
+        )
+
+    missing = [
+        item for item in required_artifacts if item.get("required") and not item.get("consumed")
+    ]
+    errors = [str(item.get("reason")) for item in missing if item.get("reason")]
+    summary = {
+        "required": sum(1 for item in required_artifacts if item.get("required")),
+        "consumed": sum(
+            1
+            for item in required_artifacts
+            if item.get("required") and item.get("consumed")
+        ),
+        "missing": len(missing),
+    }
+    return {
+        "status": "ready" if not missing else "blocked",
+        "valid": not missing,
+        "stage": normalized_stage,
+        "branch": branch_name,
+        "required_artifacts": required_artifacts,
+        "summary": summary,
+        "errors": errors,
+    }
+
+
+def _render_prior_stage_consumption_markdown(report: Mapping[str, object]) -> str:
+    """Render prior-stage consumption as reviewer-readable Markdown."""
+    summary = report.get("summary") if isinstance(report.get("summary"), Mapping) else {}
+    required = summary.get("required", 0) if isinstance(summary, Mapping) else 0
+    consumed = summary.get("consumed", 0) if isinstance(summary, Mapping) else 0
+    missing = summary.get("missing", 0) if isinstance(summary, Mapping) else 0
+    lines = [
+        "## Prior-Stage Consumption",
+        f"- Stage: {report.get('stage') or 'unknown'}",
+        f"- Status: {report.get('status') or 'unknown'}",
+        f"- Consumed required inputs: {consumed}/{required}",
+    ]
+    for item in report.get("required_artifacts", []):
+        if not isinstance(item, Mapping):
+            continue
+        status = "consumed" if item.get("consumed") else "missing"
+        label = item.get("label") or item.get("key") or "artifact"
+        path = item.get("path") or ""
+        count = item.get("count", 0)
+        reason = item.get("reason") or ""
+        detail = f"; {reason}" if reason else ""
+        lines.append(f"- [{status}] {label}: `{path}` ({count}){detail}")
+    if missing:
+        lines.append("- Action: create or refresh the missing prior-stage artifacts before claiming the workflow is ready.")
+    return "\n".join(lines) + "\n"
 
 
 def _metrics_event_log_path() -> Path:
@@ -1712,11 +1883,16 @@ def write_verification_summary(
         branch_name, extra_artifacts={"verification_summary": content}
     )
     content += "\n" + _render_acceptance_coverage_markdown(coverage_report)
+    prior_stage_report = build_prior_stage_consumption_report(
+        "implementation", branch_name
+    )
+    content += "\n" + _render_prior_stage_consumption_markdown(prior_stage_report)
     summary_file.write_text(content, encoding="utf-8")
     return {
         "status": "success",
         "path": str(summary_file),
         "acceptance_coverage": coverage_report,
+        "prior_stage_consumption": prior_stage_report,
     }
 
 
@@ -2851,6 +3027,7 @@ def _render_bundle_markdown(result: dict) -> str:
     review_handoff = result.get("review_handoff", {})
     pr_handoff = result.get("pr_handoff", {})
     acceptance_coverage = result.get("acceptance_coverage", {})
+    prior_stage_consumption = result.get("prior_stage_consumption", {})
 
     lines = [
         f"# Review Bundle — `{branch}`",
@@ -2919,6 +3096,11 @@ def _render_bundle_markdown(result: dict) -> str:
     # Acceptance coverage
     if isinstance(acceptance_coverage, dict):
         lines.append(_render_acceptance_coverage_markdown(acceptance_coverage).rstrip())
+        lines.append("")
+
+    # Prior-stage consumption
+    if isinstance(prior_stage_consumption, dict):
+        lines.append(_render_prior_stage_consumption_markdown(prior_stage_consumption).rstrip())
         lines.append("")
 
     # PR handoff
@@ -3028,6 +3210,9 @@ def create_review_bundle(branch: Optional[str] = None) -> dict:
         }
 
     acceptance_coverage = build_acceptance_coverage_report(branch_name)
+    prior_stage_consumption = build_prior_stage_consumption_report(
+        "review", branch_name, code_state=code_state
+    )
 
     # --- Ordering payload (INV-10 single-writer staging) ---
     # Consume from BOTH the file (cross-subprocess durable path) and the module
@@ -3080,6 +3265,7 @@ def create_review_bundle(branch: Optional[str] = None) -> dict:
         "review_handoff": review_handoff,
         "pr_handoff": pr_handoff,
         "acceptance_coverage": acceptance_coverage,
+        "prior_stage_consumption": prior_stage_consumption,
         "ordering": ordering_payload,
     }
 
@@ -3147,8 +3333,16 @@ def create_review_bundle(branch: Optional[str] = None) -> dict:
             "acceptance_coverage": acceptance_coverage.get("summary")
             if isinstance(acceptance_coverage, dict)
             else {},
+            "prior_stage_consumption": prior_stage_consumption.get("summary")
+            if isinstance(prior_stage_consumption, dict)
+            else {},
         }
-        stage_status = "warn" if "schema_validation_error" in result else "ready"
+        stage_status = (
+            "warn"
+            if "schema_validation_error" in result
+            or not prior_stage_consumption.get("valid", False)
+            else "ready"
+        )
         _set_manifest_stage(
             manifest, "review", stage_status, artifacts=artifacts_list, metadata=metadata
         )
@@ -4398,6 +4592,18 @@ if __name__ == "__main__":
     elif func_name == "build_acceptance_coverage_report":
         result = build_acceptance_coverage_report()
         print(json.dumps(result, indent=2, ensure_ascii=True))
+
+    elif func_name == "build_prior_stage_consumption_report":
+        stage = sys.argv[2] if len(sys.argv) >= 3 else "review"
+        result = build_prior_stage_consumption_report(stage)
+        print(json.dumps(result, indent=2, ensure_ascii=True))
+
+    elif func_name == "validate_prior_stage_consumption":
+        stage = sys.argv[2] if len(sys.argv) >= 3 else "review"
+        result = build_prior_stage_consumption_report(stage)
+        print(json.dumps(result, indent=2, ensure_ascii=True))
+        if not result.get("valid"):
+            sys.exit(1)
 
     elif func_name == "write_learning_handoff":
         workflow = sys.argv[2] if len(sys.argv) >= 3 else ""

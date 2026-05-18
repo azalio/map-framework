@@ -11,6 +11,30 @@ MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 
 
+def _minimal_prior_stage_consumption() -> dict:
+    return {
+        "status": "blocked",
+        "valid": False,
+        "stage": "review",
+        "branch": "test-branch",
+        "required_artifacts": [
+            {
+                "key": "code_diff",
+                "label": "code diff",
+                "kind": "git-diff",
+                "path": "git diff --stat HEAD",
+                "required": True,
+                "present": False,
+                "consumed": False,
+                "count": 0,
+                "reason": "missing code diff snapshot",
+            }
+        ],
+        "summary": {"required": 1, "consumed": 0, "missing": 1},
+        "errors": ["missing code diff snapshot"],
+    }
+
+
 def test_validate_workflow_fit_decision_schema():
     artifact = {
         "version": "1.0",
@@ -300,6 +324,7 @@ def test_validate_review_bundle_schema():
             "requirements": [],
             "summary": {"total": 0, "covered": 0, "missing": 0},
         },
+        "prior_stage_consumption": _minimal_prior_stage_consumption(),
     }
 
     is_valid, errors = MODULE.validate_artifact(bundle, MODULE.REVIEW_BUNDLE_SCHEMA)
@@ -348,6 +373,7 @@ def test_validate_review_bundle_schema_with_manifest_status_ready():
             "requirements": [],
             "summary": {"total": 0, "covered": 0, "missing": 0},
         },
+        "prior_stage_consumption": _minimal_prior_stage_consumption(),
         "manifest_status": {"status": "ready", "path": ".map/test-branch/artifact_manifest.json"},
     }
     is_valid, errors = MODULE.validate_artifact(minimal, MODULE.REVIEW_BUNDLE_SCHEMA)
@@ -396,6 +422,7 @@ def test_validate_review_bundle_schema_with_manifest_status_error():
             "requirements": [],
             "summary": {"total": 0, "covered": 0, "missing": 0},
         },
+        "prior_stage_consumption": _minimal_prior_stage_consumption(),
         "manifest_status": {"status": "error", "reason": "disk full"},
     }
     is_valid, errors = MODULE.validate_artifact(minimal, MODULE.REVIEW_BUNDLE_SCHEMA)
