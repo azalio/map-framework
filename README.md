@@ -74,6 +74,8 @@ mapify init . --provider codex
 codex
 ```
 
+Then enable the Codex hook manually: run `/hooks`, select `PreToolUse`, press `t` to toggle it on, then press `Esc`.
+
 Pick a context-compression policy if you want non-default behaviour
 (`auto` is the default; see [docs/USAGE.md#context-budget-policy](docs/USAGE.md)):
 

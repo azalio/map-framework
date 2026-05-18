@@ -155,6 +155,24 @@ This will:
 
 **Note:** MAP Framework is designed for Claude Code. All generated agents and commands are optimized for the Claude Code CLI.
 
+### Codex CLI Installation
+
+```bash
+mapify init . --provider codex
+codex
+```
+
+After Codex starts, enable the installed hook manually:
+
+```text
+/hooks
+PreToolUse
+t
+Esc
+```
+
+This toggles the `PreToolUse` hook on so MAP's workflow gate can run before tool calls.
+
 ### MCP Server Configuration
 
 Choose which MCP servers to enable:

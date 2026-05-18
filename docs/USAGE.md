@@ -120,6 +120,17 @@ MAP Framework supports OpenAI's Codex CLI as an alternative to Claude Code.
 mapify init . --provider codex
 ```
 
+After starting Codex, enable the installed hook manually:
+
+```text
+/hooks
+PreToolUse
+t
+Esc
+```
+
+This toggles the `PreToolUse` hook on so MAP's workflow gate can run before tool calls.
+
 This creates a `.codex/` layout instead of `.claude/`:
 - `.codex/skills/map-plan/SKILL.md` — main planning skill
 - `.codex/skills/map-fast/SKILL.md` — quick implementation
