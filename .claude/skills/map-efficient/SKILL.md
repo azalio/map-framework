@@ -792,6 +792,15 @@ Also write `.map/<branch>/verification-summary.md` with a compact final report u
 python3 .map/scripts/map_step_runner.py write_verification_summary "READY FOR REVIEW" "<task title>" "- pytest ...,- ruff ..." "- notable findings" "- open PR"
 ```
 
+This also appends a `Prior-Stage Consumption` section that records whether the
+closeout consumed the branch spec, task plan, blueprint, test contract, and code
+diff. If the workflow needs to enforce the full artifact pipeline before review,
+run the explicit gate and fix any reported missing inputs before claiming ready:
+
+```bash
+python3 .map/scripts/map_step_runner.py validate_prior_stage_consumption implementation
+```
+
 The summary should include:
 - overall verdict
 - key commands executed

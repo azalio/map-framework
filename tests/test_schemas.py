@@ -62,6 +62,27 @@ def _minimal_valid_bundle() -> dict:  # type: ignore[type-arg]
             "requirements": [],
             "summary": {"total": 0, "covered": 0, "missing": 0},
         },
+        "prior_stage_consumption": {
+            "status": "blocked",
+            "valid": False,
+            "stage": "review",
+            "branch": "test-branch",
+            "required_artifacts": [
+                {
+                    "key": "spec",
+                    "label": "specification",
+                    "kind": "file",
+                    "path": ".map/test-branch/spec_test-branch.md",
+                    "required": True,
+                    "present": False,
+                    "consumed": False,
+                    "count": 0,
+                    "reason": "missing required artifact",
+                }
+            ],
+            "summary": {"required": 1, "consumed": 0, "missing": 1},
+            "errors": ["missing required artifact"],
+        },
     }
 
 

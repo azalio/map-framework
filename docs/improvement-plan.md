@@ -226,20 +226,14 @@
 **Reasoning**: The philosophy document treats MAP as a pipeline of artifacts: `SPEC` produces model + invariants, `PLAN` produces tasks, `TEST` produces executable contract, `CODE` produces passing implementation, `REVIEW` consumes spec + tests + diff, and `LEARN` produces reusable memory. It also emphasizes one logical step at a time and reviewable diffs, citing ~155-line median PRs and warning against mixing multiple architecture surfaces in one step. U-Define strengthens the same project-owned layer by separating hard constraints, which must block or replan, from soft constraints, which should be negotiated or traded off explicitly. MAP already persists rich branch artifacts, but its runtime still leaves too much implicit: `docs/ARCHITECTURE.md` says there is no single standard workflow, `/map-fast` can implement without spec/test artifacts, and there is no explicit subtask diff budget, concern-mixing guard, or hard/soft constraint contract tied to stage completion.
 **Why Not Already Tried**: MAP invested first in orchestration correctness, persistence, and agent specialization. Artifact contracts and diff-budget enforcement remained partially implied by author intent rather than enforced by the framework, and no current artifact schema assigns durable acceptance-criteria IDs that can be cited from tests, review notes, and final verification.
 
-**Execution note:** Do not execute directly. This umbrella item is decomposed into shipped children `2604.039-followup-1`, `2604.039-followup-2`, and `2604.039-followup-4`, plus the remaining value-bearing follow-up slice below.
+**Execution note:** Do not execute directly. This umbrella item is decomposed into shipped children `2604.039-followup-1`, `2604.039-followup-2`, `2604.039-followup-3`, and `2604.039-followup-4`. Add a new child slice only if future artifact-pipeline evidence uncovers another reviewable branch.
 
 ### Proposed Changes
 
 - Add stable acceptance-criteria IDs to spec and plan artifacts, propagate them into generated test contracts, review dossiers, and verification summaries, and report acceptance coverage before a workflow can be marked complete. Blueprint validation shipped as `2604.039-followup-1`; review and verification coverage reporting shipped as `2604.039-followup-4`; generated test-contract tagging remains opportunistic where workflows still omit tags.
 - Extend spec/plan artifacts with `hard_constraints` and `soft_constraints` fields. Hard constraints block stage completion or force replanning when violated; soft constraints are logged with explicit tradeoff rationale when a workflow chooses not to satisfy them.
-- Require complex workflows to consume the prior stage artifact explicitly before proceeding; for example, review should load spec + tests + diff, and code execution should record which test/spec contract it is satisfying.
+- Require complex workflows to consume the prior stage artifact explicitly before proceeding; for example, review should load spec + tests + diff, and code execution should record which test/spec contract it is satisfying. Shipped as `2604.039-followup-3` via `prior_stage_consumption` reports in verification summaries and review bundles plus an explicit validator command.
 - Update canonical docs so MAP has a visible default artifact pipeline even if individual commands still differ in internal implementation details.
-
-## Prior-stage artifact consumption gates [2604.039-followup-3]
-
-**Scope**: Require implementation and review closeout paths to record which spec, blueprint, test contract, and diff artifacts they consumed before marking a workflow ready.
-**User payoff**: Maintainers can diagnose stage skipping and stale review context from durable artifacts instead of reconstructing the workflow from chat history.
-**Validation**: Artifact-manifest tests, run-health/report-bundle assertions, and generated-project smoke showing missing prior-stage inputs fail with actionable messages.
 
 ## Constraint-first provider rule templates
 

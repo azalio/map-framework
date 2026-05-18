@@ -738,10 +738,10 @@ class TestOrderingRoundtrip:
             f"Schema rejected the ordering object: {result.get('schema_validation_error')}"
         )
 
-        # AC-14(b)-5: manifest review stage status is 'ready', not 'warn'.
+        # AC-14(b)-5: missing prior-stage diff/test inputs warn without breaking ordering.
         manifest_status = result.get("manifest_status", {})
-        assert manifest_status.get("status") == "ready", (
-            f"Manifest stage must be 'ready'; got: {manifest_status}"
+        assert manifest_status.get("status") == "warn", (
+            f"Manifest stage must surface missing prior-stage inputs; got: {manifest_status}"
         )
 
 
