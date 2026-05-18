@@ -8,20 +8,15 @@ argument-hint: "[bug description]"
 ---
 # MAP Debugging Workflow
 
-**🚨 ABSOLUTELY FORBIDDEN 🚨**
+## Workflow Guardrails
 
-You are **STRICTLY PROHIBITED** from:
+Use the specialized MAP agents because debugging depends on isolated root-cause evidence:
 
-❌ **"Optimizing" the workflow by skipping agents** - Each agent MUST be called
-❌ **"Using general-purpose instead of specialized agents"** - USE the correct subagent_type
-❌ **"Combining steps to save time"** - Each agent MUST be called individually
-❌ **Any variation of "I'll optimize by..."** - NO ADDITIONAL OPTIMIZATION ALLOWED
-
-**YOU MUST:**
-✅ Call task-decomposer FIRST (not general-purpose)
-✅ Call actor for EACH subtask (not general-purpose)
-✅ Call monitor after EACH actor (not general-purpose)
-✅ Verify each agent used required MCP tools (check output)
+- Start with `task-decomposer` so investigation, fix, and verification work are separated.
+- Use `actor` for each investigation or fix subtask rather than a general-purpose agent.
+- Use `monitor` after each fix subtask so written code is validated before impact analysis.
+- Use `predictor` and `evaluator` only after Monitor approves a fix, as described below.
+- Do not combine phases to save time; each phase consumes the previous phase's evidence.
 
 Debug the following issue using the MAP framework:
 
@@ -39,6 +34,12 @@ parallel_tool_policy: sequential_root_cause_first
 - Spend reasoning on reproducing symptoms, isolating the root cause, and verifying the fix; do not drift into broad cleanup or feature work.
 - Keep the debugging pipeline sequential because each phase depends on the latest evidence and written repo state.
 - Parallelize only independent read-only log/code searches during initial investigation.
+
+## When Not To Expand Scope
+
+- Do not turn a bug fix into a refactor, feature, or architecture cleanup unless the root cause requires that change.
+- Do not add extra agents beyond the documented debugging sequence; switch workflows only if the task stops being a debugging task.
+- Do not continue polishing after the original symptom is reproduced, fixed, and verified.
 
 ## Workflow Overview
 
@@ -288,12 +289,12 @@ This is **completely optional**. Run it when debugging patterns are valuable for
 - `mcp__sequential-thinking__sequentialthinking` - Complex root cause analysis
 - `mcp__deepwiki__ask_question` - Learn from how others solved similar issues
 
-## Critical Constraints
+## Debugging Constraints
 
-- **ALWAYS identify root cause** before implementing fixes
-- **NEVER skip testing** after applying fixes
-- **ALWAYS check for similar issues** in other parts of codebase
-- **Use Task tool** to call all subagents
+- Identify the root cause before implementing fixes.
+- Test after applying fixes.
+- Check for similar issues in other parts of the codebase when Predictor flags them or the root cause pattern is reusable.
+- Use the Task tool to call the specialized subagents in the sequence above.
 
 ## Example
 

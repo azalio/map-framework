@@ -31,6 +31,12 @@ parallel_tool_policy: single_subtask_sequential
 - Follow the shared `/map-efficient` state-machine phases for the one subtask, including persisted TDD contracts when present.
 - Do not parallelize Actor, Monitor, test-gate, or state updates for the same subtask. Parallelize only independent context reads before the next state-machine command.
 
+## When Not To Expand Scope
+
+- Do not execute adjacent subtasks just because they are nearby in the plan.
+- Do not re-plan the selected subtask unless its stored contract is missing or contradictory.
+- Do not add Predictor, Evaluator, or learning work unless the shared state machine requires it for this subtask.
+
 ---
 
 ## Step 0: Parse Arguments
@@ -107,9 +113,9 @@ PHASE=$(echo "$NEXT_STEP" | jq -r '.phase')
 
 Route to the appropriate executor based on `$PHASE`. All phases from `/map-efficient` work identically:
 
-- **RESEARCH (2.2)** — MANDATORY: Gather context via research-agent. NEVER skip.
+- **RESEARCH (2.2)** — Required context gathering via research-agent.
 - **ACTOR (2.3)** — Implement the subtask
-- **MONITOR (2.4)** — MANDATORY: Validate implementation. NEVER skip.
+- **MONITOR (2.4)** — Required validation before the subtask can complete.
 
 Single-subtask execution must keep using the shared branch workspace artifacts rather than creating task-local side files:
 

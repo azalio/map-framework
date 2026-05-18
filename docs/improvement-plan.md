@@ -134,22 +134,6 @@
 - Add CI assertions that the resiliency artifacts are always produced: for workflows using AI agents (/map-efficient, /map-debug, /map-review, /map-learn), validate the health report JSON exists and includes terminal_status values (pending/complete/blocked/won't_do/superseded) exactly as specified in the state artifact section.
 - Create a small set of resiliency regression tests: (1) simulate compaction/no checkpoint and confirm hook injection continues without blocking session start (architecture explicitly says session start must always succeed), (2) simulate oversized checkpoint file >256KB and confirm injection is skipped but workflow proceeds, (3) simulate invalid UTF-8 and confirm injection is rejected but session continues, using the existing security validation rules and stated performance characteristics (e.g., <0.5s total hook time).
 
-## Claude 4.6 command simplification and verb calibration [2604.025]
-
-**Benefit Hypothesis**: Rewriting MAP slash-command prompts to use targeted, high-signal guardrails instead of blanket prohibitions will reduce unnecessary subagent/tool overtriggering and lower median workflow latency without hurting sequencing compliance. A reasonable target is a 10-15% reduction in average tool calls for `/map-fast`, `/map-debug`, and `/map-review` while preserving the current hard-stop guarantees for Monitor failures and irreversible release actions.
-**Confidence**: 0.76
-**Reasoning**: Anthropic’s prompting guidance for Claude 4.6 explicitly warns that prompts written to fight under-triggering in older models can now cause overtriggering. MAP’s command set still leans heavily on that older style: a quick audit of `.claude/commands/*.md` found 40 occurrences of `CRITICAL`, `MUST`, `ABSOLUTELY FORBIDDEN`, or `STRICTLY PROHIBITED`. This is especially visible in `/map-debug`, `/map-release`, `/map-efficient`, and `/map-tdd`, where large “forbidden” blocks are mixed with command semantics that are not actually high-risk. Some hard constraints are valid, but the current wording likely amplifies Claude 4.6’s tendency to over-explore, over-call agents, and spend tokens policing itself instead of executing.
-**Why Not Already Tried**: These command prompts appear to have been tuned around earlier MAP pain points such as skipped steps, skipped research, and missing Monitor passes. The architecture solved those failures with state machines and hooks, but the prompt language remained maximally forceful. The missing adaptation is recalibrating prompt tone now that orchestration safety is enforced elsewhere.
-
-### Proposed Changes
-
-- Create a shared “command guardrail baseline” snippet used by all slash commands, with normal language such as “Use the required agent when…” and “Ask before irreversible actions…”, and reserve all-caps hard-stop phrasing for true hard-stop cases only: `Monitor.valid=false`, tag push/release, destructive state resets, and user-confirmation gates.
-- Rewrite command intros to replace negative framing (“ABSOLUTELY FORBIDDEN”, “NO ADDITIONAL OPTIMIZATION ALLOWED”) with positive, contextual instructions that explain why the rule exists. Anthropic’s guidance explicitly recommends motivation/context over bare prohibitions.
-- Split each command’s safety policy into two tiers: `non_negotiable_rules` and `default_behavior`. This keeps truly critical constraints visible without making every instruction look equally severe.
-- Add a targeted “when not to do extra work” clause to `/map-fast`, `/map-check`, `/map-resume`, and `/map-task`, so the model does not over-research or over-decompose simple requests just because a long prompt exists.
-- Add prompt-lint checks that fail if command files exceed a configurable threshold of blanket modal language (`MUST`, `NEVER`, `ALWAYS`) without being under a whitelisted section such as release safety or workflow gate enforcement.
-
-
 ## Context-first XML envelopes for slash commands [2604.026]
 
 **Benefit Hypothesis**: Standardizing MAP command prompts around a shared XML envelope and moving long-form context above instructions will improve requirement retention and reduce ambiguous agent output on long-context tasks such as `/map-plan`, `/map-review`, `/map-debug`, and `/map-efficient`. The success metric is fewer dropped acceptance criteria in decompositions and fewer review/debug outputs that miss the primary artifact set.

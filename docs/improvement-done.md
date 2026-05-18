@@ -1,5 +1,14 @@
 # MAP Framework Improvement Done
 
+## Claude 4.6 command simplification and verb calibration [2604.025]
+
+- Date: 2026-05-18
+- Recalibrated shipped MAP skill prompts so non-release workflows use targeted guardrails and normal wording instead of blanket all-caps prohibition blocks. `/map-release` keeps explicit hard-stop language because tag pushes and PyPI publication are irreversible.
+- Added explicit `When Not To Expand Scope` clauses to `/map-fast`, `/map-check`, `/map-resume`, and `/map-task` so lightweight/resume/single-subtask flows stop at their intended boundary instead of adding extra research, planning, agents, or polish.
+- Tightened `/map-debug`, `/map-efficient`, `/map-tdd`, and `/map-plan` wording around required phases while preserving real gates for research, Monitor validation, blueprint metadata, TDD read-only test boundaries, and state-machine operations.
+- Synced `.claude/skills/` into shipped templates, updated README/usage/architecture/roadmap docs, and added prompt-tone regression coverage that rejects blanket prohibition blocks in non-release task skills.
+- Verified with focused prompt-tone/template-sync tests, `make lint`, `pytest -m "not slow"`, and a repo-built generated-project smoke that inspected emitted skill prompts. Full `pytest` was attempted and exceeded the 30-minute tool timeout at the live Claude SDK review boundary after plan/efficient live tests passed; the timed-out review test passed on rerun and the full `TestMapReviewE2E` class passed separately.
+
 ## Command-specific thinking and parallelism profiles [2604.029]
 
 - Date: 2026-05-18

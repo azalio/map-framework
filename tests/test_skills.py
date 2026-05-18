@@ -14,6 +14,7 @@ Validates that shipped skills keep a clean, Claude-compatible metadata surface:
 - Required sections (Examples, Troubleshooting) present
 - Manual slash invocation metadata matches skill frontmatter
 - Local supporting-file references and skill hook commands resolve
+- Non-release workflow prompts avoid blanket all-caps prohibition blocks
 """
 
 import json
@@ -68,6 +69,18 @@ WORKFLOW_EFFORT_PROFILES = {
     "map-review": "high/adaptive",
     "map-release": "high/adaptive",
 }
+
+PROMPT_TONE_EXEMPT_SKILLS = {"map-release"}
+
+BLANKET_PROHIBITION_PHRASES = [
+    "ABSOLUTELY FORBIDDEN",
+    "STRICTLY PROHIBITED",
+    "NO ADDITIONAL OPTIMIZATION ALLOWED",
+    "CRITICAL INSTRUCTION",
+    "YOU MUST:",
+]
+
+SCOPE_CONTROL_SKILLS = ["map-fast", "map-check", "map-resume", "map-task"]
 
 CLAUDE_SKILL_EFFORT_LEVELS = {
     skill_name: profile.split("/", maxsplit=1)[0]
@@ -759,6 +772,47 @@ class TestLightweightWorkflowSkillContracts:
             "Changes are already applied by Actor" in content
             or "already-written changes" in content
         )
+
+
+class TestPromptToneCalibration:
+    """Regression tests for Claude 4.6+ prompt overtriggering calibration."""
+
+    @pytest.fixture
+    def project_root(self):
+        return Path(__file__).parent.parent
+
+    @pytest.mark.parametrize("skill_name", sorted(WORKFLOW_EFFORT_PROFILES))
+    def test_non_release_skills_avoid_blanket_prohibition_blocks(
+        self, project_root, skill_name
+    ):
+        if skill_name in PROMPT_TONE_EXEMPT_SKILLS:
+            pytest.skip("Release keeps explicit hard-stop language for tag/PyPI safety")
+
+        skill_md = project_root / ".claude" / "skills" / skill_name / "SKILL.md"
+        content = skill_md.read_text(encoding="utf-8")
+
+        for phrase in BLANKET_PROHIBITION_PHRASES:
+            assert phrase not in content, (
+                f"{skill_name} should use targeted workflow guardrails instead of "
+                f"blanket prompt language: {phrase!r}"
+            )
+
+    @pytest.mark.parametrize("skill_name", SCOPE_CONTROL_SKILLS)
+    def test_lightweight_and_resume_skills_have_scope_control_clause(
+        self, project_root, skill_name
+    ):
+        skill_md = project_root / ".claude" / "skills" / skill_name / "SKILL.md"
+        content = skill_md.read_text(encoding="utf-8")
+
+        assert "## When Not To Expand Scope" in content
+        scope_section = content.split("## When Not To Expand Scope", maxsplit=1)[1]
+        scope_section = scope_section.split("\n## ", maxsplit=1)[0]
+
+        assert "Do not" in scope_section
+        assert any(
+            marker in scope_section
+            for marker in ("switch to", "hand off", "current checkpoint", "selected subtask")
+        ), f"{skill_name} scope clause should name the correct off-ramp or boundary"
 
 
 class TestContractSizedSubtaskSkillContracts:

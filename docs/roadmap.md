@@ -166,12 +166,12 @@ workflow-fit level, but the subtask contract still needs stronger shape.
 
 ## Next Iteration 3: Skill-Backed Prompt Modernization
 
-**Status:** open, re-scoped from the old command-layer plan.
+**Status:** partial, re-scoped from the old command-layer plan.
 
 **Why only after runtime contracts:** prompt tuning is useful, but it should not
 mask structural gaps in review and subtask contracts.
 
-**Improvement-plan items:** active `2604.025`, `2604.026`; shipped `2604.027`, `2604.027-1`, `2604.028`, `2604.029`.
+**Improvement-plan items:** active `2604.026`; shipped `2604.025`, `2604.027`, `2604.027-1`, `2604.028`, `2604.029`.
 
 ### Scope
 
