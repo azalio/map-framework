@@ -173,6 +173,14 @@ Esc
 
 This toggles the `PreToolUse` hook on so MAP's workflow gate can run before tool calls.
 
+If you use Codex before `0.129.0`, either start Codex with the hooks feature enabled:
+
+```bash
+codex --enable codex_hooks
+```
+
+or upgrade Codex first. Upgrading is recommended.
+
 ### MCP Server Configuration
 
 Choose which MCP servers to enable:

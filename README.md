@@ -76,6 +76,8 @@ codex
 
 Then enable the Codex hook manually: run `/hooks`, select `PreToolUse`, press `t` to toggle it on, then press `Esc`.
 
+If you use Codex before `0.129.0`, either start it with `codex --enable codex_hooks` or upgrade Codex first. Upgrading is recommended.
+
 Pick a context-compression policy if you want non-default behaviour
 (`auto` is the default; see [docs/USAGE.md#context-budget-policy](docs/USAGE.md)):
 
