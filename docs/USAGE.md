@@ -151,10 +151,12 @@ This creates a `.codex/` layout instead of `.claude/`:
 ### Using MAP with Codex
 
 ```bash
-$map-plan    # Plan and decompose complex tasks
-$map-fast    # Quick implementation with minimal validation
-$map-check   # Quality gates and verification
+map-plan    # Plan and decompose complex tasks
+map-fast    # Quick implementation with minimal validation
+map-check   # Quality gates and verification
 ```
+
+Codex MAP commands do not start with `/`. Type `map-plan`, not `/map-plan`.
 
 ### Diagnostics
 

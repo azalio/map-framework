@@ -101,7 +101,7 @@ When a task has unclear behavior, multiple files, or real review risk, run the f
 
 Direct `/map-efficient` is for already-scoped tasks. If you are unsure, start with `/map-plan`.
 
-Codex projects expose three MAP skills today: `$map-plan`, `$map-fast`, and `$map-check`. See the [Usage Guide](docs/USAGE.md#codex-cli-provider) for provider details.
+Codex users should omit the slash: type `map-plan`, `map-fast`, or `map-check` instead of `/map-plan`, `/map-fast`, or `/map-check`. See the [Usage Guide](docs/USAGE.md#codex-cli-provider) for provider details.
 
 ## What Success Looks Like
 

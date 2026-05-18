@@ -181,6 +181,8 @@ codex --enable codex_hooks
 
 or upgrade Codex first. Upgrading is recommended.
 
+Codex MAP commands do not start with `/`. Type `map-plan`, `map-fast`, or `map-check` instead of `/map-plan`, `/map-fast`, or `/map-check`.
+
 ### MCP Server Configuration
 
 Choose which MCP servers to enable:
