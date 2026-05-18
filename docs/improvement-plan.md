@@ -218,8 +218,8 @@
 
 **Source**: [[acai-sh]] (article note), [[u-define-designing-user-workflows-for-hard-and-soft-constraints-in-llm-based-planning]] (paper note), plus existing MAP philosophy and artifact-pipeline backlog context
 **Implementation Layer**: `src/mapify_cli/schemas.py`, `src/mapify_cli/templates/`, generated provider surfaces, `.map/<branch>/artifact_manifest.json`, and workflow verification helpers
-**Shipped context**: The contract-sized subtask guardrail slice is complete and recorded in [docs/improvement-done.md](./improvement-done.md): `/map-plan` and `/map-efficient` now validate per-subtask size, concern, one logical step, dependencies, validation criteria, coverage ownership, and bracketed acceptance-criteria lineage tags before implementation.
-**Missing Capability**: Hard/soft constraint typing, explicit prior-stage artifact consumption gates, and acceptance coverage in later review/verification artifacts so Monitor and FinalVerifier can distinguish non-negotiable gates from negotiable preferences.
+**Shipped context**: The contract-sized subtask guardrail slice is complete and recorded in [docs/improvement-done.md](./improvement-done.md): `/map-plan` and `/map-efficient` now validate per-subtask size, concern, one logical step, dependencies, validation criteria, coverage ownership, bracketed acceptance-criteria lineage tags, and hard/soft constraint typing before implementation.
+**Missing Capability**: Explicit prior-stage artifact consumption gates and acceptance coverage in later review/verification artifacts so Monitor and FinalVerifier can prove which artifacts and criteria were consumed before closeout.
 **Architecture Evidence**: `docs/ARCHITECTURE.md` defines reviewable diffs, artifact traceability, generated provider surfaces, branch-scoped `.map/<branch>/` manifests, and verification/review gates as core runtime concerns.
 **Benefit Hypothesis**: Making artifact lineage and small-diff budgets explicit across workflows will reduce scope creep, oversized diffs, and stage skipping, leading to more reviewable changes and more reliable recovery. The measurable target is smaller median subtask diffs, fewer mixed-concern subtasks, and fewer workflows that reach review without a full contract trail.
 **Confidence**: 0.84
@@ -234,12 +234,6 @@
 - Extend spec/plan artifacts with `hard_constraints` and `soft_constraints` fields. Hard constraints block stage completion or force replanning when violated; soft constraints are logged with explicit tradeoff rationale when a workflow chooses not to satisfy them.
 - Require complex workflows to consume the prior stage artifact explicitly before proceeding; for example, review should load spec + tests + diff, and code execution should record which test/spec contract it is satisfying.
 - Update canonical docs so MAP has a visible default artifact pipeline even if individual commands still differ in internal implementation details.
-
-## Hard/soft constraint typing in spec and blueprint gates [2604.039-followup-2]
-
-**Scope**: Add `hard_constraints` and `soft_constraints` fields to spec/blueprint artifacts and make `validate_blueprint_contract` fail hard-constraint omissions while allowing soft-constraint tradeoff rationale.
-**User payoff**: Workflow users and reviewers can tell which requirements block progress versus which were consciously traded off, reducing ambiguous Monitor/FinalVerifier feedback.
-**Validation**: Schema tests, blueprint validator pass/fail fixtures, generated-project validator smoke, and prompt tests proving decomposer/planner surfaces request the fields.
 
 ## Prior-stage artifact consumption gates [2604.039-followup-3]
 

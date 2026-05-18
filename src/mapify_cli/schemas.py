@@ -466,11 +466,46 @@ BLUEPRINT_SCHEMA = {
             "type": "object",
             "description": (
                 "Maps spec acceptance criteria, invariants, and cross-cutting "
-                "requirements to owning subtask IDs; each key must appear as a "
+                "requirements, including every hard_constraint id, to owning subtask IDs; each key must appear as a "
                 "bracketed tag in the owning subtask's validation_criteria"
             ),
             "minProperties": 1,
             "additionalProperties": {"type": "string", "pattern": "^ST-\\d{3,}$"},
+        },
+        "hard_constraints": {
+            "type": "array",
+            "description": (
+                "Non-negotiable requirements that block planning or implementation when omitted; "
+                "each id must appear in coverage_map and as a bracketed validation_criteria tag"
+            ),
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "minLength": 1, "examples": ["HC-1"]},
+                    "description": {"type": "string", "minLength": 1},
+                    "source": {"type": "string"},
+                },
+                "required": ["id", "description"],
+                "additionalProperties": True,
+            },
+        },
+        "soft_constraints": {
+            "type": "array",
+            "description": (
+                "Negotiable preferences or quality goals; include the id in coverage_map when satisfied, "
+                "or add tradeoff_rationale when consciously deferred or traded off"
+            ),
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "minLength": 1, "examples": ["SC-1"]},
+                    "description": {"type": "string", "minLength": 1},
+                    "source": {"type": "string"},
+                    "tradeoff_rationale": {"type": "string"},
+                },
+                "required": ["id", "description"],
+                "additionalProperties": True,
+            },
         },
         "blueprint": {
             "type": "object",
@@ -478,9 +513,11 @@ BLUEPRINT_SCHEMA = {
             "properties": {
                 "subtasks": {"$ref": "#/properties/subtasks"},
                 "coverage_map": {"$ref": "#/properties/coverage_map"},
+                "hard_constraints": {"$ref": "#/properties/hard_constraints"},
+                "soft_constraints": {"$ref": "#/properties/soft_constraints"},
                 "metadata": {"$ref": "#/properties/metadata"},
             },
-            "required": ["subtasks", "coverage_map"],
+            "required": ["subtasks", "coverage_map", "hard_constraints", "soft_constraints"],
             "additionalProperties": True,
         },
         "metadata": {
@@ -495,7 +532,7 @@ BLUEPRINT_SCHEMA = {
         },
     },
     "anyOf": [
-        {"required": ["subtasks", "coverage_map"]},
+        {"required": ["subtasks", "coverage_map", "hard_constraints", "soft_constraints"]},
         {"required": ["blueprint"]},
     ],
     "additionalProperties": True,

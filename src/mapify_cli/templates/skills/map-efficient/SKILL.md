@@ -168,6 +168,8 @@ Hard requirements:
   - Map every `VCn:` to ≥1 planned test case (prefer test name contains `vc<n>`)
   - Recommended format: `path/to/test_file.ext::test_name_or_symbol`
 - Include `aag_contract` (one-line pseudocode: Actor -> Action -> Goal)
+- Include top-level `hard_constraints` for non-negotiable requirements; every `hard_constraints[].id` must appear in `coverage_map` and as a bracket tag in the owning `validation_criteria`
+- Include top-level `soft_constraints` for negotiable preferences; each `soft_constraints[].id` must either appear in `coverage_map` or include `tradeoff_rationale`
 - Include top-level `coverage_map` mapping each acceptance criterion, invariant, and cross-cutting requirement to its owning subtask ID; each key must appear as a matching bracket tag in that subtask's `validation_criteria`
 
 AAG Contract format (REQUIRED per subtask):

@@ -195,6 +195,20 @@ class TestBackwardCompatibility:
 class TestBlueprintSchema:
     """Test the new BLUEPRINT_SCHEMA."""
 
+    def _constraint_fields(self):
+        return {
+            "hard_constraints": [
+                {"id": "AC-1", "description": "Invalid artifacts return errors"},
+            ],
+            "soft_constraints": [
+                {
+                    "id": "SC-1",
+                    "description": "Prefer small helper functions",
+                    "tradeoff_rationale": "Not required for the schema contract",
+                },
+            ],
+        }
+
     def test_schema_exists(self):
         from mapify_cli.schemas import BLUEPRINT_SCHEMA
 
@@ -205,6 +219,7 @@ class TestBlueprintSchema:
         from mapify_cli.schemas import BLUEPRINT_SCHEMA, validate_artifact
 
         blueprint = {
+            **self._constraint_fields(),
             "subtasks": [
                 {
                     "id": "ST-001",
@@ -227,6 +242,7 @@ class TestBlueprintSchema:
         from mapify_cli.schemas import BLUEPRINT_SCHEMA, validate_artifact
 
         blueprint = {
+            **self._constraint_fields(),
             "subtasks": [
                 {
                     "id": "ST-001",
@@ -252,6 +268,7 @@ class TestBlueprintSchema:
         blueprint = {
             "schema_version": "2.0",
             "blueprint": {
+                **self._constraint_fields(),
                 "subtasks": [
                     {
                         "id": "ST-001",
@@ -276,6 +293,7 @@ class TestBlueprintSchema:
         from mapify_cli.schemas import BLUEPRINT_SCHEMA, validate_artifact
 
         blueprint = {
+            **self._constraint_fields(),
             "subtasks": [
                 {
                     "id": "ST-001",
@@ -302,6 +320,7 @@ class TestBlueprintSchema:
         from mapify_cli.schemas import BLUEPRINT_SCHEMA, validate_artifact
 
         blueprint = {
+            **self._constraint_fields(),
             "subtasks": [
                 {
                     "id": "ST-001",
@@ -322,6 +341,33 @@ class TestBlueprintSchema:
         assert not is_valid
         assert any("expected_diff_size" in error for error in errors)
         assert any("concern_type" in error for error in errors)
+
+    def test_validate_blueprint_requires_constraint_fields(self):
+        from mapify_cli.schemas import BLUEPRINT_SCHEMA, validate_artifact
+
+        blueprint = {
+            "subtasks": [
+                {
+                    "id": "ST-001",
+                    "title": "Missing constraints",
+                    "dependencies": [],
+                    "affected_files": [],
+                    "aag_contract": "Actor -> bad() -> bad",
+                    "expected_diff_size": "small",
+                    "concern_type": "runtime",
+                    "one_logical_step": True,
+                    "validation_criteria": ["VC1 [AC-1]: check"],
+                }
+            ],
+            "coverage_map": {"AC-1": "ST-001"},
+        }
+
+        is_valid, errors = validate_artifact(blueprint, BLUEPRINT_SCHEMA)
+        assert not is_valid
+        assert errors
+        required_fields = BLUEPRINT_SCHEMA["anyOf"][0]["required"]
+        assert "hard_constraints" in required_fields
+        assert "soft_constraints" in required_fields
 
     def test_validate_invalid_blueprint(self):
         from mapify_cli.schemas import BLUEPRINT_SCHEMA, validate_artifact
@@ -361,6 +407,7 @@ class TestValidateArtifact:
         from mapify_cli.schemas import BLUEPRINT_SCHEMA, load_and_validate
 
         bp = {
+            **TestBlueprintSchema()._constraint_fields(),
             "subtasks": [
                 {
                     "id": "ST-001",

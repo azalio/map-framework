@@ -30,6 +30,21 @@ def _stub_compute_insight(payload: dict[str, object]):
     return _stub
 
 
+def _blueprint_constraint_fields() -> dict[str, object]:
+    return {
+        "hard_constraints": [
+            {"id": "AC-1", "description": "Timeouts must show a retryable message"},
+        ],
+        "soft_constraints": [
+            {
+                "id": "SC-1",
+                "description": "Prefer concise implementation",
+                "tradeoff_rationale": "Not required for the blocking user-visible contract",
+            },
+        ],
+    }
+
+
 @pytest.fixture
 def branch_workspace(tmp_path, monkeypatch):
     branch = "test-branch"
@@ -486,6 +501,7 @@ def test_record_plan_artifacts_is_partial_when_only_step_state_exists(branch_wor
 def test_validate_blueprint_contract_accepts_contract_sized_plan(branch_workspace):
     blueprint = {
         "summary": "Deliver a user-visible fix",
+        **_blueprint_constraint_fields(),
         "subtasks": [
             {
                 "id": "ST-001",
@@ -517,6 +533,7 @@ def test_validate_blueprint_contract_rejects_non_noticeable_plumbing_slice(
     branch_workspace,
 ):
     blueprint = {
+        **_blueprint_constraint_fields(),
         "subtasks": [
             {
                 "id": "ST-001",
@@ -552,6 +569,7 @@ def test_validate_blueprint_contract_accepts_nested_decomposer_blueprint(
         "schema_version": "2.0",
         "blueprint": {
             "summary": "Deliver a user-visible fix",
+            **_blueprint_constraint_fields(),
             "coverage_map": {"AC-1": "ST-001"},
             "subtasks": [
                 {
@@ -579,6 +597,7 @@ def test_validate_blueprint_contract_rejects_missing_or_invalid_subtask_id(
     branch_workspace,
 ):
     blueprint = {
+        **_blueprint_constraint_fields(),
         "subtasks": [
             {
                 "title": "Missing ID",
@@ -605,6 +624,7 @@ def test_validate_blueprint_contract_rejects_non_string_coverage_owner(
     branch_workspace,
 ):
     blueprint = {
+        **_blueprint_constraint_fields(),
         "subtasks": [
             {
                 "id": "ST-001",
@@ -632,6 +652,7 @@ def test_validate_blueprint_contract_requires_criteria_requirement_tags(
     branch_workspace,
 ):
     blueprint = {
+        **_blueprint_constraint_fields(),
         "subtasks": [
             {
                 "id": "ST-001",
@@ -657,6 +678,7 @@ def test_validate_blueprint_contract_requires_criteria_requirement_tags(
 
 def test_validate_blueprint_contract_requires_validation_criteria(branch_workspace):
     blueprint = {
+        **_blueprint_constraint_fields(),
         "subtasks": [
             {
                 "id": "ST-001",
@@ -693,6 +715,7 @@ def test_validate_blueprint_contract_rejects_duplicate_subtask_ids(branch_worksp
         "validation_criteria": ["VC1 [AC-1]: timeout shows retryable message"],
     }
     blueprint = {
+        **_blueprint_constraint_fields(),
         "subtasks": [subtask, {**subtask, "title": "Duplicate timeout fix"}],
         "coverage_map": {"AC-1": "ST-001"},
     }
@@ -706,6 +729,7 @@ def test_validate_blueprint_contract_rejects_duplicate_subtask_ids(branch_worksp
 
 def test_validate_blueprint_contract_rejects_unknown_dependencies(branch_workspace):
     blueprint = {
+        **_blueprint_constraint_fields(),
         "subtasks": [
             {
                 "id": "ST-001",
@@ -727,6 +751,104 @@ def test_validate_blueprint_contract_rejects_unknown_dependencies(branch_workspa
 
     assert result["valid"] is False
     assert any("dependency 'ST-999' points to unknown subtask" in error for error in result["errors"])
+
+
+def test_validate_blueprint_contract_requires_hard_constraint_coverage(
+    branch_workspace,
+):
+    blueprint = {
+        **_blueprint_constraint_fields(),
+        "hard_constraints": [
+            {"id": "HC-1", "description": "Persisted state must survive compaction"},
+        ],
+        "subtasks": [
+            {
+                "id": "ST-001",
+                "title": "Fix checkout timeout message",
+                "aag_contract": "CheckoutService -> handle_timeout() -> user sees retryable error",
+                "dependencies": [],
+                "affected_files": ["src/checkout.py"],
+                "expected_diff_size": "small",
+                "concern_type": "runtime",
+                "one_logical_step": True,
+                "validation_criteria": ["VC1 [AC-1]: timeout shows retryable message"],
+            }
+        ],
+        "coverage_map": {"AC-1": "ST-001"},
+    }
+    (branch_workspace / "blueprint.json").write_text(json.dumps(blueprint))
+
+    result = map_step_runner.validate_blueprint_contract()
+
+    assert result["valid"] is False
+    assert any("hard_constraints requirement 'HC-1' must appear in coverage_map" in error for error in result["errors"])
+
+
+def test_validate_blueprint_contract_accepts_soft_constraint_tradeoff(
+    branch_workspace,
+):
+    blueprint = {
+        "hard_constraints": [
+            {"id": "AC-1", "description": "Timeouts must show a retryable message"},
+        ],
+        "soft_constraints": [
+            {
+                "id": "SC-1",
+                "description": "Prefer preserving existing wording",
+                "tradeoff_rationale": "New wording is clearer for the retry action",
+            },
+        ],
+        "subtasks": [
+            {
+                "id": "ST-001",
+                "title": "Fix checkout timeout message",
+                "aag_contract": "CheckoutService -> handle_timeout() -> user sees retryable error",
+                "dependencies": [],
+                "affected_files": ["src/checkout.py"],
+                "expected_diff_size": "small",
+                "concern_type": "runtime",
+                "one_logical_step": True,
+                "validation_criteria": ["VC1 [AC-1]: timeout shows retryable message"],
+            }
+        ],
+        "coverage_map": {"AC-1": "ST-001"},
+    }
+    (branch_workspace / "blueprint.json").write_text(json.dumps(blueprint))
+
+    result = map_step_runner.validate_blueprint_contract()
+
+    assert result["valid"] is True
+
+
+def test_validate_blueprint_contract_rejects_unexplained_soft_constraint_tradeoff(
+    branch_workspace,
+):
+    blueprint = {
+        **_blueprint_constraint_fields(),
+        "soft_constraints": [
+            {"id": "SC-1", "description": "Prefer preserving existing wording"},
+        ],
+        "subtasks": [
+            {
+                "id": "ST-001",
+                "title": "Fix checkout timeout message",
+                "aag_contract": "CheckoutService -> handle_timeout() -> user sees retryable error",
+                "dependencies": [],
+                "affected_files": ["src/checkout.py"],
+                "expected_diff_size": "small",
+                "concern_type": "runtime",
+                "one_logical_step": True,
+                "validation_criteria": ["VC1 [AC-1]: timeout shows retryable message"],
+            }
+        ],
+        "coverage_map": {"AC-1": "ST-001"},
+    }
+    (branch_workspace / "blueprint.json").write_text(json.dumps(blueprint))
+
+    result = map_step_runner.validate_blueprint_contract()
+
+    assert result["valid"] is False
+    assert any("soft_constraints requirement 'SC-1' must either appear in coverage_map" in error for error in result["errors"])
 
 
 def test_record_test_contract_handoff_creates_json_and_manifest(branch_workspace):

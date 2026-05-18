@@ -1156,6 +1156,43 @@ def validate_blueprint_contract(
             "path": str(path),
         }
 
+    hard_constraints = blueprint_body.get("hard_constraints")
+    soft_constraints = blueprint_body.get("soft_constraints")
+    if not isinstance(hard_constraints, list):
+        errors.append("hard_constraints is required and must be an array")
+        hard_constraints = []
+    if not isinstance(soft_constraints, list):
+        errors.append("soft_constraints is required and must be an array")
+        soft_constraints = []
+
+    hard_constraint_ids: list[str] = []
+    for index, constraint in enumerate(hard_constraints):
+        label = f"hard_constraints[{index}]"
+        if not isinstance(constraint, dict):
+            errors.append(f"{label}: must be an object with id and description")
+            continue
+        constraint_id = str(constraint.get("id") or "").strip()
+        description = str(constraint.get("description") or "").strip()
+        if not constraint_id:
+            errors.append(f"{label}: missing id")
+            continue
+        if not description:
+            errors.append(f"{label}: missing description")
+        hard_constraint_ids.append(constraint_id)
+
+    for index, constraint in enumerate(soft_constraints):
+        label = f"soft_constraints[{index}]"
+        if not isinstance(constraint, dict):
+            errors.append(f"{label}: must be an object with id and description")
+            continue
+        constraint_id = str(constraint.get("id") or "").strip()
+        description = str(constraint.get("description") or "").strip()
+        if not constraint_id:
+            errors.append(f"{label}: missing id")
+            continue
+        if not description:
+            errors.append(f"{label}: missing description")
+
     subtask_id_counts: dict[str, int] = {}
     for subtask in subtasks:
         if not isinstance(subtask, dict):
@@ -1256,6 +1293,24 @@ def validate_blueprint_contract(
             "coverage_map is required and must map each spec AC/invariant to an owning subtask"
         )
     else:
+        for constraint_id in hard_constraint_ids:
+            if constraint_id not in coverage_map:
+                errors.append(
+                    f"hard_constraints requirement {constraint_id!r} must appear in coverage_map"
+                )
+        for constraint in soft_constraints:
+            if not isinstance(constraint, dict):
+                continue
+            constraint_id = str(constraint.get("id") or "").strip()
+            if not constraint_id or constraint_id in coverage_map:
+                continue
+            tradeoff_rationale = str(constraint.get("tradeoff_rationale") or "").strip()
+            if not tradeoff_rationale:
+                errors.append(
+                    f"soft_constraints requirement {constraint_id!r} must either appear in coverage_map "
+                    "or include tradeoff_rationale"
+                )
+
         requirement_owners: dict[str, list[str]] = {}
         for requirement_id, owner in coverage_map.items():
             if not isinstance(owner, str):

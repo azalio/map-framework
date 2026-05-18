@@ -459,10 +459,14 @@ Output requirements:
 - Identify dependencies between subtasks
 - Estimate complexity (low/medium/high)
 - Use architecture_graph_summary to map subtasks to affected modules
+- Output `hard_constraints`: non-negotiable requirements that must block or force replanning if omitted
+- Output `soft_constraints`: negotiable preferences with `tradeoff_rationale` when intentionally not covered
 
 Coverage requirements:
 - CRITICAL: Every acceptance criterion from the spec must appear as a validation_criteria in exactly one subtask. Do NOT silently drop spec criteria that seem minor.
 - Each `validation_criteria` item that proves a mapped requirement must cite the stable requirement ID in brackets, e.g. `VC1 [MVP-AC-1]: checkout timeout shows retryable message`. The `coverage_map` key and bracket tag must match exactly.
+- Every `hard_constraints[].id` must appear in `coverage_map` and as a matching bracket tag in the owning subtask's `validation_criteria`.
+- Every `soft_constraints[].id` must either appear in `coverage_map` or include `tradeoff_rationale` explaining the conscious tradeoff/defer decision.
 - For cross-cutting requirements (observability, error handling, budget tracking, structured logging), either create a dedicated subtask or explicitly add them as validation criteria to the subtask that implements the relevant infrastructure.
 - For each structured result type in the spec, verify ALL fields (including optional envelope fields like budget_state, deferred_work, recovery_state) are covered in validation criteria.
 - Output a `coverage_map` field: a dict mapping each spec AC identifier to the subtask ID that owns it, e.g. {{"MVP-AC-1": "ST-007", "MVP-AC-2": "ST-005", ...}}.
@@ -479,6 +483,8 @@ The blueprint JSON must include at minimum:
 ```json
 {
   "summary": "<goal description>",
+  "hard_constraints": [{"id": "HC-1", "description": "Non-negotiable requirement"}],
+  "soft_constraints": [{"id": "SC-1", "description": "Preference", "tradeoff_rationale": "Only if not covered"}],
   "subtasks": [
     {
       "id": "ST-001",
@@ -491,11 +497,11 @@ The blueprint JSON must include at minimum:
       "one_logical_step": true,
       "complexity_score": 5,
       "risk_level": "medium",
-      "validation_criteria": ["VC1 [AC-1]: ...", "VC2 [INV-1]: ..."],
+      "validation_criteria": ["VC1 [HC-1] [AC-1]: ...", "VC2 [INV-1]: ..."],
       "test_strategy": {"unit": ["test description"]}
     }
   ],
-  "coverage_map": {"AC-1": "ST-001", "INV-1": "ST-001"}
+  "coverage_map": {"HC-1": "ST-001", "AC-1": "ST-001", "INV-1": "ST-001"}
 }
 ```
 
@@ -505,8 +511,8 @@ If the decomposer returned structured JSON, save it directly. If it returned mar
 
 After writing `blueprint.json`, run this deterministic shell check to verify the
 file contains contract-sized subtasks with size, concern, one-logical-step, AAG,
-validation, and coverage ownership metadata. Do NOT proceed to Step 5.7 if the
-check reports a problem.
+validation, hard/soft constraint, and coverage ownership metadata. Do NOT
+proceed to Step 5.7 if the check reports a problem.
 
 Use the **Bash** tool:
 

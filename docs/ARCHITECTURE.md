@@ -83,6 +83,7 @@ Claude skill metadata includes `skillClass` in `.claude/skills/skill-rules.json`
 - **Context Budgeting & Compression**: MAP exposes compression policies and thresholds and treats budget control as a first-class workflow concern.
 - **Verification & Review Gates**: Commands like `/map-check` and `/map-review` validate work against plan/spec artifacts, not only “looks OK” prompting.
 - **Observability via Artifacts**: Primary observability surface is file-based (plans, summaries, review dossiers) persisted under `.map/<branch>/`.
+- **Constraint Typing**: `blueprint.json` separates non-negotiable `hard_constraints` from negotiable `soft_constraints`; hard constraints must be covered through `coverage_map` and bracketed validation criteria, while soft constraints need either coverage or explicit tradeoff rationale.
 - **Provider Differences**: Workflow intent is shared, but orchestration mechanics differ between Claude Code (`.claude/`) and Codex CLI (`.codex/`).
 
 ## Deployment/Operations
