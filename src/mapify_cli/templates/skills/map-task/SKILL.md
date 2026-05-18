@@ -19,6 +19,17 @@ argument-hint: "[subtask id]"
 
 **Task:** $ARGUMENTS
 
+## Effort and Parallelism Policy
+
+```yaml
+thinking_policy: medium/adaptive
+parallel_tool_policy: single_subtask_sequential
+```
+
+- Reason just enough to execute the selected subtask against its stored contract; avoid re-planning unrelated subtasks.
+- Follow the shared `/map-efficient` state-machine phases for the one subtask, including persisted TDD contracts when present.
+- Do not parallelize Actor, Monitor, test-gate, or state updates for the same subtask. Parallelize only independent context reads before the next state-machine command.
+
 ---
 
 ## Step 0: Parse Arguments

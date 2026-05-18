@@ -17,6 +17,17 @@ Implement the following:
 
 **Task:** $ARGUMENTS
 
+## Effort and Parallelism Policy
+
+```yaml
+thinking_policy: low/direct
+parallel_tool_policy: sequential_by_default
+```
+
+- Keep reasoning brief and action-oriented; this workflow exists to avoid heavyweight orchestration for bounded, low-risk work.
+- Do not add research, Predictor, Evaluator, Reflector, or extra self-audit steps unless the task no longer fits `/map-fast`; switch to `/map-efficient` instead.
+- Run agent phases sequentially. Parallelize only independent read-only file inspection or independent check commands when there are no state transitions or edits involved.
+
 ## Workflow Overview
 
 Minimal agent sequence (token-optimized, reduced analysis depth):

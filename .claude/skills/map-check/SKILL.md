@@ -9,6 +9,17 @@ argument-hint: "[focus area]"
 
 **Purpose:** Run code quality checks (linters, type checkers, tests) and/or verify MAP workflow completion.
 
+## Effort and Parallelism Policy
+
+```yaml
+thinking_policy: low/direct
+parallel_tool_policy: independent_checks_only
+```
+
+- Stay in verification mode: run the relevant gates, interpret failures, and stop with a clear pass/fail summary.
+- Do not plan or execute new work from this skill. If checks reveal missing implementation, report it and hand off to `/map-task`, `/map-efficient`, or `/map-debug`.
+- Parallelize only independent quality gates or artifact reads. Do not parallelize final-verifier, state validation, or any step that depends on previous check output.
+
 **Two Modes:**
 
 ## Mode 1: Standalone Quality Check (No MAP workflow)

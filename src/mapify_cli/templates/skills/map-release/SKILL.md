@@ -40,6 +40,17 @@ Execute the following release using the MAP (Modular Agentic Planner) framework:
 
 **Release Request:** $ARGUMENTS
 
+## Effort and Parallelism Policy
+
+```yaml
+thinking_policy: high/adaptive
+parallel_tool_policy: validation_gates_only
+```
+
+- Use deeper reasoning for version selection, release safety, CI interpretation, and rollback decisions.
+- Parallelize only independent pre-release validation gates when their outputs do not depend on one another.
+- Keep version bumping, commits, tags, pushes, GitHub release creation, PyPI verification, and any irreversible or state-mutating operation sequential with the required user confirmation gates.
+
 ## Workflow Overview
 
 This workflow orchestrates a complete package release through 7 sequential phases:

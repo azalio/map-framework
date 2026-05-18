@@ -9,6 +9,17 @@ argument-hint: "[file path | symbol | PR ref | code snippet | empty for branch d
 
 **Target:** $ARGUMENTS
 
+## Effort and Parallelism Policy
+
+```yaml
+thinking_policy: medium/adaptive
+parallel_tool_policy: independent_reads_only
+```
+
+- Use adaptive reasoning to build the requested mental model, but stop at explanation: do not plan or implement changes from this skill.
+- Parallelize independent file reads, diffs, and searches when they do not require immediate synthesis.
+- Keep final synthesis sequential so the explanation is coherent and does not mix unrelated targets.
+
 ## Default target (when $ARGUMENTS is empty)
 
 Pick mode by inspecting the current branch and its relation to the upstream base:

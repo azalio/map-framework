@@ -28,6 +28,17 @@ Debug the following issue using the MAP framework:
 
 Use compact evidence-first examples from [Evidence-First Output Examples](../../references/map-output-examples.md) when asking agents to report root causes, validation failures, or impact risks.
 
+## Effort and Parallelism Policy
+
+```yaml
+thinking_policy: medium/adaptive
+parallel_tool_policy: sequential_root_cause_first
+```
+
+- Spend reasoning on reproducing symptoms, isolating the root cause, and verifying the fix; do not drift into broad cleanup or feature work.
+- Keep the debugging pipeline sequential because each phase depends on the latest evidence and written repo state.
+- Parallelize only independent read-only log/code searches during initial investigation.
+
 ## Workflow Overview
 
 Debugging workflow focuses on analysis before implementation:

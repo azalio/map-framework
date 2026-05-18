@@ -9,6 +9,17 @@ argument-hint: "[plan ID]"
 
 **Purpose:** Resume an interrupted or incomplete MAP workflow from the last checkpoint.
 
+## Effort and Parallelism Policy
+
+```yaml
+thinking_policy: low/direct
+parallel_tool_policy: sequential_state_machine
+```
+
+- Minimize fresh reasoning: trust the persisted briefing, step state, and next-action artifact trail unless they are missing or contradictory.
+- Do not re-plan, re-decompose, or broaden the task during resume. The goal is to continue the existing workflow from the next valid state-machine step.
+- Keep state-machine operations sequential. Parallelize only independent artifact reads used to prepare the resume briefing.
+
 **When to use:**
 - After context window exhaustion mid-workflow
 - After accidental session termination
