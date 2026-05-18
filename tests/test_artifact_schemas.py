@@ -294,6 +294,12 @@ def test_validate_review_bundle_schema():
             "validation": "All checks passed.",
             "risks_follow_up": "- [not recorded]",
         },
+        "acceptance_coverage": {
+            "status": "success",
+            "branch": "test-branch",
+            "requirements": [],
+            "summary": {"total": 0, "covered": 0, "missing": 0},
+        },
     }
 
     is_valid, errors = MODULE.validate_artifact(bundle, MODULE.REVIEW_BUNDLE_SCHEMA)
@@ -336,6 +342,12 @@ def test_validate_review_bundle_schema_with_manifest_status_ready():
             "validation": "- [not recorded]",
             "risks_follow_up": "- [not recorded]",
         },
+        "acceptance_coverage": {
+            "status": "missing_blueprint",
+            "branch": "test-branch",
+            "requirements": [],
+            "summary": {"total": 0, "covered": 0, "missing": 0},
+        },
         "manifest_status": {"status": "ready", "path": ".map/test-branch/artifact_manifest.json"},
     }
     is_valid, errors = MODULE.validate_artifact(minimal, MODULE.REVIEW_BUNDLE_SCHEMA)
@@ -377,6 +389,12 @@ def test_validate_review_bundle_schema_with_manifest_status_error():
             "summary": "- [not recorded]",
             "validation": "- [not recorded]",
             "risks_follow_up": "- [not recorded]",
+        },
+        "acceptance_coverage": {
+            "status": "missing_blueprint",
+            "branch": "test-branch",
+            "requirements": [],
+            "summary": {"total": 0, "covered": 0, "missing": 0},
         },
         "manifest_status": {"status": "error", "reason": "disk full"},
     }

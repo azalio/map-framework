@@ -135,6 +135,7 @@ LEARNING_CONSUMPTION_SOURCES = {"auto-handoff", "file-handoff", "inline-summary"
 REVIEW_SECTION_IDS: tuple[str, ...] = ("architecture", "code_quality", "tests", "performance")
 REVIEW_VALID_MODES: tuple[str, ...] = ("default", "reverse-sections", "shuffle-sections")
 LEARNING_IMMEDIATE_WINDOW_SECONDS = 30 * 60
+ACCEPTANCE_TAG_RE = re.compile(r"\[([A-Za-z][A-Za-z0-9_-]*-\d+[A-Za-z0-9_-]*)\]")
 
 LEARNING_METRICS_COUNTER_DEFAULTS = {
     "handoff_generated_count": 0,
@@ -1492,6 +1493,195 @@ def append_session_log(
     return {"status": "deprecated", "path": "", "deprecated": True}
 
 
+def _load_blueprint_for_coverage(branch_dir: Path) -> tuple[dict[str, object] | None, str]:
+    """Load blueprint.json and normalize nested blueprint payloads for coverage reporting."""
+    blueprint_path = branch_dir / "blueprint.json"
+    try:
+        payload = json.loads(blueprint_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None, "blueprint.json not found"
+    except (json.JSONDecodeError, OSError) as exc:
+        return None, f"cannot read blueprint.json: {exc}"
+    if not isinstance(payload, dict):
+        return None, "blueprint.json must contain an object"
+    blueprint = payload.get("blueprint") if isinstance(payload.get("blueprint"), dict) else payload
+    blueprint = cast(dict[str, object], blueprint)
+    if "coverage_map" not in blueprint and isinstance(payload.get("coverage_map"), dict):
+        blueprint = dict(blueprint)
+        blueprint["coverage_map"] = payload["coverage_map"]
+    return blueprint, ""
+
+
+def _extract_acceptance_tags(text: object) -> set[str]:
+    """Return bracketed acceptance/invariant tags found in artifact text."""
+    if not isinstance(text, str) or not text:
+        return set()
+    return {match.group(1) for match in ACCEPTANCE_TAG_RE.finditer(text)}
+
+
+def _collect_acceptance_evidence_texts(
+    branch_dir: Path,
+    branch_name: str,
+    extra_artifacts: Optional[Mapping[str, str]] = None,
+) -> dict[str, str]:
+    """Collect review/verification artifact text that can prove acceptance tags."""
+    evidence: dict[str, str] = {}
+    for label, name in (
+        ("verification_summary", "verification-summary.md"),
+        ("qa", "qa-001.md"),
+        ("pr_draft", "pr-draft.md"),
+    ):
+        text = _read_branch_artifact_text(branch_dir, name)
+        if text:
+            evidence[label] = text
+
+    for prefix, label in (("code-review", "latest_code_review"),):
+        latest = _collect_numbered_artifact(branch_dir, prefix)
+        text = latest.get("sanitized_text") if isinstance(latest, dict) else None
+        if isinstance(text, str) and text:
+            evidence[label] = text
+
+    for pattern, label_prefix in (
+        ("test_contract_*.md", "test_contract"),
+        ("test_handoff_*.json", "test_handoff"),
+    ):
+        try:
+            matches = sorted(branch_dir.glob(pattern))
+        except OSError:
+            matches = []
+        for path in matches:
+            if not path.is_file():
+                continue
+            try:
+                text = _sanitize_for_json(path.read_text(encoding="utf-8", errors="replace"))
+            except OSError:
+                continue
+            if text:
+                evidence[f"{label_prefix}:{path.name}"] = text
+
+    for label, text in (extra_artifacts or {}).items():
+        if text:
+            evidence[label] = _sanitize_for_json(text)
+    return evidence
+
+
+def build_acceptance_coverage_report(
+    branch: Optional[str] = None,
+    extra_artifacts: Optional[Mapping[str, str]] = None,
+) -> dict[str, object]:
+    """Summarize which blueprint acceptance tags have downstream evidence."""
+    branch_name = branch or get_branch_name()
+    branch_dir = get_branch_dir(branch_name)
+    blueprint, reason = _load_blueprint_for_coverage(branch_dir)
+    if blueprint is None:
+        return {
+            "status": "missing_blueprint",
+            "branch": branch_name,
+            "reason": reason,
+            "requirements": [],
+            "summary": {"total": 0, "covered": 0, "missing": 0},
+        }
+
+    coverage_map = blueprint.get("coverage_map")
+    subtasks = blueprint.get("subtasks")
+    if not isinstance(coverage_map, dict) or not isinstance(subtasks, list):
+        return {
+            "status": "invalid_blueprint",
+            "branch": branch_name,
+            "reason": "blueprint requires coverage_map and subtasks for acceptance coverage",
+            "requirements": [],
+            "summary": {"total": 0, "covered": 0, "missing": 0},
+        }
+
+    subtasks_by_id = {
+        subtask.get("id"): subtask
+        for subtask in subtasks
+        if isinstance(subtask, dict) and isinstance(subtask.get("id"), str)
+    }
+    evidence_texts = _collect_acceptance_evidence_texts(
+        branch_dir, branch_name, extra_artifacts=extra_artifacts
+    )
+    evidence_tags_by_source = {
+        source: _extract_acceptance_tags(text)
+        for source, text in evidence_texts.items()
+    }
+
+    requirements: list[dict[str, object]] = []
+    for requirement_id, owner in sorted(coverage_map.items(), key=lambda item: str(item[0])):
+        requirement = str(requirement_id)
+        owner_id = str(owner) if isinstance(owner, str) else None
+        owner_subtask = subtasks_by_id.get(owner_id) if owner_id else None
+        criteria = (
+            owner_subtask.get("validation_criteria")
+            if isinstance(owner_subtask, dict)
+            else []
+        )
+        criterion_texts = [item for item in criteria if isinstance(item, str)]
+        validation_criteria_cited = any(
+            f"[{requirement}]" in item for item in criterion_texts
+        )
+        evidence_artifacts = sorted(
+            source
+            for source, tags in evidence_tags_by_source.items()
+            if requirement in tags
+        )
+        requirements.append(
+            {
+                "id": requirement,
+                "owner": owner_id,
+                "validation_criteria_cited": validation_criteria_cited,
+                "evidence_artifacts": evidence_artifacts,
+                "status": "covered" if evidence_artifacts else "missing_evidence",
+            }
+        )
+
+    covered = sum(1 for item in requirements if item["status"] == "covered")
+    missing = len(requirements) - covered
+    tagged_evidence_sources = sorted(
+        source for source, tags in evidence_tags_by_source.items() if tags
+    )
+    return {
+        "status": "success",
+        "branch": branch_name,
+        "blueprint_path": str(branch_dir / "blueprint.json"),
+        "evidence_sources": tagged_evidence_sources,
+        "requirements": requirements,
+        "summary": {"total": len(requirements), "covered": covered, "missing": missing},
+    }
+
+
+def _render_acceptance_coverage_markdown(report: Mapping[str, object]) -> str:
+    """Render an acceptance coverage report into a compact Markdown section."""
+    if report.get("status") != "success":
+        reason = report.get("reason", "not available")
+        return "## Acceptance Coverage\n- Status: not available\n- Reason: " + str(reason) + "\n"
+
+    summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
+    total = summary.get("total", 0) if isinstance(summary, dict) else 0
+    covered = summary.get("covered", 0) if isinstance(summary, dict) else 0
+    missing = summary.get("missing", 0) if isinstance(summary, dict) else 0
+    lines = [
+        "## Acceptance Coverage",
+        f"- Covered tags: {covered}/{total}",
+        f"- Missing evidence: {missing}",
+    ]
+    requirements = report.get("requirements")
+    if isinstance(requirements, list) and requirements:
+        for item in requirements:
+            if not isinstance(item, dict):
+                continue
+            evidence = item.get("evidence_artifacts")
+            if isinstance(evidence, list) and evidence:
+                evidence_text = ", ".join(str(source) for source in evidence)
+            else:
+                evidence_text = "missing"
+            lines.append(
+                f"- [{item.get('status', 'unknown')}] {item.get('id', 'unknown')} "
+                f"owned by {item.get('owner') or 'unknown'}; evidence: {evidence_text}"
+            )
+    return "\n".join(lines) + "\n"
+
+
 def write_verification_summary(
     verdict: str,
     task_title: str = "",
@@ -1518,8 +1708,16 @@ def write_verification_summary(
         "## Next Action\n"
         f"{next_action or '- [not recorded]'}\n"
     )
+    coverage_report = build_acceptance_coverage_report(
+        branch_name, extra_artifacts={"verification_summary": content}
+    )
+    content += "\n" + _render_acceptance_coverage_markdown(coverage_report)
     summary_file.write_text(content, encoding="utf-8")
-    return {"status": "success", "path": str(summary_file)}
+    return {
+        "status": "success",
+        "path": str(summary_file),
+        "acceptance_coverage": coverage_report,
+    }
 
 
 def _count_step_entries(value: object) -> int:
@@ -2652,6 +2850,7 @@ def _render_bundle_markdown(result: dict) -> str:
     code_state = result.get("code_state", {})
     review_handoff = result.get("review_handoff", {})
     pr_handoff = result.get("pr_handoff", {})
+    acceptance_coverage = result.get("acceptance_coverage", {})
 
     lines = [
         f"# Review Bundle — `{branch}`",
@@ -2716,6 +2915,11 @@ def _render_bundle_markdown(result: dict) -> str:
             lines.append("")
             lines.append(val[:500] + ("…" if len(val) > 500 else ""))
             lines.append("")
+
+    # Acceptance coverage
+    if isinstance(acceptance_coverage, dict):
+        lines.append(_render_acceptance_coverage_markdown(acceptance_coverage).rstrip())
+        lines.append("")
 
     # PR handoff
     lines += ["## PR Handoff Summary", ""]
@@ -2823,6 +3027,8 @@ def create_review_bundle(branch: Optional[str] = None) -> dict:
             "_error": str(exc),
         }
 
+    acceptance_coverage = build_acceptance_coverage_report(branch_name)
+
     # --- Ordering payload (INV-10 single-writer staging) ---
     # Consume from BOTH the file (cross-subprocess durable path) and the module
     # dict (in-process pytest path), preferring whichever is present. Clear both
@@ -2873,6 +3079,7 @@ def create_review_bundle(branch: Optional[str] = None) -> dict:
         "code_state": code_state,
         "review_handoff": review_handoff,
         "pr_handoff": pr_handoff,
+        "acceptance_coverage": acceptance_coverage,
         "ordering": ordering_payload,
     }
 
@@ -2937,6 +3144,9 @@ def create_review_bundle(branch: Optional[str] = None) -> dict:
             "branch": branch_name,
             "generated_at": result["generated_at"],
             "ordering": ordering_payload,
+            "acceptance_coverage": acceptance_coverage.get("summary")
+            if isinstance(acceptance_coverage, dict)
+            else {},
         }
         stage_status = "warn" if "schema_validation_error" in result else "ready"
         _set_manifest_stage(
@@ -4183,6 +4393,10 @@ if __name__ == "__main__":
 
     elif func_name == "build_review_handoff":
         result = build_review_handoff()
+        print(json.dumps(result, indent=2, ensure_ascii=True))
+
+    elif func_name == "build_acceptance_coverage_report":
+        result = build_acceptance_coverage_report()
         print(json.dumps(result, indent=2, ensure_ascii=True))
 
     elif func_name == "write_learning_handoff":

@@ -1,5 +1,13 @@
 # MAP Framework Improvement Done
 
+## Acceptance coverage in review and verification artifacts [2604.039-followup-4]
+
+- Date: 2026-05-18
+- Added acceptance coverage reporting to `.map/scripts/map_step_runner.py` and the shipped template copy so `write_verification_summary` and `create_review_bundle` summarize every `blueprint.json` `coverage_map` tag.
+- Marked each tag as `covered` only when bracketed evidence such as `[AC-1]` or `[INV-1]` appears in downstream verification, QA, test contract, handoff, PR draft, or review artifacts; otherwise the Markdown and JSON outputs show `missing_evidence`.
+- Extended `REVIEW_BUNDLE_SCHEMA`, review-bundle Markdown, manifest review-stage metadata, and user/architecture docs so reviewers get both human-readable and machine-readable acceptance evidence before approval.
+- Verified with focused acceptance-coverage, review-bundle, schema, and artifact tests, `make lint`, `pytest -m "not slow"`, and a repo-built generated-project smoke for the shipped helper copy.
+
 ## Hard/soft constraint typing in spec and blueprint gates [2604.039-followup-2]
 
 - Date: 2026-05-18

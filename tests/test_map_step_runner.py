@@ -529,6 +529,117 @@ def test_validate_blueprint_contract_accepts_contract_sized_plan(branch_workspac
     assert result["subtask_count"] == 1
 
 
+def test_acceptance_coverage_report_tracks_downstream_evidence(branch_workspace):
+    blueprint = {
+        "summary": "Deliver a user-visible fix",
+        **_blueprint_constraint_fields(),
+        "subtasks": [
+            {
+                "id": "ST-001",
+                "title": "Fix checkout timeout message",
+                "aag_contract": "CheckoutService -> handle_timeout() -> user sees retryable error",
+                "dependencies": [],
+                "affected_files": ["src/checkout.py"],
+                "expected_diff_size": "small",
+                "concern_type": "runtime",
+                "one_logical_step": True,
+                "validation_criteria": [
+                    "VC1 [AC-1]: timeout shows retryable message",
+                    "VC2 [INV-1]: retry state is not corrupted",
+                ],
+            }
+        ],
+        "coverage_map": {"AC-1": "ST-001", "INV-1": "ST-001"},
+    }
+    (branch_workspace / "blueprint.json").write_text(json.dumps(blueprint))
+    (branch_workspace / "verification-summary.md").write_text(
+        "# Verification Summary\n\n## Checks Run\npytest [AC-1]\n",
+        encoding="utf-8",
+    )
+
+    result = map_step_runner.build_acceptance_coverage_report()
+
+    assert result["status"] == "success"
+    assert result["summary"] == {"total": 2, "covered": 1, "missing": 1}
+    requirements = {item["id"]: item for item in result["requirements"]}
+    assert requirements["AC-1"]["status"] == "covered"
+    assert requirements["AC-1"]["evidence_artifacts"] == ["verification_summary"]
+    assert requirements["INV-1"]["status"] == "missing_evidence"
+
+
+def test_acceptance_coverage_report_ignores_planning_artifacts(branch_workspace):
+    blueprint = {
+        "summary": "Deliver a user-visible fix",
+        **_blueprint_constraint_fields(),
+        "subtasks": [
+            {
+                "id": "ST-001",
+                "title": "Fix checkout timeout message",
+                "aag_contract": "CheckoutService -> handle_timeout() -> user sees retryable error",
+                "dependencies": [],
+                "affected_files": ["src/checkout.py"],
+                "expected_diff_size": "small",
+                "concern_type": "runtime",
+                "one_logical_step": True,
+                "validation_criteria": ["VC1 [AC-1]: timeout shows retryable message"],
+            }
+        ],
+        "coverage_map": {"AC-1": "ST-001"},
+    }
+    (branch_workspace / "blueprint.json").write_text(json.dumps(blueprint))
+    (branch_workspace / "task_plan_test-branch.md").write_text(
+        "# Plan\n\nPlanning mentions [AC-1] but does not prove it.\n",
+        encoding="utf-8",
+    )
+    (branch_workspace / "plan-review-001.md").write_text(
+        "# Plan Review\n\nPlan reviewer mentions [AC-1].\n",
+        encoding="utf-8",
+    )
+
+    result = map_step_runner.build_acceptance_coverage_report()
+
+    assert result["summary"] == {"total": 1, "covered": 0, "missing": 1}
+    assert result["evidence_sources"] == []
+    assert result["requirements"][0]["status"] == "missing_evidence"
+
+
+def test_write_verification_summary_appends_acceptance_coverage(branch_workspace):
+    blueprint = {
+        **_blueprint_constraint_fields(),
+        "subtasks": [
+            {
+                "id": "ST-001",
+                "title": "Fix checkout timeout message",
+                "aag_contract": "CheckoutService -> handle_timeout() -> user sees retryable error",
+                "dependencies": [],
+                "affected_files": ["src/checkout.py"],
+                "expected_diff_size": "small",
+                "concern_type": "runtime",
+                "one_logical_step": True,
+                "validation_criteria": ["VC1 [AC-1]: timeout shows retryable message"],
+            }
+        ],
+        "coverage_map": {"AC-1": "ST-001"},
+    }
+    (branch_workspace / "blueprint.json").write_text(json.dumps(blueprint))
+
+    result = map_step_runner.write_verification_summary(
+        "ready",
+        task_title="Checkout timeout",
+        checks_run="pytest tests/test_checkout.py [AC-1]",
+    )
+
+    assert result["acceptance_coverage"]["summary"] == {
+        "total": 1,
+        "covered": 1,
+        "missing": 0,
+    }
+    summary = (branch_workspace / "verification-summary.md").read_text(encoding="utf-8")
+    assert "## Acceptance Coverage" in summary
+    assert "Covered tags: 1/1" in summary
+    assert "[covered] AC-1 owned by ST-001" in summary
+
+
 def test_validate_blueprint_contract_rejects_non_noticeable_plumbing_slice(
     branch_workspace,
 ):
@@ -2943,6 +3054,50 @@ def test_build_handoff_bundle_compatible_after_review_bundle_created(
     assert "READY FOR REVIEW" in result["validation"]
     assert "follow up on edge case" in result["risks_follow_up"]
     assert "Verification summary available" in result["summary"]
+
+
+def test_create_review_bundle_includes_acceptance_coverage(branch_workspace):
+    blueprint = {
+        **_blueprint_constraint_fields(),
+        "subtasks": [
+            {
+                "id": "ST-001",
+                "title": "Fix checkout timeout message",
+                "aag_contract": "CheckoutService -> handle_timeout() -> user sees retryable error",
+                "dependencies": [],
+                "affected_files": ["src/checkout.py"],
+                "expected_diff_size": "small",
+                "concern_type": "runtime",
+                "one_logical_step": True,
+                "validation_criteria": ["VC1 [AC-1]: timeout shows retryable message"],
+            }
+        ],
+        "coverage_map": {"AC-1": "ST-001"},
+    }
+    (branch_workspace / "blueprint.json").write_text(json.dumps(blueprint))
+    (branch_workspace / "verification-summary.md").write_text(
+        "# Verification Summary\n\n## Checks Run\npytest [AC-1]\n",
+        encoding="utf-8",
+    )
+
+    result = map_step_runner.create_review_bundle()
+
+    assert result["acceptance_coverage"]["summary"] == {
+        "total": 1,
+        "covered": 1,
+        "missing": 0,
+    }
+    bundle = json.loads((branch_workspace / "review-bundle.json").read_text())
+    assert bundle["acceptance_coverage"]["requirements"][0]["id"] == "AC-1"
+    markdown = (branch_workspace / "review-bundle.md").read_text(encoding="utf-8")
+    assert "## Acceptance Coverage" in markdown
+    assert "[covered] AC-1 owned by ST-001" in markdown
+    manifest = map_step_runner.load_artifact_manifest("test-branch")
+    assert manifest["stages"]["review"]["metadata"]["acceptance_coverage"] == {
+        "total": 1,
+        "covered": 1,
+        "missing": 0,
+    }
 
 
 def test_write_learning_handoff_compatible_after_review_bundle_created(

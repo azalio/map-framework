@@ -138,12 +138,13 @@ workflow-fit level, but the subtask contract still needs stronger shape.
 
 - `/map-plan` and `/map-efficient` require per-subtask `expected_diff_size`, `concern_type`, `one_logical_step`, AAG, validation criteria, and top-level `coverage_map` metadata.
 - `validate_blueprint_contract` fails empty, oversized, mixed-concern, untraceable, or non-logical-step blueprints before implementation starts.
+- `verification-summary.md` and `review-bundle.*` report whether each `coverage_map` tag has downstream evidence in verification, QA, test, PR draft, handoff, or review artifacts.
 - Actor context, Monitor, and FinalVerifier now receive or check the subtask contract metadata so scope creep remains visible after planning.
 
 ### Remaining Follow-up
 
-- Add explicit hard/soft constraint typing across spec, plan, tests, review, and verification artifacts.
-- Propagate durable acceptance-criteria IDs into test contracts and review dossiers beyond the current `coverage_map` planning gate.
+- Add explicit prior-stage artifact consumption gates so implementation and review closeout record which spec, blueprint, test, and diff artifacts they consumed.
+- Continue propagating durable acceptance-criteria IDs into generated test contracts where workflows still omit tags.
 
 ### Primary Files
 

@@ -56,6 +56,12 @@ def _minimal_valid_bundle() -> dict:  # type: ignore[type-arg]
             "validation": "- [not recorded]",
             "risks_follow_up": "- [not recorded]",
         },
+        "acceptance_coverage": {
+            "status": "missing_blueprint",
+            "branch": "test-branch",
+            "requirements": [],
+            "summary": {"total": 0, "covered": 0, "missing": 0},
+        },
     }
 
 
@@ -141,6 +147,56 @@ def test_review_bundle_schema_accepts_no_ordering() -> None:
 
     is_valid, errors = MODULE.validate_artifact(bundle, MODULE.REVIEW_BUNDLE_SCHEMA)
     assert is_valid, f"Errors: {errors}"
+
+
+def test_review_bundle_schema_accepts_typed_acceptance_coverage() -> None:
+    """acceptance_coverage requirements expose a stable machine-readable shape."""
+    bundle = _minimal_valid_bundle()
+    bundle["acceptance_coverage"] = {
+        "status": "success",
+        "branch": "test-branch",
+        "blueprint_path": ".map/test-branch/blueprint.json",
+        "evidence_sources": ["verification_summary"],
+        "requirements": [
+            {
+                "id": "AC-1",
+                "owner": "ST-001",
+                "validation_criteria_cited": True,
+                "evidence_artifacts": ["verification_summary"],
+                "status": "covered",
+            }
+        ],
+        "summary": {"total": 1, "covered": 1, "missing": 0},
+    }
+
+    is_valid, errors = MODULE.validate_artifact(bundle, MODULE.REVIEW_BUNDLE_SCHEMA)
+    assert is_valid, f"Errors: {errors}"
+
+
+def test_review_bundle_schema_rejects_malformed_acceptance_coverage_summary() -> None:
+    """acceptance_coverage.summary must keep total/covered/missing integers."""
+    bundle = _minimal_valid_bundle()
+    bundle["acceptance_coverage"]["summary"] = {"total": "1", "covered": 1, "missing": 0}
+
+    is_valid = MODULE.validate_artifact(bundle, MODULE.REVIEW_BUNDLE_SCHEMA)[0]
+    assert not is_valid
+
+
+def test_review_bundle_schema_rejects_malformed_acceptance_requirement() -> None:
+    """acceptance_coverage.requirements items must not silently drift shape."""
+    bundle = _minimal_valid_bundle()
+    bundle["acceptance_coverage"]["requirements"] = [
+        {
+            "id": "AC-1",
+            "owner": "ST-001",
+            "validation_criteria_cited": True,
+            "evidence_artifacts": "verification_summary",
+            "status": "covered",
+        }
+    ]
+
+    is_valid = MODULE.validate_artifact(bundle, MODULE.REVIEW_BUNDLE_SCHEMA)[0]
+    assert not is_valid
 
 
 # ---------------------------------------------------------------------------
