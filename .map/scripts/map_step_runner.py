@@ -1530,13 +1530,12 @@ def _collect_acceptance_evidence_texts(
         ("verification_summary", "verification-summary.md"),
         ("qa", "qa-001.md"),
         ("pr_draft", "pr-draft.md"),
-        ("task_plan", f"task_plan_{branch_name}.md"),
     ):
         text = _read_branch_artifact_text(branch_dir, name)
         if text:
             evidence[label] = text
 
-    for prefix, label in (("code-review", "latest_code_review"), ("plan-review", "latest_plan_review")):
+    for prefix, label in (("code-review", "latest_code_review"),):
         latest = _collect_numbered_artifact(branch_dir, prefix)
         text = latest.get("sanitized_text") if isinstance(latest, dict) else None
         if isinstance(text, str) and text:

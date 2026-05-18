@@ -986,8 +986,43 @@ REVIEW_BUNDLE_SCHEMA = {
                     "type": "array",
                     "items": {"type": "string"},
                 },
-                "requirements": {"type": "array"},
-                "summary": {"type": "object"},
+                "requirements": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "owner": {"type": ["string", "null"]},
+                            "validation_criteria_cited": {"type": "boolean"},
+                            "evidence_artifacts": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                            "status": {
+                                "type": "string",
+                                "enum": ["covered", "missing_evidence"],
+                            },
+                        },
+                        "required": [
+                            "id",
+                            "owner",
+                            "validation_criteria_cited",
+                            "evidence_artifacts",
+                            "status",
+                        ],
+                        "additionalProperties": False,
+                    },
+                },
+                "summary": {
+                    "type": "object",
+                    "properties": {
+                        "total": {"type": "integer", "minimum": 0},
+                        "covered": {"type": "integer", "minimum": 0},
+                        "missing": {"type": "integer", "minimum": 0},
+                    },
+                    "required": ["total", "covered", "missing"],
+                    "additionalProperties": False,
+                },
             },
             "required": ["status", "branch", "requirements", "summary"],
             "additionalProperties": True,

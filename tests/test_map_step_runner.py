@@ -567,6 +567,42 @@ def test_acceptance_coverage_report_tracks_downstream_evidence(branch_workspace)
     assert requirements["INV-1"]["status"] == "missing_evidence"
 
 
+def test_acceptance_coverage_report_ignores_planning_artifacts(branch_workspace):
+    blueprint = {
+        "summary": "Deliver a user-visible fix",
+        **_blueprint_constraint_fields(),
+        "subtasks": [
+            {
+                "id": "ST-001",
+                "title": "Fix checkout timeout message",
+                "aag_contract": "CheckoutService -> handle_timeout() -> user sees retryable error",
+                "dependencies": [],
+                "affected_files": ["src/checkout.py"],
+                "expected_diff_size": "small",
+                "concern_type": "runtime",
+                "one_logical_step": True,
+                "validation_criteria": ["VC1 [AC-1]: timeout shows retryable message"],
+            }
+        ],
+        "coverage_map": {"AC-1": "ST-001"},
+    }
+    (branch_workspace / "blueprint.json").write_text(json.dumps(blueprint))
+    (branch_workspace / "task_plan_test-branch.md").write_text(
+        "# Plan\n\nPlanning mentions [AC-1] but does not prove it.\n",
+        encoding="utf-8",
+    )
+    (branch_workspace / "plan-review-001.md").write_text(
+        "# Plan Review\n\nPlan reviewer mentions [AC-1].\n",
+        encoding="utf-8",
+    )
+
+    result = map_step_runner.build_acceptance_coverage_report()
+
+    assert result["summary"] == {"total": 1, "covered": 0, "missing": 1}
+    assert result["evidence_sources"] == []
+    assert result["requirements"][0]["status"] == "missing_evidence"
+
+
 def test_write_verification_summary_appends_acceptance_coverage(branch_workspace):
     blueprint = {
         **_blueprint_constraint_fields(),
