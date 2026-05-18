@@ -122,9 +122,9 @@ Return **ONLY** valid JSON in this exact structure:
         "split_rationale": "Required only when expected_diff_size is large; otherwise omit",
         "concern_justification": "Required only when concern_type is mixed; otherwise omit",
         "validation_criteria": [
-          "Testable condition that proves completion (e.g., 'Returns 401 for expired token')",
-          "Another specific, verifiable outcome",
-          "Edge case handled: [specific case]"
+          "VC1 [AC-1]: Testable condition that proves completion (e.g., 'Returns 401 for expired token')",
+          "VC2 [INV-1]: Another specific, verifiable outcome",
+          "VC3 [Cross-cutting: observability]: Edge case handled: [specific case]"
         ],
         "contracts": [
           {
@@ -194,6 +194,7 @@ Return **ONLY** valid JSON in this exact structure:
   - Purpose: lets reviewers see requirement ownership before implementation starts
   - Values MUST match an existing `subtasks[].id`
   - Include entries such as `"AC-1": "ST-001"`, `"INV-2": "ST-003"`, `"Cross-cutting: observability": "ST-004"`
+  - Each key MUST appear as a matching bracket tag in the owning subtask's `validation_criteria`, e.g. `VC1 [AC-1]: ...`
 
 **subtasks[].id**: Namespaced string ID (e.g., "ST-001", "ST-002") - prevents collision across blueprints
 **subtasks[].title**: Action-oriented, specific (e.g., "Add validateToken() to AuthService", NOT "update auth")
@@ -220,7 +221,7 @@ Return **ONLY** valid JSON in this exact structure:
   - If this would be `false`, split the subtask instead of returning it
 **subtasks[].validation_criteria**: Array of **testable conditions** that prove completion
   - REQUIRED: 2-4 specific, verifiable outcomes
-  - Format (recommended): Prefix each item with `VC1:`, `VC2:`, ... for stable cross-agent reference.
+  - Format: Prefix each item with `VC1:`, `VC2:`, ... and include every owned coverage_map key in brackets, e.g. `VC1 [AC-1]: ...`.
   - Each criterion MUST be both:
     - **Behavior-/artifact-verifiable** (can be checked by reading code), and
     - **Test-verifiable** (has at least one concrete test case planned in `test_strategy`).
@@ -228,9 +229,9 @@ Return **ONLY** valid JSON in this exact structure:
     - endpoint/handler + route, OR
     - function/class name + file path
   - Good:
-    - "VC1: POST /users returns 201 and persists normalized email (users/routes.py:create_user)"
-    - "VC2: Returns 401 for expired token (auth/middleware.py:validate_token)"
-    - "VC3: Creates audit log entry with user_id (audit/logger.py:log_event)"
+    - "VC1 [AC-1]: POST /users returns 201 and persists normalized email (users/routes.py:create_user)"
+    - "VC2 [INV-1]: Returns 401 for expired token (auth/middleware.py:validate_token)"
+    - "VC3 [Cross-cutting: audit]: Creates audit log entry with user_id (audit/logger.py:log_event)"
   - Bad:
     - "Works correctly"
     - "Handles errors"
@@ -734,9 +735,9 @@ Omit for simple CRUD, internal helpers, obvious logic.
         "complexity_rationale": "Score 3: Base(1) + Novelty(+0) + Deps(+0) + Scope(+2) + Risk(+0) = 3",
         "aag_contract": "ProjectModel -> add_field(archived_at: DateTime?) -> migration passes, existing queries unaffected",
         "validation_criteria": [
-          "Project model has archived_at field (nullable DateTime)",
-          "Migration runs without errors on existing data",
-          "SELECT count(*) FROM projects WHERE archived_at IS NOT NULL returns 0"
+          "VC1 [AC-1]: Project model has archived_at field (nullable DateTime)",
+          "VC2 [INV-1]: Migration runs without errors on existing data",
+          "VC3 [INV-1]: SELECT count(*) FROM projects WHERE archived_at IS NOT NULL returns 0"
         ],
         "test_strategy": {
           "unit": "Test field accepts timestamps, test default is null",
@@ -766,9 +767,9 @@ Omit for simple CRUD, internal helpers, obvious logic.
         "complexity_rationale": "Score 3: Base(1) + Novelty(+0) + Deps(+1) + Scope(+1) + Risk(+0) = 3",
         "aag_contract": "ProjectService -> archive_project(id) + unarchive_project(id) -> sets/clears archived_at, raises ProjectNotFoundError for invalid IDs",
         "validation_criteria": [
-          "archive_project(valid_id) sets archived_at to current UTC timestamp",
-          "unarchive_project(valid_id) sets archived_at to null",
-          "Both raise ProjectNotFoundError for invalid IDs"
+          "VC1 [AC-2]: archive_project(valid_id) sets archived_at to current UTC timestamp",
+          "VC2 [AC-2]: unarchive_project(valid_id) sets archived_at to null",
+          "VC3 [AC-2]: Both raise ProjectNotFoundError for invalid IDs"
         ],
         "test_strategy": {
           "unit": "Test archive sets timestamp, test unarchive clears it, test invalid ID handling",
@@ -791,10 +792,10 @@ Omit for simple CRUD, internal helpers, obvious logic.
         "complexity_rationale": "Score 4: Base(1) + Novelty(+0) + Deps(+1) + Scope(+2) + Risk(+0) = 4",
         "aag_contract": "ProjectRoutes -> POST /projects/{id}/archive|unarchive -> 200+JSON for owner, 403 for non-owner, 404 for invalid ID",
         "validation_criteria": [
-          "POST /projects/{id}/archive returns 200 + archived project JSON",
-          "POST /projects/{id}/unarchive returns 200 + active project JSON",
-          "Non-owner receives 403 Forbidden",
-          "Invalid ID returns 404 Not Found"
+          "VC1 [AC-3]: POST /projects/{id}/archive returns 200 + archived project JSON",
+          "VC2 [AC-3]: POST /projects/{id}/unarchive returns 200 + active project JSON",
+          "VC3 [SEC-1]: Non-owner receives 403 Forbidden",
+          "VC4 [AC-3]: Invalid ID returns 404 Not Found"
         ],
         "contracts": [
           {"type": "postcondition", "assertion": "response.status == 200 AND project.archived_at IS SET WHEN valid_owner", "scope": "endpoint"},
@@ -824,9 +825,9 @@ Omit for simple CRUD, internal helpers, obvious logic.
         "complexity_rationale": "Score 3: Base(1) + Novelty(+0) + Deps(+1) + Scope(+1) + Risk(+0) = 3",
         "aag_contract": "ProjectRoutes -> GET /projects(?include_archived=bool) -> excludes archived by default, includes when param=true",
         "validation_criteria": [
-          "GET /projects excludes archived projects by default",
-          "GET /projects?include_archived=true returns all projects",
-          "Response includes is_archived boolean field"
+          "VC1 [AC-4]: GET /projects excludes archived projects by default",
+          "VC2 [AC-4]: GET /projects?include_archived=true returns all projects",
+          "VC3 [AC-4]: Response includes is_archived boolean field"
         ],
         "test_strategy": {
           "unit": "Test filter logic, test query param parsing",

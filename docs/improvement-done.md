@@ -1,5 +1,13 @@
 # MAP Framework Improvement Done
 
+## Acceptance-criteria lineage tags in blueprint validation [2604.039-followup-1]
+
+- Date: 2026-05-18
+- Split the broad artifact-lineage follow-up into executable child slices and shipped the first reviewer-visible slice: every `coverage_map` key in `blueprint.json` must now appear as a bracketed tag in the owning subtask's `validation_criteria`, for example `VC1 [AC-1]: ...`.
+- Updated `validate_blueprint_contract` in `.map/scripts/map_step_runner.py` and the shipped template copy so untagged validation criteria fail before Actor starts, with an actionable error naming the missing tag.
+- Updated Claude and Codex planner/decomposer surfaces plus the package schema and user docs so generated plans ask for bracketed requirement lineage instead of only assigning ownership in `coverage_map`.
+- Verified with focused blueprint validator/schema/prompt/template-sync tests and a repo-built generated-project smoke where a tagged blueprint passed and an untagged blueprint exited nonzero.
+
 ## Few-shot command examples and evidence-quoted outputs [2604.027]
 
 - Date: 2026-05-17

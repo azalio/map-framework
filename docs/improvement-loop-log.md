@@ -1,3 +1,18 @@
+## 2026-05-18 - Acceptance-criteria lineage tags in blueprint validation [2604.039-followup-1]
+
+- Decision: `implemented`
+- Branch: `codex/2604-039-ac-lineage`
+- Baseline: `coverage_map` assigned each acceptance criterion or invariant to an owner subtask, but the owning subtask's `validation_criteria` did not have to cite the requirement ID, so reviewers could still receive plans where ownership and executable checks were disconnected.
+- Forward Change: Split the broad `2604.039-followup` parent into value-bearing child slices, then made `validate_blueprint_contract` fail untagged owner criteria, updated Claude/Codex planner and decomposer prompts, refreshed schema descriptions and docs, and kept source/template copies in sync.
+- Decisive Validation: Focused validator/schema/prompt/template-sync tests passed, and a repo-built `uv run --no-sync mapify init <new-dir> --no-git --mcp none` smoke confirmed the generated validator accepts tagged blueprints and rejects untagged ones with a nonzero exit.
+- Validation Boundary: `make lint` and `pytest -m "not slow"` passed. Full `pytest` was attempted and reached the live Claude SDK suite, then exceeded tool timeout at `TestMapPlanE2E::test_plan_creates_required_artifacts`; rerunning that single slow test with a 10-minute timeout also exceeded the limit without a deterministic assertion failure.
+- Review Result: Diff review found no blocking issues; invalid coverage owners still fail before lineage checks, nested blueprint output remains supported, and source/template surfaces are synced.
+- Next Trigger: Reuse this learning whenever extending blueprint, review-bundle, or verification artifacts with new traceability fields.
+- Reusable Learnings:
+  - command: `python3 .map/scripts/map_step_runner.py validate_blueprint_contract <path-to-blueprint.json>`
+  - invariant: `Every coverage_map key must appear as a bracketed tag in the owning subtask's validation_criteria before implementation starts.`
+  - review-check: `When changing decomposer contracts, update Claude agents, Codex agents, shipped templates, schema descriptions, docs, and generated-project smokes together.`
+
 ## 2026-05-17 - Generic JSON prompt-contract lint for future MAP skills [2604.027-1]
 
 - Decision: `implemented`

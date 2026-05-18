@@ -496,7 +496,10 @@ def test_validate_blueprint_contract_accepts_contract_sized_plan(branch_workspac
                 "expected_diff_size": "small",
                 "concern_type": "runtime",
                 "one_logical_step": True,
-                "validation_criteria": ["VC1: timeout shows retryable message"],
+                "validation_criteria": [
+                    "VC1 [AC-1]: timeout shows retryable message",
+                    "VC2 [INV-1]: retry state is not corrupted",
+                ],
             }
         ],
         "coverage_map": {"AC-1": "ST-001", "INV-1": "ST-001"},
@@ -560,7 +563,7 @@ def test_validate_blueprint_contract_accepts_nested_decomposer_blueprint(
                     "expected_diff_size": "small",
                     "concern_type": "runtime",
                     "one_logical_step": True,
-                    "validation_criteria": ["VC1: timeout shows retryable message"],
+                    "validation_criteria": ["VC1 [AC-1]: timeout shows retryable message"],
                 }
             ],
         },
@@ -585,7 +588,7 @@ def test_validate_blueprint_contract_rejects_missing_or_invalid_subtask_id(
                 "expected_diff_size": "small",
                 "concern_type": "runtime",
                 "one_logical_step": True,
-                "validation_criteria": ["VC1: check"],
+                "validation_criteria": ["VC1 [AC-1]: check"],
             }
         ],
         "coverage_map": {"AC-1": "subtasks[0]"},
@@ -612,7 +615,7 @@ def test_validate_blueprint_contract_rejects_non_string_coverage_owner(
                 "expected_diff_size": "small",
                 "concern_type": "runtime",
                 "one_logical_step": True,
-                "validation_criteria": ["VC1: timeout shows retryable message"],
+                "validation_criteria": ["VC1 [AC-1]: timeout shows retryable message"],
             }
         ],
         "coverage_map": {"AC-1": ["ST-001"]},
@@ -623,6 +626,33 @@ def test_validate_blueprint_contract_rejects_non_string_coverage_owner(
 
     assert result["valid"] is False
     assert any("must point to a single ST-NNN" in error for error in result["errors"])
+
+
+def test_validate_blueprint_contract_requires_criteria_requirement_tags(
+    branch_workspace,
+):
+    blueprint = {
+        "subtasks": [
+            {
+                "id": "ST-001",
+                "title": "Fix checkout timeout message",
+                "aag_contract": "CheckoutService -> handle_timeout() -> user sees retryable error",
+                "dependencies": [],
+                "affected_files": ["src/checkout.py"],
+                "expected_diff_size": "small",
+                "concern_type": "runtime",
+                "one_logical_step": True,
+                "validation_criteria": ["VC1: timeout shows retryable message"],
+            }
+        ],
+        "coverage_map": {"AC-1": "ST-001"},
+    }
+    (branch_workspace / "blueprint.json").write_text(json.dumps(blueprint))
+
+    result = map_step_runner.validate_blueprint_contract()
+
+    assert result["valid"] is False
+    assert any("must cite coverage_map requirement 'AC-1' as [AC-1]" in error for error in result["errors"])
 
 
 def test_validate_blueprint_contract_requires_validation_criteria(branch_workspace):
@@ -660,7 +690,7 @@ def test_validate_blueprint_contract_rejects_duplicate_subtask_ids(branch_worksp
         "expected_diff_size": "small",
         "concern_type": "runtime",
         "one_logical_step": True,
-        "validation_criteria": ["VC1: timeout shows retryable message"],
+        "validation_criteria": ["VC1 [AC-1]: timeout shows retryable message"],
     }
     blueprint = {
         "subtasks": [subtask, {**subtask, "title": "Duplicate timeout fix"}],
@@ -686,7 +716,7 @@ def test_validate_blueprint_contract_rejects_unknown_dependencies(branch_workspa
                 "expected_diff_size": "small",
                 "concern_type": "runtime",
                 "one_logical_step": True,
-                "validation_criteria": ["VC1: timeout shows retryable message"],
+                "validation_criteria": ["VC1 [AC-1]: timeout shows retryable message"],
             }
         ],
         "coverage_map": {"AC-1": "ST-001"},

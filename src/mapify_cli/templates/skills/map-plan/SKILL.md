@@ -462,6 +462,7 @@ Output requirements:
 
 Coverage requirements:
 - CRITICAL: Every acceptance criterion from the spec must appear as a validation_criteria in exactly one subtask. Do NOT silently drop spec criteria that seem minor.
+- Each `validation_criteria` item that proves a mapped requirement must cite the stable requirement ID in brackets, e.g. `VC1 [MVP-AC-1]: checkout timeout shows retryable message`. The `coverage_map` key and bracket tag must match exactly.
 - For cross-cutting requirements (observability, error handling, budget tracking, structured logging), either create a dedicated subtask or explicitly add them as validation criteria to the subtask that implements the relevant infrastructure.
 - For each structured result type in the spec, verify ALL fields (including optional envelope fields like budget_state, deferred_work, recovery_state) are covered in validation criteria.
 - Output a `coverage_map` field: a dict mapping each spec AC identifier to the subtask ID that owns it, e.g. {{"MVP-AC-1": "ST-007", "MVP-AC-2": "ST-005", ...}}.
@@ -490,7 +491,7 @@ The blueprint JSON must include at minimum:
       "one_logical_step": true,
       "complexity_score": 5,
       "risk_level": "medium",
-      "validation_criteria": ["VC1: ...", "VC2: ..."],
+      "validation_criteria": ["VC1 [AC-1]: ...", "VC2 [INV-1]: ..."],
       "test_strategy": {"unit": ["test description"]}
     }
   ],

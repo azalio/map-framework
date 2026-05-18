@@ -218,20 +218,40 @@
 
 **Source**: [[acai-sh]] (article note), [[u-define-designing-user-workflows-for-hard-and-soft-constraints-in-llm-based-planning]] (paper note), plus existing MAP philosophy and artifact-pipeline backlog context
 **Implementation Layer**: `src/mapify_cli/schemas.py`, `src/mapify_cli/templates/`, generated provider surfaces, `.map/<branch>/artifact_manifest.json`, and workflow verification helpers
-**Shipped context**: The contract-sized subtask guardrail slice is complete and recorded in [docs/improvement-done.md](./improvement-done.md): `/map-plan` and `/map-efficient` now validate per-subtask size, concern, one logical step, dependencies, validation criteria, and coverage ownership before implementation.
-**Missing Capability**: Stable acceptance-criteria IDs that connect specs, generated subtask contracts, tests, review findings, and verification summaries across the MAP artifact pipeline, plus explicit hard/soft constraint typing so Monitor and FinalVerifier can distinguish non-negotiable gates from negotiable preferences.
+**Shipped context**: The contract-sized subtask guardrail slice is complete and recorded in [docs/improvement-done.md](./improvement-done.md): `/map-plan` and `/map-efficient` now validate per-subtask size, concern, one logical step, dependencies, validation criteria, coverage ownership, and bracketed acceptance-criteria lineage tags before implementation.
+**Missing Capability**: Hard/soft constraint typing, explicit prior-stage artifact consumption gates, and acceptance coverage in later review/verification artifacts so Monitor and FinalVerifier can distinguish non-negotiable gates from negotiable preferences.
 **Architecture Evidence**: `docs/ARCHITECTURE.md` defines reviewable diffs, artifact traceability, generated provider surfaces, branch-scoped `.map/<branch>/` manifests, and verification/review gates as core runtime concerns.
 **Benefit Hypothesis**: Making artifact lineage and small-diff budgets explicit across workflows will reduce scope creep, oversized diffs, and stage skipping, leading to more reviewable changes and more reliable recovery. The measurable target is smaller median subtask diffs, fewer mixed-concern subtasks, and fewer workflows that reach review without a full contract trail.
 **Confidence**: 0.84
 **Reasoning**: The philosophy document treats MAP as a pipeline of artifacts: `SPEC` produces model + invariants, `PLAN` produces tasks, `TEST` produces executable contract, `CODE` produces passing implementation, `REVIEW` consumes spec + tests + diff, and `LEARN` produces reusable memory. It also emphasizes one logical step at a time and reviewable diffs, citing ~155-line median PRs and warning against mixing multiple architecture surfaces in one step. U-Define strengthens the same project-owned layer by separating hard constraints, which must block or replan, from soft constraints, which should be negotiated or traded off explicitly. MAP already persists rich branch artifacts, but its runtime still leaves too much implicit: `docs/ARCHITECTURE.md` says there is no single standard workflow, `/map-fast` can implement without spec/test artifacts, and there is no explicit subtask diff budget, concern-mixing guard, or hard/soft constraint contract tied to stage completion.
 **Why Not Already Tried**: MAP invested first in orchestration correctness, persistence, and agent specialization. Artifact contracts and diff-budget enforcement remained partially implied by author intent rather than enforced by the framework, and no current artifact schema assigns durable acceptance-criteria IDs that can be cited from tests, review notes, and final verification.
 
+**Execution note:** Do not execute directly. This umbrella item is decomposed into the shipped child `2604.039-followup-1` plus the value-bearing follow-up slices below.
+
 ### Proposed Changes
 
-- Add stable acceptance-criteria IDs to spec and plan artifacts, propagate them into generated test contracts, review dossiers, and verification summaries, and report acceptance coverage before a workflow can be marked complete.
+- Add stable acceptance-criteria IDs to spec and plan artifacts, propagate them into generated test contracts, review dossiers, and verification summaries, and report acceptance coverage before a workflow can be marked complete. The first blueprint-validation slice is shipped as `2604.039-followup-1`; later artifacts still need coverage reporting.
 - Extend spec/plan artifacts with `hard_constraints` and `soft_constraints` fields. Hard constraints block stage completion or force replanning when violated; soft constraints are logged with explicit tradeoff rationale when a workflow chooses not to satisfy them.
 - Require complex workflows to consume the prior stage artifact explicitly before proceeding; for example, review should load spec + tests + diff, and code execution should record which test/spec contract it is satisfying.
 - Update canonical docs so MAP has a visible default artifact pipeline even if individual commands still differ in internal implementation details.
+
+## Hard/soft constraint typing in spec and blueprint gates [2604.039-followup-2]
+
+**Scope**: Add `hard_constraints` and `soft_constraints` fields to spec/blueprint artifacts and make `validate_blueprint_contract` fail hard-constraint omissions while allowing soft-constraint tradeoff rationale.
+**User payoff**: Workflow users and reviewers can tell which requirements block progress versus which were consciously traded off, reducing ambiguous Monitor/FinalVerifier feedback.
+**Validation**: Schema tests, blueprint validator pass/fail fixtures, generated-project validator smoke, and prompt tests proving decomposer/planner surfaces request the fields.
+
+## Prior-stage artifact consumption gates [2604.039-followup-3]
+
+**Scope**: Require implementation and review closeout paths to record which spec, blueprint, test contract, and diff artifacts they consumed before marking a workflow ready.
+**User payoff**: Maintainers can diagnose stage skipping and stale review context from durable artifacts instead of reconstructing the workflow from chat history.
+**Validation**: Artifact-manifest tests, run-health/report-bundle assertions, and generated-project smoke showing missing prior-stage inputs fail with actionable messages.
+
+## Acceptance coverage in review and verification artifacts [2604.039-followup-4]
+
+**Scope**: Extend review bundles and verification summaries to report coverage for bracketed acceptance/invariant tags emitted by blueprint validation.
+**User payoff**: Reviewers see which `AC-*`/`INV-*` tags are proven, missing, or intentionally deferred before approving a PR.
+**Validation**: Review-bundle and final-verifier artifact tests with one fully covered and one missing-coverage fixture.
 
 ## Constraint-first provider rule templates
 

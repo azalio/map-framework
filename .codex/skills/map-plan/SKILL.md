@@ -365,7 +365,7 @@ Output requirements per subtask:
 - one_logical_step: true
 - split_rationale: required when expected_diff_size is large, otherwise omit
 - concern_justification: required when concern_type is mixed, otherwise omit
-- validation_criteria: ["VC1: ...", "VC2: ..."]
+- validation_criteria: ["VC1 [AC-1]: ...", "VC2 [INV-1]: ..."]
 - test_strategy: {unit: [...], integration: [...]}
 
 Target subtask size: completable within ~4000 tokens (SFT comfort zone).
@@ -373,6 +373,7 @@ Aim for 3-7 subtasks; flag if more than 10 are needed.
 
 Coverage requirements:
 - Every spec AC must appear as a validation_criteria in exactly one subtask.
+- Every validation_criteria item that proves a mapped requirement must cite the matching coverage_map key in brackets, e.g. `VC1 [AC-1]: ...`.
 - For cross-cutting requirements (observability, error handling, structured logging,
   budget tracking), create a dedicated subtask or add them as validation_criteria
   to the subtask that implements the relevant infrastructure.
@@ -384,7 +385,7 @@ Return structured JSON:
 {
   "summary": "<goal description>",
   "coverage_map": {"AC-1": "ST-001"},
-  "subtasks": [{ ...subtask fields above... }]
+  "subtasks": [{"id": "ST-001", "validation_criteria": ["VC1 [AC-1]: ..."]}]
 }
 """
 )

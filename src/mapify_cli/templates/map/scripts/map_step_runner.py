@@ -1235,6 +1235,10 @@ def validate_blueprint_contract(
 
         if not isinstance(validation_criteria, list) or not validation_criteria:
             errors.append(f"{label}: validation_criteria must contain at least one item")
+        elif not all(
+            isinstance(item, str) and item.strip() for item in validation_criteria
+        ):
+            errors.append(f"{label}: validation_criteria items must be non-empty strings")
         elif len(validation_criteria) > 6:
             warnings.append(
                 f"{label}: has {len(validation_criteria)} validation criteria; consider splitting if ownership is unclear"
@@ -1248,8 +1252,11 @@ def validate_blueprint_contract(
 
     coverage_map = payload.get("coverage_map") or blueprint_body.get("coverage_map")
     if not isinstance(coverage_map, dict) or not coverage_map:
-        errors.append("coverage_map is required and must map each spec AC/invariant to an owning subtask")
+        errors.append(
+            "coverage_map is required and must map each spec AC/invariant to an owning subtask"
+        )
     else:
+        requirement_owners: dict[str, list[str]] = {}
         for requirement_id, owner in coverage_map.items():
             if not isinstance(owner, str):
                 errors.append(
@@ -1260,6 +1267,31 @@ def validate_blueprint_contract(
                 errors.append(
                     f"coverage_map[{requirement_id!r}] points to unknown subtask {owner!r}"
                 )
+                continue
+            requirement_owners.setdefault(owner, []).append(str(requirement_id))
+
+        subtasks_by_id = {
+            subtask.get("id"): subtask
+            for subtask in subtasks
+            if isinstance(subtask, dict) and isinstance(subtask.get("id"), str)
+        }
+        for owner, requirement_ids in requirement_owners.items():
+            owner_subtask = subtasks_by_id.get(owner)
+            validation_criteria = (
+                owner_subtask.get("validation_criteria")
+                if isinstance(owner_subtask, dict)
+                else None
+            )
+            criterion_texts = [
+                item for item in validation_criteria or [] if isinstance(item, str)
+            ]
+            for requirement_id in requirement_ids:
+                lineage_tag = f"[{requirement_id}]"
+                if not any(lineage_tag in item for item in criterion_texts):
+                    errors.append(
+                        f"{owner}: validation_criteria must cite coverage_map requirement "
+                        f"{requirement_id!r} as {lineage_tag}"
+                    )
 
     return {
         "valid": not errors,

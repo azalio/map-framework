@@ -744,6 +744,18 @@ class TestContractSizedSubtaskSkillContracts:
 
         assert "validate_blueprint_contract" in content
 
+    @pytest.mark.parametrize("skill_name", ["map-plan", "map-efficient"])
+    def test_planning_prompts_require_coverage_ids_in_validation_criteria(
+        self, project_root, skill_name
+    ):
+        skill_md = project_root / ".claude" / "skills" / skill_name / "SKILL.md"
+        content = skill_md.read_text(encoding="utf-8")
+
+        assert "coverage_map" in content
+        assert "validation_criteria" in content
+        assert "[AC-1]" in content
+        assert "bracket" in content.lower()
+
     def test_map_plan_human_plan_surfaces_scope_metadata(self, project_root):
         skill_md = project_root / ".claude" / "skills" / "map-plan" / "SKILL.md"
         content = skill_md.read_text(encoding="utf-8")
@@ -770,6 +782,7 @@ class TestContractSizedSubtaskSkillContracts:
         assert "one_logical_step" in content
         assert "split_rationale" in content
         assert "concern_justification" in content
+        assert "[AC-1]" in content
 
 
 class TestRunHealthCloseoutWiring:
