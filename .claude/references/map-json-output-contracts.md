@@ -39,12 +39,12 @@ Required shape:
 {
   "approach": "string",
   "files_changed": ["path/to/file"],
-  "tests_run": ["command or empty"],
+  "tests_run": [],
   "remaining_risks": []
 }
 ```
 
-The prompt may add workflow-specific fields such as `trade_offs`, `why_this_fixes_it`, or `potential_side_effects`. It must still say that files were edited directly with Edit/Write tools and that full file contents must not be serialized in the response.
+The prompt may add workflow-specific fields such as `trade_offs`, `why_this_fixes_it`, or `potential_side_effects`. `tests_run` is an array of command strings and should be empty when no tests were run. The prompt must still say that files were edited directly with Edit/Write tools and that full file contents must not be serialized in the response.
 
 ## Monitor Verdict
 
