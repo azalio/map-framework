@@ -21,7 +21,14 @@ Reference examples for task-decomposer agent. Load dynamically based on task com
   "blueprint": {
     "id": "admin-audit-logging",
     "summary": "Async audit logging system for admin actions with sensitive data filtering and queryable log storage",
+    "hard_constraints": [
+      {"id": "HC-1", "description": "Audit logging must not expose passwords, tokens, secrets, or keys"}
+    ],
+    "soft_constraints": [
+      {"id": "SC-1", "description": "Prefer reusing existing async job infrastructure", "tradeoff_rationale": "If Celery is unavailable, a different queue can be selected with explicit rationale"}
+    ],
     "coverage_map": {
+      "HC-1": "ST-002",
       "AC-1": "ST-001",
       "SEC-1": "ST-002",
       "AC-2": "ST-003",
@@ -67,7 +74,7 @@ Reference examples for task-decomposer agent. Load dynamically based on task com
         "complexity_rationale": "Score 5: Base(1) + Novelty(+1) + Deps(+1) + Scope(+2) + Risk(+0) = 5",
         "validation_criteria": [
           "VC1 [SEC-1]: log_action() queues background task (does not block request)",
-          "VC2 [SEC-1]: Fields containing 'password', 'token', 'secret', 'key' are redacted as '[REDACTED]'",
+          "VC2 [HC-1] [SEC-1]: Fields containing 'password', 'token', 'secret', 'key' are redacted as '[REDACTED]'",
           "VC3 [SEC-1]: Audit log persists to database within 5 seconds of action"
         ],
         "implementation_hint": "Use Celery @shared_task with retry policy for queue failures",

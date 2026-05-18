@@ -367,6 +367,8 @@ Output requirements per subtask:
 - concern_justification: required when concern_type is mixed, otherwise omit
 - validation_criteria: ["VC1 [AC-1]: ...", "VC2 [INV-1]: ..."]
 - test_strategy: {unit: [...], integration: [...]}
+- hard_constraints: [{id: "HC-1", description: "non-negotiable requirement"}]
+- soft_constraints: [{id: "SC-1", description: "preference", tradeoff_rationale: "if not covered"}]
 
 Target subtask size: completable within ~4000 tokens (SFT comfort zone).
 Aim for 3-7 subtasks; flag if more than 10 are needed.
@@ -374,6 +376,8 @@ Aim for 3-7 subtasks; flag if more than 10 are needed.
 Coverage requirements:
 - Every spec AC must appear as a validation_criteria in exactly one subtask.
 - Every validation_criteria item that proves a mapped requirement must cite the matching coverage_map key in brackets, e.g. `VC1 [AC-1]: ...`.
+- Every hard_constraints id must appear in coverage_map and as a matching validation_criteria bracket tag.
+- Every soft_constraints id must either appear in coverage_map or include tradeoff_rationale explaining the tradeoff.
 - For cross-cutting requirements (observability, error handling, structured logging,
   budget tracking), create a dedicated subtask or add them as validation_criteria
   to the subtask that implements the relevant infrastructure.
@@ -384,8 +388,10 @@ Coverage requirements:
 Return structured JSON:
 {
   "summary": "<goal description>",
-  "coverage_map": {"AC-1": "ST-001"},
-  "subtasks": [{"id": "ST-001", "validation_criteria": ["VC1 [AC-1]: ..."]}]
+  "hard_constraints": [{"id": "HC-1", "description": "Non-negotiable requirement"}],
+  "soft_constraints": [{"id": "SC-1", "description": "Preference", "tradeoff_rationale": "Only if not covered"}],
+  "coverage_map": {"HC-1": "ST-001", "AC-1": "ST-001"},
+  "subtasks": [{"id": "ST-001", "validation_criteria": ["VC1 [HC-1] [AC-1]: ..."]}]
 }
 """
 )

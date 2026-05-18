@@ -734,6 +734,8 @@ class TestContractSizedSubtaskSkillContracts:
         assert "split_rationale" in content
         assert "concern_justification" in content
         assert "coverage_map" in content
+        assert "hard_constraints" in content
+        assert "soft_constraints" in content
 
     @pytest.mark.parametrize("skill_name", ["map-plan", "map-efficient"])
     def test_planning_prompts_run_blueprint_contract_validator(
@@ -755,6 +757,8 @@ class TestContractSizedSubtaskSkillContracts:
         assert "validation_criteria" in content
         assert "[AC-1]" in content
         assert "bracket" in content.lower()
+        assert "hard_constraints" in content
+        assert "tradeoff_rationale" in content
 
     def test_map_plan_human_plan_surfaces_scope_metadata(self, project_root):
         skill_md = project_root / ".claude" / "skills" / "map-plan" / "SKILL.md"
@@ -783,6 +787,8 @@ class TestContractSizedSubtaskSkillContracts:
         assert "split_rationale" in content
         assert "concern_justification" in content
         assert "[AC-1]" in content
+        assert "hard_constraints" in content
+        assert "soft_constraints" in content
 
 
 class TestRunHealthCloseoutWiring:

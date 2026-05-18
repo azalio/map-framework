@@ -1,5 +1,14 @@
 # MAP Framework Improvement Done
 
+## Hard/soft constraint typing in spec and blueprint gates [2604.039-followup-2]
+
+- Date: 2026-05-18
+- Added `hard_constraints` and `soft_constraints` to the blueprint schema and planner/decomposer prompts so MAP plans explicitly separate blocking requirements from negotiable preferences before implementation starts.
+- Updated `validate_blueprint_contract` in `.map/scripts/map_step_runner.py` and the shipped template copy so every hard constraint id must appear in `coverage_map` and in the owning subtask's bracketed `validation_criteria`; soft constraints can be left out only with `tradeoff_rationale`.
+- Synced Claude and Codex provider surfaces, decomposition examples, and docs so generated projects ask for and validate the same constraint contract.
+- Verified with focused schema/validator/prompt/template-sync tests, `make lint`, `pytest -m "not slow"`, and a repo-built generated-project smoke that accepted a covered hard constraint and exited nonzero for missing hard coverage plus unexplained soft tradeoff.
+- Full unfiltered `pytest` was attempted and reached live Claude SDK e2e, then exceeded tool timeout at `TestMapEfficientE2E::test_efficient_produces_code_changes`; rerunning that single live test with a longer timeout also exceeded the limit without a deterministic assertion failure.
+
 ## Acceptance-criteria lineage tags in blueprint validation [2604.039-followup-1]
 
 - Date: 2026-05-18

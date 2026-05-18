@@ -139,7 +139,14 @@ Return **ONLY** valid JSON in this exact structure:
       "error_handling_required": true,
       "rationale": "Production deployment to critical infrastructure requires non-negotiable quality thresholds"
     },
+    "hard_constraints": [
+      {"id": "HC-1", "description": "Non-negotiable requirement that must block progress if omitted", "source": "spec"}
+    ],
+    "soft_constraints": [
+      {"id": "SC-1", "description": "Negotiable preference", "tradeoff_rationale": "Required only when not covered by coverage_map"}
+    ],
     "coverage_map": {
+      "HC-1": "ST-001",
       "AC-1": "ST-001",
       "INV-1": "ST-001",
       "Cross-cutting: observability": "ST-002"
@@ -161,7 +168,7 @@ Return **ONLY** valid JSON in this exact structure:
         "split_rationale": "Required only when expected_diff_size is large; otherwise omit",
         "concern_justification": "Required only when concern_type is mixed; otherwise omit",
         "validation_criteria": [
-          "VC1 [AC-1]: Testable condition that proves completion (e.g., 'Returns 401 for expired token')",
+          "VC1 [HC-1] [AC-1]: Testable condition that proves completion (e.g., 'Returns 401 for expired token')",
           "VC2 [INV-1]: Another specific, verifiable outcome",
           "VC3 [Cross-cutting: observability]: Edge case handled: [specific case]"
         ],
@@ -229,11 +236,17 @@ Return **ONLY** valid JSON in this exact structure:
     - Enforced in: Actor quality checklist, Monitor validation
   - **rationale**: String explaining why these thresholds are set
     - Example: "Production deployment to critical infrastructure requires non-negotiable quality thresholds"
-**blueprint.coverage_map**: REQUIRED object mapping every spec acceptance criterion, invariant, result schema field, and cross-cutting requirement to exactly one owning `ST-NNN` subtask
+**blueprint.coverage_map**: REQUIRED object mapping every spec acceptance criterion, invariant, hard constraint, satisfied soft constraint, result schema field, and cross-cutting requirement to exactly one owning `ST-NNN` subtask
   - Purpose: lets reviewers see requirement ownership before implementation starts
   - Values MUST match an existing `subtasks[].id`
   - Include entries such as `"AC-1": "ST-001"`, `"INV-2": "ST-003"`, `"Cross-cutting: observability": "ST-004"`
   - Each key MUST appear as a matching bracket tag in the owning subtask's `validation_criteria`, e.g. `VC1 [AC-1]: ...`
+**blueprint.hard_constraints**: REQUIRED array of non-negotiable requirement objects `{id, description, source?}`
+  - Every `hard_constraints[].id` MUST appear in `coverage_map` and as a matching bracket tag in the owning subtask's `validation_criteria`
+  - If a hard constraint cannot be satisfied, return an explicit blocker or split/replan; do not silently downgrade it to soft
+**blueprint.soft_constraints**: REQUIRED array of negotiable preference objects `{id, description, source?, tradeoff_rationale?}`
+  - If satisfied, include the soft constraint id in `coverage_map` and cite it in validation criteria
+  - If deferred or traded off, omit it from `coverage_map` only when `tradeoff_rationale` explains the decision
 
 **subtasks[].id**: Namespaced string ID (e.g., "ST-001", "ST-002") - prevents collision across blueprints
 **subtasks[].title**: Action-oriented, specific (e.g., "Add validateToken() to AuthService", NOT "update auth")

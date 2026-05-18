@@ -1,3 +1,18 @@
+## 2026-05-18 - Hard/soft constraint typing in spec and blueprint gates [2604.039-followup-2]
+
+- Decision: `implemented`
+- Branch: `codex/2604-039-hard-soft-constraints`
+- Baseline: `blueprint.json` could trace acceptance criteria with `coverage_map`, but it did not distinguish requirements that must block progress from preferences that can be traded off, so reviewers still had to infer whether missing coverage was a hard failure or an intentional scope decision.
+- Forward Change: Added `hard_constraints` and `soft_constraints` to schema, validator, Claude/Codex planner and decomposer surfaces, decomposition examples, generated templates, and user docs. The validator now fails missing hard-constraint coverage and fails soft constraints that are neither covered nor explained with `tradeoff_rationale`.
+- Decisive Validation: Focused schema/validator/prompt/template-sync tests passed, and a repo-built `uv run --no-sync mapify init <new-dir> --no-git --mcp none` smoke confirmed the generated validator accepts covered hard constraints and exits nonzero for missing hard coverage plus unexplained soft tradeoff.
+- Validation Boundary: `make lint` and `pytest -m "not slow"` passed. Full `pytest` reached live Claude SDK e2e and exceeded the 15-minute tool timeout at `TestMapEfficientE2E::test_efficient_produces_code_changes`; rerunning that single slow test with a 20-minute timeout also exceeded the limit without a deterministic assertion failure.
+- Review Result: The gstack `/review` checklist path was unavailable at `~/.Codex/skills/review/checklist.md`, so review continued as a repo-local diff review. It found one non-blocking cleanup, an unused soft constraint id accumulator, which was removed and templates were resynced.
+- Next Trigger: Reuse this learning whenever blueprint schema semantics change or prompt-generated plan fields become validation gates.
+- Reusable Learnings:
+  - command: `python3 .map/scripts/map_step_runner.py validate_blueprint_contract <path-to-blueprint.json>`
+  - invariant: `Every hard_constraints id must be in coverage_map and cited as a bracketed validation_criteria tag; every uncovered soft_constraints id must include tradeoff_rationale.`
+  - review-check: `When adding blueprint fields that prompts must emit, update schema, validator, Claude agents/skills, Codex agents/skills, decomposition examples, template copies, docs, and generated-project pass/fail smokes together.`
+
 ## 2026-05-18 - Acceptance-criteria lineage tags in blueprint validation [2604.039-followup-1]
 
 - Decision: `implemented`
