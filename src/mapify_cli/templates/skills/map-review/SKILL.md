@@ -2,6 +2,7 @@
 name: map-review
 description: |
   Interactive 4-section code review using Monitor, Predictor, and Evaluator agents on current changes. Use when reviewing a diff, PR, or staged work before merge. Do NOT use to plan or implement; use map-plan or map-efficient.
+effort: high
 disable-model-invocation: true
 argument-hint: "[review focus] [--detached] [--ci] [--reverse-sections] [--shuffle-sections] [--seed <int>] [--compare-orderings]"
 ---
@@ -10,6 +11,17 @@ argument-hint: "[review focus] [--detached] [--ci] [--reverse-sections] [--shuff
 Interactive, structured code review of current changes using Monitor, Predictor, and Evaluator agents.
 
 **Task:** $ARGUMENTS
+
+## Effort and Parallelism Policy
+
+```yaml
+thinking_policy: high/adaptive
+parallel_tool_policy: single_review_fanout
+```
+
+- Use deeper reasoning for verdicts, risk ranking, section tradeoffs, and contradictory reviewer evidence.
+- Use exactly one parallel reviewer fan-out after bundle preparation: Monitor, Predictor, and Evaluator may run together because they inspect the same review input independently.
+- Wait for all reviewer agents before section presentation. Do not parallelize interactive decisions, ordering comparisons that share state, or review-bundle writes.
 
 ## Flags
 

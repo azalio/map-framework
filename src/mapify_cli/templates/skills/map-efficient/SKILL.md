@@ -2,6 +2,7 @@
 name: map-efficient
 description: |
   Token-efficient MAP workflow with state-machine orchestration over Predictor/Actor/Monitor/Evaluator/Reflector. Use when implementing a non-trivial change end-to-end. Do NOT use for tiny one-shot edits; use map-fast.
+effort: medium
 disable-model-invocation: true
 argument-hint: "[task description]"
 ---
@@ -11,6 +12,17 @@ argument-hint: "[task description]"
 
 **State-Gated Prompting**: Each invocation sees exactly ONE clear next action.
 State machine enforces sequencing, Python validates completion, hooks inject reminders.
+
+## Effort and Parallelism Policy
+
+```yaml
+thinking_policy: medium/adaptive
+parallel_tool_policy: guarded_wave_only
+```
+
+- Use deeper reasoning only when a subtask is risky, blocked, under-specified, or repeatedly failing Monitor; otherwise follow the state machine directly.
+- Keep execution sequential by default. Parallel waves are allowed only under the existing wave rules: all dependencies satisfied, low risk, disjoint new-file writes, and the wave API is used.
+- Do not parallelize state transitions, Monitor retries for the same subtask, or writes to shared branch artifacts.
 
 ## Execution Rules
 

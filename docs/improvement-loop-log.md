@@ -1,3 +1,18 @@
+## 2026-05-18 - Command-specific thinking and parallelism profiles [2604.029]
+
+- Decision: `implemented`
+- Branch: `codex/2604-029-effort-parallelism`
+- Baseline: MAP task skills mixed direct, adaptive, and deep workflows without an explicit per-command effort contract, while `/map-review`, `/map-efficient`, and `/map-release` used different parallelism wording that could encourage over-triggering or unsafe fan-out.
+- Forward Change: Added `thinking_policy` and `parallel_tool_policy` blocks to all shipped task skills, added matching execution policies to `workflow-rules.json` for triggered workflows, synced templates, documented the calibration in README/usage/architecture, and added tests that fail if source or shipped template skills lose the policy blocks.
+- Decisive Validation: Focused skill policy tests, full `tests/test_skills.py tests/test_template_sync.py`, `make lint`, `pytest -m "not slow"`, and a repo-built generated-project smoke passed. Full `pytest` hit the live Claude SDK review boundary after prior live plan/efficient tests passed; the first boundary test passed separately in 7:01, and the subsequent full slow run was user-stopped while another live review test was still running.
+- Review Result: Inline diff review found no blocking issues; the change is limited to prompt/template policy, docs, and regression tests, with no runtime state-machine semantics changed.
+- Next Trigger: Reuse this learning whenever changing shipped MAP task skill orchestration wording, especially around reasoning depth, parallel fan-out, or command latency claims.
+- Reusable Learnings:
+  - command: `pytest tests/test_skills.py::TestSkillStructure::test_task_skills_have_effort_and_parallelism_policy tests/test_template_sync.py -v`
+  - command: `uv run --no-sync mapify init <new-dir> --no-git --mcp none`
+  - invariant: `Every shipped task skill must declare an explicit thinking_policy and parallel_tool_policy in both .claude/skills and src/mapify_cli/templates/skills.`
+  - review-check: `When adding or editing workflow parallelism wording, verify the policy allows only dependency-free, side-effect-safe fan-out and keeps state-machine transitions sequential.`
+
 ## 2026-05-18 - Prior-stage artifact consumption gates [2604.039-followup-3]
 
 - Decision: `implemented`

@@ -2,6 +2,7 @@
 name: map-plan
 description: |
   ARCHITECT phase only: decompose a complex task into atomic subtasks via task-decomposer. Use when starting a feature, refactor, or complex bug fix and you need a plan first. Do NOT use to execute work; use map-task or map-efficient.
+effort: high
 argument-hint: "[task description]"
 ---
 # /map-plan — ARCHITECT Phase (Decomposition Only)
@@ -9,6 +10,17 @@ argument-hint: "[task description]"
 **Purpose:** Plan and decompose complex tasks into atomic subtasks. This command ONLY plans - it does NOT execute or verify.
 
 Use compact evidence-first examples from [Evidence-First Output Examples](../../references/map-output-examples.md) when spec review or decomposition output depends on quoted requirements, source files, or prior artifacts.
+
+## Effort and Parallelism Policy
+
+```yaml
+thinking_policy: high/adaptive
+parallel_tool_policy: discovery_only
+```
+
+- Use deeper reasoning for workflow-fit decisions, requirement conflicts, hard/soft constraints, and decomposition boundaries.
+- Do not over-plan tiny work: honor the workflow-fit off-ramp when the task is a direct edit or `/map-fast` fit.
+- Parallelize only independent discovery reads/searches. Keep interview decisions, spec writing, decomposition, blueprint validation, and state initialization sequential.
 
 **When to use:**
 - Starting a new feature, refactoring, or complex bug fix

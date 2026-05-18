@@ -1,5 +1,14 @@
 # MAP Framework Improvement Done
 
+## Command-specific thinking and parallelism profiles [2604.029]
+
+- Date: 2026-05-18
+- Added `## Effort and Parallelism Policy` blocks to all shipped MAP task skills and synced the generated template copies so installed projects receive the same calibration.
+- Lightweight workflows (`/map-fast`, `/map-check`, `/map-resume`) now declare `thinking_policy: low/direct`; implementation and learning workflows declare `medium/adaptive`; planning, review, and release declare `high/adaptive`.
+- Each skill also declares a concrete `parallel_tool_policy`, such as independent checks only, guarded `/map-efficient` waves only, or the single `/map-review` reviewer fan-out, so provider prompts have workflow-specific limits instead of generic “parallel where possible” wording. The top-level `workflow-rules.json` also records execution policies for workflow-triggered `/map-fast`, `/map-efficient`, and `/map-debug` suggestions.
+- Updated README, usage, and architecture docs, and added regression coverage that scans both `.claude/skills/` and `src/mapify_cli/templates/skills/` for the policy blocks.
+- Verified with focused skill policy tests, full skill/template sync tests, `make lint`, `pytest -m "not slow"`, and a generated-project `mapify init` smoke that inspected emitted policy lines. Full `pytest` was attempted; the live Claude SDK boundary reached review E2E after earlier live plan/efficient tests passed, timed out at 30 minutes, and the exact first boundary test passed separately in 7:01. A subsequent full slow SDK rerun was stopped by the user while another live review test was still running.
+
 ## Prior-stage artifact consumption gates [2604.039-followup-3]
 
 - Date: 2026-05-18

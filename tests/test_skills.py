@@ -54,6 +54,26 @@ NEGATIVE_TRIGGER_FIXTURES = {
 
 SUPPORTED_SKILL_CLASSES = {"reference", "task", "hybrid"}
 
+WORKFLOW_EFFORT_PROFILES = {
+    "map-fast": "low/direct",
+    "map-check": "low/direct",
+    "map-resume": "low/direct",
+    "map-efficient": "medium/adaptive",
+    "map-task": "medium/adaptive",
+    "map-debug": "medium/adaptive",
+    "map-tdd": "medium/adaptive",
+    "map-learn": "medium/adaptive",
+    "map-explain": "medium/adaptive",
+    "map-plan": "high/adaptive",
+    "map-review": "high/adaptive",
+    "map-release": "high/adaptive",
+}
+
+CLAUDE_SKILL_EFFORT_LEVELS = {
+    skill_name: profile.split("/", maxsplit=1)[0]
+    for skill_name, profile in WORKFLOW_EFFORT_PROFILES.items()
+}
+
 JSON_OUTPUT_PATTERN = re.compile(r"\bOutput JSON with:\*?", re.IGNORECASE)
 JSON_CONTRACT_REFERENCE_PATTERN = re.compile(
     r"JSON contract reference: \[[^\]]+\]"
@@ -307,6 +327,33 @@ class TestSkillStructure:
             assert re.search(
                 r"^## Troubleshooting", content, re.MULTILINE
             ), f"Skill '{folder}' is missing '## Troubleshooting' section"
+
+    def test_task_skills_have_effort_and_parallelism_policy(
+        self, skills_dir, template_skills_dir
+    ):
+        """Manual workflow skills should calibrate reasoning and parallel fan-out."""
+        for base_dir in (skills_dir, template_skills_dir):
+            for skill_name, profile in WORKFLOW_EFFORT_PROFILES.items():
+                skill_file = base_dir / skill_name / "SKILL.md"
+                assert skill_file.exists(), f"Missing skill file: {skill_file}"
+                content = skill_file.read_text()
+                frontmatter = self._parse_frontmatter(skill_file)
+                expected_effort = CLAUDE_SKILL_EFFORT_LEVELS[skill_name]
+
+                assert "## Effort and Parallelism Policy" in content, (
+                    f"{skill_file} must define an effort/parallelism policy so "
+                    "provider prompts do not overthink or over-parallelize."
+                )
+                assert frontmatter.get("effort") == expected_effort, (
+                    f"{skill_file} should set Claude Code effort: "
+                    f"{expected_effort}"
+                )
+                assert f"thinking_policy: {profile}" in content, (
+                    f"{skill_file} should declare thinking_policy: {profile}"
+                )
+                assert "parallel_tool_policy:" in content, (
+                    f"{skill_file} should declare a parallel_tool_policy."
+                )
 
     # --- skill-rules.json tests ---
 

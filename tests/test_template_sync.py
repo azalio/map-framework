@@ -13,6 +13,7 @@ See .claude/CLAUDE.md for the template synchronization process.
 """
 
 import filecmp
+import json
 import pytest
 from pathlib import Path
 
@@ -295,6 +296,41 @@ class TestReferenceTemplateSynchronization:
             assert source.read_bytes() == target.read_bytes(), (
                 f"Reference file '{rel_path}' differs between .claude/references/ "
                 "and templates/references/. Run: make sync-templates"
+            )
+
+
+class TestRootTemplateSynchronization:
+    """Sync invariants for top-level Claude configuration templates."""
+
+    @pytest.fixture
+    def project_root(self):
+        return Path(__file__).parent.parent
+
+    def test_workflow_rules_in_sync(self, project_root):
+        source = project_root / ".claude" / "workflow-rules.json"
+        target = project_root / "src" / "mapify_cli" / "templates" / "workflow-rules.json"
+
+        assert source.exists(), ".claude/workflow-rules.json is missing"
+        assert target.exists(), "templates/workflow-rules.json is missing"
+        assert source.read_bytes() == target.read_bytes(), (
+            "workflow-rules.json differs between .claude/ and templates/. "
+            "Run: make sync-templates"
+        )
+
+    def test_workflow_rules_declare_execution_policies(self, project_root):
+        rules_file = project_root / ".claude" / "workflow-rules.json"
+        rules = json.loads(rules_file.read_text())
+
+        expected = {
+            "map-fast": "low/direct",
+            "map-efficient": "medium/adaptive",
+            "map-debug": "medium/adaptive",
+        }
+        for workflow, thinking_policy in expected.items():
+            policy = rules["workflows"][workflow].get("executionPolicy", {})
+            assert policy.get("thinking_policy") == thinking_policy
+            assert policy.get("parallel_tool_policy"), (
+                f"{workflow} should declare parallel_tool_policy"
             )
 
 

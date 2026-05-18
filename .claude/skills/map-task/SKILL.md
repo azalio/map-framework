@@ -2,6 +2,7 @@
 name: map-task
 description: |
   Execute a single subtask from an existing MAP plan via Actor and Monitor. Use when map-plan has decomposed work and you want fine-grained control over one subtask. Do NOT use without an existing plan; run map-plan first.
+effort: medium
 disable-model-invocation: true
 argument-hint: "[subtask id]"
 ---
@@ -18,6 +19,17 @@ argument-hint: "[subtask id]"
 **Prerequisites:** A plan must exist (`.map/<branch>/task_plan_<branch>.md`). Run `/map-plan` first if needed.
 
 **Task:** $ARGUMENTS
+
+## Effort and Parallelism Policy
+
+```yaml
+thinking_policy: medium/adaptive
+parallel_tool_policy: single_subtask_sequential
+```
+
+- Reason just enough to execute the selected subtask against its stored contract; avoid re-planning unrelated subtasks.
+- Follow the shared `/map-efficient` state-machine phases for the one subtask, including persisted TDD contracts when present.
+- Do not parallelize Actor, Monitor, test-gate, or state updates for the same subtask. Parallelize only independent context reads before the next state-machine command.
 
 ---
 

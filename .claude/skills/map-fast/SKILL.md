@@ -2,6 +2,7 @@
 name: map-fast
 description: |
   Minimal MAP workflow for small low-risk changes (40-50% token savings, no Predictor/Reflector). Use when the change is small, low-risk, and learning is not needed. Do NOT use for risky or complex work; use map-efficient.
+effort: low
 disable-model-invocation: true
 argument-hint: "[task description]"
 ---
@@ -16,6 +17,17 @@ Minimal agent sequence (40-50% token savings). Skips: Predictor, Reflector.
 Implement the following:
 
 **Task:** $ARGUMENTS
+
+## Effort and Parallelism Policy
+
+```yaml
+thinking_policy: low/direct
+parallel_tool_policy: sequential_by_default
+```
+
+- Keep reasoning brief and action-oriented; this workflow exists to avoid heavyweight orchestration for bounded, low-risk work.
+- Do not add research, Predictor, Evaluator, Reflector, or extra self-audit steps unless the task no longer fits `/map-fast`; switch to `/map-efficient` instead.
+- Run agent phases sequentially. Parallelize only independent read-only file inspection or independent check commands when there are no state transitions or edits involved.
 
 ## Workflow Overview
 

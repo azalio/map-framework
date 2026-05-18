@@ -5,6 +5,7 @@ description: >-
   run has finished and you want rules written to
   `.claude/rules/learned/` from a workflow summary or handoff. Do NOT use
   during active implementation.
+effort: medium
 disable-model-invocation: true
 argument-hint: "[workflow-summary]"
 ---
@@ -28,6 +29,17 @@ argument-hint: "[workflow-summary]"
 **Workflow Summary Input:** $ARGUMENTS
 
 **Zero-argument mode:** If `$ARGUMENTS` is empty and `.map/<branch>/learning-handoff.md` exists, load that artifact automatically. If `$ARGUMENTS` is a readable file path, load the file contents and treat them as the workflow summary. Inline summary text still works when you want to override the artifact.
+
+## Effort and Parallelism Policy
+
+```yaml
+thinking_policy: medium/adaptive
+parallel_tool_policy: sequential_learning_write
+```
+
+- Use enough reasoning to distinguish reusable lessons from one-off noise, but do not re-review or re-implement the completed workflow.
+- Keep Reflector analysis, rule-file updates, and learning-metrics recording sequential so deduplication and persistence stay coherent.
+- Parallelize only independent reads of existing handoff, metrics, and learned-rule files before deciding what to write.
 
 ## Templates
 

@@ -2,12 +2,24 @@
 name: map-explain
 description: |
   Deep walkthrough that builds a mental model of code, a diff, or the project — flow, side effects, assumptions, breakage. Use when learning unfamiliar code or auditing a diff. Do NOT use to plan or implement; use map-plan or map-efficient.
+effort: medium
 disable-model-invocation: true
 argument-hint: "[file path | symbol | PR ref | code snippet | empty for branch diff vs origin/main (fallback origin/master), or project overview on main/master]"
 ---
 # MAP Explain
 
 **Target:** $ARGUMENTS
+
+## Effort and Parallelism Policy
+
+```yaml
+thinking_policy: medium/adaptive
+parallel_tool_policy: independent_reads_only
+```
+
+- Use adaptive reasoning to build the requested mental model, but stop at explanation: do not plan or implement changes from this skill.
+- Parallelize independent file reads, diffs, and searches when they do not require immediate synthesis.
+- Keep final synthesis sequential so the explanation is coherent and does not mix unrelated targets.
 
 ## Default target (when $ARGUMENTS is empty)
 

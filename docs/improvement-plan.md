@@ -166,22 +166,6 @@
 - Centralize the common envelope in a small template helper or generator so the structure is maintained in one place and synced into `src/mapify_cli/templates/commands/`.
 
 
-## Command-specific thinking and parallelism profiles [2604.029]
-
-**Benefit Hypothesis**: Adding explicit thinking/effort and parallelism guidance per workflow will reduce latency and wasted reasoning on simple commands while preserving deeper reasoning for plan/review/release flows. Success would show up as lower runtime for `/map-fast`, `/map-check`, and `/map-resume` without lowering verification quality, plus fewer unstable parallel execution paths in commands that mix sequential and parallel logic.
-**Confidence**: 0.74
-**Reasoning**: Anthropic’s guide recommends adaptive thinking with explicit effort calibration, and it also warns that Claude 4.6 can both overthink and over-parallelize if prompted too aggressively. MAP’s command layer currently lacks a consistent command-specific thinking policy. It also mixes several parallelism styles: `/map-review` requires three agent calls in one message; `/map-release` says validation gates should run in parallel where possible; `/map-efficient` has both sequential-by-default language and elaborate parallel-wave exceptions. The missing piece is a stable per-command policy that says when to think more, when to answer directly, and when parallelism is worth the complexity.
-**Why Not Already Tried**: Existing MAP work focused on orchestrator correctness and state continuity, not on prompt-level effort calibration. Earlier Claude generations also had less nuanced adaptive-thinking behavior, so explicit effort profiles were less relevant than they are now.
-
-### Proposed Changes
-
-- Add a short `thinking_policy` block to each command: `low/direct` for `/map-fast`, `/map-check`, `/map-resume`; `medium/adaptive` for `/map-efficient`, `/map-task`, `/map-debug`; `high/adaptive` only for `/map-plan`, `/map-review`, and `/map-release`.
-- Add explicit language mirroring Anthropic’s recommendation: use deeper reasoning only when it materially improves quality, otherwise respond directly and continue.
-- Standardize a `parallel_tool_policy` block across commands: parallelize only when there are no dependencies, side effects are disjoint, and the result does not need immediate local integration. This should replace ad hoc wording like “in ONE message” or “parallel where possible” with a shared rule set.
-- Log per-command latency, tool-call count, and parallel fan-out in `.claude/metrics/agent_metrics.jsonl` so MAP can compare pre/post prompt changes rather than tuning by anecdote.
-- Update `workflow-rules.json` and command docs to reflect that “small/simple/quick” workflows should bias toward lower effort and minimal orchestration, while planning/review/release workflows intentionally permit more reasoning depth.
-
-
 ## Supporting-file and lifecycle optimization for skills [2604.033]
 
 **Benefit Hypothesis**: Restructuring MAP skills around the official skill content lifecycle and supporting-file model will keep invoked skill bodies lean, reduce compaction loss, and make long-running skills more durable across sessions. The measurable outcome is a smaller average SKILL body with equal or better task completion quality.

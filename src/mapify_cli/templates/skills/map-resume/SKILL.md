@@ -2,12 +2,24 @@
 name: map-resume
 description: |
   Resume an interrupted MAP workflow from .map/<branch>/step_state.json checkpoint. Use when returning after context exhaustion, /clear, or a session crash mid-workflow. Do NOT use to start new work; use map-plan or map-efficient.
+effort: low
 disable-model-invocation: true
 argument-hint: "[plan ID]"
 ---
 # MAP Resume - Workflow Recovery Command
 
 **Purpose:** Resume an interrupted or incomplete MAP workflow from the last checkpoint.
+
+## Effort and Parallelism Policy
+
+```yaml
+thinking_policy: low/direct
+parallel_tool_policy: sequential_state_machine
+```
+
+- Minimize fresh reasoning: trust the persisted briefing, step state, and next-action artifact trail unless they are missing or contradictory.
+- Do not re-plan, re-decompose, or broaden the task during resume. The goal is to continue the existing workflow from the next valid state-machine step.
+- Keep state-machine operations sequential. Parallelize only independent artifact reads used to prepare the resume briefing.
 
 **When to use:**
 - After context window exhaustion mid-workflow

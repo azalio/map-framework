@@ -2,6 +2,7 @@
 name: map-tdd
 description: |
   TDD MAP workflow: write tests from the spec FIRST, then implement, so tests validate intent not implementation. Use when correctness is critical (auth, payments, data integrity). Do NOT use without a spec; use map-efficient instead.
+effort: medium
 disable-model-invocation: true
 argument-hint: "[task description]"
 ---
@@ -19,6 +20,17 @@ argument-hint: "[task description]"
 **What this command does NOT do:**
 - Does NOT replace /map-efficient — it augments the Actor/Monitor loop with test-first phases
 - Does NOT work without a spec or plan — requires spec_<branch>.md or clear acceptance criteria
+
+## Effort and Parallelism Policy
+
+```yaml
+thinking_policy: medium/adaptive
+parallel_tool_policy: sequential_red_green_gate
+```
+
+- Spend reasoning on the behavior contract and the red/green boundary, not on implementation details during test authoring.
+- Keep TEST_WRITER, TEST_FAIL_GATE, Actor, and Monitor sequential so tests remain an independent contract before implementation.
+- Parallelize only independent artifact reads or read-only spec inspection before writing the test contract.
 
 ---
 

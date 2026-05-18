@@ -2,12 +2,24 @@
 name: map-check
 description: |
   Run quality gates (lint, types, tests) and verify MAP workflow completion. Use when user asks to run checks, validate a workflow, or confirm a MAP run is done. Do NOT use to plan or execute new tasks; use map-plan or map-efficient.
+effort: low
 disable-model-invocation: true
 argument-hint: "[focus area]"
 ---
 # /map-check — Quality Gates & Verification
 
 **Purpose:** Run code quality checks (linters, type checkers, tests) and/or verify MAP workflow completion.
+
+## Effort and Parallelism Policy
+
+```yaml
+thinking_policy: low/direct
+parallel_tool_policy: independent_checks_only
+```
+
+- Stay in verification mode: run the relevant gates, interpret failures, and stop with a clear pass/fail summary.
+- Do not plan or execute new work from this skill. If checks reveal missing implementation, report it and hand off to `/map-task`, `/map-efficient`, or `/map-debug`.
+- Parallelize only independent quality gates or artifact reads. Do not parallelize final-verifier, state validation, or any step that depends on previous check output.
 
 **Two Modes:**
 

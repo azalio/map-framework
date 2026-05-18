@@ -5,6 +5,10 @@
     "map-debug": {
       "priority": "high",
       "description": "Debug issues, fix bugs, resolve test failures",
+      "executionPolicy": {
+        "thinking_policy": "medium/adaptive",
+        "parallel_tool_policy": "sequential_root_cause_first"
+      },
       "promptTriggers": {
         "keywords": [
           "bug",
@@ -34,6 +38,10 @@
     "map-efficient": {
       "priority": "high",
       "description": "Production features, refactoring, critical code (recommended default, 60-70% tokens)",
+      "executionPolicy": {
+        "thinking_policy": "medium/adaptive",
+        "parallel_tool_policy": "guarded_wave_only"
+      },
       "promptTriggers": {
         "keywords": [
           "implement",
@@ -69,6 +77,10 @@
     "map-fast": {
       "priority": "low",
       "description": "Small, low-risk changes with reduced analysis (NO learning)",
+      "executionPolicy": {
+        "thinking_policy": "low/direct",
+        "parallel_tool_policy": "sequential_by_default"
+      },
       "promptTriggers": {
         "keywords": [
           "quick",
@@ -80,7 +92,7 @@
         "intentPatterns": [
           "(quick|fast).*?(fix|change|update)",
           "(small|minor).*?(fix|change|update)",
-          "low\s+risk.*?(fix|change|update)"
+          "low\\s+risk.*?(fix|change|update)"
         ]
       }
     }

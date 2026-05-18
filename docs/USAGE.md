@@ -995,6 +995,8 @@ Summary:
 
 MAP Framework offers three primary implementation workflows with different trade-offs between token usage, quality assurance, and learning. A fourth workflow (`/map-tdd`) adds test-first development. A fifth (`/map-task`) executes a single subtask from an existing plan. Additional supporting workflows (`/map-debug`, `/map-review`, `/map-check`, `/map-plan`, `/map-release`, `/map-resume`, `/map-learn`) are documented in their respective sections.
 
+Each shipped task skill now declares an explicit effort and parallelism policy near the top of its `SKILL.md` body. Lightweight workflows (`/map-fast`, `/map-check`, `/map-resume`) use `thinking_policy: low/direct`; implementation and learning workflows use `medium/adaptive`; planning, review, and release use `high/adaptive`. The paired `parallel_tool_policy` tells the provider when fan-out is safe, for example independent checks only, guarded `/map-efficient` waves only, or the single `/map-review` reviewer fan-out. This keeps simple commands from overthinking while preserving deeper analysis where it protects correctness or release safety.
+
 ### Comparison Table
 
 | Feature | /map-efficient ⭐ | /map-fast ⚠️ |
