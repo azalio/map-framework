@@ -82,6 +82,11 @@ BLANKET_PROHIBITION_PHRASES = [
 
 SCOPE_CONTROL_SKILLS = ["map-fast", "map-check", "map-resume", "map-task"]
 
+PROMPT_TONE_SKILL_ROOTS = [
+    Path(".claude") / "skills",
+    Path("src") / "mapify_cli" / "templates" / "skills",
+]
+
 CLAUDE_SKILL_EFFORT_LEVELS = {
     skill_name: profile.split("/", maxsplit=1)[0]
     for skill_name, profile in WORKFLOW_EFFORT_PROFILES.items()
@@ -781,14 +786,15 @@ class TestPromptToneCalibration:
     def project_root(self):
         return Path(__file__).parent.parent
 
+    @pytest.mark.parametrize("skills_root", PROMPT_TONE_SKILL_ROOTS)
     @pytest.mark.parametrize("skill_name", sorted(WORKFLOW_EFFORT_PROFILES))
     def test_non_release_skills_avoid_blanket_prohibition_blocks(
-        self, project_root, skill_name
+        self, project_root, skill_name, skills_root
     ):
         if skill_name in PROMPT_TONE_EXEMPT_SKILLS:
             pytest.skip("Release keeps explicit hard-stop language for tag/PyPI safety")
 
-        skill_md = project_root / ".claude" / "skills" / skill_name / "SKILL.md"
+        skill_md = project_root / skills_root / skill_name / "SKILL.md"
         content = skill_md.read_text(encoding="utf-8")
 
         for phrase in BLANKET_PROHIBITION_PHRASES:
@@ -797,11 +803,12 @@ class TestPromptToneCalibration:
                 f"blanket prompt language: {phrase!r}"
             )
 
+    @pytest.mark.parametrize("skills_root", PROMPT_TONE_SKILL_ROOTS)
     @pytest.mark.parametrize("skill_name", SCOPE_CONTROL_SKILLS)
     def test_lightweight_and_resume_skills_have_scope_control_clause(
-        self, project_root, skill_name
+        self, project_root, skill_name, skills_root
     ):
-        skill_md = project_root / ".claude" / "skills" / skill_name / "SKILL.md"
+        skill_md = project_root / skills_root / skill_name / "SKILL.md"
         content = skill_md.read_text(encoding="utf-8")
 
         assert "## When Not To Expand Scope" in content
