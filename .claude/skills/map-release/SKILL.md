@@ -2,6 +2,7 @@
 name: map-release
 description: |
   Execute the mapify-cli package release workflow with validation gates and PyPI publication. Use when shipping a new MAP Framework release. Do NOT use for ordinary feature work; use map-efficient.
+effort: high
 disable-model-invocation: true
 argument-hint: "[version or notes]"
 ---

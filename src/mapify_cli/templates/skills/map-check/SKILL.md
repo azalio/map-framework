@@ -2,6 +2,7 @@
 name: map-check
 description: |
   Run quality gates (lint, types, tests) and verify MAP workflow completion. Use when user asks to run checks, validate a workflow, or confirm a MAP run is done. Do NOT use to plan or execute new tasks; use map-plan or map-efficient.
+effort: low
 disable-model-invocation: true
 argument-hint: "[focus area]"
 ---

@@ -2,6 +2,7 @@
 name: map-tdd
 description: |
   TDD MAP workflow: write tests from the spec FIRST, then implement, so tests validate intent not implementation. Use when correctness is critical (auth, payments, data integrity). Do NOT use without a spec; use map-efficient instead.
+effort: medium
 disable-model-invocation: true
 argument-hint: "[task description]"
 ---

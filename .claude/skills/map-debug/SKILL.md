@@ -2,6 +2,7 @@
 name: map-debug
 description: |
   Structured MAP debugging via task-decomposer, actor, and monitor agents. Use when reproducing a bug, isolating a regression, or diagnosing an error with specialized agents. Do NOT use for greenfield features; use map-plan or map-efficient.
+effort: medium
 disable-model-invocation: true
 argument-hint: "[bug description]"
 ---

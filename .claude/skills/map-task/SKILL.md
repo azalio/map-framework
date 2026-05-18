@@ -2,6 +2,7 @@
 name: map-task
 description: |
   Execute a single subtask from an existing MAP plan via Actor and Monitor. Use when map-plan has decomposed work and you want fine-grained control over one subtask. Do NOT use without an existing plan; run map-plan first.
+effort: medium
 disable-model-invocation: true
 argument-hint: "[subtask id]"
 ---

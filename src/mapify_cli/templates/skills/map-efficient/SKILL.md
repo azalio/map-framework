@@ -2,6 +2,7 @@
 name: map-efficient
 description: |
   Token-efficient MAP workflow with state-machine orchestration over Predictor/Actor/Monitor/Evaluator/Reflector. Use when implementing a non-trivial change end-to-end. Do NOT use for tiny one-shot edits; use map-fast.
+effort: medium
 disable-model-invocation: true
 argument-hint: "[task description]"
 ---
