@@ -170,7 +170,7 @@ workflow-fit level, but the subtask contract still needs stronger shape.
 **Why only after runtime contracts:** prompt tuning is useful, but it should not
 mask structural gaps in review and subtask contracts.
 
-**Improvement-plan items:** `2604.025`, `2604.026`, `2604.027`, `2604.028`, `2604.029`.
+**Improvement-plan items:** active `2604.025`, `2604.026`, `2604.029`; shipped `2604.027`, `2604.027-1`, `2604.028`.
 
 ### Scope
 

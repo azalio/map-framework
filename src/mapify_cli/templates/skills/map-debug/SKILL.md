@@ -65,6 +65,8 @@ Task(
 - Error logs: [if available]
 - Affected files: [from analysis]
 
+JSON contract reference: [Decomposition Output](../../references/map-json-output-contracts.md#decomposition-output).
+
 Output JSON with:
 - subtasks: array of {id, description, debug_type: 'investigation'|'fix'|'verification', acceptance_criteria}
 - root_cause_hypothesis: string
@@ -116,7 +118,11 @@ Task(
 **Issue:** [from investigation]
 **Root Cause:** [identified root cause]
 
-Apply the fix directly with Edit/Write tools, then output JSON with:
+Apply the fix directly with Edit/Write tools.
+
+JSON contract reference: [Actor Change Summary](../../references/map-json-output-contracts.md#actor-change-summary).
+
+Output JSON with:
 - approach: string (fix strategy)
 - files_changed: array of file paths actually edited
 - tests_run: array of commands run, or [] if deferred to the orchestrator

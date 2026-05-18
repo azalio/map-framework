@@ -166,14 +166,6 @@
 - Centralize the common envelope in a small template helper or generator so the structure is maintained in one place and synced into `src/mapify_cli/templates/commands/`.
 
 
-## Generic JSON prompt-contract lint for future MAP skills [2604.027-1]
-
-**Parent context**: Evidence-first examples and quoted outputs shipped under `2604.027`; `/map-review`, `/map-debug`, and `/map-plan` now require concrete evidence before high-risk verdicts, root causes, risks, scores, and decomposition boundaries.
-**Benefit Hypothesis**: A generic lint rule for future or changed JSON prompt contracts will prevent MAP from adding new unsupported verdict surfaces after the evidence-first workflow contracts have shipped.
-**Scope**: Add a template/prompt lint that scans newly introduced or edited MAP skill prompt sections containing `Output JSON with:` and requires either a reusable schema/reference link or a compact example/evidence contract. Keep this as a tooling slice only when it produces a clear maintainer payoff: reviewers should get an actionable lint failure before a prompt with unsupported JSON judgments can ship.
-**Validation**: Add fixtures for a valid evidence-backed JSON contract, a valid schema-backed contract, and an invalid vague JSON contract. Run the lint against `.claude/skills/` and the shipped template copy.
-
-
 ## Command-specific thinking and parallelism profiles [2604.029]
 
 **Benefit Hypothesis**: Adding explicit thinking/effort and parallelism guidance per workflow will reduce latency and wasted reasoning on simple commands while preserving deeper reasoning for plan/review/release flows. Success would show up as lower runtime for `/map-fast`, `/map-check`, and `/map-resume` without lowering verification quality, plus fewer unstable parallel execution paths in commands that mix sequential and parallel logic.

@@ -134,6 +134,8 @@ Analyze holistically across ALL subtasks:
 **IMPORTANT:** Do NOT repeat any pattern from the 'Existing learned rules' list above.
 Only suggest genuinely new patterns not already captured.
 
+JSON contract reference: [Learning Summary](../../references/map-json-output-contracts.md#learning-summary).
+
 **Output JSON with:**
 - key_insight: string (one sentence takeaway in 'When X, always Y because Z' format)
 - patterns_used: array of strings (existing patterns applied successfully)
