@@ -248,7 +248,7 @@
 
 - Decision: `implemented`
 - Branch: `codex/2604-025-prompt-calibration`
-- PR: `pending`
+- PR: `https://github.com/azalio/map-framework/pull/129`
 - Baseline: MAP task skills still contained older prompt patterns such as `ABSOLUTELY FORBIDDEN`, `STRICTLY PROHIBITED`, `CRITICAL: ALWAYS`, and generic `YOU MUST:` blocks in non-release workflows. Anthropic's current prompt guidance says Claude 4.5/4.6-era prompts can overtrigger tools and subagents when older undertriggering workarounds remain in place.
 - Forward Change: Replaced non-release blanket prohibition blocks with targeted workflow guardrails, added explicit `When Not To Expand Scope` clauses to lightweight/resume/single-subtask skills, preserved real hard stops in `/map-release`, synced templates, and added a scanner that rejects the banned blanket prohibition phrases outside release safety.
 - Decisive Validation: Focused prompt-tone and template-sync tests passed, `make lint` passed, `pytest -m "not slow"` passed, and generated-project `uv run --no-sync mapify init ... --no-git --mcp none` emitted calibrated skill prompts. Full `pytest` was attempted and reached the live Claude SDK review boundary after plan/efficient live tests passed; the timed-out review boundary then passed both individually and as the full `TestMapReviewE2E` class.
