@@ -325,8 +325,8 @@ Missing artifacts are recorded with `present: false` rather than omitted, so bun
       "title": "Create User model",
       "status": "complete",
       "validation_criteria": [
-        "Model includes email field",
-        "Password hashing implemented"
+        "VC1 [AC-1]: Model includes email field",
+        "VC2 [INV-1]: Password hashing implemented"
       ]
     },
     {
@@ -1777,7 +1777,7 @@ Workflow state is managed through file-based persistence in `.map/` directory:
 - `step_state.json` — `subtask_results` dict (per-subtask files_changed + status), `last_subtask_commit_sha`
 - `task_plan.md` — goal text only (never parsed for structured data)
 
-**Contract-sized subtask gate:** before `/map-plan` or `/map-efficient` proceeds from decomposition into execution, `python3 .map/scripts/map_step_runner.py validate_blueprint_contract` checks that each subtask has size/concern metadata, one logical purpose, AAG and validation criteria, and coverage ownership. Oversized `large` subtasks require `split_rationale`; `mixed` concern subtasks require `concern_justification`. This moves scope-creep detection to planning time, where users can fix the plan before Actor produces an unreviewable diff.
+**Contract-sized subtask gate:** before `/map-plan` or `/map-efficient` proceeds from decomposition into execution, `python3 .map/scripts/map_step_runner.py validate_blueprint_contract` checks that each subtask has size/concern metadata, one logical purpose, AAG and validation criteria, and coverage ownership. Every `coverage_map` key must also appear as a bracketed tag in the owning subtask's `validation_criteria`, for example `VC1 [AC-1]: ...`, so reviewers can trace spec acceptance criteria and invariants into executable checks. Oversized `large` subtasks require `split_rationale`; `mixed` concern subtasks require `concern_justification`. This moves scope-creep and requirement-drop detection to planning time, where users can fix the plan before Actor produces an unreviewable diff.
 
 **Benefits:**
 - 30-60% fewer tokens in system prompt on long workflows

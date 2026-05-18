@@ -21,6 +21,13 @@ Reference examples for task-decomposer agent. Load dynamically based on task com
   "blueprint": {
     "id": "admin-audit-logging",
     "summary": "Async audit logging system for admin actions with sensitive data filtering and queryable log storage",
+    "coverage_map": {
+      "AC-1": "ST-001",
+      "SEC-1": "ST-002",
+      "AC-2": "ST-003",
+      "AC-3": "ST-004",
+      "AC-4": "ST-005"
+    },
     "subtasks": [
       {
         "id": "ST-001",
@@ -33,10 +40,10 @@ Reference examples for task-decomposer agent. Load dynamically based on task com
         "complexity_score": 4,
         "complexity_rationale": "Score 4: Base(1) + Novelty(+1) + Deps(+0) + Scope(+2) + Risk(+0) = 4",
         "validation_criteria": [
-          "AuditLog model exists with all specified fields",
-          "JSON fields can store arbitrary dict data",
-          "Indexes exist on admin_user_id and created_at",
-          "Migration runs without errors on existing data"
+          "VC1 [AC-1]: AuditLog model exists with all specified fields",
+          "VC2 [AC-1]: JSON fields can store arbitrary dict data",
+          "VC3 [AC-1]: Indexes exist on admin_user_id and created_at",
+          "VC4 [AC-1]: Migration runs without errors on existing data"
         ],
         "test_strategy": {
           "unit": "Test model validation, test JSON field serialization",
@@ -59,9 +66,9 @@ Reference examples for task-decomposer agent. Load dynamically based on task com
         "complexity_score": 5,
         "complexity_rationale": "Score 5: Base(1) + Novelty(+1) + Deps(+1) + Scope(+2) + Risk(+0) = 5",
         "validation_criteria": [
-          "log_action() queues background task (does not block request)",
-          "Fields containing 'password', 'token', 'secret', 'key' are redacted as '[REDACTED]'",
-          "Audit log persists to database within 5 seconds of action"
+          "VC1 [SEC-1]: log_action() queues background task (does not block request)",
+          "VC2 [SEC-1]: Fields containing 'password', 'token', 'secret', 'key' are redacted as '[REDACTED]'",
+          "VC3 [SEC-1]: Audit log persists to database within 5 seconds of action"
         ],
         "implementation_hint": "Use Celery @shared_task with retry policy for queue failures",
         "test_strategy": {
@@ -86,10 +93,10 @@ Reference examples for task-decomposer agent. Load dynamically based on task com
         "complexity_score": 6,
         "complexity_rationale": "Score 6: Base(1) + Novelty(+3) + Deps(+1) + Scope(+1) + Risk(+0) = 6",
         "validation_criteria": [
-          "Decorator captures admin user from request context",
-          "Decorator captures resource state before action execution",
-          "Decorator captures resource state after action execution",
-          "Works with both sync and async view functions"
+          "VC1 [AC-2]: Decorator captures admin user from request context",
+          "VC2 [AC-2]: Decorator captures resource state before action execution",
+          "VC3 [AC-2]: Decorator captures resource state after action execution",
+          "VC4 [AC-2]: Works with both sync and async view functions"
         ],
         "implementation_hint": "Use functools.wraps and inspect.iscoroutinefunction for async detection",
         "test_strategy": {
@@ -112,10 +119,10 @@ Reference examples for task-decomposer agent. Load dynamically based on task com
         "complexity_score": 4,
         "complexity_rationale": "Score 4: Base(1) + Novelty(+0) + Deps(+1) + Scope(+2) + Risk(+0) = 4",
         "validation_criteria": [
-          "All @admin_required endpoints have @audit_admin_action",
-          "User CRUD operations create audit logs",
-          "Role assignments create audit logs",
-          "Settings changes create audit logs"
+          "VC1 [AC-3]: All @admin_required endpoints have @audit_admin_action",
+          "VC2 [AC-3]: User CRUD operations create audit logs",
+          "VC3 [AC-3]: Role assignments create audit logs",
+          "VC4 [AC-3]: Settings changes create audit logs"
         ],
         "test_strategy": {
           "unit": "N/A",
@@ -140,10 +147,10 @@ Reference examples for task-decomposer agent. Load dynamically based on task com
         "complexity_score": 5,
         "complexity_rationale": "Score 5: Base(1) + Novelty(+1) + Deps(+1) + Scope(+2) + Risk(+0) = 5",
         "validation_criteria": [
-          "GET /admin/audit-logs returns paginated JSON array",
-          "Supports ?admin_user_id, ?action, ?resource_type query params",
-          "Supports ?from_date and ?to_date for date range",
-          "Returns 403 for non-super-admin users"
+          "VC1 [AC-4]: GET /admin/audit-logs returns paginated JSON array",
+          "VC2 [AC-4]: Supports ?admin_user_id, ?action, ?resource_type query params",
+          "VC3 [AC-4]: Supports ?from_date and ?to_date for date range",
+          "VC4 [AC-4]: Returns 403 for non-super-admin users"
         ],
         "test_strategy": {
           "unit": "Test filter logic, test pagination math",

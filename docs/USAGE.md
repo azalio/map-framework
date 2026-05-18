@@ -535,7 +535,7 @@ Before implementation starts, MAP validates `.map/<branch>/blueprint.json` with:
 python3 .map/scripts/map_step_runner.py validate_blueprint_contract
 ```
 
-Each subtask must carry `expected_diff_size`, `concern_type`, `one_logical_step: true`, an `aag_contract`, and testable `validation_criteria`. The blueprint also needs a top-level `coverage_map` that assigns spec acceptance criteria, invariants, and cross-cutting requirements to owner subtasks. `large` subtasks require `split_rationale`, and `mixed` concern subtasks require `concern_justification`; otherwise planning stops before Actor can start. This makes oversized or mixed-scope work visible while the plan is cheap to fix, instead of after a reviewer receives an unreviewable diff.
+Each subtask must carry `expected_diff_size`, `concern_type`, `one_logical_step: true`, an `aag_contract`, and testable `validation_criteria`. The blueprint also needs a top-level `coverage_map` that assigns spec acceptance criteria, invariants, and cross-cutting requirements to owner subtasks. Every mapped requirement key must appear as a bracket tag in the owning subtask's `validation_criteria`, for example `VC1 [AC-1]: timeout shows a retryable message`. `large` subtasks require `split_rationale`, and `mixed` concern subtasks require `concern_justification`; otherwise planning stops before Actor can start. This makes oversized, mixed-scope, or untraceable work visible while the plan is cheap to fix, instead of after a reviewer receives an unreviewable diff.
 
 ### Before/After Comparison
 

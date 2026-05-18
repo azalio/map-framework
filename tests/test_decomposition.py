@@ -215,7 +215,7 @@ class TestBlueprintSchema:
                     "expected_diff_size": "small",
                     "concern_type": "runtime",
                     "one_logical_step": True,
-                    "validation_criteria": ["VC1: invalid artifacts return errors"],
+                    "validation_criteria": ["VC1 [AC-1]: invalid artifacts return errors"],
                 }
             ],
             "coverage_map": {"AC-1": "ST-001"},
@@ -237,7 +237,7 @@ class TestBlueprintSchema:
                     "expected_diff_size": "small",
                     "concern_type": "runtime",
                     "one_logical_step": True,
-                    "validation_criteria": ["VC1: user sees retryable timeout"],
+                    "validation_criteria": ["VC1 [AC-1]: user sees retryable timeout"],
                 }
             ],
             "coverage_map": {"AC-1": "ST-001"},
@@ -262,7 +262,7 @@ class TestBlueprintSchema:
                         "expected_diff_size": "small",
                         "concern_type": "runtime",
                         "one_logical_step": True,
-                        "validation_criteria": ["VC1: user sees retryable timeout"],
+                        "validation_criteria": ["VC1 [AC-1]: user sees retryable timeout"],
                     }
                 ],
                 "coverage_map": {"AC-1": "ST-001"},
@@ -286,7 +286,7 @@ class TestBlueprintSchema:
                     "expected_diff_size": "small",
                     "concern_type": "runtime",
                     "one_logical_step": True,
-                    "validation_criteria": ["VC1: check"],
+                    "validation_criteria": ["VC1 [AC-1]: check"],
                 }
             ],
             "coverage_map": {"AC-1": "one"},
@@ -312,7 +312,7 @@ class TestBlueprintSchema:
                     "expected_diff_size": "huge",
                     "concern_type": "everything",
                     "one_logical_step": True,
-                    "validation_criteria": ["VC1: check"],
+                    "validation_criteria": ["VC1 [AC-1]: check"],
                 }
             ],
             "coverage_map": {"AC-1": "ST-001"},
@@ -371,7 +371,7 @@ class TestValidateArtifact:
                     "expected_diff_size": "small",
                     "concern_type": "runtime",
                     "one_logical_step": True,
-                    "validation_criteria": ["VC1: check"],
+                    "validation_criteria": ["VC1 [AC-1]: check"],
                 }
             ],
             "coverage_map": {"AC-1": "ST-001"},

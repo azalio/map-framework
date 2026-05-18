@@ -156,6 +156,7 @@ Task: $TASK_ARGS
 Hard requirements:
 - Use `blueprint.subtasks[].validation_criteria` (2-4 testable outcomes)
   - Prefix each criterion with `VC1:`, `VC2:`, ... (stable references for Actor/Monitor)
+  - Cite every owned `coverage_map` key in brackets inside the owning criterion, e.g. `VC1 [AC-1]: checkout timeout shows retryable message`
   - Include a concrete anchor per VC (endpoint/function + file path)
 - Use `blueprint.subtasks[].dependencies` (array of subtask IDs)
 - Include `complexity_score` (1-10) and `risk_level` (low|medium|high)
@@ -167,7 +168,7 @@ Hard requirements:
   - Map every `VCn:` to ≥1 planned test case (prefer test name contains `vc<n>`)
   - Recommended format: `path/to/test_file.ext::test_name_or_symbol`
 - Include `aag_contract` (one-line pseudocode: Actor -> Action -> Goal)
-- Include top-level `coverage_map` mapping each acceptance criterion, invariant, and cross-cutting requirement to its owning subtask ID
+- Include top-level `coverage_map` mapping each acceptance criterion, invariant, and cross-cutting requirement to its owning subtask ID; each key must appear as a matching bracket tag in that subtask's `validation_criteria`
 
 AAG Contract format (REQUIRED per subtask):
   "aag_contract": "AuthService -> validate(token) -> returns 401|200 with user_id"

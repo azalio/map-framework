@@ -388,8 +388,18 @@ BLUEPRINT_SCHEMA = {
                     },
                     "validation_criteria": {
                         "type": "array",
-                        "description": "Commands or checks that prove the subtask contract is complete",
-                        "items": {"type": "string"},
+                        "description": (
+                            "Commands or checks that prove the subtask contract is complete; "
+                            "each owned coverage_map requirement should be cited as "
+                            "[AC-1], [INV-1], etc."
+                        ),
+                        "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "examples": [
+                                "VC1 [AC-1]: invalid artifacts return actionable errors",
+                            ],
+                        },
                         "minItems": 1,
                     },
                     "aag_contract": {
@@ -454,7 +464,11 @@ BLUEPRINT_SCHEMA = {
         },
         "coverage_map": {
             "type": "object",
-            "description": "Maps spec acceptance criteria, invariants, and cross-cutting requirements to owning subtask IDs",
+            "description": (
+                "Maps spec acceptance criteria, invariants, and cross-cutting "
+                "requirements to owning subtask IDs; each key must appear as a "
+                "bracketed tag in the owning subtask's validation_criteria"
+            ),
             "minProperties": 1,
             "additionalProperties": {"type": "string", "pattern": "^ST-\\d{3,}$"},
         },
