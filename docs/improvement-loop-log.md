@@ -1,3 +1,18 @@
+## 2026-05-18 - Acceptance coverage in review and verification artifacts [2604.039-followup-4]
+
+- Decision: `implemented`
+- Branch: `codex/2604-039-acceptance-coverage`
+- Baseline: `blueprint.json` required bracketed acceptance and invariant tags in `validation_criteria`, but later verification and review artifacts did not summarize which tags were actually evidenced, so reviewers still had to grep branch artifacts manually.
+- Forward Change: Added acceptance coverage reporting to verification summaries and review bundles, including machine-readable `acceptance_coverage`, Markdown rendering, review manifest metadata, and synced generated-project helper templates.
+- Decisive Validation: Focused acceptance-coverage/review-bundle/schema tests passed, `make lint` and `pytest -m "not slow"` passed, and a repo-built generated-project smoke confirmed the shipped helper can report coverage from generated `.map/default` artifacts.
+- Validation Boundary: Full unfiltered `pytest` was attempted and reached the live Claude SDK suite, then exceeded a 20-minute tool timeout at `TestMapEfficientE2E::test_efficient_produces_code_changes`; rerunning that single live boundary with a 30-minute tool timeout passed in 19:06.
+- Review Result: The gstack `/review` checklist path was unavailable, so review continued as a repo-local diff review. It found no blocking issues and confirmed coverage sources are restricted to downstream artifacts that actually contain bracketed tags.
+- Next Trigger: Reuse this learning whenever adding branch-scoped review, verification, or manifest fields derived from `blueprint.json` contracts.
+- Reusable Learnings:
+  - command: `python3 .map/scripts/map_step_runner.py build_acceptance_coverage_report`
+  - invariant: `Acceptance coverage is evidence-based: a coverage_map key is covered only when the bracketed tag appears in downstream verification, QA, test, handoff, PR draft, or review artifacts.`
+  - review-check: `When adding review-bundle fields, update the runtime helper, shipped template copy, JSON schema, Markdown rendering, manifest metadata, docs, focused tests, and generated-project smoke together.`
+
 ## 2026-05-18 - Hard/soft constraint typing in spec and blueprint gates [2604.039-followup-2]
 
 - Decision: `implemented`

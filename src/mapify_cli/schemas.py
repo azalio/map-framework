@@ -975,6 +975,23 @@ REVIEW_BUNDLE_SCHEMA = {
             },
             "required": ["summary", "validation", "risks_follow_up"],
         },
+        "acceptance_coverage": {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string"},
+                "branch": {"type": "string"},
+                "reason": {"type": "string"},
+                "blueprint_path": {"type": "string"},
+                "evidence_sources": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+                "requirements": {"type": "array"},
+                "summary": {"type": "object"},
+            },
+            "required": ["status", "branch", "requirements", "summary"],
+            "additionalProperties": True,
+        },
         "manifest_status": {
             "type": "object",
             "properties": {
@@ -1029,6 +1046,7 @@ REVIEW_BUNDLE_SCHEMA = {
         "code_state",
         "review_handoff",
         "pr_handoff",
+        "acceptance_coverage",
     ],
     "additionalProperties": False,
 }

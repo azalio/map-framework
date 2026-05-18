@@ -56,6 +56,12 @@ def _minimal_valid_bundle() -> dict:  # type: ignore[type-arg]
             "validation": "- [not recorded]",
             "risks_follow_up": "- [not recorded]",
         },
+        "acceptance_coverage": {
+            "status": "missing_blueprint",
+            "branch": "test-branch",
+            "requirements": [],
+            "summary": {"total": 0, "covered": 0, "missing": 0},
+        },
     }
 
 
