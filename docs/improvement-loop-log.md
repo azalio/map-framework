@@ -1,3 +1,17 @@
+## 2026-05-19 - Actor Context Block Token Budget Enforcement [2604.023-1]
+
+- Decision: `implemented`
+- Branch: `codex/2604-023-context-budget`
+- Baseline: `build_context_block()` assembled current subtask, dependency results, plan overview, and repo delta as an unbounded string; long plans could silently crowd out the active Actor prompt even though MAP already exposed transcript-level compaction nudges.
+- Forward Change: Added deterministic estimated-token helpers, enforced a default 4,000-token cap for generated Actor `<map_context>` blocks, prioritized current-subtask and dependency summaries over broad overview text, preserved valid XML shape with a truncation note, synced the template helper copy, and documented the `MAP_CONTEXT_BLOCK_BUDGET_TOKENS` override.
+- Decisive Validation: Focused token-budget and context-block tests prove oversized multi-subtask contexts stay within the configured budget while preserving current-task and dependency evidence. Template sync verifies generated projects receive the runner change. Generated-project smoke and broader validation are recorded in the PR evidence.
+- Review Result: Inline diff review checked source/template parity, current-context preservation, dependency-summary ordering, and docs/plan consistency; no blocking issue remained after reducing file-list caps so dependency summaries survive tight budgets.
+- Next Trigger: Reuse this learning whenever a generated prompt helper assembles branch artifacts into a model-facing context block.
+- Reusable Learnings:
+  - command: `pytest tests/test_token_budget.py tests/test_map_step_runner.py::TestBuildContextBlock -v`
+  - invariant: `Generated prompt context builders must preserve valid envelope shape and prioritize current-task/dependency evidence before broad plan overview when clipping to a budget.`
+  - review-check: `When adding prompt budget enforcement, test the forced-truncation path with a small configured budget rather than only asserting normal-sized prompts still render.`
+
 ## 2026-05-19 - Clean-session TEST->CODE handoff for TDD workflows [2604.036]
 
 - Decision: `rejected`

@@ -60,6 +60,10 @@
 **Reasoning**: The brief highlights token economics and context-window problems: long command files cause attention dilution, and the system relies on context injection to keep goals fresh (“Hook Output Example… reminder before EVERY tool call”; “command file tokens… down from ~5.4K to ~1.75K”; “Recitation Pattern… -20–30% token usage”; “active window injection… only relevant context”). However, the brief also describes best-effort context blocks (“best-effort” target <=4000 tokens in Context-Aware Step Injection) and does not state a hard, deterministic enforcement that guarantees `|C| ≤ T` prior to every tool call. Deterministic token budget enforcement directly operationalizes the architecture’s token-management intent.
 **Why Not Already Tried**: The current architecture already implements token reductions through step-aware injection, recitation, compaction resilience, and template optimization, but it does not explicitly guarantee an invariant via deterministic counting before each tool call. The described mechanisms are optimizations; deterministic enforcement is a stricter missing layer.
 
+**Execution note:** Do not execute directly. This umbrella item is decomposed into follow-up slices. The first value-bearing child, `2604.023-1`, shipped deterministic budget enforcement for `/map-efficient` Actor `<map_context>` blocks. Execute future child slices only when they protect a current prompt path or operator decision; do not add token-budget telemetry for dormant REGISTRY/FOCUS mechanisms before those mechanisms prove useful.
+
+**Field evidence (2026-05-19)**: A scan of `/Users/azalio/gitroot/src.yandex.cloud` found 37 `.map` directories and 8 current-format runs with `.map/<branch>/blueprint.json`. Replaying `build_context_block()` with the same deterministic `ceil(chars / 4)` estimator showed Actor `<map_context>` blocks are well below the new 4,000-token default on those runs: max 1,255 estimated tokens (`STACKLAND-921-p2-2`), 1,193 (`STACKLAND-1591-crd`), and 849 (`STACKLAND-921-p2-105191705053013442`), with 0/63 sampled subtask contexts over 4,000. The same tree contains raw artifacts far above 4,000 tokens, including `STACKLAND-921-p2-2` `blueprint.json` at ~16,013 tokens and `task_plan` at ~11,819 tokens, `STACKLAND-921-p2-105191705053013442` review bundle at ~13,240 tokens, and `STACKLAND-1591-crd` task plan/blueprint at ~7,531/~7,291 tokens. This supports keeping Actor context compact via summaries while prioritizing follow-up budgeting for prompt paths that still consume large raw artifacts, especially review fan-out.
+
 ### Proposed Changes
 
 - Implement a deterministic token-budget enforcer in the context builder path that runs before every LLM/agent tool call (the architecture already emphasizes structured state, hook injection, and pre-tool-call reminders; this adds a hard constraint). Integrate it into the place where map_step_runner.py builds map_context blocks (“Built by build_context_block() in map_step_runner.py”).
@@ -68,6 +72,18 @@
 - Extend the PreToolUse hook `workflow-context-injector.py` to include the deterministic token budget decision outcome (e.g., `budget_action: truncated_registry` or `budget_action: none`) in the injected reminder block so that step compliance and context completeness can be audited.
 - Add unit tests and property-based tests ensuring the invariant from the idea: `|C| ≤ T` before every LLM call “without exception.” Also test that truncation does not occur in the focus context and only affects registry/non-focused entries.
 - Add end-to-end test harness: run a known multi-subtask workflow with increasing N (e.g., 3, 5, 10 subtasks) and verify (a) the deterministic budget never exceeds the configured T, and (b) Monitor approval rates remain near baseline target (>80% first try as stated in “Success Metrics”).
+
+## Reviewer Prompt Budget Enforcement [2604.023-2]
+
+**Benefit Hypothesis**: Bounding `/map-review` reviewer fan-out prompts will reduce review-quality regressions on large diffs or large review bundles by keeping the review bundle, raw diff, instructions, and output schema inside a deterministic budget while preserving the review bundle as primary context.
+**Scope**: Add a budgeted prompt-building helper for review fan-out inputs, with tests that prove oversized bundles/diffs preserve reviewer instructions, the primary review-bundle summary, and valid XML prompt envelope shape while clipping lower-priority raw diff context.
+**Validation**: Focused prompt-builder tests, `/map-review` prompt contract tests, template sync, and a generated-project smoke that builds an oversized review bundle and verifies the emitted reviewer prompt includes a truncation note and remains under the configured budget.
+
+## Budget Decision Artifact for Active Prompt Paths [2604.023-3]
+
+**Benefit Hypothesis**: Once at least two active prompt builders enforce budgets, a compact `.map/<branch>/token_budget.json` decision artifact will help users diagnose missing-context complaints by showing which prompt path clipped which lower-priority sections, without requiring transcript inspection.
+**Scope**: Record budget decisions only from prompt paths that already enforce budgets in production workflows. Include path name, configured budget, estimated tokens before/after, clipped section labels, and generated artifact references. Do not record telemetry for dormant REGISTRY/FOCUS mechanisms.
+**Validation**: Focused writer/schema tests, generated-project smoke that creates budget decisions from real branch artifacts, and docs showing how an operator uses the artifact to decide whether to raise a budget or split a workflow.
 
 ## High-Urgency Preemption Protocol for Focus Sessions [2604.022]
 

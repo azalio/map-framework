@@ -137,6 +137,41 @@ REVIEW_SECTION_IDS: tuple[str, ...] = ("architecture", "code_quality", "tests", 
 REVIEW_VALID_MODES: tuple[str, ...] = ("default", "reverse-sections", "shuffle-sections")
 LEARNING_IMMEDIATE_WINDOW_SECONDS = 30 * 60
 ACCEPTANCE_TAG_RE = re.compile(r"\[([A-Za-z][A-Za-z0-9_-]*-\d+[A-Za-z0-9_-]*)\]")
+CONTEXT_BLOCK_DEFAULT_BUDGET_TOKENS = 4_000
+CONTEXT_BLOCK_MIN_BUDGET_TOKENS = 128
+CONTEXT_BLOCK_BUDGET_ENV = "MAP_CONTEXT_BLOCK_BUDGET_TOKENS"
+
+try:
+    from mapify_cli.token_budget import (
+        estimate_tokens as _estimate_tokens,
+        truncate_to_token_budget as _truncate_to_token_budget,
+    )
+except ImportError:
+    ESTIMATED_CHARS_PER_TOKEN = 4
+
+    def _estimate_tokens(text: str) -> int:
+        if not text:
+            return 0
+        return max(
+            1,
+            (len(text) + ESTIMATED_CHARS_PER_TOKEN - 1) // ESTIMATED_CHARS_PER_TOKEN,
+        )
+
+    def _truncate_to_token_budget(
+        text: str, budget_tokens: int, suffix: str = "..."
+    ) -> str:
+        if budget_tokens <= 0 or not text:
+            return ""
+        if _estimate_tokens(text) <= budget_tokens:
+            return text
+        char_limit = budget_tokens * ESTIMATED_CHARS_PER_TOKEN
+        if char_limit <= len(suffix):
+            return suffix[:char_limit]
+        cut = text[: char_limit - len(suffix)].rstrip()
+        last_space = cut.rfind(" ")
+        if last_space > len(cut) // 2:
+            cut = cut[:last_space].rstrip()
+        return cut + suffix
 
 LEARNING_METRICS_COUNTER_DEFAULTS = {
     "handoff_generated_count": 0,
@@ -4147,14 +4182,75 @@ def _sanitize_branch(branch: str) -> str:
     return sanitized or "default"
 
 
+def _context_block_budget_tokens() -> int:
+    """Return the hard estimated-token budget for Actor map_context blocks."""
+    raw = os.environ.get(CONTEXT_BLOCK_BUDGET_ENV, "").strip()
+    if raw:
+        try:
+            value = int(raw)
+            if value >= CONTEXT_BLOCK_MIN_BUDGET_TOKENS:
+                return value
+        except ValueError:
+            pass
+    return CONTEXT_BLOCK_DEFAULT_BUDGET_TOKENS
+
+
+def _truncate_context_value(value: object, budget_tokens: int = 80) -> str:
+    """Render a persisted value without letting one field consume the context."""
+    text = value if isinstance(value, str) else str(value)
+    return _truncate_to_token_budget(text, budget_tokens)
+
+
+def _context_block_text(parts: list[str]) -> str:
+    return "\n".join(parts)
+
+
+def _enforce_context_block_budget(parts: list[str], budget_tokens: int) -> str:
+    """Keep generated map_context under budget while preserving valid XML shape."""
+    full_text = _context_block_text(parts)
+    if _estimate_tokens(full_text) <= budget_tokens:
+        return full_text
+
+    closing = "</map_context>"
+    truncation_note = (
+        f"# Context Budget: truncated to <= {budget_tokens} estimated tokens; "
+        "rerun with a larger MAP_CONTEXT_BLOCK_BUDGET_TOKENS if more plan "
+        "overview is required."
+    )
+    output: list[str] = []
+
+    for line in parts:
+        if line == closing:
+            continue
+        candidate = _context_block_text(output + [line, truncation_note, closing])
+        if _estimate_tokens(candidate) <= budget_tokens:
+            output.append(line)
+            continue
+
+        remaining = budget_tokens - _estimate_tokens(
+            _context_block_text(output + [truncation_note, closing])
+        )
+        truncated_line = _truncate_to_token_budget(line, remaining)
+        if truncated_line:
+            candidate = _context_block_text(
+                output + [truncated_line, truncation_note, closing]
+            )
+            if _estimate_tokens(candidate) <= budget_tokens:
+                output.append(truncated_line)
+        break
+
+    output.extend([truncation_note, closing])
+    return _context_block_text(output)
+
+
 def build_context_block(branch: str, current_subtask_id: str) -> str:
     """Build structured context block for Actor prompt.
 
     Returns formatted string with:
     - Goal (from task_plan.md)
     - Current subtask full details (from blueprint)
-    - Plan overview (all subtasks as ID + title + status one-liners)
     - Upstream results (from step_state.json subtask_results)
+    - Plan overview (all subtasks as ID + title + status one-liners)
     - Repo delta (differential insight, if last_subtask_commit_sha available)
 
     Returns empty string if blueprint not found (graceful fallback).
@@ -4196,14 +4292,22 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
         f"concern_type={current.get('concern_type', 'unknown')}, "
         f"one_logical_step={current.get('one_logical_step', 'unknown')}"
     )
-    files = current.get("affected_files", [])
+    files_value = current.get("affected_files", [])
+    files = files_value if isinstance(files_value, list) else []
     if files:
-        current_details.append(f"Affected files: {', '.join(files)}")
-    criteria = current.get("validation_criteria", [])
+        shown_files = [str(f) for f in files[:8]]
+        file_text = ", ".join(shown_files)
+        if len(files) > 8:
+            file_text += f", ... +{len(files) - 8} more"
+        current_details.append(f"Affected files: {file_text}")
+    criteria_value = current.get("validation_criteria", [])
+    criteria = criteria_value if isinstance(criteria_value, list) else []
     if criteria:
         current_details.append("Validation criteria:")
-        for c in criteria:
-            current_details.append(f"  - {c}")
+        for c in criteria[:10]:
+            current_details.append(f"  - {_truncate_context_value(c, 120)}")
+        if len(criteria) > 10:
+            current_details.append(f"  ... +{len(criteria) - 10} more criteria")
 
     # Plan overview with statuses from step_state.json
     state_path = project_dir / ".map" / branch / "step_state.json"
@@ -4240,12 +4344,15 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
     for up_id in upstream_ids:
         if up_id in subtask_results:
             result = subtask_results[up_id]
-            fc = result.get("files_changed", [])
+            fc_value = result.get("files_changed", [])
+            fc = fc_value if isinstance(fc_value, list) else []
             status = result.get("status", "unknown")
             summary = result.get("summary", "")
-            line = f"  {up_id}: files={fc}, status={status}"
+            shown_files = fc[:4]
+            file_suffix = f", +{len(fc) - 4} more" if len(fc) > 4 else ""
+            line = f"  {up_id}: files={shown_files}{file_suffix}, status={status}"
             if summary:
-                line += f", summary={summary}"
+                line += f", summary={_truncate_context_value(summary, 120)}"
             upstream_lines.append(line)
         else:
             upstream_lines.append(f"  {up_id}: (not yet completed)")
@@ -4258,14 +4365,14 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
         f"# Current Subtask: {current_subtask_id} — {current.get('title', 'Untitled')}",
     ]
     parts.extend(current_details)
-    parts.append("")
-    parts.append(f"# Plan Overview ({len(blueprint.get('subtasks', []))} subtasks):")
-    parts.extend(overview_lines)
-
     if upstream_lines:
         parts.append("")
         parts.append(f"# Upstream Results (dependencies of {current_subtask_id}):")
         parts.extend(upstream_lines)
+
+    parts.append("")
+    parts.append(f"# Plan Overview ({len(blueprint.get('subtasks', []))} subtasks):")
+    parts.extend(overview_lines)
 
     # Repo Delta (via compute_differential_insight from repo_insight)
     if last_sha:
@@ -4306,7 +4413,7 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
 
     parts.append("</map_context>")
 
-    return "\n".join(parts)
+    return _enforce_context_block_budget(parts, _context_block_budget_tokens())
 
 
 def prepare_detached_review(

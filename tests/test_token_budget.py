@@ -13,8 +13,10 @@ from mapify_cli.token_budget import (
     TokenUsage,
     count_last_turn_tokens,
     effective_threshold,
+    estimate_tokens,
     format_compact_instruction,
     should_nudge,
+    truncate_to_token_budget,
 )
 
 
@@ -157,6 +159,22 @@ class TestCountLastTurnTokens:
         }
         f = _write_jsonl(tmp_path / "t.jsonl", [no_usage, no_usage])
         assert count_last_turn_tokens(f) == 0
+
+
+class TestPromptTokenEstimates:
+    def test_estimate_tokens_uses_deterministic_ceiling(self) -> None:
+        assert estimate_tokens("") == 0
+        assert estimate_tokens("abcd") == 1
+        assert estimate_tokens("abcde") == 2
+
+    def test_truncate_to_token_budget_preserves_estimated_budget(self) -> None:
+        result = truncate_to_token_budget("alpha beta gamma delta epsilon", 4)
+
+        assert result.endswith("...")
+        assert estimate_tokens(result) <= 4
+
+    def test_truncate_to_zero_budget_returns_empty(self) -> None:
+        assert truncate_to_token_budget("alpha", 0) == ""
 
 
 # ---------------------------------------------------------------------------

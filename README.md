@@ -87,6 +87,12 @@ mapify init . --compression aggressive            # cost > quality
 mapify init . --compression-threshold 250000      # Opus 1M project
 ```
 
+Generated `/map-efficient` Actor context blocks are also bounded before they
+enter prompts. Override the default 4,000 estimated-token cap with
+`MAP_CONTEXT_BLOCK_BUDGET_TOKENS` only when a large plan genuinely needs more
+context; values below the 128-token minimum fall back to the default so the
+block can still include its required wrapper and truncation note.
+
 **3. Use the golden path for serious work**
 
 When a task has unclear behavior, multiple files, or real review risk, run the full loop:
