@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import builtins
 import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
 from mapify_cli.skill_ir import (
+    SkillIRParseError,
     audit_skill_tree,
     ir_to_dict,
     main,
+    parse_frontmatter,
     parse_skill_file,
 )
 
@@ -98,6 +103,27 @@ def test_audit_rejects_supporting_link_outside_bundle(tmp_path: Path) -> None:
     assert "provider bundle" in findings[0].message
 
 
+def test_audit_normalises_angle_wrapped_supporting_link(tmp_path: Path) -> None:
+    skill_file = _write_skill(tmp_path, "wrapped-link", "See [guide](<guide.md>).\n")
+    (skill_file.parent / "guide.md").write_text("details\n", encoding="utf-8")
+
+    irs, findings = audit_skill_tree(tmp_path, provider="claude")
+
+    assert not findings
+    assert irs[0].supporting_files == ("guide.md",)
+
+
+def test_audit_reports_obfuscated_supporting_link(tmp_path: Path) -> None:
+    _write_skill(tmp_path, "bad-link", "See [dynamic]($REFERENCE.md).\n")
+
+    _irs, findings = audit_skill_tree(tmp_path, provider="claude")
+
+    assert [(f.code, f.severity) for f in findings] == [
+        ("missing_supporting_file", "error")
+    ]
+    assert "$REFERENCE.md" in findings[0].message
+
+
 def test_audit_rejects_injection_like_instruction(tmp_path: Path) -> None:
     _write_skill(
         tmp_path,
@@ -138,6 +164,20 @@ def test_audit_rejects_invalid_yaml_frontmatter(tmp_path: Path) -> None:
 
     assert [(f.code, f.severity) for f in findings] == [("parse_error", "error")]
     assert "invalid YAML frontmatter" in findings[0].message
+
+
+def test_fallback_frontmatter_parser_rejects_invalid_yaml(monkeypatch: pytest.MonkeyPatch) -> None:
+    real_import = builtins.__import__
+
+    def fake_import(name: str, *args, **kwargs):
+        if name == "yaml":
+            raise ImportError("blocked")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    with pytest.raises(SkillIRParseError, match="invalid list-like scalar"):
+        parse_frontmatter("name: [unterminated\ndescription: Bad. Use when testing.")
 
 
 def test_cli_outputs_json_and_exits_nonzero_for_findings(

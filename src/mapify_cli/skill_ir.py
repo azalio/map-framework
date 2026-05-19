@@ -105,15 +105,18 @@ def _parse_simple_yaml(frontmatter: str) -> dict[str, Any]:
     index = 0
     while index < len(lines):
         line = lines[index]
-        if not line.strip() or line.startswith(" "):
+        if not line.strip():
             index += 1
             continue
+        if line.startswith(" "):
+            raise SkillIRParseError(f"unexpected indented frontmatter line: {line!r}")
         if ":" not in line:
-            index += 1
-            continue
+            raise SkillIRParseError(f"invalid frontmatter line: {line!r}")
         key, raw_value = line.split(":", 1)
         key = key.strip()
         value = raw_value.strip()
+        if not key:
+            raise SkillIRParseError(f"invalid empty frontmatter key: {line!r}")
         if value in {"|", ">", ">-"}:
             block: list[str] = []
             index += 1
@@ -140,6 +143,12 @@ def _parse_simple_yaml(frontmatter: str) -> dict[str, Any]:
         elif value.lower() == "false":
             parsed[key] = False
         else:
+            if value.startswith("[") and not value.endswith("]"):
+                raise SkillIRParseError(f"invalid list-like scalar for {key!r}")
+            if value.startswith("{") and not value.endswith("}"):
+                raise SkillIRParseError(f"invalid map-like scalar for {key!r}")
+            if value.startswith(("'", '"')) and not value.endswith(value[0]):
+                raise SkillIRParseError(f"unterminated quoted scalar for {key!r}")
             parsed[key] = value.strip('"\'')
         index += 1
     return parsed
@@ -176,13 +185,13 @@ def _strip_code_fences(content: str) -> str:
     return CODE_FENCE_RE.sub("", content)
 
 
-def _supporting_files(skill_file: Path, body: str) -> tuple[str, ...]:
+def _supporting_files(body: str) -> tuple[str, ...]:
     files: list[str] = []
     for href in MARKDOWN_LINK_RE.findall(_strip_code_fences(body)):
         target = href.split("#", 1)[0].strip()
+        if target.startswith("<") and target.endswith(">"):
+            target = target[1:-1].strip()
         if not target or target.startswith(EXTERNAL_LINK_PREFIXES):
-            continue
-        if target.startswith("/") or "$" in target or "<" in target:
             continue
         files.append(target)
     return tuple(dict.fromkeys(files))
@@ -198,9 +207,7 @@ def _safety_constraints(body: str) -> tuple[str, ...]:
     return tuple(constraints)
 
 
-def parse_skill_file(skill_file: Path, *, provider: str) -> SkillIR:
-    """Lower one ``SKILL.md`` file into ``SkillIR``."""
-
+def _parse_skill_content(skill_file: Path, *, provider: str) -> tuple[SkillIR, str]:
     content_bytes = skill_file.read_bytes()
     content = content_bytes.decode("utf-8")
     frontmatter_text, body = _split_frontmatter(content)
@@ -209,18 +216,26 @@ def parse_skill_file(skill_file: Path, *, provider: str) -> SkillIR:
     invocation_mode = (
         "manual" if frontmatter.get("disable-model-invocation") else "automatic"
     )
-    return SkillIR(
+    ir = SkillIR(
         name=name,
         provider=provider,
         source_path=str(skill_file),
         description=str(frontmatter.get("description") or "").strip(),
         invocation_mode=invocation_mode,
         allowed_tools=_normalise_allowed_tools(frontmatter.get("allowed-tools")),
-        supporting_files=_supporting_files(skill_file, body),
+        supporting_files=_supporting_files(body),
         safety_constraints=_safety_constraints(body),
         content_hash=hashlib.sha256(content_bytes).hexdigest(),
         frontmatter=frontmatter,
     )
+    return ir, body
+
+
+def parse_skill_file(skill_file: Path, *, provider: str) -> SkillIR:
+    """Lower one ``SKILL.md`` file into ``SkillIR``."""
+
+    ir, _body = _parse_skill_content(skill_file, provider=provider)
+    return ir
 
 
 def _provider_from_root(root: Path) -> str:
@@ -246,7 +261,7 @@ def audit_skill_file(
 
     findings: list[SkillAuditFinding] = []
     try:
-        ir = parse_skill_file(skill_file, provider=provider)
+        ir, body = _parse_skill_content(skill_file, provider=provider)
     except (OSError, UnicodeDecodeError, SkillIRParseError) as exc:
         return None, [
             SkillAuditFinding(str(skill_file), "error", "parse_error", str(exc))
@@ -300,7 +315,6 @@ def audit_skill_file(
                 )
             )
 
-    body = _split_frontmatter(skill_file.read_text(encoding="utf-8"))[1]
     body_without_code = _strip_code_fences(body)
     for pattern in FORBIDDEN_INSTRUCTION_PATTERNS:
         match = pattern.search(body_without_code)
