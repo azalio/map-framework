@@ -13,6 +13,8 @@ argument-hint: "[task description]"
 **State-Gated Prompting**: Each invocation sees exactly ONE clear next action.
 State machine enforces sequencing, Python validates completion, hooks inject reminders.
 
+Long subagent prompts use the shared [XML Prompt Envelope](../../references/map-xml-prompt-envelopes.md): persisted artifacts and current subtask context appear before instructions, with output contracts isolated in `<expected_output>`.
+
 ## Effort and Parallelism Policy
 
 ```yaml
@@ -161,10 +163,18 @@ Route to appropriate executor based on `$PHASE`:
 Task(
   subagent_type="task-decomposer",
   description="Decompose task into subtasks",
-  prompt=f"""Break down into ≤20 atomic subtasks and RETURN ONLY JSON.
+  prompt=f"""
+<documents>
+  <document source="task-arguments">
+    <document_content>$TASK_ARGS</document_content>
+  </document>
+</documents>
 
-Task: $TASK_ARGS
+<task>
+Break down the task into no more than 20 atomic subtasks and return only JSON.
+</task>
 
+<constraints>
 Hard requirements:
 - Use `blueprint.subtasks[].validation_criteria` (2-4 testable outcomes)
   - Prefix each criterion with `VC1:`, `VC2:`, ... (stable references for Actor/Monitor)
@@ -189,8 +199,13 @@ AAG Contract format (REQUIRED per subtask):
   "aag_contract": "ProjectModel -> add_field(archived_at: DateTime?) -> migration passes"
   "aag_contract": "RateLimiter -> decorate(endpoint, 100/min) -> returns 429 when exceeded"
 
-Purpose: Actor compiles this line into code. Monitor verifies against it.
-This eliminates reasoning overhead — the contract IS the specification."""
+</constraints>
+
+<expected_output>
+Return only JSON matching the blueprint shape described in the hard requirements; do not include markdown or prose outside the JSON object.
+Purpose: Actor compiles the AAG contract line into code. Monitor verifies against it.
+This eliminates reasoning overhead — the contract IS the specification.
+</expected_output>"""
 )
 
 # After decomposer returns:
@@ -463,7 +478,8 @@ When TDD mode is active, Actor receives `<TDD_Mode>code_only</TDD_Mode>` and mus
 Task(
   subagent_type="actor",
   description="Implement subtask [ID]",
-  prompt=f"""Implement and APPLY CODE with Edit/Write tools.
+  prompt=f"""
+<documents>
 
 <MAP_Contract>
 [AAG contract from decomposition: Actor -> Action -> Goal]
@@ -493,8 +509,13 @@ ST-001: files=[a.py, b.py], status=valid
 [From compute_differential_insight(), if last_subtask_commit_sha available]
 [Omit this section entirely if no previous SHA (first subtask)]
 </map_context>
+</documents>
 
-Protocol:
+<task>
+Implement and apply code for the current subtask with Edit/Write tools.
+</task>
+
+<instructions>
 1. SCOPE: Implement ONLY the Current Subtask. Do NOT modify files belonging to other subtasks.
 2. Plan Overview is for orientation — do NOT implement other subtasks.
 3. Upstream Results show what dependencies produced — use as input context.
@@ -502,7 +523,11 @@ Protocol:
 5. Read affected files to understand current state.
 6. Implement: translate MAP_Contract into code.
 7. Apply code with Edit/Write tools.
-8. Output: approach + files_changed + trade-offs"""
+</instructions>
+
+<expected_output>
+Output: approach + files_changed + trade-offs.
+</expected_output>"""
 )
 ```
 
@@ -523,7 +548,8 @@ Passing tests is necessary but not sufficient for MAP completion.
 Task(
   subagent_type="monitor",
   description="Validate written code",
-  prompt=f"""Validate WRITTEN CODE (Actor already applied with Edit/Write).
+  prompt=f"""
+<documents>
 
 <MAP_Written files="[count]">
 [list files modified by Actor]
@@ -532,8 +558,13 @@ Task(
 <MAP_Contract>
 [AAG contract from decomposition: Actor -> Action -> Goal]
 </MAP_Contract>
+</documents>
 
-Protocol (execute in order):
+<task>
+Validate written code that Actor already applied with Edit/Write.
+</task>
+
+<instructions>
 1. Read each file in MAP_Written — verify code exists and compiles/parses
 2. **BUILD GATE (MANDATORY):** Run the project build/compile command BEFORE any other checks:
    - TypeScript: `npx tsc --noEmit` (or `npm run build`)
@@ -549,7 +580,12 @@ Protocol (execute in order):
    - If build fails: valid=false + compilation errors
    - If MAP_Contract violated: valid=false + specific contract breach
    - If tests fail: valid=false + failure output
-   - If all pass: valid=true + contract_compliant=true"""
+   - If all pass: valid=true + contract_compliant=true
+</instructions>
+
+<expected_output>
+Return only valid JSON per MonitorReviewOutput schema.
+</expected_output>"""
 )
 ```
 

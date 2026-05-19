@@ -82,6 +82,7 @@ Claude skill metadata includes `skillClass` in `.claude/skills/skill-rules.json`
 
 - **Context Budgeting & Compression**: MAP exposes compression policies and thresholds and treats budget control as a first-class workflow concern.
 - **Effort & Parallelism Calibration**: Each task skill declares a `thinking_policy` and `parallel_tool_policy` so provider runtimes know when to stay direct, when to use adaptive reasoning, and when parallel fan-out is safe. Prompt-tone regression tests keep non-release skills on targeted guardrails instead of blanket prohibition blocks, which protects lightweight workflows from unnecessary subagent/tool expansion.
+- **Context-First Prompt Envelopes**: High-context skill prompts use a shared XML-style envelope so persisted artifacts appear in `<documents>` before `<task>`, instructions, and `<expected_output>`. This keeps specs, review bundles, diffs, logs, and output schemas distinct when provider runtimes receive long subagent prompts.
 - **Verification & Review Gates**: Commands like `/map-check` and `/map-review` validate work against plan/spec artifacts, not only “looks OK” prompting.
 - **Observability via Artifacts**: Primary observability surface is file-based (plans, summaries, review dossiers) persisted under `.map/<branch>/`.
 - **Constraint Typing**: `blueprint.json` separates non-negotiable `hard_constraints` from negotiable `soft_constraints`; hard constraints must be covered through `coverage_map` and bracketed validation criteria, while soft constraints need either coverage or explicit tradeoff rationale.

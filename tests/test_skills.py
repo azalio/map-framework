@@ -822,6 +822,78 @@ class TestPromptToneCalibration:
         ), f"{skill_name} scope clause should name the correct off-ramp or boundary"
 
 
+class TestXMLPromptEnvelopeContracts:
+    """Regression tests for long-context MAP subagent prompt structure."""
+
+    XML_ENVELOPE_SKILLS = ["map-plan", "map-efficient", "map-debug", "map-review"]
+
+    @pytest.fixture
+    def project_root(self):
+        return Path(__file__).parent.parent
+
+    @pytest.mark.parametrize("skills_root", PROMPT_TONE_SKILL_ROOTS)
+    @pytest.mark.parametrize("skill_name", XML_ENVELOPE_SKILLS)
+    def test_high_context_skills_link_xml_envelope_reference(
+        self, project_root, skills_root, skill_name
+    ):
+        skill_md = project_root / skills_root / skill_name / "SKILL.md"
+        content = skill_md.read_text(encoding="utf-8")
+
+        assert "../../references/map-xml-prompt-envelopes.md" in content, (
+            f"{skill_name} should link the shared XML envelope reference so "
+            "maintainers preserve the prompt layout in generated skills."
+        )
+
+    @pytest.mark.parametrize("skills_root", PROMPT_TONE_SKILL_ROOTS)
+    @pytest.mark.parametrize("skill_name", XML_ENVELOPE_SKILLS)
+    def test_high_context_subagent_prompts_use_xml_envelope_tags(
+        self, project_root, skills_root, skill_name
+    ):
+        skill_md = project_root / skills_root / skill_name / "SKILL.md"
+        content = skill_md.read_text(encoding="utf-8")
+
+        for tag in ("<documents>", "<task>", "<expected_output>"):
+            assert tag in content, (
+                f"{skill_name} should use {tag} in long subagent prompts "
+                "so artifacts, task, and output schema stay unambiguous."
+            )
+
+    @pytest.mark.parametrize("skills_root", PROMPT_TONE_SKILL_ROOTS)
+    def test_map_review_reviewer_prompts_put_bundle_before_instructions(
+        self, project_root, skills_root
+    ):
+        skill_md = project_root / skills_root / "map-review" / "SKILL.md"
+        content = skill_md.read_text(encoding="utf-8")
+        launch_section = content.split("### Step A.2: Launch all parallel calls", maxsplit=1)[1]
+        launch_section = launch_section.split("### Hard Stop Check", maxsplit=1)[0]
+
+        assert launch_section.count("<documents>") == 3
+        assert launch_section.count("priority='primary'") == 3
+        assert launch_section.count("<workflow_policy>") == 3
+        for prompt in re.findall(r'prompt="(.*?)"\n\)', launch_section, flags=re.DOTALL):
+            assert prompt.index("<documents>") < prompt.index("<instructions>"), (
+                "Reviewer prompts should present the review bundle and diff before "
+                "instructions, matching long-context prompting guidance."
+            )
+
+    @pytest.mark.parametrize("skills_root", PROMPT_TONE_SKILL_ROOTS)
+    def test_map_efficient_actor_and_monitor_put_artifacts_before_task(
+        self, project_root, skills_root
+    ):
+        skill_md = project_root / skills_root / "map-efficient" / "SKILL.md"
+        content = skill_md.read_text(encoding="utf-8")
+        for start_heading, end_heading in (
+            ("### Phase: ACTOR (2.3)", "### Phase: MONITOR (2.4)"),
+            ("### Phase: MONITOR (2.4)", "# After Monitor returns:"),
+        ):
+            section = content.split(start_heading, maxsplit=1)[1]
+            section = section.split(end_heading, maxsplit=1)[0]
+            assert section.index("<documents>") < section.index("<task>"), (
+                f"{start_heading} should put context artifacts before the task "
+                "so long-context inputs are read before instructions."
+            )
+
+
 class TestContractSizedSubtaskSkillContracts:
     """Regression tests for user-visible subtask size and concern guardrails."""
 

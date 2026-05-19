@@ -258,3 +258,19 @@
   - command: `uv run --no-sync mapify init <new-dir> --no-git --mcp none`
   - invariant: `Non-release MAP task skills should use targeted guardrail wording and explicit scope off-ramps; reserve blanket all-caps prohibition blocks for irreversible release/tag safety.`
   - review-check: `When changing prompt tone, verify required workflow gates remain semantically explicit even if CRITICAL/MUST/NEVER wording is reduced.`
+
+## 2026-05-19 - Context-first XML envelopes for slash commands [2604.026]
+
+- Decision: `implemented`
+- Branch: `codex/2604-026-xml-envelopes`
+- PR: `pending`
+- Baseline: High-context MAP skills mixed persisted artifacts, user requests, workflow policy, and output schemas in ad hoc markdown inside subagent prompts. `/map-review` in particular passed the review bundle, review preferences, and git diff as inline prose, so future edits could accidentally move long artifacts below instructions or blur primary bundle context with secondary diff context.
+- Forward Change: Added `.claude/references/map-xml-prompt-envelopes.md` and the shipped template copy, then applied the artifact-first envelope to `/map-plan`, `/map-efficient`, `/map-debug`, and `/map-review`. The change preserved existing MAP semantic tags such as `<MAP_Contract>` and `<map_context>` while wrapping larger prompt inputs in `<documents>` before `<task>`, `<workflow_policy>` or `<instructions>`, and `<expected_output>`.
+- Decisive Validation: Focused XML envelope tests scan both `.claude/skills/` and `src/mapify_cli/templates/skills/` for the reference link and required tags. The generated-project smoke confirmed `mapify init` emits the new reference and XML tags in installed skills. `make lint`, `pytest -m "not slow"`, the timed-out live SDK boundary test, live `/map-review` E2E, and live full-flow E2E passed. Full `pytest` and full live SDK module runs both hit the 30-minute tool timeout at the same cumulative boundary, with no deterministic failure before timeout.
+- Next Trigger: Reuse this learning whenever changing MAP skill prompts that pass specs, review bundles, diffs, logs, current-subtask context, or other large artifacts into subagents.
+- Reusable Learnings:
+  - command: `pytest tests/test_skills.py::TestXMLPromptEnvelopeContracts tests/test_template_sync.py::TestReferenceTemplateSynchronization -v`
+  - command: `uv run --no-sync mapify init <new-dir> --no-git --mcp none`
+  - invariant: `High-context MAP skill prompts should put long artifacts in <documents> before task/instructions/output schema and keep source/template skill copies byte-synced.`
+  - gotcha: `Existing prompt contract tests may assert marker phrases such as Written Files; XML refactors must preserve those explicit markers inside the tagged document content.`
+  - review-check: `When changing /map-review reviewer prompts, verify the review bundle remains the primary tagged document and raw diff remains secondary.`

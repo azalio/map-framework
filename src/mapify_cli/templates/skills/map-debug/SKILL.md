@@ -22,7 +22,7 @@ Debug the following issue using the MAP framework:
 
 **Debug Request:** $ARGUMENTS
 
-Use compact evidence-first examples from [Evidence-First Output Examples](../../references/map-output-examples.md) when asking agents to report root causes, validation failures, or impact risks.
+Use compact evidence-first examples from [Evidence-First Output Examples](../../references/map-output-examples.md) when asking agents to report root causes, validation failures, or impact risks. Use the shared [XML Prompt Envelope](../../references/map-xml-prompt-envelopes.md) for long debugging prompts so logs, affected files, and fixes are separated from instructions and output contracts.
 
 ## Effort and Parallelism Policy
 
@@ -70,25 +70,37 @@ Before calling task-decomposer, gather context:
 Task(
   subagent_type="task-decomposer",
   description="Decompose debugging steps",
-  prompt="Break down this debugging process into atomic steps:
+  prompt="<documents>
+  <document source='debug-request'>
+    <document_content>$ARGUMENTS</document_content>
+  </document>
+  <document source='error-logs'>
+    <document_content>[if available]</document_content>
+  </document>
+  <document source='affected-files'>
+    <document_content>[from analysis]</document_content>
+  </document>
+</documents>
 
-**Issue:** $ARGUMENTS
-
-**Context:**
-- Error logs: [if available]
-- Affected files: [from analysis]
+<task>
+Break down this debugging process into atomic investigation, fix, and verification steps.
+</task>
 
 JSON contract reference: [Decomposition Output](../../references/map-json-output-contracts.md#decomposition-output).
 
+<expected_output>
 Output JSON with:
 - subtasks: array of {id, description, debug_type: 'investigation'|'fix'|'verification', acceptance_criteria}
 - root_cause_hypothesis: string
 - estimated_complexity: 'low'|'medium'|'high'
+</expected_output>
 
+<constraints>
 Debug types:
 - investigation: analyze code, logs, reproduce issue
 - fix: implement solution
-- verification: test fix, check for regressions"
+- verification: test fix, check for regressions
+</constraints>"
 )
 ```
 
@@ -155,12 +167,23 @@ After each fix (max 5 Actor->Monitor retry iterations per subtask):
 Task(
   subagent_type="monitor",
   description="Validate fix",
-  prompt="Validate this debugging fix in the written repo state:
+  prompt="<documents>
+  <document source='original-issue'>
+    <document_content>[description]</document_content>
+  </document>
+  <document source='written-files'>
+    <document_content>Written Files: [files_changed from Actor]</document_content>
+  </document>
+  <document source='root-cause'>
+    <document_content>[identified root cause]</document_content>
+  </document>
+</documents>
 
-**Original Issue:** [description]
-**Written Files:** [files_changed from Actor]
-**Root Cause:** [identified root cause]
+<task>
+Validate this debugging fix in the written repo state.
+</task>
 
+<instructions>
 Check:
 - Read the written files and verify the code exists in the repo
 - Does the fix address the root cause?
@@ -168,13 +191,16 @@ Check:
 - Are there proper error handling?
 - Is the fix testable?
 - Are there any edge cases missed?
+</instructions>
 
+<expected_output>
 Output JSON with:
 - evidence: array of {file_path, line_range, quote, relevance}; cite the changed code or failing/passing test before verdict fields
 - valid: boolean
 - issues: array of {severity, category, description}
 - verdict: 'approved'|'needs_revision'|'rejected'
-- feedback: string"
+- feedback: string
+</expected_output>"
 )
 ```
 
