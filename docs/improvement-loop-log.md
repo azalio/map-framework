@@ -274,3 +274,18 @@
   - invariant: `High-context MAP skill prompts should put long artifacts in <documents> before task/instructions/output schema and keep source/template skill copies byte-synced.`
   - gotcha: `Existing prompt contract tests may assert marker phrases such as Written Files; XML refactors must preserve those explicit markers inside the tagged document content.`
   - review-check: `When changing /map-review reviewer prompts, verify the review bundle remains the primary tagged document and raw diff remains secondary.`
+
+## 2026-05-19 - Compile-time skill IR and anti-injection audit for provider surfaces [2605.221]
+
+- Decision: `implemented`
+- Branch: `codex/2605-221-skill-ir-audit`
+- PR: `https://github.com/azalio/map-framework/pull/132`
+- Baseline: MAP shipped Claude and Codex provider skills as hand-authored Markdown templates. Existing tests covered frontmatter, trigger rules, prompt tone, JSON contracts, links, and template sync, but there was no single typed representation that could parse every shipped `SKILL.md`, record content hashes, and fail unsafe provider-surface drift before `mapify init` installed the files into user repos.
+- Forward Change: Added `src/mapify_cli/skill_ir.py` with a `SkillIR` dataclass, parser, audit findings, supporting-file/link validation, hidden instruction-override phrase detection, deterministic content hashes, and a CLI entry point. Added focused tests that parse all shipped Claude and Codex template skills, reject missing references, reject unsupported frontmatter, reject injection-like instructions, and verify the CLI exits non-zero on findings.
+- Decisive Validation: Focused Skill IR tests passed, the audit command returned no findings for both shipped provider skill roots, focused skill/template sync regressions passed, `make lint` passed, `pytest -m "not slow"` passed, generated Claude and Codex `mapify init` smokes emitted the expected skill trees, and the full `pytest` attempt reached live review E2E before the 30-minute tool timeout; the timed-out review boundary test passed when rerun directly.
+- Next Trigger: Reuse this when changing `SKILL.md` templates, adding new provider skill roots, changing supported frontmatter, or adding a future generated-skill emitter.
+- Reusable Learnings:
+  - command: `PYTHONPATH=src python -m mapify_cli.skill_ir src/mapify_cli/templates/skills src/mapify_cli/templates/codex/skills --format json`
+  - invariant: `When changing provider skill templates, parse both Claude and Codex SKILL.md trees into SkillIR so content hashes, frontmatter shape, references, and injection-like text are validated together.`
+  - gotcha: `Claude skill Markdown references can legitimately point outside the skill folder to sibling bundled references such as ../../references/*.md, so audits should allow links inside the provider bundle root rather than only inside the individual skill directory.`
+  - review-check: `When adding static provider-surface audits, verify they cover generated-template roots and do not only inspect repo-local .claude skills.`

@@ -69,6 +69,8 @@ Maintainer guardrail: every skill prompt section that says `Output JSON with:` m
 
 Maintainer prompt-tone guardrail: non-release MAP skills should use targeted workflow guardrails and explicit off-ramps instead of blanket all-caps prohibition blocks. `tests/test_skills.py::TestPromptToneCalibration` keeps `/map-fast`, `/map-check`, `/map-resume`, and `/map-task` focused on their intended scope and reserves aggressive hard-stop wording for release safety and irreversible operations.
 
+Maintainer provider-surface guardrail: shipped Claude and Codex skills can be audited as typed `SkillIR` records before release. Run `python -m mapify_cli.skill_ir src/mapify_cli/templates/skills src/mapify_cli/templates/codex/skills` to parse every `SKILL.md`, print deterministic content hashes, and fail unsupported frontmatter, missing bundled Markdown references, or injection-like phrases such as “ignore previous instructions.”
+
 **Optional detached mode:**
 
 ```bash
@@ -1508,6 +1510,18 @@ See `.claude/skills/README.md` for:
 - `skillClass` taxonomy and `runtimeEffects` guidance
 - Trigger configuration in `skill-rules.json`
 - Template sync and validation commands
+
+### Provider Skill IR Audit
+
+MAP's shipped provider skills remain hand-authored, but maintainers can validate their release shape through a compile-time intermediate representation:
+
+```bash
+python -m mapify_cli.skill_ir \
+  src/mapify_cli/templates/skills \
+  src/mapify_cli/templates/codex/skills
+```
+
+The audit reads Claude and Codex `SKILL.md` files, records provider, name, invocation mode, allowed tools, bundled supporting-file links, extracted safety constraints, and a SHA-256 content hash. It exits non-zero when a template introduces unsupported frontmatter, links to a missing bundled reference, or contains hidden instruction-override wording. This catches provider-surface drift before `mapify init` installs the skills into user repositories.
 
 ---
 

@@ -207,7 +207,7 @@ mask structural gaps in review and subtask contracts.
 
 **Status:** partial.
 
-**Improvement-plan items:** `2604.030`, `2604.031`, `2604.032`, `2604.033`, `2604.034`.
+**Improvement-plan items:** `2604.030`, `2604.031`, `2604.032`, `2604.033`, `2604.034`, `2605.221`.
 
 ### Scope
 
@@ -216,6 +216,7 @@ mask structural gaps in review and subtask contracts.
 - Move heavy explanatory content into supporting files only when it reduces always-loaded context.
 - Add stronger trigger tests, including negative-trigger cases.
 - Keep Claude and Codex skill surfaces aligned where they claim the same behavior.
+- Validate hand-authored provider skill files through `SkillIR` before release.
 
 ### Primary Files
 
@@ -223,13 +224,16 @@ mask structural gaps in review and subtask contracts.
 - [src/mapify_cli/templates/skills/skill-rules.json](../src/mapify_cli/templates/skills/skill-rules.json)
 - [src/mapify_cli/templates/skills/map-state/SKILL.md](../src/mapify_cli/templates/skills/map-state/SKILL.md)
 - [src/mapify_cli/templates/skills/map-learn/SKILL.md](../src/mapify_cli/templates/skills/map-learn/SKILL.md)
+- [src/mapify_cli/skill_ir.py](../src/mapify_cli/skill_ir.py)
 - [tests/test_skills.py](../tests/test_skills.py)
+- [tests/test_skill_ir.py](../tests/test_skill_ir.py)
 - [docs/USAGE.md](./USAGE.md)
 - [docs/ARCHITECTURE.md](./ARCHITECTURE.md)
 
 ### Exit Criteria
 
 - Skill documentation matches the installed runtime shape.
+- Provider skill templates parse into stable IR records and fail unsafe or unresolved references.
 - Trigger/invocation regressions are caught by tests.
 - Users can distinguish workflow skills from reference skills without reading source code.
 

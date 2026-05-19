@@ -121,6 +121,7 @@ MAP review is useful, but it is not a replacement for engineering judgment. Seri
 - **Low overhead** - structured enough to prevent chaos, lightweight enough to keep token and time cost under control.
 - **Calibrated workflow effort** - each shipped slash skill declares a `thinking_policy` and `parallel_tool_policy`, so lightweight commands stay direct while planning, review, and release workflows reserve deeper reasoning and parallel fan-out for the stages that benefit from it. Non-release prompts use targeted guardrails instead of blanket all-caps prohibition blocks, reducing over-triggered agents and tool calls while keeping true hard stops explicit.
 - **Context-first prompt envelopes** - high-context `/map-plan`, `/map-efficient`, `/map-debug`, and `/map-review` agent prompts wrap branch artifacts in XML-style `<documents>`, then state the `<task>` and `<expected_output>`, so specs, review bundles, diffs, logs, and schemas stay visually and machine-semantically separated.
+- **Skill IR audit** - release checks can lower shipped Claude and Codex `SKILL.md` files into a typed `SkillIR`, verify content hashes, catch unsupported frontmatter, reject missing supporting-file links, and block injection-like instructions before `mapify init` copies provider surfaces into user repos.
 - **Reviewable diffs** - planning and task contracts keep changes small enough to inspect.
 - **Contract-sized subtasks** - `/map-plan` and `/map-efficient` require per-subtask `expected_diff_size`, `concern_type`, `one_logical_step`, `hard_constraints`, `soft_constraints`, and `coverage_map` metadata, then validate `blueprint.json` before implementation so oversized, mixed-concern, untraceable, or hard-constraint-dropping plans fail early instead of surprising reviewers later. Soft constraints can be consciously traded off only with explicit rationale.
 - **Useful quality gates** - `/map-check` and `/map-review` validate against the plan instead of just asking whether code "looks fine".
@@ -186,6 +187,8 @@ Learner        -> captures reusable project memory
 For Claude Code, MAP slash surfaces live in `.claude/skills/map-*/SKILL.md` files created by `mapify init`. The `.claude/commands/` directory is reserved for user-custom commands and a README that points back to the skill-backed MAP surfaces. The shipped skill catalog classifies skills with `skillClass`: MAP slash workflows are `task` skills, while `map-state` is a `hybrid` skill because it combines planning guidance with hooks/scripts that manage `.map/<branch>/` focus artifacts.
 
 For Codex CLI, `mapify init . --provider codex` creates `.codex/skills/`, `.codex/agents/`, `.codex/config.toml`, hooks, and shared `.map/scripts/`.
+
+Maintainers can audit both provider skill trees with `python -m mapify_cli.skill_ir src/mapify_cli/templates/skills src/mapify_cli/templates/codex/skills`. The command exits non-zero if a shipped skill has unsupported frontmatter, unresolved bundled references, or hidden prompt-injection-like text.
 
 MAP is inspired by [MAP cognitive architecture](https://github.com/Shanka123/MAP) (Nature Communications, 2025), which reported a 74% improvement in planning tasks. The CLI turns that idea into a practical software development workflow.
 

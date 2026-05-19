@@ -1,5 +1,14 @@
 # MAP Framework Improvement Done
 
+## Compile-time skill IR and anti-injection audit for provider surfaces [2605.221]
+
+- Date: 2026-05-19
+- Added `src/mapify_cli/skill_ir.py`, a typed static audit layer that lowers shipped Claude and Codex `SKILL.md` files into `SkillIR` records with provider, name, invocation mode, allowed tools, supporting-file references, extracted safety constraints, and SHA-256 content hashes.
+- The audit exits non-zero for unsupported frontmatter, frontmatter/folder name mismatch, missing descriptions, unresolved bundled Markdown references, links escaping the provider bundle root, and hidden instruction-override phrases such as “ignore previous instructions.”
+- Added `python -m mapify_cli.skill_ir src/mapify_cli/templates/skills src/mapify_cli/templates/codex/skills` as the release validation command for hand-authored provider skill surfaces until a full generator is worth the migration.
+- Updated README, usage, architecture, and roadmap docs so maintainers know the Skill IR audit protects provider surfaces before `mapify init` installs them into user repos.
+- Verified with focused Skill IR tests, ruff on the new module/tests, focused skill/template regression tests, the Skill IR audit CLI, `make lint`, `pytest -m "not slow"`, and repo-built generated-project smokes that emitted both Claude and Codex skill trees. Full `pytest` was attempted after the final code changes and reached the live `/map-review` SDK boundary before the 30-minute tool timeout; the exact boundary test passed on rerun.
+
 ## Context-first XML envelopes for slash commands [2604.026]
 
 - Date: 2026-05-19
