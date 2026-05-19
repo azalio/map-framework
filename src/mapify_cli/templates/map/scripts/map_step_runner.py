@@ -4249,8 +4249,8 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
     Returns formatted string with:
     - Goal (from task_plan.md)
     - Current subtask full details (from blueprint)
-    - Plan overview (all subtasks as ID + title + status one-liners)
     - Upstream results (from step_state.json subtask_results)
+    - Plan overview (all subtasks as ID + title + status one-liners)
     - Repo delta (differential insight, if last_subtask_commit_sha available)
 
     Returns empty string if blueprint not found (graceful fallback).

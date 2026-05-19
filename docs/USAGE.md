@@ -438,7 +438,8 @@ the generated `<map_context>` block before it enters the model. The default is
 summaries ahead of broad plan overview text. If a long workflow genuinely needs
 more injected context, set `MAP_CONTEXT_BLOCK_BUDGET_TOKENS=<positive integer>`
 for that run; malformed, non-positive, or too-small values fall back to the
-default.
+default. The minimum accepted override is 128 estimated tokens, which reserves
+enough space for the `<map_context>` wrapper and truncation note.
 
 ### What is Context Compaction?
 

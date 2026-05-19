@@ -154,7 +154,9 @@ def estimate_tokens(text: str) -> int:
     )
 
 
-def truncate_to_token_budget(text: str, budget_tokens: int, suffix: str = "...") -> str:
+def truncate_to_token_budget(
+    text: str, budget_tokens: int, suffix: str = "..."
+) -> str:
     """Truncate text so ``estimate_tokens(result) <= budget_tokens``.
 
     The truncation is deterministic and prefers a word boundary when it can do
