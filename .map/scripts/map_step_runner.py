@@ -140,6 +140,9 @@ ACCEPTANCE_TAG_RE = re.compile(r"\[([A-Za-z][A-Za-z0-9_-]*-\d+[A-Za-z0-9_-]*)\]"
 CONTEXT_BLOCK_DEFAULT_BUDGET_TOKENS = 4_000
 CONTEXT_BLOCK_MIN_BUDGET_TOKENS = 128
 CONTEXT_BLOCK_BUDGET_ENV = "MAP_CONTEXT_BLOCK_BUDGET_TOKENS"
+REVIEW_PROMPT_DEFAULT_BUDGET_TOKENS = 12_000
+REVIEW_PROMPT_MIN_BUDGET_TOKENS = 1_024
+REVIEW_PROMPT_BUDGET_ENV = "MAP_REVIEW_PROMPT_BUDGET_TOKENS"
 
 try:
     from mapify_cli.token_budget import (
@@ -3389,6 +3392,270 @@ def create_review_bundle(branch: Optional[str] = None) -> dict:
     return result
 
 
+REVIEW_PROMPT_SPECS: dict[str, dict[str, str]] = {
+    "monitor": {
+        "subagent_type": "monitor",
+        "description": "Review code changes",
+        "task": "Review code correctness, standards, security, tests, and performance.",
+        "instructions": """Check for:
+- Code correctness and logic errors
+- Security vulnerabilities (OWASP top 10)
+- Standards compliance
+- Test coverage gaps
+- Performance issues""",
+        "expected_output": """Output JSON with:
+- evidence: array of {file_path, line_range, quote, relevance}; populate this before verdict fields and include at least one item for every HIGH/CRITICAL issue
+- valid: boolean
+- summary: string
+- verdict: 'approved' | 'needs_revision' | 'rejected'
+- issues: array of {severity, category, description, file_path, line_range, suggestion}
+- passed_checks: array of strings
+- failed_checks: array of strings""",
+    },
+    "predictor": {
+        "subagent_type": "predictor",
+        "description": "Analyze change impact",
+        "task": "Analyze the impact and risk of the change.",
+        "instructions": """Analyze:
+- Affected components and modules
+- Breaking changes (API, schema, behavior)
+- Dependencies that need updates
+- Risk assessment (low/medium/high/critical)
+- Integration points affected""",
+        "expected_output": """Output JSON with:
+- evidence: array of {file_path, line_range, quote, relevance}; populate this before risk_assessment and include evidence for each breaking change or high-risk claim
+- risk_assessment: 'low' | 'medium' | 'high' | 'critical'
+- predicted_state:
+    affected_components: array of affected files/modules
+    breaking_changes: array of {type, description, mitigation}
+    required_updates: array of strings
+- confidence:
+    score: float 0.0-1.0""",
+    },
+    "evaluator": {
+        "subagent_type": "evaluator",
+        "description": "Score change quality",
+        "task": "Score the change quality using the review bundle and diff evidence.",
+        "instructions": """Provide quality assessment using 1-10 scoring:
+- Functionality score (1-10)
+- Code quality score (1-10)
+- Performance score (1-10)
+- Security score (1-10)
+- Testability score (1-10)
+- Completeness score (1-10)""",
+        "expected_output": """Output JSON with:
+- evidence: array of {file_path, line_range, quote, relevance}; populate this before scores and include evidence for any score below 7
+- scores: {functionality, code_quality, performance, security, testability, completeness}
+- overall_score: weighted float (1.0-10.0)
+- recommendation: 'proceed' | 'improve' | 'reconsider'
+- strengths: array of strings
+- weaknesses: array of strings
+- next_steps: array of strings""",
+    },
+}
+
+
+def _review_prompt_budget_tokens(explicit_budget: Optional[int] = None) -> int:
+    """Return the hard estimated-token budget for each review fan-out prompt."""
+    if explicit_budget is not None and explicit_budget >= REVIEW_PROMPT_MIN_BUDGET_TOKENS:
+        return explicit_budget
+
+    raw = os.environ.get(REVIEW_PROMPT_BUDGET_ENV, "").strip()
+    if raw:
+        try:
+            value = int(raw)
+            if value >= REVIEW_PROMPT_MIN_BUDGET_TOKENS:
+                return value
+        except ValueError:
+            pass
+    return REVIEW_PROMPT_DEFAULT_BUDGET_TOKENS
+
+
+def _read_review_bundle_markdown(branch_name: str) -> str:
+    bundle_path = get_branch_dir(branch_name) / "review-bundle.md"
+    try:
+        return bundle_path.read_text(encoding="utf-8")
+    except OSError:
+        return "[review-bundle.md missing; run create_review_bundle before launching reviewers]"
+
+
+def _read_git_diff_for_review() -> str:
+    try:
+        result = subprocess.run(
+            ["git", "diff", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except Exception as exc:
+        return f"[git diff unavailable: {exc}]"
+    if result.returncode != 0:
+        reason = result.stderr.strip() or "git diff exited non-zero"
+        return f"[git diff unavailable: {reason}]"
+    return result.stdout.strip() or "[no git diff output]"
+
+
+def _render_review_prompt(
+    spec: dict[str, str],
+    review_bundle: str,
+    review_preferences: str,
+    git_diff: str,
+    budget_note: str = "",
+) -> str:
+    preferences = review_preferences.strip() or "[no additional review preferences]"
+    documents = [
+        "<documents>",
+        "  <document source='.map/<branch>/review-bundle.md' priority='primary'>",
+        "    <document_content>",
+        review_bundle,
+        "    </document_content>",
+        "  </document>",
+        "  <document source='review-preferences'>",
+        "    <document_content>",
+        preferences,
+        "    </document_content>",
+        "  </document>",
+        "  <document source='git diff' priority='secondary'>",
+        "    <document_content>",
+        git_diff,
+        "    </document_content>",
+        "  </document>",
+    ]
+    if budget_note:
+        documents.extend(
+            [
+                "  <document source='review-prompt-budget' priority='diagnostic'>",
+                "    <document_content>",
+                budget_note,
+                "    </document_content>",
+                "  </document>",
+            ]
+        )
+    documents.append("</documents>")
+
+    return "\n\n".join(
+        [
+            "\n".join(documents),
+            f"<task>\n{spec['task']}\n</task>",
+            "<workflow_policy>\n"
+            "Read the persisted review bundle first. Use the raw diff only to "
+            "confirm or expand specific findings the bundle surfaces.\n"
+            "</workflow_policy>",
+            f"<instructions>\n{spec['instructions']}\n</instructions>",
+            f"<expected_output>\n{spec['expected_output']}\n</expected_output>",
+        ]
+    )
+
+
+def _budget_review_prompt(
+    spec: dict[str, str],
+    review_bundle: str,
+    review_preferences: str,
+    git_diff: str,
+    budget_tokens: int,
+) -> dict[str, object]:
+    full_prompt = _render_review_prompt(
+        spec, review_bundle, review_preferences, git_diff
+    )
+    full_estimate = _estimate_tokens(full_prompt)
+    if full_estimate <= budget_tokens:
+        return {
+            "prompt": full_prompt,
+            "estimated_tokens": full_estimate,
+            "budget_tokens": budget_tokens,
+            "truncated": False,
+            "clipped_sections": [],
+        }
+
+    budget_note = (
+        f"Review Prompt Budget: truncated to <= {budget_tokens} estimated tokens. "
+        "The persisted review bundle remains primary; lower-priority raw diff "
+        f"context is clipped first. Increase {REVIEW_PROMPT_BUDGET_ENV} if a "
+        "larger review prompt is required."
+    )
+
+    clipped_sections: list[str] = []
+    base_prompt = _render_review_prompt(spec, "", review_preferences, "", budget_note)
+    remaining_for_documents = budget_tokens - _estimate_tokens(base_prompt)
+    bundle_budget = max(0, remaining_for_documents)
+    budgeted_bundle = review_bundle
+    if _estimate_tokens(review_bundle) > bundle_budget:
+        budgeted_bundle = _truncate_to_token_budget(review_bundle, bundle_budget)
+        clipped_sections.append("review-bundle.md")
+
+    prompt_without_diff = _render_review_prompt(
+        spec, budgeted_bundle, review_preferences, "", budget_note
+    )
+    remaining_for_diff = budget_tokens - _estimate_tokens(prompt_without_diff)
+    diff_budget = max(0, remaining_for_diff)
+    budgeted_diff = git_diff
+    if _estimate_tokens(git_diff) > diff_budget:
+        budgeted_diff = _truncate_to_token_budget(git_diff, diff_budget)
+        clipped_sections.append("git diff")
+
+    prompt = _render_review_prompt(
+        spec, budgeted_bundle, review_preferences, budgeted_diff, budget_note
+    )
+    if _estimate_tokens(prompt) > budget_tokens:
+        # Guard against note/rounding drift: drop secondary diff, then tighten primary text.
+        budgeted_diff = ""
+        prompt_without_docs = _render_review_prompt(spec, "", review_preferences, "", budget_note)
+        bundle_budget = max(0, budget_tokens - _estimate_tokens(prompt_without_docs))
+        budgeted_bundle = _truncate_to_token_budget(review_bundle, bundle_budget)
+        prompt = _render_review_prompt(
+            spec, budgeted_bundle, review_preferences, budgeted_diff, budget_note
+        )
+        for section in ("git diff", "review-bundle.md"):
+            if section not in clipped_sections:
+                clipped_sections.append(section)
+
+    return {
+        "prompt": prompt,
+        "estimated_tokens": _estimate_tokens(prompt),
+        "budget_tokens": budget_tokens,
+        "truncated": True,
+        "clipped_sections": clipped_sections,
+        "full_estimated_tokens": full_estimate,
+    }
+
+
+def build_review_prompts(
+    branch: Optional[str] = None,
+    review_preferences: str = "",
+    budget_tokens: Optional[int] = None,
+    review_bundle_text: Optional[str] = None,
+    git_diff_text: Optional[str] = None,
+) -> dict:
+    """Build bounded `/map-review` fan-out prompts for Monitor/Predictor/Evaluator."""
+    branch_name = _sanitize_branch(branch) if branch else get_branch_name()
+    budget = _review_prompt_budget_tokens(budget_tokens)
+    review_bundle = (
+        review_bundle_text
+        if review_bundle_text is not None
+        else _read_review_bundle_markdown(branch_name)
+    )
+    git_diff = git_diff_text if git_diff_text is not None else _read_git_diff_for_review()
+
+    prompts: dict[str, dict[str, object]] = {}
+    for role, spec in REVIEW_PROMPT_SPECS.items():
+        prompt_result = _budget_review_prompt(
+            spec, review_bundle, review_preferences, git_diff, budget
+        )
+        prompts[role] = {
+            "subagent_type": spec["subagent_type"],
+            "description": spec["description"],
+            **prompt_result,
+        }
+
+    return {
+        "status": "success",
+        "branch": branch_name,
+        "budget_tokens": budget,
+        "budget_env": REVIEW_PROMPT_BUDGET_ENV,
+        "prompts": prompts,
+    }
+
+
 def write_learning_handoff(
     workflow: str,
     task_title: str = "",
@@ -4686,6 +4953,21 @@ if __name__ == "__main__":
 
     elif func_name == "create_review_bundle":
         result = create_review_bundle()
+        print(json.dumps(result, indent=2, ensure_ascii=True))
+
+    elif func_name == "build_review_prompts":
+        import argparse as _ap
+
+        _p = _ap.ArgumentParser(prog="map_step_runner.py build_review_prompts")
+        _p.add_argument("--branch", default=None)
+        _p.add_argument("--budget-tokens", type=int, default=None)
+        _p.add_argument("--review-preferences", default="")
+        _args = _p.parse_args(sys.argv[2:])
+        result = build_review_prompts(
+            branch=_args.branch,
+            review_preferences=_args.review_preferences,
+            budget_tokens=_args.budget_tokens,
+        )
         print(json.dumps(result, indent=2, ensure_ascii=True))
 
     elif func_name == "build_handoff_bundle":

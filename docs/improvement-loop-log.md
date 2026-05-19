@@ -1,3 +1,17 @@
+## 2026-05-19 - Reviewer Prompt Budget Enforcement [2604.023-2]
+
+- Decision: `implemented`
+- Branch: `codex/2604-023-review-prompt-budget`
+- Baseline: `/map-review` already persisted a primary review bundle and separated it from raw diff with XML prompt envelopes, but reviewer fan-out still asked the operator to paste unbounded bundle/diff text into each Monitor, Predictor, and Evaluator prompt.
+- Forward Change: Added `build_review_prompts` to the runtime helper and shipped template copy, wired `/map-review` to call it before Task fan-out, kept the review bundle primary, clipped lower-priority raw diff first under `MAP_REVIEW_PROMPT_BUDGET_TOKENS`, and documented the review prompt budget boundary.
+- Decisive Validation: Focused prompt-builder tests and a synthetic old/new reviewer A/B test prove oversized raw diffs are clipped while bundle evidence, XML envelope shape, reviewer instructions, and expected output contracts survive. A generated-project smoke ran the installed helper against an oversized review bundle plus real git diff and confirmed the prompt stayed under 1,500 estimated tokens with `git diff` clipped.
+- Review Result: Inline diff review checked source/template sync, prompt-envelope preservation, review-bundle priority, docs/plan consistency, and the new CLI surface; no blocking issues remained before commit.
+- Next Trigger: Reuse this learning whenever a MAP workflow fans out long branch artifacts into multiple reviewer or verifier prompts.
+- Reusable Learnings:
+  - command: `python3 .map/scripts/map_step_runner.py build_review_prompts --budget-tokens 1500 --review-preferences "Flag correctness first."`
+  - invariant: `/map-review` reviewer prompts must keep the persisted review bundle as primary context and clip raw diff before bundle text whenever prompt budgeting is required.`
+  - review-check: `For prompt-budget changes, include an old/new A/B test that proves the old prompt exceeds the target while the new prompt preserves task/instruction/output-contract sections under budget.`
+
 ## 2026-05-19 - Actor Context Block Token Budget Enforcement [2604.023-1]
 
 - Decision: `implemented`

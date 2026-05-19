@@ -1,5 +1,13 @@
 # MAP Framework Improvement Done
 
+## Reviewer Prompt Budget Enforcement [2604.023-2]
+
+- Date: 2026-05-19
+- Added `build_review_prompts` to `.map/scripts/map_step_runner.py` and the shipped template copy so `/map-review` builds separate bounded Monitor, Predictor, and Evaluator prompts from the persisted review bundle, review preferences, and raw `git diff` before fan-out.
+- Each reviewer prompt now defaults to a 12,000 estimated-token cap via `MAP_REVIEW_PROMPT_BUDGET_TOKENS`, preserves reviewer task/instruction/output-contract XML envelope sections, keeps `.map/<branch>/review-bundle.md` as the primary context, clips lower-priority raw diff context first, and emits a `Review Prompt Budget` diagnostic document when clipping occurs.
+- Updated `/map-review` skill wiring and shipped template copy to call the prompt builder before Task fan-out, plus README, usage, architecture, and roadmap docs so installed projects expose the new review budget boundary.
+- Verified with focused prompt-builder tests, a synthetic old/new reviewer A/B test proving the new prompt stays under budget while the old inline prompt exceeds it, skill/template-sync tests, lint, and a generated-project smoke that created an oversized review bundle and raw diff then confirmed the installed helper preserved the primary bundle sentinel while clipping the diff tail.
+
 ## Actor Context Block Token Budget Enforcement [2604.023-1]
 
 - Date: 2026-05-19

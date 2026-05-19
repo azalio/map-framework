@@ -354,159 +354,38 @@ verdict.
 
 In **ONE message**, launch all 3 calls in parallel (no dependencies between them):
 
-**3 agent Task calls** (pass the bundle summary + git diff + Review Preferences to each):
+Before launching reviewers, build bounded prompts from the persisted bundle and raw diff:
+
+```bash
+REVIEW_PROMPTS_JSON=$(python3 .map/scripts/map_step_runner.py build_review_prompts \
+  --review-preferences "[paste Review Preferences section above]")
+```
+
+Use `REVIEW_PROMPTS_JSON.prompts.<role>.prompt` as the Task prompt for each reviewer.
+The helper preserves the review bundle as primary context, clips lower-priority raw diff
+context first when the prompt exceeds `MAP_REVIEW_PROMPT_BUDGET_TOKENS` (default 12,000
+estimated tokens), and includes a `Review Prompt Budget` diagnostic document when clipping
+occurs.
+
+**3 agent Task calls** (pass the budgeted prompt for each role):
 
 ```
 Task(
   subagent_type="monitor",
   description="Review code changes",
-  prompt="<documents>
-  <document source='.map/<branch>/review-bundle.md' priority='primary'>
-    <document_content>
-    [paste contents of .map/<branch>/review-bundle.md]
-    </document_content>
-  </document>
-  <document source='review-preferences'>
-    <document_content>
-    [paste Review Preferences section above]
-    </document_content>
-  </document>
-  <document source='git diff' priority='secondary'>
-    <document_content>
-    [paste git diff output]
-    </document_content>
-  </document>
-</documents>
-
-<task>
-Review code correctness, standards, security, tests, and performance.
-</task>
-
-<workflow_policy>
-Read the persisted review bundle first. Use the raw diff only to confirm or expand specific findings the bundle surfaces.
-</workflow_policy>
-
-<instructions>
-Check for:
-- Code correctness and logic errors
-- Security vulnerabilities (OWASP top 10)
-- Standards compliance
-- Test coverage gaps
-- Performance issues
-</instructions>
-
-<expected_output>
-Output JSON with:
-- evidence: array of {file_path, line_range, quote, relevance}; populate this before verdict fields and include at least one item for every HIGH/CRITICAL issue
-- valid: boolean
-- summary: string
-- verdict: 'approved' | 'needs_revision' | 'rejected'
-- issues: array of {severity, category, description, file_path, line_range, suggestion}
-- passed_checks: array of strings
-- failed_checks: array of strings
-</expected_output>"
+  prompt="[paste REVIEW_PROMPTS_JSON.prompts.monitor.prompt]"
 )
 
 Task(
   subagent_type="predictor",
   description="Analyze change impact",
-  prompt="<documents>
-  <document source='.map/<branch>/review-bundle.md' priority='primary'>
-    <document_content>
-    [paste contents of .map/<branch>/review-bundle.md]
-    </document_content>
-  </document>
-  <document source='review-preferences'>
-    <document_content>
-    [paste Review Preferences section above]
-    </document_content>
-  </document>
-  <document source='git diff' priority='secondary'>
-    <document_content>
-    [paste git diff output]
-    </document_content>
-  </document>
-</documents>
-
-<task>
-Analyze the impact and risk of the change.
-</task>
-
-<workflow_policy>
-Read the persisted review bundle first. Use the raw diff only to confirm or expand specific findings the bundle surfaces.
-</workflow_policy>
-
-<instructions>
-Analyze:
-- Affected components and modules
-- Breaking changes (API, schema, behavior)
-- Dependencies that need updates
-- Risk assessment (low/medium/high/critical)
-- Integration points affected
-</instructions>
-
-<expected_output>
-Output JSON with:
-- evidence: array of {file_path, line_range, quote, relevance}; populate this before risk_assessment and include evidence for each breaking change or high-risk claim
-- risk_assessment: 'low' | 'medium' | 'high' | 'critical'
-- predicted_state:
-    affected_components: array of affected files/modules
-    breaking_changes: array of {type, description, mitigation}
-    required_updates: array of strings
-- confidence:
-    score: float 0.0-1.0
-</expected_output>"
+  prompt="[paste REVIEW_PROMPTS_JSON.prompts.predictor.prompt]"
 )
 
 Task(
   subagent_type="evaluator",
   description="Score change quality",
-  prompt="<documents>
-  <document source='.map/<branch>/review-bundle.md' priority='primary'>
-    <document_content>
-    [paste contents of .map/<branch>/review-bundle.md]
-    </document_content>
-  </document>
-  <document source='review-preferences'>
-    <document_content>
-    [paste Review Preferences section above]
-    </document_content>
-  </document>
-  <document source='git diff' priority='secondary'>
-    <document_content>
-    [paste git diff output]
-    </document_content>
-  </document>
-</documents>
-
-<task>
-Score the change quality using the review bundle and diff evidence.
-</task>
-
-<workflow_policy>
-Read the persisted review bundle first. Use the raw diff only to confirm or expand specific findings the bundle surfaces.
-</workflow_policy>
-
-<instructions>
-Provide quality assessment using 1-10 scoring:
-- Functionality score (1-10)
-- Code quality score (1-10)
-- Performance score (1-10)
-- Security score (1-10)
-- Testability score (1-10)
-- Completeness score (1-10)
-</instructions>
-
-<expected_output>
-Output JSON with:
-- evidence: array of {file_path, line_range, quote, relevance}; populate this before scores and include evidence for any score below 7
-- scores: {functionality, code_quality, performance, security, testability, completeness}
-- overall_score: weighted float (1.0-10.0)
-- recommendation: 'proceed' | 'improve' | 'reconsider'
-- strengths: array of strings
-- weaknesses: array of strings
-- next_steps: array of strings
-</expected_output>"
+  prompt="[paste REVIEW_PROMPTS_JSON.prompts.evaluator.prompt]"
 )
 ```
 
