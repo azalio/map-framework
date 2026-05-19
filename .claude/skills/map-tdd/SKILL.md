@@ -137,7 +137,7 @@ Task(
 
 <TDD_Mode>test_writer</TDD_Mode>
 
-STRICT RULES:
+Code-only rules:
 1. Write ONLY test files. Do NOT create or modify implementation files.
 2. Tests must be derived from the SPECIFICATION (AAG contract + validation_criteria + test_strategy).
 3. You have NO knowledge of the implementation. Do not assume implementation details.
@@ -307,7 +307,7 @@ Output: standard Actor output (approach + code + trade-offs)
 )
 ```
 
-**CRITICAL: After ACTOR returns, run the TDD Refactor step below, then call Monitor (2.4). Do NOT skip Monitor. Do NOT mark the subtask complete without Monitor validation.** This is not optional — Monitor is a mandatory phase in every workflow, including TDD.
+After Actor returns, run the TDD Refactor step below, then call Monitor (2.4). Monitor validation is required before marking the subtask complete, including in TDD workflows.
 
 ### TDD Refactor: Clean Stale Red-Phase Comments
 
@@ -326,7 +326,7 @@ Rewrite matched comments as permanent, implementation-neutral descriptions. If a
 # Validate Actor step, then get_next_step will return MONITOR (2.4)
 python3 .map/scripts/map_orchestrator.py validate_step "2.3"
 NEXT_STEP=$(python3 .map/scripts/map_orchestrator.py get_next_step)
-# NEXT_STEP.phase MUST be "MONITOR" — execute it before proceeding
+# NEXT_STEP.phase should be "MONITOR" — execute it before proceeding
 ```
 
 Monitor verifies both implementation correctness AND that all tests pass.

@@ -65,6 +65,8 @@ Reviewer agents now use evidence-first output contracts: Monitor, Predictor, and
 
 Maintainer guardrail: every skill prompt section that says `Output JSON with:` must now either include evidence/quotes before judgment fields or cite `.claude/references/map-json-output-contracts.md`. `tests/test_skills.py::TestEvidenceFirstPromptContracts` scans both `.claude/skills/` and shipped template skills so vague JSON contracts fail before release.
 
+Maintainer prompt-tone guardrail: non-release MAP skills should use targeted workflow guardrails and explicit off-ramps instead of blanket all-caps prohibition blocks. `tests/test_skills.py::TestPromptToneCalibration` keeps `/map-fast`, `/map-check`, `/map-resume`, and `/map-task` focused on their intended scope and reserves aggressive hard-stop wording for release safety and irreversible operations.
+
 **Optional detached mode:**
 
 ```bash

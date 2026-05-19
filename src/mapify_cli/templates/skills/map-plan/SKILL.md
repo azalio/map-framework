@@ -131,7 +131,7 @@ Locate the most relevant code for this request and return:
 - any existing similar implementations/patterns
 - risks/unknowns and what to verify
 
-CRITICAL: For EVERY file path you mention:
+For every file path you mention:
 1. Use Glob to verify the file actually exists
 2. If the spec/requirements say "create new file X" — CHECK if X already exists
 3. Clearly mark each file as EXISTING (verified via Glob) or NEW (confirmed not found)
@@ -369,7 +369,7 @@ This ensures every `/map-plan` run produces a spec, regardless of whether interv
 - Multi-service coordination, retry/backoff logic, queueing
 - Any operation where state must survive a single request-response cycle
 
-**ALWAYS run if ANY of these is true:**
+Run the spec review when any of these is true:
 - Source spec/requirements exceed 500 lines
 - Source defines 10 or more acceptance criteria
 - Multiple subgraphs, services, or subsystems involved
@@ -459,10 +459,10 @@ Break down this task into atomic, testable subtasks:
 
 Output requirements:
 - Include an `evidence` array before `subtasks`: quote the spec, user request, discovery notes, or source files that justify the decomposition boundaries
-- Each subtask MUST include an aag_contract: "Actor -> Action(params) -> Goal"
-- Each subtask MUST include `expected_diff_size`: `tiny`, `small`, `medium`, or `large`
-- Each subtask MUST include `concern_type`: `api`, `config`, `data`, `docs`, `infra`, `observability`, `refactor`, `release`, `runtime`, `security`, `tests`, `ui`, or `mixed`
-- Each subtask MUST include `one_logical_step: true`
+- Each subtask must include an aag_contract: "Actor -> Action(params) -> Goal"
+- Each subtask must include `expected_diff_size`: `tiny`, `small`, `medium`, or `large`
+- Each subtask must include `concern_type`: `api`, `config`, `data`, `docs`, `infra`, `observability`, `refactor`, `release`, `runtime`, `security`, `tests`, `ui`, or `mixed`
+- Each subtask must include `one_logical_step: true`
 - If `expected_diff_size` is `large`, split the subtask unless it has a concrete `split_rationale`
 - If `concern_type` is `mixed`, split the subtask unless it has a concrete `concern_justification`
 - Each subtask should be completable within ~4000 tokens (SFT comfort zone)
@@ -475,7 +475,7 @@ Output requirements:
 - Output `soft_constraints`: negotiable preferences with `tradeoff_rationale` when intentionally not covered
 
 Coverage requirements:
-- CRITICAL: Every acceptance criterion from the spec must appear as a validation_criteria in exactly one subtask. Do NOT silently drop spec criteria that seem minor.
+- Every acceptance criterion from the spec must appear as a validation_criteria in exactly one subtask. Do not silently drop spec criteria that seem minor.
 - Each `validation_criteria` item that proves a mapped requirement must cite the stable requirement ID in brackets, e.g. `VC1 [MVP-AC-1]: checkout timeout shows retryable message`. The `coverage_map` key and bracket tag must match exactly.
 - Every `hard_constraints[].id` must appear in `coverage_map` and as a matching bracket tag in the owning subtask's `validation_criteria`.
 - Every `soft_constraints[].id` must either appear in `coverage_map` or include `tradeoff_rationale` explaining the conscious tradeoff/defer decision.

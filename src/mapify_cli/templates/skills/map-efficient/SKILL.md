@@ -27,7 +27,7 @@ parallel_tool_policy: guarded_wave_only
 ## Execution Rules
 
 1. Execute steps in order using state machine guidance
-2. Use exact `subagent_type` specified — never substitute
+2. Use the exact `subagent_type` specified so each phase has the right context boundary
 3. Call each agent individually — no combining or skipping
 4. Max 5 retry iterations per subtask (note: /map-fast uses max 3)
 5. **Always batch mode, sequential by default**: execution mode is always `batch` (no pauses). After INIT_STATE, compute waves but execute subtasks **one at a time** (sequential). Parallel execution within a wave is allowed ONLY when wave has ≤3 subtasks AND all are low-risk AND all create new files (no modifications to existing files). See "Wave Computation" section.
@@ -51,7 +51,7 @@ Written/read by `map_orchestrator.py`. Tracks: current phase, subtask states, wa
 retry counts, constraints, files changed per subtask. Used by `workflow-gate.py` for
 phase-based enforcement (Edit allowed only during ACTOR/APPLY/TEST_WRITER phases).
 
-**NEVER modify `step_state.json` directly.** Always use the orchestrator CLI
+Do not modify `step_state.json` directly. Use the orchestrator CLI
 (`map_orchestrator.py`, `map_step_runner.py`). Direct writes bypass validation and
 corrupt state transitions. If an orchestrator operation doesn't work — it's a bug,
 ask the user.
@@ -313,7 +313,7 @@ loop:
   for each subtask in WAVE.subtasks (one at a time):
     1. RESEARCH (2.2) — run research-agent
     2. ACTOR (2.3) — implement subtask
-    3. MONITOR (2.4) — MANDATORY: validate + BUILD GATE. NEVER skip.
+    3. MONITOR (2.4) — required validation + build gate before completion.
     4. validate_step / advance to next subtask
 
   # After ALL subtasks in wave pass: run per-wave gates
@@ -329,7 +329,7 @@ automatically. The state machine handles iteration.
 Use when wave has ≤3 subtasks AND all are low-risk AND all create new files only.
 Also allowed for any wave size when the user explicitly requests parallel execution.
 
-**CRITICAL:** When running subtasks in parallel, use the **wave API** (`validate_wave_step`,
+When running subtasks in parallel, use the **wave API** (`validate_wave_step`,
 `advance_wave`), NOT the sequential API (`validate_step`, `get_next_step`).
 The sequential API tracks only ONE `current_subtask_id` and will fail for parallel work.
 
@@ -367,9 +367,9 @@ and does NOT require `current_subtask_id` to match. After `advance_wave`, the st
 is synchronized for sequential API — you can switch back to `get_next_step` for
 subsequent waves.
 
-### Phase: RESEARCH (2.2) — MANDATORY
+### Phase: RESEARCH (2.2) — Required
 
-**CRITICAL: ALWAYS run research. Do NOT skip this phase.**
+Run research for each subtask before Actor.
 
 Research prevents the most common failure mode: Actor writing code that doesn't integrate
 with the existing codebase (wrong imports, missing types, incompatible APIs).
@@ -415,7 +415,7 @@ Task(
 
 <TDD_Mode>test_writer</TDD_Mode>
 
-STRICT RULES:
+Test-writer rules:
 1. Write ONLY test files. Do NOT create or modify implementation files.
 2. Tests must be derived from the SPECIFICATION (AAG contract + validation_criteria).
 3. You have NO knowledge of the implementation.
@@ -506,18 +506,18 @@ Protocol:
 )
 ```
 
-**CRITICAL: After Actor returns, do NOT debug or fix issues yourself.**
+After Actor returns, proceed to Monitor rather than debugging or fixing issues yourself.
 - If Actor reports diagnostics/errors — proceed directly to MONITOR.
 - Monitor will verify and report real issues. If `valid=false`, retry via Actor (not manual edits).
 
-### Phase: MONITOR (2.4) — MANDATORY
+### Phase: MONITOR (2.4) — Required
 
-**CRITICAL: ALWAYS run Monitor after Actor. Do NOT skip this phase.**
+Run Monitor after Actor before marking any subtask complete.
 
 Monitor is the ONLY validation gate between Actor output and step completion.
 Even if tests already pass, Monitor checks contract compliance, code quality,
 security issues, and integration correctness that tests alone cannot verify.
-**Never skip Monitor because "tests pass" — passing tests is necessary but NOT sufficient.**
+Passing tests is necessary but not sufficient for MAP completion.
 
 ```python
 Task(
@@ -782,7 +782,7 @@ Task(
 **Completed Subtasks:** {list_of_subtask_ids}
 **Branch:** {branch}
 
-You MUST:
+Required final-verifier actions:
 1. Run available tests
 2. Check MCP tools for ground-truth if available
 3. Verify integration between subtasks

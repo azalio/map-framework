@@ -29,6 +29,12 @@ parallel_tool_policy: sequential_by_default
 - Do not add research, Predictor, Evaluator, Reflector, or extra self-audit steps unless the task no longer fits `/map-fast`; switch to `/map-efficient` instead.
 - Run agent phases sequentially. Parallelize only independent read-only file inspection or independent check commands when there are no state transitions or edits involved.
 
+## When Not To Expand Scope
+
+- Do not add discovery, design review, impact analysis, or learning steps to keep this workflow busy.
+- Do not refactor nearby code unless the selected small task cannot work without that exact change.
+- If the task becomes risky, multi-stage, or ambiguous, stop using `/map-fast` and switch to `/map-efficient` or `/map-plan` instead.
+
 ## Workflow Overview
 
 Minimal agent sequence (token-optimized, reduced analysis depth):
@@ -46,7 +52,7 @@ Minimal agent sequence (token-optimized, reduced analysis depth):
 - Predictor (no impact analysis)
 - Reflector (no lesson extraction)
 
-**⚠️ CRITICAL:** This is NOT the full MAP workflow. Learning and impact analysis are disabled.
+**Scope boundary:** This is not the full MAP workflow. Learning and impact analysis are disabled by design.
 
 ## Step 1: Task Decomposition
 

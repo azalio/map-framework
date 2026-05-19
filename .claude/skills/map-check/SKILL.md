@@ -21,6 +21,12 @@ parallel_tool_policy: independent_checks_only
 - Do not plan or execute new work from this skill. If checks reveal missing implementation, report it and hand off to `/map-task`, `/map-efficient`, or `/map-debug`.
 - Parallelize only independent quality gates or artifact reads. Do not parallelize final-verifier, state validation, or any step that depends on previous check output.
 
+## When Not To Expand Scope
+
+- Do not fix failures from inside `/map-check`; report the failing gate and hand off to the workflow that should own the fix.
+- Do not decompose, research, or implement new subtasks from this skill.
+- Do not run extra audits after the requested quality gates and MAP completion checks have a clear pass/fail result.
+
 **Two Modes:**
 
 ## Mode 1: Standalone Quality Check (No MAP workflow)

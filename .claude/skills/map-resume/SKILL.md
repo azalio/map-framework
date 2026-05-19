@@ -21,6 +21,12 @@ parallel_tool_policy: sequential_state_machine
 - Do not re-plan, re-decompose, or broaden the task during resume. The goal is to continue the existing workflow from the next valid state-machine step.
 - Keep state-machine operations sequential. Parallelize only independent artifact reads used to prepare the resume briefing.
 
+## When Not To Expand Scope
+
+- Do not start unrelated work from a resume session.
+- Do not re-run planning or decomposition unless the persisted artifacts are missing or contradictory.
+- Do not add extra validation beyond the resumed workflow's next required gate until the current checkpoint is complete.
+
 **When to use:**
 - After context window exhaustion mid-workflow
 - After accidental session termination
@@ -139,7 +145,7 @@ Parse the state and display:
 
 ## Step 3: User Confirmation
 
-**CRITICAL: Always ask for user confirmation before resuming.**
+Ask for user confirmation before resuming because this can continue a prior edit workflow.
 
 ```
 AskUserQuestion(questions=[

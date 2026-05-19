@@ -244,3 +244,17 @@
   - command: `uv run --no-sync mapify init <new-dir> --no-git --mcp none`
   - invariant: `If shipped skills link to .claude/references files, the matching src/mapify_cli/templates/references files must exist, be byte-identical, and be covered by template-sync tests.`
   - review-check: `When a plan item mixes user-visible prompt behavior with future generic lint tooling, close only the shipped behavior and leave the lint rule as a child follow-up.`
+## 2026-05-18 - Claude 4.6 command simplification and verb calibration [2604.025]
+
+- Decision: `implemented`
+- Branch: `codex/2604-025-prompt-calibration`
+- PR: `https://github.com/azalio/map-framework/pull/129`
+- Baseline: MAP task skills still contained older prompt patterns such as `ABSOLUTELY FORBIDDEN`, `STRICTLY PROHIBITED`, `CRITICAL: ALWAYS`, and generic `YOU MUST:` blocks in non-release workflows. Anthropic's current prompt guidance says Claude 4.5/4.6-era prompts can overtrigger tools and subagents when older undertriggering workarounds remain in place.
+- Forward Change: Replaced non-release blanket prohibition blocks with targeted workflow guardrails, added explicit `When Not To Expand Scope` clauses to lightweight/resume/single-subtask skills, preserved real hard stops in `/map-release`, synced templates, and added a scanner that rejects the banned blanket prohibition phrases outside release safety.
+- Decisive Validation: Focused prompt-tone and template-sync tests passed, `make lint` passed, `pytest -m "not slow"` passed, and generated-project `uv run --no-sync mapify init ... --no-git --mcp none` emitted calibrated skill prompts. Full `pytest` was attempted and reached the live Claude SDK review boundary after plan/efficient live tests passed; the timed-out review boundary then passed both individually and as the full `TestMapReviewE2E` class.
+- Next Trigger: Reuse this learning whenever editing `.claude/skills/map-*/SKILL.md`, shipped template skill copies, or workflow prompt wording that could affect subagent/tool triggering.
+- Reusable Learnings:
+  - command: `pytest tests/test_skills.py::TestPromptToneCalibration tests/test_template_sync.py -v`
+  - command: `uv run --no-sync mapify init <new-dir> --no-git --mcp none`
+  - invariant: `Non-release MAP task skills should use targeted guardrail wording and explicit scope off-ramps; reserve blanket all-caps prohibition blocks for irreversible release/tag safety.`
+  - review-check: `When changing prompt tone, verify required workflow gates remain semantically explicit even if CRITICAL/MUST/NEVER wording is reduced.`
