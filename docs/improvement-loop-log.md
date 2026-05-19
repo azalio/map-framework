@@ -279,7 +279,7 @@
 
 - Decision: `implemented`
 - Branch: `codex/2605-221-skill-ir-audit`
-- PR: `pending`
+- PR: `https://github.com/azalio/map-framework/pull/132`
 - Baseline: MAP shipped Claude and Codex provider skills as hand-authored Markdown templates. Existing tests covered frontmatter, trigger rules, prompt tone, JSON contracts, links, and template sync, but there was no single typed representation that could parse every shipped `SKILL.md`, record content hashes, and fail unsafe provider-surface drift before `mapify init` installed the files into user repos.
 - Forward Change: Added `src/mapify_cli/skill_ir.py` with a `SkillIR` dataclass, parser, audit findings, supporting-file/link validation, hidden instruction-override phrase detection, deterministic content hashes, and a CLI entry point. Added focused tests that parse all shipped Claude and Codex template skills, reject missing references, reject unsupported frontmatter, reject injection-like instructions, and verify the CLI exits non-zero on findings.
 - Decisive Validation: Focused Skill IR tests passed, the audit command returned no findings for both shipped provider skill roots, focused skill/template sync regressions passed, `make lint` passed, `pytest -m "not slow"` passed, generated Claude and Codex `mapify init` smokes emitted the expected skill trees, and the full `pytest` attempt reached live review E2E before the 30-minute tool timeout; the timed-out review boundary test passed when rerun directly.
