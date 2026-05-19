@@ -134,22 +134,6 @@
 - Add CI assertions that the resiliency artifacts are always produced: for workflows using AI agents (/map-efficient, /map-debug, /map-review, /map-learn), validate the health report JSON exists and includes terminal_status values (pending/complete/blocked/won't_do/superseded) exactly as specified in the state artifact section.
 - Create a small set of resiliency regression tests: (1) simulate compaction/no checkpoint and confirm hook injection continues without blocking session start (architecture explicitly says session start must always succeed), (2) simulate oversized checkpoint file >256KB and confirm injection is skipped but workflow proceeds, (3) simulate invalid UTF-8 and confirm injection is rejected but session continues, using the existing security validation rules and stated performance characteristics (e.g., <0.5s total hook time).
 
-## Context-first XML envelopes for slash commands [2604.026]
-
-**Benefit Hypothesis**: Standardizing MAP command prompts around a shared XML envelope and moving long-form context above instructions will improve requirement retention and reduce ambiguous agent output on long-context tasks such as `/map-plan`, `/map-review`, `/map-debug`, and `/map-efficient`. The success metric is fewer dropped acceptance criteria in decompositions and fewer review/debug outputs that miss the primary artifact set.
-**Confidence**: 0.79
-**Reasoning**: Anthropic’s guide is explicit on two points: for long contexts, put documents/data first and put the query at the end; and structure mixed prompt content with consistent XML tags. MAP only applies that pattern partially today. `/map-efficient` and `/map-tdd` use some XML blocks (`<MAP_Contract>`, `<map_context>`, `<MAP_Written>`), but most commands still rely on ad hoc prose and markdown. `/map-review`, `/map-debug`, `/map-fast`, and large parts of `/map-plan` pass instructions, policies, and data in inconsistent layouts, which increases prompt ambiguity exactly in the commands that carry the most context.
-**Why Not Already Tried**: MAP already invested in state injection and context-window management, so the next iteration naturally focused on orchestration and hooks rather than prompt formatting. The remaining gap is not “more context”, but a more consistent and parseable arrangement of the context that already exists.
-
-### Proposed Changes
-
-- Introduce a shared slash-command prompt envelope with tags such as `<task>`, `<workflow_policy>`, `<artifacts>`, `<constraints>`, `<expected_output>`, and `<decision_rule>`, and apply it consistently across all `.claude/commands/map-*.md`.
-- For any prompt that includes large artifacts, move those artifacts to the top of the actual subagent prompt. For example, wrap plan specs, diffs, findings files, and prior review handoffs in `<documents>` or `<artifacts>` blocks before the instructions and query.
-- Refactor `/map-review` so the canonical handoff, diff, and review preferences are passed as separate tagged sections rather than inline prose. Do the same for `/map-plan` when passing spec + findings + architecture graph to the decomposer.
-- Replace ad hoc markdown headings like “**Context:**” or “**Task:**” inside quoted subagent prompts with explicit machine-readable tags. This aligns with Anthropic’s guidance that XML reduces misinterpretation when instructions and variable input are mixed.
-- Centralize the common envelope in a small template helper or generator so the structure is maintained in one place and synced into `src/mapify_cli/templates/commands/`.
-
-
 ## Supporting-file and lifecycle optimization for skills [2604.033]
 
 **Benefit Hypothesis**: Restructuring MAP skills around the official skill content lifecycle and supporting-file model will keep invoked skill bodies lean, reduce compaction loss, and make long-running skills more durable across sessions. The measurable outcome is a smaller average SKILL body with equal or better task completion quality.

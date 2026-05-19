@@ -64,7 +64,7 @@ These defaults guide how agents weigh findings. Override by editing this section
 
 These are the fields each agent is expected to return. The command prompt explicitly requests them.
 
-Use compact evidence-first examples from [Evidence-First Output Examples](../../references/map-output-examples.md) when constructing reviewer prompts or interpreting agent output.
+Use compact evidence-first examples from [Evidence-First Output Examples](../../references/map-output-examples.md) when constructing reviewer prompts or interpreting agent output. Use the shared [XML Prompt Envelope](../../references/map-xml-prompt-envelopes.md) for reviewer prompts so the persisted bundle and diff stay separated from instructions and output contracts.
 
 **Monitor:**
 - `evidence[]`: array of `{file_path, line_range, quote, relevance}` — quote concrete source or diff material before verdict fields
@@ -360,26 +360,42 @@ In **ONE message**, launch all 3 calls in parallel (no dependencies between them
 Task(
   subagent_type="monitor",
   description="Review code changes",
-  prompt="Your primary context is the persisted review bundle at `.map/<branch>/review-bundle.json`
-(human-readable summary at `.map/<branch>/review-bundle.md`). Read the bundle first.
-Use the raw diff only to confirm or expand specific findings the bundle surfaces.
+  prompt="<documents>
+  <document source='.map/<branch>/review-bundle.md' priority='primary'>
+    <document_content>
+    [paste contents of .map/<branch>/review-bundle.md]
+    </document_content>
+  </document>
+  <document source='review-preferences'>
+    <document_content>
+    [paste Review Preferences section above]
+    </document_content>
+  </document>
+  <document source='git diff' priority='secondary'>
+    <document_content>
+    [paste git diff output]
+    </document_content>
+  </document>
+</documents>
 
-**Review Bundle Summary:**
-[paste contents of .map/<branch>/review-bundle.md]
+<task>
+Review code correctness, standards, security, tests, and performance.
+</task>
 
-**Review Preferences:**
-[paste Review Preferences section above]
+<workflow_policy>
+Read the persisted review bundle first. Use the raw diff only to confirm or expand specific findings the bundle surfaces.
+</workflow_policy>
 
-**Changes (secondary — use to confirm bundle findings):**
-[paste git diff output]
-
+<instructions>
 Check for:
 - Code correctness and logic errors
 - Security vulnerabilities (OWASP top 10)
 - Standards compliance
 - Test coverage gaps
 - Performance issues
+</instructions>
 
+<expected_output>
 Output JSON with:
 - evidence: array of {file_path, line_range, quote, relevance}; populate this before verdict fields and include at least one item for every HIGH/CRITICAL issue
 - valid: boolean
@@ -387,32 +403,49 @@ Output JSON with:
 - verdict: 'approved' | 'needs_revision' | 'rejected'
 - issues: array of {severity, category, description, file_path, line_range, suggestion}
 - passed_checks: array of strings
-- failed_checks: array of strings"
+- failed_checks: array of strings
+</expected_output>"
 )
 
 Task(
   subagent_type="predictor",
   description="Analyze change impact",
-  prompt="Your primary context is the persisted review bundle at `.map/<branch>/review-bundle.json`
-(human-readable summary at `.map/<branch>/review-bundle.md`). Read the bundle first.
-Use the raw diff only to confirm or expand specific findings the bundle surfaces.
+  prompt="<documents>
+  <document source='.map/<branch>/review-bundle.md' priority='primary'>
+    <document_content>
+    [paste contents of .map/<branch>/review-bundle.md]
+    </document_content>
+  </document>
+  <document source='review-preferences'>
+    <document_content>
+    [paste Review Preferences section above]
+    </document_content>
+  </document>
+  <document source='git diff' priority='secondary'>
+    <document_content>
+    [paste git diff output]
+    </document_content>
+  </document>
+</documents>
 
-**Review Bundle Summary:**
-[paste contents of .map/<branch>/review-bundle.md]
+<task>
+Analyze the impact and risk of the change.
+</task>
 
-**Review Preferences:**
-[paste Review Preferences section above]
+<workflow_policy>
+Read the persisted review bundle first. Use the raw diff only to confirm or expand specific findings the bundle surfaces.
+</workflow_policy>
 
-**Changes (secondary — use to confirm bundle findings):**
-[paste git diff output]
-
+<instructions>
 Analyze:
 - Affected components and modules
 - Breaking changes (API, schema, behavior)
 - Dependencies that need updates
 - Risk assessment (low/medium/high/critical)
 - Integration points affected
+</instructions>
 
+<expected_output>
 Output JSON with:
 - evidence: array of {file_path, line_range, quote, relevance}; populate this before risk_assessment and include evidence for each breaking change or high-risk claim
 - risk_assessment: 'low' | 'medium' | 'high' | 'critical'
@@ -421,25 +454,40 @@ Output JSON with:
     breaking_changes: array of {type, description, mitigation}
     required_updates: array of strings
 - confidence:
-    score: float 0.0-1.0"
+    score: float 0.0-1.0
+</expected_output>"
 )
 
 Task(
   subagent_type="evaluator",
   description="Score change quality",
-  prompt="Your primary context is the persisted review bundle at `.map/<branch>/review-bundle.json`
-(human-readable summary at `.map/<branch>/review-bundle.md`). Read the bundle first.
-Use the raw diff only to confirm or expand specific findings the bundle surfaces.
+  prompt="<documents>
+  <document source='.map/<branch>/review-bundle.md' priority='primary'>
+    <document_content>
+    [paste contents of .map/<branch>/review-bundle.md]
+    </document_content>
+  </document>
+  <document source='review-preferences'>
+    <document_content>
+    [paste Review Preferences section above]
+    </document_content>
+  </document>
+  <document source='git diff' priority='secondary'>
+    <document_content>
+    [paste git diff output]
+    </document_content>
+  </document>
+</documents>
 
-**Review Bundle Summary:**
-[paste contents of .map/<branch>/review-bundle.md]
+<task>
+Score the change quality using the review bundle and diff evidence.
+</task>
 
-**Review Preferences:**
-[paste Review Preferences section above]
+<workflow_policy>
+Read the persisted review bundle first. Use the raw diff only to confirm or expand specific findings the bundle surfaces.
+</workflow_policy>
 
-**Changes (secondary — use to confirm bundle findings):**
-[paste git diff output]
-
+<instructions>
 Provide quality assessment using 1-10 scoring:
 - Functionality score (1-10)
 - Code quality score (1-10)
@@ -447,7 +495,9 @@ Provide quality assessment using 1-10 scoring:
 - Security score (1-10)
 - Testability score (1-10)
 - Completeness score (1-10)
+</instructions>
 
+<expected_output>
 Output JSON with:
 - evidence: array of {file_path, line_range, quote, relevance}; populate this before scores and include evidence for any score below 7
 - scores: {functionality, code_quality, performance, security, testability, completeness}
@@ -455,7 +505,8 @@ Output JSON with:
 - recommendation: 'proceed' | 'improve' | 'reconsider'
 - strengths: array of strings
 - weaknesses: array of strings
-- next_steps: array of strings"
+- next_steps: array of strings
+</expected_output>"
 )
 ```
 

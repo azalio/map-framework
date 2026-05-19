@@ -1,5 +1,14 @@
 # MAP Framework Improvement Done
 
+## Context-first XML envelopes for slash commands [2604.026]
+
+- Date: 2026-05-19
+- Added a shared `.claude/references/map-xml-prompt-envelopes.md` reference, with the shipped template copy, documenting the artifact-first XML envelope pattern from Anthropic long-context/XML prompt guidance.
+- Updated `/map-plan`, `/map-efficient`, `/map-debug`, and `/map-review` high-context subagent prompts so long artifacts are wrapped in `<documents>` before `<task>`, workflow instructions, and `<expected_output>`.
+- Refactored `/map-review` reviewer fan-out prompts so the persisted review bundle, review preferences, and git diff are separate tagged documents, with the bundle explicitly primary and the diff secondary.
+- Updated README, usage, architecture, and roadmap docs, and added regression tests that scan both `.claude/skills/` and `src/mapify_cli/templates/skills/` for the XML envelope reference and required tags.
+- Verified with focused XML envelope/template-sync tests, `make lint`, `pytest -m "not slow"`, a repo-built `mapify init` smoke that inspected generated skill/reference output, the timed-out live SDK boundary test rerun, live `/map-review` E2E, and live full-flow E2E. Full `pytest` and the full live SDK module were attempted but exceeded the 30-minute tool timeout at the same cumulative live boundary without a deterministic failure; the exact boundary test passed individually.
+
 ## Claude 4.6 command simplification and verb calibration [2604.025]
 
 - Date: 2026-05-18

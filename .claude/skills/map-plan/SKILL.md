@@ -9,7 +9,7 @@ argument-hint: "[task description]"
 
 **Purpose:** Plan and decompose complex tasks into atomic subtasks. This command ONLY plans - it does NOT execute or verify.
 
-Use compact evidence-first examples from [Evidence-First Output Examples](../../references/map-output-examples.md) when spec review or decomposition output depends on quoted requirements, source files, or prior artifacts.
+Use compact evidence-first examples from [Evidence-First Output Examples](../../references/map-output-examples.md) when spec review or decomposition output depends on quoted requirements, source files, or prior artifacts. Use the shared [XML Prompt Envelope](../../references/map-xml-prompt-envelopes.md) for long subagent prompts so source artifacts appear before instructions and output contracts.
 
 ## Effort and Parallelism Policy
 
@@ -382,24 +382,36 @@ After writing the spec, invoke Monitor agent to adversarially review it. The goa
 Task(
   subagent_type="monitor",
   description="Devil's Advocate spec review",
-  prompt=f"""You are reviewing a SPECIFICATION (not code). Act as Devil's Advocate.
+  prompt=f"""
+<documents>
+  <document source=".map/<branch>/spec_<branch>.md">
+    <document_content>
+    Read the current branch spec file before reviewing. Treat it as the primary artifact.
+    </document_content>
+  </document>
+</documents>
 
-Read the spec file: .map/<branch>/spec_<branch>.md
+<task>
+Review the SPECIFICATION, not code. Act as Devil's Advocate before decomposition.
+</task>
 
+<instructions>
 Check for:
-1. **Race conditions / concurrency gaps**: Are there shared resources without defined conflict resolution?
-2. **Ownership ambiguity**: Are responsibilities clearly assigned? Could two components both assume the other handles something?
-3. **Missing edge cases**: Compare the Edge Cases section against Invariants — are there invariant violations not covered by edge cases?
-4. **Decision/invariant contradictions**: Do any decisions contradict invariants or acceptance criteria?
-5. **Security gaps**: Are trust boundaries complete? Are there injection vectors not addressed?
-6. **Implicit assumptions**: What is assumed but not stated?
-7. **Trivial or false design contradiction**: Does the `## Contradiction` section state a real tension (both sides have independent forces — separate stakeholders, conflicting cost axes, or genuine physics) or a tautology like "fast AND correct" with no constraint binding the trade-off? If trivial, demand a sharper formulation or explicit "No non-trivial contradiction" with justification.
+1. Race conditions / concurrency gaps: are shared resources missing conflict resolution?
+2. Ownership ambiguity: could two components both assume the other handles something?
+3. Missing edge cases: compare Edge Cases against Invariants.
+4. Decision/invariant contradictions: identify conflicts with acceptance criteria.
+5. Security gaps: identify incomplete trust boundaries or injection vectors.
+6. Implicit assumptions: name assumptions that are not stated.
+7. Trivial or false design contradiction: verify the `## Contradiction` section states a real tension, not a tautology like "fast AND correct" with no binding constraint. If trivial, demand a sharper formulation or explicit "No non-trivial contradiction" with justification.
+</instructions>
 
-Output format:
+<expected_output>
 - Evidence first: for every finding, include `evidence` with `file_path`, `line_range` or section, `quote`, and `relevance`. HIGH-severity findings must cite the exact spec section or source lines that make the gap concrete.
-- For each finding: severity (HIGH/MEDIUM/LOW), category, description, suggested fix
-- If NO high-severity issues found: output "SPEC APPROVED"
-- If HIGH-severity issues found: list them clearly for user resolution
+- For each finding: severity (HIGH/MEDIUM/LOW), category, description, suggested fix.
+- If NO high-severity issues found: output "SPEC APPROVED".
+- If HIGH-severity issues found: list them clearly for user resolution.
+</expected_output>
 """
 )
 ```
@@ -449,15 +461,23 @@ Task(
   subagent_type="task-decomposer",
   description="Decompose task into subtasks",
   prompt=f"""
-Break down this task into atomic, testable subtasks:
+<documents>
+  <document source="user_request">
+    <document_content>{user_requirements}</document_content>
+  </document>
+  <document source=".map/<branch>/spec_<branch>.md">
+    <document_content>{"Spec with decisions + Architecture Graph is available at this path." if spec_exists else "No spec artifact exists; rely on the user request and discovery notes."}</document_content>
+  </document>
+  <document source="research_discovery">
+    <document_content>{"Discovery notes from research-agent are available in this chat." if discovery_done else "No separate discovery notes are available."}</document_content>
+  </document>
+</documents>
 
-{user_requirements}
+<task>
+Break down the request into atomic, testable subtasks.
+</task>
 
-{"Spec with decisions + Architecture Graph: .map/<branch>/spec_<branch>.md" if spec_exists else ""}
-
-{"Discovery notes from research-agent are available in this chat" if discovery_done else ""}
-
-Output requirements:
+<expected_output>
 - Include an `evidence` array before `subtasks`: quote the spec, user request, discovery notes, or source files that justify the decomposition boundaries
 - Each subtask must include an aag_contract: "Actor -> Action(params) -> Goal"
 - Each subtask must include `expected_diff_size`: `tiny`, `small`, `medium`, or `large`
@@ -483,6 +503,7 @@ Coverage requirements:
 - For each structured result type in the spec, verify ALL fields (including optional envelope fields like budget_state, deferred_work, recovery_state) are covered in validation criteria.
 - Output a `coverage_map` field: a dict mapping each spec AC identifier to the subtask ID that owns it, e.g. {{"MVP-AC-1": "ST-007", "MVP-AC-2": "ST-005", ...}}.
 - The `coverage_map` is mandatory and must include acceptance criteria, invariants, and cross-cutting requirements that a reviewer would expect to trace before implementation.
+</expected_output>
 """
 )
 ```
