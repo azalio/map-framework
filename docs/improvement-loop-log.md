@@ -1,3 +1,15 @@
+## 2026-05-19 - Clean-session TEST->CODE handoff for TDD workflows [2604.036]
+
+- Decision: `rejected`
+- Branch: `codex/2604-036-close-tdd-handoff`
+- Baseline: The active plan still described split-session TDD as missing, but the current product already has targeted TDD red-phase handoff artifacts and `/map-task` resume behavior.
+- Forward Change: Removed the stale active plan section and recorded the exact `[2604.036]` heading in `docs/improvement-done.md` with runtime, template, docs, roadmap, and regression-test evidence.
+- Decisive Validation: Focused TDD handoff/resume tests and template sync passed; a repo-built generated-project smoke confirmed installed `/map-tdd` and `/map-task` expose the contract handoff and resume paths; `make lint` and `pytest -m "not slow"` passed; the idea indexer confirmed `2604.036` is now done-only. Full `pytest` was attempted and hit the cumulative live SDK boundary after surfacing transient plan/efficient results; the surfaced plan and efficient tests passed on rerun, the live SDK module passed through review E2E before its cumulative timeout, and the final full-flow boundary passed individually.
+- Review Result: Inline diff review found no blocking issues; the diff is ledger-only, the roadmap already marks targeted TDD handoff as shipped, and the generated-project smoke supports the installed-user evidence claimed in the done entry.
+- Next Trigger: Reuse this learning whenever an active plan item describes a workflow behavior already shipped in a targeted mode rather than the broad mode originally proposed.
+- Reusable Learnings:
+  - review-check: `Before implementing a broad workflow-mode item, inspect whether the highest-payoff targeted mode already shipped the promised user journey and close the stale parent with evidence instead of rebuilding it.`
+
 ## 2026-05-18 - Command-specific thinking and parallelism profiles [2604.029]
 
 - Decision: `implemented`

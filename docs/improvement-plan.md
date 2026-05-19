@@ -150,22 +150,6 @@
 - If MAP later adds more task skills, evaluate whether some should use `context: fork` and `agent` to isolate long procedures into subagent execution, as supported by the official docs.
 
 
-## Clean-session TEST→CODE handoff for TDD workflows [2604.036]
-
-**Benefit Hypothesis**: Forcing test authoring and implementation to happen in separate sessions/contexts will reduce “tests that merely bless the implementation”, catch spec misunderstandings earlier, and improve contract quality on risky subtasks. The measurable target is fewer trivial/pass-without-code tests and fewer post-implementation revisions caused by weak test contracts.
-**Confidence**: 0.82
-**Reasoning**: The philosophy document is explicit that tests should be written in a clean session, reviewed by a human, and then implemented in another session so the model does not see its own code while inventing tests. MAP is test-first, but not context-isolated: `map-tdd` and `map-efficient --tdd` run `TEST_WRITER → TEST_FAIL_GATE → ACTOR` inside the same workflow state machine, and `map-tdd.md` explicitly says test phases should append to the same branch workspace rather than creating a separate artifact universe. That preserves convenience, but it does not preserve the clean-room property the philosophy relies on.
-**Why Not Already Tried**: Current TDD design optimizes for continuity, lower friction, and fewer restarts. It assumes phase separation inside one workflow is enough, but the presentation’s claim is stronger: the value comes from separating contexts, not just labels.
-
-### Proposed Changes
-
-- Add a split-session TDD mode that stops after `TEST_FAIL_GATE`, writes a persisted `test_contract_<branch>.md` and `test_handoff_<subtask>.json`, and exits instead of continuing directly into implementation.
-- Add a resume path for code generation (`/map-task`, `/map-efficient --resume-contract`, or equivalent) that loads only spec, plan, failing tests, and concise contract notes, not the full TEST_WRITER deliberation.
-- Optionally require a commit checkpoint for generated tests before code implementation begins, so the test contract becomes a reviewable artifact instead of transient context.
-- Introduce separate prompt personas and success criteria for test-authoring versus code-authoring, with explicit guarantees that the implementer step does not author or silently weaken tests.
-- Add regression tests proving that split-session TDD survives context reset/compaction and still resumes deterministically from persisted test artifacts.
-
-
 ## Artifact lineage and hard/soft constraint typing [2604.039-followup]
 
 **Source**: [[acai-sh]] (article note), [[u-define-designing-user-workflows-for-hard-and-soft-constraints-in-llm-based-planning]] (paper note), plus existing MAP philosophy and artifact-pipeline backlog context

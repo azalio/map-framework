@@ -1,5 +1,16 @@
 # MAP Framework Improvement Done
 
+## Clean-session TEST->CODE handoff for TDD workflows [2604.036]
+
+- Date: 2026-05-19
+- Decision: rejected as an active-plan item because the clean-session TDD handoff path is already implemented for the targeted TDD workflow where it has the strongest user payoff.
+- Repo evidence: `.claude/skills/map-tdd/SKILL.md` and the shipped template copy define targeted TDD as `DECOMPOSE -> TEST_WRITER -> TEST_FAIL_GATE -> CONTRACT_HANDOFF -> STOP`, write `.map/${BRANCH}/test_contract_${SUBTASK_ID}.md`, call `record_test_contract_handoff`, mark the contract ready, and tell the user to resume implementation with `/map-task ST-001`.
+- Repo evidence: `.claude/skills/map-task/SKILL.md` and the shipped template copy detect `test_handoff_<subtask>.json` plus `test_contract_<subtask>.md` and call `resume_from_test_contract` so Actor starts from the persisted red-phase contract instead of re-running research or test authoring.
+- Repo evidence: `.map/scripts/map_orchestrator.py` and the shipped template copy implement `mark_contract_ready` and `resume_from_test_contract`; Actor instructions in TDD mode require code-only implementation and tell Actor to read the persisted contract artifacts before editing.
+- Repo evidence: `.map/scripts/map_step_runner.py` and the shipped template copy implement `record_test_contract_handoff`, write `test_handoff_<subtask>.json`, and record the `test_contract` stage in `artifact_manifest.json`.
+- Repo evidence: `tests/test_map_orchestrator.py::TestResumeFromTestContract`, `tests/test_map_step_runner.py::test_record_test_contract_handoff_creates_json_and_manifest`, README, `docs/USAGE.md`, `docs/ARCHITECTURE.md`, and `docs/roadmap.md` all cover or document the targeted clean-session handoff behavior.
+- No runtime change was needed; this loop removed the stale active backlog section so future loops do not rebuild the shipped targeted TDD contract handoff.
+
 ## Compile-time skill IR and anti-injection audit for provider surfaces [2605.221]
 
 - Date: 2026-05-19
