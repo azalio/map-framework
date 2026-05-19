@@ -5,6 +5,7 @@
 - Date: 2026-05-19
 - Added deterministic estimated-token helpers to `src/mapify_cli/token_budget.py` and wired generated `.map/scripts/map_step_runner.py` `build_context_block()` output through a hard budget gate.
 - The generated Actor `<map_context>` path now defaults to a `4000` estimated-token cap, honors `MAP_CONTEXT_BLOCK_BUDGET_TOKENS` for explicit override, keeps current-subtask identity and dependency summaries ahead of broad plan overview text, and emits a `# Context Budget` truncation note while preserving a closed `</map_context>` tag.
+- Field check against `/Users/azalio/gitroot/src.yandex.cloud` found 8 current-format MAP runs and 63 sampled subtask contexts; the largest generated Actor `<map_context>` was ~1,255 estimated tokens, while raw artifacts in the same tree reached ~16,013-token `blueprint.json`, ~13,240-token review bundle, and ~11,819-token task plan sizes. This confirms the shipped Actor path is compact on real runs and that remaining risk sits in other prompt paths that may consume raw artifacts.
 - Synced the shipped template helper copy, updated README, usage, architecture, and roadmap docs, and split the remaining umbrella budget work into active child slices for review prompt budgeting and budget-decision artifacts only after active prompt paths need them.
 - Verified with focused token-budget and context-block tests plus template-sync coverage; generated-project smoke and broader validation are recorded in the PR evidence.
 
