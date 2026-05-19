@@ -359,13 +359,17 @@ Before launching reviewers, build bounded prompts from the persisted bundle and 
 ```bash
 REVIEW_PROMPTS_JSON=$(python3 .map/scripts/map_step_runner.py build_review_prompts \
   --review-preferences "[paste Review Preferences section above]")
+
+MONITOR_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prompts"]["monitor"]["prompt"])')
+PREDICTOR_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prompts"]["predictor"]["prompt"])')
+EVALUATOR_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prompts"]["evaluator"]["prompt"])')
 ```
 
-Use `REVIEW_PROMPTS_JSON.prompts.<role>.prompt` as the Task prompt for each reviewer.
+Use the extracted `MONITOR_PROMPT`, `PREDICTOR_PROMPT`, and `EVALUATOR_PROMPT` strings as the Task prompts.
 The helper preserves the review bundle as primary context, clips lower-priority raw diff
 context first when the prompt exceeds `MAP_REVIEW_PROMPT_BUDGET_TOKENS` (default 12,000
-estimated tokens), and includes a `Review Prompt Budget` diagnostic document when clipping
-occurs.
+estimated tokens), clips oversized review preferences only if needed to preserve the hard
+budget, and includes a `Review Prompt Budget` diagnostic document when clipping occurs.
 
 **3 agent Task calls** (pass the budgeted prompt for each role):
 
@@ -373,19 +377,19 @@ occurs.
 Task(
   subagent_type="monitor",
   description="Review code changes",
-  prompt="[paste REVIEW_PROMPTS_JSON.prompts.monitor.prompt]"
+  prompt="[paste MONITOR_PROMPT]"
 )
 
 Task(
   subagent_type="predictor",
   description="Analyze change impact",
-  prompt="[paste REVIEW_PROMPTS_JSON.prompts.predictor.prompt]"
+  prompt="[paste PREDICTOR_PROMPT]"
 )
 
 Task(
   subagent_type="evaluator",
   description="Score change quality",
-  prompt="[paste REVIEW_PROMPTS_JSON.prompts.evaluator.prompt]"
+  prompt="[paste EVALUATOR_PROMPT]"
 )
 ```
 

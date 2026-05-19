@@ -3007,6 +3007,32 @@ class TestCreateReviewBundle:
             assert "<expected_output>" in prompt
             assert "Output JSON with:" in prompt
 
+    def test_build_review_prompts_budgets_large_review_preferences(self):
+        """Oversized review preferences must not break the prompt budget."""
+        review_bundle = "# Review Bundle\nPRIMARY_BUNDLE_SENTINEL\n" + (
+            "covered acceptance evidence\n" * 40
+        )
+        review_preferences = "Prefer high-signal review.\n" + (
+            "Large preference context\n" * 5_000
+        ) + "TAIL_PREFERENCES_SENTINEL\n"
+
+        result = map_step_runner.build_review_prompts(
+            branch="test-branch",
+            review_preferences=review_preferences,
+            budget_tokens=1_500,
+            review_bundle_text=review_bundle,
+            git_diff_text="diff --git a/app.py b/app.py\n+small change\n",
+        )
+
+        for role in ("monitor", "predictor", "evaluator"):
+            prompt_info = result["prompts"][role]
+            prompt = prompt_info["prompt"]
+            assert prompt_info["estimated_tokens"] <= 1_500
+            assert prompt_info["truncated"] is True
+            assert "review-preferences" in prompt_info["clipped_sections"]
+            assert "PRIMARY_BUNDLE_SENTINEL" in prompt
+            assert "TAIL_PREFERENCES_SENTINEL" not in prompt
+
     def test_review_prompt_ab_reduces_old_unbounded_prompt_size(self):
         """A/B: new budgeted reviewer prompt is smaller than old inline prompt."""
         review_bundle = "# Review Bundle\nPRIMARY_BUNDLE_SENTINEL\n" + (

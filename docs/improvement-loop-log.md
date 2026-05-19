@@ -9,7 +9,7 @@
 - Next Trigger: Reuse this learning whenever a MAP workflow fans out long branch artifacts into multiple reviewer or verifier prompts.
 - Reusable Learnings:
   - command: `python3 .map/scripts/map_step_runner.py build_review_prompts --budget-tokens 1500 --review-preferences "Flag correctness first."`
-  - invariant: `/map-review` reviewer prompts must keep the persisted review bundle as primary context and clip raw diff before bundle text whenever prompt budgeting is required.`
+  - invariant: `/map-review` reviewer prompts must keep the persisted review bundle as primary context and clip raw diff before bundle text whenever prompt budgeting is required.
   - review-check: `For prompt-budget changes, include an old/new A/B test that proves the old prompt exceeds the target while the new prompt preserves task/instruction/output-contract sections under budget.`
 
 ## 2026-05-19 - Actor Context Block Token Budget Enforcement [2604.023-1]

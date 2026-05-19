@@ -3575,7 +3575,7 @@ def _budget_review_prompt(
     )
 
     clipped_sections: list[str] = []
-    base_prompt = _render_review_prompt(spec, "", review_preferences, "", budget_note)
+    base_prompt = _render_review_prompt(spec, "", "", "", budget_note)
     remaining_for_documents = budget_tokens - _estimate_tokens(base_prompt)
     bundle_budget = max(0, remaining_for_documents)
     budgeted_bundle = review_bundle
@@ -3583,8 +3583,19 @@ def _budget_review_prompt(
         budgeted_bundle = _truncate_to_token_budget(review_bundle, bundle_budget)
         clipped_sections.append("review-bundle.md")
 
+    remaining_for_preferences = budget_tokens - _estimate_tokens(
+        _render_review_prompt(spec, budgeted_bundle, "", "", budget_note)
+    )
+    preferences_budget = max(0, remaining_for_preferences)
+    budgeted_preferences = review_preferences
+    if _estimate_tokens(review_preferences) > preferences_budget:
+        budgeted_preferences = _truncate_to_token_budget(
+            review_preferences, preferences_budget
+        )
+        clipped_sections.append("review-preferences")
+
     prompt_without_diff = _render_review_prompt(
-        spec, budgeted_bundle, review_preferences, "", budget_note
+        spec, budgeted_bundle, budgeted_preferences, "", budget_note
     )
     remaining_for_diff = budget_tokens - _estimate_tokens(prompt_without_diff)
     diff_budget = max(0, remaining_for_diff)
@@ -3594,18 +3605,19 @@ def _budget_review_prompt(
         clipped_sections.append("git diff")
 
     prompt = _render_review_prompt(
-        spec, budgeted_bundle, review_preferences, budgeted_diff, budget_note
+        spec, budgeted_bundle, budgeted_preferences, budgeted_diff, budget_note
     )
     if _estimate_tokens(prompt) > budget_tokens:
-        # Guard against note/rounding drift: drop secondary diff, then tighten primary text.
+        # Guard against note/rounding drift: drop secondary diff and preferences, then tighten primary text.
         budgeted_diff = ""
-        prompt_without_docs = _render_review_prompt(spec, "", review_preferences, "", budget_note)
+        prompt_without_docs = _render_review_prompt(spec, "", "", "", budget_note)
         bundle_budget = max(0, budget_tokens - _estimate_tokens(prompt_without_docs))
         budgeted_bundle = _truncate_to_token_budget(review_bundle, bundle_budget)
+        budgeted_preferences = ""
         prompt = _render_review_prompt(
-            spec, budgeted_bundle, review_preferences, budgeted_diff, budget_note
+            spec, budgeted_bundle, budgeted_preferences, budgeted_diff, budget_note
         )
-        for section in ("git diff", "review-bundle.md"):
+        for section in ("git diff", "review-preferences", "review-bundle.md"):
             if section not in clipped_sections:
                 clipped_sections.append(section)
 
