@@ -131,7 +131,7 @@ Esc
 
 This toggles the `PreToolUse` hook on so MAP's workflow gate can run before tool calls.
 
-If you use Codex before `0.129.0`, either start Codex with the hooks feature enabled:
+If your Codex version does not support the `hooks` feature key yet, either start Codex with the deprecated hooks feature alias enabled:
 
 ```bash
 codex --enable codex_hooks
@@ -151,12 +151,12 @@ This creates a `.codex/` layout instead of `.claude/`:
 ### Using MAP with Codex
 
 ```bash
-map-plan    # Plan and decompose complex tasks
-map-fast    # Quick implementation with minimal validation
-map-check   # Quality gates and verification
+$map-plan    # Plan and decompose complex tasks
+$map-fast    # Quick implementation with minimal validation
+$map-check   # Quality gates and verification
 ```
 
-Codex MAP commands do not start with `/`. Type `map-plan`, not `/map-plan`.
+Codex MAP skills do not start with `/`. Type `$map-plan`, not `/map-plan`.
 
 ### Diagnostics
 

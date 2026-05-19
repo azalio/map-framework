@@ -28,7 +28,7 @@ configuration to take effect. Without trust, `.codex/` files are ignored.
 MAP uses a workflow gate hook that restricts file-modifying commands during
 research and review phases. This prevents accidental edits while exploring.
 
-**Note:** Hooks require `codex_hooks = true` in config.toml and are not
+**Note:** Hooks require `hooks = true` in config.toml and are not
 supported on Windows.
 
 ## Getting Started

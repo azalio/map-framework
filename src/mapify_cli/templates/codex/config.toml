@@ -2,7 +2,7 @@
 
 [features]
 # Enable hooks for MAP workflow enforcement
-codex_hooks = true
+hooks = true
 
 [agents.decomposer]
 description = "Breaks complex goals into atomic, testable subtasks"

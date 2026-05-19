@@ -173,7 +173,7 @@ Esc
 
 This toggles the `PreToolUse` hook on so MAP's workflow gate can run before tool calls.
 
-If you use Codex before `0.129.0`, either start Codex with the hooks feature enabled:
+If your Codex version does not support the `hooks` feature key yet, either start Codex with the deprecated hooks feature alias enabled:
 
 ```bash
 codex --enable codex_hooks
@@ -181,7 +181,7 @@ codex --enable codex_hooks
 
 or upgrade Codex first. Upgrading is recommended.
 
-Codex MAP commands do not start with `/`. Type `map-plan`, `map-fast`, or `map-check` instead of `/map-plan`, `/map-fast`, or `/map-check`.
+Codex MAP skills do not start with `/`. Type `$map-plan`, `$map-fast`, or `$map-check` instead of `/map-plan`, `/map-fast`, or `/map-check`.
 
 ### MCP Server Configuration
 
