@@ -33,6 +33,12 @@ AGGRESSIVE_MULTIPLIER = 0.4
 # ``test_unknown_policy_treated_as_auto``.
 VALID_POLICIES = ("never", "auto", "aggressive")
 
+# Deterministic fallback estimate used for pre-flight context shaping. Provider
+# tokenizers are not always available inside generated projects, so MAP uses a
+# stable chars-per-token approximation when it needs to bound text before a
+# model call.
+ESTIMATED_CHARS_PER_TOKEN = 4
+
 
 @dataclass(frozen=True)
 class TokenUsage:
@@ -130,6 +136,44 @@ def count_last_turn_tokens(transcript_path: Path) -> int:
             return usage.total
 
     return 0
+
+
+def estimate_tokens(text: str) -> int:
+    """Return a deterministic token estimate for text not yet sent to a model.
+
+    Transcript accounting uses provider-reported usage when available. For new
+    prompt text, generated projects need a dependency-free estimate that is
+    stable across Python environments. A four-characters-per-token ceiling is
+    conservative enough for budget enforcement without requiring a tokenizer.
+    """
+    if not text:
+        return 0
+    return max(
+        1,
+        (len(text) + ESTIMATED_CHARS_PER_TOKEN - 1) // ESTIMATED_CHARS_PER_TOKEN,
+    )
+
+
+def truncate_to_token_budget(text: str, budget_tokens: int, suffix: str = "...") -> str:
+    """Truncate text so ``estimate_tokens(result) <= budget_tokens``.
+
+    The truncation is deterministic and prefers a word boundary when it can do
+    so without discarding most of the retained text.
+    """
+    if budget_tokens <= 0 or not text:
+        return ""
+    if estimate_tokens(text) <= budget_tokens:
+        return text
+
+    char_limit = budget_tokens * ESTIMATED_CHARS_PER_TOKEN
+    if char_limit <= len(suffix):
+        return suffix[:char_limit]
+
+    cut = text[: char_limit - len(suffix)].rstrip()
+    last_space = cut.rfind(" ")
+    if last_space > len(cut) // 2:
+        cut = cut[:last_space].rstrip()
+    return cut + suffix
 
 
 def effective_threshold(policy: str, threshold: int) -> int | None:

@@ -1,5 +1,13 @@
 # MAP Framework Improvement Done
 
+## Actor Context Block Token Budget Enforcement [2604.023-1]
+
+- Date: 2026-05-19
+- Added deterministic estimated-token helpers to `src/mapify_cli/token_budget.py` and wired generated `.map/scripts/map_step_runner.py` `build_context_block()` output through a hard budget gate.
+- The generated Actor `<map_context>` path now defaults to a `4000` estimated-token cap, honors `MAP_CONTEXT_BLOCK_BUDGET_TOKENS` for explicit override, keeps current-subtask identity and dependency summaries ahead of broad plan overview text, and emits a `# Context Budget` truncation note while preserving a closed `</map_context>` tag.
+- Synced the shipped template helper copy, updated README, usage, architecture, and roadmap docs, and split the remaining umbrella budget work into active child slices for review prompt budgeting and budget-decision artifacts only after active prompt paths need them.
+- Verified with focused token-budget and context-block tests plus template-sync coverage; generated-project smoke and broader validation are recorded in the PR evidence.
+
 ## Clean-session TEST->CODE handoff for TDD workflows [2604.036]
 
 - Date: 2026-05-19

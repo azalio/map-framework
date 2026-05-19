@@ -432,6 +432,14 @@ double-firing right after a built-in auto-compact has already run. For Codex
 sessions the same recommendation is emitted to stderr by `map_orchestrator.py`
 when invoked with `--transcript-path` (or env `MAPIFY_TRANSCRIPT_PATH`).
 
+Actor prompts built by `build_context_block` enforce a separate hard budget for
+the generated `<map_context>` block before it enters the model. The default is
+`4000` estimated tokens and keeps current-subtask details plus dependency
+summaries ahead of broad plan overview text. If a long workflow genuinely needs
+more injected context, set `MAP_CONTEXT_BLOCK_BUDGET_TOKENS=<positive integer>`
+for that run; malformed, non-positive, or too-small values fall back to the
+default.
+
 ### What is Context Compaction?
 
 Context compaction occurs when Claude's conversation memory reaches its limit. When this happens:

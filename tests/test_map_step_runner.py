@@ -2274,6 +2274,95 @@ class TestBuildContextBlock:
         assert "# Upstream Results" in result
         assert "ST-001: files=" in result
 
+    def test_build_context_block_enforces_budget(
+        self, branch_workspace, monkeypatch
+    ):
+        subtasks = [
+            {
+                "id": "ST-001",
+                "title": "Current task that must stay visible",
+                "aag_contract": "Actor -> bounded context -> done",
+                "affected_files": [f"src/current_{i}.py" for i in range(30)],
+                "validation_criteria": [
+                    "VC1 [AC-1]: current acceptance contract remains visible"
+                ],
+                "dependencies": ["ST-002"],
+            },
+            {
+                "id": "ST-002",
+                "title": "Dependency task",
+                "aag_contract": "Actor -> dependency -> done",
+                "affected_files": ["src/dep.py"],
+                "validation_criteria": ["VC2 [AC-2]: dependency complete"],
+                "dependencies": [],
+            },
+        ]
+        subtasks.extend(
+            {
+                "id": f"ST-{i:03d}",
+                "title": "Long future task " + ("noise " * 20),
+                "aag_contract": "Actor -> future -> done",
+                "affected_files": [f"src/future_{i}.py"],
+                "validation_criteria": ["later"],
+                "dependencies": [],
+            }
+            for i in range(3, 80)
+        )
+        (branch_workspace / "blueprint.json").write_text(
+            json.dumps({"summary": "test", "subtasks": subtasks})
+        )
+        (branch_workspace / "task_plan_test-branch.md").write_text(
+            "## Goal\nKeep the active Actor prompt bounded for long plans.\n"
+        )
+        state = {
+            "subtask_results": {
+                "ST-002": {
+                    "files_changed": [f"src/dep_{i}.py" for i in range(20)],
+                    "status": "valid",
+                    "summary": "dependency summary " * 100,
+                }
+            }
+        }
+        (branch_workspace / "step_state.json").write_text(json.dumps(state))
+        monkeypatch.setenv("MAP_CONTEXT_BLOCK_BUDGET_TOKENS", "260")
+
+        result = map_step_runner.build_context_block("test-branch", "ST-001")
+
+        assert map_step_runner._estimate_tokens(result) <= 260
+        assert result.startswith("<map_context>")
+        assert result.endswith("</map_context>")
+        assert "# Context Budget: truncated" in result
+        assert "Current task that must stay visible" in result
+        assert "Actor -> bounded context -> done" in result
+        assert "# Upstream Results" in result
+        assert "dependency summary" in result
+
+    def test_build_context_block_ignores_impossible_budget(
+        self, branch_workspace, monkeypatch
+    ):
+        bp = {
+            "subtasks": [
+                {
+                    "id": "ST-001",
+                    "title": "Only task",
+                    "aag_contract": "A -> B -> C",
+                    "affected_files": [],
+                    "validation_criteria": [],
+                    "dependencies": [],
+                }
+            ]
+        }
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        (branch_workspace / "task_plan_test-branch.md").write_text(
+            "## Goal\nDo thing.\n"
+        )
+        monkeypatch.setenv("MAP_CONTEXT_BLOCK_BUDGET_TOKENS", "1")
+
+        result = map_step_runner.build_context_block("test-branch", "ST-001")
+
+        assert "# Context Budget: truncated" not in result
+        assert "Only task" in result
+
     def test_upstream_results_omitted_when_no_deps(self, branch_workspace):
         bp = {
             "summary": "test",
