@@ -74,6 +74,10 @@ mapify init . --provider codex
 codex
 ```
 
+Then enable the Codex hook manually: run `/hooks`, select `PreToolUse`, press `t` to toggle it on, then press `Esc`.
+
+If your Codex version does not support the `hooks` feature key yet, either start it with `codex --enable codex_hooks` or upgrade Codex first. Upgrading is recommended.
+
 Pick a context-compression policy if you want non-default behaviour
 (`auto` is the default; see [docs/USAGE.md#context-budget-policy](docs/USAGE.md)):
 
@@ -97,7 +101,7 @@ When a task has unclear behavior, multiple files, or real review risk, run the f
 
 Direct `/map-efficient` is for already-scoped tasks. If you are unsure, start with `/map-plan`.
 
-Codex projects expose three MAP skills today: `$map-plan`, `$map-fast`, and `$map-check`. See the [Usage Guide](docs/USAGE.md#codex-cli-provider) for provider details.
+Codex users should invoke MAP skills with `$`: type `$map-plan`, `$map-fast`, or `$map-check` instead of `/map-plan`, `/map-fast`, or `/map-check`. See the [Usage Guide](docs/USAGE.md#codex-cli-provider) for provider details.
 
 ## What Success Looks Like
 

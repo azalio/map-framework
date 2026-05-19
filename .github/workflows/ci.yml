@@ -89,9 +89,15 @@ jobs:
         which ruff > /dev/null 2>&1 && ruff check src/ tests/ || echo "Ruff not installed, skipping"
         which mypy > /dev/null 2>&1 && mypy src/ || echo "Mypy not installed, skipping"
 
+    - name: Run Codex provider regression checks
+      run: |
+        python -m pytest -v \
+          tests/test_template_sync.py::TestCodexTemplateSynchronization \
+          tests/test_mapify_cli.py::TestCodexProvider
+
     - name: Run tests
       run: |
-        python -m pytest -v --cov=mapify_cli --cov-report=xml
+        python -m pytest -v -m "not slow" --cov=mapify_cli --cov-report=xml
 
     - name: Upload coverage to Codecov
       if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'

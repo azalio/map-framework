@@ -1181,6 +1181,11 @@ class TestCodexProvider:
         )
         # Either a real file with content or a symlink to CLAUDE.md
         assert agents_md.is_symlink() or len(content) > 0, "AGENTS.md must be non-empty"
+        if not agents_md.is_symlink():
+            assert "$map-plan" in content, "Codex AGENTS.md must document skill invocation with $"
+            assert "codex_hooks" not in content, (
+                "Codex AGENTS.md must not document deprecated codex_hooks"
+            )
 
     # ------------------------------------------------------------------ #
     # AC-5: config.toml, agents/*.toml, hooks/workflow-gate.py exist      #
@@ -1190,6 +1195,13 @@ class TestCodexProvider:
         """AC-5: config.toml and at least one agent TOML and the hook script must exist."""
         codex_dir = codex_project / ".codex"
         assert (codex_dir / "config.toml").exists(), ".codex/config.toml must exist"
+        config_text = (codex_dir / "config.toml").read_text(encoding="utf-8")
+        assert "hooks = true" in config_text, (
+            "Codex config must enable canonical hooks feature"
+        )
+        assert "codex_hooks" not in config_text, (
+            "Codex config must not use deprecated codex_hooks feature alias"
+        )
         toml_files = list((codex_dir / "agents").glob("*.toml"))
         assert (
             len(toml_files) > 0
