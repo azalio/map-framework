@@ -263,7 +263,7 @@
 
 - Decision: `implemented`
 - Branch: `codex/2604-026-xml-envelopes`
-- PR: `pending`
+- PR: `https://github.com/azalio/map-framework/pull/131`
 - Baseline: High-context MAP skills mixed persisted artifacts, user requests, workflow policy, and output schemas in ad hoc markdown inside subagent prompts. `/map-review` in particular passed the review bundle, review preferences, and git diff as inline prose, so future edits could accidentally move long artifacts below instructions or blur primary bundle context with secondary diff context.
 - Forward Change: Added `.claude/references/map-xml-prompt-envelopes.md` and the shipped template copy, then applied the artifact-first envelope to `/map-plan`, `/map-efficient`, `/map-debug`, and `/map-review`. The change preserved existing MAP semantic tags such as `<MAP_Contract>` and `<map_context>` while wrapping larger prompt inputs in `<documents>` before `<task>`, `<workflow_policy>` or `<instructions>`, and `<expected_output>`.
 - Decisive Validation: Focused XML envelope tests scan both `.claude/skills/` and `src/mapify_cli/templates/skills/` for the reference link and required tags. The generated-project smoke confirmed `mapify init` emits the new reference and XML tags in installed skills. `make lint`, `pytest -m "not slow"`, the timed-out live SDK boundary test, live `/map-review` E2E, and live full-flow E2E passed. Full `pytest` and full live SDK module runs both hit the 30-minute tool timeout at the same cumulative boundary, with no deterministic failure before timeout.
