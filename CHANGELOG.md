@@ -49,6 +49,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/compact` recommendation to stderr at every command. Provider-agnostic —
   works for both Claude Code and Codex sessions.
 - **Design doc**: `docs/context-compression-plan.md`.
+- **`/map-explain` skill**: new manual slash surface for deep code, PR, and
+  project walkthroughs. Synced into shipped templates so generated projects
+  get the same explainer workflow.
+- **`/map-review` order-bias hardening (Phase 1)**: review prompts now use
+  randomized agent order, evidence-tagged findings, and explicit anti-bias
+  checks so reviewer agents are less susceptible to ordering effects in
+  multi-agent fan-out.
+- **Skill `skillClass` runtime taxonomy**: `.claude/skills/skill-rules.json`
+  and the shipped template copy declare `task`, `reference`, or `hybrid` for
+  every shipped skill. Hybrid skills must enumerate `runtimeEffects`. The
+  skills README and user docs distinguish runtime boundaries instead of
+  treating every skill as passive documentation.
+- **Run health report artifact**: `write_run_health_report` in
+  `.map/scripts/map_step_runner.py` (and shipped template copy) emits
+  `.map/<branch>/run_health_report.json` with terminal status, step
+  progress, artifact presence, retry counters, Predictor/final-verifier
+  signals, and hook-injection state. Backed by `RUN_HEALTH_REPORT_SCHEMA`
+  and a new `run_health` stage in `artifact_manifest.json`.
+- **Run health closeout wiring**: `/map-efficient`, `/map-debug`,
+  `/map-check`, and `/map-review` write `run_health_report.json` after the
+  terminal verdict is known. Closeout snippets set `RUN_HEALTH_STATUS` from
+  the verdict instead of defaulting to `complete`, preserving `pending`,
+  `blocked`, `won't_do`, and `superseded` paths.
+- **Expanded hook degradation status coverage**: `workflow-context-injector.py`
+  now records explicit skipped-hook reasons for malformed input, non-object
+  payloads, non-injected tools, and insignificant Bash commands when an
+  existing branch `step_state.json` can be safely parsed and updated.
+- **Run health validator**: `validate_run_health_report` enforces required
+  fields, terminal-status enum, artifact inventory entries, resiliency
+  signal types, complete-without-pending-steps, complete-without-verification,
+  retry overflow, and hook degradation reasons. Works in generated projects
+  without `mapify_cli.schemas`.
+- **Contract-sized subtask guardrails**: `validate_blueprint_contract` fails
+  oversized, mixed-concern, untraceable, duplicate-ID, dangling-dependency,
+  or non-logical subtasks before implementation starts. Blueprint schema
+  gains `expected_diff_size`, `concern_type`, `one_logical_step`,
+  `aag_contract`, `validation_criteria`, and `coverage_map` (with nested
+  TaskDecomposer output support). Monitor and FinalVerifier prompts check
+  for scope drift after planning.
+- **Evidence-first prompt outputs**: `.claude/references/map-output-examples.md`
+  provides a shared evidence-first JSON examples file. `/map-review`
+  Monitor/Predictor/Evaluator, `/map-debug` investigation, and `/map-plan`
+  spec-review/decomposition prompts now require `evidence[]` (with concrete
+  quotes from logs, code, tests, or spec) before verdict, risk, or score
+  fields. HIGH/CRITICAL issues, breaking changes, and sub-7 scores must be
+  evidence-tied.
+- **JSON prompt-contract lint**: `.claude/references/map-json-output-contracts.md`
+  is the reusable backing reference for non-evidence JSON prompt sections.
+  `/map-fast`, `/map-debug`, and `/map-learn` non-evidence outputs declare
+  explicit contract references. `tests/test_skills.py` adds a generic
+  scanner over both `.claude/skills/` and the shipped templates that fails
+  if future JSON prompt sections lack either evidence or a contract
+  reference.
+- **Blueprint acceptance-criteria lineage**: every `coverage_map` key in
+  `blueprint.json` must now appear as a bracketed tag in the owning
+  subtask's `validation_criteria` (e.g., `VC1 [AC-1]: ...`).
+  `validate_blueprint_contract` fails untagged validation criteria before
+  Actor starts and names the missing tag.
+- **Hard/soft constraint typing**: blueprint schema adds `hard_constraints`
+  and `soft_constraints`. Hard constraint ids must appear in `coverage_map`
+  and the owning subtask's bracketed `validation_criteria`; soft
+  constraints may be omitted only with `tradeoff_rationale`. Planner and
+  decomposer prompts (Claude and Codex) ask for and validate the contract.
+- **Acceptance coverage reporting**: `write_verification_summary` and
+  `create_review_bundle` summarize every `blueprint.json` `coverage_map`
+  tag, marking each `covered` only when bracketed evidence (e.g., `[AC-1]`,
+  `[INV-1]`) appears in downstream verification, QA, test contract,
+  handoff, PR draft, or review artifacts. Otherwise outputs show
+  `missing_evidence`. `REVIEW_BUNDLE_SCHEMA`, review-bundle Markdown, and
+  manifest review-stage metadata surface both human and machine views.
+- **Prior-stage artifact consumption gates**:
+  `build_prior_stage_consumption_report` and
+  `validate_prior_stage_consumption <implementation|review>` prove whether
+  spec, task plan, blueprint, test contract, code diff, and review-time
+  verification summary were consumed. `write_verification_summary` and
+  `create_review_bundle` include `prior_stage_consumption`; review
+  manifest status downgrades to `warn` when required prior-stage inputs
+  are missing instead of hiding stage skipping.
+- **Workflow effort and parallelism policies**: every shipped MAP task
+  skill declares `## Effort and Parallelism Policy` with explicit
+  `thinking_policy` (low/medium/high) and `parallel_tool_policy`.
+  Lightweight workflows (`/map-fast`, `/map-check`, `/map-resume`) use
+  `low/direct`; implementation/learning workflows use `medium/adaptive`;
+  planning, review, and release use `high/adaptive`. Top-level
+  `workflow-rules.json` records execution policies for workflow-triggered
+  `/map-fast`, `/map-efficient`, and `/map-debug` suggestions.
 
 ### Changed
 - **Workflow gate `COMPLETE` phase is permissive**: post-workflow polish and
@@ -96,6 +182,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and strips the entire `\x00-\x1f\x7f` range so the bundle is robust
   through bash pipelines. Learned rule updated with WRONG/CORRECT
   example.
+- **Action-first lightweight workflows**: `/map-fast` and `/map-debug`
+  write-capable Actor steps edit files directly with Edit/Write tools and
+  return compact summaries (`files_changed`, `tests_run`,
+  `remaining_risks`) instead of serialized full-file `code_changes`.
+  Monitor prompts validate written repo state from `Written Files`, and
+  stale post-validation apply instructions are removed from workflow
+  overviews and decision points.
+- **Skill invocation metadata hardening**: regression tests now require
+  manual slash skill classification to match frontmatter, assert direct
+  invocation names appear in trigger keywords/patterns, verify selected
+  negative-trigger fixtures do not match noisy skills, check that local
+  Markdown supporting-file links resolve, validate hook commands using
+  `CLAUDE_PLUGIN_ROOT` point at bundled scripts, and confirm non-`SKILL.md`
+  supporting files stay synced into templates.
+- **Calibrated workflow prompt guardrails**: non-release MAP skills use
+  targeted guardrails and normal wording instead of blanket all-caps
+  prohibition blocks. `/map-release` keeps explicit hard-stop language
+  because tag pushes and PyPI publication are irreversible. Lightweight
+  and resume workflows now have explicit `When Not To Expand Scope`
+  clauses. Prompt-tone regression coverage rejects blanket prohibition
+  blocks in non-release task skills.
+
+### Fixed
+- **Codex provider polish**: deprecated `codex_hooks` references; documented
+  the required pre-tool-use hook configuration step in `docs/INSTALL.md`;
+  noted leading-slash usage for Codex users in `docs/USAGE.md`; fixed
+  `pyproject.toml` dev dependency declaration; aligned shipped Codex docs
+  and CI checks (`.codex/AGENTS.md`, `.codex/config.toml`,
+  `.github/workflows/ci.yml`).
 
 ## [3.9.0] - 2026-04-22
 
