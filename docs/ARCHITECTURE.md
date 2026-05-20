@@ -1913,16 +1913,18 @@ Command checks .map/progress.md existence
 | Component | Location | Purpose |
 |-----------|----------|---------|
 | Resume skill | `.claude/skills/map-resume/SKILL.md` | User-facing recovery workflow |
+| Resume reference | `.claude/skills/map-resume/resume-reference.md` | Low-frequency examples, state-file notes, token-budget notes, and troubleshooting loaded only when needed |
 | WorkflowState class | `src/mapify_cli/workflow_state.py` | Checkpoint serialization/deserialization |
-| Checkpoint file | `.map/progress.md` | YAML frontmatter + markdown progress |
+| Current checkpoint file | `.map/<branch>/step_state.json` | Orchestrator state, current step, subtask progress, retry counters, and enforcement gates |
+| Legacy progress file | `.map/progress.md` | Older YAML frontmatter + markdown progress state; coexists with branch-scoped state in some flows |
 | Task plan | `.map/<branch>/task_plan_*.md` | Subtask decomposition with validation |
 | Unit tests | `tests/test_workflow_state.py` | WorkflowState logic coverage |
 
 **Execution Flow:**
 
 1. **User runs `/map-resume`** - Explicit recovery command (no auto-injection)
-2. **Command checks checkpoint** - Tests if `.map/progress.md` exists
-3. **YAML frontmatter parsed** - WorkflowState.load() extracts machine state
+2. **Command checks checkpoint** - Tests if `.map/<branch>/step_state.json` exists
+3. **Branch state parsed** - Orchestrator state identifies the current step, phase, and subtask
 4. **Progress summary displayed** - Shows completed/remaining subtasks
 5. **User confirms Y/n** - Simple prompt, Y resumes, n clears checkpoint
 6. **Task plan loaded** - Full decomposition with validation criteria

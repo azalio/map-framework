@@ -1,3 +1,17 @@
+## 2026-05-20 - Compact `/map-resume` Recovery Skill Body [2604.033-1]
+
+- Decision: `implemented`
+- Branch: `codex/2604-033-resume-skill-lifecycle`
+- Baseline: Claude Code's official skill docs say invoked skill content stays in context and recommend concise `SKILL.md` bodies with supporting files; `/map-resume` is specifically used after context exhaustion, but its active body still carried 504 lines including low-frequency examples, state-file examples, token-budget notes, and troubleshooting.
+- External Docs: Claude Code skills docs, https://docs.anthropic.com/en/docs/claude-code/skills, accessed 2026-05-20; applied rules: invoked skill content stays in context, compaction reattaches recent skill invocations within a limited token budget, supporting files should hold detailed reference material, and `SKILL.md` should stay focused.
+- Forward Change: Moved the low-frequency material into `.claude/skills/map-resume/resume-reference.md`, kept the active recovery path in `SKILL.md`, synced the template copy, updated docs, and split the parent plan into future high-traffic workflow playbook and retained-body lint slices.
+- Decisive Validation: Focused skill lifecycle regression checks both source and template copies for the compact `/map-resume` body and supporting reference. Generated-project smoke inspected installed `.claude/skills/map-resume/SKILL.md` and `resume-reference.md` so the installed recovery workflow matches the repo surface.
+- Next Trigger: Reuse this when a task skill is invoked after compaction, `/clear`, or long-running workflow interruption and contains examples/troubleshooting that do not need to stay in the active body.
+- Reusable Learnings:
+  - command: `pytest tests/test_skills.py::TestSkillStructure::test_map_resume_keeps_recovery_skill_body_compact tests/test_template_sync.py -v`
+  - invariant: `Recovery skills should keep the active SKILL.md body focused on checkpoint detection and next action; move low-frequency examples, state-shape references, token notes, and troubleshooting into bundled supporting files.`
+  - review-check: `When externalizing skill content, verify local Markdown links resolve, supporting files are template-synced, and generated-project smokes inspect both the compact SKILL.md and the supporting file.`
+
 ## 2026-05-19 - Reviewer Prompt Budget Enforcement [2604.023-2]
 
 - Decision: `implemented`

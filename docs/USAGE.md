@@ -464,9 +464,11 @@ MAP Framework uses a `/map-resume` command to recover interrupted workflows. Whe
 2. **View progress summary** - Shows completed and remaining subtasks
 3. **Confirm Y/n** - Resume workflow or clear checkpoint and start fresh
 
+The installed `/map-resume` skill keeps this active recovery path compact. Detailed example transcripts, state-file shape notes, token-budget notes, and troubleshooting live in `.claude/skills/map-resume/resume-reference.md` and are loaded only when the checkpoint is ambiguous or recovery fails.
+
 **What you'll see:**
 
-When running `/map-resume` with an existing checkpoint (`.map/progress.md`):
+When running `/map-resume` with an existing branch checkpoint (`.map/<branch>/step_state.json`):
 
 ```markdown
 ## Found Incomplete Workflow

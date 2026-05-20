@@ -373,6 +373,29 @@ class TestSkillStructure:
                     f"{skill_file} should declare a parallel_tool_policy."
                 )
 
+    def test_map_resume_keeps_recovery_skill_body_compact(
+        self, skills_dir, template_skills_dir
+    ):
+        """Resume is used after context loss, so its invoked body must stay lean."""
+        for base_dir in (skills_dir, template_skills_dir):
+            skill_file = base_dir / "map-resume" / "SKILL.md"
+            reference_file = base_dir / "map-resume" / "resume-reference.md"
+            content = skill_file.read_text()
+
+            assert len(content.splitlines()) <= 350, (
+                f"{skill_file} should keep the active recovery flow compact; "
+                "move low-frequency examples or troubleshooting to supporting files."
+            )
+            assert "[resume-reference.md](resume-reference.md)" in content, (
+                f"{skill_file} should point to the bundled supporting reference."
+            )
+            assert reference_file.exists(), (
+                f"{reference_file} should hold detailed resume examples and troubleshooting."
+            )
+            reference = reference_file.read_text()
+            assert "## Examples" in reference
+            assert "## Troubleshooting" in reference
+
     # --- skill-rules.json tests ---
 
     def test_skill_rules_json_is_valid(self, skills_dir):
