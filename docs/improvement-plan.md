@@ -145,7 +145,7 @@
 **Reasoning**: The official docs emphasize that invoked skill content stays in the conversation, is reattached after compaction within a token budget, and should therefore keep `SKILL.md` focused while moving detailed material into supporting files. MAP already does this reasonably well for `map-state` and parts of `map-learn`, but the skills still contain a lot of command-like procedural detail that can drift away from supporting templates and increase retained token load. The same docs also recommend referencing supporting files explicitly so Claude knows when to load them.
 **Why Not Already Tried**: MAP adopted supporting scripts and templates, but not yet a systematic skill-body minimization pass informed by Claude Code’s persistence and compaction behavior.
 
-**Execution note:** Do not execute directly. This parent is decomposed into child slices. `2604.033-1` shipped the compact `/map-resume` recovery surface by moving low-frequency examples, state-file notes, token-budget notes, and troubleshooting into a bundled supporting file while preserving the active checkpoint-recovery flow in `SKILL.md`. Execute future child slices only when they reduce always-loaded context for a current workflow users invoke directly; do not move mandatory phase instructions out of the active body without a same-PR regression or operator smoke proving the workflow still has a clear next action.
+**Execution note:** Do not execute directly. This parent is decomposed into child slices. `2604.033-1` shipped the compact `/map-resume` recovery surface by moving low-frequency examples, state-file notes, token-budget notes, and troubleshooting into a bundled supporting file while preserving the active checkpoint-recovery flow in `SKILL.md`. `2604.033-2` shipped compact high-traffic playbooks for `/map-plan`, `/map-efficient`, `/map-check`, and `/map-review`, each with a bundled supporting reference and source/template compactness regression. Execute future child slices only when they reduce always-loaded context for a current workflow users invoke directly; do not move mandatory phase instructions out of the active body without a same-PR regression or operator smoke proving the workflow still has a clear next action.
 
 ### Proposed Changes
 
@@ -154,19 +154,6 @@
 - For `map-learn`, prefer a short top-level playbook plus explicit links to rule templates and any future examples/reference files, rather than embedding all operational detail inline.
 - Add a “retained after invocation” lint heuristic for skills: flag large sections that are better expressed as supporting files because they do not need to remain in-context across the whole task.
 - If MAP later adds more task skills, evaluate whether some should use `context: fork` and `agent` to isolate long procedures into subagent execution, as supported by the official docs.
-
-## Compact high-traffic workflow playbooks [2604.033-2]
-
-**Benefit Hypothesis**: Externalizing low-frequency reference material from the largest high-traffic workflow skills (`/map-plan`, `/map-efficient`, `/map-review`, and `/map-check`) will reduce invoked skill body size and compaction carry-forward cost while preserving the active phase instructions users need to complete the workflow.
-**Confidence**: 0.70
-**Reasoning**: Official Claude Code docs state invoked `SKILL.md` content stays in context across turns and is reattached after compaction within a limited budget. Repo evidence shows several shipped task skills still exceed the recommended compact body shape. The highest-value next slice is not a generic rewrite; it is targeted playbook extraction for high-traffic workflows where examples, design rationale, or troubleshooting can move without hiding mandatory execution gates.
-
-### Proposed Changes
-
-- Inspect the longest high-traffic task skills and identify sections that are not required for the normal active workflow path.
-- Move low-frequency examples, troubleshooting, rationale, and matrices into bundled supporting files linked from the compact `SKILL.md` body.
-- Add focused regressions that preserve required phase headings, state-machine commands, output contracts, and supporting-file links in both `.claude/skills/` and template copies.
-- Run a generated-project smoke that inspects installed skill bodies and supporting files.
 
 ## Retained skill body lint for task workflows [2604.033-3]
 
