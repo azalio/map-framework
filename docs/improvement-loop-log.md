@@ -372,3 +372,18 @@
   - invariant: `High-traffic workflow SKILL.md files should keep active next-action flow under 500 lines and link bundled supporting files for examples/troubleshooting/reference material.`
   - review-check: `When compacting task skills, verify source and template SKILL.md files still preserve state-machine commands, output contracts, closeout artifact writes, and prompt-contract markers before moving detail into references.`
   - gotcha: `Tests that assert a command appears before first Task( can fail if prose mentions Task( earlier than the real launch; keep literal launch markers out of preflight prose.`
+
+## 2026-05-20 - Constraint-first provider rule templates [2604.040]
+
+- Decision: `implemented`
+- Branch: `codex/2604-040-constraint-provider-rules`
+- Baseline: The active plan identified that generated provider rules lacked a structural guardrail against broad positive write directives. Claude write-capable surfaces already had scattered scope wording, but there was no uniform installed-project constraint that blocked unrelated edits, dependency churn, or neighboring refactors at mutation boundaries.
+- Forward Change: Added `Mutation Boundary Constraints` to the Actor agent, `/map-fast`, `/map-efficient`, `/map-task`, `/map-debug`, `.codex/AGENTS.md`, and Codex `$map-fast`, then synced the shipped templates. The constraints require agents to report dependency changes, broad refactors, or scope expansion as blockers/tradeoffs instead of doing them silently.
+- Decisive Validation: Focused prompt regression tests now scan source and shipped Claude/Codex provider surfaces for the mutation-boundary section and required unrelated-file/dependency/refactor/blocker phrases. Generated-project smokes inspected installed `.claude/` files, root `AGENTS.md` for Codex, and `.codex/skills/map-fast/SKILL.md`.
+- Validation Boundary: `pytest` and `pytest tests/integration/test_e2e_claude_sdk.py -v -m slow` were both attempted and exceeded the 30-minute tool timeout without a deterministic failure message. Deterministic validation passed via `make lint`, `pytest -m "not slow"`, focused skill/template tests, no-LLM e2e artifact tests, Skill IR audit, and generated-project smokes.
+- Next Trigger: Reuse this when adding a write-capable provider surface, changing Actor/fix prompts, or introducing any prompt that says to apply edits directly.
+- Reusable Learnings:
+  - command: `pytest tests/test_skills.py::TestSkillStructure::test_write_capable_claude_surfaces_have_constraint_first_boundaries tests/test_skills.py::TestSkillStructure::test_write_capable_codex_surfaces_have_mutation_boundaries -v`
+  - command: `uv run --no-sync mapify init <new-dir> --no-git --mcp none`
+  - invariant: `Every write-capable provider surface should include Mutation Boundary Constraints that block unrelated edits, dependency changes, and neighboring refactors unless the current contract explicitly requires them.`
+  - review-check: `When a prompt says Actor/fix/apply_patch should edit files directly, verify the same prompt or its enclosing skill tells the agent to report required scope expansion as a blocker/tradeoff.`

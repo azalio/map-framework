@@ -89,6 +89,32 @@ HIGH_TRAFFIC_COMPACT_SKILL_REFS = {
     "map-check": "check-reference.md",
 }
 
+CLAUDE_MUTATION_BOUNDARY_SURFACES = [
+    Path("agents") / "actor.md",
+    Path("skills") / "map-fast" / "SKILL.md",
+    Path("skills") / "map-efficient" / "SKILL.md",
+    Path("skills") / "map-task" / "SKILL.md",
+    Path("skills") / "map-debug" / "SKILL.md",
+]
+
+CODEX_MUTATION_BOUNDARY_SURFACES = [
+    Path("AGENTS.md"),
+    Path("skills") / "map-fast" / "SKILL.md",
+]
+
+MUTATION_BOUNDARY_REQUIRED_PHRASES = [
+    "Do not edit unrelated files",
+    "Do not add, remove, or upgrade dependencies",
+    "refactor neighboring code",
+    "report it as a blocker/tradeoff",
+]
+
+MUTATION_DIRECTIVE_PATTERN = re.compile(
+    r"\b(?:Apply changes directly|Use Edit/Write|Implement exactly|"
+    r"Implement this subtask|Implement a fix|Apply the fix directly|make changes)\b",
+    re.IGNORECASE,
+)
+
 PROMPT_TONE_SKILL_ROOTS = [
     Path(".claude") / "skills",
     Path("src") / "mapify_cli" / "templates" / "skills",
@@ -429,6 +455,58 @@ class TestSkillStructure:
                 reference = reference_file.read_text(encoding="utf-8")
                 assert "## Examples" in reference
                 assert "## Troubleshooting" in reference
+
+    def test_write_capable_claude_surfaces_have_constraint_first_boundaries(
+        self, project_root
+    ):
+        """Write-capable Claude surfaces must block silent scope expansion."""
+        for root in (
+            project_root / ".claude",
+            project_root / "src" / "mapify_cli" / "templates",
+        ):
+            for relative_path in CLAUDE_MUTATION_BOUNDARY_SURFACES:
+                surface = root / relative_path
+                content = surface.read_text(encoding="utf-8")
+
+                assert "## Mutation Boundary Constraints" in content, (
+                    f"{surface} must declare mutation boundary constraints before "
+                    "write-capable instructions."
+                )
+                for phrase in MUTATION_BOUNDARY_REQUIRED_PHRASES:
+                    assert phrase in content, (
+                        f"{surface} must include constraint-first guardrail: {phrase}"
+                    )
+
+                constraint_index = content.index("## Mutation Boundary Constraints")
+                directive_match = MUTATION_DIRECTIVE_PATTERN.search(content)
+                assert directive_match is None or constraint_index < directive_match.start(), (
+                    f"{surface} should present scope/dependency constraints before "
+                    "broad write directives."
+                )
+
+    def test_write_capable_codex_surfaces_have_mutation_boundaries(
+        self, project_root
+    ):
+        """Installed Codex scaffolds need the same unrelated-edit/dependency guardrail."""
+        codex_root = project_root / "src" / "mapify_cli" / "templates" / "codex"
+        for relative_path in CODEX_MUTATION_BOUNDARY_SURFACES:
+            surface = codex_root / relative_path
+            content = surface.read_text(encoding="utf-8")
+
+            assert "## Mutation Boundary Constraints" in content, (
+                f"{surface} must declare mutation boundary constraints."
+            )
+            for phrase in MUTATION_BOUNDARY_REQUIRED_PHRASES:
+                assert phrase in content, (
+                    f"{surface} must include constraint-first guardrail: {phrase}"
+                )
+
+            constraint_index = content.index("## Mutation Boundary Constraints")
+            directive_match = MUTATION_DIRECTIVE_PATTERN.search(content)
+            assert directive_match is None or constraint_index < directive_match.start(), (
+                f"{surface} should present scope/dependency constraints before "
+                "broad write directives."
+            )
 
     # --- skill-rules.json tests ---
 

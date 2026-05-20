@@ -1,5 +1,15 @@
 # MAP Framework Improvement Done
 
+## Constraint-first provider rule templates [2604.040]
+
+- Date: 2026-05-20
+- Added `Mutation Boundary Constraints` to write-capable Claude provider surfaces: `.claude/agents/actor.md`, `/map-fast`, `/map-efficient`, `/map-task`, and `/map-debug`, plus the shipped template copies.
+- Added matching Codex constraints to `.codex/AGENTS.md` and `$map-fast`, plus the shipped template copies, so installed Codex projects get the same unrelated-edit/dependency-change boundary.
+- The constraints tell agents not to edit unrelated files, add/remove/upgrade dependencies, or refactor neighboring code unless the current task/subtask explicitly requires it; required scope expansion must be reported as a blocker/tradeoff instead of done silently.
+- Added regression tests that scan source and generated Claude/Codex provider surfaces for the mutation-boundary section and required phrases before release.
+- Updated README, usage, and architecture docs to describe the installed-user behavior and maintainer guardrail.
+- Verified with focused mutation-boundary prompt tests, full skill/template-sync tests, generated Claude and Codex `mapify init` smokes that inspected installed provider files, Skill IR audit, `make lint`, `pytest -m "not slow"`, and no-LLM e2e artifact tests. Full `pytest` and the slow Claude SDK module were attempted, but each exceeded the 30-minute tool timeout without a deterministic failure message.
+
 ## Compact high-traffic workflow playbooks [2604.033-2]
 
 - Date: 2026-05-20

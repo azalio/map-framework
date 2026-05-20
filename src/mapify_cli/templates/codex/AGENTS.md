@@ -31,6 +31,15 @@ research and review phases. This prevents accidental edits while exploring.
 **Note:** Hooks require `hooks = true` in config.toml and are not
 supported on Windows.
 
+## Mutation Boundary Constraints
+
+For write-capable MAP skills and agents:
+
+- Do not edit unrelated files, even if they are nearby or easy to clean up.
+- Do not add, remove, or upgrade dependencies unless the current task or subtask explicitly names that dependency change.
+- Do not refactor neighboring code unless the acceptance criteria cannot pass without that exact refactor.
+- If a dependency change, broad refactor, or scope expansion seems necessary, report it as a blocker/tradeoff instead of doing it silently.
+
 ## Getting Started
 
 1. Trust this project in Codex settings

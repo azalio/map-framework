@@ -33,7 +33,17 @@ parallel_tool_policy: sequential_by_default
 
 - Do not add discovery, design review, impact analysis, or learning steps to keep this workflow busy.
 - Do not refactor nearby code unless the selected small task cannot work without that exact change.
+- Do not edit unrelated files or add, remove, or upgrade dependencies unless the task explicitly requires that exact change.
 - If the task becomes risky, multi-stage, or ambiguous, stop using `/map-fast` and switch to `/map-efficient` or `/map-plan` instead.
+
+## Mutation Boundary Constraints
+
+These constraints apply to the Actor implementation prompt:
+
+- Do not edit unrelated files, even if they are nearby or easy to clean up.
+- Do not add, remove, or upgrade dependencies unless the current task explicitly names that dependency change.
+- Do not refactor neighboring code unless the acceptance criteria cannot pass without that exact refactor.
+- If a dependency change, broad refactor, or scope expansion seems necessary, report it as a blocker/tradeoff instead of doing it silently.
 
 ## Workflow Overview
 
@@ -102,7 +112,8 @@ Output JSON with:
   - trade_offs: array of strings
   - remaining_risks: array of strings
 
-Apply changes directly with Edit/Write tools. Do not serialize full file contents in your response."
+Apply changes directly with Edit/Write tools. Do not serialize full file contents in your response.
+Do not edit unrelated files, add or upgrade dependencies, or refactor neighboring code unless the current subtask explicitly requires it. Report any required scope expansion as a blocker/tradeoff."
 )
 ```
 
