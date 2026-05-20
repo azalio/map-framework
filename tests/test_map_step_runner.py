@@ -2973,6 +2973,101 @@ class TestCreateReviewBundle:
             len(result["files_changed"]) == map_step_runner._FILES_CHANGED_MAX_ENTRIES
         )
 
+    def test_build_review_prompts_budgets_secondary_diff_before_bundle(self):
+        """Oversized review prompts keep primary bundle context and clip raw diff first."""
+        review_bundle = "# Review Bundle\nPRIMARY_BUNDLE_SENTINEL\n" + (
+            "covered acceptance evidence\n" * 80
+        )
+        git_diff = "diff --git a/app.py b/app.py\n" + (
+            "+ secondary diff context line\n" * 6_000
+        ) + "TAIL_DIFF_SENTINEL\n"
+
+        result = map_step_runner.build_review_prompts(
+            branch="test-branch",
+            review_preferences="Flag correctness and test regressions first.",
+            budget_tokens=1_500,
+            review_bundle_text=review_bundle,
+            git_diff_text=git_diff,
+        )
+
+        assert result["status"] == "success"
+        assert result["budget_tokens"] == 1_500
+        for role in ("monitor", "predictor", "evaluator"):
+            prompt_info = result["prompts"][role]
+            prompt = prompt_info["prompt"]
+            assert prompt_info["estimated_tokens"] <= 1_500
+            assert prompt_info["truncated"] is True
+            assert "git diff" in prompt_info["clipped_sections"]
+            assert "review-bundle.md" not in prompt_info["clipped_sections"]
+            assert "PRIMARY_BUNDLE_SENTINEL" in prompt
+            assert "TAIL_DIFF_SENTINEL" not in prompt
+            assert "Review Prompt Budget" in prompt
+            assert "<documents>" in prompt
+            assert "</documents>" in prompt
+            assert "<expected_output>" in prompt
+            assert "Output JSON with:" in prompt
+
+    def test_build_review_prompts_budgets_large_review_preferences(self):
+        """Oversized review preferences must not break the prompt budget."""
+        review_bundle = "# Review Bundle\nPRIMARY_BUNDLE_SENTINEL\n" + (
+            "covered acceptance evidence\n" * 40
+        )
+        review_preferences = "Prefer high-signal review.\n" + (
+            "Large preference context\n" * 5_000
+        ) + "TAIL_PREFERENCES_SENTINEL\n"
+
+        result = map_step_runner.build_review_prompts(
+            branch="test-branch",
+            review_preferences=review_preferences,
+            budget_tokens=1_500,
+            review_bundle_text=review_bundle,
+            git_diff_text="diff --git a/app.py b/app.py\n+small change\n",
+        )
+
+        for role in ("monitor", "predictor", "evaluator"):
+            prompt_info = result["prompts"][role]
+            prompt = prompt_info["prompt"]
+            assert prompt_info["estimated_tokens"] <= 1_500
+            assert prompt_info["truncated"] is True
+            assert "review-preferences" in prompt_info["clipped_sections"]
+            assert "PRIMARY_BUNDLE_SENTINEL" in prompt
+            assert "TAIL_PREFERENCES_SENTINEL" not in prompt
+
+    def test_review_prompt_ab_reduces_old_unbounded_prompt_size(self):
+        """A/B: new budgeted reviewer prompt is smaller than old inline prompt."""
+        review_bundle = "# Review Bundle\nPRIMARY_BUNDLE_SENTINEL\n" + (
+            "review bundle evidence\n" * 80
+        )
+        git_diff = "diff --git a/app.py b/app.py\n" + (
+            "+ old unbounded diff context line\n" * 5_000
+        ) + "TAIL_DIFF_SENTINEL\n"
+        spec = map_step_runner.REVIEW_PROMPT_SPECS["monitor"]
+        old_prompt = map_step_runner._render_review_prompt(
+            spec,
+            review_bundle,
+            "Flag correctness and test regressions first.",
+            git_diff,
+        )
+
+        new_prompt_info = map_step_runner.build_review_prompts(
+            branch="test-branch",
+            review_preferences="Flag correctness and test regressions first.",
+            budget_tokens=1_500,
+            review_bundle_text=review_bundle,
+            git_diff_text=git_diff,
+        )["prompts"]["monitor"]
+        new_prompt = new_prompt_info["prompt"]
+
+        assert map_step_runner._estimate_tokens(old_prompt) > 1_500
+        assert new_prompt_info["estimated_tokens"] <= 1_500
+        assert new_prompt_info["estimated_tokens"] < map_step_runner._estimate_tokens(
+            old_prompt
+        )
+        assert "TAIL_DIFF_SENTINEL" in old_prompt
+        assert "TAIL_DIFF_SENTINEL" not in new_prompt
+        assert "PRIMARY_BUNDLE_SENTINEL" in new_prompt
+        assert "Review Prompt Budget" in new_prompt
+
 
 # ---------------------------------------------------------------------------
 # prepare_detached_review — focused unit tests (ST-004)

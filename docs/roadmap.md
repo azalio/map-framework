@@ -241,13 +241,13 @@ mask structural gaps in review and subtask contracts.
 
 **Status:** deferred.
 
-**Improvement-plan items:** `2604.019`, `2604.020`, `2604.021`, `2604.022`, `2604.023` (first Actor context-budget slice shipped as `2604.023-1`), `2604.024`, `2604.014`, `2604.017`.
+**Improvement-plan items:** `2604.019`, `2604.020`, `2604.021`, `2604.022`, `2604.023` (Actor context-budget slice shipped as `2604.023-1`; reviewer prompt-budget slice shipped as `2604.023-2`), `2604.024`, `2604.014`, `2604.017`.
 
 ### Scope
 
 - `REGISTRY/FOCUS`
 - steering requests and preemption
-- deterministic token budgets beyond the shipped Actor context-block cap
+- deterministic token budgets beyond the shipped Actor and review prompt caps
 - agent registry snapshots
 - multi-phase evaluation harness
 - family-specific model scaling analysis

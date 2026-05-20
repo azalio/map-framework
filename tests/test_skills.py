@@ -827,6 +827,19 @@ class TestXMLPromptEnvelopeContracts:
 
     XML_ENVELOPE_SKILLS = ["map-plan", "map-efficient", "map-debug", "map-review"]
 
+    def _map_review_prompt_source(self, project_root, skills_root):
+        if str(skills_root).startswith(".claude"):
+            return project_root / ".map" / "scripts" / "map_step_runner.py"
+        return (
+            project_root
+            / "src"
+            / "mapify_cli"
+            / "templates"
+            / "map"
+            / "scripts"
+            / "map_step_runner.py"
+        )
+
     @pytest.fixture
     def project_root(self):
         return Path(__file__).parent.parent
@@ -851,9 +864,14 @@ class TestXMLPromptEnvelopeContracts:
     ):
         skill_md = project_root / skills_root / skill_name / "SKILL.md"
         content = skill_md.read_text(encoding="utf-8")
+        prompt_content = content
+        if skill_name == "map-review":
+            prompt_content = self._map_review_prompt_source(
+                project_root, skills_root
+            ).read_text(encoding="utf-8")
 
         for tag in ("<documents>", "<task>", "<expected_output>"):
-            assert tag in content, (
+            assert tag in prompt_content, (
                 f"{skill_name} should use {tag} in long subagent prompts "
                 "so artifacts, task, and output schema stay unambiguous."
             )
@@ -866,15 +884,16 @@ class TestXMLPromptEnvelopeContracts:
         content = skill_md.read_text(encoding="utf-8")
         launch_section = content.split("### Step A.2: Launch all parallel calls", maxsplit=1)[1]
         launch_section = launch_section.split("### Hard Stop Check", maxsplit=1)[0]
+        prompt_source = self._map_review_prompt_source(
+            project_root, skills_root
+        ).read_text(encoding="utf-8")
 
-        assert launch_section.count("<documents>") == 3
-        assert launch_section.count("priority='primary'") == 3
-        assert launch_section.count("<workflow_policy>") == 3
-        for prompt in re.findall(r'prompt="(.*?)"\n\)', launch_section, flags=re.DOTALL):
-            assert prompt.index("<documents>") < prompt.index("<instructions>"), (
-                "Reviewer prompts should present the review bundle and diff before "
-                "instructions, matching long-context prompting guidance."
-            )
+        assert "build_review_prompts" in launch_section
+        assert launch_section.index("build_review_prompts") < launch_section.index("Task(")
+        assert prompt_source.count('"subagent_type"') >= 3
+        assert "priority='primary'" in prompt_source
+        assert "<workflow_policy>" in prompt_source
+        assert prompt_source.index("<documents>") < prompt_source.index("<instructions>")
 
     @pytest.mark.parametrize("skills_root", PROMPT_TONE_SKILL_ROOTS)
     def test_map_efficient_actor_and_monitor_put_artifacts_before_task(
@@ -1090,6 +1109,10 @@ class TestEvidenceFirstPromptContracts:
         content = (
             project_root / ".claude" / "skills" / skill_name / "SKILL.md"
         ).read_text(encoding="utf-8")
+        if skill_name == "map-review":
+            content += (
+                project_root / ".map" / "scripts" / "map_step_runner.py"
+            ).read_text(encoding="utf-8")
 
         for term in required_terms:
             assert term in content
@@ -1198,6 +1221,21 @@ class TestMapReviewSkillBundleWiring:
             "create_review_bundle invocation must appear BEFORE the first Task( call "
             f"(bundle at {bundle_pos}, first Task( at {task_pos})"
         )
+
+    def test_map_review_skill_builds_budgeted_prompts_before_agents(self, skill_md):
+        """Review fan-out must use budgeted prompts before launching Task calls."""
+        assert "build_review_prompts" in skill_md, (
+            "map-review/SKILL.md must build bounded reviewer prompts"
+        )
+        prompt_pos = skill_md.index("build_review_prompts")
+        task_pos = skill_md.index("Task(")
+        assert prompt_pos < task_pos, (
+            "build_review_prompts invocation must appear BEFORE the first Task( call "
+            f"(prompt builder at {prompt_pos}, first Task( at {task_pos})"
+        )
+        assert "MAP_REVIEW_PROMPT_BUDGET_TOKENS" in skill_md
+        assert "Review Prompt Budget" in skill_md
+        assert "clips lower-priority raw diff" in skill_md
 
     def test_map_review_skill_references_bundle_artifacts_in_agent_prompts(self, skill_md):
         """Agent prompts must reference both review-bundle.json and review-bundle.md (AC-5)."""
