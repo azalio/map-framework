@@ -3064,6 +3064,50 @@ class TestCreateReviewBundle:
             assert "PRIMARY_BUNDLE_SENTINEL" in prompt
             assert "TAIL_PREFERENCES_SENTINEL" not in prompt
 
+    def test_build_review_prompts_tolerates_budget_artifact_write_error(
+        self, branch_workspace, monkeypatch
+    ):
+        """Budget diagnostics must not block prompt generation on I/O errors."""
+        del branch_workspace
+
+        def fail_write(path, payload):
+            del path, payload
+            raise OSError("read-only .map")
+
+        monkeypatch.setattr(map_step_runner, "_write_json_file", fail_write)
+
+        result = map_step_runner.build_review_prompts(
+            review_bundle_text="# Review Bundle\nPRIMARY_BUNDLE_SENTINEL\n",
+            git_diff_text="diff --git a/file.py b/file.py\n",
+            budget_tokens=1500,
+        )
+
+        assert result["status"] == "success"
+        assert set(result["prompts"]) == {"monitor", "predictor", "evaluator"}
+
+    def test_record_token_budget_decision_reports_nonfatal_write_error(
+        self, branch_workspace, monkeypatch
+    ):
+        """Direct artifact writes report errors instead of raising."""
+        del branch_workspace
+
+        def fail_write(path, payload):
+            del path, payload
+            raise OSError("disk full")
+
+        monkeypatch.setattr(map_step_runner, "_write_json_file", fail_write)
+
+        result = map_step_runner.record_token_budget_decision(
+            path_name="map-review.monitor_prompt",
+            configured_budget_tokens=1500,
+            estimated_tokens_before=2000,
+            estimated_tokens_after=1400,
+            budget_action="truncated",
+        )
+
+        assert result["status"] == "error"
+        assert "disk full" in result["reason"]
+
     def test_review_prompt_ab_reduces_old_unbounded_prompt_size(self, branch_workspace):
         """A/B: new budgeted reviewer prompt is smaller than old inline prompt."""
         del branch_workspace

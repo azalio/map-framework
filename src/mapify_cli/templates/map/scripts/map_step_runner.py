@@ -432,63 +432,68 @@ def record_token_budget_decision(
     """Append one active prompt-path budget decision to token_budget.json."""
     branch_name = branch or get_branch_name()
     artifact_path = token_budget_artifact_path(branch_name)
-    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
 
-    payload = _default_token_budget_artifact(branch_name)
-    existing = _read_json_file(artifact_path)
-    if existing:
-        payload.update(
-            {
-                "schema_version": existing.get("schema_version", payload["schema_version"]),
-                "branch": branch_name,
-            }
+        payload = _default_token_budget_artifact(branch_name)
+        existing = _read_json_file(artifact_path)
+        if existing:
+            payload.update(
+                {
+                    "schema_version": existing.get(
+                        "schema_version", payload["schema_version"]
+                    ),
+                    "branch": branch_name,
+                }
+            )
+            existing_decisions = existing.get("decisions")
+            if isinstance(existing_decisions, list):
+                payload["decisions"] = [
+                    item for item in existing_decisions if isinstance(item, dict)
+                ][-TOKEN_BUDGET_DECISION_LIMIT:]
+
+        decision: dict[str, object] = {
+            "recorded_at": _utc_timestamp(),
+            "path_name": path_name,
+            "configured_budget_tokens": max(0, int(configured_budget_tokens or 0)),
+            "estimated_tokens_before": max(0, int(estimated_tokens_before or 0)),
+            "estimated_tokens_after": max(0, int(estimated_tokens_after or 0)),
+            "budget_action": budget_action or "none",
+            "clipped_sections": list(clipped_sections or []),
+            "artifact_references": _normalize_token_budget_artifact_refs(
+                artifact_references
+            ),
+        }
+        if metadata:
+            decision["metadata"] = metadata
+
+        decisions = cast(list[dict[str, object]], payload.setdefault("decisions", []))
+        decisions.append(decision)
+        del decisions[:-TOKEN_BUDGET_DECISION_LIMIT]
+        payload["updated_at"] = _utc_timestamp()
+        _write_json_file(artifact_path, payload)
+
+        manifest = load_artifact_manifest(branch_name)
+        _set_manifest_stage(
+            manifest,
+            "token_budget",
+            "ready",
+            artifacts=[_artifact_ref(artifact_path, "token-budget-report")],
+            metadata={
+                "last_path_name": path_name,
+                "last_budget_action": decision["budget_action"],
+                "decision_count": len(decisions),
+            },
         )
-        existing_decisions = existing.get("decisions")
-        if isinstance(existing_decisions, list):
-            payload["decisions"] = [
-                item for item in existing_decisions if isinstance(item, dict)
-            ][-TOKEN_BUDGET_DECISION_LIMIT:]
-
-    decision: dict[str, object] = {
-        "recorded_at": _utc_timestamp(),
-        "path_name": path_name,
-        "configured_budget_tokens": max(0, int(configured_budget_tokens or 0)),
-        "estimated_tokens_before": max(0, int(estimated_tokens_before or 0)),
-        "estimated_tokens_after": max(0, int(estimated_tokens_after or 0)),
-        "budget_action": budget_action or "none",
-        "clipped_sections": list(clipped_sections or []),
-        "artifact_references": _normalize_token_budget_artifact_refs(
-            artifact_references
-        ),
-    }
-    if metadata:
-        decision["metadata"] = metadata
-
-    decisions = cast(list[dict[str, object]], payload.setdefault("decisions", []))
-    decisions.append(decision)
-    del decisions[:-TOKEN_BUDGET_DECISION_LIMIT]
-    payload["updated_at"] = _utc_timestamp()
-    _write_json_file(artifact_path, payload)
-
-    manifest = load_artifact_manifest(branch_name)
-    _set_manifest_stage(
-        manifest,
-        "token_budget",
-        "ready",
-        artifacts=[_artifact_ref(artifact_path, "token-budget-report")],
-        metadata={
-            "last_path_name": path_name,
-            "last_budget_action": decision["budget_action"],
-            "decision_count": len(decisions),
-        },
-    )
-    manifest_result = save_artifact_manifest(manifest, branch_name)
-    return {
-        "status": "success",
-        "path": str(artifact_path),
-        "decision": decision,
-        "manifest_path": manifest_result["path"],
-    }
+        manifest_result = save_artifact_manifest(manifest, branch_name)
+        return {
+            "status": "success",
+            "path": str(artifact_path),
+            "decision": decision,
+            "manifest_path": manifest_result["path"],
+        }
+    except Exception as exc:
+        return {"status": "error", "path": str(artifact_path), "reason": str(exc)}
 
 
 def _prior_stage_file_entry(
