@@ -111,7 +111,7 @@ MUTATION_BOUNDARY_REQUIRED_PHRASES = [
 
 MUTATION_DIRECTIVE_PATTERN = re.compile(
     r"\b(?:Apply changes directly|Use Edit/Write|Implement exactly|"
-    r"Implement this subtask|Implement a fix|make changes)\b",
+    r"Implement this subtask|Implement a fix|Apply the fix directly|make changes)\b",
     re.IGNORECASE,
 )
 
@@ -477,13 +477,12 @@ class TestSkillStructure:
                         f"{surface} must include constraint-first guardrail: {phrase}"
                     )
 
-                if relative_path.parts[0] == "skills":
-                    constraint_index = content.index("## Mutation Boundary Constraints")
-                    directive_match = MUTATION_DIRECTIVE_PATTERN.search(content)
-                    assert directive_match is None or constraint_index < directive_match.start(), (
-                        f"{surface} should present scope/dependency constraints before "
-                        "broad write directives."
-                    )
+                constraint_index = content.index("## Mutation Boundary Constraints")
+                directive_match = MUTATION_DIRECTIVE_PATTERN.search(content)
+                assert directive_match is None or constraint_index < directive_match.start(), (
+                    f"{surface} should present scope/dependency constraints before "
+                    "broad write directives."
+                )
 
     def test_write_capable_codex_surfaces_have_mutation_boundaries(
         self, project_root
@@ -501,6 +500,13 @@ class TestSkillStructure:
                 assert phrase in content, (
                     f"{surface} must include constraint-first guardrail: {phrase}"
                 )
+
+            constraint_index = content.index("## Mutation Boundary Constraints")
+            directive_match = MUTATION_DIRECTIVE_PATTERN.search(content)
+            assert directive_match is None or constraint_index < directive_match.start(), (
+                f"{surface} should present scope/dependency constraints before "
+                "broad write directives."
+            )
 
     # --- skill-rules.json tests ---
 
