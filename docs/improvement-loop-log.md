@@ -361,7 +361,7 @@
 
 - Decision: `implemented`
 - Branch: `codex/2604-033-2-compact-playbooks`
-- PR: `pending`
+- PR: `https://github.com/azalio/map-framework/pull/138`
 - Baseline: The high-traffic workflow skills `/map-plan`, `/map-efficient`, `/map-check`, and `/map-review` each carried hundreds of lines of active instructions, examples, troubleshooting, and low-frequency reference material. Official Claude Code skill docs say invoked `SKILL.md` content stays in context and compaction reattaches recent skill invocations within a limited budget, so large active bodies increase recurring context cost for the workflows users run most.
 - Forward Change: Moved low-frequency examples, troubleshooting, detailed rationale, command matrices, wave details, and section rubrics into bundled supporting files while keeping mandatory next-action flow, state-machine commands, output contracts, run-health closeout, review bundle wiring, and handoff flows in each active `SKILL.md`.
 - Decisive Validation: Focused skill/template tests passed, generated-project smoke confirmed installed high-traffic skills were <=500 lines and included supporting references, `make lint` passed, `pytest -m "not slow"` passed, and Skill IR audit found no provider-surface findings.
@@ -372,4 +372,3 @@
   - invariant: `High-traffic workflow SKILL.md files should keep active next-action flow under 500 lines and link bundled supporting files for examples/troubleshooting/reference material.`
   - review-check: `When compacting task skills, verify source and template SKILL.md files still preserve state-machine commands, output contracts, closeout artifact writes, and prompt-contract markers before moving detail into references.`
   - gotcha: `Tests that assert a command appears before first Task( can fail if prose mentions Task( earlier than the real launch; keep literal launch markers out of preflight prose.`
-
