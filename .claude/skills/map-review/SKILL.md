@@ -167,15 +167,20 @@ When compare mode is active, run two review collections with `ordering_label='de
 Before launching agents, build bounded reviewer prompts. `build_review_prompts` uses `MAP_REVIEW_PROMPT_BUDGET_TOKENS`, emits a Review Prompt Budget note, and clips lower-priority raw diff before review-bundle context.
 
 ```bash
-PROMPTS_JSON=$(python3 .map/scripts/map_step_runner.py build_review_prompts --review-preferences "$ARGUMENTS")
+REVIEW_PROMPTS_JSON=$(python3 .map/scripts/map_step_runner.py build_review_prompts \
+  --review-preferences "[paste Review Preferences section above]")
+
+MONITOR_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prompts"]["monitor"]["prompt"])')
+PREDICTOR_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prompts"]["predictor"]["prompt"])')
+EVALUATOR_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prompts"]["evaluator"]["prompt"])')
 ```
 
-Launch all three tasks from the generated prompt files. Keep reviewer task calls below the bundle and prompt-builder commands.
+Use the extracted prompt variables as the Task prompts. Keep reviewer task calls below the bundle and prompt-builder commands.
 
 ```text
-Task(subagent_type="monitor", description="Review diff for correctness", prompt="Read generated monitor prompt from build_review_prompts output.")
-Task(subagent_type="predictor", description="Predict integration risk", prompt="Read generated predictor prompt from build_review_prompts output.")
-Task(subagent_type="evaluator", description="Score review quality", prompt="Read generated evaluator prompt from build_review_prompts output.")
+Task(subagent_type="monitor", description="Review diff for correctness", prompt=MONITOR_PROMPT)
+Task(subagent_type="predictor", description="Predict integration risk", prompt=PREDICTOR_PROMPT)
+Task(subagent_type="evaluator", description="Score review quality", prompt=EVALUATOR_PROMPT)
 ```
 
 Reviewer prompts reference `review-bundle.json`, `review-bundle.md`, the raw diff as secondary context, and the expected output schema.
@@ -189,7 +194,7 @@ If Monitor returns `valid=false`, report findings immediately and skip Phase B. 
 ### Step B.0: Determine section presentation order
 
 ```bash
-SECTIONS_JSON=$(python3 .map/scripts/map_step_runner.py shuffle-sections --mode "$MODE_FLAG" --seed "$SEED_RAW")
+SECTIONS_JSON=$(python3 .map/scripts/map_step_runner.py shuffle-sections "$MODE_FLAG" "$SEED_RAW")
 ```
 
 Iterate over the helper-returned order and summarize before the next section.

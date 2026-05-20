@@ -8,7 +8,7 @@ argument-hint: "[focus area]"
 ---
 # /map-check - Quality Gates & Verification
 
-Purpose: run verification only. Do not plan, implement, or fix from this skill.
+Purpose: run quality gates and MAP workflow verification only. Do not plan, implement, or fix from this skill.
 Use [check-reference.md](check-reference.md) for command matrices, examples, and troubleshooting.
 
 ## Effort and Parallelism Policy
@@ -160,10 +160,14 @@ Run project-native checks first. If no project command exists, use the fallback 
 
 Optional structured diagnostics for failing gates:
 ```bash
+TEST_CMD="${TEST_CMD:-pytest}"
 LOG_FILE=".map/${BRANCH}/tests.log"
 mkdir -p ".map/${BRANCH}"
-# Re-run the failing command into $LOG_FILE, then parse it:
-python3 .map/scripts/diagnostics.py parse --tool tests --log "$LOG_FILE" --command "$TEST_CMD" --exit-code $?
+set +e
+$TEST_CMD >"$LOG_FILE" 2>&1
+TEST_EXIT=$?
+set -e
+python3 .map/scripts/diagnostics.py parse --tool tests --log "$LOG_FILE" --command "$TEST_CMD" --exit-code "$TEST_EXIT"
 ```
 
 Also check git state:
@@ -179,7 +183,7 @@ After each major gate, write a compact run summary and use `known-issues.json` o
 python3 .map/scripts/diagnostics.py summarize \
   --tool tests \
   --command "$TEST_CMD" \
-  --exit-code $? \
+  --exit-code "$TEST_EXIT" \
   --summary "Pytest run for branch verification" \
   --known-issues ".map/${BRANCH}/known-issues.json" \
   --notes "Capture deviations, flaky behavior, or environment quirks here"
