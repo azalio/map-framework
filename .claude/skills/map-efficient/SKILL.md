@@ -14,7 +14,7 @@ State-gated prompting: each invocation sees exactly one clear next action. The s
 
 Long subagent prompts use the shared [XML Prompt Envelope](../../references/map-xml-prompt-envelopes.md): persisted artifacts and current subtask context appear before instructions, with output contracts isolated in `<expected_output>`.
 
-Use [efficient-reference.md](efficient-reference.md) for wave examples, TDD details, final-verifier retry policy, examples, and troubleshooting.
+Use [efficient-reference.md](efficient-reference.md) for wave examples, TDD details, final-verifier retry policy, examples, and troubleshooting. When a workflow step points to a reference section, read that section before executing the step; supporting files are not assumed to be in context automatically.
 
 ## Effort and Parallelism Policy
 

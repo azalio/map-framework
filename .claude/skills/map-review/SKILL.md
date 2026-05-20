@@ -12,7 +12,7 @@ Interactive, structured code review of current changes using Monitor, Predictor,
 
 Task: `$ARGUMENTS`
 
-Use [review-reference.md](review-reference.md) for detailed examples, section rubrics, and troubleshooting. Reviewer prompt construction must follow the shared [XML Prompt Envelope](../../references/map-xml-prompt-envelopes.md): persisted artifacts appear in `<documents>` before instructions and `<expected_output>`.
+Use [review-reference.md](review-reference.md) for detailed examples, section rubrics, and troubleshooting. When a workflow step points to a reference section, read that section before executing the step; supporting files are not assumed to be in context automatically. Reviewer prompt construction must follow the shared [XML Prompt Envelope](../../references/map-xml-prompt-envelopes.md): persisted artifacts appear in `<documents>` before instructions and `<expected_output>`.
 
 ## Effort and Parallelism Policy
 

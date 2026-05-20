@@ -420,6 +420,9 @@ class TestSkillStructure:
                 assert f"[{reference_name}]({reference_name})" in content, (
                     f"{skill_file} should point to its bundled supporting reference."
                 )
+                assert "supporting files are not assumed to be in context automatically" in content, (
+                    f"{skill_file} should make supporting-reference loading explicit."
+                )
                 assert reference_file.exists(), (
                     f"{reference_file} should hold low-frequency workflow material."
                 )

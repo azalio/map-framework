@@ -9,7 +9,7 @@ argument-hint: "[focus area]"
 # /map-check - Quality Gates & Verification
 
 Purpose: run quality gates and MAP workflow verification only. Do not plan, implement, or fix from this skill.
-Use [check-reference.md](check-reference.md) for command matrices, examples, and troubleshooting.
+Use [check-reference.md](check-reference.md) for command matrices, examples, and troubleshooting. When a workflow step points to a reference section, read that section before executing the step; supporting files are not assumed to be in context automatically.
 
 ## Effort and Parallelism Policy
 

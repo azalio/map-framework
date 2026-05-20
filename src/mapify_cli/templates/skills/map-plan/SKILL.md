@@ -11,7 +11,7 @@ Purpose: plan and decompose complex tasks into atomic subtasks. This command rec
 
 Use compact evidence-first examples from [Evidence-First Output Examples](../../references/map-output-examples.md). Use the shared [XML Prompt Envelope](../../references/map-xml-prompt-envelopes.md) for long prompts so source artifacts appear before task instructions and output contracts.
 
-Use [plan-reference.md](plan-reference.md) for spec templates, architecture graph examples, full output examples, and troubleshooting.
+Use [plan-reference.md](plan-reference.md) for spec templates, architecture graph examples, full output examples, and troubleshooting. When a workflow step points to a reference section, read that section before executing the step; supporting files are not assumed to be in context automatically.
 
 ## Effort and Parallelism Policy
 
