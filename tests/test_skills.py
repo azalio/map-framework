@@ -82,6 +82,13 @@ BLANKET_PROHIBITION_PHRASES = [
 
 SCOPE_CONTROL_SKILLS = ["map-fast", "map-check", "map-resume", "map-task"]
 
+HIGH_TRAFFIC_COMPACT_SKILL_REFS = {
+    "map-plan": "plan-reference.md",
+    "map-efficient": "efficient-reference.md",
+    "map-review": "review-reference.md",
+    "map-check": "check-reference.md",
+}
+
 PROMPT_TONE_SKILL_ROOTS = [
     Path(".claude") / "skills",
     Path("src") / "mapify_cli" / "templates" / "skills",
@@ -395,6 +402,33 @@ class TestSkillStructure:
             reference = reference_file.read_text()
             assert "## Examples" in reference
             assert "## Troubleshooting" in reference
+
+    def test_high_traffic_workflow_skills_keep_active_bodies_compact(
+        self, skills_dir, template_skills_dir
+    ):
+        """Common workflows should keep invoked bodies lean and navigate to references."""
+        for base_dir in (skills_dir, template_skills_dir):
+            for skill_name, reference_name in HIGH_TRAFFIC_COMPACT_SKILL_REFS.items():
+                skill_file = base_dir / skill_name / "SKILL.md"
+                reference_file = base_dir / skill_name / reference_name
+                content = skill_file.read_text(encoding="utf-8")
+
+                assert len(content.splitlines()) <= 500, (
+                    f"{skill_file} should keep the active workflow path compact; "
+                    "move examples, rationale, and troubleshooting into supporting files."
+                )
+                assert f"[{reference_name}]({reference_name})" in content, (
+                    f"{skill_file} should point to its bundled supporting reference."
+                )
+                assert "supporting files are not assumed to be in context automatically" in content, (
+                    f"{skill_file} should make supporting-reference loading explicit."
+                )
+                assert reference_file.exists(), (
+                    f"{reference_file} should hold low-frequency workflow material."
+                )
+                reference = reference_file.read_text(encoding="utf-8")
+                assert "## Examples" in reference
+                assert "## Troubleshooting" in reference
 
     # --- skill-rules.json tests ---
 

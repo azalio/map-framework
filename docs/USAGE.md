@@ -77,6 +77,8 @@ Maintainer prompt-tone guardrail: non-release MAP skills should use targeted wor
 
 Maintainer provider-surface guardrail: shipped Claude and Codex skills can be audited as typed `SkillIR` records before release. Run `python -m mapify_cli.skill_ir src/mapify_cli/templates/skills src/mapify_cli/templates/codex/skills` to parse every `SKILL.md`, print deterministic content hashes, and fail unsupported frontmatter, missing bundled Markdown references, or injection-like phrases such as “ignore previous instructions.”
 
+Maintainer skill-lifecycle guardrail: high-traffic workflow skills (`/map-plan`, `/map-efficient`, `/map-check`, and `/map-review`) keep the active `SKILL.md` body under 500 lines and link to bundled supporting files for examples, troubleshooting, and low-frequency reference details. This keeps invoked skill content cheaper to carry through long sessions and compaction while preserving full reference material for ambiguous or failing runs.
+
 **Optional detached mode:**
 
 ```bash
