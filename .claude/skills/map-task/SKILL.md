@@ -37,6 +37,15 @@ parallel_tool_policy: single_subtask_sequential
 - Do not re-plan the selected subtask unless its stored contract is missing or contradictory.
 - Do not add Predictor, Evaluator, or learning work unless the shared state machine requires it for this subtask.
 
+## Mutation Boundary Constraints
+
+These constraints apply to the selected subtask's write-capable phases:
+
+- Do not edit unrelated files, even if they are nearby or easy to clean up.
+- Do not add, remove, or upgrade dependencies unless the selected subtask contract explicitly names that dependency change.
+- Do not refactor neighboring code unless the selected subtask's validation criteria cannot pass without that exact refactor.
+- If a dependency change, broad refactor, or scope expansion seems necessary, report it as a blocker/tradeoff and stop for a contract update instead of doing it silently.
+
 ---
 
 ## Step 0: Parse Arguments

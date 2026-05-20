@@ -41,6 +41,15 @@ parallel_tool_policy: sequential_root_cause_first
 - Do not add extra agents beyond the documented debugging sequence; switch workflows only if the task stops being a debugging task.
 - Do not continue polishing after the original symptom is reproduced, fixed, and verified.
 
+## Mutation Boundary Constraints
+
+These constraints apply to every fix subtask:
+
+- Do not edit unrelated files, even if they are nearby or easy to clean up.
+- Do not add, remove, or upgrade dependencies unless the root cause evidence explicitly requires that dependency change.
+- Do not refactor neighboring code unless the bug cannot be fixed and verified without that exact refactor.
+- If a dependency change, broad refactor, or scope expansion seems necessary, report it as a blocker/tradeoff instead of doing it silently.
+
 ## Workflow Overview
 
 Debugging workflow focuses on analysis before implementation:
@@ -144,6 +153,7 @@ Task(
 **Root Cause:** [identified root cause]
 
 Apply the fix directly with Edit/Write tools.
+Do not edit unrelated files, add or upgrade dependencies, or refactor neighboring code unless the root cause evidence explicitly requires it. Report any required scope expansion as a blocker/tradeoff.
 
 JSON contract reference: [Actor Change Summary](../../references/map-json-output-contracts.md#actor-change-summary).
 

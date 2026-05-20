@@ -36,6 +36,15 @@ parallel_tool_policy: guarded_wave_only
 5. After Monitor pass, record files changed in `step_state.json` for guard isolation.
 6. Validate planning metadata before Actor starts: `expected_diff_size`, `concern_type`, `one_logical_step`, `split_rationale`, `concern_justification`, `coverage_map`, `hard_constraints`, `soft_constraints`, `validation_criteria`, `[AC-1]` bracket tags, and `tradeoff_rationale`.
 
+## Mutation Boundary Constraints
+
+These constraints apply to every write-capable Actor or fix phase:
+
+- Do not edit unrelated files, even if they are nearby or easy to clean up.
+- Do not add, remove, or upgrade dependencies unless the current subtask contract explicitly names that dependency change.
+- Do not refactor neighboring code unless the current validation criteria cannot pass without that exact refactor.
+- If a dependency change, broad refactor, or scope expansion seems necessary, report it as a blocker/tradeoff and wait for the contract to change instead of doing it silently.
+
 ## Intentional Agent Omissions
 
 /map-efficient does not run Evaluator or Reflector during normal execution. Monitor validates correctness directly, and learning is deferred to `/map-learn`.
@@ -187,6 +196,7 @@ Task(
 </documents>
 <task>
 Implement exactly the current subtask. Preserve validation_criteria, coverage_map tags, hard_constraints, and soft_constraints tradeoffs. Do not expand scope.
+Do not edit unrelated files, add or upgrade dependencies, or refactor neighboring code unless the current subtask contract explicitly requires it. Report any required scope expansion as a blocker/tradeoff.
 </task>
 <expected_output>
 Return files_changed, tests_run, validation_notes, and any blocker.
