@@ -2337,6 +2337,16 @@ class TestBuildContextBlock:
         assert "# Upstream Results" in result
         assert "dependency summary" in result
 
+        budget_report = json.loads(
+            (branch_workspace / "token_budget.json").read_text(encoding="utf-8")
+        )
+        decision = budget_report["decisions"][-1]
+        assert decision["path_name"] == "map-efficient.actor_context_block"
+        assert decision["budget_action"] == "truncated"
+        assert decision["configured_budget_tokens"] == 260
+        assert decision["estimated_tokens_after"] <= 260
+        assert "plan_overview" in decision["clipped_sections"]
+
     def test_build_context_block_ignores_impossible_budget(
         self, branch_workspace, monkeypatch
     ):
@@ -2973,7 +2983,9 @@ class TestCreateReviewBundle:
             len(result["files_changed"]) == map_step_runner._FILES_CHANGED_MAX_ENTRIES
         )
 
-    def test_build_review_prompts_budgets_secondary_diff_before_bundle(self):
+    def test_build_review_prompts_budgets_secondary_diff_before_bundle(
+        self, branch_workspace
+    ):
         """Oversized review prompts keep primary bundle context and clip raw diff first."""
         review_bundle = "# Review Bundle\nPRIMARY_BUNDLE_SENTINEL\n" + (
             "covered acceptance evidence\n" * 80
@@ -3007,8 +3019,27 @@ class TestCreateReviewBundle:
             assert "<expected_output>" in prompt
             assert "Output JSON with:" in prompt
 
-    def test_build_review_prompts_budgets_large_review_preferences(self):
+        budget_report = json.loads(
+            (branch_workspace / "token_budget.json").read_text(encoding="utf-8")
+        )
+        decisions = budget_report["decisions"][-3:]
+        assert [decision["path_name"] for decision in decisions] == [
+            "map-review.monitor_prompt",
+            "map-review.predictor_prompt",
+            "map-review.evaluator_prompt",
+        ]
+        assert all(decision["budget_action"] == "truncated" for decision in decisions)
+        assert all("git diff" in decision["clipped_sections"] for decision in decisions)
+        manifest = json.loads(
+            (branch_workspace / "artifact_manifest.json").read_text(encoding="utf-8")
+        )
+        assert manifest["stages"]["token_budget"]["status"] == "ready"
+
+    def test_build_review_prompts_budgets_large_review_preferences(
+        self, branch_workspace
+    ):
         """Oversized review preferences must not break the prompt budget."""
+        del branch_workspace
         review_bundle = "# Review Bundle\nPRIMARY_BUNDLE_SENTINEL\n" + (
             "covered acceptance evidence\n" * 40
         )
@@ -3033,8 +3064,53 @@ class TestCreateReviewBundle:
             assert "PRIMARY_BUNDLE_SENTINEL" in prompt
             assert "TAIL_PREFERENCES_SENTINEL" not in prompt
 
-    def test_review_prompt_ab_reduces_old_unbounded_prompt_size(self):
+    def test_build_review_prompts_tolerates_budget_artifact_write_error(
+        self, branch_workspace, monkeypatch
+    ):
+        """Budget diagnostics must not block prompt generation on I/O errors."""
+        del branch_workspace
+
+        def fail_write(path, payload):
+            del path, payload
+            raise OSError("read-only .map")
+
+        monkeypatch.setattr(map_step_runner, "_write_json_file", fail_write)
+
+        result = map_step_runner.build_review_prompts(
+            review_bundle_text="# Review Bundle\nPRIMARY_BUNDLE_SENTINEL\n",
+            git_diff_text="diff --git a/file.py b/file.py\n",
+            budget_tokens=1500,
+        )
+
+        assert result["status"] == "success"
+        assert set(result["prompts"]) == {"monitor", "predictor", "evaluator"}
+
+    def test_record_token_budget_decision_reports_nonfatal_write_error(
+        self, branch_workspace, monkeypatch
+    ):
+        """Direct artifact writes report errors instead of raising."""
+        del branch_workspace
+
+        def fail_write(path, payload):
+            del path, payload
+            raise OSError("disk full")
+
+        monkeypatch.setattr(map_step_runner, "_write_json_file", fail_write)
+
+        result = map_step_runner.record_token_budget_decision(
+            path_name="map-review.monitor_prompt",
+            configured_budget_tokens=1500,
+            estimated_tokens_before=2000,
+            estimated_tokens_after=1400,
+            budget_action="truncated",
+        )
+
+        assert result["status"] == "error"
+        assert "disk full" in result["reason"]
+
+    def test_review_prompt_ab_reduces_old_unbounded_prompt_size(self, branch_workspace):
         """A/B: new budgeted reviewer prompt is smaller than old inline prompt."""
+        del branch_workspace
         review_bundle = "# Review Bundle\nPRIMARY_BUNDLE_SENTINEL\n" + (
             "review bundle evidence\n" * 80
         )

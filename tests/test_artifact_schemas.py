@@ -76,6 +76,7 @@ def test_validate_artifact_manifest_schema():
             "implementation": stage,
             "review": stage,
             "verification": stage,
+            "token_budget": stage,
             "run_health": stage,
             "learn_handoff": stage,
         },
@@ -163,6 +164,37 @@ def test_validate_run_health_report_schema():
 
     is_valid, errors = MODULE.validate_artifact(
         artifact, MODULE.RUN_HEALTH_REPORT_SCHEMA
+    )
+    assert is_valid, f"Errors: {errors}"
+
+
+def test_validate_token_budget_report_schema():
+    artifact = {
+        "schema_version": "1.0",
+        "branch": "test-branch",
+        "updated_at": "2026-05-20T10:00:00Z",
+        "decisions": [
+            {
+                "recorded_at": "2026-05-20T10:00:00Z",
+                "path_name": "map-review.monitor_prompt",
+                "configured_budget_tokens": 1500,
+                "estimated_tokens_before": 5000,
+                "estimated_tokens_after": 1490,
+                "budget_action": "truncated",
+                "clipped_sections": ["git diff"],
+                "artifact_references": [
+                    {
+                        "path": ".map/test-branch/review-bundle.md",
+                        "kind": "review-bundle",
+                    }
+                ],
+                "metadata": {"role": "monitor"},
+            }
+        ],
+    }
+
+    is_valid, errors = MODULE.validate_artifact(
+        artifact, MODULE.TOKEN_BUDGET_REPORT_SCHEMA
     )
     assert is_valid, f"Errors: {errors}"
 

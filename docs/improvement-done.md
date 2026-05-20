@@ -1,5 +1,14 @@
 # MAP Framework Improvement Done
 
+## Budget Decision Artifact for Active Prompt Paths [2604.023-3]
+
+- Date: 2026-05-20
+- Added `.map/<branch>/token_budget.json` generation to the two active budgeted prompt paths: `/map-efficient` Actor `<map_context>` building and `/map-review` Monitor/Predictor/Evaluator prompt fan-out.
+- Each decision records the prompt path name, configured budget, estimated tokens before/after enforcement, budget action, clipped section labels, source artifact references, and path-specific metadata such as role, current subtask, and budget environment variable.
+- Added a `token_budget` artifact-manifest stage and `TOKEN_BUDGET_REPORT_SCHEMA` so generated projects have a machine-readable operator breadcrumb for deciding whether to continue, raise `MAP_CONTEXT_BLOCK_BUDGET_TOKENS` / `MAP_REVIEW_PROMPT_BUDGET_TOKENS`, or split the workflow.
+- Updated README, usage, and architecture docs to describe the operator flow while keeping the artifact limited to already-active prompt builders, not dormant REGISTRY/FOCUS mechanisms.
+- Verified with focused Actor/review prompt budget tests, token-budget schema tests, template-sync coverage, and a generated-project smoke that created both Actor and review prompt decisions from real branch artifacts plus a real git diff.
+
 ## Reviewer Prompt Budget Enforcement [2604.023-2]
 
 - Date: 2026-05-19

@@ -696,6 +696,7 @@ ARTIFACT_MANIFEST_SCHEMA = {
                 "implementation": ARTIFACT_STAGE_SCHEMA,
                 "review": ARTIFACT_STAGE_SCHEMA,
                 "verification": ARTIFACT_STAGE_SCHEMA,
+                "token_budget": ARTIFACT_STAGE_SCHEMA,
                 "run_health": ARTIFACT_STAGE_SCHEMA,
                 "learn_handoff": ARTIFACT_STAGE_SCHEMA,
             },
@@ -713,6 +714,64 @@ ARTIFACT_MANIFEST_SCHEMA = {
         },
     },
     "required": ["schema_version", "branch", "updated_at", "stages"],
+    "additionalProperties": False,
+}
+
+
+TOKEN_BUDGET_DECISION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "recorded_at": {"type": "string", "format": "date-time"},
+        "path_name": {"type": "string"},
+        "configured_budget_tokens": {"type": "integer", "minimum": 0},
+        "estimated_tokens_before": {"type": "integer", "minimum": 0},
+        "estimated_tokens_after": {"type": "integer", "minimum": 0},
+        "budget_action": {"type": "string", "enum": ["none", "truncated"]},
+        "clipped_sections": {"type": "array", "items": {"type": "string"}},
+        "artifact_references": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "kind": {"type": "string"},
+                },
+                "required": ["path", "kind"],
+                "additionalProperties": False,
+            },
+        },
+        "metadata": {"type": "object"},
+    },
+    "required": [
+        "recorded_at",
+        "path_name",
+        "configured_budget_tokens",
+        "estimated_tokens_before",
+        "estimated_tokens_after",
+        "budget_action",
+        "clipped_sections",
+        "artifact_references",
+    ],
+    "additionalProperties": False,
+}
+
+
+TOKEN_BUDGET_REPORT_SCHEMA = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://mapframework.dev/schemas/token-budget-report.json",
+    "title": "MAP Token Budget Report",
+    "description": "Branch-scoped prompt budget decisions stored in .map/<branch>/token_budget.json",
+    "type": "object",
+    "properties": {
+        "schema_version": {"type": "string"},
+        "branch": {"type": "string"},
+        "updated_at": {"type": "string", "format": "date-time"},
+        "decisions": {
+            "type": "array",
+            "items": TOKEN_BUDGET_DECISION_SCHEMA,
+        },
+    },
+    "required": ["schema_version", "branch", "updated_at", "decisions"],
     "additionalProperties": False,
 }
 
