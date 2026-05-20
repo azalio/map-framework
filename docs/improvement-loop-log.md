@@ -329,3 +329,17 @@
   - invariant: `When changing provider skill templates, parse both Claude and Codex SKILL.md trees into SkillIR so content hashes, frontmatter shape, references, and injection-like text are validated together.`
   - gotcha: `Claude skill Markdown references can legitimately point outside the skill folder to sibling bundled references such as ../../references/*.md, so audits should allow links inside the provider bundle root rather than only inside the individual skill directory.`
   - review-check: `When adding static provider-surface audits, verify they cover generated-template roots and do not only inspect repo-local .claude skills.`
+
+## 2026-05-20 - Budget Decision Artifact for Active Prompt Paths [2604.023-3]
+
+- Decision: `implemented`
+- Branch: `codex/2604-023-budget-artifact`
+- Baseline: Actor and review prompt builders enforced deterministic budgets, but users had to inspect prompt text or transcripts to know which active prompt path clipped context and which budget to adjust.
+- Forward Change: The active Actor context and `/map-review` prompt builders now append compact decisions to `.map/<branch>/token_budget.json` and record a `token_budget` manifest stage, while docs explain how operators use the report to continue, raise a budget, or split a workflow.
+- Decisive Validation: Focused Actor/review prompt tests assert token-budget decisions, clipped sections, and manifest stage updates. A generated-project smoke ran installed `.map/scripts/map_step_runner.py build_context_block` and `build_review_prompts --branch default --budget-tokens 1500` against real branch artifacts plus a real git diff, then inspected `.map/default/token_budget.json` for all four active prompt-path decisions.
+- Next Trigger: Reuse this learning whenever a MAP prompt path clips context, adds a new budgeted prompt builder, or needs an operator-facing diagnostic artifact for a current workflow decision.
+- Reusable Learnings:
+  - command: `python3 .map/scripts/map_step_runner.py build_review_prompts --branch <branch> --budget-tokens <n> --review-preferences "..."`
+  - invariant: `Only active prompt builders that already enforce budgets should write token_budget.json decisions; do not add telemetry for dormant context mechanisms before activation evidence exists.`
+  - gotcha: `Generated-project review prompt smokes should pass --branch when the desired .map branch differs from git's current branch name.`
+  - review-check: `When adding prompt-budget artifacts, verify the artifact names clipped sections and source artifacts, not only before/after token counts.`

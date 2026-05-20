@@ -62,6 +62,7 @@ ARTIFACT_STAGE_NAMES = (
     "implementation",
     "review",
     "verification",
+    "token_budget",
     "run_health",
     "learn_handoff",
 )
@@ -143,6 +144,8 @@ CONTEXT_BLOCK_BUDGET_ENV = "MAP_CONTEXT_BLOCK_BUDGET_TOKENS"
 REVIEW_PROMPT_DEFAULT_BUDGET_TOKENS = 12_000
 REVIEW_PROMPT_MIN_BUDGET_TOKENS = 1_024
 REVIEW_PROMPT_BUDGET_ENV = "MAP_REVIEW_PROMPT_BUDGET_TOKENS"
+TOKEN_BUDGET_ARTIFACT_NAME = "token_budget.json"
+TOKEN_BUDGET_DECISION_LIMIT = 100
 
 try:
     from mapify_cli.token_budget import (
@@ -385,6 +388,107 @@ def _set_manifest_stage(
 def _artifact_ref(path: Path, kind: str) -> dict[str, str]:
     """Create a manifest artifact reference payload."""
     return {"path": str(path), "kind": kind}
+
+
+def token_budget_artifact_path(branch: Optional[str] = None) -> Path:
+    """Return the branch-scoped prompt budget decision artifact path."""
+    return get_branch_dir(branch) / TOKEN_BUDGET_ARTIFACT_NAME
+
+
+def _default_token_budget_artifact(branch: str) -> dict[str, object]:
+    """Return an empty token budget artifact payload."""
+    return {
+        "schema_version": "1.0",
+        "branch": branch,
+        "updated_at": _utc_timestamp(),
+        "decisions": [],
+    }
+
+
+def _normalize_token_budget_artifact_refs(
+    artifact_references: Optional[list[Mapping[str, object]]],
+) -> list[dict[str, str]]:
+    """Keep artifact references compact and schema-friendly."""
+    refs: list[dict[str, str]] = []
+    for ref in artifact_references or []:
+        path = str(ref.get("path") or "").strip()
+        kind = str(ref.get("kind") or "artifact").strip() or "artifact"
+        if path:
+            refs.append({"path": path, "kind": kind})
+    return refs
+
+
+def record_token_budget_decision(
+    path_name: str,
+    configured_budget_tokens: int,
+    estimated_tokens_before: int,
+    estimated_tokens_after: int,
+    clipped_sections: Optional[list[str]] = None,
+    budget_action: str = "none",
+    artifact_references: Optional[list[Mapping[str, object]]] = None,
+    metadata: Optional[dict[str, object]] = None,
+    branch: Optional[str] = None,
+) -> dict[str, object]:
+    """Append one active prompt-path budget decision to token_budget.json."""
+    branch_name = branch or get_branch_name()
+    artifact_path = token_budget_artifact_path(branch_name)
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+
+    payload = _default_token_budget_artifact(branch_name)
+    existing = _read_json_file(artifact_path)
+    if existing:
+        payload.update(
+            {
+                "schema_version": existing.get("schema_version", payload["schema_version"]),
+                "branch": branch_name,
+            }
+        )
+        existing_decisions = existing.get("decisions")
+        if isinstance(existing_decisions, list):
+            payload["decisions"] = [
+                item for item in existing_decisions if isinstance(item, dict)
+            ][-TOKEN_BUDGET_DECISION_LIMIT:]
+
+    decision: dict[str, object] = {
+        "recorded_at": _utc_timestamp(),
+        "path_name": path_name,
+        "configured_budget_tokens": max(0, int(configured_budget_tokens or 0)),
+        "estimated_tokens_before": max(0, int(estimated_tokens_before or 0)),
+        "estimated_tokens_after": max(0, int(estimated_tokens_after or 0)),
+        "budget_action": budget_action or "none",
+        "clipped_sections": list(clipped_sections or []),
+        "artifact_references": _normalize_token_budget_artifact_refs(
+            artifact_references
+        ),
+    }
+    if metadata:
+        decision["metadata"] = metadata
+
+    decisions = cast(list[dict[str, object]], payload.setdefault("decisions", []))
+    decisions.append(decision)
+    del decisions[:-TOKEN_BUDGET_DECISION_LIMIT]
+    payload["updated_at"] = _utc_timestamp()
+    _write_json_file(artifact_path, payload)
+
+    manifest = load_artifact_manifest(branch_name)
+    _set_manifest_stage(
+        manifest,
+        "token_budget",
+        "ready",
+        artifacts=[_artifact_ref(artifact_path, "token-budget-report")],
+        metadata={
+            "last_path_name": path_name,
+            "last_budget_action": decision["budget_action"],
+            "decision_count": len(decisions),
+        },
+    )
+    manifest_result = save_artifact_manifest(manifest, branch_name)
+    return {
+        "status": "success",
+        "path": str(artifact_path),
+        "decision": decision,
+        "manifest_path": manifest_result["path"],
+    }
 
 
 def _prior_stage_file_entry(
@@ -3653,6 +3757,26 @@ def build_review_prompts(
         prompt_result = _budget_review_prompt(
             spec, review_bundle, review_preferences, git_diff, budget
         )
+        record_token_budget_decision(
+            path_name=f"map-review.{role}_prompt",
+            configured_budget_tokens=budget,
+            estimated_tokens_before=int(
+                prompt_result.get("full_estimated_tokens")
+                or prompt_result["estimated_tokens"]
+            ),
+            estimated_tokens_after=int(prompt_result["estimated_tokens"]),
+            clipped_sections=cast(list[str], prompt_result["clipped_sections"]),
+            budget_action="truncated" if prompt_result["truncated"] else "none",
+            artifact_references=[
+                {
+                    "path": f".map/{branch_name}/review-bundle.md",
+                    "kind": "review-bundle",
+                },
+                {"path": "git diff HEAD", "kind": "git-diff"},
+            ],
+            metadata={"role": role, "budget_env": REVIEW_PROMPT_BUDGET_ENV},
+            branch=branch_name,
+        )
         prompts[role] = {
             "subagent_type": spec["subagent_type"],
             "description": spec["description"],
@@ -4484,11 +4608,33 @@ def _context_block_text(parts: list[str]) -> str:
     return "\n".join(parts)
 
 
-def _enforce_context_block_budget(parts: list[str], budget_tokens: int) -> str:
-    """Keep generated map_context under budget while preserving valid XML shape."""
+def _context_section_label(line: str, current_label: str) -> str:
+    """Classify map_context lines into operator-facing budget sections."""
+    if line.startswith("# Goal"):
+        return "goal"
+    if line.startswith("# Current Subtask"):
+        return "current_subtask"
+    if line.startswith("# Upstream Results"):
+        return "upstream_results"
+    if line.startswith("# Plan Overview"):
+        return "plan_overview"
+    if line.startswith("# Repo Delta") or line.startswith("# Deleted since"):
+        return "repo_delta"
+    return current_label
+
+
+def _budget_context_block(parts: list[str], budget_tokens: int) -> dict[str, object]:
+    """Keep generated map_context under budget while reporting the decision."""
     full_text = _context_block_text(parts)
-    if _estimate_tokens(full_text) <= budget_tokens:
-        return full_text
+    full_estimate = _estimate_tokens(full_text)
+    if full_estimate <= budget_tokens:
+        return {
+            "text": full_text,
+            "estimated_tokens_before": full_estimate,
+            "estimated_tokens_after": full_estimate,
+            "truncated": False,
+            "clipped_sections": [],
+        }
 
     closing = "</map_context>"
     truncation_note = (
@@ -4497,8 +4643,11 @@ def _enforce_context_block_budget(parts: list[str], budget_tokens: int) -> str:
         "overview is required."
     )
     output: list[str] = []
+    clipped_sections: list[str] = []
+    current_label = "preamble"
 
-    for line in parts:
+    for index, line in enumerate(parts):
+        current_label = _context_section_label(line, current_label)
         if line == closing:
             continue
         candidate = _context_block_text(output + [line, truncation_note, closing])
@@ -4516,10 +4665,31 @@ def _enforce_context_block_budget(parts: list[str], budget_tokens: int) -> str:
             )
             if _estimate_tokens(candidate) <= budget_tokens:
                 output.append(truncated_line)
+                if current_label not in clipped_sections:
+                    clipped_sections.append(current_label)
+        remaining_label = current_label
+        for omitted in parts[index + 1 :]:
+            if omitted == closing:
+                continue
+            remaining_label = _context_section_label(omitted, remaining_label)
+            if remaining_label not in clipped_sections:
+                clipped_sections.append(remaining_label)
         break
 
     output.extend([truncation_note, closing])
-    return _context_block_text(output)
+    budgeted_text = _context_block_text(output)
+    return {
+        "text": budgeted_text,
+        "estimated_tokens_before": full_estimate,
+        "estimated_tokens_after": _estimate_tokens(budgeted_text),
+        "truncated": True,
+        "clipped_sections": clipped_sections,
+    }
+
+
+def _enforce_context_block_budget(parts: list[str], budget_tokens: int) -> str:
+    """Keep generated map_context under budget while preserving valid XML shape."""
+    return str(_budget_context_block(parts, budget_tokens)["text"])
 
 
 def build_context_block(branch: str, current_subtask_id: str) -> str:
@@ -4692,7 +4862,30 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
 
     parts.append("</map_context>")
 
-    return _enforce_context_block_budget(parts, _context_block_budget_tokens())
+    budget = _context_block_budget_tokens()
+    budget_result = _budget_context_block(parts, budget)
+    record_token_budget_decision(
+        path_name="map-efficient.actor_context_block",
+        configured_budget_tokens=budget,
+        estimated_tokens_before=int(budget_result["estimated_tokens_before"]),
+        estimated_tokens_after=int(budget_result["estimated_tokens_after"]),
+        clipped_sections=cast(list[str], budget_result["clipped_sections"]),
+        budget_action="truncated" if budget_result["truncated"] else "none",
+        artifact_references=[
+            {"path": f".map/{branch}/blueprint.json", "kind": "blueprint"},
+            {
+                "path": f".map/{branch}/task_plan_{branch}.md",
+                "kind": "task-plan",
+            },
+            {"path": f".map/{branch}/step_state.json", "kind": "step-state"},
+        ],
+        metadata={
+            "current_subtask_id": current_subtask_id,
+            "budget_env": CONTEXT_BLOCK_BUDGET_ENV,
+        },
+        branch=branch,
+    )
+    return str(budget_result["text"])
 
 
 def prepare_detached_review(

@@ -93,7 +93,9 @@ default 4,000 Actor-context cap with `MAP_CONTEXT_BLOCK_BUDGET_TOKENS`, or the
 default 12,000 per-reviewer prompt cap with `MAP_REVIEW_PROMPT_BUDGET_TOKENS`,
 only when a large workflow genuinely needs more context. Values below the
 minimum fall back to the default so required wrappers and truncation notes stay
-present.
+present. When either active prompt path runs, MAP records the decision in
+`.map/<branch>/token_budget.json` so you can see which sections were clipped
+before deciding to raise a budget or split the workflow.
 
 **3. Use the golden path for serious work**
 
@@ -134,6 +136,7 @@ MAP review is useful, but it is not a replacement for engineering judgment. Seri
 - **Contract-sized subtasks** - `/map-plan` and `/map-efficient` require per-subtask `expected_diff_size`, `concern_type`, `one_logical_step`, `hard_constraints`, `soft_constraints`, and `coverage_map` metadata, then validate `blueprint.json` before implementation so oversized, mixed-concern, untraceable, or hard-constraint-dropping plans fail early instead of surprising reviewers later. Soft constraints can be consciously traded off only with explicit rationale.
 - **Useful quality gates** - `/map-check` and `/map-review` validate against the plan instead of just asking whether code "looks fine".
 - **Review bundle** - `/map-review` auto-generates `.map/<branch>/review-bundle.json` and `.map/<branch>/review-bundle.md` before launching reviewer agents, bundling spec, plan, tests, verification, latest code review, `coverage_map` acceptance-tag evidence, and prior-stage consumption status into a single durable input contract. Reviewers read the bundle first; raw diff is secondary and is clipped first when `build_review_prompts` has to keep each reviewer prompt under `MAP_REVIEW_PROMPT_BUDGET_TOKENS`. Use `/map-review --detached` to open an isolated read-only git worktree at `.map/<branch>/detached-review/` for clean-room inspection without touching the source branch. Bundle generation records the `review` stage in `.map/<branch>/artifact_manifest.json`; `python3 .map/scripts/map_step_runner.py validate_prior_stage_consumption review` can fail missing spec/blueprint/test/diff inputs before review. Section-order flags reduce anchoring bias: `--reverse-sections` (invert order), `--shuffle-sections [--seed N]` (seeded random order), `--compare-orderings` (run default + reverse, aggregate via strict-wins, surface drift).
+- **Token budget report** - Actor context and review fan-out prompt builders append active-path budget decisions to `.map/<branch>/token_budget.json`, including before/after estimated tokens, clipped sections, source artifact references, and the budget environment variable. This is the operator breadcrumb for diagnosing missing context: inspect the report, then either raise `MAP_CONTEXT_BLOCK_BUDGET_TOKENS` / `MAP_REVIEW_PROMPT_BUDGET_TOKENS` or split the workflow before rerunning.
 - **Run health report** - `/map-efficient`, `/map-debug`, `/map-check`, and `/map-review` write `.map/<branch>/run_health_report.json` during closeout via `.map/scripts/map_step_runner.py write_run_health_report`. The report is a machine-readable snapshot of terminal status, step progress, retry counters, artifact presence, and latest hook-injection status, including explicit skipped reasons for malformed hook input or insignificant Bash commands when branch state can be safely updated. CI or operators can fail inconsistent closeouts with `python3 .map/scripts/map_step_runner.py validate_run_health_report`.
 - **Project memory** - `/map-learn` turns hard-won fixes and gotchas into reusable context for the next session.
 
