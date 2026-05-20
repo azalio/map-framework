@@ -1,5 +1,14 @@
 # MAP Framework Improvement Done
 
+## Compact `/map-resume` Recovery Skill Body [2604.033-1]
+
+- Date: 2026-05-20
+- Moved `/map-resume` low-frequency example transcripts, integration notes, state-file shape examples, token-budget notes, and troubleshooting into bundled `resume-reference.md` so the invoked recovery `SKILL.md` stays focused on checkpoint detection, briefing, confirmation, and state-machine continuation.
+- Reduced the active `/map-resume` skill body from 504 lines to 305 lines while preserving required Examples and Troubleshooting navigation sections plus links to the supporting reference.
+- Added regression coverage that scans both `.claude/skills/map-resume/` and the shipped template copy so recovery skill growth and missing supporting references fail before release.
+- External documentation checked: Claude Code skills docs, https://docs.anthropic.com/en/docs/claude-code/skills, accessed 2026-05-20; relevant constraints are that invoked `SKILL.md` content stays in context, compaction reattaches recent skill invocations within a limited token budget, supporting files should hold detailed reference material, and `SKILL.md` should stay focused.
+- Updated README, usage, and architecture docs to describe the compact recovery surface, and updated the active plan parent with follow-up slices for high-traffic workflow playbooks and retained-body linting.
+
 ## Budget Decision Artifact for Active Prompt Paths [2604.023-3]
 
 - Date: 2026-05-20

@@ -1871,26 +1871,27 @@ Filesystem (persists forever)           Conversation Memory (clears on compactio
 - ✅ **Cross-session** - Resume in any new conversation
 
 **Implementation:**
-- Checkpoint: `.map/progress.md` (YAML frontmatter + markdown body)
+- Current checkpoint: `.map/<branch>/step_state.json` (orchestrator state, current phase, subtask progress, retry counters)
+- Legacy checkpoint: `.map/progress.md` may still exist for older state flows, but it is not the active `/map-resume` checkpoint
 - Task plan: `.map/<branch>/task_plan_*.md` (subtask decomposition with validation criteria)
-- Recovery: `/map-resume` command (detects checkpoint and offers to resume)
+- Recovery: `/map-resume` command (detects branch checkpoint and offers to resume)
 
 ### Automatic Recovery (Phase 2)
 
 **Problem:** Manual recovery (Phase 1) requires users to reference checkpoint files after compaction, adding cognitive load and causing 60% workflow abandonment rate.
 
-**Solution:** `/map-resume` command detects `.map/progress.md` checkpoint and offers to resume incomplete workflow with a simple Y/n prompt.
+**Solution:** `/map-resume` command detects the branch-scoped `.map/<branch>/step_state.json` checkpoint and offers to resume incomplete workflow with a simple Y/n prompt.
 
 **Architecture:**
 
 ```
 User runs /map-resume command
         ↓
-Command checks .map/progress.md existence
+Command checks .map/<branch>/step_state.json existence
         ↓
     [Checkpoint exists?]
         ↓ Yes
-    Parse YAML frontmatter for workflow state
+    Parse orchestrator JSON for workflow state
         ↓
     Display progress summary:
     - Task plan
@@ -1913,16 +1914,18 @@ Command checks .map/progress.md existence
 | Component | Location | Purpose |
 |-----------|----------|---------|
 | Resume skill | `.claude/skills/map-resume/SKILL.md` | User-facing recovery workflow |
+| Resume reference | `.claude/skills/map-resume/resume-reference.md` | Low-frequency examples, state-file notes, token-budget notes, and troubleshooting loaded only when needed |
 | WorkflowState class | `src/mapify_cli/workflow_state.py` | Checkpoint serialization/deserialization |
-| Checkpoint file | `.map/progress.md` | YAML frontmatter + markdown progress |
+| Current checkpoint file | `.map/<branch>/step_state.json` | Orchestrator state, current step, subtask progress, retry counters, and enforcement gates |
+| Legacy progress file | `.map/progress.md` | Older YAML frontmatter + markdown progress state; coexists with branch-scoped state in some flows |
 | Task plan | `.map/<branch>/task_plan_*.md` | Subtask decomposition with validation |
 | Unit tests | `tests/test_workflow_state.py` | WorkflowState logic coverage |
 
 **Execution Flow:**
 
 1. **User runs `/map-resume`** - Explicit recovery command (no auto-injection)
-2. **Command checks checkpoint** - Tests if `.map/progress.md` exists
-3. **YAML frontmatter parsed** - WorkflowState.load() extracts machine state
+2. **Command checks checkpoint** - Tests if `.map/<branch>/step_state.json` exists
+3. **Branch state parsed** - Orchestrator state identifies the current step, phase, and subtask
 4. **Progress summary displayed** - Shows completed/remaining subtasks
 5. **User confirms Y/n** - Simple prompt, Y resumes, n clears checkpoint
 6. **Task plan loaded** - Full decomposition with validation criteria
