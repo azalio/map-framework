@@ -1871,26 +1871,27 @@ Filesystem (persists forever)           Conversation Memory (clears on compactio
 - ✅ **Cross-session** - Resume in any new conversation
 
 **Implementation:**
-- Checkpoint: `.map/progress.md` (YAML frontmatter + markdown body)
+- Current checkpoint: `.map/<branch>/step_state.json` (orchestrator state, current phase, subtask progress, retry counters)
+- Legacy checkpoint: `.map/progress.md` may still exist for older state flows, but it is not the active `/map-resume` checkpoint
 - Task plan: `.map/<branch>/task_plan_*.md` (subtask decomposition with validation criteria)
-- Recovery: `/map-resume` command (detects checkpoint and offers to resume)
+- Recovery: `/map-resume` command (detects branch checkpoint and offers to resume)
 
 ### Automatic Recovery (Phase 2)
 
 **Problem:** Manual recovery (Phase 1) requires users to reference checkpoint files after compaction, adding cognitive load and causing 60% workflow abandonment rate.
 
-**Solution:** `/map-resume` command detects `.map/progress.md` checkpoint and offers to resume incomplete workflow with a simple Y/n prompt.
+**Solution:** `/map-resume` command detects the branch-scoped `.map/<branch>/step_state.json` checkpoint and offers to resume incomplete workflow with a simple Y/n prompt.
 
 **Architecture:**
 
 ```
 User runs /map-resume command
         ↓
-Command checks .map/progress.md existence
+Command checks .map/<branch>/step_state.json existence
         ↓
     [Checkpoint exists?]
         ↓ Yes
-    Parse YAML frontmatter for workflow state
+    Parse orchestrator JSON for workflow state
         ↓
     Display progress summary:
     - Task plan

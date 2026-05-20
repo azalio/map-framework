@@ -65,7 +65,7 @@ User: /map-resume
 
 Claude: ## No Workflow in Progress
 
-No checkpoint file found at `.map/feat-auth/step_state.json`.
+No checkpoint file found at `.map/<branch>/step_state.json`.
 
 To start a new workflow, use:
 - `/map-efficient "task description"` - Standard implementation
@@ -177,9 +177,10 @@ Total overhead for resume: ~1K tokens before continuing workflow.
 
 **Fix:**
 
-1. Manually verify each subtask's actual completion status
-2. Update `step_state.json` to match reality
-3. Resume from corrected state
+1. Manually verify each subtask's actual completion status from the task plan, git diff, and latest review/verification artifacts
+2. Do not hand-edit `step_state.json`; direct writes bypass orchestrator validation
+3. If the current subtask must be redone, ask the user to confirm restarting that subtask and run `python3 .map/scripts/map_orchestrator.py resume_single_subtask ST-003`
+4. Otherwise leave state unchanged and resume from the orchestrator's next step
 
 ### Issue: Resume Loads But Does Not Continue
 
@@ -211,6 +212,7 @@ Total overhead for resume: ~1K tokens before continuing workflow.
 
 **Fix:**
 
-1. Trust `step_state.json` as the canonical source
-2. Update `step_state.json` to match
-3. Resume from corrected state
+1. Trust `step_state.json` as the canonical source unless repo evidence proves it is stale
+2. Do not hand-edit `step_state.json`; direct writes bypass orchestrator validation
+3. If one subtask needs to be restarted, ask the user to confirm and run `python3 .map/scripts/map_orchestrator.py resume_single_subtask ST-003`
+4. If the whole plan state is unusable, ask the user whether to clear the checkpoint and restart with `/map-efficient`

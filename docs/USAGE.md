@@ -510,7 +510,7 @@ Claude: Resuming workflow from ST-004...
 
 ### Security Design
 
-The checkpoint format (`.map/progress.md`) is designed with security in mind:
+Current `/map-resume` recovery reads the branch-scoped orchestrator checkpoint at `.map/<branch>/step_state.json`. Older docs and legacy workflows may still contain `.map/progress.md`, but the active resume path should treat `step_state.json` as the checkpoint to validate before continuing.
 
 1. **Path Traversal Prevention**
    - Only allows files within `.map/` directory
@@ -541,11 +541,12 @@ The checkpoint format (`.map/progress.md`) is designed with security in mind:
 
 **Mitigation:**
 
-The checkpoint format (`.map/progress.md`) is designed with security in mind:
-- YAML frontmatter with simple key-value pairs (no code execution)
-- Human-readable markdown body (can be visually inspected)
+The active checkpoint format is designed with security in mind:
+
+- JSON state with simple data fields (no code execution)
+- Branch-scoped path under `.map/<branch>/step_state.json`
 - Small file sizes (workflow state only, not code)
-- `/map-resume` command validates checkpoint before resuming
+- `/map-resume` command validates checkpoint presence before resuming
 
 ### Manual Recovery (Fallback)
 
@@ -560,7 +561,8 @@ The checkpoint format (`.map/progress.md`) is designed with security in mind:
 1. **Locate checkpoint files** (auto-saved during workflow):
 
    ```
-   .map/progress.md         - Workflow state (YAML frontmatter + markdown)
+   .map/<branch>/step_state.json - Current orchestrator checkpoint
+   .map/progress.md              - Legacy workflow state, when present
    .map/*/task_plan_*.md    - Task decomposition with validation criteria
    .map/*/blueprint.json    - Machine-readable subtasks with size/concern contracts
    ```
@@ -569,7 +571,7 @@ The checkpoint format (`.map/progress.md`) is designed with security in mind:
 
    ```
    User: continue MAP workflow
-         @.map/progress.md
+          @.map/<branch>/step_state.json
            @.map/map-to-enchance/task_plan_map-to-enchance.md
 
    Claude: [reads files]
@@ -635,16 +637,16 @@ Claude: Resuming workflow from ST-004...
 
 1. **Check if checkpoint file exists:**
    ```bash
-   ls -lh .map/progress.md
+   ls -lh .map/<branch>/step_state.json
    ```
    - If missing: No checkpoint to restore (expected for new projects)
    - If exists: Proceed to step 2
 
 2. **Check checkpoint file contents:**
    ```bash
-   head -20 .map/progress.md
+   python3 -m json.tool .map/<branch>/step_state.json
    ```
-   - Should contain valid YAML frontmatter with `task_plan:`, `current_phase:`, etc.
+   - Should contain valid JSON with current step, phase, subtask, and pending/completed steps.
    - If malformed: Delete and start fresh with `/map-efficient`
 
 3. **Resume workflow:**
@@ -659,7 +661,7 @@ Claude: Resuming workflow from ST-004...
 | Issue | Cause | Solution |
 |-------|-------|----------|
 | No checkpoint found | Workflow not started or completed | Start new workflow with `/map-efficient` |
-| YAML parse error | Corrupted checkpoint | Delete `.map/progress.md` and start fresh |
+| JSON parse error | Corrupted checkpoint | Clear the branch checkpoint and start fresh |
 | Missing task plan | Task plan file deleted | Delete checkpoint and restart workflow |
 
 **Fallback:**
