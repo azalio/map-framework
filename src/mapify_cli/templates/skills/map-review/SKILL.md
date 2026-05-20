@@ -151,12 +151,14 @@ This creates `.map/<branch>/review-bundle.json` and `.map/<branch>/review-bundle
 DETACHED_PATH=""
 if [ "$DETACHED_FLAG" = "true" ]; then
   # EC-15: prepare detached review once; compare runs reuse the same path.
-  DETACHED_JSON=$(python3 .map/scripts/map_step_runner.py prepare_detached_review)
-  DETACHED_PATH=$(echo "$DETACHED_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin).get('detached_path',''))")
+  DETACHED_JSON=$(python3 .map/scripts/map_step_runner.py prepare_detached_review "$BUNDLE_JSON_PATH")
+  DETACHED_STATUS=$(echo "$DETACHED_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status',''))")
+  DETACHED_PATH=$(echo "$DETACHED_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('worktree_path') or '')")
+  DETACHED_REASON=$(echo "$DETACHED_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('reason') or '')")
 fi
 ```
 
-If unavailable, continue in place. Do not mutate the source branch.
+If `DETACHED_STATUS` is `success`, tell reviewer agents to read source files from `$DETACHED_PATH` read-only. If status is `unavailable` or `error`, announce `$DETACHED_REASON` and continue in place. Do not mutate the source branch.
 
 ### Step A.1d: Prepare compare-mode ordering (optional, `--compare-orderings` only)
 

@@ -3,7 +3,7 @@
 ## Compact high-traffic workflow playbooks [2604.033-2]
 
 - Date: 2026-05-20
-- Compactified the high-traffic workflow skill bodies for `/map-plan`, `/map-efficient`, `/map-check`, and `/map-review`, reducing active `SKILL.md` sizes to 301, 295, 295, and 300 lines respectively while preserving required phase headings, state-machine commands, output contracts, run-health closeout, review bundle wiring, and handoff flows.
+- Compactified the high-traffic workflow skill bodies for `/map-plan`, `/map-efficient`, `/map-check`, and `/map-review`, reducing active `SKILL.md` sizes to 301, 295, 295, and 302 lines respectively while preserving required phase headings, state-machine commands, output contracts, run-health closeout, review bundle wiring, and handoff flows.
 - Moved low-frequency examples, troubleshooting, detailed rationale, command matrices, wave details, and reference notes into bundled supporting files: `plan-reference.md`, `efficient-reference.md`, `check-reference.md`, and `review-reference.md`.
 - Synced the `.claude/skills/` changes into shipped templates so generated projects receive the same compact active playbooks and bundled references.
 - Added regression coverage that enforces active high-traffic workflow skill bodies stay under 500 lines, link their supporting reference, and ship source/template supporting files.
