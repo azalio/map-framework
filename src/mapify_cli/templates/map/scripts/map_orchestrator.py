@@ -1142,7 +1142,7 @@ def _write_retry_quarantine(
             loaded = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(loaded, dict):
                 existing = loaded
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError):
             existing = {}
 
     quarantines = existing.get("quarantines")
@@ -1184,7 +1184,11 @@ def _write_retry_quarantine(
         "updated_at": _utc_timestamp(),
         "quarantines": quarantines,
     }
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+    tmp_path = path.with_suffix(".tmp")
+    tmp_path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8"
+    )
+    tmp_path.replace(path)
     return str(path)
 
 

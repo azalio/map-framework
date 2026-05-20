@@ -252,6 +252,31 @@ def test_validate_retry_quarantine_rejects_missing_constraints(branch_workspace)
     ]
 
 
+def test_validate_retry_quarantine_handles_invalid_utf8(branch_workspace):
+    (branch_workspace / "retry_quarantine.json").write_bytes(b"\xff\xfe")
+
+    result = map_step_runner.validate_retry_quarantine()
+
+    assert result["status"] == "error"
+    assert result["valid"] is False
+    assert any("cannot read retry quarantine" in error for error in result["errors"])
+
+
+def test_validate_retry_quarantine_rejects_bool_retry_count(branch_workspace):
+    result = map_step_runner.build_retry_quarantine("ST-001", 2, "Repeated failure")
+    assert result["valid"] is True
+    payload = json.loads((branch_workspace / "retry_quarantine.json").read_text())
+    payload["quarantines"][0]["retry_count"] = True
+    (branch_workspace / "retry_quarantine.json").write_text(
+        json.dumps(payload) + "\n", encoding="utf-8"
+    )
+
+    result = map_step_runner.validate_retry_quarantine()
+
+    assert result["status"] == "error"
+    assert "quarantines[0].retry_count must be an integer >= 2" in result["errors"]
+
+
 def test_artifact_health_entry_handles_disappearing_file():
     with patch.object(Path, "stat", side_effect=FileNotFoundError):
         entry = map_step_runner._artifact_health_entry(Path("transient.json"), "state")
@@ -458,6 +483,29 @@ def test_validate_run_health_report_rejects_schema_drift_without_package_schema(
     assert result["status"] == "error"
     assert "invalid terminal_status: done" in result["errors"]
     assert "unexpected field: extra" in result["errors"]
+
+
+def test_validate_run_health_report_rejects_bool_retry_counts(branch_workspace):
+    payload = _valid_run_health_payload()
+    payload["resiliency_signals"]["clean_retry_count"] = True
+    payload["completed_step_count"] = True
+    payload["artifacts"]["step_state"]["size_bytes"] = False
+    (branch_workspace / "run_health_report.json").write_text(
+        json.dumps(payload) + "\n", encoding="utf-8"
+    )
+
+    result = map_step_runner.validate_run_health_report()
+
+    assert result["status"] == "error"
+    assert (
+        "resiliency_signals.clean_retry_count must be a non-negative integer"
+        in result["errors"]
+    )
+    assert "completed_step_count must be a non-negative integer" in result["errors"]
+    assert (
+        "artifacts.step_state.size_bytes must be a non-negative integer"
+        in result["errors"]
+    )
 
 
 def test_map_step_runner_cli_validate_run_health_report_exits_nonzero(tmp_path):

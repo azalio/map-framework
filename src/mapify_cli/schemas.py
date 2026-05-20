@@ -787,10 +787,19 @@ RETRY_QUARANTINE_ENTRY_SCHEMA = {
         "monitor_rejection_summary": {"type": "string"},
         "rejected_assumptions": {"type": "array", "items": {"type": "string"}},
         "do_not_repeat": {"type": "array", "items": {"type": "string"}},
-        "preserved_constraints": {"type": "array", "items": {"type": "string"}},
-        "required_evidence": {"type": "array", "items": {"type": "string"}},
+        "preserved_constraints": {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 1,
+        },
+        "required_evidence": {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 1,
+        },
         "source_artifacts": {
             "type": "array",
+            "minItems": 1,
             "items": {
                 "type": "object",
                 "properties": {

@@ -271,6 +271,10 @@ def _shorten_retry_text(text: str, max_chars: int = 1_200) -> str:
     return compact[: max_chars - 15].rstrip() + "\n[truncated]"
 
 
+def _is_non_negative_int(value: object) -> bool:
+    return type(value) is int and value >= 0
+
+
 def _write_json_file(path: Path, payload: dict) -> None:
     """Atomically write JSON payload to disk."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -2294,7 +2298,7 @@ def _validate_run_health_report_shape(report: Mapping[str, object]) -> list[str]
             errors.append(f"{key} must be a string")
     for key in ("completed_step_count", "pending_step_count"):
         value = report.get(key)
-        if key in report and (not isinstance(value, int) or value < 0):
+        if key in report and not _is_non_negative_int(value):
             errors.append(f"{key} must be a non-negative integer")
 
     artifacts = report.get("artifacts")
@@ -2313,7 +2317,7 @@ def _validate_run_health_report_shape(report: Mapping[str, object]) -> list[str]
             if not isinstance(value.get("present"), bool):
                 errors.append(f"artifacts.{key}.present must be a boolean")
             size_bytes = value.get("size_bytes")
-            if not isinstance(size_bytes, int) or size_bytes < 0:
+            if not _is_non_negative_int(size_bytes):
                 errors.append(f"artifacts.{key}.size_bytes must be a non-negative integer")
 
     signals = report.get("resiliency_signals")
@@ -2343,7 +2347,7 @@ def _validate_run_health_report_shape(report: Mapping[str, object]) -> list[str]
             "contaminated_retry_count",
         ):
             value = signals.get(key)
-            if key in signals and (not isinstance(value, int) or value < 0):
+            if key in signals and not _is_non_negative_int(value):
                 errors.append(f"resiliency_signals.{key} must be a non-negative integer")
         for key in ("predictor_called", "predictor_skipped", "final_verifier_executed"):
             if key in signals and not isinstance(signals.get(key), bool):
@@ -2372,7 +2376,7 @@ def validate_run_health_report(
             "errors": [f"run health report not found: {path}"],
             "warnings": [],
         }
-    except (json.JSONDecodeError, OSError) as exc:
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
         return {
             "status": "error",
             "valid": False,
@@ -2537,7 +2541,7 @@ def validate_retry_quarantine(
             "errors": [f"retry quarantine not found: {path}"],
             "warnings": [],
         }
-    except (json.JSONDecodeError, OSError) as exc:
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
         return {
             "status": "error",
             "valid": False,
@@ -2586,24 +2590,51 @@ def validate_retry_quarantine(
         if not isinstance(item.get("subtask_id"), str) or not item.get("subtask_id"):
             errors.append(f"{prefix}.subtask_id must be a non-empty string")
         retry_count = item.get("retry_count")
-        if not isinstance(retry_count, int) or retry_count < 2:
+        if type(retry_count) is not int or retry_count < 2:
             errors.append(f"{prefix}.retry_count must be an integer >= 2")
         if item.get("isolation_mode") != "clean_retry":
             errors.append(f"{prefix}.isolation_mode must be clean_retry")
+        if not isinstance(item.get("failed_attempt"), str) or not item.get(
+            "failed_attempt"
+        ):
+            errors.append(f"{prefix}.failed_attempt must be non-empty")
         if not isinstance(item.get("monitor_rejection_summary"), str) or not item.get(
             "monitor_rejection_summary"
         ):
             errors.append(f"{prefix}.monitor_rejection_summary must be non-empty")
+        for array_field in ("rejected_assumptions", "do_not_repeat"):
+            value = item.get(array_field)
+            if not isinstance(value, list) or not all(
+                isinstance(entry, str) for entry in value
+            ):
+                errors.append(f"{prefix}.{array_field} must be an array of strings")
         preserved_constraints = item.get("preserved_constraints")
-        if not isinstance(preserved_constraints, list) or not preserved_constraints:
+        if (
+            not isinstance(preserved_constraints, list)
+            or not preserved_constraints
+            or not all(isinstance(entry, str) for entry in preserved_constraints)
+        ):
             errors.append(f"{prefix}.preserved_constraints must be a non-empty array")
         required_evidence = item.get("required_evidence")
-        if not isinstance(required_evidence, list) or not required_evidence:
+        if (
+            not isinstance(required_evidence, list)
+            or not required_evidence
+            or not all(isinstance(entry, str) for entry in required_evidence)
+        ):
             errors.append(f"{prefix}.required_evidence must be a non-empty array")
         source_artifacts = item.get("source_artifacts")
         if not isinstance(source_artifacts, list) or not source_artifacts:
             errors.append(f"{prefix}.source_artifacts must be a non-empty array")
         else:
+            for source_index, source in enumerate(source_artifacts):
+                source_prefix = f"{prefix}.source_artifacts[{source_index}]"
+                if not isinstance(source, Mapping):
+                    errors.append(f"{source_prefix} must be an object")
+                    continue
+                if not isinstance(source.get("path"), str) or not source.get("path"):
+                    errors.append(f"{source_prefix}.path must be a non-empty string")
+                if not isinstance(source.get("kind"), str) or not source.get("kind"):
+                    errors.append(f"{source_prefix}.kind must be a non-empty string")
             kinds = {
                 str(source.get("kind"))
                 for source in source_artifacts
