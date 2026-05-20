@@ -76,6 +76,7 @@ def test_validate_artifact_manifest_schema():
             "implementation": stage,
             "review": stage,
             "verification": stage,
+            "retry_quarantine": stage,
             "token_budget": stage,
             "run_health": stage,
             "learn_handoff": stage,
@@ -147,6 +148,7 @@ def test_validate_run_health_report_schema():
             "blueprint": artifact_entry,
             "active_issues": artifact_entry,
             "known_issues": artifact_entry,
+            "retry_quarantine": artifact_entry,
         },
         "resiliency_signals": {
             "hook_injection": {"status": "injected"},
@@ -155,6 +157,9 @@ def test_validate_run_health_report_schema():
             "max_retries": 5,
             "subtask_retry_counts": {"ST-001": 1},
             "max_subtask_retry_count": 1,
+            "clean_retry_count": 1,
+            "contaminated_retry_count": 1,
+            "retry_isolation_status": {"ST-001": "clean_retry_required"},
             "guard_rework_counts": {},
             "predictor_called": False,
             "predictor_skipped": True,
@@ -199,6 +204,36 @@ def test_validate_token_budget_report_schema():
     assert is_valid, f"Errors: {errors}"
 
 
+def test_validate_retry_quarantine_schema():
+    artifact = {
+        "schema_version": "1.0",
+        "branch": "test-branch",
+        "updated_at": "2026-05-20T10:00:00Z",
+        "quarantines": [
+            {
+                "subtask_id": "ST-001",
+                "retry_count": 2,
+                "isolation_mode": "clean_retry",
+                "failed_attempt": "retry_2",
+                "monitor_rejection_summary": "Actor repeated a rejected cache strategy.",
+                "rejected_assumptions": [],
+                "do_not_repeat": ["Do not reuse the cache strategy."],
+                "preserved_constraints": ["Preserve [AC-1] and hard constraints."],
+                "required_evidence": ["Run focused retry tests."],
+                "source_artifacts": [
+                    {"path": ".map/test-branch/step_state.json", "kind": "step-state"},
+                    {"path": ".map/test-branch/blueprint.json", "kind": "blueprint"},
+                ],
+            }
+        ],
+    }
+
+    is_valid, errors = MODULE.validate_artifact(
+        artifact, MODULE.RETRY_QUARANTINE_SCHEMA
+    )
+    assert is_valid, f"Errors: {errors}"
+
+
 def test_run_health_report_schema_rejects_missing_inventory_and_hook_status():
     artifact = {
         "schema_version": "1.0",
@@ -216,6 +251,9 @@ def test_run_health_report_schema_rejects_missing_inventory_and_hook_status():
             "max_retries": 0,
             "subtask_retry_counts": {},
             "max_subtask_retry_count": 0,
+            "clean_retry_count": 0,
+            "contaminated_retry_count": 0,
+            "retry_isolation_status": {},
             "guard_rework_counts": {},
             "predictor_called": False,
             "predictor_skipped": False,

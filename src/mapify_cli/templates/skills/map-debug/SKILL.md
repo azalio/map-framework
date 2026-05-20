@@ -173,6 +173,9 @@ Do not serialize full file contents in your response."
 
 After each fix (max 5 Actor->Monitor retry iterations per subtask):
 
+- On the first Monitor rejection, pass feedback back to Actor normally.
+- On the second or later rejection for the same fix attempt, run `python3 .map/scripts/map_step_runner.py build_retry_quarantine debug-fix <retry_count> "<monitor feedback>"` and make the next Actor prompt use `.map/<branch>/retry_quarantine.json` as CLEAN_RETRY context. Do not reuse the rejected approach unless the quarantine artifact explicitly preserves it.
+
 ```
 Task(
   subagent_type="monitor",

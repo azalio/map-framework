@@ -230,7 +230,8 @@ Return JSON with valid, summary, issues, files_changed, tests_run, and escalatio
 # After Monitor returns:
 
 - If `valid=true`, run the deterministic test gate, record the subtask result, and validate/advance the state.
-- If `valid=false`, write `code-review-N.md`, send feedback to Actor, increment retry count, and invoke Predictor only when stuck/high-risk escalation rules apply.
+- If `valid=false`, write `code-review-N.md`, run `python3 .map/scripts/map_orchestrator.py monitor_failed --feedback "<feedback>"`, inspect `retry_isolation`, and invoke Predictor only when stuck/high-risk escalation rules apply.
+- If `retry_isolation=clean_retry_required`, run `python3 .map/scripts/map_step_runner.py validate_retry_quarantine` before the next Actor call. The next Actor prompt must use CLEAN_RETRY mode from `.map/<branch>/retry_quarantine.json` and must not reuse the rejected approach unless the quarantine artifact preserves it.
 - Treat test failures after Monitor approval as Monitor failure.
 
 ### Monitor Artifact Rule

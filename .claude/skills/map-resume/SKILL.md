@@ -208,6 +208,8 @@ IS_COMPLETE=$(echo "$NEXT_STEP" | jq -r '.is_complete')
 
 Resume should prioritize the explicit next action from the briefing. Do not improvise a new plan if the artifact trail already indicates the required fix or next subtask.
 
+If the briefing reports `retry_isolation=clean_retry_required`, run `python3 .map/scripts/map_step_runner.py validate_retry_quarantine` and resume the Actor attempt from `.map/<branch>/retry_quarantine.json`. Do not rehydrate the raw failed context or repeat the rejected approach unless the quarantine artifact explicitly preserves it.
+
 **If Monitor returns `valid: false`:**
 - Retry Actor with feedback (max 5 iterations, tracked in step_state.json)
 - State is saved after each iteration

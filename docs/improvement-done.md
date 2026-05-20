@@ -1,5 +1,14 @@
 # MAP Framework Improvement Done
 
+## Clean-room retry and context quarantine for failed agent iterations [2605.08563]
+
+- Date: 2026-05-20
+- Added clean-room retry isolation to the Actor->Monitor failure path: the first Monitor rejection remains an ordinary feedback retry, while the second or later rejection for the same subtask marks `retry_isolation=clean_retry_required`, increments clean retry counters, and writes `.map/<branch>/retry_quarantine.json`.
+- The quarantine artifact records the subtask, retry count, compact Monitor rejection summary, do-not-repeat guidance, preserved constraints, required evidence, and source artifact references so the next Actor attempt can change approach without dropping `blueprint.json` hard constraints, acceptance tags, or mutation boundaries.
+- Extended `run_health_report.json` resiliency signals with `clean_retry_count`, `contaminated_retry_count`, and `retry_isolation_status`, plus retry-quarantine artifact inventory, so interrupted or blocked workflows expose whether a retry was isolated.
+- Wired `/map-efficient`, `/map-task`, `/map-debug`, and `/map-resume` to validate or build retry quarantine artifacts before clean retries, and synced the shipped template copies so generated projects receive the same retry boundary.
+- Added schema support for retry quarantine artifacts and focused regression coverage for serial retries, wave retries, run-health counters, quarantine validation, and source/template sync.
+
 ## Constraint-first provider rule templates [2604.040]
 
 - Date: 2026-05-20

@@ -163,6 +163,14 @@ def _extract_recent_markdown_section(content: str, max_lines: int = 12) -> str:
     return "\n".join(lines[-max_lines:])
 
 
+def _shorten_text(text: str, max_chars: int = 1_200) -> str:
+    """Return compact, artifact-safe text without preserving full failed context."""
+    compact = "\n".join(line.rstrip() for line in text.splitlines() if line.strip())
+    if len(compact) <= max_chars:
+        return compact
+    return compact[: max_chars - 15].rstrip() + "\n[truncated]"
+
+
 def _latest_numbered_artifact(plan_dir: Path, prefix: str) -> Optional[Path]:
     """Return latest numbered artifact like review-003.md."""
     matches = sorted(plan_dir.glob(f"{prefix}-*.md"))
@@ -239,8 +247,12 @@ def build_resume_briefing(branch: str) -> dict:
         current_subtask = state.current_subtask_id
         current_phase = state.current_step_phase
         workflow_status = state.workflow_status
+        retry_quarantine_path = state.retry_quarantine_paths.get(str(current_subtask or ""))
+        retry_isolation = state.retry_isolation_status.get(str(current_subtask or ""))
     else:
         current_phase = None
+        retry_quarantine_path = None
+        retry_isolation = None
 
     next_action = []
     if workflow_status == "CONTRACT_READY" and current_subtask:
@@ -253,6 +265,10 @@ def build_resume_briefing(branch: str) -> dict:
         )
     if briefing.get("suggested_fixes"):
         next_action.append("Review requested fixes from latest review artifact")
+    if retry_isolation == "clean_retry_required" and retry_quarantine_path:
+        next_action.append(
+            f"Resume clean retry from {retry_quarantine_path}; do not rehydrate raw failed context"
+        )
     if current_subtask and current_phase:
         next_action.append(f"Resume {current_subtask} at phase {current_phase}")
     elif suggested_next:
@@ -267,6 +283,8 @@ def build_resume_briefing(branch: str) -> dict:
         "current_subtask": current_subtask,
         "current_phase": current_phase,
         "workflow_status": workflow_status,
+        "retry_isolation": retry_isolation,
+        "retry_quarantine_path": retry_quarantine_path,
         "completed_count": completed_count,
         "pending_count": pending_count,
         "suggested_next": suggested_next,
@@ -315,6 +333,10 @@ class StepState:
     subtask_results: dict[str, dict] = field(default_factory=dict)
     last_subtask_commit_sha: Optional[str] = None
     contract_ready_subtasks: dict[str, dict] = field(default_factory=dict)
+    clean_retry_count: int = 0
+    contaminated_retry_count: int = 0
+    retry_isolation_status: dict[str, str] = field(default_factory=dict)
+    retry_quarantine_paths: dict[str, str] = field(default_factory=dict)
     completed_at: Optional[str] = None
 
     def record_subtask_result(
@@ -363,6 +385,10 @@ class StepState:
             "subtask_results": self.subtask_results,
             "last_subtask_commit_sha": self.last_subtask_commit_sha,
             "contract_ready_subtasks": self.contract_ready_subtasks,
+            "clean_retry_count": self.clean_retry_count,
+            "contaminated_retry_count": self.contaminated_retry_count,
+            "retry_isolation_status": self.retry_isolation_status,
+            "retry_quarantine_paths": self.retry_quarantine_paths,
             "completed_at": self.completed_at,
         }
 
@@ -396,6 +422,10 @@ class StepState:
             subtask_results=data.get("subtask_results", {}),
             last_subtask_commit_sha=data.get("last_subtask_commit_sha"),
             contract_ready_subtasks=data.get("contract_ready_subtasks", {}),
+            clean_retry_count=data.get("clean_retry_count", 0),
+            contaminated_retry_count=data.get("contaminated_retry_count", 0),
+            retry_isolation_status=data.get("retry_isolation_status", {}),
+            retry_quarantine_paths=data.get("retry_quarantine_paths", {}),
             completed_at=data.get("completed_at"),
         )
 
@@ -435,6 +465,16 @@ from map_utils import (  # noqa: E402 — shared across .map/scripts/
 def _actor_step_instruction(state: StepState) -> str:
     """Build instruction string for the ACTOR step, TDD-aware."""
     subtask = state.current_subtask_id
+    isolation = state.retry_isolation_status.get(str(subtask or ""))
+    quarantine_path = state.retry_quarantine_paths.get(str(subtask or ""))
+    clean_retry = ""
+    if isolation == "clean_retry_required" and quarantine_path:
+        clean_retry = (
+            f" CLEAN_RETRY mode is required: read {quarantine_path}, rebuild context "
+            "only from durable artifacts named there, preserve hard constraints and "
+            "acceptance tags, and do not reuse the rejected approach unless the "
+            "quarantine artifact explicitly preserves it."
+        )
     if state.tdd_mode:
         context = (
             "TDD CODE_ONLY mode: pass <TDD_Mode>code_only</TDD_Mode>. "
@@ -446,7 +486,7 @@ def _actor_step_instruction(state: StepState) -> str:
         context = "Pass AAG contract and context. "
     return (
         f"Call Task(subagent_type='actor') to implement subtask {subtask}. "
-        f"{context}"
+        f"{context}{clean_retry}"
     )
 
 
@@ -933,13 +973,23 @@ def get_wave_step(branch: str) -> dict:
     for st_id in wave:
         phase = state.subtask_phases.get(st_id, default_phase)
         phase_name = STEP_PHASES.get(phase, "ACTOR")
-        subtask_infos.append(
-            {
-                "subtask_id": st_id,
-                "phase": phase_name,
-                "step_id": phase,
-            }
-        )
+        info = {
+            "subtask_id": st_id,
+            "phase": phase_name,
+            "step_id": phase,
+        }
+        if phase_name == "ACTOR":
+            isolation = state.retry_isolation_status.get(st_id)
+            quarantine_path = state.retry_quarantine_paths.get(st_id)
+            if isolation == "clean_retry_required" and quarantine_path:
+                info["retry_isolation"] = isolation
+                info["retry_quarantine_path"] = quarantine_path
+                info["instruction"] = (
+                    f"CLEAN_RETRY mode is required for {st_id}: read {quarantine_path}, "
+                    "rebuild context from durable artifacts only, and do not reuse the "
+                    "rejected approach unless preserved there."
+                )
+        subtask_infos.append(info)
 
     return {
         "mode": mode,
@@ -1057,6 +1107,111 @@ def _write_feedback_file(
     return str(fb_path)
 
 
+def _task_plan_path(branch: str) -> str:
+    return f".map/{branch}/task_plan_{branch}.md"
+
+
+def _source_artifact_refs(
+    branch: str, feedback_file: Optional[str]
+) -> list[dict[str, str]]:
+    refs = [
+        {"path": f".map/{branch}/step_state.json", "kind": "step-state"},
+        {"path": f".map/{branch}/blueprint.json", "kind": "blueprint"},
+        {"path": _task_plan_path(branch), "kind": "task-plan"},
+    ]
+    if feedback_file:
+        refs.append({"path": feedback_file, "kind": "monitor-feedback"})
+    return refs
+
+
+def _write_retry_quarantine(
+    branch: str,
+    state: StepState,
+    subtask_id: str,
+    retry_count: int,
+    feedback_file: Optional[str],
+    feedback: str,
+) -> str:
+    """Write compact clean-retry context that excludes raw failed reasoning."""
+    path = Path(f".map/{branch}/retry_quarantine.json")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    summary = _shorten_text(feedback) or "See latest Monitor feedback artifact."
+    existing: dict[str, object] = {}
+    if path.exists():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                existing = loaded
+        except (json.JSONDecodeError, OSError):
+            existing = {}
+
+    quarantines = existing.get("quarantines")
+    if not isinstance(quarantines, list):
+        quarantines = []
+    quarantines = [
+        item
+        for item in quarantines
+        if not (
+            isinstance(item, dict)
+            and item.get("subtask_id") == subtask_id
+            and item.get("retry_count") == retry_count
+        )
+    ]
+    quarantines.append(
+        {
+            "subtask_id": subtask_id,
+            "retry_count": retry_count,
+            "isolation_mode": "clean_retry",
+            "failed_attempt": f"retry_{retry_count}",
+            "monitor_rejection_summary": summary,
+            "rejected_assumptions": [],
+            "do_not_repeat": [summary],
+            "preserved_constraints": [
+                "Preserve current blueprint hard_constraints, coverage_map tags, validation_criteria, and mutation boundaries."
+            ],
+            "required_evidence": [
+                "Read blueprint.json for the subtask contract before editing.",
+                "Read the latest Monitor feedback artifact before choosing a new approach.",
+                "Cite passing focused checks or explain the blocker before returning to Monitor.",
+            ],
+            "source_artifacts": _source_artifact_refs(branch, feedback_file),
+        }
+    )
+
+    payload = {
+        "schema_version": "1.0",
+        "branch": branch,
+        "updated_at": _utc_timestamp(),
+        "quarantines": quarantines,
+    }
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+    return str(path)
+
+
+def _record_retry_isolation(
+    branch: str,
+    state: StepState,
+    subtask_id: Optional[str],
+    retry_count: int,
+    feedback_file: Optional[str],
+    feedback: str,
+) -> tuple[str, Optional[str]]:
+    """Update retry isolation counters and write quarantine when required."""
+    subtask_key = subtask_id or "workflow"
+    if retry_count >= 2:
+        quarantine_path = _write_retry_quarantine(
+            branch, state, subtask_key, retry_count, feedback_file, feedback
+        )
+        state.clean_retry_count += 1
+        state.retry_isolation_status[subtask_key] = "clean_retry_required"
+        state.retry_quarantine_paths[subtask_key] = quarantine_path
+        return "clean_retry_required", quarantine_path
+
+    state.contaminated_retry_count += 1
+    state.retry_isolation_status[subtask_key] = "normal_retry"
+    return "normal_retry", None
+
+
 def _check_retry_limit(
     current_retries: int, max_retries: int, context: dict
 ) -> Optional[dict]:
@@ -1142,6 +1297,14 @@ def monitor_failed(branch: str, feedback: str = "") -> dict:
         f"Monitor Feedback (retry {state.retry_count})",
         feedback,
     )
+    retry_isolation, quarantine_path = _record_retry_isolation(
+        branch,
+        state,
+        state.current_subtask_id,
+        state.retry_count,
+        feedback_file,
+        feedback,
+    )
 
     state.save(state_file)
 
@@ -1151,6 +1314,8 @@ def monitor_failed(branch: str, feedback: str = "") -> dict:
         "max_retries": state.max_retries,
         "current_phase": "ACTOR",
         "feedback_file": feedback_file,
+        "retry_isolation": retry_isolation,
+        "retry_quarantine_path": quarantine_path,
         "message": (
             f"Monitor failed. Retry {state.retry_count}/{state.max_retries}. "
             f"Phase reset to ACTOR for subtask {state.current_subtask_id}."
@@ -1205,6 +1370,9 @@ def wave_monitor_failed(
         f"Monitor Feedback for {subtask_id} (retry {current_retries})",
         feedback,
     )
+    retry_isolation, quarantine_path = _record_retry_isolation(
+        branch, state, subtask_id, current_retries, feedback_file, feedback
+    )
 
     state.save(state_file)
 
@@ -1215,6 +1383,8 @@ def wave_monitor_failed(
         "max_retries": state.max_retries,
         "current_phase": "ACTOR",
         "feedback_file": feedback_file,
+        "retry_isolation": retry_isolation,
+        "retry_quarantine_path": quarantine_path,
         "message": (
             f"Monitor failed for {subtask_id}. "
             f"Retry {current_retries}/{state.max_retries}. "

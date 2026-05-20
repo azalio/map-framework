@@ -189,3 +189,4 @@
 - Extend spec/plan artifacts with `hard_constraints` and `soft_constraints` fields. Hard constraints block stage completion or force replanning when violated; soft constraints are logged with explicit tradeoff rationale when a workflow chooses not to satisfy them.
 - Require complex workflows to consume the prior stage artifact explicitly before proceeding; for example, review should load spec + tests + diff, and code execution should record which test/spec contract it is satisfying. Shipped as `2604.039-followup-3` via `prior_stage_consumption` reports in verification summaries and review bundles plus an explicit validator command.
 - Update canonical docs so MAP has a visible default artifact pipeline even if individual commands still differ in internal implementation details.
+

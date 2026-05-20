@@ -144,7 +144,8 @@ For each step:
 5. Continue to next step until complete
 
 **If Monitor returns `valid: false`:**
-- Retry Actor with feedback (max 5 iterations)
+- Run `python3 .map/scripts/map_orchestrator.py monitor_failed --feedback "<feedback>"` and retry Actor with feedback (max 5 iterations).
+- If the result says `retry_isolation=clean_retry_required`, run `python3 .map/scripts/map_step_runner.py validate_retry_quarantine` and make the next Actor attempt use `.map/<branch>/retry_quarantine.json` as clean-room context instead of rehydrating the rejected approach.
 
 ## Step 4: Completion and Progress Report
 
