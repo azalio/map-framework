@@ -14,7 +14,6 @@ See .claude/CLAUDE.md for the template synchronization process.
 
 import filecmp
 import json
-import subprocess
 import pytest
 from pathlib import Path
 
@@ -61,19 +60,12 @@ class TestTemplateArtifactHygiene:
     def test_shipped_templates_do_not_contain_generated_artifacts(
         self, templates_root
     ):
-        project_root = templates_root.parents[2]
-        result = subprocess.run(
-            ["git", "ls-files", "src/mapify_cli/templates"],
-            cwd=project_root,
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=5,
-        )
         offenders = [
-            Path(path).relative_to("src/mapify_cli/templates")
-            for path in result.stdout.splitlines()
-            if _is_disallowed_template_artifact(Path(path))
+            relative_path
+            for path in templates_root.rglob("*")
+            if _is_disallowed_template_artifact(
+                relative_path := path.relative_to(templates_root)
+            )
         ]
 
         assert not offenders, (
