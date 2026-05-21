@@ -98,6 +98,7 @@ def get_branch_name() -> str:
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
             capture_output=True,
             text=True,
+            cwd=Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())),
             timeout=1,
         )
         if result.returncode == 0:

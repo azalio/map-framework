@@ -8,6 +8,7 @@ outside of Actor-related phases. Uses step_state.json as source of truth.
 """
 
 import json
+import os
 import subprocess
 from pathlib import Path
 from typing import Tuple
@@ -114,6 +115,21 @@ class TestWorkflowGate:
             capture_output=True,
             text=True,
             cwd=tmp_path,
+        )
+        return result.returncode, result.stdout, result.stderr
+
+    def run_hook_with_project_dir(
+        self, input_data: dict, project_dir: Path
+    ) -> Tuple[int, str, str]:
+        env = os.environ.copy()
+        env["CLAUDE_PROJECT_DIR"] = str(project_dir)
+        result = subprocess.run(
+            ["python3", str(self.HOOK_PATH)],
+            input=json.dumps(input_data),
+            capture_output=True,
+            text=True,
+            cwd=REPO_ROOT,
+            env=env,
         )
         return result.returncode, result.stdout, result.stderr
 
@@ -453,6 +469,56 @@ class TestWorkflowGate:
                 "tool_name": "Edit",
                 "tool_input": {"file_path": str(tmp_path / "src" / "foo.py")},
             },
+            tmp_path,
+        )
+        assert code == 0
+        self._assert_allowed(stdout)
+
+    def test_uses_claude_project_dir_for_state_and_scope(
+        self, tmp_path: Path
+    ) -> None:
+        """Generated-project hooks must read state relative to CLAUDE_PROJECT_DIR."""
+        map_dir = tmp_path / ".map" / "default"
+        map_dir.mkdir(parents=True, exist_ok=True)
+        (map_dir / "step_state.json").write_text(
+            json.dumps(
+                {
+                    "current_step_phase": "MONITOR",
+                    "current_subtask_id": "ST-001",
+                    "subtask_phases": {},
+                    "constraints": {"scope_glob": "src/*"},
+                }
+            )
+        )
+
+        code, stdout, _ = self.run_hook_with_project_dir(
+            {"tool_name": "Edit", "tool_input": {"file_path": "src/foo.py"}},
+            tmp_path,
+        )
+        assert code == 0
+        reason = self._assert_denied(stdout)
+        assert "MONITOR" in reason
+
+        (map_dir / "step_state.json").write_text(
+            json.dumps(
+                {
+                    "current_step_phase": "ACTOR",
+                    "current_subtask_id": "ST-001",
+                    "subtask_phases": {},
+                    "constraints": {"scope_glob": "src/*"},
+                }
+            )
+        )
+        code, stdout, _ = self.run_hook_with_project_dir(
+            {"tool_name": "Edit", "tool_input": {"file_path": "docs/foo.md"}},
+            tmp_path,
+        )
+        assert code == 0
+        reason = self._assert_denied(stdout)
+        assert "scope_glob" in reason
+
+        code, stdout, _ = self.run_hook_with_project_dir(
+            {"tool_name": "Edit", "tool_input": {"file_path": "src/foo.py"}},
             tmp_path,
         )
         assert code == 0

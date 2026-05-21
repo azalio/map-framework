@@ -45,17 +45,7 @@ def hook_mod():
 
 @pytest.fixture(scope="session")
 def branch_name():
-    return (
-        subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=2,
-        )
-        .stdout.strip()
-        .replace("/", "-")
-    )
+    return "default"
 
 
 def test_injects_for_edit_when_step_state_exists(
@@ -98,6 +88,58 @@ def test_injects_for_edit_when_step_state_exists(
     assert state["hook_injection"]["tool_name"] == "Edit"
     assert state["hook_injection"]["additional_context_chars"] == len(additional)
     assert state["hook_injection_counts"]["injected"] == 1
+
+
+def test_uses_claude_project_dir_for_branch_detection(tmp_path: Path) -> None:
+    """A non-git CLAUDE_PROJECT_DIR should use default, not the caller cwd branch."""
+    branch = "default"
+    state_dir = tmp_path / ".map" / branch
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "step_state.json").write_text(
+        json.dumps(
+            {
+                "workflow": "map-efficient",
+                "current_step_id": "2.3",
+                "current_step_phase": "ACTOR",
+                "current_subtask_id": "ST-001",
+                "subtask_index": 0,
+                "subtask_sequence": ["ST-001"],
+                "plan_approved": True,
+                "execution_mode": "batch",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (state_dir / "blueprint.json").write_text(
+        json.dumps(
+            {
+                "hard_constraints": [
+                    {"id": "HC-1", "description": "Preserve retry behavior"}
+                ],
+                "subtasks": [
+                    {
+                        "id": "ST-001",
+                        "title": "Implement retry handling",
+                        "validation_criteria": ["VC1 [AC-1]: retryable timeout"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    code, out, err = _run_hook(
+        tmp_path, {"tool_name": "Edit", "tool_input": {"file_path": "src/retry.py"}}
+    )
+
+    assert code == 0
+    assert err == ""
+    payload = json.loads(out)
+    additional = payload["hookSpecificOutput"]["additionalContext"]
+    assert "2.3" in additional
+    assert "ACTOR" in additional
+    assert "HC-1" in additional
+    assert "AC-1" in additional
 
 
 def test_skips_for_readonly_bash(tmp_path: Path) -> None:
