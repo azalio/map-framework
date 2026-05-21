@@ -14,8 +14,73 @@ See .claude/CLAUDE.md for the template synchronization process.
 
 import filecmp
 import json
+import subprocess
 import pytest
 from pathlib import Path
+
+
+DISALLOWED_TEMPLATE_DIR_NAMES = {
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+}
+DISALLOWED_TEMPLATE_FILE_NAMES = {
+    ".DS_Store",
+    "agent_metrics.jsonl",
+    "playbook.db",
+    "session.log",
+    "current_context.txt",
+}
+DISALLOWED_TEMPLATE_SUFFIXES = {
+    ".pyc",
+    ".pyo",
+    ".log",
+    ".db",
+    ".sqlite",
+    ".sqlite3",
+    ".pkl",
+}
+
+
+def _is_disallowed_template_artifact(path: Path) -> bool:
+    if any(part in DISALLOWED_TEMPLATE_DIR_NAMES for part in path.parts):
+        return True
+    if path.name in DISALLOWED_TEMPLATE_FILE_NAMES:
+        return True
+    return path.suffix in DISALLOWED_TEMPLATE_SUFFIXES
+
+
+class TestTemplateArtifactHygiene:
+    """Generated/cache artifacts must never ship through mapify templates."""
+
+    @pytest.fixture
+    def templates_root(self):
+        return Path(__file__).parent.parent / "src" / "mapify_cli" / "templates"
+
+    def test_shipped_templates_do_not_contain_generated_artifacts(
+        self, templates_root
+    ):
+        project_root = templates_root.parents[2]
+        result = subprocess.run(
+            ["git", "ls-files", "src/mapify_cli/templates"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=5,
+        )
+        offenders = [
+            Path(path).relative_to("src/mapify_cli/templates")
+            for path in result.stdout.splitlines()
+            if _is_disallowed_template_artifact(Path(path))
+        ]
+
+        assert not offenders, (
+            "Generated/cache artifacts tracked in shipped templates: "
+            + ", ".join(str(path) for path in sorted(offenders))
+            + ". Run make sync-templates after cleaning template inputs."
+        )
 
 
 class TestTemplateSynchronization:

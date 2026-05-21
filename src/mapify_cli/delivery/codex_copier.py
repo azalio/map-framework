@@ -26,10 +26,14 @@ def _copy_tree(
     """
     count = 0
     dst_dir.mkdir(parents=True, exist_ok=True)
+    ignored_names = {"__pycache__", ".DS_Store"}
+    ignored_suffixes = {".pyc", ".pyo"}
     for src_file in src_dir.rglob("*"):
         if not src_file.is_file():
             continue
-        if "__pycache__" in src_file.parts:
+        if any(part in ignored_names for part in src_file.parts):
+            continue
+        if src_file.suffix in ignored_suffixes:
             continue
         rel = src_file.relative_to(src_dir)
         target = dst_dir / rel

@@ -50,6 +50,12 @@ include = [
     "src/mapify_cli/templates/**/*",
     "README.md",
 ]
+exclude = [
+    "**/__pycache__/**",
+    "**/*.pyc",
+    "**/*.pyo",
+    "**/.DS_Store",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mapify_cli"]

@@ -1,8 +1,13 @@
 """Shared pytest fixtures for all test files."""
 
 import os
+import sys
 
 import pytest
+
+
+sys.dont_write_bytecode = True
+os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
 
 
 @pytest.fixture(autouse=True)

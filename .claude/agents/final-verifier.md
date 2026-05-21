@@ -61,6 +61,8 @@ Read `.map/<branch>/task_plan_<branch>.md` to extract:
 - Review integration points between subtasks
 - Verify ALL validation_criteria are met
 - Verify completed work still matches the blueprint's subtask contract metadata: no unjustified large subtask expansion, no mixed-concern drift, and every coverage_map owner has evidence
+- Treat source files, tests, schemas, and configs as authoritative over transcripts, summaries, commit messages, and stale docs
+- Any dismissal verdict (`false_positive`, `covered`, `out_of_scope`, `pre_existing`, `no_tests_needed`, `safe_to_skip`, `not_applicable`) requires `path:line` source evidence, a quote, and confidence; otherwise record `needs_investigation`
 
 #### Noise Handling Protocol (Flaky Test Re-runs)
 When tests fail on first run, apply the confirmation policy:

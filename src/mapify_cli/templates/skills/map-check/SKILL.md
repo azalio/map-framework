@@ -143,6 +143,10 @@ Read these artifacts from disk:
 - .map/<branch>/artifact_manifest.json
 - verification/test/check artifacts present in the manifest
 
+Source authority: source files, tests, schemas, and configs beat transcripts, summaries, commit messages, and stale docs. If a plan or transcript claim disagrees with source, report drift and trust source.
+
+Dismissal verdict gate: any `false_positive`, `covered`, `out_of_scope`, `pre_existing`, `no_tests_needed`, `safe_to_skip`, or `not_applicable` claim requires `path:line` source evidence, a quote, and confidence. Without source evidence, output `needs_investigation`.
+
 For each subtask, check:
 1. acceptance criteria met
 2. code changes align with the subtask description

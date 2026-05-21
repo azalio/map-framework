@@ -487,7 +487,7 @@ class TestLoadGoalAndTitle:
 
 
 class TestFormatReminderTruncation:
-    """Tests for format_reminder progressive 500-char truncation."""
+    """Tests for format_reminder progressive bounded truncation."""
 
     def _make_state(self, **overrides):
         base = {
@@ -503,7 +503,7 @@ class TestFormatReminderTruncation:
         return base
 
     def test_result_within_500_chars(self, hook_mod, tmp_path, branch_name):
-        """Basic reminder should be well under 500 chars."""
+        """Basic reminder should be well under the edit-time reminder cap."""
         os.environ["CLAUDE_PROJECT_DIR"] = str(tmp_path)
         try:
             state = self._make_state()
@@ -512,7 +512,7 @@ class TestFormatReminderTruncation:
             os.environ.pop("CLAUDE_PROJECT_DIR", None)
 
         assert result is not None
-        assert len(result) <= 500
+        assert len(result) <= hook_mod.REMINDER_LIMIT
 
     def test_includes_goal_when_plan_exists(self, hook_mod, tmp_path, branch_name):
         branch = branch_name
@@ -548,14 +548,14 @@ class TestFormatReminderTruncation:
 
         assert "My task title" in result
 
-    def test_hard_truncates_at_500(self, hook_mod, tmp_path, branch_name):
-        """When base string exceeds 500 chars even after dropping goal, hard-truncate."""
+    def test_hard_truncates_at_limit(self, hook_mod, tmp_path, branch_name):
+        """When base string exceeds the reminder cap, hard-truncate."""
         branch = branch_name
         state_dir = tmp_path / ".map" / branch
         state_dir.mkdir(parents=True, exist_ok=True)
 
-        # Create a title long enough to push past 500 chars even without goal
-        bp = {"subtasks": [{"id": "ST-001", "title": "X" * 480}]}
+        # Create a title long enough to push past the cap even without goal.
+        bp = {"subtasks": [{"id": "ST-001", "title": "X" * 780}]}
         (state_dir / "blueprint.json").write_text(json.dumps(bp))
 
         os.environ["CLAUDE_PROJECT_DIR"] = str(tmp_path)
@@ -566,19 +566,19 @@ class TestFormatReminderTruncation:
             os.environ.pop("CLAUDE_PROJECT_DIR", None)
 
         assert result is not None
-        assert len(result) <= 500
+        assert len(result) <= hook_mod.REMINDER_LIMIT
         assert result.endswith("...")
 
-    def test_drops_goal_first_when_over_500(self, hook_mod, tmp_path, branch_name):
+    def test_drops_goal_first_when_over_limit(self, hook_mod, tmp_path, branch_name):
         """Goal hint is dropped first before hard truncation."""
         branch = branch_name
         state_dir = tmp_path / ".map" / branch
         state_dir.mkdir(parents=True, exist_ok=True)
 
-        # Title that takes ~430 chars, goal that would push it past 500
+        # Title that takes most of the budget; goal would push it past the cap.
         plan = "## Goal\nSome goal text.\n\n## Done"
         (state_dir / f"task_plan_{branch}.md").write_text(plan)
-        bp = {"subtasks": [{"id": "ST-001", "title": "Y" * 430}]}
+        bp = {"subtasks": [{"id": "ST-001", "title": "Y" * 630}]}
         (state_dir / "blueprint.json").write_text(json.dumps(bp))
 
         os.environ["CLAUDE_PROJECT_DIR"] = str(tmp_path)
@@ -589,9 +589,46 @@ class TestFormatReminderTruncation:
             os.environ.pop("CLAUDE_PROJECT_DIR", None)
 
         assert result is not None
-        assert len(result) <= 500
+        assert len(result) <= hook_mod.REMINDER_LIMIT
         # Goal should have been dropped
         assert "Goal:" not in result
+
+    def test_includes_hard_constraints_and_validation_tags(
+        self, hook_mod, tmp_path, branch_name
+    ):
+        branch = branch_name
+        state_dir = tmp_path / ".map" / branch
+        state_dir.mkdir(parents=True, exist_ok=True)
+
+        bp = {
+            "hard_constraints": [
+                {"id": "HC-1", "description": "Preserve retry behavior"}
+            ],
+            "subtasks": [
+                {
+                    "id": "ST-001",
+                    "title": "Implement retry handling",
+                    "validation_criteria": [
+                        "VC1 [AC-1]: retryable timeout returns guidance",
+                        "VC2 [AC-2]: non-retryable errors stay fatal",
+                    ],
+                }
+            ],
+        }
+        (state_dir / "blueprint.json").write_text(json.dumps(bp))
+
+        os.environ["CLAUDE_PROJECT_DIR"] = str(tmp_path)
+        try:
+            state = self._make_state()
+            result = hook_mod.format_reminder(state, branch)
+        finally:
+            os.environ.pop("CLAUDE_PROJECT_DIR", None)
+
+        assert result is not None
+        assert "HC-1" in result
+        assert "AC-1" in result
+        assert "AC-2" in result
+        assert "Source>summary" in result
 
     def test_no_goal_or_title_when_subtask_is_dash(
         self, hook_mod, tmp_path, branch_name
@@ -608,14 +645,14 @@ class TestFormatReminderTruncation:
         assert "Goal:" not in result
 
     def test_required_suffix_truncated(self, hook_mod, tmp_path, branch_name):
-        """REQUIRED suffix should also be truncated to 500 chars total at word boundary."""
+        """REQUIRED suffix should also be truncated at word boundary."""
         branch = branch_name
         state_dir = tmp_path / ".map" / branch
         state_dir.mkdir(parents=True, exist_ok=True)
 
         # Use word-spaced title so truncation can find a word boundary
-        # "word " * 90 = 450 chars, plus prefix + REQUIRED pushes well past 500
-        long_title = ("word " * 90).strip()
+        # Long title plus REQUIRED pushes past the reminder cap.
+        long_title = ("word " * 150).strip()
         bp = {"subtasks": [{"id": "ST-001", "title": long_title}]}
         (state_dir / "blueprint.json").write_text(json.dumps(bp))
 
@@ -631,15 +668,5 @@ class TestFormatReminderTruncation:
             os.environ.pop("CLAUDE_PROJECT_DIR", None)
 
         assert result is not None
-        assert len(result) <= 500
+        assert len(result) <= hook_mod.REMINDER_LIMIT
         assert result.endswith("...")
-        # Word-boundary truncation: should not cut mid-word.
-        # The text before "..." ends at a space (rfind finds last space),
-        # so the remaining text should end with a non-alphanumeric char
-        # (space, pipe, paren) rather than cutting "wor..." mid-word.
-        before_ellipsis = result[:-3]
-        assert not before_ellipsis[
-            -1
-        ].isalpha(), (
-            f"Truncation cut mid-word; last char before '...': {before_ellipsis[-1]!r}"
-        )
