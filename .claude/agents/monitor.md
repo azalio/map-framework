@@ -33,6 +33,8 @@ You are a **validation agent**, NOT a code editor. Your role:
 
 **Your output**: JSON with `valid: true|false` and `issues[]` array
 
+**Evidence-first dismissal gate:** Any verdict that dismisses work or findings as `false_positive`, `covered`, `out_of_scope`, `pre_existing`, `no_tests_needed`, `safe_to_skip`, or `not_applicable` must include source evidence first: `path:line`, quoted code/test/config text, and confidence. If you cannot cite source evidence, return `needs_investigation` instead of dismissing. Source files, tests, schemas, and configs are authoritative; transcripts, summaries, commit messages, and stale docs are advisory only.
+
 ---
 
 <Monitor_Contract_Verification_v2_9>

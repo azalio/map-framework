@@ -1193,6 +1193,66 @@ class TestRunHealthCloseoutWiring:
         )
 
 
+class TestEvidenceFirstVerdictContracts:
+    """Regression tests for source-backed dismissal verdict requirements."""
+
+    @pytest.fixture
+    def project_root(self):
+        return Path(__file__).parent.parent
+
+    @pytest.mark.parametrize(
+        "relative_path",
+        [
+            Path(".claude/agents/monitor.md"),
+            Path(".claude/agents/evaluator.md"),
+            Path(".claude/agents/predictor.md"),
+            Path(".claude/agents/documentation-reviewer.md"),
+            Path(".claude/agents/final-verifier.md"),
+            Path(".claude/skills/map-review/SKILL.md"),
+            Path(".claude/skills/map-check/SKILL.md"),
+        ],
+    )
+    def test_verdict_dismissals_require_source_evidence(
+        self, project_root, relative_path
+    ):
+        content = (project_root / relative_path).read_text(encoding="utf-8")
+
+        for term in (
+            "false_positive",
+            "covered",
+            "out_of_scope",
+            "pre_existing",
+            "no_tests_needed",
+            "safe_to_skip",
+            "not_applicable",
+        ):
+            assert term in content
+        assert "path:line" in content
+        assert "confidence" in content
+        assert "needs_investigation" in content
+
+    @pytest.mark.parametrize(
+        "relative_path",
+        [
+            Path(".claude/agents/monitor.md"),
+            Path(".claude/agents/evaluator.md"),
+            Path(".claude/agents/predictor.md"),
+            Path(".claude/agents/documentation-reviewer.md"),
+            Path(".claude/agents/final-verifier.md"),
+            Path(".claude/skills/map-review/SKILL.md"),
+            Path(".claude/skills/map-check/SKILL.md"),
+        ],
+    )
+    def test_source_artifacts_are_authoritative(self, project_root, relative_path):
+        content = (project_root / relative_path).read_text(encoding="utf-8").lower()
+
+        assert "source" in content
+        assert "tests" in content
+        assert "configs" in content
+        assert "transcripts" in content
+        assert "summaries" in content
+
+
 class TestEvidenceFirstPromptContracts:
     """Regression tests for evidence-grounded agent outputs.
 

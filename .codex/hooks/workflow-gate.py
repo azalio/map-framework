@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Optional
 
 EDITING_TOOLS = {"Edit", "Write", "MultiEdit"}
+PROJECT_DIR = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
 
 # Phases where Edit/Write is expected (Actor applies code)
 EDITING_PHASES = {"ACTOR", "APPLY", "TEST_WRITER"}
@@ -95,7 +96,7 @@ def is_exempt_path(file_path: str) -> bool:
     resolved = (
         candidate.resolve(strict=False)
         if candidate.is_absolute()
-        else (Path.cwd().resolve() / candidate).resolve(strict=False)
+        else (PROJECT_DIR / candidate).resolve(strict=False)
     )
 
     # Allow ~/.claude/projects/*/memory/
@@ -109,7 +110,7 @@ def is_exempt_path(file_path: str) -> bool:
 
     # Allow .map/ and .claude/rules/learned/ (MAP-generated artifacts)
     try:
-        rel = resolved.relative_to(Path.cwd().resolve())
+        rel = resolved.relative_to(PROJECT_DIR)
     except ValueError:
         return False
 
@@ -150,6 +151,7 @@ def get_branch_name() -> str:
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
             capture_output=True,
             text=True,
+            cwd=PROJECT_DIR,
             timeout=1,
         )
         if result.returncode == 0:
@@ -164,7 +166,7 @@ def is_editing_phase(branch: str) -> tuple[bool, Optional[str]]:
 
     Returns (allowed, error_message).
     """
-    step_file = Path(f".map/{branch}/step_state.json")
+    step_file = PROJECT_DIR / ".map" / branch / "step_state.json"
     if not step_file.exists():
         return True, None  # No step state → fail-open
 
@@ -200,7 +202,7 @@ def is_editing_phase(branch: str) -> tuple[bool, Optional[str]]:
 
 def check_constraints(branch: str, target_paths: list[str]) -> Optional[str]:
     """Check constraints from step_state.json. Returns error or None."""
-    state_file = Path(f".map/{branch}/step_state.json")
+    state_file = PROJECT_DIR / ".map" / branch / "step_state.json"
     if not state_file.exists():
         return None
 
@@ -224,9 +226,14 @@ def check_constraints(branch: str, target_paths: list[str]) -> Optional[str]:
         )
         scope_glob = None
     if scope_glob and target_paths:
-        repo_root = Path.cwd().resolve()
+        repo_root = PROJECT_DIR
         for tp in target_paths:
-            resolved = Path(tp).resolve()
+            candidate = Path(tp)
+            resolved = (
+                candidate.resolve(strict=False)
+                if candidate.is_absolute()
+                else (repo_root / candidate).resolve(strict=False)
+            )
             try:
                 rel = str(resolved.relative_to(repo_root))
             except ValueError:

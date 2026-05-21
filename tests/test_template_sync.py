@@ -18,6 +18,63 @@ import pytest
 from pathlib import Path
 
 
+DISALLOWED_TEMPLATE_DIR_NAMES = {
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+}
+DISALLOWED_TEMPLATE_FILE_NAMES = {
+    ".DS_Store",
+    "agent_metrics.jsonl",
+    "playbook.db",
+    "session.log",
+    "current_context.txt",
+}
+DISALLOWED_TEMPLATE_SUFFIXES = {
+    ".pyc",
+    ".pyo",
+    ".log",
+    ".db",
+    ".sqlite",
+    ".sqlite3",
+    ".pkl",
+}
+
+
+def _is_disallowed_template_artifact(path: Path) -> bool:
+    if any(part in DISALLOWED_TEMPLATE_DIR_NAMES for part in path.parts):
+        return True
+    if path.name in DISALLOWED_TEMPLATE_FILE_NAMES:
+        return True
+    return path.suffix in DISALLOWED_TEMPLATE_SUFFIXES
+
+
+class TestTemplateArtifactHygiene:
+    """Generated/cache artifacts must never ship through mapify templates."""
+
+    @pytest.fixture
+    def templates_root(self):
+        return Path(__file__).parent.parent / "src" / "mapify_cli" / "templates"
+
+    def test_shipped_templates_do_not_contain_generated_artifacts(
+        self, templates_root
+    ):
+        offenders = [
+            relative_path
+            for path in templates_root.rglob("*")
+            if _is_disallowed_template_artifact(
+                relative_path := path.relative_to(templates_root)
+            )
+        ]
+
+        assert not offenders, (
+            "Generated/cache artifacts tracked in shipped templates: "
+            + ", ".join(str(path) for path in sorted(offenders))
+            + ". Run make sync-templates after cleaning template inputs."
+        )
+
+
 class TestTemplateSynchronization:
     """Test that agent templates are synchronized between .claude/ and templates/."""
 

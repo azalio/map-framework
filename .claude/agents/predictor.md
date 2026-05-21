@@ -104,6 +104,8 @@ CONFLICT (Category B: -0.10):
 
 **Key Principle**: Right-size your analysis. A typo fix needs 30 seconds; a public API change needs 5 minutes.
 
+**Evidence-first dismissal gate**: Any `false_positive`, `covered`, `out_of_scope`, `pre_existing`, `no_tests_needed`, `safe_to_skip`, or `not_applicable` impact verdict must cite `path:line` source evidence, quote the source, and include confidence. If you cannot verify from source files, tests, schemas, or configs, mark the item `needs_investigation`; do not trust transcripts, summaries, commit messages, or stale docs over source.
+
 </quick_start>
 
 <map_integration>

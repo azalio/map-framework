@@ -40,6 +40,7 @@ Validation:
 ## How to work in this repo
 
 - Prefer deterministic tooling over “manual review”: run `make check` (or `make lint` / `make test`) after changes.
+- When changing scripts, hooks, CLIs, or generated provider surfaces, test both negative/no-op paths and positive paths with realistic inputs. A hook returning `{}` proves only the silent path; also build minimal state/artifacts that should trigger its intended output or side effect.
 - When changing user-facing behavior, also update relevant docs:
   - `README.md` (quick-start)
   - `docs/USAGE.md` (workflows and CLI usage)

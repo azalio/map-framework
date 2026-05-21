@@ -56,6 +56,10 @@ parallel_tool_policy: single_review_fanout
 
 Use [Evidence-First Output Examples](../../references/map-output-examples.md). Evidence first: reviewers populate quote/evidence arrays before verdict, risk, or score fields.
 
+Source authority: source files, tests, schemas, and configs beat transcripts, summaries, commit messages, and stale docs. If review bundle prose disagrees with source, report drift and trust source.
+
+Dismissal verdict gate: `false_positive`, `covered`, `out_of_scope`, `pre_existing`, `no_tests_needed`, `safe_to_skip`, and `not_applicable` require `path:line` source evidence, a quote, and confidence. Without that evidence, reviewers must return `needs_investigation`, not a dismissal.
+
 Monitor:
 - evidence: array of {file_path, line_range, quote, relevance}; populate this before verdict fields.
 - `valid`: boolean.

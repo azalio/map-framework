@@ -24,10 +24,13 @@ last_updated: 2026-04-28
 ├─────────────────────────────────────────────────────────────────────┤
 │  NEVER: Inflate scores | Skip dimensions | Accept < 5 security      │
 │         Ignore Monitor findings | Give "proceed" when issues exist  │
+│         Dismiss findings without source citation and confidence       │
 ├─────────────────────────────────────────────────────────────────────┤
 │  OUTPUT: Dimension scores → Overall score → Recommendation → Next   │
 └─────────────────────────────────────────────────────────────────────┘
 ```
+
+Evidence-first dismissal gate: any `false_positive`, `covered`, `out_of_scope`, `pre_existing`, `no_tests_needed`, `safe_to_skip`, or `not_applicable` judgment requires `path:line` source evidence, a quote, and confidence. If source evidence is missing, classify it as `needs_investigation`, not dismissed. Source files, tests, schemas, and configs beat transcripts, summaries, commit messages, and stale docs.
 
 ---
 

@@ -23,6 +23,7 @@ from pathlib import Path
 
 # Keep in sync with map_step_runner.py GOAL_HEADING_RE
 GOAL_HEADING_RE = r"## (?:Goal|Overview)\n(.*?)(?=\n##|\Z)"
+REMINDER_LIMIT = 700
 
 # Bash commands that don't need workflow reminders
 READONLY_COMMANDS = {
@@ -97,6 +98,7 @@ def get_branch_name() -> str:
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
             capture_output=True,
             text=True,
+            cwd=Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())),
             timeout=1,
         )
         if result.returncode == 0:
@@ -272,6 +274,71 @@ def load_goal_and_title(branch: str, subtask_id: str) -> tuple[str, str]:
     return (goal, title)
 
 
+def _constraint_label(item: object) -> str | None:
+    """Return a compact display label for a hard constraint entry."""
+    if isinstance(item, str):
+        return _truncate_at_word(" ".join(item.split()), 70)
+    if not isinstance(item, dict):
+        return None
+    cid = item.get("id")
+    desc = item.get("description")
+    if isinstance(cid, str) and isinstance(desc, str):
+        return _truncate_at_word(f"{cid}: {' '.join(desc.split())}", 70)
+    if isinstance(cid, str):
+        return _truncate_at_word(cid, 70)
+    if isinstance(desc, str):
+        return _truncate_at_word(" ".join(desc.split()), 70)
+    return None
+
+
+def _extract_coverage_tags(criteria: list[object]) -> list[str]:
+    tags: list[str] = []
+    for criterion in criteria:
+        if not isinstance(criterion, str):
+            continue
+        for tag in re.findall(r"\[([A-Z]+-\d+)\]", criterion):
+            if tag not in tags:
+                tags.append(tag)
+    return tags
+
+
+def load_subtask_contract_hints(branch: str, subtask_id: str) -> tuple[str, str]:
+    """Load compact hard-constraint and validation tag hints for edit-time reminders."""
+    if not subtask_id or subtask_id == "-":
+        return ("", "")
+
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+    blueprint_file = project_dir / ".map" / branch / "blueprint.json"
+    try:
+        bp = json.loads(blueprint_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+        return ("", "")
+    if not isinstance(bp, dict):
+        return ("", "")
+
+    hard_hint = ""
+    hard_constraints = bp.get("hard_constraints")
+    if isinstance(hard_constraints, list):
+        labels = [label for item in hard_constraints if (label := _constraint_label(item))]
+        if labels:
+            hard_hint = " | HC: " + "; ".join(labels[:3])
+
+    tag_hint = ""
+    subtasks = bp.get("subtasks")
+    if isinstance(subtasks, list):
+        for item in subtasks:
+            if not isinstance(item, dict) or item.get("id") != subtask_id:
+                continue
+            criteria = item.get("validation_criteria")
+            if isinstance(criteria, list):
+                tags = _extract_coverage_tags(criteria)
+                if tags:
+                    tag_hint = " | VC: " + ", ".join(tags[:6])
+            break
+
+    return (hard_hint, tag_hint)
+
+
 def _truncate_at_word(text: str, limit: int) -> str:
     """Truncate text at word boundary, appending '...' within limit."""
     if len(text) <= limit:
@@ -285,7 +352,7 @@ def _truncate_at_word(text: str, limit: int) -> str:
 
 
 def format_reminder(state: dict, branch: str) -> str | None:
-    """Format terse workflow reminder (aim: ≤500 chars)."""
+    """Format terse workflow reminder (aim: ≤700 chars)."""
     if not state:
         return None
 
@@ -353,20 +420,25 @@ def format_reminder(state: dict, branch: str) -> str | None:
             goal_hint = f" | Goal: {goal}"
         if title:
             title_hint = f" {title}"
+    hard_hint, tag_hint = load_subtask_contract_hints(branch, subtask_id)
 
-    base = f"[MAP] {step_id} {step_phase}{goal_hint} | ST: {subtask_id}{title_hint} ({progress}) | plan:{plan_ok} mode:{mode}{wave_hint}{diag_hint}{files_hint}"
+    authority_hint = " | Source>summary"
+    base = f"[MAP] {step_id} {step_phase}{goal_hint} | ST: {subtask_id}{title_hint} ({progress}) | plan:{plan_ok} mode:{mode}{wave_hint}{diag_hint}{files_hint}{hard_hint}{tag_hint}{authority_hint}"
 
-    # Enforce 500-char limit: trim goal first, then word-boundary truncate
-    if len(base) > 500:
+    # Enforce limit: trim goal first, then constraint detail, then word-boundary truncate.
+    if len(base) > REMINDER_LIMIT:
         goal_hint = ""
-        base = f"[MAP] {step_id} {step_phase} | ST: {subtask_id}{title_hint} ({progress}) | plan:{plan_ok} mode:{mode}{wave_hint}{diag_hint}{files_hint}"
-    if len(base) > 500:
-        base = _truncate_at_word(base, 500)
+        base = f"[MAP] {step_id} {step_phase} | ST: {subtask_id}{title_hint} ({progress}) | plan:{plan_ok} mode:{mode}{wave_hint}{diag_hint}{files_hint}{hard_hint}{tag_hint}{authority_hint}"
+    if len(base) > REMINDER_LIMIT:
+        hard_hint = ""
+        base = f"[MAP] {step_id} {step_phase} | ST: {subtask_id}{title_hint} ({progress}) | plan:{plan_ok} mode:{mode}{wave_hint}{diag_hint}{files_hint}{tag_hint}{authority_hint}"
+    if len(base) > REMINDER_LIMIT:
+        base = _truncate_at_word(base, REMINDER_LIMIT)
 
     if required:
         result = f"{base} | REQUIRED: {required}"
-        if len(result) > 500:
-            result = _truncate_at_word(result, 500)
+        if len(result) > REMINDER_LIMIT:
+            result = _truncate_at_word(result, REMINDER_LIMIT)
         return result
     return base
 

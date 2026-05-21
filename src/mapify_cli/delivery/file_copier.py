@@ -22,6 +22,21 @@ from mapify_cli.delivery.agent_generator import (
 )
 
 
+_IGNORED_TEMPLATE_NAMES = {"__pycache__", ".DS_Store"}
+_IGNORED_TEMPLATE_SUFFIXES = {".pyc", ".pyo"}
+
+
+def _ignore_generated_template_artifacts(
+    _directory: str, names: list[str]
+) -> set[str]:
+    """Ignore Python/cache artifacts if a dirty template tree reaches install time."""
+    ignored: set[str] = set()
+    for name in names:
+        if name in _IGNORED_TEMPLATE_NAMES or Path(name).suffix in _IGNORED_TEMPLATE_SUFFIXES:
+            ignored.add(name)
+    return ignored
+
+
 def _get_version() -> str:
     """Get current mapify-cli version for metadata injection."""
     try:
@@ -181,7 +196,12 @@ def create_skill_files(project_path: Path) -> int:
         for skill_template in skills_template_dir.iterdir():
             if skill_template.is_dir() and skill_template.name != "__pycache__":
                 target = skills_dir / skill_template.name
-                shutil.copytree(skill_template, target, dirs_exist_ok=True)
+                shutil.copytree(
+                    skill_template,
+                    target,
+                    dirs_exist_ok=True,
+                    ignore=_ignore_generated_template_artifacts,
+                )
                 count += 1
 
     return count
@@ -201,7 +221,12 @@ def _copy_map_path(src: Path, dest: Path) -> int:
                 file=sys.stderr,
             )
     if src.is_dir():
-        shutil.copytree(src, dest, dirs_exist_ok=True)
+        shutil.copytree(
+            src,
+            dest,
+            dirs_exist_ok=True,
+            ignore=_ignore_generated_template_artifacts,
+        )
     else:
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dest)
