@@ -87,6 +87,7 @@ def _valid_run_health_payload() -> dict[str, object]:
                 "blueprint",
                 "active_issues",
                 "known_issues",
+                "retry_quarantine",
             )
         },
         "resiliency_signals": {
@@ -96,6 +97,9 @@ def _valid_run_health_payload() -> dict[str, object]:
             "max_retries": 5,
             "subtask_retry_counts": {},
             "max_subtask_retry_count": 0,
+            "clean_retry_count": 0,
+            "contaminated_retry_count": 0,
+            "retry_isolation_status": {},
             "guard_rework_counts": {},
             "predictor_called": False,
             "predictor_skipped": False,
@@ -153,6 +157,9 @@ def test_write_run_health_report_creates_report_and_manifest(branch_workspace):
                 "retry_count": 2,
                 "max_retries": 5,
                 "subtask_retry_counts": {"ST-001": 1},
+                "clean_retry_count": 1,
+                "contaminated_retry_count": 1,
+                "retry_isolation_status": {"ST-001": "clean_retry_required"},
                 "hook_injection": {"status": "injected", "tool_name": "Edit"},
                 "hook_injection_counts": {"injected": 3},
                 "predictor_skipped": True,
@@ -178,6 +185,9 @@ def test_write_run_health_report_creates_report_and_manifest(branch_workspace):
     assert signals["hook_injection"]["status"] == "injected"
     assert signals["retry_count"] == 2
     assert signals["max_subtask_retry_count"] == 1
+    assert signals["clean_retry_count"] == 1
+    assert signals["contaminated_retry_count"] == 1
+    assert signals["retry_isolation_status"] == {"ST-001": "clean_retry_required"}
     assert signals["predictor_skipped"] is True
     assert signals["final_verifier_executed"] is True
 
@@ -185,6 +195,86 @@ def test_write_run_health_report_creates_report_and_manifest(branch_workspace):
     stage = manifest["stages"]["run_health"]
     assert stage["status"] == "ready"
     assert stage["metadata"]["terminal_status"] == "blocked"
+
+
+def test_build_retry_quarantine_writes_valid_artifact(branch_workspace):
+    result = map_step_runner.build_retry_quarantine(
+        "ST-001", 2, "Actor repeated the rejected cache strategy."
+    )
+
+    assert result["status"] == "success"
+    assert result["valid"] is True
+    payload = json.loads((branch_workspace / "retry_quarantine.json").read_text())
+    entry = payload["quarantines"][0]
+    assert entry["subtask_id"] == "ST-001"
+    assert entry["retry_count"] == 2
+    assert entry["isolation_mode"] == "clean_retry"
+    assert entry["preserved_constraints"]
+    assert entry["required_evidence"]
+
+
+def test_validate_retry_quarantine_rejects_missing_constraints(branch_workspace):
+    (branch_workspace / "retry_quarantine.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "branch": "test-branch",
+                "updated_at": "2026-05-20T10:00:00Z",
+                "quarantines": [
+                    {
+                        "subtask_id": "ST-001",
+                        "retry_count": 2,
+                        "isolation_mode": "clean_retry",
+                        "failed_attempt": "retry_2",
+                        "monitor_rejection_summary": "Still broken.",
+                        "rejected_assumptions": [],
+                        "do_not_repeat": [],
+                        "preserved_constraints": [],
+                        "required_evidence": ["Run tests."],
+                        "source_artifacts": [
+                            {"path": ".map/test-branch/step_state.json", "kind": "step-state"},
+                            {"path": ".map/test-branch/blueprint.json", "kind": "blueprint"},
+                        ],
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = map_step_runner.validate_retry_quarantine()
+
+    assert result["status"] == "error"
+    assert result["valid"] is False
+    assert "quarantines[0].preserved_constraints must be a non-empty array" in result[
+        "errors"
+    ]
+
+
+def test_validate_retry_quarantine_handles_invalid_utf8(branch_workspace):
+    (branch_workspace / "retry_quarantine.json").write_bytes(b"\xff\xfe")
+
+    result = map_step_runner.validate_retry_quarantine()
+
+    assert result["status"] == "error"
+    assert result["valid"] is False
+    assert any("cannot read retry quarantine" in error for error in result["errors"])
+
+
+def test_validate_retry_quarantine_rejects_bool_retry_count(branch_workspace):
+    result = map_step_runner.build_retry_quarantine("ST-001", 2, "Repeated failure")
+    assert result["valid"] is True
+    payload = json.loads((branch_workspace / "retry_quarantine.json").read_text())
+    payload["quarantines"][0]["retry_count"] = True
+    (branch_workspace / "retry_quarantine.json").write_text(
+        json.dumps(payload) + "\n", encoding="utf-8"
+    )
+
+    result = map_step_runner.validate_retry_quarantine()
+
+    assert result["status"] == "error"
+    assert "quarantines[0].retry_count must be an integer >= 2" in result["errors"]
 
 
 def test_artifact_health_entry_handles_disappearing_file():
@@ -304,6 +394,26 @@ def test_validate_run_health_report_accepts_valid_complete(branch_workspace):
     assert result["errors"] == []
 
 
+def test_validate_run_health_report_accepts_legacy_without_clean_retry_fields(
+    branch_workspace,
+):
+    payload = _valid_run_health_payload()
+    payload["artifacts"].pop("retry_quarantine")
+    signals = payload["resiliency_signals"]
+    signals.pop("clean_retry_count")
+    signals.pop("contaminated_retry_count")
+    signals.pop("retry_isolation_status")
+    (branch_workspace / "run_health_report.json").write_text(
+        json.dumps(payload) + "\n", encoding="utf-8"
+    )
+
+    result = map_step_runner.validate_run_health_report()
+
+    assert result["status"] == "success"
+    assert result["valid"] is True
+    assert result["errors"] == []
+
+
 def test_validate_run_health_report_rejects_inconsistent_complete(branch_workspace):
     (branch_workspace / "step_state.json").write_text(
         json.dumps(
@@ -373,6 +483,29 @@ def test_validate_run_health_report_rejects_schema_drift_without_package_schema(
     assert result["status"] == "error"
     assert "invalid terminal_status: done" in result["errors"]
     assert "unexpected field: extra" in result["errors"]
+
+
+def test_validate_run_health_report_rejects_bool_retry_counts(branch_workspace):
+    payload = _valid_run_health_payload()
+    payload["resiliency_signals"]["clean_retry_count"] = True
+    payload["completed_step_count"] = True
+    payload["artifacts"]["step_state"]["size_bytes"] = False
+    (branch_workspace / "run_health_report.json").write_text(
+        json.dumps(payload) + "\n", encoding="utf-8"
+    )
+
+    result = map_step_runner.validate_run_health_report()
+
+    assert result["status"] == "error"
+    assert (
+        "resiliency_signals.clean_retry_count must be a non-negative integer"
+        in result["errors"]
+    )
+    assert "completed_step_count must be a non-negative integer" in result["errors"]
+    assert (
+        "artifacts.step_state.size_bytes must be a non-negative integer"
+        in result["errors"]
+    )
 
 
 def test_map_step_runner_cli_validate_run_health_report_exits_nonzero(tmp_path):

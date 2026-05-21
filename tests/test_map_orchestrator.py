@@ -1512,6 +1512,41 @@ class TestMonitorFailed:
         assert Path(r1["feedback_file"]).exists()
         assert Path(r2["feedback_file"]).exists()
 
+    def test_second_retry_requires_clean_retry_quarantine(self, branch_dir, tmp_path):
+        state_file = self._make_monitor_state(tmp_path, branch_dir)
+        first = map_orchestrator.monitor_failed(branch_dir, "issue 1")
+        assert first["retry_isolation"] == "normal_retry"
+
+        state = map_orchestrator.StepState.load(state_file)
+        state.current_step_phase = "MONITOR"
+        state.save(state_file)
+        second = map_orchestrator.monitor_failed(
+            branch_dir, "Actor repeated the rejected cache strategy."
+        )
+
+        assert second["retry_isolation"] == "clean_retry_required"
+        quarantine_path = Path(second["retry_quarantine_path"])
+        assert quarantine_path.exists()
+        payload = json.loads(quarantine_path.read_text(encoding="utf-8"))
+        entry = payload["quarantines"][0]
+        assert entry["subtask_id"] == "ST-001"
+        assert entry["retry_count"] == 2
+        assert entry["preserved_constraints"]
+        state = map_orchestrator.StepState.load(state_file)
+        assert state.clean_retry_count == 1
+        assert state.contaminated_retry_count == 1
+        assert state.retry_isolation_status["ST-001"] == "clean_retry_required"
+
+    def test_get_next_step_surfaces_clean_retry_instruction(self, branch_dir, tmp_path):
+        self._make_monitor_state(tmp_path, branch_dir, retry_count=1)
+        map_orchestrator.monitor_failed(branch_dir, "Repeated stale approach")
+
+        result = map_orchestrator.get_next_step(branch_dir)
+
+        assert result["phase"] == "ACTOR"
+        assert "CLEAN_RETRY mode is required" in result["instruction"]
+        assert "retry_quarantine.json" in result["instruction"]
+
     def test_state_saved_on_max_retries(self, branch_dir, tmp_path):
         """State is persisted even in the max_retries early-return branch."""
         state_file = self._make_monitor_state(
@@ -1574,6 +1609,22 @@ class TestWaveMonitorFailed:
         state = map_orchestrator.StepState.load(state_file)
         assert state.subtask_retry_counts["ST-001"] == 2
         assert state.subtask_retry_counts["ST-002"] == 0
+
+    def test_wave_second_retry_requires_clean_retry(self, branch_dir, tmp_path):
+        state_file = self._make_wave_state(tmp_path, branch_dir)
+        map_orchestrator.wave_monitor_failed("ST-001", branch_dir, "issue 1")
+        result = map_orchestrator.wave_monitor_failed(
+            "ST-001", branch_dir, "Repeated stale wave approach"
+        )
+
+        assert result["retry_isolation"] == "clean_retry_required"
+        assert Path(result["retry_quarantine_path"]).exists()
+        state = map_orchestrator.StepState.load(state_file)
+        assert state.retry_isolation_status["ST-001"] == "clean_retry_required"
+        wave = map_orchestrator.get_wave_step(branch_dir)
+        subtask_map = {s["subtask_id"]: s for s in wave["subtasks"]}
+        assert subtask_map["ST-001"]["retry_isolation"] == "clean_retry_required"
+        assert "CLEAN_RETRY mode is required" in subtask_map["ST-001"]["instruction"]
 
     def test_max_retries_escalation(self, branch_dir, tmp_path):
         self._make_wave_state(

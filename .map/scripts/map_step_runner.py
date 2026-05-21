@@ -62,6 +62,7 @@ ARTIFACT_STAGE_NAMES = (
     "implementation",
     "review",
     "verification",
+    "retry_quarantine",
     "token_budget",
     "run_health",
     "learn_handoff",
@@ -146,6 +147,7 @@ REVIEW_PROMPT_MIN_BUDGET_TOKENS = 1_024
 REVIEW_PROMPT_BUDGET_ENV = "MAP_REVIEW_PROMPT_BUDGET_TOKENS"
 TOKEN_BUDGET_ARTIFACT_NAME = "token_budget.json"
 TOKEN_BUDGET_DECISION_LIMIT = 100
+RETRY_QUARANTINE_ARTIFACT_NAME = "retry_quarantine.json"
 
 try:
     from mapify_cli.token_budget import (
@@ -260,6 +262,17 @@ def _parse_boolish(value: object) -> bool:
         return value
     normalized = str(value or "").strip().lower()
     return normalized in {"1", "true", "yes", "y"}
+
+
+def _shorten_retry_text(text: str, max_chars: int = 1_200) -> str:
+    compact = "\n".join(line.rstrip() for line in text.splitlines() if line.strip())
+    if len(compact) <= max_chars:
+        return compact
+    return compact[: max_chars - 15].rstrip() + "\n[truncated]"
+
+
+def _is_non_negative_int(value: object) -> bool:
+    return type(value) is int and value >= 0
 
 
 def _write_json_file(path: Path, payload: dict) -> None:
@@ -2137,6 +2150,9 @@ def _run_health_artifact_inventory(
         "known_issues": _artifact_health_entry(
             branch_dir / "known-issues.json", "known-issues"
         ),
+        "retry_quarantine": _artifact_health_entry(
+            branch_dir / RETRY_QUARANTINE_ARTIFACT_NAME, "retry-quarantine"
+        ),
     }
 
 
@@ -2169,6 +2185,7 @@ def write_run_health_report(
     retry_count = _as_int(state.get("retry_count"))
     subtask_retry_counts = _as_dict(state.get("subtask_retry_counts"))
     guard_rework_counts = _as_dict(state.get("guard_rework_counts"))
+    retry_isolation_status = _as_dict(state.get("retry_isolation_status"))
     hook_injection = _as_dict(state.get("hook_injection"))
     artifact_inventory = _run_health_artifact_inventory(branch_dir, branch_name)
 
@@ -2194,6 +2211,9 @@ def write_run_health_report(
             "max_subtask_retry_count": max(
                 [_as_int(value) for value in subtask_retry_counts.values()] or [0]
             ),
+            "clean_retry_count": _as_int(state.get("clean_retry_count")),
+            "contaminated_retry_count": _as_int(state.get("contaminated_retry_count")),
+            "retry_isolation_status": retry_isolation_status,
             "guard_rework_counts": guard_rework_counts,
             "predictor_called": bool(state.get("predictor_called")),
             "predictor_skipped": bool(state.get("predictor_skipped")),
@@ -2278,7 +2298,7 @@ def _validate_run_health_report_shape(report: Mapping[str, object]) -> list[str]
             errors.append(f"{key} must be a string")
     for key in ("completed_step_count", "pending_step_count"):
         value = report.get(key)
-        if key in report and (not isinstance(value, int) or value < 0):
+        if key in report and not _is_non_negative_int(value):
             errors.append(f"{key} must be a non-negative integer")
 
     artifacts = report.get("artifacts")
@@ -2297,7 +2317,7 @@ def _validate_run_health_report_shape(report: Mapping[str, object]) -> list[str]
             if not isinstance(value.get("present"), bool):
                 errors.append(f"artifacts.{key}.present must be a boolean")
             size_bytes = value.get("size_bytes")
-            if not isinstance(size_bytes, int) or size_bytes < 0:
+            if not _is_non_negative_int(size_bytes):
                 errors.append(f"artifacts.{key}.size_bytes must be a non-negative integer")
 
     signals = report.get("resiliency_signals")
@@ -2311,12 +2331,23 @@ def _validate_run_health_report_shape(report: Mapping[str, object]) -> list[str]
             errors.append("resiliency_signals.hook_injection must be an object")
         elif not isinstance(hook.get("status"), str):
             errors.append("resiliency_signals.hook_injection.status must be a string")
-        for key in ("hook_injection_counts", "subtask_retry_counts", "guard_rework_counts"):
+        for key in (
+            "hook_injection_counts",
+            "subtask_retry_counts",
+            "guard_rework_counts",
+            "retry_isolation_status",
+        ):
             if key in signals and not isinstance(signals.get(key), Mapping):
                 errors.append(f"resiliency_signals.{key} must be an object")
-        for key in ("retry_count", "max_retries", "max_subtask_retry_count"):
+        for key in (
+            "retry_count",
+            "max_retries",
+            "max_subtask_retry_count",
+            "clean_retry_count",
+            "contaminated_retry_count",
+        ):
             value = signals.get(key)
-            if key in signals and (not isinstance(value, int) or value < 0):
+            if key in signals and not _is_non_negative_int(value):
                 errors.append(f"resiliency_signals.{key} must be a non-negative integer")
         for key in ("predictor_called", "predictor_skipped", "final_verifier_executed"):
             if key in signals and not isinstance(signals.get(key), bool):
@@ -2345,7 +2376,7 @@ def validate_run_health_report(
             "errors": [f"run health report not found: {path}"],
             "warnings": [],
         }
-    except (json.JSONDecodeError, OSError) as exc:
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
         return {
             "status": "error",
             "valid": False,
@@ -2416,6 +2447,224 @@ def validate_run_health_report(
         "valid": valid,
         "path": str(path),
         "terminal_status": terminal_status,
+        "errors": errors,
+        "warnings": warnings,
+    }
+
+
+def build_retry_quarantine(
+    subtask_id: str,
+    retry_count: int,
+    monitor_feedback: str,
+    branch: Optional[str] = None,
+) -> dict[str, object]:
+    """Write retry_quarantine.json for clean-room retry in non-orchestrated flows."""
+    branch_name = branch or get_branch_name()
+    branch_dir = get_branch_dir(branch_name)
+    branch_dir.mkdir(parents=True, exist_ok=True)
+    path = branch_dir / RETRY_QUARANTINE_ARTIFACT_NAME
+    existing = _read_json_file(path) or {}
+    quarantines = existing.get("quarantines")
+    if not isinstance(quarantines, list):
+        quarantines = []
+    quarantines = [
+        item
+        for item in quarantines
+        if not (
+            isinstance(item, Mapping)
+            and item.get("subtask_id") == subtask_id
+            and item.get("retry_count") == retry_count
+        )
+    ]
+    summary = _shorten_retry_text(monitor_feedback) or "See latest Monitor feedback artifact."
+    quarantines.append(
+        {
+            "subtask_id": subtask_id,
+            "retry_count": retry_count,
+            "isolation_mode": "clean_retry",
+            "failed_attempt": f"retry_{retry_count}",
+            "monitor_rejection_summary": summary,
+            "rejected_assumptions": [],
+            "do_not_repeat": [summary],
+            "preserved_constraints": [
+                "Preserve current blueprint hard_constraints, coverage_map tags, validation_criteria, and mutation boundaries."
+            ],
+            "required_evidence": [
+                "Read blueprint.json or the current task contract before editing.",
+                "Read the latest Monitor feedback artifact before choosing a new approach.",
+                "Cite passing focused checks or explain the blocker before returning to Monitor.",
+            ],
+            "source_artifacts": [
+                {"path": str(branch_dir / "step_state.json"), "kind": "step-state"},
+                {"path": str(branch_dir / "blueprint.json"), "kind": "blueprint"},
+                {
+                    "path": str(branch_dir / f"task_plan_{branch_name}.md"),
+                    "kind": "task-plan",
+                },
+            ],
+        }
+    )
+    payload = {
+        "schema_version": "1.0",
+        "branch": branch_name,
+        "updated_at": _utc_timestamp(),
+        "quarantines": quarantines,
+    }
+    _write_json_file(path, payload)
+    validation = validate_retry_quarantine(str(path), branch_name)
+    return {
+        "status": "success" if validation.get("valid") else "error",
+        "valid": validation.get("valid", False),
+        "path": str(path),
+        "validation": validation,
+    }
+
+
+def validate_retry_quarantine(
+    quarantine_path: str = "",
+    branch: Optional[str] = None,
+) -> dict[str, object]:
+    """Validate retry_quarantine.json before a clean Actor retry begins."""
+    branch_name = branch or get_branch_name()
+    branch_dir = get_branch_dir(branch_name)
+    path = Path(quarantine_path) if quarantine_path else branch_dir / RETRY_QUARANTINE_ARTIFACT_NAME
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {
+            "status": "error",
+            "valid": False,
+            "path": str(path),
+            "errors": [f"retry quarantine not found: {path}"],
+            "warnings": [],
+        }
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
+        return {
+            "status": "error",
+            "valid": False,
+            "path": str(path),
+            "errors": [f"cannot read retry quarantine: {exc}"],
+            "warnings": [],
+        }
+
+    if not isinstance(payload, Mapping):
+        return {
+            "status": "error",
+            "valid": False,
+            "path": str(path),
+            "errors": ["retry quarantine must be a JSON object"],
+            "warnings": [],
+        }
+
+    if payload.get("schema_version") != "1.0":
+        errors.append("schema_version must be 1.0")
+    if not isinstance(payload.get("branch"), str) or not payload.get("branch"):
+        errors.append("branch must be a non-empty string")
+    quarantines = payload.get("quarantines")
+    if not isinstance(quarantines, list) or not quarantines:
+        errors.append("quarantines must be a non-empty array")
+        quarantines = []
+
+    required_fields = {
+        "subtask_id",
+        "retry_count",
+        "isolation_mode",
+        "failed_attempt",
+        "monitor_rejection_summary",
+        "rejected_assumptions",
+        "do_not_repeat",
+        "preserved_constraints",
+        "required_evidence",
+        "source_artifacts",
+    }
+    for index, item in enumerate(quarantines):
+        prefix = f"quarantines[{index}]"
+        if not isinstance(item, Mapping):
+            errors.append(f"{prefix} must be an object")
+            continue
+        for field_name in sorted(required_fields - set(item)):
+            errors.append(f"{prefix}.{field_name} is required")
+        if not isinstance(item.get("subtask_id"), str) or not item.get("subtask_id"):
+            errors.append(f"{prefix}.subtask_id must be a non-empty string")
+        retry_count = item.get("retry_count")
+        if type(retry_count) is not int or retry_count < 2:
+            errors.append(f"{prefix}.retry_count must be an integer >= 2")
+        if item.get("isolation_mode") != "clean_retry":
+            errors.append(f"{prefix}.isolation_mode must be clean_retry")
+        if not isinstance(item.get("failed_attempt"), str) or not item.get(
+            "failed_attempt"
+        ):
+            errors.append(f"{prefix}.failed_attempt must be non-empty")
+        if not isinstance(item.get("monitor_rejection_summary"), str) or not item.get(
+            "monitor_rejection_summary"
+        ):
+            errors.append(f"{prefix}.monitor_rejection_summary must be non-empty")
+        for array_field in ("rejected_assumptions", "do_not_repeat"):
+            value = item.get(array_field)
+            if not isinstance(value, list) or not all(
+                isinstance(entry, str) for entry in value
+            ):
+                errors.append(f"{prefix}.{array_field} must be an array of strings")
+        preserved_constraints = item.get("preserved_constraints")
+        if (
+            not isinstance(preserved_constraints, list)
+            or not preserved_constraints
+            or not all(isinstance(entry, str) for entry in preserved_constraints)
+        ):
+            errors.append(f"{prefix}.preserved_constraints must be a non-empty array")
+        required_evidence = item.get("required_evidence")
+        if (
+            not isinstance(required_evidence, list)
+            or not required_evidence
+            or not all(isinstance(entry, str) for entry in required_evidence)
+        ):
+            errors.append(f"{prefix}.required_evidence must be a non-empty array")
+        source_artifacts = item.get("source_artifacts")
+        if not isinstance(source_artifacts, list) or not source_artifacts:
+            errors.append(f"{prefix}.source_artifacts must be a non-empty array")
+        else:
+            for source_index, source in enumerate(source_artifacts):
+                source_prefix = f"{prefix}.source_artifacts[{source_index}]"
+                if not isinstance(source, Mapping):
+                    errors.append(f"{source_prefix} must be an object")
+                    continue
+                if not isinstance(source.get("path"), str) or not source.get("path"):
+                    errors.append(f"{source_prefix}.path must be a non-empty string")
+                if not isinstance(source.get("kind"), str) or not source.get("kind"):
+                    errors.append(f"{source_prefix}.kind must be a non-empty string")
+            kinds = {
+                str(source.get("kind"))
+                for source in source_artifacts
+                if isinstance(source, Mapping)
+            }
+            if "step-state" not in kinds:
+                errors.append(f"{prefix}.source_artifacts must include step-state")
+            if "blueprint" not in kinds:
+                errors.append(f"{prefix}.source_artifacts must include blueprint")
+
+    valid = not errors
+    if valid:
+        manifest = load_artifact_manifest(branch_name)
+        _set_manifest_stage(
+            manifest,
+            "retry_quarantine",
+            "ready",
+            artifacts=[_artifact_ref(path, "retry-quarantine")],
+            metadata={"quarantine_count": len(quarantines)},
+        )
+        manifest_result = save_artifact_manifest(manifest, branch_name)
+        manifest_path = manifest_result["path"]
+    else:
+        manifest_path = str(branch_dir / "artifact_manifest.json")
+
+    return {
+        "status": "success" if valid else "error",
+        "valid": valid,
+        "path": str(path),
+        "manifest_path": manifest_path,
         "errors": errors,
         "warnings": warnings,
     }
@@ -5157,6 +5406,22 @@ if __name__ == "__main__":
     elif func_name == "validate_run_health_report":
         report_path = sys.argv[2] if len(sys.argv) >= 3 else ""
         result = validate_run_health_report(report_path)
+        print(json.dumps(result, indent=2, ensure_ascii=True))
+        if not result.get("valid"):
+            sys.exit(1)
+
+    elif func_name == "build_retry_quarantine":
+        subtask_id = sys.argv[2] if len(sys.argv) >= 3 else "workflow"
+        retry_count = int(sys.argv[3]) if len(sys.argv) >= 4 else 2
+        monitor_feedback = sys.argv[4] if len(sys.argv) >= 5 else ""
+        result = build_retry_quarantine(subtask_id, retry_count, monitor_feedback)
+        print(json.dumps(result, indent=2, ensure_ascii=True))
+        if not result.get("valid"):
+            sys.exit(1)
+
+    elif func_name == "validate_retry_quarantine":
+        quarantine_path = sys.argv[2] if len(sys.argv) >= 3 else ""
+        result = validate_retry_quarantine(quarantine_path)
         print(json.dumps(result, indent=2, ensure_ascii=True))
         if not result.get("valid"):
             sys.exit(1)

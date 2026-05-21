@@ -1,3 +1,16 @@
+## 2026-05-20 - Clean-room retry and context quarantine for failed agent iterations [2605.08563]
+
+- Decision: `implemented`
+- Branch: `codex/2605-08563-clean-retry`
+- Baseline: `/map-efficient`, `/map-task`, and `/map-debug` carried Monitor feedback forward through repeated Actor retries, while `run_health_report.json` only recorded retry counts. Repeated failures could therefore reuse rejected implementation momentum without a durable clean-room boundary.
+- Forward Change: Repeated Monitor rejection now marks `clean_retry_required`, writes `.map/<branch>/retry_quarantine.json`, validates the quarantine artifact before the next clean Actor attempt, updates run-health clean vs ordinary retry counters, and surfaces quarantine paths during `/map-resume`.
+- Decisive Validation: Focused retry, run-health, schema, and template-sync tests cover serial retry, wave retry, quarantine validation, and generated template parity. Generated-project smoke exercised installed `.map/scripts/map_orchestrator.py` and `.map/scripts/map_step_runner.py`, validated `retry_quarantine.json`, wrote `run_health_report.json`, and inspected clean-retry counters plus artifact presence.
+- Next Trigger: Reuse this when changing Actor->Monitor retry behavior, retry counters, resume diagnostics, or any workflow prompt that tells Actor to retry after validation failure.
+- Reusable Learnings:
+  - command: `pytest tests/test_map_orchestrator.py::TestMonitorFailed tests/test_map_orchestrator.py::TestWaveMonitorFailed tests/test_map_step_runner.py::test_build_retry_quarantine_writes_valid_artifact tests/test_artifact_schemas.py::test_validate_retry_quarantine_schema tests/test_template_sync.py -v`
+  - invariant: `After the second Monitor rejection for a subtask, the next Actor attempt must use clean retry context from retry_quarantine.json instead of raw failed-session context.`
+  - review-check: `When adding retry isolation fields, verify step_state.json, retry_quarantine.json, run_health_report.json, shipped skills, templates, schemas, and resume briefing stay aligned.`
+
 ## 2026-05-20 - Compact `/map-resume` Recovery Skill Body [2604.033-1]
 
 - Decision: `implemented`
@@ -387,3 +400,16 @@
   - command: `uv run --no-sync mapify init <new-dir> --no-git --mcp none`
   - invariant: `Every write-capable provider surface should include Mutation Boundary Constraints that block unrelated edits, dependency changes, and neighboring refactors unless the current contract explicitly requires them.`
   - review-check: `When a prompt says Actor/fix/apply_patch should edit files directly, verify the same prompt or its enclosing skill tells the agent to report required scope expansion as a blocker/tradeoff.`
+## 2026-05-20 - Clean-room retry and context quarantine [2605.08563]
+
+- Decision: `implemented`
+- Branch: `codex/2605-08563-clean-retry`
+- PR: `pending`
+- Baseline: Repeated Monitor failures fed feedback back into Actor without a clean-room context boundary, so rejected approaches could carry forward while run health only exposed retry counts.
+- Forward Change: Repeated Monitor rejection now writes `retry_quarantine.json`, marks `clean_retry_required` in step state, validates the quarantine artifact, surfaces clean/ordinary retry counters in `run_health_report.json`, and tells resume/Actor prompts not to rehydrate raw failed context.
+- Decisive Validation: Focused retry/schema/template tests passed; generated-project smoke exercised installed `map_orchestrator.py` and `map_step_runner.py`, validated `retry_quarantine.json`, wrote `run_health_report.json`, and inspected `clean_retry_count` plus retry-quarantine artifact presence.
+- Next Trigger: Read these learnings before changing Actor->Monitor retry logic, run-health retry signals, resume diagnostics, or workflow prompts that describe retries after validation failure.
+- Reusable Learnings:
+  - command: `python3 .map/scripts/map_step_runner.py validate_retry_quarantine`
+  - invariant: `After the second Monitor rejection for a subtask, the next Actor attempt must use clean retry context from retry_quarantine.json instead of raw failed-session context.`
+  - review-check: `When adding retry isolation fields, verify step_state.json, retry_quarantine.json, run_health_report.json, shipped skills, templates, schemas, and resume briefing stay aligned.`

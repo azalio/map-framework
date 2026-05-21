@@ -696,6 +696,7 @@ ARTIFACT_MANIFEST_SCHEMA = {
                 "implementation": ARTIFACT_STAGE_SCHEMA,
                 "review": ARTIFACT_STAGE_SCHEMA,
                 "verification": ARTIFACT_STAGE_SCHEMA,
+                "retry_quarantine": ARTIFACT_STAGE_SCHEMA,
                 "token_budget": ARTIFACT_STAGE_SCHEMA,
                 "run_health": ARTIFACT_STAGE_SCHEMA,
                 "learn_handoff": ARTIFACT_STAGE_SCHEMA,
@@ -772,6 +773,77 @@ TOKEN_BUDGET_REPORT_SCHEMA = {
         },
     },
     "required": ["schema_version", "branch", "updated_at", "decisions"],
+    "additionalProperties": False,
+}
+
+
+RETRY_QUARANTINE_ENTRY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "subtask_id": {"type": "string"},
+        "retry_count": {"type": "integer", "minimum": 2},
+        "isolation_mode": {"type": "string", "enum": ["clean_retry"]},
+        "failed_attempt": {"type": "string"},
+        "monitor_rejection_summary": {"type": "string"},
+        "rejected_assumptions": {"type": "array", "items": {"type": "string"}},
+        "do_not_repeat": {"type": "array", "items": {"type": "string"}},
+        "preserved_constraints": {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 1,
+        },
+        "required_evidence": {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 1,
+        },
+        "source_artifacts": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "kind": {"type": "string"},
+                },
+                "required": ["path", "kind"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": [
+        "subtask_id",
+        "retry_count",
+        "isolation_mode",
+        "failed_attempt",
+        "monitor_rejection_summary",
+        "rejected_assumptions",
+        "do_not_repeat",
+        "preserved_constraints",
+        "required_evidence",
+        "source_artifacts",
+    ],
+    "additionalProperties": False,
+}
+
+
+RETRY_QUARANTINE_SCHEMA = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://mapframework.dev/schemas/retry-quarantine.json",
+    "title": "MAP Retry Quarantine",
+    "description": "Compact clean-room retry context stored in .map/<branch>/retry_quarantine.json",
+    "type": "object",
+    "properties": {
+        "schema_version": {"type": "string"},
+        "branch": {"type": "string"},
+        "updated_at": {"type": "string", "format": "date-time"},
+        "quarantines": {
+            "type": "array",
+            "items": RETRY_QUARANTINE_ENTRY_SCHEMA,
+            "minItems": 1,
+        },
+    },
+    "required": ["schema_version", "branch", "updated_at", "quarantines"],
     "additionalProperties": False,
 }
 
@@ -879,6 +951,9 @@ RUN_HEALTH_REPORT_SCHEMA = {
                 "max_retries": {"type": "integer", "minimum": 0},
                 "subtask_retry_counts": {"type": "object"},
                 "max_subtask_retry_count": {"type": "integer", "minimum": 0},
+                "clean_retry_count": {"type": "integer", "minimum": 0},
+                "contaminated_retry_count": {"type": "integer", "minimum": 0},
+                "retry_isolation_status": {"type": "object"},
                 "guard_rework_counts": {"type": "object"},
                 "predictor_called": {"type": "boolean"},
                 "predictor_skipped": {"type": "boolean"},
