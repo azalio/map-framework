@@ -5023,7 +5023,7 @@ def validate_mutation_boundary(
     Strict mode is opt-in via ``MAP_STRICT_SCOPE=1`` in the env — callers (the
     CLI, Monitor) can then treat ``status="violation"`` as a hard reject.
 
-    Return shape::
+    Return shape on success::
         {
           "status": "clean" | "warning" | "violation",
           "subtask_id": str,
@@ -5033,6 +5033,17 @@ def validate_mutation_boundary(
           "unexpected": [str], # actual but not expected (scope leak)
           "strict": bool,
         }
+
+    Return shape on error (blueprint missing, subtask unknown, git failure,
+    not a git repo)::
+        {
+          "status": "error",
+          "subtask_id": str,
+          "message": str,      # diagnostic message
+        }
+    Callers that treat this as a mandatory gate MUST handle "error" — the
+    CLI exits non-zero in that case so Bash callers can `set -e` and Monitor
+    can verdict `valid: false` with the message.
     """
     branch_name = _sanitize_branch(branch)
     project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
@@ -5055,8 +5066,11 @@ def validate_mutation_boundary(
     expected = sorted({str(p) for p in expected_raw if isinstance(p, str)})
 
     # Pick a base_ref. Caller's explicit arg wins; otherwise fall back to
-    # last_subtask_commit_sha (so the diff covers only THIS subtask's work);
-    # last resort: HEAD (diff = uncommitted changes only).
+    # last_subtask_commit_sha (so the diff covers only THIS subtask's work).
+    # If neither resolves to a real commit, skip the commit-range diff entirely
+    # and rely on porcelain (uncommitted + untracked) — this is the only sane
+    # behaviour in a brand-new repo before its first commit.
+    base_ref_explicit = bool(base_ref)
     if not base_ref:
         state_file = project_dir / ".map" / branch_name / "step_state.json"
         if state_file.exists():
@@ -5068,16 +5082,30 @@ def validate_mutation_boundary(
             except (json.JSONDecodeError, OSError):
                 pass
         if not base_ref:
-            base_ref = "HEAD"
+            # Probe HEAD before using it — `git rev-parse HEAD` fails in a
+            # fresh repo with no commits, and we want to fall through to
+            # porcelain-only rather than emit a confusing "ambiguous HEAD".
+            head_probe = subprocess.run(
+                ["git", "rev-parse", "--verify", "HEAD"],
+                cwd=project_dir,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if head_probe.returncode == 0:
+                base_ref = "HEAD"
 
     try:
-        diff_result = subprocess.run(
-            ["git", "diff", "--name-only", base_ref],
-            cwd=project_dir,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
+        if base_ref:
+            diff_result = subprocess.run(
+                ["git", "diff", "--name-only", base_ref],
+                cwd=project_dir,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        else:
+            diff_result = None
         status_result = subprocess.run(
             ["git", "status", "--porcelain"],
             cwd=project_dir,
@@ -5092,8 +5120,36 @@ def validate_mutation_boundary(
             "subtask_id": subtask_id,
         }
 
+    # `git status --porcelain` non-zero ⇒ not a git repo (or git is broken);
+    # without it we can't observe uncommitted work, and treating `actual_set`
+    # as empty would mis-report `clean`. Always a hard error.
+    if status_result.returncode != 0:
+        return {
+            "status": "error",
+            "subtask_id": subtask_id,
+            "message": (
+                f"`git status --porcelain` failed (exit {status_result.returncode}): "
+                f"{status_result.stderr.strip() or 'no stderr'}"
+            ),
+        }
+    # An explicit invalid base_ref (caller-supplied) is a hard error so the
+    # operator sees the mistake. An auto-resolved one that became "no diff"
+    # is acceptable (we just fall through to porcelain-only).
+    if diff_result is not None and diff_result.returncode != 0:
+        if base_ref_explicit:
+            return {
+                "status": "error",
+                "subtask_id": subtask_id,
+                "message": (
+                    f"`git diff --name-only {base_ref}` failed "
+                    f"(exit {diff_result.returncode}): "
+                    f"{diff_result.stderr.strip() or 'no stderr'}"
+                ),
+            }
+        diff_result = None  # treat as no commit-range diff available
+
     actual_set: set[str] = set()
-    if diff_result.returncode == 0:
+    if diff_result is not None:
         actual_set.update(
             line.strip() for line in diff_result.stdout.splitlines() if line.strip()
         )
@@ -5758,11 +5814,18 @@ if __name__ == "__main__":
 
     elif func_name == "validate_mutation_boundary" and len(sys.argv) >= 4:
         # CLI: validate_mutation_boundary <branch> <subtask_id> [base_ref]
-        # Exit code: 0 unless MAP_STRICT_SCOPE=1 AND status=="violation".
+        # Exit codes:
+        #   0: status in {"clean", "warning"}
+        #   1: status == "error" (missing blueprint, unknown subtask, git
+        #      failure) — always non-zero so Monitor's mandatory gate cannot
+        #      silently pass; OR status == "violation" with MAP_STRICT_SCOPE=1.
         base_ref_arg = sys.argv[4] if len(sys.argv) >= 5 else None
         report = validate_mutation_boundary(sys.argv[2], sys.argv[3], base_ref_arg)
         print(json.dumps(report, indent=2))
-        if report.get("status") == "violation" and report.get("strict"):
+        report_status = report.get("status")
+        if report_status == "error":
+            sys.exit(1)
+        if report_status == "violation" and report.get("strict"):
             sys.exit(1)
 
     elif func_name == "save_research" and len(sys.argv) >= 4:
@@ -5781,7 +5844,10 @@ if __name__ == "__main__":
             sys.exit(1)
 
     elif func_name == "load_research" and len(sys.argv) >= 4:
-        # CLI: load_research <branch> <subtask_id> [kind]; content to stdout
+        # CLI: load_research <branch> <subtask_id> [kind]; content to stdout.
+        # On error: write the diagnostic to STDERR (keeping stdout empty) so
+        # callers using command substitution (FOO=$(... load_research ...))
+        # don't get JSON in place of research text.
         branch_arg = sys.argv[2]
         subtask_arg = sys.argv[3]
         kind_arg = sys.argv[4] if len(sys.argv) >= 5 else "actor"
@@ -5790,7 +5856,10 @@ if __name__ == "__main__":
                 load_research(branch_arg, subtask_arg, kind=kind_arg)
             )
         except ValueError as exc:
-            print(json.dumps({"status": "error", "message": str(exc)}))
+            print(
+                json.dumps({"status": "error", "message": str(exc)}),
+                file=sys.stderr,
+            )
             sys.exit(1)
 
     elif func_name == "shuffle-sections":

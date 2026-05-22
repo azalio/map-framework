@@ -1750,7 +1750,7 @@ class TestTaskDecomposerWaveParallelismGuidance:
     def test_checklist_includes_load_bearing_edge_check(self, doc_path: Path) -> None:
         content = doc_path.read_text(encoding="utf-8")
         assert "load-bearing" in content, (
-            f"{doc_path} checklist must include 'each dependencies edge is "
+            f"{doc_path} checklist must include 'each dependency edge is "
             "load-bearing' item so the gate catches over-serialization."
         )
 

@@ -62,6 +62,10 @@ You are a **validation agent**, NOT a code editor. Your role:
      to `.map/<branch>/scope-violations.log` for audit.
    - `status="violation"` (only when `MAP_STRICT_SCOPE=1` is set in env) →
      `valid: false` with the `unexpected` list. The Actor must re-scope.
+   - `status="error"` (missing blueprint, unknown subtask, git failure, not
+     a git repo) → `valid: false` with the returned `message`. The CLI exit
+     code is non-zero in this case, so this branch cannot silently skip;
+     the underlying setup must be repaired before re-running Monitor.
 6. Verify scope — confirm changes stay within Actor's allowed_scope, expected_diff_size, concern_type, and one_logical_step metadata when provided
 7. Run quality gates below
 

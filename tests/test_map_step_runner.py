@@ -2805,6 +2805,57 @@ class TestValidateMutationBoundary:
         assert report["status"] == "error"
         assert "ST-999" in report["message"]
 
+    def test_error_when_not_a_git_repo(self, branch_workspace, monkeypatch):
+        """git status non-zero (no .git) → error, NOT a silent 'clean'."""
+        repo = branch_workspace.parents[1]
+        self._write_blueprint(branch_workspace, "ST-001", ["a.py"])
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
+        assert report["status"] == "error", report
+        assert "git" in report["message"].lower()
+
+    def test_cli_exits_non_zero_on_error_status(self, branch_workspace, tmp_path):
+        """Monitor's mandatory gate must not silently pass when blueprint is
+        missing — exit 1 is the only signal `set -e` callers can rely on."""
+        del branch_workspace
+        runner = (
+            Path(__file__).resolve().parents[1]
+            / "src" / "mapify_cli" / "templates" / "map" / "scripts" / "map_step_runner.py"
+        )
+        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "CLAUDE_PROJECT_DIR": str(tmp_path)}
+        result = subprocess.run(
+            [sys.executable, str(runner), "validate_mutation_boundary", "no-such-branch", "ST-001"],
+            capture_output=True, text=True, cwd=str(tmp_path), env=env,
+        )
+        assert result.returncode != 0, (
+            f"CLI must exit non-zero on status='error'; stdout={result.stdout!r}"
+        )
+        report = json.loads(result.stdout)
+        assert report["status"] == "error"
+
+
+class TestLoadResearchCliErrorChannel:
+    """load_research CLI must write error JSON to STDERR, not STDOUT, so
+    command substitution (`FOO=$(... load_research ...)`) is not corrupted."""
+
+    def test_invalid_subtask_id_writes_to_stderr_keeps_stdout_empty(
+        self, branch_workspace, tmp_path
+    ):
+        del branch_workspace
+        runner = (
+            Path(__file__).resolve().parents[1]
+            / "src" / "mapify_cli" / "templates" / "map" / "scripts" / "map_step_runner.py"
+        )
+        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+        # ".." triggers ValueError from _research_path's sanitization.
+        result = subprocess.run(
+            [sys.executable, str(runner), "load_research", "test-branch", "../escape"],
+            capture_output=True, text=True, cwd=str(tmp_path), env=env,
+        )
+        assert result.returncode == 1
+        assert result.stdout == "", f"stdout must be empty; got {result.stdout!r}"
+        assert "error" in result.stderr.lower()
+
 
 class TestSaveLoadResearch:
     """Tests for save_research / load_research subtask-scoped artifact API.
@@ -2850,14 +2901,17 @@ class TestSaveLoadResearch:
         map_step_runner.save_research("test-branch", "ST-001", "v2 with new finding")
         assert map_step_runner.load_research("test-branch", "ST-001") == "v2 with new finding"
 
-    def test_branch_is_sanitized(self, branch_workspace):
-        """`feature/x` must land under sanitized branch dir, not a literal subpath."""
+    def test_branch_is_sanitized(self, branch_workspace, tmp_path, monkeypatch):
+        """`feature/x` is sanitized to `feature-x` — no literal `/` subdir."""
         del branch_workspace
-        path = map_step_runner.save_research("test-branch", "ST-001", "hi")
-        # branch dir must not contain a real subdirectory separator from the
-        # branch arg — the fixture's branch is already 'test-branch', so we
-        # just confirm the file landed under it.
-        assert "/test-branch/research/" in path
+        # Pre-create the sanitized branch dir so write doesn't hit a permission
+        # issue if the fixture only made one branch dir.
+        (tmp_path / ".map" / "feature-x").mkdir(parents=True, exist_ok=True)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        path = map_step_runner.save_research("feature/x", "ST-001", "hi")
+        assert "/feature-x/research/" in path, path
+        # Hard contract: the literal unsanitized form must NOT appear.
+        assert "/feature/x/research/" not in path, path
 
     def test_subtask_id_must_be_safe(self, branch_workspace):
         """Path-traversal in subtask_id is rejected."""

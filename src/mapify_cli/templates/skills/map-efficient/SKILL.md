@@ -174,6 +174,7 @@ Default to sequential execution. Use wave APIs only for low-risk disjoint new-fi
 Some subtasks are already-done historically (rename/refactor landed in a prior PR), or are docs-only and don't need the full research→actor→monitor cycle. Skip them up-front to save tokens:
 
 ```bash
+SUBTASK_ID=$(jq -r '.current_subtask_id' ".map/${BRANCH}/step_state.json")
 python3 .map/scripts/map_orchestrator.py mark_subtask_complete "$SUBTASK_ID" \
   --reason "rename already landed in commit <sha>; verified via git log"
 ```
@@ -185,6 +186,7 @@ This records a synthetic subtask_result with status="no-op", marks the phase COM
 Call `research-agent` for the current subtask, then persist its concise findings via the canonical `save_research` API so Actor and Monitor consume them from the same path. Validate the phase with the orchestrator.
 
 ```bash
+SUBTASK_ID=$(jq -r '.current_subtask_id' ".map/${BRANCH}/step_state.json")
 # After research-agent returns findings in $RESEARCH_FINDINGS:
 printf '%s' "$RESEARCH_FINDINGS" | \
   python3 .map/scripts/map_step_runner.py save_research "$BRANCH" "$SUBTASK_ID"
