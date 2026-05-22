@@ -2531,6 +2531,45 @@ class TestBuildContextBlock:
         assert "# Upstream Results" not in result
 
 
+class TestBuildContextBlockIncludesDescription:
+    """build_context_block now emits the subtask's `description` and
+    `risk_level` — Actor previously had to read blueprint.json separately
+    for the long-form what/why prose."""
+
+    def test_description_emitted_when_present(self, branch_workspace):
+        bp = {
+            "subtasks": [
+                {
+                    "id": "ST-001",
+                    "title": "first",
+                    "description": "Implement QuantumComponentIndex with O(1) lookup.",
+                    "aag_contract": "X -> y() -> done",
+                    "risk_level": "low",
+                    "validation_criteria": ["VC1: ok"],
+                }
+            ],
+        }
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        result = map_step_runner.build_context_block("test-branch", "ST-001")
+        assert "Description: Implement QuantumComponentIndex" in result, result
+        assert "risk_level=low" in result, result
+
+    def test_no_description_line_when_field_absent(self, branch_workspace):
+        bp = {
+            "subtasks": [
+                {
+                    "id": "ST-001",
+                    "title": "first",
+                    "aag_contract": "X -> y() -> done",
+                    "validation_criteria": ["VC1: ok"],
+                }
+            ],
+        }
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        result = map_step_runner.build_context_block("test-branch", "ST-001")
+        assert "Description:" not in result
+
+
 class TestBuildContextBlockRepoDelta:
     """Tests for Repo Delta path in build_context_block (requires mocked compute_differential_insight)."""
 

@@ -5252,11 +5252,20 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
         return ""
 
     current_details = []
+    # Include the prose `description` field (the long-form what/why for the
+    # subtask) — Actor previously had to open blueprint.json separately to
+    # see it. Truncate so the rest of the block fits the budget.
+    description_text = current.get("description")
+    if isinstance(description_text, str) and description_text.strip():
+        current_details.append(
+            f"Description: {_truncate_context_value(description_text.strip(), 480)}"
+        )
     current_details.append(f"AAG Contract: {current.get('aag_contract', 'N/A')}")
     current_details.append(
         f"Subtask contract: expected_diff_size={current.get('expected_diff_size', 'unknown')}, "
         f"concern_type={current.get('concern_type', 'unknown')}, "
-        f"one_logical_step={current.get('one_logical_step', 'unknown')}"
+        f"one_logical_step={current.get('one_logical_step', 'unknown')}, "
+        f"risk_level={current.get('risk_level', 'unknown')}"
     )
     files_value = current.get("affected_files", [])
     files = files_value if isinstance(files_value, list) else []

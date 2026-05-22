@@ -423,15 +423,34 @@ def format_reminder(state: dict, branch: str) -> str | None:
     hard_hint, tag_hint = load_subtask_contract_hints(branch, subtask_id)
 
     authority_hint = " | Source>summary"
-    base = f"[MAP] {step_id} {step_phase}{goal_hint} | ST: {subtask_id}{title_hint} ({progress}) | plan:{plan_ok} mode:{mode}{wave_hint}{diag_hint}{files_hint}{hard_hint}{tag_hint}{authority_hint}"
+    # Lag diagnostics: emit hook wall-clock UTC and the age of step_state.json
+    # (now - state mtime, seconds, 1 decimal). If the hook is reading stale
+    # state, "state +Xs" jumps. Repros for "[MAP] still says ACTOR after I
+    # validate_step'd to MONITOR" can be diffed by comparing the printed
+    # state-age across consecutive reminders.
+    from datetime import datetime as _dt, timezone as _tz
+    now_utc = _dt.now(_tz.utc)
+    state_age_str = "?"
+    try:
+        state_file_age_src = (
+            Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+            / ".map" / branch / "step_state.json"
+        )
+        if state_file_age_src.exists():
+            mtime = _dt.fromtimestamp(state_file_age_src.stat().st_mtime, _tz.utc)
+            state_age_str = f"+{(now_utc - mtime).total_seconds():.1f}s"
+    except OSError:
+        pass
+    ts_hint = f" @ {now_utc.strftime('%H:%M:%S.%f')[:-3]}Z (state {state_age_str})"
+    base = f"[MAP]{ts_hint} {step_id} {step_phase}{goal_hint} | ST: {subtask_id}{title_hint} ({progress}) | plan:{plan_ok} mode:{mode}{wave_hint}{diag_hint}{files_hint}{hard_hint}{tag_hint}{authority_hint}"
 
     # Enforce limit: trim goal first, then constraint detail, then word-boundary truncate.
     if len(base) > REMINDER_LIMIT:
         goal_hint = ""
-        base = f"[MAP] {step_id} {step_phase} | ST: {subtask_id}{title_hint} ({progress}) | plan:{plan_ok} mode:{mode}{wave_hint}{diag_hint}{files_hint}{hard_hint}{tag_hint}{authority_hint}"
+        base = f"[MAP]{ts_hint} {step_id} {step_phase} | ST: {subtask_id}{title_hint} ({progress}) | plan:{plan_ok} mode:{mode}{wave_hint}{diag_hint}{files_hint}{hard_hint}{tag_hint}{authority_hint}"
     if len(base) > REMINDER_LIMIT:
         hard_hint = ""
-        base = f"[MAP] {step_id} {step_phase} | ST: {subtask_id}{title_hint} ({progress}) | plan:{plan_ok} mode:{mode}{wave_hint}{diag_hint}{files_hint}{tag_hint}{authority_hint}"
+        base = f"[MAP]{ts_hint} {step_id} {step_phase} | ST: {subtask_id}{title_hint} ({progress}) | plan:{plan_ok} mode:{mode}{wave_hint}{diag_hint}{files_hint}{tag_hint}{authority_hint}"
     if len(base) > REMINDER_LIMIT:
         base = _truncate_at_word(base, REMINDER_LIMIT)
 
