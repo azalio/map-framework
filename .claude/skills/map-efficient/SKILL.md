@@ -169,9 +169,35 @@ fi
 
 Default to sequential execution. Use wave APIs only for low-risk disjoint new-file waves or explicit user-requested parallel execution. See [efficient-reference.md](efficient-reference.md#wave-execution) for the full wave loop.
 
+### No-op subtask short-circuit (before RESEARCH)
+
+Some subtasks are already-done historically (rename/refactor landed in a prior PR), or are docs-only and don't need the full research→actor→monitor cycle. Skip them up-front to save tokens:
+
+```bash
+python3 .map/scripts/map_orchestrator.py mark_subtask_complete "$SUBTASK_ID" \
+  --reason "rename already landed in commit <sha>; verified via git log"
+```
+
+This records a synthetic subtask_result with status="no-op", marks the phase COMPLETE, and advances the cursor (or closes the workflow if it was the last). Always pass `--reason` so audits know why the work was skipped. If unsure, run RESEARCH first and decide based on its findings.
+
 ### Phase: RESEARCH (2.2) - Required
 
-Call `research-agent` for the current subtask and save concise findings into branch artifacts. Validate the phase with the orchestrator.
+Call `research-agent` for the current subtask, then persist its concise findings via the canonical `save_research` API so Actor and Monitor consume them from the same path. Validate the phase with the orchestrator.
+
+```bash
+# After research-agent returns findings in $RESEARCH_FINDINGS:
+printf '%s' "$RESEARCH_FINDINGS" | \
+  python3 .map/scripts/map_step_runner.py save_research "$BRANCH" "$SUBTASK_ID"
+# (defaults kind=actor; pass a 4th arg like 'monitor' or 'decomposer' to partition)
+```
+
+Later phases read with:
+
+```bash
+RESEARCH_FINDINGS=$(python3 .map/scripts/map_step_runner.py load_research "$BRANCH" "$SUBTASK_ID")
+```
+
+The artifact lands under `.map/<branch>/research/<subtask_id>__<kind>.md`. Use `load_research` to fill the `{research_findings}` placeholder in Actor and Monitor prompts below.
 
 ### Phase: TEST_WRITER (2.25) - TDD Mode Only
 
@@ -183,7 +209,14 @@ Lint and run the new tests. Passing tests before Actor indicate weak tests; retu
 
 ### Phase: ACTOR (2.3)
 
-Use `build_context_block()` from `map_step_runner.py` to generate the bounded `<map_context>` from blueprint, step state, dependency results, and repo delta.
+Generate the bounded `<map_context>` via the `build_context_block` CLI on `map_step_runner.py` (blueprint + step state + dependency results + repo delta, budget-capped). Prefer the CLI form — it sets up `CLAUDE_PROJECT_DIR` resolution and import paths for you, so no inline `python -c` is needed.
+
+```bash
+SUBTASK_ID=$(jq -r '.current_subtask_id' ".map/${BRANCH}/step_state.json")
+BOUNDED_MAP_CONTEXT=$(python3 .map/scripts/map_step_runner.py build_context_block "$BRANCH" "$SUBTASK_ID")
+```
+
+Then substitute `$BOUNDED_MAP_CONTEXT` into the Actor prompt below.
 
 ```text
 Task(

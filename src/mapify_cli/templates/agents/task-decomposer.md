@@ -343,6 +343,22 @@ Subtasks should be ordered by dependency:
 
 **CRITICAL**: If subtask B depends on subtask A, A must appear BEFORE B in the array.
 
+### Minimize Dependencies for Parallelism (MANDATORY)
+
+`dependencies` is a HARD serialization signal — the wave planner builds execution waves from this graph, and every false dependency you add forces work that could have run in parallel into a separate wave. The cost is real: a 15-subtask plan with linear deps becomes 15 sequential waves, 15x research-actor-monitor cycles, and 15x context budget.
+
+Add a dependency edge ONLY when:
+- B literally reads symbols/files that A creates, OR
+- B's tests rely on A's behavior, OR
+- B touches a file A creates or substantially renames.
+
+Do NOT add dependencies for:
+- "Logical ordering" (B feels like it should come after A but doesn't read A's output).
+- Same-area-of-codebase intuition (two subtasks in the auth module touching different files are independent).
+- Risk hedging ("might break if done out of order").
+
+When two subtasks touch disjoint `affected_files` and neither reads the other's symbols, leave their `dependencies` arrays independent — `split_wave_by_file_conflicts` will further refine if needed. Always populate `affected_files`; the file-conflict checker treats missing/empty `affected_files` as "conflicts with everything" and places the subtask in its own wave.
+
 ### Acceptance Criteria Section (Ralph Loop Integration)
 
 When writing task plans to `.map/<branch>/task_plan_<branch>.md`, the orchestrator generates an Acceptance Criteria section from subtask validation_criteria. The format is:
@@ -590,6 +606,8 @@ When invoked with `mode: "re_decomposition"` from the orchestrator, you receive 
 - [ ] AAG contracts are specific (not "does stuff" — name classes, methods, return types)
 - [ ] AAG contracts include wiring/integration when relevant (entrypoint + validator/policy checks, not leaf-only helpers)
 - [ ] All dependencies are explicit and accurate
+- [ ] Each `dependencies` edge is load-bearing (B reads A's output, A creates B's files, or A's tests pin B's behavior) — no edges added for "logical ordering" or risk hedging
+- [ ] `affected_files` populated for every subtask (empty = single-subtask wave)
 - [ ] Subtasks ordered by dependency (foundations first)
 - [ ] 5-8 subtasks (not too granular or too coarse)
 - [ ] Titles are action-oriented (start with verb)

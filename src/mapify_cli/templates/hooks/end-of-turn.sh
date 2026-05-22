@@ -141,11 +141,17 @@ if [[ -n "$STAGED_FILES" ]]; then
     fi
 fi
 
-# Python: Check for syntax errors only (fast, critical)
+# Python: Check for syntax errors only (fast, critical).
+# We use `ast.parse` instead of `py_compile` because `py_compile` always
+# writes `__pycache__/*.pyc` next to the source — even with `-B` or
+# PYTHONDONTWRITEBYTECODE, since emitting bytecode is `py_compile`'s entire
+# job. Touching any .py under .map/scripts/ or src/mapify_cli/templates/ then
+# leaves a tracked __pycache__/ that the template-hygiene gate
+# (tests/test_template_sync.py) rejects.
 if command -v python3 &>/dev/null; then
     for file in $CHANGED_FILES; do
         if [[ "$file" == *.py ]] && [[ -f "$file" ]]; then
-            if ! python3 -m py_compile "$file" 2>/dev/null; then
+            if ! python3 -B -c "import ast,sys; ast.parse(open(sys.argv[1],'rb').read())" "$file" 2>/dev/null; then
                 add_critical "Python syntax error in: $file"
             fi
         fi

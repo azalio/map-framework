@@ -4946,6 +4946,213 @@ def _enforce_context_block_budget(parts: list[str], budget_tokens: int) -> str:
     return str(_budget_context_block(parts, budget_tokens)["text"])
 
 
+_RESEARCH_KIND_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+_RESEARCH_SUBTASK_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+
+
+def _research_path(branch: str, subtask_id: str, kind: str) -> Path:
+    """Resolve a research artifact path with strict sanitization."""
+    if not _RESEARCH_SUBTASK_ID_RE.match(subtask_id):
+        raise ValueError(
+            f"Invalid subtask_id for research artifact: {subtask_id!r}. "
+            "Must match [A-Za-z0-9][A-Za-z0-9_.-]{0,63}."
+        )
+    if not _RESEARCH_KIND_RE.match(kind):
+        raise ValueError(
+            f"Invalid research kind: {kind!r}. Must match [a-z][a-z0-9_]*."
+        )
+    safe_branch = _sanitize_branch(branch)
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+    return (
+        project_dir
+        / ".map"
+        / safe_branch
+        / "research"
+        / f"{subtask_id}__{kind}.md"
+    )
+
+
+def save_research(
+    branch: str,
+    subtask_id: str,
+    content: str,
+    *,
+    kind: str = "actor",
+) -> str:
+    """Persist research findings for a subtask. Returns the written path.
+
+    Keeps multiple consumer kinds (actor, monitor, decomposer, ...)
+    side-by-side under .map/<branch>/research/<subtask_id>__<kind>.md so the
+    research surface stops being discipline-only — Actor writes once and
+    Monitor reads through the same path on the next phase.
+    """
+    path = _research_path(branch, subtask_id, kind)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    return str(path)
+
+
+def load_research(
+    branch: str,
+    subtask_id: str,
+    *,
+    kind: str = "actor",
+) -> str:
+    """Return saved research findings; empty string when absent."""
+    path = _research_path(branch, subtask_id, kind)
+    if not path.exists():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def validate_mutation_boundary(
+    branch: str, subtask_id: str, base_ref: Optional[str] = None
+) -> dict:
+    """Compare actual repo diff against the subtask's declared affected_files.
+
+    Reads blueprint.subtasks[subtask_id].affected_files (the planned mutation
+    surface) and computes the actual paths touched relative to ``base_ref``
+    (default: last_subtask_commit_sha from step_state, falling back to
+    ``HEAD``). Reports any files outside the planned surface as ``unexpected``.
+
+    Default behaviour is WARN-only: returns the report and appends a row to
+    ``.map/<branch>/scope-violations.log`` but exits success-equivalent.
+    Strict mode is opt-in via ``MAP_STRICT_SCOPE=1`` in the env — callers (the
+    CLI, Monitor) can then treat ``status="violation"`` as a hard reject.
+
+    Return shape::
+        {
+          "status": "clean" | "warning" | "violation",
+          "subtask_id": str,
+          "base_ref": str,
+          "expected": [str],   # declared affected_files
+          "actual": [str],     # files actually changed
+          "unexpected": [str], # actual but not expected (scope leak)
+          "strict": bool,
+        }
+    """
+    branch_name = _sanitize_branch(branch)
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+    blueprint = load_blueprint(branch_name, project_dir=project_dir)
+    if blueprint is None:
+        return {
+            "status": "error",
+            "message": "blueprint.json not found",
+            "subtask_id": subtask_id,
+        }
+    subtask = get_subtask_from_blueprint(blueprint, subtask_id)
+    if subtask is None:
+        return {
+            "status": "error",
+            "message": f"subtask {subtask_id!r} not in blueprint",
+            "subtask_id": subtask_id,
+        }
+
+    expected_raw = subtask.get("affected_files", []) or []
+    expected = sorted({str(p) for p in expected_raw if isinstance(p, str)})
+
+    # Pick a base_ref. Caller's explicit arg wins; otherwise fall back to
+    # last_subtask_commit_sha (so the diff covers only THIS subtask's work);
+    # last resort: HEAD (diff = uncommitted changes only).
+    if not base_ref:
+        state_file = project_dir / ".map" / branch_name / "step_state.json"
+        if state_file.exists():
+            try:
+                state_data = json.loads(state_file.read_text(encoding="utf-8"))
+                last_sha = state_data.get("last_subtask_commit_sha")
+                if isinstance(last_sha, str) and last_sha:
+                    base_ref = last_sha
+            except (json.JSONDecodeError, OSError):
+                pass
+        if not base_ref:
+            base_ref = "HEAD"
+
+    try:
+        diff_result = subprocess.run(
+            ["git", "diff", "--name-only", base_ref],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        status_result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {
+            "status": "error",
+            "message": f"git invocation failed: {exc}",
+            "subtask_id": subtask_id,
+        }
+
+    actual_set: set[str] = set()
+    if diff_result.returncode == 0:
+        actual_set.update(
+            line.strip() for line in diff_result.stdout.splitlines() if line.strip()
+        )
+    # Include uncommitted (worktree + index) paths from porcelain output.
+    for raw in status_result.stdout.splitlines():
+        if len(raw) >= 4:
+            path = raw[3:].strip()
+            if " -> " in path:
+                path = path.split(" -> ", 1)[1]
+            if path:
+                actual_set.add(path)
+
+    # Filter framework-owned paths that are NEVER part of a subtask's mutation
+    # surface: `.map/` carries orchestrator artifacts (blueprint, step_state,
+    # research outputs, scope logs) and `.codex/` mirrors Codex-side config.
+    # Treating them as scope leaks would produce a flood of false positives.
+    actual_set = {
+        p for p in actual_set
+        if not p.startswith(".map/") and not p.startswith(".codex/")
+    }
+
+    actual = sorted(actual_set)
+    expected_set = set(expected)
+    unexpected = sorted(p for p in actual if p not in expected_set)
+    strict = os.environ.get("MAP_STRICT_SCOPE", "0") == "1"
+
+    if not unexpected:
+        status = "clean"
+    elif strict:
+        status = "violation"
+    else:
+        status = "warning"
+
+    report = {
+        "status": status,
+        "subtask_id": subtask_id,
+        "base_ref": base_ref,
+        "expected": expected,
+        "actual": actual,
+        "unexpected": unexpected,
+        "strict": strict,
+    }
+
+    if unexpected:
+        log_path = project_dir / ".map" / branch_name / "scope-violations.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            entry = {
+                "at": _utc_timestamp(),
+                **report,
+            }
+            with log_path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(entry) + "\n")
+        except OSError:
+            pass
+
+    return report
+
+
 def build_context_block(branch: str, current_subtask_id: str) -> str:
     """Build structured context block for Actor prompt.
 
@@ -5548,6 +5755,43 @@ if __name__ == "__main__":
     elif func_name == "build_context_block" and len(sys.argv) >= 4:
         result = build_context_block(sys.argv[2], sys.argv[3])
         print(result)
+
+    elif func_name == "validate_mutation_boundary" and len(sys.argv) >= 4:
+        # CLI: validate_mutation_boundary <branch> <subtask_id> [base_ref]
+        # Exit code: 0 unless MAP_STRICT_SCOPE=1 AND status=="violation".
+        base_ref_arg = sys.argv[4] if len(sys.argv) >= 5 else None
+        report = validate_mutation_boundary(sys.argv[2], sys.argv[3], base_ref_arg)
+        print(json.dumps(report, indent=2))
+        if report.get("status") == "violation" and report.get("strict"):
+            sys.exit(1)
+
+    elif func_name == "save_research" and len(sys.argv) >= 4:
+        # CLI: save_research <branch> <subtask_id> [kind]; content via stdin
+        branch_arg = sys.argv[2]
+        subtask_arg = sys.argv[3]
+        kind_arg = sys.argv[4] if len(sys.argv) >= 5 else "actor"
+        try:
+            content_in = sys.stdin.read()
+            written = save_research(
+                branch_arg, subtask_arg, content_in, kind=kind_arg
+            )
+            print(json.dumps({"status": "success", "path": written}))
+        except ValueError as exc:
+            print(json.dumps({"status": "error", "message": str(exc)}))
+            sys.exit(1)
+
+    elif func_name == "load_research" and len(sys.argv) >= 4:
+        # CLI: load_research <branch> <subtask_id> [kind]; content to stdout
+        branch_arg = sys.argv[2]
+        subtask_arg = sys.argv[3]
+        kind_arg = sys.argv[4] if len(sys.argv) >= 5 else "actor"
+        try:
+            sys.stdout.write(
+                load_research(branch_arg, subtask_arg, kind=kind_arg)
+            )
+        except ValueError as exc:
+            print(json.dumps({"status": "error", "message": str(exc)}))
+            sys.exit(1)
 
     elif func_name == "shuffle-sections":
         # CLI: shuffle-sections <mode> [seed]

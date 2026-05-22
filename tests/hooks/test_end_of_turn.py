@@ -17,7 +17,7 @@ from pathlib import Path
 HOOK_PATH = Path(__file__).parent.parent.parent / ".claude" / "hooks" / "end-of-turn.sh"
 
 
-def run_hook(cwd: str = None, env: dict = None) -> tuple[int, str, str]:
+def run_hook(cwd: str | None = None, env: dict | None = None) -> tuple[int, str, str]:
     """Execute the hook in given directory."""
     run_env = os.environ.copy()
     if env:
@@ -65,6 +65,7 @@ class TestEarlyExit:
         """Should exit 0 immediately in non-git directory."""
         with tempfile.TemporaryDirectory() as tmpdir:
             exit_code, stdout, stderr = run_hook(cwd=tmpdir)
+            del stderr
             assert exit_code == 0
             assert stdout.strip() == "{}"
 
@@ -226,6 +227,7 @@ class TestVerboseMode:
             exit_code, _, stderr = run_hook(
                 cwd=tmpdir, env={"CLAUDE_HOOK_VERBOSE": "true"}
             )
+            del exit_code
             assert (
                 "[end-of-turn]" in stderr
             ), f"Should have verbose logs. stderr: {stderr}"
@@ -235,6 +237,7 @@ class TestVerboseMode:
         """No verbose logs by default."""
         with tempfile.TemporaryDirectory() as tmpdir:
             exit_code, _, stderr = run_hook(cwd=tmpdir)
+            del exit_code
             assert (
                 "[end-of-turn]" not in stderr
             ), "Should not have verbose logs by default"
@@ -254,3 +257,75 @@ class TestOutputFormat:
             exit_code, stdout, _ = run_hook(cwd=tmpdir)
             assert exit_code == 0
             assert stdout.strip() == "{}"
+
+
+class TestSyntaxCheckHygiene:
+    """Regression: the syntax-check pass must not leave __pycache__/*.pyc.
+
+    Before this hardening the hook called ``python3 -m py_compile <file>``,
+    which writes ``__pycache__/*.pyc`` next to the source even with ``-B``
+    (emitting bytecode is py_compile's entire job). Touching any .py under
+    ``.map/scripts/`` or ``src/mapify_cli/templates/`` then left a tracked
+    ``__pycache__/`` directory that the template-hygiene gate rejects.
+    The replacement uses ``ast.parse`` which only parses, never writes.
+    """
+
+    def test_hook_does_not_write_pycache_next_to_changed_py(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            subprocess.run(["git", "init"], cwd=tmp, capture_output=True)
+            subprocess.run(
+                ["git", "config", "user.email", "t@t.com"], cwd=tmp, capture_output=True
+            )
+            subprocess.run(
+                ["git", "config", "user.name", "t"], cwd=tmp, capture_output=True
+            )
+            (tmp / "seed.txt").write_text("seed\n")
+            subprocess.run(["git", "add", "."], cwd=tmp, capture_output=True)
+            subprocess.run(
+                ["git", "commit", "-m", "init"], cwd=tmp, capture_output=True
+            )
+
+            # Add a changed .py file with valid syntax to trigger the
+            # syntax-check loop.
+            py_file = tmp / "module_under_check.py"
+            py_file.write_text("x = 1\n")
+            subprocess.run(["git", "add", "."], cwd=tmp, capture_output=True)
+
+            exit_code, _, _ = run_hook(cwd=str(tmp))
+            assert exit_code == 0, "syntax-check must pass for valid .py"
+
+            pycache_dirs = list(tmp.rglob("__pycache__"))
+            pyc_files = list(tmp.rglob("*.pyc"))
+            assert not pycache_dirs, (
+                f"hook must not create __pycache__ next to changed files; "
+                f"found: {pycache_dirs}"
+            )
+            assert not pyc_files, (
+                f"hook must not create .pyc files; found: {pyc_files}"
+            )
+
+    def test_hook_still_catches_syntax_errors(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            subprocess.run(["git", "init"], cwd=tmp, capture_output=True)
+            subprocess.run(
+                ["git", "config", "user.email", "t@t.com"], cwd=tmp, capture_output=True
+            )
+            subprocess.run(
+                ["git", "config", "user.name", "t"], cwd=tmp, capture_output=True
+            )
+            (tmp / "seed.txt").write_text("seed\n")
+            subprocess.run(["git", "add", "."], cwd=tmp, capture_output=True)
+            subprocess.run(
+                ["git", "commit", "-m", "init"], cwd=tmp, capture_output=True
+            )
+
+            (tmp / "broken.py").write_text("def f(:\n    pass\n")
+            subprocess.run(["git", "add", "."], cwd=tmp, capture_output=True)
+
+            exit_code, _, stderr = run_hook(cwd=str(tmp))
+            assert exit_code == 2, (
+                "broken Python must trigger critical-issue blocking exit"
+            )
+            assert "Python syntax error" in stderr, stderr

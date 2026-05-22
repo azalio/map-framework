@@ -43,7 +43,7 @@ Verification sequence (execute in order):
 2. BUILD GATE (MANDATORY -- run FIRST):
    Run the project's build/compile command:
    - TypeScript: npx tsc --noEmit (or npm run build)
-   - Python: python -m py_compile <changed_files> (or mypy if configured)
+   - Python: python -B -c "import ast,sys; [ast.parse(open(p,'rb').read()) for p in sys.argv[1:]]" <changed_files> (or mypy if configured). Prefer ast.parse over py_compile, which writes __pycache__/*.pyc next to source even with -B.
    - Go: go build ./...
    - Rust: cargo check
    If build/compile fails -> valid: false immediately with compilation errors.

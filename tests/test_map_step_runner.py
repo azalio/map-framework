@@ -1,6 +1,7 @@
 """Tests for map_step_runner human-readable artifact helpers."""
 
 import json
+import os
 import subprocess
 import sys
 import types
@@ -2724,6 +2725,184 @@ class TestBuildContextBlockIntegration:
         assert "All tests pass" in result
         assert "[x] ST-001: First task (valid)" in result
         assert "[>>] ST-002: Second task (IN PROGRESS)" in result
+
+
+class TestValidateMutationBoundary:
+    """validate_mutation_boundary compares actual git diff vs the planned
+    affected_files surface. Warn-only by default; MAP_STRICT_SCOPE=1 escalates
+    to status='violation' and CLI exit 1 so callers (Monitor) can hard-fail.
+    """
+
+    def _init_git(self, root: Path) -> None:
+        subprocess.run(["git", "init"], cwd=root, capture_output=True, check=False)
+        subprocess.run(
+            ["git", "config", "user.email", "t@t.com"], cwd=root, capture_output=True
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "t"], cwd=root, capture_output=True
+        )
+
+    def _write_blueprint(self, branch_dir: Path, subtask_id: str, files: list[str]) -> None:
+        bp = {
+            "summary": "test",
+            "subtasks": [
+                {"id": subtask_id, "title": "x", "affected_files": files}
+            ],
+        }
+        (branch_dir / "blueprint.json").write_text(json.dumps(bp))
+
+    def test_clean_when_diff_matches_affected_files(self, branch_workspace, monkeypatch):
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        self._write_blueprint(branch_workspace, "ST-001", ["a.py"])
+        (repo / "a.py").write_text("x = 1\n")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
+        assert report["status"] == "clean", report
+        assert report["unexpected"] == []
+
+    def test_warning_when_diff_exceeds_affected_files(
+        self, branch_workspace, monkeypatch
+    ):
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        self._write_blueprint(branch_workspace, "ST-001", ["a.py"])
+        (repo / "a.py").write_text("x = 1\n")
+        (repo / "b.py").write_text("y = 2\n")  # NOT in affected_files
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        monkeypatch.delenv("MAP_STRICT_SCOPE", raising=False)
+        report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
+        assert report["status"] == "warning", report
+        assert "b.py" in report["unexpected"]
+        log = branch_workspace / "scope-violations.log"
+        assert log.exists(), "warning must be appended to scope-violations.log"
+
+    def test_violation_when_strict_mode_enabled(self, branch_workspace, monkeypatch):
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        self._write_blueprint(branch_workspace, "ST-001", ["a.py"])
+        (repo / "b.py").write_text("y = 2\n")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        monkeypatch.setenv("MAP_STRICT_SCOPE", "1")
+        report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
+        assert report["status"] == "violation"
+        assert report["strict"] is True
+
+    def test_error_when_blueprint_missing(self, branch_workspace, monkeypatch):
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
+        assert report["status"] == "error"
+
+    def test_error_when_subtask_unknown(self, branch_workspace, monkeypatch):
+        repo = branch_workspace.parents[1]
+        self._write_blueprint(branch_workspace, "ST-001", ["a.py"])
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.validate_mutation_boundary("test-branch", "ST-999")
+        assert report["status"] == "error"
+        assert "ST-999" in report["message"]
+
+
+class TestSaveLoadResearch:
+    """Tests for save_research / load_research subtask-scoped artifact API.
+
+    Provides a durable storage contract for research-agent output so Actor and
+    Monitor consume findings through the same path rather than ad-hoc bash. The
+    .map/<branch>/research/<subtask_id>__<kind>.md layout keeps multiple agent
+    kinds (actor, monitor, decomposer, ...) side-by-side without collisions.
+    """
+
+    def test_save_then_load_round_trips_content(self, branch_workspace):
+        del branch_workspace
+        content = "## Findings\n\n- API surface: foo()\n- Tests live in tests/foo_test.py\n"
+        path = map_step_runner.save_research("test-branch", "ST-001", content)
+        assert Path(path).exists()
+        loaded = map_step_runner.load_research("test-branch", "ST-001")
+        assert loaded == content
+
+    def test_load_returns_empty_string_when_missing(self, branch_workspace):
+        del branch_workspace
+        assert map_step_runner.load_research("test-branch", "ST-999") == ""
+
+    def test_kind_partitions_storage(self, branch_workspace):
+        del branch_workspace
+        map_step_runner.save_research(
+            "test-branch", "ST-001", "actor view", kind="actor"
+        )
+        map_step_runner.save_research(
+            "test-branch", "ST-001", "monitor view", kind="monitor"
+        )
+        assert (
+            map_step_runner.load_research("test-branch", "ST-001", kind="actor")
+            == "actor view"
+        )
+        assert (
+            map_step_runner.load_research("test-branch", "ST-001", kind="monitor")
+            == "monitor view"
+        )
+
+    def test_save_overwrites_prior_content_for_same_kind(self, branch_workspace):
+        del branch_workspace
+        map_step_runner.save_research("test-branch", "ST-001", "v1")
+        map_step_runner.save_research("test-branch", "ST-001", "v2 with new finding")
+        assert map_step_runner.load_research("test-branch", "ST-001") == "v2 with new finding"
+
+    def test_branch_is_sanitized(self, branch_workspace):
+        """`feature/x` must land under sanitized branch dir, not a literal subpath."""
+        del branch_workspace
+        path = map_step_runner.save_research("test-branch", "ST-001", "hi")
+        # branch dir must not contain a real subdirectory separator from the
+        # branch arg — the fixture's branch is already 'test-branch', so we
+        # just confirm the file landed under it.
+        assert "/test-branch/research/" in path
+
+    def test_subtask_id_must_be_safe(self, branch_workspace):
+        """Path-traversal in subtask_id is rejected."""
+        del branch_workspace
+        with pytest.raises(ValueError):
+            map_step_runner.save_research("test-branch", "../escape", "x")
+        with pytest.raises(ValueError):
+            map_step_runner.load_research("test-branch", "../escape")
+
+    def test_kind_must_be_safe(self, branch_workspace):
+        """kind must match a conservative ident pattern."""
+        del branch_workspace
+        with pytest.raises(ValueError):
+            map_step_runner.save_research("test-branch", "ST-001", "x", kind="../foo")
+
+    def test_cli_save_reads_stdin_load_writes_stdout(self, branch_workspace, tmp_path):
+        """End-to-end CLI: save_research consumes stdin, load_research prints stdout."""
+        del branch_workspace
+        runner = (
+            Path(__file__).resolve().parents[1]
+            / "src" / "mapify_cli" / "templates" / "map" / "scripts" / "map_step_runner.py"
+        )
+        # Force PYTHONDONTWRITEBYTECODE so subprocess imports don't pollute
+        # src/mapify_cli/templates/map/scripts/__pycache__ — the template-
+        # hygiene gate fails if any .pyc is shipped under templates/.
+        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+        content = "Research note from CLI"
+        save_result = subprocess.run(
+            [sys.executable, str(runner), "save_research", "test-branch", "ST-007"],
+            input=content,
+            capture_output=True,
+            text=True,
+            cwd=str(tmp_path),
+            env=env,
+        )
+        assert save_result.returncode == 0, save_result.stderr
+        load_result = subprocess.run(
+            [sys.executable, str(runner), "load_research", "test-branch", "ST-007"],
+            capture_output=True,
+            text=True,
+            cwd=str(tmp_path),
+            env=env,
+        )
+        assert load_result.returncode == 0, load_result.stderr
+        assert load_result.stdout == content
 
 
 class TestSanitizeForJson:

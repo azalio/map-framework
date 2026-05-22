@@ -111,18 +111,30 @@ Read `step_state.json` and the task plan. If either required artifact is missing
 
 ### Step 2: Validate All Subtasks Complete
 
+Schema note: `step_state.json` carries `pending_steps` as a FLAT `list[str]` of
+workflow phase ids (e.g. `"2.2"`, `"2.3"`) scoped to the currently active
+subtask — it is NOT a dict keyed by subtask id. The workflow-level completion
+signal is `workflow_status == "WORKFLOW_COMPLETE"`. Treating `pending_steps`
+as `.pending_steps["ST-001"]` crashes jq with `Cannot index array with string`.
+
 ```bash
-SUBTASKS=$(jq -r '.subtask_sequence[]' "$STATE_FILE")
-for ST in $SUBTASKS; do
-  PENDING=$(jq -r ".pending_steps[\"$ST\"] | length" "$STATE_FILE")
-  if [[ "$PENDING" -gt 0 ]]; then
-    echo "$ST has pending steps:"
-    jq -r ".pending_steps[\"$ST\"][]" "$STATE_FILE"
+WORKFLOW_STATUS=$(jq -r '.workflow_status // ""' "$STATE_FILE")
+CURRENT_ST=$(jq -r '.current_subtask_id // ""' "$STATE_FILE")
+CURRENT_PHASE=$(jq -r '.current_step_phase // ""' "$STATE_FILE")
+PENDING_COUNT=$(jq -r '.pending_steps | length' "$STATE_FILE")
+SUBTASK_INDEX=$(jq -r '.subtask_index // 0' "$STATE_FILE")
+SUBTASK_TOTAL=$(jq -r '.subtask_sequence | length' "$STATE_FILE")
+
+if [[ "$WORKFLOW_STATUS" != "WORKFLOW_COMPLETE" ]]; then
+  echo "Workflow incomplete: status=$WORKFLOW_STATUS, current=$CURRENT_ST ($CURRENT_PHASE), subtask $((SUBTASK_INDEX + 1)) of $SUBTASK_TOTAL"
+  if [[ "$PENDING_COUNT" -gt 0 ]]; then
+    echo "Pending workflow phases for $CURRENT_ST:"
+    jq -r '.pending_steps[]' "$STATE_FILE"
   fi
-done
+fi
 ```
 
-If any subtask has pending steps, STOP with `NEEDS WORK` and name the handoff command (`/map-task`, `/map-efficient`, or `/map-debug`).
+If `workflow_status` is not `WORKFLOW_COMPLETE` (or any phase is still pending), STOP with `NEEDS WORK` and name the handoff command (`/map-task`, `/map-efficient`, or `/map-debug`).
 
 ### Step 3: Load Original Plan
 

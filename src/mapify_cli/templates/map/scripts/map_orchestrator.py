@@ -551,6 +551,44 @@ def get_step_instruction(step_id: str, state: StepState) -> str:
     return instructions.get(step_id, f"Execute step {step_id} ({phase})")
 
 
+def peek_current_step(branch: str) -> dict:
+    """Return the current step descriptor WITHOUT mutating state.
+
+    Recovery escape hatch for the case where ``validate_step X`` fails with
+    ``Step mismatch: expected Y, got X`` after a double-advance: callers can
+    ``peek_current_step`` to learn the canonical Y instead of guessing.
+    Returns the same shape as ``get_next_step`` but never saves the state.
+    """
+    state_file = Path(f".map/{branch}/step_state.json")
+    state = StepState.load(state_file)
+
+    if state.workflow_status == "WORKFLOW_COMPLETE":
+        return {
+            "step_id": "COMPLETE",
+            "phase": "COMPLETE",
+            "is_complete": True,
+            "current_subtask": state.current_subtask_id,
+        }
+
+    if state.workflow_status == "CONTRACT_READY":
+        return {
+            "step_id": "CONTRACT_READY",
+            "phase": "CONTRACT_READY",
+            "is_complete": False,
+            "current_subtask": state.current_subtask_id,
+        }
+
+    next_id = state.pending_steps[0] if state.pending_steps else state.current_step_id
+    phase = STEP_PHASES.get(next_id, state.current_step_phase or "UNKNOWN")
+    return {
+        "step_id": next_id,
+        "phase": phase,
+        "is_complete": False,
+        "current_subtask": state.current_subtask_id,
+        "subtask_progress": f"{state.subtask_index + 1}/{max(len(state.subtask_sequence), 1)}",
+    }
+
+
 def get_next_step(branch: str) -> dict:
     """
     Determine next step in workflow.
@@ -563,6 +601,18 @@ def get_next_step(branch: str) -> dict:
     """
     state_file = Path(f".map/{branch}/step_state.json")
     state = StepState.load(state_file)
+
+    # WORKFLOW_COMPLETE is authoritative — short-circuit even if pending_steps
+    # got repopulated by a partial recovery path. Otherwise the function walks
+    # the per-subtask branches and returns a stale "2.2 RESEARCH" instruction
+    # for a workflow that already closed out.
+    if state.workflow_status == "WORKFLOW_COMPLETE":
+        return {
+            "step_id": "COMPLETE",
+            "phase": "COMPLETE",
+            "instruction": "All subtasks complete. Run final verification.",
+            "is_complete": True,
+        }
 
     if state.workflow_status == "CONTRACT_READY":
         if state.pending_steps != ["CONTRACT_READY"]:
@@ -895,13 +945,17 @@ def set_waves(branch: str, blueprint_path: Optional[str] = None) -> dict:
     if not subtasks:
         return {"status": "error", "message": "No subtasks in blueprint"}
 
-    # Build graph
-    graph = DependencyGraph()
+    # Build graph. The DependencyGraph / SubtaskNode symbols are bound either
+    # by the top-level `from mapify_cli.dependency_graph import ...` in the try
+    # block above OR by the importlib-spec fallback in the except block. Pyright
+    # cannot follow the dynamic spec path so the names look possibly-unbound;
+    # the except branch returns early when neither import succeeds.
+    graph = DependencyGraph()  # pyright: ignore[reportPossiblyUnboundVariable]
     affected_files_map: dict[str, set] = {}
     for st in subtasks:
         st_id = st.get("id", "")
         deps = st.get("dependencies", [])
-        graph.add_node(SubtaskNode(id=st_id, dependencies=deps))
+        graph.add_node(SubtaskNode(id=st_id, dependencies=deps))  # pyright: ignore[reportPossiblyUnboundVariable]
         files = st.get("affected_files", [])
         affected_files_map[st_id] = set(files) if files else set()
 
@@ -1126,7 +1180,6 @@ def _source_artifact_refs(
 
 def _write_retry_quarantine(
     branch: str,
-    state: StepState,
     subtask_id: str,
     retry_count: int,
     feedback_file: Optional[str],
@@ -1204,7 +1257,7 @@ def _record_retry_isolation(
     subtask_key = subtask_id or "workflow"
     if retry_count >= 2:
         quarantine_path = _write_retry_quarantine(
-            branch, state, subtask_key, retry_count, feedback_file, feedback
+            branch, subtask_key, retry_count, feedback_file, feedback
         )
         state.clean_retry_count += 1
         state.retry_isolation_status[subtask_key] = "clean_retry_required"
@@ -1440,6 +1493,86 @@ def mark_workflow_complete(branch: str) -> dict:
         "current_step_id": state.current_step_id,
         "current_step_phase": state.current_step_phase,
         "completed_at": state.completed_at,
+    }
+
+
+def mark_subtask_complete(
+    subtask_id: str, branch: str, reason: str = "no-op"
+) -> dict:
+    """Short-circuit a subtask as already-done without running its phases.
+
+    Use cases: a subtask whose intended change was already made historically
+    (rename done in a prior PR), a docs-only subtask that doesn't need the
+    research/actor/monitor cycle, or any other no-op detected up-front.
+
+    Effects:
+      - Records a synthetic subtask_result with status="no-op" and the reason
+        in the summary so audits know the work was intentionally skipped.
+      - Marks subtask_phases[subtask_id] = "COMPLETE".
+      - If subtask_id is the current subtask, advances to the next one and
+        resets pending_steps to the canonical start (2.2). When it was the
+        last subtask, transitions to WORKFLOW_COMPLETE atomically.
+
+    Refuses to operate on an unknown subtask_id to avoid silently corrupting
+    the sequence.
+    """
+    state_file = Path(f".map/{branch}/step_state.json")
+    if not state_file.exists():
+        return {
+            "status": "error",
+            "message": f"No step_state.json at {state_file}",
+        }
+
+    state = StepState.load(state_file)
+
+    if subtask_id not in state.subtask_sequence:
+        return {
+            "status": "error",
+            "message": (
+                f"Unknown subtask_id {subtask_id!r}. "
+                f"Known: {state.subtask_sequence}"
+            ),
+        }
+
+    state.record_subtask_result(
+        subtask_id,
+        files_changed=[],
+        status="no-op",
+        summary=f"Marked no-op via mark_subtask_complete: {reason}",
+    )
+    state.subtask_phases[subtask_id] = "COMPLETE"
+
+    advanced = False
+    closed = False
+    if state.current_subtask_id == subtask_id:
+        if state.subtask_index + 1 < len(state.subtask_sequence):
+            state.subtask_index += 1
+            state.current_subtask_id = state.subtask_sequence[state.subtask_index]
+            state.current_step_id = "2.2"
+            state.current_step_phase = "RESEARCH"
+            step_order = _get_step_order(state.tdd_mode)
+            research_idx = step_order.index("2.2")
+            state.pending_steps = step_order[research_idx:]
+            state.completed_steps = []
+            state.skipped_steps = []
+            state.retry_count = 0
+            advanced = True
+        else:
+            state.pending_steps = []
+            state.workflow_status = "WORKFLOW_COMPLETE"
+            state.current_step_id = "COMPLETE"
+            state.current_step_phase = "COMPLETE"
+            state.completed_at = _utc_timestamp()
+            closed = True
+
+    state.save(state_file)
+
+    return {
+        "status": "success",
+        "subtask_id": subtask_id,
+        "reason": reason,
+        "advanced_to": state.current_subtask_id if advanced else None,
+        "workflow_complete": closed,
     }
 
 
@@ -2070,6 +2203,7 @@ def main():
         "command",
         choices=[
             "get_next_step",
+            "peek_current_step",
             "validate_step",
             "initialize",
             "set_plan_approved",
@@ -2091,6 +2225,7 @@ def main():
             "wave_monitor_failed",
             "reopen_for_fixes",
             "mark_workflow_complete",
+            "mark_subtask_complete",
         ],
         help="Command to execute",
     )
@@ -2110,6 +2245,10 @@ def main():
     parser.add_argument(
         "--feedback",
         help="Monitor feedback text (for monitor_failed / wave_monitor_failed)",
+    )
+    parser.add_argument(
+        "--reason",
+        help="Free-form reason (e.g. for mark_subtask_complete no-op records)",
     )
     parser.add_argument(
         "--transcript-path",
@@ -2147,6 +2286,10 @@ def main():
     try:
         if args.command == "get_next_step":
             result = get_next_step(branch)
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "peek_current_step":
+            result = peek_current_step(branch)
             print(json.dumps(result, indent=2))
 
         elif args.command == "validate_step":
@@ -2340,6 +2483,17 @@ def main():
 
         elif args.command == "mark_workflow_complete":
             result = mark_workflow_complete(branch)
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "mark_subtask_complete":
+            if not args.task_or_step:
+                print(
+                    json.dumps({"error": "subtask_id required for mark_subtask_complete"}),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            reason = args.reason or "no-op"
+            result = mark_subtask_complete(args.task_or_step, branch, reason)
             print(json.dumps(result, indent=2))
 
     except Exception as e:

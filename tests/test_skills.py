@@ -1714,3 +1714,190 @@ class TestMapReviewSkillOrderingWiring:
             "INV-7: Step 0 must set MODE_FLAG to 'default' as the base value so that "
             "plain /map-review (no flags) uses canonical section order"
         )
+
+
+class TestTaskDecomposerWaveParallelismGuidance:
+    """Regression: task-decomposer must steer Actor away from over-serializing
+    waves. Without explicit guidance, decomposer agents emit linear deps
+    (B depends on A, C on B, ...) that collapse the wave planner into 15
+    single-subtask waves even when files are disjoint.
+    """
+
+    @pytest.fixture(
+        params=[
+            Path(".claude/agents/task-decomposer.md"),
+            Path("src/mapify_cli/templates/agents/task-decomposer.md"),
+        ],
+        ids=["dev", "template"],
+    )
+    def doc_path(self, request: pytest.FixtureRequest) -> Path:
+        return Path(__file__).parent.parent / request.param
+
+    def test_minimize_dependencies_section_present(self, doc_path: Path) -> None:
+        content = doc_path.read_text(encoding="utf-8")
+        assert "Minimize Dependencies for Parallelism" in content, (
+            f"{doc_path} must include 'Minimize Dependencies for Parallelism' "
+            "guidance — the wave planner serializes every false dependency edge."
+        )
+
+    def test_logical_ordering_anti_pattern_called_out(self, doc_path: Path) -> None:
+        content = doc_path.read_text(encoding="utf-8")
+        assert "Logical ordering" in content or "logical ordering" in content
+        assert "Risk hedging" in content or "risk hedging" in content, (
+            f"{doc_path} must explicitly forbid risk-hedging dependencies."
+        )
+
+    def test_checklist_includes_load_bearing_edge_check(self, doc_path: Path) -> None:
+        content = doc_path.read_text(encoding="utf-8")
+        assert "load-bearing" in content, (
+            f"{doc_path} checklist must include 'each dependencies edge is "
+            "load-bearing' item so the gate catches over-serialization."
+        )
+
+    def test_affected_files_population_required(self, doc_path: Path) -> None:
+        content = doc_path.read_text(encoding="utf-8")
+        assert "`affected_files` populated for every subtask" in content, (
+            f"{doc_path} must require affected_files for every subtask — "
+            "split_wave_by_file_conflicts treats empty as 'alone'."
+        )
+
+
+class TestMapEfficientSaveResearchWiring:
+    """Regression: map-efficient must show the save_research / load_research API.
+
+    Before this wiring, the .map/<branch>/research/ folder was discipline-only:
+    Actor and Monitor had no canonical path to write/read research findings, so
+    the {research_findings} prompt placeholder lived as untracked tribal lore.
+    """
+
+    @pytest.fixture(
+        params=[
+            Path(".claude/skills/map-efficient/SKILL.md"),
+            Path("src/mapify_cli/templates/skills/map-efficient/SKILL.md"),
+        ],
+        ids=["dev", "template"],
+    )
+    def skill_path(self, request: pytest.FixtureRequest) -> Path:
+        return Path(__file__).parent.parent / request.param
+
+    def test_research_phase_invokes_save_research_cli(self, skill_path: Path) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        assert (
+            "python3 .map/scripts/map_step_runner.py save_research" in content
+        ), (
+            f"{skill_path} must show the save_research CLI for the RESEARCH phase. "
+            "Without it, .map/<branch>/research/ remains discipline-only."
+        )
+
+    def test_research_phase_invokes_load_research_cli(self, skill_path: Path) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        assert (
+            "python3 .map/scripts/map_step_runner.py load_research" in content
+        ), (
+            f"{skill_path} must show the load_research CLI so downstream phases "
+            "read findings through the canonical path."
+        )
+
+
+class TestMapEfficientBuildContextBlockCli:
+    """Regression: map-efficient must show the build_context_block CLI form.
+
+    map_step_runner.py exposes `build_context_block <branch> <subtask_id>` as a
+    proper CLI subcommand. The skill used to tell agents to use the `python -c
+    "import sys; sys.path.insert(0, '.map/scripts'); ..."` workaround, which is
+    fragile and noisy. The CLI form is canonical — the skill must surface it.
+    """
+
+    @pytest.fixture(
+        params=[
+            Path(".claude/skills/map-efficient/SKILL.md"),
+            Path("src/mapify_cli/templates/skills/map-efficient/SKILL.md"),
+        ],
+        ids=["dev", "template"],
+    )
+    def skill_path(self, request: pytest.FixtureRequest) -> Path:
+        return Path(__file__).parent.parent / request.param
+
+    def test_cli_invocation_is_documented(self, skill_path: Path) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        assert (
+            "python3 .map/scripts/map_step_runner.py build_context_block"
+            in content
+        ), (
+            f"{skill_path} must document the CLI form "
+            "`python3 .map/scripts/map_step_runner.py build_context_block "
+            "<branch> <subtask_id>` for build_context_block."
+        )
+
+    def test_no_python_dash_c_workaround(self, skill_path: Path) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        # Catch the historical "python -c \"import sys; sys.path.insert..."
+        # workaround that the CLI form replaces.
+        offending_patterns = [
+            'python -c "import sys; sys.path.insert',
+            "python3 -c \"import sys; sys.path.insert",
+        ]
+        hits = [p for p in offending_patterns if p in content]
+        assert not hits, (
+            f"{skill_path} still contains the python -c sys.path.insert "
+            f"workaround for build_context_block: {hits!r}. Use the CLI form "
+            "instead."
+        )
+
+
+class TestMapCheckPendingStepsSchema:
+    """Regression: map-check must treat step_state.pending_steps as a flat list[str].
+
+    The canonical schema (see map_orchestrator.WorkflowState.pending_steps) is a
+    list of workflow phase ids (e.g. "2.2", "2.3"), NOT a dict keyed by subtask id.
+    A prior version of map-check/SKILL.md indexed it as `.pending_steps["ST-001"]`,
+    which crashes jq at runtime with:
+        Cannot index array with string "ST-001"
+    Both the dev copy under .claude/ and the shipped template copy must avoid this
+    pattern.
+    """
+
+    @pytest.fixture(
+        params=[
+            Path(".claude/skills/map-check/SKILL.md"),
+            Path("src/mapify_cli/templates/skills/map-check/SKILL.md"),
+        ],
+        ids=["dev", "template"],
+    )
+    def skill_path(self, request: pytest.FixtureRequest) -> Path:
+        return Path(__file__).parent.parent / request.param
+
+    def test_skill_does_not_index_pending_steps_as_dict(
+        self, skill_path: Path
+    ) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        # Only inspect executable bash code fences — prose that warns about the
+        # anti-pattern (in inline backticks) is legitimate and must stay.
+        bash_blocks = re.findall(r"```bash\n(.*?)```", content, re.DOTALL)
+        offenders: list[tuple[int, str]] = []
+        for idx, block in enumerate(bash_blocks):
+            for hit in re.findall(r'\.pending_steps\[\\?"[^\]]+\\?"\]', block):
+                offenders.append((idx, hit))
+        assert not offenders, (
+            f"{skill_path} indexes .pending_steps as a dict inside bash blocks "
+            f"(e.g. {offenders[0][1]!r}); the canonical schema makes pending_steps "
+            "a flat list[str] of workflow phase ids — keyed access crashes jq at "
+            "runtime with 'Cannot index array with string'."
+        )
+
+    def test_skill_completion_check_uses_flat_schema(
+        self, skill_path: Path
+    ) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        # A valid check needs to inspect either workflow_status or pending_steps
+        # as a flat array. Without one of these the schema-aware check is gone.
+        has_flat_pending = (
+            ".pending_steps | length" in content
+            or ".pending_steps[]" in content
+        )
+        has_workflow_status = "workflow_status" in content
+        assert has_flat_pending or has_workflow_status, (
+            f"{skill_path} must verify workflow completion via either "
+            "`.pending_steps | length` / `.pending_steps[]` (flat-array form) "
+            "or `.workflow_status` — neither was found."
+        )
