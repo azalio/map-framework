@@ -80,18 +80,44 @@ fi
 
 Use `$TASK_ARGS`, not raw `$ARGUMENTS`, in prompts.
 
-## Step 0: Detect Existing Plan from /map-plan
+**MANDATORY: Empty $TASK_ARGS is NOT a stop condition.** Do not bail out on an
+empty `$TASK_ARGS`/`$ARGUMENTS` value alone — this skill resumes from
+existing artifacts. The skill stops with a task-required message ONLY when
+ALL THREE are true:
 
-Resume from existing plan artifacts when present:
+1. `$TASK_ARGS` is empty, AND
+2. `.map/<branch>/step_state.json` does NOT exist, AND
+3. `.map/<branch>/task_plan_<branch>.md` does NOT exist.
+
+In every other case you MUST execute Step 0 first and let `resume_from_plan` /
+`get_next_step` decide the next phase. The DECOMPOSE phase (1.0) is the only
+phase that reads `$TASK_ARGS` — and resumed workflows skip it.
+
+## Step 0: Detect Existing State or Plan
+
+Run this BEFORE any `$TASK_ARGS` validation.
 
 ```bash
 BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
-if [ -f ".map/${BRANCH}/task_plan_${BRANCH}.md" ]; then
+STATE_FILE=".map/${BRANCH}/step_state.json"
+PLAN_FILE=".map/${BRANCH}/task_plan_${BRANCH}.md"
+
+if [ -f "$STATE_FILE" ]; then
+  echo "Existing step_state.json found — proceeding straight to Step 1 get_next_step."
+elif [ -f "$PLAN_FILE" ]; then
   RESUME_RESULT=$(python3 .map/scripts/map_orchestrator.py resume_from_plan)
   RESUME_STATUS=$(echo "$RESUME_RESULT" | jq -r '.status')
   if [ "$RESUME_STATUS" = "success" ]; then
     echo "Resumed from /map-plan artifacts."
+  else
+    echo "resume_from_plan failed: $RESUME_RESULT" >&2
+    exit 1
   fi
+elif [ -z "$TASK_ARGS" ]; then
+  echo "No \$TASK_ARGS, no step_state.json, and no task_plan_${BRANCH}.md." >&2
+  echo "Provide a task description (e.g. '/map-efficient add retry policy')" >&2
+  echo "or run /map-plan first to create a plan to resume from." >&2
+  exit 1
 fi
 ```
 

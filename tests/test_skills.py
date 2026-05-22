@@ -1762,6 +1762,53 @@ class TestTaskDecomposerWaveParallelismGuidance:
         )
 
 
+class TestMapEfficientEmptyArgsResumeGuard:
+    """Regression: /map-efficient must resume from existing plan / state when
+    $TASK_ARGS is empty, NOT bail with "needs a task description". A prior
+    model invocation took an early shortcut and refused to run against a repo
+    that had a complete task_plan_<branch>.md ready for resume.
+    """
+
+    @pytest.fixture(
+        params=[
+            Path(".claude/skills/map-efficient/SKILL.md"),
+            Path("src/mapify_cli/templates/skills/map-efficient/SKILL.md"),
+        ],
+        ids=["dev", "template"],
+    )
+    def skill_path(self, request: pytest.FixtureRequest) -> Path:
+        return Path(__file__).parent.parent / request.param
+
+    def test_skill_states_empty_args_alone_is_not_a_stop_condition(
+        self, skill_path: Path
+    ) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        assert "Empty $TASK_ARGS is NOT a stop condition" in content, (
+            f"{skill_path} must explicitly tell the model that empty "
+            "$TASK_ARGS alone does not justify exiting — Step 0 resume must "
+            "run first."
+        )
+
+    def test_skill_lists_three_required_conditions_for_exit(
+        self, skill_path: Path
+    ) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        # The 3-of-3 contract: empty args, missing state, missing plan.
+        assert "step_state.json` does NOT exist" in content
+        assert "task_plan_<branch>.md` does NOT exist" in content
+
+    def test_step_zero_checks_state_before_plan(self, skill_path: Path) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        # state check must precede plan check inside Step 0 so an in-flight
+        # workflow takes priority over a stale plan resume.
+        state_idx = content.find("Existing step_state.json found")
+        plan_idx = content.find("Resumed from /map-plan artifacts")
+        assert 0 < state_idx < plan_idx, (
+            f"{skill_path} Step 0 must check existing step_state.json BEFORE "
+            "falling through to resume_from_plan."
+        )
+
+
 class TestMapEfficientSaveResearchWiring:
     """Regression: map-efficient must show the save_research / load_research API.
 
