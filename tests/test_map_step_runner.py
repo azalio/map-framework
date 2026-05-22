@@ -2834,6 +2834,58 @@ class TestValidateMutationBoundary:
         assert report["status"] == "error"
 
 
+class TestGetSubtaskCli:
+    """get_subtask CLI normalizes the {flat, blueprint-wrapped} blueprint
+    schema so callers don't need ad-hoc jq with two fallbacks."""
+
+    def _runner(self) -> Path:
+        return (
+            Path(__file__).resolve().parents[1]
+            / "src" / "mapify_cli" / "templates" / "map" / "scripts" / "map_step_runner.py"
+        )
+
+    def test_returns_subtask_json_from_flat_blueprint(self, branch_workspace, tmp_path):
+        bp = {"subtasks": [{"id": "ST-001", "title": "first"}]}
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+        result = subprocess.run(
+            [sys.executable, str(self._runner()), "get_subtask", "ST-001",
+             "--branch", "test-branch"],
+            capture_output=True, text=True, cwd=str(tmp_path), env=env,
+        )
+        assert result.returncode == 0, result.stderr
+        payload = json.loads(result.stdout)
+        assert payload["id"] == "ST-001"
+        assert payload["title"] == "first"
+
+    def test_returns_subtask_from_blueprint_wrapped_shape(
+        self, branch_workspace, tmp_path
+    ):
+        bp = {"blueprint": {"subtasks": [{"id": "ST-002", "title": "second"}]}}
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+        result = subprocess.run(
+            [sys.executable, str(self._runner()), "get_subtask", "ST-002",
+             "--branch", "test-branch"],
+            capture_output=True, text=True, cwd=str(tmp_path), env=env,
+        )
+        assert result.returncode == 0, result.stderr
+        payload = json.loads(result.stdout)
+        assert payload["id"] == "ST-002"
+
+    def test_exits_non_zero_on_unknown_subtask(self, branch_workspace, tmp_path):
+        bp = {"subtasks": [{"id": "ST-001"}]}
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+        result = subprocess.run(
+            [sys.executable, str(self._runner()), "get_subtask", "ST-999",
+             "--branch", "test-branch"],
+            capture_output=True, text=True, cwd=str(tmp_path), env=env,
+        )
+        assert result.returncode == 1
+        assert "ST-999" in result.stderr
+
+
 class TestLoadResearchCliErrorChannel:
     """load_research CLI must write error JSON to STDERR, not STDOUT, so
     command substitution (`FOO=$(... load_research ...)`) is not corrupted."""

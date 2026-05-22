@@ -5812,6 +5812,33 @@ if __name__ == "__main__":
         result = build_context_block(sys.argv[2], sys.argv[3])
         print(result)
 
+    elif func_name == "get_subtask" and len(sys.argv) >= 3:
+        # CLI: get_subtask <subtask_id> [--branch <branch>]
+        # Hides the {flat shape, blueprint-wrapped shape} dichotomy that
+        # forces every caller into ad-hoc jq with two fallbacks. load_blueprint
+        # already normalizes both forms.
+        sid = sys.argv[2]
+        branch_arg: Optional[str] = None
+        if "--branch" in sys.argv:
+            idx = sys.argv.index("--branch")
+            if idx + 1 < len(sys.argv):
+                branch_arg = sys.argv[idx + 1]
+        bp = load_blueprint(branch_arg)
+        if bp is None:
+            print(
+                json.dumps({"status": "error", "message": "blueprint.json not found"}),
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        sub = get_subtask_from_blueprint(bp, sid)
+        if sub is None:
+            print(
+                json.dumps({"status": "error", "message": f"subtask {sid!r} not in blueprint"}),
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print(json.dumps(sub, indent=2))
+
     elif func_name == "validate_mutation_boundary" and len(sys.argv) >= 4:
         # CLI: validate_mutation_boundary <branch> <subtask_id> [base_ref]
         # Exit codes:

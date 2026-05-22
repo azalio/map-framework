@@ -195,6 +195,21 @@ fi
 
 Default to sequential execution. Use wave APIs only for low-risk disjoint new-file waves or explicit user-requested parallel execution. See [efficient-reference.md](efficient-reference.md#wave-execution) for the full wave loop.
 
+**Note on resume:** `resume_from_plan` (Step 0) now auto-invokes `set_waves`
+when `blueprint.json` is present, so resumed workflows do not need a manual
+`set_waves` dispatch. The result is reported in the `waves_computed` field of
+the resume response (`"success"`, `"error"`, or `"skipped"` if no blueprint).
+
+**Wave-loop vs sequential dispatcher:** `get_next_step` is the **sequential**
+walker (one phase at a time, in `subtask_sequence` order). The **wave-loop**
+(`get_wave_step` / `validate_wave_step` / `advance_wave`) honors
+`execution_waves` and is the canonical path when waves contain >1 subtask.
+For a single-Actor batch run with a fully-linear plan, `get_next_step` and
+the wave-loop converge on the same order, so the skill defaults to the
+sequential walker for simplicity. Switch to the wave-loop when (a) waves
+have ≥2 subtasks AND (b) the subtasks in that wave touch disjoint files
+(see `split_wave_by_file_conflicts`).
+
 ### No-op subtask short-circuit (before RESEARCH)
 
 Some subtasks are already-done historically (rename/refactor landed in a prior PR), or are docs-only and don't need the full research→actor→monitor cycle. Skip them up-front to save tokens:

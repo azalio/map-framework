@@ -706,6 +706,18 @@ def validate_step(step_id: str, branch: str) -> dict:
     state_file = Path(f".map/{branch}/step_state.json")
     state = StepState.load(state_file)
 
+    # Idempotency: validating a step already in completed_steps is a no-op
+    # success. Re-running validate_step after a double-advance no longer
+    # explodes with "Step mismatch: expected Y, got X" — callers can safely
+    # retry without first calling peek_current_step.
+    if step_id in state.completed_steps and state.current_step_id != step_id:
+        return {
+            "valid": True,
+            "message": f"Step {step_id} already completed (idempotent no-op)",
+            "next_step": state.current_step_id,
+            "idempotent": True,
+        }
+
     # Check if step is current
     if state.current_step_id != step_id:
         return {
@@ -719,6 +731,24 @@ def validate_step(step_id: str, branch: str) -> dict:
             "valid": False,
             "message": "Plan not approved. Set approval first: python3 .map/scripts/map_orchestrator.py set_plan_approved true",
         }
+    # RESEARCH (2.2) is documented MANDATORY for every subtask — enforce that
+    # save_research wrote something before letting Actor proceed. Without this
+    # check, "MANDATORY" was prompt-text only and could be silently skipped.
+    if step_id == "2.2" and state.current_subtask_id:
+        research_dir = Path(f".map/{branch}/research")
+        # Accept any kind of research artifact for this subtask.
+        if not research_dir.is_dir() or not any(
+            research_dir.glob(f"{state.current_subtask_id}__*.md")
+        ):
+            return {
+                "valid": False,
+                "message": (
+                    f"RESEARCH not persisted for {state.current_subtask_id}. "
+                    f"Run: python3 .map/scripts/map_step_runner.py save_research "
+                    f"<branch> {state.current_subtask_id} (defaults kind=actor) "
+                    "before validate_step 2.2."
+                ),
+            }
     # CHOOSE_MODE is auto-skipped; execution_mode is always "batch"
 
     # Mark step complete
@@ -737,9 +767,22 @@ def validate_step(step_id: str, branch: str) -> dict:
         next_id = state.pending_steps[0]
         state.current_step_id = next_id
         state.current_step_phase = STEP_PHASES.get(next_id, "UNKNOWN")
+        next_step_signal = state.current_step_id
+    elif state.subtask_index + 1 < len(state.subtask_sequence):
+        # Inter-subtask boundary: pending_steps emptied for THIS subtask but
+        # more remain. Do NOT mislabel as COMPLETE — that confuses callers
+        # (and silently masks #4: validate_step would report next_step=COMPLETE
+        # while get_next_step then handed back RESEARCH for the next ST). The
+        # next get_next_step call will advance the cursor and reset
+        # pending_steps; surface a distinct sentinel here so the caller can
+        # tell mid-workflow advancement apart from terminal completion.
+        state.current_step_id = "ADVANCE_SUBTASK"
+        state.current_step_phase = "ADVANCE_SUBTASK"
+        next_step_signal = "ADVANCE_SUBTASK"
     else:
         state.current_step_id = "COMPLETE"
         state.current_step_phase = "COMPLETE"
+        next_step_signal = "COMPLETE"
 
     # Save updated state
     state.save(state_file)
@@ -747,7 +790,7 @@ def validate_step(step_id: str, branch: str) -> dict:
     return {
         "valid": True,
         "message": f"Step {step_id} completed successfully",
-        "next_step": state.current_step_id,
+        "next_step": next_step_signal,
     }
 
 
@@ -1982,6 +2025,18 @@ def resume_from_plan(branch: str) -> dict:
     )
     state.save(state_file)
 
+    # Auto-compute execution waves so /map-efficient doesn't have to dispatch
+    # set_waves manually after every resume. Best-effort: missing or invalid
+    # blueprint just leaves execution_waves empty; the sequential fallback in
+    # get_next_step / get_wave_step still works.
+    waves_status: str = "skipped"
+    if blueprint_file.exists():
+        try:
+            wave_result = set_waves(branch)
+            waves_status = wave_result.get("status", "error")
+        except Exception:  # noqa: BLE001
+            waves_status = "error"
+
     briefing = get_resume_briefing(branch)
 
     return {
@@ -1991,6 +2046,7 @@ def resume_from_plan(branch: str) -> dict:
         "current_subtask_id": subtask_ids[0],
         "aag_contracts_found": len(aag_contracts),
         "next_phase": "INIT_STATE",
+        "waves_computed": waves_status,
         "resume_briefing": briefing,
     }
 

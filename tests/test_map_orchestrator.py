@@ -1152,6 +1152,52 @@ class TestResumeFromPlan:
         assert briefing["latest_verification_verdict"] == "READY FOR REVIEW"
 
 
+class TestResumeFromPlanAutoSetWaves:
+    """Regression: resume_from_plan must auto-compute execution_waves when
+    blueprint.json is present, so /map-efficient does not need a separate
+    set_waves dispatch on resumed runs (#3 in the framework-issue triage)."""
+
+    def test_blueprint_present_populates_execution_waves(self, branch_dir, tmp_path):
+        plan_dir = tmp_path / ".map" / branch_dir
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / f"task_plan_{branch_dir}.md").write_text(
+            "# Task Plan\n\n### ST-001\n- **Status:** pending\n\n### ST-002\n- **Status:** pending\n",
+            encoding="utf-8",
+        )
+        (plan_dir / "blueprint.json").write_text(
+            json.dumps({
+                "summary": "test",
+                "subtasks": [
+                    {"id": "ST-001", "title": "first", "dependencies": [], "affected_files": ["a.py"]},
+                    {"id": "ST-002", "title": "second", "dependencies": ["ST-001"], "affected_files": ["b.py"]},
+                ],
+            }),
+            encoding="utf-8",
+        )
+        result = map_orchestrator.resume_from_plan(branch_dir)
+        assert result["status"] == "success"
+        assert result.get("waves_computed") == "success", result
+
+        reloaded = map_orchestrator.StepState.load(plan_dir / "step_state.json")
+        assert reloaded.execution_waves, (
+            "resume_from_plan must populate execution_waves when blueprint is present"
+        )
+        # Wave 0 = [ST-001] (no deps); Wave 1 = [ST-002] (depends on ST-001).
+        assert reloaded.execution_waves[0] == ["ST-001"]
+        assert reloaded.execution_waves[1] == ["ST-002"]
+
+    def test_no_blueprint_marks_waves_skipped(self, branch_dir, tmp_path):
+        plan_dir = tmp_path / ".map" / branch_dir
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / f"task_plan_{branch_dir}.md").write_text(
+            "# Task Plan\n\n### ST-001\n- **Status:** pending\n",
+            encoding="utf-8",
+        )
+        result = map_orchestrator.resume_from_plan(branch_dir)
+        assert result["status"] == "success"
+        assert result.get("waves_computed") == "skipped"
+
+
 class TestBuildResumeBriefing:
     """Tests for next-action resume briefing synthesis."""
 
@@ -1955,6 +2001,110 @@ class TestMarkSubtaskComplete:
         assert reloaded.current_subtask_id == "ST-001"
         assert reloaded.subtask_phases["ST-002"] == "COMPLETE"
         assert reloaded.subtask_results["ST-002"]["status"] == "no-op"
+
+
+class TestValidateStepIdempotency:
+    """validate_step X is idempotent when X already in completed_steps —
+    re-running after a double-advance no longer explodes with 'Step mismatch'."""
+
+    def test_idempotent_no_op_when_already_completed(self, branch_dir, tmp_path):
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001"]
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.4"
+        state.current_step_phase = "MONITOR"
+        state.completed_steps = ["2.2", "2.3"]
+        state.pending_steps = ["2.4"]
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        result = map_orchestrator.validate_step("2.3", branch_dir)
+        assert result["valid"] is True, result
+        assert result.get("idempotent") is True
+        # state.current_step_id stays at 2.4, not regressed:
+        reloaded = map_orchestrator.StepState.load(state_file)
+        assert reloaded.current_step_id == "2.4"
+
+
+class TestValidateStepInterSubtaskBoundary:
+    """validate_step at the boundary between subtasks must signal
+    ADVANCE_SUBTASK, not COMPLETE — the workflow is NOT done while more
+    subtasks remain in subtask_sequence (regression for #4)."""
+
+    def test_inter_subtask_returns_advance_not_complete(
+        self, branch_dir, tmp_path
+    ):
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001", "ST-002"]
+        state.subtask_index = 0
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.4"
+        state.current_step_phase = "MONITOR"
+        state.completed_steps = ["2.2", "2.3"]
+        state.pending_steps = ["2.4"]
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        result = map_orchestrator.validate_step("2.4", branch_dir)
+        assert result["valid"] is True
+        assert result["next_step"] == "ADVANCE_SUBTASK", result
+        # Reload — current_step_id holds the sentinel, NOT "COMPLETE".
+        reloaded = map_orchestrator.StepState.load(state_file)
+        assert reloaded.current_step_id == "ADVANCE_SUBTASK"
+        assert reloaded.workflow_status == "IN_PROGRESS"
+
+    def test_final_subtask_still_returns_complete(self, branch_dir, tmp_path):
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001"]
+        state.subtask_index = 0
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.4"
+        state.completed_steps = ["2.2", "2.3"]
+        state.pending_steps = ["2.4"]
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        result = map_orchestrator.validate_step("2.4", branch_dir)
+        assert result["next_step"] == "COMPLETE"
+
+
+class TestValidateStepResearchEnforcement:
+    """RESEARCH (2.2) is documented MANDATORY; validate_step 2.2 must reject
+    when no research artifact exists for the current subtask."""
+
+    def test_rejects_when_no_research_artifact(self, branch_dir, tmp_path):
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001"]
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.2"
+        state.current_step_phase = "RESEARCH"
+        state.pending_steps = ["2.2", "2.3", "2.4"]
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        result = map_orchestrator.validate_step("2.2", branch_dir)
+        assert result["valid"] is False
+        assert "RESEARCH not persisted" in result["message"]
+
+    def test_accepts_when_research_artifact_present(
+        self, branch_dir, tmp_path
+    ):
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001"]
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.2"
+        state.current_step_phase = "RESEARCH"
+        state.pending_steps = ["2.2", "2.3", "2.4"]
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        # Plant a research artifact.
+        research_dir = tmp_path / ".map" / branch_dir / "research"
+        research_dir.mkdir(parents=True, exist_ok=True)
+        (research_dir / "ST-001__actor.md").write_text("findings", encoding="utf-8")
+        result = map_orchestrator.validate_step("2.2", branch_dir)
+        assert result["valid"] is True, result
+        assert result["next_step"] == "2.3"
 
 
 class TestPeekCurrentStep:
