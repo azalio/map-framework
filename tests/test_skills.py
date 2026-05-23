@@ -1762,6 +1762,44 @@ class TestTaskDecomposerWaveParallelismGuidance:
         )
 
 
+class TestMapEfficientNoInterSubtaskPause:
+    """Regression: /map-efficient must chain subtasks without per-subtask
+    "summary report + wait for user" pauses. A downstream run paused
+    between ST-004 and ST-005, doubling round-trips; the skill defaulted
+    to the conservative interpretation because no rule forbade pausing."""
+
+    @pytest.fixture(
+        params=[
+            Path(".claude/skills/map-efficient/SKILL.md"),
+            Path("src/mapify_cli/templates/skills/map-efficient/SKILL.md"),
+        ],
+        ids=["dev", "template"],
+    )
+    def skill_path(self, request: pytest.FixtureRequest) -> Path:
+        return Path(__file__).parent.parent / request.param
+
+    def test_skill_explicitly_forbids_inter_subtask_pause(self, skill_path: Path) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        assert "Do NOT pause between subtasks" in content, (
+            f"{skill_path} must include 'Do NOT pause between subtasks' "
+            "rule so models don't default to per-subtask checkpoints."
+        )
+
+    def test_skill_enumerates_legitimate_stop_conditions(self, skill_path: Path) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        # The 4-of-4 stop list — anything else is the "wrong default"
+        # the user explicitly complained about.
+        for marker in (
+            "next_step: \"COMPLETE\"",
+            "retry_quarantine",
+            "User explicitly interrupts",
+            "Circuit-breaker",
+        ):
+            assert marker in content, (
+                f"{skill_path} stop-condition list missing: {marker!r}"
+            )
+
+
 class TestMapEfficientEmptyArgsResumeGuard:
     """Regression: /map-efficient must resume from existing plan / state when
     $TASK_ARGS is empty, NOT bail with "needs a task description". A prior

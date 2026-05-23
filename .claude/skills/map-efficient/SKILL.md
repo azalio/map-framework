@@ -357,7 +357,27 @@ Use `validate_wave_step` only in wave execution mode.
 
 ## Step 2b: Continue or Complete
 
-Call `get_next_step` again. Continue until complete, then run final verification.
+**MANDATORY: Do NOT pause between subtasks.** After `validate_step 2.4`
+returns `next_step: "ADVANCE_SUBTASK"`, immediately call `get_next_step`
+again and continue executing the next subtask's RESEARCH/ACTOR/MONITOR
+cycle in the SAME `/map-efficient` invocation. A subtask boundary is NOT
+a checkpoint for the user — the only legitimate stops are:
+
+1. `next_step: "COMPLETE"` with `subtask_index + 1 == len(subtask_sequence)`
+   → workflow done, run Final Verification (Step 3).
+2. `monitor_failed` retry quarantine requires user adjudication
+   (`retry_isolation=clean_retry_required` AND clean_retry_count > max).
+3. User explicitly interrupts via the conversation.
+4. Circuit-breaker trips (`check_circuit_breaker` returns
+   `should_stop=true`).
+
+Per-subtask "summary report and wait for review" is the WRONG default —
+it doubles round-trips and burns the operator's attention. The user
+asked the skill to ship the whole plan; ship the whole plan. They can
+interrupt at any time if they want a checkpoint.
+
+Call `get_next_step` again immediately. Continue until complete, then
+run final verification.
 
 ## Step 3: Final Verification (Ralph Loop)
 
