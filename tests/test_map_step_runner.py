@@ -2934,6 +2934,105 @@ class TestSubtaskTokenUsage:
         assert report["input_tokens"] == 42
 
 
+class TestBlueprintContractRelaxations:
+    """Validator now accepts (a) `text` as a `description` alias on hard/soft
+    constraints, (b) `cross-repo` concern_type, (c) suppresses oversized /
+    mixed flags when justification fields are present."""
+
+    def _write_bp(self, branch_workspace: Path, **kwargs) -> Path:
+        path = branch_workspace / "blueprint.json"
+        path.write_text(json.dumps(kwargs))
+        return path
+
+    def _base_bp(self) -> dict:
+        return {
+            "summary": "x",
+            "hard_constraints": [{"id": "HC-1", "description": "must"}],
+            "soft_constraints": [],
+            "coverage_map": {"HC-1": "ST-001"},
+            "subtasks": [{
+                "id": "ST-001", "title": "x", "aag_contract": "X -> y -> done",
+                "expected_diff_size": "small", "concern_type": "runtime",
+                "one_logical_step": True, "dependencies": [],
+                "validation_criteria": ["VC1 [HC-1]: ok"],
+            }],
+        }
+
+    def test_text_alias_accepted_for_constraint(self, branch_workspace):
+        bp = self._base_bp()
+        # Constraint uses `text` instead of `description`.
+        bp["hard_constraints"] = [{"id": "HC-1", "text": "must hold true"}]
+        path = self._write_bp(branch_workspace, **bp)
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is True, result["errors"]
+
+    def test_cross_repo_concern_type_accepted(self, branch_workspace):
+        bp = self._base_bp()
+        bp["subtasks"][0]["concern_type"] = "cross-repo"
+        path = self._write_bp(branch_workspace, **bp)
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is True, result["errors"]
+
+    def test_split_rationale_suppresses_too_many_vc_warning(self, branch_workspace):
+        bp = self._base_bp()
+        bp["subtasks"][0]["validation_criteria"] = [
+            f"VC{i} [HC-1]: ok" for i in range(1, 8)  # 7 criteria > threshold 6
+        ]
+        bp["subtasks"][0]["split_rationale"] = "Single logical contract — splitting fragments coverage."
+        path = self._write_bp(branch_workspace, **bp)
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is True
+        # No warning text about "consider splitting" should be present.
+        assert not any("consider splitting" in w for w in result["warnings"]), result["warnings"]
+
+    def test_split_rationale_suppresses_oversized_flag(self, branch_workspace):
+        bp = self._base_bp()
+        bp["subtasks"][0]["expected_diff_size"] = "large"
+        bp["subtasks"][0]["split_rationale"] = "Atomic config + loader unit."
+        path = self._write_bp(branch_workspace, **bp)
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is True
+        assert result["oversized_subtasks"] == [], result
+
+
+class TestListPlansCli:
+    """list_plans enumerates .map/<branch>/ artifacts so operators can pick
+    scope from a multi-roadmap workspace without grepping."""
+
+    def test_returns_blueprint_and_state_metadata(self, branch_workspace, monkeypatch):
+        repo = branch_workspace.parents[1]
+        (branch_workspace / "blueprint.json").write_text(
+            json.dumps({"subtasks": [{"id": "ST-001"}, {"id": "ST-002"}]})
+        )
+        (branch_workspace / "task_plan_test-branch.md").write_text("# plan")
+        (branch_workspace / "step_state.json").write_text(
+            json.dumps({"workflow_status": "WORKFLOW_COMPLETE", "completed_at": "2026-05-23Z"})
+        )
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.list_plans()
+        assert report["status"] == "success"
+        rows = [p for p in report["plans"] if p["branch"] == "test-branch"]
+        assert rows, report
+        row = rows[0]
+        assert row["has_blueprint"] and row["has_task_plan"] and row["has_step_state"]
+        assert row["workflow_status"] == "WORKFLOW_COMPLETE"
+        assert row["subtask_count"] == 2
+
+
+class TestRecordPlanArtifactsPlanReadyWithoutStepState:
+    """/map-plan stops before INIT_STATE, so plan_status should be 'ready'
+    when blueprint + task_plan are both present even if step_state.json
+    has not been created yet."""
+
+    def test_plan_ready_without_step_state(self, branch_workspace, monkeypatch):
+        del monkeypatch  # branch_workspace already chdirs
+        (branch_workspace / "blueprint.json").write_text(json.dumps({"subtasks": []}))
+        (branch_workspace / "task_plan_test-branch.md").write_text("# plan")
+        result = map_step_runner.record_plan_artifacts("test-branch")
+        assert result["status"] == "success", result
+        assert result["plan_status"] == "ready", result
+
+
 class TestRecordScopeBaseline:
     """record_scope_baseline snapshots current git status into
     .map/<branch>/scope-baseline.json; validate_mutation_boundary

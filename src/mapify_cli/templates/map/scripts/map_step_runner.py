@@ -122,6 +122,7 @@ DIFF_SIZE_LEVELS = {"tiny", "small", "medium", "large"}
 SUBTASK_CONCERN_TYPES = {
     "api",
     "config",
+    "cross-repo",
     "data",
     "docs",
     "infra",
@@ -1417,7 +1418,11 @@ def record_plan_artifacts(branch: Optional[str] = None) -> dict[str, object]:
     if step_state_path.exists():
         plan_artifacts.append(_artifact_ref(step_state_path, "step-state"))
 
-    if task_plan_path.exists() and blueprint_path.exists() and step_state_path.exists():
+    # /map-plan deliberately stops BEFORE INIT_STATE writes step_state.json
+    # — that step belongs to /map-efficient. So "plan complete" means
+    # blueprint + task_plan are both present, regardless of step_state.
+    # Only flag "partial" when one of those is missing.
+    if task_plan_path.exists() and blueprint_path.exists():
         plan_status = "ready"
     elif plan_artifacts:
         plan_status = "partial"
@@ -1497,33 +1502,44 @@ def validate_blueprint_contract(
         errors.append("soft_constraints is required and must be an array")
         soft_constraints = []
 
+    # Constraints accept either `description` or `text` (some decomposer
+    # agent generations use `text`); both fields are read with the same
+    # meaning so the contract stops rejecting valid blueprints on a naming
+    # mismatch alone.
+    def _constraint_body(c: dict) -> str:
+        for key in ("description", "text"):
+            v = c.get(key)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        return ""
+
     hard_constraint_ids: list[str] = []
     for index, constraint in enumerate(hard_constraints):
         label = f"hard_constraints[{index}]"
         if not isinstance(constraint, dict):
-            errors.append(f"{label}: must be an object with id and description")
+            errors.append(f"{label}: must be an object with id and description (or text)")
             continue
         constraint_id = str(constraint.get("id") or "").strip()
-        description = str(constraint.get("description") or "").strip()
+        description = _constraint_body(constraint)
         if not constraint_id:
             errors.append(f"{label}: missing id")
             continue
         if not description:
-            errors.append(f"{label}: missing description")
+            errors.append(f"{label}: missing description (or text)")
         hard_constraint_ids.append(constraint_id)
 
     for index, constraint in enumerate(soft_constraints):
         label = f"soft_constraints[{index}]"
         if not isinstance(constraint, dict):
-            errors.append(f"{label}: must be an object with id and description")
+            errors.append(f"{label}: must be an object with id and description (or text)")
             continue
         constraint_id = str(constraint.get("id") or "").strip()
-        description = str(constraint.get("description") or "").strip()
+        description = _constraint_body(constraint)
         if not constraint_id:
             errors.append(f"{label}: missing id")
             continue
         if not description:
-            errors.append(f"{label}: missing description")
+            errors.append(f"{label}: missing description (or text)")
 
     subtask_id_counts: dict[str, int] = {}
     for subtask in subtasks:
@@ -1581,7 +1597,10 @@ def validate_blueprint_contract(
                 errors.append(
                     f"{label}: large subtasks require split_rationale or must be decomposed"
                 )
-            oversized_subtasks.append(subtask_id)
+                # Only flag in `oversized_subtasks` when there's no
+                # rationale — a large subtask WITH split_rationale is an
+                # acknowledged design choice, not a flag for the operator.
+                oversized_subtasks.append(subtask_id)
 
         if concern_type not in SUBTASK_CONCERN_TYPES:
             errors.append(
@@ -1593,7 +1612,9 @@ def validate_blueprint_contract(
                 errors.append(
                     f"{label}: mixed concern_type requires concern_justification"
                 )
-            mixed_concern_subtasks.append(subtask_id)
+                # Same treatment: explicitly justified mixed concerns are
+                # acknowledged, not surfaced as flags.
+                mixed_concern_subtasks.append(subtask_id)
 
         one_logical_step = subtask.get("one_logical_step")
         if one_logical_step is not True:
@@ -1609,15 +1630,25 @@ def validate_blueprint_contract(
         ):
             errors.append(f"{label}: validation_criteria items must be non-empty strings")
         elif len(validation_criteria) > 6:
-            warnings.append(
-                f"{label}: has {len(validation_criteria)} validation criteria; consider splitting if ownership is unclear"
-            )
+            # Suppress the "consider splitting" hint when split_rationale is
+            # present — the author already justified the size. Same logic
+            # for affected_files >8: an explicit split_rationale acks scope.
+            split_rationale = str(subtask.get("split_rationale") or "").strip()
+            if not split_rationale:
+                warnings.append(
+                    f"{label}: has {len(validation_criteria)} validation criteria; "
+                    "consider splitting if ownership is unclear "
+                    "(or add split_rationale to ack the size)"
+                )
 
         affected_files = subtask.get("affected_files")
         if isinstance(affected_files, list) and len(affected_files) > 8:
-            warnings.append(
-                f"{label}: touches {len(affected_files)} files; verify this is still one reviewable concern"
-            )
+            split_rationale = str(subtask.get("split_rationale") or "").strip()
+            if not split_rationale:
+                warnings.append(
+                    f"{label}: touches {len(affected_files)} files; verify this is still one "
+                    "reviewable concern (or add split_rationale to ack the size)"
+                )
 
     coverage_map = payload.get("coverage_map") or blueprint_body.get("coverage_map")
     if not isinstance(coverage_map, dict) or not coverage_map:
@@ -5268,6 +5299,64 @@ def _scope_baseline_path(branch: str, project_dir: Path) -> Path:
     return project_dir / ".map" / _sanitize_branch(branch) / "scope-baseline.json"
 
 
+def list_plans() -> dict:
+    """Enumerate per-branch plan artifacts under .map/<branch>/ so the
+    operator can pick scope from a multi-roadmap workspace without grepping.
+
+    Returns: list of {branch, has_blueprint, has_task_plan, has_step_state,
+    workflow_status, completed_at, plan_mtime, subtask_count}.
+    """
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
+    map_root = project_dir / ".map"
+    if not map_root.is_dir():
+        return {"status": "success", "plans": []}
+    plans: list[dict[str, object]] = []
+    for entry in sorted(map_root.iterdir()):
+        if not entry.is_dir() or entry.name == "scripts":
+            continue
+        branch_name = entry.name
+        blueprint_path = entry / "blueprint.json"
+        task_plan_path = entry / f"task_plan_{branch_name}.md"
+        state_path = entry / "step_state.json"
+        info: dict[str, object] = {
+            "branch": branch_name,
+            "has_blueprint": blueprint_path.exists(),
+            "has_task_plan": task_plan_path.exists(),
+            "has_step_state": state_path.exists(),
+            "plan_mtime": None,
+            "workflow_status": None,
+            "completed_at": None,
+            "subtask_count": None,
+        }
+        if task_plan_path.exists():
+            info["plan_mtime"] = (
+                _dt_from_mtime(task_plan_path.stat().st_mtime)
+            )
+        if blueprint_path.exists():
+            try:
+                bp = json.loads(blueprint_path.read_text(encoding="utf-8"))
+                if isinstance(bp.get("blueprint"), dict):
+                    bp = bp["blueprint"]
+                if isinstance(bp.get("subtasks"), list):
+                    info["subtask_count"] = len(bp["subtasks"])
+            except (json.JSONDecodeError, OSError):
+                pass
+        if state_path.exists():
+            try:
+                st = json.loads(state_path.read_text(encoding="utf-8"))
+                info["workflow_status"] = st.get("workflow_status")
+                info["completed_at"] = st.get("completed_at")
+            except (json.JSONDecodeError, OSError):
+                pass
+        plans.append(info)
+    return {"status": "success", "plans": plans}
+
+
+def _dt_from_mtime(ts: float) -> str:
+    from datetime import datetime, timezone
+    return datetime.fromtimestamp(ts, timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 def record_scope_baseline(branch: str) -> dict:
     """Snapshot the current uncommitted / untracked file set as a baseline
     that validate_mutation_boundary will subtract from `actual` on future
@@ -5992,23 +6081,49 @@ if __name__ == "__main__":
         result = load_artifact_manifest()
         print(json.dumps(result, indent=2, ensure_ascii=True))
 
-    elif func_name == "record_workflow_fit" and len(sys.argv) >= 8:
+    elif func_name == "record_workflow_fit" and len(sys.argv) >= 3:
+        # Two calling conventions supported:
+        #   legacy (positional, deprecated):
+        #     record_workflow_fit <workflow> <diff_size> <inv> <review>
+        #         <ac> <tdd> [summary]
+        #   keyword (preferred):
+        #     record_workflow_fit <workflow> [--diff-size SIZE]
+        #         [--has-new-invariants 0|1] [--needs-independent-review 0|1]
+        #         [--has-clear-acceptance-criteria 0|1]
+        #         [--test-first-required 0|1] [--summary "..."]
+        # The keyword form prevents bool-order mix-ups the operator just
+        # called out.
         recommended_workflow = sys.argv[2]
-        expected_diff_size = sys.argv[3]
-        has_new_invariants = sys.argv[4]
-        needs_independent_review = sys.argv[5]
-        has_clear_acceptance_criteria = sys.argv[6]
-        test_first_required = sys.argv[7]
-        decision_summary = sys.argv[8] if len(sys.argv) >= 9 else ""
-        result = record_workflow_fit(
-            recommended_workflow,
-            expected_diff_size,
-            has_new_invariants,
-            needs_independent_review,
-            has_clear_acceptance_criteria,
-            test_first_required,
-            decision_summary,
-        )
+        rest = list(sys.argv[3:])
+        if rest and not rest[0].startswith("--") and len(rest) >= 5:
+            # Legacy positional path
+            result = record_workflow_fit(
+                recommended_workflow,
+                rest[0],
+                rest[1],
+                rest[2],
+                rest[3],
+                rest[4],
+                rest[5] if len(rest) >= 6 else "",
+            )
+        else:
+            def _flag(name: str, default: str) -> str:
+                if f"--{name}" in rest:
+                    idx = rest.index(f"--{name}")
+                    if idx + 1 < len(rest):
+                        return rest[idx + 1]
+                return default
+            result = record_workflow_fit(
+                recommended_workflow,
+                expected_diff_size=_flag("diff-size", "medium"),
+                has_new_invariants=_flag("has-new-invariants", "0"),
+                needs_independent_review=_flag("needs-independent-review", "0"),
+                has_clear_acceptance_criteria=_flag(
+                    "has-clear-acceptance-criteria", "1"
+                ),
+                test_first_required=_flag("test-first-required", "0"),
+                decision_summary=_flag("summary", ""),
+            )
         print(json.dumps(result, indent=2))
 
     elif func_name == "record_plan_artifacts":
@@ -6238,6 +6353,10 @@ if __name__ == "__main__":
         print(json.dumps(report, indent=2))
         if report.get("status") in {"no_state", "error"}:
             sys.exit(1)
+
+    elif func_name == "list_plans":
+        report = list_plans()
+        print(json.dumps(report, indent=2))
 
     elif func_name == "record_scope_baseline" and len(sys.argv) >= 3:
         # CLI: record_scope_baseline <branch>
