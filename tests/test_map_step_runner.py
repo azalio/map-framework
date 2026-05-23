@@ -3033,6 +3033,54 @@ class TestRecordPlanArtifactsPlanReadyWithoutStepState:
         assert result["plan_status"] == "ready", result
 
 
+class TestRecordSubtaskBaseline:
+    """record_subtask_baseline + per-subtask baseline filter in
+    validate_mutation_boundary: each subtask's MONITOR check only flags
+    files CHANGED during that subtask, not the cumulative branch diff."""
+
+    def _init_git(self, root: Path) -> None:
+        subprocess.run(["git", "init"], cwd=root, capture_output=True, check=False)
+        subprocess.run(
+            ["git", "config", "user.email", "t@t.com"], cwd=root, capture_output=True
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "t"], cwd=root, capture_output=True
+        )
+        (root / "seed.txt").write_text("seed")
+        subprocess.run(["git", "add", "."], cwd=root, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=root, capture_output=True)
+
+    def test_subtask_baseline_filters_prior_wave_diff(
+        self, branch_workspace, monkeypatch
+    ):
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        # Prior wave: ST-001 created old_a.py (still uncommitted).
+        (repo / "old_a.py").write_text("from prior wave")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        # ST-002 starts: snapshot its baseline (= everything dirty now).
+        snap = map_step_runner.record_subtask_baseline("test-branch", "ST-002")
+        assert snap["status"] == "success"
+        assert "old_a.py" in (
+            map_step_runner._subtask_baseline_path(
+                "test-branch", "ST-002", repo
+            ).parent / "ST-002.json"
+        ).read_text()
+        # ST-002 declares its scope = b.py; create + add.
+        bp = {"subtasks": [{"id": "ST-002", "title": "x", "affected_files": ["b.py"]}]}
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        (repo / "b.py").write_text("x = 1")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        report = map_step_runner.validate_mutation_boundary(
+            "test-branch", "ST-002"
+        )
+        # old_a.py was in the baseline → filtered → status="clean".
+        assert report["status"] == "clean", report
+        assert "old_a.py" not in report["actual"]
+        assert "b.py" in report["actual"]
+
+
 class TestRecordScopeBaseline:
     """record_scope_baseline snapshots current git status into
     .map/<branch>/scope-baseline.json; validate_mutation_boundary

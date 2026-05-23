@@ -608,6 +608,7 @@ When invoked with `mode: "re_decomposition"` from the orchestrator, you receive 
 - [ ] All dependencies are explicit and accurate
 - [ ] Each `dependencies` edge is load-bearing (B reads A's output, A creates B's files, or A's tests pin B's behavior) — no edges added for "logical ordering" or risk hedging
 - [ ] `affected_files` populated for every subtask (empty = single-subtask wave)
+- [ ] **No circular imports between subtask modules.** If subtask A's affected_files includes `mod_x.py` that imports from `mod_y.py` (subtask B), AND B's affected_files imports from `mod_x.py`, you have a cycle. Either redesign the contract surface (lift the shared symbol to a third module owned by a foundation subtask) or document the lazy-import workaround in `split_rationale` so Actor doesn't discover it mid-implementation.
 - [ ] Subtasks ordered by dependency (foundations first)
 - [ ] 5-8 subtasks (not too granular or too coarse)
 - [ ] Titles are action-oriented (start with verb)

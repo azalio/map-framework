@@ -563,6 +563,16 @@ def main() -> None:
         print("{}")
         sys.exit(0)
 
+    # Edits during a phase where editing is EXPECTED (ACTOR / TEST_WRITER)
+    # don't need a trailing "REQUIRED: Run Actor" nag. The operator is
+    # already doing exactly that — consecutive atomic Edits in the same
+    # ACTOR turn shouldn't be lectured.
+    if (
+        tool_name in ("Edit", "Write", "MultiEdit")
+        and isinstance(state, dict)
+        and state.get("current_step_phase") in ("ACTOR", "TEST_WRITER")
+    ):
+        suppress_required = True
     reminder = format_reminder(state, branch, suppress_required=suppress_required)
     if reminder:
         record_hook_injection_status(

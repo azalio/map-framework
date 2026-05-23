@@ -771,6 +771,14 @@ def validate_step(step_id: str, branch: str) -> dict:
                     "before validate_step 2.2."
                 ),
             }
+        # Auto-snapshot per-subtask baseline at RESEARCH-complete so the
+        # MONITOR-side validate_mutation_boundary check only flags files
+        # CHANGED during this subtask, not the cumulative branch diff.
+        try:
+            from map_step_runner import record_subtask_baseline  # noqa: WPS433
+            record_subtask_baseline(branch, state.current_subtask_id)
+        except ImportError:
+            pass
     # MONITOR gate auto-runs validate_mutation_boundary so scope leaks can't
     # silently slip past. The check is warn-only by default; only
     # MAP_STRICT_SCOPE=1 escalates a "violation" to a hard reject. Best-effort:

@@ -5299,6 +5299,63 @@ def _scope_baseline_path(branch: str, project_dir: Path) -> Path:
     return project_dir / ".map" / _sanitize_branch(branch) / "scope-baseline.json"
 
 
+def _subtask_baseline_path(branch: str, subtask_id: str, project_dir: Path) -> Path:
+    return (
+        project_dir
+        / ".map"
+        / _sanitize_branch(branch)
+        / "subtask-baselines"
+        / f"{subtask_id}.json"
+    )
+
+
+def record_subtask_baseline(branch: str, subtask_id: str) -> dict:
+    """Snapshot the current `git status --porcelain` set as a per-subtask
+    baseline that validate_mutation_boundary will subtract from `actual` for
+    THIS subtask only — independent from the branch-wide scope-baseline.
+
+    Fires automatically at validate_step("2.2") (RESEARCH start) so each
+    subtask's mutation boundary check sees only changes since RESEARCH began,
+    not the cumulative branch diff. The branch-wide
+    .map/<branch>/scope-baseline.json still applies on top as a
+    coarse filter.
+    """
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
+    try:
+        proc = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"status": "error", "message": f"git status failed: {exc}"}
+    if proc.returncode != 0:
+        return {
+            "status": "error",
+            "message": f"git status non-zero: {proc.stderr.strip() or 'no stderr'}",
+        }
+    files: list[str] = []
+    for raw in proc.stdout.splitlines():
+        if len(raw) >= 4:
+            path = raw[3:].strip()
+            if " -> " in path:
+                path = path.split(" -> ", 1)[1]
+            if path and not path.startswith(".map/") and not path.startswith(".codex/"):
+                files.append(path)
+    path = _subtask_baseline_path(branch, subtask_id, project_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "branch": _sanitize_branch(branch),
+        "subtask_id": subtask_id,
+        "recorded_at": _utc_timestamp(),
+        "files": sorted(set(files)),
+    }
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return {"status": "success", "path": str(path), "count": len(payload["files"])}
+
+
 def list_plans() -> dict:
     """Enumerate per-branch plan artifacts under .map/<branch>/ so the
     operator can pick scope from a multi-roadmap workspace without grepping.
@@ -5566,19 +5623,33 @@ def validate_mutation_boundary(
         if not p.startswith(".map/") and not p.startswith(".codex/")
     }
 
-    # Baseline filter: if the operator has captured a per-branch baseline of
-    # pre-existing untracked / unstaged work (via `record_scope_baseline`),
-    # subtract it from `actual` so warnings only flag files that THIS subtask
-    # actually changed. Closes the "every ST showed warning because the
-    # branch carries old uncommitted artifacts" friction.
-    baseline_path = _scope_baseline_path(branch_name, project_dir)
+    # Baseline filter — two layers:
+    #   1. Per-subtask baseline (auto-snapshotted at validate_step('2.2')):
+    #      everything dirty in the worktree when THIS subtask started
+    #      RESEARCH belongs to prior subtasks. Subtract it so per-subtask
+    #      mutation check only sees changes made during the current run.
+    #   2. Branch-wide baseline (operator opt-in via record_scope_baseline):
+    #      coarser filter for branches that carry pre-existing artifacts
+    #      from outside the workflow entirely.
     baseline_files: set[str] = set()
-    if baseline_path.exists():
+    subtask_baseline_path = _subtask_baseline_path(
+        branch_name, subtask_id, project_dir
+    )
+    if subtask_baseline_path.exists():
         try:
-            data = json.loads(baseline_path.read_text(encoding="utf-8"))
+            data = json.loads(subtask_baseline_path.read_text(encoding="utf-8"))
             raw = data.get("files", [])
             if isinstance(raw, list):
-                baseline_files = {str(p) for p in raw if isinstance(p, str)}
+                baseline_files.update(str(p) for p in raw if isinstance(p, str))
+        except (json.JSONDecodeError, OSError):
+            pass
+    branch_baseline_path = _scope_baseline_path(branch_name, project_dir)
+    if branch_baseline_path.exists():
+        try:
+            data = json.loads(branch_baseline_path.read_text(encoding="utf-8"))
+            raw = data.get("files", [])
+            if isinstance(raw, list):
+                baseline_files.update(str(p) for p in raw if isinstance(p, str))
         except (json.JSONDecodeError, OSError):
             pass
     if baseline_files:

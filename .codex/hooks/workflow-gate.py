@@ -47,7 +47,17 @@ EDITING_PHASES = {"ACTOR", "APPLY", "TEST_WRITER"}
 # for every editing tool. Treat any ad-hoc mutation of ``current_step_phase`` (jq, manual
 # JSON edit, third-party tool) as a security regression on this gate.
 TERMINAL_PHASES = {"COMPLETE"}  # Workflow closed — gate is permissive.
-ALLOWED_PHASES = EDITING_PHASES | TERMINAL_PHASES
+
+# MONITOR hot-fix opt-in: when MAP_MONITOR_HOTFIX=1 in env, Edits are
+# allowed during MONITOR so the operator can land a 2-line nit without
+# spinning a full monitor_failed → ACTOR retry cycle. Opt-in (not default)
+# because the unconditional behaviour would silently widen the gate; the
+# operator must set the env variable per-session to acknowledge they're
+# making a hot-fix and re-running validate_step("2.4") themselves.
+HOTFIX_PHASES: set[str] = (
+    {"MONITOR"} if os.environ.get("MAP_MONITOR_HOTFIX") == "1" else set()
+)
+ALLOWED_PHASES = EDITING_PHASES | TERMINAL_PHASES | HOTFIX_PHASES
 
 # Map step IDs (used in subtask_phases parallel dict) to phase names
 STEP_ID_TO_PHASE = {
