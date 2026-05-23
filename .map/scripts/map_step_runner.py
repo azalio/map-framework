@@ -5162,6 +5162,158 @@ def subtask_token_usage(
     }
 
 
+def detect_already_done(
+    branch: str, subtask_id: str, *, since_ref: Optional[str] = None
+) -> dict:
+    """Heuristic: does git history suggest the subtask is already shipped?
+
+    Returns ``status``:
+      "likely_done" — every affected_file exists AND has at least one commit
+        in the configured window (``since_ref`` default: ``HEAD~50``).
+      "partial" — some affected_files have commits, some don't / are missing.
+      "unclear" — no evidence either way (fresh files, no history).
+      "error" — blueprint / git unavailable.
+
+    Pragmatic, not authoritative: callers should still review the listed
+    commits before invoking ``mark_subtask_complete``.
+    """
+    branch_name = _sanitize_branch(branch)
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
+    bp = load_blueprint(branch_name, project_dir=project_dir)
+    if bp is None:
+        return {"status": "error", "message": "blueprint.json not found"}
+    sub = get_subtask_from_blueprint(bp, subtask_id)
+    if sub is None:
+        return {"status": "error", "message": f"subtask {subtask_id!r} not in blueprint"}
+
+    raw = sub.get("affected_files", []) or []
+    # Affected paths in blueprints sometimes carry " (new)" suffixes — strip
+    # them so git understands the path.
+    files = sorted({
+        re.split(r"\s+\(", str(p).strip())[0]
+        for p in raw
+        if isinstance(p, str) and p.strip()
+    })
+    if not files:
+        return {
+            "status": "unclear",
+            "subtask_id": subtask_id,
+            "message": "no affected_files declared",
+        }
+
+    requested_ref = since_ref or "HEAD~50"
+    # Probe the requested ref; if it can't be resolved (e.g., HEAD~50 in a
+    # repo with only 3 commits), fall back to the entire reachable history.
+    probe = subprocess.run(
+        ["git", "rev-parse", "--verify", requested_ref],
+        cwd=project_dir,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    window_ref: Optional[str] = requested_ref if probe.returncode == 0 else None
+    evidence: list[dict] = []
+    missing: list[str] = []
+    have_commit: list[str] = []
+    for path in files:
+        full = project_dir / path
+        if not full.exists():
+            missing.append(path)
+            continue
+        log_cmd = ["git", "log", "--oneline"]
+        if window_ref:
+            log_cmd.append(f"{window_ref}..HEAD")
+        log_cmd.extend(["--", path])
+        try:
+            log_proc = subprocess.run(
+                log_cmd,
+                cwd=project_dir,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return {
+                "status": "error",
+                "message": f"git log failed for {path}: {exc}",
+            }
+        commits = [
+            line.strip()
+            for line in log_proc.stdout.splitlines()
+            if line.strip()
+        ]
+        if commits:
+            have_commit.append(path)
+            evidence.append({"path": path, "commits": commits[:5]})
+        else:
+            missing.append(path)
+
+    if missing:
+        status = "partial" if have_commit else "unclear"
+    else:
+        status = "likely_done"
+
+    return {
+        "status": status,
+        "subtask_id": subtask_id,
+        "window_ref": window_ref or "all-history",
+        "expected_files": files,
+        "have_commits": have_commit,
+        "missing_or_no_commits": missing,
+        "evidence": evidence,
+    }
+
+
+def _scope_baseline_path(branch: str, project_dir: Path) -> Path:
+    return project_dir / ".map" / _sanitize_branch(branch) / "scope-baseline.json"
+
+
+def record_scope_baseline(branch: str) -> dict:
+    """Snapshot the current uncommitted / untracked file set as a baseline
+    that validate_mutation_boundary will subtract from `actual` on future
+    runs. Use when the branch carries pre-existing artifacts from prior
+    waves that would otherwise flood every subtask with `warning`.
+
+    Returns dict with: status, path, files (count + list).
+    """
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
+    try:
+        status_proc = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"status": "error", "message": f"git status failed: {exc}"}
+    if status_proc.returncode != 0:
+        return {
+            "status": "error",
+            "message": (
+                f"git status non-zero (exit {status_proc.returncode}): "
+                f"{status_proc.stderr.strip() or 'no stderr'}"
+            ),
+        }
+    files: list[str] = []
+    for raw in status_proc.stdout.splitlines():
+        if len(raw) >= 4:
+            path = raw[3:].strip()
+            if " -> " in path:
+                path = path.split(" -> ", 1)[1]
+            if path and not path.startswith(".map/") and not path.startswith(".codex/"):
+                files.append(path)
+    path = _scope_baseline_path(branch, project_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "branch": _sanitize_branch(branch),
+        "recorded_at": _utc_timestamp(),
+        "files": sorted(set(files)),
+    }
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return {"status": "success", "path": str(path), "count": len(payload["files"]), "files": payload["files"]}
+
+
 def validate_mutation_boundary(
     branch: str, subtask_id: str, base_ref: Optional[str] = None
 ) -> dict:
@@ -5324,6 +5476,24 @@ def validate_mutation_boundary(
         p for p in actual_set
         if not p.startswith(".map/") and not p.startswith(".codex/")
     }
+
+    # Baseline filter: if the operator has captured a per-branch baseline of
+    # pre-existing untracked / unstaged work (via `record_scope_baseline`),
+    # subtract it from `actual` so warnings only flag files that THIS subtask
+    # actually changed. Closes the "every ST showed warning because the
+    # branch carries old uncommitted artifacts" friction.
+    baseline_path = _scope_baseline_path(branch_name, project_dir)
+    baseline_files: set[str] = set()
+    if baseline_path.exists():
+        try:
+            data = json.loads(baseline_path.read_text(encoding="utf-8"))
+            raw = data.get("files", [])
+            if isinstance(raw, list):
+                baseline_files = {str(p) for p in raw if isinstance(p, str)}
+        except (json.JSONDecodeError, OSError):
+            pass
+    if baseline_files:
+        actual_set = {p for p in actual_set if p not in baseline_files}
 
     actual = sorted(actual_set)
     expected_set = set(expected)
@@ -5498,6 +5668,28 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
         parts.append("")
         parts.append(f"# Upstream Results (dependencies of {current_subtask_id}):")
         parts.extend(upstream_lines)
+
+    # Inline the latest research artifact for THIS subtask so callers stop
+    # having to glue load_research output into the Actor prompt by hand.
+    # Tries actor → monitor → decomposer kinds in order; if none exists,
+    # nothing is added (RESEARCH may not have run yet).
+    try:
+        for _research_kind in ("actor", "monitor", "decomposer"):
+            _research_text = load_research(
+                branch, current_subtask_id, kind=_research_kind
+            )
+            if _research_text:
+                parts.append("")
+                parts.append(
+                    f"# Research Findings ({current_subtask_id}, kind={_research_kind}):"
+                )
+                # Cap embedded research at 1500 chars so a chatty research
+                # agent can't crowd out the rest of the context block; the
+                # full file is still on disk under .map/<branch>/research/.
+                parts.append(_truncate_context_value(_research_text, 1500))
+                break
+    except (ValueError, OSError):
+        pass
 
     parts.append("")
     parts.append(f"# Plan Overview ({len(blueprint.get('subtasks', []))} subtasks):")
@@ -6045,6 +6237,27 @@ if __name__ == "__main__":
         report = subtask_token_usage(branch_arg, sid_arg, since_ts=since_arg)
         print(json.dumps(report, indent=2))
         if report.get("status") in {"no_state", "error"}:
+            sys.exit(1)
+
+    elif func_name == "record_scope_baseline" and len(sys.argv) >= 3:
+        # CLI: record_scope_baseline <branch>
+        report = record_scope_baseline(sys.argv[2])
+        print(json.dumps(report, indent=2))
+        if report.get("status") == "error":
+            sys.exit(1)
+
+    elif func_name == "detect_already_done" and len(sys.argv) >= 4:
+        # CLI: detect_already_done <branch> <subtask_id> [--since-ref REF]
+        branch_arg = sys.argv[2]
+        sid_arg = sys.argv[3]
+        since_arg: Optional[str] = None
+        if "--since-ref" in sys.argv:
+            idx = sys.argv.index("--since-ref")
+            if idx + 1 < len(sys.argv):
+                since_arg = sys.argv[idx + 1]
+        report = detect_already_done(branch_arg, sid_arg, since_ref=since_arg)
+        print(json.dumps(report, indent=2))
+        if report.get("status") == "error":
             sys.exit(1)
 
     elif func_name == "validate_mutation_boundary" and len(sys.argv) >= 4:

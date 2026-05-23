@@ -78,6 +78,23 @@ SIGNIFICANT_PATTERNS = [
     r"\bcp\s+-r",
 ]
 
+# Verification-class invocations: legitimate during ACTOR / TEST_WRITER for
+# the agent to self-check before MONITOR. They count as "significant" so the
+# base reminder still emits, but the closing "REQUIRED: Run Actor" pressure
+# tag is suppressed — Actor verifying their own work shouldn't get nagged
+# to re-enter the phase they're already in.
+VERIFICATION_PATTERNS = [
+    r"pytest(\s+|$)",
+    r"ruff\s+check(?!\s+--fix)",
+    r"ruff\s+format\s+--check",
+    r"mypy(\s+|$)",
+    r"pyright(\s+|$)",
+    r"go\s+vet",
+    r"go\s+build\b",
+    r"cargo\s+check",
+    r"tsc\s+--noEmit",
+]
+
 
 def sanitize_branch_name(branch: str) -> str:
     """Sanitize branch name for safe filesystem paths."""
@@ -203,6 +220,21 @@ def should_inject_for_bash(command: str) -> bool:
             return True
 
     # Default: don't inject for unknown commands
+    return False
+
+
+def is_verification_command(command: str) -> bool:
+    """Return True when the bash command is an agent self-verification
+    invocation (pytest, ruff check, mypy, pyright, go vet/build, ...).
+    Used to suppress the "REQUIRED: Run Actor" pressure tag so Actor
+    verifying their own work isn't nagged to re-enter the phase they're
+    already in.
+    """
+    if not command:
+        return False
+    for pattern in VERIFICATION_PATTERNS:
+        if re.search(pattern, command, re.IGNORECASE):
+            return True
     return False
 
 
@@ -351,8 +383,15 @@ def _truncate_at_word(text: str, limit: int) -> str:
     return cut + "..."
 
 
-def format_reminder(state: dict, branch: str) -> str | None:
-    """Format terse workflow reminder (aim: ≤700 chars)."""
+def format_reminder(
+    state: dict, branch: str, *, suppress_required: bool = False
+) -> str | None:
+    """Format terse workflow reminder (aim: ≤700 chars).
+
+    ``suppress_required`` drops the trailing ``| REQUIRED: ...`` pressure tag
+    — used when the invoking command is a verification (pytest, ruff check,
+    mypy, ...) so Actor running self-checks isn't told to "Run Actor".
+    """
     if not state:
         return None
 
@@ -376,21 +415,17 @@ def format_reminder(state: dict, branch: str) -> str | None:
     wave_idx = state.get("current_wave_index", 0)
     wave_hint = ""
     if waves and isinstance(wave_idx, int):
-        wave_hint = f" | WAVE {wave_idx + 1}/{len(waves)}"
-        current_wave = waves[wave_idx] if wave_idx < len(waves) else []
-        if isinstance(current_wave, list) and len(current_wave) > 1:
-            wave_hint += f" ({', '.join(str(item) for item in current_wave)})"
-            # Only label as batch:parallel when the caller is ACTUALLY using
-            # the wave loop — get_wave_step / validate_wave_step / advance_wave
-            # increment current_wave_index past the seed 0. Sticking on
-            # current_wave_index == 0 with the sequential walker (get_next_step)
-            # means waves are computed but unused; calling that "batch:parallel"
-            # in the banner misleads operators into thinking parallel work is
-            # happening when it's not.
-            if wave_idx > 0:
+        # Only surface the WAVE banner when the wave-loop driver is ACTUALLY
+        # in use — current_wave_index > 0 means get_wave_step / advance_wave
+        # advanced past the seed. Showing "WAVE 1/N" while the sequential
+        # walker is driving is cognitive noise (operators wondered which
+        # logic was running). Stay silent until the wave loop kicks in.
+        if wave_idx > 0:
+            wave_hint = f" | WAVE {wave_idx + 1}/{len(waves)}"
+            current_wave = waves[wave_idx] if wave_idx < len(waves) else []
+            if isinstance(current_wave, list) and len(current_wave) > 1:
+                wave_hint += f" ({', '.join(str(item) for item in current_wave)})"
                 mode = "batch:parallel"
-            else:
-                wave_hint += " [waves computed, sequential walker active]"
 
     required = required_action_for_step(step_id, step_phase, state)
 
@@ -464,7 +499,7 @@ def format_reminder(state: dict, branch: str) -> str | None:
     if len(base) > REMINDER_LIMIT:
         base = _truncate_at_word(base, REMINDER_LIMIT)
 
-    if required:
+    if required and not suppress_required:
         result = f"{base} | REQUIRED: {required}"
         if len(result) > REMINDER_LIMIT:
             result = _truncate_at_word(result, REMINDER_LIMIT)
@@ -494,6 +529,7 @@ def main() -> None:
 
     # Determine if we should inject
     should_inject = False
+    suppress_required = False
     skip_reason = ""
 
     if tool_name in ("Edit", "Write", "MultiEdit"):
@@ -504,6 +540,11 @@ def main() -> None:
             skip_reason = "bash command is not a string"
         else:
             should_inject = should_inject_for_bash(command)
+            # Verification commands inject the base reminder but drop the
+            # "REQUIRED: Run Actor" pressure tag — Actor running pytest on
+            # their own work shouldn't be nagged to re-enter ACTOR.
+            if should_inject and is_verification_command(command):
+                suppress_required = True
 
     if not should_inject:
         reason = skip_reason or "tool not configured for workflow injection"
@@ -522,7 +563,7 @@ def main() -> None:
         print("{}")
         sys.exit(0)
 
-    reminder = format_reminder(state, branch)
+    reminder = format_reminder(state, branch, suppress_required=suppress_required)
     if reminder:
         record_hook_injection_status(
             branch, state, "injected", "reminder emitted", tool_name, len(reminder)

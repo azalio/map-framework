@@ -2107,6 +2107,36 @@ class TestValidateStepResearchEnforcement:
         assert result["next_step"] == "2.3"
 
 
+class TestValidateStepTransactionalMonitor:
+    """validate_step('2.4') now implicitly closes pending 2.3 (ACTOR) so
+    callers don't get 'Step mismatch: expected 2.3' when they jump straight
+    from Monitor pass to validation."""
+
+    def test_two_four_auto_closes_pending_two_three(self, branch_dir, tmp_path):
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001"]
+        state.current_subtask_id = "ST-001"
+        # Mid-flight: cursor at 2.3, both 2.3 and 2.4 still pending.
+        state.current_step_id = "2.3"
+        state.current_step_phase = "ACTOR"
+        state.completed_steps = ["2.2"]
+        state.pending_steps = ["2.3", "2.4"]
+        # Plant required research artifact so the 2.2-style enforcement
+        # never blocks (we're past 2.2 here).
+        research_dir = tmp_path / ".map" / branch_dir / "research"
+        research_dir.mkdir(parents=True, exist_ok=True)
+        (research_dir / "ST-001__actor.md").write_text("ok")
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        # Jump straight to 2.4 — historically this returned Step mismatch.
+        result = map_orchestrator.validate_step("2.4", branch_dir)
+        assert result["valid"] is True, result
+        reloaded = map_orchestrator.StepState.load(state_file)
+        assert "2.3" in reloaded.completed_steps
+        assert "2.4" in reloaded.completed_steps
+
+
 class TestRecordSubtaskResultCli:
     """record_subtask_result is the canonical write path for subtask outcomes;
     the earlier release advised this in skill docs but exposed no CLI, so

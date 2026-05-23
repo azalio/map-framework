@@ -2934,6 +2934,125 @@ class TestSubtaskTokenUsage:
         assert report["input_tokens"] == 42
 
 
+class TestRecordScopeBaseline:
+    """record_scope_baseline snapshots current git status into
+    .map/<branch>/scope-baseline.json; validate_mutation_boundary
+    subtracts that set from `actual` so warnings stop flooding when the
+    branch carries pre-existing untracked artifacts."""
+
+    def _init_git(self, root: Path) -> None:
+        subprocess.run(["git", "init"], cwd=root, capture_output=True, check=False)
+        subprocess.run(
+            ["git", "config", "user.email", "t@t.com"], cwd=root, capture_output=True
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "t"], cwd=root, capture_output=True
+        )
+        (root / "seed.txt").write_text("seed")
+        subprocess.run(["git", "add", "."], cwd=root, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=root, capture_output=True)
+
+    def test_baseline_excludes_pre_existing_from_warning(
+        self, branch_workspace, tmp_path, monkeypatch
+    ):
+        del tmp_path  # only the underlying repo dir is exercised
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        # Pre-existing untracked file — would normally trigger warning.
+        (repo / "old_artifact.md").write_text("from prior wave")
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        baseline = map_step_runner.record_scope_baseline("test-branch")
+        assert baseline["status"] == "success"
+        assert "old_artifact.md" in baseline["files"]
+
+        bp = {"subtasks": [{"id": "ST-001", "title": "x", "affected_files": ["a.py"]}]}
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        (repo / "a.py").write_text("x = 1")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
+        # old_artifact.md was in the baseline → filtered → status="clean".
+        assert report["status"] == "clean", report
+        assert "old_artifact.md" not in report["actual"]
+
+
+class TestDetectAlreadyDone:
+    """detect_already_done suggests whether a subtask's affected_files
+    already have commits in the recent window — pragmatic, not authoritative."""
+
+    def _init_git(self, root: Path, commit_files: list[str]) -> None:
+        subprocess.run(["git", "init"], cwd=root, capture_output=True, check=False)
+        subprocess.run(
+            ["git", "config", "user.email", "t@t.com"], cwd=root, capture_output=True
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "t"], cwd=root, capture_output=True
+        )
+        (root / "seed.txt").write_text("seed")
+        subprocess.run(["git", "add", "."], cwd=root, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=root, capture_output=True)
+        for f in commit_files:
+            (root / f).write_text(f"content of {f}")
+            subprocess.run(["git", "add", "."], cwd=root, capture_output=True)
+            subprocess.run(
+                ["git", "commit", "-m", f"add {f}"], cwd=root, capture_output=True
+            )
+
+    def test_likely_done_when_all_affected_have_commits(
+        self, branch_workspace, tmp_path, monkeypatch
+    ):
+        del tmp_path  # only the underlying repo dir is exercised
+        repo = branch_workspace.parents[1]
+        self._init_git(repo, ["mod_a.py", "mod_b.py"])
+        bp = {"subtasks": [{
+            "id": "ST-007", "affected_files": ["mod_a.py", "mod_b.py"],
+        }]}
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        # HEAD~5 doesn't resolve in a 3-commit repo; the function should
+        # fall back to the entire reachable history and still find commits.
+        report = map_step_runner.detect_already_done(
+            "test-branch", "ST-007", since_ref="HEAD~5"
+        )
+        assert report["status"] == "likely_done", report
+        assert sorted(report["have_commits"]) == ["mod_a.py", "mod_b.py"]
+
+    def test_unclear_when_files_missing(self, branch_workspace, tmp_path, monkeypatch):
+        del tmp_path  # only the underlying repo dir is exercised
+        repo = branch_workspace.parents[1]
+        self._init_git(repo, [])
+        bp = {"subtasks": [{
+            "id": "ST-007", "affected_files": ["never_made.py"],
+        }]}
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.detect_already_done("test-branch", "ST-007")
+        assert report["status"] == "unclear"
+        assert "never_made.py" in report["missing_or_no_commits"]
+
+
+class TestBuildContextBlockInlinesResearch:
+    """build_context_block now auto-loads load_research for the current
+    subtask so callers don't have to glue findings into the Actor prompt
+    by hand."""
+
+    def test_actor_research_inlined_when_present(self, branch_workspace):
+        bp = {"subtasks": [{
+            "id": "ST-001", "title": "x", "aag_contract": "X -> y -> done",
+        }]}
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        # Plant research artifact via the canonical API.
+        map_step_runner.save_research("test-branch", "ST-001", "Pivotal finding: foo wraps bar.")
+        result = map_step_runner.build_context_block("test-branch", "ST-001")
+        assert "# Research Findings (ST-001, kind=actor):" in result
+        assert "Pivotal finding: foo wraps bar." in result
+
+    def test_no_research_section_when_artifact_absent(self, branch_workspace):
+        bp = {"subtasks": [{"id": "ST-001", "title": "x"}]}
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        result = map_step_runner.build_context_block("test-branch", "ST-001")
+        assert "# Research Findings" not in result
+
+
 class TestValidateMutationBoundary:
     """validate_mutation_boundary compares actual git diff vs the planned
     affected_files surface. Warn-only by default; MAP_STRICT_SCOPE=1 escalates

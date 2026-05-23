@@ -725,6 +725,21 @@ def validate_step(step_id: str, branch: str) -> dict:
             "idempotent": True,
         }
 
+    # Transactional MONITOR pass: validate_step("2.4") implicitly closes
+    # 2.3 (ACTOR) if it's still pending. Caller convenience — Monitor
+    # approval logically means Actor work was accepted, so requiring a
+    # separate validate_step("2.3") before validate_step("2.4") is just
+    # ceremony that produces "Step mismatch: expected 2.3" errors.
+    if (
+        step_id == "2.4"
+        and state.current_step_id == "2.3"
+        and "2.3" in state.pending_steps
+    ):
+        state.completed_steps.append("2.3")
+        state.pending_steps.remove("2.3")
+        state.current_step_id = "2.4"
+        state.current_step_phase = "MONITOR"
+
     # Check if step is current
     if state.current_step_id != step_id:
         return {
