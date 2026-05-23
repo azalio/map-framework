@@ -2851,6 +2851,55 @@ class TestSubtaskTokenUsage:
         assert report["cache_creation_input_tokens"] == 201
         assert report["cache_read_input_tokens"] == 300
 
+    def test_all_flag_via_cli_reports_whole_session(
+        self, branch_workspace, tmp_path, monkeypatch
+    ):
+        """`--all` anchors the window at epoch so the report covers every
+        message in the active jsonl, ignoring step_state.json mtime."""
+        self._seed_state(branch_workspace)
+        proj_abs = tmp_path.resolve()
+        log_dir = tmp_path / "home" / ".claude" / "projects" / str(proj_abs).replace("/", "-")
+        entries = [
+            {  # Way before any plausible state mtime
+                "timestamp": "2020-01-01T00:00:00Z",
+                "message": {"role": "assistant", "usage": {
+                    "input_tokens": 11, "output_tokens": 22,
+                    "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+                }},
+            },
+            {
+                "timestamp": "2026-05-23T00:00:00Z",
+                "message": {"role": "assistant", "usage": {
+                    "input_tokens": 33, "output_tokens": 44,
+                    "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+                }},
+            },
+        ]
+        self._seed_log(log_dir, entries)
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj_abs))
+        runner = (
+            Path(__file__).resolve().parents[1]
+            / "src" / "mapify_cli" / "templates" / "map" / "scripts" / "map_step_runner.py"
+        )
+        env = {
+            **os.environ,
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "HOME": str(tmp_path / "home"),
+            "CLAUDE_PROJECT_DIR": str(proj_abs),
+        }
+        result = subprocess.run(
+            [sys.executable, str(runner), "subtask_token_usage", "test-branch", "--all"],
+            capture_output=True, text=True, cwd=str(tmp_path), env=env,
+        )
+        assert result.returncode == 0, result.stderr
+        report = json.loads(result.stdout)
+        # Both entries counted (default-anchor would drop the 2020 one).
+        assert report["messages_counted"] == 2
+        assert report["input_tokens"] == 44
+        assert report["output_tokens"] == 66
+        assert report["since_ts"].startswith("1970-01-01")
+
     def test_no_logs_when_log_dir_missing(self, branch_workspace, tmp_path, monkeypatch):
         self._seed_state(branch_workspace)
         monkeypatch.setenv("HOME", str(tmp_path / "fake-empty-home"))

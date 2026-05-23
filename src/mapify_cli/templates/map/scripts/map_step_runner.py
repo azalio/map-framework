@@ -6026,6 +6026,10 @@ if __name__ == "__main__":
 
     elif func_name == "subtask_token_usage" and len(sys.argv) >= 3:
         # CLI: subtask_token_usage <branch> [subtask_id] [--since-ts ISO]
+        #      [--all]
+        # --all reports the whole-session total (anchors window at epoch);
+        # useful when the operator wants "tokens since session start" rather
+        # than "tokens since current subtask boundary".
         branch_arg = sys.argv[2]
         sid_arg: Optional[str] = None
         since_arg: Optional[str] = None
@@ -6036,6 +6040,8 @@ if __name__ == "__main__":
             idx = rest.index("--since-ts")
             if idx + 1 < len(rest):
                 since_arg = rest[idx + 1]
+        if "--all" in rest and not since_arg:
+            since_arg = "1970-01-01T00:00:00Z"
         report = subtask_token_usage(branch_arg, sid_arg, since_ts=since_arg)
         print(json.dumps(report, indent=2))
         if report.get("status") in {"no_state", "error"}:
