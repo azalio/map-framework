@@ -2107,6 +2107,91 @@ class TestValidateStepResearchEnforcement:
         assert result["next_step"] == "2.3"
 
 
+class TestRecordSubtaskResultCli:
+    """record_subtask_result is the canonical write path for subtask outcomes;
+    the earlier release advised this in skill docs but exposed no CLI, so
+    callers either reached into Python or relied on indirect recording."""
+
+    def test_records_result_to_step_state(self, branch_dir, tmp_path):
+        state = map_orchestrator.StepState()
+        state.subtask_sequence = ["ST-001"]
+        state.current_subtask_id = "ST-001"
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        result = map_orchestrator.record_subtask_result(
+            "ST-001", branch_dir, files_changed=["a.py"], status="valid",
+            summary="all green", commit_sha="abc123",
+        )
+        assert result["status"] == "success"
+        reloaded = map_orchestrator.StepState.load(state_file)
+        assert reloaded.subtask_results["ST-001"]["status"] == "valid"
+        assert reloaded.subtask_results["ST-001"]["files_changed"] == ["a.py"]
+        assert reloaded.last_subtask_commit_sha == "abc123"
+
+
+class TestFinalizePlan:
+    """finalize_plan bumps artifact_manifest.stages.plan to 'complete' so
+    /map-plan stops leaving the stage stuck in 'partial' after artifacts ship."""
+
+    def test_bumps_partial_to_complete_when_artifacts_present(self, branch_dir, tmp_path):
+        plan_dir = tmp_path / ".map" / branch_dir
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / f"task_plan_{branch_dir}.md").write_text("# plan\n### ST-001\n")
+        (plan_dir / "blueprint.json").write_text(json.dumps({"subtasks": [{"id": "ST-001"}]}))
+        (plan_dir / "artifact_manifest.json").write_text(json.dumps({
+            "stages": {"plan": {"status": "partial"}}
+        }))
+        result = map_orchestrator.finalize_plan(branch_dir)
+        assert result["status"] == "success"
+        manifest = json.loads((plan_dir / "artifact_manifest.json").read_text())
+        assert manifest["stages"]["plan"]["status"] == "complete"
+
+    def test_noop_without_artifacts(self, branch_dir, tmp_path):
+        del tmp_path  # fixture side-effects (chdir) already applied via branch_dir
+        result = map_orchestrator.finalize_plan(branch_dir)
+        assert result["status"] == "noop"
+
+
+class TestValidateStepAutoMutationBoundary:
+    """validate_step('2.4') now runs validate_mutation_boundary so scope
+    leaks can't silently slip past MONITOR. Warn-only by default; STRICT mode
+    escalates."""
+
+    def test_strict_mode_rejects_violation(self, branch_dir, tmp_path, monkeypatch):
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001"]
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.4"
+        state.current_step_phase = "MONITOR"
+        state.pending_steps = ["2.4"]
+        state.completed_steps = ["2.2", "2.3"]
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        # Plant blueprint with ONE expected file but make repo have an
+        # untracked extra to trip the boundary check.
+        plan_dir = tmp_path / ".map" / branch_dir
+        (plan_dir / "blueprint.json").write_text(json.dumps({
+            "subtasks": [{"id": "ST-001", "title": "x", "affected_files": ["a.py"]}],
+        }))
+        # Init real git repo so validate_mutation_boundary's git calls work.
+        import subprocess as _sp
+        _sp.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "config", "user.name", "t"], cwd=tmp_path, capture_output=True)
+        (tmp_path / "seed.txt").write_text("seed")
+        _sp.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True)
+        (tmp_path / "leak.py").write_text("nope")  # untracked: scope leak
+        _sp.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
+
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        monkeypatch.setenv("MAP_STRICT_SCOPE", "1")
+        result = map_orchestrator.validate_step("2.4", branch_dir)
+        assert result["valid"] is False
+        assert "Mutation-boundary violation" in result["message"]
+
+
 class TestPeekCurrentStep:
     """peek_current_step is the read-only recovery escape hatch for the case
     where validate_step rejects a double-advance with 'Step mismatch: expected

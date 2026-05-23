@@ -380,7 +380,17 @@ def format_reminder(state: dict, branch: str) -> str | None:
         current_wave = waves[wave_idx] if wave_idx < len(waves) else []
         if isinstance(current_wave, list) and len(current_wave) > 1:
             wave_hint += f" ({', '.join(str(item) for item in current_wave)})"
-            mode = "batch:parallel"
+            # Only label as batch:parallel when the caller is ACTUALLY using
+            # the wave loop — get_wave_step / validate_wave_step / advance_wave
+            # increment current_wave_index past the seed 0. Sticking on
+            # current_wave_index == 0 with the sequential walker (get_next_step)
+            # means waves are computed but unused; calling that "batch:parallel"
+            # in the banner misleads operators into thinking parallel work is
+            # happening when it's not.
+            if wave_idx > 0:
+                mode = "batch:parallel"
+            else:
+                wave_hint += " [waves computed, sequential walker active]"
 
     required = required_action_for_step(step_id, step_phase, state)
 

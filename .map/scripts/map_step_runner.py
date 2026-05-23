@@ -4978,16 +4978,26 @@ def save_research(
     content: str,
     *,
     kind: str = "actor",
+    attempt: Optional[int] = None,
 ) -> str:
     """Persist research findings for a subtask. Returns the written path.
 
-    Keeps multiple consumer kinds (actor, monitor, decomposer, ...)
-    side-by-side under .map/<branch>/research/<subtask_id>__<kind>.md so the
-    research surface stops being discipline-only — Actor writes once and
-    Monitor reads through the same path on the next phase.
+    Default behaviour overwrites the canonical ``<subtask_id>__<kind>.md`` so
+    Actor and Monitor read the latest copy without a sentinel hunt. Pass an
+    ``attempt`` integer (e.g. retry_count) to preserve a numbered snapshot at
+    ``<subtask_id>__<kind>.attempt-<N>.md`` BEFORE overwriting the canonical
+    path — useful for clean-retry diffing without losing the original.
     """
     path = _research_path(branch, subtask_id, kind)
     path.parent.mkdir(parents=True, exist_ok=True)
+    if attempt is not None and path.exists():
+        snapshot = path.with_name(
+            f"{subtask_id}__{kind}.attempt-{int(attempt)}.md"
+        )
+        try:
+            snapshot.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+        except OSError:
+            pass
     path.write_text(content, encoding="utf-8")
     return str(path)
 
@@ -5411,7 +5421,29 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
         },
         branch=branch,
     )
-    return str(budget_result["text"])
+    text = str(budget_result["text"])
+    # Visible truncation signal: Actor previously had no way to tell that
+    # the context block was budget-clipped, so silent detail-loss masqueraded
+    # as "Actor ignored a nuance". Emit a tiny in-band marker so callers know
+    # to consult the linked artifacts. Kept ultra-short (~10 tokens) so it
+    # doesn't itself blow the budget — the full clipping ledger lives in
+    # token_budget.json which record_token_budget_decision already wrote.
+    if budget_result.get("truncated"):
+        marker = "# [TRUNCATED] see .map/<branch>/token_budget.json"
+        lines = text.splitlines()
+        # Replace the existing "# Context Budget: ..." footer (if any) with
+        # the marker to net-zero on tokens; otherwise inject right after the
+        # opening <map_context> tag.
+        replaced = False
+        for i, line in enumerate(lines):
+            if line.startswith("# Context Budget:"):
+                lines[i] = marker
+                replaced = True
+                break
+        if not replaced and lines and lines[0].strip().startswith("<map_context>"):
+            lines.insert(1, marker)
+        text = "\n".join(lines)
+    return text
 
 
 def prepare_detached_review(
@@ -5865,14 +5897,30 @@ if __name__ == "__main__":
             sys.exit(1)
 
     elif func_name == "save_research" and len(sys.argv) >= 4:
-        # CLI: save_research <branch> <subtask_id> [kind]; content via stdin
+        # CLI: save_research <branch> <subtask_id> [kind] [--attempt N]
+        # content via stdin
         branch_arg = sys.argv[2]
         subtask_arg = sys.argv[3]
-        kind_arg = sys.argv[4] if len(sys.argv) >= 5 else "actor"
+        kind_arg = "actor"
+        attempt_arg: Optional[int] = None
+        rest = list(sys.argv[4:])
+        if rest and not rest[0].startswith("--"):
+            kind_arg = rest.pop(0)
+        if "--attempt" in rest:
+            idx = rest.index("--attempt")
+            if idx + 1 < len(rest):
+                try:
+                    attempt_arg = int(rest[idx + 1])
+                except ValueError:
+                    print(
+                        json.dumps({"status": "error", "message": "--attempt must be int"}),
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
         try:
             content_in = sys.stdin.read()
             written = save_research(
-                branch_arg, subtask_arg, content_in, kind=kind_arg
+                branch_arg, subtask_arg, content_in, kind=kind_arg, attempt=attempt_arg
             )
             print(json.dumps({"status": "success", "path": written}))
         except ValueError as exc:

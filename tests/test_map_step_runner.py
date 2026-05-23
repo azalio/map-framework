@@ -2465,7 +2465,11 @@ class TestBuildContextBlock:
         assert map_step_runner._estimate_tokens(result) <= 260
         assert result.startswith("<map_context>")
         assert result.endswith("</map_context>")
-        assert "# Context Budget: truncated" in result
+        # Truncation marker replaced "# Context Budget: truncated..." with the
+        # compact "# [TRUNCATED] see .map/<branch>/token_budget.json" so the
+        # warning itself doesn't blow the budget. Either signal proves a clip
+        # happened — assert the new in-band marker.
+        assert "# [TRUNCATED] see .map/<branch>/token_budget.json" in result
         assert "Current task that must stay visible" in result
         assert "Actor -> bounded context -> done" in result
         assert "# Upstream Results" in result

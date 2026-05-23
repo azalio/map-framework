@@ -305,10 +305,39 @@ Return JSON with valid, summary, issues, files_changed, tests_run, and escalatio
 
 # After Monitor returns:
 
-- If `valid=true`, run the deterministic test gate, record the subtask result, and validate/advance the state.
+- **Verdict contract (MANDATORY):** Monitor's `recommendation` field overrides
+  loose `valid=true` calls. If `valid=true` AND `recommendation in {"revise",
+  "block", "needs_investigation"}`, treat it as `valid=false`. Reason: a
+  MEDIUM/HIGH issue with a permissive `valid` is the same broken-window
+  pattern that silently merged "NOT NULL" / type-ignore mistakes. Only the
+  combination `valid=true AND recommendation in {"proceed", "approve",
+  null/missing}` is a clean pass.
+- **Record the subtask result (REQUIRED on clean pass):**
+  ```bash
+  python3 .map/scripts/map_orchestrator.py record_subtask_result "$SUBTASK_ID" valid \
+    --files "$FILES_CSV" --summary "$ONE_LINE" --commit-sha "$SHA"
+  ```
+  `record_subtask_result` is the canonical write path — the result lands in
+  `subtask_results` and `last_subtask_commit_sha` for downstream context.
+- **Auto-validate mutation boundary:** `validate_step 2.4` itself now runs
+  `validate_mutation_boundary` for the current subtask and rejects on
+  `status="violation"` (only when `MAP_STRICT_SCOPE=1`) or `status="error"`.
+  No manual dispatch needed.
 - If `valid=false`, write `code-review-N.md`, run `python3 .map/scripts/map_orchestrator.py monitor_failed --feedback "<feedback>"`, inspect `retry_isolation`, and invoke Predictor only when stuck/high-risk escalation rules apply.
 - If `retry_isolation=clean_retry_required`, run `python3 .map/scripts/map_step_runner.py validate_retry_quarantine` before the next Actor call. The next Actor prompt must use CLEAN_RETRY mode from `.map/<branch>/retry_quarantine.json` and must not reuse the rejected approach unless the quarantine artifact preserves it.
 - Treat test failures after Monitor approval as Monitor failure.
+
+### Phase: ADVANCE_SUBTASK (synthetic boundary)
+
+After `validate_step 2.4` succeeds AND another subtask remains in the
+sequence, the orchestrator returns `next_step: "ADVANCE_SUBTASK"`. This is
+NOT a phase you execute — it just means "this subtask is done; call
+`get_next_step` again to load the next subtask's RESEARCH (2.2)". The
+sentinel exists so callers can tell mid-workflow advancement apart from a
+real terminal `COMPLETE`. Treat it as a free transition: invoke
+`get_next_step` and continue. (If you instead see `next_step: "COMPLETE"`
+AND `subtask_index + 1 == len(subtask_sequence)`, the workflow is really
+done — go to final verification.)
 
 ### Monitor Artifact Rule
 

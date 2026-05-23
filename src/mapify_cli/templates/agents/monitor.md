@@ -1595,6 +1595,25 @@ Before returning JSON, verify:
 
 Do NOT invent issues to justify review effort. Empty `issues` array is valid.
 
+### Verdict consistency contract (MANDATORY)
+
+`valid` and `issues` must agree — partial / contradictory verdicts hide bugs.
+
+- If `issues` contains ANY item with `severity in {"medium", "high",
+  "critical", "blocker"}`, you MUST set `valid: false`. A "MEDIUM with
+  valid: true" is a broken-window pattern: callers branch on `valid`, so
+  the medium issue is silently lost.
+- If `issues` is non-empty but all items are `severity: "low"`, `valid:
+  true` is acceptable ONLY when `feedback_for_actor` explicitly says
+  "non-blocking — fix in follow-up". The skill caller then logs the
+  follow-up into `.map/<branch>/known-issues.json` before advancing.
+- The optional `recommendation` field, when present, MUST be one of
+  `{"proceed", "approve"}` whenever `valid: true`. Any
+  `recommendation in {"revise", "block", "needs_investigation"}` forces
+  `valid: false`. Do not emit `valid: true` + `recommendation: "revise"`
+  — it is a contradiction that downstream workflows treat as a clean
+  pass and silently skip the recommended revision.
+
 ### JSON Schema Definition (Complete)
 
 ```json

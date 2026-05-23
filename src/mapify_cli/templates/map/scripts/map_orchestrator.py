@@ -526,8 +526,15 @@ def get_step_instruction(step_id: str, state: StepState) -> str:
             "Single source of truth for workflow enforcement."
         ),
         "2.2": (
-            "Call Task(subagent_type='research-agent') to research the subtask. "
-            "MANDATORY for all subtasks. Pass findings to Actor."
+            "Call Task(subagent_type='research-agent') to research the subtask, "
+            "then persist findings via "
+            "`python3 .map/scripts/map_step_runner.py save_research <branch> "
+            "<subtask_id>`. MANDATORY for all subtasks (validate_step 2.2 "
+            "rejects when no research artifact exists). "
+            "Short-circuit hint: if this subtask is already done in a prior "
+            "PR or is a pure no-op, skip the cycle with "
+            "`python3 .map/scripts/map_orchestrator.py mark_subtask_complete "
+            "<subtask_id> --reason \"...\"` instead of running research."
         ),
         "2.25": (
             f"TDD TEST_WRITER: Call Task(subagent_type='actor') with "
@@ -749,6 +756,33 @@ def validate_step(step_id: str, branch: str) -> dict:
                     "before validate_step 2.2."
                 ),
             }
+    # MONITOR gate auto-runs validate_mutation_boundary so scope leaks can't
+    # silently slip past. The check is warn-only by default; only
+    # MAP_STRICT_SCOPE=1 escalates a "violation" to a hard reject. Best-effort:
+    # if blueprint or git aren't available (e.g., unit tests that exercise
+    # just the orchestrator), skip silently rather than block the gate.
+    if step_id == "2.4" and state.current_subtask_id:
+        blueprint_present = Path(f".map/{branch}/blueprint.json").exists()
+        if blueprint_present:
+            try:
+                from map_step_runner import validate_mutation_boundary  # noqa: WPS433
+                scope_report = validate_mutation_boundary(
+                    branch, state.current_subtask_id
+                )
+                scope_status = scope_report.get("status")
+                # "error" (git failure, unknown subtask) is non-blocking by
+                # default — strict mode still treats violation as a hard
+                # reject.
+                if scope_status == "violation" and scope_report.get("strict"):
+                    return {
+                        "valid": False,
+                        "message": (
+                            "Mutation-boundary violation in MAP_STRICT_SCOPE mode. "
+                            f"Unexpected files: {scope_report.get('unexpected', [])}"
+                        ),
+                    }
+            except ImportError:
+                pass
     # CHOOSE_MODE is auto-skipped; execution_mode is always "batch"
 
     # Mark step complete
@@ -1539,6 +1573,87 @@ def mark_workflow_complete(branch: str) -> dict:
     }
 
 
+def record_subtask_result(
+    subtask_id: str,
+    branch: str,
+    files_changed: list[str],
+    status: str,
+    summary: str = "",
+    commit_sha: Optional[str] = None,
+) -> dict:
+    """CLI wrapper around StepState.record_subtask_result.
+
+    The skill text used to advise "record files changed in step_state.json"
+    without a public command — callers had to either reach into Python or
+    rely on the indirect record happening inside validate_step. This exposes
+    the canonical write path so /map-efficient's ACTOR-done step has a
+    deterministic dispatch.
+    """
+    state_file = Path(f".map/{branch}/step_state.json")
+    if not state_file.exists():
+        return {
+            "status": "error",
+            "message": f"No step_state.json at {state_file}",
+        }
+    state = StepState.load(state_file)
+    state.record_subtask_result(
+        subtask_id,
+        files_changed=files_changed,
+        status=status,
+        summary=summary,
+        commit_sha=commit_sha,
+    )
+    state.save(state_file)
+    return {
+        "status": "success",
+        "subtask_id": subtask_id,
+        "recorded": state.subtask_results[subtask_id],
+    }
+
+
+def finalize_plan(branch: str) -> dict:
+    """Bump the artifact_manifest plan stage to "complete" when artifacts exist.
+
+    Closes the gap where /map-plan leaves stage=plan: partial in
+    artifact_manifest.json even after blueprint+task_plan+spec are written.
+    No-op safe: returns status="noop" if blueprint+task_plan aren't both
+    present.
+    """
+    plan_dir = Path(f".map/{branch}")
+    blueprint = plan_dir / "blueprint.json"
+    plan_file = plan_dir / f"task_plan_{branch}.md"
+    if not (blueprint.exists() and plan_file.exists()):
+        return {
+            "status": "noop",
+            "message": "blueprint.json + task_plan_<branch>.md required",
+        }
+    manifest_path = plan_dir / "artifact_manifest.json"
+    if not manifest_path.exists():
+        return {
+            "status": "noop",
+            "message": "artifact_manifest.json not found",
+        }
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        return {
+            "status": "error",
+            "message": f"unreadable artifact_manifest.json: {exc}",
+        }
+    stages = manifest.get("stages", {})
+    if not isinstance(stages, dict):
+        return {"status": "error", "message": "manifest.stages malformed"}
+    plan_stage = stages.get("plan")
+    if not isinstance(plan_stage, dict):
+        plan_stage = {}
+    plan_stage["status"] = "complete"
+    plan_stage["updated_at"] = _utc_timestamp()
+    stages["plan"] = plan_stage
+    manifest["stages"] = stages
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    return {"status": "success", "plan_stage": plan_stage}
+
+
 def mark_subtask_complete(
     subtask_id: str, branch: str, reason: str = "no-op"
 ) -> dict:
@@ -2282,6 +2397,8 @@ def main():
             "reopen_for_fixes",
             "mark_workflow_complete",
             "mark_subtask_complete",
+            "record_subtask_result",
+            "finalize_plan",
         ],
         help="Command to execute",
     )
@@ -2305,6 +2422,19 @@ def main():
     parser.add_argument(
         "--reason",
         help="Free-form reason (e.g. for mark_subtask_complete no-op records)",
+    )
+    parser.add_argument(
+        "--files",
+        help="Comma-separated list of files (for record_subtask_result)",
+    )
+    parser.add_argument(
+        "--summary",
+        help="One-line summary (for record_subtask_result)",
+    )
+    parser.add_argument(
+        "--commit-sha",
+        dest="commit_sha",
+        help="Commit SHA (for record_subtask_result)",
     )
     parser.add_argument(
         "--transcript-path",
@@ -2550,6 +2680,39 @@ def main():
                 sys.exit(1)
             reason = args.reason or "no-op"
             result = mark_subtask_complete(args.task_or_step, branch, reason)
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "record_subtask_result":
+            # CLI: record_subtask_result <ST-ID> <status> [--files a.py,b.py]
+            # [--summary "..."] [--commit-sha SHA]
+            if not args.task_or_step:
+                print(
+                    json.dumps({"error": "subtask_id required"}),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            extra_args = list(args.extra_args or [])
+            if not extra_args:
+                print(
+                    json.dumps({"error": "status required (valid|invalid|no-op)"}),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            status_value = extra_args[0]
+            files_list = args.files.split(",") if args.files else []
+            files_list = [f.strip() for f in files_list if f.strip()]
+            result = record_subtask_result(
+                args.task_or_step,
+                branch,
+                files_changed=files_list,
+                status=status_value,
+                summary=args.summary or "",
+                commit_sha=args.commit_sha,
+            )
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "finalize_plan":
+            result = finalize_plan(branch)
             print(json.dumps(result, indent=2))
 
     except Exception as e:
