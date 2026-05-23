@@ -5018,6 +5018,150 @@ def load_research(
         return ""
 
 
+def _claude_code_log_dir(project_dir: Path) -> Optional[Path]:
+    """Claude Code stores per-session jsonl logs under
+    ``~/.claude/projects/<project-path-with-slashes-as-dashes>/``.
+    Resolve the canonical dir for the given project.
+    """
+    home = Path(os.environ.get("HOME", "")).expanduser()
+    if not home:
+        return None
+    abs_proj = project_dir.resolve()
+    # The harness replaces "/" with "-" verbatim, no other sanitization.
+    canonical_name = str(abs_proj).replace("/", "-")
+    candidate = home / ".claude" / "projects" / canonical_name
+    if candidate.is_dir():
+        return candidate
+    # Fallback: pick by cwd match across all session logs (slower).
+    projects_root = home / ".claude" / "projects"
+    if not projects_root.is_dir():
+        return None
+    for child in projects_root.iterdir():
+        if child.is_dir():
+            try:
+                latest = max(child.glob("*.jsonl"), key=lambda p: p.stat().st_mtime)
+            except ValueError:
+                continue
+            try:
+                first = next(
+                    json.loads(line)
+                    for line in latest.read_text(errors="replace").splitlines()[:30]
+                    if "cwd" in line
+                )
+            except (StopIteration, json.JSONDecodeError, OSError):
+                continue
+            if isinstance(first, dict) and str(first.get("cwd")) == str(abs_proj):
+                return child
+    return None
+
+
+def subtask_token_usage(
+    branch: str,
+    subtask_id: Optional[str] = None,
+    *,
+    since_ts: Optional[str] = None,
+) -> dict:
+    """Sum Claude Code transcript token usage for the current subtask.
+
+    Reads the most recent ``~/.claude/projects/<project>/*.jsonl`` log and
+    aggregates ``message.usage`` fields from assistant turns whose timestamp
+    falls AFTER the subtask transition. The transition timestamp defaults to
+    ``step_state.json``'s mtime — close enough because the orchestrator
+    writes to that file on every advance — or to the explicit ``since_ts``
+    parameter when callers want a custom window.
+
+    Returns a dict with:
+      status: "success" | "no_logs" | "no_state" | "error"
+      subtask_id, since_ts, transcript, messages_counted
+      input_tokens, output_tokens, cache_read_input_tokens,
+      cache_creation_input_tokens, total_tokens
+    """
+    branch_name = _sanitize_branch(branch)
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
+
+    state_file = project_dir / ".map" / branch_name / "step_state.json"
+    if not state_file.exists():
+        return {"status": "no_state", "message": f"missing {state_file}"}
+    try:
+        state_data = json.loads(state_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        return {"status": "error", "message": f"unreadable state: {exc}"}
+
+    if subtask_id is None:
+        subtask_id = state_data.get("current_subtask_id") or "unknown"
+
+    log_dir = _claude_code_log_dir(project_dir)
+    if log_dir is None:
+        return {
+            "status": "no_logs",
+            "subtask_id": subtask_id,
+            "message": f"no Claude Code session log dir under ~/.claude/projects for {project_dir}",
+        }
+    try:
+        latest = max(log_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime)
+    except ValueError:
+        return {
+            "status": "no_logs",
+            "subtask_id": subtask_id,
+            "message": f"no .jsonl files in {log_dir}",
+        }
+
+    # Transition timestamp = explicit since_ts OR step_state.json mtime.
+    if since_ts:
+        threshold_iso = since_ts
+    else:
+        from datetime import datetime as _dt, timezone as _tz
+        threshold_iso = _dt.fromtimestamp(
+            state_file.stat().st_mtime, _tz.utc
+        ).isoformat().replace("+00:00", "Z")
+
+    totals = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+    }
+    messages_counted = 0
+    try:
+        with latest.open(encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                try:
+                    entry = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                ts = entry.get("timestamp")
+                if not isinstance(ts, str) or ts < threshold_iso:
+                    continue
+                msg = entry.get("message")
+                if not isinstance(msg, dict):
+                    continue
+                usage = msg.get("usage")
+                if not isinstance(usage, dict):
+                    continue
+                messages_counted += 1
+                for key in totals:
+                    val = usage.get(key)
+                    if isinstance(val, int):
+                        totals[key] += val
+    except OSError as exc:
+        return {"status": "error", "message": f"transcript read failed: {exc}"}
+
+    totals_total = (
+        totals["input_tokens"]
+        + totals["output_tokens"]
+        + totals["cache_creation_input_tokens"]
+    )
+    return {
+        "status": "success",
+        "subtask_id": subtask_id,
+        "since_ts": threshold_iso,
+        "transcript": str(latest),
+        "messages_counted": messages_counted,
+        "total_tokens": totals_total,
+        **totals,
+    }
+
+
 def validate_mutation_boundary(
     branch: str, subtask_id: str, base_ref: Optional[str] = None
 ) -> dict:
@@ -5879,6 +6023,23 @@ if __name__ == "__main__":
             )
             sys.exit(1)
         print(json.dumps(sub, indent=2))
+
+    elif func_name == "subtask_token_usage" and len(sys.argv) >= 3:
+        # CLI: subtask_token_usage <branch> [subtask_id] [--since-ts ISO]
+        branch_arg = sys.argv[2]
+        sid_arg: Optional[str] = None
+        since_arg: Optional[str] = None
+        rest = list(sys.argv[3:])
+        if rest and not rest[0].startswith("--"):
+            sid_arg = rest.pop(0)
+        if "--since-ts" in rest:
+            idx = rest.index("--since-ts")
+            if idx + 1 < len(rest):
+                since_arg = rest[idx + 1]
+        report = subtask_token_usage(branch_arg, sid_arg, since_ts=since_arg)
+        print(json.dumps(report, indent=2))
+        if report.get("status") in {"no_state", "error"}:
+            sys.exit(1)
 
     elif func_name == "validate_mutation_boundary" and len(sys.argv) >= 4:
         # CLI: validate_mutation_boundary <branch> <subtask_id> [base_ref]

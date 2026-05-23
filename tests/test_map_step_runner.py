@@ -2770,6 +2770,121 @@ class TestBuildContextBlockIntegration:
         assert "[>>] ST-002: Second task (IN PROGRESS)" in result
 
 
+class TestSubtaskTokenUsage:
+    """subtask_token_usage parses ~/.claude/projects/<project>/*.jsonl and
+    aggregates assistant message.usage since the last subtask transition
+    (step_state.json mtime). Closes the "no cheap per-subtask token count"
+    gap from the latest framework triage (#10)."""
+
+    def _seed_state(self, branch_workspace: Path, current: str = "ST-001") -> None:
+        state = {
+            "workflow": "map-efficient",
+            "current_subtask_id": current,
+            "subtask_sequence": [current],
+        }
+        (branch_workspace / "step_state.json").write_text(json.dumps(state))
+
+    def _seed_log(self, log_dir: Path, entries: list[dict]) -> Path:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / "session-test.jsonl"
+        with log_path.open("w", encoding="utf-8") as fh:
+            for entry in entries:
+                fh.write(json.dumps(entry) + "\n")
+        return log_path
+
+    def test_sums_usage_only_after_state_mtime(
+        self, branch_workspace, tmp_path, monkeypatch
+    ):
+        import time
+        from datetime import datetime, timedelta, timezone
+        self._seed_state(branch_workspace)
+        # Force state mtime to a known anchor.
+        anchor = datetime.now(timezone.utc).replace(microsecond=0)
+        os.utime(
+            branch_workspace / "step_state.json",
+            (anchor.timestamp(), anchor.timestamp()),
+        )
+        # Place a Claude Code log dir using the canonical name convention.
+        proj_abs = tmp_path.resolve()
+        log_dir = tmp_path / "fake-home" / ".claude" / "projects" / str(proj_abs).replace("/", "-")
+        before = (anchor - timedelta(seconds=30)).isoformat().replace("+00:00", "Z")
+        after_1 = (anchor + timedelta(seconds=10)).isoformat().replace("+00:00", "Z")
+        after_2 = (anchor + timedelta(seconds=20)).isoformat().replace("+00:00", "Z")
+        entries = [
+            {  # BEFORE transition — must be ignored
+                "timestamp": before,
+                "message": {"role": "assistant", "usage": {
+                    "input_tokens": 9999, "output_tokens": 9999,
+                    "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+                }},
+            },
+            {  # After — counted
+                "timestamp": after_1,
+                "message": {"role": "assistant", "usage": {
+                    "input_tokens": 100, "output_tokens": 50,
+                    "cache_creation_input_tokens": 200, "cache_read_input_tokens": 300,
+                }},
+            },
+            {  # After — counted
+                "timestamp": after_2,
+                "message": {"role": "assistant", "usage": {
+                    "input_tokens": 5, "output_tokens": 7,
+                    "cache_creation_input_tokens": 1, "cache_read_input_tokens": 0,
+                }},
+            },
+            {  # No usage field — ignored
+                "timestamp": after_2,
+                "message": {"role": "user", "content": "hi"},
+            },
+        ]
+        self._seed_log(log_dir, entries)
+        monkeypatch.setenv("HOME", str(tmp_path / "fake-home"))
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj_abs))
+        # avoid time-of-day flake by sleeping briefly so log mtime > state mtime
+        time.sleep(0.01)
+        report = map_step_runner.subtask_token_usage("test-branch")
+        assert report["status"] == "success", report
+        assert report["subtask_id"] == "ST-001"
+        assert report["messages_counted"] == 2
+        assert report["input_tokens"] == 105
+        assert report["output_tokens"] == 57
+        assert report["cache_creation_input_tokens"] == 201
+        assert report["cache_read_input_tokens"] == 300
+
+    def test_no_logs_when_log_dir_missing(self, branch_workspace, tmp_path, monkeypatch):
+        self._seed_state(branch_workspace)
+        monkeypatch.setenv("HOME", str(tmp_path / "fake-empty-home"))
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path.resolve()))
+        report = map_step_runner.subtask_token_usage("test-branch")
+        assert report["status"] == "no_logs"
+        assert report["subtask_id"] == "ST-001"
+
+    def test_explicit_subtask_id_and_since_ts_override_defaults(
+        self, branch_workspace, tmp_path, monkeypatch
+    ):
+        self._seed_state(branch_workspace, current="ST-001")
+        proj_abs = tmp_path.resolve()
+        log_dir = tmp_path / "h" / ".claude" / "projects" / str(proj_abs).replace("/", "-")
+        anchor_iso = "2026-05-23T00:00:00Z"
+        entries = [
+            {"timestamp": "2026-05-22T23:59:59Z",
+             "message": {"role": "assistant", "usage": {"input_tokens": 1, "output_tokens": 1,
+                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}}},
+            {"timestamp": "2026-05-23T00:00:30Z",
+             "message": {"role": "assistant", "usage": {"input_tokens": 42, "output_tokens": 1,
+                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}}},
+        ]
+        self._seed_log(log_dir, entries)
+        monkeypatch.setenv("HOME", str(tmp_path / "h"))
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj_abs))
+        report = map_step_runner.subtask_token_usage(
+            "test-branch", subtask_id="ST-007", since_ts=anchor_iso
+        )
+        assert report["subtask_id"] == "ST-007"
+        assert report["since_ts"] == anchor_iso
+        assert report["input_tokens"] == 42
+
+
 class TestValidateMutationBoundary:
     """validate_mutation_boundary compares actual git diff vs the planned
     affected_files surface. Warn-only by default; MAP_STRICT_SCOPE=1 escalates
