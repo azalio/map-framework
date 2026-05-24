@@ -820,22 +820,36 @@ def validate_step(step_id: str, branch: str) -> dict:
         state.subtask_index = 0
 
     # Advance current_step_id to next pending step
+    advanced_from_subtask: Optional[str] = None
+    advanced_to_subtask: Optional[str] = None
     if state.pending_steps:
         next_id = state.pending_steps[0]
         state.current_step_id = next_id
         state.current_step_phase = STEP_PHASES.get(next_id, "UNKNOWN")
         next_step_signal = state.current_step_id
     elif state.subtask_index + 1 < len(state.subtask_sequence):
-        # Inter-subtask boundary: pending_steps emptied for THIS subtask but
-        # more remain. Do NOT mislabel as COMPLETE — that confuses callers
-        # (and silently masks #4: validate_step would report next_step=COMPLETE
-        # while get_next_step then handed back RESEARCH for the next ST). The
-        # next get_next_step call will advance the cursor and reset
-        # pending_steps; surface a distinct sentinel here so the caller can
-        # tell mid-workflow advancement apart from terminal completion.
-        state.current_step_id = "ADVANCE_SUBTASK"
-        state.current_step_phase = "ADVANCE_SUBTASK"
-        next_step_signal = "ADVANCE_SUBTASK"
+        # Inter-subtask boundary: ATOMICALLY advance to the next subtask's
+        # RESEARCH (2.2) so state.current_step_id / pending_steps /
+        # completed_steps stay coherent. The synthetic ADVANCE_SUBTASK
+        # sentinel left state half-applied (next-subtask cursor unset,
+        # pending_steps empty) — callers reading step_state.json between
+        # validate_step("2.4") and get_next_step saw stale data and the
+        # next idempotent validate_step("2.2") returned ADVANCE_SUBTASK
+        # instead of the canonical "2.3". Now next_step is "2.2" and the
+        # response surfaces both subtask IDs for caller visibility.
+        advanced_from_subtask = state.current_subtask_id
+        state.subtask_index += 1
+        state.current_subtask_id = state.subtask_sequence[state.subtask_index]
+        advanced_to_subtask = state.current_subtask_id
+        step_order = _get_step_order(state.tdd_mode)
+        research_idx = step_order.index("2.2")
+        state.pending_steps = step_order[research_idx:]
+        state.completed_steps = []
+        state.skipped_steps = []
+        state.retry_count = 0
+        state.current_step_id = state.pending_steps[0]
+        state.current_step_phase = STEP_PHASES.get(state.current_step_id, "RESEARCH")
+        next_step_signal = state.current_step_id
     else:
         state.current_step_id = "COMPLETE"
         state.current_step_phase = "COMPLETE"
@@ -844,11 +858,15 @@ def validate_step(step_id: str, branch: str) -> dict:
     # Save updated state
     state.save(state_file)
 
-    return {
+    response: dict = {
         "valid": True,
         "message": f"Step {step_id} completed successfully",
         "next_step": next_step_signal,
     }
+    if advanced_to_subtask is not None:
+        response["subtask_advanced_from"] = advanced_from_subtask
+        response["subtask_advanced_to"] = advanced_to_subtask
+    return response
 
 
 def initialize_workflow(task: str, branch: str) -> dict:
@@ -1415,12 +1433,20 @@ def monitor_failed(branch: str, feedback: str = "") -> dict:
     state_file = Path(f".map/{branch}/step_state.json")
     state = StepState.load(state_file)
 
-    if state.current_step_phase != "MONITOR":
+    # Accept call from MONITOR (the canonical path) OR ACTOR (the common
+    # mistake: operator notices Monitor's verdict was valid=false while
+    # cursor is technically still at 2.3 because they skipped
+    # validate_step("2.3") on the way through). "monitor_failed" already
+    # implies the failure happened — fighting the phase check is just
+    # ceremony. Reject only from clearly-wrong phases (DECOMPOSE /
+    # INIT_STATE / COMPLETE) where the call doesn't make sense.
+    if state.current_step_phase not in ("MONITOR", "ACTOR", "APPLY", "TEST_WRITER"):
         return {
             "status": "error",
             "message": (
                 f"monitor_failed() called from phase '{state.current_step_phase}', "
-                "expected 'MONITOR'. Aborting to prevent state corruption."
+                "expected MONITOR or ACTOR/APPLY/TEST_WRITER. Aborting to "
+                "prevent state corruption."
             ),
         }
 
@@ -1619,6 +1645,14 @@ def record_subtask_result(
             "message": f"No step_state.json at {state_file}",
         }
     state = StepState.load(state_file)
+    # Warn-only file-exists check: catches typos / drift between --files arg
+    # and the actual diff without blocking on legitimate file deletions or
+    # renames. Caller sees the missing list and decides; record proceeds.
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
+    missing_files = [
+        p for p in (files_changed or [])
+        if isinstance(p, str) and p and not (project_dir / p).exists()
+    ]
     state.record_subtask_result(
         subtask_id,
         files_changed=files_changed,
@@ -1627,11 +1661,18 @@ def record_subtask_result(
         commit_sha=commit_sha,
     )
     state.save(state_file)
-    return {
+    response: dict = {
         "status": "success",
         "subtask_id": subtask_id,
         "recorded": state.subtask_results[subtask_id],
     }
+    if missing_files:
+        response["warning"] = (
+            "Some recorded files do not exist on disk — possible typo or "
+            "stale --files arg."
+        )
+        response["missing_files"] = missing_files
+    return response
 
 
 def finalize_plan(branch: str) -> dict:
@@ -2701,8 +2742,24 @@ def main():
                     file=sys.stderr,
                 )
                 sys.exit(1)
-            reason = args.reason or "no-op"
+            # `--mechanical` is shorthand for a deterministic short-circuit
+            # without the full research→actor→monitor cycle for trivial
+            # subtasks (DB schema bump, dependency pin, etc.) where deep
+            # research is overhead. The reason text auto-flags the path
+            # for audit.
+            mechanical = "--mechanical" in (args.extra_args or [])
+            if args.reason:
+                reason = args.reason
+            elif mechanical:
+                reason = (
+                    "mechanical subtask short-circuit (skip research-agent): "
+                    "deterministic edit, no design surface to explore"
+                )
+            else:
+                reason = "no-op"
             result = mark_subtask_complete(args.task_or_step, branch, reason)
+            if mechanical:
+                result["mechanical"] = True
             print(json.dumps(result, indent=2))
 
         elif args.command == "record_subtask_result":

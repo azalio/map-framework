@@ -5356,6 +5356,93 @@ def record_subtask_baseline(branch: str, subtask_id: str) -> dict:
     return {"status": "success", "path": str(path), "count": len(payload["files"])}
 
 
+def subtask_boundary_compact_check(branch: str) -> dict:
+    """Decide whether the operator should force-compact at the current
+    subtask boundary. Reads the project's MAP config + the latest Claude
+    Code session jsonl and returns an "advice" payload — the actual
+    /compact dispatch is still the operator's call (Claude Code hooks
+    can't fire slash commands themselves).
+
+    The cooldown matches context-meter.py (5 min) so two consecutive
+    subtasks won't both nag.
+
+    Returns: {status, used, threshold, hard_threshold, force_compact (bool),
+             advice, since_last_compact_seconds}.
+    """
+    import importlib
+    import time
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
+    branch_name = _sanitize_branch(branch)
+    # Pull config + token-budget helpers from mapify_cli; degrade gracefully
+    # if the package isn't on sys.path (e.g., bundled-script context).
+    try:
+        sys_path_addition = str(project_dir / "src")
+        if sys_path_addition not in sys.path:
+            sys.path.insert(0, sys_path_addition)
+        cfg_mod = importlib.import_module("mapify_cli.config.project_config")
+        tb_mod = importlib.import_module("mapify_cli.token_budget")
+    except ImportError:
+        return {"status": "no_budget_config"}
+
+    config = cfg_mod.load_map_config(project_dir)
+    threshold = tb_mod.effective_threshold(
+        config.compression_policy, config.compression_threshold_tokens
+    )
+    if threshold is None:
+        return {"status": "policy_never"}
+
+    marker = project_dir / ".map" / branch_name / "last-compact.marker"
+    since_last_compact: Optional[float] = None
+    if marker.exists():
+        since_last_compact = time.time() - marker.stat().st_mtime
+        if since_last_compact < 5 * 60:
+            return {
+                "status": "cooldown",
+                "since_last_compact_seconds": since_last_compact,
+                "advice": "compact ran recently; skip force-compact",
+            }
+
+    log_dir = _claude_code_log_dir(project_dir)
+    used = 0
+    if log_dir is not None:
+        try:
+            latest = max(log_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime)
+            used = tb_mod.count_last_turn_tokens(latest)
+        except (ValueError, OSError):
+            used = 0
+
+    # The auto-checkpoint kicks in when current usage is past the soft
+    # threshold — twice the threshold means we've blown past the context
+    # meter's nudge and the operator has missed the suggestion. At that
+    # point the boundary advice escalates to "force compact".
+    hard_threshold = threshold * 2
+    if used >= hard_threshold:
+        force = True
+        advice = (
+            f"FORCE COMPACT NOW — used {used}/{threshold} ({used / threshold:.0%}). "
+            "Subtask boundary is the safe place to /compact + resume."
+        )
+    elif used >= threshold:
+        force = False
+        advice = (
+            f"Recommend compact at this subtask boundary — used "
+            f"{used}/{threshold} ({used / threshold:.0%})."
+        )
+    else:
+        force = False
+        advice = "below threshold; continue"
+
+    return {
+        "status": "success",
+        "used": used,
+        "threshold": threshold,
+        "hard_threshold": hard_threshold,
+        "force_compact": force,
+        "advice": advice,
+        "since_last_compact_seconds": since_last_compact,
+    }
+
+
 def list_plans() -> dict:
     """Enumerate per-branch plan artifacts under .map/<branch>/ so the
     operator can pick scope from a multi-roadmap workspace without grepping.
@@ -6428,6 +6515,26 @@ if __name__ == "__main__":
     elif func_name == "list_plans":
         report = list_plans()
         print(json.dumps(report, indent=2))
+
+    elif func_name == "subtask_boundary_compact_check" and len(sys.argv) >= 3:
+        # CLI: subtask_boundary_compact_check <branch>
+        # Exit codes: 0 = below threshold or cooldown; 1 = recommend
+        # compact; 2 = force_compact (above 2x threshold). Lets skill
+        # bash drive `if (( $? >= 2 )); then ... fi`.
+        report = subtask_boundary_compact_check(sys.argv[2])
+        print(json.dumps(report, indent=2))
+        if report.get("status") == "success":
+            if report.get("force_compact"):
+                sys.exit(2)
+            if report.get("used", 0) >= report.get("threshold", 1):
+                sys.exit(1)
+
+    elif func_name == "record_subtask_baseline" and len(sys.argv) >= 4:
+        # CLI: record_subtask_baseline <branch> <subtask_id>
+        report = record_subtask_baseline(sys.argv[2], sys.argv[3])
+        print(json.dumps(report, indent=2))
+        if report.get("status") == "error":
+            sys.exit(1)
 
     elif func_name == "record_scope_baseline" and len(sys.argv) >= 3:
         # CLI: record_scope_baseline <branch>

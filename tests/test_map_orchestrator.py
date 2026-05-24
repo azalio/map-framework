@@ -1603,13 +1603,24 @@ class TestMonitorFailed:
         state = map_orchestrator.StepState.load(state_file)
         assert state.retry_count == 6  # incremented and saved
 
-    def test_phase_guard_rejects_non_monitor_phase(self, branch_dir, tmp_path):
-        """monitor_failed() returns error if called from non-MONITOR phase."""
+    def test_phase_guard_accepts_actor_and_monitor(self, branch_dir, tmp_path):
+        """monitor_failed() now accepts being called from MONITOR or
+        ACTOR/APPLY/TEST_WRITER — the operator often notices verdict
+        valid=false while cursor is still at 2.3 (skipped a validate_step
+        on the way through). The phase-mismatch ceremony was friction."""
         self._make_monitor_state(tmp_path, branch_dir, current_step_phase="ACTOR")
         result = map_orchestrator.monitor_failed(branch_dir, "feedback")
+        assert result["status"] in ("retrying", "max_retries"), result
+
+    def test_phase_guard_rejects_clearly_wrong_phase(self, branch_dir, tmp_path):
+        """Reject from clearly-wrong phases (DECOMPOSE / INIT_STATE / COMPLETE)
+        where 'monitor failed' doesn't make sense."""
+        self._make_monitor_state(
+            tmp_path, branch_dir, current_step_phase="DECOMPOSE"
+        )
+        result = map_orchestrator.monitor_failed(branch_dir, "feedback")
         assert result["status"] == "error"
-        assert "ACTOR" in result["message"]
-        assert "MONITOR" in result["message"]
+        assert "DECOMPOSE" in result["message"]
 
     def test_monitor_failed_then_get_next_step(self, branch_dir, tmp_path):
         """Integration: after monitor_failed(), get_next_step() returns ACTOR."""
@@ -2031,9 +2042,13 @@ class TestValidateStepInterSubtaskBoundary:
     ADVANCE_SUBTASK, not COMPLETE — the workflow is NOT done while more
     subtasks remain in subtask_sequence (regression for #4)."""
 
-    def test_inter_subtask_returns_advance_not_complete(
+    def test_inter_subtask_advances_atomically_to_next_research(
         self, branch_dir, tmp_path
     ):
+        """Previously returned an ADVANCE_SUBTASK sentinel that left
+        next-subtask fields unpopulated. Now validate_step("2.4") on
+        inter-subtask boundary atomically bumps subtask_index, resets
+        completed/pending, sets current_step_id to next subtask's 2.2."""
         state = map_orchestrator.StepState()
         state.workflow_status = "IN_PROGRESS"
         state.subtask_sequence = ["ST-001", "ST-002"]
@@ -2043,14 +2058,23 @@ class TestValidateStepInterSubtaskBoundary:
         state.current_step_phase = "MONITOR"
         state.completed_steps = ["2.2", "2.3"]
         state.pending_steps = ["2.4"]
-        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        # plant blueprint for the auto-mutation-boundary check to be a no-op
+        plan_dir = tmp_path / ".map" / branch_dir
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        state_file = plan_dir / "step_state.json"
         state.save(state_file)
         result = map_orchestrator.validate_step("2.4", branch_dir)
         assert result["valid"] is True
-        assert result["next_step"] == "ADVANCE_SUBTASK", result
-        # Reload — current_step_id holds the sentinel, NOT "COMPLETE".
+        assert result["next_step"] == "2.2", result
+        assert result["subtask_advanced_from"] == "ST-001"
+        assert result["subtask_advanced_to"] == "ST-002"
         reloaded = map_orchestrator.StepState.load(state_file)
-        assert reloaded.current_step_id == "ADVANCE_SUBTASK"
+        assert reloaded.subtask_index == 1
+        assert reloaded.current_subtask_id == "ST-002"
+        assert reloaded.current_step_id == "2.2"
+        assert reloaded.current_step_phase == "RESEARCH"
+        assert reloaded.completed_steps == []
+        assert "2.2" in reloaded.pending_steps
         assert reloaded.workflow_status == "IN_PROGRESS"
 
     def test_final_subtask_still_returns_complete(self, branch_dir, tmp_path):
