@@ -1542,12 +1542,22 @@ def validate_blueprint_contract(
             errors.append(f"{label}: missing description (or text)")
 
     subtask_id_counts: dict[str, int] = {}
-    for subtask in subtasks:
+    # Position map: declaration order of each subtask id in the blueprint's
+    # `subtasks[]` array. Used to enforce the topological invariant — a
+    # subtask may only depend on subtasks declared BEFORE it. Without this
+    # check, a blueprint like ST-012 deps=[ST-027] passes the existing
+    # "dep exists" guard but the runtime walker hits ST-012 long before
+    # ST-027 is finished, producing a deadlock.
+    subtask_position: dict[str, int] = {}
+    for index, subtask in enumerate(subtasks):
         if not isinstance(subtask, dict):
             continue
         raw_subtask_id = subtask.get("id")
         if isinstance(raw_subtask_id, str) and re.fullmatch(r"ST-\d{3,}", raw_subtask_id):
             subtask_id_counts[raw_subtask_id] = subtask_id_counts.get(raw_subtask_id, 0) + 1
+            # First occurrence wins for position (duplicates already flagged
+            # below — position is a topology signal, not a dedup signal).
+            subtask_position.setdefault(raw_subtask_id, index)
 
     subtask_ids = set(subtask_id_counts)
     duplicate_subtask_ids = {
@@ -1555,6 +1565,7 @@ def validate_blueprint_contract(
     }
     oversized_subtasks: list[str] = []
     mixed_concern_subtasks: list[str] = []
+    forward_dep_violations: list[str] = []
 
     for index, subtask in enumerate(subtasks):
         label = f"subtasks[{index}]"
@@ -1580,8 +1591,32 @@ def validate_blueprint_contract(
             for dependency in dependencies:
                 if not isinstance(dependency, str) or not re.fullmatch(r"ST-\d{3,}", dependency):
                     errors.append(f"{label}: dependency {dependency!r} must match ST-NNN")
-                elif dependency not in subtask_ids:
+                    continue
+                if dependency not in subtask_ids:
                     errors.append(f"{label}: dependency {dependency!r} points to unknown subtask")
+                    continue
+                # Self-dependency is a contract violation (subtask cannot
+                # block on its own completion).
+                if dependency == subtask_id:
+                    errors.append(
+                        f"{label}: dependency {dependency!r} is a self-reference"
+                    )
+                    continue
+                # Topological invariant: dep must be declared earlier than
+                # the dependent. Catches ST-012 deps=[ST-027] before the
+                # runtime walker ever sees the blueprint.
+                dep_pos = subtask_position.get(dependency)
+                self_pos = subtask_position.get(subtask_id, index)
+                if dep_pos is not None and dep_pos >= self_pos:
+                    errors.append(
+                        f"{label}: forward dependency on {dependency!r} (declared at "
+                        f"subtasks[{dep_pos}] but {label} is at subtasks[{self_pos}]); "
+                        "dependencies must reference only subtasks declared earlier — "
+                        "reorder subtasks[] so deps come first"
+                    )
+                    forward_dep_violations.append(
+                        f"{subtask_id}->{dependency}"
+                    )
 
         expected_diff_size = str(subtask.get("expected_diff_size") or "").strip().lower()
         concern_type = str(subtask.get("concern_type") or "").strip().lower()
@@ -1649,6 +1684,36 @@ def validate_blueprint_contract(
                     f"{label}: touches {len(affected_files)} files; verify this is still one "
                     "reviewable concern (or add split_rationale to ack the size)"
                 )
+
+        # affected_files drift check: warn when EVERY declared path is
+        # missing from disk (decomposer hallucinated names that don't
+        # exist anywhere — the canonical friction was ST-016 pointing at
+        # services/sourcecraft.py when the actual class lives in
+        # sourcecraft_publisher.py). Path is resolved against
+        # CLAUDE_PROJECT_DIR / cwd. Files that don't yet exist for a
+        # "create new file" subtask are common, so this is intentionally
+        # warn-only and only triggers when ALL listed paths are missing
+        # AND at least one path is declared (empty affected_files is the
+        # decomposer's "no claim" signal and gets its own treatment in
+        # the file-conflict checker).
+        if isinstance(affected_files, list) and affected_files:
+            string_files = [p for p in affected_files if isinstance(p, str) and p.strip()]
+            if string_files:
+                project_root_check = Path(
+                    os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())
+                )
+                missing_paths = [
+                    p for p in string_files
+                    if not (project_root_check / p).exists()
+                ]
+                if missing_paths == string_files:
+                    warnings.append(
+                        f"{label}: affected_files drift — none of "
+                        f"{string_files!r} exist under {project_root_check}; "
+                        "verify the decomposer didn't hallucinate file names "
+                        "(or rename to actual symbols if the subtask creates "
+                        "every listed file from scratch)"
+                    )
 
     coverage_map = payload.get("coverage_map") or blueprint_body.get("coverage_map")
     if not isinstance(coverage_map, dict) or not coverage_map:
@@ -1719,6 +1784,7 @@ def validate_blueprint_contract(
         "subtask_count": len(subtasks),
         "oversized_subtasks": oversized_subtasks,
         "mixed_concern_subtasks": mixed_concern_subtasks,
+        "forward_dep_violations": forward_dep_violations,
     }
 
 
@@ -4883,98 +4949,8 @@ def _context_block_budget_tokens() -> int:
     return CONTEXT_BLOCK_DEFAULT_BUDGET_TOKENS
 
 
-def _truncate_context_value(value: object, budget_tokens: int = 80) -> str:
-    """Render a persisted value without letting one field consume the context."""
-    text = value if isinstance(value, str) else str(value)
-    return _truncate_to_token_budget(text, budget_tokens)
-
-
 def _context_block_text(parts: list[str]) -> str:
     return "\n".join(parts)
-
-
-def _context_section_label(line: str, current_label: str) -> str:
-    """Classify map_context lines into operator-facing budget sections."""
-    if line.startswith("# Goal"):
-        return "goal"
-    if line.startswith("# Current Subtask"):
-        return "current_subtask"
-    if line.startswith("# Upstream Results"):
-        return "upstream_results"
-    if line.startswith("# Plan Overview"):
-        return "plan_overview"
-    if line.startswith("# Repo Delta") or line.startswith("# Deleted since"):
-        return "repo_delta"
-    return current_label
-
-
-def _budget_context_block(parts: list[str], budget_tokens: int) -> dict[str, object]:
-    """Keep generated map_context under budget while reporting the decision."""
-    full_text = _context_block_text(parts)
-    full_estimate = _estimate_tokens(full_text)
-    if full_estimate <= budget_tokens:
-        return {
-            "text": full_text,
-            "estimated_tokens_before": full_estimate,
-            "estimated_tokens_after": full_estimate,
-            "truncated": False,
-            "clipped_sections": [],
-        }
-
-    closing = "</map_context>"
-    truncation_note = (
-        f"# Context Budget: truncated to <= {budget_tokens} estimated tokens; "
-        "rerun with a larger MAP_CONTEXT_BLOCK_BUDGET_TOKENS if more plan "
-        "overview is required."
-    )
-    output: list[str] = []
-    clipped_sections: list[str] = []
-    current_label = "preamble"
-
-    for index, line in enumerate(parts):
-        current_label = _context_section_label(line, current_label)
-        if line == closing:
-            continue
-        candidate = _context_block_text(output + [line, truncation_note, closing])
-        if _estimate_tokens(candidate) <= budget_tokens:
-            output.append(line)
-            continue
-
-        remaining = budget_tokens - _estimate_tokens(
-            _context_block_text(output + [truncation_note, closing])
-        )
-        truncated_line = _truncate_to_token_budget(line, remaining)
-        if truncated_line:
-            candidate = _context_block_text(
-                output + [truncated_line, truncation_note, closing]
-            )
-            if _estimate_tokens(candidate) <= budget_tokens:
-                output.append(truncated_line)
-                if current_label not in clipped_sections:
-                    clipped_sections.append(current_label)
-        remaining_label = current_label
-        for omitted in parts[index + 1 :]:
-            if omitted == closing:
-                continue
-            remaining_label = _context_section_label(omitted, remaining_label)
-            if remaining_label not in clipped_sections:
-                clipped_sections.append(remaining_label)
-        break
-
-    output.extend([truncation_note, closing])
-    budgeted_text = _context_block_text(output)
-    return {
-        "text": budgeted_text,
-        "estimated_tokens_before": full_estimate,
-        "estimated_tokens_after": _estimate_tokens(budgeted_text),
-        "truncated": True,
-        "clipped_sections": clipped_sections,
-    }
-
-
-def _enforce_context_block_budget(parts: list[str], budget_tokens: int) -> str:
-    """Keep generated map_context under budget while preserving valid XML shape."""
-    return str(_budget_context_block(parts, budget_tokens)["text"])
 
 
 _RESEARCH_KIND_RE = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -5038,15 +5014,62 @@ def load_research(
     subtask_id: str,
     *,
     kind: str = "actor",
+    merge_all_kinds: bool = False,
 ) -> str:
-    """Return saved research findings; empty string when absent."""
-    path = _research_path(branch, subtask_id, kind)
-    if not path.exists():
+    """Return saved research findings; empty string when absent.
+
+    ``merge_all_kinds=True`` concatenates every kind present on disk
+    (actor / monitor / decomposer / anything custom) under per-kind
+    section headers, so callers that want the full research picture
+    don't have to ping each kind individually. Order: actor first if
+    present, then monitor, then decomposer, then any other kinds in
+    sorted order. Sections are separated by blank lines and prefixed
+    with ``# kind=<kind>``. When merge_all_kinds is False (default),
+    the function behaves exactly as before — single-kind read.
+    """
+    if not merge_all_kinds:
+        path = _research_path(branch, subtask_id, kind)
+        if not path.exists():
+            return ""
+        try:
+            return path.read_text(encoding="utf-8")
+        except OSError:
+            return ""
+
+    # Merge mode: scan the research directory for this subtask and
+    # concatenate every kind.
+    seed_path = _research_path(branch, subtask_id, "actor")
+    research_dir = seed_path.parent
+    if not research_dir.is_dir():
         return ""
-    try:
-        return path.read_text(encoding="utf-8")
-    except OSError:
+    pattern = f"{subtask_id}__*.md"
+    found: dict[str, str] = {}
+    for candidate in sorted(research_dir.glob(pattern)):
+        stem = candidate.stem  # e.g. "ST-001__monitor"
+        marker = "__"
+        if marker not in stem:
+            continue
+        kind_name = stem.rsplit(marker, 1)[-1]
+        if not _RESEARCH_KIND_RE.match(kind_name):
+            continue
+        try:
+            found[kind_name] = candidate.read_text(encoding="utf-8")
+        except OSError:
+            continue
+    if not found:
         return ""
+    ordered_kinds: list[str] = []
+    for preferred in ("actor", "monitor", "decomposer"):
+        if preferred in found:
+            ordered_kinds.append(preferred)
+    for remaining in sorted(k for k in found if k not in ordered_kinds):
+        ordered_kinds.append(remaining)
+    parts: list[str] = []
+    for k in ordered_kinds:
+        parts.append(f"# kind={k}")
+        parts.append(found[k].rstrip())
+        parts.append("")
+    return "\n".join(parts).rstrip() + "\n"
 
 
 def _claude_code_log_dir(project_dir: Path) -> Optional[Path]:
@@ -5937,11 +5960,11 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
     except OSError:
         pass
     goal = goal or "No goal found"
-    # Truncate to first sentence
-    if ". " in goal:
-        goal = goal[: goal.index(". ") + 1]
-    if len(goal) > 200:
-        goal = goal[:197] + "..."
+    # Trim trailing whitespace; do not truncate — the user disabled context
+    # clipping in build_context_block because the visible "[truncated]" /
+    # "[TRUNCATED] see token_budget.json" markers were getting in the way of
+    # downstream Actor runs (it lost real subtask description text).
+    goal = goal.strip()
 
     # Current subtask full details
     current = get_subtask_from_blueprint(blueprint, current_subtask_id)
@@ -5949,14 +5972,10 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
         return ""
 
     current_details = []
-    # Include the prose `description` field (the long-form what/why for the
-    # subtask) — Actor previously had to open blueprint.json separately to
-    # see it. Truncate so the rest of the block fits the budget.
+    # Emit the full prose `description` field (no per-field truncation).
     description_text = current.get("description")
     if isinstance(description_text, str) and description_text.strip():
-        current_details.append(
-            f"Description: {_truncate_context_value(description_text.strip(), 480)}"
-        )
+        current_details.append(f"Description: {description_text.strip()}")
     current_details.append(f"AAG Contract: {current.get('aag_contract', 'N/A')}")
     current_details.append(
         f"Subtask contract: expected_diff_size={current.get('expected_diff_size', 'unknown')}, "
@@ -5967,19 +5986,16 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
     files_value = current.get("affected_files", [])
     files = files_value if isinstance(files_value, list) else []
     if files:
-        shown_files = [str(f) for f in files[:8]]
-        file_text = ", ".join(shown_files)
-        if len(files) > 8:
-            file_text += f", ... +{len(files) - 8} more"
-        current_details.append(f"Affected files: {file_text}")
+        # Emit every affected file — no "+N more" elision.
+        current_details.append(
+            f"Affected files: {', '.join(str(f) for f in files)}"
+        )
     criteria_value = current.get("validation_criteria", [])
     criteria = criteria_value if isinstance(criteria_value, list) else []
     if criteria:
         current_details.append("Validation criteria:")
-        for c in criteria[:10]:
-            current_details.append(f"  - {_truncate_context_value(c, 120)}")
-        if len(criteria) > 10:
-            current_details.append(f"  ... +{len(criteria) - 10} more criteria")
+        for c in criteria:
+            current_details.append(f"  - {c}")
 
     # Plan overview with statuses from step_state.json
     state_path = project_dir / ".map" / branch / "step_state.json"
@@ -6020,11 +6036,9 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
             fc = fc_value if isinstance(fc_value, list) else []
             status = result.get("status", "unknown")
             summary = result.get("summary", "")
-            shown_files = fc[:4]
-            file_suffix = f", +{len(fc) - 4} more" if len(fc) > 4 else ""
-            line = f"  {up_id}: files={shown_files}{file_suffix}, status={status}"
+            line = f"  {up_id}: files={list(fc)}, status={status}"
             if summary:
-                line += f", summary={_truncate_context_value(summary, 120)}"
+                line += f", summary={summary}"
             upstream_lines.append(line)
         else:
             upstream_lines.append(f"  {up_id}: (not yet completed)")
@@ -6045,7 +6059,9 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
     # Inline the latest research artifact for THIS subtask so callers stop
     # having to glue load_research output into the Actor prompt by hand.
     # Tries actor → monitor → decomposer kinds in order; if none exists,
-    # nothing is added (RESEARCH may not have run yet).
+    # nothing is added (RESEARCH may not have run yet). No length cap — the
+    # user disabled context-block truncation; the full research file
+    # contents are inlined so Actor doesn't have to re-read the file.
     try:
         for _research_kind in ("actor", "monitor", "decomposer"):
             _research_text = load_research(
@@ -6056,10 +6072,7 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
                 parts.append(
                     f"# Research Findings ({current_subtask_id}, kind={_research_kind}):"
                 )
-                # Cap embedded research at 1500 chars so a chatty research
-                # agent can't crowd out the rest of the context block; the
-                # full file is still on disk under .map/<branch>/research/.
-                parts.append(_truncate_context_value(_research_text, 1500))
+                parts.append(_research_text)
                 break
     except (ValueError, OSError):
         pass
@@ -6091,31 +6104,36 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
             if changed or deleted:
                 parts.append("")
                 parts.append("# Repo Delta (files changed since last subtask):")
-                for f in changed[:20]:
+                for f in changed:
                     parts.append(f"  {f}")
-                if len(changed) > 20:
-                    parts.append(f"  ... +{len(changed) - 20} more")
                 if deleted:
                     parts.append("# Deleted since last subtask:")
-                    for f in deleted[:10]:
+                    for f in deleted:
                         parts.append(f"  (deleted) {f}")
-                    if len(deleted) > 10:
-                        parts.append(f"  ... +{len(deleted) - 10} more")
         except ImportError:
             # Fallback: repo_insight not available in standalone .map/ context
             pass
 
     parts.append("</map_context>")
 
-    budget = _context_block_budget_tokens()
-    budget_result = _budget_context_block(parts, budget)
+    # Per-field truncation and budget-based clipping were removed: the
+    # visible "[TRUNCATED] see token_budget.json" marker and per-field
+    # ellipsis ("+N more", "[truncated]") were swallowing real subtask
+    # description/research text. We still report the size to token_budget.json
+    # so operators can see when a block exceeds the configured budget, but we
+    # do not clip the text — Actor always gets the full block.
+    text = _context_block_text(parts)
+    estimated = _estimate_tokens(text)
+    configured_budget = _context_block_budget_tokens()
     record_token_budget_decision(
         path_name="map-efficient.actor_context_block",
-        configured_budget_tokens=budget,
-        estimated_tokens_before=int(budget_result["estimated_tokens_before"]),
-        estimated_tokens_after=int(budget_result["estimated_tokens_after"]),
-        clipped_sections=cast(list[str], budget_result["clipped_sections"]),
-        budget_action="truncated" if budget_result["truncated"] else "none",
+        configured_budget_tokens=configured_budget,
+        estimated_tokens_before=estimated,
+        estimated_tokens_after=estimated,
+        clipped_sections=[],
+        budget_action=(
+            "exceeded" if estimated > configured_budget else "none"
+        ),
         artifact_references=[
             {"path": f".map/{branch}/blueprint.json", "kind": "blueprint"},
             {
@@ -6127,31 +6145,10 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
         metadata={
             "current_subtask_id": current_subtask_id,
             "budget_env": CONTEXT_BLOCK_BUDGET_ENV,
+            "truncation_disabled": True,
         },
         branch=branch,
     )
-    text = str(budget_result["text"])
-    # Visible truncation signal: Actor previously had no way to tell that
-    # the context block was budget-clipped, so silent detail-loss masqueraded
-    # as "Actor ignored a nuance". Emit a tiny in-band marker so callers know
-    # to consult the linked artifacts. Kept ultra-short (~10 tokens) so it
-    # doesn't itself blow the budget — the full clipping ledger lives in
-    # token_budget.json which record_token_budget_decision already wrote.
-    if budget_result.get("truncated"):
-        marker = "# [TRUNCATED] see .map/<branch>/token_budget.json"
-        lines = text.splitlines()
-        # Replace the existing "# Context Budget: ..." footer (if any) with
-        # the marker to net-zero on tokens; otherwise inject right after the
-        # opening <map_context> tag.
-        replaced = False
-        for i, line in enumerate(lines):
-            if line.startswith("# Context Budget:"):
-                lines[i] = marker
-                replaced = True
-                break
-        if not replaced and lines and lines[0].strip().startswith("<map_context>"):
-            lines.insert(1, marker)
-        text = "\n".join(lines)
     return text
 
 
@@ -6743,16 +6740,26 @@ if __name__ == "__main__":
             sys.exit(1)
 
     elif func_name == "load_research" and len(sys.argv) >= 4:
-        # CLI: load_research <branch> <subtask_id> [kind]; content to stdout.
-        # On error: write the diagnostic to STDERR (keeping stdout empty) so
-        # callers using command substitution (FOO=$(... load_research ...))
-        # don't get JSON in place of research text.
+        # CLI: load_research <branch> <subtask_id> [kind] [--all]
+        # Content to stdout. On error: write the diagnostic to STDERR
+        # (keeping stdout empty) so callers using command substitution
+        # (FOO=$(... load_research ...)) don't get JSON in place of
+        # research text. --all merges every kind on disk under section
+        # headers — useful when Monitor wants both Actor's research and
+        # its own previous notes without two ping-pongs.
         branch_arg = sys.argv[2]
         subtask_arg = sys.argv[3]
-        kind_arg = sys.argv[4] if len(sys.argv) >= 5 else "actor"
+        merge_all = "--all" in sys.argv[4:]
+        rest_tokens = [t for t in sys.argv[4:] if t != "--all"]
+        kind_arg = rest_tokens[0] if rest_tokens else "actor"
         try:
             sys.stdout.write(
-                load_research(branch_arg, subtask_arg, kind=kind_arg)
+                load_research(
+                    branch_arg,
+                    subtask_arg,
+                    kind=kind_arg,
+                    merge_all_kinds=merge_all,
+                )
             )
         except ValueError as exc:
             print(

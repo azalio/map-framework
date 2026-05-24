@@ -712,3 +712,203 @@ class TestFormatReminderTruncation:
         assert result is not None
         assert len(result) <= hook_mod.REMINDER_LIMIT
         assert result.endswith("...")
+
+
+class TestPerTurnReminderDedup:
+    """Regression: PreToolUse hook used to emit the [MAP] reminder per
+    Edit/Write/Bash invocation, racking up ~30 tokens × N tools per turn
+    of paragraph spam. Now identical reminders within DEDUP_WINDOW_SECONDS
+    against the same step_state.json mtime are squelched. The first call
+    in a turn still emits; only the consecutive duplicates are dropped.
+    """
+
+    def _seed_state(self, tmp_project_dir: Path, branch: str) -> Path:
+        state_dir = tmp_project_dir / ".map" / branch
+        state_dir.mkdir(parents=True, exist_ok=True)
+        state_file = state_dir / "step_state.json"
+        state_file.write_text(
+            json.dumps(
+                {
+                    "current_step_id": "2.3",
+                    "current_step_phase": "ACTOR",
+                    "current_subtask_id": "ST-001",
+                    "subtask_index": 0,
+                    "subtask_sequence": ["ST-001"],
+                    "plan_approved": True,
+                    "execution_mode": "batch",
+                    "workflow_status": "IN_PROGRESS",
+                }
+            ),
+            encoding="utf-8",
+        )
+        return state_file
+
+    def test_second_identical_call_within_window_returns_empty(
+        self, tmp_path: Path, branch_name: str
+    ) -> None:
+        branch = branch_name
+        self._seed_state(tmp_path, branch)
+        payload = {
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "src/foo.py"},
+        }
+        # First call: reminder emitted.
+        rc1, stdout1, _ = _run_hook(tmp_path, payload)
+        assert rc1 == 0
+        first = json.loads(stdout1 or "{}")
+        assert "hookSpecificOutput" in first, first
+
+        # Second identical call within DEDUP_WINDOW_SECONDS: silent {}.
+        rc2, stdout2, _ = _run_hook(tmp_path, payload)
+        assert rc2 == 0
+        assert stdout2 in ("{}", ""), (
+            f"Duplicate reminder must be squelched; got {stdout2!r}"
+        )
+
+    def test_state_mutation_busts_dedup(
+        self, tmp_path: Path, branch_name: str
+    ) -> None:
+        # If step_state.json mtime changes between calls (validate_step
+        # advanced the workflow), the dedup must NOT squelch — the
+        # reminder content may now be different.
+        import time as _time
+        branch = branch_name
+        state_file = self._seed_state(tmp_path, branch)
+        payload = {
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "src/foo.py"},
+        }
+        rc1, stdout1, _ = _run_hook(tmp_path, payload)
+        assert rc1 == 0
+        assert "hookSpecificOutput" in (json.loads(stdout1 or "{}"))
+
+        # Mutate state file mtime + content (workflow advance simulation).
+        _time.sleep(0.01)
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+        state["current_step_phase"] = "MONITOR"
+        state["current_step_id"] = "2.4"
+        state_file.write_text(json.dumps(state), encoding="utf-8")
+
+        rc2, stdout2, _ = _run_hook(tmp_path, payload)
+        assert rc2 == 0
+        second = json.loads(stdout2 or "{}")
+        # MONITOR-phase reminder ≠ ACTOR-phase reminder ⇒ emit.
+        assert "hookSpecificOutput" in second, (
+            f"State mtime changed but reminder was squelched: {stdout2!r}"
+        )
+
+
+class TestPhaseAwareSmokeTestSuppression:
+    """Regression: when current_step_phase is ACTOR/MONITOR/TEST_WRITER, any
+    significant Bash command (build, smoke-test, app boot) is some form of
+    self-check. The "REQUIRED: Run Actor" trailer is noise in that context
+    (Actor is already in ACTOR). Patterns like `python3 -m sgr_code_review`
+    that the static VERIFICATION_PATTERNS list misses must also be
+    suppressed by phase context.
+    """
+
+    def _seed_state(
+        self,
+        tmp_project_dir: Path,
+        branch: str,
+        phase: str,
+    ) -> None:
+        state_dir = tmp_project_dir / ".map" / branch
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / "step_state.json").write_text(
+            json.dumps(
+                {
+                    "current_step_id": "2.3" if phase == "ACTOR" else "2.4",
+                    "current_step_phase": phase,
+                    "current_subtask_id": "ST-001",
+                    "subtask_index": 0,
+                    "subtask_sequence": ["ST-001"],
+                    "plan_approved": True,
+                    "execution_mode": "batch",
+                    "workflow_status": "IN_PROGRESS",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def test_actor_phase_suppresses_required_on_smoke_run(
+        self, tmp_path: Path, branch_name: str
+    ) -> None:
+        branch = branch_name
+        self._seed_state(tmp_path, branch, "ACTOR")
+        rc, stdout, _ = _run_hook(
+            tmp_path,
+            {
+                "tool_name": "Bash",
+                "tool_input": {"command": "python3 -m sgr_code_review --help"},
+            },
+        )
+        assert rc == 0
+        payload = json.loads(stdout or "{}")
+        # The hook either emits a reminder or nothing. If reminder present,
+        # it MUST NOT carry the REQUIRED trailer when phase is ACTOR.
+        if payload:
+            ctx = payload.get("hookSpecificOutput", {}).get("additionalContext", "")
+            assert "REQUIRED:" not in ctx, (
+                f"ACTOR-phase Bash smoke-run still carries REQUIRED: {ctx!r}"
+            )
+
+    def test_monitor_phase_suppresses_required_on_smoke_run(
+        self, tmp_path: Path, branch_name: str
+    ) -> None:
+        branch = branch_name
+        self._seed_state(tmp_path, branch, "MONITOR")
+        rc, stdout, _ = _run_hook(
+            tmp_path,
+            {
+                "tool_name": "Bash",
+                "tool_input": {"command": "python3 -m my_app.smoke"},
+            },
+        )
+        assert rc == 0
+        payload = json.loads(stdout or "{}")
+        if payload:
+            ctx = payload.get("hookSpecificOutput", {}).get("additionalContext", "")
+            assert "REQUIRED:" not in ctx, (
+                f"MONITOR-phase Bash smoke-run still carries REQUIRED: {ctx!r}"
+            )
+
+    def test_research_phase_keeps_required_on_bash(
+        self, tmp_path: Path, branch_name: str
+    ) -> None:
+        # RESEARCH phase should still nag "Run Actor" — agent isn't yet
+        # in implementation, so the trailer is meaningful.
+        branch = branch_name
+        state_dir = tmp_path / ".map" / branch
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / "step_state.json").write_text(
+            json.dumps(
+                {
+                    "current_step_id": "2.2",
+                    "current_step_phase": "RESEARCH",
+                    "current_subtask_id": "ST-001",
+                    "subtask_index": 0,
+                    "subtask_sequence": ["ST-001"],
+                    "plan_approved": True,
+                    "execution_mode": "batch",
+                    "workflow_status": "IN_PROGRESS",
+                }
+            ),
+            encoding="utf-8",
+        )
+        rc, stdout, _ = _run_hook(
+            tmp_path,
+            {
+                "tool_name": "Bash",
+                # Use a known significant non-verification command (git diff
+                # is in the should_inject list for git operations).
+                "tool_input": {"command": "git diff HEAD~1"},
+            },
+        )
+        assert rc == 0
+        payload = json.loads(stdout or "{}")
+        if payload:
+            ctx = payload.get("hookSpecificOutput", {}).get("additionalContext", "")
+            # In RESEARCH the REQUIRED trailer should remain when emitted
+            # (verifies suppression is phase-bounded, not blanket).
+            assert "RESEARCH" in ctx

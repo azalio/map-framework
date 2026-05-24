@@ -462,6 +462,10 @@ class TestProjectConfig:
         assert cfg.confidence_threshold == 0.7
         assert "src/" in cfg.safe_path_prefixes
         assert cfg.language == ""
+        # /compact nudge is opt-in: the meter must NOT fire unless the user
+        # explicitly switches compression_policy to "auto" or "aggressive".
+        assert cfg.compression_policy == "never"
+        assert cfg.compression_threshold_tokens == 120_000
 
     def test_load_map_config_no_file(self, tmp_path):
         from mapify_cli.config.project_config import load_map_config
@@ -560,7 +564,7 @@ class TestProjectConfig:
 
     # ---- compression policy validation ----
 
-    def test_load_map_config_invalid_compression_policy_falls_back_to_auto(
+    def test_load_map_config_invalid_compression_policy_falls_back_to_never(
         self, tmp_path
     ):
         from mapify_cli.config.project_config import load_map_config
@@ -569,8 +573,10 @@ class TestProjectConfig:
         map_dir.mkdir()
         (map_dir / "config.yaml").write_text("compression_policy: paranoid\n")
         cfg = load_map_config(tmp_path)
-        # Typo must not break the user — silently fall back to the default.
-        assert cfg.compression_policy == "auto"
+        # Typo must not break the user — silently fall back to the default
+        # ("never"); the /compact nudge is opt-in and a typo must not flip
+        # users into auto-nudge mode against their will.
+        assert cfg.compression_policy == "never"
 
     def test_load_map_config_zero_compression_threshold_resets_to_default(
         self, tmp_path
@@ -622,8 +628,9 @@ class TestProjectConfig:
         )
 
         config_file = write_default_config(tmp_path)
-        # Default config has the keys commented out.
-        assert "# compression_policy: auto" in config_file.read_text()
+        # Default config has the keys commented out (now showing "never"
+        # since the /compact nudge is opt-in by default).
+        assert "# compression_policy: never" in config_file.read_text()
 
         apply_compression_overrides(config_file, "aggressive", 200_000)
         content = config_file.read_text()

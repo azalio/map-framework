@@ -347,13 +347,23 @@ class StepState:
         summary: str = "",
         commit_sha: Optional[str] = None,
     ) -> None:
-        """Record result of a completed subtask for context injection."""
+        """Record result of a completed subtask for context injection.
+
+        The entry stores a redundant ``subtask_id`` field even though the
+        outer key already carries it: downstream reporters / log shippers
+        repeatedly want to forward entries individually and used to receive
+        ``{"subtask_id": null, ...}`` because the producer never set it.
+        Keeping the field self-describing closes that gap; the matching
+        ``backfill_subtask_ids`` helper exists for old states.
+        """
         self.subtask_results[subtask_id] = {
+            "subtask_id": subtask_id,
             "files_changed": files_changed,
             "status": status,
             "summary": summary,
         }
         if commit_sha:
+            self.subtask_results[subtask_id]["commit_sha"] = commit_sha
             self.last_subtask_commit_sha = commit_sha
 
     def to_dict(self) -> dict:
@@ -558,6 +568,129 @@ def get_step_instruction(step_id: str, state: StepState) -> str:
     return instructions.get(step_id, f"Execute step {step_id} ({phase})")
 
 
+DEFERRED_FOR_DEPS_PHASE = "deferred_for_deps"
+
+
+def _completed_subtask_ids_for_deps(state: "StepState") -> set[str]:
+    """Return subtask IDs that count as "done" for dependency-resolution.
+
+    Combines three signals:
+      - subtask_results[sid].status ∈ {valid, completed, done, skipped}
+        (written by record_subtask_result on Monitor success)
+      - subtask_phases[sid] ∈ {completed, skipped}
+        (written by mark_subtask_complete)
+      - linear-walk past: subtask at index < state.subtask_index is
+        treated as done (preserves the original "subtask_index is
+        monotonic" contract for flows that don't record results), UNLESS
+        it carries the deferred_for_deps marker — those were
+        intentionally skipped over and must be revisited once their
+        dependencies clear.
+    """
+    done: set[str] = set()
+    DONE_RESULT_STATUSES = {"valid", "completed", "done", "skipped"}
+    DONE_PHASE_STATUSES = {"completed", "skipped"}
+    for sid, entry in (state.subtask_results or {}).items():
+        if isinstance(entry, dict) and entry.get("status") in DONE_RESULT_STATUSES:
+            done.add(sid)
+    phases = state.subtask_phases or {}
+    for sid, phase in phases.items():
+        if phase in DONE_PHASE_STATUSES:
+            done.add(sid)
+    for idx, sid in enumerate(state.subtask_sequence or []):
+        if idx >= state.subtask_index:
+            break
+        if phases.get(sid) == DEFERRED_FOR_DEPS_PHASE:
+            # Explicitly deferred — do NOT count as done; we owe a revisit.
+            continue
+        done.add(sid)
+    return done
+
+
+def _find_next_ready_subtask_index(
+    state: "StepState",
+    branch: str,
+    *,
+    start_after_index: int,
+    treat_current_as_done: bool = True,
+) -> tuple[Optional[int], list[str]]:
+    """Walk subtask_sequence and return the index of the next ready subtask.
+
+    "Ready" means: not yet completed AND every entry in its blueprint
+    `dependencies` array is in the completed set.
+
+    Walk order is forward-biased with wrap-around:
+        start_after_index + 1, ..., len - 1, 0, 1, ..., start_after_index
+    so dependents whose deps got satisfied LATER in the sequence (an
+    edge case if the planning sort missed a forward dep) are still picked
+    up on a later pass.
+
+    Returns ``(idx, skipped)`` where ``skipped`` lists subtask IDs that
+    were considered but had unmet deps in this pass — useful for
+    diagnostics. Returns ``(None, blocked_ids)`` if no ready subtask
+    exists. ``blocked_ids`` then represents the surviving unprocessed
+    subtasks whose deps are still unmet (i.e., the workflow is stuck on
+    a deadlock unless the user intervenes).
+
+    ``treat_current_as_done=True`` (default): the just-finished current
+    subtask is assumed done for dep resolution. Use False when caller is
+    only inspecting and hasn't yet marked the current subtask complete.
+    """
+    deps_map = _load_blueprint_deps_for_runtime(branch)
+    completed = _completed_subtask_ids_for_deps(state)
+    if treat_current_as_done and state.current_subtask_id:
+        completed.add(state.current_subtask_id)
+
+    n = len(state.subtask_sequence)
+    if n == 0:
+        return None, []
+
+    skipped_for_deps: list[str] = []
+    order = list(range(start_after_index + 1, n)) + list(
+        range(0, max(start_after_index + 1, 0))
+    )
+    for idx in order:
+        if idx < 0 or idx >= n:
+            continue
+        sid = state.subtask_sequence[idx]
+        if sid in completed:
+            continue
+        required = deps_map.get(sid, [])
+        if all(dep in completed for dep in required):
+            return idx, skipped_for_deps
+        skipped_for_deps.append(sid)
+    return None, skipped_for_deps
+
+
+def _load_blueprint_deps_for_runtime(branch: str) -> dict[str, list[str]]:
+    """Same shape as _load_blueprint_deps (planning side) but lives in the
+    orchestrator module so runtime advance code doesn't have to import
+    from set_subtasks scope (avoids a forward reference)."""
+    bp_path = Path(f".map/{branch}/blueprint.json")
+    if not bp_path.exists():
+        return {}
+    try:
+        payload = json.loads(bp_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    body = payload.get("blueprint") if isinstance(payload.get("blueprint"), dict) else payload
+    subtasks = body.get("subtasks") if isinstance(body, dict) else None
+    deps: dict[str, list[str]] = {}
+    if not isinstance(subtasks, list):
+        return deps
+    for st in subtasks:
+        if not isinstance(st, dict):
+            continue
+        sid = st.get("id")
+        if not isinstance(sid, str):
+            continue
+        raw = st.get("dependencies", [])
+        if isinstance(raw, list):
+            deps[sid] = [d for d in raw if isinstance(d, str)]
+        else:
+            deps[sid] = []
+    return deps
+
+
 def peek_current_step(branch: str) -> dict:
     """Return the current step descriptor WITHOUT mutating state.
 
@@ -656,14 +789,37 @@ def get_next_step(branch: str) -> dict:
 
     # Check if workflow complete
     if not state.pending_steps:
-        # Check if more subtasks remain
-        if state.subtask_index + 1 < len(state.subtask_sequence):
-            # Move to next subtask, reset steps
-            state.subtask_index += 1
+        # Deps-aware advance: pick the next subtask whose dependencies are
+        # all satisfied, skipping over subtasks whose deps are unmet (in
+        # case the planning sort missed a forward dep). Backward compat:
+        # only enter the dep-aware branch when there are unprocessed
+        # subtasks (forward index or deferred markers); otherwise treat as
+        # completion so linear-walk flows finish cleanly.
+        has_forward_slot = state.subtask_index + 1 < len(state.subtask_sequence)
+        has_deferred = any(
+            state.subtask_phases.get(sid) == DEFERRED_FOR_DEPS_PHASE
+            for sid in state.subtask_sequence
+        )
+        if not has_forward_slot and not has_deferred:
+            return {
+                "step_id": "COMPLETE",
+                "phase": "COMPLETE",
+                "instruction": "All subtasks complete. Run final verification.",
+                "is_complete": True,
+            }
+        ready_idx, skipped_for_deps = _find_next_ready_subtask_index(
+            state, branch, start_after_index=state.subtask_index,
+            treat_current_as_done=True,
+        )
+        for skipped_sid in skipped_for_deps:
+            state.subtask_phases[skipped_sid] = DEFERRED_FOR_DEPS_PHASE
+        if ready_idx is not None:
+            state.subtask_index = ready_idx
             state.current_subtask_id = state.subtask_sequence[state.subtask_index]
+            if state.subtask_phases.get(state.current_subtask_id) == DEFERRED_FOR_DEPS_PHASE:
+                state.subtask_phases.pop(state.current_subtask_id, None)
             state.current_step_id = "2.2"
             state.current_step_phase = "RESEARCH"
-            # Reset to subtask-level steps (skip global setup steps)
             step_order = _get_step_order(state.tdd_mode)
             research_idx = step_order.index("2.2")
             state.pending_steps = step_order[research_idx:]  # Start from 2.2
@@ -672,11 +828,39 @@ def get_next_step(branch: str) -> dict:
             state.retry_count = 0
             state.save(state_file)
         else:
+            # No ready subtask. Distinguish completion from deadlock by
+            # checking whether ANY subtask remains unprocessed.
+            completed = _completed_subtask_ids_for_deps(state)
+            if state.current_subtask_id:
+                completed.add(state.current_subtask_id)
+            remaining = [
+                sid for sid in state.subtask_sequence if sid not in completed
+            ]
+            if not remaining:
+                return {
+                    "step_id": "COMPLETE",
+                    "phase": "COMPLETE",
+                    "instruction": "All subtasks complete. Run final verification.",
+                    "is_complete": True,
+                }
+            # Deadlock: subtasks remain but every one of them has an
+            # unmet dep. Surface BLOCKED_ON_DEPS so the caller doesn't
+            # silently spin or report COMPLETE prematurely.
+            state.current_step_id = "BLOCKED_ON_DEPS"
+            state.current_step_phase = "BLOCKED_ON_DEPS"
+            state.save(state_file)
             return {
-                "step_id": "COMPLETE",
-                "phase": "COMPLETE",
-                "instruction": "All subtasks complete. Run final verification.",
-                "is_complete": True,
+                "step_id": "BLOCKED_ON_DEPS",
+                "phase": "BLOCKED_ON_DEPS",
+                "instruction": (
+                    "No subtask can run: every remaining subtask has an "
+                    "unmet dependency. Inspect blueprint deps + "
+                    "subtask_results, then either record missing results "
+                    "or fix the dep graph."
+                ),
+                "is_complete": False,
+                "blocked_subtasks": remaining,
+                "skipped_for_deps": skipped_for_deps,
             }
 
     # Get next pending step
@@ -822,34 +1006,68 @@ def validate_step(step_id: str, branch: str) -> dict:
     # Advance current_step_id to next pending step
     advanced_from_subtask: Optional[str] = None
     advanced_to_subtask: Optional[str] = None
+    blocked_remaining: list[str] = []
+    skipped_for_deps: list[str] = []
     if state.pending_steps:
         next_id = state.pending_steps[0]
         state.current_step_id = next_id
         state.current_step_phase = STEP_PHASES.get(next_id, "UNKNOWN")
         next_step_signal = state.current_step_id
-    elif state.subtask_index + 1 < len(state.subtask_sequence):
-        # Inter-subtask boundary: ATOMICALLY advance to the next subtask's
-        # RESEARCH (2.2) so state.current_step_id / pending_steps /
-        # completed_steps stay coherent. The synthetic ADVANCE_SUBTASK
-        # sentinel left state half-applied (next-subtask cursor unset,
-        # pending_steps empty) — callers reading step_state.json between
-        # validate_step("2.4") and get_next_step saw stale data and the
-        # next idempotent validate_step("2.2") returned ADVANCE_SUBTASK
-        # instead of the canonical "2.3". Now next_step is "2.2" and the
-        # response surfaces both subtask IDs for caller visibility.
-        advanced_from_subtask = state.current_subtask_id
-        state.subtask_index += 1
-        state.current_subtask_id = state.subtask_sequence[state.subtask_index]
-        advanced_to_subtask = state.current_subtask_id
-        step_order = _get_step_order(state.tdd_mode)
-        research_idx = step_order.index("2.2")
-        state.pending_steps = step_order[research_idx:]
-        state.completed_steps = []
-        state.skipped_steps = []
-        state.retry_count = 0
-        state.current_step_id = state.pending_steps[0]
-        state.current_step_phase = STEP_PHASES.get(state.current_step_id, "RESEARCH")
-        next_step_signal = state.current_step_id
+    elif state.subtask_index + 1 < len(state.subtask_sequence) or any(
+        state.subtask_phases.get(sid) == DEFERRED_FOR_DEPS_PHASE
+        for sid in state.subtask_sequence
+    ):
+        # Inter-subtask boundary: deps-aware atomic advance. Use the
+        # runtime safety net to find the next subtask whose dependencies
+        # are all satisfied — skips over forward-dep violations that
+        # slipped past the planning gate, and wraps around to pick up
+        # earlier subtasks marked deferred_for_deps once their deps clear.
+        ready_idx, skipped_for_deps = _find_next_ready_subtask_index(
+            state, branch, start_after_index=state.subtask_index,
+            treat_current_as_done=True,
+        )
+        # Persist the deferral marker on every subtask we skipped over —
+        # so the next advance can find them on wrap-around once their
+        # deps land. Without this, _completed_subtask_ids_for_deps would
+        # treat them as already-done (linear-walk past).
+        for skipped_sid in skipped_for_deps:
+            state.subtask_phases[skipped_sid] = DEFERRED_FOR_DEPS_PHASE
+        if ready_idx is not None:
+            advanced_from_subtask = state.current_subtask_id
+            state.subtask_index = ready_idx
+            state.current_subtask_id = state.subtask_sequence[state.subtask_index]
+            advanced_to_subtask = state.current_subtask_id
+            # The chosen subtask is no longer deferred — it's now active.
+            if state.subtask_phases.get(state.current_subtask_id) == DEFERRED_FOR_DEPS_PHASE:
+                state.subtask_phases.pop(state.current_subtask_id, None)
+            step_order = _get_step_order(state.tdd_mode)
+            research_idx = step_order.index("2.2")
+            state.pending_steps = step_order[research_idx:]
+            state.completed_steps = []
+            state.skipped_steps = []
+            state.retry_count = 0
+            state.current_step_id = state.pending_steps[0]
+            state.current_step_phase = STEP_PHASES.get(
+                state.current_step_id, "RESEARCH"
+            )
+            next_step_signal = state.current_step_id
+        else:
+            # All remaining subtasks blocked on unmet deps. Distinguish
+            # from "all done" by checking what's still unprocessed.
+            completed = _completed_subtask_ids_for_deps(state)
+            if state.current_subtask_id:
+                completed.add(state.current_subtask_id)
+            blocked_remaining = [
+                sid for sid in state.subtask_sequence if sid not in completed
+            ]
+            if not blocked_remaining:
+                state.current_step_id = "COMPLETE"
+                state.current_step_phase = "COMPLETE"
+                next_step_signal = "COMPLETE"
+            else:
+                state.current_step_id = "BLOCKED_ON_DEPS"
+                state.current_step_phase = "BLOCKED_ON_DEPS"
+                next_step_signal = "BLOCKED_ON_DEPS"
     else:
         state.current_step_id = "COMPLETE"
         state.current_step_phase = "COMPLETE"
@@ -866,6 +1084,10 @@ def validate_step(step_id: str, branch: str) -> dict:
     if advanced_to_subtask is not None:
         response["subtask_advanced_from"] = advanced_from_subtask
         response["subtask_advanced_to"] = advanced_to_subtask
+    if skipped_for_deps:
+        response["skipped_for_deps"] = skipped_for_deps
+    if next_step_signal == "BLOCKED_ON_DEPS":
+        response["blocked_subtasks"] = blocked_remaining
     return response
 
 
@@ -1695,6 +1917,45 @@ def record_subtask_result(
     return response
 
 
+def backfill_subtask_ids(branch: str) -> dict:
+    """Populate the redundant ``subtask_id`` field on legacy subtask_results.
+
+    Older versions of record_subtask_result wrote entries without a
+    self-describing ``subtask_id`` field, so downstream reporters that
+    forward entries individually saw ``{"subtask_id": null, ...}``. This
+    helper walks step_state.json and writes the field for every entry
+    that's missing it (or has it set to null). Idempotent: entries
+    already carrying the correct id are left untouched.
+
+    Returns:
+        Dict with status, ``updated`` count, and the list of updated ids.
+    """
+    state_file = Path(f".map/{branch}/step_state.json")
+    if not state_file.exists():
+        return {
+            "status": "error",
+            "message": f"No step_state.json at {state_file}",
+        }
+    state = StepState.load(state_file)
+    updated: list[str] = []
+    for sid, entry in (state.subtask_results or {}).items():
+        if not isinstance(entry, dict):
+            continue
+        existing = entry.get("subtask_id")
+        if existing == sid:
+            continue
+        entry["subtask_id"] = sid
+        updated.append(sid)
+    if updated:
+        state.save(state_file)
+    return {
+        "status": "success",
+        "branch": branch,
+        "updated": len(updated),
+        "updated_ids": updated,
+    }
+
+
 def finalize_plan(branch: str) -> dict:
     """Bump the artifact_manifest plan stage to "complete" when artifacts exist.
 
@@ -1985,15 +2246,110 @@ def check_circuit_breaker(branch: str) -> dict:
     }
 
 
+def _load_blueprint_deps(branch: str) -> dict[str, list[str]]:
+    """Return {subtask_id: [dep_ids]} from blueprint.json, or empty if absent.
+
+    Tolerates both the flat blueprint shape (subtasks at top level) and the
+    decomposer's nested shape (subtasks under blueprint.subtasks). Returns
+    empty dict on any read/parse failure — callers fall back to caller-
+    provided order (no deps known means no topology to enforce).
+    """
+    bp_path = Path(f".map/{branch}/blueprint.json")
+    if not bp_path.exists():
+        return {}
+    try:
+        payload = json.loads(bp_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    body = payload.get("blueprint") if isinstance(payload.get("blueprint"), dict) else payload
+    subtasks = body.get("subtasks") if isinstance(body, dict) else None
+    deps: dict[str, list[str]] = {}
+    if not isinstance(subtasks, list):
+        return deps
+    for st in subtasks:
+        if not isinstance(st, dict):
+            continue
+        sid = st.get("id")
+        if not isinstance(sid, str):
+            continue
+        raw = st.get("dependencies", [])
+        if isinstance(raw, list):
+            deps[sid] = [d for d in raw if isinstance(d, str)]
+        else:
+            deps[sid] = []
+    return deps
+
+
+def _topological_sort_subtasks(
+    subtask_ids: list[str], deps_map: dict[str, list[str]]
+) -> tuple[Optional[list[str]], Optional[str]]:
+    """Stable topological sort of subtask_ids honoring deps_map.
+
+    Stability: when multiple nodes are simultaneously ready (no remaining
+    deps), they emerge in the order they appear in ``subtask_ids``. So a
+    decomposer that already wrote subtasks in correct order gets a
+    no-op pass; only forward-dep violations move.
+
+    Returns ``(sorted_ids, None)`` on success, or ``(None, cycle_reason)``
+    when the graph contains a cycle.
+
+    deps that reference subtasks NOT in ``subtask_ids`` are ignored — the
+    blueprint contract validator already rejects unknown deps, so this
+    function should never see them in normal flow, but it must not crash
+    in pathological cases (e.g., blueprint mid-write).
+    """
+    known = set(subtask_ids)
+    # Filter deps to in-set only and pre-compute incoming-edge counts.
+    incoming: dict[str, int] = {sid: 0 for sid in subtask_ids}
+    children: dict[str, list[str]] = {sid: [] for sid in subtask_ids}
+    for sid in subtask_ids:
+        for dep in deps_map.get(sid, []):
+            if dep in known and dep != sid:
+                incoming[sid] += 1
+                children[dep].append(sid)
+
+    # Kahn's algorithm with stable iteration in original input order so a
+    # decomposer that already wrote subtasks correctly sees no reorder.
+    ready: list[str] = [sid for sid in subtask_ids if incoming[sid] == 0]
+    sorted_ids: list[str] = []
+    emitted: set[str] = set()
+    while ready:
+        # Emit in input order (stable). Pop the smallest-index ready node.
+        ready.sort(key=lambda s: subtask_ids.index(s))
+        node = ready.pop(0)
+        sorted_ids.append(node)
+        emitted.add(node)
+        for child in children[node]:
+            incoming[child] -= 1
+            if incoming[child] == 0:
+                ready.append(child)
+
+    if len(sorted_ids) != len(subtask_ids):
+        unresolved = [sid for sid in subtask_ids if sid not in emitted]
+        return None, f"dependency cycle involving: {unresolved}"
+    return sorted_ids, None
+
+
 def set_subtasks(subtask_ids: list[str], branch: str) -> dict:
     """Set subtask sequence after decomposition and select the first subtask.
+
+    Topological invariant (added 2026-05-24): if a blueprint.json exists in
+    .map/<branch>/, its declared dependencies are honored — ``subtask_ids``
+    is stably topologically sorted so deps always precede their dependents.
+    The user-facing friction this addresses: decomposer occasionally emits
+    ST-012 with deps=[ST-027]; the linear walker hit ST-012 long before
+    ST-027 finished, producing a deadlock the operator had to break by
+    hand. Now the sequence is corrected at induction time. If a cycle is
+    detected, set_subtasks returns ``status=error`` rather than persisting
+    a broken sequence.
 
     Args:
         subtask_ids: List of subtask IDs (e.g., ["ST-001", "ST-002", "ST-003"])
         branch: Git branch name (sanitized)
 
     Returns:
-        Dict with status and subtask info
+        Dict with status, subtask info, and an optional ``reordered`` flag
+        when the input order had to be permuted to satisfy deps.
     """
     state_file = Path(f".map/{branch}/step_state.json")
     state = StepState.load(state_file)
@@ -2001,16 +2357,36 @@ def set_subtasks(subtask_ids: list[str], branch: str) -> dict:
     if not subtask_ids:
         return {"status": "error", "message": "At least one subtask ID is required"}
 
+    deps_map = _load_blueprint_deps(branch)
+    reordered = False
+    original = list(subtask_ids)
+    if deps_map:
+        sorted_ids, cycle = _topological_sort_subtasks(subtask_ids, deps_map)
+        if sorted_ids is None:
+            return {
+                "status": "error",
+                "message": (
+                    "Cannot set subtask sequence: " + (cycle or "unknown topology error")
+                ),
+            }
+        if sorted_ids != original:
+            reordered = True
+        subtask_ids = sorted_ids
+
     state.subtask_sequence = subtask_ids
     state.current_subtask_id = subtask_ids[0]
     state.subtask_index = 0
     state.save(state_file)
 
-    return {
+    response: dict[str, object] = {
         "status": "success",
         "subtask_sequence": subtask_ids,
         "current_subtask_id": subtask_ids[0],
     }
+    if reordered:
+        response["reordered"] = True
+        response["original_sequence"] = original
+    return response
 
 
 def _contract_artifact_paths(branch: str, subtask_id: str) -> tuple[Path, Path]:
@@ -2482,6 +2858,7 @@ def main():
             "mark_workflow_complete",
             "mark_subtask_complete",
             "record_subtask_result",
+            "backfill_subtask_ids",
             "finalize_plan",
         ],
         help="Command to execute",
@@ -2809,6 +3186,10 @@ def main():
                 summary=args.summary or "",
                 commit_sha=args.commit_sha,
             )
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "backfill_subtask_ids":
+            result = backfill_subtask_ids(branch)
             print(json.dumps(result, indent=2))
 
         elif args.command == "finalize_plan":

@@ -157,6 +157,92 @@ def step_state_path(branch: str) -> Path:
     return project_dir / ".map" / branch / "step_state.json"
 
 
+# Per-turn dedup: same reminder text emitted within DEDUP_WINDOW_SECONDS of
+# the previous emission AND against the same step_state.json mtime is
+# squelched. The cache lives next to step_state.json so it ages out with the
+# rest of the branch artifacts. Single-source: the cache is keyed by
+# (state_mtime, reminder_hash) so any change to either invalidates the dedup.
+DEDUP_CACHE_NAME = ".hook-reminder-cache.json"
+DEDUP_WINDOW_SECONDS = 5.0
+
+
+def _dedup_cache_path(branch: str) -> Path:
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+    return project_dir / ".map" / branch / DEDUP_CACHE_NAME
+
+
+_REMINDER_TS_RE = re.compile(r" @ \d{2}:\d{2}:\d{2}\.\d{3}Z \(state [^)]+\)")
+
+
+def _reminder_dedup_key(reminder: str) -> str:
+    """Strip volatile timestamp/state-age fragments so the dedup key reflects
+    semantic content only. format_reminder embeds `@ HH:MM:SS.mmmZ (state
+    +X.Xs)` for lag diagnostics — without normalization every call has a
+    different hash and dedup never fires.
+    """
+    return _REMINDER_TS_RE.sub("", reminder)
+
+
+def _should_squelch_duplicate(branch: str, reminder: str) -> bool:
+    """Return True if this reminder is a duplicate of the previous emission.
+
+    Dedup axis is purely the NORMALIZED reminder text within a short wall
+    clock window: when the workflow state changes (validate_step advances
+    phases / subtasks), the reminder text changes automatically (different
+    step_id / phase / progress) and the dedup naturally lifts. We do NOT
+    look at step_state.json mtime — record_hook_injection_status writes
+    the state file on every call as part of normal accounting, which
+    would otherwise bust dedup on its own side effect.
+
+    Any failure (no cache, different reminder, ancient timestamp, IO
+    error) returns False so the reminder is emitted normally.
+    """
+    if not reminder:
+        return False
+    cache_file = _dedup_cache_path(branch)
+    try:
+        if not cache_file.is_file():
+            return False
+        cache = json.loads(cache_file.read_text(encoding="utf-8"))
+        if not isinstance(cache, dict):
+            return False
+        last_hash = cache.get("reminder_hash")
+        last_emit_ts = cache.get("emit_ts")
+        if not isinstance(last_hash, str) or not isinstance(last_emit_ts, (int, float)):
+            return False
+        import hashlib  # local import; cheap on the silent path
+        import time
+        normalized = _reminder_dedup_key(reminder)
+        current_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+        if current_hash != last_hash:
+            return False
+        if (time.time() - last_emit_ts) >= DEDUP_WINDOW_SECONDS:
+            return False
+        return True
+    except (OSError, json.JSONDecodeError):
+        return False
+
+
+def _write_dedup_cache(branch: str, reminder: str) -> None:
+    """Persist last-emitted reminder hash for the next call."""
+    cache_file = _dedup_cache_path(branch)
+    try:
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        import hashlib
+        import time
+        normalized = _reminder_dedup_key(reminder)
+        payload = {
+            "reminder_hash": hashlib.sha256(normalized.encode("utf-8")).hexdigest(),
+            "emit_ts": time.time(),
+        }
+        cache_file.write_text(
+            json.dumps(payload, ensure_ascii=True), encoding="utf-8"
+        )
+    except OSError:
+        # Best-effort: cache write must never block the hook.
+        pass
+
+
 def record_hook_injection_status(
     branch: str,
     state: dict,
@@ -545,6 +631,19 @@ def main() -> None:
             # their own work shouldn't be nagged to re-enter ACTOR.
             if should_inject and is_verification_command(command):
                 suppress_required = True
+            # Phase-aware smoke-test suppression: when current_step_phase
+            # is ACTOR/MONITOR, every significant Bash command is some
+            # form of self-check (build, smoke, lint, app boot). Pressing
+            # "REQUIRED: Run Actor" on those is noise — Actor is already
+            # in ACTOR. This covers smoke patterns the static
+            # VERIFICATION_PATTERNS list misses (e.g., `python3 -m
+            # sgr_code_review …` was tagged REQUIRED 31x in one session).
+            if should_inject:
+                state_snapshot, _ = read_step_state(branch)
+                if isinstance(state_snapshot, dict):
+                    phase_now = state_snapshot.get("current_step_phase")
+                    if phase_now in ("ACTOR", "MONITOR", "TEST_WRITER"):
+                        suppress_required = True
 
     if not should_inject:
         reason = skip_reason or "tool not configured for workflow injection"
@@ -575,6 +674,16 @@ def main() -> None:
         suppress_required = True
     reminder = format_reminder(state, branch, suppress_required=suppress_required)
     if reminder:
+        # Per-turn dedup: same reminder + same state_mtime within 5s = same
+        # turn; squelch to avoid the [MAP] banner repeating across every
+        # Edit/Write/Bash invocation in a single agent burst.
+        if _should_squelch_duplicate(branch, reminder):
+            record_hook_injection_status(
+                branch, state, "deduped", "duplicate reminder squelched", tool_name
+            )
+            print("{}")
+            sys.exit(0)
+        _write_dedup_cache(branch, reminder)
         record_hook_injection_status(
             branch, state, "injected", "reminder emitted", tool_name, len(reminder)
         )

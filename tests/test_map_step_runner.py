@@ -2408,9 +2408,17 @@ class TestBuildContextBlock:
         assert "# Upstream Results" in result
         assert "ST-001: files=" in result
 
-    def test_build_context_block_enforces_budget(
+    def test_build_context_block_no_longer_truncates(
         self, branch_workspace, monkeypatch
     ):
+        """Negative-contract regression: build_context_block must NOT clip its
+        output even when MAP_CONTEXT_BLOCK_BUDGET_TOKENS is set well below the
+        natural block size. The truncation feature was removed by user request
+        because the visible "[TRUNCATED] see token_budget.json" marker and
+        per-field ellipsis were swallowing real subtask description / research
+        text. token_budget.json must still record the over-budget event so
+        operators can see when blocks exceed the configured budget.
+        """
         subtasks = [
             {
                 "id": "ST-001",
@@ -2462,28 +2470,43 @@ class TestBuildContextBlock:
 
         result = map_step_runner.build_context_block("test-branch", "ST-001")
 
-        assert map_step_runner._estimate_tokens(result) <= 260
+        # XML envelope stays intact.
         assert result.startswith("<map_context>")
         assert result.endswith("</map_context>")
-        # Truncation marker replaced "# Context Budget: truncated..." with the
-        # compact "# [TRUNCATED] see .map/<branch>/token_budget.json" so the
-        # warning itself doesn't blow the budget. Either signal proves a clip
-        # happened — assert the new in-band marker.
-        assert "# [TRUNCATED] see .map/<branch>/token_budget.json" in result
+        # NO truncation marker — the feature is gone.
+        assert "# [TRUNCATED] see" not in result
+        assert "# Context Budget: truncated" not in result
+        assert "[truncated]" not in result
+        # The block intentionally exceeds the artificially-low 260 budget;
+        # the full content must remain visible.
+        assert map_step_runner._estimate_tokens(result) > 260
+        # Current subtask details are fully present.
         assert "Current task that must stay visible" in result
         assert "Actor -> bounded context -> done" in result
+        # Every affected file rendered — no "+N more" elision.
+        assert "src/current_0.py" in result
+        assert "src/current_29.py" in result
+        assert "+" not in result.split("Affected files:", 1)[1].split("\n", 1)[0]
+        # Upstream summary preserved in full (100x repetition).
         assert "# Upstream Results" in result
-        assert "dependency summary" in result
+        assert result.count("dependency summary") >= 100
+        # All 80 plan-overview entries rendered (current + dependency + 77 future).
+        for stub in ("ST-001", "ST-002", "ST-050", "ST-079"):
+            assert stub in result, stub
 
         budget_report = json.loads(
             (branch_workspace / "token_budget.json").read_text(encoding="utf-8")
         )
         decision = budget_report["decisions"][-1]
         assert decision["path_name"] == "map-efficient.actor_context_block"
-        assert decision["budget_action"] == "truncated"
+        # New contract: "exceeded" (not "truncated") signals "block is over
+        # budget, but we did not clip" — actionable for operators without
+        # silently dropping content.
+        assert decision["budget_action"] == "exceeded"
         assert decision["configured_budget_tokens"] == 260
-        assert decision["estimated_tokens_after"] <= 260
-        assert "plan_overview" in decision["clipped_sections"]
+        assert decision["estimated_tokens_after"] > 260
+        assert decision["clipped_sections"] == []
+        assert decision["metadata"]["truncation_disabled"] is True
 
     def test_build_context_block_ignores_impossible_budget(
         self, branch_workspace, monkeypatch
@@ -2619,7 +2642,13 @@ class TestBuildContextBlockRepoDelta:
         assert "src/foo.py" in result
         assert "src/bar.py" in result
 
-    def test_repo_delta_capped_at_20_files(self, branch_workspace):
+    def test_repo_delta_lists_every_changed_file_without_elision(
+        self, branch_workspace
+    ):
+        """Negative-contract regression: build_context_block no longer caps
+        repo delta at 20 files. All changed files must render, and the
+        "... +N more" elision marker must be absent.
+        """
         self._setup_blueprint_and_state(branch_workspace, last_sha="abc123")
         many_files = [f"file_{i}.py" for i in range(25)]
         mock_insight = {
@@ -2635,9 +2664,9 @@ class TestBuildContextBlockRepoDelta:
             result = map_step_runner.build_context_block("test-branch", "ST-001")
 
         assert "# Repo Delta" in result
-        assert "file_19.py" in result
-        assert "file_20.py" not in result
-        assert "... +5 more" in result
+        for i in range(25):
+            assert f"file_{i}.py" in result, f"missing file_{i}.py"
+        assert "... +" not in result, "elision marker must be gone"
 
     def test_repo_delta_omitted_on_error(self, branch_workspace):
         self._setup_blueprint_and_state(branch_workspace, last_sha="abc123")
@@ -2993,6 +3022,138 @@ class TestBlueprintContractRelaxations:
         result = map_step_runner.validate_blueprint_contract(str(path))
         assert result["valid"] is True
         assert result["oversized_subtasks"] == [], result
+
+
+class TestBlueprintContractAffectedFilesDrift:
+    """Decomposer drift catch: when every declared affected_files path is
+    missing from disk, validate_blueprint_contract warns. The canonical
+    friction was the decomposer naming services/sourcecraft.py when the
+    actual class lives in sourcecraft_publisher.py."""
+
+    def _bp(self, files: list[str]) -> dict:
+        return {
+            "summary": "x",
+            "hard_constraints": [{"id": "HC-1", "description": "must"}],
+            "soft_constraints": [],
+            "coverage_map": {"HC-1": "ST-001"},
+            "subtasks": [{
+                "id": "ST-001", "title": "x", "aag_contract": "X -> y -> done",
+                "expected_diff_size": "small", "concern_type": "runtime",
+                "one_logical_step": True, "dependencies": [],
+                "affected_files": files,
+                "validation_criteria": ["VC1 [HC-1]: ok"],
+            }],
+        }
+
+    def test_warns_when_all_paths_missing(
+        self, branch_workspace, monkeypatch
+    ):
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        path = branch_workspace / "blueprint.json"
+        path.write_text(json.dumps(self._bp(["src/hallucinated.py", "src/also_missing.py"])))
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        # Drift is a warning, not an error — still valid=True.
+        assert result["valid"] is True, result["errors"]
+        assert any("affected_files drift" in w for w in result["warnings"]), result["warnings"]
+
+    def test_no_warning_when_any_path_exists(
+        self, branch_workspace, monkeypatch
+    ):
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        (repo / "real.py").write_text("# real file")
+        path = branch_workspace / "blueprint.json"
+        path.write_text(json.dumps(self._bp(["real.py", "src/missing.py"])))
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is True
+        assert not any("affected_files drift" in w for w in result["warnings"]), result["warnings"]
+
+    def test_no_warning_when_affected_files_empty(
+        self, branch_workspace, monkeypatch
+    ):
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        path = branch_workspace / "blueprint.json"
+        path.write_text(json.dumps(self._bp([])))
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is True
+        assert not any("affected_files drift" in w for w in result["warnings"])
+
+
+class TestBlueprintContractForwardDepsRejection:
+    """Planning-stage fix: validate_blueprint_contract rejects blueprints
+    where a subtask depends on another subtask declared LATER in the
+    subtasks[] array. Without this gate, the runtime walker would hit the
+    dependent before its dep had any chance to complete, producing a
+    silent deadlock the operator had to break with manual mark_subtask_complete.
+    """
+
+    def _subtask(self, sid: str, deps: list[str]) -> dict:
+        return {
+            "id": sid,
+            "title": f"task {sid}",
+            "aag_contract": "X -> y -> done",
+            "expected_diff_size": "small",
+            "concern_type": "runtime",
+            "one_logical_step": True,
+            "dependencies": deps,
+            "validation_criteria": ["VC1 [HC-1]: ok"],
+        }
+
+    def _bp(self, subtasks: list[dict]) -> dict:
+        return {
+            "summary": "x",
+            "hard_constraints": [{"id": "HC-1", "description": "must"}],
+            "soft_constraints": [],
+            "coverage_map": {"HC-1": subtasks[0]["id"]},
+            "subtasks": subtasks,
+        }
+
+    def test_forward_dep_is_rejected(self, branch_workspace):
+        # ST-012 depends on ST-027 (declared later) — the exact friction
+        # the user reported on neuro-vlad.
+        subtasks = [self._subtask(f"ST-{i:03d}", []) for i in range(1, 51)]
+        subtasks[11]["dependencies"] = ["ST-027"]  # ST-012 -> ST-027 (forward)
+        path = branch_workspace / "blueprint.json"
+        path.write_text(json.dumps(self._bp(subtasks)))
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is False, result
+        forward_errors = [e for e in result["errors"] if "forward dependency" in e]
+        assert any("ST-012" in e and "ST-027" in e for e in forward_errors), forward_errors
+        assert "ST-012->ST-027" in result["forward_dep_violations"]
+
+    def test_self_dep_is_rejected(self, branch_workspace):
+        subtasks = [self._subtask("ST-001", ["ST-001"])]
+        path = branch_workspace / "blueprint.json"
+        path.write_text(json.dumps(self._bp(subtasks)))
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is False
+        assert any("self-reference" in e for e in result["errors"]), result["errors"]
+
+    def test_backward_dep_is_accepted(self, branch_workspace):
+        # ST-002 depends on ST-001 (declared earlier) — the canonical case.
+        subtasks = [
+            self._subtask("ST-001", []),
+            self._subtask("ST-002", ["ST-001"]),
+            self._subtask("ST-003", ["ST-001", "ST-002"]),
+        ]
+        path = branch_workspace / "blueprint.json"
+        path.write_text(json.dumps(self._bp(subtasks)))
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is True, result["errors"]
+        assert result["forward_dep_violations"] == []
+
+    def test_unknown_dep_is_rejected_separately(self, branch_workspace):
+        # Unknown dep is reported as "unknown subtask", not as a forward dep.
+        subtasks = [self._subtask("ST-001", ["ST-999"])]
+        path = branch_workspace / "blueprint.json"
+        path.write_text(json.dumps(self._bp(subtasks)))
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is False
+        assert any("unknown subtask" in e for e in result["errors"]), result["errors"]
+        # Must NOT also be reported as a forward dep (the dep doesn't exist).
+        assert not any("forward dependency" in e for e in result["errors"])
 
 
 class TestListPlansCli:
@@ -3515,6 +3676,58 @@ class TestSaveLoadResearch:
             map_step_runner.save_research("test-branch", "../escape", "x")
         with pytest.raises(ValueError):
             map_step_runner.load_research("test-branch", "../escape")
+
+    def test_merge_all_kinds_concatenates_present_kinds(self, branch_workspace):
+        """merge_all_kinds=True returns a section-headed concat of every kind
+        on disk, ordered actor → monitor → decomposer → others. Resolves the
+        recurring friction where Monitor's own research was invisible
+        unless callers happened to pass kind="monitor"."""
+        del branch_workspace
+        map_step_runner.save_research(
+            "test-branch", "ST-001", "actor findings", kind="actor"
+        )
+        map_step_runner.save_research(
+            "test-branch", "ST-001", "monitor verdict notes", kind="monitor"
+        )
+        map_step_runner.save_research(
+            "test-branch", "ST-001", "decomposer scoping", kind="decomposer"
+        )
+        merged = map_step_runner.load_research(
+            "test-branch", "ST-001", merge_all_kinds=True
+        )
+        # All three sections present, in canonical order.
+        for needle in (
+            "# kind=actor",
+            "actor findings",
+            "# kind=monitor",
+            "monitor verdict notes",
+            "# kind=decomposer",
+            "decomposer scoping",
+        ):
+            assert needle in merged, merged
+        assert merged.index("# kind=actor") < merged.index("# kind=monitor")
+        assert merged.index("# kind=monitor") < merged.index("# kind=decomposer")
+
+    def test_merge_all_kinds_returns_empty_when_nothing_present(self, branch_workspace):
+        del branch_workspace
+        assert (
+            map_step_runner.load_research(
+                "test-branch", "ST-999", merge_all_kinds=True
+            )
+            == ""
+        )
+
+    def test_merge_all_handles_unknown_kind_after_canonical(self, branch_workspace):
+        """Custom kinds get sorted lexicographically after actor/monitor/decomposer."""
+        del branch_workspace
+        map_step_runner.save_research("test-branch", "ST-001", "actor", kind="actor")
+        map_step_runner.save_research(
+            "test-branch", "ST-001", "zebra notes", kind="zebra"
+        )
+        merged = map_step_runner.load_research(
+            "test-branch", "ST-001", merge_all_kinds=True
+        )
+        assert merged.index("# kind=actor") < merged.index("# kind=zebra")
 
     def test_kind_must_be_safe(self, branch_workspace):
         """kind must match a conservative ident pattern."""

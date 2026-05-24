@@ -1800,6 +1800,56 @@ class TestMapEfficientNoInterSubtaskPause:
             )
 
 
+class TestMapEfficientTruncatedMonitorResponseGate:
+    """Regression: when Monitor truncates mid-execution and emits prose
+    instead of JSON ("All tests pass. Now run ruff..."), /map-efficient
+    must treat it as needs_investigation, NOT silently advance. The skill
+    rule sits BEFORE the verdict-contract check so prose can't sneak
+    through on a recommendation default.
+    """
+
+    @pytest.fixture(
+        params=[
+            Path(".claude/skills/map-efficient/SKILL.md"),
+            Path("src/mapify_cli/templates/skills/map-efficient/SKILL.md"),
+        ],
+        ids=["dev", "template"],
+    )
+    def skill_path(self, request: pytest.FixtureRequest) -> Path:
+        return Path(__file__).parent.parent / request.param
+
+    def test_skill_has_truncated_response_gate(self, skill_path: Path) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        assert "Truncated-response gate" in content, (
+            f"{skill_path} missing the truncated-Monitor-response gate."
+        )
+        # Gate must be MANDATORY and ordered before the verdict-contract
+        # rule, so prose responses don't sneak past on a default recommendation.
+        gate_pos = content.find("Truncated-response gate")
+        verdict_pos = content.find("Verdict contract (MANDATORY)")
+        assert 0 <= gate_pos < verdict_pos, (
+            f"{skill_path}: truncated-response gate must appear BEFORE "
+            "verdict-contract rule so prose-output is rejected first."
+        )
+
+    def test_skill_describes_retry_then_clarify_protocol(
+        self, skill_path: Path
+    ) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        # Retry once with explicit "JSON only" instruction, then stop.
+        assert "retry and emit ONLY the JSON" in content, skill_path
+        assert "CLARIFICATION_NEEDED" in content, skill_path
+        # Three diagnostic signs must be enumerated.
+        for sign in (
+            "cannot be parsed as JSON",
+            "missing one of `valid`/`summary`/`issues`",
+            "ends mid-sentence",
+        ):
+            assert sign in content, (
+                f"{skill_path} truncated-response diagnosis must list: {sign!r}"
+            )
+
+
 class TestMapEfficientEmptyArgsResumeGuard:
     """Regression: /map-efficient must resume from existing plan / state when
     $TASK_ARGS is empty, NOT bail with "needs a task description". A prior

@@ -305,6 +305,22 @@ Return JSON with valid, summary, issues, files_changed, tests_run, and escalatio
 
 # After Monitor returns:
 
+- **Truncated-response gate (MANDATORY — pre-verdict):** Before reading
+  `valid`/`recommendation`, confirm Monitor returned a JSON object with
+  at minimum the keys `valid`, `summary`, `issues`. Monitor occasionally
+  cuts off mid-execution and returns prose ("All tests pass. Now run
+  ruff…") instead of JSON; treat that as `valid=false +
+  recommendation="needs_investigation"` and re-invoke Monitor with the
+  SAME prompt plus a follow-up line `Your previous response was not
+  JSON — retry and emit ONLY the JSON object.` Do NOT record the
+  prose-response subtask as complete or write commit_sha for it. The
+  three signs of a truncated Monitor:
+  1. The output cannot be parsed as JSON.
+  2. The JSON is parsed but missing one of `valid`/`summary`/`issues`.
+  3. The output ends mid-sentence with no closing `}`.
+  After one retry, if Monitor still doesn't emit valid JSON, stop the
+  workflow with a CLARIFICATION_NEEDED message — do NOT silently leave
+  the subtask in an unverified state.
 - **Verdict contract (MANDATORY):** Monitor's `recommendation` field overrides
   loose `valid=true` calls. If `valid=true` AND `recommendation in {"revise",
   "block", "needs_investigation"}`, treat it as `valid=false`. Reason: a

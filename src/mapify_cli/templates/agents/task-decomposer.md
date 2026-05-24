@@ -341,7 +341,33 @@ Subtasks should be ordered by dependency:
 3. Integration/wiring subtasks after ALL feature subtasks they integrate
 4. Tests/docs can be parallel with implementation (same dependency level)
 
-**CRITICAL**: If subtask B depends on subtask A, A must appear BEFORE B in the array.
+**CRITICAL — topological invariant (framework-enforced):** If subtask B depends on subtask A, A MUST appear BEFORE B in the `subtasks[]` array. A forward dependency (B at index `i` referencing A at index `j > i`) is rejected by `validate_blueprint_contract` (`forward_dep_violations`), and `set_subtasks` will either auto-reorder the input or refuse the sequence outright when it detects a cycle.
+
+```jsonc
+// WRONG — ST-012 declared at index 11 depends on ST-027 at index 26
+"subtasks": [
+  { "id": "ST-001", "dependencies": [] },
+  // ...
+  { "id": "ST-012", "dependencies": ["ST-011", "ST-027"] },  // forward dep!
+  // ...
+  { "id": "ST-027", "dependencies": [] }
+]
+// → validate_blueprint_contract reports:
+//   "ST-012: forward dependency on 'ST-027' (declared at subtasks[26]
+//    but ST-012 is at subtasks[11]); dependencies must reference only
+//    subtasks declared earlier — reorder subtasks[] so deps come first"
+
+// CORRECT — ST-027 emitted FIRST, then ST-012 can depend on it
+"subtasks": [
+  { "id": "ST-001", "dependencies": [] },
+  { "id": "ST-027", "dependencies": [] },
+  // ...
+  { "id": "ST-012", "dependencies": ["ST-011", "ST-027"] }   // backward dep OK
+]
+```
+
+A subtask MUST NOT depend on itself. The validator also flags any
+`dependencies: ["ST-XXX"]` where `ST-XXX` is the subtask's own id.
 
 ### Minimize Dependencies for Parallelism (MANDATORY)
 
@@ -629,6 +655,12 @@ When invoked with `mode: "re_decomposition"` from the orchestrator, you receive 
 - [ ] All affected_files are precise paths
 - [ ] No vague references ("backend", "frontend", "code")
 - [ ] Paths match actual project structure
+- [ ] Paths verified to exist on disk (grep/glob) OR explicitly marked as new-file creation in the subtask description — `validate_blueprint_contract` warns "affected_files drift" when every declared path is missing under CLAUDE_PROJECT_DIR
+
+**Symbol Grounding (MANDATORY)**:
+- [ ] Every class / function / method name referenced in `aag_contract` or `validation_criteria` has been grep-verified against actual source code (`rg 'class FooBar'` or `rg 'def baz_method'`). Do NOT name symbols from memory or from a similar-looking project. Recurring decomposer failure mode: hallucinating `SourceCraftPublisher.publish_inline` when the real entry point is `publish_findings`, sending Actor on a wild-goose chase before the bug is caught.
+- [ ] If the subtask creates a NEW symbol, mark it explicitly in the description ("introduces new class `X`") so reviewers don't expect to find it in the current tree.
+- [ ] When extending an existing class, name the class AND verify the file path where it currently lives — the decomposer's working assumption ("the obvious name") is wrong often enough that grep before write is cheaper than Actor rework.
 
 **Complexity Estimation** (using Unified Framework):
 - [ ] Numeric complexity_score (1-10) assigned using unified scoring framework

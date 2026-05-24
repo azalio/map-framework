@@ -2390,6 +2390,63 @@ class TestGetNextStepWorkflowCompleteShortCircuit:
         assert result["step_id"] == "2.2"
 
 
+class TestBackfillSubtaskIds:
+    """Self-describing-record fix: record_subtask_result entries now carry a
+    redundant ``subtask_id`` field so downstream reporters/log shippers
+    that forward entries individually stop receiving ``subtask_id: null``.
+    backfill_subtask_ids walks legacy state and writes the field where
+    missing.
+    """
+
+    def test_record_writes_subtask_id_on_entry(self):
+        state = map_orchestrator.StepState()
+        state.record_subtask_result(
+            "ST-001", ["a.py"], "valid", "ok", commit_sha="abc"
+        )
+        entry = state.subtask_results["ST-001"]
+        assert entry["subtask_id"] == "ST-001"
+        assert entry["commit_sha"] == "abc"
+
+    def test_backfill_populates_legacy_entries(self, branch_dir, tmp_path):
+        state = map_orchestrator.StepState()
+        state.subtask_sequence = ["ST-001", "ST-002"]
+        # Legacy entry shape (no subtask_id field — what old states have).
+        state.subtask_results = {
+            "ST-001": {"files_changed": ["a.py"], "status": "valid"},
+            "ST-002": {"files_changed": ["b.py"], "status": "valid", "subtask_id": "ST-002"},
+        }
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+
+        result = map_orchestrator.backfill_subtask_ids(branch_dir)
+        assert result["status"] == "success"
+        assert result["updated"] == 1
+        assert result["updated_ids"] == ["ST-001"]
+        reloaded = map_orchestrator.StepState.load(state_file)
+        assert reloaded.subtask_results["ST-001"]["subtask_id"] == "ST-001"
+        # Already-correct entry left untouched.
+        assert reloaded.subtask_results["ST-002"]["subtask_id"] == "ST-002"
+
+    def test_backfill_is_idempotent(self, branch_dir, tmp_path):
+        state = map_orchestrator.StepState()
+        state.record_subtask_result("ST-001", ["a.py"], "valid")
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+
+        first = map_orchestrator.backfill_subtask_ids(branch_dir)
+        assert first["updated"] == 0
+        second = map_orchestrator.backfill_subtask_ids(branch_dir)
+        assert second["updated"] == 0
+
+    def test_backfill_error_when_state_missing(self, branch_dir, tmp_path):
+        # No step_state.json present
+        sf = tmp_path / ".map" / branch_dir / "step_state.json"
+        if sf.exists():
+            sf.unlink()
+        result = map_orchestrator.backfill_subtask_ids(branch_dir)
+        assert result["status"] == "error"
+
+
 class TestSubtaskResults:
     """Tests for StepState subtask_results and last_subtask_commit_sha fields."""
 
@@ -2464,6 +2521,237 @@ class TestSubtaskResults:
         state = map_orchestrator.StepState()
         state.record_subtask_result("ST-004", ["x.py"], "valid")
         assert state.subtask_results["ST-004"]["summary"] == ""
+
+
+class TestDepsAwareRuntimeAdvance:
+    """Runtime safety net: even when planning fails and a forward-dep
+    blueprint slips through, validate_step("2.4") at the inter-subtask
+    boundary skips subtasks whose deps aren't satisfied yet, walking
+    forward to the first ready subtask. If no ready subtask exists,
+    emits BLOCKED_ON_DEPS instead of silently advancing.
+    """
+
+    def _seed_blueprint(self, tmp_path: Path, branch: str, subtasks: list[dict]) -> None:
+        bp_dir = tmp_path / ".map" / branch
+        bp_dir.mkdir(parents=True, exist_ok=True)
+        (bp_dir / "blueprint.json").write_text(
+            json.dumps({"subtasks": subtasks}), encoding="utf-8"
+        )
+
+    def test_skips_unready_subtask_picks_next_ready(
+        self, branch_dir, tmp_path
+    ):
+        # Planning slipped: blueprint claims ST-002 deps=[ST-003] but
+        # ST-002 was put before ST-003 in subtask_sequence. After
+        # closing ST-001, runtime advance must skip ST-002 (unmet dep)
+        # and land on ST-003 instead.
+        self._seed_blueprint(
+            tmp_path,
+            branch_dir,
+            [
+                {"id": "ST-001", "dependencies": []},
+                {"id": "ST-002", "dependencies": ["ST-003"]},
+                {"id": "ST-003", "dependencies": []},
+            ],
+        )
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001", "ST-002", "ST-003"]
+        state.subtask_index = 0
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.4"
+        state.current_step_phase = "MONITOR"
+        state.completed_steps = ["2.2", "2.3"]
+        state.pending_steps = ["2.4"]
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+
+        result = map_orchestrator.validate_step("2.4", branch_dir)
+
+        assert result["valid"] is True
+        assert result["subtask_advanced_from"] == "ST-001"
+        # Skipped ST-002 (forward-dep), landed on ST-003.
+        assert result["subtask_advanced_to"] == "ST-003"
+        assert result["skipped_for_deps"] == ["ST-002"]
+        reloaded = map_orchestrator.StepState.load(state_file)
+        assert reloaded.current_subtask_id == "ST-003"
+        assert reloaded.subtask_index == 2
+
+    def test_blocked_on_deps_when_no_subtask_ready(
+        self, branch_dir, tmp_path
+    ):
+        # ST-001 done, but ST-002 depends on ST-999 which doesn't exist
+        # in subtask_sequence (and was never recorded as done). Advance
+        # has no candidate — emit BLOCKED_ON_DEPS instead of COMPLETE.
+        self._seed_blueprint(
+            tmp_path,
+            branch_dir,
+            [
+                {"id": "ST-001", "dependencies": []},
+                {"id": "ST-002", "dependencies": ["ST-999"]},
+            ],
+        )
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001", "ST-002"]
+        state.subtask_index = 0
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.4"
+        state.current_step_phase = "MONITOR"
+        state.completed_steps = ["2.2", "2.3"]
+        state.pending_steps = ["2.4"]
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+
+        result = map_orchestrator.validate_step("2.4", branch_dir)
+
+        assert result["valid"] is True
+        assert result["next_step"] == "BLOCKED_ON_DEPS"
+        assert "ST-002" in result["blocked_subtasks"]
+        reloaded = map_orchestrator.StepState.load(state_file)
+        assert reloaded.current_step_id == "BLOCKED_ON_DEPS"
+
+    def test_no_blueprint_falls_through_to_linear_walk(
+        self, branch_dir, tmp_path
+    ):
+        # When no blueprint exists, advance falls back to linear order
+        # (no deps to honor). Backward compatibility: existing flows
+        # without a blueprint must still work.
+        bp = tmp_path / ".map" / branch_dir / "blueprint.json"
+        if bp.exists():
+            bp.unlink()
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001", "ST-002"]
+        state.subtask_index = 0
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.4"
+        state.completed_steps = ["2.2", "2.3"]
+        state.pending_steps = ["2.4"]
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+
+        result = map_orchestrator.validate_step("2.4", branch_dir)
+        assert result["valid"] is True
+        assert result["subtask_advanced_to"] == "ST-002"
+
+    def test_mark_subtask_complete_unblocks_dependent(
+        self, branch_dir, tmp_path
+    ):
+        # Operator manually marks ST-003 complete via mark_subtask_complete;
+        # ST-002 (deps=[ST-003]) must then be picked up on next advance.
+        self._seed_blueprint(
+            tmp_path,
+            branch_dir,
+            [
+                {"id": "ST-001", "dependencies": []},
+                {"id": "ST-002", "dependencies": ["ST-003"]},
+                {"id": "ST-003", "dependencies": []},
+            ],
+        )
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001", "ST-002", "ST-003"]
+        state.subtask_index = 0
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.4"
+        state.completed_steps = ["2.2", "2.3"]
+        state.pending_steps = ["2.4"]
+        # Pre-mark ST-003 via subtask_phases (what mark_subtask_complete writes).
+        state.subtask_phases["ST-003"] = "completed"
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+
+        result = map_orchestrator.validate_step("2.4", branch_dir)
+        assert result["valid"] is True
+        # Now ST-002 is ready (ST-003 marked done) — advance lands on it.
+        assert result["subtask_advanced_to"] == "ST-002"
+
+
+class TestSetSubtasksTopologicalSort:
+    """Planning-stage fix: set_subtasks reorders subtask_ids to honor
+    blueprint deps, so a decomposer that emitted ST-012 deps=[ST-027]
+    can no longer leak a forward-dep into runtime — set_subtasks puts
+    ST-027 before ST-012 in subtask_sequence. Cycles are rejected
+    rather than silently persisted.
+    """
+
+    def _write_bp(self, tmp_path: Path, branch: str, subtasks: list[dict]) -> None:
+        bp_dir = tmp_path / ".map" / branch
+        bp_dir.mkdir(parents=True, exist_ok=True)
+        (bp_dir / "blueprint.json").write_text(
+            json.dumps({"subtasks": subtasks}), encoding="utf-8"
+        )
+
+    def test_already_topological_input_is_noop_passthrough(
+        self, branch_dir, tmp_path
+    ):
+        self._write_bp(
+            tmp_path,
+            branch_dir,
+            [
+                {"id": "ST-001", "dependencies": []},
+                {"id": "ST-002", "dependencies": ["ST-001"]},
+                {"id": "ST-003", "dependencies": ["ST-002"]},
+            ],
+        )
+        result = map_orchestrator.set_subtasks(
+            ["ST-001", "ST-002", "ST-003"], branch_dir
+        )
+        assert result["status"] == "success"
+        assert result["subtask_sequence"] == ["ST-001", "ST-002", "ST-003"]
+        # No reorder flag when input is already correct — keeps the path
+        # quiet for well-formed blueprints.
+        assert "reordered" not in result
+
+    def test_forward_dep_in_input_is_corrected(self, branch_dir, tmp_path):
+        # The exact friction reported on neuro-vlad: ST-012 declared with
+        # deps=[ST-027] but listed BEFORE ST-027 in the input id-order.
+        # set_subtasks must reorder so ST-027 precedes ST-012.
+        subtasks = [{"id": f"ST-{i:03d}", "dependencies": []} for i in range(1, 6)]
+        subtasks[1]["dependencies"] = ["ST-005"]  # ST-002 depends on ST-005
+        self._write_bp(tmp_path, branch_dir, subtasks)
+        input_ids = ["ST-001", "ST-002", "ST-003", "ST-004", "ST-005"]
+        result = map_orchestrator.set_subtasks(input_ids, branch_dir)
+        assert result["status"] == "success"
+        assert result["reordered"] is True
+        assert result["original_sequence"] == input_ids
+        seq = result["subtask_sequence"]
+        assert seq.index("ST-005") < seq.index("ST-002")
+        # ST-001/003/004 (no deps) stay in their relative input order.
+        assert seq.index("ST-001") < seq.index("ST-003")
+        assert seq.index("ST-003") < seq.index("ST-004")
+        # current_subtask_id reflects the new head.
+        assert result["current_subtask_id"] == seq[0]
+
+    def test_cycle_is_rejected(self, branch_dir, tmp_path):
+        # ST-001 -> ST-002 -> ST-001 (cycle); cannot produce any valid order.
+        self._write_bp(
+            tmp_path,
+            branch_dir,
+            [
+                {"id": "ST-001", "dependencies": ["ST-002"]},
+                {"id": "ST-002", "dependencies": ["ST-001"]},
+            ],
+        )
+        result = map_orchestrator.set_subtasks(["ST-001", "ST-002"], branch_dir)
+        assert result["status"] == "error"
+        assert "cycle" in result["message"].lower()
+
+    def test_missing_blueprint_falls_back_to_input_order(
+        self, branch_dir, tmp_path
+    ):
+        # No blueprint = no deps to honor; preserve caller-provided order.
+        # (delete any blueprint that branch_dir fixture might have planted)
+        bp = tmp_path / ".map" / branch_dir / "blueprint.json"
+        if bp.exists():
+            bp.unlink()
+        result = map_orchestrator.set_subtasks(
+            ["ST-003", "ST-001", "ST-002"], branch_dir
+        )
+        assert result["status"] == "success"
+        assert result["subtask_sequence"] == ["ST-003", "ST-001", "ST-002"]
+        assert "reordered" not in result
 
 
 class TestCwdIndependence:
