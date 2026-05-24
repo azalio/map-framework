@@ -2131,6 +2131,54 @@ class TestValidateStepResearchEnforcement:
         assert result["next_step"] == "2.3"
 
 
+class TestRecordSubtaskResultAutoCommitSha:
+    """record_subtask_result auto-detects current HEAD commit when caller
+    didn't pass --commit-sha. Strengthens downstream provenance — every
+    recorded subtask result now carries a SHA the operator can git-show."""
+
+    def test_auto_detects_head_commit_sha(self, branch_dir, tmp_path, monkeypatch):
+        state = map_orchestrator.StepState()
+        state.subtask_sequence = ["ST-001"]
+        state.current_subtask_id = "ST-001"
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        # Init a git repo with one commit so HEAD resolves.
+        import subprocess as _sp
+        _sp.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "config", "user.name", "t"], cwd=tmp_path, capture_output=True)
+        (tmp_path / "seed.txt").write_text("seed")
+        _sp.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True)
+        sha_proc = _sp.run(
+            ["git", "log", "-1", "--format=%H"], cwd=tmp_path,
+            capture_output=True, text=True,
+        )
+        expected_sha = sha_proc.stdout.strip()
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        result = map_orchestrator.record_subtask_result(
+            "ST-001", branch_dir, files_changed=[], status="valid",
+            summary="auto sha", commit_sha=None,
+        )
+        assert result["status"] == "success"
+        reloaded = map_orchestrator.StepState.load(state_file)
+        assert reloaded.last_subtask_commit_sha == expected_sha
+
+    def test_explicit_commit_sha_wins(self, branch_dir, tmp_path, monkeypatch):
+        state = map_orchestrator.StepState()
+        state.subtask_sequence = ["ST-001"]
+        state.current_subtask_id = "ST-001"
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        map_orchestrator.record_subtask_result(
+            "ST-001", branch_dir, files_changed=[], status="valid",
+            summary="x", commit_sha="cafebabe",
+        )
+        reloaded = map_orchestrator.StepState.load(state_file)
+        assert reloaded.last_subtask_commit_sha == "cafebabe"
+
+
 class TestValidateStepTransactionalMonitor:
     """validate_step('2.4') now implicitly closes pending 2.3 (ACTOR) so
     callers don't get 'Step mismatch: expected 2.3' when they jump straight

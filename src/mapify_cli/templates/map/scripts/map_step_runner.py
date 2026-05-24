@@ -5193,6 +5193,132 @@ def subtask_token_usage(
     }
 
 
+def refresh_blueprint_affected_files(
+    branch: str, subtask_id: str, *, dry_run: bool = False
+) -> dict:
+    """Overwrite a subtask's `affected_files` in blueprint.json with the
+    actual files this subtask changed (per-subtask baseline ∆ git status).
+
+    Closes the recurring "blueprint affected_files drift" friction: paths
+    decomposer guessed at planning time are routinely wrong, and the
+    mutation-boundary check then flags every Monitor pass as `warning`.
+    Run this after Actor finishes a subtask to lock the planned surface
+    to reality before MONITOR — or after MONITOR pass to keep blueprint
+    auditable for downstream review.
+
+    Returns: status, subtask_id, previous, current, diff (added/removed),
+    blueprint_path, dry_run.
+    """
+    branch_name = _sanitize_branch(branch)
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
+    bp_path = project_dir / ".map" / branch_name / "blueprint.json"
+    if not bp_path.exists():
+        return {"status": "error", "message": f"blueprint.json not found at {bp_path}"}
+    try:
+        bp_text = bp_path.read_text(encoding="utf-8")
+        bp_data = json.loads(bp_text)
+    except (json.JSONDecodeError, OSError) as exc:
+        return {"status": "error", "message": f"unreadable blueprint: {exc}"}
+
+    # Both wrapped and flat shapes — same convention as load_blueprint.
+    if isinstance(bp_data.get("blueprint"), dict):
+        target_body = bp_data["blueprint"]
+        body_is_wrapped = True
+    else:
+        target_body = bp_data
+        body_is_wrapped = False
+    subtasks = target_body.get("subtasks")
+    if not isinstance(subtasks, list):
+        return {"status": "error", "message": "blueprint missing subtasks list"}
+    found_index: Optional[int] = None
+    for idx, st in enumerate(subtasks):
+        if isinstance(st, dict) and st.get("id") == subtask_id:
+            found_index = idx
+            break
+    if found_index is None:
+        return {
+            "status": "error",
+            "message": f"subtask {subtask_id!r} not in blueprint",
+        }
+
+    # Compute the per-subtask actual surface, using the same baseline
+    # subtraction the mutation-boundary validator uses.
+    baseline_files: set[str] = set()
+    for bp_baseline in (
+        _subtask_baseline_path(branch_name, subtask_id, project_dir),
+        _scope_baseline_path(branch_name, project_dir),
+    ):
+        if bp_baseline.exists():
+            try:
+                data = json.loads(bp_baseline.read_text(encoding="utf-8"))
+                raw = data.get("files", [])
+                if isinstance(raw, list):
+                    baseline_files.update(str(p) for p in raw if isinstance(p, str))
+            except (json.JSONDecodeError, OSError):
+                pass
+
+    try:
+        status_proc = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"status": "error", "message": f"git status failed: {exc}"}
+    if status_proc.returncode != 0:
+        return {
+            "status": "error",
+            "message": f"git status non-zero: {status_proc.stderr.strip() or 'no stderr'}",
+        }
+    actual_set: set[str] = set()
+    for raw in status_proc.stdout.splitlines():
+        if len(raw) >= 4:
+            path = raw[3:].strip()
+            if " -> " in path:
+                path = path.split(" -> ", 1)[1]
+            if path and not path.startswith(".map/") and not path.startswith(".codex/"):
+                actual_set.add(path)
+    actual_set -= baseline_files
+    current_files = sorted(actual_set)
+
+    previous_raw = subtasks[found_index].get("affected_files", []) or []
+    previous_files = sorted({
+        re.split(r"\s+\(", str(p).strip())[0]
+        for p in previous_raw
+        if isinstance(p, str) and p.strip()
+    })
+
+    added = sorted(set(current_files) - set(previous_files))
+    removed = sorted(set(previous_files) - set(current_files))
+
+    if dry_run:
+        return {
+            "status": "dry_run",
+            "subtask_id": subtask_id,
+            "blueprint_path": str(bp_path),
+            "previous": previous_files,
+            "current": current_files,
+            "diff": {"added": added, "removed": removed},
+        }
+
+    subtasks[found_index]["affected_files"] = current_files
+    if body_is_wrapped:
+        bp_data["blueprint"] = target_body
+    else:
+        bp_data = target_body
+    bp_path.write_text(json.dumps(bp_data, indent=2), encoding="utf-8")
+    return {
+        "status": "success",
+        "subtask_id": subtask_id,
+        "blueprint_path": str(bp_path),
+        "previous": previous_files,
+        "current": current_files,
+        "diff": {"added": added, "removed": removed},
+    }
+
+
 def detect_already_done(
     branch: str, subtask_id: str, *, since_ref: Optional[str] = None
 ) -> dict:
@@ -6539,6 +6665,18 @@ if __name__ == "__main__":
     elif func_name == "record_scope_baseline" and len(sys.argv) >= 3:
         # CLI: record_scope_baseline <branch>
         report = record_scope_baseline(sys.argv[2])
+        print(json.dumps(report, indent=2))
+        if report.get("status") == "error":
+            sys.exit(1)
+
+    elif func_name == "refresh_blueprint_affected_files" and len(sys.argv) >= 4:
+        # CLI: refresh_blueprint_affected_files <branch> <subtask_id> [--dry-run]
+        branch_arg = sys.argv[2]
+        sid_arg = sys.argv[3]
+        dry_run_arg = "--dry-run" in sys.argv
+        report = refresh_blueprint_affected_files(
+            branch_arg, sid_arg, dry_run=dry_run_arg
+        )
         print(json.dumps(report, indent=2))
         if report.get("status") == "error":
             sys.exit(1)

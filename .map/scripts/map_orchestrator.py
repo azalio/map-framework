@@ -1653,12 +1653,32 @@ def record_subtask_result(
         p for p in (files_changed or [])
         if isinstance(p, str) and p and not (project_dir / p).exists()
     ]
+    # Auto-detect commit_sha from `git log -1 --format=%H` when caller
+    # didn't pass one — closes the "commit_sha always null in
+    # subtask_results" gap that weakened downstream provenance.
+    import subprocess as _sp  # noqa: PLC0415 — local import keeps top clean
+    auto_commit_sha = commit_sha
+    if not auto_commit_sha:
+        try:
+            proc = _sp.run(
+                ["git", "log", "-1", "--format=%H"],
+                cwd=project_dir,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if proc.returncode == 0:
+                candidate = proc.stdout.strip()
+                if candidate:
+                    auto_commit_sha = candidate
+        except (OSError, _sp.TimeoutExpired):
+            pass
     state.record_subtask_result(
         subtask_id,
         files_changed=files_changed,
         status=status,
         summary=summary,
-        commit_sha=commit_sha,
+        commit_sha=auto_commit_sha,
     )
     state.save(state_file)
     response: dict = {

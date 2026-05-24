@@ -3033,6 +3033,76 @@ class TestRecordPlanArtifactsPlanReadyWithoutStepState:
         assert result["plan_status"] == "ready", result
 
 
+class TestRefreshBlueprintAffectedFiles:
+    """refresh_blueprint_affected_files locks the planned mutation surface to
+    the actual diff once Actor finishes a subtask — closes the recurring
+    drift between blueprint affected_files and reality."""
+
+    def _init_git(self, root: Path) -> None:
+        subprocess.run(["git", "init"], cwd=root, capture_output=True, check=False)
+        subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=root, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "t"], cwd=root, capture_output=True)
+        (root / "seed.txt").write_text("seed")
+        subprocess.run(["git", "add", "."], cwd=root, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=root, capture_output=True)
+
+    def test_overwrites_affected_files_with_actual_diff(
+        self, branch_workspace, monkeypatch
+    ):
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        # Blueprint guessed wrong paths.
+        bp = {"subtasks": [{
+            "id": "ST-001", "title": "x",
+            "affected_files": ["wrong/path.py", "stale_guess.py"],
+        }]}
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        # Actor actually changed these:
+        (repo / "real_a.py").write_text("x = 1")
+        (repo / "real_b.py").write_text("y = 2")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.refresh_blueprint_affected_files(
+            "test-branch", "ST-001"
+        )
+        assert report["status"] == "success", report
+        assert sorted(report["current"]) == ["real_a.py", "real_b.py"]
+        assert report["diff"]["added"] == ["real_a.py", "real_b.py"]
+        assert report["diff"]["removed"] == ["stale_guess.py", "wrong/path.py"]
+        reloaded = json.loads((branch_workspace / "blueprint.json").read_text())
+        assert reloaded["subtasks"][0]["affected_files"] == ["real_a.py", "real_b.py"]
+
+    def test_dry_run_does_not_write(self, branch_workspace, monkeypatch):
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        bp = {"subtasks": [{
+            "id": "ST-001", "affected_files": ["wrong.py"],
+        }]}
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        (repo / "real.py").write_text("x")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.refresh_blueprint_affected_files(
+            "test-branch", "ST-001", dry_run=True
+        )
+        assert report["status"] == "dry_run"
+        reloaded = json.loads((branch_workspace / "blueprint.json").read_text())
+        # File on disk untouched.
+        assert reloaded["subtasks"][0]["affected_files"] == ["wrong.py"]
+
+    def test_rejects_unknown_subtask(self, branch_workspace, monkeypatch):
+        repo = branch_workspace.parents[1]
+        (branch_workspace / "blueprint.json").write_text(json.dumps({
+            "subtasks": [{"id": "ST-001", "affected_files": []}]
+        }))
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.refresh_blueprint_affected_files(
+            "test-branch", "ST-999"
+        )
+        assert report["status"] == "error"
+        assert "ST-999" in report["message"]
+
+
 class TestRecordSubtaskBaseline:
     """record_subtask_baseline + per-subtask baseline filter in
     validate_mutation_boundary: each subtask's MONITOR check only flags
