@@ -32,6 +32,16 @@ PROJECT_DIR = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
 # Phases where Edit/Write is expected (Actor applies code)
 EDITING_PHASES = {"ACTOR", "APPLY", "TEST_WRITER"}
 
+# Docs-only file suffixes / path prefixes that are permitted during
+# RESEARCH (2.2). A docs-only subtask (runbook update, README tweak,
+# CHANGELOG line) doesn't benefit from research-agent investigation,
+# but the unconditional RESEARCH gate forced operators to save an
+# empty research stub before they could edit a .md file. Allowing
+# obvious docs surfaces during RESEARCH preserves the intent (block
+# code edits before research) without the friction.
+DOCS_ONLY_EXTENSIONS = {".md", ".mdx", ".rst", ".txt", ".adoc"}
+DOCS_ONLY_PATH_PREFIXES = ("docs/", "doc/", "documentation/", "CHANGELOG", "RELEASING", "README")
+
 # TERMINAL_PHASES contains phases where the workflow is considered closed.
 # Edits during COMPLETE are intentionally permissive because:
 #   1. Post-workflow polish (doc tweaks, follow-up review fixes) must not be gated —
@@ -95,6 +105,39 @@ def extract_target_file_paths(tool_call: dict) -> list[str]:
                     paths.append(fp)
 
     return paths
+
+
+def is_docs_only_path(file_path: str) -> bool:
+    """Return True if path is documentation that may be edited during RESEARCH.
+
+    RESEARCH (2.2) blocks Edit by default — research-agent must run
+    before code mutation. Docs surfaces (README, runbook, CHANGELOG)
+    don't benefit from research-agent, so the unconditional block
+    forced operators to save an empty research stub. Allowing docs
+    files during RESEARCH preserves the intent (no code edits before
+    research) without the friction.
+    """
+    if not isinstance(file_path, str) or not file_path.strip():
+        return False
+    candidate = Path(file_path)
+    name = candidate.name
+    suffix = candidate.suffix.lower()
+    if suffix in DOCS_ONLY_EXTENSIONS:
+        return True
+    # Project-relative path check for prefix matches (docs/, README*, etc.)
+    try:
+        resolved = (
+            candidate.resolve(strict=False)
+            if candidate.is_absolute()
+            else (PROJECT_DIR / candidate).resolve(strict=False)
+        )
+        rel = str(resolved.relative_to(PROJECT_DIR))
+    except (ValueError, OSError):
+        rel = file_path
+    for prefix in DOCS_ONLY_PATH_PREFIXES:
+        if rel.startswith(prefix) or name.startswith(prefix):
+            return True
+    return False
 
 
 def is_exempt_path(file_path: str) -> bool:
@@ -169,6 +212,20 @@ def get_branch_name() -> str:
     except Exception:
         pass
     return "default"
+
+
+def _current_phase_is_research(branch: str) -> bool:
+    """Return True iff step_state's current phase is RESEARCH (2.2)."""
+    step_file = PROJECT_DIR / ".map" / branch / "step_state.json"
+    if not step_file.exists():
+        return False
+    try:
+        with open(step_file, "r", encoding="utf-8") as f:
+            state = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return False
+    phase = state.get("current_step_phase", "")
+    return isinstance(phase, str) and phase.upper() == "RESEARCH"
 
 
 def is_editing_phase(branch: str) -> tuple[bool, Optional[str]]:
@@ -330,6 +387,19 @@ def main() -> None:
         # Phase check (step_state.json)
         allowed, error = is_editing_phase(branch)
         if not allowed:
+            # Docs-only exception: when EVERY target path is a docs
+            # surface (README, runbook, CHANGELOG, anything matching the
+            # configured DOCS_ONLY_* allowlist) AND the current phase is
+            # RESEARCH, allow the edit. Docs subtasks don't need
+            # research-agent investigation, and the unconditional block
+            # forced operators to write empty research stubs just to
+            # pass the gate.
+            if (
+                target_paths
+                and all(is_docs_only_path(p) for p in target_paths)
+                and _current_phase_is_research(branch)
+            ):
+                allow()
             deny(error or "Edit blocked: not in an editing phase.")
 
         # Constraint check (step_state.json)

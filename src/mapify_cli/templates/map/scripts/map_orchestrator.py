@@ -904,6 +904,48 @@ def get_next_step(branch: str) -> dict:
 
 
 REJECT_RECOMMENDATIONS = {"revise", "block", "needs_investigation"}
+_MONITOR_REQUIRED_KEYS = ("valid", "summary", "issues")
+
+
+def _validate_monitor_envelope(monitor_text: str) -> Optional[str]:
+    """Return None when monitor_text is a complete Monitor JSON envelope.
+
+    Returns an error message string when the envelope is broken — used
+    by validate_step 2.4 to reject prose-instead-of-JSON Monitor
+    responses orchestrator-side instead of relying on the operator to
+    eyeball it. Three failure modes match the skill's documented gate:
+    (a) doesn't parse as JSON, (b) missing required keys, (c) ends
+    mid-sentence (no closing `}`).
+    """
+    if not monitor_text or not monitor_text.strip():
+        return "Monitor envelope is empty (prose-only response or truncation)"
+    stripped = monitor_text.strip()
+    if not stripped.endswith(("}", "]")):
+        return (
+            "Monitor response ends mid-sentence (no closing `}`/`]`) — "
+            "likely truncated; re-prompt with 'emit ONLY the JSON object'"
+        )
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError as exc:
+        # Try fenced ```json {...} ``` recovery before giving up.
+        import re as _re
+        match = _re.search(r"\{(?:.|\n)*\}", stripped)
+        if not match:
+            return f"Monitor response does not parse as JSON: {exc}"
+        try:
+            parsed = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            return f"Monitor response does not parse as JSON: {exc}"
+    if not isinstance(parsed, dict):
+        return "Monitor response parsed but is not an object"
+    missing = [k for k in _MONITOR_REQUIRED_KEYS if k not in parsed]
+    if missing:
+        return (
+            f"Monitor JSON missing required keys {missing!r} — likely "
+            "truncated; re-prompt for complete envelope"
+        )
+    return None
 
 
 def validate_step(
@@ -911,6 +953,7 @@ def validate_step(
     branch: str,
     *,
     recommendation: Optional[str] = None,
+    monitor_envelope: Optional[str] = None,
 ) -> dict:
     """
     Validate step completion and update state.
@@ -972,6 +1015,26 @@ def validate_step(
             "valid": False,
             "message": "Plan not approved. Set approval first: python3 .map/scripts/map_orchestrator.py set_plan_approved true",
         }
+    # Monitor envelope check: when --monitor-envelope is supplied,
+    # reject 2.4 close if the envelope text is truncated / not JSON /
+    # missing required keys. Moves the prose-response gate from skill
+    # guidance to structural enforcement so a forgetful operator can't
+    # close on a truncated Monitor output.
+    if step_id == "2.4" and monitor_envelope is not None:
+        envelope_error = _validate_monitor_envelope(monitor_envelope)
+        if envelope_error:
+            return {
+                "valid": False,
+                "message": (
+                    f"Monitor envelope validation failed: {envelope_error}. "
+                    "Re-invoke Monitor with 'retry and emit ONLY the JSON "
+                    "object'; if it stays truncated, stop with "
+                    "CLARIFICATION_NEEDED — do NOT close 2.4 on a "
+                    "prose-only response."
+                ),
+                "envelope_error": envelope_error,
+            }
+
     # Monitor recommendation enforcement: when closing 2.4 (MONITOR) and
     # the caller passed a recommendation, refuse to close on revise /
     # block / needs_investigation. The skill rule was prose-only ("valid
@@ -1934,6 +1997,7 @@ def record_subtask_result(
     # didn't pass one — closes the "commit_sha always null in
     # subtask_results" gap that weakened downstream provenance.
     auto_commit_sha = commit_sha
+    auto_detected_sha = False
     if not auto_commit_sha:
         try:
             proc = _sp.run(
@@ -1947,8 +2011,21 @@ def record_subtask_result(
                 candidate = proc.stdout.strip()
                 if candidate:
                     auto_commit_sha = candidate
+                    auto_detected_sha = True
         except (OSError, _sp.TimeoutExpired):
             pass
+    # Stale-SHA detection: when auto-detect grabbed the same commit as
+    # the prior subtask's recorded SHA, the operator didn't make a new
+    # commit for THIS subtask — silently writing the prior SHA into the
+    # current entry makes the audit trail lie. Flag the duplicate so
+    # caller can decide (commit per-subtask, OR record without --commit-sha
+    # for the "intentionally bundled" case, OR pass --commit-sha
+    # explicitly to acknowledge the shared SHA).
+    sha_is_stale_duplicate = (
+        auto_detected_sha
+        and auto_commit_sha is not None
+        and state.last_subtask_commit_sha == auto_commit_sha
+    )
 
     # Actor-output verification (added 2026-05-25): cross-check that the
     # files Actor CLAIMED to change actually show up in the worktree —
@@ -2025,6 +2102,24 @@ def record_subtask_result(
             else suffix
         )
         response["files_not_in_diff"] = files_not_in_diff
+    if sha_is_stale_duplicate and auto_commit_sha:
+        stale_sha_short = auto_commit_sha[:12]
+        existing_warning = response.get("warning", "")
+        suffix = (
+            f"Auto-detected commit_sha {stale_sha_short} matches the "
+            "prior subtask's last_subtask_commit_sha — you almost certainly "
+            "did NOT commit between subtasks, so the audit trail will record "
+            "the same SHA for both. Either (a) commit per-subtask BEFORE "
+            "record_subtask_result (recommended; see map-efficient SKILL.md), "
+            "or (b) pass --commit-sha <SHA> explicitly to acknowledge a "
+            "shared commit (bundled-PR mode)."
+        )
+        response["warning"] = (
+            f"{existing_warning}\n{suffix}".strip()
+            if existing_warning
+            else suffix
+        )
+        response["sha_is_stale_duplicate"] = True
     return response
 
 
@@ -3077,6 +3172,43 @@ def main():
         help="Commit SHA (for record_subtask_result)",
     )
     parser.add_argument(
+        "--recommendation",
+        help=(
+            "Monitor recommendation (for validate_step 2.4). Values "
+            "revise|block|needs_investigation make validate_step return "
+            "valid=false even when the step would otherwise close. "
+            "Closes the 'Monitor says needs_revision but skill called "
+            "validate_step without surfacing it' footgun. Optional — "
+            "back-compat callers that omit it get legacy behavior."
+        ),
+    )
+    parser.add_argument(
+        "--monitor-envelope",
+        dest="monitor_envelope",
+        help=(
+            "Path to Monitor's JSON response (for validate_step 2.4). "
+            "When provided, the orchestrator validates the envelope "
+            "(parses as JSON, has valid/summary/issues, ends with `}`) "
+            "before closing the step. Use `-` to read from stdin."
+        ),
+    )
+    parser.add_argument(
+        "--kind",
+        help=(
+            "Subtask completion kind (for mark_subtask_complete): one of "
+            "done|noop|deferred|stub|prior_pr. Default noop preserves "
+            "backward compatibility with callers that don't pass it."
+        ),
+    )
+    parser.add_argument(
+        "--mechanical",
+        action="store_true",
+        help=(
+            "Shorthand for mark_subtask_complete deterministic-edit "
+            "short-circuit (skip research-agent for trivial subtasks)."
+        ),
+    )
+    parser.add_argument(
         "--transcript-path",
         default=os.environ.get("MAPIFY_TRANSCRIPT_PATH"),
         help=(
@@ -3152,17 +3284,45 @@ def main():
                 sys.exit(1)
             # `--recommendation <verdict>` enforces the Monitor verdict
             # contract on the 2.4 close: revise/block/needs_investigation
-            # makes validate_step fail. Optional — back-compat callers
-            # that don't pass it get the legacy "no recommendation check"
-            # behavior.
-            extras = list(args.extra_args or [])
-            recommendation_arg: Optional[str] = None
-            if "--recommendation" in extras:
-                rec_idx = extras.index("--recommendation")
-                if rec_idx + 1 < len(extras):
-                    recommendation_arg = extras[rec_idx + 1]
+            # makes validate_step fail. Registered as a real argparse
+            # option above so `--recommendation proceed` is no longer
+            # rejected with "unrecognized arguments" (regression: the
+            # earlier extras-scan implementation was bypassed by
+            # argparse's strict-mode rejection of unknown -- flags).
+            # We also accept the legacy extras placement for backward
+            # compat with callers stuck on the old scrape pattern.
+            recommendation_arg: Optional[str] = args.recommendation
+            if recommendation_arg is None:
+                extras = list(args.extra_args or [])
+                if "--recommendation" in extras:
+                    rec_idx = extras.index("--recommendation")
+                    if rec_idx + 1 < len(extras):
+                        recommendation_arg = extras[rec_idx + 1]
+            # --monitor-envelope <path>: validate the envelope before
+            # closing 2.4. Path "-" reads from stdin so shell pipelines
+            # can stream Monitor's response without an intermediate file.
+            monitor_envelope_text: Optional[str] = None
+            if args.monitor_envelope:
+                if args.monitor_envelope == "-":
+                    monitor_envelope_text = sys.stdin.read()
+                else:
+                    try:
+                        monitor_envelope_text = Path(args.monitor_envelope).read_text(
+                            encoding="utf-8"
+                        )
+                    except OSError as exc:
+                        print(
+                            json.dumps({
+                                "error": f"--monitor-envelope read failed: {exc}",
+                            }),
+                            file=sys.stderr,
+                        )
+                        sys.exit(1)
             result = validate_step(
-                args.task_or_step, branch, recommendation=recommendation_arg
+                args.task_or_step,
+                branch,
+                recommendation=recommendation_arg,
+                monitor_envelope=monitor_envelope_text,
             )
             print(json.dumps(result, indent=2))
 
@@ -3361,13 +3521,16 @@ def main():
             # subtasks (DB schema bump, dependency pin, etc.) where deep
             # research is overhead. The reason text auto-flags the path
             # for audit.
+            # Real argparse options take precedence over the legacy
+            # extras-scan (same reason as --recommendation above:
+            # extras-scan never sees -- flags in argparse strict mode).
             extra = list(args.extra_args or [])
-            mechanical = "--mechanical" in extra
+            mechanical = bool(args.mechanical) or ("--mechanical" in extra)
             # `--kind <done|noop|deferred|stub|prior_pr>` classifies the
             # short-circuit so audits can group by intent. Default falls
             # back to noop for backward compat with existing callers.
-            kind_arg: Optional[str] = None
-            if "--kind" in extra:
+            kind_arg: Optional[str] = args.kind
+            if kind_arg is None and "--kind" in extra:
                 kind_idx = extra.index("--kind")
                 if kind_idx + 1 < len(extra):
                     kind_arg = extra[kind_idx + 1]

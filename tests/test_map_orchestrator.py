@@ -2523,6 +2523,40 @@ class TestSubtaskResults:
         assert state.subtask_results["ST-004"]["summary"] == ""
 
 
+class TestValidateStepRecommendationCLIRegistration:
+    """Regression: --recommendation must be a registered argparse option,
+    not scraped from extra_args. The scrape implementation was bypassed
+    by argparse strict mode (unknown -- flags fail before reaching
+    extra_args), so the skill instruction was broken in practice.
+    """
+
+    def test_cli_accepts_recommendation_flag(self, branch_dir, tmp_path):
+        del branch_dir, tmp_path  # CLI subprocess uses its own cwd
+        script = (
+            Path(__file__).parent.parent
+            / "src" / "mapify_cli" / "templates" / "map" / "scripts"
+            / "map_orchestrator.py"
+        )
+        # Help text exposes the flag; no argparse error.
+        result = subprocess.run(
+            [sys.executable, str(script), "validate_step", "--help"],
+            capture_output=True, text=True, timeout=10,
+        )
+        # The script doesn't have per-command help, but the parent parser
+        # must list --recommendation among its options.
+        result_root = subprocess.run(
+            [sys.executable, str(script), "--help"],
+            capture_output=True, text=True, timeout=10,
+        )
+        assert "--recommendation" in result_root.stdout, (
+            f"--recommendation missing from CLI options. stdout: {result_root.stdout!r}"
+        )
+        # Direct invocation with the flag must NOT exit with argparse's
+        # exit(2) "unrecognized arguments" — even if state load fails,
+        # argparse parsing itself must succeed.
+        assert "unrecognized arguments: --recommendation" not in result.stderr
+
+
 class TestValidateStepRecommendationContract:
     """Fix #6: validate_step 2.4 now enforces the Monitor recommendation
     contract orchestrator-side. Skill rule "valid=true +
