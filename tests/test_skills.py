@@ -2097,3 +2097,116 @@ class TestMapCheckPendingStepsSchema:
             "`.pending_steps | length` / `.pending_steps[]` (flat-array form) "
             "or `.workflow_status` — neither was found."
         )
+
+
+class TestMapReviewWalkthroughHardening:
+    """Regression: after a walkthrough that filtered 9 reviewer findings
+    down to 3 (with HIGH severities downgraded), the skill must:
+      - precheck lint/test BEFORE reviewer agents,
+      - detect lightweight (empty bundle) and sibling-aware modes,
+      - require evidence (reach_evidence) for severity≥MEDIUM,
+      - tag findings was_present_before_pr to filter pre-existing,
+      - run a verification gate before publication,
+      - force cross-agent challenge when Monitor and Evaluator diverge.
+    """
+
+    @pytest.fixture(
+        params=[
+            Path(".claude/skills/map-review/SKILL.md"),
+            Path("src/mapify_cli/templates/skills/map-review/SKILL.md"),
+        ],
+        ids=["dev", "template"],
+    )
+    def skill_path(self, request: pytest.FixtureRequest) -> Path:
+        return Path(__file__).parent.parent / request.param
+
+    def test_lint_test_precheck_runs_first(self, skill_path: Path) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        # Precheck section exists.
+        assert "Step A.0: Lint / test precheck" in content, (
+            f"{skill_path} missing Step A.0 lint/test precheck — "
+            "reviewer findings the linter already catches must NOT "
+            "become walkthrough items."
+        )
+        # Precheck appears BEFORE the first Task( call.
+        precheck_pos = content.find("Step A.0: Lint / test precheck")
+        first_task = content.find("Task(")
+        assert 0 <= precheck_pos < first_task, (
+            f"{skill_path}: precheck must run before reviewer agents."
+        )
+
+    def test_mode_detection_step_present(self, skill_path: Path) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        assert "Step A.0b: Detect review mode" in content, skill_path
+        for needle in ("lightweight", "sibling-aware", "review-mode.json"):
+            assert needle in content, (
+                f"{skill_path} mode detection missing: {needle!r}"
+            )
+
+    def test_evidence_required_on_agent_schemas(self, skill_path: Path) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        # Monitor issues must carry reach_evidence + was_present_before_pr.
+        assert "`reach_evidence`" in content, skill_path
+        assert "`was_present_before_pr`" in content, skill_path
+        # Predictor landmine claims require landmine_evidence.
+        assert "`landmine_evidence`" in content, skill_path
+        # Evaluator audits Monitor's severity.
+        assert "`monitor_severity_audit`" in content, skill_path
+
+    def test_verification_gate_present_with_six_checks(
+        self, skill_path: Path
+    ) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        assert "Step A.3: Verification gate" in content, skill_path
+        # Six numbered checks: Evidence, Pre-existing, Sibling, Precheck dup,
+        # Reachability, Cross-agent challenge.
+        for check in (
+            "Evidence check",
+            "Pre-existing check",
+            "Sibling check",
+            "Precheck duplication check",
+            "Reachability check",
+            "Cross-agent challenge",
+        ):
+            assert check in content, (
+                f"{skill_path} verification gate missing: {check!r}"
+            )
+
+    def test_hard_stop_no_longer_immediate_publication(
+        self, skill_path: Path
+    ) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        # The legacy "report findings immediately and skip Phase B" line
+        # must be gone — replaced with verification-gated publication.
+        assert (
+            "report findings immediately and skip Phase B" not in content
+        ), (
+            f"{skill_path}: hard-stop must require verification before "
+            "publication (legacy unconditional dump is gone)."
+        )
+        # Surviving findings (post-verification) gate is documented.
+        # Whitespace-tolerant: the phrase may wrap across lines.
+        flat = " ".join(content.split())
+        assert "survives the verification gate" in flat, skill_path
+
+    def test_sibling_aware_reads_sibling_before_findings(
+        self, skill_path: Path
+    ) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        assert "sibling-aware" in content
+        assert "Read the sibling's" in content, (
+            f"{skill_path}: sibling-aware mode must require reading the "
+            "sibling reference BEFORE reviewers search for differences."
+        )
+
+    def test_lightweight_mode_drops_to_monitor_only(
+        self, skill_path: Path
+    ) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        # Lightweight = monitor only, two sections, stricter evidence.
+        assert "lightweight" in content
+        assert "Monitor only" in content, (
+            f"{skill_path}: lightweight mode must drop Predictor / Evaluator "
+            "to keep speculation off an empty bundle."
+        )
+
