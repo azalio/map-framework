@@ -202,6 +202,35 @@ def is_editing_phase(branch: str) -> tuple[bool, Optional[str]]:
 
     # Not in an editing phase → block
     subtask = state.get("current_subtask_id", "?")
+    # Phase-specific guidance: RESEARCH is the most common pre-ACTOR
+    # transition the operator forgets ("just one quick fix"); surface
+    # the exact recovery commands inline so the message is actionable
+    # the first time someone reads it.
+    if current_phase == "RESEARCH":
+        return False, (
+            f"Workflow gate: Edit blocked during RESEARCH (subtask {subtask}).\n"
+            "RESEARCH is mandatory before ACTOR — persist research findings,\n"
+            "then close the phase, then Edit becomes available.\n"
+            "\n"
+            "Required:\n"
+            f"  1. echo '<findings>' | python3 .map/scripts/map_step_runner.py \\\n"
+            f"       save_research <branch> {subtask}  # default kind=actor\n"
+            f"  2. python3 .map/scripts/map_orchestrator.py validate_step 2.2\n"
+            "  3. Then Edit/Write opens (ACTOR phase)."
+        )
+    if current_phase == "MONITOR":
+        return False, (
+            f"Workflow gate: Edit blocked during MONITOR (subtask {subtask}).\n"
+            "MONITOR reviews Actor's code — re-editing here bypasses the\n"
+            "verdict. Either:\n"
+            "  - Wait for Monitor verdict, then validate_step 2.4 (proceed),\n"
+            "  - Or call monitor_failed if Actor needs revisions, returning\n"
+            "    to ACTOR phase legitimately.\n"
+            "\n"
+            "Hot-fix escape: MAP_MONITOR_HOTFIX=1 env opt-in re-opens Edit\n"
+            "during MONITOR for trivial one-line nits (operator acknowledges\n"
+            "they will re-run validate_step 2.4 themselves)."
+        )
     return False, (
         f"Workflow gate: Edit blocked during phase '{current_phase}' "
         f"(subtask {subtask}).\n"

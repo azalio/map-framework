@@ -3024,6 +3024,78 @@ class TestBlueprintContractRelaxations:
         assert result["oversized_subtasks"] == [], result
 
 
+class TestDetectTruncatedAgentOutput:
+    """Fix #4/#5: orchestrator helper that callers (skills, CI, automation)
+    use to detect truncated Monitor/Actor responses uniformly. Was
+    prose-only in the skill; now a single source-of-truth predicate.
+    """
+
+    def test_well_formed_monitor_response_is_not_truncated(self):
+        text = json.dumps({
+            "valid": True,
+            "summary": "Implementation matches contract",
+            "issues": [],
+        })
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="monitor"
+        )
+        assert report["truncated"] is False, report
+        assert report["reasons"] == []
+
+    def test_prose_response_is_truncated(self):
+        text = "All tests pass. Now run ruff check and we're good."
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="monitor"
+        )
+        assert report["truncated"] is True
+        assert any("does not parse as JSON" in r for r in report["reasons"]) or \
+            any("ends mid-sentence" in r for r in report["reasons"])
+
+    def test_missing_required_key_is_truncated(self):
+        # Parseable JSON but missing the "issues" key Monitor must emit.
+        text = json.dumps({"valid": True, "summary": "ok"})
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="monitor"
+        )
+        assert report["truncated"] is True
+        assert any("missing required key: issues" in r for r in report["reasons"])
+
+    def test_mid_sentence_cutoff_detected(self):
+        text = '{"valid": true, "summary": "starting work'
+        report = map_step_runner.detect_truncated_agent_output(text)
+        assert report["truncated"] is True
+        # The mid-sentence cue must surface (either via parse error
+        # OR the explicit mid-sentence reason — at least one must fire).
+        assert any(
+            "does not parse as JSON" in r or "ends mid-sentence" in r
+            for r in report["reasons"]
+        )
+
+    def test_fenced_json_is_extracted(self):
+        # ```json\n{...}\n``` wraps — extraction recovers the object but
+        # flags the wrapping prose as a soft signal.
+        text = '```json\n{"valid": true, "summary": "x", "issues": []}\n```'
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="monitor"
+        )
+        # Fenced content with all keys present is non-fatal, but the
+        # trailing/leading text wrapping is recorded as a soft reason.
+        assert "trailing or leading text around JSON object" in report["reasons"]
+
+    def test_actor_kind_required_keys(self):
+        text = json.dumps({"files_changed": ["a.py"]})
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="actor"
+        )
+        assert report["truncated"] is True
+        assert any("missing required key: tests_run" in r for r in report["reasons"])
+
+    def test_empty_response_is_truncated(self):
+        report = map_step_runner.detect_truncated_agent_output("")
+        assert report["truncated"] is True
+        assert report["reasons"] == ["empty response"]
+
+
 class TestBlueprintContractAffectedFilesDrift:
     """Decomposer drift catch: when every declared affected_files path is
     missing from disk, validate_blueprint_contract warns. The canonical
@@ -3079,6 +3151,62 @@ class TestBlueprintContractAffectedFilesDrift:
         result = map_step_runner.validate_blueprint_contract(str(path))
         assert result["valid"] is True
         assert not any("affected_files drift" in w for w in result["warnings"])
+
+
+class TestBlueprintContractCrossRepoDetection:
+    """Fix #9: validate_blueprint_contract warns when affected_files
+    declares paths that resolve OUTSIDE the project root (sibling-repo
+    mutations). MAP cannot guarantee anything about cross-repo work, so
+    operators need a heads-up before blueprint approval.
+    """
+
+    def _bp(self, files: list[str]) -> dict:
+        return {
+            "summary": "x",
+            "hard_constraints": [{"id": "HC-1", "description": "must"}],
+            "soft_constraints": [],
+            "coverage_map": {"HC-1": "ST-001"},
+            "subtasks": [{
+                "id": "ST-001", "title": "x", "aag_contract": "X -> y -> done",
+                "expected_diff_size": "small", "concern_type": "runtime",
+                "one_logical_step": True, "dependencies": [],
+                "affected_files": files,
+                "validation_criteria": ["VC1 [HC-1]: ok"],
+            }],
+        }
+
+    def test_warns_on_cross_repo_path(self, branch_workspace, monkeypatch, tmp_path):
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        # Create a real file in current repo so we don't trigger drift warning.
+        (repo / "real.py").write_text("# x")
+        # Sibling-repo path escapes via ..
+        path = branch_workspace / "blueprint.json"
+        path.write_text(
+            json.dumps(self._bp(["real.py", "../sibling-repo/internal/handler.go"]))
+        )
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is True
+        assert any("cross-repo affected_files" in w for w in result["warnings"]), result["warnings"]
+        # Specific path is named in the warning so the operator can grep.
+        assert any(
+            "../sibling-repo/internal/handler.go" in w
+            for w in result["warnings"]
+        ), result["warnings"]
+
+    def test_no_warning_when_all_paths_in_repo(
+        self, branch_workspace, monkeypatch
+    ):
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        (repo / "real.py").write_text("# x")
+        (repo / "src").mkdir(exist_ok=True)
+        (repo / "src" / "real2.py").write_text("# x")
+        path = branch_workspace / "blueprint.json"
+        path.write_text(json.dumps(self._bp(["real.py", "src/real2.py"])))
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is True
+        assert not any("cross-repo affected_files" in w for w in result["warnings"])
 
 
 class TestBlueprintContractForwardDepsRejection:
@@ -3351,6 +3479,32 @@ class TestRecordScopeBaseline:
         # old_artifact.md was in the baseline → filtered → status="clean".
         assert report["status"] == "clean", report
         assert "old_artifact.md" not in report["actual"]
+
+    def test_warning_includes_diagnostic_hint(
+        self, branch_workspace, tmp_path, monkeypatch
+    ):
+        """Fix #7: when warnings fire and no per-subtask baseline was
+        recorded, the report carries an actionable diagnostic_hint so the
+        operator can see WHY the base_ref was chosen and how to filter
+        prior-subtask noise. Without this, every Monitor pass reads like
+        a real scope leak even when it's really stale baseline state.
+        """
+        del tmp_path
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        bp = {"subtasks": [{"id": "ST-001", "title": "x", "affected_files": ["expected.py"]}]}
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        # Create an unexpected file (not in affected_files, not in baseline).
+        (repo / "drifted.py").write_text("unexpected")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
+        assert report["status"] == "warning", report
+        assert "drifted.py" in report["unexpected"]
+        # Diagnostic must explain the operator's options.
+        assert "diagnostic_hint" in report
+        hint = report["diagnostic_hint"]
+        assert "record_scope_baseline" in hint or "record_subtask_baseline" in hint, hint
 
 
 class TestDetectAlreadyDone:

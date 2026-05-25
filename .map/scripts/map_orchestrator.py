@@ -338,6 +338,11 @@ class StepState:
     retry_isolation_status: dict[str, str] = field(default_factory=dict)
     retry_quarantine_paths: dict[str, str] = field(default_factory=dict)
     completed_at: Optional[str] = None
+    # Audit ledger for mark_subtask_complete: per-subtask
+    # {kind: done|noop|deferred|stub|prior_pr, reason: str, recorded_at}
+    # Added 2026-05-25 so post-run audits can tell intent apart instead
+    # of squinting at synthetic "no-op" summaries.
+    subtask_completion_reasons: dict[str, dict] = field(default_factory=dict)
 
     def record_subtask_result(
         self,
@@ -400,6 +405,7 @@ class StepState:
             "retry_isolation_status": self.retry_isolation_status,
             "retry_quarantine_paths": self.retry_quarantine_paths,
             "completed_at": self.completed_at,
+            "subtask_completion_reasons": self.subtask_completion_reasons,
         }
 
     @classmethod
@@ -437,6 +443,9 @@ class StepState:
             retry_isolation_status=data.get("retry_isolation_status", {}),
             retry_quarantine_paths=data.get("retry_quarantine_paths", {}),
             completed_at=data.get("completed_at"),
+            subtask_completion_reasons=data.get(
+                "subtask_completion_reasons", {}
+            ),
         )
 
     @classmethod
@@ -574,27 +583,38 @@ DEFERRED_FOR_DEPS_PHASE = "deferred_for_deps"
 def _completed_subtask_ids_for_deps(state: "StepState") -> set[str]:
     """Return subtask IDs that count as "done" for dependency-resolution.
 
-    Combines three signals:
-      - subtask_results[sid].status ∈ {valid, completed, done, skipped}
-        (written by record_subtask_result on Monitor success)
-      - subtask_phases[sid] ∈ {completed, skipped}
-        (written by mark_subtask_complete)
+    Combines four signals (any one is sufficient):
+      - subtask_results[sid] has any non-empty entry: that ID has been
+        processed at least once (record_subtask_result was called on
+        ACTOR/Monitor success, OR mark_subtask_complete wrote a synthetic
+        no-op result). Cursor MUST treat these as done — even when
+        subtask_phases didn't get updated due to case mismatch or
+        legacy state. This was the root cause of the "cursor stuck on
+        ST-033 stub" friction.
+      - subtask_results[sid].status ∈ {valid, completed, done, skipped, no-op}
+      - subtask_phases[sid] ∈ {completed, skipped, COMPLETE, SKIPPED, no-op}
+        (case-insensitive match; mark_subtask_complete writes "COMPLETE"
+        in upper, validate_step writes lowercase)
       - linear-walk past: subtask at index < state.subtask_index is
-        treated as done (preserves the original "subtask_index is
-        monotonic" contract for flows that don't record results), UNLESS
-        it carries the deferred_for_deps marker — those were
-        intentionally skipped over and must be revisited once their
-        dependencies clear.
+        treated as done UNLESS it carries the deferred_for_deps marker
+        (those were intentionally skipped and owe a revisit).
     """
     done: set[str] = set()
-    DONE_RESULT_STATUSES = {"valid", "completed", "done", "skipped"}
-    DONE_PHASE_STATUSES = {"completed", "skipped"}
+    DONE_RESULT_STATUSES = {"valid", "completed", "done", "skipped", "no-op"}
+    DONE_PHASE_STATUSES = {"completed", "skipped", "no-op", "complete"}
     for sid, entry in (state.subtask_results or {}).items():
-        if isinstance(entry, dict) and entry.get("status") in DONE_RESULT_STATUSES:
+        if not isinstance(entry, dict):
+            continue
+        # Any recorded result (Monitor success OR mark_subtask_complete
+        # no-op) is enough — entries always exist with at least
+        # files_changed/status; missing-status entries also count as
+        # "this id was processed" so cursor never re-visits them.
+        status_value = entry.get("status")
+        if not isinstance(status_value, str) or status_value.lower() in DONE_RESULT_STATUSES:
             done.add(sid)
     phases = state.subtask_phases or {}
     for sid, phase in phases.items():
-        if phase in DONE_PHASE_STATUSES:
+        if isinstance(phase, str) and phase.lower() in DONE_PHASE_STATUSES:
             done.add(sid)
     for idx, sid in enumerate(state.subtask_sequence or []):
         if idx >= state.subtask_index:
@@ -883,13 +903,28 @@ def get_next_step(branch: str) -> dict:
     }
 
 
-def validate_step(step_id: str, branch: str) -> dict:
+REJECT_RECOMMENDATIONS = {"revise", "block", "needs_investigation"}
+
+
+def validate_step(
+    step_id: str,
+    branch: str,
+    *,
+    recommendation: Optional[str] = None,
+) -> dict:
     """
     Validate step completion and update state.
 
     Args:
         step_id: Step identifier to validate
         branch: Git branch name (sanitized)
+        recommendation: For step_id="2.4" (Monitor close), optional
+            Monitor verdict field. When set to ``revise``, ``block``, or
+            ``needs_investigation``, validate_step refuses to close the
+            phase and returns valid=false — so the recommendation
+            contract (skill rule: "valid=true + recommendation∈{revise,
+            block, needs_investigation} = fail") is enforced
+            orchestrator-side, not just by-convention.
 
     Returns:
         Dict with valid: bool, message: str
@@ -937,6 +972,25 @@ def validate_step(step_id: str, branch: str) -> dict:
             "valid": False,
             "message": "Plan not approved. Set approval first: python3 .map/scripts/map_orchestrator.py set_plan_approved true",
         }
+    # Monitor recommendation enforcement: when closing 2.4 (MONITOR) and
+    # the caller passed a recommendation, refuse to close on revise /
+    # block / needs_investigation. The skill rule was prose-only ("valid
+    # +recommendation∈{revise,block,needs_investigation} = fail"); this
+    # makes it a structural gate so the contract can't be bypassed by
+    # forgetting to read the recommendation field.
+    if step_id == "2.4" and recommendation:
+        normalized_rec = recommendation.strip().lower()
+        if normalized_rec in REJECT_RECOMMENDATIONS:
+            return {
+                "valid": False,
+                "message": (
+                    f"Monitor recommendation={normalized_rec!r} rejects "
+                    "this subtask. Address the issue, re-run Actor, then "
+                    "re-invoke Monitor. (Do NOT call validate_step 2.4 "
+                    "until Monitor returns proceed/approve.)"
+                ),
+                "recommendation": normalized_rec,
+            }
     # RESEARCH (2.2) is documented MANDATORY for every subtask — enforce that
     # save_research wrote something before letting Actor proceed. Without this
     # check, "MANDATORY" was prompt-text only and could be silently skipped.
@@ -1999,8 +2053,21 @@ def finalize_plan(branch: str) -> dict:
     return {"status": "success", "plan_stage": plan_stage}
 
 
+VALID_MARK_COMPLETE_KINDS = {
+    "done",
+    "noop",
+    "deferred",
+    "stub",
+    "prior_pr",
+}
+
+
 def mark_subtask_complete(
-    subtask_id: str, branch: str, reason: str = "no-op"
+    subtask_id: str,
+    branch: str,
+    reason: str = "no-op",
+    *,
+    kind: Optional[str] = None,
 ) -> dict:
     """Short-circuit a subtask as already-done without running its phases.
 
@@ -2008,10 +2075,25 @@ def mark_subtask_complete(
     (rename done in a prior PR), a docs-only subtask that doesn't need the
     research/actor/monitor cycle, or any other no-op detected up-front.
 
+    ``kind`` (added 2026-05-25) classifies the short-circuit so future
+    audits can tell intent apart. One of:
+      - ``done``: the work IS finished, just not via this workflow
+      - ``noop``: nothing to do (auto-detected no-op)
+      - ``deferred``: intentionally skipped for THIS iteration, expected
+        to come back later (stub placeholder)
+      - ``stub``: empty placeholder created during planning, expected to
+        be implemented in a follow-up subtask/PR
+      - ``prior_pr``: this work was completed in a prior PR (rename,
+        infra change already merged)
+    Default ``None`` falls back to ``noop`` for backward compatibility.
+
     Effects:
-      - Records a synthetic subtask_result with status="no-op" and the reason
-        in the summary so audits know the work was intentionally skipped.
+      - Records a synthetic subtask_result with status set to the kind
+        (``no-op``/``deferred``/``stub``/...) and the reason in summary,
+        so reports can group by intent.
       - Marks subtask_phases[subtask_id] = "COMPLETE".
+      - Stores subtask_completion_reasons[subtask_id] = {kind, reason,
+        recorded_at} for audit.
       - If subtask_id is the current subtask, advances to the next one and
         resets pending_steps to the canonical start (2.2). When it was the
         last subtask, transitions to WORKFLOW_COMPLETE atomically.
@@ -2037,13 +2119,42 @@ def mark_subtask_complete(
             ),
         }
 
+    # Normalize kind. Legacy callers pass no kind — keep backward
+    # compatibility by mapping to "noop".
+    normalized_kind = (kind or "noop").strip().lower()
+    if normalized_kind not in VALID_MARK_COMPLETE_KINDS:
+        return {
+            "status": "error",
+            "message": (
+                f"Invalid kind {kind!r}. Must be one of "
+                f"{sorted(VALID_MARK_COMPLETE_KINDS)}."
+            ),
+        }
+
+    # Status field on the synthetic entry: keep "no-op" for the legacy
+    # default so existing reporters that filter by status="no-op" don't
+    # break. For other kinds the explicit name is stored so groupings
+    # like "show me all deferred stubs" work without parsing the summary.
+    status_value = "no-op" if normalized_kind == "noop" else normalized_kind
     state.record_subtask_result(
         subtask_id,
         files_changed=[],
-        status="no-op",
-        summary=f"Marked no-op via mark_subtask_complete: {reason}",
+        status=status_value,
+        summary=f"Marked {normalized_kind} via mark_subtask_complete: {reason}",
     )
     state.subtask_phases[subtask_id] = "COMPLETE"
+    # Audit ledger lives outside subtask_results so reporters can render
+    # a "WHY was this short-circuited?" column without re-parsing summary
+    # text. Single source of truth for the (kind, reason) pair.
+    if not isinstance(
+        getattr(state, "subtask_completion_reasons", None), dict
+    ):
+        state.subtask_completion_reasons = {}  # type: ignore[attr-defined]
+    state.subtask_completion_reasons[subtask_id] = {  # type: ignore[attr-defined]
+        "kind": normalized_kind,
+        "reason": reason,
+        "recorded_at": _utc_timestamp(),
+    }
 
     advanced = False
     closed = False
@@ -2074,6 +2185,7 @@ def mark_subtask_complete(
         "status": "success",
         "subtask_id": subtask_id,
         "reason": reason,
+        "kind": normalized_kind,
         "advanced_to": state.current_subtask_id if advanced else None,
         "workflow_complete": closed,
     }
@@ -2082,16 +2194,26 @@ def mark_subtask_complete(
 def _is_workflow_complete(state: "StepState") -> bool:
     """Return True if any canonical completion signal is set.
 
-    The canonical signal is ``workflow_status == "WORKFLOW_COMPLETE"`` (set by
-    ``mark_workflow_complete``). The two fallbacks accept legacy state files
+    The canonical signal is ``workflow_status == "WORKFLOW_COMPLETE"`` (set
+    by ``mark_workflow_complete``). The fallbacks accept legacy state files
     that were marked complete via partial mutations (e.g., the historical
-    ``jq`` line in ``map-check`` that bypassed this API).
+    ``jq`` line in ``map-check`` that bypassed this API) AND — added 2026-05-25
+    — the case where every subtask in ``subtask_sequence`` has a corresponding
+    entry in ``subtask_results``. Truthiness used to be cursor-only, so a
+    stuck cursor (ST-033 case) made write_run_health_report report ``pending``
+    even when 51/51 entries were already recorded.
     """
-    return (
+    if (
         state.workflow_status == "WORKFLOW_COMPLETE"
         or state.current_step_id == "COMPLETE"
         or state.current_step_phase == "COMPLETE"
-    )
+    ):
+        return True
+    sequence = state.subtask_sequence or []
+    if not sequence:
+        return False
+    completed = _completed_subtask_ids_for_deps(state)
+    return all(sid in completed for sid in sequence)
 
 
 def reopen_for_fixes(branch: str, feedback: str = "") -> dict:
@@ -2946,7 +3068,20 @@ def main():
                     file=sys.stderr,
                 )
                 sys.exit(1)
-            result = validate_step(args.task_or_step, branch)
+            # `--recommendation <verdict>` enforces the Monitor verdict
+            # contract on the 2.4 close: revise/block/needs_investigation
+            # makes validate_step fail. Optional — back-compat callers
+            # that don't pass it get the legacy "no recommendation check"
+            # behavior.
+            extras = list(args.extra_args or [])
+            recommendation_arg: Optional[str] = None
+            if "--recommendation" in extras:
+                rec_idx = extras.index("--recommendation")
+                if rec_idx + 1 < len(extras):
+                    recommendation_arg = extras[rec_idx + 1]
+            result = validate_step(
+                args.task_or_step, branch, recommendation=recommendation_arg
+            )
             print(json.dumps(result, indent=2))
 
         elif args.command == "initialize":
@@ -3144,7 +3279,16 @@ def main():
             # subtasks (DB schema bump, dependency pin, etc.) where deep
             # research is overhead. The reason text auto-flags the path
             # for audit.
-            mechanical = "--mechanical" in (args.extra_args or [])
+            extra = list(args.extra_args or [])
+            mechanical = "--mechanical" in extra
+            # `--kind <done|noop|deferred|stub|prior_pr>` classifies the
+            # short-circuit so audits can group by intent. Default falls
+            # back to noop for backward compat with existing callers.
+            kind_arg: Optional[str] = None
+            if "--kind" in extra:
+                kind_idx = extra.index("--kind")
+                if kind_idx + 1 < len(extra):
+                    kind_arg = extra[kind_idx + 1]
             if args.reason:
                 reason = args.reason
             elif mechanical:
@@ -3154,10 +3298,14 @@ def main():
                 )
             else:
                 reason = "no-op"
-            result = mark_subtask_complete(args.task_or_step, branch, reason)
+            result = mark_subtask_complete(
+                args.task_or_step, branch, reason, kind=kind_arg
+            )
             if mechanical:
                 result["mechanical"] = True
             print(json.dumps(result, indent=2))
+            if isinstance(result, dict) and result.get("status") == "error":
+                sys.exit(1)
 
         elif args.command == "record_subtask_result":
             # CLI: record_subtask_result <ST-ID> <status> [--files a.py,b.py]

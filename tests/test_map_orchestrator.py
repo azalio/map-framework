@@ -2523,6 +2523,225 @@ class TestSubtaskResults:
         assert state.subtask_results["ST-004"]["summary"] == ""
 
 
+class TestValidateStepRecommendationContract:
+    """Fix #6: validate_step 2.4 now enforces the Monitor recommendation
+    contract orchestrator-side. Skill rule "valid=true +
+    recommendation∈{revise,block,needs_investigation} = fail" used to be
+    prose-only; now passing --recommendation revise|block|needs_investigation
+    to validate_step 2.4 makes it return valid=false even when the step
+    would otherwise close cleanly.
+    """
+
+    def _seed_state(self, branch_dir: str, tmp_path: Path) -> Path:
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001"]
+        state.subtask_index = 0
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.4"
+        state.current_step_phase = "MONITOR"
+        state.completed_steps = ["2.2", "2.3"]
+        state.pending_steps = ["2.4"]
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        return state_file
+
+    def test_revise_recommendation_rejects(self, branch_dir, tmp_path):
+        self._seed_state(branch_dir, tmp_path)
+        result = map_orchestrator.validate_step(
+            "2.4", branch_dir, recommendation="revise"
+        )
+        assert result["valid"] is False
+        assert result["recommendation"] == "revise"
+        assert "revise" in result["message"]
+
+    def test_block_recommendation_rejects(self, branch_dir, tmp_path):
+        self._seed_state(branch_dir, tmp_path)
+        result = map_orchestrator.validate_step(
+            "2.4", branch_dir, recommendation="BLOCK"
+        )
+        assert result["valid"] is False
+        assert result["recommendation"] == "block"
+
+    def test_needs_investigation_rejects(self, branch_dir, tmp_path):
+        self._seed_state(branch_dir, tmp_path)
+        result = map_orchestrator.validate_step(
+            "2.4", branch_dir, recommendation="needs_investigation"
+        )
+        assert result["valid"] is False
+
+    def test_proceed_recommendation_does_not_block(self, branch_dir, tmp_path):
+        self._seed_state(branch_dir, tmp_path)
+        result = map_orchestrator.validate_step(
+            "2.4", branch_dir, recommendation="proceed"
+        )
+        assert result["valid"] is True
+
+    def test_missing_recommendation_is_backward_compat(
+        self, branch_dir, tmp_path
+    ):
+        # Legacy callers that don't pass recommendation get the old
+        # behavior: 2.4 closes on any valid=true path.
+        self._seed_state(branch_dir, tmp_path)
+        result = map_orchestrator.validate_step("2.4", branch_dir)
+        assert result["valid"] is True
+
+
+class TestMarkSubtaskCompleteKind:
+    """Audit-ledger fix #10: mark_subtask_complete now classifies the
+    short-circuit via --kind so post-run reports can group "deferred stubs"
+    apart from "no-op auto-detected" apart from "done in a prior PR".
+    """
+
+    def _seed_state(self, branch_dir: str, tmp_path: Path) -> Path:
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001", "ST-002"]
+        state.subtask_index = 0
+        state.current_subtask_id = "ST-001"
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        return state_file
+
+    def test_default_kind_is_noop_backward_compat(self, branch_dir, tmp_path):
+        state_file = self._seed_state(branch_dir, tmp_path)
+        result = map_orchestrator.mark_subtask_complete(
+            "ST-002", branch_dir, "auto-detected no-op"
+        )
+        assert result["status"] == "success"
+        assert result["kind"] == "noop"
+        # Legacy entry status stays "no-op" so existing reporters keep working.
+        reloaded = map_orchestrator.StepState.load(state_file)
+        assert reloaded.subtask_results["ST-002"]["status"] == "no-op"
+        assert reloaded.subtask_completion_reasons["ST-002"]["kind"] == "noop"
+
+    def test_deferred_kind_records_distinct_status(self, branch_dir, tmp_path):
+        state_file = self._seed_state(branch_dir, tmp_path)
+        result = map_orchestrator.mark_subtask_complete(
+            "ST-002", branch_dir, "will land in follow-up PR", kind="deferred"
+        )
+        assert result["kind"] == "deferred"
+        reloaded = map_orchestrator.StepState.load(state_file)
+        assert reloaded.subtask_results["ST-002"]["status"] == "deferred"
+        assert reloaded.subtask_completion_reasons["ST-002"]["kind"] == "deferred"
+        assert (
+            reloaded.subtask_completion_reasons["ST-002"]["reason"]
+            == "will land in follow-up PR"
+        )
+
+    def test_unknown_kind_is_rejected(self, branch_dir, tmp_path):
+        self._seed_state(branch_dir, tmp_path)
+        result = map_orchestrator.mark_subtask_complete(
+            "ST-002", branch_dir, "x", kind="rubbish"
+        )
+        assert result["status"] == "error"
+        assert "rubbish" in result["message"]
+
+    def test_stub_kind_serializes_through_roundtrip(self, branch_dir, tmp_path):
+        state_file = self._seed_state(branch_dir, tmp_path)
+        map_orchestrator.mark_subtask_complete(
+            "ST-002", branch_dir, "placeholder", kind="stub"
+        )
+        # Roundtrip via JSON to ensure the field persists.
+        data = json.loads(state_file.read_text(encoding="utf-8"))
+        assert data["subtask_completion_reasons"]["ST-002"]["kind"] == "stub"
+        restored = map_orchestrator.StepState.from_dict(data)
+        assert restored.subtask_completion_reasons["ST-002"]["kind"] == "stub"
+
+
+class TestCursorAdvancesPastMarkedSubtasks:
+    """Regression for the ST-033 friction: mark_subtask_complete wrote
+    subtask_phases[sid]="COMPLETE" (uppercase) while the deps-resolver
+    looked for lowercase "completed", so the cursor returned to the same
+    stub indefinitely. Now phase comparison is case-insensitive AND any
+    non-empty subtask_results entry counts as done.
+    """
+
+    def test_uppercase_phase_marker_counts_as_done(self, branch_dir, tmp_path):
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001", "ST-002"]
+        state.subtask_index = 0
+        state.current_subtask_id = "ST-001"
+        # mark_subtask_complete writes uppercase — must still count.
+        state.subtask_phases["ST-002"] = "COMPLETE"
+        completed = map_orchestrator._completed_subtask_ids_for_deps(state)
+        assert "ST-002" in completed, completed
+
+    def test_subtask_results_entry_alone_counts_as_done(
+        self, branch_dir, tmp_path
+    ):
+        # Even without a subtask_phases marker, any recorded entry should
+        # let the cursor move past the id.
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001", "ST-002", "ST-003"]
+        state.subtask_index = 1
+        state.current_subtask_id = "ST-002"
+        state.subtask_results = {
+            "ST-003": {
+                "subtask_id": "ST-003",
+                "files_changed": ["x.py"],
+                "status": "valid",
+            }
+        }
+        completed = map_orchestrator._completed_subtask_ids_for_deps(state)
+        assert "ST-003" in completed, completed
+
+    def test_validate_step_advances_past_already_marked_subtasks(
+        self, branch_dir, tmp_path
+    ):
+        # ST-033 reproduction: cursor at idx=0, ST-002 marked done via
+        # mark_subtask_complete (uppercase phase). Closing ST-001's 2.4
+        # must advance to COMPLETE, not loop back to ST-002.
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001", "ST-002"]
+        state.subtask_index = 0
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.4"
+        state.completed_steps = ["2.2", "2.3"]
+        state.pending_steps = ["2.4"]
+        state.subtask_phases["ST-002"] = "COMPLETE"
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+
+        result = map_orchestrator.validate_step("2.4", branch_dir)
+        assert result["valid"] is True
+        assert result["next_step"] == "COMPLETE", result
+
+
+class TestIsWorkflowCompleteCoverageBased:
+    """Regression for #14: write_run_health_report (via _is_workflow_complete
+    and _derive_terminal_status) must report "complete" when every subtask
+    in subtask_sequence has a recorded result — even if the cursor still
+    points at a non-COMPLETE phase due to mid-run drift."""
+
+    def test_full_coverage_returns_complete_when_cursor_stuck(self):
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001", "ST-002", "ST-003"]
+        state.subtask_index = 0
+        state.current_subtask_id = "ST-001"
+        state.current_step_phase = "ACTOR"  # stuck mid-flight
+        for sid in state.subtask_sequence:
+            state.subtask_results[sid] = {
+                "subtask_id": sid,
+                "files_changed": ["x.py"],
+                "status": "valid",
+            }
+        assert map_orchestrator._is_workflow_complete(state) is True
+
+    def test_partial_coverage_returns_false(self):
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001", "ST-002", "ST-003"]
+        state.subtask_results = {
+            "ST-001": {"subtask_id": "ST-001", "status": "valid"}
+        }
+        assert map_orchestrator._is_workflow_complete(state) is False
+
+
 class TestDepsAwareRuntimeAdvance:
     """Runtime safety net: even when planning fails and a forward-dep
     blueprint slips through, validate_step("2.4") at the inter-subtask

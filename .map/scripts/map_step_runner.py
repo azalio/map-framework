@@ -1702,6 +1702,7 @@ def validate_blueprint_contract(
                 project_root_check = Path(
                     os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())
                 )
+                project_root_resolved = project_root_check.resolve()
                 missing_paths = [
                     p for p in string_files
                     if not (project_root_check / p).exists()
@@ -1713,6 +1714,34 @@ def validate_blueprint_contract(
                         "verify the decomposer didn't hallucinate file names "
                         "(or rename to actual symbols if the subtask creates "
                         "every listed file from scratch)"
+                    )
+                # Cross-repo detection: any path that resolves OUTSIDE
+                # the project root (e.g. ``../LLM-memory/...``) means
+                # this subtask plans to mutate a sibling repo. Surface a
+                # warning so the operator knows /map-efficient cannot
+                # guarantee anything about that change — sibling-repo
+                # commits aren't tracked, hooks don't run there, and
+                # validate_mutation_boundary's diff is local-repo only.
+                cross_repo_paths: list[str] = []
+                for p in string_files:
+                    try:
+                        resolved = (project_root_check / p).resolve()
+                    except (OSError, RuntimeError):
+                        continue
+                    try:
+                        resolved.relative_to(project_root_resolved)
+                    except ValueError:
+                        cross_repo_paths.append(p)
+                if cross_repo_paths:
+                    warnings.append(
+                        f"{label}: cross-repo affected_files detected — "
+                        f"{cross_repo_paths!r} resolve outside the project root "
+                        f"({project_root_resolved}). MAP gates (workflow-gate, "
+                        "validate_mutation_boundary, hooks) do NOT cover sibling "
+                        "repos. Either split the subtask into a sibling-repo "
+                        "follow-up (recommended) or document the cross-repo "
+                        "intent in the subtask description and acknowledge that "
+                        "MAP cannot verify the change."
                     )
 
     coverage_map = payload.get("coverage_map") or blueprint_body.get("coverage_map")
@@ -2178,6 +2207,50 @@ def _as_int(value: object) -> int:
         return 0
 
 
+_DONE_RESULT_STATUSES_FOR_COMPLETION = {
+    "valid",
+    "completed",
+    "done",
+    "skipped",
+    "no-op",
+}
+_DONE_PHASE_STATUSES_FOR_COMPLETION = {
+    "completed",
+    "skipped",
+    "no-op",
+    "complete",
+}
+
+
+def _state_subtask_coverage_complete(state: dict[str, object]) -> bool:
+    """Return True iff every subtask in subtask_sequence has a "done"-class
+    signal recorded (subtask_results entry OR subtask_phases marker).
+
+    Mirrors the orchestrator's _completed_subtask_ids_for_deps logic. Used
+    by _derive_terminal_status so a stuck cursor (ST-033 friction) no
+    longer makes write_run_health_report report ``pending`` when 51/51
+    entries actually exist.
+    """
+    sequence_value = state.get("subtask_sequence")
+    if not isinstance(sequence_value, list) or not sequence_value:
+        return False
+    results_value = state.get("subtask_results")
+    results = results_value if isinstance(results_value, dict) else {}
+    phases_value = state.get("subtask_phases")
+    phases = phases_value if isinstance(phases_value, dict) else {}
+    completed: set[str] = set()
+    for sid, entry in results.items():
+        if not isinstance(sid, str) or not isinstance(entry, dict):
+            continue
+        status = entry.get("status")
+        if not isinstance(status, str) or status.lower() in _DONE_RESULT_STATUSES_FOR_COMPLETION:
+            completed.add(sid)
+    for sid, phase in phases.items():
+        if isinstance(sid, str) and isinstance(phase, str) and phase.lower() in _DONE_PHASE_STATUSES_FOR_COMPLETION:
+            completed.add(sid)
+    return all(isinstance(sid, str) and sid in completed for sid in sequence_value)
+
+
 def _derive_terminal_status(state: dict[str, object]) -> str:
     """Derive a stable terminal status from step_state.json when not explicit."""
     existing = str(state.get("terminal_status") or "").strip().lower()
@@ -2197,6 +2270,13 @@ def _derive_terminal_status(state: dict[str, object]) -> str:
         return "superseded"
     if workflow_status in {"WONT_DO", "WON'T_DO"}:
         return "won't_do"
+    # Cursor-independent fallback: if every subtask has a recorded result
+    # (Monitor success OR mark_subtask_complete no-op), treat the run as
+    # complete even when current_step_phase still points at a stale stub.
+    # This closes the ST-033 friction where cursor sat on a deferred-stub
+    # forever while 51/51 entries were recorded.
+    if _state_subtask_coverage_complete(state):
+        return "complete"
     return "pending"
 
 
@@ -5009,6 +5089,114 @@ def save_research(
     return str(path)
 
 
+_MONITOR_REQUIRED_KEYS = ("valid", "summary", "issues")
+_ACTOR_REQUIRED_KEYS = ("files_changed", "tests_run")
+
+
+def detect_truncated_agent_output(
+    text: str,
+    *,
+    expected_keys: Optional[list[str]] = None,
+    agent_kind: str = "monitor",
+) -> dict[str, object]:
+    """Diagnose a possibly-truncated agent response.
+
+    Skill-level rule (added 2026-05-24): if Monitor or Actor returns prose
+    instead of the JSON envelope they were prompted for, the workflow
+    must retry once with an "emit ONLY JSON" follow-up, then
+    CLARIFICATION_NEEDED. The rule was prose; this helper makes it a
+    reusable predicate so callers (skills, CI, future automation) all
+    classify the same way.
+
+    Returns:
+        {
+            "truncated": bool,        # True = response is not a complete
+                                      # well-formed JSON object with the
+                                      # expected keys
+            "reasons": [str, ...],    # zero-or-more diagnoses, e.g.:
+                                      # "output does not parse as JSON",
+                                      # "missing required key: valid",
+                                      # "trailing text after JSON object",
+                                      # "response ends mid-sentence"
+            "parsed": dict | None,    # the parsed object, or None on parse failure
+            "agent_kind": str,        # echoed for downstream logging
+        }
+
+    ``expected_keys`` defaults per ``agent_kind``: monitor expects
+    ``valid``/``summary``/``issues``; actor expects ``files_changed``/
+    ``tests_run``. Other kinds pass an explicit list or get a permissive
+    "parses as object" check only.
+    """
+    reasons: list[str] = []
+    text = text or ""
+    stripped = text.strip()
+    if not stripped:
+        return {
+            "truncated": True,
+            "reasons": ["empty response"],
+            "parsed": None,
+            "agent_kind": agent_kind,
+        }
+
+    parsed: Optional[dict[str, object]] = None
+    # Two parse attempts: full body, then "first JSON object substring"
+    # in case there's a code fence or markdown prelude.
+    try:
+        candidate = json.loads(stripped)
+        if isinstance(candidate, dict):
+            parsed = candidate
+        else:
+            reasons.append("output parses as JSON but is not an object")
+    except json.JSONDecodeError:
+        # Try to recover a fenced object: ```json\n{...}\n```
+        match = re.search(r"\{(?:.|\n)*\}", stripped)
+        if match:
+            try:
+                candidate = json.loads(match.group(0))
+                if isinstance(candidate, dict):
+                    parsed = candidate
+                    # Reject if the body has non-JSON trailing/leading
+                    # text — that's a strong "wrapped in prose" signal.
+                    if stripped != match.group(0):
+                        reasons.append("trailing or leading text around JSON object")
+                else:
+                    reasons.append("recovered JSON is not an object")
+            except json.JSONDecodeError:
+                reasons.append("output does not parse as JSON")
+        else:
+            reasons.append("output does not parse as JSON")
+
+    if parsed is None:
+        # Mid-sentence ending is a strong "agent cut off" hint.
+        if not stripped.endswith(("}", "]")):
+            reasons.append("response ends mid-sentence (no closing } or ])")
+        return {
+            "truncated": True,
+            "reasons": reasons,
+            "parsed": None,
+            "agent_kind": agent_kind,
+        }
+
+    # Validate required keys.
+    if expected_keys is None:
+        if agent_kind == "monitor":
+            expected_keys = list(_MONITOR_REQUIRED_KEYS)
+        elif agent_kind == "actor":
+            expected_keys = list(_ACTOR_REQUIRED_KEYS)
+        else:
+            expected_keys = []
+    missing = [k for k in expected_keys if k not in parsed]
+    for key in missing:
+        reasons.append(f"missing required key: {key}")
+
+    return {
+        "truncated": bool(reasons),
+        "reasons": reasons,
+        "parsed": parsed,
+        "agent_kind": agent_kind,
+    }
+
+
 def load_research(
     branch: str,
     subtask_id: str,
@@ -5903,6 +6091,29 @@ def validate_mutation_boundary(
     else:
         status = "warning"
 
+    # Diagnostic hint: when the warning fires, surface WHY base_ref was
+    # selected so the operator can disambiguate "real scope leak" from
+    # "I forgot to commit the prior subtask + auto-detect grabbed HEAD".
+    # The recommended recovery commands are inline so the operator
+    # doesn't have to dig through docs.
+    diagnostic_hint = None
+    if unexpected:
+        if not base_ref_explicit:
+            diagnostic_hint = (
+                "If 'unexpected' includes files from prior subtasks: either "
+                "(a) commit those subtasks and re-run record_subtask_result "
+                "--commit-sha <SHA> so this check uses the right base, OR "
+                "(b) run `python3 .map/scripts/map_step_runner.py "
+                "record_scope_baseline <branch>` to lock the current "
+                "uncommitted state as the branch baseline."
+            )
+        elif not baseline_files:
+            diagnostic_hint = (
+                "No per-subtask baseline was found — RESEARCH (2.2) likely "
+                "didn't auto-snapshot. Run record_subtask_baseline "
+                f"{branch} {subtask_id} before MONITOR to filter prior work."
+            )
+
     report = {
         "status": status,
         "subtask_id": subtask_id,
@@ -5912,6 +6123,8 @@ def validate_mutation_boundary(
         "unexpected": unexpected,
         "strict": strict,
     }
+    if diagnostic_hint:
+        report["diagnostic_hint"] = diagnostic_hint
 
     if unexpected:
         log_path = project_dir / ".map" / branch_name / "scope-violations.log"
@@ -6767,6 +6980,29 @@ if __name__ == "__main__":
                 file=sys.stderr,
             )
             sys.exit(1)
+
+    elif func_name == "detect_truncated_agent_output":
+        # CLI: detect_truncated_agent_output [--agent monitor|actor|...]
+        # Reads candidate agent response from stdin, prints JSON report.
+        # Exit code 0 always (callers parse `truncated` field) — no stderr
+        # for a clean response, so shell pipelines can branch on it.
+        agent_kind_arg = "monitor"
+        if "--agent" in sys.argv:
+            agent_idx = sys.argv.index("--agent")
+            if agent_idx + 1 < len(sys.argv):
+                agent_kind_arg = sys.argv[agent_idx + 1]
+        text_in = sys.stdin.read()
+        report = detect_truncated_agent_output(
+            text_in, agent_kind=agent_kind_arg
+        )
+        # Don't serialize the parsed dict back (callers can re-parse the
+        # original text if they want it); keep the report shape small.
+        report_summary = {
+            "truncated": report["truncated"],
+            "reasons": report["reasons"],
+            "agent_kind": report["agent_kind"],
+        }
+        print(json.dumps(report_summary, indent=2))
 
     elif func_name == "shuffle-sections":
         # CLI: shuffle-sections <mode> [seed]
