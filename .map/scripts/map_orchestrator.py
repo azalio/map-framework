@@ -1988,10 +1988,33 @@ def record_subtask_result(
     # and the actual diff without blocking on legitimate file deletions or
     # renames. Caller sees the missing list and decides; record proceeds.
     project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
-    missing_files = [
-        p for p in (files_changed or [])
-        if isinstance(p, str) and p and not (project_dir / p).exists()
-    ]
+
+    def _is_cross_repo_path(p: str) -> bool:
+        """Return True if ``p`` escapes project_dir (sibling-repo path).
+
+        Cross-repo paths (e.g. ``../LLM-memory/internal/foo.go``) are
+        legitimate but MAP can't verify their existence — the sibling
+        repo lives outside CLAUDE_PROJECT_DIR. Suppress the "typo"
+        warning for those; validate_blueprint_contract already warns
+        operators about cross-repo affected_files at planning time.
+        """
+        try:
+            resolved = (project_dir / p).resolve()
+            resolved.relative_to(project_dir)
+            return False
+        except (ValueError, OSError):
+            return True
+
+    cross_repo_files: list[str] = []
+    missing_files: list[str] = []
+    for p in (files_changed or []):
+        if not isinstance(p, str) or not p:
+            continue
+        if _is_cross_repo_path(p):
+            cross_repo_files.append(p)
+            continue
+        if not (project_dir / p).exists():
+            missing_files.append(p)
     import subprocess as _sp  # noqa: PLC0415 — local import keeps top clean
     # Auto-detect commit_sha from `git log -1 --format=%H` when caller
     # didn't pass one — closes the "commit_sha always null in
@@ -2088,6 +2111,13 @@ def record_subtask_result(
             "stale --files arg."
         )
         response["missing_files"] = missing_files
+    if cross_repo_files:
+        # Surface (don't warn) cross-repo paths so the audit trail shows
+        # MAP knew about them. validate_blueprint_contract already warns
+        # at planning time; record_subtask_result should not repeat the
+        # "typo" message — the paths are legitimate, just unverifiable
+        # from THIS project's CLAUDE_PROJECT_DIR.
+        response["cross_repo_files"] = cross_repo_files
     if files_not_in_diff:
         existing_warning = response.get("warning", "")
         suffix = (

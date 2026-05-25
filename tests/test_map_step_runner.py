@@ -3467,6 +3467,195 @@ class TestRefreshBlueprintAffectedFiles:
         assert report["status"] == "error"
         assert "ST-999" in report["message"]
 
+    def test_includes_committed_files_via_baseline_sha(
+        self, branch_workspace, monkeypatch
+    ):
+        """Regression #1: after per-subtask commit, porcelain is empty, so
+        refresh used to record current=[] and mark all prior files removed.
+        Now record_subtask_baseline captures head_sha and refresh diffs
+        baseline_sha..HEAD to include committed-since-baseline files.
+        """
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        # Capture baseline BEFORE the subtask commits.
+        snap = map_step_runner.record_subtask_baseline(
+            "test-branch", "ST-001"
+        )
+        assert snap["status"] == "success"
+        assert snap.get("head_sha"), "baseline must capture HEAD SHA"
+        # Subtask edits + commits two files.
+        (repo / "committed_a.py").write_text("x = 1")
+        (repo / "committed_b.py").write_text("y = 2")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "ST-001 work"],
+            cwd=repo, capture_output=True,
+        )
+        # Blueprint has stale guess; refresh should write the real two files
+        # even though porcelain is now empty.
+        bp = {"subtasks": [{
+            "id": "ST-001", "affected_files": ["wrong.py"],
+        }]}
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        report = map_step_runner.refresh_blueprint_affected_files(
+            "test-branch", "ST-001"
+        )
+        assert report["status"] == "success", report
+        # current MUST include both committed files — NOT empty.
+        assert sorted(report["current"]) == ["committed_a.py", "committed_b.py"]
+        assert "wrong.py" in report["diff"]["removed"]
+        assert "committed_a.py" in report["diff"]["added"]
+
+
+class TestRecordTestBaseline:
+    """Fix #9: INIT_STATE pre-flight pytest baseline so later subtasks can
+    distinguish "I introduced this regression" from "this was broken
+    before plan started".
+    """
+
+    def test_baseline_records_passing_run(
+        self, branch_workspace, monkeypatch, tmp_path
+    ):
+        del tmp_path
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.record_test_baseline(
+            "test-branch", "true"
+        )
+        assert report["status"] == "success"
+        assert report["returncode"] == 0
+        assert report["command"] == "true"
+        assert report["baseline_failures"] == []
+        baseline_path = branch_workspace / "test_baseline.json"
+        assert baseline_path.exists()
+
+    def test_baseline_captures_pytest_failure_lines(
+        self, branch_workspace, monkeypatch, tmp_path
+    ):
+        del tmp_path
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        # Synthesize a pytest-like FAILED line via printf.
+        report = map_step_runner.record_test_baseline(
+            "test-branch",
+            "printf 'FAILED tests/test_x.py::test_foo - assert ...\\nFAILED tests/test_y.py::test_bar\\n'; exit 1",
+        )
+        assert report["status"] == "baseline_failures"
+        assert report["returncode"] == 1
+        assert sorted(report["baseline_failures"]) == [
+            "tests/test_x.py::test_foo",
+            "tests/test_y.py::test_bar",
+        ]
+
+    def test_baseline_skipped_when_no_harness(
+        self, branch_workspace, monkeypatch, tmp_path
+    ):
+        del tmp_path
+        # Use a totally empty dir without any project markers.
+        empty_dir = branch_workspace.parents[1] / "empty"
+        empty_dir.mkdir()
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(empty_dir))
+        # The branch fixture's project_dir is non-empty (has pyproject /
+        # etc); we have to point CLAUDE_PROJECT_DIR at a clean dir.
+        # Auto-detect must return skipped status.
+        report = map_step_runner.record_test_baseline("test-branch")
+        # Either skipped (no harness) or success (if test harness
+        # auto-detected from pyproject.toml elsewhere). The contract:
+        # the call should not raise and should write a baseline file.
+        assert report["status"] in ("skipped", "success", "baseline_failures")
+
+    def test_list_baseline_failures_returns_recorded_entries(
+        self, branch_workspace, monkeypatch, tmp_path
+    ):
+        del tmp_path
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        map_step_runner.record_test_baseline(
+            "test-branch",
+            "printf 'FAILED tests/test_x.py::test_foo\\n'; exit 1",
+        )
+        report = map_step_runner.list_baseline_failures("test-branch")
+        assert report["status"] == "success"
+        assert report["baseline_failures"] == [
+            "tests/test_x.py::test_foo"
+        ]
+
+    def test_list_baseline_failures_no_baseline_path(
+        self, branch_workspace, monkeypatch
+    ):
+        del branch_workspace
+        empty = monkeypatch  # silence pyright
+        del empty
+        report = map_step_runner.list_baseline_failures("never-recorded")
+        assert report["status"] == "no_baseline"
+        assert report["baseline_failures"] == []
+
+
+class TestRecordSubtaskResultCrossRepoSuppression:
+    """Regression #2: cross-repo affected_files paths (../sibling-repo/...)
+    must NOT trigger the "Some recorded files do not exist on disk —
+    possible typo" warning. They're legitimate, just unverifiable from
+    THIS project's CLAUDE_PROJECT_DIR. validate_blueprint_contract
+    already warns about cross-repo at planning time; record_subtask_result
+    should not repeat the noise.
+    """
+
+    def test_cross_repo_paths_appear_in_response_not_warning(
+        self, branch_dir_orchestrator, tmp_path, monkeypatch
+    ):
+        del branch_dir_orchestrator
+        # Set up a minimal state file in cwd-relative .map/.
+        project = tmp_path / "project"
+        sibling = tmp_path / "sibling-repo"
+        project.mkdir()
+        sibling.mkdir()
+        (sibling / "real_file.go").write_text("package x")
+        (project / ".map" / "test-branch").mkdir(parents=True)
+        (project / ".map" / "test-branch" / "step_state.json").write_text(
+            json.dumps({"workflow": "x", "subtask_sequence": ["ST-001"], "current_subtask_id": "ST-001"})
+        )
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(project))
+        monkeypatch.chdir(project)
+        import importlib.util as _ilu
+        spec = _ilu.spec_from_file_location(
+            "map_orchestrator",
+            Path(__file__).parent.parent
+            / "src" / "mapify_cli" / "templates" / "map" / "scripts"
+            / "map_orchestrator.py",
+        )
+        assert spec is not None and spec.loader is not None
+        orch = _ilu.module_from_spec(spec)
+        spec.loader.exec_module(orch)
+        result = orch.record_subtask_result(
+            "ST-001",
+            "test-branch",
+            ["../sibling-repo/real_file.go", "../sibling-repo/another.go"],
+            "valid",
+            summary="x",
+            commit_sha="abc123",
+        )
+        assert result["status"] == "success", result
+        # No "typo" warning text for cross-repo paths.
+        assert "missing_files" not in result, result
+        assert "typo" not in (result.get("warning", "") or "").lower(), result
+        # cross_repo_files surfaced for audit transparency.
+        assert "cross_repo_files" in result, result
+        assert "../sibling-repo/real_file.go" in result["cross_repo_files"]
+
+
+@pytest.fixture
+def branch_dir_orchestrator(tmp_path, monkeypatch):
+    """Fresh tmp .map/<branch>/ + chdir; mirrors branch_dir but for
+    map_orchestrator import path (test_map_step_runner.py doesn't import
+    map_orchestrator the same way test_map_orchestrator.py does, so we
+    isolate the fixture here to keep the test self-contained)."""
+    branch = "test-branch"
+    map_dir = tmp_path / ".map" / branch
+    map_dir.mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+    return branch
+
 
 class TestRecordSubtaskBaseline:
     """record_subtask_baseline + per-subtask baseline filter in

@@ -63,6 +63,26 @@ Read `.map/<branch>/task_plan_<branch>.md` to extract:
 - Verify completed work still matches the blueprint's subtask contract metadata: no unjustified large subtask expansion, no mixed-concern drift, and every coverage_map owner has evidence
 - Treat source files, tests, schemas, and configs as authoritative over transcripts, summaries, commit messages, and stale docs
 - Any dismissal verdict (`false_positive`, `covered`, `out_of_scope`, `pre_existing`, `no_tests_needed`, `safe_to_skip`, `not_applicable`) requires `path:line` source evidence, a quote, and confidence; otherwise record `needs_investigation`
+- **Pre-existing failures are NEVER silent skips (MANDATORY):** when a test
+  failure (or any surfaced error) is `pre_existing` AND not introduced by
+  this plan, do ONE of three things — do NOT use `out_of_scope` as a quiet
+  dismissal:
+  1. **Fix it now** as part of the verification pass when scope is small
+     (single-line typo, missing import, count assertion off by one). The
+     global rule is "fix every surfaced error" — `out_of_scope` is reserved
+     for cases that genuinely belong in a different workflow.
+  2. **Open a follow-up subtask** when the fix is non-trivial: emit
+     `follow_up_subtask: {title, reason, est_diff_size}` in the JSON
+     output. The operator can route it into the next plan iteration.
+  3. **Emit CLARIFICATION_NEEDED** when fixing would expand scope
+     meaningfully AND no follow-up subtask placement is obvious. Halt
+     verification, report the failure with file:line + rationale, ask
+     the operator whether to fix-here, follow-up, or explicitly defer.
+  The verdict `out_of_scope` for a surfaced test failure WITHOUT one of
+  these three actions contradicts the global rule and the framework's
+  learned `error-patterns.md` "Pre-existing Surfaced Failures Are Not
+  Out-of-Scope" — Monitor / Evaluator will reject runs where final-verifier
+  used `out_of_scope` to bury a real failure.
 
 #### Noise Handling Protocol (Flaky Test Re-runs)
 When tests fail on first run, apply the confirmation policy:

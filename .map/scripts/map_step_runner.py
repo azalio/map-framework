@@ -35,6 +35,7 @@ import random
 import re
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Mapping, Optional, cast
@@ -5328,21 +5329,53 @@ def refresh_blueprint_affected_files(
         }
 
     # Compute the per-subtask actual surface, using the same baseline
-    # subtraction the mutation-boundary validator uses.
+    # subtraction the mutation-boundary validator uses. Bug fix
+    # (2026-05-26): previously refresh only consulted `git status
+    # --porcelain` (uncommitted only). After the recommended
+    # per-subtask-commit workflow the porcelain is empty post-commit,
+    # so refresh recorded "current=[]" and dashboard reported "all
+    # previous files removed". Now we ALSO diff against
+    # baseline.head_sha so committed-since-baseline files are included.
     baseline_files: set[str] = set()
-    for bp_baseline in (
-        _subtask_baseline_path(branch_name, subtask_id, project_dir),
-        _scope_baseline_path(branch_name, project_dir),
-    ):
+    baseline_head_sha: Optional[str] = None
+    subtask_baseline_path = _subtask_baseline_path(
+        branch_name, subtask_id, project_dir
+    )
+    for bp_baseline in (subtask_baseline_path, _scope_baseline_path(branch_name, project_dir)):
         if bp_baseline.exists():
             try:
                 data = json.loads(bp_baseline.read_text(encoding="utf-8"))
                 raw = data.get("files", [])
                 if isinstance(raw, list):
                     baseline_files.update(str(p) for p in raw if isinstance(p, str))
+                if bp_baseline == subtask_baseline_path:
+                    bp_head = data.get("head_sha")
+                    if isinstance(bp_head, str) and bp_head:
+                        baseline_head_sha = bp_head
             except (json.JSONDecodeError, OSError):
                 pass
 
+    actual_set: set[str] = set()
+    # Layer 1: committed-since-baseline files (the per-subtask commit
+    # workflow's output). git diff base..HEAD enumerates every path
+    # touched in any commit on top of `base`.
+    if baseline_head_sha:
+        try:
+            diff_proc = subprocess.run(
+                ["git", "diff", "--name-only", f"{baseline_head_sha}..HEAD"],
+                cwd=project_dir,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if diff_proc.returncode == 0:
+                for raw in diff_proc.stdout.splitlines():
+                    path = raw.strip()
+                    if path and not path.startswith(".map/") and not path.startswith(".codex/"):
+                        actual_set.add(path)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    # Layer 2: uncommitted (worktree + index) via porcelain.
     try:
         status_proc = subprocess.run(
             ["git", "status", "--porcelain"],
@@ -5358,7 +5391,6 @@ def refresh_blueprint_affected_files(
             "status": "error",
             "message": f"git status non-zero: {status_proc.stderr.strip() or 'no stderr'}",
         }
-    actual_set: set[str] = set()
     for raw in status_proc.stdout.splitlines():
         if len(raw) >= 4:
             path = raw[3:].strip()
@@ -5402,6 +5434,162 @@ def refresh_blueprint_affected_files(
         "previous": previous_files,
         "current": current_files,
         "diff": {"added": added, "removed": removed},
+    }
+
+
+def record_test_baseline(
+    branch: str,
+    test_command: str = "",
+    *,
+    timeout_seconds: int = 120,
+) -> dict[str, object]:
+    """Record a pre-flight test baseline so subtasks can distinguish
+    "this regression is mine" from "this was broken before I started".
+
+    Called at INIT_STATE (1.6) or any point before subtask execution.
+    Runs ``test_command`` (auto-detected if empty), captures stdout +
+    return code + parsed FAILED lines, persists to
+    ``.map/<branch>/test_baseline.json``. Future subtasks can compare
+    new failures against this baseline.
+
+    Auto-detection prefers, in order:
+      - ``make test`` if a Makefile with a ``test:`` target exists
+      - ``pytest`` (no arguments) if pyproject.toml or pytest.ini present
+      - ``go test ./...`` if go.mod present
+      - ``cargo test`` if Cargo.toml present
+    Empty auto-detect ⇒ status="skipped" (no test harness found).
+
+    Returns dict with status, command, returncode, baseline_failures (list of
+    failing test names parsed from stdout), and elapsed_seconds.
+    """
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
+    branch_name = _sanitize_branch(branch)
+    baseline_dir = project_dir / ".map" / branch_name
+    baseline_dir.mkdir(parents=True, exist_ok=True)
+    baseline_path = baseline_dir / "test_baseline.json"
+
+    cmd_str = test_command.strip()
+    auto_detected_command = ""
+    if not cmd_str:
+        # Auto-detect a sensible default. Cheap shell probes only.
+        if (project_dir / "Makefile").exists():
+            try:
+                mk_text = (project_dir / "Makefile").read_text(encoding="utf-8")
+                if re.search(r"^test:", mk_text, re.MULTILINE):
+                    auto_detected_command = "make test"
+            except OSError:
+                pass
+        if not auto_detected_command:
+            if (project_dir / "pyproject.toml").exists() or (project_dir / "pytest.ini").exists():
+                auto_detected_command = "pytest"
+            elif (project_dir / "go.mod").exists():
+                auto_detected_command = "go test ./..."
+            elif (project_dir / "Cargo.toml").exists():
+                auto_detected_command = "cargo test"
+        cmd_str = auto_detected_command
+
+    if not cmd_str:
+        payload = {
+            "branch": branch_name,
+            "status": "skipped",
+            "reason": "no test harness detected (Makefile / pytest / go.mod / Cargo.toml)",
+            "recorded_at": _utc_timestamp(),
+        }
+        baseline_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return payload
+
+    started = time.time()
+    try:
+        proc = subprocess.run(
+            cmd_str,
+            shell=True,
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+        returncode = proc.returncode
+        stdout = proc.stdout
+        stderr = proc.stderr
+        timed_out = False
+    except subprocess.TimeoutExpired as exc:
+        returncode = -1
+        stdout = exc.stdout.decode("utf-8", errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+        stderr = exc.stderr.decode("utf-8", errors="replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
+        timed_out = True
+    except OSError as exc:
+        return {
+            "status": "error",
+            "message": f"test invocation failed: {exc}",
+        }
+    elapsed = round(time.time() - started, 2)
+
+    # Parse failing tests from stdout. Heuristics cover pytest "FAILED"
+    # lines and Go's "--- FAIL: TestX" pattern; anything else falls back
+    # to "see stdout".
+    failures: list[str] = []
+    for line in (stdout + "\n" + stderr).splitlines():
+        line = line.strip()
+        # pytest: "FAILED tests/test_foo.py::TestBar::test_baz - ..."
+        m = re.match(r"^FAILED (\S+)", line)
+        if m:
+            failures.append(m.group(1))
+            continue
+        # Go: "--- FAIL: TestFoo (0.01s)"
+        m = re.match(r"^--- FAIL: (\S+)", line)
+        if m:
+            failures.append(m.group(1))
+            continue
+        # Cargo: "test foo::bar ... FAILED"
+        m = re.match(r"^test (\S+)\s+\.\.\.\s+FAILED", line)
+        if m:
+            failures.append(m.group(1))
+
+    payload: dict[str, object] = {
+        "branch": branch_name,
+        "status": "success" if returncode == 0 else "baseline_failures",
+        "command": cmd_str,
+        "auto_detected": bool(auto_detected_command),
+        "returncode": returncode,
+        "timed_out": timed_out,
+        "elapsed_seconds": elapsed,
+        "baseline_failures": sorted(set(failures)),
+        "recorded_at": _utc_timestamp(),
+    }
+    baseline_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return payload
+
+
+def list_baseline_failures(branch: str) -> dict[str, object]:
+    """Read the recorded test baseline; useful for subtasks comparing
+    new failures against pre-existing ones."""
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
+    branch_name = _sanitize_branch(branch)
+    baseline_path = project_dir / ".map" / branch_name / "test_baseline.json"
+    if not baseline_path.exists():
+        return {
+            "status": "no_baseline",
+            "branch": branch_name,
+            "message": (
+                "No test_baseline.json — run record_test_baseline at "
+                "INIT_STATE to capture pre-existing failures."
+            ),
+            "baseline_failures": [],
+        }
+    try:
+        data = json.loads(baseline_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        return {"status": "error", "message": f"read failed: {exc}"}
+    failures = data.get("baseline_failures", [])
+    if not isinstance(failures, list):
+        failures = []
+    return {
+        "status": "success",
+        "branch": branch_name,
+        "command": data.get("command", ""),
+        "returncode": data.get("returncode"),
+        "baseline_failures": failures,
+        "recorded_at": data.get("recorded_at"),
     }
 
 
@@ -5645,15 +5833,22 @@ def _subtask_baseline_path(branch: str, subtask_id: str, project_dir: Path) -> P
 
 
 def record_subtask_baseline(branch: str, subtask_id: str) -> dict:
-    """Snapshot the current `git status --porcelain` set as a per-subtask
-    baseline that validate_mutation_boundary will subtract from `actual` for
-    THIS subtask only — independent from the branch-wide scope-baseline.
+    """Snapshot the current `git status --porcelain` set + HEAD SHA as a
+    per-subtask baseline that validate_mutation_boundary will subtract
+    from `actual` for THIS subtask only — independent from the
+    branch-wide scope-baseline.
 
     Fires automatically at validate_step("2.2") (RESEARCH start) so each
     subtask's mutation boundary check sees only changes since RESEARCH began,
     not the cumulative branch diff. The branch-wide
     .map/<branch>/scope-baseline.json still applies on top as a
     coarse filter.
+
+    Added 2026-05-26: ``head_sha`` field captures the commit SHA at
+    baseline time so refresh_blueprint_affected_files can resolve the
+    full per-subtask diff (committed + uncommitted) instead of seeing
+    porcelain-only and recording an empty current set after a clean
+    per-subtask commit.
     """
     project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
     try:
@@ -5679,16 +5874,40 @@ def record_subtask_baseline(branch: str, subtask_id: str) -> dict:
                 path = path.split(" -> ", 1)[1]
             if path and not path.startswith(".map/") and not path.startswith(".codex/"):
                 files.append(path)
+    # Capture HEAD SHA so downstream commits can be diffed against this
+    # baseline. Fresh repos with no commits return non-zero — fall back to
+    # None (refresh / validate code handles that case).
+    head_sha: Optional[str] = None
+    try:
+        head_proc = subprocess.run(
+            ["git", "rev-parse", "--verify", "HEAD"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if head_proc.returncode == 0:
+            candidate = head_proc.stdout.strip()
+            if candidate:
+                head_sha = candidate
+    except (OSError, subprocess.TimeoutExpired):
+        pass
     path = _subtask_baseline_path(branch, subtask_id, project_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
+    payload: dict[str, object] = {
         "branch": _sanitize_branch(branch),
         "subtask_id": subtask_id,
         "recorded_at": _utc_timestamp(),
         "files": sorted(set(files)),
+        "head_sha": head_sha,
     }
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    return {"status": "success", "path": str(path), "count": len(payload["files"])}
+    return {
+        "status": "success",
+        "path": str(path),
+        "count": len(files),
+        "head_sha": head_sha,
+    }
 
 
 def subtask_boundary_compact_check(branch: str) -> dict:
@@ -6972,6 +7191,47 @@ if __name__ == "__main__":
                 file=sys.stderr,
             )
             sys.exit(1)
+
+    elif func_name == "record_test_baseline":
+        # CLI: record_test_baseline <branch> [--command "..."] [--timeout N]
+        # Snapshot pre-existing test failures so later subtasks can
+        # distinguish "I broke this" from "this was broken before plan
+        # started". Auto-detects test command when omitted.
+        if len(sys.argv) < 3:
+            print(json.dumps({"status": "error", "message": "usage: record_test_baseline <branch> [--command ...]"}), file=sys.stderr)
+            sys.exit(1)
+        baseline_branch = sys.argv[2]
+        baseline_cmd = ""
+        baseline_timeout = 120
+        if "--command" in sys.argv:
+            c_idx = sys.argv.index("--command")
+            if c_idx + 1 < len(sys.argv):
+                baseline_cmd = sys.argv[c_idx + 1]
+        if "--timeout" in sys.argv:
+            t_idx = sys.argv.index("--timeout")
+            if t_idx + 1 < len(sys.argv):
+                try:
+                    baseline_timeout = int(sys.argv[t_idx + 1])
+                except ValueError:
+                    print(json.dumps({"status": "error", "message": "--timeout must be int"}), file=sys.stderr)
+                    sys.exit(1)
+        report = record_test_baseline(
+            baseline_branch, baseline_cmd, timeout_seconds=baseline_timeout
+        )
+        print(json.dumps(report, indent=2))
+        # Exit 0 even on baseline_failures — the WHOLE point is to
+        # record them, not gate on them. Only exit non-zero on hard
+        # error (invocation failed).
+        if report.get("status") == "error":
+            sys.exit(1)
+
+    elif func_name == "list_baseline_failures":
+        # CLI: list_baseline_failures <branch>
+        if len(sys.argv) < 3:
+            print(json.dumps({"status": "error", "message": "usage: list_baseline_failures <branch>"}), file=sys.stderr)
+            sys.exit(1)
+        report = list_baseline_failures(sys.argv[2])
+        print(json.dumps(report, indent=2))
 
     elif func_name == "acknowledge_diagnostic":
         # CLI: acknowledge_diagnostic <branch> <signature> [--reason "..."]
