@@ -2477,9 +2477,9 @@ class TestBuildContextBlock:
         assert "# [TRUNCATED] see" not in result
         assert "# Context Budget: truncated" not in result
         assert "[truncated]" not in result
-        # The block intentionally exceeds the artificially-low 260 budget;
-        # the full content must remain visible.
-        assert map_step_runner._estimate_tokens(result) > 260
+        # Full content must remain visible regardless of the artificially-
+        # low MAP_CONTEXT_BLOCK_BUDGET_TOKENS env (the budget mechanism
+        # was deleted entirely; the env var no longer has any effect).
         # Current subtask details are fully present.
         assert "Current task that must stay visible" in result
         assert "Actor -> bounded context -> done" in result
@@ -2490,23 +2490,17 @@ class TestBuildContextBlock:
         # Upstream summary preserved in full (100x repetition).
         assert "# Upstream Results" in result
         assert result.count("dependency summary") >= 100
-        # All 80 plan-overview entries rendered (current + dependency + 77 future).
+        # All 80 plan-overview entries rendered.
         for stub in ("ST-001", "ST-002", "ST-050", "ST-079"):
             assert stub in result, stub
 
-        budget_report = json.loads(
-            (branch_workspace / "token_budget.json").read_text(encoding="utf-8")
-        )
-        decision = budget_report["decisions"][-1]
-        assert decision["path_name"] == "map-efficient.actor_context_block"
-        # New contract: "exceeded" (not "truncated") signals "block is over
-        # budget, but we did not clip" — actionable for operators without
-        # silently dropping content.
-        assert decision["budget_action"] == "exceeded"
-        assert decision["configured_budget_tokens"] == 260
-        assert decision["estimated_tokens_after"] > 260
-        assert decision["clipped_sections"] == []
-        assert decision["metadata"]["truncation_disabled"] is True
+        # Token-budget bookkeeping was removed wholesale — no decisions
+        # are recorded for build_context_block any more.
+        budget_file = branch_workspace / "token_budget.json"
+        if budget_file.exists():
+            budget_report = json.loads(budget_file.read_text(encoding="utf-8"))
+            for decision in budget_report.get("decisions", []):
+                assert decision.get("path_name") != "map-efficient.actor_context_block"
 
     def test_build_context_block_ignores_impossible_budget(
         self, branch_workspace, monkeypatch
@@ -3022,6 +3016,88 @@ class TestBlueprintContractRelaxations:
         result = map_step_runner.validate_blueprint_contract(str(path))
         assert result["valid"] is True
         assert result["oversized_subtasks"] == [], result
+
+
+class TestAcknowledgedDiagnostics:
+    """Fix #5: per-branch acknowledged-diagnostics ledger so Pyright /
+    Monitor noise (pre-existing `_rescore_cached_findings is not
+    accessed`-style lines) can be silenced once instead of re-flagged on
+    every subtask.
+    """
+
+    def test_acknowledge_persists_signature(self, branch_workspace, monkeypatch):
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        result = map_step_runner.acknowledge_diagnostic(
+            "test-branch",
+            "_rescore_cached_findings is not accessed",
+            reason="pre-existing helper, not load-bearing",
+        )
+        assert result["status"] == "success"
+        assert result["already_acknowledged"] is False
+        # Whitespace gets normalized.
+        assert "_rescore_cached_findings" in result["signature"]
+        # Ledger file exists on disk.
+        assert (
+            branch_workspace / "acknowledged_diagnostics.json"
+        ).exists()
+
+    def test_re_acknowledge_updates_reason(self, branch_workspace, monkeypatch):
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        map_step_runner.acknowledge_diagnostic(
+            "test-branch", "noise line", reason="first reason"
+        )
+        result = map_step_runner.acknowledge_diagnostic(
+            "test-branch", "noise line", reason="updated reason"
+        )
+        assert result["status"] == "success"
+        assert result["already_acknowledged"] is True
+        assert result["entry"]["reason"] == "updated reason"
+
+    def test_is_acknowledged_returns_true_after_record(
+        self, branch_workspace, monkeypatch
+    ):
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        assert map_step_runner.is_diagnostic_acknowledged(
+            "test-branch", "noise"
+        ) is False
+        map_step_runner.acknowledge_diagnostic(
+            "test-branch", "noise", reason="x"
+        )
+        assert map_step_runner.is_diagnostic_acknowledged(
+            "test-branch", "noise"
+        ) is True
+        # Whitespace-normalized lookup still matches.
+        assert map_step_runner.is_diagnostic_acknowledged(
+            "test-branch", "  noise  "
+        ) is True
+
+    def test_list_returns_newest_first(self, branch_workspace, monkeypatch):
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        map_step_runner.acknowledge_diagnostic("test-branch", "older")
+        # Force a perceptible timestamp difference (UTC iso w/ microseconds).
+        import time as _t
+        _t.sleep(0.01)
+        map_step_runner.acknowledge_diagnostic("test-branch", "newer")
+        result = map_step_runner.list_acknowledged_diagnostics("test-branch")
+        assert result["status"] == "success"
+        signatures = [e["signature"] for e in result["entries"]]
+        assert signatures.index("newer") < signatures.index("older")
+
+    def test_unknown_branch_returns_empty(self, branch_workspace, monkeypatch):
+        del branch_workspace
+        repo = monkeypatch  # silence pyright
+        del repo
+        # Branch with no ledger file → empty entries, no error.
+        result = map_step_runner.list_acknowledged_diagnostics("nonexistent-branch")
+        assert result == {
+            "status": "success",
+            "branch": "nonexistent-branch",
+            "entries": [],
+        }
 
 
 class TestDetectTruncatedAgentOutput:
@@ -4311,10 +4387,15 @@ class TestCreateReviewBundle:
             len(result["files_changed"]) == map_step_runner._FILES_CHANGED_MAX_ENTRIES
         )
 
-    def test_build_review_prompts_budgets_secondary_diff_before_bundle(
+    def test_build_review_prompts_no_longer_truncates_diff_or_bundle(
         self, branch_workspace
     ):
-        """Oversized review prompts keep primary bundle context and clip raw diff first."""
+        """Negative-contract regression: review prompts no longer clip bundle
+        or diff context. Truncation infrastructure was removed by user
+        directive — review prompts emit the full bundle and full diff
+        regardless of the artificially-low budget_tokens.
+        """
+        del branch_workspace
         review_bundle = "# Review Bundle\nPRIMARY_BUNDLE_SENTINEL\n" + (
             "covered acceptance evidence\n" * 80
         )
@@ -4331,42 +4412,26 @@ class TestCreateReviewBundle:
         )
 
         assert result["status"] == "success"
-        assert result["budget_tokens"] == 1_500
         for role in ("monitor", "predictor", "evaluator"):
             prompt_info = result["prompts"][role]
             prompt = prompt_info["prompt"]
-            assert prompt_info["estimated_tokens"] <= 1_500
-            assert prompt_info["truncated"] is True
-            assert "git diff" in prompt_info["clipped_sections"]
-            assert "review-bundle.md" not in prompt_info["clipped_sections"]
+            assert prompt_info["truncated"] is False
+            assert prompt_info["clipped_sections"] == []
+            # Both sentinels present — bundle AND diff tail survive.
             assert "PRIMARY_BUNDLE_SENTINEL" in prompt
-            assert "TAIL_DIFF_SENTINEL" not in prompt
-            assert "Review Prompt Budget" in prompt
+            assert "TAIL_DIFF_SENTINEL" in prompt
+            assert "Review Prompt Budget" not in prompt  # no budget note
             assert "<documents>" in prompt
             assert "</documents>" in prompt
             assert "<expected_output>" in prompt
             assert "Output JSON with:" in prompt
 
-        budget_report = json.loads(
-            (branch_workspace / "token_budget.json").read_text(encoding="utf-8")
-        )
-        decisions = budget_report["decisions"][-3:]
-        assert [decision["path_name"] for decision in decisions] == [
-            "map-review.monitor_prompt",
-            "map-review.predictor_prompt",
-            "map-review.evaluator_prompt",
-        ]
-        assert all(decision["budget_action"] == "truncated" for decision in decisions)
-        assert all("git diff" in decision["clipped_sections"] for decision in decisions)
-        manifest = json.loads(
-            (branch_workspace / "artifact_manifest.json").read_text(encoding="utf-8")
-        )
-        assert manifest["stages"]["token_budget"]["status"] == "ready"
-
-    def test_build_review_prompts_budgets_large_review_preferences(
+    def test_build_review_prompts_no_longer_truncates_preferences(
         self, branch_workspace
     ):
-        """Oversized review preferences must not break the prompt budget."""
+        """Negative-contract regression: review preferences no longer
+        clipped — they reach the reviewer in full.
+        """
         del branch_workspace
         review_bundle = "# Review Bundle\nPRIMARY_BUNDLE_SENTINEL\n" + (
             "covered acceptance evidence\n" * 40
@@ -4386,11 +4451,11 @@ class TestCreateReviewBundle:
         for role in ("monitor", "predictor", "evaluator"):
             prompt_info = result["prompts"][role]
             prompt = prompt_info["prompt"]
-            assert prompt_info["estimated_tokens"] <= 1_500
-            assert prompt_info["truncated"] is True
-            assert "review-preferences" in prompt_info["clipped_sections"]
+            assert prompt_info["truncated"] is False
+            assert prompt_info["clipped_sections"] == []
             assert "PRIMARY_BUNDLE_SENTINEL" in prompt
-            assert "TAIL_PREFERENCES_SENTINEL" not in prompt
+            # Tail preferences sentinel must now survive (was clipped before).
+            assert "TAIL_PREFERENCES_SENTINEL" in prompt
 
     def test_build_review_prompts_tolerates_budget_artifact_write_error(
         self, branch_workspace, monkeypatch
@@ -4436,8 +4501,11 @@ class TestCreateReviewBundle:
         assert result["status"] == "error"
         assert "disk full" in result["reason"]
 
-    def test_review_prompt_ab_reduces_old_unbounded_prompt_size(self, branch_workspace):
-        """A/B: new budgeted reviewer prompt is smaller than old inline prompt."""
+    def test_review_prompt_no_longer_clips_unbounded_input(self, branch_workspace):
+        """Negative-contract regression: truncation infra was deleted, so
+        the "old vs new (budgeted)" A/B no longer applies. The new prompt
+        equals the old prompt — both include the full diff tail.
+        """
         del branch_workspace
         review_bundle = "# Review Bundle\nPRIMARY_BUNDLE_SENTINEL\n" + (
             "review bundle evidence\n" * 80
@@ -4462,15 +4530,14 @@ class TestCreateReviewBundle:
         )["prompts"]["monitor"]
         new_prompt = new_prompt_info["prompt"]
 
-        assert map_step_runner._estimate_tokens(old_prompt) > 1_500
-        assert new_prompt_info["estimated_tokens"] <= 1_500
-        assert new_prompt_info["estimated_tokens"] < map_step_runner._estimate_tokens(
-            old_prompt
-        )
+        # Truncation is gone: new prompt contains the diff tail (was
+        # previously clipped) and carries no "Review Prompt Budget" note.
         assert "TAIL_DIFF_SENTINEL" in old_prompt
-        assert "TAIL_DIFF_SENTINEL" not in new_prompt
+        assert "TAIL_DIFF_SENTINEL" in new_prompt
         assert "PRIMARY_BUNDLE_SENTINEL" in new_prompt
-        assert "Review Prompt Budget" in new_prompt
+        assert "Review Prompt Budget" not in new_prompt
+        assert new_prompt_info["truncated"] is False
+        assert new_prompt_info["clipped_sections"] == []
 
 
 # ---------------------------------------------------------------------------

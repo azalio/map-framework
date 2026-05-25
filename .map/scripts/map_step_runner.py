@@ -140,9 +140,6 @@ REVIEW_SECTION_IDS: tuple[str, ...] = ("architecture", "code_quality", "tests", 
 REVIEW_VALID_MODES: tuple[str, ...] = ("default", "reverse-sections", "shuffle-sections")
 LEARNING_IMMEDIATE_WINDOW_SECONDS = 30 * 60
 ACCEPTANCE_TAG_RE = re.compile(r"\[([A-Za-z][A-Za-z0-9_-]*-\d+[A-Za-z0-9_-]*)\]")
-CONTEXT_BLOCK_DEFAULT_BUDGET_TOKENS = 4_000
-CONTEXT_BLOCK_MIN_BUDGET_TOKENS = 128
-CONTEXT_BLOCK_BUDGET_ENV = "MAP_CONTEXT_BLOCK_BUDGET_TOKENS"
 REVIEW_PROMPT_DEFAULT_BUDGET_TOKENS = 12_000
 REVIEW_PROMPT_MIN_BUDGET_TOKENS = 1_024
 REVIEW_PROMPT_BUDGET_ENV = "MAP_REVIEW_PROMPT_BUDGET_TOKENS"
@@ -150,37 +147,12 @@ TOKEN_BUDGET_ARTIFACT_NAME = "token_budget.json"
 TOKEN_BUDGET_DECISION_LIMIT = 100
 RETRY_QUARANTINE_ARTIFACT_NAME = "retry_quarantine.json"
 
-try:
-    from mapify_cli.token_budget import (
-        estimate_tokens as _estimate_tokens,
-        truncate_to_token_budget as _truncate_to_token_budget,
-    )
-except ImportError:
-    ESTIMATED_CHARS_PER_TOKEN = 4
-
-    def _estimate_tokens(text: str) -> int:
-        if not text:
-            return 0
-        return max(
-            1,
-            (len(text) + ESTIMATED_CHARS_PER_TOKEN - 1) // ESTIMATED_CHARS_PER_TOKEN,
-        )
-
-    def _truncate_to_token_budget(
-        text: str, budget_tokens: int, suffix: str = "..."
-    ) -> str:
-        if budget_tokens <= 0 or not text:
-            return ""
-        if _estimate_tokens(text) <= budget_tokens:
-            return text
-        char_limit = budget_tokens * ESTIMATED_CHARS_PER_TOKEN
-        if char_limit <= len(suffix):
-            return suffix[:char_limit]
-        cut = text[: char_limit - len(suffix)].rstrip()
-        last_space = cut.rfind(" ")
-        if last_space > len(cut) // 2:
-            cut = cut[:last_space].rstrip()
-        return cut + suffix
+# Truncation infrastructure deleted by user directive ("убери транкейт уже
+# вообще"). build_context_block / _budget_review_prompt now emit raw text;
+# operators handle context size via /compact opt-in. The mapify_cli
+# token_budget module is no longer imported here — review-prompt budget
+# constants remain only because record_token_budget_decision is still
+# exposed for callers that want their own accounting.
 
 LEARNING_METRICS_COUNTER_DEFAULTS = {
     "handoff_generated_count": 0,
@@ -4089,80 +4061,17 @@ def _budget_review_prompt(
     git_diff: str,
     budget_tokens: int,
 ) -> dict[str, object]:
-    full_prompt = _render_review_prompt(
-        spec, review_bundle, review_preferences, git_diff
-    )
-    full_estimate = _estimate_tokens(full_prompt)
-    if full_estimate <= budget_tokens:
-        return {
-            "prompt": full_prompt,
-            "estimated_tokens": full_estimate,
-            "budget_tokens": budget_tokens,
-            "truncated": False,
-            "clipped_sections": [],
-        }
-
-    budget_note = (
-        f"Review Prompt Budget: truncated to <= {budget_tokens} estimated tokens. "
-        "The persisted review bundle remains primary; lower-priority raw diff "
-        f"context is clipped first. Increase {REVIEW_PROMPT_BUDGET_ENV} if a "
-        "larger review prompt is required."
-    )
-
-    clipped_sections: list[str] = []
-    base_prompt = _render_review_prompt(spec, "", "", "", budget_note)
-    remaining_for_documents = budget_tokens - _estimate_tokens(base_prompt)
-    bundle_budget = max(0, remaining_for_documents)
-    budgeted_bundle = review_bundle
-    if _estimate_tokens(review_bundle) > bundle_budget:
-        budgeted_bundle = _truncate_to_token_budget(review_bundle, bundle_budget)
-        clipped_sections.append("review-bundle.md")
-
-    remaining_for_preferences = budget_tokens - _estimate_tokens(
-        _render_review_prompt(spec, budgeted_bundle, "", "", budget_note)
-    )
-    preferences_budget = max(0, remaining_for_preferences)
-    budgeted_preferences = review_preferences
-    if _estimate_tokens(review_preferences) > preferences_budget:
-        budgeted_preferences = _truncate_to_token_budget(
-            review_preferences, preferences_budget
-        )
-        clipped_sections.append("review-preferences")
-
-    prompt_without_diff = _render_review_prompt(
-        spec, budgeted_bundle, budgeted_preferences, "", budget_note
-    )
-    remaining_for_diff = budget_tokens - _estimate_tokens(prompt_without_diff)
-    diff_budget = max(0, remaining_for_diff)
-    budgeted_diff = git_diff
-    if _estimate_tokens(git_diff) > diff_budget:
-        budgeted_diff = _truncate_to_token_budget(git_diff, diff_budget)
-        clipped_sections.append("git diff")
-
-    prompt = _render_review_prompt(
-        spec, budgeted_bundle, budgeted_preferences, budgeted_diff, budget_note
-    )
-    if _estimate_tokens(prompt) > budget_tokens:
-        # Guard against note/rounding drift: drop secondary diff and preferences, then tighten primary text.
-        budgeted_diff = ""
-        prompt_without_docs = _render_review_prompt(spec, "", "", "", budget_note)
-        bundle_budget = max(0, budget_tokens - _estimate_tokens(prompt_without_docs))
-        budgeted_bundle = _truncate_to_token_budget(review_bundle, bundle_budget)
-        budgeted_preferences = ""
-        prompt = _render_review_prompt(
-            spec, budgeted_bundle, budgeted_preferences, budgeted_diff, budget_note
-        )
-        for section in ("git diff", "review-preferences", "review-bundle.md"):
-            if section not in clipped_sections:
-                clipped_sections.append(section)
-
+    # Truncation infrastructure removed by user directive ("убери транкейт
+    # уже вообще"). The full review prompt is emitted with no clipping —
+    # reviewers see the entire bundle, preferences, and diff. If the
+    # prompt exceeds context, the operator opts into /compact themselves.
+    prompt = _render_review_prompt(spec, review_bundle, review_preferences, git_diff)
     return {
         "prompt": prompt,
-        "estimated_tokens": _estimate_tokens(prompt),
+        "estimated_tokens": 0,
         "budget_tokens": budget_tokens,
-        "truncated": True,
-        "clipped_sections": clipped_sections,
-        "full_estimated_tokens": full_estimate,
+        "truncated": False,
+        "clipped_sections": [],
     }
 
 
@@ -4188,26 +4097,9 @@ def build_review_prompts(
         prompt_result = _budget_review_prompt(
             spec, review_bundle, review_preferences, git_diff, budget
         )
-        record_token_budget_decision(
-            path_name=f"map-review.{role}_prompt",
-            configured_budget_tokens=budget,
-            estimated_tokens_before=int(
-                prompt_result.get("full_estimated_tokens")
-                or prompt_result["estimated_tokens"]
-            ),
-            estimated_tokens_after=int(prompt_result["estimated_tokens"]),
-            clipped_sections=cast(list[str], prompt_result["clipped_sections"]),
-            budget_action="truncated" if prompt_result["truncated"] else "none",
-            artifact_references=[
-                {
-                    "path": f".map/{branch_name}/review-bundle.md",
-                    "kind": "review-bundle",
-                },
-                {"path": "git diff HEAD", "kind": "git-diff"},
-            ],
-            metadata={"role": role, "budget_env": REVIEW_PROMPT_BUDGET_ENV},
-            branch=branch_name,
-        )
+        # No token-budget bookkeeping — truncation is gone, so there's
+        # nothing to record. Operators chase context-size concerns via
+        # the conversation-level /compact opt-in.
         prompts[role] = {
             "subagent_type": spec["subagent_type"],
             "description": spec["description"],
@@ -5016,23 +4908,6 @@ def _sanitize_branch(branch: str) -> str:
     return sanitized or "default"
 
 
-def _context_block_budget_tokens() -> int:
-    """Return the hard estimated-token budget for Actor map_context blocks."""
-    raw = os.environ.get(CONTEXT_BLOCK_BUDGET_ENV, "").strip()
-    if raw:
-        try:
-            value = int(raw)
-            if value >= CONTEXT_BLOCK_MIN_BUDGET_TOKENS:
-                return value
-        except ValueError:
-            pass
-    return CONTEXT_BLOCK_DEFAULT_BUDGET_TOKENS
-
-
-def _context_block_text(parts: list[str]) -> str:
-    return "\n".join(parts)
-
-
 _RESEARCH_KIND_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 _RESEARCH_SUBTASK_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 
@@ -5528,6 +5403,129 @@ def refresh_blueprint_affected_files(
         "current": current_files,
         "diff": {"added": added, "removed": removed},
     }
+
+
+def _acknowledged_diagnostics_path(branch: str) -> Path:
+    """Return the per-branch acknowledged-diagnostics ledger path."""
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+    return project_dir / ".map" / _sanitize_branch(branch) / "acknowledged_diagnostics.json"
+
+
+def _diagnostic_signature(text: str) -> str:
+    """Canonicalize a diagnostic line into a stable comparison key.
+
+    Strips leading/trailing whitespace and collapses interior runs of
+    whitespace to a single space so cosmetic re-flow doesn't bust the
+    match. Callers may pass any text form they wish to acknowledge —
+    the comparison is whole-line, not pattern-based.
+    """
+    return " ".join((text or "").split()).strip()
+
+
+def acknowledge_diagnostic(
+    branch: str, signature: str, reason: str = ""
+) -> dict[str, object]:
+    """Mark a diagnostic as known/deferred so reporters can suppress it.
+
+    Use case: pre-existing Pyright noise like ``_rescore_cached_findings
+    is not accessed`` surfaces on every subtask but isn't caused by the
+    current change. Without an acknowledged-baseline mechanism each
+    Monitor pass re-flags the same line, drowning real signals.
+
+    The ledger lives at ``.map/<branch>/acknowledged_diagnostics.json``;
+    entries are keyed by canonical signature (whitespace-normalised line
+    text). Duplicate acknowledgements update the ``reason`` and bump
+    ``last_seen_at`` instead of adding a second entry.
+
+    Returns the persisted entry plus an ``already_acknowledged`` flag.
+    """
+    key = _diagnostic_signature(signature)
+    if not key:
+        return {"status": "error", "message": "empty signature"}
+    path = _acknowledged_diagnostics_path(branch)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    ledger: dict[str, object] = {"entries": {}}
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                ledger = data
+        except (json.JSONDecodeError, OSError):
+            pass
+    entries = ledger.get("entries")
+    if not isinstance(entries, dict):
+        entries = {}
+        ledger["entries"] = entries
+    existing = entries.get(key)
+    now = _utc_timestamp()
+    already = isinstance(existing, dict)
+    if already:
+        existing["reason"] = reason or existing.get("reason", "")
+        existing["last_seen_at"] = now
+        entry = existing
+    else:
+        entry = {
+            "signature": key,
+            "reason": reason,
+            "acknowledged_at": now,
+            "last_seen_at": now,
+        }
+        entries[key] = entry
+    try:
+        path.write_text(
+            json.dumps(ledger, indent=2, sort_keys=True), encoding="utf-8"
+        )
+    except OSError as exc:
+        return {"status": "error", "message": f"write failed: {exc}"}
+    return {
+        "status": "success",
+        "branch": branch,
+        "signature": key,
+        "entry": entry,
+        "already_acknowledged": already,
+    }
+
+
+def list_acknowledged_diagnostics(branch: str) -> dict[str, object]:
+    """Return all acknowledged diagnostics on the branch (newest first)."""
+    path = _acknowledged_diagnostics_path(branch)
+    if not path.exists():
+        return {"status": "success", "branch": branch, "entries": []}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        return {"status": "error", "message": f"read failed: {exc}"}
+    if not isinstance(data, dict):
+        return {"status": "success", "branch": branch, "entries": []}
+    entries_map = data.get("entries")
+    if not isinstance(entries_map, dict):
+        return {"status": "success", "branch": branch, "entries": []}
+    entries = sorted(
+        (e for e in entries_map.values() if isinstance(e, dict)),
+        key=lambda e: str(e.get("acknowledged_at", "")),
+        reverse=True,
+    )
+    return {"status": "success", "branch": branch, "entries": entries}
+
+
+def is_diagnostic_acknowledged(branch: str, signature: str) -> bool:
+    """Return True iff the diagnostic signature is in the acknowledged ledger."""
+    key = _diagnostic_signature(signature)
+    if not key:
+        return False
+    path = _acknowledged_diagnostics_path(branch)
+    if not path.exists():
+        return False
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    entries = data.get("entries")
+    if not isinstance(entries, dict):
+        return False
+    return key in entries
 
 
 def detect_already_done(
@@ -6329,40 +6327,12 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
 
     parts.append("</map_context>")
 
-    # Per-field truncation and budget-based clipping were removed: the
-    # visible "[TRUNCATED] see token_budget.json" marker and per-field
-    # ellipsis ("+N more", "[truncated]") were swallowing real subtask
-    # description/research text. We still report the size to token_budget.json
-    # so operators can see when a block exceeds the configured budget, but we
-    # do not clip the text — Actor always gets the full block.
-    text = _context_block_text(parts)
-    estimated = _estimate_tokens(text)
-    configured_budget = _context_block_budget_tokens()
-    record_token_budget_decision(
-        path_name="map-efficient.actor_context_block",
-        configured_budget_tokens=configured_budget,
-        estimated_tokens_before=estimated,
-        estimated_tokens_after=estimated,
-        clipped_sections=[],
-        budget_action=(
-            "exceeded" if estimated > configured_budget else "none"
-        ),
-        artifact_references=[
-            {"path": f".map/{branch}/blueprint.json", "kind": "blueprint"},
-            {
-                "path": f".map/{branch}/task_plan_{branch}.md",
-                "kind": "task-plan",
-            },
-            {"path": f".map/{branch}/step_state.json", "kind": "step-state"},
-        ],
-        metadata={
-            "current_subtask_id": current_subtask_id,
-            "budget_env": CONTEXT_BLOCK_BUDGET_ENV,
-            "truncation_disabled": True,
-        },
-        branch=branch,
-    )
-    return text
+    # All truncation infrastructure removed by user directive: no per-field
+    # caps, no budget-based clipping, no token-budget accounting roundtrip.
+    # build_context_block emits the raw text — the operator wants the full
+    # picture, period. If the block grows beyond context window, the user
+    # will opt into /compact themselves (compression_policy default = never).
+    return "\n".join(parts)
 
 
 def prepare_detached_review(
@@ -6922,12 +6892,17 @@ if __name__ == "__main__":
             sys.exit(1)
 
     elif func_name == "save_research" and len(sys.argv) >= 4:
-        # CLI: save_research <branch> <subtask_id> [kind] [--attempt N]
-        # content via stdin
+        # CLI: save_research <branch> <subtask_id> [kind] [--attempt N] [--file PATH]
+        # Content source priority: --file PATH > stdin. The --file
+        # alternative was added because the stdin-only contract was
+        # brittle — a single shell-quoting accident bricked the input
+        # with "Invalid JSON on stdin"-class errors and there was no way
+        # to pass an already-written research file straight through.
         branch_arg = sys.argv[2]
         subtask_arg = sys.argv[3]
         kind_arg = "actor"
         attempt_arg: Optional[int] = None
+        file_arg: Optional[str] = None
         rest = list(sys.argv[4:])
         if rest and not rest[0].startswith("--"):
             kind_arg = rest.pop(0)
@@ -6942,8 +6917,25 @@ if __name__ == "__main__":
                         file=sys.stderr,
                     )
                     sys.exit(1)
+        if "--file" in rest:
+            file_idx = rest.index("--file")
+            if file_idx + 1 < len(rest):
+                file_arg = rest[file_idx + 1]
         try:
-            content_in = sys.stdin.read()
+            if file_arg:
+                file_path = Path(file_arg)
+                if not file_path.is_file():
+                    print(
+                        json.dumps({
+                            "status": "error",
+                            "message": f"--file {file_arg!r} not found or not a file",
+                        }),
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+                content_in = file_path.read_text(encoding="utf-8")
+            else:
+                content_in = sys.stdin.read()
             written = save_research(
                 branch_arg, subtask_arg, content_in, kind=kind_arg, attempt=attempt_arg
             )
@@ -6980,6 +6972,46 @@ if __name__ == "__main__":
                 file=sys.stderr,
             )
             sys.exit(1)
+
+    elif func_name == "acknowledge_diagnostic":
+        # CLI: acknowledge_diagnostic <branch> <signature> [--reason "..."]
+        # The signature can be any whole-line diagnostic text — we
+        # canonicalize internally (collapse whitespace, strip).
+        if len(sys.argv) < 4:
+            print(json.dumps({"status": "error", "message": "usage: acknowledge_diagnostic <branch> <signature> [--reason ...]"}), file=sys.stderr)
+            sys.exit(1)
+        ack_branch = sys.argv[2]
+        ack_signature = sys.argv[3]
+        ack_reason = ""
+        if "--reason" in sys.argv:
+            r_idx = sys.argv.index("--reason")
+            if r_idx + 1 < len(sys.argv):
+                ack_reason = sys.argv[r_idx + 1]
+        report = acknowledge_diagnostic(ack_branch, ack_signature, ack_reason)
+        print(json.dumps(report, indent=2))
+        if report.get("status") == "error":
+            sys.exit(1)
+
+    elif func_name == "list_acknowledged_diagnostics":
+        # CLI: list_acknowledged_diagnostics <branch>
+        if len(sys.argv) < 3:
+            print(json.dumps({"status": "error", "message": "usage: list_acknowledged_diagnostics <branch>"}), file=sys.stderr)
+            sys.exit(1)
+        report = list_acknowledged_diagnostics(sys.argv[2])
+        print(json.dumps(report, indent=2))
+        if report.get("status") == "error":
+            sys.exit(1)
+
+    elif func_name == "is_diagnostic_acknowledged":
+        # CLI: is_diagnostic_acknowledged <branch> <signature>
+        # Exit code 0 if acknowledged, 1 otherwise (lets shell branch:
+        # `if python3 ... is_diagnostic_acknowledged $B "$LINE"; then continue; fi`).
+        if len(sys.argv) < 4:
+            print(json.dumps({"status": "error", "message": "usage: is_diagnostic_acknowledged <branch> <signature>"}), file=sys.stderr)
+            sys.exit(1)
+        is_ack = is_diagnostic_acknowledged(sys.argv[2], sys.argv[3])
+        print(json.dumps({"acknowledged": is_ack, "signature": sys.argv[3]}))
+        sys.exit(0 if is_ack else 1)
 
     elif func_name == "detect_truncated_agent_output":
         # CLI: detect_truncated_agent_output [--agent monitor|actor|...]
@@ -7114,5 +7146,33 @@ if __name__ == "__main__":
         print(json.dumps(ord_result))
 
     else:
-        print(f"Unknown function: {func_name}")
+        # Helpful redirect: when the user passes a command that belongs to
+        # the orchestrator (record_subtask_result, mark_subtask_complete,
+        # validate_step, ...) the previous "Invalid JSON on stdin" /
+        # "Unknown function" error gave no hint about WHICH script to use.
+        # Cross-reference the orchestrator's command list so misroutes
+        # surface as actionable text instead of cryptic JSON parse errors.
+        ORCHESTRATOR_ONLY_COMMANDS = {
+            "get_next_step", "peek_current_step", "validate_step",
+            "initialize", "set_plan_approved", "set_execution_mode",
+            "set_tdd_mode", "skip_step", "set_subtasks",
+            "mark_contract_ready", "resume_from_plan",
+            "resume_from_test_contract", "check_circuit_breaker",
+            "set_waves", "get_wave_step", "validate_wave_step",
+            "advance_wave", "resume_single_subtask", "get_plan_progress",
+            "monitor_failed", "wave_monitor_failed", "reopen_for_fixes",
+            "mark_workflow_complete", "mark_subtask_complete",
+            "record_subtask_result", "backfill_subtask_ids",
+            "finalize_plan",
+        }
+        if func_name in ORCHESTRATOR_ONLY_COMMANDS:
+            print(
+                f"Wrong runner: {func_name!r} lives in map_orchestrator.py, "
+                f"not map_step_runner.py.\n"
+                f"Try: python3 .map/scripts/map_orchestrator.py {func_name} "
+                f"{' '.join(sys.argv[2:])}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print(f"Unknown function: {func_name}", file=sys.stderr)
         sys.exit(1)

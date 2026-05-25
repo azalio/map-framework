@@ -281,6 +281,16 @@ Return files_changed, tests_run, validation_notes, and any blocker.
 )
 ```
 
+### Actor truncated-response gate (MANDATORY — pre-MONITOR)
+
+Before invoking Monitor, validate Actor's response via
+`detect_truncated_agent_output --agent actor`. If `truncated: true`,
+re-prompt once with "emit ONLY the JSON envelope", then
+CLARIFICATION_NEEDED. Cross-check declared `files_changed` against
+`git diff --name-only` — Actor that named files but didn't write them
+is truncated by extension. Full recipe in
+[efficient-reference.md](efficient-reference.md).
+
 ### Phase: MONITOR (2.4) - Required
 
 ```text
@@ -306,21 +316,15 @@ Return JSON with valid, summary, issues, files_changed, tests_run, and escalatio
 # After Monitor returns:
 
 - **Truncated-response gate (MANDATORY — pre-verdict):** Before reading
-  `valid`/`recommendation`, confirm Monitor returned a JSON object with
-  at minimum the keys `valid`, `summary`, `issues`. Monitor occasionally
-  cuts off mid-execution and returns prose ("All tests pass. Now run
-  ruff…") instead of JSON; treat that as `valid=false +
-  recommendation="needs_investigation"` and re-invoke Monitor with the
-  SAME prompt plus a follow-up line `Your previous response was not
-  JSON — retry and emit ONLY the JSON object.` Do NOT record the
-  prose-response subtask as complete or write commit_sha for it. The
-  three signs of a truncated Monitor:
-  1. The output cannot be parsed as JSON.
-  2. The JSON is parsed but missing one of `valid`/`summary`/`issues`.
-  3. The output ends mid-sentence with no closing `}`.
-  After one retry, if Monitor still doesn't emit valid JSON, stop the
-  workflow with a CLARIFICATION_NEEDED message — do NOT silently leave
-  the subtask in an unverified state.
+  `valid`/`recommendation`, run `detect_truncated_agent_output --agent
+  monitor` (or check inline: JSON object with `valid`, `summary`,
+  `issues` present, ends with `}`, parses cleanly). On truncation:
+  re-invoke Monitor once with "retry and emit ONLY the JSON object"; if
+  still truncated, stop with CLARIFICATION_NEEDED. Do NOT record the
+  prose-response subtask as complete. Three signs:
+  (a) doesn't parse as JSON, (b) missing one of
+  `valid`/`summary`/`issues`, (c) ends mid-sentence with no closing `}`.
+  Full recipe in [efficient-reference.md](efficient-reference.md).
 - **Verdict contract (MANDATORY):** Monitor's `recommendation` field overrides
   loose `valid=true` calls. If `valid=true` AND `recommendation in {"revise",
   "block", "needs_investigation"}`, treat it as `valid=false`. Reason: a
@@ -330,45 +334,13 @@ Return JSON with valid, summary, issues, files_changed, tests_run, and escalatio
   null/missing}` is a clean pass.
 - **Commit on clean Monitor close (ALLOWED, encouraged):** As soon as
   Monitor returns a clean verdict (`valid=true` AND
-  `recommendation∈{proceed, approve, missing}`) for a subtask, you MAY
-  create a per-subtask commit before advancing — without asking the
-  user. This is the default operator preference because:
-  * Per-subtask commits make the PR diff reviewable subtask-by-subtask.
-  * `last_subtask_commit_sha` (from `record_subtask_result --commit-sha`)
-    locks the per-subtask `validate_mutation_boundary` base so the next
-    subtask's scope check only sees ITS own diff, not the cumulative
-    branch diff (closes the recurring "scope-creep noise" friction).
-  * Skipping the commit accumulates uncommitted work that a later
-    `git checkout -- file` or batch revert can destroy (see
-    error-patterns.md "Broad Revert Commands Destroy Uncommitted Work").
-
-  Recommended order:
-  ```bash
-  # 1. Stage the subtask's files (no broad `git add .` — name them).
-  git add <files from Monitor's files_changed>
-  # 2. Commit with the subtask id in the subject line.
-  git commit -m "ST-NNN: <one-line summary>"
-  SHA=$(git log -1 --format=%H)
-  # 3. Record the result with --commit-sha so cursor/baseline align.
-  python3 .map/scripts/map_orchestrator.py record_subtask_result \
-    "$SUBTASK_ID" valid --files "$FILES_CSV" --summary "$ONE_LINE" \
-    --commit-sha "$SHA"
-  # 4. Then validate_step 2.4.
-  ```
-
-  When NOT to commit per-subtask:
-  * The subtask is part of a wave whose other subtasks haven't closed
-    yet AND the work doesn't independently compile/pass tests — in
-    that case finish the wave first.
-  * The user explicitly asked for a single bundled commit (rare; the
-    default is per-subtask).
-  * The repo's pre-commit hooks would block on intermediate state
-    that's only valid after the wave completes. Document the deferral
-    in the subtask summary so audits know why.
-
-  Do NOT skip hooks (`--no-verify`) and do NOT amend a published
-  commit. If the pre-commit hook fails, fix the surfaced issue and
-  create a NEW commit — same as the global rule.
+  `recommendation∈{proceed, approve, missing}`), create a per-subtask
+  commit before advancing — without asking the user. Per-subtask
+  commits keep the PR reviewable and lock `last_subtask_commit_sha`
+  as the baseline for the next subtask's mutation-boundary check.
+  Full recipe + "when NOT to commit" cases live in
+  [efficient-reference.md](efficient-reference.md). Never `--no-verify`,
+  never amend a published commit.
 - **Record the subtask result (REQUIRED on clean pass):**
   ```bash
   python3 .map/scripts/map_orchestrator.py record_subtask_result "$SUBTASK_ID" valid \
@@ -384,6 +356,19 @@ Return JSON with valid, summary, issues, files_changed, tests_run, and escalatio
   `validate_mutation_boundary` for the current subtask and rejects on
   `status="violation"` (only when `MAP_STRICT_SCOPE=1`) or `status="error"`.
   No manual dispatch needed.
+- **Refresh blueprint affected_files after each clean close (RECOMMENDED):**
+  After commit + record_subtask_result, sync the blueprint's
+  `affected_files` for the just-closed subtask to the actual diff. This
+  keeps the next subtask's mutation-boundary check honest — without
+  refresh, decomposer-time guesses drift further from reality every
+  subtask and Monitor warnings degrade into background noise.
+
+  ```bash
+  python3 .map/scripts/map_step_runner.py refresh_blueprint_affected_files \
+    "$BRANCH" "$SUBTASK_ID"
+  ```
+  Idempotent and read-only against blueprint structure outside the
+  named subtask. Use `--dry-run` to preview the diff before writing.
 - If `valid=false`, write `code-review-N.md`, run `python3 .map/scripts/map_orchestrator.py monitor_failed --feedback "<feedback>"`, inspect `retry_isolation`, and invoke Predictor only when stuck/high-risk escalation rules apply.
 - If `retry_isolation=clean_retry_required`, run `python3 .map/scripts/map_step_runner.py validate_retry_quarantine` before the next Actor call. The next Actor prompt must use CLEAN_RETRY mode from `.map/<branch>/retry_quarantine.json` and must not reuse the rejected approach unless the quarantine artifact preserves it.
 - Treat test failures after Monitor approval as Monitor failure.
@@ -412,6 +397,17 @@ Run build first, then tests, then linter. If build fails, skip tests/lint and re
 
 ```bash
 python3 .map/scripts/map_orchestrator.py validate_step "$STEP_ID"
+```
+
+For step `2.4` (MONITOR close), ALWAYS pass `--recommendation
+"$MONITOR_RECOMMENDATION"`. The orchestrator now treats
+`recommendation ∈ {revise, block, needs_investigation}` as a structural
+reject — silently passing `valid=true` while ignoring the
+recommendation field is a known footgun the framework now refuses.
+
+```bash
+python3 .map/scripts/map_orchestrator.py validate_step 2.4 \
+  --recommendation "$MONITOR_RECOMMENDATION"
 ```
 
 Use `validate_wave_step` only in wave execution mode.

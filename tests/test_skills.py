@@ -1832,18 +1832,25 @@ class TestMapEfficientPerSubtaskCommitAllowance:
     def test_skill_recommends_per_subtask_commit_workflow(
         self, skill_path: Path
     ) -> None:
-        content = skill_path.read_text(encoding="utf-8")
-        # The bash recipe order matters — stage, commit, capture SHA, then
-        # record_subtask_result --commit-sha, then validate_step.
-        commit_pos = content.find("git commit -m \"ST-NNN")
-        record_pos = content.find("record_subtask_result \\")
-        validate_pos = content.find("validate_step 2.4")
+        # The bash recipe is in efficient-reference.md (moved 2026-05-25 to
+        # keep SKILL.md under 500 lines). Verify the recipe still has the
+        # correct stage → commit → record → validate order on the
+        # reference side, and that SKILL.md points to it.
+        skill_content = skill_path.read_text(encoding="utf-8")
+        assert "efficient-reference.md" in skill_content, (
+            f"{skill_path}: must point to efficient-reference.md for the full recipe."
+        )
+        reference = skill_path.parent / "efficient-reference.md"
+        ref_content = reference.read_text(encoding="utf-8")
+        commit_pos = ref_content.find("git commit -m \"ST-NNN")
+        record_pos = ref_content.find("record_subtask_result \\")
+        validate_pos = ref_content.find("validate_step 2.4")
         assert 0 <= commit_pos < record_pos, (
-            f"{skill_path}: commit must precede record_subtask_result so "
+            f"{reference}: commit must precede record_subtask_result so "
             "--commit-sha gets the real SHA, not the prior one."
         )
         assert record_pos < validate_pos, (
-            f"{skill_path}: record_subtask_result must precede validate_step 2.4."
+            f"{reference}: record_subtask_result must precede validate_step 2.4."
         )
 
     def test_skill_warns_against_no_verify_and_amend(self, skill_path: Path) -> None:
@@ -1892,9 +1899,11 @@ class TestMapEfficientTruncatedMonitorResponseGate:
         assert "retry and emit ONLY the JSON" in content, skill_path
         assert "CLARIFICATION_NEEDED" in content, skill_path
         # Three diagnostic signs must be enumerated.
+        # Whitespace-tolerant check: SKILL.md uses backtick-formatted markdown
+        # which may re-flow. Match on substrings independent of fence style.
         for sign in (
-            "cannot be parsed as JSON",
-            "missing one of `valid`/`summary`/`issues`",
+            "doesn't parse as JSON",
+            "valid`/`summary`/`issues",
             "ends mid-sentence",
         ):
             assert sign in content, (

@@ -1929,10 +1929,10 @@ def record_subtask_result(
         p for p in (files_changed or [])
         if isinstance(p, str) and p and not (project_dir / p).exists()
     ]
+    import subprocess as _sp  # noqa: PLC0415 — local import keeps top clean
     # Auto-detect commit_sha from `git log -1 --format=%H` when caller
     # didn't pass one — closes the "commit_sha always null in
     # subtask_results" gap that weakened downstream provenance.
-    import subprocess as _sp  # noqa: PLC0415 — local import keeps top clean
     auto_commit_sha = commit_sha
     if not auto_commit_sha:
         try:
@@ -1949,6 +1949,49 @@ def record_subtask_result(
                     auto_commit_sha = candidate
         except (OSError, _sp.TimeoutExpired):
             pass
+
+    # Actor-output verification (added 2026-05-25): cross-check that the
+    # files Actor CLAIMED to change actually show up in the worktree —
+    # either in the most recent commit (if commit_sha resolved) OR in
+    # the uncommitted diff. Catches the "Actor truncated mid-flight and
+    # reported files it never wrote" failure mode where record_subtask_result
+    # used to accept anything. The check is WARN-only by default so legit
+    # cases (file recreated then deleted, etc.) don't block. The next-level
+    # gate is the operator reading the response — they SHOULD reject when
+    # files_not_in_diff is non-empty.
+    declared = [p for p in (files_changed or []) if isinstance(p, str) and p]
+    files_not_in_diff: list[str] = []
+    if declared:
+        diff_paths: set[str] = set()
+        try:
+            if auto_commit_sha:
+                # Files in the latest commit's diff.
+                cproc = _sp.run(
+                    ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", auto_commit_sha],
+                    cwd=project_dir, capture_output=True, text=True, timeout=5,
+                )
+                if cproc.returncode == 0:
+                    diff_paths.update(
+                        line.strip() for line in cproc.stdout.splitlines() if line.strip()
+                    )
+            # Uncommitted (worktree + index) via porcelain.
+            sproc = _sp.run(
+                ["git", "status", "--porcelain"],
+                cwd=project_dir, capture_output=True, text=True, timeout=5,
+            )
+            if sproc.returncode == 0:
+                for raw in sproc.stdout.splitlines():
+                    if len(raw) >= 4:
+                        path = raw[3:].strip()
+                        if " -> " in path:
+                            path = path.split(" -> ", 1)[1]
+                        if path:
+                            diff_paths.add(path)
+        except (OSError, _sp.TimeoutExpired):
+            diff_paths = set()
+        if diff_paths:
+            files_not_in_diff = [p for p in declared if p not in diff_paths]
+
     state.record_subtask_result(
         subtask_id,
         files_changed=files_changed,
@@ -1968,6 +2011,20 @@ def record_subtask_result(
             "stale --files arg."
         )
         response["missing_files"] = missing_files
+    if files_not_in_diff:
+        existing_warning = response.get("warning", "")
+        suffix = (
+            f"Actor-claimed files not present in commit/diff "
+            f"({len(files_not_in_diff)}/{len(declared)}): "
+            f"{files_not_in_diff!r}. Possible Actor truncation — verify "
+            "before advancing to MONITOR / next subtask."
+        )
+        response["warning"] = (
+            f"{existing_warning}\n{suffix}".strip()
+            if existing_warning
+            else suffix
+        )
+        response["files_not_in_diff"] = files_not_in_diff
     return response
 
 
@@ -3038,7 +3095,32 @@ def main():
     # invoked. Without this chdir, an absolute-path call from a different cwd
     # silently reads ``.map/<branch>/`` from the caller's directory and
     # returns misleading "step mismatch" errors.
-    os.chdir(Path(__file__).resolve().parents[2])
+    script_anchored_root = Path(__file__).resolve().parents[2]
+    os.chdir(script_anchored_root)
+
+    # Project-root sanity check: if CLAUDE_PROJECT_DIR is set and points
+    # somewhere other than the script-anchored root, the user almost
+    # certainly invoked the WRONG project's orchestrator. Common failure
+    # mode: `cd /tmp/sibling-repo && python3 .map/scripts/map_orchestrator.py`
+    # silently reads sibling-repo's state instead of the project the
+    # operator's session is bound to. We warn (to stderr, never block),
+    # so the deviation is loud but not fatal — the operator may have a
+    # legitimate reason.
+    env_project_dir = os.environ.get("CLAUDE_PROJECT_DIR", "").strip()
+    if env_project_dir:
+        try:
+            env_resolved = Path(env_project_dir).resolve()
+        except OSError:
+            env_resolved = None
+        if env_resolved and env_resolved != script_anchored_root:
+            print(
+                f"WARNING: orchestrator project mismatch. "
+                f"CLAUDE_PROJECT_DIR={env_resolved} but this script lives at "
+                f"{script_anchored_root}. Reading state from "
+                f"{script_anchored_root}/.map/ — if you meant the other "
+                "project, run that project's .map/scripts/map_orchestrator.py.",
+                file=sys.stderr,
+            )
 
     # Get branch. ``--branch`` arrives unsanitized from the CLI; route it
     # through the same sanitiser used by ``get_branch_name()`` so the value
