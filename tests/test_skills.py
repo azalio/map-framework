@@ -1800,6 +1800,58 @@ class TestMapEfficientNoInterSubtaskPause:
             )
 
 
+class TestMapEfficientPerSubtaskCommitAllowance:
+    """Regression: /map-efficient must explicitly permit (and encourage)
+    per-subtask commits after Monitor clean-close, without asking the
+    user. Operators were unsure whether they could commit per subtask
+    or had to bundle everything; the default needs to be "commit per
+    subtask" so PR review and last_subtask_commit_sha baseline both
+    work.
+    """
+
+    @pytest.fixture(
+        params=[
+            Path(".claude/skills/map-efficient/SKILL.md"),
+            Path("src/mapify_cli/templates/skills/map-efficient/SKILL.md"),
+        ],
+        ids=["dev", "template"],
+    )
+    def skill_path(self, request: pytest.FixtureRequest) -> Path:
+        return Path(__file__).parent.parent / request.param
+
+    def test_skill_permits_per_subtask_commit(self, skill_path: Path) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        assert "Commit on clean Monitor close" in content, (
+            f"{skill_path} must explicitly permit per-subtask commit "
+            "after Monitor clean-close — operators were unsure if it "
+            "was allowed and either bundled everything or asked first."
+        )
+        # Must signal "without asking" so the model doesn't pause.
+        assert "without asking the" in content, skill_path
+
+    def test_skill_recommends_per_subtask_commit_workflow(
+        self, skill_path: Path
+    ) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        # The bash recipe order matters — stage, commit, capture SHA, then
+        # record_subtask_result --commit-sha, then validate_step.
+        commit_pos = content.find("git commit -m \"ST-NNN")
+        record_pos = content.find("record_subtask_result \\")
+        validate_pos = content.find("validate_step 2.4")
+        assert 0 <= commit_pos < record_pos, (
+            f"{skill_path}: commit must precede record_subtask_result so "
+            "--commit-sha gets the real SHA, not the prior one."
+        )
+        assert record_pos < validate_pos, (
+            f"{skill_path}: record_subtask_result must precede validate_step 2.4."
+        )
+
+    def test_skill_warns_against_no_verify_and_amend(self, skill_path: Path) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        assert "--no-verify" in content, skill_path
+        assert "amend" in content.lower(), skill_path
+
+
 class TestMapEfficientTruncatedMonitorResponseGate:
     """Regression: when Monitor truncates mid-execution and emits prose
     instead of JSON ("All tests pass. Now run ruff..."), /map-efficient
