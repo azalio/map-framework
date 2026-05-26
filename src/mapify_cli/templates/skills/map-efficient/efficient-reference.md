@@ -88,6 +88,41 @@ If `truncated: true`:
 3. Cross-check `files_changed` against `git diff --name-only`. Files
    declared but not in the diff = Actor said it changed them but didn't.
 
+## Pre-flight test baseline
+
+Snapshot pre-existing failures BEFORE any subtask executes so later
+subtasks distinguish "I introduced this regression" from "this was
+broken before plan started". Without baseline, repo-wide red doesn't
+surface until final-verifier and the operator can't tell whether to
+fix or defer.
+
+```bash
+python3 .map/scripts/map_step_runner.py record_test_baseline "$BRANCH"
+```
+
+Auto-detects from project markers:
+- `Makefile` with `test:` target → `make test`
+- `pyproject.toml` / `pytest.ini` → `pytest`
+- `go.mod` → `go test ./...`
+- `Cargo.toml` → `cargo test`
+
+Override the auto-detect when the full run is too slow for a
+pre-flight (or you want a narrower target):
+```bash
+python3 .map/scripts/map_step_runner.py record_test_baseline "$BRANCH" \
+  --command "pytest tests/smoke" --timeout 60
+```
+
+Persists to `.map/<branch>/test_baseline.json`. Parse pre-existing
+failures back via:
+```bash
+python3 .map/scripts/map_step_runner.py list_baseline_failures "$BRANCH"
+```
+
+Each subtask's failing test now has a clean disposition: in baseline ⇒
+pre-existing, route to follow-up subtask; NOT in baseline ⇒ this
+plan introduced it, fix here.
+
 ## Troubleshooting
 
 - Blueprint validation fails: fix the decomposer output before Actor starts.

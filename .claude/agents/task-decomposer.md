@@ -662,6 +662,22 @@ When invoked with `mode: "re_decomposition"` from the orchestrator, you receive 
 - [ ] If the subtask creates a NEW symbol, mark it explicitly in the description ("introduces new class `X`") so reviewers don't expect to find it in the current tree.
 - [ ] When extending an existing class, name the class AND verify the file path where it currently lives — the decomposer's working assumption ("the obvious name") is wrong often enough that grep before write is cheaper than Actor rework.
 
+**Stale-Roadmap Check (MANDATORY)**:
+- [ ] For every planned subtask, run `detect_already_done` to confirm
+  the work isn't already shipped in prod / an earlier branch / a
+  recently-merged PR:
+  ```bash
+  python3 .map/scripts/map_step_runner.py detect_already_done \
+    <branch> <ST-NNN> [--since-ref HEAD~20]
+  ```
+  Returns `status="likely_done"` when every `affected_files` path
+  already has recent commits — that subtask should be dropped, marked
+  via `mark_subtask_complete --kind prior_pr`, OR re-scoped to the
+  delta that's actually still missing. Decomposer regression: planning
+  a 5-step subtask whose implementation already landed in the prior
+  iteration, leading to "subtask = 1 line + 12 tests" once Actor reads
+  the source.
+
 **Complexity Estimation** (using Unified Framework):
 - [ ] Numeric complexity_score (1-10) assigned using unified scoring framework
 - [ ] Derive risk_level from score: 1-4=low, 5-6=medium, 7-10=high

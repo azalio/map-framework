@@ -90,6 +90,7 @@ TESTING:
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from dataclasses import dataclass, field
@@ -1035,6 +1036,21 @@ def validate_step(
                 "envelope_error": envelope_error,
             }
 
+    # Recommendation-omitted warning: closing 2.4 without --recommendation
+    # leaves the verdict-consistency footgun open (Monitor valid=true +
+    # recommendation=revise would silently pass). Surface a soft warning
+    # so the operator knows to pipe Monitor's recommendation through.
+    recommendation_omitted_warning: Optional[str] = None
+    if step_id == "2.4" and not recommendation:
+        recommendation_omitted_warning = (
+            "validate_step 2.4 closed without --recommendation. The "
+            "verdict-consistency gate cannot enforce 'valid=true + "
+            "recommendation=revise/block/needs_investigation = fail' "
+            "unless you pass Monitor's recommendation. Recommended: "
+            "`python3 .map/scripts/map_orchestrator.py validate_step 2.4 "
+            "--recommendation \"$MONITOR_RECOMMENDATION\"`."
+        )
+
     # Monitor recommendation enforcement: when closing 2.4 (MONITOR) and
     # the caller passed a recommendation, refuse to close on revise /
     # block / needs_investigation. The skill rule was prose-only ("valid
@@ -1205,6 +1221,8 @@ def validate_step(
         response["skipped_for_deps"] = skipped_for_deps
     if next_step_signal == "BLOCKED_ON_DEPS":
         response["blocked_subtasks"] = blocked_remaining
+    if recommendation_omitted_warning:
+        response["warning"] = recommendation_omitted_warning
     return response
 
 
@@ -1990,20 +2008,42 @@ def record_subtask_result(
     project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
 
     def _is_cross_repo_path(p: str) -> bool:
-        """Return True if ``p`` escapes project_dir (sibling-repo path).
+        """Return True if ``p`` is a cross-repo (sibling) path.
 
-        Cross-repo paths (e.g. ``../LLM-memory/internal/foo.go``) are
-        legitimate but MAP can't verify their existence — the sibling
-        repo lives outside CLAUDE_PROJECT_DIR. Suppress the "typo"
-        warning for those; validate_blueprint_contract already warns
-        operators about cross-repo affected_files at planning time.
+        Two detection modes (any one match = cross-repo):
+          (a) Path escapes project_dir via ``..`` (``../LLM-memory/...``).
+          (b) Path's first segment matches a sibling directory at
+              ``../<segment>/``, i.e. ``LLM-memory/foo.go`` from a
+              cwd-parent shared with ``LLM-memory``. Catches the common
+              case where the operator writes the sibling repo name
+              without the ``..`` prefix (the path doesn't exist under
+              project_dir but DOES exist as a sibling).
+
+        Cross-repo paths are legitimate but MAP can't verify their
+        existence; validate_blueprint_contract already warns about
+        cross-repo affected_files at planning time. Suppress the "typo"
+        warning for both forms.
         """
+        # Mode (a): path escapes project_dir via .. or absolute.
         try:
             resolved = (project_dir / p).resolve()
             resolved.relative_to(project_dir)
-            return False
         except (ValueError, OSError):
             return True
+        # Mode (b): first path segment matches a sibling directory.
+        # Path looks local relative to project_dir, but project_dir/<seg>
+        # doesn't exist while project_dir.parent/<seg> does — that's a
+        # sibling repo the operator named without ../ prefix.
+        first_segment = p.split("/", 1)[0]
+        if first_segment and first_segment not in (".", ".."):
+            local_candidate = project_dir / first_segment
+            sibling_candidate = project_dir.parent / first_segment
+            if (
+                not local_candidate.exists()
+                and sibling_candidate.is_dir()
+            ):
+                return True
+        return False
 
     cross_repo_files: list[str] = []
     missing_files: list[str] = []
@@ -3599,8 +3639,18 @@ def main():
                 )
                 sys.exit(1)
             status_value = extra_args[0]
-            files_list = args.files.split(",") if args.files else []
-            files_list = [f.strip() for f in files_list if f.strip()]
+            # Accept BOTH "--files a.py,b.py" (legacy/documented) AND
+            # "--files 'a.py b.py'" (intuitive). The space form was a
+            # silent footgun: pre-2026-05-26 the whole string was
+            # treated as one path, producing "file does not exist"
+            # warnings on every multi-file subtask whose operator
+            # forgot the comma syntax.
+            files_list = []
+            if args.files:
+                for chunk in re.split(r"[,\s]+", args.files):
+                    chunk = chunk.strip()
+                    if chunk:
+                        files_list.append(chunk)
             result = record_subtask_result(
                 args.task_or_step,
                 branch,

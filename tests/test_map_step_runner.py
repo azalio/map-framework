@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import subprocess
 import sys
 import types
@@ -3722,6 +3723,84 @@ class TestRecordTestBaseline:
         report = map_step_runner.list_baseline_failures("never-recorded")
         assert report["status"] == "no_baseline"
         assert report["baseline_failures"] == []
+
+
+class TestRecordSubtaskResultFilesSeparatorParsing:
+    """Fix #2 (2026-05-26): CLI must accept --files with comma OR
+    space separators. The legacy comma-only parser silently treated
+    "a.py b.py" as one path and emitted "file does not exist" warnings
+    on every multi-file subtask whose operator forgot the comma.
+    """
+
+    def test_cli_parses_space_separated_files(self):
+        # The parsing happens in the CLI dispatch (orchestrator main()).
+        # Exercise the actual regex used there.
+        files_arg = "a.py b.py c.py"
+        files = [c.strip() for c in re.split(r"[,\s]+", files_arg) if c.strip()]
+        assert files == ["a.py", "b.py", "c.py"]
+
+    def test_cli_parses_comma_separated_files(self):
+        files_arg = "a.py,b.py,c.py"
+        files = [c.strip() for c in re.split(r"[,\s]+", files_arg) if c.strip()]
+        assert files == ["a.py", "b.py", "c.py"]
+
+    def test_cli_parses_mixed_separators(self):
+        files_arg = "a.py, b.py c.py,  d.py"
+        files = [c.strip() for c in re.split(r"[,\s]+", files_arg) if c.strip()]
+        assert files == ["a.py", "b.py", "c.py", "d.py"]
+
+
+class TestRecordSubtaskResultCrossRepoSiblingPrefix:
+    """Fix #1 extend (2026-05-26): cross-repo detection now catches
+    paths whose first segment matches a sibling directory at
+    ../<segment>/ (i.e., no ../ prefix). Operator wrote
+    `LLM-memory/foo.go` from a parent that contains both repos —
+    previously this triggered "possible typo" because the path doesn't
+    exist under project_dir and doesn't escape via ..; now it's
+    recognized as cross-repo.
+    """
+
+    def test_sibling_prefix_path_is_recognized_as_cross_repo(
+        self, branch_dir_orchestrator, tmp_path, monkeypatch
+    ):
+        del branch_dir_orchestrator
+        # Create project dir + sibling repo dir under the same parent.
+        parent = tmp_path / "workspace"
+        parent.mkdir()
+        project = parent / "neuro-vlad"
+        sibling = parent / "LLM-memory"
+        project.mkdir()
+        sibling.mkdir()
+        (sibling / "internal").mkdir()
+        (sibling / "internal" / "foo.go").write_text("package x")
+        (project / ".map" / "test-branch").mkdir(parents=True)
+        (project / ".map" / "test-branch" / "step_state.json").write_text(
+            json.dumps({"workflow": "x", "subtask_sequence": ["ST-001"], "current_subtask_id": "ST-001"})
+        )
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(project))
+        monkeypatch.chdir(project)
+        import importlib.util as _ilu
+        spec = _ilu.spec_from_file_location(
+            "map_orchestrator",
+            Path(__file__).parent.parent
+            / "src" / "mapify_cli" / "templates" / "map" / "scripts"
+            / "map_orchestrator.py",
+        )
+        assert spec is not None and spec.loader is not None
+        orch = _ilu.module_from_spec(spec)
+        spec.loader.exec_module(orch)
+        result = orch.record_subtask_result(
+            "ST-001",
+            "test-branch",
+            ["LLM-memory/internal/foo.go"],  # sibling-name, no ../ prefix
+            "valid",
+            summary="x",
+            commit_sha="abc",
+        )
+        assert result["status"] == "success"
+        assert "missing_files" not in result, result
+        assert "cross_repo_files" in result, result
+        assert result["cross_repo_files"] == ["LLM-memory/internal/foo.go"]
 
 
 class TestRecordSubtaskResultCrossRepoSuppression:

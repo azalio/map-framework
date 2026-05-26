@@ -182,6 +182,17 @@ Execution mode is `batch`; the orchestrator skips this step.
 
 State is managed by the orchestrator. Do not create `step_state.json` manually.
 
+### Pre-flight test baseline (MANDATORY at INIT_STATE)
+
+```bash
+python3 .map/scripts/map_step_runner.py record_test_baseline "$BRANCH"
+```
+
+Snapshots pre-existing failures so later subtasks distinguish
+"introduced regression" from "was broken pre-plan". Auto-detects
+Make/pytest/go test/cargo. Overrides + narrow-target guidance:
+[efficient-reference.md](efficient-reference.md#pre-flight-test-baseline).
+
 ### Wave Computation (after INIT_STATE) - REQUIRED
 
 ```bash

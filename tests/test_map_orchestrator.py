@@ -2557,6 +2557,46 @@ class TestValidateStepRecommendationCLIRegistration:
         assert "unrecognized arguments: --recommendation" not in result.stderr
 
 
+class TestValidateStepRecommendationOmittedWarning:
+    """Fix #6 (2026-05-26): closing 2.4 without --recommendation leaves
+    the verdict-consistency footgun open. The orchestrator now surfaces
+    a warning so the operator sees they should pass the recommendation
+    next time.
+    """
+
+    def _seed(self, branch_dir: str, tmp_path: Path) -> Path:
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001"]
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.4"
+        state.current_step_phase = "MONITOR"
+        state.completed_steps = ["2.2", "2.3"]
+        state.pending_steps = ["2.4"]
+        sf = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(sf)
+        return sf
+
+    def test_warning_emitted_when_recommendation_omitted(
+        self, branch_dir, tmp_path
+    ):
+        self._seed(branch_dir, tmp_path)
+        result = map_orchestrator.validate_step("2.4", branch_dir)
+        assert result["valid"] is True
+        assert "warning" in result, result
+        assert "--recommendation" in result["warning"]
+
+    def test_no_warning_when_recommendation_passed(
+        self, branch_dir, tmp_path
+    ):
+        self._seed(branch_dir, tmp_path)
+        result = map_orchestrator.validate_step(
+            "2.4", branch_dir, recommendation="proceed"
+        )
+        assert result["valid"] is True
+        assert "warning" not in result, result
+
+
 class TestValidateStepRecommendationContract:
     """Fix #6: validate_step 2.4 now enforces the Monitor recommendation
     contract orchestrator-side. Skill rule "valid=true +
