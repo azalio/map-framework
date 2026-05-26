@@ -1676,25 +1676,11 @@ def validate_blueprint_contract(
                     os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())
                 )
                 project_root_resolved = project_root_check.resolve()
-                missing_paths = [
-                    p for p in string_files
-                    if not (project_root_check / p).exists()
-                ]
-                if missing_paths == string_files:
-                    warnings.append(
-                        f"{label}: affected_files drift — none of "
-                        f"{string_files!r} exist under {project_root_check}; "
-                        "verify the decomposer didn't hallucinate file names "
-                        "(or rename to actual symbols if the subtask creates "
-                        "every listed file from scratch)"
-                    )
-                # Cross-repo detection: any path that resolves OUTSIDE
-                # the project root (e.g. ``../LLM-memory/...``) means
-                # this subtask plans to mutate a sibling repo. Surface a
-                # warning so the operator knows /map-efficient cannot
-                # guarantee anything about that change — sibling-repo
-                # commits aren't tracked, hooks don't run there, and
-                # validate_mutation_boundary's diff is local-repo only.
+                # Cross-repo detection (computed FIRST so drift can dedup
+                # against it): any path that resolves OUTSIDE the project
+                # root (e.g. ``../LLM-memory/...``) means this subtask
+                # plans to mutate a sibling repo. MAP gates can't cover
+                # sibling repos.
                 cross_repo_paths: list[str] = []
                 for p in string_files:
                     try:
@@ -1716,6 +1702,38 @@ def validate_blueprint_contract(
                         "intent in the subtask description and acknowledge that "
                         "MAP cannot verify the change."
                     )
+                # Drift detection: warn ONLY when every declared path is
+                # both (a) missing on disk AND (b) not a cross-repo path
+                # AND (c) not flagged as a new-file creation by the
+                # subtask description. Without these guards the drift
+                # warning fired for legitimate cases (new file, sibling
+                # repo) and degraded into noise.
+                cross_repo_set = set(cross_repo_paths)
+                local_files = [p for p in string_files if p not in cross_repo_set]
+                description_text = subtask.get("description") or ""
+                description_str = (
+                    description_text
+                    if isinstance(description_text, str)
+                    else ""
+                ).lower()
+                creates_new = bool(
+                    re.search(r"\b(creates? new|new file|introduces?|adds? new)\b", description_str)
+                )
+                if local_files:
+                    missing_local = [
+                        p for p in local_files
+                        if not (project_root_check / p).exists()
+                    ]
+                    if missing_local == local_files and not creates_new:
+                        warnings.append(
+                            f"{label}: affected_files drift — none of "
+                            f"{local_files!r} exist under {project_root_check}; "
+                            "verify the decomposer didn't hallucinate file names. "
+                            "If this subtask CREATES the files from scratch, mark "
+                            "that in the subtask description (phrases: "
+                            "'creates new', 'new file', 'introduces', 'adds new') "
+                            "to silence this warning."
+                        )
 
     coverage_map = payload.get("coverage_map") or blueprint_body.get("coverage_map")
     if not isinstance(coverage_map, dict) or not coverage_map:
@@ -1736,9 +1754,18 @@ def validate_blueprint_contract(
                 continue
             tradeoff_rationale = str(constraint.get("tradeoff_rationale") or "").strip()
             if not tradeoff_rationale:
+                # Forward-disclose the full requirement set so the user
+                # doesn't have to round-trip the validator twice (first
+                # error: "needs coverage_map OR rationale"; second
+                # error after coverage_map fix: "owner VC must cite
+                # [SC-N]"). Mention both branches up front.
                 errors.append(
-                    f"soft_constraints requirement {constraint_id!r} must either appear in coverage_map "
-                    "or include tradeoff_rationale"
+                    f"soft_constraints requirement {constraint_id!r} must either: "
+                    "(a) include tradeoff_rationale (silences both this check and "
+                    f"the [{constraint_id}] bracket-tag requirement), OR "
+                    f"(b) appear in coverage_map mapped to an ST-NNN AND that "
+                    f"subtask's validation_criteria must cite [{constraint_id}] "
+                    "as a bracket tag — path (b) is two requirements, not one"
                 )
 
         requirement_owners: dict[str, list[str]] = {}

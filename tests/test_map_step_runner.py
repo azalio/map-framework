@@ -1138,7 +1138,15 @@ def test_validate_blueprint_contract_rejects_unexplained_soft_constraint_tradeof
     result = map_step_runner.validate_blueprint_contract()
 
     assert result["valid"] is False
-    assert any("soft_constraints requirement 'SC-1' must either appear in coverage_map" in error for error in result["errors"])
+    # 2026-05-26: error text rewritten to disclose both branches up front
+    # (path a = tradeoff_rationale, path b = coverage_map + [SC-N] tag)
+    # so operators don't have to round-trip the validator twice.
+    assert any(
+        "soft_constraints requirement 'SC-1' must either" in error
+        and "tradeoff_rationale" in error
+        and "[SC-1]" in error
+        for error in result["errors"]
+    ), result["errors"]
 
 
 def test_record_test_contract_handoff_creates_json_and_manifest(branch_workspace):
@@ -3227,6 +3235,130 @@ class TestBlueprintContractAffectedFilesDrift:
         result = map_step_runner.validate_blueprint_contract(str(path))
         assert result["valid"] is True
         assert not any("affected_files drift" in w for w in result["warnings"])
+
+    def test_drift_suppressed_when_all_paths_cross_repo(
+        self, branch_workspace, monkeypatch
+    ):
+        """Regression #2 (2026-05-26): when every missing path is
+        cross-repo, drift warning must NOT fire — cross-repo gets its
+        own dedicated warning, and the drift message would be a false
+        positive (MAP can't verify sibling repo files).
+        """
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        path = branch_workspace / "blueprint.json"
+        path.write_text(json.dumps(self._bp([
+            "../LLM-memory/internal/foo.go",
+            "../sibling-repo/bar.py",
+        ])))
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is True
+        # Cross-repo warning fires; drift warning does NOT.
+        assert any("cross-repo affected_files" in w for w in result["warnings"])
+        assert not any("affected_files drift" in w for w in result["warnings"]), result["warnings"]
+
+    def test_drift_suppressed_when_description_marks_new_file(
+        self, branch_workspace, monkeypatch
+    ):
+        """Drift warning suppressed when subtask description signals the
+        files are CREATED here (new file). The decomposer can opt out by
+        naming the intent in the description prose."""
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        bp = self._bp(["tests/test_new_module.py", "src/new_module.py"])
+        bp["subtasks"][0]["description"] = (
+            "Introduces new module + tests from scratch; no existing files."
+        )
+        path = branch_workspace / "blueprint.json"
+        path.write_text(json.dumps(bp))
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is True
+        assert not any("affected_files drift" in w for w in result["warnings"]), result["warnings"]
+
+    def test_drift_still_fires_when_no_creation_hint_and_local_paths(
+        self, branch_workspace, monkeypatch
+    ):
+        """Counter-test: pure hallucination (local path that doesn't exist
+        AND description doesn't signal new-file) still triggers drift."""
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        path = branch_workspace / "blueprint.json"
+        path.write_text(json.dumps(self._bp(["src/hallucinated.py"])))
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is True
+        assert any("affected_files drift" in w for w in result["warnings"]), result["warnings"]
+
+
+class TestBlueprintContractSoftConstraintForwardDisclosure:
+    """Fix #1 (2026-05-26): soft-constraint validation used to require
+    two validator passes — first pass said "needs coverage_map OR
+    rationale"; after fix, second pass said "owner VC must cite
+    [SC-N]". Now the first error mentions both branches up front so
+    the operator can plan path (b) as two-step from the start.
+    """
+
+    def _bp_with_sc(self, include_in_coverage: bool, vc_cites_sc: bool) -> dict:
+        sc_id = "SC-2"
+        vc = ["VC1 [HC-1]: ok"]
+        if vc_cites_sc:
+            vc.append(f"VC2 [{sc_id}]: cited")
+        bp = {
+            "summary": "x",
+            "hard_constraints": [{"id": "HC-1", "description": "must"}],
+            "soft_constraints": [{"id": sc_id, "description": "soft"}],
+            "coverage_map": {"HC-1": "ST-001"},
+            "subtasks": [{
+                "id": "ST-001", "title": "x", "aag_contract": "X -> y -> done",
+                "expected_diff_size": "small", "concern_type": "runtime",
+                "one_logical_step": True, "dependencies": [],
+                "validation_criteria": vc,
+            }],
+        }
+        if include_in_coverage:
+            bp["coverage_map"][sc_id] = "ST-001"
+        return bp
+
+    def test_first_pass_error_mentions_both_branches(
+        self, branch_workspace
+    ):
+        path = branch_workspace / "blueprint.json"
+        path.write_text(
+            json.dumps(self._bp_with_sc(include_in_coverage=False, vc_cites_sc=False))
+        )
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is False
+        sc_errors = [e for e in result["errors"] if "'SC-2'" in e]
+        assert sc_errors, result["errors"]
+        msg = sc_errors[0]
+        # Both branches must be enumerated.
+        assert "tradeoff_rationale" in msg, msg
+        assert "[SC-2] bracket-tag" in msg or "[SC-2]" in msg, msg
+        assert "two requirements, not one" in msg, msg
+
+    def test_path_a_tradeoff_rationale_silences_both_checks(
+        self, branch_workspace
+    ):
+        bp = self._bp_with_sc(include_in_coverage=False, vc_cites_sc=False)
+        bp["soft_constraints"][0]["tradeoff_rationale"] = "accepted tradeoff"
+        path = branch_workspace / "blueprint.json"
+        path.write_text(json.dumps(bp))
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is True, result["errors"]
+
+    def test_path_b_requires_both_coverage_and_bracket_tag(
+        self, branch_workspace
+    ):
+        # Coverage_map alone, no bracket tag → still error on lineage.
+        bp = self._bp_with_sc(include_in_coverage=True, vc_cites_sc=False)
+        path = branch_workspace / "blueprint.json"
+        path.write_text(json.dumps(bp))
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is False
+        # Both coverage AND bracket tag → clean.
+        bp = self._bp_with_sc(include_in_coverage=True, vc_cites_sc=True)
+        path.write_text(json.dumps(bp))
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is True, result["errors"]
 
 
 class TestBlueprintContractCrossRepoDetection:
