@@ -662,6 +662,26 @@ When invoked with `mode: "re_decomposition"` from the orchestrator, you receive 
 - [ ] If the subtask creates a NEW symbol, mark it explicitly in the description ("introduces new class `X`") so reviewers don't expect to find it in the current tree.
 - [ ] When extending an existing class, name the class AND verify the file path where it currently lives — the decomposer's working assumption ("the obvious name") is wrong often enough that grep before write is cheaper than Actor rework.
 
+**Tool-Call Budget Estimate (MANDATORY)**:
+- [ ] For every planned subtask, estimate the Actor's tool-call budget:
+  approximate (file reads to understand context) + (edits across
+  `affected_files`) + (test/lint invocations). Subtasks projected to
+  exceed ~30 tool calls are HIGH RISK for Actor truncation (the
+  observed truncation floor across production runs is ~50-66 tool
+  calls — leaving a 30-call buffer for unanticipated overhead).
+- [ ] High-budget subtasks (>30 estimated tool calls) MUST EITHER:
+  (a) split into smaller subtasks each below the threshold, OR
+  (b) include `split_rationale` documenting WHY the work cannot be
+      split (e.g., a single atomic refactor whose intermediate state
+      would not compile), AND tag `expected_diff_size: large` so
+      Monitor/Evaluator know to expect a long run.
+- [ ] Cleanup-heavy subtasks (touching 20+ files for tracking
+  consistency) MUST split by concern (one subtask per concern_type:
+  type-cleanup, dead-code, naming, docs).
+- [ ] When affected_files lists 8+ paths, add `split_rationale` even
+  if expected_diff_size remains medium — high file count correlates
+  with truncation regardless of per-file delta.
+
 **Stale-Roadmap Check (MANDATORY)**:
 - [ ] For every planned subtask, run `detect_already_done` to confirm
   the work isn't already shipped in prod / an earlier branch / a

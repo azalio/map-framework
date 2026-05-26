@@ -886,6 +886,38 @@ def get_next_step(branch: str) -> dict:
 
     # Get next pending step
     next_step_id = state.pending_steps[0]
+
+    # Defensive RESEARCH-skip warning (added 2026-05-27): if get_next_step
+    # is about to return 2.3 (ACTOR) for the current subtask but 2.2
+    # (RESEARCH) was never completed for it AND no research artifact
+    # exists on disk AND TDD pre-phases (2.25/2.26) weren't the path
+    # by which 2.2 got skipped, emit a soft warning. Catches the silent
+    # skip without breaking the documented TDD auto-skip path (which
+    # legitimately bypasses 2.2 in the auto_skip_tdd_phases test).
+    research_skip_warning: Optional[str] = None
+    if (
+        next_step_id == "2.3"
+        and "2.2" not in state.completed_steps
+        and "2.2" not in state.skipped_steps
+        and "2.25" not in state.skipped_steps
+        and "2.26" not in state.skipped_steps
+        and state.current_subtask_id
+    ):
+        research_dir = Path(f".map/{branch}/research")
+        artifact_present = research_dir.is_dir() and any(
+            research_dir.glob(f"{state.current_subtask_id}__*.md")
+        )
+        if not artifact_present:
+            research_skip_warning = (
+                f"WARNING: about to return ACTOR (2.3) for "
+                f"{state.current_subtask_id} but RESEARCH (2.2) is not in "
+                "completed_steps AND no research artifact exists at "
+                f".map/{branch}/research/{state.current_subtask_id}__*.md. "
+                "Likely a state-drift skip. Run save_research + "
+                "validate_step 2.2 before ACTOR, or document this as an "
+                "intentional research-skip in the subtask description."
+            )
+
     phase = STEP_PHASES.get(next_step_id, "UNKNOWN")
     instruction = get_step_instruction(next_step_id, state)
 
@@ -894,7 +926,7 @@ def get_next_step(branch: str) -> dict:
     state.current_step_phase = phase
     state.save(state_file)
 
-    return {
+    response: dict[str, object] = {
         "step_id": next_step_id,
         "phase": phase,
         "instruction": instruction,
@@ -902,6 +934,9 @@ def get_next_step(branch: str) -> dict:
         "current_subtask": state.current_subtask_id,
         "subtask_progress": f"{state.subtask_index + 1}/{len(state.subtask_sequence)}",
     }
+    if research_skip_warning:
+        response["warning"] = research_skip_warning
+    return response
 
 
 REJECT_RECOMMENDATIONS = {"revise", "block", "needs_investigation"}

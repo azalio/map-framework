@@ -2557,6 +2557,87 @@ class TestValidateStepRecommendationCLIRegistration:
         assert "unrecognized arguments: --recommendation" not in result.stderr
 
 
+class TestGetNextStepResearchSkipWarning:
+    """Fix #3 (2026-05-27): if get_next_step is about to return 2.3
+    (ACTOR) for the current subtask but 2.2 (RESEARCH) was never
+    completed AND no research artifact exists on disk AND TDD
+    auto-skip wasn't the path, emit a soft warning in the response.
+    Does NOT block (back-compat with legacy TDD auto-skip flow) but
+    surfaces the silent skip so operator sees it. Catches the final-
+    subtask silent skip that hit ST-016 in a production run.
+    """
+
+    def test_warning_emitted_when_about_to_return_actor_without_artifact(
+        self, branch_dir, tmp_path
+    ):
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-016"]
+        state.current_subtask_id = "ST-016"
+        state.current_step_id = "2.3"
+        state.current_step_phase = "ACTOR"
+        # Drift: pending starts at 2.3, 2.2 NOT in completed_steps,
+        # no research artifact on disk, no TDD skip in history.
+        state.completed_steps = []
+        state.skipped_steps = []
+        state.pending_steps = ["2.3", "2.4"]
+        state.plan_approved = True
+        sf = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(sf)
+
+        result = map_orchestrator.get_next_step(branch_dir)
+        # Still returns 2.3 (no auto-reinsertion — would break TDD flow).
+        assert result["step_id"] == "2.3"
+        # But warning surfaces the silent skip.
+        assert "warning" in result, result
+        assert "RESEARCH" in result["warning"]
+        assert "ST-016" in result["warning"]
+
+    def test_no_warning_when_research_artifact_present(
+        self, branch_dir, tmp_path
+    ):
+        """When research artifact IS on disk, no warning — operator did
+        the research, just didn't record completion."""
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-016"]
+        state.current_subtask_id = "ST-016"
+        state.current_step_id = "2.3"
+        state.completed_steps = []
+        state.pending_steps = ["2.3", "2.4"]
+        state.plan_approved = True
+        sf = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(sf)
+        research_dir = tmp_path / ".map" / branch_dir / "research"
+        research_dir.mkdir(parents=True, exist_ok=True)
+        (research_dir / "ST-016__actor.md").write_text("findings")
+
+        result = map_orchestrator.get_next_step(branch_dir)
+        assert result["step_id"] == "2.3"
+        assert "warning" not in result
+
+    def test_no_warning_when_tdd_skip_in_history(
+        self, branch_dir, tmp_path
+    ):
+        """TDD-auto-skip path (2.25/2.26 in skipped_steps) is the
+        documented legitimate way to reach 2.3 without 2.2 — must NOT
+        trigger the warning."""
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-016"]
+        state.current_subtask_id = "ST-016"
+        state.current_step_id = "2.3"
+        state.skipped_steps = ["2.25", "2.26"]
+        state.pending_steps = ["2.3", "2.4"]
+        state.plan_approved = True
+        sf = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(sf)
+
+        result = map_orchestrator.get_next_step(branch_dir)
+        assert result["step_id"] == "2.3"
+        assert "warning" not in result
+
+
 class TestValidateStepRecommendationOmittedWarning:
     """Fix #6 (2026-05-26): closing 2.4 without --recommendation leaves
     the verdict-consistency footgun open. The orchestrator now surfaces

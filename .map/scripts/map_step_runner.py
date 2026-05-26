@@ -5464,6 +5464,165 @@ def refresh_blueprint_affected_files(
     }
 
 
+def record_diagnostics_baseline(
+    branch: str,
+    *,
+    tools: Optional[list[str]] = None,
+    timeout_seconds: int = 180,
+) -> dict[str, object]:
+    """Snapshot pre-existing static-analysis diagnostics (pyright, ruff,
+    mypy, golangci-lint) so subtasks can delta against each tool — the
+    pytest-only test baseline missed 123 pyright + 130 ruff diagnostics
+    in one production run.
+
+    Auto-detects which tools to run from project markers:
+      - ``pyright`` (pyproject.toml or pyrightconfig.json present)
+      - ``ruff`` (pyproject.toml / ruff.toml present)
+      - ``mypy`` (pyproject.toml or mypy.ini present)
+      - ``golangci-lint`` (go.mod + binary on PATH)
+
+    Override the auto-detect by passing ``tools=["pyright", "ruff"]``.
+
+    Persists to ``.map/<branch>/diagnostics_baseline.json`` with the
+    shape::
+        {
+          "branch": ...,
+          "recorded_at": ...,
+          "tools": {
+            "pyright": {"returncode": 1, "error_count": 123, "raw": "..."},
+            "ruff":    {"returncode": 1, "error_count": 130, "raw": "..."},
+            ...
+          }
+        }
+    """
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
+    branch_name = _sanitize_branch(branch)
+    baseline_dir = project_dir / ".map" / branch_name
+    baseline_dir.mkdir(parents=True, exist_ok=True)
+    baseline_path = baseline_dir / "diagnostics_baseline.json"
+
+    auto_tools: list[str] = []
+    if tools is None:
+        pyproject_exists = (project_dir / "pyproject.toml").exists()
+        if pyproject_exists or (project_dir / "pyrightconfig.json").exists():
+            auto_tools.append("pyright")
+        if pyproject_exists or (project_dir / "ruff.toml").exists():
+            auto_tools.append("ruff")
+        if pyproject_exists or (project_dir / "mypy.ini").exists():
+            auto_tools.append("mypy")
+        if (project_dir / "go.mod").exists():
+            auto_tools.append("golangci-lint")
+        tools = auto_tools
+
+    tool_commands = {
+        "pyright": "pyright .",
+        "ruff": "ruff check .",
+        "mypy": "mypy .",
+        "golangci-lint": "golangci-lint run",
+    }
+    tool_error_patterns = {
+        # Pyright emits "Found N errors" at the tail of its output.
+        "pyright": re.compile(r"(\d+)\s+errors?\b", re.IGNORECASE),
+        # Ruff emits "Found N error(s)" before the diagnostic list.
+        "ruff": re.compile(r"Found\s+(\d+)\s+error", re.IGNORECASE),
+        # Mypy emits "Found N errors in M files".
+        "mypy": re.compile(r"Found\s+(\d+)\s+error", re.IGNORECASE),
+        # Golangci-lint emits each diagnostic on a line; "N issues" summary.
+        "golangci-lint": re.compile(r"(\d+)\s+issues?", re.IGNORECASE),
+    }
+
+    results: dict[str, dict[str, object]] = {}
+    for tool in tools:
+        cmd = tool_commands.get(tool)
+        if not cmd:
+            continue
+        # Skip tools whose binary isn't available rather than fail the
+        # whole snapshot.
+        binary = cmd.split()[0]
+        which = subprocess.run(
+            ["command", "-v", binary], shell=False,
+            capture_output=True, text=True, timeout=2,
+        )
+        if which.returncode != 0:
+            # Try the shell-builtin check (POSIX `command -v`).
+            which = subprocess.run(
+                f"command -v {binary}", shell=True,
+                capture_output=True, text=True, timeout=2,
+            )
+            if which.returncode != 0:
+                results[tool] = {
+                    "status": "skipped",
+                    "reason": f"binary {binary!r} not on PATH",
+                }
+                continue
+        try:
+            proc = subprocess.run(
+                cmd, shell=True, cwd=project_dir,
+                capture_output=True, text=True, timeout=timeout_seconds,
+            )
+            returncode = proc.returncode
+            combined_output = proc.stdout + "\n" + proc.stderr
+        except subprocess.TimeoutExpired as exc:
+            results[tool] = {
+                "status": "timeout",
+                "elapsed_seconds": timeout_seconds,
+                "reason": str(exc),
+            }
+            continue
+        except OSError as exc:
+            results[tool] = {
+                "status": "error",
+                "reason": str(exc),
+            }
+            continue
+        pattern = tool_error_patterns.get(tool)
+        error_count = 0
+        if pattern:
+            for m in pattern.finditer(combined_output):
+                try:
+                    error_count = max(error_count, int(m.group(1)))
+                except ValueError:
+                    continue
+        # Cap raw output so the JSON doesn't grow unbounded on 1000-error runs.
+        raw_capped = combined_output[:8000]
+        results[tool] = {
+            "status": "success",
+            "command": cmd,
+            "returncode": returncode,
+            "error_count": error_count,
+            "raw": raw_capped,
+        }
+
+    payload: dict[str, object] = {
+        "branch": branch_name,
+        "recorded_at": _utc_timestamp(),
+        "tools": results,
+    }
+    baseline_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return payload
+
+
+def list_diagnostics_baseline(branch: str) -> dict[str, object]:
+    """Return the recorded diagnostics baseline; used by subtasks to
+    compute "delta vs baseline" for each static-analysis tool."""
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
+    branch_name = _sanitize_branch(branch)
+    baseline_path = project_dir / ".map" / branch_name / "diagnostics_baseline.json"
+    if not baseline_path.exists():
+        return {
+            "status": "no_baseline",
+            "branch": branch_name,
+            "message": (
+                "No diagnostics_baseline.json — run record_diagnostics_baseline "
+                "at INIT_STATE to snapshot pre-existing pyright/ruff/mypy noise."
+            ),
+        }
+    try:
+        return json.loads(baseline_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        return {"status": "error", "message": f"read failed: {exc}"}
+
+
 def record_test_baseline(
     branch: str,
     test_command: str = "",
@@ -7218,6 +7377,42 @@ if __name__ == "__main__":
                 file=sys.stderr,
             )
             sys.exit(1)
+
+    elif func_name == "record_diagnostics_baseline":
+        # CLI: record_diagnostics_baseline <branch> [--tools pyright,ruff]
+        # Snapshot pyright/ruff/mypy/golangci-lint state pre-execution.
+        if len(sys.argv) < 3:
+            print(json.dumps({"status": "error", "message": "usage: record_diagnostics_baseline <branch> [--tools ...]"}), file=sys.stderr)
+            sys.exit(1)
+        diag_branch = sys.argv[2]
+        diag_tools: Optional[list[str]] = None
+        diag_timeout = 180
+        if "--tools" in sys.argv:
+            t_idx = sys.argv.index("--tools")
+            if t_idx + 1 < len(sys.argv):
+                diag_tools = [
+                    t.strip() for t in re.split(r"[,\s]+", sys.argv[t_idx + 1])
+                    if t.strip()
+                ]
+        if "--timeout" in sys.argv:
+            t_idx = sys.argv.index("--timeout")
+            if t_idx + 1 < len(sys.argv):
+                try:
+                    diag_timeout = int(sys.argv[t_idx + 1])
+                except ValueError:
+                    print(json.dumps({"status": "error", "message": "--timeout must be int"}), file=sys.stderr)
+                    sys.exit(1)
+        report = record_diagnostics_baseline(
+            diag_branch, tools=diag_tools, timeout_seconds=diag_timeout
+        )
+        print(json.dumps(report, indent=2))
+
+    elif func_name == "list_diagnostics_baseline":
+        if len(sys.argv) < 3:
+            print(json.dumps({"status": "error", "message": "usage: list_diagnostics_baseline <branch>"}), file=sys.stderr)
+            sys.exit(1)
+        report = list_diagnostics_baseline(sys.argv[2])
+        print(json.dumps(report, indent=2))
 
     elif func_name == "record_test_baseline":
         # CLI: record_test_baseline <branch> [--command "..."] [--timeout N]

@@ -239,7 +239,8 @@ Call `research-agent` for the current subtask, then persist its concise findings
 
 ```bash
 SUBTASK_ID=$(jq -r '.current_subtask_id' ".map/${BRANCH}/step_state.json")
-# After research-agent returns findings in $RESEARCH_FINDINGS:
+# RECOMMENDED: proactive refresh_blueprint_affected_files <branch>
+# <sid> [--dry-run] BEFORE research-agent (efficient-reference.md).
 printf '%s' "$RESEARCH_FINDINGS" | \
   python3 .map/scripts/map_step_runner.py save_research "$BRANCH" "$SUBTASK_ID"
 # (defaults kind=actor; pass a 4th arg like 'monitor' or 'decomposer' to partition)

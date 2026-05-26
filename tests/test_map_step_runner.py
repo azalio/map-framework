@@ -3641,6 +3641,69 @@ class TestRefreshBlueprintAffectedFiles:
         assert "committed_a.py" in report["diff"]["added"]
 
 
+class TestRecordDiagnosticsBaseline:
+    """Fix #1 (2026-05-27): record_diagnostics_baseline snapshots
+    static-analysis (pyright/ruff/mypy/golangci-lint) counts at
+    INIT_STATE so subtasks can delta against each tool. Pytest-only
+    baseline missed 123 pyright + 130 ruff in one production run.
+    """
+
+    def test_baseline_with_no_tools_returns_empty_results(
+        self, branch_workspace, monkeypatch, tmp_path
+    ):
+        del tmp_path
+        # Pass explicit empty tool list to bypass auto-detect.
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.record_diagnostics_baseline(
+            "test-branch", tools=[]
+        )
+        assert "tools" in report
+        assert report["tools"] == {}
+        assert (branch_workspace / "diagnostics_baseline.json").exists()
+
+    def test_baseline_skips_missing_binary(
+        self, branch_workspace, monkeypatch, tmp_path
+    ):
+        del tmp_path
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.record_diagnostics_baseline(
+            "test-branch", tools=["nonexistent-binary-xyz"]
+        )
+        # Unknown tool name (no command mapping) is dropped silently.
+        assert report["tools"] == {}
+
+    def test_baseline_records_known_tool_entries_with_status(
+        self, branch_workspace, monkeypatch, tmp_path
+    ):
+        """Even when binaries are missing on the test runner, the
+        function must return a status='skipped' entry per tool so
+        the operator's later delta-vs-baseline check has a stable
+        shape to read."""
+        del tmp_path
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.record_diagnostics_baseline(
+            "test-branch", tools=["pyright", "ruff"]
+        )
+        # Each requested tool produces a result entry — either
+        # "skipped" (binary missing) or "success" (binary found and ran).
+        for tool in ("pyright", "ruff"):
+            assert tool in report["tools"], report
+            entry = report["tools"][tool]
+            assert "status" in entry
+            assert entry["status"] in ("skipped", "success", "timeout", "error")
+
+    def test_list_baseline_returns_no_baseline_when_absent(
+        self, branch_workspace, monkeypatch
+    ):
+        del branch_workspace
+        del monkeypatch
+        report = map_step_runner.list_diagnostics_baseline("never-recorded")
+        assert report["status"] == "no_baseline"
+
+
 class TestRecordTestBaseline:
     """Fix #9: INIT_STATE pre-flight pytest baseline so later subtasks can
     distinguish "I introduced this regression" from "this was broken

@@ -123,6 +123,26 @@ Each subtask's failing test now has a clean disposition: in baseline ⇒
 pre-existing, route to follow-up subtask; NOT in baseline ⇒ this
 plan introduced it, fix here.
 
+## Proactive blueprint refresh (recommended)
+
+Re-sync a subtask's `affected_files` against the actual diff BEFORE
+its RESEARCH starts, so decomposer's stale path/symbol guesses from
+planning time don't leak into research → Actor → Monitor.
+
+```bash
+python3 .map/scripts/map_step_runner.py refresh_blueprint_affected_files \
+  "$BRANCH" "$SUBTASK_ID" --dry-run   # preview the proposed write
+python3 .map/scripts/map_step_runner.py refresh_blueprint_affected_files \
+  "$BRANCH" "$SUBTASK_ID"             # commit the refresh
+```
+
+When to call:
+- At the start of every subtask's RESEARCH phase (covers planning-time
+  path drift for THIS subtask).
+- After a clean Monitor close (already documented in the per-subtask
+  commit section above — covers reality lock for the just-completed
+  subtask).
+
 ## Troubleshooting
 
 - Blueprint validation fails: fix the decomposer output before Actor starts.
