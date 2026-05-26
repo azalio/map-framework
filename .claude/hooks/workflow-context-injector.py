@@ -78,6 +78,23 @@ SIGNIFICANT_PATTERNS = [
     r"\bcp\s+-r",
 ]
 
+# Verification-class invocations: legitimate during ACTOR / TEST_WRITER for
+# the agent to self-check before MONITOR. They count as "significant" so the
+# base reminder still emits, but the closing "REQUIRED: Run Actor" pressure
+# tag is suppressed — Actor verifying their own work shouldn't get nagged
+# to re-enter the phase they're already in.
+VERIFICATION_PATTERNS = [
+    r"pytest(\s+|$)",
+    r"ruff\s+check(?!\s+--fix)",
+    r"ruff\s+format\s+--check",
+    r"mypy(\s+|$)",
+    r"pyright(\s+|$)",
+    r"go\s+vet",
+    r"go\s+build\b",
+    r"cargo\s+check",
+    r"tsc\s+--noEmit",
+]
+
 
 def sanitize_branch_name(branch: str) -> str:
     """Sanitize branch name for safe filesystem paths."""
@@ -138,6 +155,95 @@ def step_state_path(branch: str) -> Path:
     """Return the branch step_state.json path."""
     project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
     return project_dir / ".map" / branch / "step_state.json"
+
+
+# Per-turn dedup: identical normalized reminder text emitted within
+# DEDUP_WINDOW_SECONDS of the previous emission is squelched. We do
+# NOT key on step_state.json mtime — record_hook_injection_status
+# rewrites step_state on every hook call as part of accounting, so
+# mtime always changes and would defeat dedup on its own side effect.
+# Instead we rely on the fact that any meaningful workflow change
+# (validate_step → new phase / subtask) produces different reminder
+# text, which naturally lifts the squelch.
+DEDUP_CACHE_NAME = ".hook-reminder-cache.json"
+DEDUP_WINDOW_SECONDS = 5.0
+
+
+def _dedup_cache_path(branch: str) -> Path:
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+    return project_dir / ".map" / branch / DEDUP_CACHE_NAME
+
+
+_REMINDER_TS_RE = re.compile(r" @ \d{2}:\d{2}:\d{2}\.\d{3}Z \(state [^)]+\)")
+
+
+def _reminder_dedup_key(reminder: str) -> str:
+    """Strip volatile timestamp/state-age fragments so the dedup key reflects
+    semantic content only. format_reminder embeds `@ HH:MM:SS.mmmZ (state
+    +X.Xs)` for lag diagnostics — without normalization every call has a
+    different hash and dedup never fires.
+    """
+    return _REMINDER_TS_RE.sub("", reminder)
+
+
+def _should_squelch_duplicate(branch: str, reminder: str) -> bool:
+    """Return True if this reminder is a duplicate of the previous emission.
+
+    Dedup axis is purely the NORMALIZED reminder text within a short wall
+    clock window: when the workflow state changes (validate_step advances
+    phases / subtasks), the reminder text changes automatically (different
+    step_id / phase / progress) and the dedup naturally lifts. We do NOT
+    look at step_state.json mtime — record_hook_injection_status writes
+    the state file on every call as part of normal accounting, which
+    would otherwise bust dedup on its own side effect.
+
+    Any failure (no cache, different reminder, ancient timestamp, IO
+    error) returns False so the reminder is emitted normally.
+    """
+    if not reminder:
+        return False
+    cache_file = _dedup_cache_path(branch)
+    try:
+        if not cache_file.is_file():
+            return False
+        cache = json.loads(cache_file.read_text(encoding="utf-8"))
+        if not isinstance(cache, dict):
+            return False
+        last_hash = cache.get("reminder_hash")
+        last_emit_ts = cache.get("emit_ts")
+        if not isinstance(last_hash, str) or not isinstance(last_emit_ts, (int, float)):
+            return False
+        import hashlib  # local import; cheap on the silent path
+        import time
+        normalized = _reminder_dedup_key(reminder)
+        current_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+        if current_hash != last_hash:
+            return False
+        if (time.time() - last_emit_ts) >= DEDUP_WINDOW_SECONDS:
+            return False
+        return True
+    except (OSError, json.JSONDecodeError):
+        return False
+
+
+def _write_dedup_cache(branch: str, reminder: str) -> None:
+    """Persist last-emitted reminder hash for the next call."""
+    cache_file = _dedup_cache_path(branch)
+    try:
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        import hashlib
+        import time
+        normalized = _reminder_dedup_key(reminder)
+        payload = {
+            "reminder_hash": hashlib.sha256(normalized.encode("utf-8")).hexdigest(),
+            "emit_ts": time.time(),
+        }
+        cache_file.write_text(
+            json.dumps(payload, ensure_ascii=True), encoding="utf-8"
+        )
+    except OSError:
+        # Best-effort: cache write must never block the hook.
+        pass
 
 
 def record_hook_injection_status(
@@ -203,6 +309,21 @@ def should_inject_for_bash(command: str) -> bool:
             return True
 
     # Default: don't inject for unknown commands
+    return False
+
+
+def is_verification_command(command: str) -> bool:
+    """Return True when the bash command is an agent self-verification
+    invocation (pytest, ruff check, mypy, pyright, go vet/build, ...).
+    Used to suppress the "REQUIRED: Run Actor" pressure tag so Actor
+    verifying their own work isn't nagged to re-enter the phase they're
+    already in.
+    """
+    if not command:
+        return False
+    for pattern in VERIFICATION_PATTERNS:
+        if re.search(pattern, command, re.IGNORECASE):
+            return True
     return False
 
 
@@ -351,8 +472,15 @@ def _truncate_at_word(text: str, limit: int) -> str:
     return cut + "..."
 
 
-def format_reminder(state: dict, branch: str) -> str | None:
-    """Format terse workflow reminder (aim: ≤700 chars)."""
+def format_reminder(
+    state: dict, branch: str, *, suppress_required: bool = False
+) -> str | None:
+    """Format terse workflow reminder (aim: ≤700 chars).
+
+    ``suppress_required`` drops the trailing ``| REQUIRED: ...`` pressure tag
+    — used when the invoking command is a verification (pytest, ruff check,
+    mypy, ...) so Actor running self-checks isn't told to "Run Actor".
+    """
     if not state:
         return None
 
@@ -376,11 +504,22 @@ def format_reminder(state: dict, branch: str) -> str | None:
     wave_idx = state.get("current_wave_index", 0)
     wave_hint = ""
     if waves and isinstance(wave_idx, int):
-        wave_hint = f" | WAVE {wave_idx + 1}/{len(waves)}"
-        current_wave = waves[wave_idx] if wave_idx < len(waves) else []
-        if isinstance(current_wave, list) and len(current_wave) > 1:
-            wave_hint += f" ({', '.join(str(item) for item in current_wave)})"
-            mode = "batch:parallel"
+        # Surface the WAVE banner when the wave-loop driver is ACTUALLY
+        # in use. Previous "wave_idx > 0" check missed the very first
+        # wave (wave 0 is the first wave by definition). Better signal:
+        # subtask_phases is populated only by the wave-loop dispatcher
+        # (get_wave_step writes per-subtask phase tracking there). So
+        # if subtask_phases has any entries AND execution_waves is set,
+        # the wave-loop is engaged — show the banner from wave 0 onward.
+        subtask_phases_value = state.get("subtask_phases", {})
+        subtask_phases_dict = subtask_phases_value if isinstance(subtask_phases_value, dict) else {}
+        wave_loop_engaged = bool(subtask_phases_dict) or wave_idx > 0
+        if wave_loop_engaged:
+            wave_hint = f" | WAVE {wave_idx + 1}/{len(waves)}"
+            current_wave = waves[wave_idx] if wave_idx < len(waves) else []
+            if isinstance(current_wave, list) and len(current_wave) > 1:
+                wave_hint += f" ({', '.join(str(item) for item in current_wave)})"
+                mode = "batch:parallel"
 
     required = required_action_for_step(step_id, step_phase, state)
 
@@ -423,19 +562,38 @@ def format_reminder(state: dict, branch: str) -> str | None:
     hard_hint, tag_hint = load_subtask_contract_hints(branch, subtask_id)
 
     authority_hint = " | Source>summary"
-    base = f"[MAP] {step_id} {step_phase}{goal_hint} | ST: {subtask_id}{title_hint} ({progress}) | plan:{plan_ok} mode:{mode}{wave_hint}{diag_hint}{files_hint}{hard_hint}{tag_hint}{authority_hint}"
+    # Lag diagnostics: emit hook wall-clock UTC and the age of step_state.json
+    # (now - state mtime, seconds, 1 decimal). If the hook is reading stale
+    # state, "state +Xs" jumps. Repros for "[MAP] still says ACTOR after I
+    # validate_step'd to MONITOR" can be diffed by comparing the printed
+    # state-age across consecutive reminders.
+    from datetime import datetime as _dt, timezone as _tz
+    now_utc = _dt.now(_tz.utc)
+    state_age_str = "?"
+    try:
+        state_file_age_src = (
+            Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+            / ".map" / branch / "step_state.json"
+        )
+        if state_file_age_src.exists():
+            mtime = _dt.fromtimestamp(state_file_age_src.stat().st_mtime, _tz.utc)
+            state_age_str = f"+{(now_utc - mtime).total_seconds():.1f}s"
+    except OSError:
+        pass
+    ts_hint = f" @ {now_utc.strftime('%H:%M:%S.%f')[:-3]}Z (state {state_age_str})"
+    base = f"[MAP]{ts_hint} {step_id} {step_phase}{goal_hint} | ST: {subtask_id}{title_hint} ({progress}) | plan:{plan_ok} mode:{mode}{wave_hint}{diag_hint}{files_hint}{hard_hint}{tag_hint}{authority_hint}"
 
     # Enforce limit: trim goal first, then constraint detail, then word-boundary truncate.
     if len(base) > REMINDER_LIMIT:
         goal_hint = ""
-        base = f"[MAP] {step_id} {step_phase} | ST: {subtask_id}{title_hint} ({progress}) | plan:{plan_ok} mode:{mode}{wave_hint}{diag_hint}{files_hint}{hard_hint}{tag_hint}{authority_hint}"
+        base = f"[MAP]{ts_hint} {step_id} {step_phase} | ST: {subtask_id}{title_hint} ({progress}) | plan:{plan_ok} mode:{mode}{wave_hint}{diag_hint}{files_hint}{hard_hint}{tag_hint}{authority_hint}"
     if len(base) > REMINDER_LIMIT:
         hard_hint = ""
-        base = f"[MAP] {step_id} {step_phase} | ST: {subtask_id}{title_hint} ({progress}) | plan:{plan_ok} mode:{mode}{wave_hint}{diag_hint}{files_hint}{tag_hint}{authority_hint}"
+        base = f"[MAP]{ts_hint} {step_id} {step_phase} | ST: {subtask_id}{title_hint} ({progress}) | plan:{plan_ok} mode:{mode}{wave_hint}{diag_hint}{files_hint}{tag_hint}{authority_hint}"
     if len(base) > REMINDER_LIMIT:
         base = _truncate_at_word(base, REMINDER_LIMIT)
 
-    if required:
+    if required and not suppress_required:
         result = f"{base} | REQUIRED: {required}"
         if len(result) > REMINDER_LIMIT:
             result = _truncate_at_word(result, REMINDER_LIMIT)
@@ -465,6 +623,7 @@ def main() -> None:
 
     # Determine if we should inject
     should_inject = False
+    suppress_required = False
     skip_reason = ""
 
     if tool_name in ("Edit", "Write", "MultiEdit"):
@@ -475,6 +634,24 @@ def main() -> None:
             skip_reason = "bash command is not a string"
         else:
             should_inject = should_inject_for_bash(command)
+            # Verification commands inject the base reminder but drop the
+            # "REQUIRED: Run Actor" pressure tag — Actor running pytest on
+            # their own work shouldn't be nagged to re-enter ACTOR.
+            if should_inject and is_verification_command(command):
+                suppress_required = True
+            # Phase-aware smoke-test suppression: when current_step_phase
+            # is ACTOR/MONITOR, every significant Bash command is some
+            # form of self-check (build, smoke, lint, app boot). Pressing
+            # "REQUIRED: Run Actor" on those is noise — Actor is already
+            # in ACTOR. This covers smoke patterns the static
+            # VERIFICATION_PATTERNS list misses (e.g., `python3 -m
+            # sgr_code_review …` was tagged REQUIRED 31x in one session).
+            if should_inject:
+                state_snapshot, _ = read_step_state(branch)
+                if isinstance(state_snapshot, dict):
+                    phase_now = state_snapshot.get("current_step_phase")
+                    if phase_now in ("ACTOR", "MONITOR", "TEST_WRITER"):
+                        suppress_required = True
 
     if not should_inject:
         reason = skip_reason or "tool not configured for workflow injection"
@@ -493,8 +670,28 @@ def main() -> None:
         print("{}")
         sys.exit(0)
 
-    reminder = format_reminder(state, branch)
+    # Edits during a phase where editing is EXPECTED (ACTOR / TEST_WRITER)
+    # don't need a trailing "REQUIRED: Run Actor" nag. The operator is
+    # already doing exactly that — consecutive atomic Edits in the same
+    # ACTOR turn shouldn't be lectured.
+    if (
+        tool_name in ("Edit", "Write", "MultiEdit")
+        and isinstance(state, dict)
+        and state.get("current_step_phase") in ("ACTOR", "TEST_WRITER")
+    ):
+        suppress_required = True
+    reminder = format_reminder(state, branch, suppress_required=suppress_required)
     if reminder:
+        # Per-turn dedup: same reminder + same state_mtime within 5s = same
+        # turn; squelch to avoid the [MAP] banner repeating across every
+        # Edit/Write/Bash invocation in a single agent burst.
+        if _should_squelch_duplicate(branch, reminder):
+            record_hook_injection_status(
+                branch, state, "deduped", "duplicate reminder squelched", tool_name
+            )
+            print("{}")
+            sys.exit(0)
+        _write_dedup_cache(branch, reminder)
         record_hook_injection_status(
             branch, state, "injected", "reminder emitted", tool_name, len(reminder)
         )

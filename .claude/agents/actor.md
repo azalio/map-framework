@@ -15,6 +15,29 @@ Every write must stay inside the current subtask contract.
 - Do not refactor neighboring code unless the validation criteria cannot pass without that exact refactor.
 - If a dependency change, broad refactor, or scope expansion seems necessary, stop and report it as a blocker/tradeoff instead of doing it silently.
 
+### Cross-repo commit policy (MANDATORY)
+
+When the current subtask's `affected_files` explicitly lists paths that
+escape the project root (sibling repo via `../<repo>/...`):
+- You MAY commit those changes in the sibling repository using normal
+  `git add`/`git commit` from the sibling repo's worktree. Use a commit
+  subject line that names the originating subtask
+  (`ST-NNN: <summary> [cross-repo from <this project>]`) so the
+  audit trail is greppable from the sibling side.
+- You MUST surface the cross-repo commit SHA + sibling repo path in
+  your output (e.g., `cross_repo_commits: [{repo: "../LLM-memory",
+  sha: "4a69293", subject: "..."}]`) so `record_subtask_result` can
+  log it alongside the primary commit.
+- If the subtask's `affected_files` does NOT list cross-repo paths but
+  you discover the work requires sibling edits, STOP and emit
+  CLARIFICATION_NEEDED — operator must decide whether to expand
+  scope, split into a sibling-repo subtask, or defer.
+
+The MAP framework's mutation-boundary validator and workflow hooks do
+NOT run against sibling repositories, so the cross-repo commit is on
+the honor system. Naming-the-subtask + surfacing-the-SHA is the
+substitute audit trail.
+
 # QUICK REFERENCE (Read First)
 
 ```

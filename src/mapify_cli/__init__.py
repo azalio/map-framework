@@ -650,20 +650,21 @@ def init(
         None,
         "--compression",
         help=(
-            "Context-compression policy: never (quality), auto (default), "
-            "or aggressive (cost). When omitted the existing config value "
-            "is preserved and re-running ``mapify init`` does not overwrite "
-            "user choices. See docs/USAGE.md."
+            "Context-compression policy: never (default, opt-in everywhere), "
+            "auto (nudge when last turn >= threshold), or aggressive "
+            "(nudge at 0.4 x threshold). When omitted the existing config "
+            "value is preserved and re-running ``mapify init`` does not "
+            "overwrite user choices. See docs/USAGE.md."
         ),
     ),
     compression_threshold: Optional[int] = typer.Option(
         None,
         "--compression-threshold",
         help=(
-            "Token threshold for the compression nudge. Default 120000 "
-            "(~60% of a 200k window) when no value has been set. Raise to "
-            "~250000 for Opus 1M. When omitted, the existing config value "
-            "is preserved on re-run."
+            "Token threshold for the compression nudge (only applies when "
+            "--compression auto|aggressive). Default 120000 (~60% of a 200k "
+            "window). Raise to ~250000 for Opus 1M or long 50+ subtask plans. "
+            "When omitted, the existing config value is preserved on re-run."
         ),
     ),
 ):

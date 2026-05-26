@@ -1,6 +1,8 @@
 """Tests for map_step_runner human-readable artifact helpers."""
 
 import json
+import os
+import re
 import subprocess
 import sys
 import types
@@ -1137,7 +1139,15 @@ def test_validate_blueprint_contract_rejects_unexplained_soft_constraint_tradeof
     result = map_step_runner.validate_blueprint_contract()
 
     assert result["valid"] is False
-    assert any("soft_constraints requirement 'SC-1' must either appear in coverage_map" in error for error in result["errors"])
+    # 2026-05-26: error text rewritten to disclose both branches up front
+    # (path a = tradeoff_rationale, path b = coverage_map + [SC-N] tag)
+    # so operators don't have to round-trip the validator twice.
+    assert any(
+        "soft_constraints requirement 'SC-1' must either" in error
+        and "tradeoff_rationale" in error
+        and "[SC-1]" in error
+        for error in result["errors"]
+    ), result["errors"]
 
 
 def test_record_test_contract_handoff_creates_json_and_manifest(branch_workspace):
@@ -2407,9 +2417,17 @@ class TestBuildContextBlock:
         assert "# Upstream Results" in result
         assert "ST-001: files=" in result
 
-    def test_build_context_block_enforces_budget(
+    def test_build_context_block_no_longer_truncates(
         self, branch_workspace, monkeypatch
     ):
+        """Negative-contract regression: build_context_block must NOT clip its
+        output even when MAP_CONTEXT_BLOCK_BUDGET_TOKENS is set well below the
+        natural block size. The truncation feature was removed by user request
+        because the visible "[TRUNCATED] see token_budget.json" marker and
+        per-field ellipsis were swallowing real subtask description / research
+        text. token_budget.json must still record the over-budget event so
+        operators can see when blocks exceed the configured budget.
+        """
         subtasks = [
             {
                 "id": "ST-001",
@@ -2461,24 +2479,37 @@ class TestBuildContextBlock:
 
         result = map_step_runner.build_context_block("test-branch", "ST-001")
 
-        assert map_step_runner._estimate_tokens(result) <= 260
+        # XML envelope stays intact.
         assert result.startswith("<map_context>")
         assert result.endswith("</map_context>")
-        assert "# Context Budget: truncated" in result
+        # NO truncation marker — the feature is gone.
+        assert "# [TRUNCATED] see" not in result
+        assert "# Context Budget: truncated" not in result
+        assert "[truncated]" not in result
+        # Full content must remain visible regardless of the artificially-
+        # low MAP_CONTEXT_BLOCK_BUDGET_TOKENS env (the budget mechanism
+        # was deleted entirely; the env var no longer has any effect).
+        # Current subtask details are fully present.
         assert "Current task that must stay visible" in result
         assert "Actor -> bounded context -> done" in result
+        # Every affected file rendered — no "+N more" elision.
+        assert "src/current_0.py" in result
+        assert "src/current_29.py" in result
+        assert "+" not in result.split("Affected files:", 1)[1].split("\n", 1)[0]
+        # Upstream summary preserved in full (100x repetition).
         assert "# Upstream Results" in result
-        assert "dependency summary" in result
+        assert result.count("dependency summary") >= 100
+        # All 80 plan-overview entries rendered.
+        for stub in ("ST-001", "ST-002", "ST-050", "ST-079"):
+            assert stub in result, stub
 
-        budget_report = json.loads(
-            (branch_workspace / "token_budget.json").read_text(encoding="utf-8")
-        )
-        decision = budget_report["decisions"][-1]
-        assert decision["path_name"] == "map-efficient.actor_context_block"
-        assert decision["budget_action"] == "truncated"
-        assert decision["configured_budget_tokens"] == 260
-        assert decision["estimated_tokens_after"] <= 260
-        assert "plan_overview" in decision["clipped_sections"]
+        # Token-budget bookkeeping was removed wholesale — no decisions
+        # are recorded for build_context_block any more.
+        budget_file = branch_workspace / "token_budget.json"
+        if budget_file.exists():
+            budget_report = json.loads(budget_file.read_text(encoding="utf-8"))
+            for decision in budget_report.get("decisions", []):
+                assert decision.get("path_name") != "map-efficient.actor_context_block"
 
     def test_build_context_block_ignores_impossible_budget(
         self, branch_workspace, monkeypatch
@@ -2530,6 +2561,45 @@ class TestBuildContextBlock:
         assert "# Upstream Results" not in result
 
 
+class TestBuildContextBlockIncludesDescription:
+    """build_context_block now emits the subtask's `description` and
+    `risk_level` — Actor previously had to read blueprint.json separately
+    for the long-form what/why prose."""
+
+    def test_description_emitted_when_present(self, branch_workspace):
+        bp = {
+            "subtasks": [
+                {
+                    "id": "ST-001",
+                    "title": "first",
+                    "description": "Implement QuantumComponentIndex with O(1) lookup.",
+                    "aag_contract": "X -> y() -> done",
+                    "risk_level": "low",
+                    "validation_criteria": ["VC1: ok"],
+                }
+            ],
+        }
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        result = map_step_runner.build_context_block("test-branch", "ST-001")
+        assert "Description: Implement QuantumComponentIndex" in result, result
+        assert "risk_level=low" in result, result
+
+    def test_no_description_line_when_field_absent(self, branch_workspace):
+        bp = {
+            "subtasks": [
+                {
+                    "id": "ST-001",
+                    "title": "first",
+                    "aag_contract": "X -> y() -> done",
+                    "validation_criteria": ["VC1: ok"],
+                }
+            ],
+        }
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        result = map_step_runner.build_context_block("test-branch", "ST-001")
+        assert "Description:" not in result
+
+
 class TestBuildContextBlockRepoDelta:
     """Tests for Repo Delta path in build_context_block (requires mocked compute_differential_insight)."""
 
@@ -2575,7 +2645,13 @@ class TestBuildContextBlockRepoDelta:
         assert "src/foo.py" in result
         assert "src/bar.py" in result
 
-    def test_repo_delta_capped_at_20_files(self, branch_workspace):
+    def test_repo_delta_lists_every_changed_file_without_elision(
+        self, branch_workspace
+    ):
+        """Negative-contract regression: build_context_block no longer caps
+        repo delta at 20 files. All changed files must render, and the
+        "... +N more" elision marker must be absent.
+        """
         self._setup_blueprint_and_state(branch_workspace, last_sha="abc123")
         many_files = [f"file_{i}.py" for i in range(25)]
         mock_insight = {
@@ -2591,9 +2667,9 @@ class TestBuildContextBlockRepoDelta:
             result = map_step_runner.build_context_block("test-branch", "ST-001")
 
         assert "# Repo Delta" in result
-        assert "file_19.py" in result
-        assert "file_20.py" not in result
-        assert "... +5 more" in result
+        for i in range(25):
+            assert f"file_{i}.py" in result, f"missing file_{i}.py"
+        assert "... +" not in result, "elision marker must be gone"
 
     def test_repo_delta_omitted_on_error(self, branch_workspace):
         self._setup_blueprint_and_state(branch_workspace, last_sha="abc123")
@@ -2724,6 +2800,1664 @@ class TestBuildContextBlockIntegration:
         assert "All tests pass" in result
         assert "[x] ST-001: First task (valid)" in result
         assert "[>>] ST-002: Second task (IN PROGRESS)" in result
+
+
+class TestSubtaskTokenUsage:
+    """subtask_token_usage parses ~/.claude/projects/<project>/*.jsonl and
+    aggregates assistant message.usage since the last subtask transition
+    (step_state.json mtime). Closes the "no cheap per-subtask token count"
+    gap from the latest framework triage (#10)."""
+
+    def _seed_state(self, branch_workspace: Path, current: str = "ST-001") -> None:
+        state = {
+            "workflow": "map-efficient",
+            "current_subtask_id": current,
+            "subtask_sequence": [current],
+        }
+        (branch_workspace / "step_state.json").write_text(json.dumps(state))
+
+    def _seed_log(self, log_dir: Path, entries: list[dict]) -> Path:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / "session-test.jsonl"
+        with log_path.open("w", encoding="utf-8") as fh:
+            for entry in entries:
+                fh.write(json.dumps(entry) + "\n")
+        return log_path
+
+    def test_sums_usage_only_after_state_mtime(
+        self, branch_workspace, tmp_path, monkeypatch
+    ):
+        import time
+        from datetime import datetime, timedelta, timezone
+        self._seed_state(branch_workspace)
+        # Force state mtime to a known anchor.
+        anchor = datetime.now(timezone.utc).replace(microsecond=0)
+        os.utime(
+            branch_workspace / "step_state.json",
+            (anchor.timestamp(), anchor.timestamp()),
+        )
+        # Place a Claude Code log dir using the canonical name convention.
+        proj_abs = tmp_path.resolve()
+        log_dir = tmp_path / "fake-home" / ".claude" / "projects" / str(proj_abs).replace("/", "-")
+        before = (anchor - timedelta(seconds=30)).isoformat().replace("+00:00", "Z")
+        after_1 = (anchor + timedelta(seconds=10)).isoformat().replace("+00:00", "Z")
+        after_2 = (anchor + timedelta(seconds=20)).isoformat().replace("+00:00", "Z")
+        entries = [
+            {  # BEFORE transition — must be ignored
+                "timestamp": before,
+                "message": {"role": "assistant", "usage": {
+                    "input_tokens": 9999, "output_tokens": 9999,
+                    "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+                }},
+            },
+            {  # After — counted
+                "timestamp": after_1,
+                "message": {"role": "assistant", "usage": {
+                    "input_tokens": 100, "output_tokens": 50,
+                    "cache_creation_input_tokens": 200, "cache_read_input_tokens": 300,
+                }},
+            },
+            {  # After — counted
+                "timestamp": after_2,
+                "message": {"role": "assistant", "usage": {
+                    "input_tokens": 5, "output_tokens": 7,
+                    "cache_creation_input_tokens": 1, "cache_read_input_tokens": 0,
+                }},
+            },
+            {  # No usage field — ignored
+                "timestamp": after_2,
+                "message": {"role": "user", "content": "hi"},
+            },
+        ]
+        self._seed_log(log_dir, entries)
+        monkeypatch.setenv("HOME", str(tmp_path / "fake-home"))
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj_abs))
+        # avoid time-of-day flake by sleeping briefly so log mtime > state mtime
+        time.sleep(0.01)
+        report = map_step_runner.subtask_token_usage("test-branch")
+        assert report["status"] == "success", report
+        assert report["subtask_id"] == "ST-001"
+        assert report["messages_counted"] == 2
+        assert report["input_tokens"] == 105
+        assert report["output_tokens"] == 57
+        assert report["cache_creation_input_tokens"] == 201
+        assert report["cache_read_input_tokens"] == 300
+
+    def test_all_flag_via_cli_reports_whole_session(
+        self, branch_workspace, tmp_path, monkeypatch
+    ):
+        """`--all` anchors the window at epoch so the report covers every
+        message in the active jsonl, ignoring step_state.json mtime."""
+        self._seed_state(branch_workspace)
+        proj_abs = tmp_path.resolve()
+        log_dir = tmp_path / "home" / ".claude" / "projects" / str(proj_abs).replace("/", "-")
+        entries = [
+            {  # Way before any plausible state mtime
+                "timestamp": "2020-01-01T00:00:00Z",
+                "message": {"role": "assistant", "usage": {
+                    "input_tokens": 11, "output_tokens": 22,
+                    "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+                }},
+            },
+            {
+                "timestamp": "2026-05-23T00:00:00Z",
+                "message": {"role": "assistant", "usage": {
+                    "input_tokens": 33, "output_tokens": 44,
+                    "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+                }},
+            },
+        ]
+        self._seed_log(log_dir, entries)
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj_abs))
+        runner = (
+            Path(__file__).resolve().parents[1]
+            / "src" / "mapify_cli" / "templates" / "map" / "scripts" / "map_step_runner.py"
+        )
+        env = {
+            **os.environ,
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "HOME": str(tmp_path / "home"),
+            "CLAUDE_PROJECT_DIR": str(proj_abs),
+        }
+        result = subprocess.run(
+            [sys.executable, str(runner), "subtask_token_usage", "test-branch", "--all"],
+            capture_output=True, text=True, cwd=str(tmp_path), env=env,
+        )
+        assert result.returncode == 0, result.stderr
+        report = json.loads(result.stdout)
+        # Both entries counted (default-anchor would drop the 2020 one).
+        assert report["messages_counted"] == 2
+        assert report["input_tokens"] == 44
+        assert report["output_tokens"] == 66
+        assert report["since_ts"].startswith("1970-01-01")
+
+    def test_no_logs_when_log_dir_missing(self, branch_workspace, tmp_path, monkeypatch):
+        self._seed_state(branch_workspace)
+        monkeypatch.setenv("HOME", str(tmp_path / "fake-empty-home"))
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path.resolve()))
+        report = map_step_runner.subtask_token_usage("test-branch")
+        assert report["status"] == "no_logs"
+        assert report["subtask_id"] == "ST-001"
+
+    def test_explicit_subtask_id_and_since_ts_override_defaults(
+        self, branch_workspace, tmp_path, monkeypatch
+    ):
+        self._seed_state(branch_workspace, current="ST-001")
+        proj_abs = tmp_path.resolve()
+        log_dir = tmp_path / "h" / ".claude" / "projects" / str(proj_abs).replace("/", "-")
+        anchor_iso = "2026-05-23T00:00:00Z"
+        entries = [
+            {"timestamp": "2026-05-22T23:59:59Z",
+             "message": {"role": "assistant", "usage": {"input_tokens": 1, "output_tokens": 1,
+                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}}},
+            {"timestamp": "2026-05-23T00:00:30Z",
+             "message": {"role": "assistant", "usage": {"input_tokens": 42, "output_tokens": 1,
+                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}}},
+        ]
+        self._seed_log(log_dir, entries)
+        monkeypatch.setenv("HOME", str(tmp_path / "h"))
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj_abs))
+        report = map_step_runner.subtask_token_usage(
+            "test-branch", subtask_id="ST-007", since_ts=anchor_iso
+        )
+        assert report["subtask_id"] == "ST-007"
+        assert report["since_ts"] == anchor_iso
+        assert report["input_tokens"] == 42
+
+
+class TestBlueprintContractRelaxations:
+    """Validator now accepts (a) `text` as a `description` alias on hard/soft
+    constraints, (b) `cross-repo` concern_type, (c) suppresses oversized /
+    mixed flags when justification fields are present."""
+
+    def _write_bp(self, branch_workspace: Path, **kwargs) -> Path:
+        path = branch_workspace / "blueprint.json"
+        path.write_text(json.dumps(kwargs))
+        return path
+
+    def _base_bp(self) -> dict:
+        return {
+            "summary": "x",
+            "hard_constraints": [{"id": "HC-1", "description": "must"}],
+            "soft_constraints": [],
+            "coverage_map": {"HC-1": "ST-001"},
+            "subtasks": [{
+                "id": "ST-001", "title": "x", "aag_contract": "X -> y -> done",
+                "expected_diff_size": "small", "concern_type": "runtime",
+                "one_logical_step": True, "dependencies": [],
+                "validation_criteria": ["VC1 [HC-1]: ok"],
+            }],
+        }
+
+    def test_text_alias_accepted_for_constraint(self, branch_workspace):
+        bp = self._base_bp()
+        # Constraint uses `text` instead of `description`.
+        bp["hard_constraints"] = [{"id": "HC-1", "text": "must hold true"}]
+        path = self._write_bp(branch_workspace, **bp)
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is True, result["errors"]
+
+    def test_cross_repo_concern_type_accepted(self, branch_workspace):
+        bp = self._base_bp()
+        bp["subtasks"][0]["concern_type"] = "cross-repo"
+        path = self._write_bp(branch_workspace, **bp)
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is True, result["errors"]
+
+    def test_split_rationale_suppresses_too_many_vc_warning(self, branch_workspace):
+        bp = self._base_bp()
+        bp["subtasks"][0]["validation_criteria"] = [
+            f"VC{i} [HC-1]: ok" for i in range(1, 8)  # 7 criteria > threshold 6
+        ]
+        bp["subtasks"][0]["split_rationale"] = "Single logical contract — splitting fragments coverage."
+        path = self._write_bp(branch_workspace, **bp)
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is True
+        # No warning text about "consider splitting" should be present.
+        assert not any("consider splitting" in w for w in result["warnings"]), result["warnings"]
+
+    def test_split_rationale_suppresses_oversized_flag(self, branch_workspace):
+        bp = self._base_bp()
+        bp["subtasks"][0]["expected_diff_size"] = "large"
+        bp["subtasks"][0]["split_rationale"] = "Atomic config + loader unit."
+        path = self._write_bp(branch_workspace, **bp)
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is True
+        assert result["oversized_subtasks"] == [], result
+
+
+class TestAcknowledgedDiagnostics:
+    """Fix #5: per-branch acknowledged-diagnostics ledger so Pyright /
+    Monitor noise (pre-existing `_rescore_cached_findings is not
+    accessed`-style lines) can be silenced once instead of re-flagged on
+    every subtask.
+    """
+
+    def test_acknowledge_persists_signature(self, branch_workspace, monkeypatch):
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        result = map_step_runner.acknowledge_diagnostic(
+            "test-branch",
+            "_rescore_cached_findings is not accessed",
+            reason="pre-existing helper, not load-bearing",
+        )
+        assert result["status"] == "success"
+        assert result["already_acknowledged"] is False
+        # Whitespace gets normalized.
+        assert "_rescore_cached_findings" in result["signature"]
+        # Ledger file exists on disk.
+        assert (
+            branch_workspace / "acknowledged_diagnostics.json"
+        ).exists()
+
+    def test_re_acknowledge_updates_reason(self, branch_workspace, monkeypatch):
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        map_step_runner.acknowledge_diagnostic(
+            "test-branch", "noise line", reason="first reason"
+        )
+        result = map_step_runner.acknowledge_diagnostic(
+            "test-branch", "noise line", reason="updated reason"
+        )
+        assert result["status"] == "success"
+        assert result["already_acknowledged"] is True
+        assert result["entry"]["reason"] == "updated reason"
+
+    def test_is_acknowledged_returns_true_after_record(
+        self, branch_workspace, monkeypatch
+    ):
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        assert map_step_runner.is_diagnostic_acknowledged(
+            "test-branch", "noise"
+        ) is False
+        map_step_runner.acknowledge_diagnostic(
+            "test-branch", "noise", reason="x"
+        )
+        assert map_step_runner.is_diagnostic_acknowledged(
+            "test-branch", "noise"
+        ) is True
+        # Whitespace-normalized lookup still matches.
+        assert map_step_runner.is_diagnostic_acknowledged(
+            "test-branch", "  noise  "
+        ) is True
+
+    def test_list_returns_newest_first(self, branch_workspace, monkeypatch):
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        map_step_runner.acknowledge_diagnostic("test-branch", "older")
+        # Force a perceptible timestamp difference (UTC iso w/ microseconds).
+        import time as _t
+        _t.sleep(0.01)
+        map_step_runner.acknowledge_diagnostic("test-branch", "newer")
+        result = map_step_runner.list_acknowledged_diagnostics("test-branch")
+        assert result["status"] == "success"
+        signatures = [e["signature"] for e in result["entries"]]
+        assert signatures.index("newer") < signatures.index("older")
+
+    def test_unknown_branch_returns_empty(self, branch_workspace, monkeypatch):
+        del branch_workspace
+        repo = monkeypatch  # silence pyright
+        del repo
+        # Branch with no ledger file → empty entries, no error.
+        result = map_step_runner.list_acknowledged_diagnostics("nonexistent-branch")
+        assert result == {
+            "status": "success",
+            "branch": "nonexistent-branch",
+            "entries": [],
+        }
+
+
+class TestDetectTruncatedAgentOutput:
+    """Fix #4/#5: orchestrator helper that callers (skills, CI, automation)
+    use to detect truncated Monitor/Actor responses uniformly. Was
+    prose-only in the skill; now a single source-of-truth predicate.
+    """
+
+    def test_well_formed_monitor_response_is_not_truncated(self):
+        text = json.dumps({
+            "valid": True,
+            "summary": "Implementation matches contract",
+            "issues": [],
+        })
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="monitor"
+        )
+        assert report["truncated"] is False, report
+        assert report["reasons"] == []
+
+    def test_prose_response_is_truncated(self):
+        text = "All tests pass. Now run ruff check and we're good."
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="monitor"
+        )
+        assert report["truncated"] is True
+        assert any("does not parse as JSON" in r for r in report["reasons"]) or \
+            any("ends mid-sentence" in r for r in report["reasons"])
+
+    def test_missing_required_key_is_truncated(self):
+        # Parseable JSON but missing the "issues" key Monitor must emit.
+        text = json.dumps({"valid": True, "summary": "ok"})
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="monitor"
+        )
+        assert report["truncated"] is True
+        assert any("missing required key: issues" in r for r in report["reasons"])
+
+    def test_mid_sentence_cutoff_detected(self):
+        text = '{"valid": true, "summary": "starting work'
+        report = map_step_runner.detect_truncated_agent_output(text)
+        assert report["truncated"] is True
+        # The mid-sentence cue must surface (either via parse error
+        # OR the explicit mid-sentence reason — at least one must fire).
+        assert any(
+            "does not parse as JSON" in r or "ends mid-sentence" in r
+            for r in report["reasons"]
+        )
+
+    def test_fenced_json_is_extracted(self):
+        # ```json\n{...}\n``` wraps — extraction recovers the object but
+        # flags the wrapping prose as a soft signal.
+        text = '```json\n{"valid": true, "summary": "x", "issues": []}\n```'
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="monitor"
+        )
+        # Fenced content with all keys present is non-fatal, but the
+        # trailing/leading text wrapping is recorded as a soft reason.
+        assert "trailing or leading text around JSON object" in report["reasons"]
+
+    def test_actor_kind_required_keys(self):
+        text = json.dumps({"files_changed": ["a.py"]})
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="actor"
+        )
+        assert report["truncated"] is True
+        assert any("missing required key: tests_run" in r for r in report["reasons"])
+
+    def test_empty_response_is_truncated(self):
+        report = map_step_runner.detect_truncated_agent_output("")
+        assert report["truncated"] is True
+        assert report["reasons"] == ["empty response"]
+
+
+class TestBlueprintContractAffectedFilesDrift:
+    """Decomposer drift catch: when every declared affected_files path is
+    missing from disk, validate_blueprint_contract warns. The canonical
+    friction was the decomposer naming services/sourcecraft.py when the
+    actual class lives in sourcecraft_publisher.py."""
+
+    def _bp(self, files: list[str]) -> dict:
+        return {
+            "summary": "x",
+            "hard_constraints": [{"id": "HC-1", "description": "must"}],
+            "soft_constraints": [],
+            "coverage_map": {"HC-1": "ST-001"},
+            "subtasks": [{
+                "id": "ST-001", "title": "x", "aag_contract": "X -> y -> done",
+                "expected_diff_size": "small", "concern_type": "runtime",
+                "one_logical_step": True, "dependencies": [],
+                "affected_files": files,
+                "validation_criteria": ["VC1 [HC-1]: ok"],
+            }],
+        }
+
+    def test_warns_when_all_paths_missing(
+        self, branch_workspace, monkeypatch
+    ):
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        path = branch_workspace / "blueprint.json"
+        path.write_text(json.dumps(self._bp(["src/hallucinated.py", "src/also_missing.py"])))
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        # Drift is a warning, not an error — still valid=True.
+        assert result["valid"] is True, result["errors"]
+        assert any("affected_files drift" in w for w in result["warnings"]), result["warnings"]
+
+    def test_no_warning_when_any_path_exists(
+        self, branch_workspace, monkeypatch
+    ):
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        (repo / "real.py").write_text("# real file")
+        path = branch_workspace / "blueprint.json"
+        path.write_text(json.dumps(self._bp(["real.py", "src/missing.py"])))
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is True
+        assert not any("affected_files drift" in w for w in result["warnings"]), result["warnings"]
+
+    def test_no_warning_when_affected_files_empty(
+        self, branch_workspace, monkeypatch
+    ):
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        path = branch_workspace / "blueprint.json"
+        path.write_text(json.dumps(self._bp([])))
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is True
+        assert not any("affected_files drift" in w for w in result["warnings"])
+
+    def test_drift_suppressed_when_all_paths_cross_repo(
+        self, branch_workspace, monkeypatch
+    ):
+        """Regression #2 (2026-05-26): when every missing path is
+        cross-repo, drift warning must NOT fire — cross-repo gets its
+        own dedicated warning, and the drift message would be a false
+        positive (MAP can't verify sibling repo files).
+        """
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        path = branch_workspace / "blueprint.json"
+        path.write_text(json.dumps(self._bp([
+            "../LLM-memory/internal/foo.go",
+            "../sibling-repo/bar.py",
+        ])))
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is True
+        # Cross-repo warning fires; drift warning does NOT.
+        assert any("cross-repo affected_files" in w for w in result["warnings"])
+        assert not any("affected_files drift" in w for w in result["warnings"]), result["warnings"]
+
+    def test_drift_suppressed_when_description_marks_new_file(
+        self, branch_workspace, monkeypatch
+    ):
+        """Drift warning suppressed when subtask description signals the
+        files are CREATED here (new file). The decomposer can opt out by
+        naming the intent in the description prose."""
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        bp = self._bp(["tests/test_new_module.py", "src/new_module.py"])
+        bp["subtasks"][0]["description"] = (
+            "Introduces new module + tests from scratch; no existing files."
+        )
+        path = branch_workspace / "blueprint.json"
+        path.write_text(json.dumps(bp))
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is True
+        assert not any("affected_files drift" in w for w in result["warnings"]), result["warnings"]
+
+    def test_drift_still_fires_when_no_creation_hint_and_local_paths(
+        self, branch_workspace, monkeypatch
+    ):
+        """Counter-test: pure hallucination (local path that doesn't exist
+        AND description doesn't signal new-file) still triggers drift."""
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        path = branch_workspace / "blueprint.json"
+        path.write_text(json.dumps(self._bp(["src/hallucinated.py"])))
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is True
+        assert any("affected_files drift" in w for w in result["warnings"]), result["warnings"]
+
+
+class TestBlueprintContractSoftConstraintForwardDisclosure:
+    """Fix #1 (2026-05-26): soft-constraint validation used to require
+    two validator passes — first pass said "needs coverage_map OR
+    rationale"; after fix, second pass said "owner VC must cite
+    [SC-N]". Now the first error mentions both branches up front so
+    the operator can plan path (b) as two-step from the start.
+    """
+
+    def _bp_with_sc(self, include_in_coverage: bool, vc_cites_sc: bool) -> dict:
+        sc_id = "SC-2"
+        vc = ["VC1 [HC-1]: ok"]
+        if vc_cites_sc:
+            vc.append(f"VC2 [{sc_id}]: cited")
+        bp = {
+            "summary": "x",
+            "hard_constraints": [{"id": "HC-1", "description": "must"}],
+            "soft_constraints": [{"id": sc_id, "description": "soft"}],
+            "coverage_map": {"HC-1": "ST-001"},
+            "subtasks": [{
+                "id": "ST-001", "title": "x", "aag_contract": "X -> y -> done",
+                "expected_diff_size": "small", "concern_type": "runtime",
+                "one_logical_step": True, "dependencies": [],
+                "validation_criteria": vc,
+            }],
+        }
+        if include_in_coverage:
+            bp["coverage_map"][sc_id] = "ST-001"
+        return bp
+
+    def test_first_pass_error_mentions_both_branches(
+        self, branch_workspace
+    ):
+        path = branch_workspace / "blueprint.json"
+        path.write_text(
+            json.dumps(self._bp_with_sc(include_in_coverage=False, vc_cites_sc=False))
+        )
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is False
+        sc_errors = [e for e in result["errors"] if "'SC-2'" in e]
+        assert sc_errors, result["errors"]
+        msg = sc_errors[0]
+        # Both branches must be enumerated.
+        assert "tradeoff_rationale" in msg, msg
+        assert "[SC-2] bracket-tag" in msg or "[SC-2]" in msg, msg
+        assert "two requirements, not one" in msg, msg
+
+    def test_path_a_tradeoff_rationale_silences_both_checks(
+        self, branch_workspace
+    ):
+        bp = self._bp_with_sc(include_in_coverage=False, vc_cites_sc=False)
+        bp["soft_constraints"][0]["tradeoff_rationale"] = "accepted tradeoff"
+        path = branch_workspace / "blueprint.json"
+        path.write_text(json.dumps(bp))
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is True, result["errors"]
+
+    def test_path_b_requires_both_coverage_and_bracket_tag(
+        self, branch_workspace
+    ):
+        # Coverage_map alone, no bracket tag → still error on lineage.
+        bp = self._bp_with_sc(include_in_coverage=True, vc_cites_sc=False)
+        path = branch_workspace / "blueprint.json"
+        path.write_text(json.dumps(bp))
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is False
+        # Both coverage AND bracket tag → clean.
+        bp = self._bp_with_sc(include_in_coverage=True, vc_cites_sc=True)
+        path.write_text(json.dumps(bp))
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is True, result["errors"]
+
+
+class TestBlueprintContractCrossRepoDetection:
+    """Fix #9: validate_blueprint_contract warns when affected_files
+    declares paths that resolve OUTSIDE the project root (sibling-repo
+    mutations). MAP cannot guarantee anything about cross-repo work, so
+    operators need a heads-up before blueprint approval.
+    """
+
+    def _bp(self, files: list[str]) -> dict:
+        return {
+            "summary": "x",
+            "hard_constraints": [{"id": "HC-1", "description": "must"}],
+            "soft_constraints": [],
+            "coverage_map": {"HC-1": "ST-001"},
+            "subtasks": [{
+                "id": "ST-001", "title": "x", "aag_contract": "X -> y -> done",
+                "expected_diff_size": "small", "concern_type": "runtime",
+                "one_logical_step": True, "dependencies": [],
+                "affected_files": files,
+                "validation_criteria": ["VC1 [HC-1]: ok"],
+            }],
+        }
+
+    def test_warns_on_cross_repo_path(self, branch_workspace, monkeypatch, tmp_path):
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        # Create a real file in current repo so we don't trigger drift warning.
+        (repo / "real.py").write_text("# x")
+        # Sibling-repo path escapes via ..
+        path = branch_workspace / "blueprint.json"
+        path.write_text(
+            json.dumps(self._bp(["real.py", "../sibling-repo/internal/handler.go"]))
+        )
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is True
+        assert any("cross-repo affected_files" in w for w in result["warnings"]), result["warnings"]
+        # Specific path is named in the warning so the operator can grep.
+        assert any(
+            "../sibling-repo/internal/handler.go" in w
+            for w in result["warnings"]
+        ), result["warnings"]
+
+    def test_no_warning_when_all_paths_in_repo(
+        self, branch_workspace, monkeypatch
+    ):
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        (repo / "real.py").write_text("# x")
+        (repo / "src").mkdir(exist_ok=True)
+        (repo / "src" / "real2.py").write_text("# x")
+        path = branch_workspace / "blueprint.json"
+        path.write_text(json.dumps(self._bp(["real.py", "src/real2.py"])))
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is True
+        assert not any("cross-repo affected_files" in w for w in result["warnings"])
+
+
+class TestBlueprintContractForwardDepsRejection:
+    """Planning-stage fix: validate_blueprint_contract rejects blueprints
+    where a subtask depends on another subtask declared LATER in the
+    subtasks[] array. Without this gate, the runtime walker would hit the
+    dependent before its dep had any chance to complete, producing a
+    silent deadlock the operator had to break with manual mark_subtask_complete.
+    """
+
+    def _subtask(self, sid: str, deps: list[str]) -> dict:
+        return {
+            "id": sid,
+            "title": f"task {sid}",
+            "aag_contract": "X -> y -> done",
+            "expected_diff_size": "small",
+            "concern_type": "runtime",
+            "one_logical_step": True,
+            "dependencies": deps,
+            "validation_criteria": ["VC1 [HC-1]: ok"],
+        }
+
+    def _bp(self, subtasks: list[dict]) -> dict:
+        return {
+            "summary": "x",
+            "hard_constraints": [{"id": "HC-1", "description": "must"}],
+            "soft_constraints": [],
+            "coverage_map": {"HC-1": subtasks[0]["id"]},
+            "subtasks": subtasks,
+        }
+
+    def test_forward_dep_is_rejected(self, branch_workspace):
+        # ST-012 depends on ST-027 (declared later) — the exact friction
+        # the user reported on neuro-vlad.
+        subtasks = [self._subtask(f"ST-{i:03d}", []) for i in range(1, 51)]
+        subtasks[11]["dependencies"] = ["ST-027"]  # ST-012 -> ST-027 (forward)
+        path = branch_workspace / "blueprint.json"
+        path.write_text(json.dumps(self._bp(subtasks)))
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is False, result
+        forward_errors = [e for e in result["errors"] if "forward dependency" in e]
+        assert any("ST-012" in e and "ST-027" in e for e in forward_errors), forward_errors
+        assert "ST-012->ST-027" in result["forward_dep_violations"]
+
+    def test_self_dep_is_rejected(self, branch_workspace):
+        subtasks = [self._subtask("ST-001", ["ST-001"])]
+        path = branch_workspace / "blueprint.json"
+        path.write_text(json.dumps(self._bp(subtasks)))
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is False
+        assert any("self-reference" in e for e in result["errors"]), result["errors"]
+
+    def test_backward_dep_is_accepted(self, branch_workspace):
+        # ST-002 depends on ST-001 (declared earlier) — the canonical case.
+        subtasks = [
+            self._subtask("ST-001", []),
+            self._subtask("ST-002", ["ST-001"]),
+            self._subtask("ST-003", ["ST-001", "ST-002"]),
+        ]
+        path = branch_workspace / "blueprint.json"
+        path.write_text(json.dumps(self._bp(subtasks)))
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is True, result["errors"]
+        assert result["forward_dep_violations"] == []
+
+    def test_unknown_dep_is_rejected_separately(self, branch_workspace):
+        # Unknown dep is reported as "unknown subtask", not as a forward dep.
+        subtasks = [self._subtask("ST-001", ["ST-999"])]
+        path = branch_workspace / "blueprint.json"
+        path.write_text(json.dumps(self._bp(subtasks)))
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is False
+        assert any("unknown subtask" in e for e in result["errors"]), result["errors"]
+        # Must NOT also be reported as a forward dep (the dep doesn't exist).
+        assert not any("forward dependency" in e for e in result["errors"])
+
+
+class TestListPlansCli:
+    """list_plans enumerates .map/<branch>/ artifacts so operators can pick
+    scope from a multi-roadmap workspace without grepping."""
+
+    def test_returns_blueprint_and_state_metadata(self, branch_workspace, monkeypatch):
+        repo = branch_workspace.parents[1]
+        (branch_workspace / "blueprint.json").write_text(
+            json.dumps({"subtasks": [{"id": "ST-001"}, {"id": "ST-002"}]})
+        )
+        (branch_workspace / "task_plan_test-branch.md").write_text("# plan")
+        (branch_workspace / "step_state.json").write_text(
+            json.dumps({"workflow_status": "WORKFLOW_COMPLETE", "completed_at": "2026-05-23Z"})
+        )
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.list_plans()
+        assert report["status"] == "success"
+        rows = [p for p in report["plans"] if p["branch"] == "test-branch"]
+        assert rows, report
+        row = rows[0]
+        assert row["has_blueprint"] and row["has_task_plan"] and row["has_step_state"]
+        assert row["workflow_status"] == "WORKFLOW_COMPLETE"
+        assert row["subtask_count"] == 2
+
+
+class TestRecordPlanArtifactsPlanReadyWithoutStepState:
+    """/map-plan stops before INIT_STATE, so plan_status should be 'ready'
+    when blueprint + task_plan are both present even if step_state.json
+    has not been created yet."""
+
+    def test_plan_ready_without_step_state(self, branch_workspace, monkeypatch):
+        del monkeypatch  # branch_workspace already chdirs
+        (branch_workspace / "blueprint.json").write_text(json.dumps({"subtasks": []}))
+        (branch_workspace / "task_plan_test-branch.md").write_text("# plan")
+        result = map_step_runner.record_plan_artifacts("test-branch")
+        assert result["status"] == "success", result
+        assert result["plan_status"] == "ready", result
+
+
+class TestRefreshBlueprintAffectedFiles:
+    """refresh_blueprint_affected_files locks the planned mutation surface to
+    the actual diff once Actor finishes a subtask — closes the recurring
+    drift between blueprint affected_files and reality."""
+
+    def _init_git(self, root: Path) -> None:
+        subprocess.run(["git", "init"], cwd=root, capture_output=True, check=False)
+        subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=root, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "t"], cwd=root, capture_output=True)
+        (root / "seed.txt").write_text("seed")
+        subprocess.run(["git", "add", "."], cwd=root, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=root, capture_output=True)
+
+    def test_overwrites_affected_files_with_actual_diff(
+        self, branch_workspace, monkeypatch
+    ):
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        # Blueprint guessed wrong paths.
+        bp = {"subtasks": [{
+            "id": "ST-001", "title": "x",
+            "affected_files": ["wrong/path.py", "stale_guess.py"],
+        }]}
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        # Actor actually changed these:
+        (repo / "real_a.py").write_text("x = 1")
+        (repo / "real_b.py").write_text("y = 2")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.refresh_blueprint_affected_files(
+            "test-branch", "ST-001"
+        )
+        assert report["status"] == "success", report
+        assert sorted(report["current"]) == ["real_a.py", "real_b.py"]
+        assert report["diff"]["added"] == ["real_a.py", "real_b.py"]
+        assert report["diff"]["removed"] == ["stale_guess.py", "wrong/path.py"]
+        reloaded = json.loads((branch_workspace / "blueprint.json").read_text())
+        assert reloaded["subtasks"][0]["affected_files"] == ["real_a.py", "real_b.py"]
+
+    def test_dry_run_does_not_write(self, branch_workspace, monkeypatch):
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        bp = {"subtasks": [{
+            "id": "ST-001", "affected_files": ["wrong.py"],
+        }]}
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        (repo / "real.py").write_text("x")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.refresh_blueprint_affected_files(
+            "test-branch", "ST-001", dry_run=True
+        )
+        assert report["status"] == "dry_run"
+        reloaded = json.loads((branch_workspace / "blueprint.json").read_text())
+        # File on disk untouched.
+        assert reloaded["subtasks"][0]["affected_files"] == ["wrong.py"]
+
+    def test_rejects_unknown_subtask(self, branch_workspace, monkeypatch):
+        repo = branch_workspace.parents[1]
+        (branch_workspace / "blueprint.json").write_text(json.dumps({
+            "subtasks": [{"id": "ST-001", "affected_files": []}]
+        }))
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.refresh_blueprint_affected_files(
+            "test-branch", "ST-999"
+        )
+        assert report["status"] == "error"
+        assert "ST-999" in report["message"]
+
+    def test_includes_committed_files_via_baseline_sha(
+        self, branch_workspace, monkeypatch
+    ):
+        """Regression #1: after per-subtask commit, porcelain is empty, so
+        refresh used to record current=[] and mark all prior files removed.
+        Now record_subtask_baseline captures head_sha and refresh diffs
+        baseline_sha..HEAD to include committed-since-baseline files.
+        """
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        # Capture baseline BEFORE the subtask commits.
+        snap = map_step_runner.record_subtask_baseline(
+            "test-branch", "ST-001"
+        )
+        assert snap["status"] == "success"
+        assert snap.get("head_sha"), "baseline must capture HEAD SHA"
+        # Subtask edits + commits two files.
+        (repo / "committed_a.py").write_text("x = 1")
+        (repo / "committed_b.py").write_text("y = 2")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "ST-001 work"],
+            cwd=repo, capture_output=True,
+        )
+        # Blueprint has stale guess; refresh should write the real two files
+        # even though porcelain is now empty.
+        bp = {"subtasks": [{
+            "id": "ST-001", "affected_files": ["wrong.py"],
+        }]}
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        report = map_step_runner.refresh_blueprint_affected_files(
+            "test-branch", "ST-001"
+        )
+        assert report["status"] == "success", report
+        # current MUST include both committed files — NOT empty.
+        assert sorted(report["current"]) == ["committed_a.py", "committed_b.py"]
+        assert "wrong.py" in report["diff"]["removed"]
+        assert "committed_a.py" in report["diff"]["added"]
+
+
+class TestRecordDiagnosticsBaseline:
+    """Fix #1 (2026-05-27): record_diagnostics_baseline snapshots
+    static-analysis (pyright/ruff/mypy/golangci-lint) counts at
+    INIT_STATE so subtasks can delta against each tool. Pytest-only
+    baseline missed 123 pyright + 130 ruff in one production run.
+    """
+
+    def test_baseline_with_no_tools_returns_empty_results(
+        self, branch_workspace, monkeypatch, tmp_path
+    ):
+        del tmp_path
+        # Pass explicit empty tool list to bypass auto-detect.
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.record_diagnostics_baseline(
+            "test-branch", tools=[]
+        )
+        assert "tools" in report
+        assert report["tools"] == {}
+        assert (branch_workspace / "diagnostics_baseline.json").exists()
+
+    def test_baseline_skips_missing_binary(
+        self, branch_workspace, monkeypatch, tmp_path
+    ):
+        del tmp_path
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.record_diagnostics_baseline(
+            "test-branch", tools=["nonexistent-binary-xyz"]
+        )
+        # Unknown tool name (no command mapping) is dropped silently.
+        assert report["tools"] == {}
+
+    def test_baseline_records_known_tool_entries_with_status(
+        self, branch_workspace, monkeypatch, tmp_path
+    ):
+        """Even when binaries are missing on the test runner, the
+        function must return a status='skipped' entry per tool so
+        the operator's later delta-vs-baseline check has a stable
+        shape to read."""
+        del tmp_path
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.record_diagnostics_baseline(
+            "test-branch", tools=["pyright", "ruff"]
+        )
+        # Each requested tool produces a result entry — either
+        # "skipped" (binary missing) or "success" (binary found and ran).
+        for tool in ("pyright", "ruff"):
+            assert tool in report["tools"], report
+            entry = report["tools"][tool]
+            assert "status" in entry
+            assert entry["status"] in ("skipped", "success", "timeout", "error")
+
+    def test_list_baseline_returns_no_baseline_when_absent(
+        self, branch_workspace, monkeypatch
+    ):
+        del branch_workspace
+        del monkeypatch
+        report = map_step_runner.list_diagnostics_baseline("never-recorded")
+        assert report["status"] == "no_baseline"
+
+
+class TestRecordTestBaseline:
+    """Fix #9: INIT_STATE pre-flight pytest baseline so later subtasks can
+    distinguish "I introduced this regression" from "this was broken
+    before plan started".
+    """
+
+    def test_baseline_records_passing_run(
+        self, branch_workspace, monkeypatch, tmp_path
+    ):
+        del tmp_path
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.record_test_baseline(
+            "test-branch", "true"
+        )
+        assert report["status"] == "success"
+        assert report["returncode"] == 0
+        assert report["command"] == "true"
+        assert report["baseline_failures"] == []
+        baseline_path = branch_workspace / "test_baseline.json"
+        assert baseline_path.exists()
+
+    def test_baseline_captures_pytest_failure_lines(
+        self, branch_workspace, monkeypatch, tmp_path
+    ):
+        del tmp_path
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        # Synthesize a pytest-like FAILED line via printf.
+        report = map_step_runner.record_test_baseline(
+            "test-branch",
+            "printf 'FAILED tests/test_x.py::test_foo - assert ...\\nFAILED tests/test_y.py::test_bar\\n'; exit 1",
+        )
+        assert report["status"] == "baseline_failures"
+        assert report["returncode"] == 1
+        assert sorted(report["baseline_failures"]) == [
+            "tests/test_x.py::test_foo",
+            "tests/test_y.py::test_bar",
+        ]
+
+    def test_baseline_skipped_when_no_harness(
+        self, branch_workspace, monkeypatch, tmp_path
+    ):
+        del tmp_path
+        # Use a totally empty dir without any project markers.
+        empty_dir = branch_workspace.parents[1] / "empty"
+        empty_dir.mkdir()
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(empty_dir))
+        # The branch fixture's project_dir is non-empty (has pyproject /
+        # etc); we have to point CLAUDE_PROJECT_DIR at a clean dir.
+        # Auto-detect must return skipped status.
+        report = map_step_runner.record_test_baseline("test-branch")
+        # Either skipped (no harness) or success (if test harness
+        # auto-detected from pyproject.toml elsewhere). The contract:
+        # the call should not raise and should write a baseline file.
+        assert report["status"] in ("skipped", "success", "baseline_failures")
+
+    def test_list_baseline_failures_returns_recorded_entries(
+        self, branch_workspace, monkeypatch, tmp_path
+    ):
+        del tmp_path
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        map_step_runner.record_test_baseline(
+            "test-branch",
+            "printf 'FAILED tests/test_x.py::test_foo\\n'; exit 1",
+        )
+        report = map_step_runner.list_baseline_failures("test-branch")
+        assert report["status"] == "success"
+        assert report["baseline_failures"] == [
+            "tests/test_x.py::test_foo"
+        ]
+
+    def test_list_baseline_failures_no_baseline_path(
+        self, branch_workspace, monkeypatch
+    ):
+        del branch_workspace
+        empty = monkeypatch  # silence pyright
+        del empty
+        report = map_step_runner.list_baseline_failures("never-recorded")
+        assert report["status"] == "no_baseline"
+        assert report["baseline_failures"] == []
+
+
+class TestRecordSubtaskResultFilesSeparatorParsing:
+    """Fix #2 (2026-05-26): CLI must accept --files with comma OR
+    space separators. The legacy comma-only parser silently treated
+    "a.py b.py" as one path and emitted "file does not exist" warnings
+    on every multi-file subtask whose operator forgot the comma.
+    """
+
+    def test_cli_parses_space_separated_files(self):
+        # The parsing happens in the CLI dispatch (orchestrator main()).
+        # Exercise the actual regex used there.
+        files_arg = "a.py b.py c.py"
+        files = [c.strip() for c in re.split(r"[,\s]+", files_arg) if c.strip()]
+        assert files == ["a.py", "b.py", "c.py"]
+
+    def test_cli_parses_comma_separated_files(self):
+        files_arg = "a.py,b.py,c.py"
+        files = [c.strip() for c in re.split(r"[,\s]+", files_arg) if c.strip()]
+        assert files == ["a.py", "b.py", "c.py"]
+
+    def test_cli_parses_mixed_separators(self):
+        files_arg = "a.py, b.py c.py,  d.py"
+        files = [c.strip() for c in re.split(r"[,\s]+", files_arg) if c.strip()]
+        assert files == ["a.py", "b.py", "c.py", "d.py"]
+
+
+class TestRecordSubtaskResultCrossRepoSiblingPrefix:
+    """Fix #1 extend (2026-05-26): cross-repo detection now catches
+    paths whose first segment matches a sibling directory at
+    ../<segment>/ (i.e., no ../ prefix). Operator wrote
+    `LLM-memory/foo.go` from a parent that contains both repos —
+    previously this triggered "possible typo" because the path doesn't
+    exist under project_dir and doesn't escape via ..; now it's
+    recognized as cross-repo.
+    """
+
+    def test_sibling_prefix_path_is_recognized_as_cross_repo(
+        self, branch_dir_orchestrator, tmp_path, monkeypatch
+    ):
+        del branch_dir_orchestrator
+        # Create project dir + sibling repo dir under the same parent.
+        parent = tmp_path / "workspace"
+        parent.mkdir()
+        project = parent / "neuro-vlad"
+        sibling = parent / "LLM-memory"
+        project.mkdir()
+        sibling.mkdir()
+        (sibling / "internal").mkdir()
+        (sibling / "internal" / "foo.go").write_text("package x")
+        (project / ".map" / "test-branch").mkdir(parents=True)
+        (project / ".map" / "test-branch" / "step_state.json").write_text(
+            json.dumps({"workflow": "x", "subtask_sequence": ["ST-001"], "current_subtask_id": "ST-001"})
+        )
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(project))
+        monkeypatch.chdir(project)
+        import importlib.util as _ilu
+        spec = _ilu.spec_from_file_location(
+            "map_orchestrator",
+            Path(__file__).parent.parent
+            / "src" / "mapify_cli" / "templates" / "map" / "scripts"
+            / "map_orchestrator.py",
+        )
+        assert spec is not None and spec.loader is not None
+        orch = _ilu.module_from_spec(spec)
+        spec.loader.exec_module(orch)
+        result = orch.record_subtask_result(
+            "ST-001",
+            "test-branch",
+            ["LLM-memory/internal/foo.go"],  # sibling-name, no ../ prefix
+            "valid",
+            summary="x",
+            commit_sha="abc",
+        )
+        assert result["status"] == "success"
+        assert "missing_files" not in result, result
+        assert "cross_repo_files" in result, result
+        assert result["cross_repo_files"] == ["LLM-memory/internal/foo.go"]
+
+
+class TestRecordSubtaskResultCrossRepoSuppression:
+    """Regression #2: cross-repo affected_files paths (../sibling-repo/...)
+    must NOT trigger the "Some recorded files do not exist on disk —
+    possible typo" warning. They're legitimate, just unverifiable from
+    THIS project's CLAUDE_PROJECT_DIR. validate_blueprint_contract
+    already warns about cross-repo at planning time; record_subtask_result
+    should not repeat the noise.
+    """
+
+    def test_cross_repo_paths_appear_in_response_not_warning(
+        self, branch_dir_orchestrator, tmp_path, monkeypatch
+    ):
+        del branch_dir_orchestrator
+        # Set up a minimal state file in cwd-relative .map/.
+        project = tmp_path / "project"
+        sibling = tmp_path / "sibling-repo"
+        project.mkdir()
+        sibling.mkdir()
+        (sibling / "real_file.go").write_text("package x")
+        (project / ".map" / "test-branch").mkdir(parents=True)
+        (project / ".map" / "test-branch" / "step_state.json").write_text(
+            json.dumps({"workflow": "x", "subtask_sequence": ["ST-001"], "current_subtask_id": "ST-001"})
+        )
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(project))
+        monkeypatch.chdir(project)
+        import importlib.util as _ilu
+        spec = _ilu.spec_from_file_location(
+            "map_orchestrator",
+            Path(__file__).parent.parent
+            / "src" / "mapify_cli" / "templates" / "map" / "scripts"
+            / "map_orchestrator.py",
+        )
+        assert spec is not None and spec.loader is not None
+        orch = _ilu.module_from_spec(spec)
+        spec.loader.exec_module(orch)
+        result = orch.record_subtask_result(
+            "ST-001",
+            "test-branch",
+            ["../sibling-repo/real_file.go", "../sibling-repo/another.go"],
+            "valid",
+            summary="x",
+            commit_sha="abc123",
+        )
+        assert result["status"] == "success", result
+        # No "typo" warning text for cross-repo paths.
+        assert "missing_files" not in result, result
+        assert "typo" not in (result.get("warning", "") or "").lower(), result
+        # cross_repo_files surfaced for audit transparency.
+        assert "cross_repo_files" in result, result
+        assert "../sibling-repo/real_file.go" in result["cross_repo_files"]
+
+
+@pytest.fixture
+def branch_dir_orchestrator(tmp_path, monkeypatch):
+    """Fresh tmp .map/<branch>/ + chdir; mirrors branch_dir but for
+    map_orchestrator import path (test_map_step_runner.py doesn't import
+    map_orchestrator the same way test_map_orchestrator.py does, so we
+    isolate the fixture here to keep the test self-contained)."""
+    branch = "test-branch"
+    map_dir = tmp_path / ".map" / branch
+    map_dir.mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+    return branch
+
+
+class TestRecordSubtaskBaseline:
+    """record_subtask_baseline + per-subtask baseline filter in
+    validate_mutation_boundary: each subtask's MONITOR check only flags
+    files CHANGED during that subtask, not the cumulative branch diff."""
+
+    def _init_git(self, root: Path) -> None:
+        subprocess.run(["git", "init"], cwd=root, capture_output=True, check=False)
+        subprocess.run(
+            ["git", "config", "user.email", "t@t.com"], cwd=root, capture_output=True
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "t"], cwd=root, capture_output=True
+        )
+        (root / "seed.txt").write_text("seed")
+        subprocess.run(["git", "add", "."], cwd=root, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=root, capture_output=True)
+
+    def test_subtask_baseline_filters_prior_wave_diff(
+        self, branch_workspace, monkeypatch
+    ):
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        # Prior wave: ST-001 created old_a.py (still uncommitted).
+        (repo / "old_a.py").write_text("from prior wave")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        # ST-002 starts: snapshot its baseline (= everything dirty now).
+        snap = map_step_runner.record_subtask_baseline("test-branch", "ST-002")
+        assert snap["status"] == "success"
+        assert "old_a.py" in (
+            map_step_runner._subtask_baseline_path(
+                "test-branch", "ST-002", repo
+            ).parent / "ST-002.json"
+        ).read_text()
+        # ST-002 declares its scope = b.py; create + add.
+        bp = {"subtasks": [{"id": "ST-002", "title": "x", "affected_files": ["b.py"]}]}
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        (repo / "b.py").write_text("x = 1")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        report = map_step_runner.validate_mutation_boundary(
+            "test-branch", "ST-002"
+        )
+        # old_a.py was in the baseline → filtered → status="clean".
+        assert report["status"] == "clean", report
+        assert "old_a.py" not in report["actual"]
+        assert "b.py" in report["actual"]
+
+
+class TestRecordScopeBaseline:
+    """record_scope_baseline snapshots current git status into
+    .map/<branch>/scope-baseline.json; validate_mutation_boundary
+    subtracts that set from `actual` so warnings stop flooding when the
+    branch carries pre-existing untracked artifacts."""
+
+    def _init_git(self, root: Path) -> None:
+        subprocess.run(["git", "init"], cwd=root, capture_output=True, check=False)
+        subprocess.run(
+            ["git", "config", "user.email", "t@t.com"], cwd=root, capture_output=True
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "t"], cwd=root, capture_output=True
+        )
+        (root / "seed.txt").write_text("seed")
+        subprocess.run(["git", "add", "."], cwd=root, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=root, capture_output=True)
+
+    def test_baseline_excludes_pre_existing_from_warning(
+        self, branch_workspace, tmp_path, monkeypatch
+    ):
+        del tmp_path  # only the underlying repo dir is exercised
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        # Pre-existing untracked file — would normally trigger warning.
+        (repo / "old_artifact.md").write_text("from prior wave")
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        baseline = map_step_runner.record_scope_baseline("test-branch")
+        assert baseline["status"] == "success"
+        assert "old_artifact.md" in baseline["files"]
+
+        bp = {"subtasks": [{"id": "ST-001", "title": "x", "affected_files": ["a.py"]}]}
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        (repo / "a.py").write_text("x = 1")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
+        # old_artifact.md was in the baseline → filtered → status="clean".
+        assert report["status"] == "clean", report
+        assert "old_artifact.md" not in report["actual"]
+
+    def test_warning_includes_diagnostic_hint(
+        self, branch_workspace, tmp_path, monkeypatch
+    ):
+        """Fix #7: when warnings fire and no per-subtask baseline was
+        recorded, the report carries an actionable diagnostic_hint so the
+        operator can see WHY the base_ref was chosen and how to filter
+        prior-subtask noise. Without this, every Monitor pass reads like
+        a real scope leak even when it's really stale baseline state.
+        """
+        del tmp_path
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        bp = {"subtasks": [{"id": "ST-001", "title": "x", "affected_files": ["expected.py"]}]}
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        # Create an unexpected file (not in affected_files, not in baseline).
+        (repo / "drifted.py").write_text("unexpected")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
+        assert report["status"] == "warning", report
+        assert "drifted.py" in report["unexpected"]
+        # Diagnostic must explain the operator's options.
+        assert "diagnostic_hint" in report
+        hint = report["diagnostic_hint"]
+        assert "record_scope_baseline" in hint or "record_subtask_baseline" in hint, hint
+
+
+class TestDetectAlreadyDone:
+    """detect_already_done suggests whether a subtask's affected_files
+    already have commits in the recent window — pragmatic, not authoritative."""
+
+    def _init_git(self, root: Path, commit_files: list[str]) -> None:
+        subprocess.run(["git", "init"], cwd=root, capture_output=True, check=False)
+        subprocess.run(
+            ["git", "config", "user.email", "t@t.com"], cwd=root, capture_output=True
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "t"], cwd=root, capture_output=True
+        )
+        (root / "seed.txt").write_text("seed")
+        subprocess.run(["git", "add", "."], cwd=root, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=root, capture_output=True)
+        for f in commit_files:
+            (root / f).write_text(f"content of {f}")
+            subprocess.run(["git", "add", "."], cwd=root, capture_output=True)
+            subprocess.run(
+                ["git", "commit", "-m", f"add {f}"], cwd=root, capture_output=True
+            )
+
+    def test_likely_done_when_all_affected_have_commits(
+        self, branch_workspace, tmp_path, monkeypatch
+    ):
+        del tmp_path  # only the underlying repo dir is exercised
+        repo = branch_workspace.parents[1]
+        self._init_git(repo, ["mod_a.py", "mod_b.py"])
+        bp = {"subtasks": [{
+            "id": "ST-007", "affected_files": ["mod_a.py", "mod_b.py"],
+        }]}
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        # HEAD~5 doesn't resolve in a 3-commit repo; the function should
+        # fall back to the entire reachable history and still find commits.
+        report = map_step_runner.detect_already_done(
+            "test-branch", "ST-007", since_ref="HEAD~5"
+        )
+        assert report["status"] == "likely_done", report
+        assert sorted(report["have_commits"]) == ["mod_a.py", "mod_b.py"]
+
+    def test_unclear_when_files_missing(self, branch_workspace, tmp_path, monkeypatch):
+        del tmp_path  # only the underlying repo dir is exercised
+        repo = branch_workspace.parents[1]
+        self._init_git(repo, [])
+        bp = {"subtasks": [{
+            "id": "ST-007", "affected_files": ["never_made.py"],
+        }]}
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.detect_already_done("test-branch", "ST-007")
+        assert report["status"] == "unclear"
+        assert "never_made.py" in report["missing_or_no_commits"]
+
+
+class TestBuildContextBlockInlinesResearch:
+    """build_context_block now auto-loads load_research for the current
+    subtask so callers don't have to glue findings into the Actor prompt
+    by hand."""
+
+    def test_actor_research_inlined_when_present(self, branch_workspace):
+        bp = {"subtasks": [{
+            "id": "ST-001", "title": "x", "aag_contract": "X -> y -> done",
+        }]}
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        # Plant research artifact via the canonical API.
+        map_step_runner.save_research("test-branch", "ST-001", "Pivotal finding: foo wraps bar.")
+        result = map_step_runner.build_context_block("test-branch", "ST-001")
+        assert "# Research Findings (ST-001, kind=actor):" in result
+        assert "Pivotal finding: foo wraps bar." in result
+
+    def test_no_research_section_when_artifact_absent(self, branch_workspace):
+        bp = {"subtasks": [{"id": "ST-001", "title": "x"}]}
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        result = map_step_runner.build_context_block("test-branch", "ST-001")
+        assert "# Research Findings" not in result
+
+
+class TestValidateMutationBoundary:
+    """validate_mutation_boundary compares actual git diff vs the planned
+    affected_files surface. Warn-only by default; MAP_STRICT_SCOPE=1 escalates
+    to status='violation' and CLI exit 1 so callers (Monitor) can hard-fail.
+    """
+
+    def _init_git(self, root: Path) -> None:
+        subprocess.run(["git", "init"], cwd=root, capture_output=True, check=False)
+        subprocess.run(
+            ["git", "config", "user.email", "t@t.com"], cwd=root, capture_output=True
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "t"], cwd=root, capture_output=True
+        )
+
+    def _write_blueprint(self, branch_dir: Path, subtask_id: str, files: list[str]) -> None:
+        bp = {
+            "summary": "test",
+            "subtasks": [
+                {"id": subtask_id, "title": "x", "affected_files": files}
+            ],
+        }
+        (branch_dir / "blueprint.json").write_text(json.dumps(bp))
+
+    def test_clean_when_diff_matches_affected_files(self, branch_workspace, monkeypatch):
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        self._write_blueprint(branch_workspace, "ST-001", ["a.py"])
+        (repo / "a.py").write_text("x = 1\n")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
+        assert report["status"] == "clean", report
+        assert report["unexpected"] == []
+
+    def test_warning_when_diff_exceeds_affected_files(
+        self, branch_workspace, monkeypatch
+    ):
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        self._write_blueprint(branch_workspace, "ST-001", ["a.py"])
+        (repo / "a.py").write_text("x = 1\n")
+        (repo / "b.py").write_text("y = 2\n")  # NOT in affected_files
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        monkeypatch.delenv("MAP_STRICT_SCOPE", raising=False)
+        report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
+        assert report["status"] == "warning", report
+        assert "b.py" in report["unexpected"]
+        log = branch_workspace / "scope-violations.log"
+        assert log.exists(), "warning must be appended to scope-violations.log"
+
+    def test_violation_when_strict_mode_enabled(self, branch_workspace, monkeypatch):
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        self._write_blueprint(branch_workspace, "ST-001", ["a.py"])
+        (repo / "b.py").write_text("y = 2\n")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        monkeypatch.setenv("MAP_STRICT_SCOPE", "1")
+        report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
+        assert report["status"] == "violation"
+        assert report["strict"] is True
+
+    def test_error_when_blueprint_missing(self, branch_workspace, monkeypatch):
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
+        assert report["status"] == "error"
+
+    def test_error_when_subtask_unknown(self, branch_workspace, monkeypatch):
+        repo = branch_workspace.parents[1]
+        self._write_blueprint(branch_workspace, "ST-001", ["a.py"])
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.validate_mutation_boundary("test-branch", "ST-999")
+        assert report["status"] == "error"
+        assert "ST-999" in report["message"]
+
+    def test_error_when_not_a_git_repo(self, branch_workspace, monkeypatch):
+        """git status non-zero (no .git) → error, NOT a silent 'clean'."""
+        repo = branch_workspace.parents[1]
+        self._write_blueprint(branch_workspace, "ST-001", ["a.py"])
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
+        assert report["status"] == "error", report
+        assert "git" in report["message"].lower()
+
+    def test_cli_exits_non_zero_on_error_status(self, branch_workspace, tmp_path):
+        """Monitor's mandatory gate must not silently pass when blueprint is
+        missing — exit 1 is the only signal `set -e` callers can rely on."""
+        del branch_workspace
+        runner = (
+            Path(__file__).resolve().parents[1]
+            / "src" / "mapify_cli" / "templates" / "map" / "scripts" / "map_step_runner.py"
+        )
+        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "CLAUDE_PROJECT_DIR": str(tmp_path)}
+        result = subprocess.run(
+            [sys.executable, str(runner), "validate_mutation_boundary", "no-such-branch", "ST-001"],
+            capture_output=True, text=True, cwd=str(tmp_path), env=env,
+        )
+        assert result.returncode != 0, (
+            f"CLI must exit non-zero on status='error'; stdout={result.stdout!r}"
+        )
+        report = json.loads(result.stdout)
+        assert report["status"] == "error"
+
+
+class TestGetSubtaskCli:
+    """get_subtask CLI normalizes the {flat, blueprint-wrapped} blueprint
+    schema so callers don't need ad-hoc jq with two fallbacks."""
+
+    def _runner(self) -> Path:
+        return (
+            Path(__file__).resolve().parents[1]
+            / "src" / "mapify_cli" / "templates" / "map" / "scripts" / "map_step_runner.py"
+        )
+
+    def test_returns_subtask_json_from_flat_blueprint(self, branch_workspace, tmp_path):
+        bp = {"subtasks": [{"id": "ST-001", "title": "first"}]}
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+        result = subprocess.run(
+            [sys.executable, str(self._runner()), "get_subtask", "ST-001",
+             "--branch", "test-branch"],
+            capture_output=True, text=True, cwd=str(tmp_path), env=env,
+        )
+        assert result.returncode == 0, result.stderr
+        payload = json.loads(result.stdout)
+        assert payload["id"] == "ST-001"
+        assert payload["title"] == "first"
+
+    def test_returns_subtask_from_blueprint_wrapped_shape(
+        self, branch_workspace, tmp_path
+    ):
+        bp = {"blueprint": {"subtasks": [{"id": "ST-002", "title": "second"}]}}
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+        result = subprocess.run(
+            [sys.executable, str(self._runner()), "get_subtask", "ST-002",
+             "--branch", "test-branch"],
+            capture_output=True, text=True, cwd=str(tmp_path), env=env,
+        )
+        assert result.returncode == 0, result.stderr
+        payload = json.loads(result.stdout)
+        assert payload["id"] == "ST-002"
+
+    def test_exits_non_zero_on_unknown_subtask(self, branch_workspace, tmp_path):
+        bp = {"subtasks": [{"id": "ST-001"}]}
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+        result = subprocess.run(
+            [sys.executable, str(self._runner()), "get_subtask", "ST-999",
+             "--branch", "test-branch"],
+            capture_output=True, text=True, cwd=str(tmp_path), env=env,
+        )
+        assert result.returncode == 1
+        assert "ST-999" in result.stderr
+
+
+class TestLoadResearchCliErrorChannel:
+    """load_research CLI must write error JSON to STDERR, not STDOUT, so
+    command substitution (`FOO=$(... load_research ...)`) is not corrupted."""
+
+    def test_invalid_subtask_id_writes_to_stderr_keeps_stdout_empty(
+        self, branch_workspace, tmp_path
+    ):
+        del branch_workspace
+        runner = (
+            Path(__file__).resolve().parents[1]
+            / "src" / "mapify_cli" / "templates" / "map" / "scripts" / "map_step_runner.py"
+        )
+        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+        # ".." triggers ValueError from _research_path's sanitization.
+        result = subprocess.run(
+            [sys.executable, str(runner), "load_research", "test-branch", "../escape"],
+            capture_output=True, text=True, cwd=str(tmp_path), env=env,
+        )
+        assert result.returncode == 1
+        assert result.stdout == "", f"stdout must be empty; got {result.stdout!r}"
+        assert "error" in result.stderr.lower()
+
+
+class TestSaveLoadResearch:
+    """Tests for save_research / load_research subtask-scoped artifact API.
+
+    Provides a durable storage contract for research-agent output so Actor and
+    Monitor consume findings through the same path rather than ad-hoc bash. The
+    .map/<branch>/research/<subtask_id>__<kind>.md layout keeps multiple agent
+    kinds (actor, monitor, decomposer, ...) side-by-side without collisions.
+    """
+
+    def test_save_then_load_round_trips_content(self, branch_workspace):
+        del branch_workspace
+        content = "## Findings\n\n- API surface: foo()\n- Tests live in tests/foo_test.py\n"
+        path = map_step_runner.save_research("test-branch", "ST-001", content)
+        assert Path(path).exists()
+        loaded = map_step_runner.load_research("test-branch", "ST-001")
+        assert loaded == content
+
+    def test_load_returns_empty_string_when_missing(self, branch_workspace):
+        del branch_workspace
+        assert map_step_runner.load_research("test-branch", "ST-999") == ""
+
+    def test_kind_partitions_storage(self, branch_workspace):
+        del branch_workspace
+        map_step_runner.save_research(
+            "test-branch", "ST-001", "actor view", kind="actor"
+        )
+        map_step_runner.save_research(
+            "test-branch", "ST-001", "monitor view", kind="monitor"
+        )
+        assert (
+            map_step_runner.load_research("test-branch", "ST-001", kind="actor")
+            == "actor view"
+        )
+        assert (
+            map_step_runner.load_research("test-branch", "ST-001", kind="monitor")
+            == "monitor view"
+        )
+
+    def test_save_overwrites_prior_content_for_same_kind(self, branch_workspace):
+        del branch_workspace
+        map_step_runner.save_research("test-branch", "ST-001", "v1")
+        map_step_runner.save_research("test-branch", "ST-001", "v2 with new finding")
+        assert map_step_runner.load_research("test-branch", "ST-001") == "v2 with new finding"
+
+    def test_branch_is_sanitized(self, branch_workspace, tmp_path, monkeypatch):
+        """`feature/x` is sanitized to `feature-x` — no literal `/` subdir."""
+        del branch_workspace
+        # Pre-create the sanitized branch dir so write doesn't hit a permission
+        # issue if the fixture only made one branch dir.
+        (tmp_path / ".map" / "feature-x").mkdir(parents=True, exist_ok=True)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        path = map_step_runner.save_research("feature/x", "ST-001", "hi")
+        assert "/feature-x/research/" in path, path
+        # Hard contract: the literal unsanitized form must NOT appear.
+        assert "/feature/x/research/" not in path, path
+
+    def test_subtask_id_must_be_safe(self, branch_workspace):
+        """Path-traversal in subtask_id is rejected."""
+        del branch_workspace
+        with pytest.raises(ValueError):
+            map_step_runner.save_research("test-branch", "../escape", "x")
+        with pytest.raises(ValueError):
+            map_step_runner.load_research("test-branch", "../escape")
+
+    def test_merge_all_kinds_concatenates_present_kinds(self, branch_workspace):
+        """merge_all_kinds=True returns a section-headed concat of every kind
+        on disk, ordered actor → monitor → decomposer → others. Resolves the
+        recurring friction where Monitor's own research was invisible
+        unless callers happened to pass kind="monitor"."""
+        del branch_workspace
+        map_step_runner.save_research(
+            "test-branch", "ST-001", "actor findings", kind="actor"
+        )
+        map_step_runner.save_research(
+            "test-branch", "ST-001", "monitor verdict notes", kind="monitor"
+        )
+        map_step_runner.save_research(
+            "test-branch", "ST-001", "decomposer scoping", kind="decomposer"
+        )
+        merged = map_step_runner.load_research(
+            "test-branch", "ST-001", merge_all_kinds=True
+        )
+        # All three sections present, in canonical order.
+        for needle in (
+            "# kind=actor",
+            "actor findings",
+            "# kind=monitor",
+            "monitor verdict notes",
+            "# kind=decomposer",
+            "decomposer scoping",
+        ):
+            assert needle in merged, merged
+        assert merged.index("# kind=actor") < merged.index("# kind=monitor")
+        assert merged.index("# kind=monitor") < merged.index("# kind=decomposer")
+
+    def test_merge_all_kinds_returns_empty_when_nothing_present(self, branch_workspace):
+        del branch_workspace
+        assert (
+            map_step_runner.load_research(
+                "test-branch", "ST-999", merge_all_kinds=True
+            )
+            == ""
+        )
+
+    def test_merge_all_handles_unknown_kind_after_canonical(self, branch_workspace):
+        """Custom kinds get sorted lexicographically after actor/monitor/decomposer."""
+        del branch_workspace
+        map_step_runner.save_research("test-branch", "ST-001", "actor", kind="actor")
+        map_step_runner.save_research(
+            "test-branch", "ST-001", "zebra notes", kind="zebra"
+        )
+        merged = map_step_runner.load_research(
+            "test-branch", "ST-001", merge_all_kinds=True
+        )
+        assert merged.index("# kind=actor") < merged.index("# kind=zebra")
+
+    def test_kind_must_be_safe(self, branch_workspace):
+        """kind must match a conservative ident pattern."""
+        del branch_workspace
+        with pytest.raises(ValueError):
+            map_step_runner.save_research("test-branch", "ST-001", "x", kind="../foo")
+
+    def test_cli_save_reads_stdin_load_writes_stdout(self, branch_workspace, tmp_path):
+        """End-to-end CLI: save_research consumes stdin, load_research prints stdout."""
+        del branch_workspace
+        runner = (
+            Path(__file__).resolve().parents[1]
+            / "src" / "mapify_cli" / "templates" / "map" / "scripts" / "map_step_runner.py"
+        )
+        # Force PYTHONDONTWRITEBYTECODE so subprocess imports don't pollute
+        # src/mapify_cli/templates/map/scripts/__pycache__ — the template-
+        # hygiene gate fails if any .pyc is shipped under templates/.
+        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+        content = "Research note from CLI"
+        save_result = subprocess.run(
+            [sys.executable, str(runner), "save_research", "test-branch", "ST-007"],
+            input=content,
+            capture_output=True,
+            text=True,
+            cwd=str(tmp_path),
+            env=env,
+        )
+        assert save_result.returncode == 0, save_result.stderr
+        load_result = subprocess.run(
+            [sys.executable, str(runner), "load_research", "test-branch", "ST-007"],
+            capture_output=True,
+            text=True,
+            cwd=str(tmp_path),
+            env=env,
+        )
+        assert load_result.returncode == 0, load_result.stderr
+        assert load_result.stdout == content
 
 
 class TestSanitizeForJson:
@@ -3116,10 +4850,15 @@ class TestCreateReviewBundle:
             len(result["files_changed"]) == map_step_runner._FILES_CHANGED_MAX_ENTRIES
         )
 
-    def test_build_review_prompts_budgets_secondary_diff_before_bundle(
+    def test_build_review_prompts_no_longer_truncates_diff_or_bundle(
         self, branch_workspace
     ):
-        """Oversized review prompts keep primary bundle context and clip raw diff first."""
+        """Negative-contract regression: review prompts no longer clip bundle
+        or diff context. Truncation infrastructure was removed by user
+        directive — review prompts emit the full bundle and full diff
+        regardless of the artificially-low budget_tokens.
+        """
+        del branch_workspace
         review_bundle = "# Review Bundle\nPRIMARY_BUNDLE_SENTINEL\n" + (
             "covered acceptance evidence\n" * 80
         )
@@ -3136,42 +4875,26 @@ class TestCreateReviewBundle:
         )
 
         assert result["status"] == "success"
-        assert result["budget_tokens"] == 1_500
         for role in ("monitor", "predictor", "evaluator"):
             prompt_info = result["prompts"][role]
             prompt = prompt_info["prompt"]
-            assert prompt_info["estimated_tokens"] <= 1_500
-            assert prompt_info["truncated"] is True
-            assert "git diff" in prompt_info["clipped_sections"]
-            assert "review-bundle.md" not in prompt_info["clipped_sections"]
+            assert prompt_info["truncated"] is False
+            assert prompt_info["clipped_sections"] == []
+            # Both sentinels present — bundle AND diff tail survive.
             assert "PRIMARY_BUNDLE_SENTINEL" in prompt
-            assert "TAIL_DIFF_SENTINEL" not in prompt
-            assert "Review Prompt Budget" in prompt
+            assert "TAIL_DIFF_SENTINEL" in prompt
+            assert "Review Prompt Budget" not in prompt  # no budget note
             assert "<documents>" in prompt
             assert "</documents>" in prompt
             assert "<expected_output>" in prompt
             assert "Output JSON with:" in prompt
 
-        budget_report = json.loads(
-            (branch_workspace / "token_budget.json").read_text(encoding="utf-8")
-        )
-        decisions = budget_report["decisions"][-3:]
-        assert [decision["path_name"] for decision in decisions] == [
-            "map-review.monitor_prompt",
-            "map-review.predictor_prompt",
-            "map-review.evaluator_prompt",
-        ]
-        assert all(decision["budget_action"] == "truncated" for decision in decisions)
-        assert all("git diff" in decision["clipped_sections"] for decision in decisions)
-        manifest = json.loads(
-            (branch_workspace / "artifact_manifest.json").read_text(encoding="utf-8")
-        )
-        assert manifest["stages"]["token_budget"]["status"] == "ready"
-
-    def test_build_review_prompts_budgets_large_review_preferences(
+    def test_build_review_prompts_no_longer_truncates_preferences(
         self, branch_workspace
     ):
-        """Oversized review preferences must not break the prompt budget."""
+        """Negative-contract regression: review preferences no longer
+        clipped — they reach the reviewer in full.
+        """
         del branch_workspace
         review_bundle = "# Review Bundle\nPRIMARY_BUNDLE_SENTINEL\n" + (
             "covered acceptance evidence\n" * 40
@@ -3191,11 +4914,11 @@ class TestCreateReviewBundle:
         for role in ("monitor", "predictor", "evaluator"):
             prompt_info = result["prompts"][role]
             prompt = prompt_info["prompt"]
-            assert prompt_info["estimated_tokens"] <= 1_500
-            assert prompt_info["truncated"] is True
-            assert "review-preferences" in prompt_info["clipped_sections"]
+            assert prompt_info["truncated"] is False
+            assert prompt_info["clipped_sections"] == []
             assert "PRIMARY_BUNDLE_SENTINEL" in prompt
-            assert "TAIL_PREFERENCES_SENTINEL" not in prompt
+            # Tail preferences sentinel must now survive (was clipped before).
+            assert "TAIL_PREFERENCES_SENTINEL" in prompt
 
     def test_build_review_prompts_tolerates_budget_artifact_write_error(
         self, branch_workspace, monkeypatch
@@ -3241,8 +4964,11 @@ class TestCreateReviewBundle:
         assert result["status"] == "error"
         assert "disk full" in result["reason"]
 
-    def test_review_prompt_ab_reduces_old_unbounded_prompt_size(self, branch_workspace):
-        """A/B: new budgeted reviewer prompt is smaller than old inline prompt."""
+    def test_review_prompt_no_longer_clips_unbounded_input(self, branch_workspace):
+        """Negative-contract regression: truncation infra was deleted, so
+        the "old vs new (budgeted)" A/B no longer applies. The new prompt
+        equals the old prompt — both include the full diff tail.
+        """
         del branch_workspace
         review_bundle = "# Review Bundle\nPRIMARY_BUNDLE_SENTINEL\n" + (
             "review bundle evidence\n" * 80
@@ -3267,15 +4993,14 @@ class TestCreateReviewBundle:
         )["prompts"]["monitor"]
         new_prompt = new_prompt_info["prompt"]
 
-        assert map_step_runner._estimate_tokens(old_prompt) > 1_500
-        assert new_prompt_info["estimated_tokens"] <= 1_500
-        assert new_prompt_info["estimated_tokens"] < map_step_runner._estimate_tokens(
-            old_prompt
-        )
+        # Truncation is gone: new prompt contains the diff tail (was
+        # previously clipped) and carries no "Review Prompt Budget" note.
         assert "TAIL_DIFF_SENTINEL" in old_prompt
-        assert "TAIL_DIFF_SENTINEL" not in new_prompt
+        assert "TAIL_DIFF_SENTINEL" in new_prompt
         assert "PRIMARY_BUNDLE_SENTINEL" in new_prompt
-        assert "Review Prompt Budget" in new_prompt
+        assert "Review Prompt Budget" not in new_prompt
+        assert new_prompt_info["truncated"] is False
+        assert new_prompt_info["clipped_sections"] == []
 
 
 # ---------------------------------------------------------------------------

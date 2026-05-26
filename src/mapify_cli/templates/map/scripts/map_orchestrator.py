@@ -90,6 +90,7 @@ TESTING:
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from dataclasses import dataclass, field
@@ -338,6 +339,11 @@ class StepState:
     retry_isolation_status: dict[str, str] = field(default_factory=dict)
     retry_quarantine_paths: dict[str, str] = field(default_factory=dict)
     completed_at: Optional[str] = None
+    # Audit ledger for mark_subtask_complete: per-subtask
+    # {kind: done|noop|deferred|stub|prior_pr, reason: str, recorded_at}
+    # Added 2026-05-25 so post-run audits can tell intent apart instead
+    # of squinting at synthetic "no-op" summaries.
+    subtask_completion_reasons: dict[str, dict] = field(default_factory=dict)
 
     def record_subtask_result(
         self,
@@ -347,13 +353,23 @@ class StepState:
         summary: str = "",
         commit_sha: Optional[str] = None,
     ) -> None:
-        """Record result of a completed subtask for context injection."""
+        """Record result of a completed subtask for context injection.
+
+        The entry stores a redundant ``subtask_id`` field even though the
+        outer key already carries it: downstream reporters / log shippers
+        repeatedly want to forward entries individually and used to receive
+        ``{"subtask_id": null, ...}`` because the producer never set it.
+        Keeping the field self-describing closes that gap; the matching
+        ``backfill_subtask_ids`` helper exists for old states.
+        """
         self.subtask_results[subtask_id] = {
+            "subtask_id": subtask_id,
             "files_changed": files_changed,
             "status": status,
             "summary": summary,
         }
         if commit_sha:
+            self.subtask_results[subtask_id]["commit_sha"] = commit_sha
             self.last_subtask_commit_sha = commit_sha
 
     def to_dict(self) -> dict:
@@ -390,6 +406,7 @@ class StepState:
             "retry_isolation_status": self.retry_isolation_status,
             "retry_quarantine_paths": self.retry_quarantine_paths,
             "completed_at": self.completed_at,
+            "subtask_completion_reasons": self.subtask_completion_reasons,
         }
 
     @classmethod
@@ -427,6 +444,9 @@ class StepState:
             retry_isolation_status=data.get("retry_isolation_status", {}),
             retry_quarantine_paths=data.get("retry_quarantine_paths", {}),
             completed_at=data.get("completed_at"),
+            subtask_completion_reasons=data.get(
+                "subtask_completion_reasons", {}
+            ),
         )
 
     @classmethod
@@ -526,8 +546,15 @@ def get_step_instruction(step_id: str, state: StepState) -> str:
             "Single source of truth for workflow enforcement."
         ),
         "2.2": (
-            "Call Task(subagent_type='research-agent') to research the subtask. "
-            "MANDATORY for all subtasks. Pass findings to Actor."
+            "Call Task(subagent_type='research-agent') to research the subtask, "
+            "then persist findings via "
+            "`python3 .map/scripts/map_step_runner.py save_research <branch> "
+            "<subtask_id>`. MANDATORY for all subtasks (validate_step 2.2 "
+            "rejects when no research artifact exists). "
+            "Short-circuit hint: if this subtask is already done in a prior "
+            "PR or is a pure no-op, skip the cycle with "
+            "`python3 .map/scripts/map_orchestrator.py mark_subtask_complete "
+            "<subtask_id> --reason \"...\"` instead of running research."
         ),
         "2.25": (
             f"TDD TEST_WRITER: Call Task(subagent_type='actor') with "
@@ -551,6 +578,178 @@ def get_step_instruction(step_id: str, state: StepState) -> str:
     return instructions.get(step_id, f"Execute step {step_id} ({phase})")
 
 
+DEFERRED_FOR_DEPS_PHASE = "deferred_for_deps"
+
+
+def _completed_subtask_ids_for_deps(state: "StepState") -> set[str]:
+    """Return subtask IDs that count as "done" for dependency-resolution.
+
+    Combines four signals (any one is sufficient):
+      - subtask_results[sid] has any non-empty entry: that ID has been
+        processed at least once (record_subtask_result was called on
+        ACTOR/Monitor success, OR mark_subtask_complete wrote a synthetic
+        no-op result). Cursor MUST treat these as done — even when
+        subtask_phases didn't get updated due to case mismatch or
+        legacy state. This was the root cause of the "cursor stuck on
+        ST-033 stub" friction.
+      - subtask_results[sid].status ∈ {valid, completed, done, skipped, no-op}
+      - subtask_phases[sid] ∈ {completed, skipped, COMPLETE, SKIPPED, no-op}
+        (case-insensitive match; mark_subtask_complete writes "COMPLETE"
+        in upper, validate_step writes lowercase)
+      - linear-walk past: subtask at index < state.subtask_index is
+        treated as done UNLESS it carries the deferred_for_deps marker
+        (those were intentionally skipped and owe a revisit).
+    """
+    done: set[str] = set()
+    DONE_RESULT_STATUSES = {"valid", "completed", "done", "skipped", "no-op"}
+    DONE_PHASE_STATUSES = {"completed", "skipped", "no-op", "complete"}
+    for sid, entry in (state.subtask_results or {}).items():
+        if not isinstance(entry, dict):
+            continue
+        # Any recorded result (Monitor success OR mark_subtask_complete
+        # no-op) is enough — entries always exist with at least
+        # files_changed/status; missing-status entries also count as
+        # "this id was processed" so cursor never re-visits them.
+        status_value = entry.get("status")
+        if not isinstance(status_value, str) or status_value.lower() in DONE_RESULT_STATUSES:
+            done.add(sid)
+    phases = state.subtask_phases or {}
+    for sid, phase in phases.items():
+        if isinstance(phase, str) and phase.lower() in DONE_PHASE_STATUSES:
+            done.add(sid)
+    for idx, sid in enumerate(state.subtask_sequence or []):
+        if idx >= state.subtask_index:
+            break
+        if phases.get(sid) == DEFERRED_FOR_DEPS_PHASE:
+            # Explicitly deferred — do NOT count as done; we owe a revisit.
+            continue
+        done.add(sid)
+    return done
+
+
+def _find_next_ready_subtask_index(
+    state: "StepState",
+    branch: str,
+    *,
+    start_after_index: int,
+    treat_current_as_done: bool = True,
+) -> tuple[Optional[int], list[str]]:
+    """Walk subtask_sequence and return the index of the next ready subtask.
+
+    "Ready" means: not yet completed AND every entry in its blueprint
+    `dependencies` array is in the completed set.
+
+    Walk order is forward-biased with wrap-around:
+        start_after_index + 1, ..., len - 1, 0, 1, ..., start_after_index
+    so dependents whose deps got satisfied LATER in the sequence (an
+    edge case if the planning sort missed a forward dep) are still picked
+    up on a later pass.
+
+    Returns ``(idx, skipped)`` where ``skipped`` lists subtask IDs that
+    were considered but had unmet deps in this pass — useful for
+    diagnostics. Returns ``(None, blocked_ids)`` if no ready subtask
+    exists. ``blocked_ids`` then represents the surviving unprocessed
+    subtasks whose deps are still unmet (i.e., the workflow is stuck on
+    a deadlock unless the user intervenes).
+
+    ``treat_current_as_done=True`` (default): the just-finished current
+    subtask is assumed done for dep resolution. Use False when caller is
+    only inspecting and hasn't yet marked the current subtask complete.
+    """
+    deps_map = _load_blueprint_deps_for_runtime(branch)
+    completed = _completed_subtask_ids_for_deps(state)
+    if treat_current_as_done and state.current_subtask_id:
+        completed.add(state.current_subtask_id)
+
+    n = len(state.subtask_sequence)
+    if n == 0:
+        return None, []
+
+    skipped_for_deps: list[str] = []
+    order = list(range(start_after_index + 1, n)) + list(
+        range(0, max(start_after_index + 1, 0))
+    )
+    for idx in order:
+        if idx < 0 or idx >= n:
+            continue
+        sid = state.subtask_sequence[idx]
+        if sid in completed:
+            continue
+        required = deps_map.get(sid, [])
+        if all(dep in completed for dep in required):
+            return idx, skipped_for_deps
+        skipped_for_deps.append(sid)
+    return None, skipped_for_deps
+
+
+def _load_blueprint_deps_for_runtime(branch: str) -> dict[str, list[str]]:
+    """Same shape as _load_blueprint_deps (planning side) but lives in the
+    orchestrator module so runtime advance code doesn't have to import
+    from set_subtasks scope (avoids a forward reference)."""
+    bp_path = Path(f".map/{branch}/blueprint.json")
+    if not bp_path.exists():
+        return {}
+    try:
+        payload = json.loads(bp_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    body = payload.get("blueprint") if isinstance(payload.get("blueprint"), dict) else payload
+    subtasks = body.get("subtasks") if isinstance(body, dict) else None
+    deps: dict[str, list[str]] = {}
+    if not isinstance(subtasks, list):
+        return deps
+    for st in subtasks:
+        if not isinstance(st, dict):
+            continue
+        sid = st.get("id")
+        if not isinstance(sid, str):
+            continue
+        raw = st.get("dependencies", [])
+        if isinstance(raw, list):
+            deps[sid] = [d for d in raw if isinstance(d, str)]
+        else:
+            deps[sid] = []
+    return deps
+
+
+def peek_current_step(branch: str) -> dict:
+    """Return the current step descriptor WITHOUT mutating state.
+
+    Recovery escape hatch for the case where ``validate_step X`` fails with
+    ``Step mismatch: expected Y, got X`` after a double-advance: callers can
+    ``peek_current_step`` to learn the canonical Y instead of guessing.
+    Returns the same shape as ``get_next_step`` but never saves the state.
+    """
+    state_file = Path(f".map/{branch}/step_state.json")
+    state = StepState.load(state_file)
+
+    if state.workflow_status == "WORKFLOW_COMPLETE":
+        return {
+            "step_id": "COMPLETE",
+            "phase": "COMPLETE",
+            "is_complete": True,
+            "current_subtask": state.current_subtask_id,
+        }
+
+    if state.workflow_status == "CONTRACT_READY":
+        return {
+            "step_id": "CONTRACT_READY",
+            "phase": "CONTRACT_READY",
+            "is_complete": False,
+            "current_subtask": state.current_subtask_id,
+        }
+
+    next_id = state.pending_steps[0] if state.pending_steps else state.current_step_id
+    phase = STEP_PHASES.get(next_id, state.current_step_phase or "UNKNOWN")
+    return {
+        "step_id": next_id,
+        "phase": phase,
+        "is_complete": False,
+        "current_subtask": state.current_subtask_id,
+        "subtask_progress": f"{state.subtask_index + 1}/{max(len(state.subtask_sequence), 1)}",
+    }
+
+
 def get_next_step(branch: str) -> dict:
     """
     Determine next step in workflow.
@@ -563,6 +762,18 @@ def get_next_step(branch: str) -> dict:
     """
     state_file = Path(f".map/{branch}/step_state.json")
     state = StepState.load(state_file)
+
+    # WORKFLOW_COMPLETE is authoritative — short-circuit even if pending_steps
+    # got repopulated by a partial recovery path. Otherwise the function walks
+    # the per-subtask branches and returns a stale "2.2 RESEARCH" instruction
+    # for a workflow that already closed out.
+    if state.workflow_status == "WORKFLOW_COMPLETE":
+        return {
+            "step_id": "COMPLETE",
+            "phase": "COMPLETE",
+            "instruction": "All subtasks complete. Run final verification.",
+            "is_complete": True,
+        }
 
     if state.workflow_status == "CONTRACT_READY":
         if state.pending_steps != ["CONTRACT_READY"]:
@@ -599,14 +810,37 @@ def get_next_step(branch: str) -> dict:
 
     # Check if workflow complete
     if not state.pending_steps:
-        # Check if more subtasks remain
-        if state.subtask_index + 1 < len(state.subtask_sequence):
-            # Move to next subtask, reset steps
-            state.subtask_index += 1
+        # Deps-aware advance: pick the next subtask whose dependencies are
+        # all satisfied, skipping over subtasks whose deps are unmet (in
+        # case the planning sort missed a forward dep). Backward compat:
+        # only enter the dep-aware branch when there are unprocessed
+        # subtasks (forward index or deferred markers); otherwise treat as
+        # completion so linear-walk flows finish cleanly.
+        has_forward_slot = state.subtask_index + 1 < len(state.subtask_sequence)
+        has_deferred = any(
+            state.subtask_phases.get(sid) == DEFERRED_FOR_DEPS_PHASE
+            for sid in state.subtask_sequence
+        )
+        if not has_forward_slot and not has_deferred:
+            return {
+                "step_id": "COMPLETE",
+                "phase": "COMPLETE",
+                "instruction": "All subtasks complete. Run final verification.",
+                "is_complete": True,
+            }
+        ready_idx, skipped_for_deps = _find_next_ready_subtask_index(
+            state, branch, start_after_index=state.subtask_index,
+            treat_current_as_done=True,
+        )
+        for skipped_sid in skipped_for_deps:
+            state.subtask_phases[skipped_sid] = DEFERRED_FOR_DEPS_PHASE
+        if ready_idx is not None:
+            state.subtask_index = ready_idx
             state.current_subtask_id = state.subtask_sequence[state.subtask_index]
+            if state.subtask_phases.get(state.current_subtask_id) == DEFERRED_FOR_DEPS_PHASE:
+                state.subtask_phases.pop(state.current_subtask_id, None)
             state.current_step_id = "2.2"
             state.current_step_phase = "RESEARCH"
-            # Reset to subtask-level steps (skip global setup steps)
             step_order = _get_step_order(state.tdd_mode)
             research_idx = step_order.index("2.2")
             state.pending_steps = step_order[research_idx:]  # Start from 2.2
@@ -615,15 +849,75 @@ def get_next_step(branch: str) -> dict:
             state.retry_count = 0
             state.save(state_file)
         else:
+            # No ready subtask. Distinguish completion from deadlock by
+            # checking whether ANY subtask remains unprocessed.
+            completed = _completed_subtask_ids_for_deps(state)
+            if state.current_subtask_id:
+                completed.add(state.current_subtask_id)
+            remaining = [
+                sid for sid in state.subtask_sequence if sid not in completed
+            ]
+            if not remaining:
+                return {
+                    "step_id": "COMPLETE",
+                    "phase": "COMPLETE",
+                    "instruction": "All subtasks complete. Run final verification.",
+                    "is_complete": True,
+                }
+            # Deadlock: subtasks remain but every one of them has an
+            # unmet dep. Surface BLOCKED_ON_DEPS so the caller doesn't
+            # silently spin or report COMPLETE prematurely.
+            state.current_step_id = "BLOCKED_ON_DEPS"
+            state.current_step_phase = "BLOCKED_ON_DEPS"
+            state.save(state_file)
             return {
-                "step_id": "COMPLETE",
-                "phase": "COMPLETE",
-                "instruction": "All subtasks complete. Run final verification.",
-                "is_complete": True,
+                "step_id": "BLOCKED_ON_DEPS",
+                "phase": "BLOCKED_ON_DEPS",
+                "instruction": (
+                    "No subtask can run: every remaining subtask has an "
+                    "unmet dependency. Inspect blueprint deps + "
+                    "subtask_results, then either record missing results "
+                    "or fix the dep graph."
+                ),
+                "is_complete": False,
+                "blocked_subtasks": remaining,
+                "skipped_for_deps": skipped_for_deps,
             }
 
     # Get next pending step
     next_step_id = state.pending_steps[0]
+
+    # Defensive RESEARCH-skip warning (added 2026-05-27): if get_next_step
+    # is about to return 2.3 (ACTOR) for the current subtask but 2.2
+    # (RESEARCH) was never completed for it AND no research artifact
+    # exists on disk AND TDD pre-phases (2.25/2.26) weren't the path
+    # by which 2.2 got skipped, emit a soft warning. Catches the silent
+    # skip without breaking the documented TDD auto-skip path (which
+    # legitimately bypasses 2.2 in the auto_skip_tdd_phases test).
+    research_skip_warning: Optional[str] = None
+    if (
+        next_step_id == "2.3"
+        and "2.2" not in state.completed_steps
+        and "2.2" not in state.skipped_steps
+        and "2.25" not in state.skipped_steps
+        and "2.26" not in state.skipped_steps
+        and state.current_subtask_id
+    ):
+        research_dir = Path(f".map/{branch}/research")
+        artifact_present = research_dir.is_dir() and any(
+            research_dir.glob(f"{state.current_subtask_id}__*.md")
+        )
+        if not artifact_present:
+            research_skip_warning = (
+                f"WARNING: about to return ACTOR (2.3) for "
+                f"{state.current_subtask_id} but RESEARCH (2.2) is not in "
+                "completed_steps AND no research artifact exists at "
+                f".map/{branch}/research/{state.current_subtask_id}__*.md. "
+                "Likely a state-drift skip. Run save_research + "
+                "validate_step 2.2 before ACTOR, or document this as an "
+                "intentional research-skip in the subtask description."
+            )
+
     phase = STEP_PHASES.get(next_step_id, "UNKNOWN")
     instruction = get_step_instruction(next_step_id, state)
 
@@ -632,7 +926,7 @@ def get_next_step(branch: str) -> dict:
     state.current_step_phase = phase
     state.save(state_file)
 
-    return {
+    response: dict[str, object] = {
         "step_id": next_step_id,
         "phase": phase,
         "instruction": instruction,
@@ -640,21 +934,109 @@ def get_next_step(branch: str) -> dict:
         "current_subtask": state.current_subtask_id,
         "subtask_progress": f"{state.subtask_index + 1}/{len(state.subtask_sequence)}",
     }
+    if research_skip_warning:
+        response["warning"] = research_skip_warning
+    return response
 
 
-def validate_step(step_id: str, branch: str) -> dict:
+REJECT_RECOMMENDATIONS = {"revise", "block", "needs_investigation"}
+_MONITOR_REQUIRED_KEYS = ("valid", "summary", "issues")
+
+
+def _validate_monitor_envelope(monitor_text: str) -> Optional[str]:
+    """Return None when monitor_text is a complete Monitor JSON envelope.
+
+    Returns an error message string when the envelope is broken — used
+    by validate_step 2.4 to reject prose-instead-of-JSON Monitor
+    responses orchestrator-side instead of relying on the operator to
+    eyeball it. Three failure modes match the skill's documented gate:
+    (a) doesn't parse as JSON, (b) missing required keys, (c) ends
+    mid-sentence (no closing `}`).
+    """
+    if not monitor_text or not monitor_text.strip():
+        return "Monitor envelope is empty (prose-only response or truncation)"
+    stripped = monitor_text.strip()
+    if not stripped.endswith(("}", "]")):
+        return (
+            "Monitor response ends mid-sentence (no closing `}`/`]`) — "
+            "likely truncated; re-prompt with 'emit ONLY the JSON object'"
+        )
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError as exc:
+        # Try fenced ```json {...} ``` recovery before giving up.
+        import re as _re
+        match = _re.search(r"\{(?:.|\n)*\}", stripped)
+        if not match:
+            return f"Monitor response does not parse as JSON: {exc}"
+        try:
+            parsed = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            return f"Monitor response does not parse as JSON: {exc}"
+    if not isinstance(parsed, dict):
+        return "Monitor response parsed but is not an object"
+    missing = [k for k in _MONITOR_REQUIRED_KEYS if k not in parsed]
+    if missing:
+        return (
+            f"Monitor JSON missing required keys {missing!r} — likely "
+            "truncated; re-prompt for complete envelope"
+        )
+    return None
+
+
+def validate_step(
+    step_id: str,
+    branch: str,
+    *,
+    recommendation: Optional[str] = None,
+    monitor_envelope: Optional[str] = None,
+) -> dict:
     """
     Validate step completion and update state.
 
     Args:
         step_id: Step identifier to validate
         branch: Git branch name (sanitized)
+        recommendation: For step_id="2.4" (Monitor close), optional
+            Monitor verdict field. When set to ``revise``, ``block``, or
+            ``needs_investigation``, validate_step refuses to close the
+            phase and returns valid=false — so the recommendation
+            contract (skill rule: "valid=true + recommendation∈{revise,
+            block, needs_investigation} = fail") is enforced
+            orchestrator-side, not just by-convention.
 
     Returns:
         Dict with valid: bool, message: str
     """
     state_file = Path(f".map/{branch}/step_state.json")
     state = StepState.load(state_file)
+
+    # Idempotency: validating a step already in completed_steps is a no-op
+    # success. Re-running validate_step after a double-advance no longer
+    # explodes with "Step mismatch: expected Y, got X" — callers can safely
+    # retry without first calling peek_current_step.
+    if step_id in state.completed_steps and state.current_step_id != step_id:
+        return {
+            "valid": True,
+            "message": f"Step {step_id} already completed (idempotent no-op)",
+            "next_step": state.current_step_id,
+            "idempotent": True,
+        }
+
+    # Transactional MONITOR pass: validate_step("2.4") implicitly closes
+    # 2.3 (ACTOR) if it's still pending. Caller convenience — Monitor
+    # approval logically means Actor work was accepted, so requiring a
+    # separate validate_step("2.3") before validate_step("2.4") is just
+    # ceremony that produces "Step mismatch: expected 2.3" errors.
+    if (
+        step_id == "2.4"
+        and state.current_step_id == "2.3"
+        and "2.3" in state.pending_steps
+    ):
+        state.completed_steps.append("2.3")
+        state.pending_steps.remove("2.3")
+        state.current_step_id = "2.4"
+        state.current_step_phase = "MONITOR"
 
     # Check if step is current
     if state.current_step_id != step_id:
@@ -669,6 +1051,113 @@ def validate_step(step_id: str, branch: str) -> dict:
             "valid": False,
             "message": "Plan not approved. Set approval first: python3 .map/scripts/map_orchestrator.py set_plan_approved true",
         }
+    # Monitor envelope check: when --monitor-envelope is supplied,
+    # reject 2.4 close if the envelope text is truncated / not JSON /
+    # missing required keys. Moves the prose-response gate from skill
+    # guidance to structural enforcement so a forgetful operator can't
+    # close on a truncated Monitor output.
+    if step_id == "2.4" and monitor_envelope is not None:
+        envelope_error = _validate_monitor_envelope(monitor_envelope)
+        if envelope_error:
+            return {
+                "valid": False,
+                "message": (
+                    f"Monitor envelope validation failed: {envelope_error}. "
+                    "Re-invoke Monitor with 'retry and emit ONLY the JSON "
+                    "object'; if it stays truncated, stop with "
+                    "CLARIFICATION_NEEDED — do NOT close 2.4 on a "
+                    "prose-only response."
+                ),
+                "envelope_error": envelope_error,
+            }
+
+    # Recommendation-omitted warning: closing 2.4 without --recommendation
+    # leaves the verdict-consistency footgun open (Monitor valid=true +
+    # recommendation=revise would silently pass). Surface a soft warning
+    # so the operator knows to pipe Monitor's recommendation through.
+    recommendation_omitted_warning: Optional[str] = None
+    if step_id == "2.4" and not recommendation:
+        recommendation_omitted_warning = (
+            "validate_step 2.4 closed without --recommendation. The "
+            "verdict-consistency gate cannot enforce 'valid=true + "
+            "recommendation=revise/block/needs_investigation = fail' "
+            "unless you pass Monitor's recommendation. Recommended: "
+            "`python3 .map/scripts/map_orchestrator.py validate_step 2.4 "
+            "--recommendation \"$MONITOR_RECOMMENDATION\"`."
+        )
+
+    # Monitor recommendation enforcement: when closing 2.4 (MONITOR) and
+    # the caller passed a recommendation, refuse to close on revise /
+    # block / needs_investigation. The skill rule was prose-only ("valid
+    # +recommendation∈{revise,block,needs_investigation} = fail"); this
+    # makes it a structural gate so the contract can't be bypassed by
+    # forgetting to read the recommendation field.
+    if step_id == "2.4" and recommendation:
+        normalized_rec = recommendation.strip().lower()
+        if normalized_rec in REJECT_RECOMMENDATIONS:
+            return {
+                "valid": False,
+                "message": (
+                    f"Monitor recommendation={normalized_rec!r} rejects "
+                    "this subtask. Address the issue, re-run Actor, then "
+                    "re-invoke Monitor. (Do NOT call validate_step 2.4 "
+                    "until Monitor returns proceed/approve.)"
+                ),
+                "recommendation": normalized_rec,
+            }
+    # RESEARCH (2.2) is documented MANDATORY for every subtask — enforce that
+    # save_research wrote something before letting Actor proceed. Without this
+    # check, "MANDATORY" was prompt-text only and could be silently skipped.
+    if step_id == "2.2" and state.current_subtask_id:
+        research_dir = Path(f".map/{branch}/research")
+        # Accept any kind of research artifact for this subtask.
+        if not research_dir.is_dir() or not any(
+            research_dir.glob(f"{state.current_subtask_id}__*.md")
+        ):
+            return {
+                "valid": False,
+                "message": (
+                    f"RESEARCH not persisted for {state.current_subtask_id}. "
+                    f"Run: python3 .map/scripts/map_step_runner.py save_research "
+                    f"<branch> {state.current_subtask_id} (defaults kind=actor) "
+                    "before validate_step 2.2."
+                ),
+            }
+        # Auto-snapshot per-subtask baseline at RESEARCH-complete so the
+        # MONITOR-side validate_mutation_boundary check only flags files
+        # CHANGED during this subtask, not the cumulative branch diff.
+        try:
+            from map_step_runner import record_subtask_baseline  # noqa: WPS433
+            record_subtask_baseline(branch, state.current_subtask_id)
+        except ImportError:
+            pass
+    # MONITOR gate auto-runs validate_mutation_boundary so scope leaks can't
+    # silently slip past. The check is warn-only by default; only
+    # MAP_STRICT_SCOPE=1 escalates a "violation" to a hard reject. Best-effort:
+    # if blueprint or git aren't available (e.g., unit tests that exercise
+    # just the orchestrator), skip silently rather than block the gate.
+    if step_id == "2.4" and state.current_subtask_id:
+        blueprint_present = Path(f".map/{branch}/blueprint.json").exists()
+        if blueprint_present:
+            try:
+                from map_step_runner import validate_mutation_boundary  # noqa: WPS433
+                scope_report = validate_mutation_boundary(
+                    branch, state.current_subtask_id
+                )
+                scope_status = scope_report.get("status")
+                # "error" (git failure, unknown subtask) is non-blocking by
+                # default — strict mode still treats violation as a hard
+                # reject.
+                if scope_status == "violation" and scope_report.get("strict"):
+                    return {
+                        "valid": False,
+                        "message": (
+                            "Mutation-boundary violation in MAP_STRICT_SCOPE mode. "
+                            f"Unexpected files: {scope_report.get('unexpected', [])}"
+                        ),
+                    }
+            except ImportError:
+                pass
     # CHOOSE_MODE is auto-skipped; execution_mode is always "batch"
 
     # Mark step complete
@@ -683,22 +1172,93 @@ def validate_step(step_id: str, branch: str) -> dict:
         state.subtask_index = 0
 
     # Advance current_step_id to next pending step
+    advanced_from_subtask: Optional[str] = None
+    advanced_to_subtask: Optional[str] = None
+    blocked_remaining: list[str] = []
+    skipped_for_deps: list[str] = []
     if state.pending_steps:
         next_id = state.pending_steps[0]
         state.current_step_id = next_id
         state.current_step_phase = STEP_PHASES.get(next_id, "UNKNOWN")
+        next_step_signal = state.current_step_id
+    elif state.subtask_index + 1 < len(state.subtask_sequence) or any(
+        state.subtask_phases.get(sid) == DEFERRED_FOR_DEPS_PHASE
+        for sid in state.subtask_sequence
+    ):
+        # Inter-subtask boundary: deps-aware atomic advance. Use the
+        # runtime safety net to find the next subtask whose dependencies
+        # are all satisfied — skips over forward-dep violations that
+        # slipped past the planning gate, and wraps around to pick up
+        # earlier subtasks marked deferred_for_deps once their deps clear.
+        ready_idx, skipped_for_deps = _find_next_ready_subtask_index(
+            state, branch, start_after_index=state.subtask_index,
+            treat_current_as_done=True,
+        )
+        # Persist the deferral marker on every subtask we skipped over —
+        # so the next advance can find them on wrap-around once their
+        # deps land. Without this, _completed_subtask_ids_for_deps would
+        # treat them as already-done (linear-walk past).
+        for skipped_sid in skipped_for_deps:
+            state.subtask_phases[skipped_sid] = DEFERRED_FOR_DEPS_PHASE
+        if ready_idx is not None:
+            advanced_from_subtask = state.current_subtask_id
+            state.subtask_index = ready_idx
+            state.current_subtask_id = state.subtask_sequence[state.subtask_index]
+            advanced_to_subtask = state.current_subtask_id
+            # The chosen subtask is no longer deferred — it's now active.
+            if state.subtask_phases.get(state.current_subtask_id) == DEFERRED_FOR_DEPS_PHASE:
+                state.subtask_phases.pop(state.current_subtask_id, None)
+            step_order = _get_step_order(state.tdd_mode)
+            research_idx = step_order.index("2.2")
+            state.pending_steps = step_order[research_idx:]
+            state.completed_steps = []
+            state.skipped_steps = []
+            state.retry_count = 0
+            state.current_step_id = state.pending_steps[0]
+            state.current_step_phase = STEP_PHASES.get(
+                state.current_step_id, "RESEARCH"
+            )
+            next_step_signal = state.current_step_id
+        else:
+            # All remaining subtasks blocked on unmet deps. Distinguish
+            # from "all done" by checking what's still unprocessed.
+            completed = _completed_subtask_ids_for_deps(state)
+            if state.current_subtask_id:
+                completed.add(state.current_subtask_id)
+            blocked_remaining = [
+                sid for sid in state.subtask_sequence if sid not in completed
+            ]
+            if not blocked_remaining:
+                state.current_step_id = "COMPLETE"
+                state.current_step_phase = "COMPLETE"
+                next_step_signal = "COMPLETE"
+            else:
+                state.current_step_id = "BLOCKED_ON_DEPS"
+                state.current_step_phase = "BLOCKED_ON_DEPS"
+                next_step_signal = "BLOCKED_ON_DEPS"
     else:
         state.current_step_id = "COMPLETE"
         state.current_step_phase = "COMPLETE"
+        next_step_signal = "COMPLETE"
 
     # Save updated state
     state.save(state_file)
 
-    return {
+    response: dict = {
         "valid": True,
         "message": f"Step {step_id} completed successfully",
-        "next_step": state.current_step_id,
+        "next_step": next_step_signal,
     }
+    if advanced_to_subtask is not None:
+        response["subtask_advanced_from"] = advanced_from_subtask
+        response["subtask_advanced_to"] = advanced_to_subtask
+    if skipped_for_deps:
+        response["skipped_for_deps"] = skipped_for_deps
+    if next_step_signal == "BLOCKED_ON_DEPS":
+        response["blocked_subtasks"] = blocked_remaining
+    if recommendation_omitted_warning:
+        response["warning"] = recommendation_omitted_warning
+    return response
 
 
 def initialize_workflow(task: str, branch: str) -> dict:
@@ -895,13 +1455,17 @@ def set_waves(branch: str, blueprint_path: Optional[str] = None) -> dict:
     if not subtasks:
         return {"status": "error", "message": "No subtasks in blueprint"}
 
-    # Build graph
-    graph = DependencyGraph()
+    # Build graph. The DependencyGraph / SubtaskNode symbols are bound either
+    # by the top-level `from mapify_cli.dependency_graph import ...` in the try
+    # block above OR by the importlib-spec fallback in the except block. Pyright
+    # cannot follow the dynamic spec path so the names look possibly-unbound;
+    # the except branch returns early when neither import succeeds.
+    graph = DependencyGraph()  # pyright: ignore[reportPossiblyUnboundVariable]
     affected_files_map: dict[str, set] = {}
     for st in subtasks:
         st_id = st.get("id", "")
         deps = st.get("dependencies", [])
-        graph.add_node(SubtaskNode(id=st_id, dependencies=deps))
+        graph.add_node(SubtaskNode(id=st_id, dependencies=deps))  # pyright: ignore[reportPossiblyUnboundVariable]
         files = st.get("affected_files", [])
         affected_files_map[st_id] = set(files) if files else set()
 
@@ -1126,7 +1690,6 @@ def _source_artifact_refs(
 
 def _write_retry_quarantine(
     branch: str,
-    state: StepState,
     subtask_id: str,
     retry_count: int,
     feedback_file: Optional[str],
@@ -1204,7 +1767,7 @@ def _record_retry_isolation(
     subtask_key = subtask_id or "workflow"
     if retry_count >= 2:
         quarantine_path = _write_retry_quarantine(
-            branch, state, subtask_key, retry_count, feedback_file, feedback
+            branch, subtask_key, retry_count, feedback_file, feedback
         )
         state.clean_retry_count += 1
         state.retry_isolation_status[subtask_key] = "clean_retry_required"
@@ -1262,12 +1825,20 @@ def monitor_failed(branch: str, feedback: str = "") -> dict:
     state_file = Path(f".map/{branch}/step_state.json")
     state = StepState.load(state_file)
 
-    if state.current_step_phase != "MONITOR":
+    # Accept call from MONITOR (the canonical path) OR ACTOR (the common
+    # mistake: operator notices Monitor's verdict was valid=false while
+    # cursor is technically still at 2.3 because they skipped
+    # validate_step("2.3") on the way through). "monitor_failed" already
+    # implies the failure happened — fighting the phase check is just
+    # ceremony. Reject only from clearly-wrong phases (DECOMPOSE /
+    # INIT_STATE / COMPLETE) where the call doesn't make sense.
+    if state.current_step_phase not in ("MONITOR", "ACTOR", "APPLY", "TEST_WRITER"):
         return {
             "status": "error",
             "message": (
                 f"monitor_failed() called from phase '{state.current_step_phase}', "
-                "expected 'MONITOR'. Aborting to prevent state corruption."
+                "expected MONITOR or ACTOR/APPLY/TEST_WRITER. Aborting to "
+                "prevent state corruption."
             ),
         }
 
@@ -1443,19 +2014,463 @@ def mark_workflow_complete(branch: str) -> dict:
     }
 
 
+def record_subtask_result(
+    subtask_id: str,
+    branch: str,
+    files_changed: list[str],
+    status: str,
+    summary: str = "",
+    commit_sha: Optional[str] = None,
+) -> dict:
+    """CLI wrapper around StepState.record_subtask_result.
+
+    The skill text used to advise "record files changed in step_state.json"
+    without a public command — callers had to either reach into Python or
+    rely on the indirect record happening inside validate_step. This exposes
+    the canonical write path so /map-efficient's ACTOR-done step has a
+    deterministic dispatch.
+    """
+    state_file = Path(f".map/{branch}/step_state.json")
+    if not state_file.exists():
+        return {
+            "status": "error",
+            "message": f"No step_state.json at {state_file}",
+        }
+    state = StepState.load(state_file)
+    # Warn-only file-exists check: catches typos / drift between --files arg
+    # and the actual diff without blocking on legitimate file deletions or
+    # renames. Caller sees the missing list and decides; record proceeds.
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
+
+    def _is_cross_repo_path(p: str) -> bool:
+        """Return True if ``p`` is a cross-repo (sibling) path.
+
+        Two detection modes (any one match = cross-repo):
+          (a) Path escapes project_dir via ``..`` (``../LLM-memory/...``).
+          (b) Path's first segment matches a sibling directory at
+              ``../<segment>/``, i.e. ``LLM-memory/foo.go`` from a
+              cwd-parent shared with ``LLM-memory``. Catches the common
+              case where the operator writes the sibling repo name
+              without the ``..`` prefix (the path doesn't exist under
+              project_dir but DOES exist as a sibling).
+
+        Cross-repo paths are legitimate but MAP can't verify their
+        existence; validate_blueprint_contract already warns about
+        cross-repo affected_files at planning time. Suppress the "typo"
+        warning for both forms.
+        """
+        # Mode (a): path escapes project_dir via .. or absolute.
+        try:
+            resolved = (project_dir / p).resolve()
+            resolved.relative_to(project_dir)
+        except (ValueError, OSError):
+            return True
+        # Mode (b): first path segment matches a sibling directory.
+        # Path looks local relative to project_dir, but project_dir/<seg>
+        # doesn't exist while project_dir.parent/<seg> does — that's a
+        # sibling repo the operator named without ../ prefix.
+        first_segment = p.split("/", 1)[0]
+        if first_segment and first_segment not in (".", ".."):
+            local_candidate = project_dir / first_segment
+            sibling_candidate = project_dir.parent / first_segment
+            if (
+                not local_candidate.exists()
+                and sibling_candidate.is_dir()
+            ):
+                return True
+        return False
+
+    cross_repo_files: list[str] = []
+    missing_files: list[str] = []
+    for p in (files_changed or []):
+        if not isinstance(p, str) or not p:
+            continue
+        if _is_cross_repo_path(p):
+            cross_repo_files.append(p)
+            continue
+        if not (project_dir / p).exists():
+            missing_files.append(p)
+    import subprocess as _sp  # noqa: PLC0415 — local import keeps top clean
+    # Auto-detect commit_sha from `git log -1 --format=%H` when caller
+    # didn't pass one — closes the "commit_sha always null in
+    # subtask_results" gap that weakened downstream provenance.
+    auto_commit_sha = commit_sha
+    auto_detected_sha = False
+    if not auto_commit_sha:
+        try:
+            proc = _sp.run(
+                ["git", "log", "-1", "--format=%H"],
+                cwd=project_dir,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if proc.returncode == 0:
+                candidate = proc.stdout.strip()
+                if candidate:
+                    auto_commit_sha = candidate
+                    auto_detected_sha = True
+        except (OSError, _sp.TimeoutExpired):
+            pass
+    # Stale-SHA detection: when auto-detect grabbed the same commit as
+    # the prior subtask's recorded SHA, the operator didn't make a new
+    # commit for THIS subtask — silently writing the prior SHA into the
+    # current entry makes the audit trail lie. Flag the duplicate so
+    # caller can decide (commit per-subtask, OR record without --commit-sha
+    # for the "intentionally bundled" case, OR pass --commit-sha
+    # explicitly to acknowledge the shared SHA).
+    sha_is_stale_duplicate = (
+        auto_detected_sha
+        and auto_commit_sha is not None
+        and state.last_subtask_commit_sha == auto_commit_sha
+    )
+
+    # Actor-output verification (added 2026-05-25): cross-check that the
+    # files Actor CLAIMED to change actually show up in the worktree —
+    # either in the most recent commit (if commit_sha resolved) OR in
+    # the uncommitted diff. Catches the "Actor truncated mid-flight and
+    # reported files it never wrote" failure mode where record_subtask_result
+    # used to accept anything. The check is WARN-only by default so legit
+    # cases (file recreated then deleted, etc.) don't block. The next-level
+    # gate is the operator reading the response — they SHOULD reject when
+    # files_not_in_diff is non-empty.
+    declared = [p for p in (files_changed or []) if isinstance(p, str) and p]
+    files_not_in_diff: list[str] = []
+    if declared:
+        diff_paths: set[str] = set()
+        try:
+            if auto_commit_sha:
+                # Files in the latest commit's diff.
+                cproc = _sp.run(
+                    ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", auto_commit_sha],
+                    cwd=project_dir, capture_output=True, text=True, timeout=5,
+                )
+                if cproc.returncode == 0:
+                    diff_paths.update(
+                        line.strip() for line in cproc.stdout.splitlines() if line.strip()
+                    )
+            # Uncommitted (worktree + index) via porcelain.
+            sproc = _sp.run(
+                ["git", "status", "--porcelain"],
+                cwd=project_dir, capture_output=True, text=True, timeout=5,
+            )
+            if sproc.returncode == 0:
+                for raw in sproc.stdout.splitlines():
+                    if len(raw) >= 4:
+                        path = raw[3:].strip()
+                        if " -> " in path:
+                            path = path.split(" -> ", 1)[1]
+                        if path:
+                            diff_paths.add(path)
+        except (OSError, _sp.TimeoutExpired):
+            diff_paths = set()
+        if diff_paths:
+            files_not_in_diff = [p for p in declared if p not in diff_paths]
+
+    state.record_subtask_result(
+        subtask_id,
+        files_changed=files_changed,
+        status=status,
+        summary=summary,
+        commit_sha=auto_commit_sha,
+    )
+    state.save(state_file)
+    response: dict = {
+        "status": "success",
+        "subtask_id": subtask_id,
+        "recorded": state.subtask_results[subtask_id],
+    }
+    if missing_files:
+        response["warning"] = (
+            "Some recorded files do not exist on disk — possible typo or "
+            "stale --files arg."
+        )
+        response["missing_files"] = missing_files
+    if cross_repo_files:
+        # Surface (don't warn) cross-repo paths so the audit trail shows
+        # MAP knew about them. validate_blueprint_contract already warns
+        # at planning time; record_subtask_result should not repeat the
+        # "typo" message — the paths are legitimate, just unverifiable
+        # from THIS project's CLAUDE_PROJECT_DIR.
+        response["cross_repo_files"] = cross_repo_files
+    if files_not_in_diff:
+        existing_warning = response.get("warning", "")
+        suffix = (
+            f"Actor-claimed files not present in commit/diff "
+            f"({len(files_not_in_diff)}/{len(declared)}): "
+            f"{files_not_in_diff!r}. Possible Actor truncation — verify "
+            "before advancing to MONITOR / next subtask."
+        )
+        response["warning"] = (
+            f"{existing_warning}\n{suffix}".strip()
+            if existing_warning
+            else suffix
+        )
+        response["files_not_in_diff"] = files_not_in_diff
+    if sha_is_stale_duplicate and auto_commit_sha:
+        stale_sha_short = auto_commit_sha[:12]
+        existing_warning = response.get("warning", "")
+        suffix = (
+            f"Auto-detected commit_sha {stale_sha_short} matches the "
+            "prior subtask's last_subtask_commit_sha — you almost certainly "
+            "did NOT commit between subtasks, so the audit trail will record "
+            "the same SHA for both. Either (a) commit per-subtask BEFORE "
+            "record_subtask_result (recommended; see map-efficient SKILL.md), "
+            "or (b) pass --commit-sha <SHA> explicitly to acknowledge a "
+            "shared commit (bundled-PR mode)."
+        )
+        response["warning"] = (
+            f"{existing_warning}\n{suffix}".strip()
+            if existing_warning
+            else suffix
+        )
+        response["sha_is_stale_duplicate"] = True
+    return response
+
+
+def backfill_subtask_ids(branch: str) -> dict:
+    """Populate the redundant ``subtask_id`` field on legacy subtask_results.
+
+    Older versions of record_subtask_result wrote entries without a
+    self-describing ``subtask_id`` field, so downstream reporters that
+    forward entries individually saw ``{"subtask_id": null, ...}``. This
+    helper walks step_state.json and writes the field for every entry
+    that's missing it (or has it set to null). Idempotent: entries
+    already carrying the correct id are left untouched.
+
+    Returns:
+        Dict with status, ``updated`` count, and the list of updated ids.
+    """
+    state_file = Path(f".map/{branch}/step_state.json")
+    if not state_file.exists():
+        return {
+            "status": "error",
+            "message": f"No step_state.json at {state_file}",
+        }
+    state = StepState.load(state_file)
+    updated: list[str] = []
+    for sid, entry in (state.subtask_results or {}).items():
+        if not isinstance(entry, dict):
+            continue
+        existing = entry.get("subtask_id")
+        if existing == sid:
+            continue
+        entry["subtask_id"] = sid
+        updated.append(sid)
+    if updated:
+        state.save(state_file)
+    return {
+        "status": "success",
+        "branch": branch,
+        "updated": len(updated),
+        "updated_ids": updated,
+    }
+
+
+def finalize_plan(branch: str) -> dict:
+    """Bump the artifact_manifest plan stage to "complete" when artifacts exist.
+
+    Closes the gap where /map-plan leaves stage=plan: partial in
+    artifact_manifest.json even after blueprint+task_plan+spec are written.
+    No-op safe: returns status="noop" if blueprint+task_plan aren't both
+    present.
+    """
+    plan_dir = Path(f".map/{branch}")
+    blueprint = plan_dir / "blueprint.json"
+    plan_file = plan_dir / f"task_plan_{branch}.md"
+    if not (blueprint.exists() and plan_file.exists()):
+        return {
+            "status": "noop",
+            "message": "blueprint.json + task_plan_<branch>.md required",
+        }
+    manifest_path = plan_dir / "artifact_manifest.json"
+    if not manifest_path.exists():
+        return {
+            "status": "noop",
+            "message": "artifact_manifest.json not found",
+        }
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        return {
+            "status": "error",
+            "message": f"unreadable artifact_manifest.json: {exc}",
+        }
+    stages = manifest.get("stages", {})
+    if not isinstance(stages, dict):
+        return {"status": "error", "message": "manifest.stages malformed"}
+    plan_stage = stages.get("plan")
+    if not isinstance(plan_stage, dict):
+        plan_stage = {}
+    plan_stage["status"] = "complete"
+    plan_stage["updated_at"] = _utc_timestamp()
+    stages["plan"] = plan_stage
+    manifest["stages"] = stages
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    return {"status": "success", "plan_stage": plan_stage}
+
+
+VALID_MARK_COMPLETE_KINDS = {
+    "done",
+    "noop",
+    "deferred",
+    "stub",
+    "prior_pr",
+}
+
+
+def mark_subtask_complete(
+    subtask_id: str,
+    branch: str,
+    reason: str = "no-op",
+    *,
+    kind: Optional[str] = None,
+) -> dict:
+    """Short-circuit a subtask as already-done without running its phases.
+
+    Use cases: a subtask whose intended change was already made historically
+    (rename done in a prior PR), a docs-only subtask that doesn't need the
+    research/actor/monitor cycle, or any other no-op detected up-front.
+
+    ``kind`` (added 2026-05-25) classifies the short-circuit so future
+    audits can tell intent apart. One of:
+      - ``done``: the work IS finished, just not via this workflow
+      - ``noop``: nothing to do (auto-detected no-op)
+      - ``deferred``: intentionally skipped for THIS iteration, expected
+        to come back later (stub placeholder)
+      - ``stub``: empty placeholder created during planning, expected to
+        be implemented in a follow-up subtask/PR
+      - ``prior_pr``: this work was completed in a prior PR (rename,
+        infra change already merged)
+    Default ``None`` falls back to ``noop`` for backward compatibility.
+
+    Effects:
+      - Records a synthetic subtask_result with status set to the kind
+        (``no-op``/``deferred``/``stub``/...) and the reason in summary,
+        so reports can group by intent.
+      - Marks subtask_phases[subtask_id] = "COMPLETE".
+      - Stores subtask_completion_reasons[subtask_id] = {kind, reason,
+        recorded_at} for audit.
+      - If subtask_id is the current subtask, advances to the next one and
+        resets pending_steps to the canonical start (2.2). When it was the
+        last subtask, transitions to WORKFLOW_COMPLETE atomically.
+
+    Refuses to operate on an unknown subtask_id to avoid silently corrupting
+    the sequence.
+    """
+    state_file = Path(f".map/{branch}/step_state.json")
+    if not state_file.exists():
+        return {
+            "status": "error",
+            "message": f"No step_state.json at {state_file}",
+        }
+
+    state = StepState.load(state_file)
+
+    if subtask_id not in state.subtask_sequence:
+        return {
+            "status": "error",
+            "message": (
+                f"Unknown subtask_id {subtask_id!r}. "
+                f"Known: {state.subtask_sequence}"
+            ),
+        }
+
+    # Normalize kind. Legacy callers pass no kind — keep backward
+    # compatibility by mapping to "noop".
+    normalized_kind = (kind or "noop").strip().lower()
+    if normalized_kind not in VALID_MARK_COMPLETE_KINDS:
+        return {
+            "status": "error",
+            "message": (
+                f"Invalid kind {kind!r}. Must be one of "
+                f"{sorted(VALID_MARK_COMPLETE_KINDS)}."
+            ),
+        }
+
+    # Status field on the synthetic entry: keep "no-op" for the legacy
+    # default so existing reporters that filter by status="no-op" don't
+    # break. For other kinds the explicit name is stored so groupings
+    # like "show me all deferred stubs" work without parsing the summary.
+    status_value = "no-op" if normalized_kind == "noop" else normalized_kind
+    state.record_subtask_result(
+        subtask_id,
+        files_changed=[],
+        status=status_value,
+        summary=f"Marked {normalized_kind} via mark_subtask_complete: {reason}",
+    )
+    state.subtask_phases[subtask_id] = "COMPLETE"
+    # Audit ledger lives outside subtask_results so reporters can render
+    # a "WHY was this short-circuited?" column without re-parsing summary
+    # text. Single source of truth for the (kind, reason) pair.
+    if not isinstance(
+        getattr(state, "subtask_completion_reasons", None), dict
+    ):
+        state.subtask_completion_reasons = {}  # type: ignore[attr-defined]
+    state.subtask_completion_reasons[subtask_id] = {  # type: ignore[attr-defined]
+        "kind": normalized_kind,
+        "reason": reason,
+        "recorded_at": _utc_timestamp(),
+    }
+
+    advanced = False
+    closed = False
+    if state.current_subtask_id == subtask_id:
+        if state.subtask_index + 1 < len(state.subtask_sequence):
+            state.subtask_index += 1
+            state.current_subtask_id = state.subtask_sequence[state.subtask_index]
+            state.current_step_id = "2.2"
+            state.current_step_phase = "RESEARCH"
+            step_order = _get_step_order(state.tdd_mode)
+            research_idx = step_order.index("2.2")
+            state.pending_steps = step_order[research_idx:]
+            state.completed_steps = []
+            state.skipped_steps = []
+            state.retry_count = 0
+            advanced = True
+        else:
+            state.pending_steps = []
+            state.workflow_status = "WORKFLOW_COMPLETE"
+            state.current_step_id = "COMPLETE"
+            state.current_step_phase = "COMPLETE"
+            state.completed_at = _utc_timestamp()
+            closed = True
+
+    state.save(state_file)
+
+    return {
+        "status": "success",
+        "subtask_id": subtask_id,
+        "reason": reason,
+        "kind": normalized_kind,
+        "advanced_to": state.current_subtask_id if advanced else None,
+        "workflow_complete": closed,
+    }
+
+
 def _is_workflow_complete(state: "StepState") -> bool:
     """Return True if any canonical completion signal is set.
 
-    The canonical signal is ``workflow_status == "WORKFLOW_COMPLETE"`` (set by
-    ``mark_workflow_complete``). The two fallbacks accept legacy state files
+    The canonical signal is ``workflow_status == "WORKFLOW_COMPLETE"`` (set
+    by ``mark_workflow_complete``). The fallbacks accept legacy state files
     that were marked complete via partial mutations (e.g., the historical
-    ``jq`` line in ``map-check`` that bypassed this API).
+    ``jq`` line in ``map-check`` that bypassed this API) AND — added 2026-05-25
+    — the case where every subtask in ``subtask_sequence`` has a corresponding
+    entry in ``subtask_results``. Truthiness used to be cursor-only, so a
+    stuck cursor (ST-033 case) made write_run_health_report report ``pending``
+    even when 51/51 entries were already recorded.
     """
-    return (
+    if (
         state.workflow_status == "WORKFLOW_COMPLETE"
         or state.current_step_id == "COMPLETE"
         or state.current_step_phase == "COMPLETE"
-    )
+    ):
+        return True
+    sequence = state.subtask_sequence or []
+    if not sequence:
+        return False
+    completed = _completed_subtask_ids_for_deps(state)
+    return all(sid in completed for sid in sequence)
 
 
 def reopen_for_fixes(branch: str, feedback: str = "") -> dict:
@@ -1610,15 +2625,110 @@ def check_circuit_breaker(branch: str) -> dict:
     }
 
 
+def _load_blueprint_deps(branch: str) -> dict[str, list[str]]:
+    """Return {subtask_id: [dep_ids]} from blueprint.json, or empty if absent.
+
+    Tolerates both the flat blueprint shape (subtasks at top level) and the
+    decomposer's nested shape (subtasks under blueprint.subtasks). Returns
+    empty dict on any read/parse failure — callers fall back to caller-
+    provided order (no deps known means no topology to enforce).
+    """
+    bp_path = Path(f".map/{branch}/blueprint.json")
+    if not bp_path.exists():
+        return {}
+    try:
+        payload = json.loads(bp_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    body = payload.get("blueprint") if isinstance(payload.get("blueprint"), dict) else payload
+    subtasks = body.get("subtasks") if isinstance(body, dict) else None
+    deps: dict[str, list[str]] = {}
+    if not isinstance(subtasks, list):
+        return deps
+    for st in subtasks:
+        if not isinstance(st, dict):
+            continue
+        sid = st.get("id")
+        if not isinstance(sid, str):
+            continue
+        raw = st.get("dependencies", [])
+        if isinstance(raw, list):
+            deps[sid] = [d for d in raw if isinstance(d, str)]
+        else:
+            deps[sid] = []
+    return deps
+
+
+def _topological_sort_subtasks(
+    subtask_ids: list[str], deps_map: dict[str, list[str]]
+) -> tuple[Optional[list[str]], Optional[str]]:
+    """Stable topological sort of subtask_ids honoring deps_map.
+
+    Stability: when multiple nodes are simultaneously ready (no remaining
+    deps), they emerge in the order they appear in ``subtask_ids``. So a
+    decomposer that already wrote subtasks in correct order gets a
+    no-op pass; only forward-dep violations move.
+
+    Returns ``(sorted_ids, None)`` on success, or ``(None, cycle_reason)``
+    when the graph contains a cycle.
+
+    deps that reference subtasks NOT in ``subtask_ids`` are ignored — the
+    blueprint contract validator already rejects unknown deps, so this
+    function should never see them in normal flow, but it must not crash
+    in pathological cases (e.g., blueprint mid-write).
+    """
+    known = set(subtask_ids)
+    # Filter deps to in-set only and pre-compute incoming-edge counts.
+    incoming: dict[str, int] = {sid: 0 for sid in subtask_ids}
+    children: dict[str, list[str]] = {sid: [] for sid in subtask_ids}
+    for sid in subtask_ids:
+        for dep in deps_map.get(sid, []):
+            if dep in known and dep != sid:
+                incoming[sid] += 1
+                children[dep].append(sid)
+
+    # Kahn's algorithm with stable iteration in original input order so a
+    # decomposer that already wrote subtasks correctly sees no reorder.
+    ready: list[str] = [sid for sid in subtask_ids if incoming[sid] == 0]
+    sorted_ids: list[str] = []
+    emitted: set[str] = set()
+    while ready:
+        # Emit in input order (stable). Pop the smallest-index ready node.
+        ready.sort(key=lambda s: subtask_ids.index(s))
+        node = ready.pop(0)
+        sorted_ids.append(node)
+        emitted.add(node)
+        for child in children[node]:
+            incoming[child] -= 1
+            if incoming[child] == 0:
+                ready.append(child)
+
+    if len(sorted_ids) != len(subtask_ids):
+        unresolved = [sid for sid in subtask_ids if sid not in emitted]
+        return None, f"dependency cycle involving: {unresolved}"
+    return sorted_ids, None
+
+
 def set_subtasks(subtask_ids: list[str], branch: str) -> dict:
     """Set subtask sequence after decomposition and select the first subtask.
+
+    Topological invariant (added 2026-05-24): if a blueprint.json exists in
+    .map/<branch>/, its declared dependencies are honored — ``subtask_ids``
+    is stably topologically sorted so deps always precede their dependents.
+    The user-facing friction this addresses: decomposer occasionally emits
+    ST-012 with deps=[ST-027]; the linear walker hit ST-012 long before
+    ST-027 finished, producing a deadlock the operator had to break by
+    hand. Now the sequence is corrected at induction time. If a cycle is
+    detected, set_subtasks returns ``status=error`` rather than persisting
+    a broken sequence.
 
     Args:
         subtask_ids: List of subtask IDs (e.g., ["ST-001", "ST-002", "ST-003"])
         branch: Git branch name (sanitized)
 
     Returns:
-        Dict with status and subtask info
+        Dict with status, subtask info, and an optional ``reordered`` flag
+        when the input order had to be permuted to satisfy deps.
     """
     state_file = Path(f".map/{branch}/step_state.json")
     state = StepState.load(state_file)
@@ -1626,16 +2736,36 @@ def set_subtasks(subtask_ids: list[str], branch: str) -> dict:
     if not subtask_ids:
         return {"status": "error", "message": "At least one subtask ID is required"}
 
+    deps_map = _load_blueprint_deps(branch)
+    reordered = False
+    original = list(subtask_ids)
+    if deps_map:
+        sorted_ids, cycle = _topological_sort_subtasks(subtask_ids, deps_map)
+        if sorted_ids is None:
+            return {
+                "status": "error",
+                "message": (
+                    "Cannot set subtask sequence: " + (cycle or "unknown topology error")
+                ),
+            }
+        if sorted_ids != original:
+            reordered = True
+        subtask_ids = sorted_ids
+
     state.subtask_sequence = subtask_ids
     state.current_subtask_id = subtask_ids[0]
     state.subtask_index = 0
     state.save(state_file)
 
-    return {
+    response: dict[str, object] = {
         "status": "success",
         "subtask_sequence": subtask_ids,
         "current_subtask_id": subtask_ids[0],
     }
+    if reordered:
+        response["reordered"] = True
+        response["original_sequence"] = original
+    return response
 
 
 def _contract_artifact_paths(branch: str, subtask_id: str) -> tuple[Path, Path]:
@@ -1849,6 +2979,18 @@ def resume_from_plan(branch: str) -> dict:
     )
     state.save(state_file)
 
+    # Auto-compute execution waves so /map-efficient doesn't have to dispatch
+    # set_waves manually after every resume. Best-effort: missing or invalid
+    # blueprint just leaves execution_waves empty; the sequential fallback in
+    # get_next_step / get_wave_step still works.
+    waves_status: str = "skipped"
+    if blueprint_file.exists():
+        try:
+            wave_result = set_waves(branch)
+            waves_status = wave_result.get("status", "error")
+        except Exception:  # noqa: BLE001
+            waves_status = "error"
+
     briefing = get_resume_briefing(branch)
 
     return {
@@ -1858,6 +3000,7 @@ def resume_from_plan(branch: str) -> dict:
         "current_subtask_id": subtask_ids[0],
         "aag_contracts_found": len(aag_contracts),
         "next_phase": "INIT_STATE",
+        "waves_computed": waves_status,
         "resume_briefing": briefing,
     }
 
@@ -2070,6 +3213,7 @@ def main():
         "command",
         choices=[
             "get_next_step",
+            "peek_current_step",
             "validate_step",
             "initialize",
             "set_plan_approved",
@@ -2091,6 +3235,10 @@ def main():
             "wave_monitor_failed",
             "reopen_for_fixes",
             "mark_workflow_complete",
+            "mark_subtask_complete",
+            "record_subtask_result",
+            "backfill_subtask_ids",
+            "finalize_plan",
         ],
         help="Command to execute",
     )
@@ -2112,6 +3260,60 @@ def main():
         help="Monitor feedback text (for monitor_failed / wave_monitor_failed)",
     )
     parser.add_argument(
+        "--reason",
+        help="Free-form reason (e.g. for mark_subtask_complete no-op records)",
+    )
+    parser.add_argument(
+        "--files",
+        help="Comma-separated list of files (for record_subtask_result)",
+    )
+    parser.add_argument(
+        "--summary",
+        help="One-line summary (for record_subtask_result)",
+    )
+    parser.add_argument(
+        "--commit-sha",
+        dest="commit_sha",
+        help="Commit SHA (for record_subtask_result)",
+    )
+    parser.add_argument(
+        "--recommendation",
+        help=(
+            "Monitor recommendation (for validate_step 2.4). Values "
+            "revise|block|needs_investigation make validate_step return "
+            "valid=false even when the step would otherwise close. "
+            "Closes the 'Monitor says needs_revision but skill called "
+            "validate_step without surfacing it' footgun. Optional — "
+            "back-compat callers that omit it get legacy behavior."
+        ),
+    )
+    parser.add_argument(
+        "--monitor-envelope",
+        dest="monitor_envelope",
+        help=(
+            "Path to Monitor's JSON response (for validate_step 2.4). "
+            "When provided, the orchestrator validates the envelope "
+            "(parses as JSON, has valid/summary/issues, ends with `}`) "
+            "before closing the step. Use `-` to read from stdin."
+        ),
+    )
+    parser.add_argument(
+        "--kind",
+        help=(
+            "Subtask completion kind (for mark_subtask_complete): one of "
+            "done|noop|deferred|stub|prior_pr. Default noop preserves "
+            "backward compatibility with callers that don't pass it."
+        ),
+    )
+    parser.add_argument(
+        "--mechanical",
+        action="store_true",
+        help=(
+            "Shorthand for mark_subtask_complete deterministic-edit "
+            "short-circuit (skip research-agent for trivial subtasks)."
+        ),
+    )
+    parser.add_argument(
         "--transcript-path",
         default=os.environ.get("MAPIFY_TRANSCRIPT_PATH"),
         help=(
@@ -2130,7 +3332,32 @@ def main():
     # invoked. Without this chdir, an absolute-path call from a different cwd
     # silently reads ``.map/<branch>/`` from the caller's directory and
     # returns misleading "step mismatch" errors.
-    os.chdir(Path(__file__).resolve().parents[2])
+    script_anchored_root = Path(__file__).resolve().parents[2]
+    os.chdir(script_anchored_root)
+
+    # Project-root sanity check: if CLAUDE_PROJECT_DIR is set and points
+    # somewhere other than the script-anchored root, the user almost
+    # certainly invoked the WRONG project's orchestrator. Common failure
+    # mode: `cd /tmp/sibling-repo && python3 .map/scripts/map_orchestrator.py`
+    # silently reads sibling-repo's state instead of the project the
+    # operator's session is bound to. We warn (to stderr, never block),
+    # so the deviation is loud but not fatal — the operator may have a
+    # legitimate reason.
+    env_project_dir = os.environ.get("CLAUDE_PROJECT_DIR", "").strip()
+    if env_project_dir:
+        try:
+            env_resolved = Path(env_project_dir).resolve()
+        except OSError:
+            env_resolved = None
+        if env_resolved and env_resolved != script_anchored_root:
+            print(
+                f"WARNING: orchestrator project mismatch. "
+                f"CLAUDE_PROJECT_DIR={env_resolved} but this script lives at "
+                f"{script_anchored_root}. Reading state from "
+                f"{script_anchored_root}/.map/ — if you meant the other "
+                "project, run that project's .map/scripts/map_orchestrator.py.",
+                file=sys.stderr,
+            )
 
     # Get branch. ``--branch`` arrives unsanitized from the CLI; route it
     # through the same sanitiser used by ``get_branch_name()`` so the value
@@ -2149,6 +3376,10 @@ def main():
             result = get_next_step(branch)
             print(json.dumps(result, indent=2))
 
+        elif args.command == "peek_current_step":
+            result = peek_current_step(branch)
+            print(json.dumps(result, indent=2))
+
         elif args.command == "validate_step":
             if not args.task_or_step:
                 print(
@@ -2156,7 +3387,48 @@ def main():
                     file=sys.stderr,
                 )
                 sys.exit(1)
-            result = validate_step(args.task_or_step, branch)
+            # `--recommendation <verdict>` enforces the Monitor verdict
+            # contract on the 2.4 close: revise/block/needs_investigation
+            # makes validate_step fail. Registered as a real argparse
+            # option above so `--recommendation proceed` is no longer
+            # rejected with "unrecognized arguments" (regression: the
+            # earlier extras-scan implementation was bypassed by
+            # argparse's strict-mode rejection of unknown -- flags).
+            # We also accept the legacy extras placement for backward
+            # compat with callers stuck on the old scrape pattern.
+            recommendation_arg: Optional[str] = args.recommendation
+            if recommendation_arg is None:
+                extras = list(args.extra_args or [])
+                if "--recommendation" in extras:
+                    rec_idx = extras.index("--recommendation")
+                    if rec_idx + 1 < len(extras):
+                        recommendation_arg = extras[rec_idx + 1]
+            # --monitor-envelope <path>: validate the envelope before
+            # closing 2.4. Path "-" reads from stdin so shell pipelines
+            # can stream Monitor's response without an intermediate file.
+            monitor_envelope_text: Optional[str] = None
+            if args.monitor_envelope:
+                if args.monitor_envelope == "-":
+                    monitor_envelope_text = sys.stdin.read()
+                else:
+                    try:
+                        monitor_envelope_text = Path(args.monitor_envelope).read_text(
+                            encoding="utf-8"
+                        )
+                    except OSError as exc:
+                        print(
+                            json.dumps({
+                                "error": f"--monitor-envelope read failed: {exc}",
+                            }),
+                            file=sys.stderr,
+                        )
+                        sys.exit(1)
+            result = validate_step(
+                args.task_or_step,
+                branch,
+                recommendation=recommendation_arg,
+                monitor_envelope=monitor_envelope_text,
+            )
             print(json.dumps(result, indent=2))
 
         elif args.command == "initialize":
@@ -2340,6 +3612,96 @@ def main():
 
         elif args.command == "mark_workflow_complete":
             result = mark_workflow_complete(branch)
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "mark_subtask_complete":
+            if not args.task_or_step:
+                print(
+                    json.dumps({"error": "subtask_id required for mark_subtask_complete"}),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            # `--mechanical` is shorthand for a deterministic short-circuit
+            # without the full research→actor→monitor cycle for trivial
+            # subtasks (DB schema bump, dependency pin, etc.) where deep
+            # research is overhead. The reason text auto-flags the path
+            # for audit.
+            # Real argparse options take precedence over the legacy
+            # extras-scan (same reason as --recommendation above:
+            # extras-scan never sees -- flags in argparse strict mode).
+            extra = list(args.extra_args or [])
+            mechanical = bool(args.mechanical) or ("--mechanical" in extra)
+            # `--kind <done|noop|deferred|stub|prior_pr>` classifies the
+            # short-circuit so audits can group by intent. Default falls
+            # back to noop for backward compat with existing callers.
+            kind_arg: Optional[str] = args.kind
+            if kind_arg is None and "--kind" in extra:
+                kind_idx = extra.index("--kind")
+                if kind_idx + 1 < len(extra):
+                    kind_arg = extra[kind_idx + 1]
+            if args.reason:
+                reason = args.reason
+            elif mechanical:
+                reason = (
+                    "mechanical subtask short-circuit (skip research-agent): "
+                    "deterministic edit, no design surface to explore"
+                )
+            else:
+                reason = "no-op"
+            result = mark_subtask_complete(
+                args.task_or_step, branch, reason, kind=kind_arg
+            )
+            if mechanical:
+                result["mechanical"] = True
+            print(json.dumps(result, indent=2))
+            if isinstance(result, dict) and result.get("status") == "error":
+                sys.exit(1)
+
+        elif args.command == "record_subtask_result":
+            # CLI: record_subtask_result <ST-ID> <status> [--files a.py,b.py]
+            # [--summary "..."] [--commit-sha SHA]
+            if not args.task_or_step:
+                print(
+                    json.dumps({"error": "subtask_id required"}),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            extra_args = list(args.extra_args or [])
+            if not extra_args:
+                print(
+                    json.dumps({"error": "status required (valid|invalid|no-op)"}),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            status_value = extra_args[0]
+            # Accept BOTH "--files a.py,b.py" (legacy/documented) AND
+            # "--files 'a.py b.py'" (intuitive). The space form was a
+            # silent footgun: pre-2026-05-26 the whole string was
+            # treated as one path, producing "file does not exist"
+            # warnings on every multi-file subtask whose operator
+            # forgot the comma syntax.
+            files_list = []
+            if args.files:
+                for chunk in re.split(r"[,\s]+", args.files):
+                    chunk = chunk.strip()
+                    if chunk:
+                        files_list.append(chunk)
+            result = record_subtask_result(
+                args.task_or_step,
+                branch,
+                files_changed=files_list,
+                status=status_value,
+                summary=args.summary or "",
+                commit_sha=args.commit_sha,
+            )
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "backfill_subtask_ids":
+            result = backfill_subtask_ids(branch)
+            print(json.dumps(result, indent=2))
+
+        elif args.command == "finalize_plan":
+            result = finalize_plan(branch)
             print(json.dumps(result, indent=2))
 
     except Exception as e:

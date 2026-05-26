@@ -120,7 +120,9 @@ agent (out of scope for this plan; document as follow-up).
 
 In `src/mapify_cli/__init__.py`, extend the `init` command with:
 
-- `--compression {auto,never,aggressive}` (default: `auto`)
+- `--compression {auto,never,aggressive}` (default: `never` — opt-in only;
+  the original plan shipped `auto` but unsolicited nudges on long
+  workflows hurt UX, so the default was flipped 2026-05-24)
 - `--compression-threshold INT` (default: `120000`)
 
 Both are written into `.map/config.yaml` at init time.

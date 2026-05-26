@@ -35,6 +35,7 @@ import random
 import re
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Mapping, Optional, cast
@@ -122,6 +123,7 @@ DIFF_SIZE_LEVELS = {"tiny", "small", "medium", "large"}
 SUBTASK_CONCERN_TYPES = {
     "api",
     "config",
+    "cross-repo",
     "data",
     "docs",
     "infra",
@@ -139,9 +141,6 @@ REVIEW_SECTION_IDS: tuple[str, ...] = ("architecture", "code_quality", "tests", 
 REVIEW_VALID_MODES: tuple[str, ...] = ("default", "reverse-sections", "shuffle-sections")
 LEARNING_IMMEDIATE_WINDOW_SECONDS = 30 * 60
 ACCEPTANCE_TAG_RE = re.compile(r"\[([A-Za-z][A-Za-z0-9_-]*-\d+[A-Za-z0-9_-]*)\]")
-CONTEXT_BLOCK_DEFAULT_BUDGET_TOKENS = 4_000
-CONTEXT_BLOCK_MIN_BUDGET_TOKENS = 128
-CONTEXT_BLOCK_BUDGET_ENV = "MAP_CONTEXT_BLOCK_BUDGET_TOKENS"
 REVIEW_PROMPT_DEFAULT_BUDGET_TOKENS = 12_000
 REVIEW_PROMPT_MIN_BUDGET_TOKENS = 1_024
 REVIEW_PROMPT_BUDGET_ENV = "MAP_REVIEW_PROMPT_BUDGET_TOKENS"
@@ -149,37 +148,12 @@ TOKEN_BUDGET_ARTIFACT_NAME = "token_budget.json"
 TOKEN_BUDGET_DECISION_LIMIT = 100
 RETRY_QUARANTINE_ARTIFACT_NAME = "retry_quarantine.json"
 
-try:
-    from mapify_cli.token_budget import (
-        estimate_tokens as _estimate_tokens,
-        truncate_to_token_budget as _truncate_to_token_budget,
-    )
-except ImportError:
-    ESTIMATED_CHARS_PER_TOKEN = 4
-
-    def _estimate_tokens(text: str) -> int:
-        if not text:
-            return 0
-        return max(
-            1,
-            (len(text) + ESTIMATED_CHARS_PER_TOKEN - 1) // ESTIMATED_CHARS_PER_TOKEN,
-        )
-
-    def _truncate_to_token_budget(
-        text: str, budget_tokens: int, suffix: str = "..."
-    ) -> str:
-        if budget_tokens <= 0 or not text:
-            return ""
-        if _estimate_tokens(text) <= budget_tokens:
-            return text
-        char_limit = budget_tokens * ESTIMATED_CHARS_PER_TOKEN
-        if char_limit <= len(suffix):
-            return suffix[:char_limit]
-        cut = text[: char_limit - len(suffix)].rstrip()
-        last_space = cut.rfind(" ")
-        if last_space > len(cut) // 2:
-            cut = cut[:last_space].rstrip()
-        return cut + suffix
+# Truncation infrastructure deleted by user directive ("убери транкейт уже
+# вообще"). build_context_block / _budget_review_prompt now emit raw text;
+# operators handle context size via /compact opt-in. The mapify_cli
+# token_budget module is no longer imported here — review-prompt budget
+# constants remain only because record_token_budget_decision is still
+# exposed for callers that want their own accounting.
 
 LEARNING_METRICS_COUNTER_DEFAULTS = {
     "handoff_generated_count": 0,
@@ -1417,7 +1391,11 @@ def record_plan_artifacts(branch: Optional[str] = None) -> dict[str, object]:
     if step_state_path.exists():
         plan_artifacts.append(_artifact_ref(step_state_path, "step-state"))
 
-    if task_plan_path.exists() and blueprint_path.exists() and step_state_path.exists():
+    # /map-plan deliberately stops BEFORE INIT_STATE writes step_state.json
+    # — that step belongs to /map-efficient. So "plan complete" means
+    # blueprint + task_plan are both present, regardless of step_state.
+    # Only flag "partial" when one of those is missing.
+    if task_plan_path.exists() and blueprint_path.exists():
         plan_status = "ready"
     elif plan_artifacts:
         plan_status = "partial"
@@ -1497,41 +1475,62 @@ def validate_blueprint_contract(
         errors.append("soft_constraints is required and must be an array")
         soft_constraints = []
 
+    # Constraints accept either `description` or `text` (some decomposer
+    # agent generations use `text`); both fields are read with the same
+    # meaning so the contract stops rejecting valid blueprints on a naming
+    # mismatch alone.
+    def _constraint_body(c: dict) -> str:
+        for key in ("description", "text"):
+            v = c.get(key)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        return ""
+
     hard_constraint_ids: list[str] = []
     for index, constraint in enumerate(hard_constraints):
         label = f"hard_constraints[{index}]"
         if not isinstance(constraint, dict):
-            errors.append(f"{label}: must be an object with id and description")
+            errors.append(f"{label}: must be an object with id and description (or text)")
             continue
         constraint_id = str(constraint.get("id") or "").strip()
-        description = str(constraint.get("description") or "").strip()
+        description = _constraint_body(constraint)
         if not constraint_id:
             errors.append(f"{label}: missing id")
             continue
         if not description:
-            errors.append(f"{label}: missing description")
+            errors.append(f"{label}: missing description (or text)")
         hard_constraint_ids.append(constraint_id)
 
     for index, constraint in enumerate(soft_constraints):
         label = f"soft_constraints[{index}]"
         if not isinstance(constraint, dict):
-            errors.append(f"{label}: must be an object with id and description")
+            errors.append(f"{label}: must be an object with id and description (or text)")
             continue
         constraint_id = str(constraint.get("id") or "").strip()
-        description = str(constraint.get("description") or "").strip()
+        description = _constraint_body(constraint)
         if not constraint_id:
             errors.append(f"{label}: missing id")
             continue
         if not description:
-            errors.append(f"{label}: missing description")
+            errors.append(f"{label}: missing description (or text)")
 
     subtask_id_counts: dict[str, int] = {}
-    for subtask in subtasks:
+    # Position map: declaration order of each subtask id in the blueprint's
+    # `subtasks[]` array. Used to enforce the topological invariant — a
+    # subtask may only depend on subtasks declared BEFORE it. Without this
+    # check, a blueprint like ST-012 deps=[ST-027] passes the existing
+    # "dep exists" guard but the runtime walker hits ST-012 long before
+    # ST-027 is finished, producing a deadlock.
+    subtask_position: dict[str, int] = {}
+    for index, subtask in enumerate(subtasks):
         if not isinstance(subtask, dict):
             continue
         raw_subtask_id = subtask.get("id")
         if isinstance(raw_subtask_id, str) and re.fullmatch(r"ST-\d{3,}", raw_subtask_id):
             subtask_id_counts[raw_subtask_id] = subtask_id_counts.get(raw_subtask_id, 0) + 1
+            # First occurrence wins for position (duplicates already flagged
+            # below — position is a topology signal, not a dedup signal).
+            subtask_position.setdefault(raw_subtask_id, index)
 
     subtask_ids = set(subtask_id_counts)
     duplicate_subtask_ids = {
@@ -1539,6 +1538,7 @@ def validate_blueprint_contract(
     }
     oversized_subtasks: list[str] = []
     mixed_concern_subtasks: list[str] = []
+    forward_dep_violations: list[str] = []
 
     for index, subtask in enumerate(subtasks):
         label = f"subtasks[{index}]"
@@ -1564,8 +1564,32 @@ def validate_blueprint_contract(
             for dependency in dependencies:
                 if not isinstance(dependency, str) or not re.fullmatch(r"ST-\d{3,}", dependency):
                     errors.append(f"{label}: dependency {dependency!r} must match ST-NNN")
-                elif dependency not in subtask_ids:
+                    continue
+                if dependency not in subtask_ids:
                     errors.append(f"{label}: dependency {dependency!r} points to unknown subtask")
+                    continue
+                # Self-dependency is a contract violation (subtask cannot
+                # block on its own completion).
+                if dependency == subtask_id:
+                    errors.append(
+                        f"{label}: dependency {dependency!r} is a self-reference"
+                    )
+                    continue
+                # Topological invariant: dep must be declared earlier than
+                # the dependent. Catches ST-012 deps=[ST-027] before the
+                # runtime walker ever sees the blueprint.
+                dep_pos = subtask_position.get(dependency)
+                self_pos = subtask_position.get(subtask_id, index)
+                if dep_pos is not None and dep_pos >= self_pos:
+                    errors.append(
+                        f"{label}: forward dependency on {dependency!r} (declared at "
+                        f"subtasks[{dep_pos}] but {label} is at subtasks[{self_pos}]); "
+                        "dependencies must reference only subtasks declared earlier — "
+                        "reorder subtasks[] so deps come first"
+                    )
+                    forward_dep_violations.append(
+                        f"{subtask_id}->{dependency}"
+                    )
 
         expected_diff_size = str(subtask.get("expected_diff_size") or "").strip().lower()
         concern_type = str(subtask.get("concern_type") or "").strip().lower()
@@ -1581,7 +1605,10 @@ def validate_blueprint_contract(
                 errors.append(
                     f"{label}: large subtasks require split_rationale or must be decomposed"
                 )
-            oversized_subtasks.append(subtask_id)
+                # Only flag in `oversized_subtasks` when there's no
+                # rationale — a large subtask WITH split_rationale is an
+                # acknowledged design choice, not a flag for the operator.
+                oversized_subtasks.append(subtask_id)
 
         if concern_type not in SUBTASK_CONCERN_TYPES:
             errors.append(
@@ -1593,7 +1620,9 @@ def validate_blueprint_contract(
                 errors.append(
                     f"{label}: mixed concern_type requires concern_justification"
                 )
-            mixed_concern_subtasks.append(subtask_id)
+                # Same treatment: explicitly justified mixed concerns are
+                # acknowledged, not surfaced as flags.
+                mixed_concern_subtasks.append(subtask_id)
 
         one_logical_step = subtask.get("one_logical_step")
         if one_logical_step is not True:
@@ -1609,15 +1638,102 @@ def validate_blueprint_contract(
         ):
             errors.append(f"{label}: validation_criteria items must be non-empty strings")
         elif len(validation_criteria) > 6:
-            warnings.append(
-                f"{label}: has {len(validation_criteria)} validation criteria; consider splitting if ownership is unclear"
-            )
+            # Suppress the "consider splitting" hint when split_rationale is
+            # present — the author already justified the size. Same logic
+            # for affected_files >8: an explicit split_rationale acks scope.
+            split_rationale = str(subtask.get("split_rationale") or "").strip()
+            if not split_rationale:
+                warnings.append(
+                    f"{label}: has {len(validation_criteria)} validation criteria; "
+                    "consider splitting if ownership is unclear "
+                    "(or add split_rationale to ack the size)"
+                )
 
         affected_files = subtask.get("affected_files")
         if isinstance(affected_files, list) and len(affected_files) > 8:
-            warnings.append(
-                f"{label}: touches {len(affected_files)} files; verify this is still one reviewable concern"
-            )
+            split_rationale = str(subtask.get("split_rationale") or "").strip()
+            if not split_rationale:
+                warnings.append(
+                    f"{label}: touches {len(affected_files)} files; verify this is still one "
+                    "reviewable concern (or add split_rationale to ack the size)"
+                )
+
+        # affected_files drift check: warn when EVERY declared path is
+        # missing from disk (decomposer hallucinated names that don't
+        # exist anywhere — the canonical friction was ST-016 pointing at
+        # services/sourcecraft.py when the actual class lives in
+        # sourcecraft_publisher.py). Path is resolved against
+        # CLAUDE_PROJECT_DIR / cwd. Files that don't yet exist for a
+        # "create new file" subtask are common, so this is intentionally
+        # warn-only and only triggers when ALL listed paths are missing
+        # AND at least one path is declared (empty affected_files is the
+        # decomposer's "no claim" signal and gets its own treatment in
+        # the file-conflict checker).
+        if isinstance(affected_files, list) and affected_files:
+            string_files = [p for p in affected_files if isinstance(p, str) and p.strip()]
+            if string_files:
+                project_root_check = Path(
+                    os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())
+                )
+                project_root_resolved = project_root_check.resolve()
+                # Cross-repo detection (computed FIRST so drift can dedup
+                # against it): any path that resolves OUTSIDE the project
+                # root (e.g. ``../LLM-memory/...``) means this subtask
+                # plans to mutate a sibling repo. MAP gates can't cover
+                # sibling repos.
+                cross_repo_paths: list[str] = []
+                for p in string_files:
+                    try:
+                        resolved = (project_root_check / p).resolve()
+                    except (OSError, RuntimeError):
+                        continue
+                    try:
+                        resolved.relative_to(project_root_resolved)
+                    except ValueError:
+                        cross_repo_paths.append(p)
+                if cross_repo_paths:
+                    warnings.append(
+                        f"{label}: cross-repo affected_files detected — "
+                        f"{cross_repo_paths!r} resolve outside the project root "
+                        f"({project_root_resolved}). MAP gates (workflow-gate, "
+                        "validate_mutation_boundary, hooks) do NOT cover sibling "
+                        "repos. Either split the subtask into a sibling-repo "
+                        "follow-up (recommended) or document the cross-repo "
+                        "intent in the subtask description and acknowledge that "
+                        "MAP cannot verify the change."
+                    )
+                # Drift detection: warn ONLY when every declared path is
+                # both (a) missing on disk AND (b) not a cross-repo path
+                # AND (c) not flagged as a new-file creation by the
+                # subtask description. Without these guards the drift
+                # warning fired for legitimate cases (new file, sibling
+                # repo) and degraded into noise.
+                cross_repo_set = set(cross_repo_paths)
+                local_files = [p for p in string_files if p not in cross_repo_set]
+                description_text = subtask.get("description") or ""
+                description_str = (
+                    description_text
+                    if isinstance(description_text, str)
+                    else ""
+                ).lower()
+                creates_new = bool(
+                    re.search(r"\b(creates? new|new file|introduces?|adds? new)\b", description_str)
+                )
+                if local_files:
+                    missing_local = [
+                        p for p in local_files
+                        if not (project_root_check / p).exists()
+                    ]
+                    if missing_local == local_files and not creates_new:
+                        warnings.append(
+                            f"{label}: affected_files drift — none of "
+                            f"{local_files!r} exist under {project_root_check}; "
+                            "verify the decomposer didn't hallucinate file names. "
+                            "If this subtask CREATES the files from scratch, mark "
+                            "that in the subtask description (phrases: "
+                            "'creates new', 'new file', 'introduces', 'adds new') "
+                            "to silence this warning."
+                        )
 
     coverage_map = payload.get("coverage_map") or blueprint_body.get("coverage_map")
     if not isinstance(coverage_map, dict) or not coverage_map:
@@ -1638,9 +1754,18 @@ def validate_blueprint_contract(
                 continue
             tradeoff_rationale = str(constraint.get("tradeoff_rationale") or "").strip()
             if not tradeoff_rationale:
+                # Forward-disclose the full requirement set so the user
+                # doesn't have to round-trip the validator twice (first
+                # error: "needs coverage_map OR rationale"; second
+                # error after coverage_map fix: "owner VC must cite
+                # [SC-N]"). Mention both branches up front.
                 errors.append(
-                    f"soft_constraints requirement {constraint_id!r} must either appear in coverage_map "
-                    "or include tradeoff_rationale"
+                    f"soft_constraints requirement {constraint_id!r} must either: "
+                    "(a) include tradeoff_rationale (silences both this check and "
+                    f"the [{constraint_id}] bracket-tag requirement), OR "
+                    f"(b) appear in coverage_map mapped to an ST-NNN AND that "
+                    f"subtask's validation_criteria must cite [{constraint_id}] "
+                    "as a bracket tag — path (b) is two requirements, not one"
                 )
 
         requirement_owners: dict[str, list[str]] = {}
@@ -1688,6 +1813,7 @@ def validate_blueprint_contract(
         "subtask_count": len(subtasks),
         "oversized_subtasks": oversized_subtasks,
         "mixed_concern_subtasks": mixed_concern_subtasks,
+        "forward_dep_violations": forward_dep_violations,
     }
 
 
@@ -2081,6 +2207,50 @@ def _as_int(value: object) -> int:
         return 0
 
 
+_DONE_RESULT_STATUSES_FOR_COMPLETION = {
+    "valid",
+    "completed",
+    "done",
+    "skipped",
+    "no-op",
+}
+_DONE_PHASE_STATUSES_FOR_COMPLETION = {
+    "completed",
+    "skipped",
+    "no-op",
+    "complete",
+}
+
+
+def _state_subtask_coverage_complete(state: dict[str, object]) -> bool:
+    """Return True iff every subtask in subtask_sequence has a "done"-class
+    signal recorded (subtask_results entry OR subtask_phases marker).
+
+    Mirrors the orchestrator's _completed_subtask_ids_for_deps logic. Used
+    by _derive_terminal_status so a stuck cursor (ST-033 friction) no
+    longer makes write_run_health_report report ``pending`` when 51/51
+    entries actually exist.
+    """
+    sequence_value = state.get("subtask_sequence")
+    if not isinstance(sequence_value, list) or not sequence_value:
+        return False
+    results_value = state.get("subtask_results")
+    results = results_value if isinstance(results_value, dict) else {}
+    phases_value = state.get("subtask_phases")
+    phases = phases_value if isinstance(phases_value, dict) else {}
+    completed: set[str] = set()
+    for sid, entry in results.items():
+        if not isinstance(sid, str) or not isinstance(entry, dict):
+            continue
+        status = entry.get("status")
+        if not isinstance(status, str) or status.lower() in _DONE_RESULT_STATUSES_FOR_COMPLETION:
+            completed.add(sid)
+    for sid, phase in phases.items():
+        if isinstance(sid, str) and isinstance(phase, str) and phase.lower() in _DONE_PHASE_STATUSES_FOR_COMPLETION:
+            completed.add(sid)
+    return all(isinstance(sid, str) and sid in completed for sid in sequence_value)
+
+
 def _derive_terminal_status(state: dict[str, object]) -> str:
     """Derive a stable terminal status from step_state.json when not explicit."""
     existing = str(state.get("terminal_status") or "").strip().lower()
@@ -2100,6 +2270,13 @@ def _derive_terminal_status(state: dict[str, object]) -> str:
         return "superseded"
     if workflow_status in {"WONT_DO", "WON'T_DO"}:
         return "won't_do"
+    # Cursor-independent fallback: if every subtask has a recorded result
+    # (Monitor success OR mark_subtask_complete no-op), treat the run as
+    # complete even when current_step_phase still points at a stale stub.
+    # This closes the ST-033 friction where cursor sat on a deferred-stub
+    # forever while 51/51 entries were recorded.
+    if _state_subtask_coverage_complete(state):
+        return "complete"
     return "pending"
 
 
@@ -3912,80 +4089,17 @@ def _budget_review_prompt(
     git_diff: str,
     budget_tokens: int,
 ) -> dict[str, object]:
-    full_prompt = _render_review_prompt(
-        spec, review_bundle, review_preferences, git_diff
-    )
-    full_estimate = _estimate_tokens(full_prompt)
-    if full_estimate <= budget_tokens:
-        return {
-            "prompt": full_prompt,
-            "estimated_tokens": full_estimate,
-            "budget_tokens": budget_tokens,
-            "truncated": False,
-            "clipped_sections": [],
-        }
-
-    budget_note = (
-        f"Review Prompt Budget: truncated to <= {budget_tokens} estimated tokens. "
-        "The persisted review bundle remains primary; lower-priority raw diff "
-        f"context is clipped first. Increase {REVIEW_PROMPT_BUDGET_ENV} if a "
-        "larger review prompt is required."
-    )
-
-    clipped_sections: list[str] = []
-    base_prompt = _render_review_prompt(spec, "", "", "", budget_note)
-    remaining_for_documents = budget_tokens - _estimate_tokens(base_prompt)
-    bundle_budget = max(0, remaining_for_documents)
-    budgeted_bundle = review_bundle
-    if _estimate_tokens(review_bundle) > bundle_budget:
-        budgeted_bundle = _truncate_to_token_budget(review_bundle, bundle_budget)
-        clipped_sections.append("review-bundle.md")
-
-    remaining_for_preferences = budget_tokens - _estimate_tokens(
-        _render_review_prompt(spec, budgeted_bundle, "", "", budget_note)
-    )
-    preferences_budget = max(0, remaining_for_preferences)
-    budgeted_preferences = review_preferences
-    if _estimate_tokens(review_preferences) > preferences_budget:
-        budgeted_preferences = _truncate_to_token_budget(
-            review_preferences, preferences_budget
-        )
-        clipped_sections.append("review-preferences")
-
-    prompt_without_diff = _render_review_prompt(
-        spec, budgeted_bundle, budgeted_preferences, "", budget_note
-    )
-    remaining_for_diff = budget_tokens - _estimate_tokens(prompt_without_diff)
-    diff_budget = max(0, remaining_for_diff)
-    budgeted_diff = git_diff
-    if _estimate_tokens(git_diff) > diff_budget:
-        budgeted_diff = _truncate_to_token_budget(git_diff, diff_budget)
-        clipped_sections.append("git diff")
-
-    prompt = _render_review_prompt(
-        spec, budgeted_bundle, budgeted_preferences, budgeted_diff, budget_note
-    )
-    if _estimate_tokens(prompt) > budget_tokens:
-        # Guard against note/rounding drift: drop secondary diff and preferences, then tighten primary text.
-        budgeted_diff = ""
-        prompt_without_docs = _render_review_prompt(spec, "", "", "", budget_note)
-        bundle_budget = max(0, budget_tokens - _estimate_tokens(prompt_without_docs))
-        budgeted_bundle = _truncate_to_token_budget(review_bundle, bundle_budget)
-        budgeted_preferences = ""
-        prompt = _render_review_prompt(
-            spec, budgeted_bundle, budgeted_preferences, budgeted_diff, budget_note
-        )
-        for section in ("git diff", "review-preferences", "review-bundle.md"):
-            if section not in clipped_sections:
-                clipped_sections.append(section)
-
+    # Truncation infrastructure removed by user directive ("убери транкейт
+    # уже вообще"). The full review prompt is emitted with no clipping —
+    # reviewers see the entire bundle, preferences, and diff. If the
+    # prompt exceeds context, the operator opts into /compact themselves.
+    prompt = _render_review_prompt(spec, review_bundle, review_preferences, git_diff)
     return {
         "prompt": prompt,
-        "estimated_tokens": _estimate_tokens(prompt),
+        "estimated_tokens": 0,
         "budget_tokens": budget_tokens,
-        "truncated": True,
-        "clipped_sections": clipped_sections,
-        "full_estimated_tokens": full_estimate,
+        "truncated": False,
+        "clipped_sections": [],
     }
 
 
@@ -4011,26 +4125,9 @@ def build_review_prompts(
         prompt_result = _budget_review_prompt(
             spec, review_bundle, review_preferences, git_diff, budget
         )
-        record_token_budget_decision(
-            path_name=f"map-review.{role}_prompt",
-            configured_budget_tokens=budget,
-            estimated_tokens_before=int(
-                prompt_result.get("full_estimated_tokens")
-                or prompt_result["estimated_tokens"]
-            ),
-            estimated_tokens_after=int(prompt_result["estimated_tokens"]),
-            clipped_sections=cast(list[str], prompt_result["clipped_sections"]),
-            budget_action="truncated" if prompt_result["truncated"] else "none",
-            artifact_references=[
-                {
-                    "path": f".map/{branch_name}/review-bundle.md",
-                    "kind": "review-bundle",
-                },
-                {"path": "git diff HEAD", "kind": "git-diff"},
-            ],
-            metadata={"role": role, "budget_env": REVIEW_PROMPT_BUDGET_ENV},
-            branch=branch_name,
-        )
+        # No token-budget bookkeeping — truncation is gone, so there's
+        # nothing to record. Operators chase context-size concerns via
+        # the conversation-level /compact opt-in.
         prompts[role] = {
             "subagent_type": spec["subagent_type"],
             "description": spec["description"],
@@ -4839,111 +4936,1607 @@ def _sanitize_branch(branch: str) -> str:
     return sanitized or "default"
 
 
-def _context_block_budget_tokens() -> int:
-    """Return the hard estimated-token budget for Actor map_context blocks."""
-    raw = os.environ.get(CONTEXT_BLOCK_BUDGET_ENV, "").strip()
-    if raw:
+_RESEARCH_KIND_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+_RESEARCH_SUBTASK_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+
+
+def _research_path(branch: str, subtask_id: str, kind: str) -> Path:
+    """Resolve a research artifact path with strict sanitization."""
+    if not _RESEARCH_SUBTASK_ID_RE.match(subtask_id):
+        raise ValueError(
+            f"Invalid subtask_id for research artifact: {subtask_id!r}. "
+            "Must match [A-Za-z0-9][A-Za-z0-9_.-]{0,63}."
+        )
+    if not _RESEARCH_KIND_RE.match(kind):
+        raise ValueError(
+            f"Invalid research kind: {kind!r}. Must match [a-z][a-z0-9_]*."
+        )
+    safe_branch = _sanitize_branch(branch)
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+    return (
+        project_dir
+        / ".map"
+        / safe_branch
+        / "research"
+        / f"{subtask_id}__{kind}.md"
+    )
+
+
+def save_research(
+    branch: str,
+    subtask_id: str,
+    content: str,
+    *,
+    kind: str = "actor",
+    attempt: Optional[int] = None,
+) -> str:
+    """Persist research findings for a subtask. Returns the written path.
+
+    Default behaviour overwrites the canonical ``<subtask_id>__<kind>.md`` so
+    Actor and Monitor read the latest copy without a sentinel hunt. Pass an
+    ``attempt`` integer (e.g. retry_count) to preserve a numbered snapshot at
+    ``<subtask_id>__<kind>.attempt-<N>.md`` BEFORE overwriting the canonical
+    path — useful for clean-retry diffing without losing the original.
+    """
+    path = _research_path(branch, subtask_id, kind)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if attempt is not None and path.exists():
+        snapshot = path.with_name(
+            f"{subtask_id}__{kind}.attempt-{int(attempt)}.md"
+        )
         try:
-            value = int(raw)
-            if value >= CONTEXT_BLOCK_MIN_BUDGET_TOKENS:
-                return value
-        except ValueError:
+            snapshot.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+        except OSError:
             pass
-    return CONTEXT_BLOCK_DEFAULT_BUDGET_TOKENS
+    path.write_text(content, encoding="utf-8")
+    return str(path)
 
 
-def _truncate_context_value(value: object, budget_tokens: int = 80) -> str:
-    """Render a persisted value without letting one field consume the context."""
-    text = value if isinstance(value, str) else str(value)
-    return _truncate_to_token_budget(text, budget_tokens)
+_MONITOR_REQUIRED_KEYS = ("valid", "summary", "issues")
+_ACTOR_REQUIRED_KEYS = ("files_changed", "tests_run")
 
 
-def _context_block_text(parts: list[str]) -> str:
-    return "\n".join(parts)
+def detect_truncated_agent_output(
+    text: str,
+    *,
+    expected_keys: Optional[list[str]] = None,
+    agent_kind: str = "monitor",
+) -> dict[str, object]:
+    """Diagnose a possibly-truncated agent response.
 
+    Skill-level rule (added 2026-05-24): if Monitor or Actor returns prose
+    instead of the JSON envelope they were prompted for, the workflow
+    must retry once with an "emit ONLY JSON" follow-up, then
+    CLARIFICATION_NEEDED. The rule was prose; this helper makes it a
+    reusable predicate so callers (skills, CI, future automation) all
+    classify the same way.
 
-def _context_section_label(line: str, current_label: str) -> str:
-    """Classify map_context lines into operator-facing budget sections."""
-    if line.startswith("# Goal"):
-        return "goal"
-    if line.startswith("# Current Subtask"):
-        return "current_subtask"
-    if line.startswith("# Upstream Results"):
-        return "upstream_results"
-    if line.startswith("# Plan Overview"):
-        return "plan_overview"
-    if line.startswith("# Repo Delta") or line.startswith("# Deleted since"):
-        return "repo_delta"
-    return current_label
-
-
-def _budget_context_block(parts: list[str], budget_tokens: int) -> dict[str, object]:
-    """Keep generated map_context under budget while reporting the decision."""
-    full_text = _context_block_text(parts)
-    full_estimate = _estimate_tokens(full_text)
-    if full_estimate <= budget_tokens:
-        return {
-            "text": full_text,
-            "estimated_tokens_before": full_estimate,
-            "estimated_tokens_after": full_estimate,
-            "truncated": False,
-            "clipped_sections": [],
+    Returns:
+        {
+            "truncated": bool,        # True = response is not a complete
+                                      # well-formed JSON object with the
+                                      # expected keys
+            "reasons": [str, ...],    # zero-or-more diagnoses, e.g.:
+                                      # "output does not parse as JSON",
+                                      # "missing required key: valid",
+                                      # "trailing text after JSON object",
+                                      # "response ends mid-sentence"
+            "parsed": dict | None,    # the parsed object, or None on parse failure
+            "agent_kind": str,        # echoed for downstream logging
         }
 
-    closing = "</map_context>"
-    truncation_note = (
-        f"# Context Budget: truncated to <= {budget_tokens} estimated tokens; "
-        "rerun with a larger MAP_CONTEXT_BLOCK_BUDGET_TOKENS if more plan "
-        "overview is required."
-    )
-    output: list[str] = []
-    clipped_sections: list[str] = []
-    current_label = "preamble"
+    ``expected_keys`` defaults per ``agent_kind``: monitor expects
+    ``valid``/``summary``/``issues``; actor expects ``files_changed``/
+    ``tests_run``. Other kinds pass an explicit list or get a permissive
+    "parses as object" check only.
+    """
+    reasons: list[str] = []
+    text = text or ""
+    stripped = text.strip()
+    if not stripped:
+        return {
+            "truncated": True,
+            "reasons": ["empty response"],
+            "parsed": None,
+            "agent_kind": agent_kind,
+        }
 
-    for index, line in enumerate(parts):
-        current_label = _context_section_label(line, current_label)
-        if line == closing:
-            continue
-        candidate = _context_block_text(output + [line, truncation_note, closing])
-        if _estimate_tokens(candidate) <= budget_tokens:
-            output.append(line)
-            continue
+    parsed: Optional[dict[str, object]] = None
+    # Two parse attempts: full body, then "first JSON object substring"
+    # in case there's a code fence or markdown prelude.
+    try:
+        candidate = json.loads(stripped)
+        if isinstance(candidate, dict):
+            parsed = candidate
+        else:
+            reasons.append("output parses as JSON but is not an object")
+    except json.JSONDecodeError:
+        # Try to recover a fenced object: ```json\n{...}\n```
+        match = re.search(r"\{(?:.|\n)*\}", stripped)
+        if match:
+            try:
+                candidate = json.loads(match.group(0))
+                if isinstance(candidate, dict):
+                    parsed = candidate
+                    # Reject if the body has non-JSON trailing/leading
+                    # text — that's a strong "wrapped in prose" signal.
+                    if stripped != match.group(0):
+                        reasons.append("trailing or leading text around JSON object")
+                else:
+                    reasons.append("recovered JSON is not an object")
+            except json.JSONDecodeError:
+                reasons.append("output does not parse as JSON")
+        else:
+            reasons.append("output does not parse as JSON")
 
-        remaining = budget_tokens - _estimate_tokens(
-            _context_block_text(output + [truncation_note, closing])
-        )
-        truncated_line = _truncate_to_token_budget(line, remaining)
-        if truncated_line:
-            candidate = _context_block_text(
-                output + [truncated_line, truncation_note, closing]
-            )
-            if _estimate_tokens(candidate) <= budget_tokens:
-                output.append(truncated_line)
-                if current_label not in clipped_sections:
-                    clipped_sections.append(current_label)
-        remaining_label = current_label
-        for omitted in parts[index + 1 :]:
-            if omitted == closing:
-                continue
-            remaining_label = _context_section_label(omitted, remaining_label)
-            if remaining_label not in clipped_sections:
-                clipped_sections.append(remaining_label)
-        break
+    if parsed is None:
+        # Mid-sentence ending is a strong "agent cut off" hint.
+        if not stripped.endswith(("}", "]")):
+            reasons.append("response ends mid-sentence (no closing } or ])")
+        return {
+            "truncated": True,
+            "reasons": reasons,
+            "parsed": None,
+            "agent_kind": agent_kind,
+        }
 
-    output.extend([truncation_note, closing])
-    budgeted_text = _context_block_text(output)
+    # Validate required keys.
+    if expected_keys is None:
+        if agent_kind == "monitor":
+            expected_keys = list(_MONITOR_REQUIRED_KEYS)
+        elif agent_kind == "actor":
+            expected_keys = list(_ACTOR_REQUIRED_KEYS)
+        else:
+            expected_keys = []
+    missing = [k for k in expected_keys if k not in parsed]
+    for key in missing:
+        reasons.append(f"missing required key: {key}")
+
     return {
-        "text": budgeted_text,
-        "estimated_tokens_before": full_estimate,
-        "estimated_tokens_after": _estimate_tokens(budgeted_text),
-        "truncated": True,
-        "clipped_sections": clipped_sections,
+        "truncated": bool(reasons),
+        "reasons": reasons,
+        "parsed": parsed,
+        "agent_kind": agent_kind,
     }
 
 
-def _enforce_context_block_budget(parts: list[str], budget_tokens: int) -> str:
-    """Keep generated map_context under budget while preserving valid XML shape."""
-    return str(_budget_context_block(parts, budget_tokens)["text"])
+def load_research(
+    branch: str,
+    subtask_id: str,
+    *,
+    kind: str = "actor",
+    merge_all_kinds: bool = False,
+) -> str:
+    """Return saved research findings; empty string when absent.
+
+    ``merge_all_kinds=True`` concatenates every kind present on disk
+    (actor / monitor / decomposer / anything custom) under per-kind
+    section headers, so callers that want the full research picture
+    don't have to ping each kind individually. Order: actor first if
+    present, then monitor, then decomposer, then any other kinds in
+    sorted order. Sections are separated by blank lines and prefixed
+    with ``# kind=<kind>``. When merge_all_kinds is False (default),
+    the function behaves exactly as before — single-kind read.
+    """
+    if not merge_all_kinds:
+        path = _research_path(branch, subtask_id, kind)
+        if not path.exists():
+            return ""
+        try:
+            return path.read_text(encoding="utf-8")
+        except OSError:
+            return ""
+
+    # Merge mode: scan the research directory for this subtask and
+    # concatenate every kind.
+    seed_path = _research_path(branch, subtask_id, "actor")
+    research_dir = seed_path.parent
+    if not research_dir.is_dir():
+        return ""
+    pattern = f"{subtask_id}__*.md"
+    found: dict[str, str] = {}
+    for candidate in sorted(research_dir.glob(pattern)):
+        stem = candidate.stem  # e.g. "ST-001__monitor"
+        marker = "__"
+        if marker not in stem:
+            continue
+        kind_name = stem.rsplit(marker, 1)[-1]
+        if not _RESEARCH_KIND_RE.match(kind_name):
+            continue
+        try:
+            found[kind_name] = candidate.read_text(encoding="utf-8")
+        except OSError:
+            continue
+    if not found:
+        return ""
+    ordered_kinds: list[str] = []
+    for preferred in ("actor", "monitor", "decomposer"):
+        if preferred in found:
+            ordered_kinds.append(preferred)
+    for remaining in sorted(k for k in found if k not in ordered_kinds):
+        ordered_kinds.append(remaining)
+    parts: list[str] = []
+    for k in ordered_kinds:
+        parts.append(f"# kind={k}")
+        parts.append(found[k].rstrip())
+        parts.append("")
+    return "\n".join(parts).rstrip() + "\n"
+
+
+def _claude_code_log_dir(project_dir: Path) -> Optional[Path]:
+    """Claude Code stores per-session jsonl logs under
+    ``~/.claude/projects/<project-path-with-slashes-as-dashes>/``.
+    Resolve the canonical dir for the given project.
+    """
+    home = Path(os.environ.get("HOME", "")).expanduser()
+    if not home:
+        return None
+    abs_proj = project_dir.resolve()
+    # The harness replaces "/" with "-" verbatim, no other sanitization.
+    canonical_name = str(abs_proj).replace("/", "-")
+    candidate = home / ".claude" / "projects" / canonical_name
+    if candidate.is_dir():
+        return candidate
+    # Fallback: pick by cwd match across all session logs (slower).
+    projects_root = home / ".claude" / "projects"
+    if not projects_root.is_dir():
+        return None
+    for child in projects_root.iterdir():
+        if child.is_dir():
+            try:
+                latest = max(child.glob("*.jsonl"), key=lambda p: p.stat().st_mtime)
+            except ValueError:
+                continue
+            try:
+                first = next(
+                    json.loads(line)
+                    for line in latest.read_text(errors="replace").splitlines()[:30]
+                    if "cwd" in line
+                )
+            except (StopIteration, json.JSONDecodeError, OSError):
+                continue
+            if isinstance(first, dict) and str(first.get("cwd")) == str(abs_proj):
+                return child
+    return None
+
+
+def subtask_token_usage(
+    branch: str,
+    subtask_id: Optional[str] = None,
+    *,
+    since_ts: Optional[str] = None,
+) -> dict:
+    """Sum Claude Code transcript token usage for the current subtask.
+
+    Reads the most recent ``~/.claude/projects/<project>/*.jsonl`` log and
+    aggregates ``message.usage`` fields from assistant turns whose timestamp
+    falls AFTER the subtask transition. The transition timestamp defaults to
+    ``step_state.json``'s mtime — close enough because the orchestrator
+    writes to that file on every advance — or to the explicit ``since_ts``
+    parameter when callers want a custom window.
+
+    Returns a dict with:
+      status: "success" | "no_logs" | "no_state" | "error"
+      subtask_id, since_ts, transcript, messages_counted
+      input_tokens, output_tokens, cache_read_input_tokens,
+      cache_creation_input_tokens, total_tokens
+    """
+    branch_name = _sanitize_branch(branch)
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
+
+    state_file = project_dir / ".map" / branch_name / "step_state.json"
+    if not state_file.exists():
+        return {"status": "no_state", "message": f"missing {state_file}"}
+    try:
+        state_data = json.loads(state_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        return {"status": "error", "message": f"unreadable state: {exc}"}
+
+    if subtask_id is None:
+        subtask_id = state_data.get("current_subtask_id") or "unknown"
+
+    log_dir = _claude_code_log_dir(project_dir)
+    if log_dir is None:
+        return {
+            "status": "no_logs",
+            "subtask_id": subtask_id,
+            "message": f"no Claude Code session log dir under ~/.claude/projects for {project_dir}",
+        }
+    try:
+        latest = max(log_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime)
+    except ValueError:
+        return {
+            "status": "no_logs",
+            "subtask_id": subtask_id,
+            "message": f"no .jsonl files in {log_dir}",
+        }
+
+    # Transition timestamp = explicit since_ts OR step_state.json mtime.
+    if since_ts:
+        threshold_iso = since_ts
+    else:
+        from datetime import datetime as _dt, timezone as _tz
+        threshold_iso = _dt.fromtimestamp(
+            state_file.stat().st_mtime, _tz.utc
+        ).isoformat().replace("+00:00", "Z")
+
+    totals = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+    }
+    messages_counted = 0
+    try:
+        with latest.open(encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                try:
+                    entry = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                ts = entry.get("timestamp")
+                if not isinstance(ts, str) or ts < threshold_iso:
+                    continue
+                msg = entry.get("message")
+                if not isinstance(msg, dict):
+                    continue
+                usage = msg.get("usage")
+                if not isinstance(usage, dict):
+                    continue
+                messages_counted += 1
+                for key in totals:
+                    val = usage.get(key)
+                    if isinstance(val, int):
+                        totals[key] += val
+    except OSError as exc:
+        return {"status": "error", "message": f"transcript read failed: {exc}"}
+
+    totals_total = (
+        totals["input_tokens"]
+        + totals["output_tokens"]
+        + totals["cache_creation_input_tokens"]
+    )
+    return {
+        "status": "success",
+        "subtask_id": subtask_id,
+        "since_ts": threshold_iso,
+        "transcript": str(latest),
+        "messages_counted": messages_counted,
+        "total_tokens": totals_total,
+        **totals,
+    }
+
+
+def refresh_blueprint_affected_files(
+    branch: str, subtask_id: str, *, dry_run: bool = False
+) -> dict:
+    """Overwrite a subtask's `affected_files` in blueprint.json with the
+    actual files this subtask changed (per-subtask baseline ∆ git status).
+
+    Closes the recurring "blueprint affected_files drift" friction: paths
+    decomposer guessed at planning time are routinely wrong, and the
+    mutation-boundary check then flags every Monitor pass as `warning`.
+    Run this after Actor finishes a subtask to lock the planned surface
+    to reality before MONITOR — or after MONITOR pass to keep blueprint
+    auditable for downstream review.
+
+    Returns: status, subtask_id, previous, current, diff (added/removed),
+    blueprint_path, dry_run.
+    """
+    branch_name = _sanitize_branch(branch)
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
+    bp_path = project_dir / ".map" / branch_name / "blueprint.json"
+    if not bp_path.exists():
+        return {"status": "error", "message": f"blueprint.json not found at {bp_path}"}
+    try:
+        bp_text = bp_path.read_text(encoding="utf-8")
+        bp_data = json.loads(bp_text)
+    except (json.JSONDecodeError, OSError) as exc:
+        return {"status": "error", "message": f"unreadable blueprint: {exc}"}
+
+    # Both wrapped and flat shapes — same convention as load_blueprint.
+    if isinstance(bp_data.get("blueprint"), dict):
+        target_body = bp_data["blueprint"]
+        body_is_wrapped = True
+    else:
+        target_body = bp_data
+        body_is_wrapped = False
+    subtasks = target_body.get("subtasks")
+    if not isinstance(subtasks, list):
+        return {"status": "error", "message": "blueprint missing subtasks list"}
+    found_index: Optional[int] = None
+    for idx, st in enumerate(subtasks):
+        if isinstance(st, dict) and st.get("id") == subtask_id:
+            found_index = idx
+            break
+    if found_index is None:
+        return {
+            "status": "error",
+            "message": f"subtask {subtask_id!r} not in blueprint",
+        }
+
+    # Compute the per-subtask actual surface, using the same baseline
+    # subtraction the mutation-boundary validator uses. Bug fix
+    # (2026-05-26): previously refresh only consulted `git status
+    # --porcelain` (uncommitted only). After the recommended
+    # per-subtask-commit workflow the porcelain is empty post-commit,
+    # so refresh recorded "current=[]" and dashboard reported "all
+    # previous files removed". Now we ALSO diff against
+    # baseline.head_sha so committed-since-baseline files are included.
+    baseline_files: set[str] = set()
+    baseline_head_sha: Optional[str] = None
+    subtask_baseline_path = _subtask_baseline_path(
+        branch_name, subtask_id, project_dir
+    )
+    for bp_baseline in (subtask_baseline_path, _scope_baseline_path(branch_name, project_dir)):
+        if bp_baseline.exists():
+            try:
+                data = json.loads(bp_baseline.read_text(encoding="utf-8"))
+                raw = data.get("files", [])
+                if isinstance(raw, list):
+                    baseline_files.update(str(p) for p in raw if isinstance(p, str))
+                if bp_baseline == subtask_baseline_path:
+                    bp_head = data.get("head_sha")
+                    if isinstance(bp_head, str) and bp_head:
+                        baseline_head_sha = bp_head
+            except (json.JSONDecodeError, OSError):
+                pass
+
+    actual_set: set[str] = set()
+    # Layer 1: committed-since-baseline files (the per-subtask commit
+    # workflow's output). git diff base..HEAD enumerates every path
+    # touched in any commit on top of `base`.
+    if baseline_head_sha:
+        try:
+            diff_proc = subprocess.run(
+                ["git", "diff", "--name-only", f"{baseline_head_sha}..HEAD"],
+                cwd=project_dir,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if diff_proc.returncode == 0:
+                for raw in diff_proc.stdout.splitlines():
+                    path = raw.strip()
+                    if path and not path.startswith(".map/") and not path.startswith(".codex/"):
+                        actual_set.add(path)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    # Layer 2: uncommitted (worktree + index) via porcelain.
+    try:
+        status_proc = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"status": "error", "message": f"git status failed: {exc}"}
+    if status_proc.returncode != 0:
+        return {
+            "status": "error",
+            "message": f"git status non-zero: {status_proc.stderr.strip() or 'no stderr'}",
+        }
+    for raw in status_proc.stdout.splitlines():
+        if len(raw) >= 4:
+            path = raw[3:].strip()
+            if " -> " in path:
+                path = path.split(" -> ", 1)[1]
+            if path and not path.startswith(".map/") and not path.startswith(".codex/"):
+                actual_set.add(path)
+    actual_set -= baseline_files
+    current_files = sorted(actual_set)
+
+    previous_raw = subtasks[found_index].get("affected_files", []) or []
+    previous_files = sorted({
+        re.split(r"\s+\(", str(p).strip())[0]
+        for p in previous_raw
+        if isinstance(p, str) and p.strip()
+    })
+
+    added = sorted(set(current_files) - set(previous_files))
+    removed = sorted(set(previous_files) - set(current_files))
+
+    if dry_run:
+        return {
+            "status": "dry_run",
+            "subtask_id": subtask_id,
+            "blueprint_path": str(bp_path),
+            "previous": previous_files,
+            "current": current_files,
+            "diff": {"added": added, "removed": removed},
+        }
+
+    subtasks[found_index]["affected_files"] = current_files
+    if body_is_wrapped:
+        bp_data["blueprint"] = target_body
+    else:
+        bp_data = target_body
+    bp_path.write_text(json.dumps(bp_data, indent=2), encoding="utf-8")
+    return {
+        "status": "success",
+        "subtask_id": subtask_id,
+        "blueprint_path": str(bp_path),
+        "previous": previous_files,
+        "current": current_files,
+        "diff": {"added": added, "removed": removed},
+    }
+
+
+def record_diagnostics_baseline(
+    branch: str,
+    *,
+    tools: Optional[list[str]] = None,
+    timeout_seconds: int = 180,
+) -> dict[str, object]:
+    """Snapshot pre-existing static-analysis diagnostics (pyright, ruff,
+    mypy, golangci-lint) so subtasks can delta against each tool — the
+    pytest-only test baseline missed 123 pyright + 130 ruff diagnostics
+    in one production run.
+
+    Auto-detects which tools to run from project markers:
+      - ``pyright`` (pyproject.toml or pyrightconfig.json present)
+      - ``ruff`` (pyproject.toml / ruff.toml present)
+      - ``mypy`` (pyproject.toml or mypy.ini present)
+      - ``golangci-lint`` (go.mod + binary on PATH)
+
+    Override the auto-detect by passing ``tools=["pyright", "ruff"]``.
+
+    Persists to ``.map/<branch>/diagnostics_baseline.json`` with the
+    shape::
+        {
+          "branch": ...,
+          "recorded_at": ...,
+          "tools": {
+            "pyright": {"returncode": 1, "error_count": 123, "raw": "..."},
+            "ruff":    {"returncode": 1, "error_count": 130, "raw": "..."},
+            ...
+          }
+        }
+    """
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
+    branch_name = _sanitize_branch(branch)
+    baseline_dir = project_dir / ".map" / branch_name
+    baseline_dir.mkdir(parents=True, exist_ok=True)
+    baseline_path = baseline_dir / "diagnostics_baseline.json"
+
+    auto_tools: list[str] = []
+    if tools is None:
+        pyproject_exists = (project_dir / "pyproject.toml").exists()
+        if pyproject_exists or (project_dir / "pyrightconfig.json").exists():
+            auto_tools.append("pyright")
+        if pyproject_exists or (project_dir / "ruff.toml").exists():
+            auto_tools.append("ruff")
+        if pyproject_exists or (project_dir / "mypy.ini").exists():
+            auto_tools.append("mypy")
+        if (project_dir / "go.mod").exists():
+            auto_tools.append("golangci-lint")
+        tools = auto_tools
+
+    tool_commands = {
+        "pyright": "pyright .",
+        "ruff": "ruff check .",
+        "mypy": "mypy .",
+        "golangci-lint": "golangci-lint run",
+    }
+    tool_error_patterns = {
+        # Pyright emits "Found N errors" at the tail of its output.
+        "pyright": re.compile(r"(\d+)\s+errors?\b", re.IGNORECASE),
+        # Ruff emits "Found N error(s)" before the diagnostic list.
+        "ruff": re.compile(r"Found\s+(\d+)\s+error", re.IGNORECASE),
+        # Mypy emits "Found N errors in M files".
+        "mypy": re.compile(r"Found\s+(\d+)\s+error", re.IGNORECASE),
+        # Golangci-lint emits each diagnostic on a line; "N issues" summary.
+        "golangci-lint": re.compile(r"(\d+)\s+issues?", re.IGNORECASE),
+    }
+
+    import shutil as _shutil  # local import keeps the module-level imports tidy
+    results: dict[str, dict[str, object]] = {}
+    for tool in tools:
+        cmd = tool_commands.get(tool)
+        if not cmd:
+            continue
+        # Skip tools whose binary isn't available rather than fail the
+        # whole snapshot. shutil.which is the portable way; the prior
+        # subprocess(["command", ...]) variant CI-failed on Ubuntu
+        # runners where `command` is only a POSIX shell builtin and
+        # not a real binary in /usr/bin.
+        binary = cmd.split()[0]
+        if _shutil.which(binary) is None:
+            results[tool] = {
+                "status": "skipped",
+                "reason": f"binary {binary!r} not on PATH",
+            }
+            continue
+        try:
+            proc = subprocess.run(
+                cmd, shell=True, cwd=project_dir,
+                capture_output=True, text=True, timeout=timeout_seconds,
+            )
+            returncode = proc.returncode
+            combined_output = proc.stdout + "\n" + proc.stderr
+        except subprocess.TimeoutExpired as exc:
+            results[tool] = {
+                "status": "timeout",
+                "elapsed_seconds": timeout_seconds,
+                "reason": str(exc),
+            }
+            continue
+        except OSError as exc:
+            results[tool] = {
+                "status": "error",
+                "reason": str(exc),
+            }
+            continue
+        pattern = tool_error_patterns.get(tool)
+        error_count = 0
+        if pattern:
+            for m in pattern.finditer(combined_output):
+                try:
+                    error_count = max(error_count, int(m.group(1)))
+                except ValueError:
+                    continue
+        # Cap raw output so the JSON doesn't grow unbounded on 1000-error runs.
+        raw_capped = combined_output[:8000]
+        results[tool] = {
+            "status": "success",
+            "command": cmd,
+            "returncode": returncode,
+            "error_count": error_count,
+            "raw": raw_capped,
+        }
+
+    payload: dict[str, object] = {
+        "branch": branch_name,
+        "recorded_at": _utc_timestamp(),
+        "tools": results,
+    }
+    baseline_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return payload
+
+
+def list_diagnostics_baseline(branch: str) -> dict[str, object]:
+    """Return the recorded diagnostics baseline; used by subtasks to
+    compute "delta vs baseline" for each static-analysis tool."""
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
+    branch_name = _sanitize_branch(branch)
+    baseline_path = project_dir / ".map" / branch_name / "diagnostics_baseline.json"
+    if not baseline_path.exists():
+        return {
+            "status": "no_baseline",
+            "branch": branch_name,
+            "message": (
+                "No diagnostics_baseline.json — run record_diagnostics_baseline "
+                "at INIT_STATE to snapshot pre-existing pyright/ruff/mypy noise."
+            ),
+        }
+    try:
+        return json.loads(baseline_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        return {"status": "error", "message": f"read failed: {exc}"}
+
+
+def record_test_baseline(
+    branch: str,
+    test_command: str = "",
+    *,
+    timeout_seconds: int = 120,
+) -> dict[str, object]:
+    """Record a pre-flight test baseline so subtasks can distinguish
+    "this regression is mine" from "this was broken before I started".
+
+    Called at INIT_STATE (1.6) or any point before subtask execution.
+    Runs ``test_command`` (auto-detected if empty), captures stdout +
+    return code + parsed FAILED lines, persists to
+    ``.map/<branch>/test_baseline.json``. Future subtasks can compare
+    new failures against this baseline.
+
+    Auto-detection prefers, in order:
+      - ``make test`` if a Makefile with a ``test:`` target exists
+      - ``pytest`` (no arguments) if pyproject.toml or pytest.ini present
+      - ``go test ./...`` if go.mod present
+      - ``cargo test`` if Cargo.toml present
+    Empty auto-detect ⇒ status="skipped" (no test harness found).
+
+    Returns dict with status, command, returncode, baseline_failures (list of
+    failing test names parsed from stdout), and elapsed_seconds.
+    """
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
+    branch_name = _sanitize_branch(branch)
+    baseline_dir = project_dir / ".map" / branch_name
+    baseline_dir.mkdir(parents=True, exist_ok=True)
+    baseline_path = baseline_dir / "test_baseline.json"
+
+    cmd_str = test_command.strip()
+    auto_detected_command = ""
+    if not cmd_str:
+        # Auto-detect a sensible default. Cheap shell probes only.
+        if (project_dir / "Makefile").exists():
+            try:
+                mk_text = (project_dir / "Makefile").read_text(encoding="utf-8")
+                if re.search(r"^test:", mk_text, re.MULTILINE):
+                    auto_detected_command = "make test"
+            except OSError:
+                pass
+        if not auto_detected_command:
+            if (project_dir / "pyproject.toml").exists() or (project_dir / "pytest.ini").exists():
+                auto_detected_command = "pytest"
+            elif (project_dir / "go.mod").exists():
+                auto_detected_command = "go test ./..."
+            elif (project_dir / "Cargo.toml").exists():
+                auto_detected_command = "cargo test"
+        cmd_str = auto_detected_command
+
+    if not cmd_str:
+        payload = {
+            "branch": branch_name,
+            "status": "skipped",
+            "reason": "no test harness detected (Makefile / pytest / go.mod / Cargo.toml)",
+            "recorded_at": _utc_timestamp(),
+        }
+        baseline_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return payload
+
+    started = time.time()
+    try:
+        proc = subprocess.run(
+            cmd_str,
+            shell=True,
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+        returncode = proc.returncode
+        stdout = proc.stdout
+        stderr = proc.stderr
+        timed_out = False
+    except subprocess.TimeoutExpired as exc:
+        returncode = -1
+        stdout = exc.stdout.decode("utf-8", errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+        stderr = exc.stderr.decode("utf-8", errors="replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
+        timed_out = True
+    except OSError as exc:
+        return {
+            "status": "error",
+            "message": f"test invocation failed: {exc}",
+        }
+    elapsed = round(time.time() - started, 2)
+
+    # Parse failing tests from stdout. Heuristics cover pytest "FAILED"
+    # lines and Go's "--- FAIL: TestX" pattern; anything else falls back
+    # to "see stdout".
+    failures: list[str] = []
+    for line in (stdout + "\n" + stderr).splitlines():
+        line = line.strip()
+        # pytest: "FAILED tests/test_foo.py::TestBar::test_baz - ..."
+        m = re.match(r"^FAILED (\S+)", line)
+        if m:
+            failures.append(m.group(1))
+            continue
+        # Go: "--- FAIL: TestFoo (0.01s)"
+        m = re.match(r"^--- FAIL: (\S+)", line)
+        if m:
+            failures.append(m.group(1))
+            continue
+        # Cargo: "test foo::bar ... FAILED"
+        m = re.match(r"^test (\S+)\s+\.\.\.\s+FAILED", line)
+        if m:
+            failures.append(m.group(1))
+
+    payload: dict[str, object] = {
+        "branch": branch_name,
+        "status": "success" if returncode == 0 else "baseline_failures",
+        "command": cmd_str,
+        "auto_detected": bool(auto_detected_command),
+        "returncode": returncode,
+        "timed_out": timed_out,
+        "elapsed_seconds": elapsed,
+        "baseline_failures": sorted(set(failures)),
+        "recorded_at": _utc_timestamp(),
+    }
+    baseline_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return payload
+
+
+def list_baseline_failures(branch: str) -> dict[str, object]:
+    """Read the recorded test baseline; useful for subtasks comparing
+    new failures against pre-existing ones."""
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
+    branch_name = _sanitize_branch(branch)
+    baseline_path = project_dir / ".map" / branch_name / "test_baseline.json"
+    if not baseline_path.exists():
+        return {
+            "status": "no_baseline",
+            "branch": branch_name,
+            "message": (
+                "No test_baseline.json — run record_test_baseline at "
+                "INIT_STATE to capture pre-existing failures."
+            ),
+            "baseline_failures": [],
+        }
+    try:
+        data = json.loads(baseline_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        return {"status": "error", "message": f"read failed: {exc}"}
+    failures = data.get("baseline_failures", [])
+    if not isinstance(failures, list):
+        failures = []
+    return {
+        "status": "success",
+        "branch": branch_name,
+        "command": data.get("command", ""),
+        "returncode": data.get("returncode"),
+        "baseline_failures": failures,
+        "recorded_at": data.get("recorded_at"),
+    }
+
+
+def _acknowledged_diagnostics_path(branch: str) -> Path:
+    """Return the per-branch acknowledged-diagnostics ledger path."""
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+    return project_dir / ".map" / _sanitize_branch(branch) / "acknowledged_diagnostics.json"
+
+
+def _diagnostic_signature(text: str) -> str:
+    """Canonicalize a diagnostic line into a stable comparison key.
+
+    Strips leading/trailing whitespace and collapses interior runs of
+    whitespace to a single space so cosmetic re-flow doesn't bust the
+    match. Callers may pass any text form they wish to acknowledge —
+    the comparison is whole-line, not pattern-based.
+    """
+    return " ".join((text or "").split()).strip()
+
+
+def acknowledge_diagnostic(
+    branch: str, signature: str, reason: str = ""
+) -> dict[str, object]:
+    """Mark a diagnostic as known/deferred so reporters can suppress it.
+
+    Use case: pre-existing Pyright noise like ``_rescore_cached_findings
+    is not accessed`` surfaces on every subtask but isn't caused by the
+    current change. Without an acknowledged-baseline mechanism each
+    Monitor pass re-flags the same line, drowning real signals.
+
+    The ledger lives at ``.map/<branch>/acknowledged_diagnostics.json``;
+    entries are keyed by canonical signature (whitespace-normalised line
+    text). Duplicate acknowledgements update the ``reason`` and bump
+    ``last_seen_at`` instead of adding a second entry.
+
+    Returns the persisted entry plus an ``already_acknowledged`` flag.
+    """
+    key = _diagnostic_signature(signature)
+    if not key:
+        return {"status": "error", "message": "empty signature"}
+    path = _acknowledged_diagnostics_path(branch)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    ledger: dict[str, object] = {"entries": {}}
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                ledger = data
+        except (json.JSONDecodeError, OSError):
+            pass
+    entries = ledger.get("entries")
+    if not isinstance(entries, dict):
+        entries = {}
+        ledger["entries"] = entries
+    existing = entries.get(key)
+    now = _utc_timestamp()
+    already = isinstance(existing, dict)
+    if already:
+        existing["reason"] = reason or existing.get("reason", "")
+        existing["last_seen_at"] = now
+        entry = existing
+    else:
+        entry = {
+            "signature": key,
+            "reason": reason,
+            "acknowledged_at": now,
+            "last_seen_at": now,
+        }
+        entries[key] = entry
+    try:
+        path.write_text(
+            json.dumps(ledger, indent=2, sort_keys=True), encoding="utf-8"
+        )
+    except OSError as exc:
+        return {"status": "error", "message": f"write failed: {exc}"}
+    return {
+        "status": "success",
+        "branch": branch,
+        "signature": key,
+        "entry": entry,
+        "already_acknowledged": already,
+    }
+
+
+def list_acknowledged_diagnostics(branch: str) -> dict[str, object]:
+    """Return all acknowledged diagnostics on the branch (newest first)."""
+    path = _acknowledged_diagnostics_path(branch)
+    if not path.exists():
+        return {"status": "success", "branch": branch, "entries": []}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        return {"status": "error", "message": f"read failed: {exc}"}
+    if not isinstance(data, dict):
+        return {"status": "success", "branch": branch, "entries": []}
+    entries_map = data.get("entries")
+    if not isinstance(entries_map, dict):
+        return {"status": "success", "branch": branch, "entries": []}
+    entries = sorted(
+        (e for e in entries_map.values() if isinstance(e, dict)),
+        key=lambda e: str(e.get("acknowledged_at", "")),
+        reverse=True,
+    )
+    return {"status": "success", "branch": branch, "entries": entries}
+
+
+def is_diagnostic_acknowledged(branch: str, signature: str) -> bool:
+    """Return True iff the diagnostic signature is in the acknowledged ledger."""
+    key = _diagnostic_signature(signature)
+    if not key:
+        return False
+    path = _acknowledged_diagnostics_path(branch)
+    if not path.exists():
+        return False
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    entries = data.get("entries")
+    if not isinstance(entries, dict):
+        return False
+    return key in entries
+
+
+def detect_already_done(
+    branch: str, subtask_id: str, *, since_ref: Optional[str] = None
+) -> dict:
+    """Heuristic: does git history suggest the subtask is already shipped?
+
+    Returns ``status``:
+      "likely_done" — every affected_file exists AND has at least one commit
+        in the configured window (``since_ref`` default: ``HEAD~50``).
+      "partial" — some affected_files have commits, some don't / are missing.
+      "unclear" — no evidence either way (fresh files, no history).
+      "error" — blueprint / git unavailable.
+
+    Pragmatic, not authoritative: callers should still review the listed
+    commits before invoking ``mark_subtask_complete``.
+    """
+    branch_name = _sanitize_branch(branch)
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
+    bp = load_blueprint(branch_name, project_dir=project_dir)
+    if bp is None:
+        return {"status": "error", "message": "blueprint.json not found"}
+    sub = get_subtask_from_blueprint(bp, subtask_id)
+    if sub is None:
+        return {"status": "error", "message": f"subtask {subtask_id!r} not in blueprint"}
+
+    raw = sub.get("affected_files", []) or []
+    # Affected paths in blueprints sometimes carry " (new)" suffixes — strip
+    # them so git understands the path.
+    files = sorted({
+        re.split(r"\s+\(", str(p).strip())[0]
+        for p in raw
+        if isinstance(p, str) and p.strip()
+    })
+    if not files:
+        return {
+            "status": "unclear",
+            "subtask_id": subtask_id,
+            "message": "no affected_files declared",
+        }
+
+    requested_ref = since_ref or "HEAD~50"
+    # Probe the requested ref; if it can't be resolved (e.g., HEAD~50 in a
+    # repo with only 3 commits), fall back to the entire reachable history.
+    probe = subprocess.run(
+        ["git", "rev-parse", "--verify", requested_ref],
+        cwd=project_dir,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    window_ref: Optional[str] = requested_ref if probe.returncode == 0 else None
+    evidence: list[dict] = []
+    missing: list[str] = []
+    have_commit: list[str] = []
+    for path in files:
+        full = project_dir / path
+        if not full.exists():
+            missing.append(path)
+            continue
+        log_cmd = ["git", "log", "--oneline"]
+        if window_ref:
+            log_cmd.append(f"{window_ref}..HEAD")
+        log_cmd.extend(["--", path])
+        try:
+            log_proc = subprocess.run(
+                log_cmd,
+                cwd=project_dir,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return {
+                "status": "error",
+                "message": f"git log failed for {path}: {exc}",
+            }
+        commits = [
+            line.strip()
+            for line in log_proc.stdout.splitlines()
+            if line.strip()
+        ]
+        if commits:
+            have_commit.append(path)
+            evidence.append({"path": path, "commits": commits[:5]})
+        else:
+            missing.append(path)
+
+    if missing:
+        status = "partial" if have_commit else "unclear"
+    else:
+        status = "likely_done"
+
+    return {
+        "status": status,
+        "subtask_id": subtask_id,
+        "window_ref": window_ref or "all-history",
+        "expected_files": files,
+        "have_commits": have_commit,
+        "missing_or_no_commits": missing,
+        "evidence": evidence,
+    }
+
+
+def _scope_baseline_path(branch: str, project_dir: Path) -> Path:
+    return project_dir / ".map" / _sanitize_branch(branch) / "scope-baseline.json"
+
+
+def _subtask_baseline_path(branch: str, subtask_id: str, project_dir: Path) -> Path:
+    return (
+        project_dir
+        / ".map"
+        / _sanitize_branch(branch)
+        / "subtask-baselines"
+        / f"{subtask_id}.json"
+    )
+
+
+def record_subtask_baseline(branch: str, subtask_id: str) -> dict:
+    """Snapshot the current `git status --porcelain` set + HEAD SHA as a
+    per-subtask baseline that validate_mutation_boundary will subtract
+    from `actual` for THIS subtask only — independent from the
+    branch-wide scope-baseline.
+
+    Fires automatically at validate_step("2.2") (RESEARCH start) so each
+    subtask's mutation boundary check sees only changes since RESEARCH began,
+    not the cumulative branch diff. The branch-wide
+    .map/<branch>/scope-baseline.json still applies on top as a
+    coarse filter.
+
+    Added 2026-05-26: ``head_sha`` field captures the commit SHA at
+    baseline time so refresh_blueprint_affected_files can resolve the
+    full per-subtask diff (committed + uncommitted) instead of seeing
+    porcelain-only and recording an empty current set after a clean
+    per-subtask commit.
+    """
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
+    try:
+        proc = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"status": "error", "message": f"git status failed: {exc}"}
+    if proc.returncode != 0:
+        return {
+            "status": "error",
+            "message": f"git status non-zero: {proc.stderr.strip() or 'no stderr'}",
+        }
+    files: list[str] = []
+    for raw in proc.stdout.splitlines():
+        if len(raw) >= 4:
+            path = raw[3:].strip()
+            if " -> " in path:
+                path = path.split(" -> ", 1)[1]
+            if path and not path.startswith(".map/") and not path.startswith(".codex/"):
+                files.append(path)
+    # Capture HEAD SHA so downstream commits can be diffed against this
+    # baseline. Fresh repos with no commits return non-zero — fall back to
+    # None (refresh / validate code handles that case).
+    head_sha: Optional[str] = None
+    try:
+        head_proc = subprocess.run(
+            ["git", "rev-parse", "--verify", "HEAD"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if head_proc.returncode == 0:
+            candidate = head_proc.stdout.strip()
+            if candidate:
+                head_sha = candidate
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    path = _subtask_baseline_path(branch, subtask_id, project_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload: dict[str, object] = {
+        "branch": _sanitize_branch(branch),
+        "subtask_id": subtask_id,
+        "recorded_at": _utc_timestamp(),
+        "files": sorted(set(files)),
+        "head_sha": head_sha,
+    }
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return {
+        "status": "success",
+        "path": str(path),
+        "count": len(files),
+        "head_sha": head_sha,
+    }
+
+
+def subtask_boundary_compact_check(branch: str) -> dict:
+    """Decide whether the operator should force-compact at the current
+    subtask boundary. Reads the project's MAP config + the latest Claude
+    Code session jsonl and returns an "advice" payload — the actual
+    /compact dispatch is still the operator's call (Claude Code hooks
+    can't fire slash commands themselves).
+
+    The cooldown matches context-meter.py (5 min) so two consecutive
+    subtasks won't both nag.
+
+    Returns: {status, used, threshold, hard_threshold, force_compact (bool),
+             advice, since_last_compact_seconds}.
+    """
+    import importlib
+    import time
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
+    branch_name = _sanitize_branch(branch)
+    # Pull config + token-budget helpers from mapify_cli; degrade gracefully
+    # if the package isn't on sys.path (e.g., bundled-script context).
+    try:
+        sys_path_addition = str(project_dir / "src")
+        if sys_path_addition not in sys.path:
+            sys.path.insert(0, sys_path_addition)
+        cfg_mod = importlib.import_module("mapify_cli.config.project_config")
+        tb_mod = importlib.import_module("mapify_cli.token_budget")
+    except ImportError:
+        return {"status": "no_budget_config"}
+
+    config = cfg_mod.load_map_config(project_dir)
+    threshold = tb_mod.effective_threshold(
+        config.compression_policy, config.compression_threshold_tokens
+    )
+    if threshold is None:
+        return {"status": "policy_never"}
+
+    marker = project_dir / ".map" / branch_name / "last-compact.marker"
+    since_last_compact: Optional[float] = None
+    if marker.exists():
+        since_last_compact = time.time() - marker.stat().st_mtime
+        if since_last_compact < 5 * 60:
+            return {
+                "status": "cooldown",
+                "since_last_compact_seconds": since_last_compact,
+                "advice": "compact ran recently; skip force-compact",
+            }
+
+    log_dir = _claude_code_log_dir(project_dir)
+    used = 0
+    if log_dir is not None:
+        try:
+            latest = max(log_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime)
+            used = tb_mod.count_last_turn_tokens(latest)
+        except (ValueError, OSError):
+            used = 0
+
+    # The auto-checkpoint kicks in when current usage is past the soft
+    # threshold — twice the threshold means we've blown past the context
+    # meter's nudge and the operator has missed the suggestion. At that
+    # point the boundary advice escalates to "force compact".
+    hard_threshold = threshold * 2
+    if used >= hard_threshold:
+        force = True
+        advice = (
+            f"FORCE COMPACT NOW — used {used}/{threshold} ({used / threshold:.0%}). "
+            "Subtask boundary is the safe place to /compact + resume."
+        )
+    elif used >= threshold:
+        force = False
+        advice = (
+            f"Recommend compact at this subtask boundary — used "
+            f"{used}/{threshold} ({used / threshold:.0%})."
+        )
+    else:
+        force = False
+        advice = "below threshold; continue"
+
+    return {
+        "status": "success",
+        "used": used,
+        "threshold": threshold,
+        "hard_threshold": hard_threshold,
+        "force_compact": force,
+        "advice": advice,
+        "since_last_compact_seconds": since_last_compact,
+    }
+
+
+def list_plans() -> dict:
+    """Enumerate per-branch plan artifacts under .map/<branch>/ so the
+    operator can pick scope from a multi-roadmap workspace without grepping.
+
+    Returns: list of {branch, has_blueprint, has_task_plan, has_step_state,
+    workflow_status, completed_at, plan_mtime, subtask_count}.
+    """
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
+    map_root = project_dir / ".map"
+    if not map_root.is_dir():
+        return {"status": "success", "plans": []}
+    plans: list[dict[str, object]] = []
+    for entry in sorted(map_root.iterdir()):
+        if not entry.is_dir() or entry.name == "scripts":
+            continue
+        branch_name = entry.name
+        blueprint_path = entry / "blueprint.json"
+        task_plan_path = entry / f"task_plan_{branch_name}.md"
+        state_path = entry / "step_state.json"
+        info: dict[str, object] = {
+            "branch": branch_name,
+            "has_blueprint": blueprint_path.exists(),
+            "has_task_plan": task_plan_path.exists(),
+            "has_step_state": state_path.exists(),
+            "plan_mtime": None,
+            "workflow_status": None,
+            "completed_at": None,
+            "subtask_count": None,
+        }
+        if task_plan_path.exists():
+            info["plan_mtime"] = (
+                _dt_from_mtime(task_plan_path.stat().st_mtime)
+            )
+        if blueprint_path.exists():
+            try:
+                bp = json.loads(blueprint_path.read_text(encoding="utf-8"))
+                if isinstance(bp.get("blueprint"), dict):
+                    bp = bp["blueprint"]
+                if isinstance(bp.get("subtasks"), list):
+                    info["subtask_count"] = len(bp["subtasks"])
+            except (json.JSONDecodeError, OSError):
+                pass
+        if state_path.exists():
+            try:
+                st = json.loads(state_path.read_text(encoding="utf-8"))
+                info["workflow_status"] = st.get("workflow_status")
+                info["completed_at"] = st.get("completed_at")
+            except (json.JSONDecodeError, OSError):
+                pass
+        plans.append(info)
+    return {"status": "success", "plans": plans}
+
+
+def _dt_from_mtime(ts: float) -> str:
+    from datetime import datetime, timezone
+    return datetime.fromtimestamp(ts, timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def record_scope_baseline(branch: str) -> dict:
+    """Snapshot the current uncommitted / untracked file set as a baseline
+    that validate_mutation_boundary will subtract from `actual` on future
+    runs. Use when the branch carries pre-existing artifacts from prior
+    waves that would otherwise flood every subtask with `warning`.
+
+    Returns dict with: status, path, files (count + list).
+    """
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
+    try:
+        status_proc = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"status": "error", "message": f"git status failed: {exc}"}
+    if status_proc.returncode != 0:
+        return {
+            "status": "error",
+            "message": (
+                f"git status non-zero (exit {status_proc.returncode}): "
+                f"{status_proc.stderr.strip() or 'no stderr'}"
+            ),
+        }
+    files: list[str] = []
+    for raw in status_proc.stdout.splitlines():
+        if len(raw) >= 4:
+            path = raw[3:].strip()
+            if " -> " in path:
+                path = path.split(" -> ", 1)[1]
+            if path and not path.startswith(".map/") and not path.startswith(".codex/"):
+                files.append(path)
+    path = _scope_baseline_path(branch, project_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "branch": _sanitize_branch(branch),
+        "recorded_at": _utc_timestamp(),
+        "files": sorted(set(files)),
+    }
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return {"status": "success", "path": str(path), "count": len(payload["files"]), "files": payload["files"]}
+
+
+def validate_mutation_boundary(
+    branch: str, subtask_id: str, base_ref: Optional[str] = None
+) -> dict:
+    """Compare actual repo diff against the subtask's declared affected_files.
+
+    Reads blueprint.subtasks[subtask_id].affected_files (the planned mutation
+    surface) and computes the actual paths touched relative to ``base_ref``
+    (default: last_subtask_commit_sha from step_state, falling back to
+    ``HEAD``). Reports any files outside the planned surface as ``unexpected``.
+
+    Default behaviour is WARN-only: returns the report and appends a row to
+    ``.map/<branch>/scope-violations.log`` but exits success-equivalent.
+    Strict mode is opt-in via ``MAP_STRICT_SCOPE=1`` in the env — callers (the
+    CLI, Monitor) can then treat ``status="violation"`` as a hard reject.
+
+    Return shape on success::
+        {
+          "status": "clean" | "warning" | "violation",
+          "subtask_id": str,
+          "base_ref": str,
+          "expected": [str],   # declared affected_files
+          "actual": [str],     # files actually changed
+          "unexpected": [str], # actual but not expected (scope leak)
+          "strict": bool,
+        }
+
+    Return shape on error (blueprint missing, subtask unknown, git failure,
+    not a git repo)::
+        {
+          "status": "error",
+          "subtask_id": str,
+          "message": str,      # diagnostic message
+        }
+    Callers that treat this as a mandatory gate MUST handle "error" — the
+    CLI exits non-zero in that case so Bash callers can `set -e` and Monitor
+    can verdict `valid: false` with the message.
+    """
+    branch_name = _sanitize_branch(branch)
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+    blueprint = load_blueprint(branch_name, project_dir=project_dir)
+    if blueprint is None:
+        return {
+            "status": "error",
+            "message": "blueprint.json not found",
+            "subtask_id": subtask_id,
+        }
+    subtask = get_subtask_from_blueprint(blueprint, subtask_id)
+    if subtask is None:
+        return {
+            "status": "error",
+            "message": f"subtask {subtask_id!r} not in blueprint",
+            "subtask_id": subtask_id,
+        }
+
+    expected_raw = subtask.get("affected_files", []) or []
+    expected = sorted({str(p) for p in expected_raw if isinstance(p, str)})
+
+    # Pick a base_ref. Caller's explicit arg wins; otherwise fall back to
+    # last_subtask_commit_sha (so the diff covers only THIS subtask's work).
+    # If neither resolves to a real commit, skip the commit-range diff entirely
+    # and rely on porcelain (uncommitted + untracked) — this is the only sane
+    # behaviour in a brand-new repo before its first commit.
+    base_ref_explicit = bool(base_ref)
+    if not base_ref:
+        state_file = project_dir / ".map" / branch_name / "step_state.json"
+        if state_file.exists():
+            try:
+                state_data = json.loads(state_file.read_text(encoding="utf-8"))
+                last_sha = state_data.get("last_subtask_commit_sha")
+                if isinstance(last_sha, str) and last_sha:
+                    base_ref = last_sha
+            except (json.JSONDecodeError, OSError):
+                pass
+        if not base_ref:
+            # Probe HEAD before using it — `git rev-parse HEAD` fails in a
+            # fresh repo with no commits, and we want to fall through to
+            # porcelain-only rather than emit a confusing "ambiguous HEAD".
+            head_probe = subprocess.run(
+                ["git", "rev-parse", "--verify", "HEAD"],
+                cwd=project_dir,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if head_probe.returncode == 0:
+                base_ref = "HEAD"
+
+    try:
+        if base_ref:
+            diff_result = subprocess.run(
+                ["git", "diff", "--name-only", base_ref],
+                cwd=project_dir,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        else:
+            diff_result = None
+        status_result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {
+            "status": "error",
+            "message": f"git invocation failed: {exc}",
+            "subtask_id": subtask_id,
+        }
+
+    # `git status --porcelain` non-zero ⇒ not a git repo (or git is broken);
+    # without it we can't observe uncommitted work, and treating `actual_set`
+    # as empty would mis-report `clean`. Always a hard error.
+    if status_result.returncode != 0:
+        return {
+            "status": "error",
+            "subtask_id": subtask_id,
+            "message": (
+                f"`git status --porcelain` failed (exit {status_result.returncode}): "
+                f"{status_result.stderr.strip() or 'no stderr'}"
+            ),
+        }
+    # An explicit invalid base_ref (caller-supplied) is a hard error so the
+    # operator sees the mistake. An auto-resolved one that became "no diff"
+    # is acceptable (we just fall through to porcelain-only).
+    if diff_result is not None and diff_result.returncode != 0:
+        if base_ref_explicit:
+            return {
+                "status": "error",
+                "subtask_id": subtask_id,
+                "message": (
+                    f"`git diff --name-only {base_ref}` failed "
+                    f"(exit {diff_result.returncode}): "
+                    f"{diff_result.stderr.strip() or 'no stderr'}"
+                ),
+            }
+        diff_result = None  # treat as no commit-range diff available
+
+    actual_set: set[str] = set()
+    if diff_result is not None:
+        actual_set.update(
+            line.strip() for line in diff_result.stdout.splitlines() if line.strip()
+        )
+    # Include uncommitted (worktree + index) paths from porcelain output.
+    for raw in status_result.stdout.splitlines():
+        if len(raw) >= 4:
+            path = raw[3:].strip()
+            if " -> " in path:
+                path = path.split(" -> ", 1)[1]
+            if path:
+                actual_set.add(path)
+
+    # Filter framework-owned paths that are NEVER part of a subtask's mutation
+    # surface: `.map/` carries orchestrator artifacts (blueprint, step_state,
+    # research outputs, scope logs) and `.codex/` mirrors Codex-side config.
+    # Treating them as scope leaks would produce a flood of false positives.
+    actual_set = {
+        p for p in actual_set
+        if not p.startswith(".map/") and not p.startswith(".codex/")
+    }
+
+    # Baseline filter — two layers:
+    #   1. Per-subtask baseline (auto-snapshotted at validate_step('2.2')):
+    #      everything dirty in the worktree when THIS subtask started
+    #      RESEARCH belongs to prior subtasks. Subtract it so per-subtask
+    #      mutation check only sees changes made during the current run.
+    #   2. Branch-wide baseline (operator opt-in via record_scope_baseline):
+    #      coarser filter for branches that carry pre-existing artifacts
+    #      from outside the workflow entirely.
+    baseline_files: set[str] = set()
+    subtask_baseline_path = _subtask_baseline_path(
+        branch_name, subtask_id, project_dir
+    )
+    if subtask_baseline_path.exists():
+        try:
+            data = json.loads(subtask_baseline_path.read_text(encoding="utf-8"))
+            raw = data.get("files", [])
+            if isinstance(raw, list):
+                baseline_files.update(str(p) for p in raw if isinstance(p, str))
+        except (json.JSONDecodeError, OSError):
+            pass
+    branch_baseline_path = _scope_baseline_path(branch_name, project_dir)
+    if branch_baseline_path.exists():
+        try:
+            data = json.loads(branch_baseline_path.read_text(encoding="utf-8"))
+            raw = data.get("files", [])
+            if isinstance(raw, list):
+                baseline_files.update(str(p) for p in raw if isinstance(p, str))
+        except (json.JSONDecodeError, OSError):
+            pass
+    if baseline_files:
+        actual_set = {p for p in actual_set if p not in baseline_files}
+
+    actual = sorted(actual_set)
+    expected_set = set(expected)
+    unexpected = sorted(p for p in actual if p not in expected_set)
+    strict = os.environ.get("MAP_STRICT_SCOPE", "0") == "1"
+
+    if not unexpected:
+        status = "clean"
+    elif strict:
+        status = "violation"
+    else:
+        status = "warning"
+
+    # Diagnostic hint: when the warning fires, surface WHY base_ref was
+    # selected so the operator can disambiguate "real scope leak" from
+    # "I forgot to commit the prior subtask + auto-detect grabbed HEAD".
+    # The recommended recovery commands are inline so the operator
+    # doesn't have to dig through docs.
+    diagnostic_hint = None
+    if unexpected:
+        if not base_ref_explicit:
+            diagnostic_hint = (
+                "If 'unexpected' includes files from prior subtasks: either "
+                "(a) commit those subtasks and re-run record_subtask_result "
+                "--commit-sha <SHA> so this check uses the right base, OR "
+                "(b) run `python3 .map/scripts/map_step_runner.py "
+                "record_scope_baseline <branch>` to lock the current "
+                "uncommitted state as the branch baseline."
+            )
+        elif not baseline_files:
+            diagnostic_hint = (
+                "No per-subtask baseline was found — RESEARCH (2.2) likely "
+                "didn't auto-snapshot. Run record_subtask_baseline "
+                f"{branch} {subtask_id} before MONITOR to filter prior work."
+            )
+
+    report = {
+        "status": status,
+        "subtask_id": subtask_id,
+        "base_ref": base_ref,
+        "expected": expected,
+        "actual": actual,
+        "unexpected": unexpected,
+        "strict": strict,
+    }
+    if diagnostic_hint:
+        report["diagnostic_hint"] = diagnostic_hint
+
+    if unexpected:
+        log_path = project_dir / ".map" / branch_name / "scope-violations.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            entry = {
+                "at": _utc_timestamp(),
+                **report,
+            }
+            with log_path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(entry) + "\n")
+        except OSError:
+            pass
+
+    return report
 
 
 def build_context_block(branch: str, current_subtask_id: str) -> str:
@@ -4977,11 +6570,11 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
     except OSError:
         pass
     goal = goal or "No goal found"
-    # Truncate to first sentence
-    if ". " in goal:
-        goal = goal[: goal.index(". ") + 1]
-    if len(goal) > 200:
-        goal = goal[:197] + "..."
+    # Trim trailing whitespace; do not truncate — the user disabled context
+    # clipping in build_context_block because the visible "[truncated]" /
+    # "[TRUNCATED] see token_budget.json" markers were getting in the way of
+    # downstream Actor runs (it lost real subtask description text).
+    goal = goal.strip()
 
     # Current subtask full details
     current = get_subtask_from_blueprint(blueprint, current_subtask_id)
@@ -4989,28 +6582,30 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
         return ""
 
     current_details = []
+    # Emit the full prose `description` field (no per-field truncation).
+    description_text = current.get("description")
+    if isinstance(description_text, str) and description_text.strip():
+        current_details.append(f"Description: {description_text.strip()}")
     current_details.append(f"AAG Contract: {current.get('aag_contract', 'N/A')}")
     current_details.append(
         f"Subtask contract: expected_diff_size={current.get('expected_diff_size', 'unknown')}, "
         f"concern_type={current.get('concern_type', 'unknown')}, "
-        f"one_logical_step={current.get('one_logical_step', 'unknown')}"
+        f"one_logical_step={current.get('one_logical_step', 'unknown')}, "
+        f"risk_level={current.get('risk_level', 'unknown')}"
     )
     files_value = current.get("affected_files", [])
     files = files_value if isinstance(files_value, list) else []
     if files:
-        shown_files = [str(f) for f in files[:8]]
-        file_text = ", ".join(shown_files)
-        if len(files) > 8:
-            file_text += f", ... +{len(files) - 8} more"
-        current_details.append(f"Affected files: {file_text}")
+        # Emit every affected file — no "+N more" elision.
+        current_details.append(
+            f"Affected files: {', '.join(str(f) for f in files)}"
+        )
     criteria_value = current.get("validation_criteria", [])
     criteria = criteria_value if isinstance(criteria_value, list) else []
     if criteria:
         current_details.append("Validation criteria:")
-        for c in criteria[:10]:
-            current_details.append(f"  - {_truncate_context_value(c, 120)}")
-        if len(criteria) > 10:
-            current_details.append(f"  ... +{len(criteria) - 10} more criteria")
+        for c in criteria:
+            current_details.append(f"  - {c}")
 
     # Plan overview with statuses from step_state.json
     state_path = project_dir / ".map" / branch / "step_state.json"
@@ -5051,11 +6646,9 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
             fc = fc_value if isinstance(fc_value, list) else []
             status = result.get("status", "unknown")
             summary = result.get("summary", "")
-            shown_files = fc[:4]
-            file_suffix = f", +{len(fc) - 4} more" if len(fc) > 4 else ""
-            line = f"  {up_id}: files={shown_files}{file_suffix}, status={status}"
+            line = f"  {up_id}: files={list(fc)}, status={status}"
             if summary:
-                line += f", summary={_truncate_context_value(summary, 120)}"
+                line += f", summary={summary}"
             upstream_lines.append(line)
         else:
             upstream_lines.append(f"  {up_id}: (not yet completed)")
@@ -5072,6 +6665,27 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
         parts.append("")
         parts.append(f"# Upstream Results (dependencies of {current_subtask_id}):")
         parts.extend(upstream_lines)
+
+    # Inline the latest research artifact for THIS subtask so callers stop
+    # having to glue load_research output into the Actor prompt by hand.
+    # Tries actor → monitor → decomposer kinds in order; if none exists,
+    # nothing is added (RESEARCH may not have run yet). No length cap — the
+    # user disabled context-block truncation; the full research file
+    # contents are inlined so Actor doesn't have to re-read the file.
+    try:
+        for _research_kind in ("actor", "monitor", "decomposer"):
+            _research_text = load_research(
+                branch, current_subtask_id, kind=_research_kind
+            )
+            if _research_text:
+                parts.append("")
+                parts.append(
+                    f"# Research Findings ({current_subtask_id}, kind={_research_kind}):"
+                )
+                parts.append(_research_text)
+                break
+    except (ValueError, OSError):
+        pass
 
     parts.append("")
     parts.append(f"# Plan Overview ({len(blueprint.get('subtasks', []))} subtasks):")
@@ -5100,46 +6714,24 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
             if changed or deleted:
                 parts.append("")
                 parts.append("# Repo Delta (files changed since last subtask):")
-                for f in changed[:20]:
+                for f in changed:
                     parts.append(f"  {f}")
-                if len(changed) > 20:
-                    parts.append(f"  ... +{len(changed) - 20} more")
                 if deleted:
                     parts.append("# Deleted since last subtask:")
-                    for f in deleted[:10]:
+                    for f in deleted:
                         parts.append(f"  (deleted) {f}")
-                    if len(deleted) > 10:
-                        parts.append(f"  ... +{len(deleted) - 10} more")
         except ImportError:
             # Fallback: repo_insight not available in standalone .map/ context
             pass
 
     parts.append("</map_context>")
 
-    budget = _context_block_budget_tokens()
-    budget_result = _budget_context_block(parts, budget)
-    record_token_budget_decision(
-        path_name="map-efficient.actor_context_block",
-        configured_budget_tokens=budget,
-        estimated_tokens_before=int(budget_result["estimated_tokens_before"]),
-        estimated_tokens_after=int(budget_result["estimated_tokens_after"]),
-        clipped_sections=cast(list[str], budget_result["clipped_sections"]),
-        budget_action="truncated" if budget_result["truncated"] else "none",
-        artifact_references=[
-            {"path": f".map/{branch}/blueprint.json", "kind": "blueprint"},
-            {
-                "path": f".map/{branch}/task_plan_{branch}.md",
-                "kind": "task-plan",
-            },
-            {"path": f".map/{branch}/step_state.json", "kind": "step-state"},
-        ],
-        metadata={
-            "current_subtask_id": current_subtask_id,
-            "budget_env": CONTEXT_BLOCK_BUDGET_ENV,
-        },
-        branch=branch,
-    )
-    return str(budget_result["text"])
+    # All truncation infrastructure removed by user directive: no per-field
+    # caps, no budget-based clipping, no token-budget accounting roundtrip.
+    # build_context_block emits the raw text — the operator wants the full
+    # picture, period. If the block grows beyond context window, the user
+    # will opt into /compact themselves (compression_policy default = never).
+    return "\n".join(parts)
 
 
 def prepare_detached_review(
@@ -5352,23 +6944,49 @@ if __name__ == "__main__":
         result = load_artifact_manifest()
         print(json.dumps(result, indent=2, ensure_ascii=True))
 
-    elif func_name == "record_workflow_fit" and len(sys.argv) >= 8:
+    elif func_name == "record_workflow_fit" and len(sys.argv) >= 3:
+        # Two calling conventions supported:
+        #   legacy (positional, deprecated):
+        #     record_workflow_fit <workflow> <diff_size> <inv> <review>
+        #         <ac> <tdd> [summary]
+        #   keyword (preferred):
+        #     record_workflow_fit <workflow> [--diff-size SIZE]
+        #         [--has-new-invariants 0|1] [--needs-independent-review 0|1]
+        #         [--has-clear-acceptance-criteria 0|1]
+        #         [--test-first-required 0|1] [--summary "..."]
+        # The keyword form prevents bool-order mix-ups the operator just
+        # called out.
         recommended_workflow = sys.argv[2]
-        expected_diff_size = sys.argv[3]
-        has_new_invariants = sys.argv[4]
-        needs_independent_review = sys.argv[5]
-        has_clear_acceptance_criteria = sys.argv[6]
-        test_first_required = sys.argv[7]
-        decision_summary = sys.argv[8] if len(sys.argv) >= 9 else ""
-        result = record_workflow_fit(
-            recommended_workflow,
-            expected_diff_size,
-            has_new_invariants,
-            needs_independent_review,
-            has_clear_acceptance_criteria,
-            test_first_required,
-            decision_summary,
-        )
+        rest = list(sys.argv[3:])
+        if rest and not rest[0].startswith("--") and len(rest) >= 5:
+            # Legacy positional path
+            result = record_workflow_fit(
+                recommended_workflow,
+                rest[0],
+                rest[1],
+                rest[2],
+                rest[3],
+                rest[4],
+                rest[5] if len(rest) >= 6 else "",
+            )
+        else:
+            def _flag(name: str, default: str) -> str:
+                if f"--{name}" in rest:
+                    idx = rest.index(f"--{name}")
+                    if idx + 1 < len(rest):
+                        return rest[idx + 1]
+                return default
+            result = record_workflow_fit(
+                recommended_workflow,
+                expected_diff_size=_flag("diff-size", "medium"),
+                has_new_invariants=_flag("has-new-invariants", "0"),
+                needs_independent_review=_flag("needs-independent-review", "0"),
+                has_clear_acceptance_criteria=_flag(
+                    "has-clear-acceptance-criteria", "1"
+                ),
+                test_first_required=_flag("test-first-required", "0"),
+                decision_summary=_flag("summary", ""),
+            )
         print(json.dumps(result, indent=2))
 
     elif func_name == "record_plan_artifacts":
@@ -5549,6 +7167,351 @@ if __name__ == "__main__":
         result = build_context_block(sys.argv[2], sys.argv[3])
         print(result)
 
+    elif func_name == "get_subtask" and len(sys.argv) >= 3:
+        # CLI: get_subtask <subtask_id> [--branch <branch>]
+        # Hides the {flat shape, blueprint-wrapped shape} dichotomy that
+        # forces every caller into ad-hoc jq with two fallbacks. load_blueprint
+        # already normalizes both forms.
+        sid = sys.argv[2]
+        branch_arg: Optional[str] = None
+        if "--branch" in sys.argv:
+            idx = sys.argv.index("--branch")
+            if idx + 1 < len(sys.argv):
+                branch_arg = sys.argv[idx + 1]
+        bp = load_blueprint(branch_arg)
+        if bp is None:
+            print(
+                json.dumps({"status": "error", "message": "blueprint.json not found"}),
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        sub = get_subtask_from_blueprint(bp, sid)
+        if sub is None:
+            print(
+                json.dumps({"status": "error", "message": f"subtask {sid!r} not in blueprint"}),
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print(json.dumps(sub, indent=2))
+
+    elif func_name == "subtask_token_usage" and len(sys.argv) >= 3:
+        # CLI: subtask_token_usage <branch> [subtask_id] [--since-ts ISO]
+        #      [--all]
+        # --all reports the whole-session total (anchors window at epoch);
+        # useful when the operator wants "tokens since session start" rather
+        # than "tokens since current subtask boundary".
+        branch_arg = sys.argv[2]
+        sid_arg: Optional[str] = None
+        since_arg: Optional[str] = None
+        rest = list(sys.argv[3:])
+        if rest and not rest[0].startswith("--"):
+            sid_arg = rest.pop(0)
+        if "--since-ts" in rest:
+            idx = rest.index("--since-ts")
+            if idx + 1 < len(rest):
+                since_arg = rest[idx + 1]
+        if "--all" in rest and not since_arg:
+            since_arg = "1970-01-01T00:00:00Z"
+        report = subtask_token_usage(branch_arg, sid_arg, since_ts=since_arg)
+        print(json.dumps(report, indent=2))
+        if report.get("status") in {"no_state", "error"}:
+            sys.exit(1)
+
+    elif func_name == "list_plans":
+        report = list_plans()
+        print(json.dumps(report, indent=2))
+
+    elif func_name == "subtask_boundary_compact_check" and len(sys.argv) >= 3:
+        # CLI: subtask_boundary_compact_check <branch>
+        # Exit codes: 0 = below threshold or cooldown; 1 = recommend
+        # compact; 2 = force_compact (above 2x threshold). Lets skill
+        # bash drive `if (( $? >= 2 )); then ... fi`.
+        report = subtask_boundary_compact_check(sys.argv[2])
+        print(json.dumps(report, indent=2))
+        if report.get("status") == "success":
+            if report.get("force_compact"):
+                sys.exit(2)
+            if report.get("used", 0) >= report.get("threshold", 1):
+                sys.exit(1)
+
+    elif func_name == "record_subtask_baseline" and len(sys.argv) >= 4:
+        # CLI: record_subtask_baseline <branch> <subtask_id>
+        report = record_subtask_baseline(sys.argv[2], sys.argv[3])
+        print(json.dumps(report, indent=2))
+        if report.get("status") == "error":
+            sys.exit(1)
+
+    elif func_name == "record_scope_baseline" and len(sys.argv) >= 3:
+        # CLI: record_scope_baseline <branch>
+        report = record_scope_baseline(sys.argv[2])
+        print(json.dumps(report, indent=2))
+        if report.get("status") == "error":
+            sys.exit(1)
+
+    elif func_name == "refresh_blueprint_affected_files" and len(sys.argv) >= 4:
+        # CLI: refresh_blueprint_affected_files <branch> <subtask_id> [--dry-run]
+        branch_arg = sys.argv[2]
+        sid_arg = sys.argv[3]
+        dry_run_arg = "--dry-run" in sys.argv
+        report = refresh_blueprint_affected_files(
+            branch_arg, sid_arg, dry_run=dry_run_arg
+        )
+        print(json.dumps(report, indent=2))
+        if report.get("status") == "error":
+            sys.exit(1)
+
+    elif func_name == "detect_already_done" and len(sys.argv) >= 4:
+        # CLI: detect_already_done <branch> <subtask_id> [--since-ref REF]
+        branch_arg = sys.argv[2]
+        sid_arg = sys.argv[3]
+        since_arg: Optional[str] = None
+        if "--since-ref" in sys.argv:
+            idx = sys.argv.index("--since-ref")
+            if idx + 1 < len(sys.argv):
+                since_arg = sys.argv[idx + 1]
+        report = detect_already_done(branch_arg, sid_arg, since_ref=since_arg)
+        print(json.dumps(report, indent=2))
+        if report.get("status") == "error":
+            sys.exit(1)
+
+    elif func_name == "validate_mutation_boundary" and len(sys.argv) >= 4:
+        # CLI: validate_mutation_boundary <branch> <subtask_id> [base_ref]
+        # Exit codes:
+        #   0: status in {"clean", "warning"}
+        #   1: status == "error" (missing blueprint, unknown subtask, git
+        #      failure) — always non-zero so Monitor's mandatory gate cannot
+        #      silently pass; OR status == "violation" with MAP_STRICT_SCOPE=1.
+        base_ref_arg = sys.argv[4] if len(sys.argv) >= 5 else None
+        report = validate_mutation_boundary(sys.argv[2], sys.argv[3], base_ref_arg)
+        print(json.dumps(report, indent=2))
+        report_status = report.get("status")
+        if report_status == "error":
+            sys.exit(1)
+        if report_status == "violation" and report.get("strict"):
+            sys.exit(1)
+
+    elif func_name == "save_research" and len(sys.argv) >= 4:
+        # CLI: save_research <branch> <subtask_id> [kind] [--attempt N] [--file PATH]
+        # Content source priority: --file PATH > stdin. The --file
+        # alternative was added because the stdin-only contract was
+        # brittle — a single shell-quoting accident bricked the input
+        # with "Invalid JSON on stdin"-class errors and there was no way
+        # to pass an already-written research file straight through.
+        branch_arg = sys.argv[2]
+        subtask_arg = sys.argv[3]
+        kind_arg = "actor"
+        attempt_arg: Optional[int] = None
+        file_arg: Optional[str] = None
+        rest = list(sys.argv[4:])
+        if rest and not rest[0].startswith("--"):
+            kind_arg = rest.pop(0)
+        if "--attempt" in rest:
+            idx = rest.index("--attempt")
+            if idx + 1 < len(rest):
+                try:
+                    attempt_arg = int(rest[idx + 1])
+                except ValueError:
+                    print(
+                        json.dumps({"status": "error", "message": "--attempt must be int"}),
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+        if "--file" in rest:
+            file_idx = rest.index("--file")
+            if file_idx + 1 < len(rest):
+                file_arg = rest[file_idx + 1]
+        try:
+            if file_arg:
+                file_path = Path(file_arg)
+                if not file_path.is_file():
+                    print(
+                        json.dumps({
+                            "status": "error",
+                            "message": f"--file {file_arg!r} not found or not a file",
+                        }),
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+                content_in = file_path.read_text(encoding="utf-8")
+            else:
+                content_in = sys.stdin.read()
+            written = save_research(
+                branch_arg, subtask_arg, content_in, kind=kind_arg, attempt=attempt_arg
+            )
+            print(json.dumps({"status": "success", "path": written}))
+        except ValueError as exc:
+            print(json.dumps({"status": "error", "message": str(exc)}))
+            sys.exit(1)
+
+    elif func_name == "load_research" and len(sys.argv) >= 4:
+        # CLI: load_research <branch> <subtask_id> [kind] [--all]
+        # Content to stdout. On error: write the diagnostic to STDERR
+        # (keeping stdout empty) so callers using command substitution
+        # (FOO=$(... load_research ...)) don't get JSON in place of
+        # research text. --all merges every kind on disk under section
+        # headers — useful when Monitor wants both Actor's research and
+        # its own previous notes without two ping-pongs.
+        branch_arg = sys.argv[2]
+        subtask_arg = sys.argv[3]
+        merge_all = "--all" in sys.argv[4:]
+        rest_tokens = [t for t in sys.argv[4:] if t != "--all"]
+        kind_arg = rest_tokens[0] if rest_tokens else "actor"
+        try:
+            sys.stdout.write(
+                load_research(
+                    branch_arg,
+                    subtask_arg,
+                    kind=kind_arg,
+                    merge_all_kinds=merge_all,
+                )
+            )
+        except ValueError as exc:
+            print(
+                json.dumps({"status": "error", "message": str(exc)}),
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+    elif func_name == "record_diagnostics_baseline":
+        # CLI: record_diagnostics_baseline <branch> [--tools pyright,ruff]
+        # Snapshot pyright/ruff/mypy/golangci-lint state pre-execution.
+        if len(sys.argv) < 3:
+            print(json.dumps({"status": "error", "message": "usage: record_diagnostics_baseline <branch> [--tools ...]"}), file=sys.stderr)
+            sys.exit(1)
+        diag_branch = sys.argv[2]
+        diag_tools: Optional[list[str]] = None
+        diag_timeout = 180
+        if "--tools" in sys.argv:
+            t_idx = sys.argv.index("--tools")
+            if t_idx + 1 < len(sys.argv):
+                diag_tools = [
+                    t.strip() for t in re.split(r"[,\s]+", sys.argv[t_idx + 1])
+                    if t.strip()
+                ]
+        if "--timeout" in sys.argv:
+            t_idx = sys.argv.index("--timeout")
+            if t_idx + 1 < len(sys.argv):
+                try:
+                    diag_timeout = int(sys.argv[t_idx + 1])
+                except ValueError:
+                    print(json.dumps({"status": "error", "message": "--timeout must be int"}), file=sys.stderr)
+                    sys.exit(1)
+        report = record_diagnostics_baseline(
+            diag_branch, tools=diag_tools, timeout_seconds=diag_timeout
+        )
+        print(json.dumps(report, indent=2))
+
+    elif func_name == "list_diagnostics_baseline":
+        if len(sys.argv) < 3:
+            print(json.dumps({"status": "error", "message": "usage: list_diagnostics_baseline <branch>"}), file=sys.stderr)
+            sys.exit(1)
+        report = list_diagnostics_baseline(sys.argv[2])
+        print(json.dumps(report, indent=2))
+
+    elif func_name == "record_test_baseline":
+        # CLI: record_test_baseline <branch> [--command "..."] [--timeout N]
+        # Snapshot pre-existing test failures so later subtasks can
+        # distinguish "I broke this" from "this was broken before plan
+        # started". Auto-detects test command when omitted.
+        if len(sys.argv) < 3:
+            print(json.dumps({"status": "error", "message": "usage: record_test_baseline <branch> [--command ...]"}), file=sys.stderr)
+            sys.exit(1)
+        baseline_branch = sys.argv[2]
+        baseline_cmd = ""
+        baseline_timeout = 120
+        if "--command" in sys.argv:
+            c_idx = sys.argv.index("--command")
+            if c_idx + 1 < len(sys.argv):
+                baseline_cmd = sys.argv[c_idx + 1]
+        if "--timeout" in sys.argv:
+            t_idx = sys.argv.index("--timeout")
+            if t_idx + 1 < len(sys.argv):
+                try:
+                    baseline_timeout = int(sys.argv[t_idx + 1])
+                except ValueError:
+                    print(json.dumps({"status": "error", "message": "--timeout must be int"}), file=sys.stderr)
+                    sys.exit(1)
+        report = record_test_baseline(
+            baseline_branch, baseline_cmd, timeout_seconds=baseline_timeout
+        )
+        print(json.dumps(report, indent=2))
+        # Exit 0 even on baseline_failures — the WHOLE point is to
+        # record them, not gate on them. Only exit non-zero on hard
+        # error (invocation failed).
+        if report.get("status") == "error":
+            sys.exit(1)
+
+    elif func_name == "list_baseline_failures":
+        # CLI: list_baseline_failures <branch>
+        if len(sys.argv) < 3:
+            print(json.dumps({"status": "error", "message": "usage: list_baseline_failures <branch>"}), file=sys.stderr)
+            sys.exit(1)
+        report = list_baseline_failures(sys.argv[2])
+        print(json.dumps(report, indent=2))
+
+    elif func_name == "acknowledge_diagnostic":
+        # CLI: acknowledge_diagnostic <branch> <signature> [--reason "..."]
+        # The signature can be any whole-line diagnostic text — we
+        # canonicalize internally (collapse whitespace, strip).
+        if len(sys.argv) < 4:
+            print(json.dumps({"status": "error", "message": "usage: acknowledge_diagnostic <branch> <signature> [--reason ...]"}), file=sys.stderr)
+            sys.exit(1)
+        ack_branch = sys.argv[2]
+        ack_signature = sys.argv[3]
+        ack_reason = ""
+        if "--reason" in sys.argv:
+            r_idx = sys.argv.index("--reason")
+            if r_idx + 1 < len(sys.argv):
+                ack_reason = sys.argv[r_idx + 1]
+        report = acknowledge_diagnostic(ack_branch, ack_signature, ack_reason)
+        print(json.dumps(report, indent=2))
+        if report.get("status") == "error":
+            sys.exit(1)
+
+    elif func_name == "list_acknowledged_diagnostics":
+        # CLI: list_acknowledged_diagnostics <branch>
+        if len(sys.argv) < 3:
+            print(json.dumps({"status": "error", "message": "usage: list_acknowledged_diagnostics <branch>"}), file=sys.stderr)
+            sys.exit(1)
+        report = list_acknowledged_diagnostics(sys.argv[2])
+        print(json.dumps(report, indent=2))
+        if report.get("status") == "error":
+            sys.exit(1)
+
+    elif func_name == "is_diagnostic_acknowledged":
+        # CLI: is_diagnostic_acknowledged <branch> <signature>
+        # Exit code 0 if acknowledged, 1 otherwise (lets shell branch:
+        # `if python3 ... is_diagnostic_acknowledged $B "$LINE"; then continue; fi`).
+        if len(sys.argv) < 4:
+            print(json.dumps({"status": "error", "message": "usage: is_diagnostic_acknowledged <branch> <signature>"}), file=sys.stderr)
+            sys.exit(1)
+        is_ack = is_diagnostic_acknowledged(sys.argv[2], sys.argv[3])
+        print(json.dumps({"acknowledged": is_ack, "signature": sys.argv[3]}))
+        sys.exit(0 if is_ack else 1)
+
+    elif func_name == "detect_truncated_agent_output":
+        # CLI: detect_truncated_agent_output [--agent monitor|actor|...]
+        # Reads candidate agent response from stdin, prints JSON report.
+        # Exit code 0 always (callers parse `truncated` field) — no stderr
+        # for a clean response, so shell pipelines can branch on it.
+        agent_kind_arg = "monitor"
+        if "--agent" in sys.argv:
+            agent_idx = sys.argv.index("--agent")
+            if agent_idx + 1 < len(sys.argv):
+                agent_kind_arg = sys.argv[agent_idx + 1]
+        text_in = sys.stdin.read()
+        report = detect_truncated_agent_output(
+            text_in, agent_kind=agent_kind_arg
+        )
+        # Don't serialize the parsed dict back (callers can re-parse the
+        # original text if they want it); keep the report shape small.
+        report_summary = {
+            "truncated": report["truncated"],
+            "reasons": report["reasons"],
+            "agent_kind": report["agent_kind"],
+        }
+        print(json.dumps(report_summary, indent=2))
+
     elif func_name == "shuffle-sections":
         # CLI: shuffle-sections <mode> [seed]
         # Empty string seed is treated as "unset" (None) so SKILL.md can pass "" unconditionally.
@@ -5659,5 +7622,33 @@ if __name__ == "__main__":
         print(json.dumps(ord_result))
 
     else:
-        print(f"Unknown function: {func_name}")
+        # Helpful redirect: when the user passes a command that belongs to
+        # the orchestrator (record_subtask_result, mark_subtask_complete,
+        # validate_step, ...) the previous "Invalid JSON on stdin" /
+        # "Unknown function" error gave no hint about WHICH script to use.
+        # Cross-reference the orchestrator's command list so misroutes
+        # surface as actionable text instead of cryptic JSON parse errors.
+        ORCHESTRATOR_ONLY_COMMANDS = {
+            "get_next_step", "peek_current_step", "validate_step",
+            "initialize", "set_plan_approved", "set_execution_mode",
+            "set_tdd_mode", "skip_step", "set_subtasks",
+            "mark_contract_ready", "resume_from_plan",
+            "resume_from_test_contract", "check_circuit_breaker",
+            "set_waves", "get_wave_step", "validate_wave_step",
+            "advance_wave", "resume_single_subtask", "get_plan_progress",
+            "monitor_failed", "wave_monitor_failed", "reopen_for_fixes",
+            "mark_workflow_complete", "mark_subtask_complete",
+            "record_subtask_result", "backfill_subtask_ids",
+            "finalize_plan",
+        }
+        if func_name in ORCHESTRATOR_ONLY_COMMANDS:
+            print(
+                f"Wrong runner: {func_name!r} lives in map_orchestrator.py, "
+                f"not map_step_runner.py.\n"
+                f"Try: python3 .map/scripts/map_orchestrator.py {func_name} "
+                f"{' '.join(sys.argv[2:])}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print(f"Unknown function: {func_name}", file=sys.stderr)
         sys.exit(1)

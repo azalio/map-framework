@@ -80,18 +80,44 @@ fi
 
 Use `$TASK_ARGS`, not raw `$ARGUMENTS`, in prompts.
 
-## Step 0: Detect Existing Plan from /map-plan
+**MANDATORY: Empty $TASK_ARGS is NOT a stop condition.** Do not bail out on an
+empty `$TASK_ARGS`/`$ARGUMENTS` value alone — this skill resumes from
+existing artifacts. The skill stops with a task-required message ONLY when
+ALL THREE are true:
 
-Resume from existing plan artifacts when present:
+1. `$TASK_ARGS` is empty, AND
+2. `.map/<branch>/step_state.json` does NOT exist, AND
+3. `.map/<branch>/task_plan_<branch>.md` does NOT exist.
+
+In every other case you MUST execute Step 0 first and let `resume_from_plan` /
+`get_next_step` decide the next phase. The DECOMPOSE phase (1.0) is the only
+phase that reads `$TASK_ARGS` — and resumed workflows skip it.
+
+## Step 0: Detect Existing State or Plan
+
+Run this BEFORE any `$TASK_ARGS` validation.
 
 ```bash
 BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
-if [ -f ".map/${BRANCH}/task_plan_${BRANCH}.md" ]; then
+STATE_FILE=".map/${BRANCH}/step_state.json"
+PLAN_FILE=".map/${BRANCH}/task_plan_${BRANCH}.md"
+
+if [ -f "$STATE_FILE" ]; then
+  echo "Existing step_state.json found — proceeding straight to Step 1 get_next_step."
+elif [ -f "$PLAN_FILE" ]; then
   RESUME_RESULT=$(python3 .map/scripts/map_orchestrator.py resume_from_plan)
   RESUME_STATUS=$(echo "$RESUME_RESULT" | jq -r '.status')
   if [ "$RESUME_STATUS" = "success" ]; then
     echo "Resumed from /map-plan artifacts."
+  else
+    echo "resume_from_plan failed: $RESUME_RESULT" >&2
+    exit 1
   fi
+elif [ -z "$TASK_ARGS" ]; then
+  echo "No \$TASK_ARGS, no step_state.json, and no task_plan_${BRANCH}.md." >&2
+  echo "Provide a task description (e.g. '/map-efficient add retry policy')" >&2
+  echo "or run /map-plan first to create a plan to resume from." >&2
+  exit 1
 fi
 ```
 
@@ -156,6 +182,17 @@ Execution mode is `batch`; the orchestrator skips this step.
 
 State is managed by the orchestrator. Do not create `step_state.json` manually.
 
+### Pre-flight test baseline (MANDATORY at INIT_STATE)
+
+```bash
+python3 .map/scripts/map_step_runner.py record_test_baseline "$BRANCH"
+```
+
+Snapshots pre-existing failures so later subtasks distinguish
+"introduced regression" from "was broken pre-plan". Auto-detects
+Make/pytest/go test/cargo. Overrides + narrow-target guidance:
+[efficient-reference.md](efficient-reference.md#pre-flight-test-baseline).
+
 ### Wave Computation (after INIT_STATE) - REQUIRED
 
 ```bash
@@ -169,9 +206,53 @@ fi
 
 Default to sequential execution. Use wave APIs only for low-risk disjoint new-file waves or explicit user-requested parallel execution. See [efficient-reference.md](efficient-reference.md#wave-execution) for the full wave loop.
 
+**Note on resume:** `resume_from_plan` (Step 0) now auto-invokes `set_waves`
+when `blueprint.json` is present, so resumed workflows do not need a manual
+`set_waves` dispatch. The result is reported in the `waves_computed` field of
+the resume response (`"success"`, `"error"`, or `"skipped"` if no blueprint).
+
+**Wave-loop vs sequential dispatcher:** `get_next_step` is the **sequential**
+walker (one phase at a time, in `subtask_sequence` order). The **wave-loop**
+(`get_wave_step` / `validate_wave_step` / `advance_wave`) honors
+`execution_waves` and is the canonical path when waves contain >1 subtask.
+For a single-Actor batch run with a fully-linear plan, `get_next_step` and
+the wave-loop converge on the same order, so the skill defaults to the
+sequential walker for simplicity. Switch to the wave-loop when (a) waves
+have ≥2 subtasks AND (b) the subtasks in that wave touch disjoint files
+(see `split_wave_by_file_conflicts`).
+
+### No-op subtask short-circuit (before RESEARCH)
+
+Some subtasks are already-done historically (rename/refactor landed in a prior PR), or are docs-only and don't need the full research→actor→monitor cycle. Skip them up-front to save tokens:
+
+```bash
+SUBTASK_ID=$(jq -r '.current_subtask_id' ".map/${BRANCH}/step_state.json")
+python3 .map/scripts/map_orchestrator.py mark_subtask_complete "$SUBTASK_ID" \
+  --reason "rename already landed in commit <sha>; verified via git log"
+```
+
+This records a synthetic subtask_result with status="no-op", marks the phase COMPLETE, and advances the cursor (or closes the workflow if it was the last). Always pass `--reason` so audits know why the work was skipped. If unsure, run RESEARCH first and decide based on its findings.
+
 ### Phase: RESEARCH (2.2) - Required
 
-Call `research-agent` for the current subtask and save concise findings into branch artifacts. Validate the phase with the orchestrator.
+Call `research-agent` for the current subtask, then persist its concise findings via the canonical `save_research` API so Actor and Monitor consume them from the same path. Validate the phase with the orchestrator.
+
+```bash
+SUBTASK_ID=$(jq -r '.current_subtask_id' ".map/${BRANCH}/step_state.json")
+# RECOMMENDED: proactive refresh_blueprint_affected_files <branch>
+# <sid> [--dry-run] BEFORE research-agent (efficient-reference.md).
+printf '%s' "$RESEARCH_FINDINGS" | \
+  python3 .map/scripts/map_step_runner.py save_research "$BRANCH" "$SUBTASK_ID"
+# (defaults kind=actor; pass a 4th arg like 'monitor' or 'decomposer' to partition)
+```
+
+Later phases read with:
+
+```bash
+RESEARCH_FINDINGS=$(python3 .map/scripts/map_step_runner.py load_research "$BRANCH" "$SUBTASK_ID")
+```
+
+The artifact lands under `.map/<branch>/research/<subtask_id>__<kind>.md`. Use `load_research` to fill the `{research_findings}` placeholder in Actor and Monitor prompts below.
 
 ### Phase: TEST_WRITER (2.25) - TDD Mode Only
 
@@ -183,7 +264,14 @@ Lint and run the new tests. Passing tests before Actor indicate weak tests; retu
 
 ### Phase: ACTOR (2.3)
 
-Use `build_context_block()` from `map_step_runner.py` to generate the bounded `<map_context>` from blueprint, step state, dependency results, and repo delta.
+Generate the `<map_context>` via the `build_context_block` CLI on `map_step_runner.py` (blueprint + step state + dependency results + repo delta — full content; truncation infrastructure was removed, operators handle context size via `/compact` opt-in). Prefer the CLI form — it sets up `CLAUDE_PROJECT_DIR` resolution and import paths for you, so no inline `python -c` is needed.
+
+```bash
+SUBTASK_ID=$(jq -r '.current_subtask_id' ".map/${BRANCH}/step_state.json")
+BOUNDED_MAP_CONTEXT=$(python3 .map/scripts/map_step_runner.py build_context_block "$BRANCH" "$SUBTASK_ID")
+```
+
+Then substitute `$BOUNDED_MAP_CONTEXT` into the Actor prompt below.
 
 ```text
 Task(
@@ -204,6 +292,16 @@ Return files_changed, tests_run, validation_notes, and any blocker.
 """
 )
 ```
+
+### Actor truncated-response gate (MANDATORY — pre-MONITOR)
+
+Before invoking Monitor, validate Actor's response via
+`detect_truncated_agent_output --agent actor`. If `truncated: true`,
+re-prompt once with "emit ONLY the JSON envelope", then
+CLARIFICATION_NEEDED. Cross-check declared `files_changed` against
+`git diff --name-only` — Actor that named files but didn't write them
+is truncated by extension. Full recipe in
+[efficient-reference.md](efficient-reference.md).
 
 ### Phase: MONITOR (2.4) - Required
 
@@ -229,10 +327,75 @@ Return JSON with valid, summary, issues, files_changed, tests_run, and escalatio
 
 # After Monitor returns:
 
-- If `valid=true`, run the deterministic test gate, record the subtask result, and validate/advance the state.
+- **Truncated-response gate (MANDATORY — pre-verdict):** Before reading
+  `valid`/`recommendation`, run `detect_truncated_agent_output --agent
+  monitor` (or check inline: JSON object with `valid`, `summary`,
+  `issues` present, ends with `}`, parses cleanly). On truncation:
+  re-invoke Monitor once with "retry and emit ONLY the JSON object"; if
+  still truncated, stop with CLARIFICATION_NEEDED. Do NOT record the
+  prose-response subtask as complete. Three signs:
+  (a) doesn't parse as JSON, (b) missing one of
+  `valid`/`summary`/`issues`, (c) ends mid-sentence with no closing `}`.
+  Full recipe in [efficient-reference.md](efficient-reference.md).
+- **Verdict contract (MANDATORY):** Monitor's `recommendation` field overrides
+  loose `valid=true` calls. If `valid=true` AND `recommendation in {"revise",
+  "block", "needs_investigation"}`, treat it as `valid=false`. Reason: a
+  MEDIUM/HIGH issue with a permissive `valid` is the same broken-window
+  pattern that silently merged "NOT NULL" / type-ignore mistakes. Only the
+  combination `valid=true AND recommendation in {"proceed", "approve",
+  null/missing}` is a clean pass.
+- **Commit on clean Monitor close (ALLOWED, encouraged):** As soon as
+  Monitor returns a clean verdict (`valid=true` AND
+  `recommendation∈{proceed, approve, missing}`), create a per-subtask
+  commit before advancing — without asking the user. Per-subtask
+  commits keep the PR reviewable and lock `last_subtask_commit_sha`
+  as the baseline for the next subtask's mutation-boundary check.
+  Full recipe + "when NOT to commit" cases live in
+  [efficient-reference.md](efficient-reference.md). Never `--no-verify`,
+  never amend a published commit.
+- **Record the subtask result (REQUIRED on clean pass):**
+  ```bash
+  python3 .map/scripts/map_orchestrator.py record_subtask_result "$SUBTASK_ID" valid \
+    --files "$FILES_CSV" --summary "$ONE_LINE" --commit-sha "$SHA"
+  ```
+  `record_subtask_result` is the canonical write path — the result lands in
+  `subtask_results` and `last_subtask_commit_sha` for downstream context.
+  Pass `--commit-sha` whenever you just made a per-subtask commit (see
+  rule above); when omitted, the orchestrator auto-detects via
+  `git log -1 --format=%H` but the explicit value is preferred so the
+  audit trail is unambiguous.
+- **Auto-validate mutation boundary:** `validate_step 2.4` itself now runs
+  `validate_mutation_boundary` for the current subtask and rejects on
+  `status="violation"` (only when `MAP_STRICT_SCOPE=1`) or `status="error"`.
+  No manual dispatch needed.
+- **Refresh blueprint affected_files after each clean close (RECOMMENDED):**
+  After commit + record_subtask_result, sync the blueprint's
+  `affected_files` for the just-closed subtask to the actual diff. This
+  keeps the next subtask's mutation-boundary check honest — without
+  refresh, decomposer-time guesses drift further from reality every
+  subtask and Monitor warnings degrade into background noise.
+
+  ```bash
+  python3 .map/scripts/map_step_runner.py refresh_blueprint_affected_files \
+    "$BRANCH" "$SUBTASK_ID"
+  ```
+  Idempotent and read-only against blueprint structure outside the
+  named subtask. Use `--dry-run` to preview the diff before writing.
 - If `valid=false`, write `code-review-N.md`, run `python3 .map/scripts/map_orchestrator.py monitor_failed --feedback "<feedback>"`, inspect `retry_isolation`, and invoke Predictor only when stuck/high-risk escalation rules apply.
 - If `retry_isolation=clean_retry_required`, run `python3 .map/scripts/map_step_runner.py validate_retry_quarantine` before the next Actor call. The next Actor prompt must use CLEAN_RETRY mode from `.map/<branch>/retry_quarantine.json` and must not reuse the rejected approach unless the quarantine artifact preserves it.
 - Treat test failures after Monitor approval as Monitor failure.
+
+### Phase: ADVANCE_SUBTASK (synthetic boundary)
+
+After `validate_step 2.4` succeeds AND another subtask remains in the
+sequence, the orchestrator returns `next_step: "ADVANCE_SUBTASK"`. This is
+NOT a phase you execute — it just means "this subtask is done; call
+`get_next_step` again to load the next subtask's RESEARCH (2.2)". The
+sentinel exists so callers can tell mid-workflow advancement apart from a
+real terminal `COMPLETE`. Treat it as a free transition: invoke
+`get_next_step` and continue. (If you instead see `next_step: "COMPLETE"`
+AND `subtask_index + 1 == len(subtask_sequence)`, the workflow is really
+done — go to final verification.)
 
 ### Monitor Artifact Rule
 
@@ -248,11 +411,42 @@ Run build first, then tests, then linter. If build fails, skip tests/lint and re
 python3 .map/scripts/map_orchestrator.py validate_step "$STEP_ID"
 ```
 
+For step `2.4` (MONITOR close), ALWAYS pass `--recommendation
+"$MONITOR_RECOMMENDATION"`. The orchestrator now treats
+`recommendation ∈ {revise, block, needs_investigation}` as a structural
+reject — silently passing `valid=true` while ignoring the
+recommendation field is a known footgun the framework now refuses.
+
+```bash
+python3 .map/scripts/map_orchestrator.py validate_step 2.4 \
+  --recommendation "$MONITOR_RECOMMENDATION"
+```
+
 Use `validate_wave_step` only in wave execution mode.
 
 ## Step 2b: Continue or Complete
 
-Call `get_next_step` again. Continue until complete, then run final verification.
+**MANDATORY: Do NOT pause between subtasks.** After `validate_step 2.4`
+returns `next_step: "ADVANCE_SUBTASK"`, immediately call `get_next_step`
+again and continue executing the next subtask's RESEARCH/ACTOR/MONITOR
+cycle in the SAME `/map-efficient` invocation. A subtask boundary is NOT
+a checkpoint for the user — the only legitimate stops are:
+
+1. `next_step: "COMPLETE"` with `subtask_index + 1 == len(subtask_sequence)`
+   → workflow done, run Final Verification (Step 3).
+2. `monitor_failed` retry quarantine requires user adjudication
+   (`retry_isolation=clean_retry_required` AND clean_retry_count > max).
+3. User explicitly interrupts via the conversation.
+4. Circuit-breaker trips (`check_circuit_breaker` returns
+   `should_stop=true`).
+
+Per-subtask "summary report and wait for review" is the WRONG default —
+it doubles round-trips and burns the operator's attention. The user
+asked the skill to ship the whole plan; ship the whole plan. They can
+interrupt at any time if they want a checkpoint.
+
+Call `get_next_step` again immediately. Continue until complete, then
+run final verification.
 
 ## Step 3: Final Verification (Ralph Loop)
 

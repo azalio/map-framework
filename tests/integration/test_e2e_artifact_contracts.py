@@ -458,7 +458,13 @@ class TestFullLifecycle:
         state = map_orchestrator.StepState.load(workspace / "step_state.json")
         assert state.current_subtask_id == "ST-001"
 
-        # 6. Walk subtask execution steps (RESEARCH → ACTOR → MONITOR)
+        # 6. Walk subtask execution steps (RESEARCH → ACTOR → MONITOR).
+        # validate_step("2.2") now enforces that save_research wrote a real
+        # artifact for the current subtask (MANDATORY RESEARCH); plant one
+        # per subtask so the gate accepts.
+        research_dir = workspace / "research"
+        research_dir.mkdir(parents=True, exist_ok=True)
+        (research_dir / "ST-001__actor.md").write_text("seed findings ST-001")
         for step_id in ["2.2", "2.3", "2.4"]:
             step = map_orchestrator.get_next_step(branch)
             assert (
@@ -472,6 +478,7 @@ class TestFullLifecycle:
         assert step["step_id"] == "2.2"
 
         # 8. Complete second subtask
+        (research_dir / "ST-002__actor.md").write_text("seed findings ST-002")
         for step_id in ["2.2", "2.3", "2.4"]:
             step = map_orchestrator.get_next_step(branch)
             assert step["step_id"] == step_id

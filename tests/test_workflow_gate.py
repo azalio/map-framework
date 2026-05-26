@@ -366,6 +366,103 @@ class TestWorkflowGate:
         assert code == 0
         self._assert_denied(stdout)
 
+    def test_research_phase_allows_docs_only_edit(
+        self, tmp_path: Path
+    ) -> None:
+        """Regression #7: docs-only subtasks (runbook update, README tweak)
+        don't need research-agent. Editing a .md path during RESEARCH
+        must NOT be blocked — operators were saving empty research stubs
+        just to pass the gate.
+        """
+        self._setup_step_state(tmp_path, "master", "RESEARCH")
+        for docs_path in (
+            str(tmp_path / "docs" / "runbook.md"),
+            str(tmp_path / "README.md"),
+            str(tmp_path / "CHANGELOG.md"),
+            str(tmp_path / "docs" / "guide.rst"),
+        ):
+            code, stdout, _ = self.run_hook(
+                {"tool_name": "Edit", "tool_input": {"file_path": docs_path}},
+                tmp_path,
+            )
+            assert code == 0, f"hook crashed for {docs_path}"
+            self._assert_allowed(stdout)
+
+    def test_research_phase_still_blocks_code_edit(
+        self, tmp_path: Path
+    ) -> None:
+        """Counter-test: code paths during RESEARCH still get blocked.
+        Otherwise the docs exemption would degenerate into a free pass.
+        """
+        self._setup_step_state(tmp_path, "master", "RESEARCH")
+        code, stdout, _ = self.run_hook(
+            {"tool_name": "Edit", "tool_input": {"file_path": "src/app.py"}},
+            tmp_path,
+        )
+        assert code == 0
+        self._assert_denied(stdout)
+
+    def test_research_phase_mixed_paths_still_blocks(
+        self, tmp_path: Path
+    ) -> None:
+        """When MultiEdit targets BOTH docs and code, the docs exemption
+        must NOT apply — otherwise code sneaks in under a docs umbrella.
+        """
+        self._setup_step_state(tmp_path, "master", "RESEARCH")
+        code, stdout, _ = self.run_hook(
+            {
+                "tool_name": "MultiEdit",
+                "tool_input": {
+                    "file_path": "src/app.py",
+                    "edits": [
+                        {"file_path": "docs/runbook.md"},
+                        {"file_path": "src/app.py"},
+                    ],
+                },
+            },
+            tmp_path,
+        )
+        assert code == 0
+        self._assert_denied(stdout)
+
+    def test_research_phase_message_has_actionable_recovery_commands(
+        self, tmp_path: Path
+    ) -> None:
+        """Regression for friction #11: when Edit is blocked during
+        RESEARCH (2.2), the deny message must name the save_research
+        command and the validate_step 2.2 follow-up — not a generic
+        "phase 'RESEARCH' is not allowed" string. First-time operators
+        forget the transition; the gate's message is their only hint.
+        """
+        self._setup_step_state(tmp_path, "master", "RESEARCH")
+        code, stdout, _ = self.run_hook(
+            {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}},
+            tmp_path,
+        )
+        assert code == 0
+        reason = self._assert_denied(stdout)
+        assert "RESEARCH" in reason
+        assert "save_research" in reason, reason
+        assert "validate_step 2.2" in reason, reason
+
+    def test_monitor_phase_message_mentions_hotfix_escape(
+        self, tmp_path: Path
+    ) -> None:
+        """Edit during MONITOR is blocked, but the deny message must
+        explicitly document the MAP_MONITOR_HOTFIX=1 opt-in escape and
+        the monitor_failed path so operators don't bypass via state
+        editing.
+        """
+        self._setup_step_state(tmp_path, "master", "MONITOR")
+        code, stdout, _ = self.run_hook(
+            {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}},
+            tmp_path,
+        )
+        assert code == 0
+        reason = self._assert_denied(stdout)
+        assert "MAP_MONITOR_HOTFIX" in reason, reason
+        assert "monitor_failed" in reason, reason
+
     # --- Exempt paths ---
 
     def test_allows_map_dir_edits_always(self, tmp_path: Path) -> None:

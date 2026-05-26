@@ -78,24 +78,21 @@ Then enable the Codex hook manually: run `/hooks`, select `PreToolUse`, press `t
 
 If your Codex version does not support the `hooks` feature key yet, either start it with `codex --enable codex_hooks` or upgrade Codex first. Upgrading is recommended.
 
-Pick a context-compression policy if you want non-default behaviour
-(`auto` is the default; see [docs/USAGE.md#context-budget-policy](docs/USAGE.md)):
+Pick a context-compression policy if you want the `/compact` nudge
+(default is `never` — the nudge is opt-in; see
+[docs/USAGE.md#context-budget-policy](docs/USAGE.md)):
 
 ```bash
-mapify init . --compression never                 # quality > cost
-mapify init . --compression aggressive            # cost > quality
-mapify init . --compression-threshold 250000      # Opus 1M project
+mapify init . --compression never                 # default — no nudge
+mapify init . --compression auto                  # nudge at threshold
+mapify init . --compression aggressive            # nudge at 0.4 x threshold
+mapify init . --compression-threshold 250000      # Opus 1M / 50+ subtask plans
 ```
 
-Generated `/map-efficient` Actor context blocks and `/map-review` reviewer
-fan-out prompts are also bounded before they enter model calls. Override the
-default 4,000 Actor-context cap with `MAP_CONTEXT_BLOCK_BUDGET_TOKENS`, or the
-default 12,000 per-reviewer prompt cap with `MAP_REVIEW_PROMPT_BUDGET_TOKENS`,
-only when a large workflow genuinely needs more context. Values below the
-minimum fall back to the default so required wrappers and truncation notes stay
-present. When either active prompt path runs, MAP records the decision in
-`.map/<branch>/token_budget.json` so you can see which sections were clipped
-before deciding to raise a budget or split the workflow.
+Context-block / review-prompt truncation was removed: Actor and reviewer
+prompts always carry the full bundled context. If the conversation grows
+beyond your model's window, opt into `/compact` via `--compression auto` or
+trigger it manually.
 
 **3. Use the golden path for serious work**
 

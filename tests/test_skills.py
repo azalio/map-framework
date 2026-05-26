@@ -1714,3 +1714,499 @@ class TestMapReviewSkillOrderingWiring:
             "INV-7: Step 0 must set MODE_FLAG to 'default' as the base value so that "
             "plain /map-review (no flags) uses canonical section order"
         )
+
+
+class TestTaskDecomposerWaveParallelismGuidance:
+    """Regression: task-decomposer must steer Actor away from over-serializing
+    waves. Without explicit guidance, decomposer agents emit linear deps
+    (B depends on A, C on B, ...) that collapse the wave planner into 15
+    single-subtask waves even when files are disjoint.
+    """
+
+    @pytest.fixture(
+        params=[
+            Path(".claude/agents/task-decomposer.md"),
+            Path("src/mapify_cli/templates/agents/task-decomposer.md"),
+        ],
+        ids=["dev", "template"],
+    )
+    def doc_path(self, request: pytest.FixtureRequest) -> Path:
+        return Path(__file__).parent.parent / request.param
+
+    def test_minimize_dependencies_section_present(self, doc_path: Path) -> None:
+        content = doc_path.read_text(encoding="utf-8")
+        assert "Minimize Dependencies for Parallelism" in content, (
+            f"{doc_path} must include 'Minimize Dependencies for Parallelism' "
+            "guidance — the wave planner serializes every false dependency edge."
+        )
+
+    def test_logical_ordering_anti_pattern_called_out(self, doc_path: Path) -> None:
+        content = doc_path.read_text(encoding="utf-8")
+        assert "Logical ordering" in content or "logical ordering" in content
+        assert "Risk hedging" in content or "risk hedging" in content, (
+            f"{doc_path} must explicitly forbid risk-hedging dependencies."
+        )
+
+    def test_checklist_includes_load_bearing_edge_check(self, doc_path: Path) -> None:
+        content = doc_path.read_text(encoding="utf-8")
+        assert "load-bearing" in content, (
+            f"{doc_path} checklist must include 'each dependency edge is "
+            "load-bearing' item so the gate catches over-serialization."
+        )
+
+    def test_affected_files_population_required(self, doc_path: Path) -> None:
+        content = doc_path.read_text(encoding="utf-8")
+        assert "`affected_files` populated for every subtask" in content, (
+            f"{doc_path} must require affected_files for every subtask — "
+            "split_wave_by_file_conflicts treats empty as 'alone'."
+        )
+
+
+class TestMapEfficientNoInterSubtaskPause:
+    """Regression: /map-efficient must chain subtasks without per-subtask
+    "summary report + wait for user" pauses. A downstream run paused
+    between ST-004 and ST-005, doubling round-trips; the skill defaulted
+    to the conservative interpretation because no rule forbade pausing."""
+
+    @pytest.fixture(
+        params=[
+            Path(".claude/skills/map-efficient/SKILL.md"),
+            Path("src/mapify_cli/templates/skills/map-efficient/SKILL.md"),
+        ],
+        ids=["dev", "template"],
+    )
+    def skill_path(self, request: pytest.FixtureRequest) -> Path:
+        return Path(__file__).parent.parent / request.param
+
+    def test_skill_explicitly_forbids_inter_subtask_pause(self, skill_path: Path) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        assert "Do NOT pause between subtasks" in content, (
+            f"{skill_path} must include 'Do NOT pause between subtasks' "
+            "rule so models don't default to per-subtask checkpoints."
+        )
+
+    def test_skill_enumerates_legitimate_stop_conditions(self, skill_path: Path) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        # The 4-of-4 stop list — anything else is the "wrong default"
+        # the user explicitly complained about.
+        for marker in (
+            "next_step: \"COMPLETE\"",
+            "retry_quarantine",
+            "User explicitly interrupts",
+            "Circuit-breaker",
+        ):
+            assert marker in content, (
+                f"{skill_path} stop-condition list missing: {marker!r}"
+            )
+
+
+class TestMapEfficientPerSubtaskCommitAllowance:
+    """Regression: /map-efficient must explicitly permit (and encourage)
+    per-subtask commits after Monitor clean-close, without asking the
+    user. Operators were unsure whether they could commit per subtask
+    or had to bundle everything; the default needs to be "commit per
+    subtask" so PR review and last_subtask_commit_sha baseline both
+    work.
+    """
+
+    @pytest.fixture(
+        params=[
+            Path(".claude/skills/map-efficient/SKILL.md"),
+            Path("src/mapify_cli/templates/skills/map-efficient/SKILL.md"),
+        ],
+        ids=["dev", "template"],
+    )
+    def skill_path(self, request: pytest.FixtureRequest) -> Path:
+        return Path(__file__).parent.parent / request.param
+
+    def test_skill_permits_per_subtask_commit(self, skill_path: Path) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        assert "Commit on clean Monitor close" in content, (
+            f"{skill_path} must explicitly permit per-subtask commit "
+            "after Monitor clean-close — operators were unsure if it "
+            "was allowed and either bundled everything or asked first."
+        )
+        # Must signal "without asking" so the model doesn't pause.
+        assert "without asking the" in content, skill_path
+
+    def test_skill_recommends_per_subtask_commit_workflow(
+        self, skill_path: Path
+    ) -> None:
+        # The bash recipe is in efficient-reference.md (moved 2026-05-25 to
+        # keep SKILL.md under 500 lines). Verify the recipe still has the
+        # correct stage → commit → record → validate order on the
+        # reference side, and that SKILL.md points to it.
+        skill_content = skill_path.read_text(encoding="utf-8")
+        assert "efficient-reference.md" in skill_content, (
+            f"{skill_path}: must point to efficient-reference.md for the full recipe."
+        )
+        reference = skill_path.parent / "efficient-reference.md"
+        ref_content = reference.read_text(encoding="utf-8")
+        commit_pos = ref_content.find("git commit -m \"ST-NNN")
+        record_pos = ref_content.find("record_subtask_result \\")
+        validate_pos = ref_content.find("validate_step 2.4")
+        assert 0 <= commit_pos < record_pos, (
+            f"{reference}: commit must precede record_subtask_result so "
+            "--commit-sha gets the real SHA, not the prior one."
+        )
+        assert record_pos < validate_pos, (
+            f"{reference}: record_subtask_result must precede validate_step 2.4."
+        )
+
+    def test_skill_warns_against_no_verify_and_amend(self, skill_path: Path) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        assert "--no-verify" in content, skill_path
+        assert "amend" in content.lower(), skill_path
+
+
+class TestMapEfficientTruncatedMonitorResponseGate:
+    """Regression: when Monitor truncates mid-execution and emits prose
+    instead of JSON ("All tests pass. Now run ruff..."), /map-efficient
+    must treat it as needs_investigation, NOT silently advance. The skill
+    rule sits BEFORE the verdict-contract check so prose can't sneak
+    through on a recommendation default.
+    """
+
+    @pytest.fixture(
+        params=[
+            Path(".claude/skills/map-efficient/SKILL.md"),
+            Path("src/mapify_cli/templates/skills/map-efficient/SKILL.md"),
+        ],
+        ids=["dev", "template"],
+    )
+    def skill_path(self, request: pytest.FixtureRequest) -> Path:
+        return Path(__file__).parent.parent / request.param
+
+    def test_skill_has_truncated_response_gate(self, skill_path: Path) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        assert "Truncated-response gate" in content, (
+            f"{skill_path} missing the truncated-Monitor-response gate."
+        )
+        # Gate must be MANDATORY and ordered before the verdict-contract
+        # rule, so prose responses don't sneak past on a default recommendation.
+        gate_pos = content.find("Truncated-response gate")
+        verdict_pos = content.find("Verdict contract (MANDATORY)")
+        assert 0 <= gate_pos < verdict_pos, (
+            f"{skill_path}: truncated-response gate must appear BEFORE "
+            "verdict-contract rule so prose-output is rejected first."
+        )
+
+    def test_skill_describes_retry_then_clarify_protocol(
+        self, skill_path: Path
+    ) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        # Retry once with explicit "JSON only" instruction, then stop.
+        assert "retry and emit ONLY the JSON" in content, skill_path
+        assert "CLARIFICATION_NEEDED" in content, skill_path
+        # Three diagnostic signs must be enumerated.
+        # Whitespace-tolerant check: SKILL.md uses backtick-formatted markdown
+        # which may re-flow. Match on substrings independent of fence style.
+        for sign in (
+            "doesn't parse as JSON",
+            "valid`/`summary`/`issues",
+            "ends mid-sentence",
+        ):
+            assert sign in content, (
+                f"{skill_path} truncated-response diagnosis must list: {sign!r}"
+            )
+
+
+class TestMapEfficientEmptyArgsResumeGuard:
+    """Regression: /map-efficient must resume from existing plan / state when
+    $TASK_ARGS is empty, NOT bail with "needs a task description". A prior
+    model invocation took an early shortcut and refused to run against a repo
+    that had a complete task_plan_<branch>.md ready for resume.
+    """
+
+    @pytest.fixture(
+        params=[
+            Path(".claude/skills/map-efficient/SKILL.md"),
+            Path("src/mapify_cli/templates/skills/map-efficient/SKILL.md"),
+        ],
+        ids=["dev", "template"],
+    )
+    def skill_path(self, request: pytest.FixtureRequest) -> Path:
+        return Path(__file__).parent.parent / request.param
+
+    def test_skill_states_empty_args_alone_is_not_a_stop_condition(
+        self, skill_path: Path
+    ) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        assert "Empty $TASK_ARGS is NOT a stop condition" in content, (
+            f"{skill_path} must explicitly tell the model that empty "
+            "$TASK_ARGS alone does not justify exiting — Step 0 resume must "
+            "run first."
+        )
+
+    def test_skill_lists_three_required_conditions_for_exit(
+        self, skill_path: Path
+    ) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        # The 3-of-3 contract: empty args, missing state, missing plan.
+        assert "step_state.json` does NOT exist" in content
+        assert "task_plan_<branch>.md` does NOT exist" in content
+
+    def test_step_zero_checks_state_before_plan(self, skill_path: Path) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        # state check must precede plan check inside Step 0 so an in-flight
+        # workflow takes priority over a stale plan resume.
+        state_idx = content.find("Existing step_state.json found")
+        plan_idx = content.find("Resumed from /map-plan artifacts")
+        assert 0 < state_idx < plan_idx, (
+            f"{skill_path} Step 0 must check existing step_state.json BEFORE "
+            "falling through to resume_from_plan."
+        )
+
+
+class TestMapEfficientSaveResearchWiring:
+    """Regression: map-efficient must show the save_research / load_research API.
+
+    Before this wiring, the .map/<branch>/research/ folder was discipline-only:
+    Actor and Monitor had no canonical path to write/read research findings, so
+    the {research_findings} prompt placeholder lived as untracked tribal lore.
+    """
+
+    @pytest.fixture(
+        params=[
+            Path(".claude/skills/map-efficient/SKILL.md"),
+            Path("src/mapify_cli/templates/skills/map-efficient/SKILL.md"),
+        ],
+        ids=["dev", "template"],
+    )
+    def skill_path(self, request: pytest.FixtureRequest) -> Path:
+        return Path(__file__).parent.parent / request.param
+
+    def test_research_phase_invokes_save_research_cli(self, skill_path: Path) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        assert (
+            "python3 .map/scripts/map_step_runner.py save_research" in content
+        ), (
+            f"{skill_path} must show the save_research CLI for the RESEARCH phase. "
+            "Without it, .map/<branch>/research/ remains discipline-only."
+        )
+
+    def test_research_phase_invokes_load_research_cli(self, skill_path: Path) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        assert (
+            "python3 .map/scripts/map_step_runner.py load_research" in content
+        ), (
+            f"{skill_path} must show the load_research CLI so downstream phases "
+            "read findings through the canonical path."
+        )
+
+
+class TestMapEfficientBuildContextBlockCli:
+    """Regression: map-efficient must show the build_context_block CLI form.
+
+    map_step_runner.py exposes `build_context_block <branch> <subtask_id>` as a
+    proper CLI subcommand. The skill used to tell agents to use the `python -c
+    "import sys; sys.path.insert(0, '.map/scripts'); ..."` workaround, which is
+    fragile and noisy. The CLI form is canonical — the skill must surface it.
+    """
+
+    @pytest.fixture(
+        params=[
+            Path(".claude/skills/map-efficient/SKILL.md"),
+            Path("src/mapify_cli/templates/skills/map-efficient/SKILL.md"),
+        ],
+        ids=["dev", "template"],
+    )
+    def skill_path(self, request: pytest.FixtureRequest) -> Path:
+        return Path(__file__).parent.parent / request.param
+
+    def test_cli_invocation_is_documented(self, skill_path: Path) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        assert (
+            "python3 .map/scripts/map_step_runner.py build_context_block"
+            in content
+        ), (
+            f"{skill_path} must document the CLI form "
+            "`python3 .map/scripts/map_step_runner.py build_context_block "
+            "<branch> <subtask_id>` for build_context_block."
+        )
+
+    def test_no_python_dash_c_workaround(self, skill_path: Path) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        # Catch the historical "python -c \"import sys; sys.path.insert..."
+        # workaround that the CLI form replaces.
+        offending_patterns = [
+            'python -c "import sys; sys.path.insert',
+            "python3 -c \"import sys; sys.path.insert",
+        ]
+        hits = [p for p in offending_patterns if p in content]
+        assert not hits, (
+            f"{skill_path} still contains the python -c sys.path.insert "
+            f"workaround for build_context_block: {hits!r}. Use the CLI form "
+            "instead."
+        )
+
+
+class TestMapCheckPendingStepsSchema:
+    """Regression: map-check must treat step_state.pending_steps as a flat list[str].
+
+    The canonical schema (see map_orchestrator.WorkflowState.pending_steps) is a
+    list of workflow phase ids (e.g. "2.2", "2.3"), NOT a dict keyed by subtask id.
+    A prior version of map-check/SKILL.md indexed it as `.pending_steps["ST-001"]`,
+    which crashes jq at runtime with:
+        Cannot index array with string "ST-001"
+    Both the dev copy under .claude/ and the shipped template copy must avoid this
+    pattern.
+    """
+
+    @pytest.fixture(
+        params=[
+            Path(".claude/skills/map-check/SKILL.md"),
+            Path("src/mapify_cli/templates/skills/map-check/SKILL.md"),
+        ],
+        ids=["dev", "template"],
+    )
+    def skill_path(self, request: pytest.FixtureRequest) -> Path:
+        return Path(__file__).parent.parent / request.param
+
+    def test_skill_does_not_index_pending_steps_as_dict(
+        self, skill_path: Path
+    ) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        # Only inspect executable bash code fences — prose that warns about the
+        # anti-pattern (in inline backticks) is legitimate and must stay.
+        bash_blocks = re.findall(r"```bash\n(.*?)```", content, re.DOTALL)
+        offenders: list[tuple[int, str]] = []
+        for idx, block in enumerate(bash_blocks):
+            for hit in re.findall(r'\.pending_steps\[\\?"[^\]]+\\?"\]', block):
+                offenders.append((idx, hit))
+        assert not offenders, (
+            f"{skill_path} indexes .pending_steps as a dict inside bash blocks "
+            f"(e.g. {offenders[0][1]!r}); the canonical schema makes pending_steps "
+            "a flat list[str] of workflow phase ids — keyed access crashes jq at "
+            "runtime with 'Cannot index array with string'."
+        )
+
+    def test_skill_completion_check_uses_flat_schema(
+        self, skill_path: Path
+    ) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        # A valid check needs to inspect either workflow_status or pending_steps
+        # as a flat array. Without one of these the schema-aware check is gone.
+        has_flat_pending = (
+            ".pending_steps | length" in content
+            or ".pending_steps[]" in content
+        )
+        has_workflow_status = "workflow_status" in content
+        assert has_flat_pending or has_workflow_status, (
+            f"{skill_path} must verify workflow completion via either "
+            "`.pending_steps | length` / `.pending_steps[]` (flat-array form) "
+            "or `.workflow_status` — neither was found."
+        )
+
+
+class TestMapReviewWalkthroughHardening:
+    """Regression: after a walkthrough that filtered 9 reviewer findings
+    down to 3 (with HIGH severities downgraded), the skill must:
+      - precheck lint/test BEFORE reviewer agents,
+      - detect lightweight (empty bundle) and sibling-aware modes,
+      - require evidence (reach_evidence) for severity≥MEDIUM,
+      - tag findings was_present_before_pr to filter pre-existing,
+      - run a verification gate before publication,
+      - force cross-agent challenge when Monitor and Evaluator diverge.
+    """
+
+    @pytest.fixture(
+        params=[
+            Path(".claude/skills/map-review/SKILL.md"),
+            Path("src/mapify_cli/templates/skills/map-review/SKILL.md"),
+        ],
+        ids=["dev", "template"],
+    )
+    def skill_path(self, request: pytest.FixtureRequest) -> Path:
+        return Path(__file__).parent.parent / request.param
+
+    def test_lint_test_precheck_runs_first(self, skill_path: Path) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        # Precheck section exists.
+        assert "Step A.0: Lint / test precheck" in content, (
+            f"{skill_path} missing Step A.0 lint/test precheck — "
+            "reviewer findings the linter already catches must NOT "
+            "become walkthrough items."
+        )
+        # Precheck appears BEFORE the first Task( call.
+        precheck_pos = content.find("Step A.0: Lint / test precheck")
+        first_task = content.find("Task(")
+        assert 0 <= precheck_pos < first_task, (
+            f"{skill_path}: precheck must run before reviewer agents."
+        )
+
+    def test_mode_detection_step_present(self, skill_path: Path) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        assert "Step A.0b: Detect review mode" in content, skill_path
+        for needle in ("lightweight", "sibling-aware", "review-mode.json"):
+            assert needle in content, (
+                f"{skill_path} mode detection missing: {needle!r}"
+            )
+
+    def test_evidence_required_on_agent_schemas(self, skill_path: Path) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        # Monitor issues must carry reach_evidence + was_present_before_pr.
+        assert "`reach_evidence`" in content, skill_path
+        assert "`was_present_before_pr`" in content, skill_path
+        # Predictor landmine claims require landmine_evidence.
+        assert "`landmine_evidence`" in content, skill_path
+        # Evaluator audits Monitor's severity.
+        assert "`monitor_severity_audit`" in content, skill_path
+
+    def test_verification_gate_present_with_six_checks(
+        self, skill_path: Path
+    ) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        assert "Step A.3: Verification gate" in content, skill_path
+        # Six numbered checks: Evidence, Pre-existing, Sibling, Precheck dup,
+        # Reachability, Cross-agent challenge.
+        for check in (
+            "Evidence check",
+            "Pre-existing check",
+            "Sibling check",
+            "Precheck duplication check",
+            "Reachability check",
+            "Cross-agent challenge",
+        ):
+            assert check in content, (
+                f"{skill_path} verification gate missing: {check!r}"
+            )
+
+    def test_hard_stop_no_longer_immediate_publication(
+        self, skill_path: Path
+    ) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        # The legacy "report findings immediately and skip Phase B" line
+        # must be gone — replaced with verification-gated publication.
+        assert (
+            "report findings immediately and skip Phase B" not in content
+        ), (
+            f"{skill_path}: hard-stop must require verification before "
+            "publication (legacy unconditional dump is gone)."
+        )
+        # Surviving findings (post-verification) gate is documented.
+        # Whitespace-tolerant: the phrase may wrap across lines.
+        flat = " ".join(content.split())
+        assert "survives the verification gate" in flat, skill_path
+
+    def test_sibling_aware_reads_sibling_before_findings(
+        self, skill_path: Path
+    ) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        assert "sibling-aware" in content
+        assert "Read the sibling's" in content, (
+            f"{skill_path}: sibling-aware mode must require reading the "
+            "sibling reference BEFORE reviewers search for differences."
+        )
+
+    def test_lightweight_mode_drops_to_monitor_only(
+        self, skill_path: Path
+    ) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        # Lightweight = monitor only, two sections, stricter evidence.
+        assert "lightweight" in content
+        assert "Monitor only" in content, (
+            f"{skill_path}: lightweight mode must drop Predictor / Evaluator "
+            "to keep speculation off an empty bundle."
+        )
+

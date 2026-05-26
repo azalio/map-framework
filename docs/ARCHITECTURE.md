@@ -6,7 +6,9 @@ Deep technical documentation for MAP (Modular Agentic Planner) implementation.
 
 ## Overview
 
-MAP is a Python CLI (`mapify`) plus provider-specific prompt/skill scaffolding that turns interactive coding agents (Claude Code and Codex CLI) into a repeatable engineering workflow: `SPEC -> PLAN -> TEST -> CODE -> REVIEW -> LEARN`. It emphasizes explicit artifacts, small reviewable contracts, and post-run learning handoffs persisted alongside the project.
+MAP is a Python 3.11+ CLI (`mapify`) plus provider-specific prompt/skill scaffolding that turns interactive coding agents (Claude Code and Codex CLI) into a repeatable engineering workflow: `SPEC -> PLAN -> TEST -> CODE -> REVIEW -> LEARN`. It emphasizes explicit artifacts, small reviewable contracts, deterministic prompt/runtime guardrails, and post-run learning handoffs persisted alongside the project.
+
+The current package is `mapify-cli` `3.10.0`. It ships a Typer CLI, provider delivery helpers, shared workflow-state and verification utilities, bundled Claude/Codex templates, hook scripts, and tests that validate template contracts, artifact schemas, prompt tone, provider surfaces, workflow gates, and token-budget behavior.
 
 The remainder of this file contains the deeper implementation dive (workflow-specific agent sequences, artifact specs, MCP integration, template maintenance, and context engineering).
 
@@ -17,7 +19,8 @@ The remainder of this file contains the deeper implementation dive (workflow-spe
 - `mapify` CLI initialization (`mapify init`) and configuration
 - Provider scaffolding generated into a target repo (`.claude/` for Claude Code, `.codex/` for Codex CLI, plus `.map/` scripts/artifacts)
 - Run artifacts (plans, contracts, verification summaries, review dossiers, learning handoffs) written under `.map/<branch>/`
-- Context budget / compression policy configuration surfaced through MAP settings and templates
+- Context-budget, compression, clean-retry, run-health, review-bundle, and prior-stage-consumption contracts surfaced through MAP settings, hooks, templates, and `.map/scripts/`
+- Skill/template audit surfaces such as `SkillIR`, prompt-tone checks, mutation-boundary checks, and dependency/task validation helpers
 - Optional MCP configuration wiring when supported by the provider runtime
 
 ### Out of Scope
@@ -31,7 +34,7 @@ The remainder of this file contains the deeper implementation dive (workflow-spe
 1. **Reviewable Diffs**: Prefer small, contract-sized implementation steps with explicit gates over “one big AI diff”.
 2. **Artifact Traceability**: Every run produces durable, human-readable artifacts (plans, checks, reviews, learnings) tied to the current git branch.
 3. **Provider Portability**: Keep workflow intent stable while allowing provider-specific orchestration surfaces (`.claude/skills/` vs `.codex/skills/`).
-4. **Deterministic Guardrails**: Enforce token budgets, workflow-fit exits, and verification gates consistently.
+4. **Deterministic Guardrails**: Enforce token budgets, workflow-fit exits, clean retry, mutation boundaries, prior-stage consumption, run-health checks, and verification gates consistently.
 5. **Low Overhead**: Keep the “golden path” usable as a daily driver without excessive ceremony.
 
 ## System Context
@@ -52,8 +55,10 @@ The remainder of this file contains the deeper implementation dive (workflow-spe
 ### Code Layout (this repo)
 
 - `src/mapify_cli/`: CLI implementation and workflow helpers (token budgeting, dependency graph, verification recording, workflow finalization, provider delivery)
-- `src/mapify_cli/delivery/`: Provider-specific scaffolding generators and file copier logic
-- `src/mapify_cli/templates/`: Shipped template files used by `mapify init`
+- `src/mapify_cli/delivery/`: Provider abstraction plus Claude/Codex scaffolding generators and managed file copier logic
+- `src/mapify_cli/templates/`: Shipped provider templates, hooks, agents, references, rule files, Codex config, and shared `.map/scripts/` payloads used by `mapify init`
+- `src/mapify_cli/{token_budget,workflow_state,workflow_finalizer,verification_recorder,skill_ir,dependency_graph,repo_insight}.py`: Deterministic helpers used by templates, release checks, and tests
+- `tests/`: Unit and integration coverage for CLI behavior, generated templates, hooks, workflow artifacts, SkillIR, provider frontmatter, and artifact schemas
 - `docs/`: Workflow docs, deep dives, and planning history
 
 ### On-disk Artifacts (target repo)
@@ -68,15 +73,17 @@ Claude skill metadata includes `skillClass` in `.claude/skills/skill-rules.json`
 ## Runtime Flows
 
 - **Initialize**: `mapify init` selects a provider, copies templates, and writes provider-specific prompts/skills plus shared `.map/` scripts.
-- **Run Workflow**: User triggers MAP commands (e.g., `/map-plan`, `/map-efficient`, `/map-check`, `/map-review`, `/map-learn`) via the provider UI; each command orchestrates a specific agent sequence defined in the generated command/skill files.
-- **Persist Artifacts**: Each workflow stage records durable artifacts under `.map/<branch>/`.
+- **Run Workflow**: User triggers MAP commands (e.g., `/map-plan`, `/map-efficient`, `/map-check`, `/map-review`, `/map-learn`) through the provider UI, or `$map-*` skills for Codex. Each command orchestrates a specific agent sequence defined in generated skill/template files.
+- **Persist Artifacts**: Each workflow stage records durable artifacts under `.map/<branch>/`, including specs, blueprints, test contracts, verification summaries, review bundles, learning handoffs, token-budget reports, run-health reports, and retry quarantine state.
+- **Audit/Validate**: Maintainers use tests and helper modules such as `python -m mapify_cli.skill_ir ...`, `mapify check`, `mapify doctor`, template-sync tests, artifact-schema tests, and workflow-gate tests to keep shipped provider surfaces aligned with the documented runtime contract.
 
 ## Source of Truth
 
 - **Generated provider surfaces**: `.claude/skills/`, optional `.claude/commands/` custom-command scaffolding, and `.codex/` are the operational "runtime spec" consumed by providers.
 - **Run artifacts**: `.map/<branch>/` holds the durable record of what happened in a run (what was planned, what was verified, what was learned).
-- **CLI templates**: `src/mapify_cli/templates/` is the source for what `mapify init` installs.
-- **Documentation**: `docs/USAGE.md`, `docs/COMPLETE_WORKFLOW.md`, and this document define expected behavior and invariants.
+- **CLI templates and delivery code**: `src/mapify_cli/templates/` plus `src/mapify_cli/delivery/` define what `mapify init` installs.
+- **Deterministic helpers**: `src/mapify_cli/*` helper modules and `.map/scripts/` templates enforce artifact schemas, workflow state, prompt budgets, SkillIR checks, and prior-stage validation.
+- **Documentation**: `README.md`, `docs/USAGE.md`, `docs/INSTALL.md`, and this document define expected behavior and invariants.
 
 ## Cross-cutting Concepts
 
@@ -105,6 +112,8 @@ Claude skill metadata includes `skillClass` in `.claude/skills/skill-rules.json`
 - **Skill Generator Scope**: The current `SkillIR` validates hand-authored provider skills and hashes emitted files; it is not yet a full source-of-truth generator for Claude and Codex skill bodies.
 - **Provider Runtime Constraints**: Behavior depends on provider capabilities (tool availability, context window, MCP support).
 - **Artifact Sprawl**: `.map/<branch>/` artifacts can accumulate without pruning policies; “Template Maintenance” addresses hygiene.
+- **Template Surface Breadth**: The project now owns many hooks, agents, provider templates, and schema checks; release discipline depends on keeping template-sync and SkillIR tests in the default validation path.
+- **Appendix Drift**: This file still carries a long historical deep-dive appendix after the Freshness section; the top architecture contract should remain canonical when appendix details lag newer templates.
 
 ## ADR Links
 
@@ -112,7 +121,9 @@ Information not available in current evidence.
 
 ## Freshness
 
-Generated: 2026-04-30
+Last refreshed: 2026-05-24
+
+Refresh reason: Daily architecture refresh. The previous top-level freshness marker still pointed at 2026-04-30, while current repository evidence shows the CLI and template runtime now include Codex provider scaffolding, token-budget reporting, clean retry quarantine, run-health reports, SkillIR audit, workflow-fit exits, mutation-boundary checks, prior-stage validation, and expanded template/schema tests.
 
 Evidence source files:
 - `README.md`
@@ -120,6 +131,9 @@ Evidence source files:
 - `docs/USAGE.md`
 - `docs/INSTALL.md`
 - `src/mapify_cli/`
+- `src/mapify_cli/delivery/providers.py`
+- `src/mapify_cli/workflow_state.py`
+- `tests/`
 
 ## Table of Contents
 

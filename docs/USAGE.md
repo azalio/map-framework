@@ -412,46 +412,50 @@ MAP workflows automatically save progress to the `.map/` directory, which persis
 
 ### Context budget policy
 
-MAP ships a token-aware nudge that tells Claude to run `/compact` *before* quality
-starts to degrade — well below Claude Code's built-in 83.5% auto-compact floor.
-Pick a policy at `mapify init` time, or edit `.map/config.yaml` later.
+MAP ships an OPT-IN token-aware nudge that tells Claude to run `/compact`
+*before* quality starts to degrade — well below Claude Code's built-in
+83.5% auto-compact floor. The default policy is `never` so unsolicited
+nudges don't interrupt long runs; opt in at `mapify init` time, or edit
+`.map/config.yaml` later.
 
 | Policy       | When the nudge fires                              | Use this when                          |
 | ------------ | ------------------------------------------------- | -------------------------------------- |
-| `never`      | never                                             | quality matters more than token cost   |
-| `auto`       | last assistant turn input ≥ threshold (default)   | balanced (recommended)                 |
+| `never`      | never (default — opt-in everywhere)               | default; no mid-flight interruptions   |
+| `auto`       | last assistant turn input ≥ threshold             | balanced cost/quality                  |
 | `aggressive` | last assistant turn input ≥ 0.4 × threshold       | minimise cost on long sessions         |
 
-Default threshold: `120000` tokens (~60% of a 200k Sonnet window). For Opus 1M
-projects raise it to `~250000`.
+Default threshold: `120000` tokens (~60% of a 200k Sonnet window). On
+Opus 1M projects or 50+ subtask plans raise it to `~250000` so the nudge
+fires once or twice, not after every few subtasks.
 
 ```bash
 # At init time:
-mapify init my-project --compression auto --compression-threshold 120000
-mapify init my-project --compression never           # quality mode
-mapify init my-project --compression aggressive      # cost mode
+mapify init my-project --compression never           # default — no nudge
+mapify init my-project --compression auto            # nudge at threshold
+mapify init my-project --compression aggressive      # nudge at 0.4 x threshold
+mapify init my-project --compression-threshold 250000
 
 # Or edit .map/config.yaml afterwards:
-# compression_policy: auto
+# compression_policy: never
 # compression_threshold_tokens: 120000
 # compression_focus: ""   # appended to the generated /compact command
 ```
 
-When the threshold is crossed, the `context-meter` hook injects a
-`[MAP context-meter] ...` notice with a ready-to-run `/compact` line. The
-five-minute cooldown via `.map/<branch>/last-compact.marker` prevents
-double-firing right after a built-in auto-compact has already run. For Codex
-sessions the same recommendation is emitted to stderr by `map_orchestrator.py`
-when invoked with `--transcript-path` (or env `MAPIFY_TRANSCRIPT_PATH`).
+When the threshold is crossed (and the policy is auto/aggressive), the
+`context-meter` hook injects a `[MAP context-meter] ...` notice with a
+ready-to-run `/compact` line. The five-minute cooldown via
+`.map/<branch>/last-compact.marker` prevents double-firing right after a
+built-in auto-compact has already run. For Codex sessions the same
+recommendation is emitted to stderr by `map_orchestrator.py` when invoked
+with `--transcript-path` (or env `MAPIFY_TRANSCRIPT_PATH`).
 
-Actor prompts built by `build_context_block` enforce a separate hard budget for
-the generated `<map_context>` block before it enters the model. The default is
-`4000` estimated tokens and keeps current-subtask details plus dependency
-summaries ahead of broad plan overview text. If a long workflow genuinely needs
-more injected context, set `MAP_CONTEXT_BLOCK_BUDGET_TOKENS=<positive integer>`
-for that run; malformed, non-positive, or too-small values fall back to the
-default. The minimum accepted override is 128 estimated tokens, which reserves
-enough space for the `<map_context>` wrapper and truncation note.
+Actor prompts built by `build_context_block` and reviewer fan-out prompts
+built by `build_review_prompts` no longer truncate their input: the full
+bundled context (subtask description, research findings, affected_files,
+plan overview, review bundle, git diff, preferences) reaches the model
+unmodified. Operators handle context size via the `/compact` opt-in
+described above — the `MAP_CONTEXT_BLOCK_BUDGET_TOKENS` env var that
+previously capped Actor's block has no effect any more.
 
 ### What is Context Compaction?
 

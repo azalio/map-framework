@@ -341,7 +341,49 @@ Subtasks should be ordered by dependency:
 3. Integration/wiring subtasks after ALL feature subtasks they integrate
 4. Tests/docs can be parallel with implementation (same dependency level)
 
-**CRITICAL**: If subtask B depends on subtask A, A must appear BEFORE B in the array.
+**CRITICAL — topological invariant (framework-enforced):** If subtask B depends on subtask A, A MUST appear BEFORE B in the `subtasks[]` array. A forward dependency (B at index `i` referencing A at index `j > i`) is rejected by `validate_blueprint_contract` (`forward_dep_violations`), and `set_subtasks` will either auto-reorder the input or refuse the sequence outright when it detects a cycle.
+
+```jsonc
+// WRONG — ST-012 declared at index 11 depends on ST-027 at index 26
+"subtasks": [
+  { "id": "ST-001", "dependencies": [] },
+  // ...
+  { "id": "ST-012", "dependencies": ["ST-011", "ST-027"] },  // forward dep!
+  // ...
+  { "id": "ST-027", "dependencies": [] }
+]
+// → validate_blueprint_contract reports:
+//   "ST-012: forward dependency on 'ST-027' (declared at subtasks[26]
+//    but ST-012 is at subtasks[11]); dependencies must reference only
+//    subtasks declared earlier — reorder subtasks[] so deps come first"
+
+// CORRECT — ST-027 emitted FIRST, then ST-012 can depend on it
+"subtasks": [
+  { "id": "ST-001", "dependencies": [] },
+  { "id": "ST-027", "dependencies": [] },
+  // ...
+  { "id": "ST-012", "dependencies": ["ST-011", "ST-027"] }   // backward dep OK
+]
+```
+
+A subtask MUST NOT depend on itself. The validator also flags any
+`dependencies: ["ST-XXX"]` where `ST-XXX` is the subtask's own id.
+
+### Minimize Dependencies for Parallelism (MANDATORY)
+
+`dependencies` is a HARD serialization signal — the wave planner builds execution waves from this graph, and every false dependency you add forces work that could have run in parallel into a separate wave. The cost is real: a 15-subtask plan with linear deps becomes 15 sequential waves, 15x research-actor-monitor cycles, and 15x context budget.
+
+Add a dependency edge ONLY when:
+- B literally reads symbols/files that A creates, OR
+- B's tests rely on A's behavior, OR
+- B touches a file A creates or substantially renames.
+
+Do NOT add dependencies for:
+- "Logical ordering" (B feels like it should come after A but doesn't read A's output).
+- Same-area-of-codebase intuition (two subtasks in the auth module touching different files are independent).
+- Risk hedging ("might break if done out of order").
+
+When two subtasks touch disjoint `affected_files` and neither reads the other's symbols, leave their `dependencies` arrays independent — `split_wave_by_file_conflicts` will further refine if needed. Always populate `affected_files`; the file-conflict checker treats missing/empty `affected_files` as "conflicts with everything" and places the subtask in its own wave.
 
 ### Acceptance Criteria Section (Ralph Loop Integration)
 
@@ -590,6 +632,9 @@ When invoked with `mode: "re_decomposition"` from the orchestrator, you receive 
 - [ ] AAG contracts are specific (not "does stuff" — name classes, methods, return types)
 - [ ] AAG contracts include wiring/integration when relevant (entrypoint + validator/policy checks, not leaf-only helpers)
 - [ ] All dependencies are explicit and accurate
+- [ ] Each `dependencies` edge is load-bearing (B reads A's output, A creates B's files, or A's tests pin B's behavior) — no edges added for "logical ordering" or risk hedging
+- [ ] `affected_files` populated for every subtask (empty = single-subtask wave)
+- [ ] **No circular imports between subtask modules.** If subtask A's affected_files includes `mod_x.py` that imports from `mod_y.py` (subtask B), AND B's affected_files imports from `mod_x.py`, you have a cycle. Either redesign the contract surface (lift the shared symbol to a third module owned by a foundation subtask) or document the lazy-import workaround in `split_rationale` so Actor doesn't discover it mid-implementation.
 - [ ] Subtasks ordered by dependency (foundations first)
 - [ ] 5-8 subtasks (not too granular or too coarse)
 - [ ] Titles are action-oriented (start with verb)
@@ -610,6 +655,48 @@ When invoked with `mode: "re_decomposition"` from the orchestrator, you receive 
 - [ ] All affected_files are precise paths
 - [ ] No vague references ("backend", "frontend", "code")
 - [ ] Paths match actual project structure
+- [ ] Paths verified to exist on disk (grep/glob) OR explicitly marked as new-file creation in the subtask description — `validate_blueprint_contract` warns "affected_files drift" when every declared path is missing under CLAUDE_PROJECT_DIR
+
+**Symbol Grounding (MANDATORY)**:
+- [ ] Every class / function / method name referenced in `aag_contract` or `validation_criteria` has been grep-verified against actual source code (`rg 'class FooBar'` or `rg 'def baz_method'`). Do NOT name symbols from memory or from a similar-looking project. Recurring decomposer failure mode: hallucinating `SourceCraftPublisher.publish_inline` when the real entry point is `publish_findings`, sending Actor on a wild-goose chase before the bug is caught.
+- [ ] If the subtask creates a NEW symbol, mark it explicitly in the description ("introduces new class `X`") so reviewers don't expect to find it in the current tree.
+- [ ] When extending an existing class, name the class AND verify the file path where it currently lives — the decomposer's working assumption ("the obvious name") is wrong often enough that grep before write is cheaper than Actor rework.
+
+**Tool-Call Budget Estimate (MANDATORY)**:
+- [ ] For every planned subtask, estimate the Actor's tool-call budget:
+  approximate (file reads to understand context) + (edits across
+  `affected_files`) + (test/lint invocations). Subtasks projected to
+  exceed ~30 tool calls are HIGH RISK for Actor truncation (the
+  observed truncation floor across production runs is ~50-66 tool
+  calls — leaving a 30-call buffer for unanticipated overhead).
+- [ ] High-budget subtasks (>30 estimated tool calls) MUST EITHER:
+  (a) split into smaller subtasks each below the threshold, OR
+  (b) include `split_rationale` documenting WHY the work cannot be
+      split (e.g., a single atomic refactor whose intermediate state
+      would not compile), AND tag `expected_diff_size: large` so
+      Monitor/Evaluator know to expect a long run.
+- [ ] Cleanup-heavy subtasks (touching 20+ files for tracking
+  consistency) MUST split by concern (one subtask per concern_type:
+  type-cleanup, dead-code, naming, docs).
+- [ ] When affected_files lists 8+ paths, add `split_rationale` even
+  if expected_diff_size remains medium — high file count correlates
+  with truncation regardless of per-file delta.
+
+**Stale-Roadmap Check (MANDATORY)**:
+- [ ] For every planned subtask, run `detect_already_done` to confirm
+  the work isn't already shipped in prod / an earlier branch / a
+  recently-merged PR:
+  ```bash
+  python3 .map/scripts/map_step_runner.py detect_already_done \
+    <branch> <ST-NNN> [--since-ref HEAD~20]
+  ```
+  Returns `status="likely_done"` when every `affected_files` path
+  already has recent commits — that subtask should be dropped, marked
+  via `mark_subtask_complete --kind prior_pr`, OR re-scoped to the
+  delta that's actually still missing. Decomposer regression: planning
+  a 5-step subtask whose implementation already landed in the prior
+  iteration, leading to "subtask = 1 line + 12 tests" once Actor reads
+  the source.
 
 **Complexity Estimation** (using Unified Framework):
 - [ ] Numeric complexity_score (1-10) assigned using unified scoring framework

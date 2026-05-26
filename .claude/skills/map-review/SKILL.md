@@ -37,11 +37,23 @@ parallel_tool_policy: single_review_fanout
 ## Execution Rules
 
 1. Execute all phases in order.
-2. Build the review bundle before launching reviewer agents.
-3. Build bounded review prompts before launching reviewer agents.
-4. Launch all three reviewer agents exactly once per review run: monitor, predictor, evaluator.
-5. Monitor `valid=false` is a hard stop; do not proceed to section presentation.
-6. Present options neutrally as A/B/C. Append `(Recommended)` after the option label, not by position.
+2. **Lint/test precheck FIRST** (Step A.0 below) — reviewer findings the
+   project's existing automation already catches do NOT belong in the
+   walkthrough. Linter/test output is primary signal.
+3. **Detect review mode** (Step A.0b): empty review-bundle.md ⇒
+   `lightweight` (diff-only, single Monitor pass with stricter
+   evidence). "twin of X" / "sibling controller" language in the
+   PR/commit/diff ⇒ `sibling-aware` (read X first, compare). MAP-full
+   bundle present ⇒ `full` (default).
+4. Build the review bundle before launching reviewer agents.
+5. Build bounded review prompts before launching reviewer agents.
+6. Launch reviewer agents exactly once per review run: full mode runs
+   monitor + predictor + evaluator; lightweight mode runs monitor only.
+7. **Monitor `valid=false` requires verification, not immediate
+   publication** — Step A.3 verifies each finding has evidence and is
+   bug-introduced-here BEFORE Phase B. Bare claims without evidence are
+   downgraded to `needs_investigation` and not published as issues.
+8. Present options neutrally as A/B/C. Append `(Recommended)` after the option label, not by position.
 
 ## Review Preferences (Customize per project)
 
@@ -64,17 +76,39 @@ Monitor:
 - evidence: array of {file_path, line_range, quote, relevance}; populate this before verdict fields.
 - `valid`: boolean.
 - `verdict`: `approved` | `needs_revision` | `rejected`.
-- `issues[]`: severity, category, description, file_path, line_range, suggestion.
+- `issues[]`: severity, category, description, file_path, line_range,
+  suggestion, **`was_present_before_pr`** (bool — required; True ⇒
+  finding is pre-existing tech debt, belongs to backlog not this PR),
+  **`reach_evidence`** (string — required for severity≥MEDIUM; one of:
+  "grep:<pattern>:<line>" proving the code path is reached, OR
+  "test_fail:<test_name>" proving a failing test exists, OR
+  "linter:<tool>:<line>" proving the linter flagged it. Findings
+  without `reach_evidence` are downgraded to `needs_investigation`
+  during Step A.3).
+- **`sibling_comparison`** (object, required when mode=sibling-aware):
+  `{sibling_path: <git ref or path>, equivalent_lines: [{here:..., there:...}], divergences: [str]}`.
 
 Predictor:
 - evidence: array of {file_path, line_range, quote, relevance}; populate this before risk_assessment.
 - `risk_assessment`: `low` | `medium` | `high` | `critical`.
 - `predicted_state.affected_components[]`, `breaking_changes[]`, `required_updates[]`.
+- **`landmine_evidence`** (required when raising claims like "latent
+  bug" / "future failure mode"): a reproducible signal — failing test,
+  static-analysis line, or grep showing the unreachable path is
+  actually reachable. Soft narrative ("this might break someday")
+  without evidence is rejected during Step A.3.
 
 Evaluator:
 - evidence: array of {file_path, line_range, quote, relevance}; populate this before scores.
 - `scores.functionality`, `code_quality`, `performance`, `security`, `testability`, `completeness`.
 - `overall_score` and `recommendation`.
+- **`monitor_severity_audit`** (required): for every Monitor issue,
+  Evaluator returns `{monitor_issue_index, agreed_severity,
+  rationale}`. If Evaluator's `recommendation=proceed` but Monitor's
+  highest severity is HIGH, Evaluator must explicitly justify why each
+  HIGH Monitor finding is overstated (single source of truth — closes
+  the "Monitor says 8.15/10 needs_revision, Evaluator says 8.15/10
+  proceed" disagreement).
 
 ## Review Section Protocol
 
@@ -130,6 +164,78 @@ fi
 ```
 
 ## Phase A: Collection (Parallel)
+
+### Step A.0: Lint / test precheck (MANDATORY first step)
+
+Run the project's existing automation BEFORE any reviewer agent so
+findings the automation already catches don't become walkthrough items
+(operators end up arguing with stale reviewer claims while CI quietly
+says the same thing in 2 seconds).
+
+```bash
+# Adapt commands to the project. Auto-detect from repo markers.
+# Stream directly to the log file with real newlines — earlier versions
+# concatenated literal "\n" sequences inside double quotes, which is
+# what `echo` writes verbatim (not a newline). Use printf or direct
+# redirection instead.
+PRECHECK_LOG=".map/$BRANCH/precheck.log"
+mkdir -p ".map/$BRANCH"
+: > "$PRECHECK_LOG"
+if [ -f Makefile ] && grep -q '^test:' Makefile; then
+  { make -k test 2>&1; printf '[exit=%s]\n' "$?"; } >> "$PRECHECK_LOG"
+fi
+if [ -f Makefile ] && grep -q '^lint:' Makefile; then
+  { make -k lint 2>&1; printf '[exit=%s]\n' "$?"; } >> "$PRECHECK_LOG"
+fi
+# Go: golangci-lint when present.
+if command -v golangci-lint >/dev/null 2>&1 && [ -f go.mod ]; then
+  { golangci-lint run 2>&1; printf '[exit=%s]\n' "$?"; } >> "$PRECHECK_LOG"
+fi
+# Python: ruff + pytest when present.
+if command -v ruff >/dev/null 2>&1 && find . -maxdepth 3 -name "pyproject.toml" -print -quit | grep -q .; then
+  { ruff check . 2>&1; printf '[exit=%s]\n' "$?"; } >> "$PRECHECK_LOG"
+fi
+```
+
+**Treat precheck output as primary signal.** Reviewer findings that
+duplicate a precheck error must NOT be raised as separate walkthrough
+items; cite the precheck line instead. Reviewer findings that
+contradict a clean precheck require evidence stronger than narrative
+("the linter would have caught this — provide grep showing it didn't").
+
+### Step A.0b: Detect review mode
+
+```bash
+REVIEW_MODE="full"
+# Empty / placeholder review-bundle.md ⇒ lightweight.
+if [ -f ".map/$BRANCH/review-bundle.md" ] && \
+   grep -qE 'MISSING|^- $|^—$' ".map/$BRANCH/review-bundle.md" && \
+   ! grep -qE '^\s*##' ".map/$BRANCH/review-bundle.md"; then
+   REVIEW_MODE="lightweight"
+fi
+# "twin of X", "sibling controller", "mirror of Y" in commit or PR body
+# ⇒ sibling-aware (operator probably wants comparison, not synthesis).
+SIBLING_HINT=""
+if git log -1 --format=%B | grep -iE 'twin of |sibling |mirror of |port of ' >/dev/null; then
+  REVIEW_MODE="sibling-aware"
+  SIBLING_HINT=$(git log -1 --format=%B | grep -oiE '(twin of|sibling|mirror of|port of)[^.]*' | head -1)
+fi
+echo "{\"mode\":\"$REVIEW_MODE\",\"sibling_hint\":\"$SIBLING_HINT\"}" \
+  > .map/$BRANCH/review-mode.json
+```
+
+Mode semantics:
+- **`full`** (default): three reviewer fan-out, all four sections.
+- **`lightweight`**: Monitor only, diff-only, two sections (Code Quality
+  + Tests), every finding must carry `reach_evidence`. Bundle is empty
+  so reviewers have nothing to synthesize from — staying minimal
+  prevents speculative findings.
+- **`sibling-aware`**: BEFORE reviewer fan-out, identify the sibling
+  (operator-supplied path or `$SIBLING_HINT` grep). Read the sibling's
+  diff for the same file family. Reviewer prompts MUST receive the
+  sibling text as a comparison baseline — findings that exist in
+  sibling AND PR are pre-existing, not new (set
+  `was_present_before_pr=true`).
 
 ### Step A.1: Gather changes
 
@@ -191,9 +297,45 @@ Task(subagent_type="evaluator", description="Score review quality", prompt=EVALU
 
 Reviewer prompts reference `review-bundle.json`, `review-bundle.md`, the raw diff as secondary context, and the expected output schema.
 
+### Step A.3: Verification gate (MANDATORY before any presentation)
+
+For EVERY Monitor / Predictor finding, verify BEFORE listing it as a
+walkthrough item:
+
+1. **Evidence check.** Severity ≥ MEDIUM must carry `reach_evidence`
+   (grep proving path is reached, failing test name, or linter line).
+   No evidence ⇒ downgrade to `needs_investigation`, do NOT publish.
+2. **Pre-existing check.** If `was_present_before_pr=true`, route to
+   backlog/follow-up file, NOT to the walkthrough's REVISE list. PR
+   review covers what the PR introduces.
+3. **Sibling check (mode=sibling-aware).** If the same finding holds
+   for the sibling reference, set `was_present_before_pr=true` and
+   route to backlog. The PR can't be blocked on behavior that already
+   shipped in the twin.
+4. **Precheck duplication check.** If the finding matches a precheck
+   error line, cite the precheck and stop — do NOT raise a second
+   instance.
+5. **Reachability check** (defensive branches): `if !ContainsFinalizer
+   { return }`-style guard branches usually exist by convention and
+   their absence of tests is not a "missing test" finding unless the
+   surrounding logic actually depends on the guard for correctness.
+6. **Cross-agent challenge** (full mode only). If Monitor's verdict
+   disagrees with Evaluator's `recommendation` by more than one tier
+   (e.g., `needs_revision` vs `proceed @ 8.15/10`), force a second
+   pass: re-invoke Monitor with Evaluator's audit attached, asking
+   "Evaluator scored 8.15 proceed — defend why your verdict still
+   stands, or downgrade." Record the resolution in the bundle.
+
 ### Hard Stop Check
 
-If Monitor returns `valid=false`, report findings immediately and skip Phase B. Record `REVISE` or `BLOCK` as appropriate.
+If Monitor returns `valid=false` AND at least one issue survives the
+verification gate above with `was_present_before_pr=false` and valid
+`reach_evidence`, report ONLY the surviving issues immediately and
+skip Phase B. Record `REVISE` or `BLOCK` as appropriate. Bare
+`valid=false` without surviving evidence-backed issues is a
+"verification failed at Step A.3" — proceed to Phase B (lightweight
+mode skips presentation) with a verification note instead of
+publishing the bare verdict.
 
 ## Phase B: Interactive Presentation (4 Sections)
 

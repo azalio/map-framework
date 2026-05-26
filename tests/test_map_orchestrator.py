@@ -30,7 +30,7 @@ ORCHESTRATOR_PATH = (
 # Add the scripts directory to sys.path so we can import map_orchestrator
 sys.path.insert(0, str(ORCHESTRATOR_PATH))
 
-import map_orchestrator  # noqa: E402
+import map_orchestrator  # noqa: E402  # pyright: ignore[reportMissingImports]
 
 
 @pytest.fixture
@@ -1152,6 +1152,52 @@ class TestResumeFromPlan:
         assert briefing["latest_verification_verdict"] == "READY FOR REVIEW"
 
 
+class TestResumeFromPlanAutoSetWaves:
+    """Regression: resume_from_plan must auto-compute execution_waves when
+    blueprint.json is present, so /map-efficient does not need a separate
+    set_waves dispatch on resumed runs (#3 in the framework-issue triage)."""
+
+    def test_blueprint_present_populates_execution_waves(self, branch_dir, tmp_path):
+        plan_dir = tmp_path / ".map" / branch_dir
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / f"task_plan_{branch_dir}.md").write_text(
+            "# Task Plan\n\n### ST-001\n- **Status:** pending\n\n### ST-002\n- **Status:** pending\n",
+            encoding="utf-8",
+        )
+        (plan_dir / "blueprint.json").write_text(
+            json.dumps({
+                "summary": "test",
+                "subtasks": [
+                    {"id": "ST-001", "title": "first", "dependencies": [], "affected_files": ["a.py"]},
+                    {"id": "ST-002", "title": "second", "dependencies": ["ST-001"], "affected_files": ["b.py"]},
+                ],
+            }),
+            encoding="utf-8",
+        )
+        result = map_orchestrator.resume_from_plan(branch_dir)
+        assert result["status"] == "success"
+        assert result.get("waves_computed") == "success", result
+
+        reloaded = map_orchestrator.StepState.load(plan_dir / "step_state.json")
+        assert reloaded.execution_waves, (
+            "resume_from_plan must populate execution_waves when blueprint is present"
+        )
+        # Wave 0 = [ST-001] (no deps); Wave 1 = [ST-002] (depends on ST-001).
+        assert reloaded.execution_waves[0] == ["ST-001"]
+        assert reloaded.execution_waves[1] == ["ST-002"]
+
+    def test_no_blueprint_marks_waves_skipped(self, branch_dir, tmp_path):
+        plan_dir = tmp_path / ".map" / branch_dir
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / f"task_plan_{branch_dir}.md").write_text(
+            "# Task Plan\n\n### ST-001\n- **Status:** pending\n",
+            encoding="utf-8",
+        )
+        result = map_orchestrator.resume_from_plan(branch_dir)
+        assert result["status"] == "success"
+        assert result.get("waves_computed") == "skipped"
+
+
 class TestBuildResumeBriefing:
     """Tests for next-action resume briefing synthesis."""
 
@@ -1418,6 +1464,7 @@ class TestBuildResumeBriefingExtended:
 
     def test_no_plan_file_does_not_crash(self, branch_dir, tmp_path):
         """build_resume_briefing does not raise even when no plan file exists."""
+        del tmp_path  # fixture side-effects (chdir) already applied via branch_dir
         result = map_orchestrator.build_resume_briefing(branch_dir)
 
         # Should return a dict with at minimum the branch key
@@ -1556,13 +1603,24 @@ class TestMonitorFailed:
         state = map_orchestrator.StepState.load(state_file)
         assert state.retry_count == 6  # incremented and saved
 
-    def test_phase_guard_rejects_non_monitor_phase(self, branch_dir, tmp_path):
-        """monitor_failed() returns error if called from non-MONITOR phase."""
+    def test_phase_guard_accepts_actor_and_monitor(self, branch_dir, tmp_path):
+        """monitor_failed() now accepts being called from MONITOR or
+        ACTOR/APPLY/TEST_WRITER — the operator often notices verdict
+        valid=false while cursor is still at 2.3 (skipped a validate_step
+        on the way through). The phase-mismatch ceremony was friction."""
         self._make_monitor_state(tmp_path, branch_dir, current_step_phase="ACTOR")
         result = map_orchestrator.monitor_failed(branch_dir, "feedback")
+        assert result["status"] in ("retrying", "max_retries"), result
+
+    def test_phase_guard_rejects_clearly_wrong_phase(self, branch_dir, tmp_path):
+        """Reject from clearly-wrong phases (DECOMPOSE / INIT_STATE / COMPLETE)
+        where 'monitor failed' doesn't make sense."""
+        self._make_monitor_state(
+            tmp_path, branch_dir, current_step_phase="DECOMPOSE"
+        )
+        result = map_orchestrator.monitor_failed(branch_dir, "feedback")
         assert result["status"] == "error"
-        assert "ACTOR" in result["message"]
-        assert "MONITOR" in result["message"]
+        assert "DECOMPOSE" in result["message"]
 
     def test_monitor_failed_then_get_next_step(self, branch_dir, tmp_path):
         """Integration: after monitor_failed(), get_next_step() returns ACTOR."""
@@ -1772,6 +1830,7 @@ class TestReopenForFixes:
         assert reloaded.current_step_id == "2.3"
 
     def test_no_state_file_returns_error(self, branch_dir, tmp_path):
+        del tmp_path  # fixture side-effects (chdir) already applied via branch_dir
         result = map_orchestrator.reopen_for_fixes(branch_dir, "")
         assert result["status"] == "error"
 
@@ -1838,6 +1897,7 @@ class TestMarkWorkflowComplete:
         assert "pending" in result["message"]
 
     def test_no_state_file_returns_error(self, branch_dir, tmp_path):
+        del tmp_path  # fixture side-effects (chdir) already applied via branch_dir
         result = map_orchestrator.mark_workflow_complete(branch_dir)
         assert result["status"] == "error"
 
@@ -1872,6 +1932,519 @@ class TestMarkWorkflowComplete:
         reopen_result = map_orchestrator.reopen_for_fixes(branch_dir, "fix lint")
         assert reopen_result["status"] == "reopened"
         assert reopen_result["current_phase"] == "ACTOR"
+
+
+class TestMarkSubtaskComplete:
+    """mark_subtask_complete short-circuits a no-op / already-done subtask
+    without spinning the full research→actor→monitor cycle."""
+
+    def test_marks_current_subtask_advances_to_next(self, branch_dir, tmp_path):
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001", "ST-002"]
+        state.subtask_index = 0
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.2"
+        state.current_step_phase = "RESEARCH"
+        state.pending_steps = ["2.2", "2.3", "2.4"]
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+
+        result = map_orchestrator.mark_subtask_complete(
+            "ST-001", branch_dir, reason="already done historically"
+        )
+        assert result["status"] == "success"
+        assert result["advanced_to"] == "ST-002"
+        assert result["workflow_complete"] is False
+
+        reloaded = map_orchestrator.StepState.load(state_file)
+        assert reloaded.current_subtask_id == "ST-002"
+        assert reloaded.subtask_index == 1
+        assert reloaded.subtask_phases["ST-001"] == "COMPLETE"
+        assert reloaded.subtask_results["ST-001"]["status"] == "no-op"
+        assert "already done historically" in reloaded.subtask_results["ST-001"]["summary"]
+        assert reloaded.pending_steps[0] == "2.2"  # fresh phases for next subtask
+
+    def test_marks_last_subtask_closes_workflow(self, branch_dir, tmp_path):
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001"]
+        state.subtask_index = 0
+        state.current_subtask_id = "ST-001"
+        state.pending_steps = ["2.2", "2.3", "2.4"]
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+
+        result = map_orchestrator.mark_subtask_complete("ST-001", branch_dir, "docs-only")
+        assert result["workflow_complete"] is True
+        reloaded = map_orchestrator.StepState.load(state_file)
+        assert reloaded.workflow_status == "WORKFLOW_COMPLETE"
+        assert reloaded.current_step_phase == "COMPLETE"
+        assert reloaded.completed_at is not None
+        assert reloaded.pending_steps == []
+
+    def test_rejects_unknown_subtask(self, branch_dir, tmp_path):
+        state = map_orchestrator.StepState()
+        state.subtask_sequence = ["ST-001"]
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        result = map_orchestrator.mark_subtask_complete("ST-999", branch_dir, "x")
+        assert result["status"] == "error"
+        assert "ST-999" in result["message"]
+
+    def test_marking_non_current_subtask_only_records_phase(
+        self, branch_dir, tmp_path
+    ):
+        """Marking a NON-current subtask records the no-op result and phase
+        without disturbing the workflow cursor."""
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001", "ST-002"]
+        state.subtask_index = 0
+        state.current_subtask_id = "ST-001"
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+
+        result = map_orchestrator.mark_subtask_complete("ST-002", branch_dir, "future no-op")
+        assert result["status"] == "success"
+        assert result["advanced_to"] is None
+        reloaded = map_orchestrator.StepState.load(state_file)
+        assert reloaded.current_subtask_id == "ST-001"
+        assert reloaded.subtask_phases["ST-002"] == "COMPLETE"
+        assert reloaded.subtask_results["ST-002"]["status"] == "no-op"
+
+
+class TestValidateStepIdempotency:
+    """validate_step X is idempotent when X already in completed_steps —
+    re-running after a double-advance no longer explodes with 'Step mismatch'."""
+
+    def test_idempotent_no_op_when_already_completed(self, branch_dir, tmp_path):
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001"]
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.4"
+        state.current_step_phase = "MONITOR"
+        state.completed_steps = ["2.2", "2.3"]
+        state.pending_steps = ["2.4"]
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        result = map_orchestrator.validate_step("2.3", branch_dir)
+        assert result["valid"] is True, result
+        assert result.get("idempotent") is True
+        # state.current_step_id stays at 2.4, not regressed:
+        reloaded = map_orchestrator.StepState.load(state_file)
+        assert reloaded.current_step_id == "2.4"
+
+
+class TestValidateStepInterSubtaskBoundary:
+    """validate_step at the boundary between subtasks must signal
+    ADVANCE_SUBTASK, not COMPLETE — the workflow is NOT done while more
+    subtasks remain in subtask_sequence (regression for #4)."""
+
+    def test_inter_subtask_advances_atomically_to_next_research(
+        self, branch_dir, tmp_path
+    ):
+        """Previously returned an ADVANCE_SUBTASK sentinel that left
+        next-subtask fields unpopulated. Now validate_step("2.4") on
+        inter-subtask boundary atomically bumps subtask_index, resets
+        completed/pending, sets current_step_id to next subtask's 2.2."""
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001", "ST-002"]
+        state.subtask_index = 0
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.4"
+        state.current_step_phase = "MONITOR"
+        state.completed_steps = ["2.2", "2.3"]
+        state.pending_steps = ["2.4"]
+        # plant blueprint for the auto-mutation-boundary check to be a no-op
+        plan_dir = tmp_path / ".map" / branch_dir
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        state_file = plan_dir / "step_state.json"
+        state.save(state_file)
+        result = map_orchestrator.validate_step("2.4", branch_dir)
+        assert result["valid"] is True
+        assert result["next_step"] == "2.2", result
+        assert result["subtask_advanced_from"] == "ST-001"
+        assert result["subtask_advanced_to"] == "ST-002"
+        reloaded = map_orchestrator.StepState.load(state_file)
+        assert reloaded.subtask_index == 1
+        assert reloaded.current_subtask_id == "ST-002"
+        assert reloaded.current_step_id == "2.2"
+        assert reloaded.current_step_phase == "RESEARCH"
+        assert reloaded.completed_steps == []
+        assert "2.2" in reloaded.pending_steps
+        assert reloaded.workflow_status == "IN_PROGRESS"
+
+    def test_final_subtask_still_returns_complete(self, branch_dir, tmp_path):
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001"]
+        state.subtask_index = 0
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.4"
+        state.completed_steps = ["2.2", "2.3"]
+        state.pending_steps = ["2.4"]
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        result = map_orchestrator.validate_step("2.4", branch_dir)
+        assert result["next_step"] == "COMPLETE"
+
+
+class TestValidateStepResearchEnforcement:
+    """RESEARCH (2.2) is documented MANDATORY; validate_step 2.2 must reject
+    when no research artifact exists for the current subtask."""
+
+    def test_rejects_when_no_research_artifact(self, branch_dir, tmp_path):
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001"]
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.2"
+        state.current_step_phase = "RESEARCH"
+        state.pending_steps = ["2.2", "2.3", "2.4"]
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        result = map_orchestrator.validate_step("2.2", branch_dir)
+        assert result["valid"] is False
+        assert "RESEARCH not persisted" in result["message"]
+
+    def test_accepts_when_research_artifact_present(
+        self, branch_dir, tmp_path
+    ):
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001"]
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.2"
+        state.current_step_phase = "RESEARCH"
+        state.pending_steps = ["2.2", "2.3", "2.4"]
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        # Plant a research artifact.
+        research_dir = tmp_path / ".map" / branch_dir / "research"
+        research_dir.mkdir(parents=True, exist_ok=True)
+        (research_dir / "ST-001__actor.md").write_text("findings", encoding="utf-8")
+        result = map_orchestrator.validate_step("2.2", branch_dir)
+        assert result["valid"] is True, result
+        assert result["next_step"] == "2.3"
+
+
+class TestRecordSubtaskResultAutoCommitSha:
+    """record_subtask_result auto-detects current HEAD commit when caller
+    didn't pass --commit-sha. Strengthens downstream provenance — every
+    recorded subtask result now carries a SHA the operator can git-show."""
+
+    def test_auto_detects_head_commit_sha(self, branch_dir, tmp_path, monkeypatch):
+        state = map_orchestrator.StepState()
+        state.subtask_sequence = ["ST-001"]
+        state.current_subtask_id = "ST-001"
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        # Init a git repo with one commit so HEAD resolves.
+        import subprocess as _sp
+        _sp.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "config", "user.name", "t"], cwd=tmp_path, capture_output=True)
+        (tmp_path / "seed.txt").write_text("seed")
+        _sp.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True)
+        sha_proc = _sp.run(
+            ["git", "log", "-1", "--format=%H"], cwd=tmp_path,
+            capture_output=True, text=True,
+        )
+        expected_sha = sha_proc.stdout.strip()
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        result = map_orchestrator.record_subtask_result(
+            "ST-001", branch_dir, files_changed=[], status="valid",
+            summary="auto sha", commit_sha=None,
+        )
+        assert result["status"] == "success"
+        reloaded = map_orchestrator.StepState.load(state_file)
+        assert reloaded.last_subtask_commit_sha == expected_sha
+
+    def test_explicit_commit_sha_wins(self, branch_dir, tmp_path, monkeypatch):
+        state = map_orchestrator.StepState()
+        state.subtask_sequence = ["ST-001"]
+        state.current_subtask_id = "ST-001"
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        map_orchestrator.record_subtask_result(
+            "ST-001", branch_dir, files_changed=[], status="valid",
+            summary="x", commit_sha="cafebabe",
+        )
+        reloaded = map_orchestrator.StepState.load(state_file)
+        assert reloaded.last_subtask_commit_sha == "cafebabe"
+
+
+class TestValidateStepTransactionalMonitor:
+    """validate_step('2.4') now implicitly closes pending 2.3 (ACTOR) so
+    callers don't get 'Step mismatch: expected 2.3' when they jump straight
+    from Monitor pass to validation."""
+
+    def test_two_four_auto_closes_pending_two_three(self, branch_dir, tmp_path):
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001"]
+        state.current_subtask_id = "ST-001"
+        # Mid-flight: cursor at 2.3, both 2.3 and 2.4 still pending.
+        state.current_step_id = "2.3"
+        state.current_step_phase = "ACTOR"
+        state.completed_steps = ["2.2"]
+        state.pending_steps = ["2.3", "2.4"]
+        # Plant required research artifact so the 2.2-style enforcement
+        # never blocks (we're past 2.2 here).
+        research_dir = tmp_path / ".map" / branch_dir / "research"
+        research_dir.mkdir(parents=True, exist_ok=True)
+        (research_dir / "ST-001__actor.md").write_text("ok")
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        # Jump straight to 2.4 — historically this returned Step mismatch.
+        result = map_orchestrator.validate_step("2.4", branch_dir)
+        assert result["valid"] is True, result
+        reloaded = map_orchestrator.StepState.load(state_file)
+        assert "2.3" in reloaded.completed_steps
+        assert "2.4" in reloaded.completed_steps
+
+
+class TestRecordSubtaskResultCli:
+    """record_subtask_result is the canonical write path for subtask outcomes;
+    the earlier release advised this in skill docs but exposed no CLI, so
+    callers either reached into Python or relied on indirect recording."""
+
+    def test_records_result_to_step_state(self, branch_dir, tmp_path):
+        state = map_orchestrator.StepState()
+        state.subtask_sequence = ["ST-001"]
+        state.current_subtask_id = "ST-001"
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        result = map_orchestrator.record_subtask_result(
+            "ST-001", branch_dir, files_changed=["a.py"], status="valid",
+            summary="all green", commit_sha="abc123",
+        )
+        assert result["status"] == "success"
+        reloaded = map_orchestrator.StepState.load(state_file)
+        assert reloaded.subtask_results["ST-001"]["status"] == "valid"
+        assert reloaded.subtask_results["ST-001"]["files_changed"] == ["a.py"]
+        assert reloaded.last_subtask_commit_sha == "abc123"
+
+
+class TestFinalizePlan:
+    """finalize_plan bumps artifact_manifest.stages.plan to 'complete' so
+    /map-plan stops leaving the stage stuck in 'partial' after artifacts ship."""
+
+    def test_bumps_partial_to_complete_when_artifacts_present(self, branch_dir, tmp_path):
+        plan_dir = tmp_path / ".map" / branch_dir
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / f"task_plan_{branch_dir}.md").write_text("# plan\n### ST-001\n")
+        (plan_dir / "blueprint.json").write_text(json.dumps({"subtasks": [{"id": "ST-001"}]}))
+        (plan_dir / "artifact_manifest.json").write_text(json.dumps({
+            "stages": {"plan": {"status": "partial"}}
+        }))
+        result = map_orchestrator.finalize_plan(branch_dir)
+        assert result["status"] == "success"
+        manifest = json.loads((plan_dir / "artifact_manifest.json").read_text())
+        assert manifest["stages"]["plan"]["status"] == "complete"
+
+    def test_noop_without_artifacts(self, branch_dir, tmp_path):
+        del tmp_path  # fixture side-effects (chdir) already applied via branch_dir
+        result = map_orchestrator.finalize_plan(branch_dir)
+        assert result["status"] == "noop"
+
+
+class TestValidateStepAutoMutationBoundary:
+    """validate_step('2.4') now runs validate_mutation_boundary so scope
+    leaks can't silently slip past MONITOR. Warn-only by default; STRICT mode
+    escalates."""
+
+    def test_strict_mode_rejects_violation(self, branch_dir, tmp_path, monkeypatch):
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001"]
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.4"
+        state.current_step_phase = "MONITOR"
+        state.pending_steps = ["2.4"]
+        state.completed_steps = ["2.2", "2.3"]
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        # Plant blueprint with ONE expected file but make repo have an
+        # untracked extra to trip the boundary check.
+        plan_dir = tmp_path / ".map" / branch_dir
+        (plan_dir / "blueprint.json").write_text(json.dumps({
+            "subtasks": [{"id": "ST-001", "title": "x", "affected_files": ["a.py"]}],
+        }))
+        # Init real git repo so validate_mutation_boundary's git calls work.
+        import subprocess as _sp
+        _sp.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "config", "user.name", "t"], cwd=tmp_path, capture_output=True)
+        (tmp_path / "seed.txt").write_text("seed")
+        _sp.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True)
+        (tmp_path / "leak.py").write_text("nope")  # untracked: scope leak
+        _sp.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
+
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        monkeypatch.setenv("MAP_STRICT_SCOPE", "1")
+        result = map_orchestrator.validate_step("2.4", branch_dir)
+        assert result["valid"] is False
+        assert "Mutation-boundary violation" in result["message"]
+
+
+class TestPeekCurrentStep:
+    """peek_current_step is the read-only recovery escape hatch for the case
+    where validate_step rejects a double-advance with 'Step mismatch: expected
+    Y, got X'. It returns the same shape as get_next_step but never saves the
+    state, so callers can recover the canonical step id without risk of
+    further mutating it."""
+
+    def test_returns_pending_head_without_saving(self, branch_dir, tmp_path):
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001"]
+        state.subtask_index = 0
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.2"
+        state.current_step_phase = "RESEARCH"
+        state.pending_steps = ["2.3", "2.4"]
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+
+        mtime_before = state_file.stat().st_mtime_ns
+        result = map_orchestrator.peek_current_step(branch_dir)
+        mtime_after = state_file.stat().st_mtime_ns
+
+        assert mtime_before == mtime_after, "peek must not write state"
+        assert result["step_id"] == "2.3"
+        assert result["phase"] == "ACTOR"
+        assert result["is_complete"] is False
+        assert result["current_subtask"] == "ST-001"
+
+    def test_returns_complete_when_workflow_complete(self, branch_dir, tmp_path):
+        state = map_orchestrator.StepState()
+        state.workflow_status = "WORKFLOW_COMPLETE"
+        state.subtask_sequence = ["ST-001"]
+        state.current_subtask_id = "ST-001"
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        result = map_orchestrator.peek_current_step(branch_dir)
+        assert result["is_complete"] is True
+        assert result["step_id"] == "COMPLETE"
+
+
+class TestGetNextStepWorkflowCompleteShortCircuit:
+    """Regression: get_next_step must honor workflow_status == 'WORKFLOW_COMPLETE'.
+
+    Observed: after a successful run, if the state file's pending_steps was
+    repopulated by a partial recovery path while workflow_status was already
+    'WORKFLOW_COMPLETE', get_next_step would walk the per-step branches and
+    return a fresh step (e.g. '2.2 RESEARCH for ST-015') instead of reporting
+    completion. The function checked 'CONTRACT_READY' upfront but NOT
+    'WORKFLOW_COMPLETE'. The completion signal should be authoritative.
+    """
+
+    def test_returns_complete_when_workflow_status_marked_complete(
+        self, branch_dir, tmp_path
+    ):
+        """Even with non-empty pending_steps, workflow_status=='WORKFLOW_COMPLETE'
+        must short-circuit to is_complete=True."""
+        state = map_orchestrator.StepState()
+        state.workflow_status = "WORKFLOW_COMPLETE"
+        state.current_step_id = "COMPLETE"
+        state.current_step_phase = "COMPLETE"
+        state.subtask_sequence = ["ST-001"]
+        state.subtask_index = 0
+        state.current_subtask_id = "ST-001"
+        # Simulate a stale repopulation of pending_steps (the bug condition).
+        state.pending_steps = ["2.2", "2.3", "2.4"]
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+
+        result = map_orchestrator.get_next_step(branch_dir)
+
+        assert result["is_complete"] is True, (
+            f"get_next_step must short-circuit on WORKFLOW_COMPLETE, got {result}"
+        )
+        assert result["step_id"] == "COMPLETE"
+        assert result["phase"] == "COMPLETE"
+
+    def test_in_progress_status_still_returns_next_step(
+        self, branch_dir, tmp_path
+    ):
+        """Negative control: IN_PROGRESS state must still drive normal flow."""
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001"]
+        state.subtask_index = 0
+        state.current_subtask_id = "ST-001"
+        state.pending_steps = ["2.2", "2.3", "2.4"]
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+
+        result = map_orchestrator.get_next_step(branch_dir)
+
+        assert result["is_complete"] is False
+        assert result["step_id"] == "2.2"
+
+
+class TestBackfillSubtaskIds:
+    """Self-describing-record fix: record_subtask_result entries now carry a
+    redundant ``subtask_id`` field so downstream reporters/log shippers
+    that forward entries individually stop receiving ``subtask_id: null``.
+    backfill_subtask_ids walks legacy state and writes the field where
+    missing.
+    """
+
+    def test_record_writes_subtask_id_on_entry(self):
+        state = map_orchestrator.StepState()
+        state.record_subtask_result(
+            "ST-001", ["a.py"], "valid", "ok", commit_sha="abc"
+        )
+        entry = state.subtask_results["ST-001"]
+        assert entry["subtask_id"] == "ST-001"
+        assert entry["commit_sha"] == "abc"
+
+    def test_backfill_populates_legacy_entries(self, branch_dir, tmp_path):
+        state = map_orchestrator.StepState()
+        state.subtask_sequence = ["ST-001", "ST-002"]
+        # Legacy entry shape (no subtask_id field — what old states have).
+        state.subtask_results = {
+            "ST-001": {"files_changed": ["a.py"], "status": "valid"},
+            "ST-002": {"files_changed": ["b.py"], "status": "valid", "subtask_id": "ST-002"},
+        }
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+
+        result = map_orchestrator.backfill_subtask_ids(branch_dir)
+        assert result["status"] == "success"
+        assert result["updated"] == 1
+        assert result["updated_ids"] == ["ST-001"]
+        reloaded = map_orchestrator.StepState.load(state_file)
+        assert reloaded.subtask_results["ST-001"]["subtask_id"] == "ST-001"
+        # Already-correct entry left untouched.
+        assert reloaded.subtask_results["ST-002"]["subtask_id"] == "ST-002"
+
+    def test_backfill_is_idempotent(self, branch_dir, tmp_path):
+        state = map_orchestrator.StepState()
+        state.record_subtask_result("ST-001", ["a.py"], "valid")
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+
+        first = map_orchestrator.backfill_subtask_ids(branch_dir)
+        assert first["updated"] == 0
+        second = map_orchestrator.backfill_subtask_ids(branch_dir)
+        assert second["updated"] == 0
+
+    def test_backfill_error_when_state_missing(self, branch_dir, tmp_path):
+        # No step_state.json present
+        sf = tmp_path / ".map" / branch_dir / "step_state.json"
+        if sf.exists():
+            sf.unlink()
+        result = map_orchestrator.backfill_subtask_ids(branch_dir)
+        assert result["status"] == "error"
 
 
 class TestSubtaskResults:
@@ -1948,6 +2521,611 @@ class TestSubtaskResults:
         state = map_orchestrator.StepState()
         state.record_subtask_result("ST-004", ["x.py"], "valid")
         assert state.subtask_results["ST-004"]["summary"] == ""
+
+
+class TestValidateStepRecommendationCLIRegistration:
+    """Regression: --recommendation must be a registered argparse option,
+    not scraped from extra_args. The scrape implementation was bypassed
+    by argparse strict mode (unknown -- flags fail before reaching
+    extra_args), so the skill instruction was broken in practice.
+    """
+
+    def test_cli_accepts_recommendation_flag(self, branch_dir, tmp_path):
+        del branch_dir, tmp_path  # CLI subprocess uses its own cwd
+        script = (
+            Path(__file__).parent.parent
+            / "src" / "mapify_cli" / "templates" / "map" / "scripts"
+            / "map_orchestrator.py"
+        )
+        # Help text exposes the flag; no argparse error.
+        result = subprocess.run(
+            [sys.executable, str(script), "validate_step", "--help"],
+            capture_output=True, text=True, timeout=10,
+        )
+        # The script doesn't have per-command help, but the parent parser
+        # must list --recommendation among its options.
+        result_root = subprocess.run(
+            [sys.executable, str(script), "--help"],
+            capture_output=True, text=True, timeout=10,
+        )
+        assert "--recommendation" in result_root.stdout, (
+            f"--recommendation missing from CLI options. stdout: {result_root.stdout!r}"
+        )
+        # Direct invocation with the flag must NOT exit with argparse's
+        # exit(2) "unrecognized arguments" — even if state load fails,
+        # argparse parsing itself must succeed.
+        assert "unrecognized arguments: --recommendation" not in result.stderr
+
+
+class TestGetNextStepResearchSkipWarning:
+    """Fix #3 (2026-05-27): if get_next_step is about to return 2.3
+    (ACTOR) for the current subtask but 2.2 (RESEARCH) was never
+    completed AND no research artifact exists on disk AND TDD
+    auto-skip wasn't the path, emit a soft warning in the response.
+    Does NOT block (back-compat with legacy TDD auto-skip flow) but
+    surfaces the silent skip so operator sees it. Catches the final-
+    subtask silent skip that hit ST-016 in a production run.
+    """
+
+    def test_warning_emitted_when_about_to_return_actor_without_artifact(
+        self, branch_dir, tmp_path
+    ):
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-016"]
+        state.current_subtask_id = "ST-016"
+        state.current_step_id = "2.3"
+        state.current_step_phase = "ACTOR"
+        # Drift: pending starts at 2.3, 2.2 NOT in completed_steps,
+        # no research artifact on disk, no TDD skip in history.
+        state.completed_steps = []
+        state.skipped_steps = []
+        state.pending_steps = ["2.3", "2.4"]
+        state.plan_approved = True
+        sf = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(sf)
+
+        result = map_orchestrator.get_next_step(branch_dir)
+        # Still returns 2.3 (no auto-reinsertion — would break TDD flow).
+        assert result["step_id"] == "2.3"
+        # But warning surfaces the silent skip.
+        assert "warning" in result, result
+        assert "RESEARCH" in result["warning"]
+        assert "ST-016" in result["warning"]
+
+    def test_no_warning_when_research_artifact_present(
+        self, branch_dir, tmp_path
+    ):
+        """When research artifact IS on disk, no warning — operator did
+        the research, just didn't record completion."""
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-016"]
+        state.current_subtask_id = "ST-016"
+        state.current_step_id = "2.3"
+        state.completed_steps = []
+        state.pending_steps = ["2.3", "2.4"]
+        state.plan_approved = True
+        sf = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(sf)
+        research_dir = tmp_path / ".map" / branch_dir / "research"
+        research_dir.mkdir(parents=True, exist_ok=True)
+        (research_dir / "ST-016__actor.md").write_text("findings")
+
+        result = map_orchestrator.get_next_step(branch_dir)
+        assert result["step_id"] == "2.3"
+        assert "warning" not in result
+
+    def test_no_warning_when_tdd_skip_in_history(
+        self, branch_dir, tmp_path
+    ):
+        """TDD-auto-skip path (2.25/2.26 in skipped_steps) is the
+        documented legitimate way to reach 2.3 without 2.2 — must NOT
+        trigger the warning."""
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-016"]
+        state.current_subtask_id = "ST-016"
+        state.current_step_id = "2.3"
+        state.skipped_steps = ["2.25", "2.26"]
+        state.pending_steps = ["2.3", "2.4"]
+        state.plan_approved = True
+        sf = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(sf)
+
+        result = map_orchestrator.get_next_step(branch_dir)
+        assert result["step_id"] == "2.3"
+        assert "warning" not in result
+
+
+class TestValidateStepRecommendationOmittedWarning:
+    """Fix #6 (2026-05-26): closing 2.4 without --recommendation leaves
+    the verdict-consistency footgun open. The orchestrator now surfaces
+    a warning so the operator sees they should pass the recommendation
+    next time.
+    """
+
+    def _seed(self, branch_dir: str, tmp_path: Path) -> Path:
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001"]
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.4"
+        state.current_step_phase = "MONITOR"
+        state.completed_steps = ["2.2", "2.3"]
+        state.pending_steps = ["2.4"]
+        sf = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(sf)
+        return sf
+
+    def test_warning_emitted_when_recommendation_omitted(
+        self, branch_dir, tmp_path
+    ):
+        self._seed(branch_dir, tmp_path)
+        result = map_orchestrator.validate_step("2.4", branch_dir)
+        assert result["valid"] is True
+        assert "warning" in result, result
+        assert "--recommendation" in result["warning"]
+
+    def test_no_warning_when_recommendation_passed(
+        self, branch_dir, tmp_path
+    ):
+        self._seed(branch_dir, tmp_path)
+        result = map_orchestrator.validate_step(
+            "2.4", branch_dir, recommendation="proceed"
+        )
+        assert result["valid"] is True
+        assert "warning" not in result, result
+
+
+class TestValidateStepRecommendationContract:
+    """Fix #6: validate_step 2.4 now enforces the Monitor recommendation
+    contract orchestrator-side. Skill rule "valid=true +
+    recommendation∈{revise,block,needs_investigation} = fail" used to be
+    prose-only; now passing --recommendation revise|block|needs_investigation
+    to validate_step 2.4 makes it return valid=false even when the step
+    would otherwise close cleanly.
+    """
+
+    def _seed_state(self, branch_dir: str, tmp_path: Path) -> Path:
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001"]
+        state.subtask_index = 0
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.4"
+        state.current_step_phase = "MONITOR"
+        state.completed_steps = ["2.2", "2.3"]
+        state.pending_steps = ["2.4"]
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        return state_file
+
+    def test_revise_recommendation_rejects(self, branch_dir, tmp_path):
+        self._seed_state(branch_dir, tmp_path)
+        result = map_orchestrator.validate_step(
+            "2.4", branch_dir, recommendation="revise"
+        )
+        assert result["valid"] is False
+        assert result["recommendation"] == "revise"
+        assert "revise" in result["message"]
+
+    def test_block_recommendation_rejects(self, branch_dir, tmp_path):
+        self._seed_state(branch_dir, tmp_path)
+        result = map_orchestrator.validate_step(
+            "2.4", branch_dir, recommendation="BLOCK"
+        )
+        assert result["valid"] is False
+        assert result["recommendation"] == "block"
+
+    def test_needs_investigation_rejects(self, branch_dir, tmp_path):
+        self._seed_state(branch_dir, tmp_path)
+        result = map_orchestrator.validate_step(
+            "2.4", branch_dir, recommendation="needs_investigation"
+        )
+        assert result["valid"] is False
+
+    def test_proceed_recommendation_does_not_block(self, branch_dir, tmp_path):
+        self._seed_state(branch_dir, tmp_path)
+        result = map_orchestrator.validate_step(
+            "2.4", branch_dir, recommendation="proceed"
+        )
+        assert result["valid"] is True
+
+    def test_missing_recommendation_is_backward_compat(
+        self, branch_dir, tmp_path
+    ):
+        # Legacy callers that don't pass recommendation get the old
+        # behavior: 2.4 closes on any valid=true path.
+        self._seed_state(branch_dir, tmp_path)
+        result = map_orchestrator.validate_step("2.4", branch_dir)
+        assert result["valid"] is True
+
+
+class TestMarkSubtaskCompleteKind:
+    """Audit-ledger fix #10: mark_subtask_complete now classifies the
+    short-circuit via --kind so post-run reports can group "deferred stubs"
+    apart from "no-op auto-detected" apart from "done in a prior PR".
+    """
+
+    def _seed_state(self, branch_dir: str, tmp_path: Path) -> Path:
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001", "ST-002"]
+        state.subtask_index = 0
+        state.current_subtask_id = "ST-001"
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        return state_file
+
+    def test_default_kind_is_noop_backward_compat(self, branch_dir, tmp_path):
+        state_file = self._seed_state(branch_dir, tmp_path)
+        result = map_orchestrator.mark_subtask_complete(
+            "ST-002", branch_dir, "auto-detected no-op"
+        )
+        assert result["status"] == "success"
+        assert result["kind"] == "noop"
+        # Legacy entry status stays "no-op" so existing reporters keep working.
+        reloaded = map_orchestrator.StepState.load(state_file)
+        assert reloaded.subtask_results["ST-002"]["status"] == "no-op"
+        assert reloaded.subtask_completion_reasons["ST-002"]["kind"] == "noop"
+
+    def test_deferred_kind_records_distinct_status(self, branch_dir, tmp_path):
+        state_file = self._seed_state(branch_dir, tmp_path)
+        result = map_orchestrator.mark_subtask_complete(
+            "ST-002", branch_dir, "will land in follow-up PR", kind="deferred"
+        )
+        assert result["kind"] == "deferred"
+        reloaded = map_orchestrator.StepState.load(state_file)
+        assert reloaded.subtask_results["ST-002"]["status"] == "deferred"
+        assert reloaded.subtask_completion_reasons["ST-002"]["kind"] == "deferred"
+        assert (
+            reloaded.subtask_completion_reasons["ST-002"]["reason"]
+            == "will land in follow-up PR"
+        )
+
+    def test_unknown_kind_is_rejected(self, branch_dir, tmp_path):
+        self._seed_state(branch_dir, tmp_path)
+        result = map_orchestrator.mark_subtask_complete(
+            "ST-002", branch_dir, "x", kind="rubbish"
+        )
+        assert result["status"] == "error"
+        assert "rubbish" in result["message"]
+
+    def test_stub_kind_serializes_through_roundtrip(self, branch_dir, tmp_path):
+        state_file = self._seed_state(branch_dir, tmp_path)
+        map_orchestrator.mark_subtask_complete(
+            "ST-002", branch_dir, "placeholder", kind="stub"
+        )
+        # Roundtrip via JSON to ensure the field persists.
+        data = json.loads(state_file.read_text(encoding="utf-8"))
+        assert data["subtask_completion_reasons"]["ST-002"]["kind"] == "stub"
+        restored = map_orchestrator.StepState.from_dict(data)
+        assert restored.subtask_completion_reasons["ST-002"]["kind"] == "stub"
+
+
+class TestCursorAdvancesPastMarkedSubtasks:
+    """Regression for the ST-033 friction: mark_subtask_complete wrote
+    subtask_phases[sid]="COMPLETE" (uppercase) while the deps-resolver
+    looked for lowercase "completed", so the cursor returned to the same
+    stub indefinitely. Now phase comparison is case-insensitive AND any
+    non-empty subtask_results entry counts as done.
+    """
+
+    def test_uppercase_phase_marker_counts_as_done(self, branch_dir, tmp_path):
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001", "ST-002"]
+        state.subtask_index = 0
+        state.current_subtask_id = "ST-001"
+        # mark_subtask_complete writes uppercase — must still count.
+        state.subtask_phases["ST-002"] = "COMPLETE"
+        completed = map_orchestrator._completed_subtask_ids_for_deps(state)
+        assert "ST-002" in completed, completed
+
+    def test_subtask_results_entry_alone_counts_as_done(
+        self, branch_dir, tmp_path
+    ):
+        # Even without a subtask_phases marker, any recorded entry should
+        # let the cursor move past the id.
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001", "ST-002", "ST-003"]
+        state.subtask_index = 1
+        state.current_subtask_id = "ST-002"
+        state.subtask_results = {
+            "ST-003": {
+                "subtask_id": "ST-003",
+                "files_changed": ["x.py"],
+                "status": "valid",
+            }
+        }
+        completed = map_orchestrator._completed_subtask_ids_for_deps(state)
+        assert "ST-003" in completed, completed
+
+    def test_validate_step_advances_past_already_marked_subtasks(
+        self, branch_dir, tmp_path
+    ):
+        # ST-033 reproduction: cursor at idx=0, ST-002 marked done via
+        # mark_subtask_complete (uppercase phase). Closing ST-001's 2.4
+        # must advance to COMPLETE, not loop back to ST-002.
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001", "ST-002"]
+        state.subtask_index = 0
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.4"
+        state.completed_steps = ["2.2", "2.3"]
+        state.pending_steps = ["2.4"]
+        state.subtask_phases["ST-002"] = "COMPLETE"
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+
+        result = map_orchestrator.validate_step("2.4", branch_dir)
+        assert result["valid"] is True
+        assert result["next_step"] == "COMPLETE", result
+
+
+class TestIsWorkflowCompleteCoverageBased:
+    """Regression for #14: write_run_health_report (via _is_workflow_complete
+    and _derive_terminal_status) must report "complete" when every subtask
+    in subtask_sequence has a recorded result — even if the cursor still
+    points at a non-COMPLETE phase due to mid-run drift."""
+
+    def test_full_coverage_returns_complete_when_cursor_stuck(self):
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001", "ST-002", "ST-003"]
+        state.subtask_index = 0
+        state.current_subtask_id = "ST-001"
+        state.current_step_phase = "ACTOR"  # stuck mid-flight
+        for sid in state.subtask_sequence:
+            state.subtask_results[sid] = {
+                "subtask_id": sid,
+                "files_changed": ["x.py"],
+                "status": "valid",
+            }
+        assert map_orchestrator._is_workflow_complete(state) is True
+
+    def test_partial_coverage_returns_false(self):
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001", "ST-002", "ST-003"]
+        state.subtask_results = {
+            "ST-001": {"subtask_id": "ST-001", "status": "valid"}
+        }
+        assert map_orchestrator._is_workflow_complete(state) is False
+
+
+class TestDepsAwareRuntimeAdvance:
+    """Runtime safety net: even when planning fails and a forward-dep
+    blueprint slips through, validate_step("2.4") at the inter-subtask
+    boundary skips subtasks whose deps aren't satisfied yet, walking
+    forward to the first ready subtask. If no ready subtask exists,
+    emits BLOCKED_ON_DEPS instead of silently advancing.
+    """
+
+    def _seed_blueprint(self, tmp_path: Path, branch: str, subtasks: list[dict]) -> None:
+        bp_dir = tmp_path / ".map" / branch
+        bp_dir.mkdir(parents=True, exist_ok=True)
+        (bp_dir / "blueprint.json").write_text(
+            json.dumps({"subtasks": subtasks}), encoding="utf-8"
+        )
+
+    def test_skips_unready_subtask_picks_next_ready(
+        self, branch_dir, tmp_path
+    ):
+        # Planning slipped: blueprint claims ST-002 deps=[ST-003] but
+        # ST-002 was put before ST-003 in subtask_sequence. After
+        # closing ST-001, runtime advance must skip ST-002 (unmet dep)
+        # and land on ST-003 instead.
+        self._seed_blueprint(
+            tmp_path,
+            branch_dir,
+            [
+                {"id": "ST-001", "dependencies": []},
+                {"id": "ST-002", "dependencies": ["ST-003"]},
+                {"id": "ST-003", "dependencies": []},
+            ],
+        )
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001", "ST-002", "ST-003"]
+        state.subtask_index = 0
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.4"
+        state.current_step_phase = "MONITOR"
+        state.completed_steps = ["2.2", "2.3"]
+        state.pending_steps = ["2.4"]
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+
+        result = map_orchestrator.validate_step("2.4", branch_dir)
+
+        assert result["valid"] is True
+        assert result["subtask_advanced_from"] == "ST-001"
+        # Skipped ST-002 (forward-dep), landed on ST-003.
+        assert result["subtask_advanced_to"] == "ST-003"
+        assert result["skipped_for_deps"] == ["ST-002"]
+        reloaded = map_orchestrator.StepState.load(state_file)
+        assert reloaded.current_subtask_id == "ST-003"
+        assert reloaded.subtask_index == 2
+
+    def test_blocked_on_deps_when_no_subtask_ready(
+        self, branch_dir, tmp_path
+    ):
+        # ST-001 done, but ST-002 depends on ST-999 which doesn't exist
+        # in subtask_sequence (and was never recorded as done). Advance
+        # has no candidate — emit BLOCKED_ON_DEPS instead of COMPLETE.
+        self._seed_blueprint(
+            tmp_path,
+            branch_dir,
+            [
+                {"id": "ST-001", "dependencies": []},
+                {"id": "ST-002", "dependencies": ["ST-999"]},
+            ],
+        )
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001", "ST-002"]
+        state.subtask_index = 0
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.4"
+        state.current_step_phase = "MONITOR"
+        state.completed_steps = ["2.2", "2.3"]
+        state.pending_steps = ["2.4"]
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+
+        result = map_orchestrator.validate_step("2.4", branch_dir)
+
+        assert result["valid"] is True
+        assert result["next_step"] == "BLOCKED_ON_DEPS"
+        assert "ST-002" in result["blocked_subtasks"]
+        reloaded = map_orchestrator.StepState.load(state_file)
+        assert reloaded.current_step_id == "BLOCKED_ON_DEPS"
+
+    def test_no_blueprint_falls_through_to_linear_walk(
+        self, branch_dir, tmp_path
+    ):
+        # When no blueprint exists, advance falls back to linear order
+        # (no deps to honor). Backward compatibility: existing flows
+        # without a blueprint must still work.
+        bp = tmp_path / ".map" / branch_dir / "blueprint.json"
+        if bp.exists():
+            bp.unlink()
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001", "ST-002"]
+        state.subtask_index = 0
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.4"
+        state.completed_steps = ["2.2", "2.3"]
+        state.pending_steps = ["2.4"]
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+
+        result = map_orchestrator.validate_step("2.4", branch_dir)
+        assert result["valid"] is True
+        assert result["subtask_advanced_to"] == "ST-002"
+
+    def test_mark_subtask_complete_unblocks_dependent(
+        self, branch_dir, tmp_path
+    ):
+        # Operator manually marks ST-003 complete via mark_subtask_complete;
+        # ST-002 (deps=[ST-003]) must then be picked up on next advance.
+        self._seed_blueprint(
+            tmp_path,
+            branch_dir,
+            [
+                {"id": "ST-001", "dependencies": []},
+                {"id": "ST-002", "dependencies": ["ST-003"]},
+                {"id": "ST-003", "dependencies": []},
+            ],
+        )
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001", "ST-002", "ST-003"]
+        state.subtask_index = 0
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.4"
+        state.completed_steps = ["2.2", "2.3"]
+        state.pending_steps = ["2.4"]
+        # Pre-mark ST-003 via subtask_phases (what mark_subtask_complete writes).
+        state.subtask_phases["ST-003"] = "completed"
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+
+        result = map_orchestrator.validate_step("2.4", branch_dir)
+        assert result["valid"] is True
+        # Now ST-002 is ready (ST-003 marked done) — advance lands on it.
+        assert result["subtask_advanced_to"] == "ST-002"
+
+
+class TestSetSubtasksTopologicalSort:
+    """Planning-stage fix: set_subtasks reorders subtask_ids to honor
+    blueprint deps, so a decomposer that emitted ST-012 deps=[ST-027]
+    can no longer leak a forward-dep into runtime — set_subtasks puts
+    ST-027 before ST-012 in subtask_sequence. Cycles are rejected
+    rather than silently persisted.
+    """
+
+    def _write_bp(self, tmp_path: Path, branch: str, subtasks: list[dict]) -> None:
+        bp_dir = tmp_path / ".map" / branch
+        bp_dir.mkdir(parents=True, exist_ok=True)
+        (bp_dir / "blueprint.json").write_text(
+            json.dumps({"subtasks": subtasks}), encoding="utf-8"
+        )
+
+    def test_already_topological_input_is_noop_passthrough(
+        self, branch_dir, tmp_path
+    ):
+        self._write_bp(
+            tmp_path,
+            branch_dir,
+            [
+                {"id": "ST-001", "dependencies": []},
+                {"id": "ST-002", "dependencies": ["ST-001"]},
+                {"id": "ST-003", "dependencies": ["ST-002"]},
+            ],
+        )
+        result = map_orchestrator.set_subtasks(
+            ["ST-001", "ST-002", "ST-003"], branch_dir
+        )
+        assert result["status"] == "success"
+        assert result["subtask_sequence"] == ["ST-001", "ST-002", "ST-003"]
+        # No reorder flag when input is already correct — keeps the path
+        # quiet for well-formed blueprints.
+        assert "reordered" not in result
+
+    def test_forward_dep_in_input_is_corrected(self, branch_dir, tmp_path):
+        # The exact friction reported on neuro-vlad: ST-012 declared with
+        # deps=[ST-027] but listed BEFORE ST-027 in the input id-order.
+        # set_subtasks must reorder so ST-027 precedes ST-012.
+        subtasks = [{"id": f"ST-{i:03d}", "dependencies": []} for i in range(1, 6)]
+        subtasks[1]["dependencies"] = ["ST-005"]  # ST-002 depends on ST-005
+        self._write_bp(tmp_path, branch_dir, subtasks)
+        input_ids = ["ST-001", "ST-002", "ST-003", "ST-004", "ST-005"]
+        result = map_orchestrator.set_subtasks(input_ids, branch_dir)
+        assert result["status"] == "success"
+        assert result["reordered"] is True
+        assert result["original_sequence"] == input_ids
+        seq = result["subtask_sequence"]
+        assert seq.index("ST-005") < seq.index("ST-002")
+        # ST-001/003/004 (no deps) stay in their relative input order.
+        assert seq.index("ST-001") < seq.index("ST-003")
+        assert seq.index("ST-003") < seq.index("ST-004")
+        # current_subtask_id reflects the new head.
+        assert result["current_subtask_id"] == seq[0]
+
+    def test_cycle_is_rejected(self, branch_dir, tmp_path):
+        # ST-001 -> ST-002 -> ST-001 (cycle); cannot produce any valid order.
+        self._write_bp(
+            tmp_path,
+            branch_dir,
+            [
+                {"id": "ST-001", "dependencies": ["ST-002"]},
+                {"id": "ST-002", "dependencies": ["ST-001"]},
+            ],
+        )
+        result = map_orchestrator.set_subtasks(["ST-001", "ST-002"], branch_dir)
+        assert result["status"] == "error"
+        assert "cycle" in result["message"].lower()
+
+    def test_missing_blueprint_falls_back_to_input_order(
+        self, branch_dir, tmp_path
+    ):
+        # No blueprint = no deps to honor; preserve caller-provided order.
+        # (delete any blueprint that branch_dir fixture might have planted)
+        bp = tmp_path / ".map" / branch_dir / "blueprint.json"
+        if bp.exists():
+            bp.unlink()
+        result = map_orchestrator.set_subtasks(
+            ["ST-003", "ST-001", "ST-002"], branch_dir
+        )
+        assert result["status"] == "success"
+        assert result["subtask_sequence"] == ["ST-003", "ST-001", "ST-002"]
+        assert "reordered" not in result
 
 
 class TestCwdIndependence:

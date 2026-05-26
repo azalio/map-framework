@@ -78,10 +78,17 @@ class MapConfig:
     language: str = ""
 
     # Context compression policy (see docs/context-compression-plan.md)
-    # "never"      = never inject /compact nudge (quality-leaning)
+    # "never"      = never inject /compact nudge (default — user opts in by
+    #                setting policy to auto/aggressive in .map/config.yaml or
+    #                via `mapify init --compression auto`)
     # "auto"       = nudge when used >= compression_threshold_tokens
     # "aggressive" = nudge at 0.4 * threshold (cost-leaning)
-    compression_policy: str = "auto"
+    #
+    # Default flipped from "auto" to "never" by user request: the unsolicited
+    # "run /compact" injection mid-workflow interrupted long Actor runs on
+    # 50+ subtask plans without operator consent. Users who want the nudge
+    # now explicitly opt in.
+    compression_policy: str = "never"
     # Token threshold above which the meter injects a /compact instruction.
     # Default = 120_000 (~60% of Sonnet-200k window, below the Chroma
     # context-rot zone). Override to ~250_000 for Opus/Sonnet 1M projects.
@@ -171,12 +178,12 @@ def load_map_config(project_path: Path) -> MapConfig:
         if cfg.compression_policy not in VALID_POLICIES:
             logger.warning(
                 "Invalid compression_policy %r in %s (expected one of %s). "
-                "Using default 'auto'.",
+                "Using default 'never'.",
                 cfg.compression_policy,
                 config_file,
                 ", ".join(VALID_POLICIES),
             )
-            cfg.compression_policy = "auto"
+            cfg.compression_policy = "never"
         if cfg.compression_threshold_tokens <= 0:
             logger.warning(
                 "compression_threshold_tokens must be > 0 in %s "
@@ -273,14 +280,20 @@ profile: full
 # Language for agent responses (e.g., "ru", "en", "de")
 # language: ""
 
-# Context compression policy.
-#   never      = never inject a /compact nudge (best for quality)
-#   auto       = nudge when last assistant turn input >= threshold (default)
+# Context compression policy. Default is "never" — the /compact nudge is
+# opt-in. Uncomment and switch to "auto" or "aggressive" if you want the
+# meter to interrupt long workflows and ask Claude to compact.
+#   never      = never inject a /compact nudge (default — opt-in everywhere)
+#   auto       = nudge when last assistant turn input >= threshold
 #   aggressive = nudge at 0.4 x threshold (best for cost)
-# compression_policy: auto
+# compression_policy: never
 
 # Token threshold for the auto/aggressive policies.
 # 120_000 ~= 60% of a 200k Sonnet window; raise to ~250_000 for Opus 1M.
+# Tip for 50+ subtask plans: a single subtask cycle commonly burns 10-15k
+# tokens, so 120_000 forces ~10 mid-flight compacts across a 51-subtask
+# plan. If you want the nudge active for long plans, raise threshold to
+# 250_000+ so it fires once or twice, not after every few subtasks.
 # compression_threshold_tokens: 120000
 
 # Free-form focus text appended to the generated /compact command.

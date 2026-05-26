@@ -112,6 +112,12 @@ Interview is required when the user explicitly invites clarification (`ask if un
 
 Skip interview only when the task is already well-defined with clear acceptance criteria and no critical open product decisions.
 
+**Auto-Mode reconciliation.** Auto-mode tells the harness to "minimize interruptions"; this skill tells you to interview on vague scope. Both rules hold — auto-mode does NOT override the interview gate when scope is truly vague. Resolution:
+
+- Roadmap-class input (>3 acceptance criteria absent, multiple feature ideas in one prompt, "explore options X/Y") → interview is REQUIRED even under auto-mode. Use a single batched `AskUserQuestion` (3-5 high-leverage questions at once) rather than a back-and-forth dialog so you minimize round-trips while still resolving ambiguity.
+- Narrow task with explicit ACs / clear file scope → interview SKIPPED, proceed straight to spec/blueprint.
+- When in doubt, batched interview wins; a wrong skip cascades into 12 subtasks of misaligned work.
+
 ### Step 2: Deep Interview (Spec Discovery)
 
 Ask only non-obvious questions. Cover technical choices, UX, tradeoffs, risks, scope, integration, contract clarity, and durable state lifecycle for operations longer than one request.
@@ -242,7 +248,23 @@ Rerun blueprint validation after writing the human-readable plan if any decompos
 
 ### Step 7: Record Planning Artifacts (Do This Last)
 
-Record planning artifacts in the branch manifest after spec, blueprint, and task plan exist.
+Record planning artifacts in the branch manifest after spec, blueprint, and task plan exist. Use the named CLI — don't introspect the script:
+
+```bash
+python3 .map/scripts/map_step_runner.py record_plan_artifacts
+```
+
+`/map-plan` deliberately stops BEFORE `INIT_STATE` (that step belongs to `/map-efficient`), so `plan_status: "ready"` requires only `task_plan_<branch>.md` + `blueprint.json` — `step_state.json` will land later. Don't be alarmed by `has_step_state: false` in the response; it's the expected planning-complete state.
+
+Runner functions you'll commonly need from `/map-plan`:
+
+| Function | Purpose |
+|---|---|
+| `record_plan_artifacts` | Persist spec/blueprint/task-plan into `artifact_manifest.json`. |
+| `record_workflow_fit <workflow> [--diff-size SIZE] [--has-new-invariants 0\|1] [--needs-independent-review 0\|1] [--has-clear-acceptance-criteria 0\|1] [--test-first-required 0\|1] [--summary "..."]` | Persist the workflow-fit decision. Use the named flags — bool order is easy to confuse otherwise. |
+| `validate_blueprint_contract <path>` | Run schema + semantic checks on `blueprint.json`. |
+| `list_plans` | List per-branch plan artifacts under `.map/` to pick scope from a multi-roadmap workspace. |
+| `save_research <branch> <subtask_id>` | Persist research-agent findings for a subtask (stdin-fed). |
 
 ### Step 8: Output Checkpoint
 
