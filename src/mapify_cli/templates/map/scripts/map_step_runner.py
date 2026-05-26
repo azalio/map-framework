@@ -5531,30 +5531,24 @@ def record_diagnostics_baseline(
         "golangci-lint": re.compile(r"(\d+)\s+issues?", re.IGNORECASE),
     }
 
+    import shutil as _shutil  # local import keeps the module-level imports tidy
     results: dict[str, dict[str, object]] = {}
     for tool in tools:
         cmd = tool_commands.get(tool)
         if not cmd:
             continue
         # Skip tools whose binary isn't available rather than fail the
-        # whole snapshot.
+        # whole snapshot. shutil.which is the portable way; the prior
+        # subprocess(["command", ...]) variant CI-failed on Ubuntu
+        # runners where `command` is only a POSIX shell builtin and
+        # not a real binary in /usr/bin.
         binary = cmd.split()[0]
-        which = subprocess.run(
-            ["command", "-v", binary], shell=False,
-            capture_output=True, text=True, timeout=2,
-        )
-        if which.returncode != 0:
-            # Try the shell-builtin check (POSIX `command -v`).
-            which = subprocess.run(
-                f"command -v {binary}", shell=True,
-                capture_output=True, text=True, timeout=2,
-            )
-            if which.returncode != 0:
-                results[tool] = {
-                    "status": "skipped",
-                    "reason": f"binary {binary!r} not on PATH",
-                }
-                continue
+        if _shutil.which(binary) is None:
+            results[tool] = {
+                "status": "skipped",
+                "reason": f"binary {binary!r} not on PATH",
+            }
+            continue
         try:
             proc = subprocess.run(
                 cmd, shell=True, cwd=project_dir,
