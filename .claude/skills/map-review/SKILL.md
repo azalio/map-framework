@@ -174,22 +174,27 @@ says the same thing in 2 seconds).
 
 ```bash
 # Adapt commands to the project. Auto-detect from repo markers.
-PRECHECK_OUTPUT=""
+# Stream directly to the log file with real newlines — earlier versions
+# concatenated literal "\n" sequences inside double quotes, which is
+# what `echo` writes verbatim (not a newline). Use printf or direct
+# redirection instead.
+PRECHECK_LOG=".map/$BRANCH/precheck.log"
+mkdir -p ".map/$BRANCH"
+: > "$PRECHECK_LOG"
 if [ -f Makefile ] && grep -q '^test:' Makefile; then
-  PRECHECK_OUTPUT+="$(make -k test 2>&1; echo "[exit=$?]")\n"
+  { make -k test 2>&1; printf '[exit=%s]\n' "$?"; } >> "$PRECHECK_LOG"
 fi
 if [ -f Makefile ] && grep -q '^lint:' Makefile; then
-  PRECHECK_OUTPUT+="$(make -k lint 2>&1; echo "[exit=$?]")\n"
+  { make -k lint 2>&1; printf '[exit=%s]\n' "$?"; } >> "$PRECHECK_LOG"
 fi
 # Go: golangci-lint when present.
 if command -v golangci-lint >/dev/null 2>&1 && [ -f go.mod ]; then
-  PRECHECK_OUTPUT+="$(golangci-lint run 2>&1; echo "[exit=$?]")\n"
+  { golangci-lint run 2>&1; printf '[exit=%s]\n' "$?"; } >> "$PRECHECK_LOG"
 fi
 # Python: ruff + pytest when present.
 if command -v ruff >/dev/null 2>&1 && find . -maxdepth 3 -name "pyproject.toml" -print -quit | grep -q .; then
-  PRECHECK_OUTPUT+="$(ruff check . 2>&1; echo "[exit=$?]")\n"
+  { ruff check . 2>&1; printf '[exit=%s]\n' "$?"; } >> "$PRECHECK_LOG"
 fi
-echo "$PRECHECK_OUTPUT" > .map/$BRANCH/precheck.log
 ```
 
 **Treat precheck output as primary signal.** Reviewer findings that

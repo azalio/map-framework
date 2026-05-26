@@ -157,11 +157,14 @@ def step_state_path(branch: str) -> Path:
     return project_dir / ".map" / branch / "step_state.json"
 
 
-# Per-turn dedup: same reminder text emitted within DEDUP_WINDOW_SECONDS of
-# the previous emission AND against the same step_state.json mtime is
-# squelched. The cache lives next to step_state.json so it ages out with the
-# rest of the branch artifacts. Single-source: the cache is keyed by
-# (state_mtime, reminder_hash) so any change to either invalidates the dedup.
+# Per-turn dedup: identical normalized reminder text emitted within
+# DEDUP_WINDOW_SECONDS of the previous emission is squelched. We do
+# NOT key on step_state.json mtime — record_hook_injection_status
+# rewrites step_state on every hook call as part of accounting, so
+# mtime always changes and would defeat dedup on its own side effect.
+# Instead we rely on the fact that any meaningful workflow change
+# (validate_step → new phase / subtask) produces different reminder
+# text, which naturally lifts the squelch.
 DEDUP_CACHE_NAME = ".hook-reminder-cache.json"
 DEDUP_WINDOW_SECONDS = 5.0
 
@@ -501,12 +504,17 @@ def format_reminder(
     wave_idx = state.get("current_wave_index", 0)
     wave_hint = ""
     if waves and isinstance(wave_idx, int):
-        # Only surface the WAVE banner when the wave-loop driver is ACTUALLY
-        # in use — current_wave_index > 0 means get_wave_step / advance_wave
-        # advanced past the seed. Showing "WAVE 1/N" while the sequential
-        # walker is driving is cognitive noise (operators wondered which
-        # logic was running). Stay silent until the wave loop kicks in.
-        if wave_idx > 0:
+        # Surface the WAVE banner when the wave-loop driver is ACTUALLY
+        # in use. Previous "wave_idx > 0" check missed the very first
+        # wave (wave 0 is the first wave by definition). Better signal:
+        # subtask_phases is populated only by the wave-loop dispatcher
+        # (get_wave_step writes per-subtask phase tracking there). So
+        # if subtask_phases has any entries AND execution_waves is set,
+        # the wave-loop is engaged — show the banner from wave 0 onward.
+        subtask_phases_value = state.get("subtask_phases", {})
+        subtask_phases_dict = subtask_phases_value if isinstance(subtask_phases_value, dict) else {}
+        wave_loop_engaged = bool(subtask_phases_dict) or wave_idx > 0
+        if wave_loop_engaged:
             wave_hint = f" | WAVE {wave_idx + 1}/{len(waves)}"
             current_wave = waves[wave_idx] if wave_idx < len(waves) else []
             if isinstance(current_wave, list) and len(current_wave) > 1:

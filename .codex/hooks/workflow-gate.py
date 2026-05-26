@@ -390,15 +390,18 @@ def main() -> None:
             # Docs-only exception: when EVERY target path is a docs
             # surface (README, runbook, CHANGELOG, anything matching the
             # configured DOCS_ONLY_* allowlist) AND the current phase is
-            # RESEARCH, allow the edit. Docs subtasks don't need
-            # research-agent investigation, and the unconditional block
-            # forced operators to write empty research stubs just to
-            # pass the gate.
+            # RESEARCH, allow the edit — BUT still run scope_glob /
+            # constraints so the exception doesn't silently widen scope.
+            # The exception lifts the phase block; it does not bypass
+            # mutation-boundary constraints.
             if (
                 target_paths
                 and all(is_docs_only_path(p) for p in target_paths)
                 and _current_phase_is_research(branch)
             ):
+                constraint_error = check_constraints(branch, target_paths)
+                if constraint_error:
+                    deny(constraint_error)
                 allow()
             deny(error or "Edit blocked: not in an editing phase.")
 

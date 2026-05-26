@@ -264,7 +264,7 @@ Lint and run the new tests. Passing tests before Actor indicate weak tests; retu
 
 ### Phase: ACTOR (2.3)
 
-Generate the bounded `<map_context>` via the `build_context_block` CLI on `map_step_runner.py` (blueprint + step state + dependency results + repo delta, budget-capped). Prefer the CLI form — it sets up `CLAUDE_PROJECT_DIR` resolution and import paths for you, so no inline `python -c` is needed.
+Generate the `<map_context>` via the `build_context_block` CLI on `map_step_runner.py` (blueprint + step state + dependency results + repo delta — full content; truncation infrastructure was removed, operators handle context size via `/compact` opt-in). Prefer the CLI form — it sets up `CLAUDE_PROJECT_DIR` resolution and import paths for you, so no inline `python -c` is needed.
 
 ```bash
 SUBTASK_ID=$(jq -r '.current_subtask_id' ".map/${BRANCH}/step_state.json")
