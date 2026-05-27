@@ -3121,6 +3121,7 @@ class TestDetectTruncatedAgentOutput:
         text = json.dumps({
             "evidence": [],
             "valid": True,
+            "summary": "all good",
             "verdict": "approved",
             "issues": [],
             "passed_checks": ["all checks pass"],
@@ -3147,6 +3148,7 @@ class TestDetectTruncatedAgentOutput:
         text = json.dumps({
             "evidence": [],
             "valid": True,
+            "summary": "ok",
             "verdict": "approved",
             "passed_checks": [],
             "failed_checks": [],
@@ -3175,6 +3177,7 @@ class TestDetectTruncatedAgentOutput:
         inner = json.dumps({
             "evidence": [],
             "valid": True,
+            "summary": "ok",
             "verdict": "approved",
             "issues": [],
             "passed_checks": [],
@@ -3294,6 +3297,7 @@ class TestDetectTruncatedAgentOutput:
         text = json.dumps({
             "evidence": [],
             "valid": True,
+            "summary": "ok",
             "verdict": "approved",
             "issues": [],
             "passed_checks": ["tests pass"],
@@ -3304,6 +3308,29 @@ class TestDetectTruncatedAgentOutput:
             text, agent_kind="monitor"
         )
         assert report["truncated"] is False, report
+
+    def test_map_efficient_monitor_output_not_truncated(self):
+        """Regression (Copilot review on PR #145): the map-efficient Monitor
+        gate runs `--agent monitor` against a Monitor prompted for
+        valid/summary/issues/files_changed/tests_run/escalation_required — it
+        does NOT emit evidence/verdict/passed_checks/failed_checks. The
+        truncation detector must accept this contract (its required keys are
+        the common core valid/summary/issues), otherwise the pre-verdict gate
+        rejects every valid map-efficient Monitor response and loops forever.
+        """
+        text = json.dumps({
+            "valid": True,
+            "summary": "ST-001 satisfies all criteria",
+            "issues": [],
+            "files_changed": ["a.py"],
+            "tests_run": ["pytest: 10 passed"],
+            "escalation_required": False,
+        })
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="monitor"
+        )
+        assert report["truncated"] is False, report
+        assert report["reasons"] == []
 
 
 class TestBlueprintContractAffectedFilesDrift:
@@ -6711,21 +6738,43 @@ class TestBuildJsonRetryPrompt:
         assert "rejected for" in result["prompt"]
 
     def test_unknown_agent_returns_error_empty_prompt(self):
-        """VC4: unknown agent (e.g. 'actor') → status error, prompt empty."""
-        result = map_step_runner.build_json_retry_prompt("actor")
+        """VC4: a genuinely unknown agent → status error, prompt empty."""
+        result = map_step_runner.build_json_retry_prompt("reflector")
         assert result["status"] == "error"
         assert result["prompt"] == ""
-        assert result["agent"] == "actor"
+        assert result["agent"] == "reflector"
         # reasons must include an 'unknown agent' entry
         assert any("unknown agent" in r for r in result["reasons"])
 
     def test_unknown_agent_preserves_caller_errors_in_reasons(self):
         """Unknown-agent path still echoes caller-supplied errors in reasons."""
         errs = ["some prior error"]
-        result = map_step_runner.build_json_retry_prompt("actor", errors=errs)
+        result = map_step_runner.build_json_retry_prompt("reflector", errors=errs)
         assert result["status"] == "error"
         # caller errors are preserved (after the 'unknown agent' prepend)
         assert "some prior error" in result["reasons"]
+
+    def test_actor_retry_prompt_builds(self):
+        """Regression (Copilot review on PR #145): map-efficient's Actor
+        truncation-recovery references `build_json_retry_prompt --agent actor`.
+        Actor must therefore be a known agent that yields a real retry prompt
+        (not the unknown-agent error path), embedding the shared actor skeleton
+        and the mandated phrases.
+        """
+        result = map_step_runner.build_json_retry_prompt(
+            "actor", errors=["missing required key: tests_run"]
+        )
+        assert result["status"] == "ok"
+        assert result["agent"] == "actor"
+        assert result["prompt"] != ""
+        # embeds the shared actor format block (single source of truth)
+        assert map_step_runner._render_format_block("actor") in result["prompt"]
+        # actor-specific schema fields are present
+        assert "files_changed" in result["prompt"]
+        assert "tests_run" in result["prompt"]
+        # mandated phrases + the caller error bullet
+        assert "Emit ONLY one JSON object matching this schema" in result["prompt"]
+        assert "missing required key: tests_run" in result["prompt"]
 
     def test_predictor_skeleton_reused(self):
         """Skeleton reuse also holds for predictor (not just monitor)."""

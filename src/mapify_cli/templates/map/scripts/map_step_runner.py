@@ -4381,6 +4381,7 @@ AGENT_OUTPUT_SCHEMAS: dict[str, AgentOutputSchema] = {
         "required_keys": (
             "evidence",
             "valid",
+            "summary",
             "verdict",
             "issues",
             "passed_checks",
@@ -4396,6 +4397,7 @@ AGENT_OUTPUT_SCHEMAS: dict[str, AgentOutputSchema] = {
                 }
             ],
             "valid": "<boolean>",
+            "summary": "<string>",
             "verdict": "<'approved' | 'needs_revision' | 'rejected'>",
             "issues": [
                 {
@@ -4486,6 +4488,22 @@ AGENT_OUTPUT_SCHEMAS: dict[str, AgentOutputSchema] = {
             ],
         },
     },
+    # Actor is not a review-prompt role (it has no REVIEW_PROMPT_SPECS entry),
+    # but its output schema lives here so build_json_retry_prompt and
+    # detect_truncated_agent_output can serve the map-efficient Actor
+    # truncation-recovery path (--agent actor) from the same single source.
+    "actor": {
+        "required_keys": (
+            "files_changed",
+            "tests_run",
+        ),
+        "skeleton": {
+            "files_changed": ["<string — path of each file written>"],
+            "tests_run": ["<string — command + pass/fail summary>"],
+            "validation_notes": "<string — how the change satisfies each validation criterion>",
+            "blocker": "<string | null — null when no blocker>",
+        },
+    },
 }
 
 REVIEW_PROMPT_SPECS: dict[str, dict[str, str]] = {
@@ -4538,7 +4556,9 @@ def _render_format_block(agent: str) -> str:
     format_rules_body = (
         "Return exactly one JSON object matching the schema above. "
         "No markdown, no code fences, no prose before/after. "
-        "All listed keys required."
+        "Every key is required EXCEPT fields whose placeholder marks them "
+        "conditional (\"required when ...\"): include those only when their "
+        "stated condition applies."
     )
     return (
         f"<output_schema>\n{schema_json}\n</output_schema>\n"
@@ -5548,8 +5568,19 @@ def save_research(
     return str(path)
 
 
-_MONITOR_REQUIRED_KEYS = tuple(AGENT_OUTPUT_SCHEMAS["monitor"]["required_keys"])
-_ACTOR_REQUIRED_KEYS = ("files_changed", "tests_run")
+# Truncation-detector minimal keys for `detect_truncated_agent_output
+# --agent monitor`. This is the common core shared by BOTH Monitor output
+# contracts that route through this gate:
+#   - map-efficient Monitor: valid/summary/issues/files_changed/tests_run/escalation_required
+#   - map-review Monitor:    evidence/valid/summary/verdict/issues/passed_checks/failed_checks
+# It is intentionally NOT AGENT_OUTPUT_SCHEMAS["monitor"]["required_keys"]
+# (the full review-prompt schema): the map-efficient Monitor never emits
+# evidence/verdict/passed_checks/failed_checks, so requiring the full review
+# set would make the map-efficient truncation gate reject every valid Monitor
+# response. Truncation detection only needs the verdict (valid), the prose
+# summary, and the findings (issues) — present in both contracts.
+_MONITOR_REQUIRED_KEYS = ("valid", "summary", "issues")
+_ACTOR_REQUIRED_KEYS = tuple(AGENT_OUTPUT_SCHEMAS["actor"]["required_keys"])
 
 
 def detect_truncated_agent_output(
