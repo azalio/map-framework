@@ -6109,6 +6109,67 @@ class TestTokenAccounting:
         ]
         assert len(log_rows) == 2, "dedup must not append the same turns twice"
 
+    def test_incremental_offset_captures_only_new_turns(self, branch_workspace):
+        """Appended turns are metered incrementally via the byte offset — old
+        turns are not re-read (no O(n) re-parse) and not double-counted."""
+        repo = branch_workspace.parents[1]
+        transcript = repo / "tr.jsonl"
+        transcript.write_text(self.TRANSCRIPT)  # 2 turns
+        self._state(branch_workspace)
+
+        first = map_step_runner.record_token_event(
+            "test-branch", transcript_path=str(transcript)
+        )
+        assert first["recorded"] == 2
+
+        with transcript.open("a", encoding="utf-8") as handle:
+            handle.write(
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "uuid": "u3",
+                        "message": {
+                            "role": "assistant",
+                            "id": "msg_3",
+                            "model": "claude-opus-4-7",
+                            "usage": {"input_tokens": 10, "output_tokens": 5},
+                        },
+                    }
+                )
+                + "\n"
+            )
+
+        second = map_step_runner.record_token_event(
+            "test-branch", transcript_path=str(transcript)
+        )
+        assert second["recorded"] == 1, "only the appended turn should be recorded"
+        assert second["output"] == 5
+        log_rows = [
+            line
+            for line in (branch_workspace / "token_log.jsonl").read_text().splitlines()
+            if line.strip()
+        ]
+        assert len(log_rows) == 3
+
+    def test_explicit_branch_is_sanitized_against_path_traversal(
+        self, branch_workspace
+    ):
+        """A malicious explicit branch must not escape the .map tree — it is
+        sanitized the same way MAP sanitizes branch names elsewhere."""
+        repo = branch_workspace.parents[1]
+        transcript = repo / "tr.jsonl"
+        transcript.write_text(self.TRANSCRIPT)
+
+        result = map_step_runner.record_token_event(
+            "../../pwned", transcript_path=str(transcript)
+        )
+        assert result["status"] == "success"
+        # Nothing was written outside the project's .map tree.
+        assert not (repo.parent / "pwned").exists()
+        assert not (repo / ".map" / ".." / ".." / "pwned").exists()
+        # The traversal collapsed to the safe 'default' branch dir under .map.
+        assert (repo / ".map" / "default" / "token_accounting.json").is_file()
+
     def test_missing_transcript_path_is_error(self, branch_workspace):
         del branch_workspace
         result = map_step_runner.record_token_event("test-branch", transcript_path="")

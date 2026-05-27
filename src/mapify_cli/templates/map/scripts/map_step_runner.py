@@ -591,23 +591,45 @@ def _extract_turn_usage(entry: object) -> Optional[dict[str, object]]:
     }
 
 
-def _iter_new_usage(transcript_path: Path, seen_ids: set[str]) -> list[dict[str, object]]:
-    """Usage dicts for assistant turns whose msg_id is not already in seen_ids.
+def _iter_new_usage(
+    transcript_path: Path, seen_ids: set[str], start_offset: int = 0
+) -> tuple[list[dict[str, object]], int]:
+    """New assistant-usage dicts from a transcript, read incrementally.
 
-    Entries with an empty msg_id (cannot dedup safely) and malformed JSON lines
-    are skipped; a missing/unreadable transcript yields []. The dedup is what
-    makes re-firing hooks and the Stop-time sweep over the main transcript safe
-    to call repeatedly without double-counting.
+    Reads only the bytes after ``start_offset`` (transcripts are append-only
+    JSONL) so a repeatedly-firing Stop/SubagentStop hook does not re-parse the
+    whole multi-MB file each turn. Returns ``(usages, new_offset)`` where
+    ``new_offset`` advances only past the last COMPLETE line — a partial line
+    from a concurrent append is left for the next call. ``msg_id`` dedup against
+    ``seen_ids`` is kept as a safety net (e.g. if the file is rotated and the
+    offset resets). Entries with an empty msg_id or malformed JSON are skipped;
+    a missing/unreadable transcript returns ``([], start_offset)``.
     """
     path = Path(transcript_path)
-    if not path.is_file():
-        return []
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError):
-        return []
+        if not path.is_file():
+            return [], start_offset
+        size = path.stat().st_size
+    except OSError:
+        return [], start_offset
+    # A stored offset past EOF means the file was truncated/rotated — restart.
+    offset = start_offset if 0 <= start_offset <= size else 0
+    try:
+        with path.open("rb") as handle:
+            handle.seek(offset)
+            chunk = handle.read()
+    except OSError:
+        return [], start_offset
+
+    last_newline = chunk.rfind(b"\n")
+    if last_newline == -1:
+        # No complete line yet beyond the offset.
+        return [], offset
+    complete = chunk[: last_newline + 1]
+    new_offset = offset + len(complete)
+
     out: list[dict[str, object]] = []
-    for raw in lines:
+    for raw in complete.decode("utf-8", errors="replace").splitlines():
         raw = raw.strip()
         if not raw:
             continue
@@ -622,28 +644,39 @@ def _iter_new_usage(transcript_path: Path, seen_ids: set[str]) -> list[dict[str,
         if not mid or mid in seen_ids:
             continue
         out.append(usage)
-    return out
+    return out, new_offset
 
 
 def _token_meter_cache_path(branch_name: str) -> Path:
     return get_branch_dir(branch_name) / TOKEN_METER_CACHE_NAME
 
 
-def _load_seen_ids(branch_name: str) -> set[str]:
+def _load_meter_cache(branch_name: str) -> tuple[dict[str, int], set[str]]:
+    """Return (per-transcript byte offsets, seen msg_ids) from the meter cache."""
     data = _read_json_file(_token_meter_cache_path(branch_name))
+    offsets: dict[str, int] = {}
+    seen: set[str] = set()
     if isinstance(data, dict):
-        ids = data.get("seen_ids")
-        if isinstance(ids, list):
-            return {str(x) for x in ids if isinstance(x, str)}
-    return set()
+        raw_offsets = data.get("offsets")
+        if isinstance(raw_offsets, dict):
+            for key, value in raw_offsets.items():
+                if isinstance(key, str) and isinstance(value, int) and value >= 0:
+                    offsets[key] = value
+        raw_seen = data.get("seen_ids")
+        if isinstance(raw_seen, list):
+            seen = {str(x) for x in raw_seen if isinstance(x, str)}
+    return offsets, seen
 
 
-def _save_seen_ids(branch_name: str, seen_ids: set[str]) -> None:
-    # Bound the cache so a long run can't grow it without limit.
+def _save_meter_cache(
+    branch_name: str, offsets: dict[str, int], seen_ids: set[str]
+) -> None:
+    # Offsets are the primary dedup; seen_ids is a bounded safety net (a long
+    # run never re-reads old lines, so a lexicographic trim cannot double-count).
     trimmed = sorted(seen_ids)[-_SEEN_ID_CACHE_LIMIT:]
     _write_json_file(
         _token_meter_cache_path(branch_name),
-        {"seen_ids": trimmed, "updated_at": _utc_timestamp()},
+        {"offsets": offsets, "seen_ids": trimmed, "updated_at": _utc_timestamp()},
     )
 
 
@@ -676,7 +709,10 @@ def record_token_event(
     (subtask/phase) falls back to step_state and agent to the phase mapping
     when callers don't pass them explicitly. Returns the totals just recorded.
     """
-    branch_name = branch or get_branch_name()
+    # Sanitize an explicit branch the same way MAP does elsewhere — the value
+    # becomes a path segment via get_branch_dir, so an unsanitized argument
+    # (e.g. "../../tmp") would escape the .map tree.
+    branch_name = _sanitize_branch(branch) if branch else get_branch_name()
     if not transcript_path:
         return {"status": "error", "reason": "transcript_path required"}
 
@@ -685,10 +721,20 @@ def record_token_event(
     phase = phase or cur_phase or ""
     agent = agent or _PHASE_TO_AGENT.get(phase, "orchestrator")
 
-    seen = _load_seen_ids(branch_name)
-    new_usages = _iter_new_usage(Path(transcript_path), seen)
+    transcript_key = str(transcript_path)
+    offsets, seen = _load_meter_cache(branch_name)
+    start_offset = offsets.get(transcript_key, 0)
+    new_usages, new_offset = _iter_new_usage(
+        Path(transcript_path), seen, start_offset
+    )
     totals: dict[str, int] = {field: 0 for field in _TOKEN_FIELDS}
+
     if not new_usages:
+        # Still persist an advanced offset so non-usage lines (user turns) are
+        # not re-scanned next call.
+        if new_offset != start_offset:
+            offsets[transcript_key] = new_offset
+            _save_meter_cache(branch_name, offsets, seen)
         return {
             "status": "success",
             "recorded": 0,
@@ -720,7 +766,8 @@ def record_token_event(
     except OSError as exc:
         return {"status": "error", "reason": str(exc)}
 
-    _save_seen_ids(branch_name, seen)
+    offsets[transcript_key] = new_offset
+    _save_meter_cache(branch_name, offsets, seen)
     _rebuild_token_accounting(branch_name)
     return {
         "status": "success",
@@ -743,7 +790,7 @@ def _rebuild_token_accounting(branch: Optional[str] = None) -> dict[str, object]
     ``cache_hit_ratio`` (cache_read / (input + cache_read)) and
     ``est_cost_usd``. Returns the written payload.
     """
-    branch_name = branch or get_branch_name()
+    branch_name = _sanitize_branch(branch) if branch else get_branch_name()
     log_path = get_branch_dir(branch_name) / TOKEN_LOG_NAME
     by_subtask: dict[str, dict[str, float]] = {}
     by_agent: dict[str, dict[str, float]] = {}
@@ -816,7 +863,7 @@ def _rebuild_token_accounting(branch: Optional[str] = None) -> dict[str, object]
 
 def token_report(branch: Optional[str] = None) -> str:
     """Render a per-subtask token table (input/output/cache/cost) as text."""
-    branch_name = branch or get_branch_name()
+    branch_name = _sanitize_branch(branch) if branch else get_branch_name()
     payload = _rebuild_token_accounting(branch_name)
     aggregate = cast(dict[str, float], payload["aggregate"])
     by_subtask = cast(dict[str, dict[str, float]], payload["by_subtask"])
