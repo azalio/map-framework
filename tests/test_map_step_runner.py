@@ -7,6 +7,7 @@ import subprocess
 import sys
 import types
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -57,7 +58,7 @@ def branch_workspace(tmp_path, monkeypatch):
     return workspace
 
 
-def _valid_run_health_payload() -> dict[str, object]:
+def _valid_run_health_payload() -> dict[str, Any]:
     artifact_entry = {
         "kind": "state",
         "path": ".map/test-branch/step_state.json",
@@ -3384,7 +3385,7 @@ class TestBlueprintContractCrossRepoDetection:
             }],
         }
 
-    def test_warns_on_cross_repo_path(self, branch_workspace, monkeypatch, tmp_path):
+    def test_warns_on_cross_repo_path(self, branch_workspace, monkeypatch):
         repo = branch_workspace.parents[1]
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
         # Create a real file in current repo so we don't trigger drift warning.
@@ -4229,6 +4230,185 @@ class TestValidateMutationBoundary:
         )
         report = json.loads(result.stdout)
         assert report["status"] == "error"
+
+
+class TestDetectCrossSubtaskRegressionRisk:
+    """detect_cross_subtask_regression_risk flags when the in-flight subtask
+    edits files that a PRIOR subtask owned — the signal the skill uses to
+    force a full test suite (vs a -k subset) so a cross-subtask regression
+    can't slip past per-subtask Monitor to the final gate.
+    """
+
+    def _init_git(self, root: Path) -> None:
+        subprocess.run(["git", "init"], cwd=root, capture_output=True, check=False)
+        subprocess.run(
+            ["git", "config", "user.email", "t@t.com"], cwd=root, capture_output=True
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "t"], cwd=root, capture_output=True
+        )
+        # An initial commit so HEAD resolves (base_ref fallback).
+        (root / ".seed").write_text("seed\n")
+        subprocess.run(["git", "add", "."], cwd=root, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "init"], cwd=root, capture_output=True
+        )
+
+    def _write_state(self, branch_dir: Path, subtask_results: dict) -> None:
+        (branch_dir / "step_state.json").write_text(
+            json.dumps({"subtask_results": subtask_results})
+        )
+
+    def test_shared_source_file_is_at_risk_full_suite(
+        self, branch_workspace, monkeypatch
+    ):
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        self._write_state(
+            branch_workspace,
+            {"ST-001": {"files_changed": ["src/pipeline.py"]}},
+        )
+        # Current subtask (ST-002) edits the SAME source file. Stage it so
+        # `git status --porcelain` reports the full path (untracked-only
+        # directories collapse to `src/`).
+        (repo / "src").mkdir()
+        (repo / "src" / "pipeline.py").write_text("x = 1\n")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.detect_cross_subtask_regression_risk(
+            "test-branch", "ST-002"
+        )
+        assert report["status"] == "ok", report
+        assert report["at_risk"] is True
+        assert report["recommended_gate"] == "full_suite"
+        assert "src/pipeline.py" in report["shared_source_files"]
+        assert report["prior_owners"]["src/pipeline.py"] == ["ST-001"]
+
+    def test_disjoint_files_not_at_risk_scoped(self, branch_workspace, monkeypatch):
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        self._write_state(
+            branch_workspace,
+            {"ST-001": {"files_changed": ["src/other.py"]}},
+        )
+        (repo / "src").mkdir()
+        (repo / "src" / "pipeline.py").write_text("x = 1\n")  # different file
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.detect_cross_subtask_regression_risk(
+            "test-branch", "ST-002"
+        )
+        assert report["status"] == "ok", report
+        assert report["at_risk"] is False
+        assert report["recommended_gate"] == "scoped"
+        assert report["shared_files"] == []
+
+    def test_shared_test_only_file_is_not_at_risk(
+        self, branch_workspace, monkeypatch
+    ):
+        """Two subtasks editing the same TEST file is a weak signal — it can't
+        regress another subtask's production code, so stay scoped."""
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        self._write_state(
+            branch_workspace,
+            {"ST-001": {"files_changed": ["tests/test_pipeline.py"]}},
+        )
+        (repo / "tests").mkdir()
+        (repo / "tests" / "test_pipeline.py").write_text("def test_x(): pass\n")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.detect_cross_subtask_regression_risk(
+            "test-branch", "ST-002"
+        )
+        assert report["at_risk"] is False
+        assert report["recommended_gate"] == "scoped"
+        assert "tests/test_pipeline.py" in report["shared_test_files"]
+        assert report["shared_source_files"] == []
+
+    def test_no_prior_subtasks_not_at_risk(self, branch_workspace, monkeypatch):
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        self._write_state(branch_workspace, {})
+        (repo / "src").mkdir()
+        (repo / "src" / "pipeline.py").write_text("x = 1\n")
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.detect_cross_subtask_regression_risk(
+            "test-branch", "ST-001"
+        )
+        assert report["at_risk"] is False
+        assert report["recommended_gate"] == "scoped"
+
+    def test_current_subtask_excluded_from_prior_owners(
+        self, branch_workspace, monkeypatch
+    ):
+        """A subtask's own prior record (e.g. on a retry) must not count as a
+        cross-subtask collision with itself."""
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        self._write_state(
+            branch_workspace,
+            {"ST-002": {"files_changed": ["src/pipeline.py"]}},
+        )
+        (repo / "src").mkdir()
+        (repo / "src" / "pipeline.py").write_text("x = 1\n")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.detect_cross_subtask_regression_risk(
+            "test-branch", "ST-002"
+        )
+        assert "src/pipeline.py" in report["current_changed_files"]
+        assert report["at_risk"] is False
+        assert report["shared_files"] == []
+
+    def test_git_failure_fails_safe_to_full_suite(
+        self, branch_workspace, monkeypatch
+    ):
+        """No git repo → diff can't be computed → unknown + full_suite, never a
+        silent scoped pass."""
+        repo = branch_workspace.parents[1]  # NOT a git repo
+        self._write_state(
+            branch_workspace,
+            {"ST-001": {"files_changed": ["src/pipeline.py"]}},
+        )
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.detect_cross_subtask_regression_risk(
+            "test-branch", "ST-002"
+        )
+        assert report["status"] == "unknown", report
+        assert report["at_risk"] is True
+        assert report["recommended_gate"] == "full_suite"
+
+    def test_cli_exits_zero_and_emits_json(self, branch_workspace):
+        """CLI is advisory: exit 0 always so shell callers branch on the
+        `recommended_gate` field without `set -e` tripping."""
+        self._init_git(branch_workspace.parents[1])
+        self._write_state(branch_workspace, {})
+        runner = (
+            Path(__file__).resolve().parents[1]
+            / "src" / "mapify_cli" / "templates" / "map" / "scripts" / "map_step_runner.py"
+        )
+        repo = branch_workspace.parents[1]
+        env = {
+            **os.environ,
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "CLAUDE_PROJECT_DIR": str(repo),
+        }
+        result = subprocess.run(
+            [sys.executable, str(runner),
+             "detect_cross_subtask_regression_risk", "test-branch", "ST-001"],
+            capture_output=True, text=True, cwd=str(repo), env=env,
+        )
+        assert result.returncode == 0, result.stderr
+        report = json.loads(result.stdout)
+        assert report["recommended_gate"] in {"full_suite", "scoped"}
+
+    def test_is_test_path_heuristic(self):
+        assert map_step_runner._is_test_path("tests/test_x.py")
+        assert map_step_runner._is_test_path("pkg/foo_test.go")
+        assert map_step_runner._is_test_path("web/button.spec.ts")
+        assert map_step_runner._is_test_path("a/__tests__/b.js")
+        assert not map_step_runner._is_test_path("src/pipeline.py")
+        assert not map_step_runner._is_test_path("contest.py")
 
 
 class TestGetSubtaskCli:

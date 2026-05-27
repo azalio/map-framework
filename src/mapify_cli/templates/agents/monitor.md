@@ -838,6 +838,25 @@ For each `VCn:` criterion:
   - **Code evidence** (where in code the behavior is implemented), and
   - **Test evidence** (where in tests it is asserted).
 
+### Cross-Subtask Regression Rule (Shared-File Edits)
+
+Your view is scoped to ONE subtask's contract — you cannot see regressions
+this change induces on *prior* subtasks' code. When the subtask edits a file
+that an earlier subtask in the same plan already modified, a `-k`-filtered or
+single-module test run is INSUFFICIENT evidence: the canonical miss is a
+change to a shared pipeline file that breaks a stub/no-op path another
+subtask owns, surfacing only at the final full gate.
+
+- The orchestrator exposes the deterministic signal:
+  `python3 .map/scripts/map_step_runner.py detect_cross_subtask_regression_risk <branch> <subtask_id>`.
+  When it returns `recommended_gate == "full_suite"` (current diff overlaps a
+  prior subtask's files, or the diff couldn't be computed), the `test_output`
+  you were handed MUST be from a FULL-suite run.
+- If the test evidence is scoped (a `-k` subset, a single test file) while the
+  subtask edits a shared file, do NOT approve on that evidence: set
+  `valid: false` (or `recommendation: needs_investigation`) and require a
+  full-suite run before the subtask is recorded.
+
 ### Contract Assertion Patterns
 
 | Criterion Type | How to Verify | Example |
