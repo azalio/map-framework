@@ -4409,7 +4409,7 @@ AGENT_OUTPUT_SCHEMAS: dict[str, AgentOutputSchema] = {
                     "line_range": "<string>",
                     "suggestion": "<string>",
                     "was_present_before_pr": "<boolean — required; True => pre-existing tech debt>",
-                    "reach_evidence": "<string — required for severity>=MEDIUM: grep:<pattern>:<line> | test_fail:<name> | linter:<tool>:<line>>",
+                    "reach_evidence": "<string — required when severity >= MEDIUM: grep:<pattern>:<line> | test_fail:<name> | linter:<tool>:<line>>",
                     "sibling_comparison": "<object — required when mode=sibling-aware: {sibling_path, equivalent_lines, divergences}>",
                 }
             ],
@@ -4497,6 +4497,8 @@ AGENT_OUTPUT_SCHEMAS: dict[str, AgentOutputSchema] = {
         "required_keys": (
             "files_changed",
             "tests_run",
+            "validation_notes",
+            "blocker",
         ),
         "skeleton": {
             "files_changed": ["<string — path of each file written>"],
@@ -5672,6 +5674,12 @@ def detect_truncated_agent_output(
     if expected_keys is None:
         if agent_kind == "monitor":
             expected_keys = list(_MONITOR_REQUIRED_KEYS)
+        elif agent_kind == "review-monitor":
+            # Full review-monitor schema (evidence/valid/summary/verdict/issues/
+            # passed_checks/failed_checks). Distinct from "monitor" which uses the
+            # minimal map-efficient common core so it doesn't reject valid efficient
+            # Monitor responses that never emit evidence/verdict/passed_checks/failed_checks.
+            expected_keys = list(AGENT_OUTPUT_SCHEMAS["monitor"]["required_keys"])
         elif agent_kind == "actor":
             expected_keys = list(_ACTOR_REQUIRED_KEYS)
         elif agent_kind in AGENT_OUTPUT_SCHEMAS:
@@ -7673,8 +7681,12 @@ def _grep_external_callers(
     and a single marker entry is returned so the caller still recommends
     ``validate_callers`` (too many symbols → thorough gate is the safe default).
 
-    Returns an empty list on git-grep failure (non-zero exit code other than 1)
-    so callers can degrade gracefully without crashing.
+    Returns ``_GREP_ERROR_SENTINEL`` (a one-entry list with ``note="grep_error"``)
+    on ``OSError``, ``subprocess.TimeoutExpired``, or a git-grep exit code not in
+    ``(0, 1)``.  Callers must detect the sentinel (``entry["note"] == "grep_error"``)
+    and fail-safe to ``validate_callers`` rather than treating it as evidence that
+    no external callers exist.  Do NOT revert this to an empty-list return — an
+    empty list means "grep ran and found nothing", which is a different signal.
     """
     if not symbols:
         return []
@@ -9105,18 +9117,12 @@ if __name__ == "__main__":
                 raw_errors = sys.argv[err_idx + 1]
                 try:
                     parsed_errors = json.loads(raw_errors)
-                except json.JSONDecodeError as exc:
-                    print(
-                        json.dumps({"status": "error", "message": f"--errors must be a JSON array: {exc}"}),
-                        file=sys.stderr,
-                    )
-                    sys.exit(1)
-                if not isinstance(parsed_errors, list):
-                    print(
-                        json.dumps({"status": "error", "message": "--errors must be a JSON array, got non-list"}),
-                        file=sys.stderr,
-                    )
-                    sys.exit(1)
+                    if not isinstance(parsed_errors, list):
+                        # JSON parsed to a scalar (e.g. a JSON string) — coerce to list
+                        parsed_errors = [raw_errors]
+                except json.JSONDecodeError:
+                    # Plain (non-JSON) string — coerce to single-element list
+                    parsed_errors = [raw_errors]
                 retry_errors = [str(e) for e in parsed_errors]
         retry_result = build_json_retry_prompt(retry_agent, retry_errors)
         print(json.dumps(retry_result, indent=2))
@@ -9253,18 +9259,12 @@ if __name__ == "__main__":
         if raw_reasons is not None:
             try:
                 parsed_reasons = json.loads(raw_reasons)
-            except json.JSONDecodeError as exc:
-                print(
-                    json.dumps({"status": "error", "message": f"--reasons must be a JSON array: {exc}"}),
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-            if not isinstance(parsed_reasons, list):
-                print(
-                    json.dumps({"status": "error", "message": "--reasons must be a JSON array, got non-list"}),
-                    file=sys.stderr,
-                )
-                sys.exit(1)
+                if not isinstance(parsed_reasons, list):
+                    # JSON parsed to a scalar (e.g. a JSON string) — coerce to list
+                    parsed_reasons = [raw_reasons]
+            except json.JSONDecodeError:
+                # Plain (non-JSON) string — coerce to single-element list
+                parsed_reasons = [raw_reasons]
             laf_reasons = [str(r) for r in parsed_reasons]
         laf_result = log_agent_failure(
             laf_agent,
