@@ -457,6 +457,34 @@ unmodified. Operators handle context size via the `/compact` opt-in
 described above — the `MAP_CONTEXT_BLOCK_BUDGET_TOKENS` env var that
 previously capped Actor's block has no effect any more.
 
+### Token accounting (per-subtask cost)
+
+Separately from the compaction nudge above, MAP records how many tokens a
+run actually spent and attributes them to the subtask/phase/agent that
+spent them. The `map-token-meter` hook fires on `SubagentStop` (the
+actor/monitor/research sub-agents, where most tokens go) and `Stop` (the
+main session); it reads each transcript's per-turn `usage` block and appends
+attributed rows to `.map/<branch>/token_log.jsonl`, deduplicated by message
+id so re-fired hooks never double-count.
+
+The rollup lands in `.map/<branch>/token_accounting.json` — totals plus
+`by_subtask` / `by_agent` / `by_phase`, an `est_cost_usd` estimate (priced
+per model in `MODEL_TOKEN_PRICES`), and `cache_hit_ratio`
+(`cache_read / (input + cache_read)`) so you can see how well prompt caching
+is paying off. Print a table any time:
+
+```bash
+python3 .map/scripts/map_step_runner.py token_report "$BRANCH"
+# subtask      input   output  cache_rd  cache_cr   $cost
+# ST-001     1,203,448  91,204  978,113   42,008     12.41
+# ...        cache hit ratio: 68.2%   est cost: $41.07
+```
+
+Input, output, cache-read, and cache-creation tokens are tracked
+separately because they bill at very different rates; the report makes a
+runaway uncached subtask or a low cache-hit ratio obvious at a glance. The
+meter is advisory — its hooks always exit 0 and never block a turn.
+
 ### What is Context Compaction?
 
 Context compaction occurs when Claude's conversation memory reaches its limit. When this happens:

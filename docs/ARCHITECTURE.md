@@ -20,6 +20,7 @@ The remainder of this file contains the deeper implementation dive (workflow-spe
 - Provider scaffolding generated into a target repo (`.claude/` for Claude Code, `.codex/` for Codex CLI, plus `.map/` scripts/artifacts)
 - Run artifacts (plans, contracts, verification summaries, review dossiers, learning handoffs) written under `.map/<branch>/`
 - Context-budget, compression, clean-retry, run-health, review-bundle, and prior-stage-consumption contracts surfaced through MAP settings, hooks, templates, and `.map/scripts/`
+- Per-subtask token accounting: the `map-token-meter` hook (SubagentStop/Stop) attributes transcript `usage` to the active subtask/phase/agent in `.map/<branch>/token_log.jsonl`, rolled up (with cost and cache-hit ratio) into `token_accounting.json`; logic is self-contained in `.map/scripts/map_step_runner.py` so it runs without the `mapify_cli` package present
 - Skill/template audit surfaces such as `SkillIR`, prompt-tone checks, mutation-boundary checks, and dependency/task validation helpers
 - Optional MCP configuration wiring when supported by the provider runtime
 

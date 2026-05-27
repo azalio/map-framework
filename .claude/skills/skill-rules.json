@@ -277,6 +277,28 @@
           "(test.first|tdd|spec.driven).*(workflow|develop)"
         ]
       }
+    },
+    "map-tokenreport": {
+      "type": "manual",
+      "skillClass": "task",
+      "enforcement": "manual",
+      "priority": "medium",
+      "description": "Render per-subtask/agent token accounting (tokens, cache, cost, cache-hit ratio) for the current branch.",
+      "promptTriggers": {
+        "keywords": [
+          "map-tokenreport",
+          "token report",
+          "token usage",
+          "token accounting",
+          "run cost",
+          "cache hit ratio"
+        ],
+        "intentPatterns": [
+          "map-tokenreport",
+          "(token|run).*(report|usage|accounting|cost|spent)",
+          "cache.hit.ratio"
+        ]
+      }
     }
   }
 }
