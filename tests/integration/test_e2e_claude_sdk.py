@@ -210,7 +210,8 @@ def _run_map_plan_for_e2e(test_project: Path) -> str:
     """Run /map-plan with one contract-level retry for live model variance."""
     map_dir = _get_map_dir(test_project)
     prompt = MAP_PLAN_E2E_PROMPT
-    for attempt in range(2):
+    output = ""
+    for _ in range(2):
         output = _run_claude(prompt, cwd=str(test_project), timeout=3600, max_turns=80)
         if (map_dir / "blueprint.json").exists():
             return output
@@ -436,7 +437,7 @@ def _run_map_efficient_for_e2e(
     map_dir = _get_map_dir(test_project)
     last_max_turns_error: RuntimeError | None = None
     outputs: list[str] = []
-    for attempt in range(2):
+    for _ in range(2):
         try:
             outputs.append(_run_claude(prompt, cwd=str(test_project), timeout=3600, max_turns=180))
         except RuntimeError as exc:
@@ -875,6 +876,106 @@ class TestMapEfficientE2E:
         assert result.returncode == 0, (
             f"multiply() produced wrong results:\n"
             f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+
+    def test_efficient_records_token_accounting(self, test_project):
+        """Live proof that the map-token-meter hooks fire in a real `claude -p`
+        run and produce a correct token_accounting.json rollup.
+
+        `mapify init` installs the hook + settings into the temp project; the
+        Stop hook fires on the main session and meters real `usage`. We assert
+        real tokens were recorded, the cost/cache rollup is present, and the
+        per-dimension buckets sum back to the aggregate (rollup correctness).
+
+        Note: this fast e2e prompt executes the change directly (Bash/Edit),
+        so it does not spawn Task sub-agents — the SubagentStop ->
+        agent_transcript_path attribution path is covered separately by
+        tests/test_map_token_meter.py against a real sub-agent transcript. If a
+        run DID spawn sub-agents, we additionally assert their tokens were
+        captured.
+        """
+        _ensure_map_plan_for_e2e(test_project)
+        _run_map_efficient_for_e2e(test_project)
+
+        map_dir = _get_map_dir(test_project)
+        accounting_path = map_dir / "token_accounting.json"
+        assert accounting_path.is_file(), (
+            "token_accounting.json was not produced by the token-meter hooks. "
+            f"Found in {map_dir}: {[f.name for f in map_dir.iterdir()]}"
+        )
+        assert (map_dir / "token_log.jsonl").is_file(), "append-only token_log.jsonl missing"
+
+        payload = json.loads(accounting_path.read_text(encoding="utf-8"))
+        aggregate = payload.get("aggregate", {})
+        by_agent = payload.get("by_agent", {})
+        by_subtask = payload.get("by_subtask", {})
+
+        # Real tokens were metered and rolled up with cost + cache fields.
+        assert payload.get("event_count", 0) > 0, f"no token events recorded: {payload}"
+        assert aggregate.get("output", 0) > 0, f"no output tokens recorded: {aggregate}"
+        assert (aggregate.get("input", 0) + aggregate.get("cache_read", 0)) > 0, (
+            f"no input/cache tokens recorded: {aggregate}"
+        )
+        assert "cache_hit_ratio" in aggregate, f"rollup missing cache_hit_ratio: {aggregate}"
+        assert aggregate.get("est_cost_usd", 0) > 0, f"no est_cost_usd computed: {aggregate}"
+        assert by_agent, f"no per-agent attribution: {payload}"
+        assert by_subtask, f"no per-subtask attribution: {payload}"
+
+        # Rollup correctness on real data: per-agent buckets must sum back to
+        # the aggregate for every token field (proves the grouping is sound).
+        for field in ("input", "output", "cache_creation", "cache_read"):
+            summed = sum(bucket.get(field, 0) for bucket in by_agent.values())
+            assert summed == aggregate.get(field, 0), (
+                f"by_agent {field} sum ({summed}) != aggregate ({aggregate.get(field)})"
+            )
+
+        # If the run happened to spawn Task sub-agents, their tokens must be
+        # attributed to the sub-agent (not folded into the orchestrator).
+        subagent_names = {"actor", "monitor", "research-agent", "task-decomposer", "predictor"}
+        if subagent_names & set(by_agent):
+            assert any(
+                by_agent[name].get("output", 0) > 0 for name in subagent_names & set(by_agent)
+            ), f"sub-agent present but recorded zero output: {by_agent}"
+
+    def test_subagentstop_captures_subagent_tokens(self, test_project):
+        """Force a real Task sub-agent and prove the SubagentStop ->
+        agent_transcript_path metering attributes its tokens to a
+        non-orchestrator agent.
+
+        The standard fast e2e executes directly (0 Task calls), so it never
+        exercises the live SubagentStop delivery. This test forces one
+        delegation so the sub-agent capture path is verified end-to-end with a
+        real `claude -p` run (no MAP plan needed — we only need a sub-agent to
+        spawn so the hook fires on its transcript).
+        """
+        prompt = (
+            "You MUST delegate via the Task tool. Launch exactly one subagent "
+            "using the Task tool with subagent_type 'general-purpose' and a "
+            "prompt asking it to read app.py and reply with a one-sentence "
+            "summary of what it does. Do NOT read the file yourself — delegate "
+            "through the Task tool, wait for the result, then print the summary."
+        )
+        _run_claude(prompt, cwd=str(test_project), timeout=600, max_turns=30)
+
+        map_dir = _get_map_dir(test_project)
+        accounting_path = map_dir / "token_accounting.json"
+        assert accounting_path.is_file(), (
+            f"token_accounting.json missing in {map_dir}: "
+            f"{[f.name for f in map_dir.iterdir()] if map_dir.is_dir() else 'no map dir'}"
+        )
+        payload = json.loads(accounting_path.read_text(encoding="utf-8"))
+        by_agent = payload.get("by_agent", {})
+        non_orchestrator = set(by_agent) - {"orchestrator"}
+        assert non_orchestrator, (
+            "SubagentStop did not capture any sub-agent tokens. by_agent="
+            f"{by_agent}. Either the run did not spawn a Task sub-agent, or the "
+            "agent_transcript_path metering is not firing on SubagentStop."
+        )
+        captured_output = sum(
+            by_agent[name].get("output", 0) for name in non_orchestrator
+        )
+        assert captured_output > 0, (
+            f"sub-agent(s) {sorted(non_orchestrator)} captured but zero output tokens"
         )
 
 

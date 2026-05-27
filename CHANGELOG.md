@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Per-subtask token accounting**: a new `map-token-meter` hook (wired on
+  `SubagentStop` and `Stop`) reads each transcript's per-turn `usage` and
+  attributes input/output/cache-creation/cache-read tokens to the active
+  subtask, phase, and agent. Rows append to `.map/<branch>/token_log.jsonl`
+  (deduplicated by message id) and roll up into `token_accounting.json` with
+  `by_subtask`/`by_agent`/`by_phase` buckets, `est_cost_usd` (priced per model
+  in `MODEL_TOKEN_PRICES`), and `cache_hit_ratio`. Inspect via
+  `python3 .map/scripts/map_step_runner.py token_report <branch>`. The
+  parsing/recording/rollup logic is self-contained in `map_step_runner.py`
+  (stdlib only) so it works in generated projects without `mapify_cli`
+  importable; the meter is advisory and never blocks a turn.
+
 ## [3.10.0] - 2026-05-19
 
 ### Added

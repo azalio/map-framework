@@ -133,6 +133,19 @@
         ]
       }
     ],
+    "SubagentStop": [
+      {
+        "description": "MAP Token Meter - attribute sub-agent token usage to the active subtask",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/map-token-meter.py",
+            "timeout": 5,
+            "description": "Reads the finished sub-agent transcript and records input/output/cache tokens to .map/<branch>/token_log.jsonl + token_accounting.json"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "description": "Lightweight quality gates - only critical issues",
@@ -142,6 +155,17 @@
             "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/end-of-turn.sh",
             "timeout": 30,
             "description": "Auto-fixes silently, only reports secrets/syntax errors"
+          }
+        ]
+      },
+      {
+        "description": "MAP Token Meter - sweep main-session token usage at turn end",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/map-token-meter.py",
+            "timeout": 5,
+            "description": "Records main-session input/output/cache tokens (dedup by msg_id) into the branch token accounting artifacts"
           }
         ]
       }

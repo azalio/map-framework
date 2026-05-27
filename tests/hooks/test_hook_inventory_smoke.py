@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from collections.abc import Callable
@@ -20,6 +21,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).parents[2]
 HOOKS_DIR = REPO_ROOT / ".claude" / "hooks"
+SHIPPED_SCRIPTS = REPO_ROOT / "src" / "mapify_cli" / "templates" / "map" / "scripts"
 
 
 @dataclass(frozen=True)
@@ -90,11 +92,13 @@ def _json(stdout: str) -> dict[str, object]:
 
 
 def _assert_noop(run: HookRun, _project: Path) -> None:
+    del _project
     assert run.returncode == 0
     assert run.stdout == "{}" or run.stdout == ""
 
 
 def _assert_deny(run: HookRun, _project: Path) -> None:
+    del _project
     assert run.returncode == 0
     payload = _json(run.stdout)
     output = payload.get("hookSpecificOutput", {})
@@ -104,6 +108,7 @@ def _assert_deny(run: HookRun, _project: Path) -> None:
 
 def _assert_contains(*needles: str) -> Callable[[HookRun, Path], None]:
     def _inner(run: HookRun, _project: Path) -> None:
+        del _project
         assert run.returncode == 0
         for needle in needles:
             assert needle in run.stdout
@@ -129,7 +134,18 @@ def _assert_transcript_saved(run: HookRun, project: Path) -> None:
     assert (project / ".map" / "default" / "last-transcript.txt").is_file()
 
 
+def _assert_token_accounting(run: HookRun, project: Path) -> None:
+    assert run.returncode == 0
+    assert run.stdout == "{}"
+    accounting = project / ".map" / "default" / "token_accounting.json"
+    assert accounting.is_file(), "token meter must write token_accounting.json"
+    payload = json.loads(accounting.read_text())
+    assert payload["aggregate"]["input"] == 1000
+    assert "ST-001" in payload["by_subtask"]
+
+
 def _assert_end_turn_blocks_syntax(run: HookRun, _project: Path) -> None:
+    del _project
     assert run.returncode == 2
     assert "Python syntax error" in run.stderr
 
@@ -147,6 +163,12 @@ def hook_project(tmp_path: Path) -> Path:
     project = tmp_path / "project"
     branch = project / ".map" / "default"
     branch.mkdir(parents=True)
+    # Generated-project shape: ship the standalone runner + its map_utils
+    # sibling so hooks that shell out to .map/scripts/ behave as in the field.
+    scripts = project / ".map" / "scripts"
+    scripts.mkdir(parents=True)
+    shutil.copy(SHIPPED_SCRIPTS / "map_step_runner.py", scripts / "map_step_runner.py")
+    shutil.copy(SHIPPED_SCRIPTS / "map_utils.py", scripts / "map_utils.py")
     (project / ".claude").mkdir()
     (project / ".claude" / "ralph-loop-config.json").write_text(
         json.dumps(
@@ -225,6 +247,8 @@ def hook_project(tmp_path: Path) -> Path:
                 "type": "assistant",
                 "message": {
                     "role": "assistant",
+                    "id": "msg_seed_1",
+                    "model": "claude-opus-4-7",
                     "usage": {"input_tokens": 1000, "output_tokens": 1000},
                     "content": [{"type": "text", "text": "working"}],
                 },
@@ -273,6 +297,11 @@ HOOK_CASES: dict[str, list[HookCase]] = {
     "end-of-turn.sh": [
         HookCase("non-git-noop", {}, _assert_noop, cwd_factory=lambda project: project),
         HookCase("syntax-block", {}, _assert_end_turn_blocks_syntax, cwd_factory=_make_dirty_git_repo),
+    ],
+    "map-token-meter.py": [
+        HookCase("subagentstop-records", {"agent_transcript_path": "__PROJECT__/transcript.jsonl", "agent_type": "actor"}, _assert_token_accounting),
+        HookCase("stop-records-main", {"transcript_path": "__PROJECT__/transcript.jsonl"}, _assert_token_accounting),
+        HookCase("skip-missing-transcript", {"session_id": "s1"}, _assert_noop),
     ],
 }
 

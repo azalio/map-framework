@@ -6249,3 +6249,234 @@ class TestBuildReviewHandoffWithOrdering:
         result = map_step_runner.build_review_handoff()
 
         assert result["status"] == "success"
+
+
+class TestTokenAccounting:
+    """record_token_event attributes a transcript's per-turn usage to the
+    active subtask and rolls it up (cache-hit ratio + est cost) into
+    token_accounting.json. Dedup by msg_id keeps re-fired hooks honest.
+    """
+
+    TRANSCRIPT = (
+        '{"type":"assistant","uuid":"u1","message":{"role":"assistant","id":"msg_1",'
+        '"model":"claude-opus-4-7","usage":{"input_tokens":1000,"output_tokens":200,'
+        '"cache_creation_input_tokens":500,"cache_read_input_tokens":8000}}}\n'
+        '{"type":"user","message":{"role":"user","content":"hi"}}\n'
+        '{"type":"assistant","uuid":"u2","message":{"role":"assistant","id":"msg_2",'
+        '"model":"claude-opus-4-7","usage":{"input_tokens":300,"output_tokens":50,'
+        '"cache_creation_input_tokens":0,"cache_read_input_tokens":9000}}}\n'
+    )
+
+    def _state(self, branch_dir: Path, subtask: str = "ST-003", phase: str = "ACTOR") -> None:
+        (branch_dir / "step_state.json").write_text(
+            json.dumps({"current_subtask_id": subtask, "current_step_phase": phase})
+        )
+
+    def test_records_and_attributes_usage(self, branch_workspace):
+        repo = branch_workspace.parents[1]
+        transcript = repo / "tr.jsonl"
+        transcript.write_text(self.TRANSCRIPT)
+        self._state(branch_workspace)
+
+        result = map_step_runner.record_token_event(
+            "test-branch", transcript_path=str(transcript)
+        )
+
+        assert result["status"] == "success"
+        assert result["recorded"] == 2
+        assert result["subtask_id"] == "ST-003"
+        assert result["agent"] == "actor"  # phase ACTOR -> actor
+        assert result["input"] == 1300
+        assert result["output"] == 250
+        assert result["cache_read"] == 17000
+        assert (branch_workspace / "token_log.jsonl").exists()
+
+        acct = json.loads((branch_workspace / "token_accounting.json").read_text())
+        assert acct["aggregate"]["input"] == 1300
+        assert acct["aggregate"]["cache_hit_ratio"] == round(17000 / 18300, 4)
+        assert acct["aggregate"]["est_cost_usd"] > 0
+        assert "ST-003" in acct["by_subtask"]
+        assert "actor" in acct["by_agent"]
+        assert "ACTOR" in acct["by_phase"]
+
+    def test_dedup_on_second_call(self, branch_workspace):
+        repo = branch_workspace.parents[1]
+        transcript = repo / "tr.jsonl"
+        transcript.write_text(self.TRANSCRIPT)
+        self._state(branch_workspace)
+
+        map_step_runner.record_token_event("test-branch", transcript_path=str(transcript))
+        again = map_step_runner.record_token_event(
+            "test-branch", transcript_path=str(transcript)
+        )
+
+        assert again["recorded"] == 0
+        assert again["input"] == 0
+        log_rows = [
+            line
+            for line in (branch_workspace / "token_log.jsonl").read_text().splitlines()
+            if line.strip()
+        ]
+        assert len(log_rows) == 2, "dedup must not append the same turns twice"
+
+    def test_incremental_offset_captures_only_new_turns(self, branch_workspace):
+        """Appended turns are metered incrementally via the byte offset — old
+        turns are not re-read (no O(n) re-parse) and not double-counted."""
+        repo = branch_workspace.parents[1]
+        transcript = repo / "tr.jsonl"
+        transcript.write_text(self.TRANSCRIPT)  # 2 turns
+        self._state(branch_workspace)
+
+        first = map_step_runner.record_token_event(
+            "test-branch", transcript_path=str(transcript)
+        )
+        assert first["recorded"] == 2
+
+        with transcript.open("a", encoding="utf-8") as handle:
+            handle.write(
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "uuid": "u3",
+                        "message": {
+                            "role": "assistant",
+                            "id": "msg_3",
+                            "model": "claude-opus-4-7",
+                            "usage": {"input_tokens": 10, "output_tokens": 5},
+                        },
+                    }
+                )
+                + "\n"
+            )
+
+        second = map_step_runner.record_token_event(
+            "test-branch", transcript_path=str(transcript)
+        )
+        assert second["recorded"] == 1, "only the appended turn should be recorded"
+        assert second["output"] == 5
+        log_rows = [
+            line
+            for line in (branch_workspace / "token_log.jsonl").read_text().splitlines()
+            if line.strip()
+        ]
+        assert len(log_rows) == 3
+
+    def test_explicit_branch_is_sanitized_against_path_traversal(
+        self, branch_workspace
+    ):
+        """A malicious explicit branch must not escape the .map tree — it is
+        sanitized the same way MAP sanitizes branch names elsewhere."""
+        repo = branch_workspace.parents[1]
+        transcript = repo / "tr.jsonl"
+        transcript.write_text(self.TRANSCRIPT)
+
+        result = map_step_runner.record_token_event(
+            "../../pwned", transcript_path=str(transcript)
+        )
+        assert result["status"] == "success"
+        # Nothing was written outside the project's .map tree.
+        assert not (repo.parent / "pwned").exists()
+        assert not (repo / ".map" / ".." / ".." / "pwned").exists()
+        # The traversal collapsed to the safe 'default' branch dir under .map.
+        assert (repo / ".map" / "default" / "token_accounting.json").is_file()
+
+    def test_missing_transcript_path_is_error(self, branch_workspace):
+        del branch_workspace
+        result = map_step_runner.record_token_event("test-branch", transcript_path="")
+        assert result["status"] == "error"
+
+    def test_unreadable_transcript_records_nothing(self, branch_workspace):
+        self._state(branch_workspace)
+        result = map_step_runner.record_token_event(
+            "test-branch",
+            transcript_path=str(branch_workspace.parents[1] / "absent.jsonl"),
+        )
+        assert result["status"] == "success"
+        assert result["recorded"] == 0
+
+    def test_explicit_attribution_overrides_state(self, branch_workspace):
+        repo = branch_workspace.parents[1]
+        transcript = repo / "tr.jsonl"
+        transcript.write_text(self.TRANSCRIPT)
+        self._state(branch_workspace, subtask="ST-001", phase="ACTOR")
+
+        result = map_step_runner.record_token_event(
+            "test-branch",
+            transcript_path=str(transcript),
+            agent="monitor",
+            phase="MONITOR",
+            subtask_id="ST-009",
+        )
+        assert result["agent"] == "monitor"
+        assert result["subtask_id"] == "ST-009"
+        assert result["phase"] == "MONITOR"
+
+    def test_extract_turn_usage_only_assistant_with_usage(self):
+        assert (
+            map_step_runner._extract_turn_usage(
+                {"type": "user", "message": {"role": "user"}}
+            )
+            is None
+        )
+        assert map_step_runner._extract_turn_usage({"no": "message"}) is None
+        usage = map_step_runner._extract_turn_usage(
+            json.loads(
+                '{"type":"assistant","uuid":"x","message":{"role":"assistant",'
+                '"id":"m","model":"claude-opus-4-7",'
+                '"usage":{"input_tokens":5,"output_tokens":1}}}'
+            )
+        )
+        assert usage is not None
+        assert usage["input"] == 5
+        assert usage["msg_id"] == "m"
+
+    def test_token_cost_uses_model_price(self):
+        usage = {"input": 1_000_000, "output": 0, "cache_creation": 0, "cache_read": 0}
+        assert map_step_runner._token_cost(usage, "claude-opus-4-7") == 15.0
+
+    def test_unknown_model_falls_back_to_default_price(self):
+        usage = {"input": 1_000_000, "output": 0, "cache_creation": 0, "cache_read": 0}
+        assert map_step_runner._token_cost(usage, "some-future-model") == 15.0
+
+    def test_date_suffixed_model_id_resolves_to_real_price(self):
+        # Real transcripts carry date-suffixed ids (e.g. a haiku sub-agent);
+        # must price as haiku ($1/Mtok), NOT fall back to opus ($15/Mtok).
+        usage = {"input": 1_000_000, "output": 0, "cache_creation": 0, "cache_read": 0}
+        assert map_step_runner._token_cost(usage, "claude-haiku-4-5-20251001") == 1.0
+        assert map_step_runner._model_price("claude-haiku-4-5-20251001")["input"] == 1.0
+
+    def test_token_report_renders_table(self, branch_workspace):
+        repo = branch_workspace.parents[1]
+        transcript = repo / "tr.jsonl"
+        transcript.write_text(self.TRANSCRIPT)
+        self._state(branch_workspace)
+        map_step_runner.record_token_event("test-branch", transcript_path=str(transcript))
+
+        report = map_step_runner.token_report("test-branch")
+        assert "ST-003" in report
+        assert "TOTAL" in report
+        assert "cache hit ratio" in report
+
+    def test_cli_record_and_report_exit_zero(self, branch_workspace):
+        repo = branch_workspace.parents[1]
+        transcript = repo / "tr.jsonl"
+        transcript.write_text(self.TRANSCRIPT)
+        self._state(branch_workspace)
+        runner = (
+            Path(__file__).resolve().parents[1]
+            / "src" / "mapify_cli" / "templates" / "map" / "scripts" / "map_step_runner.py"
+        )
+        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+        record = subprocess.run(
+            [sys.executable, str(runner), "record_token_event", "test-branch",
+             "--transcript", str(transcript)],
+            capture_output=True, text=True, cwd=str(repo), env=env,
+        )
+        assert record.returncode == 0, record.stderr
+        assert json.loads(record.stdout)["recorded"] == 2
+        report = subprocess.run(
+            [sys.executable, str(runner), "token_report", "test-branch"],
+            capture_output=True, text=True, cwd=str(repo), env=env,
+        )
+        assert report.returncode == 0, report.stderr
+        assert "cache hit ratio" in report.stdout

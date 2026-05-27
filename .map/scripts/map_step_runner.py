@@ -483,6 +483,426 @@ def record_token_budget_decision(
         return {"status": "error", "path": str(artifact_path), "reason": str(exc)}
 
 
+# ---------------------------------------------------------------------------
+# Per-subtask token accounting (input / output / cache).
+#
+# Distinct from record_token_budget_decision above (which logs prompt-PATH
+# budget decisions). This block reads the Claude Code transcript's per-turn
+# ``usage`` block and attributes input/output/cache tokens to the active
+# subtask/phase/agent so a run produces token_accounting.json with cost and
+# cache-hit-ratio rollups. Self-contained on stdlib (no mapify_cli import) so
+# the shipped .map/scripts/ copy works in generated projects where the
+# mapify_cli package is absent.
+# ---------------------------------------------------------------------------
+
+TOKEN_LOG_NAME = "token_log.jsonl"
+TOKEN_ACCOUNTING_NAME = "token_accounting.json"
+TOKEN_METER_CACHE_NAME = ".token-meter-cache.json"
+_SEEN_ID_CACHE_LIMIT = 5000
+
+_TOKEN_FIELDS = ("input", "output", "cache_creation", "cache_read")
+
+# Price per 1M tokens (USD). Update as provider pricing changes; an unknown
+# model falls back to the default entry so cost stays an estimate, never a
+# crash. cache_creation is the ~1.25x write multiplier and cache_read the
+# ~0.1x hit multiplier of the input price.
+MODEL_TOKEN_PRICES: dict[str, dict[str, float]] = {
+    "claude-opus-4-7": {"input": 15.0, "output": 75.0, "cache_creation": 18.75, "cache_read": 1.5},
+    "claude-opus-4-6": {"input": 15.0, "output": 75.0, "cache_creation": 18.75, "cache_read": 1.5},
+    "claude-sonnet-4-6": {"input": 3.0, "output": 15.0, "cache_creation": 3.75, "cache_read": 0.3},
+    "claude-sonnet-4-5": {"input": 3.0, "output": 15.0, "cache_creation": 3.75, "cache_read": 0.3},
+    "claude-haiku-4-5": {"input": 1.0, "output": 5.0, "cache_creation": 1.25, "cache_read": 0.1},
+}
+_DEFAULT_PRICE_MODEL = "claude-opus-4-7"
+
+# step_state phase -> MAP agent name. Claude Code does not put subagent_type on
+# the hook stdin, so attribution falls back to the active phase.
+_PHASE_TO_AGENT = {
+    "DECOMPOSE": "task-decomposer",
+    "RESEARCH": "research-agent",
+    "ACTOR": "actor",
+    "MONITOR": "monitor",
+    "PREDICT": "predictor",
+}
+
+
+def _model_price(model: str) -> dict[str, float]:
+    """Resolve a price row for a model id, tolerating real-world id shapes.
+
+    Transcript model ids carry a date suffix on some models but not others
+    (e.g. ``claude-haiku-4-5-20251001`` vs ``claude-opus-4-7``). Match in
+    order: exact key, then the id with a trailing ``-YYYYMMDD`` stripped, then
+    a known key that prefixes the id; finally the default. Without this a
+    date-suffixed haiku id would silently fall back to Opus pricing (~15x the
+    real cost).
+    """
+    if model in MODEL_TOKEN_PRICES:
+        return MODEL_TOKEN_PRICES[model]
+    stripped = re.sub(r"-\d{8}$", "", model)
+    if stripped in MODEL_TOKEN_PRICES:
+        return MODEL_TOKEN_PRICES[stripped]
+    for known in MODEL_TOKEN_PRICES:
+        if model.startswith(known):
+            return MODEL_TOKEN_PRICES[known]
+    return MODEL_TOKEN_PRICES[_DEFAULT_PRICE_MODEL]
+
+
+def _token_cost(usage: Mapping[str, int], model: str) -> float:
+    """Best-effort USD cost for one usage record under the model's price."""
+    price = _model_price(model)
+    total = 0.0
+    for field in _TOKEN_FIELDS:
+        total += usage.get(field, 0) / 1_000_000 * price.get(field, 0.0)
+    return round(total, 6)
+
+
+def _extract_turn_usage(entry: object) -> Optional[dict[str, object]]:
+    """Pull one assistant turn's full usage from a transcript JSONL entry.
+
+    Returns a flat dict (input/output/cache_creation/cache_read as ints, plus
+    ``model`` and a stable ``msg_id`` for dedup), or None when the entry is not
+    an assistant message carrying a ``usage`` block.
+    """
+    if not isinstance(entry, dict):
+        return None
+    message = entry.get("message")
+    if not isinstance(message, dict):
+        return None
+    if message.get("role") != "assistant" and entry.get("type") != "assistant":
+        return None
+    usage = message.get("usage")
+    if not isinstance(usage, dict):
+        return None
+
+    def _int(key: str) -> int:
+        try:
+            return int(usage.get(key, 0) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    msg_id = message.get("id") or entry.get("uuid") or ""
+    return {
+        "input": _int("input_tokens"),
+        "output": _int("output_tokens"),
+        "cache_creation": _int("cache_creation_input_tokens"),
+        "cache_read": _int("cache_read_input_tokens"),
+        "model": str(message.get("model") or ""),
+        "msg_id": str(msg_id),
+    }
+
+
+def _iter_new_usage(
+    transcript_path: Path, seen_ids: set[str], start_offset: int = 0
+) -> tuple[list[dict[str, object]], int]:
+    """New assistant-usage dicts from a transcript, read incrementally.
+
+    Reads only the bytes after ``start_offset`` (transcripts are append-only
+    JSONL) so a repeatedly-firing Stop/SubagentStop hook does not re-parse the
+    whole multi-MB file each turn. Returns ``(usages, new_offset)`` where
+    ``new_offset`` advances only past the last COMPLETE line — a partial line
+    from a concurrent append is left for the next call. ``msg_id`` dedup against
+    ``seen_ids`` is kept as a safety net (e.g. if the file is rotated and the
+    offset resets). Entries with an empty msg_id or malformed JSON are skipped;
+    a missing/unreadable transcript returns ``([], start_offset)``.
+    """
+    path = Path(transcript_path)
+    try:
+        if not path.is_file():
+            return [], start_offset
+        size = path.stat().st_size
+    except OSError:
+        return [], start_offset
+    # A stored offset past EOF means the file was truncated/rotated — restart.
+    offset = start_offset if 0 <= start_offset <= size else 0
+    try:
+        with path.open("rb") as handle:
+            handle.seek(offset)
+            chunk = handle.read()
+    except OSError:
+        return [], start_offset
+
+    last_newline = chunk.rfind(b"\n")
+    if last_newline == -1:
+        # No complete line yet beyond the offset.
+        return [], offset
+    complete = chunk[: last_newline + 1]
+    new_offset = offset + len(complete)
+
+    out: list[dict[str, object]] = []
+    for raw in complete.decode("utf-8", errors="replace").splitlines():
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            entry = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        usage = _extract_turn_usage(entry)
+        if usage is None:
+            continue
+        mid = str(usage["msg_id"])
+        if not mid or mid in seen_ids:
+            continue
+        out.append(usage)
+    return out, new_offset
+
+
+def _token_meter_cache_path(branch_name: str) -> Path:
+    return get_branch_dir(branch_name) / TOKEN_METER_CACHE_NAME
+
+
+def _load_meter_cache(branch_name: str) -> tuple[dict[str, int], set[str]]:
+    """Return (per-transcript byte offsets, seen msg_ids) from the meter cache."""
+    data = _read_json_file(_token_meter_cache_path(branch_name))
+    offsets: dict[str, int] = {}
+    seen: set[str] = set()
+    if isinstance(data, dict):
+        raw_offsets = data.get("offsets")
+        if isinstance(raw_offsets, dict):
+            for key, value in raw_offsets.items():
+                if isinstance(key, str) and isinstance(value, int) and value >= 0:
+                    offsets[key] = value
+        raw_seen = data.get("seen_ids")
+        if isinstance(raw_seen, list):
+            seen = {str(x) for x in raw_seen if isinstance(x, str)}
+    return offsets, seen
+
+
+def _save_meter_cache(
+    branch_name: str, offsets: dict[str, int], seen_ids: set[str]
+) -> None:
+    # Offsets are the primary dedup; seen_ids is a bounded safety net (a long
+    # run never re-reads old lines, so a lexicographic trim cannot double-count).
+    trimmed = sorted(seen_ids)[-_SEEN_ID_CACHE_LIMIT:]
+    _write_json_file(
+        _token_meter_cache_path(branch_name),
+        {"offsets": offsets, "seen_ids": trimmed, "updated_at": _utc_timestamp()},
+    )
+
+
+def _current_token_attribution(branch_name: str) -> tuple[Optional[str], str]:
+    """Return (current_subtask_id, current_step_phase) from step_state."""
+    data = _read_json_file(get_branch_dir(branch_name) / "step_state.json")
+    if not isinstance(data, dict):
+        return (None, "")
+    sid = data.get("current_subtask_id")
+    phase = data.get("current_step_phase")
+    return (
+        sid if isinstance(sid, str) else None,
+        phase if isinstance(phase, str) else "",
+    )
+
+
+def record_token_event(
+    branch: Optional[str] = None,
+    *,
+    transcript_path: str = "",
+    agent: str = "",
+    phase: str = "",
+    subtask_id: str = "",
+) -> dict[str, object]:
+    """Attribute new transcript token usage to the active subtask and log it.
+
+    Parses assistant ``usage`` blocks from ``transcript_path`` that the
+    per-branch dedup cache hasn't seen, appends one attributed row per turn to
+    ``token_log.jsonl``, then rebuilds ``token_accounting.json``. Attribution
+    (subtask/phase) falls back to step_state and agent to the phase mapping
+    when callers don't pass them explicitly. Returns the totals just recorded.
+    """
+    # Sanitize an explicit branch the same way MAP does elsewhere — the value
+    # becomes a path segment via get_branch_dir, so an unsanitized argument
+    # (e.g. "../../tmp") would escape the .map tree.
+    branch_name = _sanitize_branch(branch) if branch else get_branch_name()
+    if not transcript_path:
+        return {"status": "error", "reason": "transcript_path required"}
+
+    cur_subtask, cur_phase = _current_token_attribution(branch_name)
+    subtask_id = subtask_id or cur_subtask or "unattributed"
+    phase = phase or cur_phase or ""
+    agent = agent or _PHASE_TO_AGENT.get(phase, "orchestrator")
+
+    transcript_key = str(transcript_path)
+    offsets, seen = _load_meter_cache(branch_name)
+    start_offset = offsets.get(transcript_key, 0)
+    new_usages, new_offset = _iter_new_usage(
+        Path(transcript_path), seen, start_offset
+    )
+    totals: dict[str, int] = {field: 0 for field in _TOKEN_FIELDS}
+
+    if not new_usages:
+        # Still persist an advanced offset so non-usage lines (user turns) are
+        # not re-scanned next call.
+        if new_offset != start_offset:
+            offsets[transcript_key] = new_offset
+            _save_meter_cache(branch_name, offsets, seen)
+        return {
+            "status": "success",
+            "recorded": 0,
+            "subtask_id": subtask_id,
+            "phase": phase,
+            "agent": agent,
+            **totals,
+        }
+
+    log_path = get_branch_dir(branch_name) / TOKEN_LOG_NAME
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    timestamp = _utc_timestamp()
+    try:
+        with log_path.open("a", encoding="utf-8") as handle:
+            for usage in new_usages:
+                row = {
+                    "ts": timestamp,
+                    "subtask_id": subtask_id,
+                    "phase": phase,
+                    "agent": agent,
+                    "model": str(usage["model"]),
+                    "msg_id": str(usage["msg_id"]),
+                    **{field: int(usage[field]) for field in _TOKEN_FIELDS},  # type: ignore[arg-type]
+                }
+                handle.write(json.dumps(row) + "\n")
+                for field in _TOKEN_FIELDS:
+                    totals[field] += int(usage[field])  # type: ignore[arg-type]
+                seen.add(str(usage["msg_id"]))
+    except OSError as exc:
+        return {"status": "error", "reason": str(exc)}
+
+    offsets[transcript_key] = new_offset
+    _save_meter_cache(branch_name, offsets, seen)
+    _rebuild_token_accounting(branch_name)
+    return {
+        "status": "success",
+        "recorded": len(new_usages),
+        "subtask_id": subtask_id,
+        "phase": phase,
+        "agent": agent,
+        **totals,
+    }
+
+
+def _empty_token_bucket() -> dict[str, float]:
+    return {field: 0 for field in _TOKEN_FIELDS}
+
+
+def _rebuild_token_accounting(branch: Optional[str] = None) -> dict[str, object]:
+    """Roll token_log.jsonl up into token_accounting.json.
+
+    Groups by subtask, agent, and phase, plus an aggregate carrying
+    ``cache_hit_ratio`` (cache_read / (input + cache_read)) and
+    ``est_cost_usd``. Returns the written payload.
+    """
+    branch_name = _sanitize_branch(branch) if branch else get_branch_name()
+    log_path = get_branch_dir(branch_name) / TOKEN_LOG_NAME
+    by_subtask: dict[str, dict[str, float]] = {}
+    by_agent: dict[str, dict[str, float]] = {}
+    by_phase: dict[str, dict[str, float]] = {}
+    aggregate: dict[str, float] = _empty_token_bucket()
+    total_cost = 0.0
+    event_count = 0
+
+    if log_path.is_file():
+        try:
+            lines = log_path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            lines = []
+        for raw in lines:
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                row = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(row, dict):
+                continue
+            event_count += 1
+            model = str(row.get("model") or "")
+            usage: dict[str, int] = {}
+            for field in _TOKEN_FIELDS:
+                try:
+                    usage[field] = int(row.get(field, 0) or 0)
+                except (TypeError, ValueError):
+                    usage[field] = 0
+            row_cost = _token_cost(usage, model)
+            total_cost += row_cost
+            for dim_key, dim in (
+                (str(row.get("subtask_id") or "unattributed"), by_subtask),
+                (str(row.get("agent") or "unknown"), by_agent),
+                (str(row.get("phase") or "unknown"), by_phase),
+            ):
+                bucket = dim.setdefault(
+                    dim_key, {**_empty_token_bucket(), "est_cost_usd": 0.0}
+                )
+                for field in _TOKEN_FIELDS:
+                    bucket[field] += usage[field]
+                bucket["est_cost_usd"] = round(
+                    bucket.get("est_cost_usd", 0.0) + row_cost, 6
+                )
+            for field in _TOKEN_FIELDS:
+                aggregate[field] += usage[field]
+
+    cache_read = aggregate["cache_read"]
+    cacheable = aggregate["input"] + cache_read
+    aggregate["cache_hit_ratio"] = (
+        round(cache_read / cacheable, 4) if cacheable else 0.0
+    )
+    aggregate["est_cost_usd"] = round(total_cost, 4)
+
+    payload: dict[str, object] = {
+        "schema_version": "1.0",
+        "branch": branch_name,
+        "updated_at": _utc_timestamp(),
+        "event_count": event_count,
+        "aggregate": aggregate,
+        "by_subtask": by_subtask,
+        "by_agent": by_agent,
+        "by_phase": by_phase,
+    }
+    _write_json_file(get_branch_dir(branch_name) / TOKEN_ACCOUNTING_NAME, payload)
+    return payload
+
+
+def token_report(branch: Optional[str] = None) -> str:
+    """Render a per-subtask token table (input/output/cache/cost) as text."""
+    branch_name = _sanitize_branch(branch) if branch else get_branch_name()
+    payload = _rebuild_token_accounting(branch_name)
+    aggregate = cast(dict[str, float], payload["aggregate"])
+    by_subtask = cast(dict[str, dict[str, float]], payload["by_subtask"])
+
+    header = (
+        f"{'subtask':<18}{'input':>13}{'output':>12}"
+        f"{'cache_rd':>13}{'cache_cr':>12}{'$cost':>10}"
+    )
+    rows = [
+        f"Token accounting — {branch_name} "
+        f"({payload['event_count']} assistant turns)",
+        "",
+        header,
+        "-" * len(header),
+    ]
+
+    def _fmt(label: str, bucket: Mapping[str, float]) -> str:
+        return (
+            f"{label:<18}"
+            f"{int(bucket.get('input', 0)):>13,}"
+            f"{int(bucket.get('output', 0)):>12,}"
+            f"{int(bucket.get('cache_read', 0)):>13,}"
+            f"{int(bucket.get('cache_creation', 0)):>12,}"
+            f"{bucket.get('est_cost_usd', 0.0):>10.2f}"
+        )
+
+    for sid in sorted(by_subtask):
+        rows.append(_fmt(sid, by_subtask[sid]))
+    rows.append("-" * len(header))
+    rows.append(_fmt("TOTAL", aggregate))
+    rows.append("")
+    ratio = float(aggregate.get("cache_hit_ratio", 0.0)) * 100
+    rows.append(
+        f"cache hit ratio: {ratio:.1f}%   "
+        f"est cost: ${float(aggregate.get('est_cost_usd', 0.0)):.2f}"
+    )
+    return "\n".join(rows) + "\n"
+
+
 def _prior_stage_file_entry(
     key: str,
     label: str,
@@ -7511,6 +7931,35 @@ if __name__ == "__main__":
         print(json.dumps(report, indent=2))
         if report.get("status") == "error":
             sys.exit(1)
+
+    elif func_name == "record_token_event":
+        # CLI: record_token_event <branch> --transcript <path>
+        #        [--agent A] [--phase P] [--subtask ST-NNN]
+        # Advisory token meter: exit 0 always so the SubagentStop/Stop hooks
+        # never block the turn. Dedups by msg_id via the per-branch cache.
+        def _opt_value(flag: str) -> str:
+            if flag in sys.argv:
+                pos = sys.argv.index(flag)
+                if pos + 1 < len(sys.argv):
+                    return sys.argv[pos + 1]
+            return ""
+
+        tok_branch = (
+            sys.argv[2] if len(sys.argv) >= 3 and not sys.argv[2].startswith("--") else ""
+        )
+        report = record_token_event(
+            tok_branch or None,
+            transcript_path=_opt_value("--transcript"),
+            agent=_opt_value("--agent"),
+            phase=_opt_value("--phase"),
+            subtask_id=_opt_value("--subtask"),
+        )
+        print(json.dumps(report, indent=2))
+
+    elif func_name == "token_report":
+        # CLI: token_report [branch]
+        tok_branch = sys.argv[2] if len(sys.argv) >= 3 else None
+        print(token_report(tok_branch))
 
     elif func_name == "detect_cross_subtask_regression_risk" and len(sys.argv) >= 4:
         # CLI: detect_cross_subtask_regression_risk <branch> <subtask_id>
