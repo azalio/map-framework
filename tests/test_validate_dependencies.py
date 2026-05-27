@@ -211,7 +211,7 @@ class TestDependencyValidator:
     def test_invalid_input_not_dict(self):
         """Raises error for non-dict input"""
         with pytest.raises(ValueError, match="Input must be a JSON object"):
-            DependencyValidator([1, 2, 3])
+            DependencyValidator([1, 2, 3])  # pyright: ignore[reportArgumentType]  # intentional invalid input for validation test
 
     def test_invalid_task_missing_id(self):
         """Raises error for task without ID"""

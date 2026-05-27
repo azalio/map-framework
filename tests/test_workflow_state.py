@@ -297,6 +297,7 @@ class TestCheckpointLoad:
             state.save_checkpoint(Path(tmpdir))
 
             loaded = WorkflowState.load(Path(tmpdir))
+            assert loaded is not None
             assert loaded.subtasks[0].completed_at == original_completed_at
 
 
@@ -329,6 +330,7 @@ class TestEdgeCases:
             assert "subtasks:" in content
 
             loaded = WorkflowState.load(Path(tmpdir))
+            assert loaded is not None
             assert loaded.subtasks == []
 
     def test_empty_lists_use_inline_yaml_format(self):
@@ -388,6 +390,7 @@ class TestEdgeCases:
 
             # Load and save again
             state2 = WorkflowState.load(Path(tmpdir))
+            assert state2 is not None
             state2.save_checkpoint(Path(tmpdir))
             content2 = (Path(tmpdir) / ".map" / "progress.md").read_text()
 
@@ -426,6 +429,7 @@ class TestEdgeCases:
             state.save_checkpoint(Path(tmpdir))
 
             loaded = WorkflowState.load(Path(tmpdir))
+            assert loaded is not None
             assert len(loaded.subtasks) == 2
             assert "ST-001" in loaded.completed_subtasks
 
@@ -438,6 +442,7 @@ class TestEdgeCases:
                 state.save_checkpoint(Path(tmpdir))
 
                 loaded = WorkflowState.load(Path(tmpdir))
+                assert loaded is not None
                 assert loaded.current_phase == phase, f"Failed for phase: {phase}"
 
 
@@ -548,6 +553,7 @@ class TestWontDoTerminalStatus:
             state.save_checkpoint(Path(tmpdir))
             loaded = WorkflowState.load(Path(tmpdir))
 
+            assert loaded is not None
             assert loaded.ended_early is not None
             assert (
                 loaded.ended_early["reason"] == 'User said: "This is no longer needed"'
@@ -568,15 +574,18 @@ class TestWontDoTerminalStatus:
 
             # Load and save again
             state2 = WorkflowState.load(Path(tmpdir))
+            assert state2 is not None
             state2.save_checkpoint(Path(tmpdir))
 
             # Load final state
             state3 = WorkflowState.load(Path(tmpdir))
+            assert state3 is not None
 
             # Verify all fields preserved
             assert state3.current_phase == WorkflowPhase.WONT_DO
             assert state3.ended_early is not None
             assert state3.ended_early["by_user"] is True
+            assert state1.ended_early is not None
             assert state3.ended_early["reason"] == state1.ended_early["reason"]
             assert state3.ended_early["at_subtask_id"] == "ST-002"
 
@@ -607,6 +616,7 @@ class TestWontDoTerminalStatus:
             state.save_checkpoint(Path(tmpdir))
 
             loaded = WorkflowState.load(Path(tmpdir))
+            assert loaded is not None
             assert loaded.current_phase == WorkflowPhase.WONT_DO
 
 

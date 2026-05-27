@@ -5,8 +5,8 @@ model: sonnet  # Evaluation requires nuanced judgment for trade-off analysis and
 # 2026-04-28: high effort — weighted scoring across multiple dimensions
 # benefits from extra deliberation budget.
 effort: high
-version: 3.1.0
-last_updated: 2026-04-28
+version: 3.1.1
+last_updated: 2026-05-27
 ---
 
 # QUICK REFERENCE (Read First)
@@ -1087,6 +1087,7 @@ ELSE IF task is bug fix:
 
 </constraints>
 
+<!-- REFERENCE APPENDIX (read on demand) -->
 
 <examples>
 

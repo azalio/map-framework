@@ -374,6 +374,7 @@ class TestIntegrationWithCheckpoint:
         assert result2.current_phase == WorkflowPhase.WONT_DO
 
         # Reason should be updated to latest
+        assert result2.ended_early is not None
         assert result2.ended_early["reason"] == "Second call"
 
 

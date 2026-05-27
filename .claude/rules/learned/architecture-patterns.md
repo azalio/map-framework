@@ -48,6 +48,44 @@
           return create_codex_files(project_path)  # handles .map/scripts/ internally
   ```
 
+- **Dual-Copy Template-Sync Testability Invariant** (2026-05-27): When a project ships a template copy of runtime code (e.g., `src/mapify_cli/templates/map/scripts/`) that is ALSO the copy imported by pytest, code changes in the dev copy (`.map/scripts/`) are invisible to the test suite until an explicit sync command (`make sync-templates`) is run. Document this as a named invariant and enforce it mechanically: run sync before tests, or add a CI step that diffs the two copies and fails on divergence. Without the documented invariant, developers iterate on the dev copy, run tests, see failures, and spend time debugging the wrong copy. [workflow: map-efficient]
+  ```bash
+  # WRONG — edit dev copy, run tests, observe mysterious failures:
+  vim .map/scripts/map_step_runner.py
+  pytest tests/test_map_step_runner.py  # imports from templates/ — sees OLD code!
+
+  # CORRECT — sync first, then test:
+  vim .map/scripts/map_step_runner.py
+  make sync-templates                   # mirrors dev -> templates/
+  pytest tests/test_map_step_runner.py  # now sees the updated copy
+
+  # CI enforcement: add diff gate to Makefile check target:
+  # diff -q .map/scripts/map_step_runner.py \
+  #   src/mapify_cli/templates/map/scripts/map_step_runner.py
+  ```
+
+- **Single-Source Schema Dict with Derived Consumer Lists** (2026-05-27): When multiple consumers (monitor, predictor, evaluator, retry-prompt builder) each need the required fields for a shared agent output format, define ONE module-level dict as the authority and derive ALL per-consumer field lists from it via comprehension. Never let consumers maintain their own hardcoded lists — they drift silently. A field added to the schema for monitor is not added to the retry-prompt builder, so the retry prompt asks for a field the retry validator never checks. The dict also serves as the skeleton source for prompt injection. This is the intra-module application of the existing 'Contract-First Inter-Component JSON Schemas' rule. [workflow: map-efficient]
+  ```python
+  # WRONG — three consumers, three hardcoded lists that drift:
+  MONITOR_REQUIRED = ('severity', 'justification', 'was_present_before_pr')
+  PREDICTOR_REQUIRED = ('risk_score', 'landmine_evidence')  # forgot 'confidence'
+  RETRY_FIELDS = ['severity', 'justification']              # forgot 'was_present_before_pr'
+
+  # CORRECT — one dict, all consumers derived:
+  AGENT_OUTPUT_SCHEMAS: dict[str, dict] = {
+      'monitor': {
+          'severity': '',
+          'justification': '',
+          'was_present_before_pr': '',
+          'sibling_comparison': '[CONDITIONAL]',  # excluded from required_keys
+      },
+  }
+  _MONITOR_REQUIRED_KEYS = tuple(
+      k for k, v in AGENT_OUTPUT_SCHEMAS['monitor'].items()
+      if v != '[CONDITIONAL]'
+  )  # ('severity', 'justification', 'was_present_before_pr')
+  ```
+
 - **Long-Running Operations Need Durable State by Default** (2026-04-28): Any operation lasting longer than a single request-response cycle (>5 s) MUST persist its state to durable storage (DB, queue, KV with persistence) — never to in-process memory or class attributes. Process restart, redeploy, autoscaler eviction, OOM kill, and crash all happen during a 5-minute call in production; in-memory state silently evaporates. The default question for any async API is "what survives `kill -9` mid-call?" not "where is this convenient to put?" — provide a stable resume identifier (e.g., `run_id`) so callers can recover results across the process boundary. [workflow: map-learn-improvement]
   ```python
   # WRONG — state evaporates on restart, results lost mid-call

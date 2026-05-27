@@ -2,8 +2,8 @@
 name: predictor
 description: Predicts consequences and dependency impact of changes (MAP)
 model: sonnet  # Impact analysis requires complex reasoning - upgraded from haiku
-version: 3.3.0
-last_updated: 2025-11-27
+version: 3.3.1
+last_updated: 2026-05-27
 ---
 
 # IDENTITY
@@ -977,6 +977,7 @@ Classify dependencies to prioritize updates and avoid missing any category.
 
 </decision_frameworks>
 
+<!-- REFERENCE APPENDIX (read on demand) -->
 <examples>
 
 ## Example 1: API Function Signature Change (Breaking)

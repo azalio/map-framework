@@ -38,7 +38,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Iterable, Mapping, Optional, cast
+from typing import Callable, Iterable, Mapping, Optional, TypedDict, cast
 
 # Keep in sync with workflow-context-injector.py GOAL_HEADING_RE
 GOAL_HEADING_RE = r"## (?:Goal|Overview)\n(.*?)(?=\n##|\Z)"
@@ -4355,6 +4355,157 @@ def create_review_bundle(branch: Optional[str] = None) -> dict:
     return result
 
 
+# ---------------------------------------------------------------------------
+# AGENT_OUTPUT_SCHEMAS — single source of truth for review-agent output shapes
+# (ST-001). REVIEW_PROMPT_SPECS and detect_truncated_agent_output both derive
+# from this; do NOT maintain a second hand-written copy elsewhere.
+#
+# Authoritative field list: .claude/skills/map-review/SKILL.md lines 75-111.
+#
+# required_keys: UNCONDITIONAL top-level keys only. Conditional fields
+#   (sibling_comparison, landmine_evidence) are EXCLUDED so that a valid
+#   output omitting only a conditional field is never flagged as truncated.
+#
+# skeleton: mode-agnostic full output shape. Every SKILL.md gate field
+#   is present literally so json.dumps(skeleton) can serve as the
+#   <output_schema> block in the rendered prompt. Conditional fields are
+#   present as descriptive placeholder strings.
+# ---------------------------------------------------------------------------
+class AgentOutputSchema(TypedDict):
+    required_keys: tuple[str, ...]
+    skeleton: dict[str, object]
+
+
+AGENT_OUTPUT_SCHEMAS: dict[str, AgentOutputSchema] = {
+    "monitor": {
+        "required_keys": (
+            "evidence",
+            "valid",
+            "summary",
+            "verdict",
+            "issues",
+            "passed_checks",
+            "failed_checks",
+        ),
+        "skeleton": {
+            "evidence": [
+                {
+                    "file_path": "<string>",
+                    "line_range": "<string>",
+                    "quote": "<string>",
+                    "relevance": "<string>",
+                }
+            ],
+            "valid": "<boolean>",
+            "summary": "<string>",
+            "verdict": "<'approved' | 'needs_revision' | 'rejected'>",
+            "issues": [
+                {
+                    "severity": "<'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'>",
+                    "category": "<string>",
+                    "description": "<string>",
+                    "file_path": "<string>",
+                    "line_range": "<string>",
+                    "suggestion": "<string>",
+                    "was_present_before_pr": "<boolean — required; True => pre-existing tech debt>",
+                    "reach_evidence": "<string — required for severity>=MEDIUM: grep:<pattern>:<line> | test_fail:<name> | linter:<tool>:<line>>",
+                    "sibling_comparison": "<object — required when mode=sibling-aware: {sibling_path, equivalent_lines, divergences}>",
+                }
+            ],
+            "passed_checks": ["<string>"],
+            "failed_checks": ["<string>"],
+        },
+    },
+    "predictor": {
+        "required_keys": (
+            "evidence",
+            "risk_assessment",
+            "predicted_state",
+            "confidence",
+        ),
+        "skeleton": {
+            "evidence": [
+                {
+                    "file_path": "<string>",
+                    "line_range": "<string>",
+                    "quote": "<string>",
+                    "relevance": "<string>",
+                }
+            ],
+            "risk_assessment": "<'low' | 'medium' | 'high' | 'critical'>",
+            "predicted_state": {
+                "affected_components": ["<string>"],
+                "breaking_changes": [
+                    {"type": "<string>", "description": "<string>", "mitigation": "<string>"}
+                ],
+                "required_updates": ["<string>"],
+            },
+            "confidence": {
+                "score": "<float 0.0-1.0>",
+            },
+            "landmine_evidence": "<string — required when raising latent-bug/future-failure claims: failing test, static-analysis line, or grep showing unreachable path is reachable>",
+        },
+    },
+    "evaluator": {
+        "required_keys": (
+            "evidence",
+            "scores",
+            "overall_score",
+            "recommendation",
+            "strengths",
+            "weaknesses",
+            "next_steps",
+            "monitor_severity_audit",
+        ),
+        "skeleton": {
+            "evidence": [
+                {
+                    "file_path": "<string>",
+                    "line_range": "<string>",
+                    "quote": "<string>",
+                    "relevance": "<string>",
+                }
+            ],
+            "scores": {
+                "functionality": "<int 1-10>",
+                "code_quality": "<int 1-10>",
+                "performance": "<int 1-10>",
+                "security": "<int 1-10>",
+                "testability": "<int 1-10>",
+                "completeness": "<int 1-10>",
+            },
+            "overall_score": "<float 1.0-10.0>",
+            "recommendation": "<'proceed' | 'improve' | 'reconsider'>",
+            "strengths": ["<string>"],
+            "weaknesses": ["<string>"],
+            "next_steps": ["<string>"],
+            "monitor_severity_audit": [
+                {
+                    "monitor_issue_index": "<int>",
+                    "agreed_severity": "<string>",
+                    "rationale": "<string>",
+                }
+            ],
+        },
+    },
+    # Actor is not a review-prompt role (it has no REVIEW_PROMPT_SPECS entry),
+    # but its output schema lives here so build_json_retry_prompt and
+    # detect_truncated_agent_output can serve the map-efficient Actor
+    # truncation-recovery path (--agent actor) from the same single source.
+    "actor": {
+        "required_keys": (
+            "files_changed",
+            "tests_run",
+        ),
+        "skeleton": {
+            "files_changed": ["<string — path of each file written>"],
+            "tests_run": ["<string — command + pass/fail summary>"],
+            "validation_notes": "<string — how the change satisfies each validation criterion>",
+            "blocker": "<string | null — null when no blocker>",
+        },
+    },
+}
+
 REVIEW_PROMPT_SPECS: dict[str, dict[str, str]] = {
     "monitor": {
         "subagent_type": "monitor",
@@ -4366,14 +4517,6 @@ REVIEW_PROMPT_SPECS: dict[str, dict[str, str]] = {
 - Standards compliance
 - Test coverage gaps
 - Performance issues""",
-        "expected_output": """Output JSON with:
-- evidence: array of {file_path, line_range, quote, relevance}; populate this before verdict fields and include at least one item for every HIGH/CRITICAL issue
-- valid: boolean
-- summary: string
-- verdict: 'approved' | 'needs_revision' | 'rejected'
-- issues: array of {severity, category, description, file_path, line_range, suggestion}
-- passed_checks: array of strings
-- failed_checks: array of strings""",
     },
     "predictor": {
         "subagent_type": "predictor",
@@ -4385,15 +4528,6 @@ REVIEW_PROMPT_SPECS: dict[str, dict[str, str]] = {
 - Dependencies that need updates
 - Risk assessment (low/medium/high/critical)
 - Integration points affected""",
-        "expected_output": """Output JSON with:
-- evidence: array of {file_path, line_range, quote, relevance}; populate this before risk_assessment and include evidence for each breaking change or high-risk claim
-- risk_assessment: 'low' | 'medium' | 'high' | 'critical'
-- predicted_state:
-    affected_components: array of affected files/modules
-    breaking_changes: array of {type, description, mitigation}
-    required_updates: array of strings
-- confidence:
-    score: float 0.0-1.0""",
     },
     "evaluator": {
         "subagent_type": "evaluator",
@@ -4406,16 +4540,30 @@ REVIEW_PROMPT_SPECS: dict[str, dict[str, str]] = {
 - Security score (1-10)
 - Testability score (1-10)
 - Completeness score (1-10)""",
-        "expected_output": """Output JSON with:
-- evidence: array of {file_path, line_range, quote, relevance}; populate this before scores and include evidence for any score below 7
-- scores: {functionality, code_quality, performance, security, testability, completeness}
-- overall_score: weighted float (1.0-10.0)
-- recommendation: 'proceed' | 'improve' | 'reconsider'
-- strengths: array of strings
-- weaknesses: array of strings
-- next_steps: array of strings""",
     },
 }
+
+
+def _render_format_block(agent: str) -> str:
+    """Return an <output_schema>+<format_rules> block for the given agent role.
+
+    The schema is derived from AGENT_OUTPUT_SCHEMAS[agent]["skeleton"] so there
+    is exactly one source of truth for the output shape. format_rules are
+    verbatim — callers MUST NOT paraphrase them.
+    """
+    skeleton = AGENT_OUTPUT_SCHEMAS[agent]["skeleton"]
+    schema_json = json.dumps(skeleton, indent=2)
+    format_rules_body = (
+        "Return exactly one JSON object matching the schema above. "
+        "No markdown, no code fences, no prose before/after. "
+        "Every key is required EXCEPT fields whose placeholder marks them "
+        "conditional (\"required when ...\"): include those only when their "
+        "stated condition applies."
+    )
+    return (
+        f"<output_schema>\n{schema_json}\n</output_schema>\n"
+        f"<format_rules>\n{format_rules_body}\n</format_rules>"
+    )
 
 
 def _review_prompt_budget_tokens(explicit_budget: Optional[int] = None) -> int:
@@ -4505,7 +4653,7 @@ def _render_review_prompt(
             "confirm or expand specific findings the bundle surfaces.\n"
             "</workflow_policy>",
             f"<instructions>\n{spec['instructions']}\n</instructions>",
-            f"<expected_output>\n{spec['expected_output']}\n</expected_output>",
+            f"<expected_output>\n{_render_format_block(spec['subagent_type'])}\n</expected_output>",
         ]
     )
 
@@ -5420,8 +5568,19 @@ def save_research(
     return str(path)
 
 
+# Truncation-detector minimal keys for `detect_truncated_agent_output
+# --agent monitor`. This is the common core shared by BOTH Monitor output
+# contracts that route through this gate:
+#   - map-efficient Monitor: valid/summary/issues/files_changed/tests_run/escalation_required
+#   - map-review Monitor:    evidence/valid/summary/verdict/issues/passed_checks/failed_checks
+# It is intentionally NOT AGENT_OUTPUT_SCHEMAS["monitor"]["required_keys"]
+# (the full review-prompt schema): the map-efficient Monitor never emits
+# evidence/verdict/passed_checks/failed_checks, so requiring the full review
+# set would make the map-efficient truncation gate reject every valid Monitor
+# response. Truncation detection only needs the verdict (valid), the prose
+# summary, and the findings (issues) — present in both contracts.
 _MONITOR_REQUIRED_KEYS = ("valid", "summary", "issues")
-_ACTOR_REQUIRED_KEYS = ("files_changed", "tests_run")
+_ACTOR_REQUIRED_KEYS = tuple(AGENT_OUTPUT_SCHEMAS["actor"]["required_keys"])
 
 
 def detect_truncated_agent_output(
@@ -5514,6 +5673,8 @@ def detect_truncated_agent_output(
             expected_keys = list(_MONITOR_REQUIRED_KEYS)
         elif agent_kind == "actor":
             expected_keys = list(_ACTOR_REQUIRED_KEYS)
+        elif agent_kind in AGENT_OUTPUT_SCHEMAS:
+            expected_keys = list(AGENT_OUTPUT_SCHEMAS[agent_kind]["required_keys"])
         else:
             expected_keys = []
     missing = [k for k in expected_keys if k not in parsed]
@@ -5525,6 +5686,63 @@ def detect_truncated_agent_output(
         "reasons": reasons,
         "parsed": parsed,
         "agent_kind": agent_kind,
+    }
+
+
+def build_json_retry_prompt(
+    agent: str,
+    errors: Optional[list[str]] = None,
+) -> dict[str, object]:
+    """Build a retry prompt for a review agent that returned malformed output.
+
+    Uses _render_format_block(agent) as the single source of truth for the
+    output schema so the retry prompt embeds the identical skeleton as the
+    original review prompt.
+
+    Returns:
+        {
+            "status": "ok" | "error",
+            "agent": str,           # echoed agent name
+            "reasons": [str, ...],  # echoed errors (empty list when None)
+            "prompt": str,          # retry prompt text ("" on error)
+        }
+
+    On unknown agent (not in AGENT_OUTPUT_SCHEMAS), returns status="error"
+    with an "unknown agent" entry prepended to reasons and prompt="".
+    """
+    error_list: list[str] = list(errors) if errors else []
+
+    if agent not in AGENT_OUTPUT_SCHEMAS:
+        return {
+            "status": "error",
+            "agent": agent,
+            "reasons": [f"unknown agent: {agent!r}; must be one of {sorted(AGENT_OUTPUT_SCHEMAS)}"] + error_list,
+            "prompt": "",
+        }
+
+    format_block = _render_format_block(agent)
+
+    # Build the failure section only when there are errors to report.
+    if error_list:
+        bullet_lines = "\n".join(f"- {e}" for e in error_list)
+        failure_section = (
+            f"\nYour previous response was rejected for:\n{bullet_lines}\n"
+        )
+    else:
+        failure_section = ""
+
+    prompt = (
+        "Emit ONLY one JSON object matching this schema. "
+        "No markdown, no prose — just the JSON object.\n"
+        f"{failure_section}"
+        f"\n{format_block}"
+    )
+
+    return {
+        "status": "ok",
+        "agent": agent,
+        "reasons": error_list,
+        "prompt": prompt,
     }
 
 
@@ -7519,6 +7737,78 @@ def prepare_detached_review(
     }
 
 
+# ---------------------------------------------------------------------------
+# Agent-failure telemetry (ST-003)
+# ---------------------------------------------------------------------------
+
+_AGENT_FAILURE_LABELS: frozenset[str] = frozenset(
+    {"format_violation", "missing_field", "truncated"}
+)
+
+
+def _agent_failure_log_path(branch: Optional[str] = None) -> Path:
+    """Return branch-scoped agent failure JSONL path."""
+    return get_branch_dir(branch) / "agent_failure_events.jsonl"
+
+
+def _validate_agent_failure_event(event: dict[str, object]) -> list[str]:
+    """Validate an agent failure event dict.
+
+    Returns an empty list for a valid event, or a non-empty list of
+    human-readable reason strings describing every violation found.
+    """
+    reasons: list[str] = []
+    for field in ("agent", "phase", "failure_label", "timestamp"):
+        if not event.get(field):
+            reasons.append(f"missing required field: {field!r}")
+    label = event.get("failure_label")
+    if label and label not in _AGENT_FAILURE_LABELS:
+        reasons.append(
+            f"failure_label {label!r} is not one of {sorted(_AGENT_FAILURE_LABELS)}"
+        )
+    return reasons
+
+
+def log_agent_failure(
+    agent: str,
+    phase: str,
+    failure_label: str,
+    reasons: Optional[list[str]] = None,
+    retry: bool = False,
+    schema: Optional[str] = None,
+    branch: Optional[str] = None,
+) -> dict[str, object]:
+    """Append one agent-failure event to the branch-scoped JSONL log.
+
+    Every agent-derived string is routed through _sanitize_for_json (INV-8)
+    before the event is serialised, ensuring jq-parseability via bash pipes.
+
+    Returns:
+        On success: {"status": "ok", "path": str, "event": dict}
+        On validation failure: {"status": "error", "reasons": list[str], "path": None}
+    """
+    sanitized_reasons: list[str] = [
+        _sanitize_for_json(r) for r in (reasons or [])
+    ]
+    event: dict[str, object] = {
+        "agent": _sanitize_for_json(agent),
+        "phase": _sanitize_for_json(phase),
+        "failure_label": _sanitize_for_json(failure_label),
+        "reasons": sanitized_reasons,
+        "retry": retry,
+        "schema": _sanitize_for_json(schema) if schema is not None else None,
+        "timestamp": _utc_timestamp(),
+    }
+    validation_errors = _validate_agent_failure_event(event)
+    if validation_errors:
+        return {"status": "error", "reasons": validation_errors, "path": None}
+    path = _agent_failure_log_path(branch)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event, ensure_ascii=True) + "\n")
+    return {"status": "ok", "path": str(path), "event": event}
+
+
 if __name__ == "__main__":
     # Simple CLI interface for testing
     import sys
@@ -8222,6 +8512,39 @@ if __name__ == "__main__":
         }
         print(json.dumps(report_summary, indent=2))
 
+    elif func_name == "build_json_retry_prompt":
+        # CLI: build_json_retry_prompt --agent <role> [--errors '<json array>']
+        # Builds a retry prompt for a review agent that returned malformed output.
+        # Prints JSON result; exit 0 on success (even for unknown agent — callers
+        # check result["status"]).  Exit 1 only when --errors is not a JSON list.
+        retry_agent = "monitor"
+        if "--agent" in sys.argv:
+            agent_idx = sys.argv.index("--agent")
+            if agent_idx + 1 < len(sys.argv):
+                retry_agent = sys.argv[agent_idx + 1]
+        retry_errors: Optional[list[str]] = None
+        if "--errors" in sys.argv:
+            err_idx = sys.argv.index("--errors")
+            if err_idx + 1 < len(sys.argv):
+                raw_errors = sys.argv[err_idx + 1]
+                try:
+                    parsed_errors = json.loads(raw_errors)
+                except json.JSONDecodeError as exc:
+                    print(
+                        json.dumps({"status": "error", "message": f"--errors must be a JSON array: {exc}"}),
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+                if not isinstance(parsed_errors, list):
+                    print(
+                        json.dumps({"status": "error", "message": "--errors must be a JSON array, got non-list"}),
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+                retry_errors = [str(e) for e in parsed_errors]
+        retry_result = build_json_retry_prompt(retry_agent, retry_errors)
+        print(json.dumps(retry_result, indent=2))
+
     elif func_name == "shuffle-sections":
         # CLI: shuffle-sections <mode> [seed]
         # Empty string seed is treated as "unset" (None) so SKILL.md can pass "" unconditionally.
@@ -8330,6 +8653,54 @@ if __name__ == "__main__":
             print(json.dumps({"status": "error", "message": str(exc)}))
             sys.exit(1)
         print(json.dumps(ord_result))
+
+    elif func_name == "log_agent_failure":
+        # CLI: log_agent_failure --agent <name> --phase <name> --failure-label <label>
+        #                        [--reasons '<json array>'] [--retry] [--schema <text>]
+        # Appends one JSONL event to the branch-scoped agent_failure_events.jsonl.
+        # Prints JSON result; exit 0 on success, exit 1 on validation failure.
+        def _flag_val(name: str) -> Optional[str]:
+            flag = f"--{name}"
+            if flag in sys.argv:
+                idx = sys.argv.index(flag)
+                if idx + 1 < len(sys.argv):
+                    return sys.argv[idx + 1]
+            return None
+
+        laf_agent = _flag_val("agent") or ""
+        laf_phase = _flag_val("phase") or ""
+        laf_label = _flag_val("failure-label") or ""
+        laf_schema = _flag_val("schema")
+        laf_retry = "--retry" in sys.argv
+        laf_reasons: list[str] = []
+        raw_reasons = _flag_val("reasons")
+        if raw_reasons is not None:
+            try:
+                parsed_reasons = json.loads(raw_reasons)
+            except json.JSONDecodeError as exc:
+                print(
+                    json.dumps({"status": "error", "message": f"--reasons must be a JSON array: {exc}"}),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            if not isinstance(parsed_reasons, list):
+                print(
+                    json.dumps({"status": "error", "message": "--reasons must be a JSON array, got non-list"}),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            laf_reasons = [str(r) for r in parsed_reasons]
+        laf_result = log_agent_failure(
+            laf_agent,
+            laf_phase,
+            laf_label,
+            reasons=laf_reasons or None,
+            retry=laf_retry,
+            schema=laf_schema,
+        )
+        print(json.dumps(laf_result, indent=2))
+        if laf_result.get("status") == "error":
+            sys.exit(1)
 
     else:
         # Helpful redirect: when the user passes a command that belongs to

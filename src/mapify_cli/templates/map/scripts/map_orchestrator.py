@@ -476,7 +476,7 @@ def _get_step_order(tdd_mode: bool = False) -> list[str]:
     return TDD_STEP_ORDER if tdd_mode else STEP_ORDER
 
 
-from map_utils import (  # noqa: E402 — shared across .map/scripts/
+from map_utils import (  # noqa: E402 — shared across .map/scripts/  # pyright: ignore[reportMissingImports]
     get_branch_name,
     sanitize_branch_name,
 )
@@ -1127,7 +1127,7 @@ def validate_step(
         # MONITOR-side validate_mutation_boundary check only flags files
         # CHANGED during this subtask, not the cumulative branch diff.
         try:
-            from map_step_runner import record_subtask_baseline  # noqa: WPS433
+            from map_step_runner import record_subtask_baseline  # noqa: WPS433  # pyright: ignore[reportMissingImports]
             record_subtask_baseline(branch, state.current_subtask_id)
         except ImportError:
             pass
@@ -1140,7 +1140,7 @@ def validate_step(
         blueprint_present = Path(f".map/{branch}/blueprint.json").exists()
         if blueprint_present:
             try:
-                from map_step_runner import validate_mutation_boundary  # noqa: WPS433
+                from map_step_runner import validate_mutation_boundary  # noqa: WPS433  # pyright: ignore[reportMissingImports]
                 scope_report = validate_mutation_boundary(
                     branch, state.current_subtask_id
                 )

@@ -3117,10 +3117,15 @@ class TestDetectTruncatedAgentOutput:
     """
 
     def test_well_formed_monitor_response_is_not_truncated(self):
+        # Must include all required_keys from AGENT_OUTPUT_SCHEMAS["monitor"]
         text = json.dumps({
+            "evidence": [],
             "valid": True,
-            "summary": "Implementation matches contract",
+            "summary": "all good",
+            "verdict": "approved",
             "issues": [],
+            "passed_checks": ["all checks pass"],
+            "failed_checks": [],
         })
         report = map_step_runner.detect_truncated_agent_output(
             text, agent_kind="monitor"
@@ -3139,7 +3144,16 @@ class TestDetectTruncatedAgentOutput:
 
     def test_missing_required_key_is_truncated(self):
         # Parseable JSON but missing the "issues" key Monitor must emit.
-        text = json.dumps({"valid": True, "summary": "ok"})
+        # Provide all other required keys so only "issues" triggers the error.
+        text = json.dumps({
+            "evidence": [],
+            "valid": True,
+            "summary": "ok",
+            "verdict": "approved",
+            "passed_checks": [],
+            "failed_checks": [],
+            # "issues" intentionally omitted
+        })
         report = map_step_runner.detect_truncated_agent_output(
             text, agent_kind="monitor"
         )
@@ -3160,7 +3174,16 @@ class TestDetectTruncatedAgentOutput:
     def test_fenced_json_is_extracted(self):
         # ```json\n{...}\n``` wraps — extraction recovers the object but
         # flags the wrapping prose as a soft signal.
-        text = '```json\n{"valid": true, "summary": "x", "issues": []}\n```'
+        inner = json.dumps({
+            "evidence": [],
+            "valid": True,
+            "summary": "ok",
+            "verdict": "approved",
+            "issues": [],
+            "passed_checks": [],
+            "failed_checks": [],
+        })
+        text = f"```json\n{inner}\n```"
         report = map_step_runner.detect_truncated_agent_output(
             text, agent_kind="monitor"
         )
@@ -3180,6 +3203,134 @@ class TestDetectTruncatedAgentOutput:
         report = map_step_runner.detect_truncated_agent_output("")
         assert report["truncated"] is True
         assert report["reasons"] == ["empty response"]
+
+    def test_predictor_full_output_not_truncated(self):
+        """POSITIVE: full valid predictor JSON is not flagged as truncated."""
+        text = json.dumps({
+            "evidence": [{"file_path": "f.py", "line_range": "1", "quote": "x", "relevance": "y"}],
+            "risk_assessment": "low",
+            "predicted_state": {
+                "affected_components": [],
+                "breaking_changes": [],
+                "required_updates": [],
+            },
+            "confidence": {"score": 0.9},
+        })
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="predictor"
+        )
+        assert report["truncated"] is False, report
+
+    def test_predictor_missing_required_key_is_truncated(self):
+        """NEGATIVE: predictor output missing a required key is truncated."""
+        # omit "confidence" — a required key
+        text = json.dumps({
+            "evidence": [],
+            "risk_assessment": "low",
+            "predicted_state": {"affected_components": [], "breaking_changes": [], "required_updates": []},
+        })
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="predictor"
+        )
+        assert report["truncated"] is True
+        assert any("missing required key: confidence" in r for r in report["reasons"])
+
+    def test_predictor_missing_conditional_landmine_not_truncated(self):
+        """CONDITIONAL: predictor output missing landmine_evidence (conditional)
+        must NOT be flagged as truncated."""
+        text = json.dumps({
+            "evidence": [],
+            "risk_assessment": "medium",
+            "predicted_state": {"affected_components": [], "breaking_changes": [], "required_updates": []},
+            "confidence": {"score": 0.7},
+            # landmine_evidence intentionally absent — it is conditional
+        })
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="predictor"
+        )
+        assert report["truncated"] is False, report
+
+    def test_evaluator_full_output_not_truncated(self):
+        """POSITIVE: full valid evaluator JSON is not flagged as truncated."""
+        text = json.dumps({
+            "evidence": [],
+            "scores": {
+                "functionality": 8, "code_quality": 7, "performance": 7,
+                "security": 9, "testability": 8, "completeness": 8,
+            },
+            "overall_score": 7.8,
+            "recommendation": "proceed",
+            "strengths": ["clear tests"],
+            "weaknesses": [],
+            "next_steps": [],
+            "monitor_severity_audit": [],
+        })
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="evaluator"
+        )
+        assert report["truncated"] is False, report
+
+    def test_evaluator_missing_required_key_is_truncated(self):
+        """NEGATIVE: evaluator output missing a required key is truncated."""
+        # omit "monitor_severity_audit"
+        text = json.dumps({
+            "evidence": [],
+            "scores": {"functionality": 8, "code_quality": 7, "performance": 7,
+                       "security": 9, "testability": 8, "completeness": 8},
+            "overall_score": 7.8,
+            "recommendation": "proceed",
+            "strengths": [],
+            "weaknesses": [],
+            "next_steps": [],
+        })
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="evaluator"
+        )
+        assert report["truncated"] is True
+        assert any("missing required key: monitor_severity_audit" in r for r in report["reasons"])
+
+    def test_monitor_missing_conditional_sibling_comparison_not_truncated(self):
+        """CONDITIONAL: monitor output missing sibling_comparison (per-issue
+        conditional) must NOT be flagged as truncated at the top level."""
+        # sibling_comparison is a field inside each issue object — it is
+        # NOT a top-level required key, so omitting it at top level is fine.
+        text = json.dumps({
+            "evidence": [],
+            "valid": True,
+            "summary": "ok",
+            "verdict": "approved",
+            "issues": [],
+            "passed_checks": ["tests pass"],
+            "failed_checks": [],
+            # sibling_comparison is per-issue conditional, not top-level
+        })
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="monitor"
+        )
+        assert report["truncated"] is False, report
+
+    def test_map_efficient_monitor_output_not_truncated(self):
+        """Regression (Copilot review on PR #145): the map-efficient Monitor
+        gate runs `--agent monitor` against a Monitor prompted for
+        valid/summary/issues/files_changed/tests_run/escalation_required — it
+        does NOT emit evidence/verdict/passed_checks/failed_checks. The
+        truncation detector must accept this contract (its required keys are
+        the common core valid/summary/issues), otherwise the pre-verdict gate
+        rejects every valid map-efficient Monitor response and loops forever.
+        """
+        text = json.dumps({
+            "valid": True,
+            "summary": "ST-001 satisfies all criteria",
+            "issues": [],
+            "files_changed": ["a.py"],
+            "tests_run": ["pytest: 10 passed"],
+            "escalation_required": False,
+        })
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="monitor"
+        )
+        assert report["truncated"] is False, report
+        assert report["reasons"] == []
 
 
 class TestBlueprintContractAffectedFilesDrift:
@@ -5098,7 +5249,10 @@ class TestCreateReviewBundle:
             assert "<documents>" in prompt
             assert "</documents>" in prompt
             assert "<expected_output>" in prompt
-            assert "Output JSON with:" in prompt
+            assert "<format_rules>" in prompt
+            assert "Return exactly one JSON object" in prompt
+        # monitor schema includes "verdict" — spot-check the schema emission
+        assert '"verdict"' in result["prompts"]["monitor"]["prompt"]
 
     def test_build_review_prompts_no_longer_truncates_preferences(
         self, branch_workspace
@@ -5212,6 +5366,56 @@ class TestCreateReviewBundle:
         assert "Review Prompt Budget" not in new_prompt
         assert new_prompt_info["truncated"] is False
         assert new_prompt_info["clipped_sections"] == []
+
+    def test_review_prompt_skeleton_lists_all_required_fields(
+        self, branch_workspace
+    ):
+        """AGENT_OUTPUT_SCHEMAS skeleton fields appear literally in prompts,
+        and skeleton key set is a superset of required_keys for each agent.
+        """
+        del branch_workspace
+        result = map_step_runner.build_review_prompts(
+            branch="test-branch",
+            review_preferences="review preferences",
+            budget_tokens=4_000,
+            review_bundle_text="# Review Bundle\nsome content\n",
+            git_diff_text="diff --git a/app.py b/app.py\n+change\n",
+        )
+        assert result["status"] == "success"
+
+        # Per-role SKILL.md field spot-checks
+        role_field_checks: dict[str, list[str]] = {
+            "monitor": [
+                "was_present_before_pr",
+                "reach_evidence",
+                "sibling_comparison",
+                "verdict",
+            ],
+            "predictor": [
+                "landmine_evidence",
+                "risk_assessment",
+            ],
+            "evaluator": [
+                "monitor_severity_audit",
+                "overall_score",
+            ],
+        }
+        for role, fields in role_field_checks.items():
+            prompt = result["prompts"][role]["prompt"]
+            for field in fields:
+                assert field in prompt, (
+                    f"Expected field '{field}' for role '{role}' not found in prompt"
+                )
+
+        # skeleton key set >= required_keys for each schema role
+        schemas = map_step_runner.AGENT_OUTPUT_SCHEMAS
+        for role, schema in schemas.items():
+            skeleton_keys = set(schema["skeleton"].keys())  # type: ignore[union-attr]
+            required_keys = set(schema["required_keys"])  # type: ignore[union-attr]
+            assert required_keys <= skeleton_keys, (
+                f"Role '{role}': required_keys {required_keys - skeleton_keys} "
+                f"not present in skeleton"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -6480,3 +6684,241 @@ class TestTokenAccounting:
         )
         assert report.returncode == 0, report.stderr
         assert "cache hit ratio" in report.stdout
+
+
+class TestBuildJsonRetryPrompt:
+    """build_json_retry_prompt — canonical retry-prompt builder (ST-002).
+
+    Verifies:
+    - Shared-skeleton reuse: prompt contains _render_format_block output verbatim.
+    - Mandated phrases present in every valid-agent response.
+    - errors=None → ok, no failure section; errors=[...] → bullets + reasons echoed.
+    - Unknown agent → status "error", empty prompt.
+    """
+
+    def test_build_json_retry_prompt_uses_shared_skeleton(self):
+        """VC1: prompt embeds _render_format_block verbatim (single source of truth)."""
+        result = map_step_runner.build_json_retry_prompt("monitor")
+        assert result["status"] == "ok"
+        expected_block = map_step_runner._render_format_block("monitor")
+        assert expected_block in result["prompt"], (
+            "prompt must contain the exact _render_format_block output"
+        )
+
+    def test_mandated_phrases_present(self):
+        """VC2: prompt contains the two required literal phrases."""
+        result = map_step_runner.build_json_retry_prompt("monitor")
+        assert result["status"] == "ok"
+        assert "Emit ONLY one JSON object matching this schema" in result["prompt"]
+        assert "No markdown, no prose" in result["prompt"]
+
+    def test_no_errors_returns_ok_no_failure_section(self):
+        """VC3a: errors=None → status ok, prompt non-empty, no failure section."""
+        result = map_step_runner.build_json_retry_prompt("monitor", errors=None)
+        assert result["status"] == "ok"
+        assert result["reasons"] == []
+        assert result["prompt"] != ""
+        assert "rejected for" not in result["prompt"]
+
+    def test_empty_errors_list_returns_ok_no_failure_section(self):
+        """VC3b: errors=[] → same as None (no failure section)."""
+        result = map_step_runner.build_json_retry_prompt("predictor", errors=[])
+        assert result["status"] == "ok"
+        assert result["reasons"] == []
+        assert "rejected for" not in result["prompt"]
+
+    def test_errors_appear_in_prompt_and_reasons(self):
+        """VC3c: non-empty errors → bullet list in prompt + echoed in reasons."""
+        errs = ["missing key: valid", "trailing prose"]
+        result = map_step_runner.build_json_retry_prompt("monitor", errors=errs)
+        assert result["status"] == "ok"
+        assert result["reasons"] == errs
+        for err in errs:
+            assert err in result["prompt"], f"error {err!r} must appear in prompt"
+        assert "rejected for" in result["prompt"]
+
+    def test_unknown_agent_returns_error_empty_prompt(self):
+        """VC4: a genuinely unknown agent → status error, prompt empty."""
+        result = map_step_runner.build_json_retry_prompt("reflector")
+        assert result["status"] == "error"
+        assert result["prompt"] == ""
+        assert result["agent"] == "reflector"
+        # reasons must include an 'unknown agent' entry
+        assert any("unknown agent" in r for r in result["reasons"])
+
+    def test_unknown_agent_preserves_caller_errors_in_reasons(self):
+        """Unknown-agent path still echoes caller-supplied errors in reasons."""
+        errs = ["some prior error"]
+        result = map_step_runner.build_json_retry_prompt("reflector", errors=errs)
+        assert result["status"] == "error"
+        # caller errors are preserved (after the 'unknown agent' prepend)
+        assert "some prior error" in result["reasons"]
+
+    def test_actor_retry_prompt_builds(self):
+        """Regression (Copilot review on PR #145): map-efficient's Actor
+        truncation-recovery references `build_json_retry_prompt --agent actor`.
+        Actor must therefore be a known agent that yields a real retry prompt
+        (not the unknown-agent error path), embedding the shared actor skeleton
+        and the mandated phrases.
+        """
+        result = map_step_runner.build_json_retry_prompt(
+            "actor", errors=["missing required key: tests_run"]
+        )
+        assert result["status"] == "ok"
+        assert result["agent"] == "actor"
+        assert result["prompt"] != ""
+        # embeds the shared actor format block (single source of truth)
+        assert map_step_runner._render_format_block("actor") in result["prompt"]
+        # actor-specific schema fields are present
+        assert "files_changed" in result["prompt"]
+        assert "tests_run" in result["prompt"]
+        # mandated phrases + the caller error bullet
+        assert "Emit ONLY one JSON object matching this schema" in result["prompt"]
+        assert "missing required key: tests_run" in result["prompt"]
+
+    def test_predictor_skeleton_reused(self):
+        """Skeleton reuse also holds for predictor (not just monitor)."""
+        result = map_step_runner.build_json_retry_prompt("predictor")
+        assert result["status"] == "ok"
+        expected_block = map_step_runner._render_format_block("predictor")
+        assert expected_block in result["prompt"]
+
+    def test_evaluator_skeleton_reused(self):
+        """Skeleton reuse also holds for evaluator."""
+        result = map_step_runner.build_json_retry_prompt("evaluator")
+        assert result["status"] == "ok"
+        expected_block = map_step_runner._render_format_block("evaluator")
+        assert expected_block in result["prompt"]
+
+
+class TestAgentFailureTelemetry:
+    """ST-003: branch-scoped agent-failure telemetry with INV-8 sanitization."""
+
+    # ------------------------------------------------------------------
+    # VC1: _agent_failure_log_path is branch-scoped under get_branch_dir
+    # ------------------------------------------------------------------
+
+    def test_agent_failure_log_path_branch_scoped(self):
+        """VC1: path resolves to get_branch_dir(branch) / agent_failure_events.jsonl."""
+        branch = "somebranch"
+        expected = map_step_runner.get_branch_dir(branch) / "agent_failure_events.jsonl"
+        assert map_step_runner._agent_failure_log_path(branch) == expected
+
+    # ------------------------------------------------------------------
+    # VC2: _validate_agent_failure_event rejects bad labels / missing fields
+    # ------------------------------------------------------------------
+
+    def test_validate_good_event_returns_empty(self):
+        """VC2a: fully-valid event → empty reasons list."""
+        event: dict[str, object] = {
+            "agent": "monitor",
+            "phase": "REVIEW",
+            "failure_label": "format_violation",
+            "timestamp": "2026-05-27T00:00:00Z",
+        }
+        assert map_step_runner._validate_agent_failure_event(event) == []
+
+    def test_validate_bad_label_returns_reason(self):
+        """VC2b (HC-6): unknown failure_label → non-empty reasons."""
+        event: dict[str, object] = {
+            "agent": "monitor",
+            "phase": "REVIEW",
+            "failure_label": "exploded",
+            "timestamp": "2026-05-27T00:00:00Z",
+        }
+        reasons = map_step_runner._validate_agent_failure_event(event)
+        assert len(reasons) > 0
+        assert any("exploded" in r for r in reasons)
+
+    def test_validate_missing_field_returns_reason(self):
+        """VC2c: missing required field → non-empty reasons."""
+        event: dict[str, object] = {
+            "phase": "REVIEW",
+            "failure_label": "truncated",
+            "timestamp": "2026-05-27T00:00:00Z",
+            # 'agent' intentionally absent
+        }
+        reasons = map_step_runner._validate_agent_failure_event(event)
+        assert any("agent" in r for r in reasons)
+
+    # ------------------------------------------------------------------
+    # VC3: log_agent_failure rejects bad label without writing
+    # ------------------------------------------------------------------
+
+    def test_log_agent_failure_bad_label_no_write(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """VC3 (HC-6): bad failure_label → status=error, no JSONL written."""
+        monkeypatch.chdir(tmp_path)
+        result = map_step_runner.log_agent_failure(
+            "monitor", "REVIEW", "exploded", branch="test-branch"
+        )
+        assert result["status"] == "error"
+        assert result["path"] is None
+        log_path = map_step_runner._agent_failure_log_path("test-branch")
+        assert not log_path.exists()
+
+    # ------------------------------------------------------------------
+    # VC4: log_agent_failure appends exactly one JSONL line + INV-8
+    # ------------------------------------------------------------------
+
+    def test_log_agent_failure_appends_jsonl(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """VC4a: valid call → exactly one well-formed JSONL line appended."""
+        monkeypatch.chdir(tmp_path)
+        result = map_step_runner.log_agent_failure(
+            "monitor",
+            "REVIEW",
+            "format_violation",
+            reasons=["output missing 'valid' key"],
+            retry=True,
+            schema="MonitorOutput",
+            branch="test-branch",
+        )
+        assert result["status"] == "ok"
+        log_path = map_step_runner._agent_failure_log_path("test-branch")
+        assert log_path.exists()
+        lines = log_path.read_text(encoding="utf-8").splitlines()
+        assert len(lines) == 1
+        parsed = json.loads(lines[0])
+        assert parsed["agent"] == "monitor"
+        assert parsed["phase"] == "REVIEW"
+        assert parsed["failure_label"] == "format_violation"
+        assert parsed["retry"] is True
+        assert parsed["schema"] == "MonitorOutput"
+        assert "timestamp" in parsed
+
+    def test_log_agent_failure_inv8_sanitization(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """VC4b (INV-8): control chars in reasons are stripped; result is jq-parseable."""
+        monkeypatch.chdir(tmp_path)
+        dirty_reasons = ["bad\noutput", "tab\there", "null\x00byte"]
+        result = map_step_runner.log_agent_failure(
+            "actor",
+            "ACTOR",
+            "missing_field",
+            reasons=dirty_reasons,
+            branch="test-branch",
+        )
+        assert result["status"] == "ok"
+        log_path = map_step_runner._agent_failure_log_path("test-branch")
+        raw_line = log_path.read_text(encoding="utf-8").strip()
+        # Must parse cleanly
+        parsed = json.loads(raw_line)
+        # No raw control characters remain in any string field
+        control_re = re.compile(r"[\x00-\x1f\x7f]")
+        for reason in parsed["reasons"]:
+            assert control_re.search(reason) is None, (
+                f"Control char found in reason: {reason!r}"
+            )
+        assert control_re.search(parsed["agent"]) is None
+        assert control_re.search(parsed["phase"]) is None
+
+    def test_log_agent_failure_second_call_appends(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """VC4c: two successive calls → two lines in the JSONL file."""
+        monkeypatch.chdir(tmp_path)
+        for label in ("format_violation", "truncated"):
+            map_step_runner.log_agent_failure(
+                "monitor", "REVIEW", label, branch="test-branch"
+            )
+        log_path = map_step_runner._agent_failure_log_path("test-branch")
+        lines = log_path.read_text(encoding="utf-8").splitlines()
+        assert len(lines) == 2
+        assert json.loads(lines[0])["failure_label"] == "format_violation"
+        assert json.loads(lines[1])["failure_label"] == "truncated"

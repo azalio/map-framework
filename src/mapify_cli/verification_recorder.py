@@ -10,7 +10,7 @@ import re
 import sys
 import tempfile
 from pathlib import Path
-from typing import Optional, TypedDict, List
+from typing import Optional, TypedDict, List, cast
 
 # Maximum number of recipes to retain (older entries are trimmed)
 MAX_RECIPES = 1000
@@ -234,17 +234,20 @@ def _validate_verification_results_schema(data: VerificationResults) -> None:
         if not isinstance(recipe, dict):
             raise ValueError(f"Recipe {idx} must be a dictionary")
 
+        typed_recipe = cast(RecipeResult, recipe)
+
         # Check required fields in recipe
         required_fields = ["id", "status", "summary"]
         for field in required_fields:
-            if field not in recipe:
+            if field not in typed_recipe:
                 raise ValueError(f"Recipe {idx} missing required field: {field}")
 
-        # Validate recipe status
+        # Validate recipe status (presence already checked above via required_fields loop)
         valid_statuses = {"pass", "fail", "skipped"}
-        if recipe["status"] not in valid_statuses:
+        recipe_status = typed_recipe.get("status", "")
+        if recipe_status not in valid_statuses:
             raise ValueError(
-                f"Recipe {idx} has invalid status '{recipe['status']}'. "
+                f"Recipe {idx} has invalid status '{recipe_status}'. "
                 f"Must be one of: {valid_statuses}"
             )
 
