@@ -7429,6 +7429,364 @@ def detect_cross_subtask_regression_risk(
     }
 
 
+# ---------------------------------------------------------------------------
+# Symbol blast-radius detector
+# ---------------------------------------------------------------------------
+
+_SYMBOL_DEF_RE = re.compile(
+    r"^(?:async\s+)?def\s+(\w+)"      # function / async function
+    r"|^class\s+(\w+)"                 # class
+    r"|^([A-Z][A-Z0-9_]{2,})\s*[:=]", # UPPER_CONST (len >= 3 via {2,})
+)
+
+# Directories/globs searched by _grep_external_callers
+_GREP_SEARCH_PATHS = [".claude/skills", "src", ".map/scripts"]
+
+# Maximum distinct symbols we'll send to git-grep before short-circuiting
+_SYMBOL_GREP_CAP = 40
+
+# Sentinel returned by _grep_external_callers on git/subprocess failure.
+# Distinct from the legitimate "no matches" empty list — callers must treat
+# any entry with note=="grep_error" as an unknown/fail-safe signal rather
+# than evidence that no external callers exist.
+_GREP_ERROR_SENTINEL = [{"symbol": "*", "file": "", "line": 0, "note": "grep_error"}]
+
+
+def _extract_changed_module_symbols(diff_text: str) -> set[str]:
+    """Return module-level symbol names introduced in *added* diff lines.
+
+    Only lines that start with ``+`` (but not ``+++``) are considered.
+    Only column-0 definitions are recognised (no leading whitespace after the
+    ``+`` prefix) — this excludes nested/indented definitions.  Dunder names
+    and names shorter than 3 characters are excluded.
+    """
+    symbols: set[str] = set()
+    for raw_line in diff_text.splitlines():
+        if not raw_line.startswith("+") or raw_line.startswith("+++"):
+            continue
+        # Strip the leading '+' to get the actual source line
+        line = raw_line[1:]
+        # Module-level: no leading whitespace
+        if line and line[0] in (" ", "\t"):
+            continue
+        m = _SYMBOL_DEF_RE.match(line)
+        if not m:
+            continue
+        # Exactly one of the three groups is non-None
+        name = m.group(1) or m.group(2) or m.group(3)
+        if name is None:
+            continue
+        if name.startswith("__") or len(name) < 3:
+            continue
+        symbols.add(name)
+    return symbols
+
+
+def _grep_external_callers(
+    symbols: set[str], affected_files: list[str], project_dir: Path
+) -> list[dict]:
+    """Search for references to *symbols* in the project outside *affected_files*.
+
+    Uses a single batched ``git grep`` call with a whole-word alternation regex.
+    Returns a list of ``{"symbol": str, "file": str, "line": int}`` dicts, sorted
+    deterministically and deduped.
+
+    Symbol cap: when ``len(symbols) > _SYMBOL_GREP_CAP`` the search is skipped
+    and a single marker entry is returned so the caller still recommends
+    ``validate_callers`` (too many symbols → thorough gate is the safe default).
+
+    Returns an empty list on git-grep failure (non-zero exit code other than 1)
+    so callers can degrade gracefully without crashing.
+    """
+    if not symbols:
+        return []
+
+    # Cap: too many symbols → conservatively flag for caller validation
+    if len(symbols) > _SYMBOL_GREP_CAP:
+        return [{"symbol": "*", "file": "", "line": 0, "note": "skipped_too_many_symbols"}]
+
+    affected_set = set(affected_files)
+
+    # Build alternation pattern; sort for determinism
+    alternation = "|".join(re.escape(s) for s in sorted(symbols))
+    pattern = f"({alternation})"
+
+    try:
+        result = subprocess.run(
+            ["git", "grep", "-n", "-E", "-w", pattern, "--"] + _GREP_SEARCH_PATHS,
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return list(_GREP_ERROR_SENTINEL)
+
+    # git grep exits with 1 when no matches (not an error); >1 is a real error
+    if result.returncode not in (0, 1):
+        return list(_GREP_ERROR_SENTINEL)
+
+    seen: set[tuple[str, str, int]] = set()
+    callers: list[dict] = []
+
+    for raw in result.stdout.splitlines():
+        # Format: path:lineno:content
+        parts = raw.split(":", 2)
+        if len(parts) < 3:
+            continue
+        file_path, lineno_str, content = parts[0], parts[1], parts[2]
+
+        # Exclude matches inside the subtask's own affected files
+        if file_path in affected_set:
+            continue
+
+        try:
+            lineno = int(lineno_str)
+        except ValueError:
+            continue
+
+        # Determine which symbol(s) matched this line
+        for sym in sorted(symbols):
+            if re.search(rf"\b{re.escape(sym)}\b", content):
+                key = (sym, file_path, lineno)
+                if key in seen:
+                    continue
+                seen.add(key)
+                callers.append({"symbol": sym, "file": file_path, "line": lineno})
+
+    callers.sort(key=lambda d: (d["file"], d["line"], d["symbol"]))
+    return callers
+
+
+def detect_symbol_blast_radius(branch: str, subtask_id: str) -> dict:
+    """Flag when a subtask changed a module-level symbol referenced outside its scope.
+
+    This is an *advisory* detector — it does not block; it informs the Monitor
+    gate of external callers that need explicit validation.  The canonical failure
+    mode it prevents: a shared helper (e.g. ``chunked_review_pipeline.py``)
+    is re-derived in one subtask and silently breaks callers in other subtasks
+    that are never re-tested in the scoped gate.
+
+    Returns::
+
+        {
+          "status": "ok" | "unknown",
+          "subtask_id": str,
+          "changed_symbols": [str],         # sorted; module-level additions
+          "external_callers": [...],         # {symbol, file, line} outside affected_files
+          "recommended_gate": "validate_callers" | "scoped",
+          "reason": str,
+        }
+
+    Fail-safe: any git failure → ``status="unknown"`` +
+    ``recommended_gate="validate_callers"`` (never silently ``"scoped"``).
+    """
+    branch_name = _sanitize_branch(branch)
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+
+    # ------------------------------------------------------------------
+    # 1. Resolve blueprint + affected_files
+    # ------------------------------------------------------------------
+    blueprint = load_blueprint(branch_name, project_dir)
+    subtask: Optional[dict] = None
+    if blueprint is not None:
+        subtask = get_subtask_from_blueprint(blueprint, subtask_id)
+    affected_files: list[str] = []
+    if subtask is not None:
+        raw_af = subtask.get("affected_files") or []
+        if isinstance(raw_af, list):
+            affected_files = [str(f) for f in raw_af if f]
+
+    # ------------------------------------------------------------------
+    # 2. Compute changed files for this subtask
+    # ------------------------------------------------------------------
+    changed = _current_subtask_changed_files(branch_name, subtask_id, project_dir)
+    if changed is None:
+        return {
+            "status": "unknown",
+            "subtask_id": subtask_id,
+            "changed_symbols": [],
+            "external_callers": [],
+            "recommended_gate": "validate_callers",
+            "reason": (
+                "Could not compute the current subtask diff (git unavailable) "
+                "— defaulting to validate_callers as a fail-safe."
+            ),
+        }
+
+    # ------------------------------------------------------------------
+    # 3. Filter to runtime Python files
+    # ------------------------------------------------------------------
+    runtime_changed = [
+        p for p in changed if p.endswith(".py") and not _is_test_path(p)
+    ]
+    if not runtime_changed:
+        return {
+            "status": "ok",
+            "subtask_id": subtask_id,
+            "changed_symbols": [],
+            "external_callers": [],
+            "recommended_gate": "scoped",
+            "reason": "No runtime .py symbols changed — scoped gate is sufficient.",
+        }
+
+    # ------------------------------------------------------------------
+    # 4. Get diff text for runtime files
+    # ------------------------------------------------------------------
+    base_ref: Optional[str] = None
+    state_file = project_dir / ".map" / branch_name / "step_state.json"
+    if state_file.exists():
+        try:
+            state_data = json.loads(state_file.read_text(encoding="utf-8"))
+            last_sha = state_data.get("last_subtask_commit_sha")
+            if isinstance(last_sha, str) and last_sha:
+                base_ref = last_sha
+        except (json.JSONDecodeError, OSError):
+            pass
+    if not base_ref:
+        try:
+            head_probe = subprocess.run(
+                ["git", "rev-parse", "--verify", "HEAD"],
+                cwd=project_dir,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if head_probe.returncode == 0:
+                base_ref = "HEAD"
+        except (OSError, subprocess.TimeoutExpired):
+            return {
+                "status": "unknown",
+                "subtask_id": subtask_id,
+                "changed_symbols": [],
+                "external_callers": [],
+                "recommended_gate": "validate_callers",
+                "reason": (
+                    "git rev-parse failed or timed out — "
+                    "defaulting to validate_callers as a fail-safe."
+                ),
+            }
+
+    if not base_ref:
+        return {
+            "status": "unknown",
+            "subtask_id": subtask_id,
+            "changed_symbols": [],
+            "external_callers": [],
+            "recommended_gate": "validate_callers",
+            "reason": (
+                "Could not resolve a git base ref for the diff — "
+                "defaulting to validate_callers as a fail-safe."
+            ),
+        }
+
+    try:
+        diff_result = subprocess.run(
+            ["git", "diff", base_ref, "--"] + runtime_changed,
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return {
+            "status": "unknown",
+            "subtask_id": subtask_id,
+            "changed_symbols": [],
+            "external_callers": [],
+            "recommended_gate": "validate_callers",
+            "reason": (
+                "git diff timed out or failed — "
+                "defaulting to validate_callers as a fail-safe."
+            ),
+        }
+
+    if diff_result.returncode != 0:
+        return {
+            "status": "unknown",
+            "subtask_id": subtask_id,
+            "changed_symbols": [],
+            "external_callers": [],
+            "recommended_gate": "validate_callers",
+            "reason": (
+                f"git diff returned non-zero exit code {diff_result.returncode} "
+                "— defaulting to validate_callers as a fail-safe."
+            ),
+        }
+
+    diff_text = diff_result.stdout
+
+    # ------------------------------------------------------------------
+    # 5. Extract changed module-level symbols
+    # ------------------------------------------------------------------
+    changed_symbols = _extract_changed_module_symbols(diff_text)
+    if not changed_symbols:
+        return {
+            "status": "ok",
+            "subtask_id": subtask_id,
+            "changed_symbols": [],
+            "external_callers": [],
+            "recommended_gate": "scoped",
+            "reason": (
+                "Runtime .py files changed but no module-level symbol additions "
+                "detected — scoped gate is sufficient."
+            ),
+        }
+
+    # ------------------------------------------------------------------
+    # 6. Find external callers
+    # ------------------------------------------------------------------
+    external_callers = _grep_external_callers(changed_symbols, affected_files, project_dir)
+
+    # Detect grep-error sentinel: git/subprocess failure inside _grep_external_callers.
+    # An empty list is a legitimate "no matches" result; the sentinel is the fail-safe.
+    grep_errored = any(c.get("note") == "grep_error" for c in external_callers)
+    if grep_errored:
+        return {
+            "status": "unknown",
+            "subtask_id": subtask_id,
+            "changed_symbols": sorted(changed_symbols),
+            "external_callers": external_callers,
+            "recommended_gate": "validate_callers",
+            "reason": (
+                "git grep failed — defaulting to validate_callers as a fail-safe."
+            ),
+        }
+
+    recommended_gate = "validate_callers" if external_callers else "scoped"
+
+    if external_callers and external_callers[0].get("note") == "skipped_too_many_symbols":
+        reason = (
+            f"Too many changed symbols ({len(changed_symbols)} > {_SYMBOL_GREP_CAP}) "
+            "— grep skipped; validate_callers applied conservatively."
+        )
+    elif external_callers:
+        caller_summary = ", ".join(
+            f"{c['symbol']} in {c['file']}:{c['line']}"
+            for c in external_callers[:5]
+        )
+        extra = f" (+{len(external_callers) - 5} more)" if len(external_callers) > 5 else ""
+        reason = (
+            f"Changed symbol(s) {sorted(changed_symbols)!r} are referenced "
+            f"outside affected_files: {caller_summary}{extra}. "
+            "All external callers must be explicitly validated."
+        )
+    else:
+        reason = (
+            f"Changed symbol(s) {sorted(changed_symbols)!r} have no external "
+            "callers outside affected_files — scoped gate is sufficient."
+        )
+
+    return {
+        "status": "ok",
+        "subtask_id": subtask_id,
+        "changed_symbols": sorted(changed_symbols),
+        "external_callers": external_callers,
+        "recommended_gate": recommended_gate,
+        "reason": reason,
+    }
+
+
 def build_context_block(branch: str, current_subtask_id: str) -> str:
     """Build structured context block for Actor prompt.
 
