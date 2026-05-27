@@ -392,7 +392,7 @@ class TestValidateArtifact:
         from mapify_cli.schemas import STATE_ARTIFACT_SCHEMA, validate_artifact
 
         artifact = {"workflow": "map-efficient"}  # missing terminal_status
-        is_valid, errors = validate_artifact(artifact, STATE_ARTIFACT_SCHEMA)
+        is_valid, _ = validate_artifact(artifact, STATE_ARTIFACT_SCHEMA)
         assert not is_valid
 
     def test_validate_raise_on_error(self):
@@ -746,7 +746,7 @@ class TestSafetyGuardrailsHookConfig:
 
     def test_hook_respects_config_overrides(self, tmp_path):
         """Runtime test: config overrides affect guardrail behavior."""
-        import importlib
+        import importlib.util
         import os
 
         # Create a .map/config.yaml with custom safe_path_prefixes
@@ -773,8 +773,10 @@ class TestSafetyGuardrailsHookConfig:
         os.environ["CLAUDE_PROJECT_DIR"] = str(tmp_path)
         try:
             spec = importlib.util.spec_from_file_location("guardrails_test", hook_copy)
+            assert spec is not None
             mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
+            assert spec.loader is not None
+            spec.loader.exec_module(mod)  # pyright: ignore[reportAttributeAccessIssue]
             # custom_safe/ should be safe
             assert mod.is_safe_path("custom_safe/file.py")
             assert mod.is_safe_path("also_safe/data.json")

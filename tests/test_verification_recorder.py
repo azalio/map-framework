@@ -276,7 +276,7 @@ def test_compute_overall_status_fail_dominates():
         {"status": "fail"},
         {"status": "pass"},
     ]
-    assert _compute_overall_status(recipes) == "fail"
+    assert _compute_overall_status(recipes) == "fail"  # pyright: ignore[reportArgumentType]  # intentional partial dict for status-logic test
 
 
 def test_compute_overall_status_all_pass():
@@ -286,7 +286,7 @@ def test_compute_overall_status_all_pass():
         {"status": "pass"},
         {"status": "pass"},
     ]
-    assert _compute_overall_status(recipes) == "pass"
+    assert _compute_overall_status(recipes) == "pass"  # pyright: ignore[reportArgumentType]  # intentional partial dict for status-logic test
 
 
 def test_compute_overall_status_no_fail_with_skipped():
@@ -295,7 +295,7 @@ def test_compute_overall_status_no_fail_with_skipped():
         {"status": "pass"},
         {"status": "skipped"},
     ]
-    assert _compute_overall_status(recipes) == "unknown"
+    assert _compute_overall_status(recipes) == "unknown"  # pyright: ignore[reportArgumentType]  # intentional partial dict for status-logic test
 
 
 # ============================================================================
@@ -320,28 +320,28 @@ def test_validate_schema_missing_overall():
     """Test validation catches missing overall field."""
     data = {"recipes": []}
     with pytest.raises(ValueError, match="Missing required field: overall"):
-        _validate_verification_results_schema(data)
+        _validate_verification_results_schema(data)  # pyright: ignore[reportArgumentType]  # intentional invalid input for validation test
 
 
 def test_validate_schema_missing_recipes():
     """Test validation catches missing recipes field."""
     data = {"overall": "pass"}
     with pytest.raises(ValueError, match="Missing required field: recipes"):
-        _validate_verification_results_schema(data)
+        _validate_verification_results_schema(data)  # pyright: ignore[reportArgumentType]  # intentional invalid input for validation test
 
 
 def test_validate_schema_invalid_overall():
     """Test validation catches invalid overall status."""
     data = {"overall": "invalid", "recipes": []}
     with pytest.raises(ValueError, match="Invalid overall status"):
-        _validate_verification_results_schema(data)
+        _validate_verification_results_schema(data)  # pyright: ignore[reportArgumentType]  # intentional invalid input for validation test
 
 
 def test_validate_schema_recipes_not_list():
     """Test validation catches recipes that is not a list."""
     data = {"overall": "pass", "recipes": "not a list"}
     with pytest.raises(ValueError, match="recipes must be a list"):
-        _validate_verification_results_schema(data)
+        _validate_verification_results_schema(data)  # pyright: ignore[reportArgumentType]  # intentional invalid input for validation test
 
 
 def test_validate_schema_recipe_missing_field():
@@ -351,7 +351,7 @@ def test_validate_schema_recipe_missing_field():
         "recipes": [{"id": "lint", "status": "pass"}],  # Missing summary
     }
     with pytest.raises(ValueError, match="missing required field: summary"):
-        _validate_verification_results_schema(data)
+        _validate_verification_results_schema(data)  # pyright: ignore[reportArgumentType]  # intentional invalid input for validation test
 
 
 def test_validate_schema_invalid_recipe_status():
@@ -361,7 +361,7 @@ def test_validate_schema_invalid_recipe_status():
         "recipes": [{"id": "lint", "status": "invalid", "summary": "Test"}],
     }
     with pytest.raises(ValueError, match="invalid status"):
-        _validate_verification_results_schema(data)
+        _validate_verification_results_schema(data)  # pyright: ignore[reportArgumentType]  # intentional invalid input for validation test
 
 
 def test_validate_schema_negative_duration():
@@ -373,7 +373,7 @@ def test_validate_schema_negative_duration():
         ],
     }
     with pytest.raises(ValueError, match="duration_ms must be >= 0"):
-        _validate_verification_results_schema(data)
+        _validate_verification_results_schema(data)  # pyright: ignore[reportArgumentType]  # intentional invalid input for validation test
 
 
 def test_validate_schema_valid_data():
@@ -390,7 +390,7 @@ def test_validate_schema_valid_data():
         ],
     }
     # Should not raise
-    _validate_verification_results_schema(data)
+    _validate_verification_results_schema(data)  # pyright: ignore[reportArgumentType]  # intentional partial dict for schema test
 
 
 # ============================================================================
@@ -528,7 +528,7 @@ def test_atomic_write_creates_temp_file(temp_project_root):
     with patch("tempfile.mkstemp") as mock_mkstemp:
         mock_mkstemp.return_value = (real_fd, real_path)
 
-        _atomic_write_json(target_path, data)
+        _atomic_write_json(target_path, data)  # pyright: ignore[reportArgumentType]  # intentional partial dict for atomic-write test
 
         # Verify mkstemp was called with correct directory
         mock_mkstemp.assert_called_once()
@@ -550,7 +550,7 @@ def test_atomic_write_cleans_up_on_error(temp_project_root):
         # Force an error during write (os.fdopen is used now, not open)
         with patch("os.fdopen", side_effect=OSError("Write failed")):
             with pytest.raises(OSError, match="Write failed"):
-                _atomic_write_json(target_path, data)
+                _atomic_write_json(target_path, data)  # pyright: ignore[reportArgumentType]  # intentional partial dict for atomic-write test
 
         # Verify temp file was cleaned up
         assert not Path(temp_path).exists()
@@ -561,7 +561,7 @@ def test_atomic_write_successful_rename(temp_project_root):
     target_path = temp_project_root / "test.json"
     data = {"test": "data", "value": 123}
 
-    _atomic_write_json(target_path, data)
+    _atomic_write_json(target_path, data)  # pyright: ignore[reportArgumentType]  # intentional partial dict for atomic-write test
 
     # Verify target file exists and has correct content
     assert target_path.exists()

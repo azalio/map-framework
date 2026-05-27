@@ -42,6 +42,7 @@ try:
 
     HAS_TRUSTSTORE = True
 except ImportError:
+    truststore = None  # type: ignore[assignment]  # optional dependency
     HAS_TRUSTSTORE = False
 
 from rich.panel import Panel
@@ -94,6 +95,7 @@ def create_ssl_context():
     """Create SSL context with proper certificate validation."""
     try:
         if HAS_TRUSTSTORE:
+            assert truststore is not None  # narrowed by HAS_TRUSTSTORE guard
             context = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
             context.check_hostname = True
             context.verify_mode = ssl.CERT_REQUIRED
@@ -458,8 +460,8 @@ def get_branch_workspace_status(
 
 def init_git_repo(project_path: Path, quiet: bool = False) -> bool:
     """Initialize a git repository"""
+    original_cwd = Path.cwd()
     try:
-        original_cwd = Path.cwd()
         os.chdir(project_path)
         if not quiet:
             console.print("[cyan]Initializing git repository...[/cyan]")

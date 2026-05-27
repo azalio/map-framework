@@ -123,7 +123,7 @@ class TestExtractMetadata:
 
     def test_no_metadata_json(self):
         src = json.dumps({"key": "val"})
-        meta, clean = extract_metadata(src, ".json")
+        meta, _ = extract_metadata(src, ".json")
         assert meta is None
 
 
@@ -299,6 +299,8 @@ class TestCopyManagedFile:
         assert result2.backed_up
         backup2 = result2.backup_path
 
+        assert backup1 is not None
+        assert backup2 is not None
         assert backup1 != backup2, "Second backup must have a different path"
         assert backup1.exists(), "First backup must still exist"
         assert backup2.exists(), "Second backup must exist"

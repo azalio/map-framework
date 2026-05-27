@@ -33,8 +33,10 @@ def _import_hook():
     spec = importlib.util.spec_from_file_location(
         "workflow_context_injector", hook_path
     )
+    assert spec is not None
     mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)  # pyright: ignore[reportAttributeAccessIssue]
     return mod
 
 

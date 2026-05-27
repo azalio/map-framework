@@ -119,6 +119,7 @@ class TestAgentFrontmatter:
                     continue
 
                 # Step 2: Parse YAML
+                assert frontmatter_content is not None
                 try:
                     frontmatter_data = yaml.safe_load(frontmatter_content)
                 except yaml.YAMLError as e:

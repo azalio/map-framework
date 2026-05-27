@@ -10,7 +10,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
-from typing import Tuple
+from typing import Optional, Tuple
 
 # Get the repository root directory (where this test file lives is tests/)
 REPO_ROOT = Path(__file__).parent.parent
@@ -96,7 +96,7 @@ class TestIterationLogger:
     def test_effectiveness_from_exit_code(self, tmp_path: Path) -> None:
         """Should calculate effectiveness from Bash exit_code, not string search."""
         # Bash with exit_code=0 should be effective
-        code, _, _ = self.run_hook(
+        _, _, _ = self.run_hook(
             {
                 "tool_name": "Bash",
                 "tool_response": {
@@ -290,7 +290,7 @@ class TestContextPruner:
 
     HOOK_PATH = REPO_ROOT / ".claude/hooks/ralph-context-pruner.py"
 
-    def run_hook(self, tmp_path: Path, input_data: dict = None) -> Tuple[int, str, str]:
+    def run_hook(self, tmp_path: Path, input_data: Optional[dict] = None) -> Tuple[int, str, str]:
         """Run hook with given input."""
         env = os.environ.copy()
         env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
@@ -321,7 +321,7 @@ class TestContextPruner:
             for i in range(150):
                 f.write(json.dumps({"iteration": i}) + "\n")
 
-        code, _, stderr = self.run_hook(tmp_path)
+        code, _, _ = self.run_hook(tmp_path)
 
         assert code == 0
         # Check that file was truncated
