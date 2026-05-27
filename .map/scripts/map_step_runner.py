@@ -7431,6 +7431,99 @@ def detect_cross_subtask_regression_risk(
 
 
 # ---------------------------------------------------------------------------
+# Actor files-changed mismatch detector
+# ---------------------------------------------------------------------------
+
+
+def detect_actor_files_changed_mismatch(
+    branch: str, subtask_id: str, declared_files: list[str]
+) -> dict:
+    """Flag when an Actor declared files in its envelope that it never wrote.
+
+    The canonical failure mode: the Actor response is truncated mid-edit
+    (model context overflow, timeout). The files_changed envelope lists the
+    intended targets, but the actual git diff is shorter — some files were
+    never written. The Monitor's mutation-boundary check sees *actual* files
+    only and cannot detect the omission; this detector closes that gap.
+
+    Distinct from related detectors:
+    - ``validate_mutation_boundary`` catches *wrote-but-NOT-declared* (scope
+      creep — the opposite direction).
+    - ``detect_truncated_agent_output`` checks JSON-envelope key completeness,
+      not file-system writes.
+    - THIS function checks *declared-but-not-written* only.  The load-bearing
+      field is ``declared_not_written``.
+
+    Returns::
+
+        {
+          "status": "ok" | "unknown",
+          "subtask_id": str,
+          "declared": [str],               # sorted; stripped declared_files
+          "actual": [str],                 # sorted; files from git diff
+          "declared_not_written": [str],   # sorted; declared minus actual
+          "status_mismatch": bool,         # True when declared_not_written non-empty
+          "recovery_instruction": str,     # non-empty only when status_mismatch
+          "reason": str,                   # non-empty only on status=="unknown"
+        }
+
+    Fail-safe: any git failure → ``status="unknown"`` + ``status_mismatch=True``
+    (never silently ``False``): the Actor gate must not pass blindly on a git
+    error.
+    """
+    branch_name = _sanitize_branch(branch)
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+
+    actual_set = _current_subtask_changed_files(branch_name, subtask_id, project_dir)
+    if actual_set is None:
+        # Intent: fail safe to mismatch so the gate cannot pass blindly.
+        declared_sorted = sorted(d.strip() for d in (declared_files or []) if d.strip())
+        return {
+            "status": "unknown",
+            "subtask_id": subtask_id,
+            "declared": declared_sorted,
+            "actual": [],
+            "declared_not_written": declared_sorted,
+            "status_mismatch": True,
+            "recovery_instruction": (
+                "git diff unavailable (fail-safe — actual changes were NOT "
+                f"consulted): treating all declared files as unwritten: {declared_sorted}. "
+                "Re-invoke the Actor to finish any truncated edits and re-run this "
+                "check once git is available; do NOT record the subtask until "
+                "git diff --name-only covers every declared file."
+            ),
+            "reason": (
+                "could not compute the actual diff (git unavailable) — "
+                "assuming mismatch as a fail-safe."
+            ),
+        }
+
+    declared = [d.strip() for d in (declared_files or []) if d.strip()]
+    declared_not_written = sorted(d for d in declared if d not in actual_set)
+    status_mismatch = bool(declared_not_written)
+
+    recovery_instruction = ""
+    if status_mismatch:
+        recovery_instruction = (
+            f"Actor declared files it did not write: {declared_not_written}. "
+            "Its previous response was likely truncated mid-edit — re-invoke "
+            "the Actor to finish those files; do NOT record the subtask until "
+            "git diff --name-only covers every declared file."
+        )
+
+    return {
+        "status": "ok",
+        "subtask_id": subtask_id,
+        "declared": sorted(declared),
+        "actual": sorted(actual_set),
+        "declared_not_written": declared_not_written,
+        "status_mismatch": status_mismatch,
+        "recovery_instruction": recovery_instruction,
+        "reason": "",
+    }
+
+
+# ---------------------------------------------------------------------------
 # Symbol blast-radius detector
 # ---------------------------------------------------------------------------
 
@@ -8727,6 +8820,20 @@ if __name__ == "__main__":
         # can decide full-suite vs scoped without `set -e` tripping on an
         # advisory signal.
         report = detect_symbol_blast_radius(sys.argv[2], sys.argv[3])
+        print(json.dumps(report, indent=2))
+
+    elif func_name == "detect_actor_files_changed_mismatch" and len(sys.argv) >= 4:
+        # CLI: detect_actor_files_changed_mismatch <branch> <subtask_id> [--declared f1,f2,...]
+        # Read-only. Exit 0 always (callers branch on `status_mismatch` field)
+        # so a shell pipeline can decide whether to block recording without
+        # `set -e` tripping on an advisory signal.
+        declared_arg: list[str] = []
+        if "--declared" in sys.argv:
+            declared_idx = sys.argv.index("--declared")
+            if declared_idx + 1 < len(sys.argv):
+                raw_declared = sys.argv[declared_idx + 1]
+                declared_arg = [f for f in raw_declared.split(",") if f.strip()]
+        report = detect_actor_files_changed_mismatch(sys.argv[2], sys.argv[3], declared_arg)
         print(json.dumps(report, indent=2))
 
     elif func_name == "detect_already_done" and len(sys.argv) >= 4:
