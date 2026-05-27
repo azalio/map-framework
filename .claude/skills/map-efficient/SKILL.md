@@ -383,7 +383,7 @@ Return JSON with valid, summary, issues, files_changed, tests_run, and escalatio
   named subtask. Use `--dry-run` to preview the diff before writing.
 - If `valid=false`, write `code-review-N.md`, run `python3 .map/scripts/map_orchestrator.py monitor_failed --feedback "<feedback>"`, inspect `retry_isolation`, and invoke Predictor only when stuck/high-risk escalation rules apply.
 - If `retry_isolation=clean_retry_required`, run `python3 .map/scripts/map_step_runner.py validate_retry_quarantine` before the next Actor call. The next Actor prompt must use CLEAN_RETRY mode from `.map/<branch>/retry_quarantine.json` and must not reuse the rejected approach unless the quarantine artifact preserves it.
-- Treat test failures after Monitor approval as Monitor failure.
+- Treat test failures after Monitor approval as Monitor failure. **Cross-subtask regression gate (MANDATORY):** before the test gate, run `detect_cross_subtask_regression_risk "$BRANCH" "$SUBTASK_ID"`; if `recommended_gate == "full_suite"` you MUST run the FULL suite (never a `-k` subset) before commit / `record_subtask_result` — per-subtask Monitor is blind to regressions on prior subtasks' code. Recipe: [efficient-reference.md](efficient-reference.md).
 
 ### Phase: ADVANCE_SUBTASK (synthetic boundary)
 
@@ -403,7 +403,7 @@ Every Monitor failure must create a durable `code-review-N.md` with exact issue,
 
 ### Per-Wave Gates (after all subtasks in wave pass Monitor)
 
-Run build first, then tests, then linter. If build fails, skip tests/lint and reopen the owning subtask.
+Run build first, then tests, then linter. If build fails, skip tests/lint and reopen the owning subtask. Run the FULL test suite (not a `-k` subset) whenever any subtask in the wave tripped the cross-subtask regression gate (`recommended_gate == "full_suite"`) — a parallel wave that edits a shared file is the highest-risk case for a regression no single subtask's scoped run can see.
 
 ## Step 2a: Validate Step Completion
 

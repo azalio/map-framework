@@ -88,6 +88,36 @@ If `truncated: true`:
 3. Cross-check `files_changed` against `git diff --name-only`. Files
    declared but not in the diff = Actor said it changed them but didn't.
 
+## Cross-subtask regression gate
+
+Per-subtask Monitor validates only the current subtask's contract and the
+files it touched — it is structurally blind to regressions this change induces
+on *prior* subtasks' code. The canonical miss (run `new-road-quantum`): ST-009
+edited `chunked_review_pipeline.py`, a file seven earlier subtasks shared, and
+broke a stub-path test that only surfaced at the final full-suite gate, eight
+subtasks later.
+
+Before the post-Monitor test gate, ask the deterministic detector whether a
+scoped run is safe:
+
+```bash
+RISK=$(python3 .map/scripts/map_step_runner.py \
+  detect_cross_subtask_regression_risk "$BRANCH" "$SUBTASK_ID")
+echo "$RISK"   # inspect shared_source_files / prior_owners / reason
+GATE=$(echo "$RISK" | jq -r '.recommended_gate')
+```
+
+- `recommended_gate == "full_suite"` — the current diff overlaps a file a
+  prior subtask owned, OR the diff couldn't be computed (git error, fail-safe).
+  You MUST run the FULL test suite (never a `-k`-filtered subset) before
+  commit / `record_subtask_result`. A scoped run cannot catch a cross-subtask
+  regression and is exactly how this bug class reaches the final gate.
+- `recommended_gate == "scoped"` — no overlap with prior subtasks; a targeted
+  run is sufficient. (Overlap on test-only files stays `scoped` — a shared
+  test edit can't regress another subtask's production code.)
+
+It is read-only and exits 0 always; callers branch on `recommended_gate`.
+
 ## Pre-flight test baseline
 
 Snapshot pre-existing failures BEFORE any subtask executes so later

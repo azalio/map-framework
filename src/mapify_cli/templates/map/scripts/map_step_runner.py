@@ -6967,6 +6967,250 @@ def validate_mutation_boundary(
     return report
 
 
+_TEST_DIR_SEGMENTS = {"tests", "test", "testing", "__tests__", "spec", "specs"}
+
+
+def _is_test_path(path: str) -> bool:
+    """Heuristic: does this repo-relative path look like a test file?
+
+    Used only to lower the regression-risk signal for files that two
+    subtasks both touched but that cannot themselves cause a regression in
+    another subtask's production code (a shared *test* edit is far less
+    dangerous than a shared *source* edit). Conventions covered: a ``tests/``
+    / ``test/`` / ``__tests__/`` path segment, ``test_*`` / ``*_test`` base
+    names, and ``*.test.*`` / ``*.spec.*`` suffixes (pytest, go test, jest).
+    """
+    norm = path.replace("\\", "/")
+    parts = [p for p in norm.split("/") if p]
+    if not parts:
+        return False
+    base = parts[-1]
+    if any(seg in _TEST_DIR_SEGMENTS for seg in parts[:-1]):
+        return True
+    if re.match(r"(?:test_.+|.+_test)\.[A-Za-z0-9]+$", base):
+        return True
+    if re.search(r"\.(?:test|spec)\.[A-Za-z0-9]+$", base):
+        return True
+    return False
+
+
+def _current_subtask_changed_files(
+    branch_name: str, subtask_id: str, project_dir: Path
+) -> Optional[set[str]]:
+    """Files touched by the in-flight subtask since the prior subtask commit.
+
+    Mirrors ``validate_mutation_boundary``'s diff strategy (commit-range diff
+    against ``last_subtask_commit_sha`` — falling back to ``HEAD`` — unioned
+    with ``git status --porcelain`` for uncommitted work, minus the framework
+    ``.map/`` / ``.codex/`` paths and the per-subtask baseline). Returns
+    ``None`` on any git failure so callers can fail safe to a full gate
+    instead of silently assuming "no changes".
+    """
+    base_ref: Optional[str] = None
+    state_file = project_dir / ".map" / branch_name / "step_state.json"
+    if state_file.exists():
+        try:
+            state_data = json.loads(state_file.read_text(encoding="utf-8"))
+            last_sha = state_data.get("last_subtask_commit_sha")
+            if isinstance(last_sha, str) and last_sha:
+                base_ref = last_sha
+        except (json.JSONDecodeError, OSError):
+            pass
+    if not base_ref:
+        head_probe = subprocess.run(
+            ["git", "rev-parse", "--verify", "HEAD"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if head_probe.returncode == 0:
+            base_ref = "HEAD"
+
+    try:
+        if base_ref:
+            diff_result = subprocess.run(
+                ["git", "diff", "--name-only", base_ref],
+                cwd=project_dir,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        else:
+            diff_result = None
+        status_result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+    if status_result.returncode != 0:
+        return None
+    if diff_result is not None and diff_result.returncode != 0:
+        # A base_ref was resolved (last_subtask_commit_sha or HEAD) but its
+        # diff failed — e.g. a stale SHA after a rebase. We cannot determine
+        # this subtask's committed surface, and porcelain alone would miss
+        # committed work (reporting an empty change set on a clean worktree).
+        # Fail safe to "unknown" so the caller forces a full gate, matching
+        # this function's documented contract.
+        return None
+
+    changed: set[str] = set()
+    if diff_result is not None:
+        changed.update(
+            line.strip() for line in diff_result.stdout.splitlines() if line.strip()
+        )
+    for raw in status_result.stdout.splitlines():
+        if len(raw) >= 4:
+            path = raw[3:].strip()
+            if " -> " in path:
+                path = path.split(" -> ", 1)[1]
+            if path:
+                changed.add(path)
+
+    changed = {
+        p for p in changed
+        if not p.startswith(".map/") and not p.startswith(".codex/")
+    }
+
+    baseline_path = _subtask_baseline_path(branch_name, subtask_id, project_dir)
+    if baseline_path.exists():
+        try:
+            baseline_data = json.loads(baseline_path.read_text(encoding="utf-8"))
+            raw_baseline = baseline_data.get("files", [])
+            if isinstance(raw_baseline, list):
+                baseline_set = {
+                    str(p) for p in raw_baseline if isinstance(p, str)
+                }
+                changed -= baseline_set
+        except (json.JSONDecodeError, OSError):
+            pass
+    return changed
+
+
+def detect_cross_subtask_regression_risk(
+    branch: str, subtask_id: str
+) -> dict:
+    """Flag when the in-flight subtask edits files that prior subtasks owned.
+
+    Per-subtask Monitor validates only the current subtask's contract and the
+    files it touched — it is structurally blind to regressions this change
+    induces on *other* subtasks' code. The canonical failure (run
+    ``new-road-quantum``): ST-009 edited ``chunked_review_pipeline.py``, which
+    seven earlier subtasks had also edited, and broke a stub-path test that
+    only surfaced at the final full-suite gate, eight subtasks later.
+
+    This is the deterministic signal the skill uses to decide between a
+    ``-k``-scoped test run and the full suite: when the current diff overlaps a
+    file a prior subtask changed, a scoped run cannot see the regression, so
+    the full suite is mandatory before recording the subtask.
+
+    Returns::
+        {
+          "status": "ok" | "unknown",
+          "subtask_id": str,
+          "at_risk": bool,
+          "recommended_gate": "full_suite" | "scoped",
+          "shared_files": [str],          # all overlapping files
+          "shared_source_files": [str],   # non-test overlap (drives at_risk)
+          "shared_test_files": [str],     # test-only overlap (weaker signal)
+          "prior_owners": {file: [ST-id]},
+          "current_changed_files": [str],
+          "reason": str,
+        }
+
+    ``status="unknown"`` with ``at_risk=true`` / ``recommended_gate=
+    "full_suite"`` is the fail-safe when the current diff cannot be computed
+    (git error): the gate defaults to thorough rather than silently scoped.
+    """
+    branch_name = _sanitize_branch(branch)
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+
+    prior_owners: dict[str, list[str]] = {}
+    state_file = project_dir / ".map" / branch_name / "step_state.json"
+    if state_file.exists():
+        try:
+            state_data = json.loads(state_file.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            state_data = {}
+        results = state_data.get("subtask_results")
+        if isinstance(results, dict):
+            for prior_id, result in results.items():
+                if prior_id == subtask_id or not isinstance(result, dict):
+                    continue
+                files = result.get("files_changed")
+                if not isinstance(files, list):
+                    continue
+                for path in files:
+                    if isinstance(path, str) and path.strip():
+                        prior_owners.setdefault(path, [])
+                        if prior_id not in prior_owners[path]:
+                            prior_owners[path].append(prior_id)
+
+    current = _current_subtask_changed_files(branch_name, subtask_id, project_dir)
+    if current is None:
+        return {
+            "status": "unknown",
+            "subtask_id": subtask_id,
+            "at_risk": True,
+            "recommended_gate": "full_suite",
+            "shared_files": [],
+            "shared_source_files": [],
+            "shared_test_files": [],
+            "prior_owners": prior_owners,
+            "current_changed_files": [],
+            "reason": (
+                "Could not compute the current subtask diff (git unavailable "
+                "or not a repo). Defaulting to full_suite as a fail-safe — a "
+                "scoped run could hide a cross-subtask regression."
+            ),
+        }
+
+    shared = sorted(p for p in current if p in prior_owners)
+    shared_test = [p for p in shared if _is_test_path(p)]
+    shared_source = [p for p in shared if not _is_test_path(p)]
+    at_risk = bool(shared_source)
+
+    if at_risk:
+        offenders = ", ".join(
+            f"{p} (also: {', '.join(prior_owners[p])})" for p in shared_source
+        )
+        reason = (
+            f"Subtask edits {len(shared_source)} source file(s) prior subtasks "
+            f"already modified: {offenders}. Run the FULL test suite (no -k "
+            "filter) before recording — a scoped run cannot catch a regression "
+            "this change induces on prior subtasks' code or stub/no-op paths."
+        )
+    elif shared_test:
+        reason = (
+            f"Overlap only on test file(s): {', '.join(shared_test)}. Low "
+            "regression risk to production code; a scoped run is acceptable, "
+            "but re-run the affected test modules in full."
+        )
+    else:
+        reason = (
+            "No overlap with files changed by prior subtasks — a scoped test "
+            "run is sufficient for this subtask."
+        )
+
+    return {
+        "status": "ok",
+        "subtask_id": subtask_id,
+        "at_risk": at_risk,
+        "recommended_gate": "full_suite" if at_risk else "scoped",
+        "shared_files": shared,
+        "shared_source_files": shared_source,
+        "shared_test_files": shared_test,
+        "prior_owners": {p: prior_owners[p] for p in shared},
+        "current_changed_files": sorted(current),
+        "reason": reason,
+    }
+
+
 def build_context_block(branch: str, current_subtask_id: str) -> str:
     """Build structured context block for Actor prompt.
 
@@ -7716,6 +7960,15 @@ if __name__ == "__main__":
         # CLI: token_report [branch]
         tok_branch = sys.argv[2] if len(sys.argv) >= 3 else None
         print(token_report(tok_branch))
+
+    elif func_name == "detect_cross_subtask_regression_risk" and len(sys.argv) >= 4:
+        # CLI: detect_cross_subtask_regression_risk <branch> <subtask_id>
+        # Read-only. Exit 0 always (callers branch on the `at_risk` /
+        # `recommended_gate` fields, like detect_truncated_agent_output) so a
+        # shell pipeline can decide full-suite vs scoped without `set -e`
+        # tripping on an advisory signal.
+        report = detect_cross_subtask_regression_risk(sys.argv[2], sys.argv[3])
+        print(json.dumps(report, indent=2))
 
     elif func_name == "detect_already_done" and len(sys.argv) >= 4:
         # CLI: detect_already_done <branch> <subtask_id> [--since-ref REF]
