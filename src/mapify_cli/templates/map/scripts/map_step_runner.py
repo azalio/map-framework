@@ -5658,6 +5658,63 @@ def detect_truncated_agent_output(
     }
 
 
+def build_json_retry_prompt(
+    agent: str,
+    errors: Optional[list[str]] = None,
+) -> dict[str, object]:
+    """Build a retry prompt for a review agent that returned malformed output.
+
+    Uses _render_format_block(agent) as the single source of truth for the
+    output schema so the retry prompt embeds the identical skeleton as the
+    original review prompt.
+
+    Returns:
+        {
+            "status": "ok" | "error",
+            "agent": str,           # echoed agent name
+            "reasons": [str, ...],  # echoed errors (empty list when None)
+            "prompt": str,          # retry prompt text ("" on error)
+        }
+
+    On unknown agent (not in AGENT_OUTPUT_SCHEMAS), returns status="error"
+    with an "unknown agent" entry prepended to reasons and prompt="".
+    """
+    error_list: list[str] = list(errors) if errors else []
+
+    if agent not in AGENT_OUTPUT_SCHEMAS:
+        return {
+            "status": "error",
+            "agent": agent,
+            "reasons": [f"unknown agent: {agent!r}; must be one of {sorted(AGENT_OUTPUT_SCHEMAS)}"] + error_list,
+            "prompt": "",
+        }
+
+    format_block = _render_format_block(agent)
+
+    # Build the failure section only when there are errors to report.
+    if error_list:
+        bullet_lines = "\n".join(f"- {e}" for e in error_list)
+        failure_section = (
+            f"\nYour previous response was rejected for:\n{bullet_lines}\n"
+        )
+    else:
+        failure_section = ""
+
+    prompt = (
+        "Emit ONLY one JSON object matching this schema. "
+        "No markdown, no prose — just the JSON object.\n"
+        f"{failure_section}"
+        f"\n{format_block}"
+    )
+
+    return {
+        "status": "ok",
+        "agent": agent,
+        "reasons": error_list,
+        "prompt": prompt,
+    }
+
+
 def load_research(
     branch: str,
     subtask_id: str,
@@ -8351,6 +8408,39 @@ if __name__ == "__main__":
             "agent_kind": report["agent_kind"],
         }
         print(json.dumps(report_summary, indent=2))
+
+    elif func_name == "build_json_retry_prompt":
+        # CLI: build_json_retry_prompt --agent <role> [--errors '<json array>']
+        # Builds a retry prompt for a review agent that returned malformed output.
+        # Prints JSON result; exit 0 on success (even for unknown agent — callers
+        # check result["status"]).  Exit 1 only when --errors is not a JSON list.
+        retry_agent = "monitor"
+        if "--agent" in sys.argv:
+            agent_idx = sys.argv.index("--agent")
+            if agent_idx + 1 < len(sys.argv):
+                retry_agent = sys.argv[agent_idx + 1]
+        retry_errors: Optional[list[str]] = None
+        if "--errors" in sys.argv:
+            err_idx = sys.argv.index("--errors")
+            if err_idx + 1 < len(sys.argv):
+                raw_errors = sys.argv[err_idx + 1]
+                try:
+                    parsed_errors = json.loads(raw_errors)
+                except json.JSONDecodeError as exc:
+                    print(
+                        json.dumps({"status": "error", "message": f"--errors must be a JSON array: {exc}"}),
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+                if not isinstance(parsed_errors, list):
+                    print(
+                        json.dumps({"status": "error", "message": "--errors must be a JSON array, got non-list"}),
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+                retry_errors = [str(e) for e in parsed_errors]
+        retry_result = build_json_retry_prompt(retry_agent, retry_errors)
+        print(json.dumps(retry_result, indent=2))
 
     elif func_name == "shuffle-sections":
         # CLI: shuffle-sections <mode> [seed]

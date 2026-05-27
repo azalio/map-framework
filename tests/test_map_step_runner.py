@@ -6657,3 +6657,86 @@ class TestTokenAccounting:
         )
         assert report.returncode == 0, report.stderr
         assert "cache hit ratio" in report.stdout
+
+
+class TestBuildJsonRetryPrompt:
+    """build_json_retry_prompt — canonical retry-prompt builder (ST-002).
+
+    Verifies:
+    - Shared-skeleton reuse: prompt contains _render_format_block output verbatim.
+    - Mandated phrases present in every valid-agent response.
+    - errors=None → ok, no failure section; errors=[...] → bullets + reasons echoed.
+    - Unknown agent → status "error", empty prompt.
+    """
+
+    def test_build_json_retry_prompt_uses_shared_skeleton(self):
+        """VC1: prompt embeds _render_format_block verbatim (single source of truth)."""
+        result = map_step_runner.build_json_retry_prompt("monitor")
+        assert result["status"] == "ok"
+        expected_block = map_step_runner._render_format_block("monitor")
+        assert expected_block in result["prompt"], (
+            "prompt must contain the exact _render_format_block output"
+        )
+
+    def test_mandated_phrases_present(self):
+        """VC2: prompt contains the two required literal phrases."""
+        result = map_step_runner.build_json_retry_prompt("monitor")
+        assert result["status"] == "ok"
+        assert "Emit ONLY one JSON object matching this schema" in result["prompt"]
+        assert "No markdown, no prose" in result["prompt"]
+
+    def test_no_errors_returns_ok_no_failure_section(self):
+        """VC3a: errors=None → status ok, prompt non-empty, no failure section."""
+        result = map_step_runner.build_json_retry_prompt("monitor", errors=None)
+        assert result["status"] == "ok"
+        assert result["reasons"] == []
+        assert result["prompt"] != ""
+        assert "rejected for" not in result["prompt"]
+
+    def test_empty_errors_list_returns_ok_no_failure_section(self):
+        """VC3b: errors=[] → same as None (no failure section)."""
+        result = map_step_runner.build_json_retry_prompt("predictor", errors=[])
+        assert result["status"] == "ok"
+        assert result["reasons"] == []
+        assert "rejected for" not in result["prompt"]
+
+    def test_errors_appear_in_prompt_and_reasons(self):
+        """VC3c: non-empty errors → bullet list in prompt + echoed in reasons."""
+        errs = ["missing key: valid", "trailing prose"]
+        result = map_step_runner.build_json_retry_prompt("monitor", errors=errs)
+        assert result["status"] == "ok"
+        assert result["reasons"] == errs
+        for err in errs:
+            assert err in result["prompt"], f"error {err!r} must appear in prompt"
+        assert "rejected for" in result["prompt"]
+
+    def test_unknown_agent_returns_error_empty_prompt(self):
+        """VC4: unknown agent (e.g. 'actor') → status error, prompt empty."""
+        result = map_step_runner.build_json_retry_prompt("actor")
+        assert result["status"] == "error"
+        assert result["prompt"] == ""
+        assert result["agent"] == "actor"
+        # reasons must include an 'unknown agent' entry
+        assert any("unknown agent" in r for r in result["reasons"])
+
+    def test_unknown_agent_preserves_caller_errors_in_reasons(self):
+        """Unknown-agent path still echoes caller-supplied errors in reasons."""
+        errs = ["some prior error"]
+        result = map_step_runner.build_json_retry_prompt("actor", errors=errs)
+        assert result["status"] == "error"
+        # caller errors are preserved (after the 'unknown agent' prepend)
+        assert "some prior error" in result["reasons"]
+
+    def test_predictor_skeleton_reused(self):
+        """Skeleton reuse also holds for predictor (not just monitor)."""
+        result = map_step_runner.build_json_retry_prompt("predictor")
+        assert result["status"] == "ok"
+        expected_block = map_step_runner._render_format_block("predictor")
+        assert expected_block in result["prompt"]
+
+    def test_evaluator_skeleton_reused(self):
+        """Skeleton reuse also holds for evaluator."""
+        result = map_step_runner.build_json_retry_prompt("evaluator")
+        assert result["status"] == "ok"
+        expected_block = map_step_runner._render_format_block("evaluator")
+        assert expected_block in result["prompt"]
