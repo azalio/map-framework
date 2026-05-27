@@ -997,13 +997,14 @@ def validate_step(
     Args:
         step_id: Step identifier to validate
         branch: Git branch name (sanitized)
-        recommendation: For step_id="2.4" (Monitor close), optional
-            Monitor verdict field. When set to ``revise``, ``block``, or
-            ``needs_investigation``, validate_step refuses to close the
-            phase and returns valid=false — so the recommendation
-            contract (skill rule: "valid=true + recommendation∈{revise,
-            block, needs_investigation} = fail") is enforced
-            orchestrator-side, not just by-convention.
+        recommendation: For step_id="2.4" (Monitor close), REQUIRED
+            Monitor verdict field — omitting it returns valid=false
+            (recommendation_required) rather than closing the phase. When
+            set to ``revise``, ``block``, or ``needs_investigation``,
+            validate_step refuses to close the phase and returns valid=false
+            — so the recommendation contract (skill rule: "valid=true +
+            recommendation∈{revise, block, needs_investigation} = fail") is
+            enforced orchestrator-side, not just by-convention.
 
     Returns:
         Dict with valid: bool, message: str
