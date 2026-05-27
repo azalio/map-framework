@@ -4240,24 +4240,55 @@ class TestDetectCrossSubtaskRegressionRisk:
     """
 
     def _init_git(self, root: Path) -> None:
-        subprocess.run(["git", "init"], cwd=root, capture_output=True, check=False)
+        subprocess.run(["git", "init"], cwd=root, capture_output=True, check=True)
         subprocess.run(
-            ["git", "config", "user.email", "t@t.com"], cwd=root, capture_output=True
+            ["git", "config", "user.email", "t@t.com"], cwd=root, capture_output=True, check=True
         )
         subprocess.run(
-            ["git", "config", "user.name", "t"], cwd=root, capture_output=True
+            ["git", "config", "user.name", "t"], cwd=root, capture_output=True, check=True
         )
-        # An initial commit so HEAD resolves (base_ref fallback).
+        # An initial commit so HEAD resolves (base_ref). Assert it lands — a
+        # swallowed commit failure would leave HEAD unresolved and let the
+        # detector fall through to porcelain-only, silently weakening the tests.
         (root / ".seed").write_text("seed\n")
-        subprocess.run(["git", "add", "."], cwd=root, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=root, capture_output=True, check=True)
         subprocess.run(
-            ["git", "commit", "-m", "init"], cwd=root, capture_output=True
+            ["git", "commit", "-m", "init"], cwd=root, capture_output=True, check=True
         )
+        head = subprocess.run(
+            ["git", "rev-parse", "--verify", "HEAD"],
+            cwd=root, capture_output=True, text=True,
+        )
+        assert head.returncode == 0, "test setup: initial commit produced no resolvable HEAD"
 
     def _write_state(self, branch_dir: Path, subtask_results: dict) -> None:
         (branch_dir / "step_state.json").write_text(
             json.dumps({"subtask_results": subtask_results})
         )
+
+    def test_stale_base_ref_fails_safe_to_full_suite(
+        self, branch_workspace, monkeypatch
+    ):
+        """A stale last_subtask_commit_sha (e.g. after a rebase) makes
+        `git diff <sha>` fail. The detector must fail safe to full_suite rather
+        than report 'scoped' from porcelain alone on a clean worktree."""
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        (branch_workspace / "step_state.json").write_text(
+            json.dumps(
+                {
+                    "subtask_results": {"ST-001": {"files_changed": ["src/pipeline.py"]}},
+                    "last_subtask_commit_sha": "0" * 40,  # nonexistent commit
+                }
+            )
+        )
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.detect_cross_subtask_regression_risk(
+            "test-branch", "ST-002"
+        )
+        assert report["status"] == "unknown", report
+        assert report["at_risk"] is True
+        assert report["recommended_gate"] == "full_suite"
 
     def test_shared_source_file_is_at_risk_full_suite(
         self, branch_workspace, monkeypatch

@@ -6631,7 +6631,13 @@ def _current_subtask_changed_files(
     if status_result.returncode != 0:
         return None
     if diff_result is not None and diff_result.returncode != 0:
-        diff_result = None  # bad auto-resolved base → porcelain-only
+        # A base_ref was resolved (last_subtask_commit_sha or HEAD) but its
+        # diff failed — e.g. a stale SHA after a rebase. We cannot determine
+        # this subtask's committed surface, and porcelain alone would miss
+        # committed work (reporting an empty change set on a clean worktree).
+        # Fail safe to "unknown" so the caller forces a full gate, matching
+        # this function's documented contract.
+        return None
 
     changed: set[str] = set()
     if diff_result is not None:
