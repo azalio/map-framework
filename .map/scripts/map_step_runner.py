@@ -8618,6 +8618,15 @@ if __name__ == "__main__":
         report = detect_cross_subtask_regression_risk(sys.argv[2], sys.argv[3])
         print(json.dumps(report, indent=2))
 
+    elif func_name == "detect_symbol_blast_radius" and len(sys.argv) >= 4:
+        # CLI: detect_symbol_blast_radius <branch> <subtask_id>
+        # Read-only. Exit 0 always (callers branch on the `recommended_gate`
+        # field, like detect_cross_subtask_regression_risk) so a shell pipeline
+        # can decide full-suite vs scoped without `set -e` tripping on an
+        # advisory signal.
+        report = detect_symbol_blast_radius(sys.argv[2], sys.argv[3])
+        print(json.dumps(report, indent=2))
+
     elif func_name == "detect_already_done" and len(sys.argv) >= 4:
         # CLI: detect_already_done <branch> <subtask_id> [--since-ref REF]
         branch_arg = sys.argv[2]
