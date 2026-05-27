@@ -48,6 +48,29 @@
     via cast() at the narrowing boundary.
   ```
 
+- **Truncated Agent Recovery: Inspect Git State, Then Continue — Do Not Restart** (2026-05-27): When an Actor agent truncates mid-response (stops with prose like "Now insert the marker in predictor.md:" without completing the edit), the correct recovery is: (1) inspect actual git state (`git diff`, `git status`) to determine which edits were applied vs pending, (2) continue in the SAME agent thread via SendMessage for the pending pieces only. Do NOT restart the agent or re-issue the full subtask prompt — restart causes the agent to re-execute already-completed edits, either double-applying changes (e.g., inserting a marker twice) or producing conflicts. The git state is ground truth for what was actually done; the agent's last prose line is not. [workflow: map-efficient]
+  ```bash
+  # After Actor truncates mid-response:
+
+  # Step 1: Determine actual state from git — do NOT trust the last prose line
+  git diff --stat      # which files were modified?
+  git diff HEAD        # what exactly changed?
+
+  # Step 2: Identify pending work by comparing git state to the subtask plan.
+  # Example: plan required marker in monitor.md + predictor.md + evaluator.md
+  # git diff shows monitor.md done, predictor.md done, evaluator.md NOT in diff
+  # → pending: evaluator.md only
+
+  # Step 3: Continue in SAME agent thread (SendMessage), NOT a new subtask:
+  # "Continue from where you stopped.
+  #  Already done (confirmed via git diff): monitor.md, predictor.md.
+  #  Remaining: insert marker in evaluator.md at the appendix boundary."
+
+  # WRONG — restart with full prompt:
+  # Actor re-inserts marker in monitor.md and predictor.md → duplicate markers
+  # or conflicts requiring manual untangling.
+  ```
+
 - **Broad Revert Commands Destroy Uncommitted Work** (2026-05-12): Before running any broad automated batch-fix (regex replacement, `sed -i`, automated import insertion) on a file that holds in-progress work from earlier subtasks, COMMIT or STASH first — `git checkout -- <file>` or `git restore <file>` used to undo a bad batch-fix will also erase every uncommitted line on that file. In this workflow a Python regex script inserted `del branch_workspace` indiscriminately, breaking tests that DO use the fixture; the rescue `git checkout -- tests/test_map_step_runner.py` destroyed 451 lines of test work written across three previous subtasks that had never been committed. Recovery required a full Actor pass re-deriving assertions from source. [workflow: map-efficient]
   ```bash
   # WRONG — batch-fix on uncommitted multi-subtask work, then revert on failure:

@@ -42,6 +42,23 @@ paths:
       )
   ```
 
+- **Prose-Literal Pinned Tests Must Be Rewritten in the Same Commit as Prose Removal** (2026-05-27): When a refactor removes or replaces exact prose strings from skill files, agent prompts, or any text artifact that tests assert verbatim (e.g., `assert 'emit ONLY the JSON envelope' in content`), identify ALL such pinned tests BEFORE writing the refactor commit. The test turns red the instant the prose is gone, making the commit unbuildable mid-edit. Procedure: (1) grep the test suite for every literal string being removed, (2) plan the replacement assertion (structural tag, function name, behavioral property), (3) include the test rewrite in the SAME atomic commit as the prose removal. This is narrower than 'Workflow Phase Migration Requires Test Contract Reassignment' — it applies to any prose removal regardless of phase migration. [workflow: map-efficient]
+  ```bash
+  # Step 1: Before writing the refactor, grep for the prose being removed:
+  grep -r 'emit ONLY the JSON envelope' tests/
+  # → tests/test_skills.py:88:    assert 'emit ONLY the JSON envelope' in content
+
+  # Step 2: Plan the structural replacement assertion:
+  # Old: assert 'emit ONLY the JSON envelope' in content
+  # New: assert '<format_rules>' in retry_prompt  # tag that replaced the prose
+
+  # Step 3: Commit touches BOTH the skill file and the test atomically.
+
+  # WRONG — commit prose removal alone, discover red test after:
+  git add skills/monitor.md && git commit -m 'remove prose retry instructions'
+  # pytest fails — forced amend or second commit under time pressure
+  ```
+
 - **Side-Effect-Only pytest Fixtures Need `del` Suppression, Not Rename** (2026-05-12): When a pytest fixture is used ONLY for its `monkeypatch.chdir` / `monkeypatch.setattr` side effects and the return value is never referenced in the test body, Pyright flags the parameter as `reportUnusedParameter`. The idiomatic fix is `del fixture_name` as the first statement of the body: the name IS referenced (by the del), side effects have already executed, Pyright is satisfied. DO NOT rename to `_fixture_name` — pytest matches fixtures by exact parameter name, so renaming disconnects the injection and the side effects never run. [workflow: map-efficient]
   ```python
   @pytest.fixture
