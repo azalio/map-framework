@@ -90,8 +90,52 @@ If `truncated: true`:
    and re-invoke Actor ONCE using the prompt from
    `build_json_retry_prompt --agent actor --errors '<reasons>'`.
 2. If still malformed, stop with CLARIFICATION_NEEDED.
-3. Cross-check `files_changed` against `git diff --name-only`. Files
-   declared but not in the diff = Actor said it changed them but didn't.
+
+**Files-changed mismatch check (MANDATORY):** After the JSON envelope is
+confirmed intact, run:
+
+```bash
+FILES_DECLARED=$(echo "$ACTOR_OUTPUT" | jq -r '.files_changed | join(",")')
+MISMATCH=$(detect_actor_files_changed_mismatch "$BRANCH" "$SUBTASK_ID" \
+  --declared "$FILES_DECLARED")
+echo "$MISMATCH"
+STATUS_MISMATCH=$(echo "$MISMATCH" | jq -r '.status_mismatch')
+```
+
+- `status_mismatch == true` — Actor declared files it did not write (mid-edit
+  truncation). Read `recovery_instruction` from the JSON and re-invoke the
+  Actor to finish the `declared_not_written` files. Do NOT record the subtask
+  until the mismatch clears.
+- `status_mismatch == false` — no mismatch; proceed to Monitor.
+
+## Symbol blast-radius gate
+
+Per-subtask Monitor validates only the files the current subtask touched — it
+is structurally blind to callers of a changed symbol that live in OTHER files
+(other skills, workflows, or utilities). The canonical miss: a shared helper is
+renamed or its signature changes, and every caller outside `affected_files`
+breaks silently.
+
+Before dispatching Monitor, run the blast-radius detector:
+
+```bash
+BLAST=$(python3 .map/scripts/map_step_runner.py \
+  detect_symbol_blast_radius "$BRANCH" "$SUBTASK_ID")
+echo "$BLAST"   # inspect changed_symbols / external_callers / reason
+GATE=$(echo "$BLAST" | jq -r '.recommended_gate')
+```
+
+- `recommended_gate == "validate_callers"` — the subtask changed a
+  module-level symbol referenced OUTSIDE its `affected_files`. You MUST:
+  1. Append the `external_callers` list to the Monitor `<documents>` context.
+  2. Require Monitor to validate the contract of EACH external caller (not
+     just the current subtask's files).
+  3. Do NOT accept a Monitor pass that ignores the external callers — this is
+     the guard that catches a shared-symbol refactor breaking another workflow.
+- `recommended_gate == "scoped"` — no external callers affected; proceed to
+  Monitor dispatch without modification.
+
+It is read-only and exits 0 always; callers branch on `recommended_gate`.
 
 ## Cross-subtask regression gate
 

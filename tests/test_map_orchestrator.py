@@ -2063,7 +2063,7 @@ class TestValidateStepInterSubtaskBoundary:
         plan_dir.mkdir(parents=True, exist_ok=True)
         state_file = plan_dir / "step_state.json"
         state.save(state_file)
-        result = map_orchestrator.validate_step("2.4", branch_dir)
+        result = map_orchestrator.validate_step("2.4", branch_dir, recommendation="proceed")
         assert result["valid"] is True
         assert result["next_step"] == "2.2", result
         assert result["subtask_advanced_from"] == "ST-001"
@@ -2088,7 +2088,7 @@ class TestValidateStepInterSubtaskBoundary:
         state.pending_steps = ["2.4"]
         state_file = tmp_path / ".map" / branch_dir / "step_state.json"
         state.save(state_file)
-        result = map_orchestrator.validate_step("2.4", branch_dir)
+        result = map_orchestrator.validate_step("2.4", branch_dir, recommendation="proceed")
         assert result["next_step"] == "COMPLETE"
 
 
@@ -2202,7 +2202,7 @@ class TestValidateStepTransactionalMonitor:
         state_file = tmp_path / ".map" / branch_dir / "step_state.json"
         state.save(state_file)
         # Jump straight to 2.4 — historically this returned Step mismatch.
-        result = map_orchestrator.validate_step("2.4", branch_dir)
+        result = map_orchestrator.validate_step("2.4", branch_dir, recommendation="proceed")
         assert result["valid"] is True, result
         reloaded = map_orchestrator.StepState.load(state_file)
         assert "2.3" in reloaded.completed_steps
@@ -2289,7 +2289,7 @@ class TestValidateStepAutoMutationBoundary:
 
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
         monkeypatch.setenv("MAP_STRICT_SCOPE", "1")
-        result = map_orchestrator.validate_step("2.4", branch_dir)
+        result = map_orchestrator.validate_step("2.4", branch_dir, recommendation="proceed")
         assert result["valid"] is False
         assert "Mutation-boundary violation" in result["message"]
 
@@ -2639,10 +2639,9 @@ class TestGetNextStepResearchSkipWarning:
 
 
 class TestValidateStepRecommendationOmittedWarning:
-    """Fix #6 (2026-05-26): closing 2.4 without --recommendation leaves
-    the verdict-consistency footgun open. The orchestrator now surfaces
-    a warning so the operator sees they should pass the recommendation
-    next time.
+    """ST-003: closing 2.4 without --recommendation is now a hard-fail so the
+    verdict-consistency gate cannot be bypassed. The orchestrator returns
+    valid=False with recommendation_required=True when recommendation is absent.
     """
 
     def _seed(self, branch_dir: str, tmp_path: Path) -> Path:
@@ -2658,16 +2657,18 @@ class TestValidateStepRecommendationOmittedWarning:
         state.save(sf)
         return sf
 
-    def test_warning_emitted_when_recommendation_omitted(
+    def test_hard_fail_when_recommendation_omitted(
         self, branch_dir, tmp_path
     ):
+        """ST-003: omitting --recommendation is now a hard-fail (valid=False),
+        not a soft warning. Enforces the verdict-consistency gate structurally."""
         self._seed(branch_dir, tmp_path)
         result = map_orchestrator.validate_step("2.4", branch_dir)
-        assert result["valid"] is True
-        assert "warning" in result, result
-        assert "--recommendation" in result["warning"]
+        assert result["valid"] is False, result
+        assert result.get("recommendation_required") is True, result
+        assert "--recommendation" in result["message"]
 
-    def test_no_warning_when_recommendation_passed(
+    def test_no_error_when_recommendation_passed(
         self, branch_dir, tmp_path
     ):
         self._seed(branch_dir, tmp_path)
@@ -2675,7 +2676,7 @@ class TestValidateStepRecommendationOmittedWarning:
             "2.4", branch_dir, recommendation="proceed"
         )
         assert result["valid"] is True
-        assert "warning" not in result, result
+        assert result.get("recommendation_required") is None
 
 
 class TestValidateStepRecommendationContract:
@@ -2732,14 +2733,15 @@ class TestValidateStepRecommendationContract:
         )
         assert result["valid"] is True
 
-    def test_missing_recommendation_is_backward_compat(
+    def test_missing_recommendation_is_now_hard_fail(
         self, branch_dir, tmp_path
     ):
-        # Legacy callers that don't pass recommendation get the old
-        # behavior: 2.4 closes on any valid=true path.
+        # ST-003: omitting recommendation is now a hard-fail, not backward-compat.
+        # Callers MUST pass --recommendation to close 2.4.
         self._seed_state(branch_dir, tmp_path)
         result = map_orchestrator.validate_step("2.4", branch_dir)
-        assert result["valid"] is True
+        assert result["valid"] is False
+        assert result.get("recommendation_required") is True
 
 
 class TestMarkSubtaskCompleteKind:
@@ -2813,6 +2815,7 @@ class TestCursorAdvancesPastMarkedSubtasks:
     """
 
     def test_uppercase_phase_marker_counts_as_done(self, branch_dir, tmp_path):
+        del branch_dir, tmp_path
         state = map_orchestrator.StepState()
         state.workflow_status = "IN_PROGRESS"
         state.subtask_sequence = ["ST-001", "ST-002"]
@@ -2826,6 +2829,7 @@ class TestCursorAdvancesPastMarkedSubtasks:
     def test_subtask_results_entry_alone_counts_as_done(
         self, branch_dir, tmp_path
     ):
+        del branch_dir, tmp_path
         # Even without a subtask_phases marker, any recorded entry should
         # let the cursor move past the id.
         state = map_orchestrator.StepState()
@@ -2861,7 +2865,7 @@ class TestCursorAdvancesPastMarkedSubtasks:
         state_file = tmp_path / ".map" / branch_dir / "step_state.json"
         state.save(state_file)
 
-        result = map_orchestrator.validate_step("2.4", branch_dir)
+        result = map_orchestrator.validate_step("2.4", branch_dir, recommendation="proceed")
         assert result["valid"] is True
         assert result["next_step"] == "COMPLETE", result
 
@@ -2940,7 +2944,7 @@ class TestDepsAwareRuntimeAdvance:
         state_file = tmp_path / ".map" / branch_dir / "step_state.json"
         state.save(state_file)
 
-        result = map_orchestrator.validate_step("2.4", branch_dir)
+        result = map_orchestrator.validate_step("2.4", branch_dir, recommendation="proceed")
 
         assert result["valid"] is True
         assert result["subtask_advanced_from"] == "ST-001"
@@ -2977,7 +2981,7 @@ class TestDepsAwareRuntimeAdvance:
         state_file = tmp_path / ".map" / branch_dir / "step_state.json"
         state.save(state_file)
 
-        result = map_orchestrator.validate_step("2.4", branch_dir)
+        result = map_orchestrator.validate_step("2.4", branch_dir, recommendation="proceed")
 
         assert result["valid"] is True
         assert result["next_step"] == "BLOCKED_ON_DEPS"
@@ -3005,7 +3009,7 @@ class TestDepsAwareRuntimeAdvance:
         state_file = tmp_path / ".map" / branch_dir / "step_state.json"
         state.save(state_file)
 
-        result = map_orchestrator.validate_step("2.4", branch_dir)
+        result = map_orchestrator.validate_step("2.4", branch_dir, recommendation="proceed")
         assert result["valid"] is True
         assert result["subtask_advanced_to"] == "ST-002"
 
@@ -3036,7 +3040,7 @@ class TestDepsAwareRuntimeAdvance:
         state_file = tmp_path / ".map" / branch_dir / "step_state.json"
         state.save(state_file)
 
-        result = map_orchestrator.validate_step("2.4", branch_dir)
+        result = map_orchestrator.validate_step("2.4", branch_dir, recommendation="proceed")
         assert result["valid"] is True
         # Now ST-002 is ready (ST-003 marked done) — advance lands on it.
         assert result["subtask_advanced_to"] == "ST-002"
@@ -3360,6 +3364,93 @@ class TestCwdIndependence:
         assert "ST-001" in flat and "ST-X" not in flat, (
             f"set_waves resolved blueprint relative to cwd (project_b) "
             f"instead of script project (project_a). got: {out}"
+        )
+
+
+class TestValidateStep24RequiredRecommendation:
+    """ST-003 / VC1-VC3: validate_step 2.4 requires --recommendation.
+    Without it the verdict-consistency gate cannot enforce that Monitor's
+    revise/block/needs_investigation is honoured.
+    """
+
+    def _seed(self, branch_dir: str, tmp_path: Path) -> None:
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001"]
+        state.subtask_index = 0
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.4"
+        state.current_step_phase = "MONITOR"
+        state.completed_steps = ["2.2", "2.3"]
+        state.pending_steps = ["2.4"]
+        sf = tmp_path / ".map" / branch_dir / "step_state.json"
+        sf.parent.mkdir(parents=True, exist_ok=True)
+        state.save(sf)
+
+    # VC1 -------------------------------------------------------------------
+    def test_vc1_validate_step_24_requires_recommendation(
+        self, branch_dir: str, tmp_path: Path
+    ) -> None:
+        """VC1: omitting recommendation → valid=False + recommendation_required=True."""
+        self._seed(branch_dir, tmp_path)
+        result = map_orchestrator.validate_step("2.4", branch_dir)
+        assert result["valid"] is False, result
+        assert result.get("recommendation_required") is True, result
+        assert "--recommendation" in result["message"]
+
+    # VC3 -------------------------------------------------------------------
+    def test_vc3_validate_step_24_proceed_closes(
+        self, branch_dir: str, tmp_path: Path
+    ) -> None:
+        """VC3: recommendation='proceed' → valid=True (step closes cleanly)."""
+        self._seed(branch_dir, tmp_path)
+        result = map_orchestrator.validate_step(
+            "2.4", branch_dir, recommendation="proceed"
+        )
+        assert result["valid"] is True, result
+        assert result.get("recommendation_required") is None
+
+    def test_vc3_validate_step_24_revise_rejects(
+        self, branch_dir: str, tmp_path: Path
+    ) -> None:
+        """VC3: recommendation='revise' → valid=False (Monitor verdict enforced)."""
+        self._seed(branch_dir, tmp_path)
+        result = map_orchestrator.validate_step(
+            "2.4", branch_dir, recommendation="revise"
+        )
+        assert result["valid"] is False, result
+        assert result.get("recommendation") == "revise"
+
+    def test_vc3_validate_step_24_idempotent_noop(
+        self, branch_dir: str, tmp_path: Path
+    ) -> None:
+        """VC3: already-completed 2.4 re-validated with recommendation=None → valid=True (no-op path)."""
+        self._seed(branch_dir, tmp_path)
+        # First close it properly.
+        map_orchestrator.validate_step("2.4", branch_dir, recommendation="proceed")
+        # Now re-validate without recommendation — idempotent path must succeed.
+        result = map_orchestrator.validate_step("2.4", branch_dir)
+        assert result["valid"] is True, result
+        assert result.get("idempotent") is True, result
+
+    # VC2 -------------------------------------------------------------------
+    def test_vc2_validate_step_24_cli_nonzero_without_recommendation(
+        self, branch_dir: str, tmp_path: Path
+    ) -> None:
+        """VC2: CLI subprocess validate_step 2.4 without --recommendation → returncode != 0."""
+        self._seed(branch_dir, tmp_path)
+        script = (
+            Path(__file__).resolve().parents[1]
+            / "src" / "mapify_cli" / "templates" / "map" / "scripts" / "map_orchestrator.py"
+        )
+        result = subprocess.run(
+            [sys.executable, str(script), "validate_step", "2.4",
+             "--branch", branch_dir],
+            capture_output=True, text=True, cwd=str(tmp_path),
+        )
+        assert result.returncode != 0, (
+            f"Expected non-zero exit when --recommendation omitted; "
+            f"stdout={result.stdout!r} stderr={result.stderr!r}"
         )
 
 

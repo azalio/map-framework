@@ -301,12 +301,19 @@ Reviewer prompts reference `review-bundle.json`, `review-bundle.md`, the raw dif
 
 ### Step A.2b: Truncated-response gate (MANDATORY — post-fan-out, pre-verification)
 
-After each reviewer (monitor, predictor, evaluator) returns, validate its output
-via `detect_truncated_agent_output --agent <role>`. On truncation:
-log via `log_agent_failure --agent <role> --phase post-invoke --failure-label truncated --reasons '<reasons>'`
+After each reviewer returns, validate its output via
+`detect_truncated_agent_output --agent <kind>` using the role-specific kind
+shown below. On truncation: log via
+`log_agent_failure --agent <role> --phase post-invoke --failure-label truncated --reasons '<reasons>'`
 and re-invoke that reviewer ONCE using the prompt from
 `build_json_retry_prompt --agent <role> --errors '<reasons>'`; if still
 malformed, stop with CLARIFICATION_NEEDED.
+
+Role → `--agent` kind for the truncation check:
+- monitor reviewer → `--agent review-monitor` (enforces the full review schema:
+  evidence/valid/summary/verdict/issues/passed_checks/failed_checks)
+- predictor reviewer → `--agent predictor`
+- evaluator reviewer → `--agent evaluator`
 
 ### Step A.3: Verification gate (MANDATORY before any presentation)
 

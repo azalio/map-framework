@@ -3192,12 +3192,94 @@ class TestDetectTruncatedAgentOutput:
         assert "trailing or leading text around JSON object" in report["reasons"]
 
     def test_actor_kind_required_keys(self):
+        # FIX 2: actor required_keys now includes all four envelope fields.
         text = json.dumps({"files_changed": ["a.py"]})
         report = map_step_runner.detect_truncated_agent_output(
             text, agent_kind="actor"
         )
         assert report["truncated"] is True
         assert any("missing required key: tests_run" in r for r in report["reasons"])
+        assert any("missing required key: validation_notes" in r for r in report["reasons"])
+        assert any("missing required key: blocker" in r for r in report["reasons"])
+
+    def test_actor_full_output_not_truncated(self):
+        """FIX 2: full actor envelope with all four required keys is not truncated."""
+        text = json.dumps({
+            "files_changed": ["a.py"],
+            "tests_run": ["pytest: 5 passed"],
+            "validation_notes": "satisfies VC1 and VC2",
+            "blocker": None,
+        })
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="actor"
+        )
+        assert report["truncated"] is False, report
+
+    def test_review_monitor_full_output_not_truncated(self):
+        """FIX 4: review-monitor with the full review schema is not truncated."""
+        text = json.dumps({
+            "evidence": [],
+            "valid": True,
+            "summary": "all good",
+            "verdict": "approved",
+            "issues": [],
+            "passed_checks": ["all checks pass"],
+            "failed_checks": [],
+        })
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="review-monitor"
+        )
+        assert report["truncated"] is False, report
+
+    def test_review_monitor_missing_verdict_is_truncated(self):
+        """FIX 4: review-monitor output missing a full-schema key (verdict) is truncated."""
+        text = json.dumps({
+            "evidence": [],
+            "valid": True,
+            "summary": "ok",
+            "issues": [],
+            "passed_checks": [],
+            "failed_checks": [],
+            # "verdict" intentionally omitted
+        })
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="review-monitor"
+        )
+        assert report["truncated"] is True
+        assert any("missing required key: verdict" in r for r in report["reasons"])
+
+    def test_review_monitor_missing_passed_checks_is_truncated(self):
+        """FIX 4: review-monitor output missing passed_checks is truncated."""
+        text = json.dumps({
+            "evidence": [],
+            "valid": True,
+            "summary": "ok",
+            "verdict": "approved",
+            "issues": [],
+            # "passed_checks" intentionally omitted
+            "failed_checks": [],
+        })
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="review-monitor"
+        )
+        assert report["truncated"] is True
+        assert any("missing required key: passed_checks" in r for r in report["reasons"])
+
+    def test_monitor_still_accepts_efficient_output(self):
+        """FIX 4: --agent monitor still accepts map-efficient Monitor output
+        (no evidence/verdict/passed_checks/failed_checks) — regression guard."""
+        text = json.dumps({
+            "valid": True,
+            "summary": "ST-001 satisfies all criteria",
+            "issues": [],
+            "files_changed": ["a.py"],
+            "tests_run": ["pytest: 10 passed"],
+            "escalation_required": False,
+        })
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="monitor"
+        )
+        assert report["truncated"] is False, report
 
     def test_empty_response_is_truncated(self):
         report = map_step_runner.detect_truncated_agent_output("")
@@ -6922,3 +7004,531 @@ class TestAgentFailureTelemetry:
         assert len(lines) == 2
         assert json.loads(lines[0])["failure_label"] == "format_violation"
         assert json.loads(lines[1])["failure_label"] == "truncated"
+
+
+# ---------------------------------------------------------------------------
+# ST-006: Tests for the three new guards
+# ---------------------------------------------------------------------------
+
+
+class TestChangedLineNumbersByFile:
+    """VC1: _changed_line_numbers_by_file parses unified diff into
+    {relative_path: set[new_file_line_number]} for added (+) lines only.
+    Header lines (+++ / ---) are NOT recorded as content.
+    """
+
+    def test_vc1_parses_added_line_numbers_single_hunk(self) -> None:
+        """Single hunk with @@ -10,3 +10,4 @@: one added line at new-file line 12."""
+        diff = (
+            "diff --git a/f.py b/f.py\n"
+            "--- a/f.py\n"
+            "+++ b/f.py\n"
+            "@@ -10,3 +10,4 @@\n"
+            " context_line\n"   # line 10 — context, new_line → 11
+            " context_line2\n"  # line 11 — context, new_line → 12
+            "+added_line\n"     # added at new_file line 12
+            " context_line3\n"  # context, new_line → 13
+        )
+        result = map_step_runner._changed_line_numbers_by_file(diff)
+        assert "f.py" in result
+        assert 12 in result["f.py"]
+        # Only the one added line is recorded.
+        assert result["f.py"] == {12}
+
+    def test_vc1_parses_added_line_numbers_multi_hunk(self) -> None:
+        """Two hunks in the same file → lines from both collected under one key."""
+        diff = (
+            "diff --git a/src/foo.py b/src/foo.py\n"
+            "--- a/src/foo.py\n"
+            "+++ b/src/foo.py\n"
+            "@@ -1,2 +1,3 @@\n"
+            " a\n"      # line 1, new_line → 2
+            "+b\n"      # added at new-file line 2
+            " c\n"      # context
+            "@@ -20,1 +21,2 @@\n"
+            " x\n"      # line 21, new_line → 22
+            "+y\n"      # added at new-file line 22
+        )
+        result = map_step_runner._changed_line_numbers_by_file(diff)
+        assert "src/foo.py" in result
+        assert 2 in result["src/foo.py"]
+        assert 22 in result["src/foo.py"]
+
+    def test_vc1_headers_not_recorded_as_content(self) -> None:
+        """'+++ b/f.py' header lines must not appear as added line numbers."""
+        diff = (
+            "diff --git a/f.py b/f.py\n"
+            "--- a/f.py\n"
+            "+++ b/f.py\n"
+            "@@ -1,1 +1,2 @@\n"
+            " existing\n"
+            "+added\n"
+        )
+        result = map_step_runner._changed_line_numbers_by_file(diff)
+        # Only "f.py" key — no "b/f.py" header bleed-through.
+        assert list(result.keys()) == ["f.py"]
+        # 1 added line — the "+added" line at position 2.
+        assert len(result["f.py"]) == 1
+
+    def test_vc1_dev_null_source_ignored(self) -> None:
+        """New-file diffs with '--- /dev/null' must still record added lines."""
+        diff = (
+            "diff --git a/new.py b/new.py\n"
+            "--- /dev/null\n"
+            "+++ b/new.py\n"
+            "@@ -0,0 +1,2 @@\n"
+            "+line_one\n"
+            "+line_two\n"
+        )
+        result = map_step_runner._changed_line_numbers_by_file(diff)
+        assert "new.py" in result
+        assert result["new.py"] == {1, 2}
+
+    def test_vc1_empty_diff_returns_empty(self) -> None:
+        assert map_step_runner._changed_line_numbers_by_file("") == {}
+
+
+class TestEnclosingChangedSymbols:
+    """VC1: _enclosing_changed_symbols maps changed line numbers to the
+    enclosing top-level symbol name.
+
+    Rules:
+    - FunctionDef, AsyncFunctionDef, ClassDef → name kept if len>=3, not dunder.
+    - Assign / AnnAssign with Name target: same filter.
+    - Leading underscore names (_PRIVATE) are KEPT.
+    - Dunder names (__all__) and short names (ab) are EXCLUDED.
+    - Nested functions → maps to the enclosing top-level symbol, NOT the nested name.
+    - SyntaxError or missing file → returns None.
+    """
+
+    # Shared source fixture written to a temp file.
+    _SOURCE = """\
+_PRIVATE_CONST = (1, 2)
+
+def shared_fn(x):
+    # body line 4
+    return x + 1
+
+class Foo:
+    def method(self):
+        def _inner():
+            pass
+        return _inner()
+
+__all__ = ["shared_fn"]
+
+ab = 1
+"""
+
+    def _write_source(self, tmp_path: Path) -> Path:
+        p = tmp_path / "module.py"
+        p.write_text(self._SOURCE, encoding="utf-8")
+        return p
+
+    def test_vc1_body_change_maps_to_enclosing_function(self, tmp_path: Path) -> None:
+        """Line inside shared_fn's body → {'shared_fn'}."""
+        src = self._write_source(tmp_path)
+        # Line 4 is "    # body line 4" inside shared_fn.
+        result = map_step_runner._enclosing_changed_symbols(src, {4})
+        assert result is not None
+        assert "shared_fn" in result
+
+    def test_vc1_underscore_const_detected(self, tmp_path: Path) -> None:
+        """Leading-underscore names like _PRIVATE_CONST must be kept."""
+        src = self._write_source(tmp_path)
+        # Line 1 is "_PRIVATE_CONST = (1, 2)".
+        result = map_step_runner._enclosing_changed_symbols(src, {1})
+        assert result is not None
+        assert "_PRIVATE_CONST" in result
+
+    def test_vc1_dunder_and_short_excluded(self, tmp_path: Path) -> None:
+        """__all__ (dunder) and ab (2-char) must NOT appear in result."""
+        src = self._write_source(tmp_path)
+        # __all__ is on line 13; ab is on line 15.
+        result = map_step_runner._enclosing_changed_symbols(src, {13, 15})
+        assert result is not None
+        assert "__all__" not in result
+        assert "ab" not in result
+
+    def test_vc1_nested_not_surfaced(self, tmp_path: Path) -> None:
+        """A line inside a nested function maps to the top-level enclosing symbol."""
+        src = self._write_source(tmp_path)
+        # Line 10 is "            pass" inside _inner() inside Foo.method().
+        # Top-level enclosing node is class Foo.
+        result = map_step_runner._enclosing_changed_symbols(src, {10})
+        assert result is not None
+        assert "Foo" in result
+        assert "_inner" not in result
+
+    def test_vc3_syntax_error_returns_none(self, tmp_path: Path) -> None:
+        """SyntaxError in source → None (fail-safe / unknown signal)."""
+        bad = tmp_path / "bad.py"
+        bad.write_text("def broken(\n", encoding="utf-8")
+        result = map_step_runner._enclosing_changed_symbols(bad, {1})
+        assert result is None
+
+    def test_vc3_missing_file_returns_none(self, tmp_path: Path) -> None:
+        """Non-existent file → None (OSError caught)."""
+        missing = tmp_path / "no_such_file.py"
+        result = map_step_runner._enclosing_changed_symbols(missing, {1})
+        assert result is None
+
+
+class TestDetectSymbolBlastRadius:
+    """VC2-VC4: detect_symbol_blast_radius end-to-end with a real temp git repo.
+
+    Mirrors TestDetectCrossSubtaskRegressionRisk fixture pattern.
+    """
+
+    def _init_git(self, root: Path) -> None:
+        subprocess.run(["git", "init"], cwd=root, capture_output=True, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "t@t.com"], cwd=root, capture_output=True, check=True
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "t"], cwd=root, capture_output=True, check=True
+        )
+        (root / ".seed").write_text("seed\n")
+        subprocess.run(["git", "add", "."], cwd=root, capture_output=True, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "init"], cwd=root, capture_output=True, check=True
+        )
+        head = subprocess.run(
+            ["git", "rev-parse", "--verify", "HEAD"],
+            cwd=root, capture_output=True, text=True,
+        )
+        assert head.returncode == 0, "test setup: initial commit produced no resolvable HEAD"
+
+    def _write_state(self, branch_dir: Path, last_sha: str = "") -> None:
+        state: dict[str, object] = {"subtask_results": {}}
+        if last_sha:
+            state["last_subtask_commit_sha"] = last_sha
+        (branch_dir / "step_state.json").write_text(json.dumps(state))
+
+    def _write_blueprint(self, branch_dir: Path, affected_files: list[str]) -> None:
+        bp = {"subtasks": [{"id": "ST-001", "affected_files": affected_files}]}
+        (branch_dir / "blueprint.json").write_text(json.dumps(bp))
+
+    def test_vc2_external_caller_yields_validate_callers(
+        self, branch_workspace: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC2: symbol changed in runner.py; .claude/skills/foo/SKILL.md references it
+        externally → recommended_gate=='validate_callers'."""
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        self._write_blueprint(branch_workspace, ["runner.py"])
+
+        # Write base version of runner.py and commit it (establishes HEAD).
+        (repo / "runner.py").write_text(
+            "def shared_fn(x):\n    return x\n",
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "base"], cwd=repo, capture_output=True, check=True
+        )
+
+        # Plant an external caller in .claude/skills/ (one of _GREP_SEARCH_PATHS).
+        skill_dir = repo / ".claude" / "skills" / "foo"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "Uses shared_fn to do the thing.\n", encoding="utf-8"
+        )
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "add skill"], cwd=repo, capture_output=True, check=True
+        )
+
+        # Record the SHA of the last subtask so the diff covers the body change.
+        last_sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo, capture_output=True, text=True,
+        ).stdout.strip()
+        self._write_state(branch_workspace, last_sha=last_sha)
+
+        # Now body-change shared_fn (staged/uncommitted).
+        (repo / "runner.py").write_text(
+            "def shared_fn(x):\n    return x + 1  # changed\n",
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=True)
+
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.detect_symbol_blast_radius("test-branch", "ST-001")
+
+        assert "shared_fn" in report["changed_symbols"], report
+        external_files = [c["file"] for c in report["external_callers"]]
+        assert any(".claude/skills" in f for f in external_files), report
+        assert report["recommended_gate"] == "validate_callers", report
+
+    def test_vc2_no_external_caller_scoped(
+        self, branch_workspace: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC2: symbol referenced ONLY within affected_files → recommended_gate=='scoped'."""
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        self._write_blueprint(branch_workspace, ["runner.py"])
+
+        (repo / "runner.py").write_text(
+            "def internal_fn(x):\n    return x\n",
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=True)
+        base = subprocess.run(
+            ["git", "commit", "-m", "base"], cwd=repo, capture_output=True, text=True
+        )
+        assert base.returncode == 0
+
+        last_sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo, capture_output=True, text=True,
+        ).stdout.strip()
+        self._write_state(branch_workspace, last_sha=last_sha)
+
+        # Body-change internal_fn — no external callers anywhere.
+        (repo / "runner.py").write_text(
+            "def internal_fn(x):\n    return x * 2  # changed\n",
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=True)
+
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.detect_symbol_blast_radius("test-branch", "ST-001")
+
+        assert report["status"] == "ok", report
+        assert report["recommended_gate"] == "scoped", report
+
+    def test_vc3_stale_base_ref_fails_safe(
+        self, branch_workspace: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC3: last_subtask_commit_sha='0'*40 (nonexistent) → status=='unknown',
+        recommended_gate=='validate_callers' (fail-safe, never silently 'scoped')."""
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        self._write_blueprint(branch_workspace, ["runner.py"])
+        self._write_state(branch_workspace, last_sha="0" * 40)
+
+        (repo / "runner.py").write_text("def any_fn(x):\n    return x\n")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=True)
+
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.detect_symbol_blast_radius("test-branch", "ST-001")
+
+        assert report["status"] == "unknown", report
+        assert report["recommended_gate"] == "validate_callers", report
+
+    def test_vc4_pr145_motivating_case(
+        self, branch_workspace: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC4 / PR #145 regression: runner.py has _MONITOR_REQUIRED_KEYS and
+        detect_truncated(); a skill references both. Changing both symbols
+        must produce changed_symbols containing both and recommended_gate=='validate_callers'.
+
+        This is the exact failure mode PR #145 was designed to prevent:
+        re-deriving a shared helper in one subtask breaks callers that are
+        never re-tested in the scoped gate.
+        """
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        self._write_blueprint(branch_workspace, ["runner.py"])
+
+        base_source = (
+            "_MONITOR_REQUIRED_KEYS = ('severity', 'justification')\n"
+            "\n"
+            "def detect_truncated(output):\n"
+            "    return any(k not in output for k in _MONITOR_REQUIRED_KEYS)\n"
+        )
+        (repo / "runner.py").write_text(base_source, encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "base"], cwd=repo, capture_output=True, check=True
+        )
+
+        # Plant skill that references BOTH symbols.
+        skill_dir = repo / ".claude" / "skills" / "monitor"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "Calls detect_truncated using _MONITOR_REQUIRED_KEYS.\n",
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "add skill"], cwd=repo, capture_output=True, check=True
+        )
+
+        last_sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo, capture_output=True, text=True,
+        ).stdout.strip()
+        self._write_state(branch_workspace, last_sha=last_sha)
+
+        # Mutate BOTH symbols.
+        changed_source = (
+            "_MONITOR_REQUIRED_KEYS = ('severity', 'justification', 'sibling_comparison')\n"
+            "\n"
+            "def detect_truncated(output):\n"
+            "    # body changed\n"
+            "    return any(k not in output for k in _MONITOR_REQUIRED_KEYS)\n"
+        )
+        (repo / "runner.py").write_text(changed_source, encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=True)
+
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.detect_symbol_blast_radius("test-branch", "ST-001")
+
+        assert "_MONITOR_REQUIRED_KEYS" in report["changed_symbols"], report
+        assert "detect_truncated" in report["changed_symbols"], report
+        assert report["recommended_gate"] == "validate_callers", report
+
+    def test_vc_cli_exits_zero(
+        self, branch_workspace: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CLI is advisory: exit 0 always; result is parseable JSON."""
+        del monkeypatch
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        self._write_blueprint(branch_workspace, ["runner.py"])
+        self._write_state(branch_workspace)
+        runner = SCRIPTS_PATH / "map_step_runner.py"
+        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "CLAUDE_PROJECT_DIR": str(repo)}
+        result = subprocess.run(
+            [sys.executable, str(runner), "detect_symbol_blast_radius", "test-branch", "ST-001"],
+            capture_output=True, text=True, cwd=str(repo), env=env,
+        )
+        assert result.returncode == 0, result.stderr
+        parsed = json.loads(result.stdout)
+        assert "recommended_gate" in parsed
+
+
+class TestDetectActorFilesChangedMismatch:
+    """VC1-VC3: detect_actor_files_changed_mismatch catches declared-but-not-written files.
+
+    Mirrors TestDetectCrossSubtaskRegressionRisk fixture pattern.
+    """
+
+    def _init_git(self, root: Path) -> None:
+        subprocess.run(["git", "init"], cwd=root, capture_output=True, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "t@t.com"], cwd=root, capture_output=True, check=True
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "t"], cwd=root, capture_output=True, check=True
+        )
+        (root / ".seed").write_text("seed\n")
+        subprocess.run(["git", "add", "."], cwd=root, capture_output=True, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "init"], cwd=root, capture_output=True, check=True
+        )
+        head = subprocess.run(
+            ["git", "rev-parse", "--verify", "HEAD"],
+            cwd=root, capture_output=True, text=True,
+        )
+        assert head.returncode == 0, "test setup: initial commit produced no resolvable HEAD"
+
+    def _write_state(self, branch_dir: Path) -> None:
+        (branch_dir / "step_state.json").write_text(
+            json.dumps({"subtask_results": {}})
+        )
+
+    def test_vc1_declared_not_written_listed(
+        self, branch_workspace: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC1: declare a.py + b.py; only a.py actually changed → declared_not_written==['b.py']."""
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        self._write_state(branch_workspace)
+
+        # Only write a.py (b.py is declared but never written).
+        (repo / "a.py").write_text("x = 1\n")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.detect_actor_files_changed_mismatch(
+            "test-branch", "ST-001", ["a.py", "b.py"]
+        )
+
+        assert report["declared_not_written"] == ["b.py"], report
+        assert report["status_mismatch"] is True, report
+
+    def test_vc2_mismatch_sets_recovery(
+        self, branch_workspace: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC2: mismatch → status_mismatch=True + non-empty recovery_instruction."""
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        self._write_state(branch_workspace)
+
+        (repo / "a.py").write_text("x = 1\n")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.detect_actor_files_changed_mismatch(
+            "test-branch", "ST-001", ["a.py", "b.py"]
+        )
+
+        assert report["status_mismatch"] is True, report
+        assert report["recovery_instruction"] != "", report
+
+    def test_vc2_clean_no_recovery(
+        self, branch_workspace: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC2: declared files all written → status_mismatch=False, recovery_instruction=''."""
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        self._write_state(branch_workspace)
+
+        (repo / "a.py").write_text("x = 1\n")
+        (repo / "b.py").write_text("y = 2\n")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.detect_actor_files_changed_mismatch(
+            "test-branch", "ST-001", ["a.py", "b.py"]
+        )
+
+        assert report["status_mismatch"] is False, report
+        assert report["recovery_instruction"] == "", report
+
+    def test_vc3_git_error_failsafe(
+        self, branch_workspace: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC3: stale/nonexistent SHA → status=='unknown', status_mismatch=True,
+        declared_not_written == declared (fail-safe, all files assumed unwritten)."""
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        # Plant a stale SHA so git diff fails.
+        (branch_workspace / "step_state.json").write_text(
+            json.dumps({"subtask_results": {}, "last_subtask_commit_sha": "0" * 40})
+        )
+
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        report = map_step_runner.detect_actor_files_changed_mismatch(
+            "test-branch", "ST-001", ["a.py", "b.py"]
+        )
+
+        assert report["status"] == "unknown", report
+        assert report["status_mismatch"] is True, report
+        assert report["declared_not_written"] == ["a.py", "b.py"], report
+
+    def test_vc3_cli_exits_zero(
+        self, branch_workspace: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """VC3: CLI with --declared a.py,b.py → exit 0, JSON parseable."""
+        del monkeypatch
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        self._write_state(branch_workspace)
+        runner = SCRIPTS_PATH / "map_step_runner.py"
+        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "CLAUDE_PROJECT_DIR": str(repo)}
+        result = subprocess.run(
+            [
+                sys.executable, str(runner),
+                "detect_actor_files_changed_mismatch",
+                "test-branch", "ST-001",
+                "--declared", "a.py,b.py",
+            ],
+            capture_output=True, text=True, cwd=str(repo), env=env,
+        )
+        assert result.returncode == 0, result.stderr
+        parsed = json.loads(result.stdout)
+        assert "status_mismatch" in parsed
