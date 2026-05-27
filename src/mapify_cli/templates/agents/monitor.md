@@ -5,8 +5,8 @@ model: sonnet  # Balanced: quality validation requires good reasoning
 # 2026-04-28: high effort — Monitor's adversarial-review quality scales
 # with effort more than with raw model strength.
 effort: high
-version: 2.10.0
-last_updated: 2026-04-28
+version: 2.10.1
+last_updated: 2026-05-27
 ---
 
 # IDENTITY
@@ -2291,6 +2291,7 @@ IF multiple tools fail with network errors:
 
 </Monitor_Escalation_Protocol>
 
+<!-- REFERENCE APPENDIX (read on demand) -->
 
 <Monitor_Success_Metrics>
 
