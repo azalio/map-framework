@@ -6740,3 +6740,136 @@ class TestBuildJsonRetryPrompt:
         assert result["status"] == "ok"
         expected_block = map_step_runner._render_format_block("evaluator")
         assert expected_block in result["prompt"]
+
+
+class TestAgentFailureTelemetry:
+    """ST-003: branch-scoped agent-failure telemetry with INV-8 sanitization."""
+
+    # ------------------------------------------------------------------
+    # VC1: _agent_failure_log_path is branch-scoped under get_branch_dir
+    # ------------------------------------------------------------------
+
+    def test_agent_failure_log_path_branch_scoped(self):
+        """VC1: path resolves to get_branch_dir(branch) / agent_failure_events.jsonl."""
+        branch = "somebranch"
+        expected = map_step_runner.get_branch_dir(branch) / "agent_failure_events.jsonl"
+        assert map_step_runner._agent_failure_log_path(branch) == expected
+
+    # ------------------------------------------------------------------
+    # VC2: _validate_agent_failure_event rejects bad labels / missing fields
+    # ------------------------------------------------------------------
+
+    def test_validate_good_event_returns_empty(self):
+        """VC2a: fully-valid event → empty reasons list."""
+        event: dict[str, object] = {
+            "agent": "monitor",
+            "phase": "REVIEW",
+            "failure_label": "format_violation",
+            "timestamp": "2026-05-27T00:00:00Z",
+        }
+        assert map_step_runner._validate_agent_failure_event(event) == []
+
+    def test_validate_bad_label_returns_reason(self):
+        """VC2b (HC-6): unknown failure_label → non-empty reasons."""
+        event: dict[str, object] = {
+            "agent": "monitor",
+            "phase": "REVIEW",
+            "failure_label": "exploded",
+            "timestamp": "2026-05-27T00:00:00Z",
+        }
+        reasons = map_step_runner._validate_agent_failure_event(event)
+        assert len(reasons) > 0
+        assert any("exploded" in r for r in reasons)
+
+    def test_validate_missing_field_returns_reason(self):
+        """VC2c: missing required field → non-empty reasons."""
+        event: dict[str, object] = {
+            "phase": "REVIEW",
+            "failure_label": "truncated",
+            "timestamp": "2026-05-27T00:00:00Z",
+            # 'agent' intentionally absent
+        }
+        reasons = map_step_runner._validate_agent_failure_event(event)
+        assert any("agent" in r for r in reasons)
+
+    # ------------------------------------------------------------------
+    # VC3: log_agent_failure rejects bad label without writing
+    # ------------------------------------------------------------------
+
+    def test_log_agent_failure_bad_label_no_write(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """VC3 (HC-6): bad failure_label → status=error, no JSONL written."""
+        monkeypatch.chdir(tmp_path)
+        result = map_step_runner.log_agent_failure(
+            "monitor", "REVIEW", "exploded", branch="test-branch"
+        )
+        assert result["status"] == "error"
+        assert result["path"] is None
+        log_path = map_step_runner._agent_failure_log_path("test-branch")
+        assert not log_path.exists()
+
+    # ------------------------------------------------------------------
+    # VC4: log_agent_failure appends exactly one JSONL line + INV-8
+    # ------------------------------------------------------------------
+
+    def test_log_agent_failure_appends_jsonl(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """VC4a: valid call → exactly one well-formed JSONL line appended."""
+        monkeypatch.chdir(tmp_path)
+        result = map_step_runner.log_agent_failure(
+            "monitor",
+            "REVIEW",
+            "format_violation",
+            reasons=["output missing 'valid' key"],
+            retry=True,
+            schema="MonitorOutput",
+            branch="test-branch",
+        )
+        assert result["status"] == "ok"
+        log_path = map_step_runner._agent_failure_log_path("test-branch")
+        assert log_path.exists()
+        lines = log_path.read_text(encoding="utf-8").splitlines()
+        assert len(lines) == 1
+        parsed = json.loads(lines[0])
+        assert parsed["agent"] == "monitor"
+        assert parsed["phase"] == "REVIEW"
+        assert parsed["failure_label"] == "format_violation"
+        assert parsed["retry"] is True
+        assert parsed["schema"] == "MonitorOutput"
+        assert "timestamp" in parsed
+
+    def test_log_agent_failure_inv8_sanitization(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """VC4b (INV-8): control chars in reasons are stripped; result is jq-parseable."""
+        monkeypatch.chdir(tmp_path)
+        dirty_reasons = ["bad\noutput", "tab\there", "null\x00byte"]
+        result = map_step_runner.log_agent_failure(
+            "actor",
+            "ACTOR",
+            "missing_field",
+            reasons=dirty_reasons,
+            branch="test-branch",
+        )
+        assert result["status"] == "ok"
+        log_path = map_step_runner._agent_failure_log_path("test-branch")
+        raw_line = log_path.read_text(encoding="utf-8").strip()
+        # Must parse cleanly
+        parsed = json.loads(raw_line)
+        # No raw control characters remain in any string field
+        control_re = re.compile(r"[\x00-\x1f\x7f]")
+        for reason in parsed["reasons"]:
+            assert control_re.search(reason) is None, (
+                f"Control char found in reason: {reason!r}"
+            )
+        assert control_re.search(parsed["agent"]) is None
+        assert control_re.search(parsed["phase"]) is None
+
+    def test_log_agent_failure_second_call_appends(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """VC4c: two successive calls → two lines in the JSONL file."""
+        monkeypatch.chdir(tmp_path)
+        for label in ("format_violation", "truncated"):
+            map_step_runner.log_agent_failure(
+                "monitor", "REVIEW", label, branch="test-branch"
+            )
+        log_path = map_step_runner._agent_failure_log_path("test-branch")
+        lines = log_path.read_text(encoding="utf-8").splitlines()
+        assert len(lines) == 2
+        assert json.loads(lines[0])["failure_label"] == "format_violation"
+        assert json.loads(lines[1])["failure_label"] == "truncated"

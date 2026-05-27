@@ -7706,6 +7706,78 @@ def prepare_detached_review(
     }
 
 
+# ---------------------------------------------------------------------------
+# Agent-failure telemetry (ST-003)
+# ---------------------------------------------------------------------------
+
+_AGENT_FAILURE_LABELS: frozenset[str] = frozenset(
+    {"format_violation", "missing_field", "truncated"}
+)
+
+
+def _agent_failure_log_path(branch: Optional[str] = None) -> Path:
+    """Return branch-scoped agent failure JSONL path."""
+    return get_branch_dir(branch) / "agent_failure_events.jsonl"
+
+
+def _validate_agent_failure_event(event: dict[str, object]) -> list[str]:
+    """Validate an agent failure event dict.
+
+    Returns an empty list for a valid event, or a non-empty list of
+    human-readable reason strings describing every violation found.
+    """
+    reasons: list[str] = []
+    for field in ("agent", "phase", "failure_label", "timestamp"):
+        if not event.get(field):
+            reasons.append(f"missing required field: {field!r}")
+    label = event.get("failure_label")
+    if label and label not in _AGENT_FAILURE_LABELS:
+        reasons.append(
+            f"failure_label {label!r} is not one of {sorted(_AGENT_FAILURE_LABELS)}"
+        )
+    return reasons
+
+
+def log_agent_failure(
+    agent: str,
+    phase: str,
+    failure_label: str,
+    reasons: Optional[list[str]] = None,
+    retry: bool = False,
+    schema: Optional[str] = None,
+    branch: Optional[str] = None,
+) -> dict[str, object]:
+    """Append one agent-failure event to the branch-scoped JSONL log.
+
+    Every agent-derived string is routed through _sanitize_for_json (INV-8)
+    before the event is serialised, ensuring jq-parseability via bash pipes.
+
+    Returns:
+        On success: {"status": "ok", "path": str, "event": dict}
+        On validation failure: {"status": "error", "reasons": list[str], "path": None}
+    """
+    sanitized_reasons: list[str] = [
+        _sanitize_for_json(r) for r in (reasons or [])
+    ]
+    event: dict[str, object] = {
+        "agent": _sanitize_for_json(agent),
+        "phase": _sanitize_for_json(phase),
+        "failure_label": _sanitize_for_json(failure_label),
+        "reasons": sanitized_reasons,
+        "retry": retry,
+        "schema": _sanitize_for_json(schema) if schema is not None else None,
+        "timestamp": _utc_timestamp(),
+    }
+    validation_errors = _validate_agent_failure_event(event)
+    if validation_errors:
+        return {"status": "error", "reasons": validation_errors, "path": None}
+    path = _agent_failure_log_path(branch)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event, ensure_ascii=True) + "\n")
+    return {"status": "ok", "path": str(path), "event": event}
+
+
 if __name__ == "__main__":
     # Simple CLI interface for testing
     import sys
@@ -8550,6 +8622,54 @@ if __name__ == "__main__":
             print(json.dumps({"status": "error", "message": str(exc)}))
             sys.exit(1)
         print(json.dumps(ord_result))
+
+    elif func_name == "log_agent_failure":
+        # CLI: log_agent_failure --agent <name> --phase <name> --failure-label <label>
+        #                        [--reasons '<json array>'] [--retry] [--schema <text>]
+        # Appends one JSONL event to the branch-scoped agent_failure_events.jsonl.
+        # Prints JSON result; exit 0 on success, exit 1 on validation failure.
+        def _flag_val(name: str) -> Optional[str]:
+            flag = f"--{name}"
+            if flag in sys.argv:
+                idx = sys.argv.index(flag)
+                if idx + 1 < len(sys.argv):
+                    return sys.argv[idx + 1]
+            return None
+
+        laf_agent = _flag_val("agent") or ""
+        laf_phase = _flag_val("phase") or ""
+        laf_label = _flag_val("failure-label") or ""
+        laf_schema = _flag_val("schema")
+        laf_retry = "--retry" in sys.argv
+        laf_reasons: list[str] = []
+        raw_reasons = _flag_val("reasons")
+        if raw_reasons is not None:
+            try:
+                parsed_reasons = json.loads(raw_reasons)
+            except json.JSONDecodeError as exc:
+                print(
+                    json.dumps({"status": "error", "message": f"--reasons must be a JSON array: {exc}"}),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            if not isinstance(parsed_reasons, list):
+                print(
+                    json.dumps({"status": "error", "message": "--reasons must be a JSON array, got non-list"}),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            laf_reasons = [str(r) for r in parsed_reasons]
+        laf_result = log_agent_failure(
+            laf_agent,
+            laf_phase,
+            laf_label,
+            reasons=laf_reasons or None,
+            retry=laf_retry,
+            schema=laf_schema,
+        )
+        print(json.dumps(laf_result, indent=2))
+        if laf_result.get("status") == "error":
+            sys.exit(1)
 
     else:
         # Helpful redirect: when the user passes a command that belongs to
