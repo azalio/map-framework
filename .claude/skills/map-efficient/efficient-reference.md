@@ -132,7 +132,7 @@ GATE=$(echo "$BLAST" | jq -r '.recommended_gate')
      just the current subtask's files).
   3. Do NOT accept a Monitor pass that ignores the external callers — this is
      the guard that catches a shared-symbol refactor breaking another workflow.
-- `recommended_gate == "none"` — no external callers affected; proceed to
+- `recommended_gate == "scoped"` — no external callers affected; proceed to
   Monitor dispatch without modification.
 
 It is read-only and exits 0 always; callers branch on `recommended_gate`.

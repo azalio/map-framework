@@ -3192,12 +3192,94 @@ class TestDetectTruncatedAgentOutput:
         assert "trailing or leading text around JSON object" in report["reasons"]
 
     def test_actor_kind_required_keys(self):
+        # FIX 2: actor required_keys now includes all four envelope fields.
         text = json.dumps({"files_changed": ["a.py"]})
         report = map_step_runner.detect_truncated_agent_output(
             text, agent_kind="actor"
         )
         assert report["truncated"] is True
         assert any("missing required key: tests_run" in r for r in report["reasons"])
+        assert any("missing required key: validation_notes" in r for r in report["reasons"])
+        assert any("missing required key: blocker" in r for r in report["reasons"])
+
+    def test_actor_full_output_not_truncated(self):
+        """FIX 2: full actor envelope with all four required keys is not truncated."""
+        text = json.dumps({
+            "files_changed": ["a.py"],
+            "tests_run": ["pytest: 5 passed"],
+            "validation_notes": "satisfies VC1 and VC2",
+            "blocker": None,
+        })
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="actor"
+        )
+        assert report["truncated"] is False, report
+
+    def test_review_monitor_full_output_not_truncated(self):
+        """FIX 4: review-monitor with the full review schema is not truncated."""
+        text = json.dumps({
+            "evidence": [],
+            "valid": True,
+            "summary": "all good",
+            "verdict": "approved",
+            "issues": [],
+            "passed_checks": ["all checks pass"],
+            "failed_checks": [],
+        })
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="review-monitor"
+        )
+        assert report["truncated"] is False, report
+
+    def test_review_monitor_missing_verdict_is_truncated(self):
+        """FIX 4: review-monitor output missing a full-schema key (verdict) is truncated."""
+        text = json.dumps({
+            "evidence": [],
+            "valid": True,
+            "summary": "ok",
+            "issues": [],
+            "passed_checks": [],
+            "failed_checks": [],
+            # "verdict" intentionally omitted
+        })
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="review-monitor"
+        )
+        assert report["truncated"] is True
+        assert any("missing required key: verdict" in r for r in report["reasons"])
+
+    def test_review_monitor_missing_passed_checks_is_truncated(self):
+        """FIX 4: review-monitor output missing passed_checks is truncated."""
+        text = json.dumps({
+            "evidence": [],
+            "valid": True,
+            "summary": "ok",
+            "verdict": "approved",
+            "issues": [],
+            # "passed_checks" intentionally omitted
+            "failed_checks": [],
+        })
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="review-monitor"
+        )
+        assert report["truncated"] is True
+        assert any("missing required key: passed_checks" in r for r in report["reasons"])
+
+    def test_monitor_still_accepts_efficient_output(self):
+        """FIX 4: --agent monitor still accepts map-efficient Monitor output
+        (no evidence/verdict/passed_checks/failed_checks) — regression guard."""
+        text = json.dumps({
+            "valid": True,
+            "summary": "ST-001 satisfies all criteria",
+            "issues": [],
+            "files_changed": ["a.py"],
+            "tests_run": ["pytest: 10 passed"],
+            "escalation_required": False,
+        })
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="monitor"
+        )
+        assert report["truncated"] is False, report
 
     def test_empty_response_is_truncated(self):
         report = map_step_runner.detect_truncated_agent_output("")
