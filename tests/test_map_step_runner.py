@@ -3117,10 +3117,14 @@ class TestDetectTruncatedAgentOutput:
     """
 
     def test_well_formed_monitor_response_is_not_truncated(self):
+        # Must include all required_keys from AGENT_OUTPUT_SCHEMAS["monitor"]
         text = json.dumps({
+            "evidence": [],
             "valid": True,
-            "summary": "Implementation matches contract",
+            "verdict": "approved",
             "issues": [],
+            "passed_checks": ["all checks pass"],
+            "failed_checks": [],
         })
         report = map_step_runner.detect_truncated_agent_output(
             text, agent_kind="monitor"
@@ -3139,7 +3143,15 @@ class TestDetectTruncatedAgentOutput:
 
     def test_missing_required_key_is_truncated(self):
         # Parseable JSON but missing the "issues" key Monitor must emit.
-        text = json.dumps({"valid": True, "summary": "ok"})
+        # Provide all other required keys so only "issues" triggers the error.
+        text = json.dumps({
+            "evidence": [],
+            "valid": True,
+            "verdict": "approved",
+            "passed_checks": [],
+            "failed_checks": [],
+            # "issues" intentionally omitted
+        })
         report = map_step_runner.detect_truncated_agent_output(
             text, agent_kind="monitor"
         )
@@ -3160,7 +3172,15 @@ class TestDetectTruncatedAgentOutput:
     def test_fenced_json_is_extracted(self):
         # ```json\n{...}\n``` wraps — extraction recovers the object but
         # flags the wrapping prose as a soft signal.
-        text = '```json\n{"valid": true, "summary": "x", "issues": []}\n```'
+        inner = json.dumps({
+            "evidence": [],
+            "valid": True,
+            "verdict": "approved",
+            "issues": [],
+            "passed_checks": [],
+            "failed_checks": [],
+        })
+        text = f"```json\n{inner}\n```"
         report = map_step_runner.detect_truncated_agent_output(
             text, agent_kind="monitor"
         )
@@ -3180,6 +3200,110 @@ class TestDetectTruncatedAgentOutput:
         report = map_step_runner.detect_truncated_agent_output("")
         assert report["truncated"] is True
         assert report["reasons"] == ["empty response"]
+
+    def test_predictor_full_output_not_truncated(self):
+        """POSITIVE: full valid predictor JSON is not flagged as truncated."""
+        text = json.dumps({
+            "evidence": [{"file_path": "f.py", "line_range": "1", "quote": "x", "relevance": "y"}],
+            "risk_assessment": "low",
+            "predicted_state": {
+                "affected_components": [],
+                "breaking_changes": [],
+                "required_updates": [],
+            },
+            "confidence": {"score": 0.9},
+        })
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="predictor"
+        )
+        assert report["truncated"] is False, report
+
+    def test_predictor_missing_required_key_is_truncated(self):
+        """NEGATIVE: predictor output missing a required key is truncated."""
+        # omit "confidence" — a required key
+        text = json.dumps({
+            "evidence": [],
+            "risk_assessment": "low",
+            "predicted_state": {"affected_components": [], "breaking_changes": [], "required_updates": []},
+        })
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="predictor"
+        )
+        assert report["truncated"] is True
+        assert any("missing required key: confidence" in r for r in report["reasons"])
+
+    def test_predictor_missing_conditional_landmine_not_truncated(self):
+        """CONDITIONAL: predictor output missing landmine_evidence (conditional)
+        must NOT be flagged as truncated."""
+        text = json.dumps({
+            "evidence": [],
+            "risk_assessment": "medium",
+            "predicted_state": {"affected_components": [], "breaking_changes": [], "required_updates": []},
+            "confidence": {"score": 0.7},
+            # landmine_evidence intentionally absent — it is conditional
+        })
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="predictor"
+        )
+        assert report["truncated"] is False, report
+
+    def test_evaluator_full_output_not_truncated(self):
+        """POSITIVE: full valid evaluator JSON is not flagged as truncated."""
+        text = json.dumps({
+            "evidence": [],
+            "scores": {
+                "functionality": 8, "code_quality": 7, "performance": 7,
+                "security": 9, "testability": 8, "completeness": 8,
+            },
+            "overall_score": 7.8,
+            "recommendation": "proceed",
+            "strengths": ["clear tests"],
+            "weaknesses": [],
+            "next_steps": [],
+            "monitor_severity_audit": [],
+        })
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="evaluator"
+        )
+        assert report["truncated"] is False, report
+
+    def test_evaluator_missing_required_key_is_truncated(self):
+        """NEGATIVE: evaluator output missing a required key is truncated."""
+        # omit "monitor_severity_audit"
+        text = json.dumps({
+            "evidence": [],
+            "scores": {"functionality": 8, "code_quality": 7, "performance": 7,
+                       "security": 9, "testability": 8, "completeness": 8},
+            "overall_score": 7.8,
+            "recommendation": "proceed",
+            "strengths": [],
+            "weaknesses": [],
+            "next_steps": [],
+        })
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="evaluator"
+        )
+        assert report["truncated"] is True
+        assert any("missing required key: monitor_severity_audit" in r for r in report["reasons"])
+
+    def test_monitor_missing_conditional_sibling_comparison_not_truncated(self):
+        """CONDITIONAL: monitor output missing sibling_comparison (per-issue
+        conditional) must NOT be flagged as truncated at the top level."""
+        # sibling_comparison is a field inside each issue object — it is
+        # NOT a top-level required key, so omitting it at top level is fine.
+        text = json.dumps({
+            "evidence": [],
+            "valid": True,
+            "verdict": "approved",
+            "issues": [],
+            "passed_checks": ["tests pass"],
+            "failed_checks": [],
+            # sibling_comparison is per-issue conditional, not top-level
+        })
+        report = map_step_runner.detect_truncated_agent_output(
+            text, agent_kind="monitor"
+        )
+        assert report["truncated"] is False, report
 
 
 class TestBlueprintContractAffectedFilesDrift:
@@ -5098,7 +5222,10 @@ class TestCreateReviewBundle:
             assert "<documents>" in prompt
             assert "</documents>" in prompt
             assert "<expected_output>" in prompt
-            assert "Output JSON with:" in prompt
+            assert "<format_rules>" in prompt
+            assert "Return exactly one JSON object" in prompt
+        # monitor schema includes "verdict" — spot-check the schema emission
+        assert '"verdict"' in result["prompts"]["monitor"]["prompt"]
 
     def test_build_review_prompts_no_longer_truncates_preferences(
         self, branch_workspace
@@ -5212,6 +5339,56 @@ class TestCreateReviewBundle:
         assert "Review Prompt Budget" not in new_prompt
         assert new_prompt_info["truncated"] is False
         assert new_prompt_info["clipped_sections"] == []
+
+    def test_review_prompt_skeleton_lists_all_required_fields(
+        self, branch_workspace
+    ):
+        """AGENT_OUTPUT_SCHEMAS skeleton fields appear literally in prompts,
+        and skeleton key set is a superset of required_keys for each agent.
+        """
+        del branch_workspace
+        result = map_step_runner.build_review_prompts(
+            branch="test-branch",
+            review_preferences="review preferences",
+            budget_tokens=4_000,
+            review_bundle_text="# Review Bundle\nsome content\n",
+            git_diff_text="diff --git a/app.py b/app.py\n+change\n",
+        )
+        assert result["status"] == "success"
+
+        # Per-role SKILL.md field spot-checks
+        role_field_checks: dict[str, list[str]] = {
+            "monitor": [
+                "was_present_before_pr",
+                "reach_evidence",
+                "sibling_comparison",
+                "verdict",
+            ],
+            "predictor": [
+                "landmine_evidence",
+                "risk_assessment",
+            ],
+            "evaluator": [
+                "monitor_severity_audit",
+                "overall_score",
+            ],
+        }
+        for role, fields in role_field_checks.items():
+            prompt = result["prompts"][role]["prompt"]
+            for field in fields:
+                assert field in prompt, (
+                    f"Expected field '{field}' for role '{role}' not found in prompt"
+                )
+
+        # skeleton key set >= required_keys for each schema role
+        schemas = map_step_runner.AGENT_OUTPUT_SCHEMAS
+        for role, schema in schemas.items():
+            skeleton_keys = set(schema["skeleton"].keys())  # type: ignore[union-attr]
+            required_keys = set(schema["required_keys"])  # type: ignore[union-attr]
+            assert required_keys <= skeleton_keys, (
+                f"Role '{role}': required_keys {required_keys - skeleton_keys} "
+                f"not present in skeleton"
+            )
 
 
 # ---------------------------------------------------------------------------

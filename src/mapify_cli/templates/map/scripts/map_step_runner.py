@@ -38,7 +38,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Iterable, Mapping, Optional, cast
+from typing import Callable, Iterable, Mapping, Optional, TypedDict, cast
 
 # Keep in sync with workflow-context-injector.py GOAL_HEADING_RE
 GOAL_HEADING_RE = r"## (?:Goal|Overview)\n(.*?)(?=\n##|\Z)"
@@ -4355,6 +4355,139 @@ def create_review_bundle(branch: Optional[str] = None) -> dict:
     return result
 
 
+# ---------------------------------------------------------------------------
+# AGENT_OUTPUT_SCHEMAS — single source of truth for review-agent output shapes
+# (ST-001). REVIEW_PROMPT_SPECS and detect_truncated_agent_output both derive
+# from this; do NOT maintain a second hand-written copy elsewhere.
+#
+# Authoritative field list: .claude/skills/map-review/SKILL.md lines 75-111.
+#
+# required_keys: UNCONDITIONAL top-level keys only. Conditional fields
+#   (sibling_comparison, landmine_evidence) are EXCLUDED so that a valid
+#   output omitting only a conditional field is never flagged as truncated.
+#
+# skeleton: mode-agnostic full output shape. Every SKILL.md gate field
+#   is present literally so json.dumps(skeleton) can serve as the
+#   <output_schema> block in the rendered prompt. Conditional fields are
+#   present as descriptive placeholder strings.
+# ---------------------------------------------------------------------------
+class AgentOutputSchema(TypedDict):
+    required_keys: tuple[str, ...]
+    skeleton: dict[str, object]
+
+
+AGENT_OUTPUT_SCHEMAS: dict[str, AgentOutputSchema] = {
+    "monitor": {
+        "required_keys": (
+            "evidence",
+            "valid",
+            "verdict",
+            "issues",
+            "passed_checks",
+            "failed_checks",
+        ),
+        "skeleton": {
+            "evidence": [
+                {
+                    "file_path": "<string>",
+                    "line_range": "<string>",
+                    "quote": "<string>",
+                    "relevance": "<string>",
+                }
+            ],
+            "valid": "<boolean>",
+            "verdict": "<'approved' | 'needs_revision' | 'rejected'>",
+            "issues": [
+                {
+                    "severity": "<'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'>",
+                    "category": "<string>",
+                    "description": "<string>",
+                    "file_path": "<string>",
+                    "line_range": "<string>",
+                    "suggestion": "<string>",
+                    "was_present_before_pr": "<boolean — required; True => pre-existing tech debt>",
+                    "reach_evidence": "<string — required for severity>=MEDIUM: grep:<pattern>:<line> | test_fail:<name> | linter:<tool>:<line>>",
+                    "sibling_comparison": "<object — required when mode=sibling-aware: {sibling_path, equivalent_lines, divergences}>",
+                }
+            ],
+            "passed_checks": ["<string>"],
+            "failed_checks": ["<string>"],
+        },
+    },
+    "predictor": {
+        "required_keys": (
+            "evidence",
+            "risk_assessment",
+            "predicted_state",
+            "confidence",
+        ),
+        "skeleton": {
+            "evidence": [
+                {
+                    "file_path": "<string>",
+                    "line_range": "<string>",
+                    "quote": "<string>",
+                    "relevance": "<string>",
+                }
+            ],
+            "risk_assessment": "<'low' | 'medium' | 'high' | 'critical'>",
+            "predicted_state": {
+                "affected_components": ["<string>"],
+                "breaking_changes": [
+                    {"type": "<string>", "description": "<string>", "mitigation": "<string>"}
+                ],
+                "required_updates": ["<string>"],
+            },
+            "confidence": {
+                "score": "<float 0.0-1.0>",
+            },
+            "landmine_evidence": "<string — required when raising latent-bug/future-failure claims: failing test, static-analysis line, or grep showing unreachable path is reachable>",
+        },
+    },
+    "evaluator": {
+        "required_keys": (
+            "evidence",
+            "scores",
+            "overall_score",
+            "recommendation",
+            "strengths",
+            "weaknesses",
+            "next_steps",
+            "monitor_severity_audit",
+        ),
+        "skeleton": {
+            "evidence": [
+                {
+                    "file_path": "<string>",
+                    "line_range": "<string>",
+                    "quote": "<string>",
+                    "relevance": "<string>",
+                }
+            ],
+            "scores": {
+                "functionality": "<int 1-10>",
+                "code_quality": "<int 1-10>",
+                "performance": "<int 1-10>",
+                "security": "<int 1-10>",
+                "testability": "<int 1-10>",
+                "completeness": "<int 1-10>",
+            },
+            "overall_score": "<float 1.0-10.0>",
+            "recommendation": "<'proceed' | 'improve' | 'reconsider'>",
+            "strengths": ["<string>"],
+            "weaknesses": ["<string>"],
+            "next_steps": ["<string>"],
+            "monitor_severity_audit": [
+                {
+                    "monitor_issue_index": "<int>",
+                    "agreed_severity": "<string>",
+                    "rationale": "<string>",
+                }
+            ],
+        },
+    },
+}
+
 REVIEW_PROMPT_SPECS: dict[str, dict[str, str]] = {
     "monitor": {
         "subagent_type": "monitor",
@@ -4366,14 +4499,6 @@ REVIEW_PROMPT_SPECS: dict[str, dict[str, str]] = {
 - Standards compliance
 - Test coverage gaps
 - Performance issues""",
-        "expected_output": """Output JSON with:
-- evidence: array of {file_path, line_range, quote, relevance}; populate this before verdict fields and include at least one item for every HIGH/CRITICAL issue
-- valid: boolean
-- summary: string
-- verdict: 'approved' | 'needs_revision' | 'rejected'
-- issues: array of {severity, category, description, file_path, line_range, suggestion}
-- passed_checks: array of strings
-- failed_checks: array of strings""",
     },
     "predictor": {
         "subagent_type": "predictor",
@@ -4385,15 +4510,6 @@ REVIEW_PROMPT_SPECS: dict[str, dict[str, str]] = {
 - Dependencies that need updates
 - Risk assessment (low/medium/high/critical)
 - Integration points affected""",
-        "expected_output": """Output JSON with:
-- evidence: array of {file_path, line_range, quote, relevance}; populate this before risk_assessment and include evidence for each breaking change or high-risk claim
-- risk_assessment: 'low' | 'medium' | 'high' | 'critical'
-- predicted_state:
-    affected_components: array of affected files/modules
-    breaking_changes: array of {type, description, mitigation}
-    required_updates: array of strings
-- confidence:
-    score: float 0.0-1.0""",
     },
     "evaluator": {
         "subagent_type": "evaluator",
@@ -4406,16 +4522,28 @@ REVIEW_PROMPT_SPECS: dict[str, dict[str, str]] = {
 - Security score (1-10)
 - Testability score (1-10)
 - Completeness score (1-10)""",
-        "expected_output": """Output JSON with:
-- evidence: array of {file_path, line_range, quote, relevance}; populate this before scores and include evidence for any score below 7
-- scores: {functionality, code_quality, performance, security, testability, completeness}
-- overall_score: weighted float (1.0-10.0)
-- recommendation: 'proceed' | 'improve' | 'reconsider'
-- strengths: array of strings
-- weaknesses: array of strings
-- next_steps: array of strings""",
     },
 }
+
+
+def _render_format_block(agent: str) -> str:
+    """Return an <output_schema>+<format_rules> block for the given agent role.
+
+    The schema is derived from AGENT_OUTPUT_SCHEMAS[agent]["skeleton"] so there
+    is exactly one source of truth for the output shape. format_rules are
+    verbatim — callers MUST NOT paraphrase them.
+    """
+    skeleton = AGENT_OUTPUT_SCHEMAS[agent]["skeleton"]
+    schema_json = json.dumps(skeleton, indent=2)
+    format_rules_body = (
+        "Return exactly one JSON object matching the schema above. "
+        "No markdown, no code fences, no prose before/after. "
+        "All listed keys required."
+    )
+    return (
+        f"<output_schema>\n{schema_json}\n</output_schema>\n"
+        f"<format_rules>\n{format_rules_body}\n</format_rules>"
+    )
 
 
 def _review_prompt_budget_tokens(explicit_budget: Optional[int] = None) -> int:
@@ -4505,7 +4633,7 @@ def _render_review_prompt(
             "confirm or expand specific findings the bundle surfaces.\n"
             "</workflow_policy>",
             f"<instructions>\n{spec['instructions']}\n</instructions>",
-            f"<expected_output>\n{spec['expected_output']}\n</expected_output>",
+            f"<expected_output>\n{_render_format_block(spec['subagent_type'])}\n</expected_output>",
         ]
     )
 
@@ -5420,7 +5548,7 @@ def save_research(
     return str(path)
 
 
-_MONITOR_REQUIRED_KEYS = ("valid", "summary", "issues")
+_MONITOR_REQUIRED_KEYS = tuple(AGENT_OUTPUT_SCHEMAS["monitor"]["required_keys"])
 _ACTOR_REQUIRED_KEYS = ("files_changed", "tests_run")
 
 
@@ -5514,6 +5642,8 @@ def detect_truncated_agent_output(
             expected_keys = list(_MONITOR_REQUIRED_KEYS)
         elif agent_kind == "actor":
             expected_keys = list(_ACTOR_REQUIRED_KEYS)
+        elif agent_kind in AGENT_OUTPUT_SCHEMAS:
+            expected_keys = list(AGENT_OUTPUT_SCHEMAS[agent_kind]["required_keys"])
         else:
             expected_keys = []
     missing = [k for k in expected_keys if k not in parsed]
