@@ -296,11 +296,11 @@ Return files_changed, tests_run, validation_notes, and any blocker.
 ### Actor truncated-response gate (MANDATORY — pre-MONITOR)
 
 Before invoking Monitor, validate Actor's response via
-`detect_truncated_agent_output --agent actor`. If `truncated: true`,
-re-prompt once with "emit ONLY the JSON envelope", then
-CLARIFICATION_NEEDED. Cross-check declared `files_changed` against
-`git diff --name-only` — Actor that named files but didn't write them
-is truncated by extension. Full recipe in
+`detect_truncated_agent_output --agent actor`. If `truncated: true`, log via
+`log_agent_failure` and re-invoke ONCE using the prompt from
+`build_json_retry_prompt --agent actor --errors '<reasons>'`; if still
+malformed, stop with CLARIFICATION_NEEDED. Cross-check declared `files_changed`
+against `git diff --name-only` — undeclared writes = truncated. Full recipe in
 [efficient-reference.md](efficient-reference.md).
 
 ### Phase: MONITOR (2.4) - Required
@@ -328,11 +328,11 @@ Return JSON with valid, summary, issues, files_changed, tests_run, and escalatio
 # After Monitor returns:
 
 - **Truncated-response gate (MANDATORY — pre-verdict):** Before reading
-  `valid`/`recommendation`, run `detect_truncated_agent_output --agent
-  monitor` (or check inline: JSON object with `valid`, `summary`,
-  `issues` present, ends with `}`, parses cleanly). On truncation:
-  re-invoke Monitor once with "retry and emit ONLY the JSON object"; if
-  still truncated, stop with CLARIFICATION_NEEDED. Do NOT record the
+  `valid`/`recommendation`, run `detect_truncated_agent_output --agent monitor`
+  (JSON with `valid`, `summary`, `issues`, ends `}`). On truncation: log via
+  `log_agent_failure` and re-invoke Monitor ONCE using the prompt from
+  `build_json_retry_prompt --agent monitor --errors '<reasons>'`; if still
+  malformed, stop with CLARIFICATION_NEEDED. Do NOT record the
   prose-response subtask as complete. Three signs:
   (a) doesn't parse as JSON, (b) missing one of
   `valid`/`summary`/`issues`, (c) ends mid-sentence with no closing `}`.

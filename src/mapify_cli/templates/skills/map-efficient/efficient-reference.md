@@ -68,8 +68,12 @@ Never `--no-verify`. Never amend a published commit.
 ### Monitor truncated-response gate (full)
 
 Before reading `valid`/`recommendation`, confirm Monitor returned a complete
-JSON envelope (`valid`, `summary`, `issues`). Re-prompt once with "emit ONLY
-the JSON object" and stop with CLARIFICATION_NEEDED if truncation repeats.
+JSON envelope (`valid`, `summary`, `issues`). Detect via
+`detect_truncated_agent_output --agent monitor`; if truncated, log via
+`log_agent_failure --agent monitor --phase post-invoke --failure-label truncated --reasons '<reasons>'`
+and re-invoke ONCE using the prompt from
+`build_json_retry_prompt --agent monitor --errors '<reasons>'`; if still
+malformed, stop with CLARIFICATION_NEEDED.
 
 ### Actor truncated-response gate (full)
 
@@ -82,9 +86,10 @@ echo "$ACTOR_OUTPUT" | python3 .map/scripts/map_step_runner.py \
 ```
 
 If `truncated: true`:
-1. Re-invoke Actor with the same prompt plus "Your previous response was cut
-   off — finish the implementation and emit ONLY the JSON envelope".
-2. If still truncated, stop with CLARIFICATION_NEEDED.
+1. Log via `log_agent_failure --agent actor --phase pre-monitor --failure-label truncated --reasons '<reasons>'`
+   and re-invoke Actor ONCE using the prompt from
+   `build_json_retry_prompt --agent actor --errors '<reasons>'`.
+2. If still malformed, stop with CLARIFICATION_NEEDED.
 3. Cross-check `files_changed` against `git diff --name-only`. Files
    declared but not in the diff = Actor said it changed them but didn't.
 
