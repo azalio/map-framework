@@ -470,7 +470,9 @@ class TestFullLifecycle:
             assert (
                 step["step_id"] == step_id
             ), f"Expected {step_id}, got {step['step_id']}"
-            map_orchestrator.validate_step(step_id, branch)
+            # ST-003: closing 2.4 now requires Monitor's recommendation.
+            rec = "proceed" if step_id == "2.4" else None
+            map_orchestrator.validate_step(step_id, branch, recommendation=rec)
 
         # 7. Should advance to next subtask
         step = map_orchestrator.get_next_step(branch)
@@ -482,7 +484,9 @@ class TestFullLifecycle:
         for step_id in ["2.2", "2.3", "2.4"]:
             step = map_orchestrator.get_next_step(branch)
             assert step["step_id"] == step_id
-            map_orchestrator.validate_step(step_id, branch)
+            # ST-003: closing 2.4 now requires Monitor's recommendation.
+            rec = "proceed" if step_id == "2.4" else None
+            map_orchestrator.validate_step(step_id, branch, recommendation=rec)
 
         # 9. All done
         step = map_orchestrator.get_next_step(branch)
