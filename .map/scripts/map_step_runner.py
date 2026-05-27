@@ -27,6 +27,7 @@ TESTING:
     update_step_state('ST-001', 'actor', 'ACTOR_CALLED')"
 """
 
+import ast
 import fnmatch
 import hashlib
 import json
@@ -7433,12 +7434,6 @@ def detect_cross_subtask_regression_risk(
 # Symbol blast-radius detector
 # ---------------------------------------------------------------------------
 
-_SYMBOL_DEF_RE = re.compile(
-    r"^(?:async\s+)?def\s+(\w+)"      # function / async function
-    r"|^class\s+(\w+)"                 # class
-    r"|^([A-Z][A-Z0-9_]{2,})\s*[:=]", # UPPER_CONST (len >= 3 via {2,})
-)
-
 # Directories/globs searched by _grep_external_callers
 _GREP_SEARCH_PATHS = [".claude/skills", "src", ".map/scripts"]
 
@@ -7452,33 +7447,123 @@ _SYMBOL_GREP_CAP = 40
 _GREP_ERROR_SENTINEL = [{"symbol": "*", "file": "", "line": 0, "note": "grep_error"}]
 
 
-def _extract_changed_module_symbols(diff_text: str) -> set[str]:
-    """Return module-level symbol names introduced in *added* diff lines.
+def _changed_line_numbers_by_file(diff_text: str) -> dict[str, set[int]]:
+    """Parse a unified diff and return new-file line numbers of added lines per path.
 
-    Only lines that start with ``+`` (but not ``+++``) are considered.
-    Only column-0 definitions are recognised (no leading whitespace after the
-    ``+`` prefix) — this excludes nested/indented definitions.  Dunder names
-    and names shorter than 3 characters are excluded.
+    Only ``+``-prefixed lines (not ``+++`` headers) are recorded.  Context and
+    ``-`` lines advance or preserve the new-file line counter respectively.
+
+    Returns ``{relative_path: set_of_added_new_file_line_numbers}``.
     """
+    result: dict[str, set[int]] = {}
+    current_file: Optional[str] = None
+    new_line: int = 0
+
+    hunk_header_re = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+
+    for raw in diff_text.splitlines():
+        # New file header: "+++ b/<path>"  (ignore /dev/null)
+        if raw.startswith("+++ "):
+            path = raw[4:]
+            if path.startswith("b/"):
+                path = path[2:]
+            current_file = None if path == "/dev/null" else path
+            new_line = 0
+            continue
+
+        if current_file is None:
+            continue
+
+        # Hunk header: "@@ -a,b +c,d @@"
+        hm = hunk_header_re.match(raw)
+        if hm:
+            new_line = int(hm.group(1))
+            continue
+
+        if raw.startswith("+++") or raw.startswith("---"):
+            # diff header lines — skip without touching counter
+            continue
+
+        if raw.startswith("+"):
+            # Added line — record current new_line position then advance
+            result.setdefault(current_file, set()).add(new_line)
+            new_line += 1
+        elif raw.startswith("-"):
+            # Removed line — does NOT advance new-file counter
+            pass
+        else:
+            # Context line (space-prefixed or bare) — advance new-file counter
+            new_line += 1
+
+    return result
+
+
+def _enclosing_changed_symbols(
+    abs_path: Path, changed_lines: set[int]
+) -> Optional[set[str]]:
+    """Return top-level symbol names whose span covers any line in *changed_lines*.
+
+    Recognises ``FunctionDef``, ``AsyncFunctionDef``, ``ClassDef``, ``Assign``
+    with ``Name`` targets, and ``AnnAssign`` with a ``Name`` target.
+
+    Excludes dunder names (start AND end with ``__``) and names shorter than 3
+    characters.  Leading-underscore names such as ``_MONITOR_REQUIRED_KEYS`` are
+    intentionally kept.
+
+    Returns ``None`` on ``SyntaxError`` or ``OSError`` (caller must treat this as
+    a fail-safe / unknown signal).
+    """
+    try:
+        source = abs_path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(abs_path))
+    except (SyntaxError, OSError):
+        return None
+
     symbols: set[str] = set()
-    for raw_line in diff_text.splitlines():
-        if not raw_line.startswith("+") or raw_line.startswith("+++"):
-            continue
-        # Strip the leading '+' to get the actual source line
-        line = raw_line[1:]
-        # Module-level: no leading whitespace
-        if line and line[0] in (" ", "\t"):
-            continue
-        m = _SYMBOL_DEF_RE.match(line)
-        if not m:
-            continue
-        # Exactly one of the three groups is non-None
-        name = m.group(1) or m.group(2) or m.group(3)
-        if name is None:
-            continue
-        if name.startswith("__") or len(name) < 3:
-            continue
-        symbols.add(name)
+
+    for node in ast.iter_child_nodes(tree):
+        name: Optional[str] = None
+        start: int = 0
+        end: int = 0
+
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            name = node.name
+            # Span starts at earliest decorator line (if any), otherwise def/class line
+            decorator_lines = [d.lineno for d in node.decorator_list]
+            start = min([node.lineno] + decorator_lines)
+            end = node.end_lineno or node.lineno
+
+            if name and not (name.startswith("__") and name.endswith("__")) and len(name) >= 3:
+                if any(start <= ln <= end for ln in changed_lines):
+                    symbols.add(name)
+
+        elif isinstance(node, ast.Assign):
+            end = node.end_lineno or node.lineno
+            start = node.lineno
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    tname = target.id
+                    if (
+                        tname
+                        and not (tname.startswith("__") and tname.endswith("__"))
+                        and len(tname) >= 3
+                        and any(start <= ln <= end for ln in changed_lines)
+                    ):
+                        symbols.add(tname)
+
+        elif isinstance(node, ast.AnnAssign):
+            if isinstance(node.target, ast.Name):
+                tname = node.target.id
+                start = node.lineno
+                end = node.end_lineno or node.lineno
+                if (
+                    tname
+                    and not (tname.startswith("__") and tname.endswith("__"))
+                    and len(tname) >= 3
+                    and any(start <= ln <= end for ln in changed_lines)
+                ):
+                    symbols.add(tname)
+
     return symbols
 
 
@@ -7717,9 +7802,26 @@ def detect_symbol_blast_radius(branch: str, subtask_id: str) -> dict:
     diff_text = diff_result.stdout
 
     # ------------------------------------------------------------------
-    # 5. Extract changed module-level symbols
+    # 5. Extract changed module-level symbols via AST enclosing-symbol mapping
     # ------------------------------------------------------------------
-    changed_symbols = _extract_changed_module_symbols(diff_text)
+    lines_by_file = _changed_line_numbers_by_file(diff_text)
+    changed_symbols: set[str] = set()
+    for path in runtime_changed:
+        enc = _enclosing_changed_symbols(project_dir / path, lines_by_file.get(path, set()))
+        if enc is None:
+            # AST parse or read error — fail safe
+            return {
+                "status": "unknown",
+                "subtask_id": subtask_id,
+                "changed_symbols": [],
+                "external_callers": [],
+                "recommended_gate": "validate_callers",
+                "reason": (
+                    f"Could not parse {path} — defaulting to validate_callers as a fail-safe."
+                ),
+            }
+        changed_symbols |= enc
+
     if not changed_symbols:
         return {
             "status": "ok",
@@ -7728,8 +7830,8 @@ def detect_symbol_blast_radius(branch: str, subtask_id: str) -> dict:
             "external_callers": [],
             "recommended_gate": "scoped",
             "reason": (
-                "Runtime .py files changed but no module-level symbol additions "
-                "detected — scoped gate is sufficient."
+                "Runtime .py files changed but no module-level symbols affected "
+                "— scoped gate is sufficient."
             ),
         }
 
