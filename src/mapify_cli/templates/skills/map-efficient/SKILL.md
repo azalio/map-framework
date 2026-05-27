@@ -299,9 +299,18 @@ Before invoking Monitor, validate Actor's response via
 `detect_truncated_agent_output --agent actor`. If `truncated: true`, log via
 `log_agent_failure` and re-invoke ONCE using the prompt from
 `build_json_retry_prompt --agent actor --errors '<reasons>'`; if still
-malformed, stop with CLARIFICATION_NEEDED. Cross-check declared `files_changed`
-against `git diff --name-only` — undeclared writes = truncated. Full recipe in
-[efficient-reference.md](efficient-reference.md).
+malformed, stop with CLARIFICATION_NEEDED.
+
+**Files-changed mismatch check (MANDATORY):** Run
+`detect_actor_files_changed_mismatch "$BRANCH" "$SUBTASK_ID" --declared "<Actor's files_changed, comma-joined>"`.
+If `status_mismatch == true`, surface `recovery_instruction` and re-invoke Actor to finish `declared_not_written` files; do NOT record the subtask until clear. Full recipe: [efficient-reference.md](efficient-reference.md).
+
+### Symbol blast-radius gate (MANDATORY — pre-dispatch)
+
+Run `detect_symbol_blast_radius "$BRANCH" "$SUBTASK_ID"`. If
+`recommended_gate == "validate_callers"`, append `external_callers` to the Monitor
+`<documents>` context and require Monitor to validate each external caller's contract.
+Full recipe: [efficient-reference.md](efficient-reference.md).
 
 ### Phase: MONITOR (2.4) - Required
 
@@ -358,29 +367,17 @@ Return JSON with valid, summary, issues, files_changed, tests_run, and escalatio
   python3 .map/scripts/map_orchestrator.py record_subtask_result "$SUBTASK_ID" valid \
     --files "$FILES_CSV" --summary "$ONE_LINE" --commit-sha "$SHA"
   ```
-  `record_subtask_result` is the canonical write path — the result lands in
-  `subtask_results` and `last_subtask_commit_sha` for downstream context.
-  Pass `--commit-sha` whenever you just made a per-subtask commit (see
-  rule above); when omitted, the orchestrator auto-detects via
-  `git log -1 --format=%H` but the explicit value is preferred so the
-  audit trail is unambiguous.
+  `record_subtask_result` is the canonical write path. Pass `--commit-sha`
+  (preferred); omitting it triggers auto-detect via `git log -1 --format=%H`.
 - **Auto-validate mutation boundary:** `validate_step 2.4` itself now runs
   `validate_mutation_boundary` for the current subtask and rejects on
   `status="violation"` (only when `MAP_STRICT_SCOPE=1`) or `status="error"`.
   No manual dispatch needed.
 - **Refresh blueprint affected_files after each clean close (RECOMMENDED):**
-  After commit + record_subtask_result, sync the blueprint's
-  `affected_files` for the just-closed subtask to the actual diff. This
-  keeps the next subtask's mutation-boundary check honest — without
-  refresh, decomposer-time guesses drift further from reality every
-  subtask and Monitor warnings degrade into background noise.
-
-  ```bash
-  python3 .map/scripts/map_step_runner.py refresh_blueprint_affected_files \
-    "$BRANCH" "$SUBTASK_ID"
-  ```
-  Idempotent and read-only against blueprint structure outside the
-  named subtask. Use `--dry-run` to preview the diff before writing.
+  After commit + record_subtask_result, run
+  `refresh_blueprint_affected_files "$BRANCH" "$SUBTASK_ID"` to sync the
+  blueprint to actual diff — keeps mutation-boundary checks honest.
+  Full recipe: [efficient-reference.md](efficient-reference.md).
 - If `valid=false`, write `code-review-N.md`, run `python3 .map/scripts/map_orchestrator.py monitor_failed --feedback "<feedback>"`, inspect `retry_isolation`, and invoke Predictor only when stuck/high-risk escalation rules apply.
 - If `retry_isolation=clean_retry_required`, run `python3 .map/scripts/map_step_runner.py validate_retry_quarantine` before the next Actor call. The next Actor prompt must use CLEAN_RETRY mode from `.map/<branch>/retry_quarantine.json` and must not reuse the rejected approach unless the quarantine artifact preserves it.
 - Treat test failures after Monitor approval as Monitor failure. **Cross-subtask regression gate (MANDATORY):** before the test gate, run `detect_cross_subtask_regression_risk "$BRANCH" "$SUBTASK_ID"`; if `recommended_gate == "full_suite"` you MUST run the FULL suite (never a `-k` subset) before commit / `record_subtask_result` — per-subtask Monitor is blind to regressions on prior subtasks' code. Recipe: [efficient-reference.md](efficient-reference.md).
