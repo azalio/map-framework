@@ -1071,20 +1071,21 @@ def validate_step(
                 "envelope_error": envelope_error,
             }
 
-    # Recommendation-omitted warning: closing 2.4 without --recommendation
-    # leaves the verdict-consistency footgun open (Monitor valid=true +
-    # recommendation=revise would silently pass). Surface a soft warning
-    # so the operator knows to pipe Monitor's recommendation through.
-    recommendation_omitted_warning: Optional[str] = None
+    # Recommendation-required gate: closing 2.4 without --recommendation
+    # makes the verdict-consistency enforcement impossible. Hard-fail so
+    # the operator is forced to pipe Monitor's recommendation through.
     if step_id == "2.4" and not recommendation:
-        recommendation_omitted_warning = (
-            "validate_step 2.4 closed without --recommendation. The "
-            "verdict-consistency gate cannot enforce 'valid=true + "
-            "recommendation=revise/block/needs_investigation = fail' "
-            "unless you pass Monitor's recommendation. Recommended: "
-            "`python3 .map/scripts/map_orchestrator.py validate_step 2.4 "
-            "--recommendation \"$MONITOR_RECOMMENDATION\"`."
-        )
+        return {
+            "valid": False,
+            "message": (
+                "validate_step 2.4 requires --recommendation (Monitor's "
+                "verdict). Without it the verdict-consistency gate cannot "
+                "enforce 'valid=true + recommendation in {revise,block,"
+                "needs_investigation} = fail'. Re-run: validate_step 2.4 "
+                "--recommendation \"$MONITOR_RECOMMENDATION\"."
+            ),
+            "recommendation_required": True,
+        }
 
     # Monitor recommendation enforcement: when closing 2.4 (MONITOR) and
     # the caller passed a recommendation, refuse to close on revise /
@@ -1256,8 +1257,6 @@ def validate_step(
         response["skipped_for_deps"] = skipped_for_deps
     if next_step_signal == "BLOCKED_ON_DEPS":
         response["blocked_subtasks"] = blocked_remaining
-    if recommendation_omitted_warning:
-        response["warning"] = recommendation_omitted_warning
     return response
 
 
@@ -3430,6 +3429,8 @@ def main():
                 monitor_envelope=monitor_envelope_text,
             )
             print(json.dumps(result, indent=2))
+            if not result.get("valid", False):
+                sys.exit(1)
 
         elif args.command == "initialize":
             task = args.task_or_step or "MAP workflow task"
