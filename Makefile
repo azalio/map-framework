@@ -49,6 +49,7 @@ test-integration:
 lint:
 	ruff check src/ tests/
 	mypy src/
+	pyright src/
 
 format:
 	black src/ tests/
