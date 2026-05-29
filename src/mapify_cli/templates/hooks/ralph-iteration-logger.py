@@ -212,6 +212,8 @@ def detect_thrashing(log_file: Path) -> Optional[dict]:
 
 def main() -> None:
     """Main hook execution logic."""
+    if os.environ.get("MAP_INVOKED_BY"):
+        sys.exit(0)
     try:
         input_data = json.load(sys.stdin)
     except json.JSONDecodeError:
