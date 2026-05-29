@@ -111,3 +111,22 @@
       def get_result(self, run_id):
           return self.db.fetch_one("runs", run_id=run_id)
   ```
+
+- **CLI Gate Reading From stdin Must Distinguish "No Input Piped" From "Invalid Content"** (2026-05-29): When a MANDATORY gate CLI reads its subject from stdin (truncation detector, validator), empty stdin and valid-but-failing content are different failure modes that need different exit behavior. In a Task/Agent flow a bare call with nothing piped means the caller forgot to pipe — a caller error, not a gate verdict. Returning `truncated:true` / nonzero on empty stdin turns every bare invocation into a false-positive hard stop, silently making the gate non-functional (operators learn to ignore the always-red signal). Add a distinct non-blocking `status:"no_input"` (exit 0) for empty stdin; keep the pure function strict (empty→invalid) for programmatic/library callers; and fix the skill docs to actually pipe the captured response. [workflow: map-efficient]
+  ```python
+  # WRONG — CLI: empty stdin == truncated content == hard stop on every bare call
+  text = sys.stdin.read()
+  report = detect_truncated(text)          # "" -> {"truncated": True, "reasons": ["empty response"]}
+  print(json.dumps(report))
+
+  # CORRECT — CLI distinguishes caller-error from content failure; pure fn stays strict
+  text = sys.stdin.read()
+  if not text.strip():
+      print(json.dumps({"truncated": False, "status": "no_input",
+                        "reasons": ["no response on stdin — pipe the captured response"]}))
+      sys.exit(0)                          # bare call is non-applicable, not a failure
+  report = detect_truncated(text)          # only runs on real content
+  print(json.dumps({**report, "status": "ok"}))
+  ```
+
+- **Always-Loaded Skill Body Has a Hard Line Budget — Put Detail in the Reference File** (2026-05-29): An always-loaded active skill body (e.g. `SKILL.md`) is guarded by a CI test enforcing a max line count (it loads on every invocation and costs context). Adding even correct, useful prose to it can silently push it over budget and break the test. Architectural rule: the active body holds only a short pointer; detail lives in the bundled reference file (e.g. `efficient-reference.md`), which is not budget-gated. If the budget itself is wrong, change the test and the budget together in a deliberate commit — never grow the active body past it by accident. [workflow: map-efficient]
