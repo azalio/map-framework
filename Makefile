@@ -50,7 +50,7 @@ lint:
 	ruff check src/ tests/
 	mypy src/
 	pyright src/
-	python scripts/lint-hooks.py
+	python3 scripts/lint-hooks.py
 
 format:
 	black src/ tests/
@@ -69,14 +69,14 @@ clean:
 	find . -type f -name "*.pyc" -delete
 
 build: clean
-	python -m build
+	python3 -m build
 
 release: build
 	@echo "Ready to upload to PyPI with: twine upload dist/*"
-	@echo "Don't forget to tag the release: git tag -a v$(shell python -c "import tomli; print(tomli.load(open('pyproject.toml', 'rb'))['project']['version'])") -m 'Release version ...'"
+	@echo "Don't forget to tag the release: git tag -a v$(shell python3 -c "import tomli; print(tomli.load(open('pyproject.toml', 'rb'))['project']['version'])") -m 'Release version ...'"
 
 # Quick test of the CLI
 test-cli:
 	@echo "Testing CLI installation..."
-	python -m mapify_cli --version
-	python -m mapify_cli check
+	python3 -m mapify_cli --version
+	python3 -m mapify_cli check
