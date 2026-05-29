@@ -77,9 +77,16 @@ class LockSecurityError(Exception):
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(frozen=True)
 class StateWriter:
-    """Yields from ``flock_with_state``; call ``.set()`` to update the marker."""
+    """Yielded by ``flock_with_state``; call ``.set()`` to update the marker.
+
+    Frozen so callers cannot mutate ``name`` to bypass the path-traversal regex.
+    Direct construction is permitted (the public yield surface is a ``StateWriter``
+    instance) but ``_write_state_atomic`` re-validates ``name`` on every write,
+    so a hand-crafted ``StateWriter(..., name="../evil", ...)`` still cannot
+    escape the lock root.
+    """
 
     lock_root: Path
     name: str
@@ -101,9 +108,19 @@ def _lock_root() -> Path:
 
 
 def _ensure_lock_dir(lock_root: Path) -> None:
-    """Create the lock directory with mode 0o700 if absent."""
+    """Create the lock directory with mode 0o700, enforcing the mode on every call.
+
+    ``mkdir(mode=...)`` only applies on creation; an existing directory keeps
+    whatever permissions it already has. We enforce 0o700 unconditionally so a
+    stale or hand-created ``~/.map/locks/`` with broader perms (0o755, group-
+    writable, etc.) is corrected — the module contract guarantees 0o700, and
+    weaker modes break the symlink/hardlink defence for files created beneath.
+    """
     lock_root.mkdir(mode=0o700, parents=True, exist_ok=True)
-    # Do NOT chmod an already-existing dir — respect what the user set.
+    try:
+        os.chmod(str(lock_root), 0o700)
+    except OSError:  # pragma: no cover — chmod failure is non-fatal best-effort
+        pass
 
 
 def _state_tmp_path(name: str, lock_root: Path) -> Path:
@@ -118,7 +135,16 @@ def _write_state_atomic(
 
     Uses ``os.lstat`` before ``os.replace`` to detect symlinks on the target
     path (``O_NOFOLLOW`` only protects file-open, not rename-by-name).
+
+    Re-validates ``name`` so a hand-crafted ``StateWriter(..., name="../evil")``
+    cannot escape the lock root — ``flock_with_state`` already validates on
+    entry, this is defence-in-depth for direct ``StateWriter`` construction.
     """
+    if not _NAME_RE.fullmatch(name):
+        raise ValueError(
+            f"Invalid lock name {name!r}. Must match ^[a-zA-Z0-9_-]{{1,64}}$"
+        )
+
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
     payload: dict[str, object] = {
         "state": str(state),
@@ -222,6 +248,15 @@ def flock_with_state(
                 f"Lock path {lock_path} is a symlink; refusing to open."
             ) from exc
         raise
+
+    # The ``mode=0o600`` argument to ``os.open`` only applies on creation; a
+    # pre-existing lock file keeps its prior permissions. Enforce 0o600 on
+    # every open so a stale or hand-created lock with broader perms is
+    # corrected — the module contract guarantees 0o600.
+    try:
+        os.fchmod(fd, 0o600)
+    except OSError:  # pragma: no cover — fchmod failure is non-fatal best-effort
+        pass
 
     pid = os.getpid()
     writer = StateWriter(lock_root=lock_root, name=name, pid=pid)

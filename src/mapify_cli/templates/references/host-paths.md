@@ -25,6 +25,7 @@ These three variables are reserved by the MAP orchestration layer. Do not repurp
 | `MAP_DEBUG` | live | `src/mapify_cli/__init__.py:207` | Enables verbose debug logging across MAP CLI internals when set to a truthy value. |
 | `MAP_MONITOR_HOTFIX` | live | `src/mapify_cli/templates/codex/hooks/workflow-gate.py:68` | Bypasses the monitor gate for emergency hotfix flows; must not be set in normal workflows. |
 | `MAP_STRICT_SCOPE` | live | `src/mapify_cli/templates/map/scripts/map_step_runner.py:7137` | Enforces strict mutation-boundary validation; rejects Actor edits outside `affected_files`. |
+| `MAP_REVIEW_PROMPT_BUDGET_TOKENS` | live | `src/mapify_cli/templates/map/scripts/map_step_runner.py:147,4577` | Token budget for review prompts; consumed via `REVIEW_PROMPT_BUDGET_ENV`. |
 | `MAP_CONTEXT_BLOCK_BUDGET_TOKENS` | provisional | `docs/USAGE.md:54,64` | provisional — documented in docs/USAGE.md but no runtime consumer found as of this PR; do not rely on it without re-verifying |
 
 ## (d) Legacy / Frozen Variables
@@ -44,11 +45,13 @@ These are the only two MAP roots. No other directories are created by the MAP ru
 
 ## (f) State Markers (Closed Enum)
 
-The MAP step runner records exactly one of six state markers per subtask step:
+`src/mapify_cli/_locking.py` defines the `LockState` enum and writes one of these six values to the sidecar at `~/.map/locks/<name>.state.json` whenever a caller holds a `flock_with_state` lock:
 
 ```
 in_progress  created  updated  skipped  timeout  error
 ```
+
+This PR ships the enum and the sidecar writer; no MAP workflow surface is wired to call `flock_with_state` yet (Phase A consumes it for hook serialization, Phase E for memory-flush). The pre-existing `step_state.json` subtask statuses (`pending|in_progress|complete|blocked`) are a separate, unrelated enum owned by the orchestrator.
 
 **INV-5 invariant:** This is a closed enum. Adding a new state requires editing BOTH `src/mapify_cli/_locking.py:LockState` AND this document in the same PR. A PR that adds a state to one without the other must be rejected.
 

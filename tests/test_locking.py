@@ -306,23 +306,25 @@ def test_two_process_contention(
 def test_tmp_state_file_colocated(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """_state_tmp_path must return a path under ~/.map/locks/, never /tmp."""
+    """_state_tmp_path must return a path co-located with the target sidecar.
+
+    INV-6 is about ``os.replace`` atomicity, which requires src+dst on the same
+    filesystem. The correct check is ``tmp.parent == sidecar.parent``, NOT a
+    string-prefix scan for ``/tmp`` — on Linux CI ``pytest`` roots ``tmp_path``
+    under ``/tmp/pytest-of-runner/...``, so a naive prefix check falsely flags
+    the legitimate ``$HOME/.map/locks/`` layout.
+    """
     monkeypatch.setenv("HOME", str(tmp_path))
 
     lock_root = tmp_path / ".map" / "locks"
     tmp_file = _state_tmp_path("myname", lock_root)
+    sidecar = lock_root / "myname.state.json"
 
-    # Must be under lock_root (which is under HOME/.map/locks).
-    assert str(tmp_file).startswith(str(lock_root)), (
-        f"Tmp file {tmp_file} is not under lock_root {lock_root}"
-    )
-
-    # Must NOT be under the system /tmp or tempfile.gettempdir().
-    import tempfile
-
-    sys_tmp = tempfile.gettempdir()
-    assert not str(tmp_file).startswith(sys_tmp), (
-        f"Tmp file {tmp_file} is under system /tmp — violates INV-6"
+    # The INV-6 invariant: tmp file shares the target sidecar's directory.
+    assert tmp_file.parent == sidecar.parent == lock_root, (
+        f"INV-6 violated: tmp {tmp_file} and sidecar {sidecar} must share "
+        f"a parent for os.replace to be atomic; got {tmp_file.parent} != "
+        f"{sidecar.parent}"
     )
 
 
@@ -385,15 +387,18 @@ def test_module_docstring_contains_thread_safety_sentence() -> None:
 def test_tmp_path_never_under_system_tmp(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Direct regression for INV-6: os.replace would fail cross-filesystem."""
+    """Regression for INV-6: tmp path must share the sidecar's directory.
+
+    Implementation detail: any path returned by ``_state_tmp_path`` must live
+    inside the supplied ``lock_root`` argument — otherwise ``os.replace`` would
+    cross filesystems and raise ``OSError(EXDEV)``.
+    """
     monkeypatch.setenv("HOME", str(tmp_path))
-    import tempfile
 
     lock_root = tmp_path / ".map" / "locks"
     tmp = _state_tmp_path("regression", lock_root)
-    sys_tmp = tempfile.gettempdir()
-    assert not str(tmp).startswith(sys_tmp), (
-        f"INV-6 violated: tmp path {tmp!r} is under system tmp {sys_tmp!r}"
+    assert tmp.parent == lock_root, (
+        f"INV-6 violated: tmp path {tmp!r} is not inside lock_root {lock_root!r}"
     )
 
 
@@ -420,3 +425,83 @@ def test_invalid_name_raises_value_error(
             # The context manager raises before yielding.
             ctx = flock_with_state(name)
             ctx.__enter__()
+
+
+# ---------------------------------------------------------------------------
+# StateWriter is frozen — caller cannot mutate `.name` to bypass the regex
+# ---------------------------------------------------------------------------
+
+
+def test_state_writer_is_frozen(tmp_path: Path) -> None:
+    """Attempts to mutate StateWriter.name must raise FrozenInstanceError."""
+    import dataclasses
+
+    writer = StateWriter(lock_root=tmp_path, name="legit", pid=12345)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        writer.name = "../escape"  # type: ignore[misc]
+
+
+def test_direct_state_writer_with_bad_name_revalidated(tmp_path: Path) -> None:
+    """Hand-crafted StateWriter with a traversal name must still be rejected.
+
+    Defence-in-depth: ``flock_with_state`` validates the name at entry, but a
+    caller can construct ``StateWriter`` directly. ``_write_state_atomic``
+    therefore re-validates ``name`` on every write so a bypass is impossible
+    even without the context manager.
+    """
+    lock_root = tmp_path / ".map" / "locks"
+    lock_root.mkdir(mode=0o700, parents=True)
+    writer = StateWriter(lock_root=lock_root, name="../../etc/passwd", pid=42)
+    with pytest.raises(ValueError, match="Invalid lock name"):
+        writer.set(LockState.UPDATED)
+
+
+# ---------------------------------------------------------------------------
+# AC-6 hardening: pre-existing dir/file with wrong permissions get corrected
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permissions only")
+def test_existing_lock_dir_mode_enforced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pre-existing ~/.map/locks/ with broader perms gets corrected to 0o700."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    lock_root = tmp_path / ".map" / "locks"
+    lock_root.mkdir(mode=0o755, parents=True)  # too permissive
+    # Verify the broad mode is actually in place before we call.
+    pre_mode = os.stat(str(lock_root)).st_mode & 0o777
+    assert pre_mode == 0o755, f"Setup precondition failed: {oct(pre_mode)}"
+
+    with flock_with_state("modefix") as writer:
+        writer.set(LockState.CREATED)
+
+    post_mode = os.stat(str(lock_root)).st_mode & 0o777
+    assert post_mode == 0o700, (
+        f"Pre-existing lock dir should be chmod'd to 0o700, got {oct(post_mode)}"
+    )
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permissions only")
+def test_existing_lock_file_mode_enforced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pre-existing lock file with broader perms gets corrected to 0o600."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    lock_root = tmp_path / ".map" / "locks"
+    lock_root.mkdir(mode=0o700, parents=True)
+    lock_file = lock_root / "filemodefix.lock"
+    lock_file.touch()
+    os.chmod(str(lock_file), 0o644)  # too permissive
+    pre_mode = os.stat(str(lock_file)).st_mode & 0o777
+    assert pre_mode == 0o644, f"Setup precondition failed: {oct(pre_mode)}"
+
+    with flock_with_state("filemodefix") as writer:
+        writer.set(LockState.CREATED)
+
+    post_mode = os.stat(str(lock_file)).st_mode & 0o777
+    assert post_mode == 0o600, (
+        f"Pre-existing lock file should be chmod'd to 0o600, got {oct(post_mode)}"
+    )
