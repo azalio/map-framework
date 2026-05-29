@@ -24,6 +24,8 @@ from pathlib import Path
 # Keep in sync with map_step_runner.py GOAL_HEADING_RE
 GOAL_HEADING_RE = r"## (?:Goal|Overview)\n(.*?)(?=\n##|\Z)"
 REMINDER_LIMIT = 700
+PERSONAL_BLOCK_BUDGET_TOTAL = 10000
+PERSONAL_RULES_SEPARATOR = "\n\n"
 
 # Bash commands that don't need workflow reminders
 READONLY_COMMANDS = {
@@ -798,23 +800,34 @@ def main() -> None:
         suppress_required = True
     reminder = format_reminder(state, branch, suppress_required=suppress_required)
     if reminder:
+        project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+        personal_count, personal_content = _load_personal_rules(project_dir)
+        personal_limit = max(
+            0,
+            PERSONAL_BLOCK_BUDGET_TOTAL - len(reminder) - len(PERSONAL_RULES_SEPARATOR),
+        )
+        personal_block = _build_personal_block(personal_count, personal_content, personal_limit)
+        assembled = (
+            reminder if not personal_block else reminder + PERSONAL_RULES_SEPARATOR + personal_block
+        )
+        assert len(assembled) <= PERSONAL_BLOCK_BUDGET_TOTAL
         # Per-turn dedup: same reminder + same state_mtime within 5s = same
         # turn; squelch to avoid the [MAP] banner repeating across every
         # Edit/Write/Bash invocation in a single agent burst.
-        if _should_squelch_duplicate(branch, reminder):
+        if _should_squelch_duplicate(branch, assembled):
             record_hook_injection_status(
                 branch, state, "deduped", "duplicate reminder squelched", tool_name
             )
             print("{}")
             sys.exit(0)
-        _write_dedup_cache(branch, reminder)
+        _write_dedup_cache(branch, assembled)
         record_hook_injection_status(
-            branch, state, "injected", "reminder emitted", tool_name, len(reminder)
+            branch, state, "injected", "reminder emitted", tool_name, len(assembled)
         )
         output = {
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
-                "additionalContext": reminder,
+                "additionalContext": assembled,
             }
         }
         print(json.dumps(output))
