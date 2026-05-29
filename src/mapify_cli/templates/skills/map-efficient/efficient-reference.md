@@ -9,19 +9,19 @@ Two CLI scripts back the workflow; calling the wrong one fails with `invalid cho
 - **`python3 .map/scripts/map_orchestrator.py <cmd>`** — state-machine transitions and step-state writes:
   `get_next_step`, `peek_current_step`, `validate_step`, `initialize`, `set_plan_approved`, `set_execution_mode`, `set_tdd_mode`, `skip_step`, `set_subtasks`, `mark_contract_ready`, `resume_from_plan`, `resume_from_test_contract`, `check_circuit_breaker`, `set_waves`, `get_wave_step`, `validate_wave_step`, `advance_wave`, `resume_single_subtask`, `get_plan_progress`, `monitor_failed`, `wave_monitor_failed`, `reopen_for_fixes`, `mark_workflow_complete`, `mark_subtask_complete`, `record_subtask_result`, `backfill_subtask_ids`, `finalize_plan`.
 
-- **`python3 .map/scripts/map_step_runner.py <cmd>`** — pure analysis/persistence helpers (no state-machine side effect):
+- **`python3 .map/scripts/map_step_runner.py <cmd>`** — pure analysis/persistence helpers (no state-machine side effect). The list below names ONLY commands that have a `func_name` dispatch branch in `map_step_runner.py` and are thus invocable from the shell; the module defines additional internal helpers (`save_artifact_manifest`, `save_learning_metrics`, `load_learning_metrics`, `load_blueprint`, `record_repeated_learning_violations`, `record_token_budget_decision`, …) that are used by other dispatch branches but cannot be called directly:
   - `detect_*` family: `detect_truncated_agent_output`, `detect_already_done`, `detect_cross_subtask_regression_risk`, `detect_actor_files_changed_mismatch`, `detect_symbol_blast_radius`
   - `build_*` family: `build_context_block`, `build_json_retry_prompt`, `build_acceptance_coverage_report`, `build_prior_stage_consumption_report`, `build_retry_quarantine`, `build_handoff_bundle`, `build_review_handoff`, `build_review_prompts`
-  - `save_*` / `load_*`: `save_research`, `load_research`, `save_artifact_manifest`, `load_artifact_manifest`, `save_learning_metrics`, `load_learning_metrics`, `load_blueprint`
+  - `save_*` / `load_*`: `save_research`, `load_research`, `load_artifact_manifest`
   - `refresh_*`: `refresh_blueprint_affected_files`
-  - `validate_*` (non-state): `validate_blueprint_contract`, `validate_mutation_boundary`, `validate_retry_quarantine`, `validate_run_health_report`, `validate_checkpoint`
-  - `record_*` (artifacts, not state): `record_test_baseline`, `record_diagnostics_baseline`, `record_scope_baseline`, `record_subtask_baseline`, `record_token_event`, `record_learning_consumption`, `record_repeated_learning_violations`, `record_workflow_fit`, `record_plan_artifacts`, `record_test_contract_handoff`, `record_review_ordering`, `record_token_budget_decision`
-  - artifact writers (referenced by `Step 3.3 Evaluate Results` in `SKILL.md`): see the `write_*` family below
+  - `validate_*` (non-state): `validate_blueprint_contract`, `validate_mutation_boundary`, `validate_retry_quarantine`, `validate_run_health_report`, `validate_checkpoint`, `validate_prior_stage_consumption`
+  - `record_*` (artifacts, not state): `record_test_baseline`, `record_diagnostics_baseline`, `record_scope_baseline`, `record_subtask_baseline`, `record_token_event`, `record_learning_consumption`, `record_workflow_fit`, `record_plan_artifacts`, `record_test_contract_handoff`, `record-review-ordering` (note: this one is dispatched with a hyphen, not an underscore)
+  - artifact writers: `write_verification_summary`, `write_run_health_report`, `write_pr_draft`, `write_plan_review`, `write_stage_gate`, `write_learning_handoff`
   - `log_*`: `log_agent_failure`
 
-Artifact writer family (`write_*`): persist machine-readable sidecars to `.map/<branch>/` — verification, PR draft, plan review, stage gate, learning handoff. Each one is a one-shot CLI call; none mutates `step_state.json`.
-
 Rule of thumb: anything that mutates `step_state.json` → orchestrator. Anything that reads the repo, writes a sidecar artifact, or returns a JSON verdict without touching `step_state.json` → step_runner. The two `record_subtask_result` (orchestrator) vs `record_test_baseline` (step_runner) cases are the most common confusion point — orchestrator advances the cursor, step_runner just persists a baseline file.
+
+If a command above ever returns `Unknown function`, grep `map_step_runner.py` for `func_name ==` to confirm the dispatch branch still exists; this list is the source of truth as of the PR that added it but the underlying dispatcher is the ground truth.
 
 ## Wave Execution
 

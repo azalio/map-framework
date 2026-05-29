@@ -128,13 +128,28 @@ def _check_citation(
             "reason": f"could not read file: {exc}",
         }
 
-    if line_no < 1 or end_no > len(lines):
+    # Validate the line range against the file. The previous version only
+    # checked `line_no < 1 or end_no > len(lines)`, which missed two cases:
+    #   1. Reversed range (e.g. `file.py:20-10`) — end is below start.
+    #   2. Out-of-bounds start where end happens to be in range
+    #      (e.g. file has 10 lines, citation `file.py:50-5`: start=50 fails
+    #      but end_no=5 passes the upper-bound check).
+    # Validate every bound independently.
+    if (
+        line_no < 1
+        or end_no < line_no
+        or line_no > len(lines)
+        or end_no > len(lines)
+    ):
+        reason_parts = [f"line out of range (file has {len(lines)} lines)"]
+        if end_no < line_no:
+            reason_parts.append(f"reversed range: end {end_no} < start {line_no}")
         return {
             "path": raw_path,
             "line": line_no,
             "end_line": end_no,
             "status": "error",
-            "reason": f"line out of range (file has {len(lines)} lines)",
+            "reason": "; ".join(reason_parts),
         }
 
     ident = _nearest_identifier(spec_text, match.start())

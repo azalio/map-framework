@@ -85,6 +85,37 @@ def test_flags_out_of_range_line(validator, tmp_path: Path):
     assert "out of range" in result["failures"][0]["reason"]
 
 
+def test_flags_reversed_range(validator, tmp_path: Path):
+    """Citations like `file.py:20-10` are illegal — end below start."""
+    repo = _seed_repo(
+        tmp_path,
+        {"src/wide.py": "\n".join(f"line{i}" for i in range(1, 30)) + "\n"},
+    )
+    spec = _write_spec(repo, "See `line5` at `src/wide.py:20-10` (typo).")
+    result = validator.validate_spec(spec, repo)
+    assert result["passed"] is False
+    assert result["failures"][0]["status"] == "error"
+    assert "reversed range" in result["failures"][0]["reason"]
+
+
+def test_flags_out_of_bounds_start_with_in_bounds_end(validator, tmp_path: Path):
+    """Citation `file.py:50-5` on a 10-line file: start fails, end is in range.
+
+    The naive bounds check `end_no > len(lines)` would let this through —
+    end_no (5) is within bounds; only start_no (50) is out of range. After
+    the reversed-range guard runs (5 < 50 → already caught), this is also
+    caught by the independent `line_no > len(lines)` check.
+    """
+    repo = _seed_repo(
+        tmp_path,
+        {"src/short.py": "\n".join(f"line{i}" for i in range(1, 11)) + "\n"},
+    )
+    spec = _write_spec(repo, "See `line3` at `src/short.py:50-5`.")
+    result = validator.validate_spec(spec, repo)
+    assert result["passed"] is False
+    assert result["failures"][0]["status"] == "error"
+
+
 def test_line_range_is_validated_against_end_line(validator, tmp_path: Path):
     repo = _seed_repo(
         tmp_path,
