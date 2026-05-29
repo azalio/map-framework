@@ -190,3 +190,71 @@
 - Require complex workflows to consume the prior stage artifact explicitly before proceeding; for example, review should load spec + tests + diff, and code execution should record which test/spec contract it is satisfying. Shipped as `2604.039-followup-3` via `prior_stage_consumption` reports in verification summaries and review bundles plus an explicit validator command.
 - Update canonical docs so MAP has a visible default artifact pipeline even if individual commands still differ in internal implementation details.
 
+
+---
+
+## Phase B run — framework gate findings (2026-05-30)
+
+Discovered while running `/map-efficient` for the personal-rules layer. Each
+item: defect, fix approach, and how to test after the fix.
+
+### DONE (this change) — MONITOR-phase Edit gate now permissive by default
+
+`MAP_MONITOR_HOTFIX` defaults to **on**: `.claude/hooks/workflow-gate.py` (and
+the `.codex/` copy) allow Edit/Write/MultiEdit during MONITOR by default;
+`MAP_MONITOR_HOTFIX=0` restores strict read-only MONITOR. The operator stays
+responsible for re-running `validate_step("2.4")` after a MONITOR-phase edit.
+
+Why: Actor routinely appends a test / lands a nit while the Monitor verdict is
+being captured. The old default-off forced an escape-hatch env var — the gate
+fired where the write was legitimate.
+
+Tested in `tests/test_workflow_gate.py`:
+- `test_allows_edit_during_monitor_phase_by_default` (allow with no env)
+- `test_monitor_strict_mode_blocks_edit` (`MAP_MONITOR_HOTFIX=0` blocks; deny
+  message documents the opt-out + `monitor_failed`)
+
+### OPEN — Strict-scope gate enforcement (`MAP_STRICT_SCOPE`)
+
+Two related defects: phase gates trust a "checkmark" instead of actual repo
+state. Fix extends the EXISTING opt-in `MAP_STRICT_SCOPE=1` (already used by
+`validate_mutation_boundary` in `validate_step("2.4")`); default off →
+non-breaking.
+
+**#4 — `validate_step("2.3")` (ACTOR) doesn't verify Actor wrote anything.**
+`map_orchestrator.py::validate_step` closes ACTOR without checking the diff; the
+machine can reach MONITOR while edits are pending. `files_changed` is only
+reconciled later in `record_subtask_result` (warn-only).
+Fix (under `MAP_STRICT_SCOPE=1`): in `validate_step("2.3")`, diff the current
+subtask vs its baseline SHA; empty diff → `valid=false`, `reason="actor_no_diff"`.
+Subtasks closed via `mark_subtask_complete` (synthetic no-op) are exempt.
+
+**#6 — `validate_step("2.4")` doesn't confirm the MANDATORY `detect_*` gates ran.**
+`detect_actor_files_changed_mismatch`, `detect_symbol_blast_radius`,
+`detect_cross_subtask_regression_risk` are skill-MANDATORY but unenforced.
+Fix (under `MAP_STRICT_SCOPE=1`): each `detect_*` helper writes a receipt keyed
+by `(subtask_id, gate_name)` into `step_state.json`; `validate_step("2.4")`
+rejects (`valid=false`, `reason="gates_not_run"`, listing missing gates) when
+receipts are absent. Mirror the `validate_mutation_boundary` reject path.
+
+**How to test after the fix.** Dual-copy invariant: run `make sync-templates`
+before pytest (suite imports from `src/mapify_cli/templates/map/scripts/`).
+Strict ON: (1) empty-diff 2.3 → `actor_no_diff`; (2) real edit → pass; (3) no-op
+exempt; (4) each `detect_*` writes a receipt; (5) missing receipts → 2.4
+`gates_not_run` naming the missing gates; (6) all receipts + clean rec → pass.
+Strict OFF (regression guard): (7) empty diff still closes 2.3; (8) missing
+receipts don't block 2.4. Then `python3 -m pytest -q` (full suite must stay
+green) and `python3 scripts/lint-hooks.py`.
+
+### NOT FIXING (recorded, out of scope here)
+
+- **state ↔ git reconciliation (#1):** orchestrator trusts `step_state.json`
+  over git; no "working tree disagrees with state" detector. Needs a dedicated
+  `reconcile` command — not bundled here.
+- **idempotency asymmetry (#3):** re-running `validate_step("2.4")` after an
+  advance hard-errors "Step mismatch" while `2.2` returns a clean no-op.
+  Smoothing it risks masking genuine out-of-order calls; left until #1 lands.
+- **baseline `status` (originally flagged #2):** NOT a bug. `record_test_baseline`
+  returns `"skipped"` when no harness is found and `"success"` only on a real
+  `returncode==0` run. The earlier `{"runner":null,...}` was an operator-side
+  extractor error, not a framework defect.

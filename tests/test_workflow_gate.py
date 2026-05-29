@@ -119,10 +119,15 @@ class TestWorkflowGate:
         return result.returncode, result.stdout, result.stderr
 
     def run_hook_with_project_dir(
-        self, input_data: dict, project_dir: Path
+        self, input_data: dict, project_dir: Path, extra_env: dict | None = None
     ) -> Tuple[int, str, str]:
         env = os.environ.copy()
         env["CLAUDE_PROJECT_DIR"] = str(project_dir)
+        # Don't let an inherited MAP_MONITOR_HOTFIX leak into tests that
+        # assert default behaviour; callers opt in explicitly via extra_env.
+        env.pop("MAP_MONITOR_HOTFIX", None)
+        if extra_env:
+            env.update(extra_env)
         result = subprocess.run(
             ["python3", str(self.HOOK_PATH)],
             input=json.dumps(input_data),
@@ -201,17 +206,19 @@ class TestWorkflowGate:
 
     # --- Phase-based enforcement ---
 
-    def test_blocks_edit_during_monitor_phase(self, tmp_path: Path) -> None:
-        """Edit blocked during MONITOR phase."""
+    def test_allows_edit_during_monitor_phase_by_default(self, tmp_path: Path) -> None:
+        """MONITOR allows edits BY DEFAULT (MAP_MONITOR_HOTFIX defaults on).
+
+        Actor routinely lands a test/nit while the Monitor verdict is being
+        captured; see test_monitor_strict_mode_blocks_edit for the opt-out.
+        """
         self._setup_step_state(tmp_path, "master", "MONITOR")
         code, stdout, _ = self.run_hook(
             {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}},
             tmp_path,
         )
         assert code == 0
-        reason = self._assert_denied(stdout)
-        assert "MONITOR" in reason
-        assert "ACTOR" in reason  # Should mention allowed phases
+        self._assert_allowed(stdout)
 
     def test_blocks_edit_during_decompose_phase(self, tmp_path: Path) -> None:
         """Edit blocked during DECOMPOSE phase."""
@@ -265,7 +272,7 @@ class TestWorkflowGate:
 
     def test_blocks_write_during_non_editing_phase(self, tmp_path: Path) -> None:
         """Write blocked like Edit during non-editing phases."""
-        self._setup_step_state(tmp_path, "master", "MONITOR")
+        self._setup_step_state(tmp_path, "master", "PREDICTOR")
         code, stdout, _ = self.run_hook(
             {"tool_name": "Write", "tool_input": {"file_path": "/test.py"}},
             tmp_path,
@@ -275,7 +282,7 @@ class TestWorkflowGate:
 
     def test_blocks_multiedit_during_non_editing_phase(self, tmp_path: Path) -> None:
         """MultiEdit blocked like Edit during non-editing phases."""
-        self._setup_step_state(tmp_path, "master", "MONITOR")
+        self._setup_step_state(tmp_path, "master", "PREDICTOR")
         code, stdout, _ = self.run_hook(
             {"tool_name": "MultiEdit", "tool_input": {"file_path": "/test.py"}},
             tmp_path,
@@ -290,8 +297,8 @@ class TestWorkflowGate:
         self._setup_step_state(
             tmp_path,
             "master",
-            "MONITOR",
-            subtask_phases={"ST-001": "MONITOR", "ST-002": "ACTOR"},
+            "PREDICTOR",
+            subtask_phases={"ST-001": "PREDICTOR", "ST-002": "ACTOR"},
         )
         code, stdout, _ = self.run_hook(
             {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}},
@@ -305,8 +312,8 @@ class TestWorkflowGate:
         self._setup_step_state(
             tmp_path,
             "master",
-            "MONITOR",
-            subtask_phases={"ST-001": "MONITOR", "ST-002": "PREDICTOR"},
+            "PREDICTOR",
+            subtask_phases={"ST-001": "PREDICTOR", "ST-002": "DECOMPOSE"},
         )
         code, stdout, _ = self.run_hook(
             {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}},
@@ -322,7 +329,7 @@ class TestWorkflowGate:
         self._setup_step_state(
             tmp_path,
             "master",
-            "MONITOR",
+            "PREDICTOR",
             subtask_phases={"ST-001": "2.3"},
         )
         code, stdout, _ = self.run_hook(
@@ -339,7 +346,7 @@ class TestWorkflowGate:
         self._setup_step_state(
             tmp_path,
             "master",
-            "MONITOR",
+            "PREDICTOR",
             subtask_phases={"ST-001": "2.25"},
         )
         code, stdout, _ = self.run_hook(
@@ -356,7 +363,7 @@ class TestWorkflowGate:
         self._setup_step_state(
             tmp_path,
             "master",
-            "MONITOR",
+            "PREDICTOR",
             subtask_phases={"ST-001": "2.2"},
         )
         code, stdout, _ = self.run_hook(
@@ -445,21 +452,30 @@ class TestWorkflowGate:
         assert "save_research" in reason, reason
         assert "validate_step 2.2" in reason, reason
 
-    def test_monitor_phase_message_mentions_hotfix_escape(
-        self, tmp_path: Path
-    ) -> None:
-        """Edit during MONITOR is blocked, but the deny message must
-        explicitly document the MAP_MONITOR_HOTFIX=1 opt-in escape and
-        the monitor_failed path so operators don't bypass via state
-        editing.
+    def test_monitor_strict_mode_blocks_edit(self, tmp_path: Path) -> None:
+        """MAP_MONITOR_HOTFIX=0 restores strict read-only MONITOR. The deny
+        message must document the opt-out and the monitor_failed path so
+        operators don't bypass via state editing.
         """
-        self._setup_step_state(tmp_path, "master", "MONITOR")
-        code, stdout, _ = self.run_hook(
+        map_dir = tmp_path / ".map" / "default"
+        map_dir.mkdir(parents=True, exist_ok=True)
+        (map_dir / "step_state.json").write_text(
+            json.dumps(
+                {
+                    "current_step_phase": "MONITOR",
+                    "current_subtask_id": "ST-001",
+                    "subtask_phases": {},
+                }
+            )
+        )
+        code, stdout, _ = self.run_hook_with_project_dir(
             {"tool_name": "Edit", "tool_input": {"file_path": "/test.py"}},
             tmp_path,
+            extra_env={"MAP_MONITOR_HOTFIX": "0"},
         )
         assert code == 0
         reason = self._assert_denied(stdout)
+        assert "MONITOR" in reason
         assert "MAP_MONITOR_HOTFIX" in reason, reason
         assert "monitor_failed" in reason, reason
 
@@ -467,7 +483,7 @@ class TestWorkflowGate:
 
     def test_allows_map_dir_edits_always(self, tmp_path: Path) -> None:
         """Edits under .map/ always allowed (prevents deadlocks)."""
-        self._setup_step_state(tmp_path, "master", "MONITOR")
+        self._setup_step_state(tmp_path, "master", "PREDICTOR")
         map_file = str(tmp_path / ".map" / "master" / "state.json")
         code, stdout, _ = self.run_hook(
             {"tool_name": "Edit", "tool_input": {"file_path": map_file}},
@@ -580,7 +596,7 @@ class TestWorkflowGate:
         (map_dir / "step_state.json").write_text(
             json.dumps(
                 {
-                    "current_step_phase": "MONITOR",
+                    "current_step_phase": "PREDICTOR",
                     "current_subtask_id": "ST-001",
                     "subtask_phases": {},
                     "constraints": {"scope_glob": "src/*"},
@@ -594,7 +610,7 @@ class TestWorkflowGate:
         )
         assert code == 0
         reason = self._assert_denied(stdout)
-        assert "MONITOR" in reason
+        assert "PREDICTOR" in reason
 
         (map_dir / "step_state.json").write_text(
             json.dumps(
@@ -682,7 +698,7 @@ class TestWorkflowGate:
         self, tmp_path: Path
     ) -> None:
         """Path exemption beats phase block: .claude/rules/learned/ is always allowed."""
-        self._setup_step_state(tmp_path, "master", "MONITOR")
+        self._setup_step_state(tmp_path, "master", "PREDICTOR")
         target = tmp_path / ".claude" / "rules" / "learned" / "error-patterns.md"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("# existing\n", encoding="utf-8")
@@ -693,9 +709,9 @@ class TestWorkflowGate:
         assert code == 0
         self._assert_allowed(stdout)
 
-    def test_blocks_edit_to_claude_skills_during_monitor(self, tmp_path: Path) -> None:
+    def test_blocks_edit_to_claude_skills_when_phase_gated(self, tmp_path: Path) -> None:
         """Exemption is narrow: .claude/skills/ is NOT exempt, still gated by phase."""
-        self._setup_step_state(tmp_path, "master", "MONITOR")
+        self._setup_step_state(tmp_path, "master", "PREDICTOR")
         target = tmp_path / ".claude" / "skills" / "map-review" / "SKILL.md"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("# skill\n", encoding="utf-8")
@@ -705,7 +721,7 @@ class TestWorkflowGate:
         )
         assert code == 0
         reason = self._assert_denied(stdout)
-        assert "MONITOR" in reason
+        assert "PREDICTOR" in reason
 
     def test_allows_edit_when_subtask_phase_is_complete(self, tmp_path: Path) -> None:
         """Parallel-wave mode: COMPLETE subtask phase counts as an ALLOWED_PHASE.
@@ -716,7 +732,7 @@ class TestWorkflowGate:
         self._setup_step_state(
             tmp_path,
             "master",
-            "MONITOR",
+            "PREDICTOR",
             subtask_phases={"ST-001": "COMPLETE"},
         )
         code, stdout, _ = self.run_hook(
@@ -728,7 +744,7 @@ class TestWorkflowGate:
 
     def test_learned_rules_exemption_only_covers_markdown(self, tmp_path: Path) -> None:
         """Non-markdown files under .claude/rules/learned/ are NOT exempt."""
-        self._setup_step_state(tmp_path, "master", "MONITOR")
+        self._setup_step_state(tmp_path, "master", "PREDICTOR")
         target = tmp_path / ".claude" / "rules" / "learned" / "foo.py"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("# python\n", encoding="utf-8")
@@ -738,13 +754,13 @@ class TestWorkflowGate:
         )
         assert code == 0
         reason = self._assert_denied(stdout)
-        assert "MONITOR" in reason
+        assert "PREDICTOR" in reason
 
     def test_learned_rules_exemption_allows_nested_markdown(
         self, tmp_path: Path
     ) -> None:
         """Markdown files in subdirectories under .claude/rules/learned/ are exempt."""
-        self._setup_step_state(tmp_path, "master", "MONITOR")
+        self._setup_step_state(tmp_path, "master", "PREDICTOR")
         target = tmp_path / ".claude" / "rules" / "learned" / "deep" / "nested.md"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("# learned\n", encoding="utf-8")

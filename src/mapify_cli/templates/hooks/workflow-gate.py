@@ -58,14 +58,15 @@ DOCS_ONLY_PATH_PREFIXES = ("docs/", "doc/", "documentation/", "CHANGELOG", "RELE
 # JSON edit, third-party tool) as a security regression on this gate.
 TERMINAL_PHASES = {"COMPLETE"}  # Workflow closed — gate is permissive.
 
-# MONITOR hot-fix opt-in: when MAP_MONITOR_HOTFIX=1 in env, Edits are
-# allowed during MONITOR so the operator can land a 2-line nit without
-# spinning a full monitor_failed → ACTOR retry cycle. Opt-in (not default)
-# because the unconditional behaviour would silently widen the gate; the
-# operator must set the env variable per-session to acknowledge they're
-# making a hot-fix and re-running validate_step("2.4") themselves.
+# MONITOR hot-fix: Edits during MONITOR are allowed BY DEFAULT. Actor
+# routinely needs to append a test or land a small nit while the Monitor
+# verdict is being captured, and blocking that forced operators through an
+# escape hatch (the former MAP_MONITOR_HOTFIX=1 opt-in). The default is now
+# permissive; set MAP_MONITOR_HOTFIX=0 to restore strict read-only MONITOR.
+# The operator remains responsible for re-running validate_step("2.4") after
+# any MONITOR-phase edit.
 HOTFIX_PHASES: set[str] = (
-    {"MONITOR"} if os.environ.get("MAP_MONITOR_HOTFIX") == "1" else set()
+    set() if os.environ.get("MAP_MONITOR_HOTFIX") == "0" else {"MONITOR"}
 )
 ALLOWED_PHASES = EDITING_PHASES | TERMINAL_PHASES | HOTFIX_PHASES
 
@@ -284,9 +285,9 @@ def is_editing_phase(branch: str) -> tuple[bool, Optional[str]]:
             "  - Or call monitor_failed if Actor needs revisions, returning\n"
             "    to ACTOR phase legitimately.\n"
             "\n"
-            "Hot-fix escape: MAP_MONITOR_HOTFIX=1 env opt-in re-opens Edit\n"
-            "during MONITOR for trivial one-line nits (operator acknowledges\n"
-            "they will re-run validate_step 2.4 themselves)."
+            "Note: MONITOR-phase Edits are allowed by default; set\n"
+            "MAP_MONITOR_HOTFIX=0 to make MONITOR strictly read-only\n"
+            "(operator then re-runs validate_step 2.4 themselves)."
         )
     return False, (
         f"Workflow gate: Edit blocked during phase '{current_phase}' "
