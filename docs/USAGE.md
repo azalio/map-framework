@@ -6,6 +6,8 @@ For long-running work, the canonical MAP flows maintain branch-scoped artifacts 
 
 `/map-plan` now performs a workflow-fit preflight before full planning. If the task is truly tiny, it can explicitly off-ramp to a direct edit or `/map-fast` instead of forcing `SPEC + PLAN`.
 
+After discovery, `/map-plan` also runs an already-implemented gate: discovery reports which requested behaviors already exist (with `file:line` proof), and the planner reconciles against them. If the whole feature already exists it off-ramps with evidence and writes no plan; if only parts exist, those parts move to the spec's "Out of Scope > Already Implemented" subsection so decomposition plans only the remaining gap.
+
 ## Canonical Flows
 
 ### Standard flow

@@ -59,7 +59,7 @@ echo "state:       $(test -f .map/${BRANCH}/step_state.json && echo EXISTS || ec
 ```
 
 Resume rules:
-- Existing `findings`: reuse discovery.
+- Existing `findings`: reuse discovery only if the file has an `Already Implemented` section; if it predates that format, re-run discovery (see Step 0).
 - Existing `spec`: skip interview/spec writing.
 - Existing `task_plan`: skip decomposition and plan creation.
 - Existing `step_state.json`: plan is complete; print checkpoint and STOP.
@@ -88,7 +88,7 @@ Outcomes:
 
 ### Step 0: Quick Discovery (Optional but Recommended)
 
-If `.map/<branch>/findings_<branch>.md` exists, read it and skip discovery. Otherwise run discovery to find relevant files, existing patterns, risks, and confirmed new files.
+If `.map/<branch>/findings_<branch>.md` exists, read it and skip discovery — but ONLY if it contains an `Already Implemented` section (the format this skill now requires). A findings file written before this format existed lacks that section; in that case re-run discovery with the prompt below so the Step 0.5 gate has the evidence it requires. Otherwise (no findings file at all) run discovery to find relevant files, existing patterns, risks, and confirmed new files.
 
 ```text
 Task(
@@ -98,13 +98,25 @@ Task(
 <documents>
   <document source="user-request"><document_content>$ARGUMENTS</document_content></document>
 </documents>
-<task>Locate relevant code and return verified existing files, new files confirmed absent, patterns, risks, and unknowns.</task>
-<expected_output>Markdown sections: Existing Files, Files to Create, Patterns Found, Risks / Unknowns.</expected_output>
+<task>Locate relevant code and return verified existing files, new files confirmed absent, patterns, risks, and unknowns. Also determine, with `file:line` evidence, which parts of the request are ALREADY IMPLEMENTED in the codebase (whole feature, or specific behaviors/acceptance criteria) versus genuinely missing. Do not assume absence — search for existing implementations before reporting a part as missing.</task>
+<expected_output>Markdown sections: Already Implemented (each entry cites the feature part + `file:line` proof), Existing Files, Files to Create, Patterns Found, Risks / Unknowns. If nothing matching the request exists, write "Already Implemented: none found (searched: <queries>)".</expected_output>
 """
 )
 ```
 
 Save findings to `.map/<branch>/findings_<branch>.md`.
+
+### Step 0.5: Already-Implemented Gate (MANDATORY when discovery ran)
+
+Before interviewing or writing the spec, reconcile the request against the discovery `Already Implemented` section. Do not plan work the codebase already does. This gate runs whenever Step 0 produced findings; if discovery was intentionally skipped (greenfield or fully-provided spec), state that the gate was skipped and why. If the findings file lacks an `Already Implemented` section (it predates this format), do NOT run the gate on incomplete evidence — re-run Step 0 discovery first.
+
+Classify the request:
+
+- **Whole feature already implemented** — every observable behavior the user asked for exists, with `file:line` proof. Off-ramp: report what already satisfies the request (cite the evidence), state that no plan is needed, and STOP. Do not write a spec or blueprint. If the user may want changes to the existing implementation, ask them to restate the gap rather than re-planning what exists.
+- **Partially implemented** — some behaviors/acceptance criteria exist, others are missing. Carry the already-done parts into the spec's **Out of Scope** under an `Already Implemented` subsection (with `file:line` evidence) so decomposition plans ONLY the remaining work. Re-scope the request to the gap before continuing.
+- **Not implemented** — nothing matching exists (or only unrelated patterns). Continue normally.
+
+When in doubt about whether an existing implementation truly satisfies a request, treat it as partially implemented and surface the ambiguity in the interview or Open Questions — never silently re-plan code that already exists, and never silently assume an existing file already covers a behavior.
 
 ### Step 1: Assess Scope and Decide Interview Depth
 
@@ -198,6 +210,7 @@ Split mixed-concern subtasks unless concern_justification explains why separatio
 Top-level coverage_map must map each acceptance criterion, invariant, and cross-cutting requirement to an owning subtask. Each key must appear as a bracketed tag in that subtask's validation_criteria, e.g. VC1 [AC-1]: retryable checkout timeout.
 Top-level hard_constraints are non-negotiable: every hard_constraints id must appear in coverage_map and bracketed validation_criteria.
 Top-level soft_constraints are negotiable only with coverage or tradeoff_rationale.
+Do NOT create subtasks for behavior listed under the spec's "Out of Scope > Already Implemented" subsection; that work already exists in the codebase. Plan only the remaining gap.
 </constraints>
 <expected_output>Return only blueprint JSON.</expected_output>
 """
@@ -329,6 +342,7 @@ See [plan-reference.md](plan-reference.md#troubleshooting) for stale artifacts, 
 ## Success Criteria
 
 - Workflow-fit decision recorded.
+- Already-implemented gate ran (or was explicitly skipped with a reason): whole-feature duplicates off-ramped, partial duplicates moved to spec "Out of Scope > Already Implemented".
 - Spec exists or is intentionally reused.
 - Blueprint exists and `validate_blueprint_contract` passed.
 - Human-readable task plan includes scope metadata and coverage.
