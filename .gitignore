@@ -49,6 +49,9 @@ coverage.json
 !.map/static-analysis/
 !.map/scripts/
 .map/scripts/.map/
+.map/personal/
+# ^ Personal/local learned-rules layer — user-local, never committed or shipped
+#   (redundant over .map/* above; kept explicit for intent + defense in depth)
 
 # Temporary verification files
 mapify_cli_verification_*.json
