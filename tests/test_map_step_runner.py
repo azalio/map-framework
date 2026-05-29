@@ -3286,6 +3286,50 @@ class TestDetectTruncatedAgentOutput:
         assert report["truncated"] is True
         assert report["reasons"] == ["empty response"]
 
+    def _run_truncation_cli(self, stdin_text: str, agent: str = "actor") -> dict:
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPTS_PATH / "map_step_runner.py"),
+                "detect_truncated_agent_output",
+                "--agent",
+                agent,
+            ],
+            input=stdin_text,
+            capture_output=True,
+            text=True,
+        )
+        assert proc.returncode == 0, proc.stderr
+        return json.loads(proc.stdout)
+
+    def test_cli_no_input_is_not_truncated(self):
+        """Regression: a bare CLI call (nothing piped) must NOT report a
+        hard-stop truncation. It returns status=='no_input' / truncated False
+        so it can't masquerade as an 'empty response' truncation on every
+        subtask when the caller forgot to pipe the agent response.
+        """
+        report = self._run_truncation_cli("")
+        assert report["truncated"] is False, report
+        assert report["status"] == "no_input", report
+
+    def test_cli_piped_prose_is_truncated(self):
+        """A genuinely-piped prose (non-JSON) response is still flagged."""
+        report = self._run_truncation_cli("All good, shipping now.", agent="monitor")
+        assert report["truncated"] is True, report
+        assert report["status"] == "ok", report
+
+    def test_cli_piped_valid_envelope_is_ok(self):
+        """A piped complete envelope passes (truncated False, status ok)."""
+        envelope = json.dumps({
+            "files_changed": ["a.py"],
+            "tests_run": ["pytest"],
+            "validation_notes": "ok",
+            "blocker": "",
+        })
+        report = self._run_truncation_cli(envelope)
+        assert report["truncated"] is False, report
+        assert report["status"] == "ok", report
+
     def test_predictor_full_output_not_truncated(self):
         """POSITIVE: full valid predictor JSON is not flagged as truncated."""
         text = json.dumps({
@@ -7172,6 +7216,42 @@ ab = 1
         missing = tmp_path / "no_such_file.py"
         result = map_step_runner._enclosing_changed_symbols(missing, {1})
         assert result is None
+
+    def test_is_reportable_symbol_excludes_main(self) -> None:
+        """Regression: generic process entrypoint `main` is not a reportable symbol.
+
+        A `def main()` is invoked by convention (``if __name__ == "__main__"``)
+        and matches the literal word "main" in every SKILL.md / settings.json,
+        flooding the blast-radius gate with false external callers.
+        """
+        assert map_step_runner._is_reportable_symbol("main") is False
+        # Real shared helpers and private constants stay reportable.
+        assert map_step_runner._is_reportable_symbol("shared_fn") is True
+        assert map_step_runner._is_reportable_symbol("_MONITOR_REQUIRED_KEYS") is True
+        # Existing exclusions still hold.
+        assert map_step_runner._is_reportable_symbol("__all__") is False
+        assert map_step_runner._is_reportable_symbol("ab") is False
+
+    def test_generic_main_excluded_from_changed_symbols(self, tmp_path: Path) -> None:
+        """Regression: a changed `def main()` body does not surface `main`."""
+        src = tmp_path / "hook.py"
+        src.write_text(
+            "import os, sys\n"
+            "\n"
+            "def main() -> None:\n"
+            "    if os.environ.get('MAP_INVOKED_BY'):\n"
+            "        sys.exit(0)\n"
+            "    print('work')\n"
+            "\n"
+            "def shared_helper(x):\n"
+            "    return x + 1\n",
+            encoding="utf-8",
+        )
+        # Line 4 is inside main(); line 9 is inside shared_helper().
+        result = map_step_runner._enclosing_changed_symbols(src, {4, 9})
+        assert result is not None
+        assert "main" not in result
+        assert "shared_helper" in result
 
 
 class TestDetectSymbolBlastRadius:

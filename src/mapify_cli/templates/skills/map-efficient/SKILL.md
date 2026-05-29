@@ -296,8 +296,8 @@ Return files_changed, tests_run, validation_notes, and any blocker.
 
 ### Actor truncated-response gate (MANDATORY — pre-MONITOR)
 
-Before invoking Monitor, validate Actor's response via
-`python3 .map/scripts/map_step_runner.py detect_truncated_agent_output --agent actor`.
+Before invoking Monitor, **pipe** Actor's captured response in — the detector reads stdin; a bare call returns `status:"no_input"`, NOT a pass:
+`printf '%s' "$ACTOR_RESPONSE" | python3 .map/scripts/map_step_runner.py detect_truncated_agent_output --agent actor`.
 If `truncated: true`, log via
 `python3 .map/scripts/map_step_runner.py log_agent_failure` and re-invoke ONCE using the prompt from
 `python3 .map/scripts/map_step_runner.py build_json_retry_prompt --agent actor --errors '<reasons>'`;
@@ -339,8 +339,8 @@ Return JSON with valid, summary, issues, files_changed, tests_run, and escalatio
 # After Monitor returns:
 
 - **Truncated-response gate (MANDATORY — pre-verdict):** Before reading
-  `valid`/`recommendation`, run
-  `python3 .map/scripts/map_step_runner.py detect_truncated_agent_output --agent monitor`
+  `valid`/`recommendation`, **pipe** Monitor's response in (bare call → `status:"no_input"`, NOT a pass):
+  `printf '%s' "$MONITOR_RESPONSE" | python3 .map/scripts/map_step_runner.py detect_truncated_agent_output --agent monitor`
   (JSON with `valid`, `summary`, `issues`, ends `}`). On truncation: log via
   `python3 .map/scripts/map_step_runner.py log_agent_failure` and re-invoke Monitor ONCE using the prompt from
   `python3 .map/scripts/map_step_runner.py build_json_retry_prompt --agent monitor --errors '<reasons>'`;

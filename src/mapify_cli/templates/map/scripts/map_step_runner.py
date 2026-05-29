@@ -7547,6 +7547,28 @@ _SYMBOL_GREP_CAP = 40
 # than evidence that no external callers exist.
 _GREP_ERROR_SENTINEL = [{"symbol": "*", "file": "", "line": 0, "note": "grep_error"}]
 
+# Generic process-entrypoint names excluded from blast-radius analysis. A
+# function named ``main`` is invoked by convention (``if __name__ == "__main__"``
+# inside its own file, or by the harness via a file path) — never imported as a
+# shared helper. Treating it as a changed symbol matches the literal word "main"
+# in every SKILL.md / settings.json and floods the gate with false callers.
+_GENERIC_ENTRYPOINT_NAMES = frozenset({"main"})
+
+
+def _is_reportable_symbol(name: str) -> bool:
+    """Whether a module-level name is worth blast-radius caller analysis.
+
+    Excludes dunders (``__x__``), names shorter than 3 characters, and generic
+    process entrypoints (:data:`_GENERIC_ENTRYPOINT_NAMES`). Leading-underscore
+    names such as ``_MONITOR_REQUIRED_KEYS`` are intentionally kept.
+    """
+    return (
+        bool(name)
+        and not (name.startswith("__") and name.endswith("__"))
+        and len(name) >= 3
+        and name not in _GENERIC_ENTRYPOINT_NAMES
+    )
+
 
 def _changed_line_numbers_by_file(diff_text: str) -> dict[str, set[int]]:
     """Parse a unified diff and return new-file line numbers of added lines per path.
@@ -7607,9 +7629,10 @@ def _enclosing_changed_symbols(
     Recognises ``FunctionDef``, ``AsyncFunctionDef``, ``ClassDef``, ``Assign``
     with ``Name`` targets, and ``AnnAssign`` with a ``Name`` target.
 
-    Excludes dunder names (start AND end with ``__``) and names shorter than 3
-    characters.  Leading-underscore names such as ``_MONITOR_REQUIRED_KEYS`` are
-    intentionally kept.
+    Excludes dunder names (start AND end with ``__``), names shorter than 3
+    characters, and generic process entrypoints (``main``) via
+    :func:`_is_reportable_symbol`.  Leading-underscore names such as
+    ``_MONITOR_REQUIRED_KEYS`` are intentionally kept.
 
     Returns ``None`` on ``SyntaxError`` or ``OSError`` (caller must treat this as
     a fail-safe / unknown signal).
@@ -7634,7 +7657,7 @@ def _enclosing_changed_symbols(
             start = min([node.lineno] + decorator_lines)
             end = node.end_lineno or node.lineno
 
-            if name and not (name.startswith("__") and name.endswith("__")) and len(name) >= 3:
+            if name and _is_reportable_symbol(name):
                 if any(start <= ln <= end for ln in changed_lines):
                     symbols.add(name)
 
@@ -7644,11 +7667,8 @@ def _enclosing_changed_symbols(
             for target in node.targets:
                 if isinstance(target, ast.Name):
                     tname = target.id
-                    if (
-                        tname
-                        and not (tname.startswith("__") and tname.endswith("__"))
-                        and len(tname) >= 3
-                        and any(start <= ln <= end for ln in changed_lines)
+                    if _is_reportable_symbol(tname) and any(
+                        start <= ln <= end for ln in changed_lines
                     ):
                         symbols.add(tname)
 
@@ -7657,11 +7677,8 @@ def _enclosing_changed_symbols(
                 tname = node.target.id
                 start = node.lineno
                 end = node.end_lineno or node.lineno
-                if (
-                    tname
-                    and not (tname.startswith("__") and tname.endswith("__"))
-                    and len(tname) >= 3
-                    and any(start <= ln <= end for ln in changed_lines)
+                if _is_reportable_symbol(tname) and any(
+                    start <= ln <= end for ln in changed_lines
                 ):
                     symbols.add(tname)
 
@@ -9078,16 +9095,36 @@ if __name__ == "__main__":
         sys.exit(0 if is_ack else 1)
 
     elif func_name == "detect_truncated_agent_output":
-        # CLI: detect_truncated_agent_output [--agent monitor|actor|...]
-        # Reads candidate agent response from stdin, prints JSON report.
+        # CLI: <pipe agent response> | detect_truncated_agent_output [--agent monitor|actor|...]
+        # Reads the candidate agent response from stdin, prints JSON report.
         # Exit code 0 always (callers parse `truncated` field) — no stderr
         # for a clean response, so shell pipelines can branch on it.
+        #
+        # IMPORTANT: the captured agent response MUST be piped in. A bare call
+        # with nothing on stdin is NOT a truncated response — it means the
+        # caller forgot to pipe. We surface that as a distinct, non-blocking
+        # `status: "no_input"` so it can't masquerade as a hard-stop
+        # truncation on every subtask (an empty stdin would otherwise read as
+        # `truncated: true / "empty response"`).
         agent_kind_arg = "monitor"
         if "--agent" in sys.argv:
             agent_idx = sys.argv.index("--agent")
             if agent_idx + 1 < len(sys.argv):
                 agent_kind_arg = sys.argv[agent_idx + 1]
         text_in = sys.stdin.read()
+        if not text_in.strip():
+            print(json.dumps({
+                "truncated": False,
+                "status": "no_input",
+                "reasons": [
+                    "no agent response on stdin — pipe the captured response, "
+                    "e.g. printf '%s' \"$RESPONSE\" | python3 "
+                    ".map/scripts/map_step_runner.py "
+                    "detect_truncated_agent_output --agent " + agent_kind_arg
+                ],
+                "agent_kind": agent_kind_arg,
+            }, indent=2))
+            sys.exit(0)
         report = detect_truncated_agent_output(
             text_in, agent_kind=agent_kind_arg
         )
@@ -9095,6 +9132,7 @@ if __name__ == "__main__":
         # original text if they want it); keep the report shape small.
         report_summary = {
             "truncated": report["truncated"],
+            "status": "ok",
             "reasons": report["reasons"],
             "agent_kind": report["agent_kind"],
         }
