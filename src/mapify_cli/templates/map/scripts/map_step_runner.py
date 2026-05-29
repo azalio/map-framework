@@ -7657,7 +7657,7 @@ def _enclosing_changed_symbols(
             start = min([node.lineno] + decorator_lines)
             end = node.end_lineno or node.lineno
 
-            if name and _is_reportable_symbol(name):
+            if _is_reportable_symbol(name):
                 if any(start <= ln <= end for ln in changed_lines):
                     symbols.add(name)
 

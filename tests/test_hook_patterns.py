@@ -19,6 +19,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -138,3 +139,76 @@ def test_deny_still_fires_with_flag(hook_path: Path, flag_set: bool) -> None:
         f"{hook_path.relative_to(REPO_ROOT)} did not deny a dangerous command "
         f"with MAP_INVOKED_BY {'set' if flag_set else 'unset'}: {blob!r}"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Doc/classification drift guard
+# --------------------------------------------------------------------------- #
+# The classification (REQUIRE_GUARD/FORBID_GUARD sets in scripts/lint-hooks.py)
+# is the single machine-readable source of truth, but the same per-hook class is
+# independently restated in prose tables across four shipped docs. Nothing else
+# checks those tables against the sets, so a reclassified/added/dropped hook can
+# silently drift. These tests fail loudly on any divergence.
+HOOK_DOC_FILES = [
+    REPO_ROOT / ".claude" / "hooks" / "README.md",
+    REPO_ROOT / ".claude" / "references" / "hook-patterns.md",
+    REPO_ROOT / "src" / "mapify_cli" / "templates" / "hooks" / "README.md",
+    REPO_ROOT / "src" / "mapify_cli" / "templates" / "references" / "hook-patterns.md",
+]
+HOOK_DOC_IDS = [str(p.relative_to(REPO_ROOT)) for p in HOOK_DOC_FILES]
+
+
+def _doc_classification(text: str) -> dict[str, set[str]]:
+    """Map each hook basename mentioned in a doc TABLE to the class(es) it is
+    shown under.
+
+    Handles both doc shapes: README has a per-row ``Class`` column
+    (``| `foo.py` | ... | REQUIRE_GUARD | ... |``); hook-patterns.md groups
+    hooks under ``### REQUIRE_GUARD`` / ``### FORBID_GUARD`` section headings.
+    Only ``| ...`` table rows with backtick-wrapped ``*.py``/``*.sh`` names
+    count, so prose mentions elsewhere never pollute the map.
+    """
+    found: dict[str, set[str]] = {}
+    section: str | None = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            if "REQUIRE_GUARD" in stripped:
+                section = "REQUIRE_GUARD"
+            elif "FORBID_GUARD" in stripped:
+                section = "FORBID_GUARD"
+            elif stripped.startswith("## "):
+                section = None  # left the classification sections
+            continue
+        if not stripped.startswith("|"):
+            continue
+        if "REQUIRE_GUARD" in line:
+            row_class: str | None = "REQUIRE_GUARD"
+        elif "FORBID_GUARD" in line:
+            row_class = "FORBID_GUARD"
+        else:
+            row_class = section
+        if row_class is None:
+            continue
+        for token in re.findall(r"`([^`]+)`", line):
+            if token.endswith((".py", ".sh")):
+                found.setdefault(token, set()).add(row_class)
+    return found
+
+
+@pytest.mark.parametrize("doc_path", HOOK_DOC_FILES, ids=HOOK_DOC_IDS)
+def test_doc_tables_match_classification(doc_path: Path) -> None:
+    """Every doc table classifies each hook with EXACTLY its lint-hooks class."""
+    assert doc_path.exists(), f"missing doc file {doc_path.relative_to(REPO_ROOT)}"
+    found = _doc_classification(doc_path.read_text(encoding="utf-8"))
+    rel = doc_path.relative_to(REPO_ROOT)
+    for name in sorted(lh.REQUIRE_GUARD | lh.FORBID_GUARD):
+        expected = "REQUIRE_GUARD" if name in lh.REQUIRE_GUARD else "FORBID_GUARD"
+        assert name in found, (
+            f"{rel}: hook '{name}' is classified in scripts/lint-hooks.py but "
+            f"absent from this doc's tables (classification drift)."
+        )
+        assert found[name] == {expected}, (
+            f"{rel}: hook '{name}' is listed as {sorted(found[name])} but "
+            f"scripts/lint-hooks.py classifies it as {expected} (drift)."
+        )

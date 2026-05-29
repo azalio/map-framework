@@ -13,13 +13,18 @@ classified into exactly one class:
 
 A hook with no classification entry is a hard error (forces the author to
 classify it). Position is verified, not just presence: a guard placed after a
-side-effecting statement fails.
+side-effecting statement fails — including a module-scope assignment whose RHS
+performs I/O (e.g. ``data = sys.stdin.read()``) and a shell ``VAR=$(...)``
+command substitution before the guard.
 
 Anti-obfuscation hardening: a FORBID_GUARD hook must reference ``MAP_INVOKED_BY``
-exactly zero times (string-constant level), so an indirect guard such as
-``flag = "MAP_INVOKED_BY"; if os.environ.get(flag): sys.exit(0)`` cannot slip
-past the If-test scan. Shell guard detection strips inline comments first, so a
-prose ``# ... MAP_INVOKED_BY ...`` note is never mistaken for a real guard.
+exactly zero times at the RAW SOURCE level (a plain substring scan, including
+comments and substrings of a larger string), so an indirect guard such as
+``flag = "MAP_INVOKED_BY"; if os.environ.get(flag): sys.exit(0)``, a stray
+comment, or an embedded mention cannot slip past — and the linter agrees
+byte-for-byte with ``tests/test_hook_patterns.py``. For REQUIRE_GUARD shell
+hooks, guard *detection* still strips inline comments first, so a prose
+``# ... MAP_INVOKED_BY ...`` note is never mistaken for a real guard.
 
 Scans BOTH dev roots, including Codex (INV-A4):
   - .claude/hooks/
@@ -79,10 +84,9 @@ ENV_FLAG = "MAP_INVOKED_BY"
 
 
 class Colors:
+    # Only the codes this linter actually emits are kept (no dead YELLOW/BLUE).
     RED = "\033[91m"
     GREEN = "\033[92m"
-    YELLOW = "\033[93m"
-    BLUE = "\033[94m"
     BOLD = "\033[1m"
     END = "\033[0m"
 
@@ -117,12 +121,21 @@ def _stmt_exits(stmt: ast.stmt) -> bool:
 
 
 def is_recursion_guard(node: ast.AST) -> bool:
-    """True if ``node`` is an ``if <MAP_INVOKED_BY ...>: <exit/return>`` guard."""
+    """True if ``node`` is an ``if <MAP_INVOKED_BY ...>: <exit/return>`` guard.
+
+    The exit/return may live in either branch — ``if FLAG: sys.exit(0)`` and the
+    inverted ``if not FLAG: ... else: sys.exit(0)`` are both guards. Checking
+    ``orelse`` as well as ``body`` (a) recognises the inverted REQUIRE idiom
+    instead of mis-reporting it as MISSING, and (b) strengthens the FORBID scan
+    so an else-branch bypass cannot slip past.
+    """
     if not isinstance(node, ast.If):
         return False
     if not _test_references_flag(node.test):
         return False
-    return any(_stmt_exits(s) for s in node.body)
+    return any(_stmt_exits(s) for s in node.body) or any(
+        _stmt_exits(s) for s in node.orelse
+    )
 
 
 def _strip_leading_docstring(body: list[ast.stmt]) -> list[ast.stmt]:
@@ -137,24 +150,50 @@ def _strip_leading_docstring(body: list[ast.stmt]) -> list[ast.stmt]:
     return body
 
 
+def _is_side_effect_free_assignment(stmt: ast.stmt) -> bool:
+    """True if a module-level assignment is a plain constant definition.
+
+    Only literal/constant RHS values count as "constant definitions" the guard
+    may follow. An assignment whose RHS performs I/O or runs tooling
+    (``data = sys.stdin.read()``) is NOT skippable — the guard must precede it,
+    so we stop the module-scope scan there. Detected by the presence of any
+    ``Call``/``Await``/``Yield`` node in the RHS.
+    """
+    if not isinstance(stmt, (ast.Assign, ast.AnnAssign)):
+        return False
+    value = stmt.value  # AnnAssign may be annotation-only (value is None)
+    if value is None:
+        return True
+    return not any(
+        isinstance(node, (ast.Call, ast.Await, ast.Yield, ast.YieldFrom))
+        for node in ast.walk(value)
+    )
+
+
 def _find_entry_body(tree: ast.Module) -> tuple[list[ast.stmt], str]:
     """Return (entry-function body without docstring, label).
 
-    Prefers a top-level ``def main(...)``. Falls back to module scope after the
-    import/constant block when there is no main() (Decision 4 in the spec).
+    Prefers a top-level ``def main(...)`` / ``async def main(...)``. Falls back
+    to module scope after the import/constant block when there is no main()
+    (Decision 4 in the spec).
     """
     for node in tree.body:
-        if isinstance(node, ast.FunctionDef) and node.name == "main":
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == "main"
+        ):
             return _strip_leading_docstring(node.body), "main()"
     # Module-scope fallback: skip the leading docstring, imports and plain
     # constant assignments — the guard must be the first executable statement.
+    # A side-effecting assignment RHS (e.g. a stdin read) is NOT a constant and
+    # stops the scan, so a guard placed after it is correctly flagged misplaced.
     body = _strip_leading_docstring(tree.body)
     idx = 0
     for stmt in body:
         if isinstance(stmt, (ast.Import, ast.ImportFrom)):
             idx += 1
             continue
-        if isinstance(stmt, (ast.Assign, ast.AnnAssign)):
+        if _is_side_effect_free_assignment(stmt):
             idx += 1
             continue
         break
@@ -167,11 +206,18 @@ def _find_entry_body(tree: ast.Module) -> tuple[list[ast.stmt], str]:
 # Lines permitted BEFORE the shell guard: shebang, comments, blanks, `set ...`,
 # and simple VAR=value assignments. Anything else is an executable command and
 # means the guard is misplaced (runs after input/tooling).
+#
+# The VAR=value branch deliberately forbids command substitution (``$(...)`` and
+# backticks): ``OUT=$(curl ...)`` / ``RESPONSE=$(cat /dev/stdin)`` RUN a
+# subprocess (I/O / tooling) before the guard, so they are NOT harmless
+# assignments. Variable expansion (``$VAR``, ``${VAR}``) stays allowed. The
+# value charset is "anything but a backtick/newline, or a ``$`` not followed by
+# ``(``".
 _SH_PREAMBLE_RE = re.compile(
     r"""^\s*(
         \#.*            # comment / shebang
       | set\s.*         # set -euo pipefail etc.
-      | [A-Za-z_][A-Za-z0-9_]*=.*   # VAR=value assignment
+      | [A-Za-z_][A-Za-z0-9_]*=(?:[^`\n$]|\$(?!\())*   # VAR=value, no command substitution
     )?\s*$""",
     re.VERBOSE,
 )
@@ -185,6 +231,13 @@ def _sh_code(line: str) -> str:
     mistaken for a real guard.
     """
     return line.split("#", 1)[0]
+
+
+def _first_flag_lineno(source: str) -> int:
+    """1-based line of the first raw ``ENV_FLAG`` occurrence (0 if none)."""
+    return next(
+        (i for i, ln in enumerate(source.splitlines(), 1) if ENV_FLAG in ln), 0
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -226,20 +279,21 @@ class HookLinter:
                         f"the gate for MAP-spawned subagents.",
                     )
                     flagged = True
-            # Defense-in-depth (spec AC-2: zero matches): catch an indirect guard
-            # that hides the flag from the If-test scan, e.g.
-            # ``flag = "MAP_INVOKED_BY"; if os.environ.get(flag): sys.exit(0)``.
-            # A FORBID hook must reference the flag exactly zero times.
-            if not flagged:
-                for node in ast.walk(tree):
-                    if isinstance(node, ast.Constant) and node.value == ENV_FLAG:
-                        self.error(
-                            path,
-                            f"FORBID_GUARD hook must contain zero {ENV_FLAG} "
-                            f"references; found one at line {node.lineno} "
-                            f"(possible indirect/obfuscated guard).",
-                        )
-                        break
+            # Catch-all (spec AC-2: zero matches), aligned BYTE-FOR-BYTE with
+            # tests/test_hook_patterns.py::test_forbid_hook_has_zero_flag_references
+            # (``ENV_FLAG not in source``): a raw-source substring scan catches an
+            # indirect-variable guard, a comment mention, AND the flag embedded in
+            # a larger string constant — all of which the AST If-test / exact
+            # ``Constant == ENV_FLAG`` scan misses. Without this, the linter and
+            # the pytest gate could disagree on the same FORBID hook.
+            if not flagged and ENV_FLAG in source:
+                lineno = _first_flag_lineno(source)
+                self.error(
+                    path,
+                    f"FORBID_GUARD hook must contain zero {ENV_FLAG} "
+                    f"references; found one at line {lineno} (comment, stray "
+                    f"reference, or possible indirect/obfuscated guard).",
+                )
             return
 
         # REQUIRE_GUARD: guard must be the first statement of the entry point.
@@ -265,20 +319,24 @@ class HookLinter:
                 )
 
     def check_shell(self, path: Path, klass: str) -> None:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        source = path.read_text(encoding="utf-8")
+        lines = source.splitlines()
+
+        if klass == "FORBID_GUARD":
+            # Same raw-source substring rule as check_python's FORBID branch and
+            # the pytest gate: zero textual references (incl. comments).
+            if ENV_FLAG in source:
+                self.error(
+                    path,
+                    f"FORBID_GUARD shell hook must contain zero {ENV_FLAG} "
+                    f"references; found one at line {_first_flag_lineno(source)}.",
+                )
+            return
+
         guard_idx = next(
             (i for i, ln in enumerate(lines) if _SH_GUARD_LINE_RE.search(_sh_code(ln))),
             None,
         )
-
-        if klass == "FORBID_GUARD":
-            if guard_idx is not None:
-                self.error(
-                    path,
-                    f"FORBID_GUARD shell hook must NOT contain a {ENV_FLAG} "
-                    f"early-exit (line {guard_idx + 1}).",
-                )
-            return
 
         # REQUIRE_GUARD shell hook.
         if guard_idx is None:
@@ -396,6 +454,21 @@ def _self_test() -> int:
             "git status\n",
             "shell guard present only in a comment",
         ),
+        (
+            "end-of-turn.sh",  # REQUIRE_GUARD shell: command substitution before guard
+            '#!/usr/bin/env bash\nset -euo pipefail\n'
+            'RESPONSE=$(cat /dev/stdin)\n'
+            '[ -n "${MAP_INVOKED_BY:-}" ] && exit 0\n',
+            "shell guard after a VAR=$(...) command substitution",
+        ),
+        (
+            "context-meter.py",  # REQUIRE_GUARD module-scope: stdin read before guard
+            'import os, sys\n\n'
+            'data = sys.stdin.read()\n'
+            'if os.environ.get("MAP_INVOKED_BY"):\n    sys.exit(0)\n'
+            'print(data)\n',
+            "module-scope guard after a side-effecting (stdin-read) assignment",
+        ),
     ]
     ok = True
     with tempfile.TemporaryDirectory() as tmp:
@@ -413,22 +486,50 @@ def _self_test() -> int:
             color = Colors.GREEN if rc != 0 else Colors.RED
             print(f"  {color}[{status}]{Colors.END} expected-fail: {why} (rc={rc})")
 
-        # And a conformant fixture must pass (rc == 0).
-        root.mkdir(parents=True, exist_ok=True)
-        good = root / "context-meter.py"
-        good.write_text(
-            'import os, sys\n\ndef main() -> None:\n'
-            '    if os.environ.get("MAP_INVOKED_BY"):\n        sys.exit(0)\n'
-            '    print("io")\n',
-            encoding="utf-8",
-        )
-        rc = HookLinter().run([root])
-        good.unlink()
-        if rc != 0:
-            ok = False
-        color = Colors.GREEN if rc == 0 else Colors.RED
-        status = "PASS" if rc == 0 else "FAIL"
-        print(f"  {color}[{status}]{Colors.END} expected-pass: conformant hook (rc={rc})")
+        # And conformant fixtures must pass (rc == 0) — one per accepted shape,
+        # so the happy path of every branch (sync main, async main, module
+        # scope after a constant, and shell) is exercised, not just the
+        # failure modes.
+        good_cases: list[tuple[str, str, str]] = [
+            (
+                "context-meter.py",
+                'import os, sys\n\ndef main() -> None:\n'
+                '    if os.environ.get("MAP_INVOKED_BY"):\n        sys.exit(0)\n'
+                '    print("io")\n',
+                "conformant sync main()",
+            ),
+            (
+                "map-token-meter.py",
+                'import asyncio, os, sys\n\nasync def main() -> None:\n'
+                '    if os.environ.get("MAP_INVOKED_BY"):\n        sys.exit(0)\n'
+                '    print("io")\n\nasyncio.run(main())\n',
+                "conformant async main()",
+            ),
+            (
+                "ralph-context-pruner.py",
+                'import os, sys\n\nTHRESHOLD = 1000\n'
+                'if os.environ.get("MAP_INVOKED_BY"):\n    sys.exit(0)\n'
+                'print(sys.stdin.read())\n',
+                "conformant module-scope guard after a constant assignment",
+            ),
+            (
+                "end-of-turn.sh",
+                '#!/usr/bin/env bash\nset -euo pipefail\n'
+                '[ -n "${MAP_INVOKED_BY:-}" ] && exit 0\ngit status\n',
+                "conformant shell guard before any tooling",
+            ),
+        ]
+        for basename, content, why in good_cases:
+            root.mkdir(parents=True, exist_ok=True)
+            good = root / basename
+            good.write_text(content, encoding="utf-8")
+            rc = HookLinter().run([root])
+            good.unlink()
+            if rc != 0:
+                ok = False
+            color = Colors.GREEN if rc == 0 else Colors.RED
+            status = "PASS" if rc == 0 else "FAIL"
+            print(f"  {color}[{status}]{Colors.END} expected-pass: {why} (rc={rc})")
 
     if ok:
         print(f"{Colors.GREEN}✓ self-test: all failure modes detected.{Colors.END}")

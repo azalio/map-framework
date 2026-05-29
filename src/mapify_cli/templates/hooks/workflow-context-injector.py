@@ -147,7 +147,7 @@ def read_step_state(branch: str) -> tuple[dict | None, str | None]:
 
 def load_step_state(branch: str) -> dict | None:
     """Load step state from .map/<branch>/step_state.json."""
-    state = read_step_state(branch)[0]
+    state, _ = read_step_state(branch)
     return state
 
 
@@ -282,7 +282,7 @@ def record_hook_injection_status(
 
 def record_skip_if_state_available(branch: str, reason: str, tool_name: str) -> None:
     """Persist a skipped hook outcome only when existing state is safe to update."""
-    state = read_step_state(branch)[0]
+    state, _ = read_step_state(branch)
     if state is not None:
         record_hook_injection_status(branch, state, "skipped", reason, tool_name)
 
@@ -666,7 +666,7 @@ def main() -> None:
         sys.exit(0)
 
     # Load and format workflow step state
-    state = read_step_state(branch)[0]
+    state, _ = read_step_state(branch)
 
     if state is None:
         print("{}")
