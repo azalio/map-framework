@@ -21,6 +21,9 @@
 
 set -euo pipefail
 
+# Recursion guard: no-op when MAP spawned this subprocess (MAP_INVOKED_BY set)
+[ -n "${MAP_INVOKED_BY:-}" ] && exit 0
+
 # -----------------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------------

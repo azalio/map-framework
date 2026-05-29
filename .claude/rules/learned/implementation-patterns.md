@@ -100,3 +100,16 @@ paths:
       del _args, _kwargs
       return mock_result
   ```
+
+- **Blast-Radius / "Validate Callers" Detectors Must Exclude Generic Process-Entrypoint Names** (2026-05-29): When a static-analysis detector flags a changed module-level symbol and recommends validating its external callers, exclude generic process-entrypoint names (`main`, and by extension `run`/`cli`/`app` if a project uses them that way) in the SAME predicate that already excludes dunders and too-short names. These names are invoked by convention (`if __name__ == "__main__"`, `python -m`, entry_points), never imported as shared helpers, so they have no true import-callers — but the literal word matches prose in docs/config. A changed `def main()` matched "main" in ~168 SKILL.md / settings.json lines and recommended `validate_callers` on every entrypoint edit. Centralize the exclusion in one `_is_reportable_symbol` predicate so every consumer inherits it; meaningful-symbol callers in markdown stay flagged by design. [workflow: map-efficient]
+  ```python
+  _GENERIC_ENTRYPOINT_NAMES = frozenset({"main"})  # add run/cli/app only if used that way
+
+  def _is_reportable_symbol(name: str) -> bool:
+      return (
+          bool(name)
+          and not (name.startswith("__") and name.endswith("__"))  # dunders
+          and len(name) >= 3                                        # too-short
+          and name not in _GENERIC_ENTRYPOINT_NAMES                 # convention-called entrypoints
+      )
+  ```

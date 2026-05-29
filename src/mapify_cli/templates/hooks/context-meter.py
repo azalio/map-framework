@@ -87,6 +87,8 @@ def _silent() -> None:
 
 
 def main() -> None:
+    if os.environ.get("MAP_INVOKED_BY"):
+        sys.exit(0)
     # Read input strictly as JSON. Anything malformed -> silent no-op.
     try:
         input_data = json.load(sys.stdin)

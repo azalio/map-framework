@@ -86,16 +86,29 @@ documented per event in the official Claude Code docs.
 
 ## Hook inventory
 
-| Hook | Event | Blocking? | Purpose |
-|------|-------|-----------|---------|
-| `safety-guardrails.py` | `PreToolUse` (Edit/Write/Read/MultiEdit/Bash) | Yes (JSON deny) | Block sensitive files, dangerous commands |
-| `workflow-gate.py` | `PreToolUse` (Edit/Write/MultiEdit) | Yes (JSON deny) | Enforce Actor+Monitor workflow before edits |
-| `workflow-context-injector.py` | `PreToolUse` (Edit/Write/Bash) | No | Inject MAP workflow reminder |
-| `ralph-iteration-logger.py` | `PostToolUse` | No | Log iterations, detect file thrashing |
-| `ralph-context-pruner.py` | `PreCompact` | No | Save restore point, prune logs |
-| `pre-compact-save-transcript.py` | `PreCompact` | No | Save full conversation transcript |
-| `post-compact-context.py` | `SessionStart` (compact) | No | Inject restore-point context |
-| `end-of-turn.sh` | `Stop` | No | Auto-fix lint/format silently |
-| `detect-clarification-triggers.py` | `UserPromptSubmit` | No | Detect "ask if unclear" + async/durability language |
+All 11 hooks (10 `.py` + `end-of-turn.sh`) are classified against the
+`MAP_INVOKED_BY` recursion-guard contract. **REQUIRE_GUARD** hooks early-exit
+when MAP spawns a nested subprocess; **FORBID_GUARD** hooks must always fire
+and may not carry the guard. Full contract and per-hook rationale:
+[`../references/hook-patterns.md`](../references/hook-patterns.md). The
+classification is enforced by `scripts/lint-hooks.py` (in `make lint` /
+`make check`).
 
-Last reviewed: 2026-04-28.
+| Hook | Event | Blocking? | Class | Purpose |
+|------|-------|-----------|-------|---------|
+| `safety-guardrails.py` | `PreToolUse` (Edit/Write/Read/MultiEdit/Bash) | Yes (JSON deny) | FORBID_GUARD | Block sensitive files, dangerous commands |
+| `workflow-gate.py` | `PreToolUse` (Edit/Write/MultiEdit) | Yes (JSON deny) | FORBID_GUARD | Enforce Actor+Monitor workflow before edits |
+| `post-compact-context.py` | `SessionStart` (compact) | No | FORBID_GUARD | Inject restore-point context (re-prime after compaction) |
+| `context-meter.py` | `UserPromptSubmit` | No | REQUIRE_GUARD | Nudge `/compact <focus>` when the token threshold is crossed |
+| `map-token-meter.py` | `SubagentStop` + `Stop` | No | REQUIRE_GUARD | Attribute per-turn token usage to the active MAP subtask |
+| `workflow-context-injector.py` | `PreToolUse` (Edit/Write/Bash) | No | REQUIRE_GUARD | Inject MAP workflow reminder |
+| `ralph-iteration-logger.py` | `PostToolUse` | No | REQUIRE_GUARD | Log iterations, detect file thrashing |
+| `ralph-context-pruner.py` | `PreCompact` | No | REQUIRE_GUARD | Save restore point, prune logs |
+| `pre-compact-save-transcript.py` | `PreCompact` | No | REQUIRE_GUARD | Save full conversation transcript |
+| `detect-clarification-triggers.py` | `UserPromptSubmit` | No | REQUIRE_GUARD | Detect "ask if unclear" + async/durability language |
+| `end-of-turn.sh` | `Stop` | No | REQUIRE_GUARD | Auto-fix lint/format silently |
+
+> The Codex twin `.codex/hooks/workflow-gate.py` is FORBID_GUARD like its
+> Claude counterpart; this inventory covers `.claude/hooks/` only.
+
+Last reviewed: 2026-05-29.

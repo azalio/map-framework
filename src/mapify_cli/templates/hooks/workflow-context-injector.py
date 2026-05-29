@@ -147,7 +147,7 @@ def read_step_state(branch: str) -> tuple[dict | None, str | None]:
 
 def load_step_state(branch: str) -> dict | None:
     """Load step state from .map/<branch>/step_state.json."""
-    state, _reason = read_step_state(branch)
+    state, _ = read_step_state(branch)
     return state
 
 
@@ -282,7 +282,7 @@ def record_hook_injection_status(
 
 def record_skip_if_state_available(branch: str, reason: str, tool_name: str) -> None:
     """Persist a skipped hook outcome only when existing state is safe to update."""
-    state, _state_error = read_step_state(branch)
+    state, _ = read_step_state(branch)
     if state is not None:
         record_hook_injection_status(branch, state, "skipped", reason, tool_name)
 
@@ -335,7 +335,7 @@ def state_string(state: dict, key: str, default: str = "") -> str:
     return default
 
 
-def required_action_for_step(step_id: str, step_phase: str, state: dict) -> str | None:
+def required_action_for_step(step_id: str, step_phase: str) -> str | None:
     """Return a short required-next-action hint for common steps."""
     if step_id == "1.55":
         return "Approve plan (set_plan_approved true)"
@@ -521,7 +521,7 @@ def format_reminder(
                 wave_hint += f" ({', '.join(str(item) for item in current_wave)})"
                 mode = "batch:parallel"
 
-    required = required_action_for_step(step_id, step_phase, state)
+    required = required_action_for_step(step_id, step_phase)
 
     diag_hint = ""
     diag_file = (
@@ -602,6 +602,8 @@ def format_reminder(
 
 
 def main() -> None:
+    if os.environ.get("MAP_INVOKED_BY"):
+        sys.exit(0)
     branch = get_branch_name()
     try:
         input_data = json.load(sys.stdin)
@@ -664,7 +666,7 @@ def main() -> None:
         sys.exit(0)
 
     # Load and format workflow step state
-    state, _state_error = read_step_state(branch)
+    state, _ = read_step_state(branch)
 
     if state is None:
         print("{}")

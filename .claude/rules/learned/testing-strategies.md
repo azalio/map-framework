@@ -82,3 +82,34 @@ paths:
       result = run_command()
       assert result.exit_code == 0
   ```
+
+- **Integration-Test Framework Gates via Real Invocation, Not Just the Pure Function** (2026-05-29): When a framework ships a gate (truncation detector, linter, validator) used both as a library function AND as a CLI invoked by a skill/CI, prove it fires on BOTH paths with real invocation artifacts — a unit test of the pure function is not enough. The contract that breaks silently lives at the integration boundary (stdin pipe, process exit code, classification scope), exactly where the unit test does not reach. In Phase A the truncation gate's pure function was unit-tested and correct, yet the CLI was non-functional in every Task/Agent call because nothing was piped. Add a subprocess test that runs the actual CLI entrypoint with empty stdin, with piped-valid, and with piped-invalid input and asserts the exit/status of each. [workflow: map-efficient]
+  ```python
+  def _run_gate_cli(stdin_text: str) -> dict:
+      proc = subprocess.run(
+          [sys.executable, str(SCRIPTS_PATH / "tool.py"), "detect", "--agent", "actor"],
+          input=stdin_text, capture_output=True, text=True,
+      )
+      assert proc.returncode == 0, proc.stderr
+      return json.loads(proc.stdout)
+
+  def test_cli_no_input_is_not_a_failure(self):
+      assert _run_gate_cli("")["status"] == "no_input"   # bare call ≠ hard stop
+  def test_cli_piped_prose_is_flagged(self):
+      assert _run_gate_cli("shipping now")["truncated"] is True
+  ```
+
+- **Parametrized Tests That Discover Cases From the Filesystem Need a Non-Empty Discovery Guard** (2026-05-29): When a `@pytest.mark.parametrize` list is built by globbing the filesystem (hook files, both dev+template trees, Codex+Claude copies), an empty discovery — from a path typo, missing dir, or accidental exclusion — silently produces ZERO cases and the suite reports green. The invariant is then completely untested while looking covered. Add a standalone sentinel test asserting the discovered list meets a minimum count (and, for multi-tree coverage, that EACH tree contributes), so a vacuous pass becomes a hard failure. [workflow: map-efficient]
+  ```python
+  HOOK_FILES = glob.glob(".claude/hooks/*.py") + glob.glob(".codex/hooks/*.py")
+
+  def test_hook_discovery_non_empty():  # fails loudly if a glob silently returns []
+      claude = [p for p in HOOK_FILES if "/.claude/" in p]
+      codex  = [p for p in HOOK_FILES if "/.codex/"  in p]
+      assert claude and codex, f"empty discovery — path typo? {HOOK_FILES}"
+
+  @pytest.mark.parametrize("hook_path", HOOK_FILES)  # would pass vacuously on []
+  def test_hook_has_guard(hook_path): ...
+  ```
+
+- **A Linter That Enforces Gate Invariants Must Ship a `--self-test` Covering Every Failure Mode, Wired Into CI** (2026-05-29): A lint/gate tool that claims to detect violations (missing guard, misplaced guard, forbidden guard, unclassified file) must include a `--self-test` mode that synthesizes one input per failure mode and asserts each exits nonzero, plus a conformant input that exits zero. Without it, the happy-path CI run (no violations present → exit 0) never exercises the detection logic, so a reviewer can only verify enforcement by reading code. Wire the self-test into `make check` or invoke it from pytest via importlib. In Phase A, Monitor caught two uncovered failure modes (FORBID indirect-variable bypass, shell inline-comment) that a self-test would have caught mechanically. [workflow: map-efficient]

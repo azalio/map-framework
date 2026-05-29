@@ -29,6 +29,7 @@ Output: JSON to stdout if either signal matched, otherwise empty.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 
@@ -149,6 +150,8 @@ def build_message(clar: bool, dura: bool) -> str:
 
 
 def main() -> int:
+    if os.environ.get("MAP_INVOKED_BY"):
+        sys.exit(0)
     try:
         payload = json.load(sys.stdin)
     except Exception:

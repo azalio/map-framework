@@ -89,8 +89,11 @@ Never `--no-verify`. Never amend a published commit.
 ### Monitor truncated-response gate (full)
 
 Before reading `valid`/`recommendation`, confirm Monitor returned a complete
-JSON envelope (`valid`, `summary`, `issues`). Detect via
-`detect_truncated_agent_output --agent monitor`; if truncated, log via
+JSON envelope (`valid`, `summary`, `issues`). Pipe the captured response in
+(the detector reads stdin):
+`printf '%s' "$MONITOR_OUTPUT" | python3 .map/scripts/map_step_runner.py detect_truncated_agent_output --agent monitor`.
+A bare call with nothing piped returns `status: "no_input"` (`truncated: false`)
+— that means the response was not piped, not that it passed. If truncated, log via
 `log_agent_failure --agent monitor --phase post-invoke --failure-label truncated --reasons '<reasons>'`
 and re-invoke ONCE using the prompt from
 `build_json_retry_prompt --agent monitor --errors '<reasons>'`; if still
