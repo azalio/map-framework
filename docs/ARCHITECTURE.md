@@ -20,6 +20,8 @@ The remainder of this file contains the deeper implementation dive (workflow-spe
 - Provider scaffolding generated into a target repo (`.claude/` for Claude Code, `.codex/` for Codex CLI, plus `.map/` scripts/artifacts)
 - Run artifacts (plans, contracts, verification summaries, review dossiers, learning handoffs) written under `.map/<branch>/`
 - Context-budget, compression, clean-retry, run-health, review-bundle, and prior-stage-consumption contracts surfaced through MAP settings, hooks, templates, and `.map/scripts/`
+- Host-path and cross-process safety primitives, including canonical `MAP_*`/`~/.map/` reference docs and `flock_with_state` lock sidecars for serialized host-level workflows
+- Plan/spec citation validation that requires existing `file:line` evidence before decomposition proceeds
 - Per-subtask token accounting: the `map-token-meter` hook (SubagentStop/Stop) attributes transcript `usage` to the active subtask/phase/agent in `.map/<branch>/token_log.jsonl`, rolled up (with cost and cache-hit ratio) into `token_accounting.json`; logic is self-contained in `.map/scripts/map_step_runner.py` so it runs without the `mapify_cli` package present
 - Skill/template audit surfaces such as `SkillIR`, prompt-tone checks, mutation-boundary checks, and dependency/task validation helpers
 - Optional MCP configuration wiring when supported by the provider runtime
@@ -58,7 +60,7 @@ The remainder of this file contains the deeper implementation dive (workflow-spe
 - `src/mapify_cli/`: CLI implementation and workflow helpers (token budgeting, dependency graph, verification recording, workflow finalization, provider delivery)
 - `src/mapify_cli/delivery/`: Provider abstraction plus Claude/Codex scaffolding generators and managed file copier logic
 - `src/mapify_cli/templates/`: Shipped provider templates, hooks, agents, references, rule files, Codex config, and shared `.map/scripts/` payloads used by `mapify init`
-- `src/mapify_cli/{token_budget,workflow_state,workflow_finalizer,verification_recorder,skill_ir,dependency_graph,repo_insight}.py`: Deterministic helpers used by templates, release checks, and tests
+- `src/mapify_cli/{token_budget,workflow_state,workflow_finalizer,verification_recorder,skill_ir,dependency_graph,repo_insight,_locking}.py`: Deterministic helpers used by templates, release checks, locks, and tests
 - `tests/`: Unit and integration coverage for CLI behavior, generated templates, hooks, workflow artifacts, SkillIR, provider frontmatter, and artifact schemas
 - `docs/`: Workflow docs, deep dives, and planning history
 
@@ -84,6 +86,8 @@ Claude skill metadata includes `skillClass` in `.claude/skills/skill-rules.json`
 - **Run artifacts**: `.map/<branch>/` holds the durable record of what happened in a run (what was planned, what was verified, what was learned).
 - **CLI templates and delivery code**: `src/mapify_cli/templates/` plus `src/mapify_cli/delivery/` define what `mapify init` installs.
 - **Deterministic helpers**: `src/mapify_cli/*` helper modules and `.map/scripts/` templates enforce artifact schemas, workflow state, prompt budgets, SkillIR checks, and prior-stage validation.
+- **Host-path and lock contract**: `src/mapify_cli/_locking.py` owns the `flock_with_state` implementation; `src/mapify_cli/templates/references/host-paths.md` is the shipped user-facing reference for `MAP_*`, `~/.map/`, and lock state-marker semantics.
+- **Spec citation gate**: `.map/scripts/validate_spec_citations.py` and its template twin validate `file:line` references before `/map-plan` decomposes work.
 - **Documentation**: `README.md`, `docs/USAGE.md`, `docs/INSTALL.md`, and this document define expected behavior and invariants.
 
 ## Cross-cutting Concepts
@@ -96,6 +100,8 @@ Claude skill metadata includes `skillClass` in `.claude/skills/skill-rules.json`
 - **Context-First Prompt Envelopes**: High-context skill prompts use a shared XML-style envelope so persisted artifacts appear in `<documents>` before `<task>`, instructions, and `<expected_output>`. This keeps specs, review bundles, diffs, logs, and output schemas distinct when provider runtimes receive long subagent prompts.
 - **Skill IR Audit**: `src/mapify_cli/skill_ir.py` lowers hand-authored Claude and Codex `SKILL.md` files into provider-neutral `SkillIR` records with content hashes, invocation mode, supporting-file links, and extracted safety constraints. The audit fails unsupported frontmatter, unresolved bundled references, and hidden instruction-override wording before provider surfaces are installed.
 - **Verification & Review Gates**: Commands like `/map-check` and `/map-review` validate work against plan/spec artifacts, not only “looks OK” prompting.
+- **Evidence-backed Planning**: `/map-plan` now runs the spec citation validator so every referenced existing source path is backed by a concrete `file:line` anchor before decomposition.
+- **Host-level Serialization**: `_locking.py` provides a process-safe `flock` wrapper with JSON state sidecars under `~/.map/locks/`, giving future hooks and memory-flush paths a shared non-escaping lock protocol.
 - **Observability via Artifacts**: Primary observability surface is file-based (plans, summaries, review dossiers) persisted under `.map/<branch>/`.
 - **Token Budget Decisions**: `.map/<branch>/token_budget.json` records active prompt-path budget decisions from Actor context and review prompt builders only; it does not log dormant REGISTRY/FOCUS experiments. Each entry names the prompt path, configured budget, estimated tokens before/after enforcement, clipped sections, and source artifacts.
 - **Constraint Typing**: `blueprint.json` separates non-negotiable `hard_constraints` from negotiable `soft_constraints`; hard constraints must be covered through `coverage_map` and bracketed validation criteria, while soft constraints need either coverage or explicit tradeoff rationale.
@@ -114,6 +120,7 @@ Claude skill metadata includes `skillClass` in `.claude/skills/skill-rules.json`
 - **Provider Runtime Constraints**: Behavior depends on provider capabilities (tool availability, context window, MCP support).
 - **Artifact Sprawl**: `.map/<branch>/` artifacts can accumulate without pruning policies; “Template Maintenance” addresses hygiene.
 - **Template Surface Breadth**: The project now owns many hooks, agents, provider templates, and schema checks; release discipline depends on keeping template-sync and SkillIR tests in the default validation path.
+- **Lock Consumer Coverage**: `flock_with_state` and host-path docs are committed, but only future workflow surfaces are expected to consume the lock protocol broadly; keep tests and references synchronized before adding states.
 - **Appendix Drift**: This file still carries a long historical deep-dive appendix after the Freshness section; the top architecture contract should remain canonical when appendix details lag newer templates.
 
 ## ADR Links
@@ -122,9 +129,9 @@ Information not available in current evidence.
 
 ## Freshness
 
-Last refreshed: 2026-05-24
+Last refreshed: 2026-05-29
 
-Refresh reason: Daily architecture refresh. The previous top-level freshness marker still pointed at 2026-04-30, while current repository evidence shows the CLI and template runtime now include Codex provider scaffolding, token-budget reporting, clean retry quarantine, run-health reports, SkillIR audit, workflow-fit exits, mutation-boundary checks, prior-stage validation, and expanded template/schema tests.
+Refresh reason: Daily architecture refresh after committed host-path, locking, citation-validation, and static-analysis gate work changed the top-level MAP runtime contract.
 
 Evidence source files:
 - `README.md`
@@ -132,9 +139,22 @@ Evidence source files:
 - `docs/USAGE.md`
 - `docs/INSTALL.md`
 - `src/mapify_cli/`
+- `src/mapify_cli/_locking.py`
 - `src/mapify_cli/delivery/providers.py`
 - `src/mapify_cli/workflow_state.py`
+- `.claude/references/host-paths.md`
+- `src/mapify_cli/templates/references/host-paths.md`
+- `.map/scripts/validate_spec_citations.py`
+- `src/mapify_cli/templates/map/scripts/validate_spec_citations.py`
+- `.claude/skills/map-plan/SKILL.md`
+- `Makefile`
 - `tests/`
+
+Current delta captured: MAP now documents and tests a host-level `MAP_*` and
+`~/.map/` contract, ships `flock_with_state` with JSON state-marker sidecars,
+blocks `/map-plan` decomposition on invalid existing `file:line` citations,
+and includes `pyright src/` in `make check` so source static-analysis failures
+are part of the default validation surface.
 
 ## Table of Contents
 
