@@ -31,6 +31,9 @@ State the core design tension.
 ## Out of Scope
 - Explicit exclusions.
 
+### Already Implemented
+- Feature parts the request asked for that already exist, each with `file:line` proof. The decomposer must NOT create subtasks for these (see Step 0.5: Already-Implemented Gate).
+
 ## Open Questions
 - Questions that must be answered before decomposition or execution.
 ```
@@ -71,6 +74,26 @@ Reason: tiny isolated typo, clear acceptance criteria, no new invariants.
 Next: edit directly; MAP planning is not needed.
 ```
 
+Already-implemented off-ramp (whole feature):
+
+```text
+Decision: already-implemented (no plan)
+Evidence:
+  - "retry on 429" -> src/client/http.py:142-167 (backoff loop, max_retries)
+  - "configurable timeout" -> src/client/config.py:38 (timeout_s field)
+The request is already satisfied by existing code. No spec/blueprint written.
+Next: if you want changes to the existing behavior, restate the specific gap.
+```
+
+Partial-implementation re-scope (continue planning the gap only):
+
+```text
+Already Implemented (-> spec Out of Scope):
+  - "JWT validation" -> src/auth/middleware.py:51 (validate_token)
+Remaining gap (planned):
+  - token refresh endpoint + rotation (no existing implementation found)
+```
+
 ## Troubleshooting
 
 - Existing `step_state.json`: planning already completed; print checkpoint and stop.
@@ -78,3 +101,4 @@ Next: edit directly; MAP planning is not needed.
 - Coverage key missing from validation criteria: add bracketed criteria such as `VC1 [AC-1]: ...`.
 - Hard constraint uncovered: add it to `coverage_map` and owning validation criteria.
 - Soft constraint intentionally skipped: include `tradeoff_rationale`.
+- Request (or part) already implemented: see Step 0.5 Already-Implemented Gate — off-ramp the whole-feature case, or move partial duplicates to spec "Out of Scope > Already Implemented" so decomposition skips them.

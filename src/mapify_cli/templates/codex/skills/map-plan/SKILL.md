@@ -89,6 +89,7 @@ spawn_agent(
 - 5-15 key file paths (1-line reason each)
 - existing similar implementations and patterns to follow
 - risks, unknowns, and integration points
+- which parts of the request are ALREADY IMPLEMENTED vs genuinely missing
 
 For EVERY file path:
 1. Use find/rg to verify it actually exists
@@ -96,10 +97,17 @@ For EVERY file path:
 3. Mark each path as EXISTING (verified) or NEW (confirmed not found)
 4. For existing files: approximate LOC and key symbols
 
+For the request itself: search for an existing implementation BEFORE
+reporting a behavior as missing. For each asked-for behavior/acceptance
+criterion, decide if it is already implemented and cite `file:line` proof.
+
 User request:
 <paste user_requirements here>
 
 Output format:
+## Already Implemented
+- "<feature part>" -> `path/to/file.py:NN` — proof (or: "none found (searched: <queries>)")
+
 ## Existing Files (verified)
 - `path/to/file.py` (NNN LOC) — ClassX, relevant because...
 
@@ -126,6 +134,18 @@ shell_command:
 <paste researcher output here>
 FINDINGS_EOF
 ```
+
+---
+
+## Step 0.5: Already-Implemented Gate (MANDATORY when discovery ran)
+
+Reconcile the request against the discovery `Already Implemented` section BEFORE interview/spec. Do not plan work the codebase already does. If discovery was skipped (greenfield or fully-provided spec), state the gate was skipped and why.
+
+- **Whole feature already implemented** — every asked-for behavior exists with `file:line` proof. Off-ramp: report the evidence, state no plan is needed, and STOP (no spec, no blueprint). If the user may want changes, ask them to restate the specific gap.
+- **Partially implemented** — move already-done parts into the spec's **Out of Scope > Already Implemented** subsection (with `file:line` proof) so decomposition plans ONLY the remaining gap. Re-scope to the gap before continuing.
+- **Not implemented** — nothing matching exists; continue normally.
+
+When unsure whether existing code truly satisfies the request, treat it as partial and surface it in the interview / Open Questions — never silently re-plan code that already exists.
 
 ---
 
@@ -239,6 +259,10 @@ Priority: must-handle / should-handle / won't-handle
 ## Out of Scope
 
 - [explicitly excluded items]
+
+### Already Implemented
+
+- ["<feature part>" -> `file:line` proof] — decomposer must NOT create subtasks for these (Step 0.5 gate)
 
 ## Open Questions
 
@@ -374,6 +398,7 @@ Target subtask size: completable within ~4000 tokens (SFT comfort zone).
 Aim for 3-7 subtasks; flag if more than 10 are needed.
 
 Coverage requirements:
+- Do NOT create subtasks for behavior listed under the spec's "Out of Scope > Already Implemented" subsection — that work already exists. Plan only the remaining gap.
 - Every spec AC must appear as a validation_criteria in exactly one subtask.
 - Every validation_criteria item that proves a mapped requirement must cite the matching coverage_map key in brackets, e.g. `VC1 [AC-1]: ...`.
 - Every hard_constraints id must appear in coverage_map and as a matching validation_criteria bracket tag.
@@ -590,6 +615,7 @@ shell_command:
     echo "==================================================="
     echo "[ok] Workflow-fit: map-plan"
     echo "[ok] Discovery completed (or skipped)"
+    echo "[ok] Already-implemented gate: ran (or skipped with reason)"
     echo "[ok] Interview completed (or skipped)"
     echo "[ok] Devil's Advocate review completed (or skipped)"
     echo "[ok] Architecture graph written to spec_${BRANCH}.md"
