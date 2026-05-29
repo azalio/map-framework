@@ -1,7 +1,7 @@
 """Codex CLI provider delivery module.
 
-Copies bundled templates/codex/ into a target project's .codex/ directory
-and installs AGENTS.md at the project root.
+Copies bundled templates/codex/ into a target project's Codex discovery
+locations and installs AGENTS.md at the project root.
 
 Never touches .claude/.
 """
@@ -52,7 +52,7 @@ def create_codex_files(project_path: Path) -> dict[str, int]:
     """Copy Codex template files into target project.
 
     Creates:
-    - .codex/skills/   (map-plan, map-fast, map-check, …)
+    - .agents/skills/  (map-plan, map-fast, map-check, ...)
     - .codex/agents/   (*.toml agent definitions)
     - .codex/config.toml
     - .codex/hooks.json + .codex/hooks/workflow-gate.py
@@ -86,6 +86,7 @@ def create_codex_files(project_path: Path) -> dict[str, int]:
 
     counts: dict[str, int] = dict(empty_counts)
     codex_dir = project_path / ".codex"
+    agents_dir = project_path / ".agents"
 
     # ------------------------------------------------------------------
     # 1. Skills
@@ -95,7 +96,7 @@ def create_codex_files(project_path: Path) -> dict[str, int]:
         for skill_dir in skills_src.iterdir():
             if not skill_dir.is_dir():
                 continue
-            skill_dst = codex_dir / "skills" / skill_dir.name
+            skill_dst = agents_dir / "skills" / skill_dir.name
             counts["skills"] += _copy_tree(skill_dir, skill_dst)
 
     # ------------------------------------------------------------------

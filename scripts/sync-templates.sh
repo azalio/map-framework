@@ -53,18 +53,28 @@ mkdir -p "$templates_root/map/scripts"
 cp -a .map/scripts/*.py "$templates_root/map/scripts/"
 clean_generated_artifacts "$templates_root/map"
 
-# Sync .codex/ → templates/codex/
-if [[ -d .codex ]]; then
-    mkdir -p "$templates_root/codex/skills" "$templates_root/codex/agents" "$templates_root/codex/hooks"
-
-    # Skills (preserve nested structure)
+# Sync .agents/skills/ → templates/codex/skills/
+#
+# Codex discovers repository skills from .agents/skills. We keep the
+# distribution templates under templates/codex/skills so the Codex provider can
+# install them into the official root.
+if [[ -d .agents/skills ]]; then
+    mkdir -p "$templates_root/codex/skills"
     if command -v rsync &> /dev/null; then
-        rsync -a --delete --exclude '__pycache__' --exclude '*.pyc' --exclude '.DS_Store' .codex/skills/ "$templates_root/codex/skills/"
+        rsync -a --delete --exclude '__pycache__' --exclude '*.pyc' --exclude '.DS_Store' .agents/skills/ "$templates_root/codex/skills/"
     else
         rm -rf "$templates_root/codex/skills"
-        cp -a .codex/skills "$templates_root/codex/skills"
+        mkdir -p "$templates_root/codex"
+        cp -a .agents/skills "$templates_root/codex/skills"
         clean_generated_artifacts "$templates_root/codex/skills"
     fi
+elif [[ -d "$templates_root/codex/skills" ]]; then
+    rm -rf "$templates_root/codex/skills"
+fi
+
+# Sync .codex/ → templates/codex/
+if [[ -d .codex ]]; then
+    mkdir -p "$templates_root/codex/agents" "$templates_root/codex/hooks"
 
     # Agents
     if compgen -G ".codex/agents/*.toml" > /dev/null; then
@@ -87,4 +97,4 @@ fi
 
 clean_generated_artifacts "$templates_root"
 
-echo "✅ Synced .claude/*, .codex/*, and .map/scripts/* → $templates_root/"
+echo "✅ Synced .claude/*, .agents/skills/*, .codex/*, and .map/scripts/* → $templates_root/"

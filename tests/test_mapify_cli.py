@@ -1121,12 +1121,12 @@ class TestCodexProvider:
         return tmp_path
 
     # ------------------------------------------------------------------ #
-    # AC-1: .codex/skills/map-plan/SKILL.md created                       #
+    # AC-1: .agents/skills/map-plan/SKILL.md created                      #
     # ------------------------------------------------------------------ #
 
     def test_ac01_creates_skill_file(self, codex_project):
         """AC-1: map-plan SKILL.md must exist after init."""
-        skill_file = codex_project / ".codex" / "skills" / "map-plan" / "SKILL.md"
+        skill_file = codex_project / ".agents" / "skills" / "map-plan" / "SKILL.md"
         assert skill_file.exists(), f"Expected {skill_file} to exist"
 
     # ------------------------------------------------------------------ #
@@ -1135,7 +1135,7 @@ class TestCodexProvider:
 
     def test_ac02_skill_has_valid_frontmatter(self, codex_project):
         """AC-2: SKILL.md must start with '---' and contain name/description fields."""
-        skill_file = codex_project / ".codex" / "skills" / "map-plan" / "SKILL.md"
+        skill_file = codex_project / ".agents" / "skills" / "map-plan" / "SKILL.md"
         content = skill_file.read_text(encoding="utf-8")
         assert content.startswith(
             "---"
@@ -1151,7 +1151,7 @@ class TestCodexProvider:
 
     def test_ac03_skill_no_claude_tool_refs(self, codex_project):
         """AC-3: SKILL.md must not reference Claude-only tool functions."""
-        skill_file = codex_project / ".codex" / "skills" / "map-plan" / "SKILL.md"
+        skill_file = codex_project / ".agents" / "skills" / "map-plan" / "SKILL.md"
         content = skill_file.read_text(encoding="utf-8")
         forbidden_patterns = [
             "Agent(",
@@ -1183,6 +1183,9 @@ class TestCodexProvider:
         assert agents_md.is_symlink() or len(content) > 0, "AGENTS.md must be non-empty"
         if not agents_md.is_symlink():
             assert "$map-plan" in content, "Codex AGENTS.md must document skill invocation with $"
+            assert (
+                "$map-efficient" in content
+            ), "Codex AGENTS.md must document the execution skill"
             assert "codex_hooks" not in content, (
                 "Codex AGENTS.md must not document deprecated codex_hooks"
             )
@@ -1287,7 +1290,7 @@ class TestCodexProvider:
 
     def test_ac09_skill_has_all_steps(self, codex_project):
         """AC-9: SKILL.md must contain all 9 step section headers."""
-        skill_file = codex_project / ".codex" / "skills" / "map-plan" / "SKILL.md"
+        skill_file = codex_project / ".agents" / "skills" / "map-plan" / "SKILL.md"
         content = skill_file.read_text(encoding="utf-8")
         expected_steps = [
             "## Step 0",
@@ -1304,48 +1307,54 @@ class TestCodexProvider:
             assert step_header in content, f"SKILL.md must contain '{step_header}'"
 
     # ------------------------------------------------------------------ #
-    # AC-10: No Claude references in any .codex/ file                     #
+    # AC-10: No Claude references in any Codex provider file              #
     # ------------------------------------------------------------------ #
 
     def test_ac10_no_claude_refs_anywhere(self, codex_project):
-        """AC-10: No .codex/ file should reference Claude-specific tool APIs."""
-        codex_dir = codex_project / ".codex"
+        """AC-10: No Codex provider file should reference Claude-specific tool APIs."""
         claude_tool_patterns = [
             "Agent(",
             "AskUserQuestion(",
             "subagent_type=",
         ]
         violations: list[str] = []
-        for file_path in codex_dir.rglob("*"):
-            if not file_path.is_file():
-                continue
-            try:
-                content = file_path.read_text(encoding="utf-8")
-            except (UnicodeDecodeError, PermissionError):
-                continue
-            for pattern in claude_tool_patterns:
-                if pattern in content:
-                    rel = file_path.relative_to(codex_project)
-                    violations.append(f"{rel}: contains '{pattern}'")
+        for root in (codex_project / ".codex", codex_project / ".agents"):
+            for file_path in root.rglob("*"):
+                if not file_path.is_file():
+                    continue
+                try:
+                    content = file_path.read_text(encoding="utf-8")
+                except (UnicodeDecodeError, PermissionError):
+                    continue
+                for pattern in claude_tool_patterns:
+                    if pattern in content:
+                        rel = file_path.relative_to(codex_project)
+                        violations.append(f"{rel}: contains '{pattern}'")
         assert (
             not violations
-        ), "Claude-specific tool references found in .codex/ files:\n" + "\n".join(
+        ), "Claude-specific tool references found in Codex provider files:\n" + "\n".join(
             violations
         )
 
     # ------------------------------------------------------------------ #
-    # AC-11: Stub skills map-fast and map-check exist                      #
+    # AC-11: Codex skills map-fast, map-check, and map-efficient exist     #
     # ------------------------------------------------------------------ #
 
     def test_ac11_stub_skills_exist(self, codex_project):
-        """AC-11: .codex/skills/map-fast/SKILL.md and map-check/SKILL.md must exist."""
-        skills_dir = codex_project / ".codex" / "skills"
+        """AC-11: Codex skills must exist under the official .agents/skills root."""
+        skills_dir = codex_project / ".agents" / "skills"
         assert (
             skills_dir / "map-fast" / "SKILL.md"
-        ).exists(), ".codex/skills/map-fast/SKILL.md must exist"
+        ).exists(), ".agents/skills/map-fast/SKILL.md must exist"
         assert (
             skills_dir / "map-check" / "SKILL.md"
-        ).exists(), ".codex/skills/map-check/SKILL.md must exist"
+        ).exists(), ".agents/skills/map-check/SKILL.md must exist"
+        assert (
+            skills_dir / "map-efficient" / "SKILL.md"
+        ).exists(), ".agents/skills/map-efficient/SKILL.md must exist"
+        assert (
+            skills_dir / "map-efficient" / "efficient-reference.md"
+        ).exists(), ".agents/skills/map-efficient/efficient-reference.md must exist"
 
     # ------------------------------------------------------------------ #
     # AC-12: hooks.json and workflow-gate.py both created                 #
@@ -1402,7 +1411,7 @@ class TestCodexProvider:
 
     def test_ac15_spec_review_step(self, codex_project):
         """AC-15: SKILL.md must include a spawn_agent call using 'monitor' agent."""
-        skill_file = codex_project / ".codex" / "skills" / "map-plan" / "SKILL.md"
+        skill_file = codex_project / ".agents" / "skills" / "map-plan" / "SKILL.md"
         content = skill_file.read_text(encoding="utf-8")
         # The SPEC_REVIEW step uses spawn_agent with agent_type="monitor"
         assert "spawn_agent(" in content, "SKILL.md must contain spawn_agent("
@@ -1473,10 +1482,12 @@ class TestCodexProvider:
     def test_ac19_codex_discovery_paths(self, codex_project):
         """AC-19: Validate that Codex files are at the discovery paths Codex expects."""
         codex_dir = codex_project / ".codex"
+        skills_dir = codex_project / ".agents" / "skills"
         expected_paths = [
-            codex_dir / "skills" / "map-plan" / "SKILL.md",
-            codex_dir / "skills" / "map-fast" / "SKILL.md",
-            codex_dir / "skills" / "map-check" / "SKILL.md",
+            skills_dir / "map-plan" / "SKILL.md",
+            skills_dir / "map-fast" / "SKILL.md",
+            skills_dir / "map-check" / "SKILL.md",
+            skills_dir / "map-efficient" / "SKILL.md",
             codex_dir / "agents",
             codex_dir / "config.toml",
         ]
@@ -1489,6 +1500,9 @@ class TestCodexProvider:
         assert (
             toml_count >= 1
         ), f".codex/agents/ must have at least 1 *.toml for agent discovery, found {toml_count}"
+        assert not (
+            codex_dir / "skills"
+        ).exists(), "Codex skills must be installed under .agents/skills, not .codex/skills"
 
     # ------------------------------------------------------------------ #
     # AC-20: workflow-gate.py blocks file-modifying commands in RESEARCH  #
@@ -1555,6 +1569,27 @@ class TestCodexProvider:
             "mapify init . --provider codex --force" in result.output
         ), "upgrade must tell codex users to re-run init with --provider codex"
 
+    def test_ac22_map_efficient_state_machine_markers(self, codex_project):
+        """AC-22: $map-efficient documents the required state-machine commands."""
+        skill_file = (
+            codex_project / ".agents" / "skills" / "map-efficient" / "SKILL.md"
+        )
+        content = skill_file.read_text(encoding="utf-8")
+        for marker in [
+            "resume_from_plan",
+            "get_next_step",
+            "validate_step",
+            "record_subtask_result",
+            "write_run_health_report",
+        ]:
+            assert marker in content, f"$map-efficient must document {marker}"
+
+        mutation_index = content.index("## Mutation Boundary Constraints")
+        implement_index = content.index("Implement exactly")
+        assert (
+            mutation_index < implement_index
+        ), "Mutation boundary constraints must appear before implementation directives"
+
 
 class TestDetectProviderEdgeCases:
     """TESTS-1: _detect_provider and is_map_initialized edge cases."""
@@ -1581,7 +1616,7 @@ class TestDetectProviderEdgeCases:
 
         (tmp_path / ".codex" / "config.toml").parent.mkdir(parents=True)
         (tmp_path / ".codex" / "config.toml").write_text("[codex]\n")
-        (tmp_path / ".codex" / "skills").mkdir(parents=True)
+        (tmp_path / ".agents" / "skills").mkdir(parents=True)
         assert is_map_initialized(tmp_path) is True
 
     def test_is_map_initialized_neither_layout(self, tmp_path):

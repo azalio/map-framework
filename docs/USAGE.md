@@ -159,10 +159,11 @@ codex --enable codex_hooks
 
 or upgrade Codex first. Upgrading is recommended.
 
-This creates a `.codex/` layout instead of `.claude/`:
-- `.codex/skills/map-plan/SKILL.md` — main planning skill
-- `.codex/skills/map-fast/SKILL.md` — quick implementation
-- `.codex/skills/map-check/SKILL.md` — quality gates
+This creates a Codex layout instead of `.claude/`:
+- `.agents/skills/map-plan/SKILL.md` — main planning skill
+- `.agents/skills/map-efficient/SKILL.md` — state-machine plan execution
+- `.agents/skills/map-fast/SKILL.md` — quick implementation
+- `.agents/skills/map-check/SKILL.md` — quality gates
 - `.codex/agents/*.toml` — agent definitions (researcher, decomposer, monitor)
 - `.codex/config.toml` — project configuration
 - `.codex/hooks.json` + `.codex/hooks/workflow-gate.py` — edit gate enforcement

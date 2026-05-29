@@ -198,7 +198,7 @@ Learner        -> captures reusable project memory
 
 For Claude Code, MAP slash surfaces live in `.claude/skills/map-*/SKILL.md` files created by `mapify init`. The `.claude/commands/` directory is reserved for user-custom commands and a README that points back to the skill-backed MAP surfaces. The shipped skill catalog classifies skills with `skillClass`: MAP slash workflows are `task` skills, while `map-state` is a `hybrid` skill because it combines planning guidance with hooks/scripts that manage `.map/<branch>/` focus artifacts.
 
-For Codex CLI, `mapify init . --provider codex` creates `.codex/skills/`, `.codex/agents/`, `.codex/config.toml`, hooks, and shared `.map/scripts/`.
+For Codex CLI, `mapify init . --provider codex` creates `.agents/skills/` for repository skills, `.codex/agents/`, `.codex/config.toml`, hooks, and shared `.map/scripts/`.
 
 Maintainers can audit both provider skill trees with `python -m mapify_cli.skill_ir src/mapify_cli/templates/skills src/mapify_cli/templates/codex/skills`. The command exits non-zero if a shipped skill has unsupported frontmatter, unresolved bundled references, or hidden prompt-injection-like text.
 

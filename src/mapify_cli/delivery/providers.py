@@ -66,7 +66,7 @@ class ClaudeProvider(BaseProvider):
 
 
 class CodexProvider(BaseProvider):
-    """Codex CLI provider — installs .codex/ files from templates."""
+    """Codex CLI provider — installs .agents/.codex files from templates."""
 
     def install(
         self,

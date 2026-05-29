@@ -76,7 +76,12 @@ def test_audit_all_shipped_claude_and_codex_skills_parse_to_ir() -> None:
 
     assert not all_findings
     assert {ir.provider for ir in all_irs} == {"claude", "codex"}
-    assert {ir.name for ir in all_irs} >= {"map-plan", "map-fast", "map-check"}
+    assert {ir.name for ir in all_irs} >= {
+        "map-plan",
+        "map-efficient",
+        "map-fast",
+        "map-check",
+    }
     assert all(len(ir.content_hash) == 64 for ir in all_irs)
 
 

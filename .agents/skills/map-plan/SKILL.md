@@ -1,6 +1,6 @@
 ---
 name: map-plan
-description: "ARCHITECT phase — decompose complex tasks into atomic subtasks with research, spec, and plan artifacts in .map/<branch>/"
+description: "ARCHITECT phase - decompose complex tasks into atomic subtasks with research, spec, and branch-scoped plan artifacts under .map."
 ---
 
 # map-plan — ARCHITECT Phase (Decomposition Only)
@@ -18,7 +18,7 @@ description: "ARCHITECT phase — decompose complex tasks into atomic subtasks w
 - `.map/<branch>/task_plan_<branch>.md` — human-readable plan with AAG contracts
 - `.map/<branch>/step_state.json` — initialized workflow state
 
-**Related skills:** `$map-fast` (small changes), `$map-check` (post-execution verification)
+**Related skills:** `$map-efficient` (execute approved plans), `$map-fast` (small changes), `$map-check` (post-execution verification)
 
 ---
 
