@@ -6053,7 +6053,12 @@ def refresh_blueprint_affected_files(
             if diff_proc.returncode == 0:
                 for raw in diff_proc.stdout.splitlines():
                     path = raw.strip()
-                    if path and not path.startswith(".map/") and not path.startswith(".codex/"):
+                    if (
+                        path
+                        and not path.startswith(".map/")
+                        and not path.startswith(".codex/")
+                        and not path.startswith(".agents/")
+                    ):
                         actual_set.add(path)
         except (OSError, subprocess.TimeoutExpired):
             pass
@@ -6078,7 +6083,12 @@ def refresh_blueprint_affected_files(
             path = raw[3:].strip()
             if " -> " in path:
                 path = path.split(" -> ", 1)[1]
-            if path and not path.startswith(".map/") and not path.startswith(".codex/"):
+            if (
+                path
+                and not path.startswith(".map/")
+                and not path.startswith(".codex/")
+                and not path.startswith(".agents/")
+            ):
                 actual_set.add(path)
     actual_set -= baseline_files
     current_files = sorted(actual_set)
@@ -6707,7 +6717,12 @@ def record_subtask_baseline(branch: str, subtask_id: str) -> dict:
             path = raw[3:].strip()
             if " -> " in path:
                 path = path.split(" -> ", 1)[1]
-            if path and not path.startswith(".map/") and not path.startswith(".codex/"):
+            if (
+                path
+                and not path.startswith(".map/")
+                and not path.startswith(".codex/")
+                and not path.startswith(".agents/")
+            ):
                 files.append(path)
     # Capture HEAD SHA so downstream commits can be diffed against this
     # baseline. Fresh repos with no commits return non-zero — fall back to
@@ -6923,7 +6938,12 @@ def record_scope_baseline(branch: str) -> dict:
             path = raw[3:].strip()
             if " -> " in path:
                 path = path.split(" -> ", 1)[1]
-            if path and not path.startswith(".map/") and not path.startswith(".codex/"):
+            if (
+                path
+                and not path.startswith(".map/")
+                and not path.startswith(".codex/")
+                and not path.startswith(".agents/")
+            ):
                 files.append(path)
     path = _scope_baseline_path(branch, project_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -7092,11 +7112,14 @@ def validate_mutation_boundary(
 
     # Filter framework-owned paths that are NEVER part of a subtask's mutation
     # surface: `.map/` carries orchestrator artifacts (blueprint, step_state,
-    # research outputs, scope logs) and `.codex/` mirrors Codex-side config.
+    # research outputs, scope logs), `.codex/` mirrors Codex-side config, and
+    # `.agents/` holds Codex repository skills.
     # Treating them as scope leaks would produce a flood of false positives.
     actual_set = {
         p for p in actual_set
-        if not p.startswith(".map/") and not p.startswith(".codex/")
+        if not p.startswith(".map/")
+        and not p.startswith(".codex/")
+        and not p.startswith(".agents/")
     }
 
     # Baseline filter — two layers:
@@ -7229,7 +7252,8 @@ def _current_subtask_changed_files(
     Mirrors ``validate_mutation_boundary``'s diff strategy (commit-range diff
     against ``last_subtask_commit_sha`` — falling back to ``HEAD`` — unioned
     with ``git status --porcelain`` for uncommitted work, minus the framework
-    ``.map/`` / ``.codex/`` paths and the per-subtask baseline). Returns
+    ``.map/`` / ``.codex/`` / ``.agents/`` paths and the per-subtask baseline).
+    Returns
     ``None`` on any git failure so callers can fail safe to a full gate
     instead of silently assuming "no changes".
     """
@@ -7301,7 +7325,9 @@ def _current_subtask_changed_files(
 
     changed = {
         p for p in changed
-        if not p.startswith(".map/") and not p.startswith(".codex/")
+        if not p.startswith(".map/")
+        and not p.startswith(".codex/")
+        and not p.startswith(".agents/")
     }
 
     baseline_path = _subtask_baseline_path(branch_name, subtask_id, project_dir)

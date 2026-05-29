@@ -100,6 +100,7 @@ CLAUDE_MUTATION_BOUNDARY_SURFACES = [
 CODEX_MUTATION_BOUNDARY_SURFACES = [
     Path("AGENTS.md"),
     Path("skills") / "map-fast" / "SKILL.md",
+    Path("skills") / "map-efficient" / "SKILL.md",
 ]
 
 MUTATION_BOUNDARY_REQUIRED_PHRASES = [
@@ -2291,4 +2292,3 @@ class TestMapReviewWalkthroughHardening:
             f"{skill_path}: lightweight mode must drop Predictor / Evaluator "
             "to keep speculation off an empty bundle."
         )
-

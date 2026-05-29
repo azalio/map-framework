@@ -392,21 +392,26 @@ class TestRootTemplateSynchronization:
 
 
 class TestCodexTemplateSynchronization:
-    """Test that Codex templates are synchronized between .codex/ and templates/codex/."""
+    """Test that Codex source files are synchronized with templates/codex/."""
 
-    # Each tuple: (source relative to .codex/, template relative to templates/codex/)
+    # Each tuple: (source relative to project root, template relative to templates/codex/)
     CODEX_FILES = [
-        ("skills/map-plan/SKILL.md", "skills/map-plan/SKILL.md"),
-        ("skills/map-fast/SKILL.md", "skills/map-fast/SKILL.md"),
-        ("skills/map-check/SKILL.md", "skills/map-check/SKILL.md"),
-        ("skills/map-explain/SKILL.md", "skills/map-explain/SKILL.md"),
-        ("agents/researcher.toml", "agents/researcher.toml"),
-        ("agents/decomposer.toml", "agents/decomposer.toml"),
-        ("agents/monitor.toml", "agents/monitor.toml"),
-        ("config.toml", "config.toml"),
-        ("hooks.json", "hooks.json"),
-        ("hooks/workflow-gate.py", "hooks/workflow-gate.py"),
-        ("AGENTS.md", "AGENTS.md"),
+        (".agents/skills/map-plan/SKILL.md", "skills/map-plan/SKILL.md"),
+        (".agents/skills/map-fast/SKILL.md", "skills/map-fast/SKILL.md"),
+        (".agents/skills/map-check/SKILL.md", "skills/map-check/SKILL.md"),
+        (".agents/skills/map-explain/SKILL.md", "skills/map-explain/SKILL.md"),
+        (".agents/skills/map-efficient/SKILL.md", "skills/map-efficient/SKILL.md"),
+        (
+            ".agents/skills/map-efficient/efficient-reference.md",
+            "skills/map-efficient/efficient-reference.md",
+        ),
+        (".codex/agents/researcher.toml", "agents/researcher.toml"),
+        (".codex/agents/decomposer.toml", "agents/decomposer.toml"),
+        (".codex/agents/monitor.toml", "agents/monitor.toml"),
+        (".codex/config.toml", "config.toml"),
+        (".codex/hooks.json", "hooks.json"),
+        (".codex/hooks/workflow-gate.py", "hooks/workflow-gate.py"),
+        (".codex/AGENTS.md", "AGENTS.md"),
     ]
 
     @pytest.fixture
@@ -416,8 +421,8 @@ class TestCodexTemplateSynchronization:
 
     @pytest.fixture
     def codex_source_dir(self, project_root):
-        """Get .codex/ directory (development source)."""
-        return project_root / ".codex"
+        """Get project root for Codex development sources."""
+        return project_root
 
     @pytest.fixture
     def codex_templates_dir(self, project_root):
@@ -433,7 +438,7 @@ class TestCodexTemplateSynchronization:
         template_file = codex_templates_dir / template_rel
 
         assert source_file.exists(), (
-            f"Source file missing from .codex/: {source_rel}. "
+            f"Codex source file missing: {source_rel}. "
             f"Expected at: {source_file}"
         )
         assert template_file.exists(), (
@@ -453,7 +458,7 @@ class TestCodexTemplateSynchronization:
             pytest.skip(f"{source_rel} doesn't exist in both locations")
 
         assert filecmp.cmp(source_file, template_file, shallow=False), (
-            f"Content mismatch between .codex/{source_rel} and "
+            f"Content mismatch between {source_rel} and "
             f"templates/codex/{template_rel}. "
             f"Run 'make sync-templates' to fix"
         )

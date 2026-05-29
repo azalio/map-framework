@@ -1129,7 +1129,7 @@ def validate_step(
         # MONITOR-side validate_mutation_boundary check only flags files
         # CHANGED during this subtask, not the cumulative branch diff.
         try:
-            from map_step_runner import record_subtask_baseline  # noqa: WPS433  # pyright: ignore[reportMissingImports]
+            from map_step_runner import record_subtask_baseline  # pyright: ignore[reportMissingImports]
             record_subtask_baseline(branch, state.current_subtask_id)
         except ImportError:
             pass
@@ -1142,7 +1142,7 @@ def validate_step(
         blueprint_present = Path(f".map/{branch}/blueprint.json").exists()
         if blueprint_present:
             try:
-                from map_step_runner import validate_mutation_boundary  # noqa: WPS433  # pyright: ignore[reportMissingImports]
+                from map_step_runner import validate_mutation_boundary  # pyright: ignore[reportMissingImports]
                 scope_report = validate_mutation_boundary(
                     branch, state.current_subtask_id
                 )

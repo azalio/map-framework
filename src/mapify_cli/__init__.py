@@ -267,7 +267,8 @@ def count_project_markdown_files(
 def is_map_initialized(project_path: Path) -> bool:
     """Return True when the current directory looks like a MAP project.
 
-    Recognises both Claude Code layout (.claude/) and Codex layout (.codex/).
+    Recognises both Claude Code layout (.claude/) and Codex layout (.codex/
+    config plus .agents/skills).
     """
     claude_paths = [
         project_path / ".claude" / "agents",
@@ -277,7 +278,7 @@ def is_map_initialized(project_path: Path) -> bool:
     ]
     codex_paths = [
         project_path / ".codex" / "config.toml",
-        project_path / ".codex" / "skills",
+        project_path / ".agents" / "skills",
     ]
     return all(p.exists() for p in claude_paths) or all(p.exists() for p in codex_paths)
 
@@ -299,7 +300,7 @@ def get_project_health(project_path: Path) -> Dict[str, Any]:
     if detected == "codex":
         required_paths = {
             ".codex/config.toml": project_path / ".codex" / "config.toml",
-            ".codex/skills": project_path / ".codex" / "skills",
+            ".agents/skills": project_path / ".agents" / "skills",
             ".codex/agents": project_path / ".codex" / "agents",
             ".map/scripts": project_path / ".map" / "scripts",
         }
@@ -838,7 +839,7 @@ def init(
         tracker.complete("mcp-select", f"{len(selected_mcp_servers)} servers")
 
     if provider == "codex":
-        # Codex provider: install .codex/ files + .map/scripts/ (skip-if-exists)
+        # Codex provider: install .agents/.codex files + .map/scripts/ (skip-if-exists)
         from mapify_cli.delivery.providers import CodexProvider
 
         tracker.add("create-codex", "Create Codex files")
@@ -971,7 +972,10 @@ def init(
         )
         steps_lines.append("   • [cyan]$map-check[/] - Quality gates and verification")
         steps_lines.append(
-            f"{step_num + 1}. Trust this project in Codex settings for .codex/ config to take effect"
+            "   • [cyan]$map-efficient[/] - Execute approved MAP plans end to end"
+        )
+        steps_lines.append(
+            f"{step_num + 1}. Trust this project in Codex settings for .codex/ config to take effect; skills live in .agents/skills"
         )
     else:
         steps_lines.append(f"{step_num}. Start using MAP commands with Claude Code:")
@@ -1125,7 +1129,7 @@ def doctor(debug: bool = typer.Option(False, "--debug", help="Enable debug loggi
         codex_dir = project_path / ".codex"
         codex_checks = {
             ".codex/config.toml": codex_dir / "config.toml",
-            ".codex/skills": codex_dir / "skills",
+            ".agents/skills": project_path / ".agents" / "skills",
             ".codex/agents": codex_dir / "agents",
             ".map/scripts": project_path / ".map" / "scripts",
         }

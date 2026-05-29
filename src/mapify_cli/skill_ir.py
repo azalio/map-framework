@@ -240,7 +240,7 @@ def parse_skill_file(skill_file: Path, *, provider: str) -> SkillIR:
 
 def _provider_from_root(root: Path) -> str:
     parts = set(root.parts)
-    if "codex" in parts or root.name == "codex":
+    if "codex" in parts or root.name == "codex" or ".agents" in parts:
         return "codex"
     return "claude"
 
