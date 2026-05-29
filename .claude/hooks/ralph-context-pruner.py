@@ -212,6 +212,8 @@ State: .map/{branch}/step_state.json"""
 
 def main() -> None:
     """Main hook execution logic."""
+    if os.environ.get("MAP_INVOKED_BY"):
+        sys.exit(0)
     # Read stdin (required by hook protocol)
     try:
         json.load(sys.stdin)

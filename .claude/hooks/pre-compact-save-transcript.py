@@ -130,6 +130,8 @@ def parse_transcript(transcript_path: Path) -> str:
 
 
 def main() -> None:
+    if os.environ.get("MAP_INVOKED_BY"):
+        sys.exit(0)
     try:
         input_data = json.load(sys.stdin)
     except json.JSONDecodeError:
