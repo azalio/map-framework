@@ -601,6 +601,120 @@ def format_reminder(
     return base
 
 
+def _sanitize_fence_content(text: str) -> str:
+    """Remove fence tag occurrences from user-supplied content.
+
+    Strips case-insensitive literal ``<personal-rules`` and
+    ``</personal-rules>`` so that a malicious or accidental occurrence
+    inside a rules file cannot close the outer fence early (INV-6/E7).
+
+    Postcondition: neither ``<personal-rules`` nor ``</personal-rules>``
+    appears in the returned string (case-insensitive).
+    """
+    text = re.sub(r"(?i)</personal-rules>", "", text)
+    text = re.sub(r"(?i)<personal-rules", "", text)
+    return text
+
+
+def _load_personal_rules(project_dir: Path) -> tuple[int, str]:
+    """Load personal learned rules from ``.map/personal/rules/learned/``.
+
+    Reads every ``*.md`` file under the directory in sorted order,
+    sanitises each file's content through ``_sanitize_fence_content``,
+    and returns a tuple of ``(count, joined_content)``.
+
+    Returns ``(0, "")`` when the directory does not exist or contains
+    no readable ``.md`` files.
+
+    Invariants:
+    - INV-1: read-only; never writes anything, never opens credential files.
+    - HC-1: reads only ``*.md`` under the ``learned`` subdirectory.
+    - Symlink-escape guard: any resolved path that escapes the base
+      directory is silently skipped.
+    """
+    base = project_dir / ".map" / "personal" / "rules" / "learned"
+    if not base.is_dir():
+        return (0, "")
+
+    base_resolved = base.resolve()
+    sanitized_parts: list[str] = []
+
+    for md_file in sorted(base.glob("*.md")):
+        try:
+            resolved = md_file.resolve()
+            if not resolved.is_relative_to(base_resolved):
+                continue
+        except OSError:
+            continue
+
+        try:
+            content = md_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+
+        sanitized_parts.append(_sanitize_fence_content(content))
+
+    count = len(sanitized_parts)
+    return (count, "\n".join(sanitized_parts))
+
+
+def _build_personal_block(count: int, content: str, limit: int) -> str:
+    """Assemble the ``<personal-rules>`` XML block for context injection.
+
+    Returns ``""`` when *count* is zero or negative (HC-3).
+
+    Otherwise assembles::
+
+        <personal-rules>
+        [personal-rules: N files]
+        <content>
+        </personal-rules>
+
+    If the assembled string exceeds *limit*, the content is trimmed from
+    the END and a ``[... trimmed]`` marker is inserted on its own line
+    before the closing tag.  The opening line, banner, and closing tag
+    are ALWAYS present (INV-4), even when content must be trimmed to
+    empty.
+
+    Raw bullet markdown in *content* is concatenated unchanged (SC-2).
+    """
+    if count <= 0:
+        return ""
+
+    opening = "<personal-rules>"
+    banner = f"[personal-rules: {count} files]"
+    closing = "</personal-rules>"
+
+    assembled = opening + "\n" + banner + "\n" + content + "\n" + closing
+
+    if len(assembled) <= limit:
+        return assembled
+
+    # Compute fixed overhead for the trimmed variant:
+    #   opening\n  banner\n  trimmed_content\n  [... trimmed]\n  closing
+    trim_marker = "[... trimmed]"
+    overhead = (
+        len(opening) + 1      # opening + \n
+        + len(banner) + 1     # banner + \n
+        + 1                   # \n before trim_marker
+        + len(trim_marker) + 1  # trim_marker + \n
+        + len(closing)        # closing (no trailing \n)
+    )
+    content_budget = max(0, limit - overhead)
+    trimmed_content = content[:content_budget]
+    result = (
+        opening + "\n"
+        + banner + "\n"
+        + trimmed_content + "\n"
+        + trim_marker + "\n"
+        + closing
+    )
+
+    # Degenerate guard: if even the skeleton exceeds limit, emit it anyway
+    # (correctness of the fence beats the cap in this edge case).
+    return result
+
+
 def main() -> None:
     if os.environ.get("MAP_INVOKED_BY"):
         sys.exit(0)
