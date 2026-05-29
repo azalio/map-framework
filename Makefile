@@ -50,6 +50,7 @@ lint:
 	ruff check src/ tests/
 	mypy src/
 	pyright src/
+	python scripts/lint-hooks.py
 
 format:
 	black src/ tests/
