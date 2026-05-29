@@ -38,7 +38,7 @@ shell_command:
 ```
 
 **Resume rules:**
-- `findings` EXISTS → skip Step 0, read existing findings
+- `findings` EXISTS → skip Step 0 ONLY if the file has an `Already Implemented` section; if it predates that format, re-run Step 0 so the Step 0.5 gate has its evidence
 - `spec` EXISTS → skip Steps 1-2, read existing spec
 - `task_plan` EXISTS → skip Steps 4-6, read existing plan
 - `step_state.json` EXISTS → plan is complete, print checkpoint and STOP
@@ -80,7 +80,7 @@ shell_command:
 
 ## Step 0: Quick Discovery (Optional but Recommended)
 
-Skip if `findings_<branch>.md` already exists (resume rule above) or if the task is greenfield with a fully-provided spec.
+Skip if `findings_<branch>.md` already exists AND contains an `Already Implemented` section (resume rule above), or if the task is greenfield with a fully-provided spec. If an existing findings file predates this format (no `Already Implemented` section), re-run discovery so the Step 0.5 gate has its evidence.
 
 ```
 spawn_agent(
@@ -139,7 +139,7 @@ FINDINGS_EOF
 
 ## Step 0.5: Already-Implemented Gate (MANDATORY when discovery ran)
 
-Reconcile the request against the discovery `Already Implemented` section BEFORE interview/spec. Do not plan work the codebase already does. If discovery was skipped (greenfield or fully-provided spec), state the gate was skipped and why.
+Reconcile the request against the discovery `Already Implemented` section BEFORE interview/spec. Do not plan work the codebase already does. If discovery was skipped (greenfield or fully-provided spec), state the gate was skipped and why. If the findings file lacks an `Already Implemented` section (it predates this format), re-run Step 0 first — do NOT run the gate on incomplete evidence.
 
 - **Whole feature already implemented** — every asked-for behavior exists with `file:line` proof. Off-ramp: report the evidence, state no plan is needed, and STOP (no spec, no blueprint). If the user may want changes, ask them to restate the specific gap.
 - **Partially implemented** — move already-done parts into the spec's **Out of Scope > Already Implemented** subsection (with `file:line` proof) so decomposition plans ONLY the remaining gap. Re-scope to the gap before continuing.

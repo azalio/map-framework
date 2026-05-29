@@ -59,7 +59,7 @@ echo "state:       $(test -f .map/${BRANCH}/step_state.json && echo EXISTS || ec
 ```
 
 Resume rules:
-- Existing `findings`: reuse discovery.
+- Existing `findings`: reuse discovery only if the file has an `Already Implemented` section; if it predates that format, re-run discovery (see Step 0).
 - Existing `spec`: skip interview/spec writing.
 - Existing `task_plan`: skip decomposition and plan creation.
 - Existing `step_state.json`: plan is complete; print checkpoint and STOP.
@@ -88,7 +88,7 @@ Outcomes:
 
 ### Step 0: Quick Discovery (Optional but Recommended)
 
-If `.map/<branch>/findings_<branch>.md` exists, read it and skip discovery. Otherwise run discovery to find relevant files, existing patterns, risks, and confirmed new files.
+If `.map/<branch>/findings_<branch>.md` exists, read it and skip discovery — but ONLY if it contains an `Already Implemented` section (the format this skill now requires). A findings file written before this format existed lacks that section; in that case re-run discovery with the prompt below so the Step 0.5 gate has the evidence it requires. Otherwise (no findings file at all) run discovery to find relevant files, existing patterns, risks, and confirmed new files.
 
 ```text
 Task(
@@ -108,7 +108,7 @@ Save findings to `.map/<branch>/findings_<branch>.md`.
 
 ### Step 0.5: Already-Implemented Gate (MANDATORY when discovery ran)
 
-Before interviewing or writing the spec, reconcile the request against the discovery `Already Implemented` section. Do not plan work the codebase already does. This gate runs whenever Step 0 produced findings; if discovery was intentionally skipped (greenfield or fully-provided spec), state that the gate was skipped and why.
+Before interviewing or writing the spec, reconcile the request against the discovery `Already Implemented` section. Do not plan work the codebase already does. This gate runs whenever Step 0 produced findings; if discovery was intentionally skipped (greenfield or fully-provided spec), state that the gate was skipped and why. If the findings file lacks an `Already Implemented` section (it predates this format), do NOT run the gate on incomplete evidence — re-run Step 0 discovery first.
 
 Classify the request:
 
