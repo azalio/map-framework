@@ -35,6 +35,7 @@ parallel_tool_policy: guarded_wave_only
 4. Batch mode is default. Sequential subtask execution is default.
 5. After Monitor pass, record files changed in `step_state.json` for guard isolation.
 6. Validate planning metadata before Actor starts: `expected_diff_size`, `concern_type`, `one_logical_step`, `split_rationale`, `concern_justification`, `coverage_map`, `hard_constraints`, `soft_constraints`, `validation_criteria`, `[AC-1]` bracket tags, and `tradeoff_rationale`.
+7. Script routing: `map_orchestrator.py` owns state-machine transitions (`get_next_step`, `validate_step`, `monitor_failed`, `record_subtask_result`, `set_waves`, `resume_from_plan`, …); `map_step_runner.py` owns every `detect_*` / `build_*` / `save_*` / `load_*` / `refresh_*` / `log_*` helper plus baseline `record_*` and artifact writers. Full table + the `record_*` / `validate_*` disambiguation in [efficient-reference.md#script-routing-dispatcher-reference](efficient-reference.md#script-routing-dispatcher-reference).
 
 ## Mutation Boundary Constraints
 
@@ -296,18 +297,19 @@ Return files_changed, tests_run, validation_notes, and any blocker.
 ### Actor truncated-response gate (MANDATORY — pre-MONITOR)
 
 Before invoking Monitor, validate Actor's response via
-`detect_truncated_agent_output --agent actor`. If `truncated: true`, log via
-`log_agent_failure` and re-invoke ONCE using the prompt from
-`build_json_retry_prompt --agent actor --errors '<reasons>'`; if still
-malformed, stop with CLARIFICATION_NEEDED.
+`python3 .map/scripts/map_step_runner.py detect_truncated_agent_output --agent actor`.
+If `truncated: true`, log via
+`python3 .map/scripts/map_step_runner.py log_agent_failure` and re-invoke ONCE using the prompt from
+`python3 .map/scripts/map_step_runner.py build_json_retry_prompt --agent actor --errors '<reasons>'`;
+if still malformed, stop with CLARIFICATION_NEEDED.
 
 **Files-changed mismatch check (MANDATORY):** Run
-`detect_actor_files_changed_mismatch "$BRANCH" "$SUBTASK_ID" --declared "<Actor's files_changed, comma-joined>"`.
+`python3 .map/scripts/map_step_runner.py detect_actor_files_changed_mismatch "$BRANCH" "$SUBTASK_ID" --declared "<Actor's files_changed, comma-joined>"`.
 If `status_mismatch == true`, surface `recovery_instruction` and re-invoke Actor to finish `declared_not_written` files; do NOT record the subtask until clear. Full recipe: [efficient-reference.md](efficient-reference.md).
 
 ### Symbol blast-radius gate (MANDATORY — pre-dispatch)
 
-Run `detect_symbol_blast_radius "$BRANCH" "$SUBTASK_ID"`. If
+Run `python3 .map/scripts/map_step_runner.py detect_symbol_blast_radius "$BRANCH" "$SUBTASK_ID"`. If
 `recommended_gate == "validate_callers"`, append `external_callers` to the Monitor
 `<documents>` context and require Monitor to validate each external caller's contract.
 Full recipe: [efficient-reference.md](efficient-reference.md).
@@ -337,11 +339,12 @@ Return JSON with valid, summary, issues, files_changed, tests_run, and escalatio
 # After Monitor returns:
 
 - **Truncated-response gate (MANDATORY — pre-verdict):** Before reading
-  `valid`/`recommendation`, run `detect_truncated_agent_output --agent monitor`
+  `valid`/`recommendation`, run
+  `python3 .map/scripts/map_step_runner.py detect_truncated_agent_output --agent monitor`
   (JSON with `valid`, `summary`, `issues`, ends `}`). On truncation: log via
-  `log_agent_failure` and re-invoke Monitor ONCE using the prompt from
-  `build_json_retry_prompt --agent monitor --errors '<reasons>'`; if still
-  malformed, stop with CLARIFICATION_NEEDED. Do NOT record the
+  `python3 .map/scripts/map_step_runner.py log_agent_failure` and re-invoke Monitor ONCE using the prompt from
+  `python3 .map/scripts/map_step_runner.py build_json_retry_prompt --agent monitor --errors '<reasons>'`;
+  if still malformed, stop with CLARIFICATION_NEEDED. Do NOT record the
   prose-response subtask as complete. Three signs:
   (a) doesn't parse as JSON, (b) missing one of
   `valid`/`summary`/`issues`, (c) ends mid-sentence with no closing `}`.
@@ -380,7 +383,7 @@ Return JSON with valid, summary, issues, files_changed, tests_run, and escalatio
   Full recipe: [efficient-reference.md](efficient-reference.md).
 - If `valid=false`, write `code-review-N.md`, run `python3 .map/scripts/map_orchestrator.py monitor_failed --feedback "<feedback>"`, inspect `retry_isolation`, and invoke Predictor only when stuck/high-risk escalation rules apply.
 - If `retry_isolation=clean_retry_required`, run `python3 .map/scripts/map_step_runner.py validate_retry_quarantine` before the next Actor call. The next Actor prompt must use CLEAN_RETRY mode from `.map/<branch>/retry_quarantine.json` and must not reuse the rejected approach unless the quarantine artifact preserves it.
-- Treat test failures after Monitor approval as Monitor failure. **Cross-subtask regression gate (MANDATORY):** before the test gate, run `detect_cross_subtask_regression_risk "$BRANCH" "$SUBTASK_ID"`; if `recommended_gate == "full_suite"` you MUST run the FULL suite (never a `-k` subset) before commit / `record_subtask_result` — per-subtask Monitor is blind to regressions on prior subtasks' code. Recipe: [efficient-reference.md](efficient-reference.md).
+- Treat test failures after Monitor approval as Monitor failure. **Cross-subtask regression gate (MANDATORY):** before the test gate, run `python3 .map/scripts/map_step_runner.py detect_cross_subtask_regression_risk "$BRANCH" "$SUBTASK_ID"`; if `recommended_gate == "full_suite"` you MUST run the FULL suite (never a `-k` subset) before commit / `record_subtask_result` — per-subtask Monitor is blind to regressions on prior subtasks' code. Recipe: [efficient-reference.md](efficient-reference.md).
 
 ### Phase: ADVANCE_SUBTASK (synthetic boundary)
 

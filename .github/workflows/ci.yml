@@ -88,6 +88,7 @@ jobs:
         # Run linters if installed (Linux/macOS only)
         which ruff > /dev/null 2>&1 && ruff check src/ tests/ || echo "Ruff not installed, skipping"
         which mypy > /dev/null 2>&1 && mypy src/ || echo "Mypy not installed, skipping"
+        which pyright > /dev/null 2>&1 && pyright src/ || echo "Pyright not installed, skipping"
 
     - name: Run Codex provider regression checks
       run: |

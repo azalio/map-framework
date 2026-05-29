@@ -128,6 +128,18 @@ Write `.map/<branch>/spec_<branch>.md`. The full spec template is in [plan-refer
 
 Write the same spec artifact from the provided requirements and discovery evidence. Do not invent unresolved decisions; put them in Open Questions.
 
+### Step 2a.5: Validate Spec Citations (MANDATORY)
+
+Before the devil's-advocate review, gate on `file:line` citation correctness — stale citations in the spec ship to every downstream phase (research, Actor, Monitor) and cause real bugs (e.g., the hogback-gap ST-002 cited `src/mapify_cli/__init__.py:96` for `MAP_DEBUG` when the symbol had moved to :207). The validator finds every `<path>:<line>[-<line>]` pattern, checks the path exists and line is in range, and — when a backticked identifier sits next to the citation — verifies the cited line contains it.
+
+```bash
+python3 .map/scripts/validate_spec_citations.py --branch "$BRANCH"
+```
+
+- Exit 0 + `"passed": true` → proceed to Step 2b.
+- Exit 1 + `"failures": [...]` with `status` in `{stale-citation, error}` → fix the spec (correct the line number, update the symbol name, or remove the citation) and re-run. Do NOT proceed to decomposition with red failures.
+- Exit 2 → invocation error (missing branch / spec file); fix invocation, do not skip.
+
 ### Step 2b: Devil's Advocate Review (SPEC_REVIEW)
 
 Run Monitor as a spec reviewer before decomposition.
