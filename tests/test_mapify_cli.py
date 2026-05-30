@@ -101,6 +101,7 @@ class TestTemplates:
     @mock.patch("importlib.resources.files", side_effect=Exception("Not found"))
     def test_get_templates_dir_fallback(self, mock_files):
         """Test fallback to module directory."""
+        del mock_files  # side_effect fires on call; mock object itself not needed
         # This will use the actual module directory fallback
         result = get_templates_dir()
         assert result.exists()
@@ -108,6 +109,7 @@ class TestTemplates:
     @mock.patch("importlib.resources.files", side_effect=Exception("Not found"))
     def test_get_templates_dir_not_found(self, mock_files):
         """Test error when templates not found anywhere."""
+        del mock_files  # side_effect fires on call; mock object itself not needed
         # Mock Path methods to simulate templates not existing
         with mock.patch("pathlib.Path.exists", return_value=False):
             with pytest.raises(RuntimeError, match="Templates directory not found"):

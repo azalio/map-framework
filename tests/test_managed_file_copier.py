@@ -1,11 +1,14 @@
-"""Tests for drift-aware managed file copier (Step 3).
+"""Tests for drift-aware managed file copier (Step 3 + C2 fence-aware merge).
 
-Tests metadata injection, extraction, drift detection, and copy_managed_file().
+Tests metadata injection, extraction, drift detection, copy_managed_file(),
+and the fence-aware merge (TestFenceAwareMerge — ST-010 VC1-VC5).
 """
 
 import json
 import sys
 from pathlib import Path
+
+import pytest
 
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -258,14 +261,18 @@ class TestCopyManagedFile:
         assert result.success
         assert dest.read_bytes() == b"\x00\x01\x02"
 
-    def test_yaml_file_no_metadata(self, tmp_path):
+    def test_yaml_file_has_metadata_and_fence(self, tmp_path):
+        """Phase C2: yaml is now fence-supported with # MAP-MANAGED and # map:start/end."""
         src = tmp_path / "config.yaml"
         src.write_text("key: value\n")
         dest = tmp_path / "output" / "config.yaml"
 
         result = copy_managed_file(src, dest, "3.5.0")
         assert result.success
-        assert "MAP-MANAGED" not in dest.read_text()  # yaml not supported yet
+        content = dest.read_text()
+        assert "MAP-MANAGED" in content, "yaml must now have MAP-MANAGED metadata"
+        assert "# map:start" in content, "yaml must have fence start token"
+        assert "# map:end" in content, "yaml must have fence end token"
 
     def test_repeated_upgrade_no_backup_collision(self, tmp_path):
         """Two upgrades on a drifted file must create separate backups."""
@@ -451,3 +458,480 @@ class TestFrontmatterPreservation:
         assert meta is not None
         assert clean == original
         assert compute_hash(clean) == template_hash
+
+
+# ---------------------------------------------------------------------------
+# ST-010 C2: Fence-aware merge tests
+# ---------------------------------------------------------------------------
+
+# Parametrize over all formats that get fence tokens.
+_FENCE_FORMATS = [
+    (".md", "<!-- map:start -->", "<!-- map:end -->"),
+    (".py", "# map:start", "# map:end"),
+    (".sh", "# map:start", "# map:end"),
+    (".toml", "# map:start", "# map:end"),
+]
+
+
+def _src_body_for(ext: str) -> str:
+    """Return a plausible template body string for the given extension."""
+    bodies = {
+        ".md": "# Managed heading\nSome managed content.\n",
+        ".py": 'def hello():\n    print("hello")\n',
+        ".sh": "#!/bin/sh\necho hello\n",
+        ".toml": '[section]\nkey = "value"\n',
+    }
+    return bodies.get(ext, "managed content\n")
+
+
+def _user_tail_for(ext: str) -> str:
+    """Return sample user-added content below the fence."""
+    tails = {
+        ".md": "\n## My Custom Section\nUser-added notes.\n",
+        ".py": "\n# My customisation\nmy_var = 42\n",
+        ".sh": "\n# user additions\nexport MY_VAR=1\n",
+        ".toml": "\n[my_section]\nmy_key = true\n",
+    }
+    return tails.get(ext, "\n# user content\n")
+
+
+class TestFenceAwareMerge:
+    """ST-010 fence-aware merge: VC1-VC5."""
+
+    # ------------------------------------------------------------------ VC1
+    @pytest.mark.parametrize("ext,start_tok,end_tok", _FENCE_FORMATS)
+    def test_vc1_user_tail_preserved_byte_for_byte(
+        self, tmp_path, ext: str, start_tok: str, end_tok: str
+    ) -> None:
+        """VC1 [INV-5]: re-copy refreshes managed region, user tail unchanged."""
+        user_tail = _user_tail_for(ext)
+        src_body_v1 = _src_body_for(ext)
+        src_body_v2 = src_body_v1 + "# NEW LINE added to template\n"
+
+        # --- first install (v1) ---
+        src = tmp_path / f"tmpl{ext}"
+        src.write_text(src_body_v1, encoding="utf-8")
+        dest = tmp_path / f"dest{ext}"
+        r1 = copy_managed_file(src, dest, "1.0.0")
+        assert r1.success, f"First install failed: {r1.reason}"
+
+        # Manually append user tail below the closing fence
+        current = dest.read_text(encoding="utf-8")
+        assert start_tok in current, "Opening fence token must be present after first install"
+        assert end_tok in current, "Closing fence token must be present after first install"
+        dest.write_text(current + user_tail, encoding="utf-8")
+
+        # Snapshot the user tail bytes
+        after_fence_snapshot = dest.read_text(encoding="utf-8").split(end_tok + "\n", 1)
+        assert len(after_fence_snapshot) == 2, "Could not split on end_tok"
+        user_section_before = after_fence_snapshot[1]
+
+        # --- re-copy with changed template (v2) ---
+        src.write_text(src_body_v2, encoding="utf-8")
+        r2 = copy_managed_file(src, dest, "1.1.0")
+        assert r2.success, f"Re-copy failed: {r2.reason}"
+
+        dest_after = dest.read_text(encoding="utf-8")
+
+        # Managed region must contain new line
+        assert "NEW LINE added to template" in dest_after, (
+            "Managed region was not refreshed with new template content"
+        )
+
+        # User tail must be byte-for-byte identical (INV-5)
+        after_fence_after = dest_after.split(end_tok + "\n", 1)
+        assert len(after_fence_after) == 2, "Closing fence token missing after re-copy"
+        user_section_after = after_fence_after[1]
+        assert user_section_after == user_section_before, (
+            f"User tail changed after re-copy!\n"
+            f"Before: {user_section_before!r}\n"
+            f"After:  {user_section_after!r}"
+        )
+
+    # ------------------------------------------------------------------ VC2
+    @pytest.mark.parametrize("ext,start_tok,end_tok", _FENCE_FORMATS)
+    def test_vc2_correct_fence_tokens_emitted(
+        self, tmp_path, ext: str, start_tok: str, end_tok: str
+    ) -> None:
+        """VC2 [SC-2]: correct per-format fence tokens appear; JSON gets no fence."""
+        src = tmp_path / f"tmpl{ext}"
+        src.write_text(_src_body_for(ext), encoding="utf-8")
+        dest = tmp_path / f"dest{ext}"
+
+        r = copy_managed_file(src, dest, "1.0.0")
+        assert r.success
+
+        content = dest.read_text(encoding="utf-8")
+        assert start_tok in content, f"start token {start_tok!r} missing in {ext} output"
+        assert end_tok in content, f"end token {end_tok!r} missing in {ext} output"
+
+    def test_vc2_json_no_fence_uses_map_managed_key(self, tmp_path: Path) -> None:
+        """VC2 [SC-2]: JSON uses _map_managed root key — no fence tokens."""
+        src = tmp_path / "config.json"
+        src.write_text(json.dumps({"key": "val"}), encoding="utf-8")
+        dest = tmp_path / "out" / "config.json"
+
+        r = copy_managed_file(src, dest, "1.0.0")
+        assert r.success
+
+        content = dest.read_text(encoding="utf-8")
+        data = json.loads(content)
+        assert "_map_managed" in data, "JSON must use _map_managed root key"
+        # No fence tokens in JSON output
+        assert "map:start" not in content
+        assert "map:end" not in content
+
+    def test_vc2_json_drift_creates_bak(self, tmp_path: Path) -> None:
+        """VC2 [SC-2]: JSON drift → .bak.<ts> timestamped backup."""
+        import time
+
+        src = tmp_path / "config.json"
+        original_data = {"key": "val"}
+        src.write_text(json.dumps(original_data), encoding="utf-8")
+        dest = tmp_path / "config.json"
+
+        copy_managed_file(src, dest, "1.0.0")
+
+        # User modifies JSON file
+        data = json.loads(dest.read_text())
+        data["user_key"] = "user_value"
+        dest.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+        time.sleep(1.1)  # ensure distinct timestamp
+
+        r2 = copy_managed_file(src, dest, "1.1.0")
+        assert r2.drifted
+        assert r2.backed_up
+        assert r2.backup_path is not None
+        assert r2.backup_path.name.endswith(".bak")
+        assert r2.backup_path.exists()
+
+    # ------------------------------------------------------------------ VC3
+    @pytest.mark.parametrize("ext,start_tok,end_tok", _FENCE_FORMATS)
+    def test_vc3_phase_b_no_fence_fully_managed_no_regression(
+        self, tmp_path, ext: str, start_tok: str, end_tok: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """VC3 [INV-T]: Phase B file (metadata, no fence) → fully managed + migration notice."""
+        src_body = _src_body_for(ext)
+        src = tmp_path / f"tmpl{ext}"
+        src.write_text(src_body, encoding="utf-8")
+        dest = tmp_path / f"dest{ext}"
+
+        # Simulate a Phase B install: inject metadata but NO fence
+        template_hash = compute_hash(src_body)
+        phase_b_content = inject_metadata(src_body, ext, "1.0.0", template_hash)
+        dest.write_text(phase_b_content, encoding="utf-8")
+
+        # Re-copy with Phase C copier
+        r = copy_managed_file(src, dest, "1.1.0")
+        assert r.success, f"Phase B → C migration failed: {r.reason}"
+
+        # Must have written something (fully managed — no fence added on Phase B migration;
+        # fence only comes with a full re-install via `mapify init`)
+        del start_tok, end_tok  # Phase B path doesn't add fence tokens by design
+        content = dest.read_text(encoding="utf-8")
+        assert "MAP-MANAGED" in content, "Metadata must be present after re-copy"
+        # Check key lines of the managed body are present (shebang may be reordered)
+        for line in src_body.splitlines():
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#!"):
+                assert stripped in content, (
+                    f"Body line {stripped!r} missing from re-copied content"
+                )
+
+        # Migration notice must appear on stderr
+        stderr_out = capsys.readouterr().err
+        assert "MIGRATION" in stderr_out or "Phase B" in stderr_out or "no fence" in stderr_out.lower(), (
+            f"Migration notice expected in stderr; got: {stderr_out!r}"
+        )
+
+    # ------------------------------------------------------------------ VC4
+    @pytest.mark.parametrize("ext,start_tok,end_tok", _FENCE_FORMATS)
+    def test_vc4_deleted_fence_user_owned_not_overwritten(
+        self, tmp_path, ext: str, start_tok: str, end_tok: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """VC4 [D12]: deleted/malformed fence → user-owned, managed region not overwritten, warning emitted."""
+        src_body = _src_body_for(ext)
+        src = tmp_path / f"tmpl{ext}"
+        src.write_text(src_body, encoding="utf-8")
+        dest = tmp_path / f"dest{ext}"
+
+        # First install to get a properly fenced file
+        r1 = copy_managed_file(src, dest, "1.0.0")
+        assert r1.success
+
+        # User deletes the fence end marker (malformed: start present, end gone)
+        content = dest.read_text(encoding="utf-8")
+        assert start_tok in content, "Start fence token must be present after first install"
+        assert end_tok in content, "End fence token must be present after first install"
+        malformed = content.replace(end_tok, "")
+        dest.write_text(malformed, encoding="utf-8")
+        snapshot_before = dest.read_text(encoding="utf-8")
+
+        # Re-copy must skip (user-owned)
+        r2 = copy_managed_file(src, dest, "1.1.0")
+        assert r2.success, "Result must be success=True (skipped, not hard error)"
+
+        # File must NOT be overwritten
+        content_after = dest.read_text(encoding="utf-8")
+        assert content_after == snapshot_before, (
+            "File content must NOT change when fence is malformed (D12)"
+        )
+
+        # Warning must appear on stderr
+        stderr_out = capsys.readouterr().err
+        assert "WARNING" in stderr_out or "malformed" in stderr_out.lower() or "user-owned" in stderr_out.lower(), (
+            f"Warning expected in stderr; got: {stderr_out!r}"
+        )
+
+    @pytest.mark.parametrize("ext,start_tok,end_tok", _FENCE_FORMATS)
+    def test_vc4_fence_merge_never_writes_outside_target(
+        self, tmp_path, ext: str, start_tok: str, end_tok: str
+    ) -> None:
+        """VC4 / security: fence merge must never write to a path other than dest."""
+        src = tmp_path / f"tmpl{ext}"
+        src.write_text(_src_body_for(ext), encoding="utf-8")
+        dest = tmp_path / f"dest{ext}"
+
+        r = copy_managed_file(src, dest, "1.0.0")
+        assert r.success
+
+        # Fence tokens must appear in dest (confirms fence-aware merge ran correctly)
+        content = dest.read_text(encoding="utf-8")
+        assert start_tok in content, f"Start fence token {start_tok!r} missing from dest"
+        assert end_tok in content, f"End fence token {end_tok!r} missing from dest"
+
+        # List all files in tmp_path — only src and dest should exist
+        all_files = list(tmp_path.rglob("*"))
+        expected = {src, dest}
+        unexpected = {f for f in all_files if f.is_file() and f not in expected}
+        assert not unexpected, (
+            f"Fence merge wrote unexpected files outside target: {unexpected}"
+        )
+
+    # ------------------------------------------------------------------ VC5
+    @pytest.mark.parametrize("ext,start_tok,end_tok", _FENCE_FORMATS)
+    def test_vc5_symlink_dest_refused(
+        self, tmp_path, ext: str, start_tok: str, end_tok: str
+    ) -> None:
+        """VC5 [security]: write to symlink dest must be refused (O_NOFOLLOW guard)."""
+        del start_tok, end_tok  # parametrized for format coverage; not needed in body
+        src = tmp_path / f"tmpl{ext}"
+        src.write_text(_src_body_for(ext), encoding="utf-8")
+
+        # Create real target file and symlink to it
+        real_target = tmp_path / f"real_target{ext}"
+        real_target.write_text("real content\n", encoding="utf-8")
+        symlink_dest = tmp_path / f"symlink{ext}"
+        symlink_dest.symlink_to(real_target)
+
+        # Attempt to copy to the symlink — must fail (success=False or raise)
+        try:
+            r = copy_managed_file(src, symlink_dest, "1.0.0")
+            assert not r.success, (
+                "copy_managed_file must refuse to write to a symlink dest"
+            )
+        except OSError:
+            pass  # raising OSError is also acceptable
+
+        # Real target must not have been modified
+        assert real_target.read_text(encoding="utf-8") == "real content\n", (
+            "Symlink target must not be modified when write to symlink is refused"
+        )
+
+    def test_vc5_no_write_outside_target_path_traversal(self, tmp_path: Path) -> None:
+        """VC5 [security]: fence merge never writes outside the target file path."""
+        src = tmp_path / "tmpl.md"
+        src.write_text("# Managed content\n", encoding="utf-8")
+        dest = tmp_path / "subdir" / "dest.md"
+
+        r = copy_managed_file(src, dest, "1.0.0")
+        assert r.success
+
+        # Only dest and src should exist; no files written outside their directories
+        all_files = list(tmp_path.rglob("*"))
+        written = {f for f in all_files if f.is_file() and f != src}
+        assert written == {dest}, (
+            f"Expected only dest to be written; found: {written}"
+        )
+
+    # ------------------------------------------------------------------ INV-5 sentinel-in-tail
+    @pytest.mark.parametrize("ext,start_tok,end_tok", _FENCE_FORMATS)
+    def test_sentinel_in_tail_roundtrip(
+        self, tmp_path: Path, ext: str, start_tok: str, end_tok: str
+    ) -> None:
+        """INV-5 data-loss fix: user tail containing literal fence sentinel lines
+        must survive re-copy byte-for-byte.
+
+        Regression: naive end_indices[-1] would mis-identify the sentinel in the
+        user tail as the closing fence boundary, dropping or duplicating user content.
+        """
+        src_body_v1 = _src_body_for(ext)
+        src_body_v2 = src_body_v1 + "# NEW LINE added to template\n"
+
+        # Build a user tail that contains BOTH sentinel lines verbatim.
+        # This is realistic: a markdown file documenting MAP fence syntax, a shell
+        # heredoc, or a .toml comment block.
+        sentinel_tail = (
+            "\n# Below is user content that documents fence syntax:\n"
+            f"{start_tok}\n"
+            "some user content\n"
+            f"{end_tok}\n"
+            "more user content after\n"
+        )
+
+        # --- first install ---
+        src = tmp_path / f"tmpl{ext}"
+        src.write_text(src_body_v1, encoding="utf-8")
+        dest = tmp_path / f"dest{ext}"
+        r1 = copy_managed_file(src, dest, "1.0.0")
+        assert r1.success, f"First install failed: {r1.reason}"
+
+        # Append the sentinel-containing user tail below the closing fence
+        current = dest.read_text(encoding="utf-8")
+        assert end_tok in current, "Closing fence token must be present after first install"
+        dest.write_text(current + sentinel_tail, encoding="utf-8")
+
+        # Snapshot the exact bytes of the user tail
+        full_before = dest.read_text(encoding="utf-8")
+        # The closing fence appears FIRST; split on it to isolate user tail
+        parts = full_before.split(end_tok + "\n", 1)
+        assert len(parts) == 2, "Could not locate closing fence in seeded file"
+        user_tail_before = parts[1]
+        assert start_tok in user_tail_before, (
+            "Test setup error: start sentinel not in user tail"
+        )
+        assert end_tok in user_tail_before, (
+            "Test setup error: end sentinel not in user tail"
+        )
+
+        # --- re-copy with changed template ---
+        src.write_text(src_body_v2, encoding="utf-8")
+        r2 = copy_managed_file(src, dest, "1.1.0")
+        assert r2.success, f"Re-copy failed: {r2.reason}"
+
+        dest_after = dest.read_text(encoding="utf-8")
+
+        # Managed region must be updated
+        assert "NEW LINE added to template" in dest_after, (
+            "Managed region was not refreshed"
+        )
+
+        # User tail must be byte-for-byte identical (INV-5)
+        parts_after = dest_after.split(end_tok + "\n", 1)
+        assert len(parts_after) == 2, "Closing fence token missing after re-copy"
+        user_tail_after = parts_after[1]
+        assert user_tail_after == user_tail_before, (
+            f"User tail changed after re-copy (INV-5 violation)!\n"
+            f"Before: {user_tail_before!r}\n"
+            f"After:  {user_tail_after!r}"
+        )
+
+    # ------------------------------------------------------------------ INV-5 malformed: duplicate start
+    @pytest.mark.parametrize("ext,start_tok,end_tok", _FENCE_FORMATS)
+    def test_duplicate_start_before_end_is_malformed(
+        self,
+        tmp_path: Path,
+        ext: str,
+        start_tok: str,
+        end_tok: str,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """D12: a file with two standalone start lines before the end is malformed →
+        treated as user-owned (content unchanged), warning emitted."""
+        src = tmp_path / f"tmpl{ext}"
+        src.write_text(_src_body_for(ext), encoding="utf-8")
+        dest = tmp_path / f"dest{ext}"
+
+        # First install to get a well-formed fenced file
+        r1 = copy_managed_file(src, dest, "1.0.0")
+        assert r1.success
+
+        # Corrupt the managed region by injecting a second standalone start token
+        content = dest.read_text(encoding="utf-8")
+        # Insert a duplicate start_tok line just before the real end_tok
+        corrupted = content.replace(
+            end_tok,
+            f"{start_tok}\n{end_tok}",
+            1,
+        )
+        dest.write_text(corrupted, encoding="utf-8")
+        snapshot_before = dest.read_text(encoding="utf-8")
+
+        # Re-copy must treat as user-owned (D12)
+        r2 = copy_managed_file(src, dest, "1.1.0")
+        assert r2.success, "D12 skip must still report success=True (not hard error)"
+
+        content_after = dest.read_text(encoding="utf-8")
+        assert content_after == snapshot_before, (
+            "File must NOT be overwritten when duplicate start marker found (D12)"
+        )
+
+        stderr_out = capsys.readouterr().err
+        assert (
+            "WARNING" in stderr_out
+            or "malformed" in stderr_out.lower()
+            or "user-owned" in stderr_out.lower()
+        ), f"Warning expected in stderr for malformed fence; got: {stderr_out!r}"
+
+    # ------------------------------------------------------------------ INV-5 missing end
+    @pytest.mark.parametrize("ext,start_tok,end_tok", _FENCE_FORMATS)
+    def test_missing_end_after_start_is_malformed(
+        self,
+        tmp_path: Path,
+        ext: str,
+        start_tok: str,
+        end_tok: str,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """D12: a file whose end marker was moved ABOVE the start (or absent) is
+        treated as user-owned — content unchanged, warning emitted."""
+        src = tmp_path / f"tmpl{ext}"
+        src.write_text(_src_body_for(ext), encoding="utf-8")
+        dest = tmp_path / f"dest{ext}"
+
+        r1 = copy_managed_file(src, dest, "1.0.0")
+        assert r1.success
+
+        # Remove the end marker entirely so no end exists after start
+        content = dest.read_text(encoding="utf-8")
+        broken = content.replace(end_tok, "")
+        dest.write_text(broken, encoding="utf-8")
+        snapshot_before = dest.read_text(encoding="utf-8")
+
+        r2 = copy_managed_file(src, dest, "1.1.0")
+        assert r2.success, "D12 skip must be success=True"
+        assert dest.read_text(encoding="utf-8") == snapshot_before, (
+            "File must NOT change when end marker is absent (D12)"
+        )
+        stderr_out = capsys.readouterr().err
+        assert (
+            "WARNING" in stderr_out
+            or "malformed" in stderr_out.lower()
+            or "user-owned" in stderr_out.lower()
+        ), f"Warning expected in stderr; got: {stderr_out!r}"
+
+    # ------------------------------------------------------------------ Regression guard
+    def test_existing_extract_inject_detect_drift_unchanged(self, tmp_path: Path) -> None:
+        """Confirm extract_metadata / inject_metadata / detect_drift behavior is unchanged."""
+        original = "# Hello World\nSome content.\n"
+        injected = inject_metadata(original, ".md", "2.0.0", "hashxyz")
+        meta, clean = extract_metadata(injected, ".md")
+
+        assert meta is not None
+        assert meta["mapify_version"] == "2.0.0"
+        assert meta["template_hash"] == "hashxyz"
+        assert clean == original
+
+        # detect_drift on a fresh install (dest absent)
+        src = tmp_path / "src.md"
+        src.write_text(original)
+        dest = tmp_path / "dest.md"
+        dr = detect_drift(src, dest)
+        assert dr.first_install
+        assert not dr.drifted
+
+        # detect_drift on unmodified file
+        dest.write_text(inject_metadata(original, ".md", "2.0.0", compute_hash(original)))
+        dr2 = detect_drift(src, dest)
+        assert not dr2.drifted
