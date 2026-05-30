@@ -463,12 +463,12 @@ import pytest as _pytest  # noqa: E402 (needed for skipif marker below)
 
 _skip_no_templates_src = _pytest.mark.skipif(
     not _templates_src_available(),
-    reason="templates_src not populated; run make sync-templates first",
+    reason="templates_src not populated; run make render-templates first",
 )
 
 _skip_no_codex_templates_src = _pytest.mark.skipif(
     not (_TEMPLATES_SRC_CODEX.exists() and any(_TEMPLATES_SRC_CODEX.rglob("*.jinja"))),
-    reason="templates_src/codex not populated; run make sync-templates first",
+    reason="templates_src/codex not populated; run make render-templates first",
 )
 
 

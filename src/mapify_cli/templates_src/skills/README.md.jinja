@@ -63,8 +63,8 @@ The development copy under `.claude/skills/` must stay byte-for-byte synced with
 Use:
 
 ```bash
-make sync-templates
-pytest tests/test_skills.py tests/test_template_sync.py -v
+make render-templates
+pytest tests/test_skills.py tests/test_template_render.py -v
 ```
 
 ## Troubleshooting

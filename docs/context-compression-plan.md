@@ -129,9 +129,9 @@ Both are written into `.map/config.yaml` at init time.
 
 ### 7. Template sync
 
-Run `make sync-templates`. If the new hook does not propagate to
-`src/mapify_cli/templates/hooks/`, update `scripts/sync-templates.sh`. Verify with
-`pytest tests/test_template_sync.py -v`.
+Run `make render-templates`. If the new hook does not propagate to
+`src/mapify_cli/templates/hooks/`, update the matching `.jinja` source in `templates_src/hooks/`. Verify with
+`pytest tests/test_template_render.py -v`.
 
 ### 8. Full test pass
 

@@ -75,7 +75,7 @@ The key insight from the paper: even when test cases are *already provided* for 
 
 ### Validation Plan
 
-1. Run existing `tests/test_template_sync.py` after changes to ensure template sync.
+1. Run `make render-templates` then `pytest tests/test_template_render.py -v` after changes to ensure generated trees are up to date.
 2. Create a set of 5-10 test cases where the code looks structurally correct but has a logical bug (off-by-one, wrong variable, inverted condition).
 3. Compare Monitor verdicts with and without mental simulation on these cases.
 4. Measure token usage increase on a typical workflow run.

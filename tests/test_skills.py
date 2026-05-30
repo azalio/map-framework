@@ -770,11 +770,11 @@ class TestSkillStructure:
             if not target.exists():
                 pytest.fail(
                     f"Skill '{folder}/SKILL.md' missing from templates. "
-                    f"Run: make sync-templates"
+                    f"Run: make render-templates"
                 )
             assert source.read_text() == target.read_text(), (
                 f"Skill '{folder}/SKILL.md' differs between .claude/skills/ and templates/skills/. "
-                f"Run: make sync-templates"
+                f"Run: make render-templates"
             )
 
     def test_skill_rules_in_sync(self, skills_dir, template_skills_dir):
@@ -788,7 +788,7 @@ class TestSkillStructure:
             pytest.skip("skill-rules.json missing from one location")
         assert source.read_text() == target.read_text(), (
             "skill-rules.json differs between .claude/skills/ and templates/skills/. "
-            "Run: make sync-templates"
+            "Run: make render-templates"
         )
 
     def test_skill_supporting_files_in_sync(self, skills_dir, template_skills_dir):
@@ -822,7 +822,7 @@ class TestSkillStructure:
             target = target_files[rel_path]
             assert source.read_bytes() == target.read_bytes(), (
                 f"Skill supporting file '{rel_path}' differs between .claude/skills/ "
-                "and templates/skills/. Run: make sync-templates"
+                "and templates/skills/. Run: make render-templates"
             )
 
     # --- Validation script tests ---

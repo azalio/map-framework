@@ -59,8 +59,8 @@ def generate_suggested_checks(language: str, project_root: Path) -> List[str]:
     commands_by_language = {
         "python": [
             "make check",
-            "pytest tests/test_template_sync.py -v",
-            "make sync-templates",
+            "pytest tests/test_template_render.py -v",
+            "make render-templates",
         ],
         "javascript": ["npm run lint", "npm test"],
         "typescript": ["npm run lint", "npm test"],

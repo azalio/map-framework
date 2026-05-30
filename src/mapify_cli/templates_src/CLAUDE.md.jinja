@@ -7,24 +7,22 @@
 - **Bundled templates (what users get from `mapify init`):** `src/mapify_cli/templates/`
 - **Dev templates/config used in this repo:** `.claude/` (keep it in sync with `src/mapify_cli/templates/`)
 
-## Critical invariant: template synchronization
+## Critical invariant: template single-source render
 
-If you change anything under `.claude/` that is shipped to users, you MUST copy it to the matching path under `src/mapify_cli/templates/` before finishing.
+All shipped templates are generated from `src/mapify_cli/templates_src/**/*.jinja` via `make render-templates`. Never edit generated files directly — edit the `.jinja` source and re-render.
 
-Common synced paths:
-- `.claude/agents/` → `src/mapify_cli/templates/agents/`
-- `.claude/commands/` → `src/mapify_cli/templates/commands/` (custom-command scaffolding only; MAP `/map-*` surfaces live in skills)
-- `.claude/skills/` → `src/mapify_cli/templates/skills/`
-- `.claude/hooks/` → `src/mapify_cli/templates/hooks/`
-- `.claude/references/` → `src/mapify_cli/templates/references/`
-- `.claude/settings.json`, `.claude/workflow-rules.json` → `src/mapify_cli/templates/`
+Generated trees (do NOT edit directly):
+- `src/mapify_cli/templates/**`
+- `.claude/**`
+- `.codex/**`
+- `.agents/skills/**`
 
-Do the sync via a deterministic command (preferred):
-- `make sync-templates` (runs `scripts/sync-templates.sh`)
+To propagate any change to shipped templates:
+- `make render-templates`
 
 Verification:
-- Run `pytest tests/test_template_sync.py -v` (enforces agent template sync).
-- For other `.claude/` files, use `git diff`/`git status` to ensure the template copy was updated too.
+- Run `make check-render` (renders and asserts no diff — enforces generated trees match source).
+- Run `pytest tests/test_template_render.py -v` (byte-identity golden render tests).
 
 ## How to work in this repo
 

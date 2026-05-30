@@ -1271,13 +1271,13 @@ class TestCodexProvider:
     def test_ac08_template_sync_enforced(self):
         """AC-8: Codex templates must be present in src/mapify_cli/templates/codex/.
 
-        The exhaustive sync check lives in tests/test_template_sync.py (ST-008).
+        The exhaustive render-parity check lives in tests/test_template_render.py.
         This test is a quick smoke check that the directory exists and is non-empty.
         """
         codex_templates = get_templates_dir() / "codex"
         assert (
             codex_templates.exists()
-        ), "templates/codex/ must exist (sync enforced by test_template_sync.py)"
+        ), "templates/codex/ must exist (render enforced by test_template_render.py)"
         all_files = list(codex_templates.rglob("*"))
         template_files = [f for f in all_files if f.is_file()]
         assert (

@@ -150,7 +150,7 @@ fi
 # PYTHONDONTWRITEBYTECODE, since emitting bytecode is `py_compile`'s entire
 # job. Touching any .py under .map/scripts/ or src/mapify_cli/templates/ then
 # leaves a tracked __pycache__/ that the template-hygiene gate
-# (tests/test_template_sync.py) rejects.
+# (tests/test_template_render.py) rejects.
 if command -v python3 &>/dev/null; then
     for file in $CHANGED_FILES; do
         if [[ "$file" == *.py ]] && [[ -f "$file" ]]; then

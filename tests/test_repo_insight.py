@@ -113,8 +113,8 @@ class TestGenerateSuggestedChecks:
             result = generate_suggested_checks("python", project_root)
 
             assert "make check" in result
-            assert "pytest tests/test_template_sync.py -v" in result
-            assert "make sync-templates" in result
+            assert "pytest tests/test_template_render.py -v" in result
+            assert "make render-templates" in result
 
     def test_python_filters_make_without_makefile(self):
         """Should filter out 'make' commands when Makefile doesn't exist."""
@@ -126,7 +126,7 @@ class TestGenerateSuggestedChecks:
             # Should not include make commands
             assert not any(cmd.startswith("make ") for cmd in result)
             # Should still include pytest
-            assert "pytest tests/test_template_sync.py -v" in result
+            assert "pytest tests/test_template_render.py -v" in result
 
     def test_javascript_commands(self):
         """Should return JavaScript-specific commands."""

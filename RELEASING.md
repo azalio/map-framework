@@ -405,9 +405,9 @@ If `--force` is undesirable, the minimum manual steps are:
 2. Overwrite `.claude/skills/map-review/SKILL.md` (and the Codex mirror at
    `.codex/skills/map-review/SKILL.md` if applicable) so the skill invokes the
    bundle helpers and surfaces the `--detached` flag.
-3. Re-run `make sync-templates` (or `scripts/sync-templates.sh`) inside the
-   MAP repo if you maintain a fork — the synchronisation gate is enforced by
-   `pytest tests/test_template_sync.py`.
+3. Re-run `make render-templates` inside the MAP repo if you maintain a fork —
+   the render parity gate is enforced by `make check-render` and
+   `pytest tests/test_template_render.py`.
 
 After upgrading, the first `/map-review` invocation will materialise
 `.map/<branch>/review-bundle.json` and `.md`; subsequent reviews read the

@@ -31,7 +31,7 @@ Scans BOTH dev roots, including Codex (INV-A4):
   - .codex/hooks/
 
 Template copies (src/mapify_cli/templates/) are validated by
-``make sync-templates`` + ``tests/test_hook_patterns.py`` over both trees, so
+``make render-templates`` + ``tests/test_hook_patterns.py`` over both trees, so
 this dev-only tool intentionally does not scan them and is itself not synced.
 
 Usage:

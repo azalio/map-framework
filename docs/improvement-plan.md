@@ -237,7 +237,7 @@ by `(subtask_id, gate_name)` into `step_state.json`; `validate_step("2.4")`
 rejects (`valid=false`, `reason="gates_not_run"`, listing missing gates) when
 receipts are absent. Mirror the `validate_mutation_boundary` reject path.
 
-**How to test after the fix.** Dual-copy invariant: run `make sync-templates`
+**How to test after the fix.** Single-source render invariant: run `make render-templates`
 before pytest (suite imports from `src/mapify_cli/templates/map/scripts/`).
 Strict ON: (1) empty-diff 2.3 → `actor_no_diff`; (2) real edit → pass; (3) no-op
 exempt; (4) each `detect_*` writes a receipt; (5) missing receipts → 2.4

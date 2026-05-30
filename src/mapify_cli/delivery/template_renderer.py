@@ -416,7 +416,7 @@ def render_tree(
     if not templates_src_root.exists():
         raise RuntimeError(
             f"templates_src root not found: {templates_src_root}. "
-            "Run 'make sync-templates' or provide a templates_src_root."
+            "Run 'make render-templates' or provide a templates_src_root."
         )
 
     # Build identity resolver if none supplied (ST-001 contract).

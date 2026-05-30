@@ -1,4 +1,4 @@
-.PHONY: help test install clean build release dev-install lint format check check-render sync-templates render-templates test-e2e test-e2e-sdk test-integration
+.PHONY: help test install clean build release dev-install lint format check check-render render-templates test-e2e test-e2e-sdk test-integration
 
 # Default target
 help:
@@ -13,7 +13,6 @@ help:
 	@echo "  build        Build distribution packages"
 	@echo "  release      Create a new release"
 	@echo "  check        Run all checks (lint + test)"
-	@echo "  sync-templates Sync .claude/ into src/ templates"
 	@echo "  render-templates Render templates_src/*.jinja into all generated trees (dev only)"
 	@echo "  test-e2e     Run e2e artifact contract tests (no LLM, fast)"
 	@echo "  test-e2e-sdk Run e2e tests with real Claude SDK (slow, needs API key)"
@@ -58,9 +57,6 @@ format:
 	ruff check --fix src/ tests/
 
 check: lint test check-render
-
-sync-templates:
-	./scripts/sync-templates.sh
 
 render-templates: ## Render templates_src/*.jinja into all generated trees (dev only)
 	uv run python -m mapify_cli.delivery.template_renderer claude

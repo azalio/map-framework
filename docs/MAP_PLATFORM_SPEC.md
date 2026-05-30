@@ -372,7 +372,7 @@ rules:
 verification:
   checks:
     - make check
-    - pytest tests/test_template_sync.py -v
+    - pytest tests/test_template_render.py -v
 
 policies:
   research_threshold_existing_files: 3
