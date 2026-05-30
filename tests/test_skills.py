@@ -1172,7 +1172,7 @@ class TestRunHealthCloseoutWiring:
         ), f"{skill_name} must invoke write_run_health_report with $RUN_HEALTH_STATUS"
         assert not re.search(
             "write_run_health_report" + token_gap + re.escape(skill_name)
-            + token_gap + r"(?:complete|pending|blocked|won't_do|superseded)\b",
+            + token_gap + r"""["']?(?:complete|pending|blocked|won't_do|superseded)\b""",
             content,
         ), f"{skill_name} must not hardcode a literal status into write_run_health_report"
         assert "run_health_report.json" in content
