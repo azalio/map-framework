@@ -480,16 +480,15 @@ Set final status from verifier and gates:
 
 ```bash
 RUN_HEALTH_STATUS="${RUN_HEALTH_STATUS:?set from final decision}"
-python3 .map/scripts/map_step_runner.py write_run_health_report \
-  map-efficient \
-  "$RUN_HEALTH_STATUS"
+python3 .map/scripts/map_step_runner.py write_run_health_report map-efficient "$RUN_HEALTH_STATUS"
+python3 .map/scripts/map_step_runner.py write_learning_handoff map-efficient "" "$RUN_HEALTH_STATUS" "Run /map-learn to preserve patterns, then /map-review" ""
 ```
 
-This writes `.map/<branch>/run_health_report.json`, updates `run_health`, and gives reviewers a machine-readable terminal snapshot.
+This writes `run_health_report.json` (machine-readable run snapshot) plus `learning-handoff.md`/`.json`, so a later zero-argument `/map-learn` auto-loads this run instead of reconstructing it from memory.
 
 ## Step 4: Summary
 
-Report completed subtasks, files changed, checks run, final status, remaining issues, and next command (`/map-review` or the owning fix workflow).
+Report completed subtasks, files changed, checks run, final status, remaining issues, and next command (`/map-review`, the owning fix workflow, or optional `/map-learn` to preserve patterns).
 
 ## Examples
 
