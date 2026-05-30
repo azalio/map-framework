@@ -1090,3 +1090,41 @@ def test_vc5_promote_idempotent(tmp_path):
         f"found {bullet_count}. Content:\n{content_after_second}"
     )
     assert not personal_file.exists(), "personal copy must be removed after second promote"
+
+
+def test_vc5_promote_idempotency_rule_documented_in_shipped_skill():
+    """AC-11 guard: the E6 bold-title idempotency contract that
+    test_vc5_promote_idempotent simulates is prose-driven (no executable
+    promote helper ships), so the simulation alone would still pass if the
+    map-learn skill dropped or reworded the rule. Pin the actual shipped
+    wording in BOTH copies (dev + template) so prose drift fails the suite.
+
+    See learned rule "Prose-Literal Pinned Tests Must Be Rewritten in the
+    Same Commit as Prose Removal".
+    """
+    skill_copies = [
+        Path(".claude/skills/map-learn/SKILL.md"),
+        Path("src/mapify_cli/templates/skills/map-learn/SKILL.md"),
+    ]
+    # The exact E6 match-key sentence the promote simulation encodes.
+    required_phrase = (
+        "a rule is already present iff a bullet with the same exact "
+        "bold-title token"
+    )
+    # Idempotency behaviour: skip insert on match, but always remove personal copy.
+    required_behaviour_markers = (
+        "skip insertion",
+        "remove the bullet from the personal file",
+    )
+    for skill in skill_copies:
+        assert skill.exists(), f"shipped skill copy missing: {skill}"
+        text = skill.read_text(encoding="utf-8")
+        assert required_phrase in text, (
+            f"E6 bold-title idempotency rule missing/reworded in {skill}; "
+            f"test_vc5_promote_idempotent no longer guards real behaviour."
+        )
+        for marker in required_behaviour_markers:
+            assert marker in text, (
+                f"promote idempotency behaviour marker {marker!r} missing "
+                f"from {skill}"
+            )
