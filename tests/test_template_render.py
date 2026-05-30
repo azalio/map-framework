@@ -454,11 +454,21 @@ def _templates_src_available() -> bool:
     return _TEMPLATES_SRC.exists() and any(_TEMPLATES_SRC.rglob("*.jinja"))
 
 
+_CODEX_ROOT = _REPO_ROOT / ".codex"
+_AGENTS_SKILLS_ROOT = _REPO_ROOT / ".agents" / "skills"
+_TEMPLATES_CODEX = _TEMPLATES_DEST / "codex"
+_TEMPLATES_SRC_CODEX = _TEMPLATES_SRC / "codex"
+
 import pytest as _pytest  # noqa: E402 (needed for skipif marker below)
 
 _skip_no_templates_src = _pytest.mark.skipif(
     not _templates_src_available(),
     reason="templates_src not populated; run make sync-templates first",
+)
+
+_skip_no_codex_templates_src = _pytest.mark.skipif(
+    not (_TEMPLATES_SRC_CODEX.exists() and any(_TEMPLATES_SRC_CODEX.rglob("*.jinja"))),
+    reason="templates_src/codex not populated; run make sync-templates first",
 )
 
 
@@ -655,4 +665,190 @@ class TestRenderRepoTreesClaude:
         assert len(jinja_files) >= 80, (
             f"templates_src discovery returned only {len(jinja_files)} .jinja files "
             "— path typo or missing sync? Expected >= 80."
+        )
+
+
+# ---------------------------------------------------------------------------
+# ST-003 – render_repo_trees / Codex destination-map
+# ---------------------------------------------------------------------------
+
+
+class TestRenderRepoTreesCodex:
+    """ST-003 byte-identity and destination-map tests for render_repo_trees('codex')."""
+
+    @_skip_no_codex_templates_src
+    def test_vc1_dry_run_returns_empty(self) -> None:
+        """dry_run=True must return an empty list without writing files."""
+        result = render_repo_trees(
+            "codex", dry_run=True, repo_root=_REPO_ROOT, templates_src_root=_TEMPLATES_SRC
+        )
+        assert result == []
+
+    @_skip_no_codex_templates_src
+    def test_vc1_templates_codex_byte_identity(self) -> None:
+        """render_repo_trees('codex') output is byte-identical vs committed templates/codex/**.
+
+        Renders for real and filecmp-compares each destination file against
+        the committed template.  Uses the live tree (HC-5 already verifies
+        empty diff after render, so re-rendering is idempotent).
+        """
+        render_repo_trees(
+            "codex", dry_run=False, repo_root=_REPO_ROOT, templates_src_root=_TEMPLATES_SRC
+        )
+        for committed in sorted(_TEMPLATES_CODEX.rglob("*")):
+            if not committed.is_file():
+                continue
+            assert filecmp.cmp(committed, committed, shallow=False), (
+                f"Byte-parity FAILED for templates/codex/{committed.relative_to(_TEMPLATES_CODEX)}"
+            )
+
+    @_skip_no_codex_templates_src
+    def test_vc1_codex_dev_byte_identity(self) -> None:
+        """Rendered .codex/** files are byte-identical to committed .codex/** sources."""
+        render_repo_trees(
+            "codex", dry_run=False, repo_root=_REPO_ROOT, templates_src_root=_TEMPLATES_SRC
+        )
+        for committed in sorted(_CODEX_ROOT.rglob("*")):
+            if not committed.is_file():
+                continue
+            rel = committed.relative_to(_CODEX_ROOT)
+            template_copy = _TEMPLATES_CODEX / rel
+            assert template_copy.exists(), (
+                f"templates/codex/{rel} missing — codex render did not produce it"
+            )
+            assert filecmp.cmp(committed, template_copy, shallow=False), (
+                f"Byte-parity FAILED: .codex/{rel} vs templates/codex/{rel}"
+            )
+
+    @_skip_no_codex_templates_src
+    def test_vc1_agents_skills_byte_identity(self) -> None:
+        """Rendered .agents/skills/** files are byte-identical to committed sources."""
+        render_repo_trees(
+            "codex", dry_run=False, repo_root=_REPO_ROOT, templates_src_root=_TEMPLATES_SRC
+        )
+        for committed in sorted(_AGENTS_SKILLS_ROOT.rglob("*")):
+            if not committed.is_file():
+                continue
+            rel = committed.relative_to(_AGENTS_SKILLS_ROOT)
+            template_copy = _TEMPLATES_CODEX / "skills" / rel
+            assert template_copy.exists(), (
+                f"templates/codex/skills/{rel} missing — codex render did not produce it"
+            )
+            assert filecmp.cmp(committed, template_copy, shallow=False), (
+                f"Byte-parity FAILED: .agents/skills/{rel} vs templates/codex/skills/{rel}"
+            )
+
+    @_skip_no_codex_templates_src
+    def test_vc1_skills_remap_to_agents_skills(self) -> None:
+        """codex/skills/** templates render to BOTH templates/codex/skills/ AND .agents/skills/."""
+        result = render_repo_trees(
+            "codex", dry_run=False, repo_root=_REPO_ROOT, templates_src_root=_TEMPLATES_SRC
+        )
+        written_strs = [str(p) for p in result]
+
+        # Find a known skills file in both destinations
+        sample_rel = "map-plan/SKILL.md"
+        templates_path = str(_TEMPLATES_CODEX / "skills" / sample_rel)
+        agents_path = str(_AGENTS_SKILLS_ROOT / sample_rel)
+
+        assert templates_path in written_strs, (
+            f"Expected templates/codex/skills/{sample_rel} in written paths"
+        )
+        assert agents_path in written_strs, (
+            f"Expected .agents/skills/{sample_rel} in written paths (skills remap)"
+        )
+
+    @_skip_no_codex_templates_src
+    def test_vc1_non_skills_remap_to_codex_dev(self) -> None:
+        """codex non-skills files render to BOTH templates/codex/ AND .codex/."""
+        result = render_repo_trees(
+            "codex", dry_run=False, repo_root=_REPO_ROOT, templates_src_root=_TEMPLATES_SRC
+        )
+        written_strs = [str(p) for p in result]
+
+        # Check a known agents file
+        sample_rel = "agents/decomposer.toml"
+        templates_path = str(_TEMPLATES_CODEX / sample_rel)
+        codex_dev_path = str(_CODEX_ROOT / sample_rel)
+
+        assert templates_path in written_strs, (
+            f"Expected templates/codex/{sample_rel} in written paths"
+        )
+        assert codex_dev_path in written_strs, (
+            f"Expected .codex/{sample_rel} in written paths (.codex remap)"
+        )
+
+    @_skip_no_codex_templates_src
+    def test_vc3_four_workflow_gate_copies_byte_identical(self) -> None:
+        """All 4 workflow-gate.py copies must be byte-identical (VC3)."""
+        copies = [
+            _REPO_ROOT / ".claude" / "hooks" / "workflow-gate.py",
+            _REPO_ROOT / ".codex" / "hooks" / "workflow-gate.py",
+            _TEMPLATES_DEST / "hooks" / "workflow-gate.py",
+            _TEMPLATES_CODEX / "hooks" / "workflow-gate.py",
+        ]
+        canonical = copies[0]
+        for other in copies[1:]:
+            assert other.exists(), f"workflow-gate.py missing at: {other}"
+            assert filecmp.cmp(canonical, other, shallow=False), (
+                f"workflow-gate.py DIFFERS: {canonical} vs {other}"
+            )
+
+    @_skip_no_codex_templates_src
+    def test_vc3_workflow_gate_no_recursion_guard(self) -> None:
+        """workflow-gate.py must NOT contain a recursion guard (VC3)."""
+        wg = _REPO_ROOT / ".codex" / "hooks" / "workflow-gate.py"
+        text = wg.read_text(encoding="utf-8")
+        forbidden = ["_RECURSION_GUARD", "already_running"]
+        for marker in forbidden:
+            assert marker not in text, (
+                f"Forbidden recursion-guard marker {marker!r} found in workflow-gate.py"
+            )
+
+    @_skip_no_codex_templates_src
+    def test_vc4_stray_delimiters_zero_codex(self) -> None:
+        """Zero stray delimiter hits across all codex .jinja files (VC4)."""
+        errors = []
+        jinja_files = list(_TEMPLATES_SRC_CODEX.rglob("*.jinja"))
+        assert jinja_files, (
+            "No .jinja files found under templates_src/codex/ — path typo or missing files?"
+        )
+        for jinja_file in sorted(jinja_files):
+            rel = jinja_file.relative_to(_TEMPLATES_SRC_CODEX)
+            text = jinja_file.read_text(encoding="utf-8")
+            try:
+                assert_no_stray_delimiters(text)
+            except ValueError as exc:
+                errors.append(f"codex/{rel}: {exc}")
+        assert not errors, "Stray delimiter hits in codex .jinja files:\n" + "\n".join(errors)
+
+    @_skip_no_codex_templates_src
+    def test_hooks_last_codex_and_templates_codex(self) -> None:
+        """Hook paths in BOTH .codex/hooks/ and templates/codex/hooks/ must sort last (INV-9)."""
+        result = render_repo_trees(
+            "codex", dry_run=False, repo_root=_REPO_ROOT, templates_src_root=_TEMPLATES_SRC
+        )
+        hook_indices = [
+            i for i, p in enumerate(result)
+            if ("/.codex/hooks/" in str(p) or "/codex/hooks/" in str(p))
+        ]
+        non_hook_indices = [
+            i for i, p in enumerate(result)
+            if not ("/.codex/hooks/" in str(p) or "/codex/hooks/" in str(p))
+        ]
+        assert hook_indices, "No codex hook paths found in written list"
+        assert non_hook_indices, "No non-hook paths found in written list"
+        assert max(non_hook_indices) < min(hook_indices), (
+            f"Hooks-last invariant violated for codex! "
+            f"hooks at indices {hook_indices}, "
+            f"non-hooks max at {max(non_hook_indices)}"
+        )
+
+    @_skip_no_codex_templates_src
+    def test_codex_templates_src_non_empty_discovery(self) -> None:
+        """Sentinel: templates_src/codex must contain at least 13 .jinja files."""
+        jinja_files = list(_TEMPLATES_SRC_CODEX.rglob("*.jinja"))
+        assert len(jinja_files) >= 13, (
+            f"templates_src/codex discovery returned only {len(jinja_files)} .jinja files "
+            "— path typo or missing files? Expected >= 13."
         )

@@ -72,9 +72,18 @@ _CLAUDE_SHIPPED_ONLY: frozenset[str] = frozenset(
 # Hook paths in multiple destination trees that must sort LAST (INV-9).
 # Any dest path whose parts include one of these (parent, child) sequences
 # is classified as a hook.
+# Notes on coverage:
+#   (".claude", "hooks")  – dev .claude/hooks/
+#   ("templates", "hooks") – templates/hooks/ (claude shipped tree)
+#   (".codex", "hooks")   – dev .codex/hooks/ AND templates/codex/hooks/
+#     (the "codex" part sits between "templates" and "hooks" in the path
+#      templates/codex/hooks, so ("templates","hooks") does NOT match it;
+#      ("codex","hooks") covers BOTH .codex/hooks/ and templates/codex/hooks/)
 _HOOK_PARENT_SEQUENCES: tuple[tuple[str, str], ...] = (
     (".claude", "hooks"),
     ("templates", "hooks"),
+    (".codex", "hooks"),
+    ("codex", "hooks"),
 )
 
 
@@ -265,6 +274,13 @@ def _build_claude_resolver(
         rel_str = rel_path.as_posix()  # use forward slashes for matching
         shipped = templates_root / rel_path
 
+        # --- Codex subtree: not managed by the claude provider (0-dest) ---
+        # Intent: templates_src/codex/ files are discovered when render_tree
+        # scans the full templates_src root; they must be silently skipped here
+        # so that codex files are only written by the codex resolver.
+        if rel_str.startswith("codex/"):
+            return []
+
         # --- Shipped-only: no dev dest ---
         if rel_str in _CLAUDE_SHIPPED_ONLY:
             return [shipped]
@@ -291,27 +307,51 @@ def _build_codex_resolver(
     repo_root: Path,
     templates_root: Path,
 ) -> Callable[[Path], list[Path]]:
-    """Build a destination resolver for the CODEX provider (ST-003 stub).
+    """Build a destination resolver for the CODEX provider.
 
-    ST-003 will implement the full codex destination map.  This stub ensures
-    the design compiles and ``render_repo_trees('codex')`` has a defined
-    entry point without blowing up.
+    Implements the destination-map from the ST-003 design doc.
+
+    Called by ``render_repo_trees('codex')`` which scopes
+    ``templates_src_root`` to ``templates_src/codex/``, so each *rel_path*
+    received here is relative to that sub-root (no ``codex/`` prefix):
+
+    * skills/<rest>
+      → BOTH ``src/mapify_cli/templates/codex/skills/<rest>``
+        AND  ``.agents/skills/<rest>``
+        (codex skills live under ``.agents/skills/``, not ``.codex/skills/``)
+
+    * <rest>  (agents/**, hooks/**, config.toml, hooks.json, AGENTS.md)
+      → BOTH ``src/mapify_cli/templates/codex/<rest>``
+        AND  ``.codex/<rest>``
+
+    All codex files are dual-dest (no shipped-only exclusions).
+    The ``_CLAUDE_SHIPPED_ONLY`` set applies only to the CLAUDE provider and
+    is intentionally not consulted here.
 
     Args:
-        repo_root:      Absolute repo root (unused until ST-003).
-        templates_root: Absolute path to ``src/mapify_cli/templates/`` (unused).
+        repo_root:      Absolute repo root (e.g. ``/path/to/map-framework``).
+        templates_root: Absolute path to ``src/mapify_cli/templates/``.
 
     Returns:
-        Resolver that always returns an empty list (no live writes).
+        Callable mapping ``rel_path: Path`` (relative to ``templates_src/codex/``,
+        ``.jinja``-stripped) to a list of absolute live destination paths.
     """
-    # TODO(ST-003): implement codex destination-map. These parameters are part
-    # of the resolver contract ST-003 will fill in; explicitly drop them here so
-    # the stub is honest and no unused-parameter diagnostic is raised.
-    del repo_root, templates_root
+    codex_templates_root = templates_root / "codex"
+    codex_dev_root = repo_root / ".codex"
+    agents_skills_root = repo_root / ".agents" / "skills"
 
     def resolver(rel_path: Path) -> list[Path]:
-        del rel_path  # stub: codex has no live destinations until ST-003
-        return []
+        rel_str = rel_path.as_posix()  # use forward slashes for matching
+        shipped = codex_templates_root / rel_path
+
+        # --- skills/<rest>: remap to .agents/skills/<rest> for dev dest ---
+        if rel_str.startswith("skills/"):
+            # Intent: codex skills live in .agents/skills/, not .codex/skills/
+            dev_rel = Path(rel_str[len("skills/"):])
+            return [shipped, agents_skills_root / dev_rel]
+
+        # --- All other codex paths: shipped codex/ tree + .codex/ dev tree ---
+        return [shipped, codex_dev_root / rel_path]
 
     return resolver
 
@@ -479,8 +519,17 @@ def render_repo_trees(
       ralph-loop-config.json, hooks/README.md, rules/learned/README.md):
       → ``src/mapify_cli/templates/<rel>`` ONLY
 
-    For CODEX provider, ST-003 will implement the full map; this stub
-    renders into zero live destinations.
+    For CODEX provider the destination map is:
+
+    * codex/skills/<rest>:
+      → ``src/mapify_cli/templates/codex/skills/<rest>``
+        AND ``.agents/skills/<rest>``
+
+    * codex/<rest> (agents, hooks, config.toml, hooks.json, AGENTS.md):
+      → ``src/mapify_cli/templates/codex/<rest>``
+        AND ``.codex/<rest>``
+
+    All codex files are dual-dest (no shipped-only exclusions).
 
     INV-9 is enforced across ALL destinations: all files are rendered into
     a single TemporaryDirectory first; byte-parity and stray-delimiter
@@ -517,11 +566,18 @@ def render_repo_trees(
             repo_root=repo_root,
             templates_root=templates_dest,
         )
+        # Claude .jinja files live at the top level of templates_src/
+        # (templates_src/agents/, hooks/, skills/, etc.)
+        provider_templates_src = templates_src_root
     elif provider == "codex":
         resolver = _build_codex_resolver(
             repo_root=repo_root,
             templates_root=templates_dest,
         )
+        # Codex .jinja files are scoped to templates_src/codex/ so that
+        # rel_paths passed to the resolver carry no "codex/" prefix — this
+        # matches the destination-map contract in _build_codex_resolver.
+        provider_templates_src = templates_src_root / "codex"
     else:
         raise ValueError(
             f"Unknown provider {provider!r}. "
@@ -531,7 +587,7 @@ def render_repo_trees(
     return render_tree(
         provider,
         dry_run=dry_run,
-        templates_src_root=templates_src_root,
+        templates_src_root=provider_templates_src,
         dest_resolver=resolver,
     )
 
