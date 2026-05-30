@@ -113,3 +113,29 @@ paths:
   ```
 
 - **A Linter That Enforces Gate Invariants Must Ship a `--self-test` Covering Every Failure Mode, Wired Into CI** (2026-05-29): A lint/gate tool that claims to detect violations (missing guard, misplaced guard, forbidden guard, unclassified file) must include a `--self-test` mode that synthesizes one input per failure mode and asserts each exits nonzero, plus a conformant input that exits zero. Without it, the happy-path CI run (no violations present → exit 0) never exercises the detection logic, so a reviewer can only verify enforcement by reading code. Wire the self-test into `make check` or invoke it from pytest via importlib. In Phase A, Monitor caught two uncovered failure modes (FORBID indirect-variable bypass, shell inline-comment) that a self-test would have caught mechanically. [workflow: map-efficient]
+
+- **Config-Flag Default Flip Requires Auditing Incidental-Placeholder Tests vs Contract Tests** (2026-05-30): When flipping the default value of a config flag (e.g., `MAP_MONITOR_HOTFIX` 0→1), audit every test that references the old default and classify each as (a) CONTRACT TEST — the flag's behavior IS what's under test; keep it, update to assert the new default; or (b) INCIDENTAL-PLACEHOLDER — the test merely needed some phase/mode and grabbed this flag's old behavior as a convenient prop; re-point the placeholder to a value that STILL exercises the same gate. In this workflow, flipping `MAP_MONITOR_HOTFIX` to default-ON broke ~13 tests that used the MONITOR phase only because it was non-editing at the time — not because MONITOR gate behavior was the contract under test; the fix re-pointed them to PREDICTOR (still strictly gated) and added one real default-allow test + one `=0` strict opt-out test. Distinct from "Workflow Phase Migration Requires Test Contract Reassignment" (responsibility moves between phases): here the same test breaks because it used the old default as an incidental fixture. [workflow: map-efficient]
+  ```python
+  # INCIDENTAL-PLACEHOLDER — grabbed MONITOR because it was non-editing:
+  def test_setup_phase_blocks_writes(...):
+      result = run(phase="MONITOR", action="write")
+      assert result.denied  # breaks when MONITOR default flips to allow
+  # AFTER AUDIT — re-point to a phase whose gate IS still the invariant:
+  def test_setup_phase_blocks_writes(...):
+      result = run(phase="PREDICTOR", action="write")  # still gated
+      assert result.denied
+  # CONTRACT TEST — MONITOR gate behavior IS under test; keep + update:
+  def test_monitor_allows_edits_by_default(...): assert run(phase="MONITOR", action="write").allowed
+  def test_monitor_strict_opt_out_blocks(monkeypatch):
+      monkeypatch.setenv("MAP_MONITOR_HOTFIX", "0")
+      assert run(phase="MONITOR", action="write").denied
+  ```
+
+- **Guard and Pinning Tests Need a Negative-Proof Run Before Commit** (2026-05-30): Before committing any guard/pinning test (one that asserts a specific string, value, or property IS present to prevent accidental removal), validate it actually catches a violation with a one-off negative-proof run: temporarily break the guarded property, confirm the test goes RED, then restore and confirm GREEN. Without this, a guard test can be structurally valid yet functionally vacuous — a wrong assertion path, mismatched regex, or stale file path makes it pass whether or not the guard holds. Applies to prose-literal pinned tests, sentinel-presence tests, hook-parity tests, and linter self-tests alike. In this workflow a Copilot-requested pinned-prose test was proven by rewording the shipped SKILL.md prose, observing the failure, then restoring clean. Adjacent to but broader than "Prose-Literal Pinned Tests" (update discipline) and "Linter --self-test" (linter-specific). [workflow: map-efficient]
+  ```bash
+  # Negative-proof protocol before committing a guard test:
+  # 1. break the guarded property (sed/edit out the pinned string)
+  # 2. pytest <the guard test>   -> confirm FAILED
+  # 3. git restore <file>        -> confirm GREEN
+  # 4. commit file + test together
+  ```

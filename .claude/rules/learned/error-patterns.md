@@ -83,3 +83,22 @@
   python3 batch_fix.py tests/test_map_step_runner.py
   git checkout -- tests/test_map_step_runner.py        # safe: only undoes the batch
   ```
+
+- **Verify File State via Git After Every Edit — Tool Return Is Not Ground Truth** (2026-05-30): After any Edit tool call, verify the change actually landed via `git diff` before proceeding — do NOT assume a non-error return means the content changed. When an Edit is issued with a stale or guessed `old_string`, the tool returns an error that is easy to miss in a batch of tool calls; the agent may believe the edit landed when nothing was written. Correct sequence: (1) Read the exact anchor lines verbatim from the file — never guess surrounding text from memory or context; (2) issue the Edit; (3) run `git diff -- <file>` and confirm the expected delta. An empty diff after an Edit is a red flag requiring investigation before any dependent action. Distinct from "Truncated Agent Recovery" (prose truncation): this is the silent stale-`old_string` no-op swallowed in a batch. [workflow: map-efficient]
+  ```bash
+  # Step 1: Read exact anchor BEFORE editing — never guess the surrounding text.
+  # Step 2: Issue Edit.
+  # Step 3: Verify ground truth — tool return is NOT sufficient:
+  git diff -- path/to/file        # must show the intended delta
+  # empty diff => edit did NOT land; find the mismatch and retry
+  ```
+
+- **Write Is a Destructive Overwrite — Check Existence Before Writing to Unowned Paths** (2026-05-30): Before calling Write on any path you did not create in the current session, check whether it already exists in git — Write silently overwrites pre-existing content with no warning or diff. In this workflow Write clobbered a `docs/improvement-plan.md` that already held a substantial REGISTRY/FOCUS backlog; it was caught only because `git status` showed the file Modified (not Added). Recovery required `git restore` then appending the new section. Correct protocol: run `git ls-files --error-unmatch <path>` (or check `git status`) before Write; if the file exists, APPEND (`cat >>`, or Read+Edit at a known anchor) rather than overwrite. Treat "my Write produced Modified, not Added" as a clobber red flag. Distinct from "Broad Revert Commands Destroy Uncommitted Work" (git restore after batch fixes). [workflow: map-efficient]
+  ```bash
+  git ls-files --error-unmatch docs/improvement-plan.md 2>/dev/null \
+    && echo 'EXISTS — append, do not Write' || echo 'new file — Write is safe'
+  # WRONG: Write('docs/improvement-plan.md', new_section)  # clobbers backlog
+  # CORRECT: cat >> docs/improvement-plan.md << 'EOF' ... EOF   # append
+  ```
+
+- **In an Agentic Harness, Git State Is Ground Truth — Tool Returns Are Not** (2026-05-30, key insight): When operating through an agentic harness, treat every external dispatch and file mutation as inherently uncertain — Agent calls may QUEUE rather than fail (never retry blindly: see [[never-retry-a-queued-agent-dispatch]]), Edit calls may NOT land (always verify via `git diff`), and Write calls ALWAYS overwrite (check existence first). The harness layer between intent and execution introduces silent queuing, silent no-ops, and silent overwrites that make a tool's return value an unreliable proxy for filesystem state. Before every commit, verify with independent `git`/`grep`/`pytest` rather than trusting an agent's self-report (which can also be replayed/garbled by context compaction). [workflow: map-efficient]

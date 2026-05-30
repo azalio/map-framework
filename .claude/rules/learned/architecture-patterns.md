@@ -130,3 +130,33 @@
   ```
 
 - **Always-Loaded Skill Body Has a Hard Line Budget — Put Detail in the Reference File** (2026-05-29): An always-loaded active skill body (e.g. `SKILL.md`) is guarded by a CI test enforcing a max line count (it loads on every invocation and costs context). Adding even correct, useful prose to it can silently push it over budget and break the test. Architectural rule: the active body holds only a short pointer; detail lives in the bundled reference file (e.g. `efficient-reference.md`), which is not budget-gated. If the budget itself is wrong, change the test and the budget together in a deliberate commit — never grow the active body past it by accident. [workflow: map-efficient]
+
+- **Never Retry a Queued Agent Dispatch on Apparent Non-Response** (2026-05-30): Never retry a queued Agent (Task) dispatch on apparent non-response — "tools temporarily unavailable" or a harness flap is NOT failure. An Agent dispatch is not idempotent: re-sending multiplies running instances rather than retrying a failed one. The calls queue and eventually all execute, producing N parallel agents writing to the same file. In this workflow that launched FOUR `actor` agents simultaneously on one subtask, corrupting the file with duplicate/overlapping edits and a stale unused variable. Correct protocol: dispatch once, wait; if the harness appears unresponsive, inspect the task list before deciding to re-send, and ask the user if in doubt. One agent per file per subtask is an invariant, not a preference. [workflow: map-efficient]
+  ```python
+  # WRONG — retries on harness flap, queues N actor instances:
+  for attempt in range(3):
+      response = dispatch_agent(subtask_prompt)
+      if not response:
+          continue  # flap looks like failure -> 3 queued actors run at once
+
+  # CORRECT — dispatch once; on non-response, inspect state before retrying:
+  response = dispatch_agent(subtask_prompt)
+  if not response:
+      # Do NOT re-send. Check the task list — it may already be queued/running.
+      raise PauseAndAsk("Agent dispatch returned no response (harness may be "
+                        "flapping). Check TaskList before re-sending.")
+  ```
+
+- **N-Copy Artifact Parity Requires a Byte-Identical Diff Gate Across All Trees** (2026-05-30): When a file exists in N>2 locations that must stay identical (e.g., `workflow-gate.py` in `.claude/hooks/`, `.codex/hooks/`, and their two `src/mapify_cli/templates/` mirrors), a named sync step alone is insufficient — any one copy drifts silently if the developer edits only the most obvious dev tree. This repo has TWO dev trees (`.claude` + `.codex`) that each feed a templates mirror, so a single hook is 4 copies. Editing only `.claude` leaves `.codex` and both mirrors drifted. Enforce parity mechanically: after editing EITHER dev tree run `make sync-templates`, then `diff -q` every copy against the canonical source and fail on any divergence. Generalizes the existing two-copy "Dual-Copy Template-Sync Testability Invariant" to the N-copy case. [workflow: map-efficient]
+  ```bash
+  # Correct edit workflow for the 4-copy hook:
+  vim .claude/hooks/workflow-gate.py
+  cp .claude/hooks/workflow-gate.py .codex/hooks/workflow-gate.py  # both dev trees
+  make sync-templates                                              # mirror -> templates/
+  # Byte-identical gate (wire into `make check`):
+  for c in .codex/hooks/workflow-gate.py \
+           src/mapify_cli/templates/hooks/workflow-gate.py \
+           src/mapify_cli/templates/codex/hooks/workflow-gate.py; do
+    diff -q .claude/hooks/workflow-gate.py "$c" || { echo "PARITY FAIL: $c"; exit 1; }
+  done
+  ```
