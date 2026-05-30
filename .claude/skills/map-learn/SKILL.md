@@ -225,6 +225,42 @@ After writing, count bullets in each modified file. If any file exceeds 50 bulle
 ⚠ {filename} has {N} rules (recommended max: 50). Consider pruning old or low-value rules.
 ```
 
+### Personal vs public write-time choice
+
+When writing a NEW rule, choose the target layer at write time:
+
+| Layer | Directory | Loaded by |
+|---|---|---|
+| **Public** (team-shared) | `.claude/rules/learned/<category>.md` | Claude Code on every session |
+| **Personal** (user-local) | `.map/personal/rules/learned/<category>.md` | Active MAP workflows only (see D2 note below) |
+
+Both layers use the **same 6-category → file mapping** from the table above and the **same bullet format**:
+
+```markdown
+- **{title}** ({YYYY-MM-DD}): {content} [workflow: {workflow_type}]
+```
+
+Only the directory prefix differs. Create the personal directory if it does not exist:
+
+```bash
+mkdir -p .map/personal/rules/learned
+```
+
+The `.map/personal/` tree is repo-global but gitignored (HC-1), keeping personal rules off version control.
+
+**D2 limitation — personal rules inject only during active MAP workflows:** Unlike `.claude/rules/` files which Claude Code auto-loads on every session, personal rules under `.map/personal/rules/learned/` are injected only when an active MAP workflow is running (i.e., when `.map/<branch>/step_state.json` is present in the branch workspace). They are NOT available on every prompt outside a MAP workflow. This is an informed trade-off (E5): personal rules stay scoped to the workflow context where they are most relevant, but you will not see them in ad-hoc sessions.
+
+### Promoting a personal rule to public
+
+To share a personal rule with the team, **move** it from the personal layer to the public layer:
+
+1. **Locate** the bullet in `.map/personal/rules/learned/<category>.md` (same category → file mapping).
+2. **Check idempotency** — a rule is already present iff a bullet with the same exact bold-title token (the text between the leading `**...**` markers) exists in the target public file.
+   - If the bold-title token is **not** found in the public file: insert the bullet into `.claude/rules/learned/<category>.md`.
+   - If the bold-title token **is already** found in the public file: skip insertion (do not duplicate).
+   - In **both** cases: remove the bullet from the personal file. Re-running promote never duplicates and always cleans up the personal copy.
+3. **Result:** the rule is now in `.claude/rules/learned/<category>.md` and no longer in `.map/personal/rules/learned/<category>.md`.
+
 ---
 
 ## Step 4: Summary Report

@@ -24,6 +24,8 @@ from pathlib import Path
 # Keep in sync with map_step_runner.py GOAL_HEADING_RE
 GOAL_HEADING_RE = r"## (?:Goal|Overview)\n(.*?)(?=\n##|\Z)"
 REMINDER_LIMIT = 700
+PERSONAL_BLOCK_BUDGET_TOTAL = 10000
+PERSONAL_RULES_SEPARATOR = "\n\n"
 
 # Bash commands that don't need workflow reminders
 READONLY_COMMANDS = {
@@ -601,6 +603,120 @@ def format_reminder(
     return base
 
 
+def _sanitize_fence_content(text: str) -> str:
+    """Remove fence tag occurrences from user-supplied content.
+
+    Strips case-insensitive literal ``<personal-rules`` and
+    ``</personal-rules>`` so that a malicious or accidental occurrence
+    inside a rules file cannot close the outer fence early (INV-6/E7).
+
+    Postcondition: neither ``<personal-rules`` nor ``</personal-rules>``
+    appears in the returned string (case-insensitive).
+    """
+    text = re.sub(r"(?i)</personal-rules>", "", text)
+    text = re.sub(r"(?i)<personal-rules", "", text)
+    return text
+
+
+def _load_personal_rules(project_dir: Path) -> tuple[int, str]:
+    """Load personal learned rules from ``.map/personal/rules/learned/``.
+
+    Reads every ``*.md`` file under the directory in sorted order,
+    sanitises each file's content through ``_sanitize_fence_content``,
+    and returns a tuple of ``(count, joined_content)``.
+
+    Returns ``(0, "")`` when the directory does not exist or contains
+    no readable ``.md`` files.
+
+    Invariants:
+    - INV-1: read-only; never writes anything, never opens credential files.
+    - HC-1: reads only ``*.md`` under the ``learned`` subdirectory.
+    - Symlink-escape guard: any resolved path that escapes the base
+      directory is silently skipped.
+    """
+    base = project_dir / ".map" / "personal" / "rules" / "learned"
+    if not base.is_dir():
+        return (0, "")
+
+    base_resolved = base.resolve()
+    sanitized_parts: list[str] = []
+
+    for md_file in sorted(base.glob("*.md")):
+        try:
+            resolved = md_file.resolve()
+            if not resolved.is_relative_to(base_resolved):
+                continue
+        except OSError:
+            continue
+
+        try:
+            content = md_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+
+        sanitized_parts.append(_sanitize_fence_content(content))
+
+    count = len(sanitized_parts)
+    return (count, "\n".join(sanitized_parts))
+
+
+def _build_personal_block(count: int, content: str, limit: int) -> str:
+    """Assemble the ``<personal-rules>`` XML block for context injection.
+
+    Returns ``""`` when *count* is zero or negative (HC-3).
+
+    Otherwise assembles::
+
+        <personal-rules>
+        [personal-rules: N files]
+        <content>
+        </personal-rules>
+
+    If the assembled string exceeds *limit*, the content is trimmed from
+    the END and a ``[... trimmed]`` marker is inserted on its own line
+    before the closing tag.  The opening line, banner, and closing tag
+    are ALWAYS present (INV-4), even when content must be trimmed to
+    empty.
+
+    Raw bullet markdown in *content* is concatenated unchanged (SC-2).
+    """
+    if count <= 0:
+        return ""
+
+    opening = "<personal-rules>"
+    banner = f"[personal-rules: {count} files]"
+    closing = "</personal-rules>"
+
+    assembled = opening + "\n" + banner + "\n" + content + "\n" + closing
+
+    if len(assembled) <= limit:
+        return assembled
+
+    # Compute fixed overhead for the trimmed variant:
+    #   opening\n  banner\n  trimmed_content\n  [... trimmed]\n  closing
+    trim_marker = "[... trimmed]"
+    overhead = (
+        len(opening) + 1      # opening + \n
+        + len(banner) + 1     # banner + \n
+        + 1                   # \n before trim_marker
+        + len(trim_marker) + 1  # trim_marker + \n
+        + len(closing)        # closing (no trailing \n)
+    )
+    content_budget = max(0, limit - overhead)
+    trimmed_content = content[:content_budget]
+    result = (
+        opening + "\n"
+        + banner + "\n"
+        + trimmed_content + "\n"
+        + trim_marker + "\n"
+        + closing
+    )
+
+    # Degenerate guard: if even the skeleton exceeds limit, emit it anyway
+    # (correctness of the fence beats the cap in this edge case).
+    return result
+
+
 def main() -> None:
     if os.environ.get("MAP_INVOKED_BY"):
         sys.exit(0)
@@ -684,23 +800,34 @@ def main() -> None:
         suppress_required = True
     reminder = format_reminder(state, branch, suppress_required=suppress_required)
     if reminder:
+        project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+        personal_count, personal_content = _load_personal_rules(project_dir)
+        personal_limit = max(
+            0,
+            PERSONAL_BLOCK_BUDGET_TOTAL - len(reminder) - len(PERSONAL_RULES_SEPARATOR),
+        )
+        personal_block = _build_personal_block(personal_count, personal_content, personal_limit)
+        assembled = (
+            reminder if not personal_block else reminder + PERSONAL_RULES_SEPARATOR + personal_block
+        )
+        assert len(assembled) <= PERSONAL_BLOCK_BUDGET_TOTAL
         # Per-turn dedup: same reminder + same state_mtime within 5s = same
         # turn; squelch to avoid the [MAP] banner repeating across every
         # Edit/Write/Bash invocation in a single agent burst.
-        if _should_squelch_duplicate(branch, reminder):
+        if _should_squelch_duplicate(branch, assembled):
             record_hook_injection_status(
                 branch, state, "deduped", "duplicate reminder squelched", tool_name
             )
             print("{}")
             sys.exit(0)
-        _write_dedup_cache(branch, reminder)
+        _write_dedup_cache(branch, assembled)
         record_hook_injection_status(
-            branch, state, "injected", "reminder emitted", tool_name, len(reminder)
+            branch, state, "injected", "reminder emitted", tool_name, len(assembled)
         )
         output = {
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
-                "additionalContext": reminder,
+                "additionalContext": assembled,
             }
         }
         print(json.dumps(output))
