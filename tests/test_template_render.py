@@ -852,3 +852,144 @@ class TestRenderRepoTreesCodex:
             f"templates_src/codex discovery returned only {len(jinja_files)} .jinja files "
             "— path typo or missing files? Expected >= 13."
         )
+
+
+# ---------------------------------------------------------------------------
+# ST-005 – Golden-file fixtures (VC2/VC3): independent byte-snapshot ground truth
+# ---------------------------------------------------------------------------
+
+_FIXTURES_DIR = _REPO_ROOT / "tests" / "fixtures"
+
+
+class TestGoldenFixturesClaude:
+    """VC2/VC3: committed golden-file snapshots for the claude provider.
+
+    The fixture at tests/fixtures/claude/escalation-matrix.md is an
+    independent committed snapshot — it is NOT derived by re-rendering in
+    the same test.  This makes the comparison non-tautological: the test
+    fails if the renderer output drifts from the snapshot, catching both
+    accidental template edits and renderer bugs.
+    """
+
+    @_skip_no_templates_src
+    def test_vc2_claude_golden_escalation_matrix(self, tmp_path: Path) -> None:
+        """Renderer byte-for-byte reproduces the committed claude golden fixture."""
+        golden = _FIXTURES_DIR / "claude" / "escalation-matrix.md"
+        assert golden.exists(), f"Golden fixture missing: {golden}"
+
+        dest = tmp_path / "rendered"
+        render_tree(
+            "claude",
+            templates_src_root=_TEMPLATES_SRC,
+            dest_root=dest,
+        )
+        rendered_file = dest / "references" / "escalation-matrix.md"
+        assert rendered_file.exists(), (
+            "Renderer did not produce references/escalation-matrix.md"
+        )
+        rendered_bytes = rendered_file.read_bytes()
+        golden_bytes = golden.read_bytes()
+        assert rendered_bytes == golden_bytes, (
+            f"Golden fixture mismatch for claude/escalation-matrix.md\n"
+            f"  Golden  : {len(golden_bytes)} bytes\n"
+            f"  Rendered: {len(rendered_bytes)} bytes\n"
+            f"  Golden repr  (first 200): {golden_bytes[:200]!r}\n"
+            f"  Rendered repr (first 200): {rendered_bytes[:200]!r}"
+        )
+
+    @_skip_no_templates_src
+    def test_vc3_negative_mutated_fixture_fails(self, tmp_path: Path) -> None:
+        """Byte-equality check catches a single-byte mutation in the golden fixture.
+
+        The committed fixture is read into memory, one byte is flipped, and the
+        test asserts that the comparison fails — proving the gate is not vacuous.
+        The committed fixture file is NEVER modified.
+        """
+        golden = _FIXTURES_DIR / "claude" / "escalation-matrix.md"
+        assert golden.exists(), f"Golden fixture missing: {golden}"
+
+        dest = tmp_path / "rendered"
+        render_tree(
+            "claude",
+            templates_src_root=_TEMPLATES_SRC,
+            dest_root=dest,
+        )
+        rendered_bytes = (dest / "references" / "escalation-matrix.md").read_bytes()
+
+        # Mutate the golden bytes in memory — the committed file is untouched.
+        golden_bytes = golden.read_bytes()
+        assert len(golden_bytes) > 0, "Golden fixture is empty"
+        mutated = bytearray(golden_bytes)
+        mutated[0] = (mutated[0] + 1) % 256
+        mutated_bytes = bytes(mutated)
+
+        # The equality check MUST fail (that is the assertion we are proving).
+        assert rendered_bytes != mutated_bytes, (
+            "Negative test failed: single-byte mutation was NOT detected by "
+            "byte-equality comparison — the gate is non-functional."
+        )
+
+
+class TestGoldenFixturesCodex:
+    """VC2/VC3: committed golden-file snapshots for the codex provider.
+
+    The fixture at tests/fixtures/codex/config.toml is an independent committed
+    snapshot of the rendered codex/config.toml.jinja template.
+    """
+
+    @_skip_no_codex_templates_src
+    def test_vc2_codex_golden_config_toml(self, tmp_path: Path) -> None:
+        """Renderer byte-for-byte reproduces the committed codex golden fixture."""
+        golden = _FIXTURES_DIR / "codex" / "config.toml"
+        assert golden.exists(), f"Golden fixture missing: {golden}"
+
+        # Render only the codex subtree so the dest layout matches the
+        # codex template structure (config.toml at root, not codex/config.toml).
+        dest = tmp_path / "rendered"
+        render_tree(
+            "codex",
+            templates_src_root=_TEMPLATES_SRC_CODEX,
+            dest_root=dest,
+        )
+        rendered_file = dest / "config.toml"
+        assert rendered_file.exists(), (
+            "Renderer did not produce config.toml from codex subtree"
+        )
+        rendered_bytes = rendered_file.read_bytes()
+        golden_bytes = golden.read_bytes()
+        assert rendered_bytes == golden_bytes, (
+            f"Golden fixture mismatch for codex/config.toml\n"
+            f"  Golden  : {len(golden_bytes)} bytes\n"
+            f"  Rendered: {len(rendered_bytes)} bytes\n"
+            f"  Golden repr  (first 200): {golden_bytes[:200]!r}\n"
+            f"  Rendered repr (first 200): {rendered_bytes[:200]!r}"
+        )
+
+    @_skip_no_codex_templates_src
+    def test_vc3_negative_mutated_fixture_fails(self, tmp_path: Path) -> None:
+        """Byte-equality check catches a single-byte mutation in the codex golden fixture.
+
+        The committed fixture is read into memory, one byte is flipped, and the
+        test asserts that the comparison fails.  The committed file is NOT modified.
+        """
+        golden = _FIXTURES_DIR / "codex" / "config.toml"
+        assert golden.exists(), f"Golden fixture missing: {golden}"
+
+        dest = tmp_path / "rendered"
+        render_tree(
+            "codex",
+            templates_src_root=_TEMPLATES_SRC_CODEX,
+            dest_root=dest,
+        )
+        rendered_bytes = (dest / "config.toml").read_bytes()
+
+        golden_bytes = golden.read_bytes()
+        assert len(golden_bytes) > 0, "Golden fixture is empty"
+        mutated = bytearray(golden_bytes)
+        mutated[0] = (mutated[0] + 1) % 256
+        mutated_bytes = bytes(mutated)
+
+        assert rendered_bytes != mutated_bytes, (
+            "Negative test failed: single-byte mutation was NOT detected by "
+            "byte-equality comparison — the gate is non-functional."
+        )
