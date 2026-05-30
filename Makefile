@@ -1,4 +1,4 @@
-.PHONY: help test install clean build release dev-install lint format check sync-templates render-templates test-e2e test-e2e-sdk test-integration
+.PHONY: help test install clean build release dev-install lint format check check-render sync-templates render-templates test-e2e test-e2e-sdk test-integration
 
 # Default target
 help:
@@ -57,7 +57,7 @@ format:
 	black src/ tests/
 	ruff check --fix src/ tests/
 
-check: lint test
+check: lint test check-render
 
 sync-templates:
 	./scripts/sync-templates.sh
@@ -66,6 +66,15 @@ render-templates: ## Render templates_src/*.jinja into all generated trees (dev 
 	uv run python -m mapify_cli.delivery.template_renderer claude
 	uv run python -m mapify_cli.delivery.template_renderer codex
 	@echo "✅ Templates rendered"
+
+check-render: ## Render templates_src and fail if committed generated trees are stale
+	uv run python -m mapify_cli.delivery.template_renderer claude
+	uv run python -m mapify_cli.delivery.template_renderer codex
+	@git diff --exit-code -- src/mapify_cli/templates .claude .codex .agents/skills \
+	  || { echo "❌ Generated trees are stale — run 'make render-templates' and commit"; \
+	       git checkout -- src/mapify_cli/templates .claude .codex .agents/skills; exit 1; }
+	@git checkout -- src/mapify_cli/templates .claude .codex .agents/skills
+	@echo "✅ Generated trees match templates_src"
 
 # Build and release
 clean:
