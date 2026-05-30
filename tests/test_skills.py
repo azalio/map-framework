@@ -1161,14 +1161,20 @@ class TestRunHealthCloseoutWiring:
         content = skill_md.read_text(encoding="utf-8")
 
         assert "write_run_health_report" in content
-        expected_invocation = f'''write_run_health_report \\
-  {skill_name} \\
-  "$RUN_HEALTH_STATUS"'''
-        assert expected_invocation in content
-        hardcoded_complete = f"""write_run_health_report \\
-  {skill_name} \\
-  complete"""
-        assert hardcoded_complete not in content
+        # Accept both single-line and backslash-continued invocations (map-efficient
+        # is line-budget-gated and uses the compact single-line form), but still
+        # require the status variable rather than a hardcoded literal in either form.
+        token_gap = r"\s+\\?\s*"
+        assert re.search(
+            "write_run_health_report" + token_gap + re.escape(skill_name)
+            + token_gap + r'"\$RUN_HEALTH_STATUS"',
+            content,
+        ), f"{skill_name} must invoke write_run_health_report with $RUN_HEALTH_STATUS"
+        assert not re.search(
+            "write_run_health_report" + token_gap + re.escape(skill_name)
+            + token_gap + r"""["']?(?:complete|pending|blocked|won't_do|superseded)\b""",
+            content,
+        ), f"{skill_name} must not hardcode a literal status into write_run_health_report"
         assert "run_health_report.json" in content
         assert "run_health" in content
         assert "RUN_HEALTH_STATUS" in content
