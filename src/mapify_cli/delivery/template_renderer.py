@@ -43,7 +43,7 @@ import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
     import jinja2
@@ -54,6 +54,28 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 _STRAY_TOKENS = ("[%", "<%", "[#")
+
+# Shipped-only paths (relative to templates_src root, after stripping .jinja).
+# These are rendered to src/mapify_cli/templates/ ONLY — never written to
+# the dev .claude/ tree.
+_CLAUDE_SHIPPED_ONLY: frozenset[str] = frozenset(
+    {
+        "CLAUDE.md",
+        "settings.json",
+        "workflow-rules.json",
+        "ralph-loop-config.json",
+        "hooks/README.md",
+        "rules/learned/README.md",
+    }
+)
+
+# Hook paths in multiple destination trees that must sort LAST (INV-9).
+# Any dest path whose parts include one of these (parent, child) sequences
+# is classified as a hook.
+_HOOK_PARENT_SEQUENCES: tuple[tuple[str, str], ...] = (
+    (".claude", "hooks"),
+    ("templates", "hooks"),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +141,30 @@ def get_environment() -> jinja2.Environment:
 # ---------------------------------------------------------------------------
 
 
+def _path_is_hook(dest_path: Path) -> bool:
+    """Return True if *dest_path* is under a managed hooks directory.
+
+    Recognises both ``.claude/hooks/`` and ``templates/hooks/`` (and any
+    absolute path that contains either sequence) so that the hooks-last
+    ordering invariant (INV-9) applies across all destination trees.
+
+    Args:
+        dest_path: Absolute live destination path.
+
+    Returns:
+        True if the path should be written last (is a hook).
+    """
+    try:
+        parts = dest_path.parts
+        for parent_name, child_name in _HOOK_PARENT_SEQUENCES:
+            for i in range(len(parts) - 1):
+                if parts[i] == parent_name and parts[i + 1] == child_name:
+                    return True
+    except Exception:
+        pass
+    return False
+
+
 @dataclass
 class _WriteEntry:
     """One file to be written during the live-copy phase."""
@@ -128,15 +174,7 @@ class _WriteEntry:
     is_hook: bool = field(init=False)
 
     def __post_init__(self) -> None:
-        # Classify as hook based on the dest path containing .claude/hooks/
-        try:
-            parts = self.dest_path.parts
-            self.is_hook = any(
-                parts[i] == ".claude" and i + 1 < len(parts) and parts[i + 1] == "hooks"
-                for i in range(len(parts))
-            )
-        except Exception:
-            self.is_hook = False
+        self.is_hook = _path_is_hook(self.dest_path)
 
 
 # ---------------------------------------------------------------------------
@@ -186,7 +224,100 @@ def _atomic_write_file(src: Path, dest: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Core renderer
+# Destination-resolver helpers
+# ---------------------------------------------------------------------------
+
+
+def _build_claude_resolver(
+    repo_root: Path,
+    templates_root: Path,
+) -> Callable[[Path], list[Path]]:
+    """Build a destination resolver for the CLAUDE provider.
+
+    Implements the destination-map from the ST-002 design doc:
+
+    * agents/**, hooks/ (except README.md), references/**, skills/**
+      → BOTH ``src/mapify_cli/templates/<rel>`` AND ``.claude/<rel>``
+
+    * map/scripts/**, map/static-analysis/**
+      → BOTH ``src/mapify_cli/templates/<rel>`` AND ``.map/<rel>``
+        (``map/`` prefix remaps to ``.map/`` in the dev tree)
+
+    * hooks/README.md, rules/learned/README.md, CLAUDE.md,
+      settings.json, workflow-rules.json, ralph-loop-config.json
+      → ``src/mapify_cli/templates/<rel>`` ONLY (shipped-only — no dev dest)
+
+    A rendered file mapping to 0 destinations is simply not written live
+    (future use; not used for CLAUDE provider currently).
+
+    Args:
+        repo_root:      Absolute repo root (e.g. ``/path/to/map-framework``).
+        templates_root: Absolute path to ``src/mapify_cli/templates/``.
+
+    Returns:
+        Callable mapping ``rel_path: Path`` (relative, `.jinja`-stripped)
+        to a list of absolute live destination paths.
+    """
+    claude_root = repo_root / ".claude"
+    map_root = repo_root / ".map"
+
+    def resolver(rel_path: Path) -> list[Path]:
+        rel_str = rel_path.as_posix()  # use forward slashes for matching
+        shipped = templates_root / rel_path
+
+        # --- Shipped-only: no dev dest ---
+        if rel_str in _CLAUDE_SHIPPED_ONLY:
+            return [shipped]
+
+        # --- map/** prefix: remap map/ -> .map/ for dev dest ---
+        if rel_str.startswith("map/"):
+            # Intent: dev tree uses .map/ prefix, not map/
+            dev_rel = Path(rel_str[len("map/"):])
+            return [shipped, map_root / dev_rel]
+
+        # --- Shared subtrees: shipped + .claude/ ---
+        prefixes = ("agents/", "hooks/", "references/", "skills/", "rules/")
+        if any(rel_str.startswith(p) for p in prefixes):
+            return [shipped, claude_root / rel_path]
+
+        # --- Root-level files not in the shipped-only set ---
+        # e.g. any future root file that is not shipped-only
+        return [shipped, claude_root / rel_path]
+
+    return resolver
+
+
+def _build_codex_resolver(
+    repo_root: Path,
+    templates_root: Path,
+) -> Callable[[Path], list[Path]]:
+    """Build a destination resolver for the CODEX provider (ST-003 stub).
+
+    ST-003 will implement the full codex destination map.  This stub ensures
+    the design compiles and ``render_repo_trees('codex')`` has a defined
+    entry point without blowing up.
+
+    Args:
+        repo_root:      Absolute repo root (unused until ST-003).
+        templates_root: Absolute path to ``src/mapify_cli/templates/`` (unused).
+
+    Returns:
+        Resolver that always returns an empty list (no live writes).
+    """
+    # TODO(ST-003): implement codex destination-map. These parameters are part
+    # of the resolver contract ST-003 will fill in; explicitly drop them here so
+    # the stub is honest and no unused-parameter diagnostic is raised.
+    del repo_root, templates_root
+
+    def resolver(rel_path: Path) -> list[Path]:
+        del rel_path  # stub: codex has no live destinations until ST-003
+        return []
+
+    return resolver
+
+
+# ---------------------------------------------------------------------------
+# Core renderer (single-dest, identity; preserves ST-001 contract)
 # ---------------------------------------------------------------------------
 
 
@@ -196,14 +327,25 @@ def render_tree(
     dry_run: bool = False,
     templates_src_root: Path | None = None,
     dest_root: Path | None = None,
+    dest_resolver: Callable[[Path], list[Path]] | None = None,
 ) -> list[Path]:
     """Render all ``.jinja`` templates from *templates_src_root* into *dest_root*.
 
     Safety contract (INV-9 / HC-8):
       1. Every template is rendered into a TemporaryDirectory.
       2. If ANY render raises, the function aborts before writing ANY live file.
-      3. Live files are written with paths under ``.claude/hooks/`` LAST.
+      3. Live files are written with paths under hook directories LAST.
       4. dry_run=True skips the live-write phase entirely.
+
+    The optional *dest_resolver* parameter enables multi-destination routing:
+    it maps each ``rel_path`` (relative path, ``.jinja``-stripped) to a list
+    of absolute destination paths.  The default resolver writes every file
+    once into *dest_root* (identity mapping — ST-001 contract preserved).
+
+    When *dest_resolver* is supplied, *dest_root* is still accepted for
+    backward compatibility but is ignored if the resolver returns non-empty
+    destinations.  If the resolver returns an empty list for a given file,
+    that file is not written live (0-destination case).
 
     Args:
         provider: Provider name passed as ``PROVIDER`` context var
@@ -211,8 +353,11 @@ def render_tree(
         dry_run:  When True, render+verify but do not write live files.
         templates_src_root: Root of the ``.jinja`` source tree.
                   Defaults to ``<package>/templates_src``.
-        dest_root: Root for live destination files.
+        dest_root: Root for live destination files (identity mode only).
                   Defaults to current working directory.
+        dest_resolver: Optional callable mapping each rendered relative path
+                  to a list of absolute live destination paths.  When None,
+                  an identity resolver into *dest_root* is used.
 
     Returns:
         List of live destination paths that were written (empty on dry_run).
@@ -233,6 +378,19 @@ def render_tree(
             f"templates_src root not found: {templates_src_root}. "
             "Run 'make sync-templates' or provide a templates_src_root."
         )
+
+    # Build identity resolver if none supplied (ST-001 contract).
+    # Intent: use a separate name to avoid Pyright reportRedeclaration on the
+    # parameter; _resolver is the effective callable used below.
+    if dest_resolver is None:
+        _dest_root = dest_root  # capture for closure
+
+        def _identity_resolver(rel_path: Path) -> list[Path]:
+            return [_dest_root / rel_path]
+
+        _resolver: Callable[[Path], list[Path]] = _identity_resolver
+    else:
+        _resolver = dest_resolver
 
     env = get_environment()
     context = {"PROVIDER": provider}
@@ -265,11 +423,16 @@ def render_tree(
             # Propagate executable bits from source template
             src_mode = jinja_file.stat().st_mode
             if src_mode & stat.S_IXUSR:
-                tmp_dest.chmod(tmp_dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+                tmp_dest.chmod(
+                    tmp_dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+                )
 
-            live_dest = dest_root / dest_rel
-            entry = _WriteEntry(rendered_path=tmp_dest, dest_path=live_dest)
-            write_plan.append(entry)
+            # Resolve live destinations for this rendered file
+            live_dests = _resolver(dest_rel)
+            for live_dest in live_dests:
+                entry = _WriteEntry(rendered_path=tmp_dest, dest_path=live_dest)
+                write_plan.append(entry)
+            # 0-destination case: file simply omitted from write_plan
 
         # Sort: non-hooks first, hooks last (INV-9)
         write_plan.sort(key=lambda e: (1 if e.is_hook else 0, e.dest_path))
@@ -284,6 +447,93 @@ def render_tree(
             written.append(entry.dest_path)
 
     return written
+
+
+# ---------------------------------------------------------------------------
+# Public driver: render_repo_trees
+# ---------------------------------------------------------------------------
+
+
+def render_repo_trees(
+    provider: str,
+    *,
+    dry_run: bool = False,
+    repo_root: Path | None = None,
+    templates_src_root: Path | None = None,
+) -> list[Path]:
+    """Render all templates for *provider* into their live repo destinations.
+
+    This is the high-level entry point called by ``make render-templates``
+    (ST-004).  It builds the provider-specific destination resolver and
+    delegates to :func:`render_tree`.
+
+    For CLAUDE provider the destination map is:
+
+    * Shared subtrees (agents, hooks, references, skills, rules):
+      → ``src/mapify_cli/templates/<rel>`` AND ``.claude/<rel>``
+
+    * map/ subtrees (scripts, static-analysis):
+      → ``src/mapify_cli/templates/<rel>`` AND ``.map/<rel>``
+
+    * Shipped-only configs (CLAUDE.md, settings.json, workflow-rules.json,
+      ralph-loop-config.json, hooks/README.md, rules/learned/README.md):
+      → ``src/mapify_cli/templates/<rel>`` ONLY
+
+    For CODEX provider, ST-003 will implement the full map; this stub
+    renders into zero live destinations.
+
+    INV-9 is enforced across ALL destinations: all files are rendered into
+    a single TemporaryDirectory first; byte-parity and stray-delimiter
+    checks are performed; only then are live writes issued with hook paths
+    (both ``.claude/hooks/`` and ``templates/hooks/``) written LAST.
+
+    Args:
+        provider:           ``'claude'`` or ``'codex'``.
+        dry_run:            When True, render+verify but do not write live.
+        repo_root:          Absolute path to the repository root.
+                            Defaults to the repo root inferred from this
+                            module's location.
+        templates_src_root: Root of the ``.jinja`` source tree.
+                            Defaults to ``<package>/templates_src``.
+
+    Returns:
+        List of absolute live destination paths that were written.
+        Empty list on dry_run.
+
+    Raises:
+        ValueError: For unknown *provider* values.
+        RuntimeError: If *templates_src_root* does not exist.
+    """
+    if repo_root is None:
+        repo_root = _default_repo_root()
+    if templates_src_root is None:
+        templates_src_root = _default_templates_src_root()
+
+    # templates/ shipped destination root (always inside repo)
+    templates_dest = repo_root / "src" / "mapify_cli" / "templates"
+
+    if provider == "claude":
+        resolver = _build_claude_resolver(
+            repo_root=repo_root,
+            templates_root=templates_dest,
+        )
+    elif provider == "codex":
+        resolver = _build_codex_resolver(
+            repo_root=repo_root,
+            templates_root=templates_dest,
+        )
+    else:
+        raise ValueError(
+            f"Unknown provider {provider!r}. "
+            "Expected 'claude' or 'codex'."
+        )
+
+    return render_tree(
+        provider,
+        dry_run=dry_run,
+        templates_src_root=templates_src_root,
+        dest_resolver=resolver,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -314,6 +564,26 @@ def _default_templates_src_root() -> Path:
     return module_dir / "templates_src"
 
 
+def _default_repo_root() -> Path:
+    """Infer the repository root from this module's location.
+
+    Walks up from ``src/mapify_cli/delivery/`` to find the repo root
+    by looking for a ``pyproject.toml`` marker file.
+
+    Returns:
+        Absolute path to the repository root.
+    """
+    module_dir = Path(__file__).parent  # src/mapify_cli/delivery/
+    for candidate in [
+        module_dir.parent.parent.parent,  # src/mapify_cli/delivery -> repo root
+        module_dir.parent.parent,  # one level up
+    ]:
+        if (candidate / "pyproject.toml").exists():
+            return candidate
+    # Fallback: three levels up
+    return module_dir.parent.parent.parent
+
+
 # ---------------------------------------------------------------------------
 # Optional __main__ entry point stub (ST-004 wires the real CLI)
 # ---------------------------------------------------------------------------
@@ -326,6 +596,6 @@ if __name__ == "__main__":
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
-    paths = render_tree(args.provider, dry_run=args.dry_run)
+    paths = render_repo_trees(args.provider, dry_run=args.dry_run)
     for p in paths:
         print(p, file=sys.stdout)

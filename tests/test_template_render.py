@@ -1,7 +1,11 @@
-"""Tests for template_renderer.py — ST-001.
+"""Tests for template_renderer.py — ST-001 + ST-002.
 
 Uses tiny in-test fixture dirs (tmp_path) — does NOT depend on a real
-templates_src tree.
+templates_src tree for ST-001 tests.
+
+ST-002 tests use the real templates_src tree and verify byte-identity
+of render_repo_trees('claude') output vs committed templates/** and .claude/**
+sources.
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ from mapify_cli.delivery.template_renderer import (
     assert_no_stray_delimiters,
     get_environment,
     render_tree,
+    render_repo_trees,
 )
 
 
@@ -419,4 +424,235 @@ class TestBrokenTemplateAbort:
 
         assert not (dest_root / ".claude" / "hooks" / "new-hook.py").exists(), (
             "Hook was created despite broken template!"
+        )
+
+
+# ---------------------------------------------------------------------------
+# ST-002 – render_repo_trees / Claude destination-map
+# ---------------------------------------------------------------------------
+
+# Locate repo root relative to this test file
+_REPO_ROOT = Path(__file__).parent.parent
+_TEMPLATES_SRC = _REPO_ROOT / "src" / "mapify_cli" / "templates_src"
+_TEMPLATES_DEST = _REPO_ROOT / "src" / "mapify_cli" / "templates"
+_CLAUDE_ROOT = _REPO_ROOT / ".claude"
+_MAP_ROOT = _REPO_ROOT / ".map"
+
+# Shipped-only relative paths (no .claude/ destination)
+_SHIPPED_ONLY_RELS = [
+    "CLAUDE.md",
+    "settings.json",
+    "workflow-rules.json",
+    "ralph-loop-config.json",
+    "hooks/README.md",
+    "rules/learned/README.md",
+]
+
+
+def _templates_src_available() -> bool:
+    """Return True if the real templates_src tree exists (ST-002 tests)."""
+    return _TEMPLATES_SRC.exists() and any(_TEMPLATES_SRC.rglob("*.jinja"))
+
+
+import pytest as _pytest  # noqa: E402 (needed for skipif marker below)
+
+_skip_no_templates_src = _pytest.mark.skipif(
+    not _templates_src_available(),
+    reason="templates_src not populated; run make sync-templates first",
+)
+
+
+class TestRenderRepoTreesClaude:
+    """ST-002 byte-identity and destination-map tests for render_repo_trees('claude')."""
+
+    @_skip_no_templates_src
+    def test_vc1_dry_run_returns_empty(self) -> None:
+        """dry_run=True must return an empty list without writing files."""
+        result = render_repo_trees(
+            "claude", dry_run=True, repo_root=_REPO_ROOT, templates_src_root=_TEMPLATES_SRC
+        )
+        assert result == []
+
+    @_skip_no_templates_src
+    def test_vc1_templates_dest_byte_identity(self, tmp_path: Path) -> None:
+        """render_repo_trees('claude') output is byte-identical vs committed templates/**.
+
+        Renders into a temp dest to avoid mutating the live tree, then
+        filecmp-compares each rendered file to the committed template.
+        """
+        # Build a resolver that only writes to a tmpdir (not the real trees).
+        # We do this by running render_repo_trees with a temp repo_root copy.
+        # Simpler: use render_tree with identity dest_root pointing to tmp.
+        # But we need the same template files — just render all .jinja files
+        # into tmp and compare with templates/.
+        from mapify_cli.delivery.template_renderer import render_tree
+
+        dest = tmp_path / "templates"
+        render_tree("claude", templates_src_root=_TEMPLATES_SRC, dest_root=dest)
+
+        # Every file under templates/ should exist and be byte-identical
+        for committed in sorted(_TEMPLATES_DEST.rglob("*")):
+            if not committed.is_file():
+                continue
+            rel = committed.relative_to(_TEMPLATES_DEST)
+            rel_str = rel.as_posix()
+            # Skip codex subtree (ST-003 scope)
+            if rel_str.startswith("codex/"):
+                continue
+            rendered = dest / rel
+            assert rendered.exists(), f"Rendered file missing: {rel}"
+            assert filecmp.cmp(rendered, committed, shallow=False), (
+                f"Byte-parity FAILED for templates/{rel}"
+            )
+
+    @_skip_no_templates_src
+    def test_vc1_claude_dest_byte_identity(self, tmp_path: Path) -> None:
+        """Shared subtrees rendered into a tmp tree match committed .claude/** files.
+
+        Verifies that agents/, hooks/ (non-shipped-only), references/, skills/,
+        and rules/ all produce byte-identical output to what is committed in .claude/.
+        """
+        from mapify_cli.delivery.template_renderer import render_tree
+
+        dest = tmp_path / "claude_check"
+        render_tree("claude", templates_src_root=_TEMPLATES_SRC, dest_root=dest)
+
+        # Check all .claude/ files that should be shared (not shipped-only)
+        for committed in sorted(_CLAUDE_ROOT.rglob("*")):
+            if not committed.is_file():
+                continue
+            rel = committed.relative_to(_CLAUDE_ROOT)
+            rel_str = rel.as_posix()
+            # Skip files that are unmanaged (not in any shipped subtree)
+            shared_prefixes = ("agents/", "hooks/", "references/", "skills/", "rules/")
+            if not any(rel_str.startswith(p) for p in shared_prefixes):
+                continue
+            # Skip shipped-only files that should NOT be in .claude/
+            if rel_str in _SHIPPED_ONLY_RELS:
+                continue
+            # hooks/README.md is shipped-only — skip if it exists in .claude/
+            if rel_str == "hooks/README.md":
+                continue
+            # D11: rules/learned/*.md are unmanaged learned files (not templated)
+            if rel_str.startswith("rules/learned/") and rel_str != "rules/learned/README.md":
+                continue
+            rendered = dest / rel
+            assert rendered.exists(), f"Rendered file missing for .claude/{rel}"
+            assert filecmp.cmp(rendered, committed, shallow=False), (
+                f"Byte-parity FAILED for .claude/{rel}"
+            )
+
+    @_skip_no_templates_src
+    def test_vc1_shipped_only_not_written_to_claude(self) -> None:
+        """Shipped-only files must NOT be present in .claude/ after a real render.
+
+        This is a negative assertion: confirms the destination-map routes
+        these files to templates/ only, not .claude/.
+        """
+        result = render_repo_trees(
+            "claude", dry_run=False, repo_root=_REPO_ROOT, templates_src_root=_TEMPLATES_SRC
+        )
+        written_strs = [str(p) for p in result]
+        for rel in _SHIPPED_ONLY_RELS:
+            claude_path = str(_CLAUDE_ROOT / rel)
+            assert claude_path not in written_strs, (
+                f"Shipped-only file was incorrectly written to .claude/: {claude_path}"
+            )
+
+    @_skip_no_templates_src
+    def test_vc1_map_scripts_remap(self) -> None:
+        """map/scripts/** templates render to BOTH templates/map/scripts/ AND .map/scripts/."""
+        result = render_repo_trees(
+            "claude", dry_run=False, repo_root=_REPO_ROOT, templates_src_root=_TEMPLATES_SRC
+        )
+        written_strs = [str(p) for p in result]
+
+        # Find a known map/scripts file
+        sample = "map_utils.py"
+        templates_path = str(_TEMPLATES_DEST / "map" / "scripts" / sample)
+        map_path = str(_MAP_ROOT / "scripts" / sample)
+
+        assert templates_path in written_strs, (
+            f"Expected templates/map/scripts/{sample} in written paths"
+        )
+        assert map_path in written_strs, (
+            f"Expected .map/scripts/{sample} in written paths (map/ -> .map/ remap)"
+        )
+
+    @_skip_no_templates_src
+    def test_vc1_hooks_last_across_both_dest_trees(self) -> None:
+        """Hook paths in BOTH .claude/hooks/ and templates/hooks/ must sort last (INV-9)."""
+        result = render_repo_trees(
+            "claude", dry_run=False, repo_root=_REPO_ROOT, templates_src_root=_TEMPLATES_SRC
+        )
+        hook_indices = [
+            i for i, p in enumerate(result)
+            if ("/.claude/hooks/" in str(p) or "/templates/hooks/" in str(p))
+        ]
+        non_hook_indices = [
+            i for i, p in enumerate(result)
+            if not ("/.claude/hooks/" in str(p) or "/templates/hooks/" in str(p))
+        ]
+        assert hook_indices, "No hook paths found in written list"
+        assert non_hook_indices, "No non-hook paths found in written list"
+        assert max(non_hook_indices) < min(hook_indices), (
+            f"Hooks-last invariant violated! "
+            f"hooks at indices {hook_indices[:5]}, "
+            f"non-hooks max at {max(non_hook_indices)}"
+        )
+
+    @_skip_no_templates_src
+    def test_vc2_monitor_md_handlebars_intact(self) -> None:
+        """monitor.md must contain Handlebars {{ }} tokens after rendering (INV-8)."""
+        import tempfile
+
+        from mapify_cli.delivery.template_renderer import render_tree
+
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            render_tree("claude", templates_src_root=_TEMPLATES_SRC, dest_root=tmp)
+            rendered = (tmp / "agents" / "monitor.md").read_text(encoding="utf-8")
+
+        # monitor.md uses Handlebars {{ }} which must survive verbatim
+        assert "{{" in rendered, "monitor.md lost Handlebars {{ tokens after render"
+        assert "}}" in rendered, "monitor.md lost Handlebars }} tokens after render"
+
+    @_skip_no_templates_src
+    def test_vc2_end_of_turn_sh_bash_brackets_intact(self) -> None:
+        """end-of-turn.sh must contain bash [[ ]] tokens after rendering (INV-8)."""
+        import tempfile
+
+        from mapify_cli.delivery.template_renderer import render_tree
+
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            render_tree("claude", templates_src_root=_TEMPLATES_SRC, dest_root=tmp)
+            rendered = (tmp / "hooks" / "end-of-turn.sh").read_text(encoding="utf-8")
+
+        assert "[[" in rendered, "end-of-turn.sh lost bash [[ tokens after render"
+        assert "]]" in rendered, "end-of-turn.sh lost bash ]] tokens after render"
+
+    @_skip_no_templates_src
+    def test_vc4_stray_delimiters_zero(self) -> None:
+        """Zero stray delimiter hits across all claude .jinja files (VC4)."""
+        errors = []
+        for jinja_file in sorted(_TEMPLATES_SRC.rglob("*.jinja")):
+            rel = jinja_file.relative_to(_TEMPLATES_SRC)
+            # Skip codex scope
+            if rel.as_posix().startswith("codex/"):
+                continue
+            text = jinja_file.read_text(encoding="utf-8")
+            try:
+                assert_no_stray_delimiters(text)
+            except ValueError as exc:
+                errors.append(f"{rel}: {exc}")
+        assert not errors, "Stray delimiter hits in .jinja files:\n" + "\n".join(errors)
+
+    @_skip_no_templates_src
+    def test_templates_src_non_empty_discovery(self) -> None:
+        """Sentinel: templates_src must contain at least 80 .jinja files (guards vacuous pass)."""
+        jinja_files = list(_TEMPLATES_SRC.rglob("*.jinja"))
+        assert len(jinja_files) >= 80, (
+            f"templates_src discovery returned only {len(jinja_files)} .jinja files "
+            "— path typo or missing sync? Expected >= 80."
         )
