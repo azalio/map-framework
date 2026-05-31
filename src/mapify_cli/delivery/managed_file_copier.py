@@ -579,18 +579,32 @@ def copy_managed_file(
     version: str,
     *,
     inject_meta: bool = True,
+    fenced: bool = True,
 ) -> CopyResult:
     """Copy a template file to destination with metadata injection and drift detection.
 
-    Phase C2 (ST-010): fence-aware merge.  For supported text formats the managed
-    region is wrapped between fence markers; the user tail (below the closing fence)
-    is preserved byte-for-byte (INV-5).
+    Two managed modes (per user decision on watched-vs-overwritten categories):
+
+    * ``fenced=True`` (WATCHED) — Phase C2 fence-aware merge.  The managed region
+      is wrapped between fence markers; any user content BELOW the closing fence is
+      preserved byte-for-byte (INV-5).  Use for files a downstream user may extend
+      in place (agents, hooks, skills, CLAUDE.md, codex agents/config/AGENTS.md).
+
+    * ``fenced=False`` (OVERWRITE) — fully-managed Phase B behavior: inject metadata,
+      overwrite the whole file, and back up to ``.bak.<ts>`` if the destination
+      drifted.  No fence markers.  Use for files we fully own and always replace
+      (references, map/scripts, map/static-analysis, workflow-rules/ralph configs).
+
+    JSON is always fully-managed via the ``_map_managed`` root key regardless of
+    ``fenced`` (JSON has no comment syntax for fences — D9).
 
     Args:
         src: Source template file.
         dest: Destination path in user's project.
         version: Current mapify-cli version string.
         inject_meta: Whether to inject metadata header (False for binary files).
+        fenced: Whether to wrap the managed region in fence markers (watched mode)
+            or fully overwrite (overwrite mode). Ignored for JSON / binary.
 
     Returns:
         CopyResult with drift/backup information.
@@ -632,6 +646,16 @@ def copy_managed_file(
     # -----------------------------------------------------------------------
     if ext == ".json":
         return _copy_json_managed(src, dest, src_content, version, template_hash)
+
+    # -----------------------------------------------------------------------
+    # OVERWRITE mode (fenced=False): fully-managed text file — inject metadata,
+    # back up to .bak.<ts> on drift, overwrite whole file.  No fence markers.
+    # Used for categories we fully own (references, map tools, config files).
+    # -----------------------------------------------------------------------
+    if not fenced and ext in _FENCE_TOKENS:
+        return _copy_overwrite_managed(
+            src, dest, src_content, version, template_hash, ext
+        )
 
     # -----------------------------------------------------------------------
     # Non-fence-supported extensions (e.g. .txt) — plain copy with no metadata
@@ -871,6 +895,44 @@ def _copy_json_managed(
         drift_result.success = False
         drift_result.reason += f" (write failed: {exc})"
         return drift_result
+
+    return drift_result
+
+
+def _copy_overwrite_managed(
+    src: Path,
+    dest: Path,
+    src_content: str,
+    version: str,
+    template_hash: str,
+    ext: str,
+) -> CopyResult:
+    """Fully-managed text path (no fence): inject metadata, back up on drift, overwrite.
+
+    Mirrors ``_copy_json_managed`` for comment-bearing text formats (.md/.py/.sh/
+    .toml/.yaml/.yml) when the caller selects OVERWRITE mode (``fenced=False``).
+    The whole file is owned by MAP; a drifted destination is backed up to
+    ``.bak.<ts>`` before being replaced.
+    """
+    drift_result = detect_drift(src, dest)
+
+    if drift_result.drifted:
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+        backup_path = dest.with_suffix(f"{dest.suffix}.{ts}.bak")
+        try:
+            shutil.copy2(dest, backup_path)
+            drift_result.backed_up = True
+            drift_result.backup_path = backup_path
+        except OSError:
+            drift_result.reason += " (backup failed)"
+
+    final_content = inject_metadata(src_content, ext, version, template_hash)
+    try:
+        _atomic_write(dest, final_content)
+        drift_result.success = True
+    except OSError as exc:
+        drift_result.success = False
+        drift_result.reason += f" (write failed: {exc})"
 
     return drift_result
 
