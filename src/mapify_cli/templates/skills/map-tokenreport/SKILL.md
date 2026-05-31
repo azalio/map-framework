@@ -6,6 +6,7 @@ effort: low
 disable-model-invocation: true
 argument-hint: "[branch]"
 ---
+<!-- map:start -->
 # /map-tokenreport - Token Accounting Report
 
 Purpose: surface how many tokens (and how much money) the current branch's MAP
@@ -114,3 +115,4 @@ cache hit ratio: 100.0%   est cost: $47.31
 - **Unknown model in cost estimate.** `MODEL_TOKEN_PRICES` falls back to the
   default model price for unrecognized model ids; update that table in
   `map_step_runner.py` when a new model ships.
+<!-- map:end -->

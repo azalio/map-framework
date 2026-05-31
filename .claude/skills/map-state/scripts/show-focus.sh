@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# map:start
 #
 # show-focus.sh - Display current task plan focus (PreToolUse hook)
 #
@@ -60,3 +61,4 @@ if [ -n "$IN_PROGRESS_SECTION" ]; then
 fi
 
 exit 0
+# map:end

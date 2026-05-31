@@ -2,6 +2,7 @@
 name: map-plan
 description: "ARCHITECT phase - decompose complex tasks into atomic subtasks with research, spec, and branch-scoped plan artifacts under .map."
 ---
+<!-- map:start -->
 
 # map-plan — ARCHITECT Phase (Decomposition Only)
 
@@ -653,3 +654,4 @@ The Spec Coverage table MUST NOT be condensed — it is the review contract.
 ```
 
 **This phase ends here.** Do NOT proceed to execution. The next invocation starts fresh with focused attention on individual subtasks (use `$map-task` or `$map-efficient`).
+<!-- map:end -->

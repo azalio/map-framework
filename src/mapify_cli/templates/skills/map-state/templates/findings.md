@@ -1,3 +1,4 @@
+<!-- map:start -->
 # Findings & Decisions
 <!--
   WHAT: Your knowledge base for the task. Stores everything you discover.
@@ -60,3 +61,4 @@
 
 ---
 *Update after research-agent output or codebase exploration*
+<!-- map:end -->

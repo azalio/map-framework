@@ -1,3 +1,4 @@
+<!-- map:start -->
 # MAP XML Prompt Envelopes
 
 Use this reference when a MAP skill builds a long subagent prompt that mixes user
@@ -62,3 +63,4 @@ The response schema, evidence requirements, and any formatting constraints.
 - Use `<expected_output>` for JSON fields and evidence-first requirements.
 - Keep existing MAP semantic tags such as `<MAP_Contract>` and `<map_context>`;
   they may live inside `<documents>` or `<artifacts>` when they are input data.
+<!-- map:end -->

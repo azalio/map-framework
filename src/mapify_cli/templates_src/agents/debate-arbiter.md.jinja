@@ -5,6 +5,7 @@ model: opus
 version: 1.0.0
 last_updated: 2026-02-14
 ---
+<!-- map:start -->
 
 # QUICK REFERENCE (Read First)
 
@@ -951,3 +952,4 @@ def process_users(user_ids: List[int]) -> ProcessResult:
 {{/if}}
 
 </context>
+<!-- map:end -->

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# map:start
 """
 Safety Guardrails - PreToolUse Hook
 
@@ -184,3 +185,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+# map:end

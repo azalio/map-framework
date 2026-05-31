@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# map:start
 """detect-clarification-triggers.py
 
 UserPromptSubmit hook — inspects each user prompt before Claude processes
@@ -186,3 +187,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+# map:end

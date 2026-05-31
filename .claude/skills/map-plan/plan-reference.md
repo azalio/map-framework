@@ -1,3 +1,4 @@
+<!-- map:start -->
 # /map-plan Supporting Reference
 
 This file holds templates, examples, and troubleshooting for `/map-plan` so the invoked `SKILL.md` stays focused on the active planning flow.
@@ -102,3 +103,4 @@ Remaining gap (planned):
 - Hard constraint uncovered: add it to `coverage_map` and owning validation criteria.
 - Soft constraint intentionally skipped: include `tradeoff_rationale`.
 - Request (or part) already implemented: see Step 0.5 Already-Implemented Gate — off-ramp the whole-feature case, or move partial duplicates to spec "Out of Scope > Already Implemented" so decomposition skips them.
+<!-- map:end -->

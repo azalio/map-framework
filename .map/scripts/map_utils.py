@@ -1,3 +1,4 @@
+# map:start
 """Shared utilities for MAP workflow scripts."""
 
 import re
@@ -41,3 +42,4 @@ def get_branch_name() -> str:
         return "default"
     except Exception:
         return "default"
+# map:end

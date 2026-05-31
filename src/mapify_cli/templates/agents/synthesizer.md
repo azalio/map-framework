@@ -5,6 +5,7 @@ model: sonnet  # Balanced: synthesis requires reasoning + code generation
 version: 1.0.0
 last_updated: 2025-12-18
 ---
+<!-- map:start -->
 
 # QUICK REFERENCE (Read First)
 
@@ -1159,3 +1160,4 @@ Before submitting SynthesizerOutput:
 ```
 
 </examples>
+<!-- map:end -->

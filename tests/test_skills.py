@@ -440,7 +440,11 @@ class TestSkillStructure:
                 reference_file = base_dir / skill_name / reference_name
                 content = skill_file.read_text(encoding="utf-8")
 
-                assert len(content.splitlines()) <= 500, (
+                # Budget bumped from 500 → 502: C2 fence addition (ST-011) added
+                # <!-- map:start --> and <!-- map:end --> (2 lines) to every SKILL.md.
+                # Do NOT remove content to fit — bump the budget instead (per learned rule
+                # 'always-loaded skill body line budget').
+                assert len(content.splitlines()) <= 502, (
                     f"{skill_file} should keep the active workflow path compact; "
                     "move examples, rationale, and troubleshooting into supporting files."
                 )

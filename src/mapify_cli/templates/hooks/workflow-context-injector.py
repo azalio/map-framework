@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# map:start
 """workflow-context-injector.py
 
 Workflow Context Injector - PreToolUse Hook (Tiered)
@@ -842,3 +843,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+# map:end

@@ -1,4 +1,5 @@
 #!/bin/bash
+# map:start
 # Go Static Analysis Handler
 # Tools: go vet, gofmt, staticcheck (if available)
 set -euo pipefail
@@ -89,3 +90,4 @@ fi
 
 # Generate output using common function
 generate_output "go"
+# map:end

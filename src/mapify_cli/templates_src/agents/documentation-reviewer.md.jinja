@@ -5,6 +5,7 @@ model: sonnet
 version: 3.1.0
 last_updated: 2025-11-27
 ---
+<!-- map:start -->
 
 # QUICK REFERENCE (Read First)
 
@@ -702,3 +703,4 @@ mcp__deepwiki__ask_question(
 **Address all issues** mentioned in the feedback when conducting the updated review.
 {{/if}}
 </context>
+<!-- map:end -->

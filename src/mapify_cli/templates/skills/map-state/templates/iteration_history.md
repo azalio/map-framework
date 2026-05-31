@@ -1,3 +1,4 @@
+<!-- map:start -->
 # Iteration History (Ralph Loop Black Box)
 
 This template documents the history of Ralph Loop iterations for a workflow.
@@ -91,3 +92,4 @@ Final Verification step. The data comes from:
 
 ---
 ```
+<!-- map:end -->

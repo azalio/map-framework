@@ -1,3 +1,4 @@
+<!-- map:start -->
 # /map-review Supporting Reference
 
 This file contains lower-frequency review details. Keep `SKILL.md` focused on the active review sequence.
@@ -41,3 +42,4 @@ Ordering drift check:
 - Missing bundle: rerun `create_review_bundle` before agents.
 - Prompt clipping: inspect `.map/<branch>/token_budget.json`, then raise `MAP_REVIEW_PROMPT_BUDGET_TOKENS` only when the bundle evidence is actually missing.
 - Monitor invalid: treat as hard stop and record `REVISE` or `BLOCK`.
+<!-- map:end -->

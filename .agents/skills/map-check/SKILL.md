@@ -2,6 +2,7 @@
 name: map-check
 description: "Quality gates and verification for MAP workflow"
 ---
+<!-- map:start -->
 
 # $map-check — Quality Gates & Verification
 
@@ -19,3 +20,4 @@ $map-check [subtask-id]
 2. Run tests: `shell_command` for project test suite
 3. Run linter: `shell_command` for project linter
 4. Report: Output verification results
+<!-- map:end -->

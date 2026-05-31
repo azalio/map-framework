@@ -2,6 +2,7 @@
 paths:
   - "**/*.go"
 ---
+<!-- map:start -->
 
 # Implementation Patterns (Learned)
 
@@ -17,3 +18,4 @@ paths:
   ```
 
 - **Webhook latency** (2026-03-18): When implementing admission webhooks, always read from status/cache instead of listing pods or querying external APIs because webhook timeout is 10s and slow webhooks block all API operations. [workflow: map-efficient]
+<!-- map:end -->

@@ -1,4 +1,5 @@
 #!/bin/bash
+# map:start
 # Python Static Analysis Handler
 # Tools: ruff (linting), mypy (type checking)
 set -euo pipefail
@@ -77,3 +78,4 @@ fi
 
 # Generate output using common function
 generate_output "python"
+# map:end

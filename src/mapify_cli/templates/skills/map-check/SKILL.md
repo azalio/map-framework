@@ -6,6 +6,7 @@ effort: low
 disable-model-invocation: true
 argument-hint: "[focus area]"
 ---
+<!-- map:start -->
 # /map-check - Quality Gates & Verification
 
 Purpose: run quality gates and MAP workflow verification only. Do not plan, implement, or fix from this skill.
@@ -309,3 +310,4 @@ See [check-reference.md](check-reference.md#troubleshooting) for missing state, 
 - Automated checks were actually run or a concrete blocker is documented.
 - `write_run_health_report` ran with a non-default `RUN_HEALTH_STATUS`.
 - The final answer gives a clear `READY FOR REVIEW`, `NEEDS WORK`, or `BLOCKED` result.
+<!-- map:end -->

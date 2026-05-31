@@ -1,3 +1,4 @@
+<!-- map:start -->
 # MAP Hooks — Rules of the Road
 
 This directory contains Claude Code hook scripts wired in via
@@ -112,3 +113,4 @@ classification is enforced by `scripts/lint-hooks.py` (in `make lint` /
 > Claude counterpart; this inventory covers `.claude/hooks/` only.
 
 Last reviewed: 2026-05-29.
+<!-- map:end -->

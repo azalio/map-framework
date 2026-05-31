@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# map:start
 """
 Post-Compact Context Injector - SessionStart Hook (matcher: compact).
 
@@ -264,3 +265,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+# map:end

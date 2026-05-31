@@ -1,3 +1,4 @@
+<!-- map:start -->
 # MAP JSON Output Contracts
 
 Use these contracts when a MAP skill prompt asks an agent to return JSON that is not already covered by evidence-first output examples.
@@ -80,3 +81,4 @@ Required shape:
 ```
 
 The prompt must also tell the agent not to repeat existing learned rules already shown in context.
+<!-- map:end -->

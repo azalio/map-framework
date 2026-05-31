@@ -6,6 +6,7 @@ effort: medium
 disable-model-invocation: true
 argument-hint: "[file path | symbol | PR ref | code snippet | empty for branch diff vs origin/main (fallback origin/master), or project overview on main/master]"
 ---
+<!-- map:start -->
 # MAP Explain
 
 **Target:** $ARGUMENTS
@@ -145,3 +146,4 @@ I want you to teach it step by step:
 - **"HEAD == $BASE"** — the current branch already matches the upstream base, so there is no diff. The skill falls into Mode A (project overview); if that is not what you wanted, check `git status` and confirm your commits are on this branch.
 - **Diff is enormous and the walkthrough turns shallow** — pass a narrower target (single file, single symbol, or `HEAD~1..HEAD`) instead of the full branch diff so each line can be explained without truncation.
 - **Output mixes inference with source claims** — every non-explicit assertion must be prefixed with `Inferred:`. If you see un-marked guesses, ask the skill to re-emit with explicit confidence tags.
+<!-- map:end -->

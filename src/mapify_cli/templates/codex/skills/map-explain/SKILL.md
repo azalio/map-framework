@@ -2,6 +2,7 @@
 name: map-explain
 description: "Deep walkthrough of code, a diff, or the whole project — problem, entities, flow, line-by-line rationale, side effects, assumptions, breakage. Use when learning unfamiliar code or auditing a diff."
 ---
+<!-- map:start -->
 
 # $map-explain — Deep Walkthrough
 
@@ -164,3 +165,4 @@ $map-explain HEAD~1..HEAD
 - **`HEAD == $BASE`** — the current branch already matches the upstream base; there is no diff. The skill falls into Mode A (project overview); if that's not what you wanted, check `git status` and confirm your commits are on this branch.
 - **Diff is enormous and the walkthrough turns shallow** — pass a narrower target (single file, single symbol, or `HEAD~1..HEAD`) so each line can be explained without truncation.
 - **Output mixes inference with source claims** — every non-explicit assertion must be prefixed with `Inferred:`. If you see unmarked guesses, ask the skill to re-emit with explicit confidence tags.
+<!-- map:end -->

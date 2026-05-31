@@ -1,3 +1,4 @@
+<!-- map:start -->
 # Task Decomposition Examples
 
 Reference examples for task-decomposer agent. Load dynamically based on task complexity.
@@ -293,3 +294,4 @@ The decomposition would then include specific subtasks:
 3. Optimize N+1 query patterns
 4. Implement query result caching
 5. Add query performance monitoring
+<!-- map:end -->

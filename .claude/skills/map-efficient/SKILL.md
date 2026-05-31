@@ -6,6 +6,7 @@ effort: medium
 disable-model-invocation: true
 argument-hint: "[task description]"
 ---
+<!-- map:start -->
 # MAP Efficient Workflow (Optimized)
 
 ## Core Design Principle
@@ -497,3 +498,4 @@ See [efficient-reference.md](efficient-reference.md#examples) for standard, TDD,
 ## Troubleshooting
 
 See [efficient-reference.md](efficient-reference.md#troubleshooting) for state-machine mismatch, blueprint validation failures, Monitor retry loops, and run-health closeout problems.
+<!-- map:end -->

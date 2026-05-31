@@ -1,3 +1,4 @@
+<!-- map:start -->
 # MAP Skills System
 
 MAP ships Claude Code skills as the runtime slash surface for MAP workflows and as supporting reference material. Skills are not agents, but they are not all passive documentation either: some skills define task procedures that call agents, run scripts, or write workflow artifacts.
@@ -80,3 +81,4 @@ Run `uv run mapify init <new-temp-path> --no-git --mcp none` from this repo. Do 
 ### New task skill is not invocable
 
 Check that the skill has `argument-hint`, the direct `map-*` name appears in `skill-rules.json` keywords and intent patterns, and `skillClass` is `task`.
+<!-- map:end -->

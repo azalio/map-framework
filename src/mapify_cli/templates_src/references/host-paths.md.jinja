@@ -1,3 +1,4 @@
+<!-- map:start -->
 # MAP Host-Path and Environment-Variable Contract
 
 **Purpose:** Canonical reference for MAP_* env vars, ~/.map/ host-path layout, and state-marker enum. Read this before adding, renaming, or consuming any MAP_* variable.
@@ -64,3 +65,4 @@ Forward-reference: any question about lock semantics, timeout behaviour, or stat
 ## (h) Related (Platform Integration)
 
 - **`CLAUDE_PROJECT_DIR`** — owned by Claude Code, not MAP. MAP must not set, override, or depend on this variable; treat it as read-only ambient context if needed.
+<!-- map:end -->

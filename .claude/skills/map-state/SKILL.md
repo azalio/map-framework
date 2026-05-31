@@ -21,6 +21,7 @@ hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/scripts/check-complete.sh"
 ---
+<!-- map:start -->
 
 # MAP Planning Skill
 
@@ -226,3 +227,4 @@ Only Monitor agent updates task_plan status (via `status_update` output field).
 
 **References**:
 - [planning-with-files](https://github.com/OthmanAdi/planning-with-files) - Original pattern
+<!-- map:end -->

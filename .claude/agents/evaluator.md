@@ -8,6 +8,7 @@ effort: high
 version: 3.1.1
 last_updated: 2026-05-27
 ---
+<!-- map:start -->
 
 # QUICK REFERENCE (Read First)
 
@@ -1474,3 +1475,4 @@ overall_score = (
 - Low quality (overall < 5.0) → "reconsider"
 
 </critical_reminders>
+<!-- map:end -->

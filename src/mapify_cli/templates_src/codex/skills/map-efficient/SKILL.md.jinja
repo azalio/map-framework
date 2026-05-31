@@ -2,6 +2,7 @@
 name: map-efficient
 description: "State-machine MAP execution workflow for Codex. Use when implementing an approved MAP plan end to end, resuming from branch MAP task_plan or step_state.json artifacts, or running non-trivial multi-subtask work. Use map-fast for tiny one-shot edits."
 ---
+<!-- map:start -->
 
 # $map-efficient - MAP Execution
 
@@ -256,3 +257,4 @@ python3 .map/scripts/map_step_runner.py write_run_health_report \
 Report completed subtasks, files changed, checks run, final status, and any
 remaining blockers. Mention the next command only when useful, such as
 `$map-check` for a verification-only pass.
+<!-- map:end -->

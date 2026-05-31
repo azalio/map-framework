@@ -2,6 +2,7 @@
 name: map-fast
 description: "Minimal workflow for small, low-risk changes — no planning, no learning"
 ---
+<!-- map:start -->
 
 # $map-fast — Quick Implementation
 
@@ -27,3 +28,4 @@ $map-fast <task description>
 3. Verify: `shell_command` to run tests/build
 
 No decomposition, no state tracking, no artifacts.
+<!-- map:end -->

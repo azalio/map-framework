@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# map:start
 """
 MAP Workflow Step Execution Utilities
 
@@ -9373,3 +9374,4 @@ if __name__ == "__main__":
             sys.exit(1)
         print(f"Unknown function: {func_name}", file=sys.stderr)
         sys.exit(1)
+# map:end

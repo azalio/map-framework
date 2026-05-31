@@ -5,6 +5,7 @@ description: |
 effort: high
 argument-hint: "[task description]"
 ---
+<!-- map:start -->
 # /map-plan - ARCHITECT Phase (Decomposition Only)
 
 Purpose: plan and decompose complex tasks into atomic subtasks. This command records artifacts and then stops; it does not implement or verify.
@@ -347,3 +348,4 @@ See [plan-reference.md](plan-reference.md#troubleshooting) for stale artifacts, 
 - Blueprint exists and `validate_blueprint_contract` passed.
 - Human-readable task plan includes scope metadata and coverage.
 - The command stops with a clear execution handoff.
+<!-- map:end -->

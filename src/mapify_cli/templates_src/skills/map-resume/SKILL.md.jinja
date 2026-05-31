@@ -6,6 +6,7 @@ effort: low
 disable-model-invocation: true
 argument-hint: "[plan ID]"
 ---
+<!-- map:start -->
 # MAP Resume - Workflow Recovery Command
 
 **Purpose:** Resume an interrupted or incomplete MAP workflow from the last checkpoint.
@@ -305,3 +306,4 @@ See [resume-reference.md#examples](resume-reference.md#examples) when you need e
 ## Troubleshooting
 
 See [resume-reference.md#troubleshooting](resume-reference.md#troubleshooting) for low-frequency recovery cases such as checkpoint/status drift, missing task plans, missing Actor context, or out-of-sync `step_state.json`.
+<!-- map:end -->

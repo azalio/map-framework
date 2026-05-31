@@ -1,3 +1,4 @@
+<!-- map:start -->
 # MAP Framework Agents
 
 This project uses the MAP (Monitor-Actor-Predictor) Framework for structured development.
@@ -47,3 +48,4 @@ For write-capable MAP skills and agents:
 1. Trust this project in Codex settings
 2. Type `$map-plan <your task>` to start planning
 3. Type `$map-efficient` to execute an approved plan
+<!-- map:end -->

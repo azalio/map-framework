@@ -1,3 +1,4 @@
+<!-- map:start -->
 # MCP Tool Usage Examples for Task Decomposition
 
 Reference examples for task-decomposer agent. Loaded on demand for complex decompositions.
@@ -111,3 +112,4 @@ Learn common pattern:
 
 Apply this proven structure to your decomposition.
 ```
+<!-- map:end -->

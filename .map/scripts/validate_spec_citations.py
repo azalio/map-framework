@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# map:start
 """Validate file:line citations inside a /map-plan spec.
 
 Scans `.map/<branch>/spec_<branch>.md` for `<path>:<line>[-<line>]` patterns,
@@ -248,3 +249,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+# map:end

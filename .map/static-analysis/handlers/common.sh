@@ -1,4 +1,5 @@
 #!/bin/bash
+# map:start
 # Common utilities for static analysis handlers
 # Source this file at the beginning of each handler
 
@@ -107,3 +108,4 @@ parse_colon_delimited() {
 
     return 1
 }
+# map:end

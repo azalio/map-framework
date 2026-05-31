@@ -6,6 +6,7 @@ effort: high
 disable-model-invocation: true
 argument-hint: "[review focus] [--detached] [--ci] [--reverse-sections] [--shuffle-sections] [--seed <int>] [--compare-orderings]"
 ---
+<!-- map:start -->
 # MAP Review Workflow
 
 Interactive, structured code review of current changes using Monitor, Predictor, and Evaluator agents.
@@ -464,3 +465,4 @@ See [review-reference.md](review-reference.md#examples) for normal, CI, detached
 ## Troubleshooting
 
 See [review-reference.md](review-reference.md#troubleshooting) for unavailable detached worktrees, missing review bundles, review prompt clipping, and ordering drift.
+<!-- map:end -->

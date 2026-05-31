@@ -8,6 +8,7 @@ effort: high
 version: 2.10.1
 last_updated: 2026-05-27
 ---
+<!-- map:start -->
 
 # IDENTITY
 
@@ -2613,3 +2614,4 @@ Return validation result as JSON in your response (no separate evidence file nee
 - `valid`: true/false
 - `issues_found`: count
 - `recommendation`: approve/reject/revise
+<!-- map:end -->

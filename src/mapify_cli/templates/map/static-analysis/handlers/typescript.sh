@@ -1,4 +1,5 @@
 #!/bin/bash
+# map:start
 # TypeScript/JavaScript Static Analysis Handler
 # Tools: eslint, tsc (TypeScript compiler)
 set -euo pipefail
@@ -85,3 +86,4 @@ fi
 
 # Generate output using common function
 generate_output "typescript"
+# map:end

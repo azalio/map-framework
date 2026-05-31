@@ -1,3 +1,4 @@
+<!-- map:start -->
 # Evidence-First Output Examples
 
 Use these compact examples when a MAP prompt asks an agent to return JSON after reviewing code, specs, logs, or workflow artifacts.
@@ -72,3 +73,4 @@ Use these compact examples when a MAP prompt asks an agent to return JSON after 
   }
 }
 ```
+<!-- map:end -->

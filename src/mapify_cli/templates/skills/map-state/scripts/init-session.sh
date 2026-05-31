@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# map:start
 #
 # init-session.sh - Initialize planning files for new MAP session
 #
@@ -75,3 +76,4 @@ echo "1. Define goal in task_plan"
 echo "2. Add phases with **Status:** pending"
 echo "3. Start working - PreToolUse hook will show focus"
 echo "4. Update status as phases complete"
+# map:end

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# map:start
 """
 Ralph Loop Iteration Logger - PostToolUse Hook.
 
@@ -400,3 +401,4 @@ def derive_summary(log_file: Path) -> None:
 
 if __name__ == "__main__":
     main()
+# map:end

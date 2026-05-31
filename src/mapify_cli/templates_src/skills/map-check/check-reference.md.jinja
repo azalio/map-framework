@@ -1,3 +1,4 @@
+<!-- map:start -->
 # /map-check Supporting Reference
 
 This file holds low-frequency command matrices, examples, and troubleshooting for `/map-check`. The active `SKILL.md` stays focused on verification flow and next actions.
@@ -68,3 +69,4 @@ Next Action: Restore the dependency and rerun /map-check.
 - final-verifier rejects completion: do not fix from `/map-check`; report the rejected criteria and hand off.
 - Tests fail after verifier approval: tests win. Record `NEEDS WORK` and include the failing command.
 - `write_run_health_report` fails: report `BLOCKED`; the closeout is not machine-readable until the run-health artifact exists.
+<!-- map:end -->

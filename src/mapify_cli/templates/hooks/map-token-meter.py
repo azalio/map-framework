@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# map:start
 """
 MAP Token Meter - SubagentStop + Stop hook.
 
@@ -129,3 +130,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+# map:end

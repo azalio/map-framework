@@ -6,6 +6,7 @@ effort: medium
 disable-model-invocation: true
 argument-hint: "[task description]"
 ---
+<!-- map:start -->
 # /map-tdd — Test-Driven Development Workflow
 
 **Purpose:** Enforce test-first development where tests are written from the SPECIFICATION (not from implementation), ensuring tests validate intent rather than confirming implementation bugs.
@@ -384,3 +385,4 @@ In TDD mode, `TEST_WRITER` and `TEST_FAIL_GATE` still write into the same branch
 ## Troubleshooting
 
 - **Issue:** Workflow doesn't behave as expected. **Fix:** Re-read the section above titled 'What this command CANNOT do' (if present) and ensure prerequisites are met. Run `/map-resume` to recover from interruptions.
+<!-- map:end -->
