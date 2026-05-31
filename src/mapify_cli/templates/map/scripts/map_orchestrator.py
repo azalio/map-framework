@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# map:start
 """
 MAP Workflow State Machine Orchestrator
 
@@ -3714,4 +3713,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-# map:end

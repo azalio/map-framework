@@ -1,4 +1,3 @@
-<!-- map:start -->
 # Progress Log
 <!--
   WHAT: Chronological record of what you did, when, and what happened.
@@ -74,4 +73,3 @@
 
 ---
 *Update after completing each phase or encountering errors*
-<!-- map:end -->

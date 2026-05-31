@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# map:start
 """diagnostics.py
 
 Small helper for recording structured diagnostics from test/lint commands.
@@ -345,4 +344,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-# map:end

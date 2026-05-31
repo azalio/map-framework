@@ -1,4 +1,3 @@
-<!-- map:start -->
 # /map-efficient Supporting Reference
 
 This file holds low-frequency MAP Efficient details so `SKILL.md` stays focused on the active state-machine path.
@@ -253,4 +252,3 @@ When to call:
 - `step_state.json` disagrees with artifacts: use orchestrator commands, not manual state edits.
 - Monitor loops: preserve each failure in `code-review-N.md`, then invoke Predictor when escalation rules apply.
 - Final closeout lacks `run_health_report.json`: rerun the closeout command with explicit `RUN_HEALTH_STATUS`.
-<!-- map:end -->

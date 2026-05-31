@@ -14,7 +14,6 @@ permissionMode: plan
 version: 2.5.0
 last_updated: 2026-04-28
 ---
-<!-- map:start -->
 
 # ===== STABLE PREFIX =====
 
@@ -1077,4 +1076,3 @@ For complex decomposition scenarios, see: `.claude/references/decomposition-exam
 </Decomposer_Reference_Examples>
 
 # ===== END REFERENCE MATERIAL =====
-<!-- map:end -->

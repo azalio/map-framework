@@ -1,4 +1,3 @@
-<!-- map:start -->
 # Learned Rules (MAP Framework)
 
 This directory contains lessons extracted by `/map-learn` from completed MAP workflows.
@@ -17,4 +16,3 @@ Claude Code loads these files at session start, making past lessons available in
 - **Prune periodically**: remove outdated rules that no longer apply
 - **Keep files under 50 rules each** for best Claude Code adherence
 - **Commit with your project**: `git add .claude/rules/` to share with team
-<!-- map:end -->

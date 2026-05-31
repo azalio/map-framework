@@ -6,7 +6,6 @@ effort: medium
 disable-model-invocation: true
 argument-hint: "[bug description]"
 ---
-<!-- map:start -->
 # MAP Debugging Workflow
 
 ## Workflow Guardrails
@@ -360,4 +359,3 @@ Begin debugging now.
 ## Troubleshooting
 
 - **Issue:** Workflow doesn't behave as expected. **Fix:** Re-read the section above titled 'What this command CANNOT do' (if present) and ensure prerequisites are met. Run `/map-resume` to recover from interruptions.
-<!-- map:end -->

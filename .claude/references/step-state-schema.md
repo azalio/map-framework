@@ -1,4 +1,3 @@
-<!-- map:start -->
 # Step State Schema Reference
 
 ## Overview
@@ -65,4 +64,3 @@ Current step set (linear order; some are conditional):
 9. `2.3` ACTOR
 10. `2.4` MONITOR
 
-<!-- map:end -->

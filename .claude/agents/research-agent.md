@@ -8,7 +8,6 @@ model: haiku
 version: 1.1.0
 last_updated: 2026-04-28
 ---
-<!-- map:start -->
 
 # QUICK REFERENCE
 
@@ -280,4 +279,3 @@ Read(
 {{/if}}
 
 </Research_Query_v1_0>
-<!-- map:end -->

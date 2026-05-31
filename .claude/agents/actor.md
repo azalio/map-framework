@@ -5,7 +5,6 @@ model: sonnet  # Balanced: code generation quality is important
 version: 3.1.0
 last_updated: 2025-11-27
 ---
-<!-- map:start -->
 
 ## Mutation Boundary Constraints
 
@@ -1094,4 +1093,3 @@ export class ReconnectingWebSocket {
 4. test_reconnect_handles_immediate_disconnect
 
 </Actor_Reference_Examples>
-<!-- map:end -->

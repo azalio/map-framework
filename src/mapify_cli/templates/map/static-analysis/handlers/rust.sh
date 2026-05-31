@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# map:start
 # Rust Static Analysis Handler
 # Tools: cargo fmt (format check)
 set -euo pipefail
@@ -43,4 +42,3 @@ fi
 
 # Generate output using common function
 generate_output "rust"
-# map:end

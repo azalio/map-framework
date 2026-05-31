@@ -1,4 +1,3 @@
-# map:start
 name = "monitor"
 description = "Reviews code for correctness, standards, security, and testability (MAP)"
 
@@ -1143,4 +1142,3 @@ Hard-stop semantics:
 
 Output: Return validation result as raw JSON (no markdown fencing).
 """
-# map:end

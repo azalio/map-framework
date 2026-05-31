@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# map:start
 """
 Pre-Compact Transcript Saver - PreCompact Hook.
 
@@ -197,4 +196,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-# map:end

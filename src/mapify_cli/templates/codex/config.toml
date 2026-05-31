@@ -1,4 +1,3 @@
-# map:start
 # Codex project configuration for MAP Framework
 
 [features]
@@ -16,4 +15,3 @@ config_file = "./agents/monitor.toml"
 [agents.researcher]
 description = "Codebase exploration agent for context gathering"
 config_file = "./agents/researcher.toml"
-# map:end

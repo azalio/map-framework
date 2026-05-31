@@ -1,4 +1,3 @@
-<!-- map:start -->
 # Escalation Decision Matrix
 
 Reference guide for orchestrator agents on when to escalate failures vs. retry.
@@ -54,4 +53,3 @@ Guard rework counter is independent of monitor retry counter.
 | Test failures with clear fix path | 5 |
 | Linting/formatting issues | 3 |
 | Minor integration issues | 3 |
-<!-- map:end -->

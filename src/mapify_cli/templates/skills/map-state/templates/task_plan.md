@@ -1,4 +1,3 @@
-<!-- map:start -->
 # Task Plan: [Brief Description]
 <!--
   WHAT: Your roadmap for MAP workflow - "working memory on disk."
@@ -69,4 +68,3 @@ Reason: [Not yet complete]
 
 ---
 *PreToolUse hook shows this before actions. Stop hook validates terminal state.*
-<!-- map:end -->

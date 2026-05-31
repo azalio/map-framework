@@ -8,7 +8,6 @@ effort: high
 version: 1.1.0
 last_updated: 2026-04-28
 ---
-<!-- map:start -->
 
 # IDENTITY
 
@@ -220,4 +219,3 @@ This applies before the 0.7 threshold check below.
 - ❌ Re-decompose tasks (that's task-decomposer's job)
 - ❌ Make decisions about workflow (that's orchestrator's job)
 - ❌ Skip tests because "they look correct"
-<!-- map:end -->

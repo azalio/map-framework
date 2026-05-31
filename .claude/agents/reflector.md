@@ -5,7 +5,6 @@ model: sonnet
 version: 4.0.0
 last_updated: 2026-01-12
 ---
-<!-- map:start -->
 
 # IDENTITY
 
@@ -842,4 +841,3 @@ Before outputting:
 <critical>
 **FINAL CHECK**: Read aloud. If applies to any language or doesn't name APIs, too generic. Revise for specificity, actionability, technology-grounding.
 </critical>
-<!-- map:end -->

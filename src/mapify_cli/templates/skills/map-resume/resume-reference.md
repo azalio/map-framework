@@ -1,4 +1,3 @@
-<!-- map:start -->
 # MAP Resume Supporting Reference
 
 This file holds low-frequency examples, integration notes, and troubleshooting details for `/map-resume`. Load it only when the compact resume flow in `SKILL.md` is not enough to recover the workflow.
@@ -217,4 +216,3 @@ Total overhead for resume: ~1K tokens before continuing workflow.
 2. Do not hand-edit `step_state.json`; direct writes bypass orchestrator validation
 3. If one subtask needs to be restarted, ask the user to confirm and run `python3 .map/scripts/map_orchestrator.py resume_single_subtask ST-003`
 4. If the whole plan state is unusable, ask the user whether to clear the checkpoint and restart with `/map-efficient`
-<!-- map:end -->

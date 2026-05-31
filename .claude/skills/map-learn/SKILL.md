@@ -9,7 +9,6 @@ effort: medium
 disable-model-invocation: true
 argument-hint: "[workflow-summary]"
 ---
-<!-- map:start -->
 
 # MAP Learn - Post-Workflow Learning with Persistence
 
@@ -402,4 +401,3 @@ Only if the work revealed patterns worth preserving.
 **Rules are yours to edit.** Add context, fix inaccuracies, prune outdated patterns. They are project knowledge, not framework artifacts.
 
 **Goal:** Each `/map-learn` invocation makes the next session stronger. If you're still explaining the same gotchas to Claude after running `/map-learn`, the rules need to be more specific.
-<!-- map:end -->

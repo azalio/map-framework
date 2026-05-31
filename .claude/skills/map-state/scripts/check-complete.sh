@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# map:start
 #
 # check-complete.sh - Verify all phases have terminal state (Stop hook)
 #
@@ -67,4 +66,3 @@ else
     echo "  - superseded: Replaced by different approach"
     exit 1
 fi
-# map:end

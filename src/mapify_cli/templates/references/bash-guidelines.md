@@ -1,4 +1,3 @@
-<!-- map:start -->
 # Bash Command Guidelines
 
 **Purpose:** Best practices for running Bash commands in MAP Framework workflows to avoid common issues.
@@ -259,4 +258,3 @@ The key difference: **filtering/transforming processes all input** vs **head/tai
 **Version:** 1.0.0
 **Last Updated:** 2026-01-27
 **Applies To:** All MAP Framework agents and commands
-<!-- map:end -->
