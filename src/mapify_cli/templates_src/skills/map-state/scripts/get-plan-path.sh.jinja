@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# map:start
 #
 # get-plan-path.sh - Generate branch-scoped task plan file path
 #
@@ -39,4 +38,3 @@ fi
 
 # Output the plan file path (nested directory convention)
 echo ".map/${SANITIZED_BRANCH}/task_plan_${SANITIZED_BRANCH}.md"
-# map:end

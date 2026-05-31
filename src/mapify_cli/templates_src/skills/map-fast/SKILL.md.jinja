@@ -6,7 +6,6 @@ effort: low
 disable-model-invocation: true
 argument-hint: "[task description]"
 ---
-<!-- map:start -->
 # MAP Fast Workflow
 
 **⚠️ WARNING: Use for small, low-risk production changes only. Do not skip tests.**
@@ -185,4 +184,3 @@ Begin now with minimal workflow.
 ## Troubleshooting
 
 - **Issue:** Workflow doesn't behave as expected. **Fix:** Re-read the section above titled 'What this command CANNOT do' (if present) and ensure prerequisites are met. Run `/map-resume` to recover from interruptions.
-<!-- map:end -->

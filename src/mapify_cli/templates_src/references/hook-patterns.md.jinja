@@ -1,4 +1,3 @@
-<!-- map:start -->
 # Hook Patterns — The `MAP_INVOKED_BY` Recursion Guard
 
 This document is the authoritative contract for the recursion guard that every
@@ -156,4 +155,3 @@ subprocess.Popen(
 The detached child sets `MAP_INVOKED_BY` in its own environment so that any
 hooks it triggers honor the REQUIRE_GUARD early-exit above. Until Phase E
 lands, treat this section as design intent, not implemented behavior.
-<!-- map:end -->

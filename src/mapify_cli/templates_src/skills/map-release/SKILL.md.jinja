@@ -6,7 +6,6 @@ effort: high
 disable-model-invocation: true
 argument-hint: "[version or notes]"
 ---
-<!-- map:start -->
 # MAP Framework Release Workflow
 
 **CRITICAL INSTRUCTION:** This is an **automated sequential workflow with IRREVERSIBLE operations**. You MUST execute ALL validation gates and get explicit user confirmation before pushing tags. This workflow orchestrates a complete package release from validation to PyPI publication.
@@ -1274,4 +1273,3 @@ Begin now with the release request above.
 ## Troubleshooting
 
 - **Issue:** Workflow doesn't behave as expected. **Fix:** Re-read the section above titled 'What this command CANNOT do' (if present) and ensure prerequisites are met. Run `/map-resume` to recover from interruptions.
-<!-- map:end -->

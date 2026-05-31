@@ -6,7 +6,6 @@ effort: medium
 disable-model-invocation: true
 argument-hint: "[subtask id]"
 ---
-<!-- map:start -->
 # /map-task — Single Subtask Execution
 
 **Purpose:** Execute one specific subtask from an existing plan, without running the full workflow.
@@ -268,4 +267,3 @@ Proceed anyway? (The Actor will work with whatever state exists.)
 ## Troubleshooting
 
 - **Issue:** Workflow doesn't behave as expected. **Fix:** Re-read the section above titled 'What this command CANNOT do' (if present) and ensure prerequisites are met. Run `/map-resume` to recover from interruptions.
-<!-- map:end -->

@@ -1,4 +1,3 @@
-<!-- map:start -->
 # MAP Framework (mapify-cli) — Agent Instructions
 
 ## What this repo is
@@ -78,4 +77,3 @@ When you pipe through `head/tail/less/more`, the source command keeps running bu
 - Architecture deep dive: `docs/ARCHITECTURE.md`
 - Usage/workflows: `docs/USAGE.md`
 - Release process: `RELEASING.md`
-<!-- map:end -->

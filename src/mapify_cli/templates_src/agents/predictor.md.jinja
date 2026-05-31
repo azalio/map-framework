@@ -5,7 +5,6 @@ model: sonnet  # Impact analysis requires complex reasoning - upgraded from haik
 version: 3.3.1
 last_updated: 2026-05-27
 ---
-<!-- map:start -->
 
 # IDENTITY
 
@@ -2002,4 +2001,3 @@ IF confidence < 0.30 after all adjustments:
 **If any self-consistency check fails**: Re-analyze, lower confidence by 0.2, add note "Initial analysis revised after self-consistency check".
 
 </final_checklist>
-<!-- map:end -->

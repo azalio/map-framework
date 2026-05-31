@@ -1,5 +1,4 @@
 #!/bin/bash
-# map:start
 # Static Analysis Dispatcher
 # Invokes language-specific handlers and returns normalized JSON output
 set -euo pipefail
@@ -80,4 +79,3 @@ fi
 
 # Execute handler
 "$HANDLER" --files "$FILES" --config "$CONFIG"
-# map:end

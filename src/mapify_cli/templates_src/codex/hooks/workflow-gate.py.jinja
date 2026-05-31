@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# map:start
 """
 MAP Workflow Enforcement Gate (PreToolUse Hook)
 
@@ -424,4 +423,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-# map:end
