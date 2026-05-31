@@ -886,6 +886,7 @@ class TestFenceAwareMerge:
     ) -> None:
         """D12: a file whose end marker was moved ABOVE the start (or absent) is
         treated as user-owned — content unchanged, warning emitted."""
+        del start_tok  # parametrize tuple param; unused in this case (pytest matches positionally)
         src = tmp_path / f"tmpl{ext}"
         src.write_text(_src_body_for(ext), encoding="utf-8")
         dest = tmp_path / f"dest{ext}"
