@@ -688,7 +688,9 @@ SKILL_REQUIREMENTS_SCHEMA = {
 
 # Single authority for the four requires-* field names; consumers DERIVE from this
 # rather than hardcoding the list (see architecture-patterns: Single-Source Schema Dict).
-SKILL_REQUIREMENTS_KEYS = tuple(SKILL_REQUIREMENTS_SCHEMA["properties"])
+_skill_req_props = SKILL_REQUIREMENTS_SCHEMA["properties"]
+assert isinstance(_skill_req_props, dict)  # runtime guard; schema is always a dict
+SKILL_REQUIREMENTS_KEYS: tuple[str, ...] = tuple(_skill_req_props)
 
 
 ARTIFACT_STAGE_SCHEMA = {
