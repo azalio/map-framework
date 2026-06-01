@@ -154,3 +154,10 @@
   make check-render       # byte-identical gate (already wired into `make check`)
   git add -p              # stage only the intentional delta
   ```
+
+- **Install-Time Marker Double-Application: Source Artifacts Must Not Pre-Contain Installer Output** (2026-05-31): When an install step is responsible for injecting a structural marker (e.g. `map:start`/`map:end` fences, a generated header, a version stamp) into a file at install time, the source artifact the installer consumes must NOT already contain that marker. If the marker is pre-baked into the source (injected into a `.jinja` template or a `templates_src` file) AND the installer also wraps the content, every installed file ends up with TWO marker pairs; a parser expecting exactly one pair sees malformed/duplicate structure, fails, and falls back to a safe-but-wrong default (e.g. treating the whole file as user-owned and silently skipping the managed refresh). Invariant: a transformation that is the installer's responsibility has exactly one application site — the installer. Keep source + generated trees marker-free; the installer adds the marker once at write time. Generalises to any idempotency concern where a transform has two application sites. [workflow: map-efficient]
+  ```python
+  # WRONG: fence baked into template AND added by copier -> double fence -> parse fallback
+  # CORRECT: templates_src is fence-free; copier injects exactly once:
+  wrapped = f"# map:start\n{rendered}\n# map:end\n" if fenced else rendered
+  ```

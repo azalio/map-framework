@@ -102,3 +102,27 @@
   ```
 
 - **In an Agentic Harness, Git State Is Ground Truth — Tool Returns Are Not** (2026-05-30, key insight): When operating through an agentic harness, treat every external dispatch and file mutation as inherently uncertain — Agent calls may QUEUE rather than fail (never retry blindly: see [[never-retry-a-queued-agent-dispatch]]), Edit calls may NOT land (always verify via `git diff`), and Write calls ALWAYS overwrite (check existence first). The harness layer between intent and execution introduces silent queuing, silent no-ops, and silent overwrites that make a tool's return value an unreliable proxy for filesystem state. Before every commit, verify with independent `git`/`grep`/`pytest` rather than trusting an agent's self-report (which can also be replayed/garbled by context compaction). [workflow: map-efficient]
+
+- **Cross-Clone Editable-Install Contamination: Verify Package Source Before Trusting Subprocess Results** (2026-05-31): When a Python project is installed editable (`pip install -e` / `uv sync`) and more than one clone of the repo exists, `uv run <console-script>` (or any subprocess invoking the installed entry point) resolves the package through the editable `.pth` in the active `.venv` — which may point to a DIFFERENT clone than the worktree under edit. The subprocess exits 0 with no import error, but exercises the WRONG code, producing phantom failures (wrong file counts, missing markers, behavior that contradicts your edits). To verify the worktree under edit, import in-process (`sys.path.insert(0,"src")` + call functions directly) or run `python -m pytest` (honours the worktree). Never trust a `uv run <console-script>` subprocess as evidence about local changes. [workflow: map-efficient]
+  ```python
+  import mapify_cli, os
+  assert os.getcwd() in mapify_cli.__file__, (
+      f"Package resolves to {mapify_cli.__file__!r}, not this worktree — "
+      "check editable .pth in .venv/lib/*/site-packages/")
+  # Prefer in-process over subprocess for the code you're editing:
+  #   sys.path.insert(0,'src'); from mapify_cli.delivery... import fn; fn(tmp)
+  # NOT: subprocess.run(['uv','run','mapify','init', str(tmp)])  # may hit wrong clone
+  ```
+
+- **Tangled Multi-Edit Recovery: `git checkout HEAD -- <file>` Then One Complete Write** (2026-05-31): When several sequential Edit calls have left a file internally inconsistent — partial anchors matched the wrong location, edits applied against a stale mental model of the real HEAD shape, or context compaction shifted the agent's understanding — STOP issuing incremental Edits. Each further Edit narrows the search but adds another chance to mis-anchor against the now-diverged content. Recover by: (1) `git checkout HEAD -- <file>` to restore the known-good committed state; (2) Read the file for an accurate model; (3) one full-content Write incorporating all intended changes. Trigger: `git diff` shows structural artifacts (duplicate blocks, orphaned `else`) that were never part of any explicit Edit intent. Distinct from "Truncated Agent Recovery" (prose truncation, git state correct) and "Verify File State via Git After Every Edit" (per-edit check) — this is specifically "file is internally inconsistent; reset to known-good and rewrite whole". [workflow: map-efficient]
+  ```bash
+  git checkout HEAD -- src/mapify_cli/delivery/managed_file_copier.py  # restore baseline
+  # Read the file (ground truth, not memory), then Write full intended content once.
+  # Safe because Write now produces exactly the intended delta vs the last commit.
+  ```
+
+- **Harness Flap Output Capture: Redirect to a File and Read It Back; Treat Cancelled Batches as Unknown** (2026-05-31): Under harness flapping, safety-classifier delays, or batched-tool cancellation, inline stdout can arrive garbled, out-of-order, or empty while the call still exits 0 — acting on it yields false verdicts ("no errors" when the tool never ran). Reliable pattern: redirect to a temp file (`cmd > /tmp/out.txt 2>&1`) then Read the file (file I/O bypasses the streaming pipeline). If a batch is cancelled or unreadable, classify as "unknown" and re-derive ground truth from `git diff`/`git status`/`pytest` before any dependent action. Separately: ad-hoc `python3 /tmp/foo.py` can break with stdlib shadowing (e.g. `module 'inspect' has no attribute 'Parameter'`) if `/tmp` holds a same-named module — prefer `python3 - <<'PY' … PY` heredocs run from the repo root with `sys.path.insert(0,"src")`. [workflow: map-efficient]
+  ```bash
+  python -m mypy src/ > /tmp/mypy.txt 2>&1; echo "EXIT:$?" >> /tmp/mypy.txt
+  # then Read /tmp/mypy.txt; if empty or no EXIT: marker -> harness flap, re-derive from git
+  ```
