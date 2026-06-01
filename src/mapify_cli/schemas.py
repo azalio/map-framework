@@ -570,8 +570,8 @@ REPO_INSIGHT_SCHEMA = {
             "examples": [
                 [
                     "make check",
-                    "pytest tests/test_template_sync.py -v",
-                    "make sync-templates",
+                    "pytest tests/test_template_render.py -v",
+                    "make render-templates",
                 ]
             ],
         },

@@ -113,3 +113,18 @@ paths:
           and name not in _GENERIC_ENTRYPOINT_NAMES                 # convention-called entrypoints
       )
   ```
+
+- **Watched-vs-Owned File Categorization via a Single `fenced=` Boolean on the Copy Function** (2026-05-31): When an installer manages files in two lifecycle categories — (A) "watched/fenced": managed region refreshed in place, user content BELOW the fence preserved byte-for-byte on update (INV-5); (B) "owned": fully overwritten on update, timestamped `.bak` on drift, no fence — model the split as ONE per-call boolean `fenced=` on the shared copy function, not two functions or a string enum. One code path, one audit trail, one place to fix fence logic. Callers pass `fenced=True` where the downstream user is expected to extend below the fence (agents, skills, CLAUDE.md), `fenced=False` for fully-owned trees (references, map scripts, hooks). JSON is always `fenced=False` because it has no comment syntax — ownership is signalled by a sentinel root key (in this repo, `_map_managed`) instead. [workflow: map-efficient]
+  ```python
+  def copy_managed_file(src, dest, version, *, fenced: bool = True): ...
+  copy_managed_file(s/"CLAUDE.md",     d/"CLAUDE.md",     version)               # watched
+  copy_managed_file(s/"host-paths.md", d/"host-paths.md", version, fenced=False) # owned
+  ```
+
+- **Preserve Executable Bits After an Atomic Temp-File Writer: chmod 0o755 After Every Managed Write of an Executable** (2026-05-31): A managed copier that writes atomically (write a temp file, then `os.replace()`/`Path.replace()` into place) sets the destination mode from the TEMP file's creation mode — typically `0o644` — discarding the source file's `+x`. Any `.sh` or hook/script `.py` installed via this path silently loses executability; the file is correct but `./script.sh` fails "Permission denied", often not surfacing until an integration test invokes it. Fix: after every managed write of a known-executable file (`.sh`, `hooks/*.py`, `scripts/*`), explicitly re-chmod to `0o755`. Do not rely on `shutil.copy2` or source-mode preservation through the atomic replace — the replace drops source metadata. Mirror the chmod in EVERY caller (map-tools, codex hooks, skill scripts). [workflow: map-efficient]
+  ```python
+  copy_managed_file(src, dest, version)
+  if src.suffix in (".sh", ".py") and dest.exists():
+      dest.chmod(dest.stat().st_mode | 0o755)
+  # test guard: assert os.access(installed_hook, os.X_OK)
+  ```

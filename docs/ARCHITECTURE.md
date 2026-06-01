@@ -489,8 +489,8 @@ Missing artifacts are recorded with `present: false` rather than omitted, so bun
   "language": "python",
   "suggested_checks": [
     "make check",
-    "pytest tests/test_template_sync.py -v",
-    "make sync-templates"
+    "pytest tests/test_template_render.py -v",
+    "make render-templates"
   ],
   "key_dirs": [
     "src",

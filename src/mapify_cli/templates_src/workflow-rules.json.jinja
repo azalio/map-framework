@@ -1,0 +1,105 @@
+{
+  "version": "1.0",
+  "description": "MAP workflow activation triggers",
+  "workflows": {
+    "map-debug": {
+      "priority": "high",
+      "description": "Debug issues, fix bugs, resolve test failures",
+      "executionPolicy": {
+        "thinking_policy": "medium/adaptive",
+        "parallel_tool_policy": "sequential_root_cause_first"
+      },
+      "promptTriggers": {
+        "keywords": [
+          "bug",
+          "error",
+          "failing test",
+          "broken",
+          "not working",
+          "issue",
+          "fix",
+          "debug"
+        ],
+        "intentPatterns": [
+          "(fix|debug|resolve).*?(bug|error|issue|test)",
+          "(why|what).*?(not working|failing|broken)",
+          "tests?.*?(fail|error)"
+        ]
+      },
+      "fileTriggers": {
+        "pathPatterns": [
+          "**/*.test.ts",
+          "**/*.test.py",
+          "**/*.spec.ts",
+          "**/tests/**"
+        ]
+      }
+    },
+    "map-efficient": {
+      "priority": "high",
+      "description": "Production features, refactoring, critical code (recommended default, 60-70% tokens)",
+      "executionPolicy": {
+        "thinking_policy": "medium/adaptive",
+        "parallel_tool_policy": "guarded_wave_only"
+      },
+      "promptTriggers": {
+        "keywords": [
+          "implement",
+          "add feature",
+          "new feature",
+          "create",
+          "build",
+          "critical",
+          "production",
+          "optimize",
+          "enhance",
+          "improve",
+          "update feature",
+          "refactor",
+          "restructure",
+          "reorganize",
+          "clean up",
+          "improve structure"
+        ],
+        "intentPatterns": [
+          "(implement|add|create|build).*?(feature|functionality)",
+          "new.*?(feature|component|module)",
+          "critical.*?(feature|implementation)",
+          "(optimize|enhance|improve).*?(feature|code|implementation)",
+          "production.*?(feature|deploy)",
+          "update.*?(feature|functionality)",
+          "(refactor|restructure|reorganize).*?(code|component|module)",
+          "clean.*?up.*?(code|structure)",
+          "improve.*?(structure|architecture)"
+        ]
+      }
+    },
+    "map-fast": {
+      "priority": "low",
+      "description": "Small, low-risk changes with reduced analysis (NO learning)",
+      "executionPolicy": {
+        "thinking_policy": "low/direct",
+        "parallel_tool_policy": "sequential_by_default"
+      },
+      "promptTriggers": {
+        "keywords": [
+          "quick",
+          "small change",
+          "minor",
+          "low risk",
+          "simple"
+        ],
+        "intentPatterns": [
+          "(quick|fast).*?(fix|change|update)",
+          "(small|minor).*?(fix|change|update)",
+          "low\\s+risk.*?(fix|change|update)"
+        ]
+      }
+    }
+  },
+  "notes": {
+    "priority_matching": "If multiple workflows match, suggest highest priority",
+    "session_tracking": "Track suggested workflows per session to avoid repeats",
+    "customization": "Add project-specific keywords and file patterns as needed"
+  }
+}

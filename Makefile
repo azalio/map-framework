@@ -1,4 +1,4 @@
-.PHONY: help test install clean build release dev-install lint format check sync-templates test-e2e test-e2e-sdk test-integration
+.PHONY: help test install clean build release dev-install lint format check check-render render-templates test-e2e test-e2e-sdk test-integration
 
 # Default target
 help:
@@ -13,7 +13,7 @@ help:
 	@echo "  build        Build distribution packages"
 	@echo "  release      Create a new release"
 	@echo "  check        Run all checks (lint + test)"
-	@echo "  sync-templates Sync .claude/ into src/ templates"
+	@echo "  render-templates Render templates_src/*.jinja into all generated trees (dev only)"
 	@echo "  test-e2e     Run e2e artifact contract tests (no LLM, fast)"
 	@echo "  test-e2e-sdk Run e2e tests with real Claude SDK (slow, needs API key)"
 	@echo "  test-integration Run integration tests (excludes slow SDK tests)"
@@ -56,10 +56,19 @@ format:
 	black src/ tests/
 	ruff check --fix src/ tests/
 
-check: lint test
+check: lint test check-render
 
-sync-templates:
-	./scripts/sync-templates.sh
+render-templates: ## Render templates_src/*.jinja into all generated trees (dev only)
+	uv run python -m mapify_cli.delivery.template_renderer claude
+	uv run python -m mapify_cli.delivery.template_renderer codex
+	@echo "✅ Templates rendered"
+
+check-render: ## Render templates_src and fail if committed generated trees are stale
+	# Non-destructive: renders into a tempdir and byte-compares against the
+	# committed trees. Never renders in place and never runs `git checkout`,
+	# so uncommitted hand-authored files (e.g. .claude/rules/learned/*-patterns.md,
+	# invariant D11) are NEVER reverted.
+	uv run python -m mapify_cli.delivery.template_renderer --check
 
 # Build and release
 clean:

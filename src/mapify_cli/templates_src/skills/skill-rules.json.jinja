@@ -1,0 +1,304 @@
+{
+  "version": "1.0",
+  "description": "Skill activation triggers for MAP Framework",
+  "skills": {
+    "map-state": {
+      "type": "domain",
+      "skillClass": "hybrid",
+      "enforcement": "suggest",
+      "priority": "medium",
+      "description": "File-based planning with branch-scoped task tracking",
+      "runtimeEffects": [
+        "hooks",
+        "branch-scoped .map artifacts"
+      ],
+      "promptTriggers": {
+        "keywords": [
+          "create plan",
+          "task plan",
+          "track progress",
+          "planning",
+          ".map directory",
+          "show task status",
+          "resume work"
+        ],
+        "intentPatterns": [
+          "(create|make|start).*(plan|planning)",
+          "(track|show|check).*(progress|status|tasks)",
+          "(resume|continue).*(work|task|plan)",
+          "\\.map.*(directory|folder|files)"
+        ]
+      }
+    },
+    "map-learn": {
+      "type": "manual",
+      "skillClass": "task",
+      "enforcement": "manual",
+      "priority": "medium",
+      "description": "Extract and persist workflow lessons to .claude/rules/learned/",
+      "promptTriggers": {
+        "keywords": [
+          "extract lessons",
+          "save patterns",
+          "learn from workflow",
+          "preserve learnings",
+          "map-learn",
+          "project memory",
+          "capture gotchas"
+        ],
+        "intentPatterns": [
+          "(extract|save|preserve|capture).*(lesson|pattern|learning|gotcha)",
+          "(learn|remember).*(workflow|session|implementation)",
+          "map-learn"
+        ]
+      }
+    },
+    "map-check": {
+      "type": "manual",
+      "skillClass": "task",
+      "enforcement": "manual",
+      "priority": "high",
+      "description": "Run quality gates (lint, types, tests) and verify MAP workflow completion.",
+      "promptTriggers": {
+        "keywords": [
+          "map-check",
+          "run checks",
+          "quality gates",
+          "verify workflow",
+          "validate completion"
+        ],
+        "intentPatterns": [
+          "map-check",
+          "(run|execute).*(check|gate|lint|test)"
+        ]
+      }
+    },
+    "map-debug": {
+      "type": "manual",
+      "skillClass": "task",
+      "enforcement": "manual",
+      "priority": "high",
+      "description": "Structured MAP debugging via task-decomposer, actor, monitor agents.",
+      "promptTriggers": {
+        "keywords": [
+          "map-debug",
+          "debug bug",
+          "diagnose error",
+          "isolate regression",
+          "reproduce bug"
+        ],
+        "intentPatterns": [
+          "map-debug",
+          "(debug|diagnose|isolate).*(bug|error|regression)"
+        ]
+      }
+    },
+    "map-explain": {
+      "type": "manual",
+      "skillClass": "task",
+      "enforcement": "manual",
+      "priority": "medium",
+      "description": "Deep code/PR explanation that builds a complete mental model — problem, entities, execution and data flow, line-by-line rationale, side effects, assumptions, breakage modes; for PRs also before/after behavior.",
+      "promptTriggers": {
+        "keywords": [
+          "map-explain",
+          "explain this code",
+          "explain this pr",
+          "explain this diff",
+          "mental model",
+          "walk me through",
+          "line by line"
+        ],
+        "intentPatterns": [
+          "map-explain",
+          "explain.*(code|file|function|class|module|pr|diff|commit)",
+          "(walk|teach) me through",
+          "build.*mental model",
+          "line.by.line"
+        ]
+      }
+    },
+    "map-efficient": {
+      "type": "manual",
+      "skillClass": "task",
+      "enforcement": "manual",
+      "priority": "high",
+      "description": "Token-efficient MAP workflow with state-machine orchestration.",
+      "promptTriggers": {
+        "keywords": [
+          "map-efficient",
+          "efficient workflow",
+          "state machine",
+          "full workflow",
+          "run map"
+        ],
+        "intentPatterns": [
+          "map-efficient",
+          "(run|execute).*(efficient|map workflow)"
+        ]
+      }
+    },
+    "map-fast": {
+      "type": "manual",
+      "skillClass": "task",
+      "enforcement": "manual",
+      "priority": "high",
+      "description": "Minimal MAP workflow for small low-risk changes (no Predictor/Reflector).",
+      "promptTriggers": {
+        "keywords": [
+          "map-fast",
+          "fast workflow",
+          "small change",
+          "quick task",
+          "low risk"
+        ],
+        "intentPatterns": [
+          "map-fast",
+          "(small|quick|fast).*(change|task)"
+        ]
+      }
+    },
+    "map-plan": {
+      "type": "manual",
+      "skillClass": "task",
+      "enforcement": "manual",
+      "priority": "high",
+      "description": "ARCHITECT phase: decompose a complex task into atomic subtasks.",
+      "promptTriggers": {
+        "keywords": [
+          "map-plan",
+          "decompose task",
+          "task plan",
+          "subtasks",
+          "architect phase"
+        ],
+        "intentPatterns": [
+          "map-plan",
+          "(decompose|plan|break down).*(task|feature|work)"
+        ]
+      }
+    },
+    "map-release": {
+      "type": "manual",
+      "skillClass": "task",
+      "enforcement": "manual",
+      "priority": "high",
+      "description": "Execute mapify-cli package release workflow with validation gates.",
+      "promptTriggers": {
+        "keywords": [
+          "map-release",
+          "release workflow",
+          "publish package",
+          "ship release",
+          "pypi release"
+        ],
+        "intentPatterns": [
+          "map-release",
+          "(ship|publish|release).*(package|version|pypi)"
+        ]
+      }
+    },
+    "map-resume": {
+      "type": "manual",
+      "skillClass": "task",
+      "enforcement": "manual",
+      "priority": "high",
+      "description": "Resume an interrupted MAP workflow from step_state.json checkpoint.",
+      "promptTriggers": {
+        "keywords": [
+          "map-resume",
+          "resume workflow",
+          "continue map",
+          "checkpoint recovery",
+          "restart workflow"
+        ],
+        "intentPatterns": [
+          "map-resume",
+          "(resume|continue|restart).*(workflow|map|checkpoint)"
+        ]
+      }
+    },
+    "map-review": {
+      "type": "manual",
+      "skillClass": "task",
+      "enforcement": "manual",
+      "priority": "high",
+      "description": "Interactive code review using Monitor, Predictor, Evaluator agents.",
+      "promptTriggers": {
+        "keywords": [
+          "map-review",
+          "code review",
+          "review changes",
+          "review diff",
+          "pre-merge review"
+        ],
+        "intentPatterns": [
+          "map-review",
+          "(review|audit).*(code|change|diff|pr)"
+        ]
+      }
+    },
+    "map-task": {
+      "type": "manual",
+      "skillClass": "task",
+      "enforcement": "manual",
+      "priority": "high",
+      "description": "Execute a single subtask from an existing MAP plan.",
+      "promptTriggers": {
+        "keywords": [
+          "map-task",
+          "single subtask",
+          "run subtask",
+          "execute subtask",
+          "one task"
+        ],
+        "intentPatterns": [
+          "map-task",
+          "(run|execute).*(subtask|single task)"
+        ]
+      }
+    },
+    "map-tdd": {
+      "type": "manual",
+      "skillClass": "task",
+      "enforcement": "manual",
+      "priority": "high",
+      "description": "TDD MAP workflow: spec-driven tests written before implementation.",
+      "promptTriggers": {
+        "keywords": [
+          "map-tdd",
+          "tdd workflow",
+          "test first",
+          "spec driven tests",
+          "test driven"
+        ],
+        "intentPatterns": [
+          "map-tdd",
+          "(test.first|tdd|spec.driven).*(workflow|develop)"
+        ]
+      }
+    },
+    "map-tokenreport": {
+      "type": "manual",
+      "skillClass": "task",
+      "enforcement": "manual",
+      "priority": "medium",
+      "description": "Render per-subtask/agent token accounting (tokens, cache, cost, cache-hit ratio) for the current branch.",
+      "promptTriggers": {
+        "keywords": [
+          "map-tokenreport",
+          "token report",
+          "token usage",
+          "token accounting",
+          "run cost",
+          "cache hit ratio"
+        ],
+        "intentPatterns": [
+          "map-tokenreport",
+          "(token|run).*(report|usage|accounting|cost|spent)",
+          "cache.hit.ratio"
+        ]
+      }
+    }
+  }
+}

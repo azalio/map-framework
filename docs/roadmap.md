@@ -68,7 +68,7 @@ since moved further toward skill-backed slash surfaces:
 - `/map-learn` is skill-first.
 - MAP command files under `src/mapify_cli/templates/commands/map-*.md` should not return.
 - `skill-rules.json` classifies each shipped skill as `task`, `reference`, or `hybrid`; `map-state` is the only current hybrid because it also declares hook/script runtime effects.
-- `tests/test_template_sync.py` enforces that MAP slash surfaces live in skills.
+- `tests/test_template_render.py` enforces that generated template trees match the `.jinja` sources.
 
 The practical implication: future roadmap items should point at
 `src/mapify_cli/templates/skills/map-*/SKILL.md` and, where applicable,
@@ -194,7 +194,7 @@ mask structural gaps in review and subtask contracts.
 - [src/mapify_cli/templates/codex/skills/](../src/mapify_cli/templates/codex/skills/)
 - [src/mapify_cli/templates/hooks/workflow-context-injector.py](../src/mapify_cli/templates/hooks/workflow-context-injector.py)
 - [tests/test_skills.py](../tests/test_skills.py)
-- [tests/test_template_sync.py](../tests/test_template_sync.py)
+- [tests/test_template_render.py](../tests/test_template_render.py)
 
 ### Exit Criteria
 
@@ -276,10 +276,10 @@ artifacts; advanced orchestration ideas are useful only if they are measured.
 ## Practical Execution Notes
 
 - If `.claude/skills/`, `.claude/hooks/`, or shared templates change, keep them synchronized with `src/mapify_cli/templates/`.
-- Preferred sync path: `make sync-templates`.
+- Preferred render path: `make render-templates` (propagates `.jinja` sources to all generated trees).
 - MAP slash surfaces should live under `src/mapify_cli/templates/skills/map-*/SKILL.md`.
 - Codex-specific behavior should be mirrored under `src/mapify_cli/templates/codex/skills/` only where the Codex provider supports that surface.
-- Keep `tests/test_template_sync.py` green; it enforces that MAP command files do not return.
+- Keep `tests/test_template_render.py` green; it enforces byte-identity between templates_src renders and committed generated trees.
 - For runtime/artifact changes, add focused tests next to:
   - [tests/test_map_orchestrator.py](../tests/test_map_orchestrator.py)
   - [tests/test_map_step_runner.py](../tests/test_map_step_runner.py)

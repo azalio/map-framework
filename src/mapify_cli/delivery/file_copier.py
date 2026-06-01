@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import shutil
-import sys
 from pathlib import Path
 from typing import List
 
@@ -24,17 +22,6 @@ from mapify_cli.delivery.agent_generator import (
 
 _IGNORED_TEMPLATE_NAMES = {"__pycache__", ".DS_Store"}
 _IGNORED_TEMPLATE_SUFFIXES = {".pyc", ".pyo"}
-
-
-def _ignore_generated_template_artifacts(
-    _directory: str, names: list[str]
-) -> set[str]:
-    """Ignore Python/cache artifacts if a dirty template tree reaches install time."""
-    ignored: set[str] = set()
-    for name in names:
-        if name in _IGNORED_TEMPLATE_NAMES or Path(name).suffix in _IGNORED_TEMPLATE_SUFFIXES:
-            ignored.add(name)
-    return ignored
 
 
 def _get_version() -> str:
@@ -144,7 +131,8 @@ def create_reference_files(
         version = _get_version()
         for ref_file in references_template_dir.glob("*.md"):
             dest_file = references_dir / ref_file.name
-            result = copy_managed_file(ref_file, dest_file, version)
+            # References are fully MAP-owned — overwrite on update (no fence).
+            result = copy_managed_file(ref_file, dest_file, version, fenced=False)
             if drift_report is not None:
                 drift_report.results.append(result)
             count += 1
@@ -162,6 +150,7 @@ def create_command_files(
     This function creates only the commands directory with a README
     pointing users at the skill-backed surfaces.
     """
+    del drift_report  # accepted for caller API compatibility; not used here
     create_commands_dir(project_path)
     return 0
 
@@ -182,62 +171,71 @@ def create_skill_files(project_path: Path) -> int:
     count = 0
 
     if skills_template_dir.exists():
-        # Copy README.md and skill-rules.json to .claude/skills/
-        if (skills_template_dir / "README.md").exists():
-            shutil.copy2(skills_template_dir / "README.md", skills_dir / "README.md")
+        version = _get_version()
 
-        if (skills_template_dir / "skill-rules.json").exists():
-            shutil.copy2(
-                skills_template_dir / "skill-rules.json",
-                skills_dir / "skill-rules.json",
-            )
+        # Top-level skill catalog files (README.md, skill-rules.json).
+        for top_name in ("README.md", "skill-rules.json"):
+            top_src = skills_template_dir / top_name
+            if top_src.exists():
+                _install_managed_file(top_src, skills_dir / top_name, version)
 
-        # Copy each skill directory
+        # Copy each skill directory, fence-aware per file (watched category).
         for skill_template in skills_template_dir.iterdir():
             if skill_template.is_dir() and skill_template.name != "__pycache__":
-                target = skills_dir / skill_template.name
-                shutil.copytree(
-                    skill_template,
-                    target,
-                    dirs_exist_ok=True,
-                    ignore=_ignore_generated_template_artifacts,
-                )
+                _install_managed_tree(skill_template, skills_dir / skill_template.name, version)
                 count += 1
 
     return count
 
 
-def _copy_map_path(src: Path, dest: Path) -> int:
-    """Copy a path from map templates to .map/ and mark scripts executable."""
-    if dest.exists():
-        try:
-            if dest.is_dir():
-                shutil.rmtree(dest)
-            else:
-                dest.unlink()
-        except (OSError, PermissionError) as e:
-            print(
-                f"Warning: Could not remove existing {dest}: {e}",
-                file=sys.stderr,
-            )
-    if src.is_dir():
-        shutil.copytree(
-            src,
-            dest,
-            dirs_exist_ok=True,
-            ignore=_ignore_generated_template_artifacts,
-        )
-    else:
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dest)
+def _install_managed_file(src: Path, dest: Path, version: str) -> None:
+    """Install a single watched file fence-aware, preserving executable bits."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    copy_managed_file(src, dest, version)
+    if src.suffix in (".sh", ".py") and dest.exists():
+        dest.chmod(dest.stat().st_mode | 0o755)
 
+
+def _install_managed_tree(src_dir: Path, dest_dir: Path, version: str) -> None:
+    """Recursively install a directory of watched files via copy_managed_file."""
+    for src in sorted(src_dir.rglob("*")):
+        if not src.is_file():
+            continue
+        if src.name in _IGNORED_TEMPLATE_NAMES or src.suffix in _IGNORED_TEMPLATE_SUFFIXES:
+            continue
+        rel = src.relative_to(src_dir)
+        _install_managed_file(src, dest_dir / rel, version)
+
+
+def _copy_map_path(src: Path, dest: Path, version: str) -> int:
+    """Install a map-tools path into .map/ fully-managed (fenced=False), +x scripts.
+
+    MAP runtime scripts/static-analysis are MAP-owned: overwrite on update with a
+    .bak.<ts> on drift (Phase B behavior), never fence them.  Executable bits are
+    restored after the metadata-injecting write.
+    """
     count = 0
-    script_targets = [dest] if dest.is_file() else list(dest.rglob("*"))
-    for script in script_targets:
-        if script.is_file() and script.suffix in (".sh", ".py"):
-            script.chmod(script.stat().st_mode | 0o755)
-            count += 1
+    if src.is_dir():
+        for child in sorted(src.rglob("*")):
+            if not child.is_file():
+                continue
+            if child.name in _IGNORED_TEMPLATE_NAMES or child.suffix in _IGNORED_TEMPLATE_SUFFIXES:
+                continue
+            rel = child.relative_to(src)
+            count += _install_map_file(child, dest / rel, version)
+    else:
+        count += _install_map_file(src, dest, version)
     return count
+
+
+def _install_map_file(src: Path, dest: Path, version: str) -> int:
+    """Install one MAP-owned file (overwrite mode) and mark scripts executable."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    copy_managed_file(src, dest, version, fenced=False)
+    if src.suffix in (".sh", ".py") and dest.exists():
+        dest.chmod(dest.stat().st_mode | 0o755)
+        return 1
+    return 0
 
 
 def create_map_tools(project_path: Path) -> int:
@@ -250,8 +248,9 @@ def create_map_tools(project_path: Path) -> int:
 
     count = 0
     if map_template_dir.exists():
+        version = _get_version()
         for item in map_template_dir.iterdir():
-            count += _copy_map_path(item, map_dir / item.name)
+            count += _copy_map_path(item, map_dir / item.name, version)
 
     return count
 

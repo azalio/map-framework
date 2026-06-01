@@ -440,7 +440,11 @@ class TestSkillStructure:
                 reference_file = base_dir / skill_name / reference_name
                 content = skill_file.read_text(encoding="utf-8")
 
-                assert len(content.splitlines()) <= 500, (
+                # Budget bumped from 500 → 502: C2 fence addition (ST-011) added
+                # <!-- map:start --> and <!-- map:end --> (2 lines) to every SKILL.md.
+                # Do NOT remove content to fit — bump the budget instead (per learned rule
+                # 'always-loaded skill body line budget').
+                assert len(content.splitlines()) <= 502, (
                     f"{skill_file} should keep the active workflow path compact; "
                     "move examples, rationale, and troubleshooting into supporting files."
                 )
@@ -770,11 +774,11 @@ class TestSkillStructure:
             if not target.exists():
                 pytest.fail(
                     f"Skill '{folder}/SKILL.md' missing from templates. "
-                    f"Run: make sync-templates"
+                    f"Run: make render-templates"
                 )
             assert source.read_text() == target.read_text(), (
                 f"Skill '{folder}/SKILL.md' differs between .claude/skills/ and templates/skills/. "
-                f"Run: make sync-templates"
+                f"Run: make render-templates"
             )
 
     def test_skill_rules_in_sync(self, skills_dir, template_skills_dir):
@@ -788,7 +792,7 @@ class TestSkillStructure:
             pytest.skip("skill-rules.json missing from one location")
         assert source.read_text() == target.read_text(), (
             "skill-rules.json differs between .claude/skills/ and templates/skills/. "
-            "Run: make sync-templates"
+            "Run: make render-templates"
         )
 
     def test_skill_supporting_files_in_sync(self, skills_dir, template_skills_dir):
@@ -822,7 +826,7 @@ class TestSkillStructure:
             target = target_files[rel_path]
             assert source.read_bytes() == target.read_bytes(), (
                 f"Skill supporting file '{rel_path}' differs between .claude/skills/ "
-                "and templates/skills/. Run: make sync-templates"
+                "and templates/skills/. Run: make render-templates"
             )
 
     # --- Validation script tests ---

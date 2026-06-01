@@ -101,6 +101,7 @@ class TestTemplates:
     @mock.patch("importlib.resources.files", side_effect=Exception("Not found"))
     def test_get_templates_dir_fallback(self, mock_files):
         """Test fallback to module directory."""
+        del mock_files  # side_effect fires on call; mock object itself not needed
         # This will use the actual module directory fallback
         result = get_templates_dir()
         assert result.exists()
@@ -108,6 +109,7 @@ class TestTemplates:
     @mock.patch("importlib.resources.files", side_effect=Exception("Not found"))
     def test_get_templates_dir_not_found(self, mock_files):
         """Test error when templates not found anywhere."""
+        del mock_files  # side_effect fires on call; mock object itself not needed
         # Mock Path methods to simulate templates not existing
         with mock.patch("pathlib.Path.exists", return_value=False):
             with pytest.raises(RuntimeError, match="Templates directory not found"):
@@ -1004,22 +1006,31 @@ class TestCreateMapTools:
         for script in handlers_dir.glob("*.sh"):
             assert script.stat().st_mode & 0o111, f"{script.name} should be executable"
 
-    def test_create_map_tools_overwrites_existing(self, tmp_path):
-        """Test that existing static-analysis directory is replaced."""
-        # Create existing .map structure with a marker file
+    def test_create_map_tools_refreshes_managed_scripts(self, tmp_path):
+        """Managed scripts are (over)written; unrelated user files are preserved.
+
+        Phase C2: map tools are MAP-owned and installed per-file via
+        copy_managed_file(fenced=False) rather than a whole-directory rmtree.
+        That refreshes the managed scripts in place but no longer destroys
+        unrelated files a user may have dropped into .map/static-analysis/.
+        """
         map_dir = tmp_path / ".map" / "static-analysis"
         map_dir.mkdir(parents=True)
-        marker_file = map_dir / "old_marker.txt"
-        marker_file.write_text("old content")
+        # A stale copy of a managed script (different content) should be refreshed.
+        stale_managed = map_dir / "analyze.sh"
+        stale_managed.write_text("#!/usr/bin/env bash\n# stale\n")
+        # An unrelated user file should NOT be destroyed (no whole-dir wipe).
+        user_file = map_dir / "my_notes.txt"
+        user_file.write_text("user content")
 
-        # Run create_map_tools
         create_map_tools(tmp_path)
 
-        # Marker file should be gone (directory was replaced)
-        assert not marker_file.exists()
-
-        # New scripts should exist
-        assert (tmp_path / ".map" / "static-analysis" / "analyze.sh").exists()
+        # Managed script refreshed to shipped content (no longer "stale").
+        assert stale_managed.exists()
+        assert "stale" not in stale_managed.read_text()
+        # Unrelated user file preserved.
+        assert user_file.exists()
+        assert user_file.read_text() == "user content"
 
     def test_create_map_tools_returns_script_count(self, tmp_path):
         """Test that function returns correct count of scripts."""
@@ -1271,13 +1282,13 @@ class TestCodexProvider:
     def test_ac08_template_sync_enforced(self):
         """AC-8: Codex templates must be present in src/mapify_cli/templates/codex/.
 
-        The exhaustive sync check lives in tests/test_template_sync.py (ST-008).
+        The exhaustive render-parity check lives in tests/test_template_render.py.
         This test is a quick smoke check that the directory exists and is non-empty.
         """
         codex_templates = get_templates_dir() / "codex"
         assert (
             codex_templates.exists()
-        ), "templates/codex/ must exist (sync enforced by test_template_sync.py)"
+        ), "templates/codex/ must exist (render enforced by test_template_render.py)"
         all_files = list(codex_templates.rglob("*"))
         template_files = [f for f in all_files if f.is_file()]
         assert (

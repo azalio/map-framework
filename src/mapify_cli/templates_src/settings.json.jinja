@@ -1,0 +1,198 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "description": "MAP Framework project-level settings with security guardrails",
+  "permissions": {
+    "deny": [
+      "Write(./.env*)",
+      "Write(**/*credentials*)",
+      "Write(**/*secret*)",
+      "Edit(./.env*)",
+      "Edit(**/*credentials*)",
+      "Edit(**/*secret*)",
+      "Bash(rm -rf)",
+      "Bash(git push --force origin main)",
+      "Bash(git push --force origin master)",
+      "Bash(git reset --hard)"
+    ],
+    "allow": [
+      "Edit(.claude/agents/*)",
+      "Edit(.claude/commands/*)",
+      "Edit(.claude/references/*)",
+      "Write(.claude/agents/*)",
+      "Write(.claude/commands/*)",
+      "Write(.claude/references/*)",
+      "Bash(mapify *)",
+      "Bash(pytest *)",
+      "Bash(make lint)",
+      "Bash(make test)",
+      "Bash(ruff *)",
+      "Bash(black *)",
+      "Bash(git status)",
+      "Bash(git diff)",
+      "Bash(git log)",
+      "Bash(git branch)",
+      "Bash(git rev-parse *)",
+      "Bash(git add)",
+      "Bash(git commit)",
+      "Bash(helm template *)",
+      "Bash(go vet *)",
+      "Bash(gofmt *)",
+      "Bash(kubectl get *)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "description": "Post-Compact Context - inject transcript path and workflow state after compaction",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/post-compact-context.py",
+            "timeout": 5,
+            "description": "Tells Claude where to find the pre-compaction transcript and workflow state"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|Read|MultiEdit|Bash",
+        "description": "Safety Guardrails - block sensitive files and dangerous commands",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/safety-guardrails.py",
+            "timeout": 5,
+            "description": "Blocks .env, credentials, private keys, and dangerous bash commands"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "description": "Workflow Gate - enforce Actor+Monitor before edits (MAP)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/workflow-gate.py",
+            "timeout": 5,
+            "description": "Blocks Edit/Write/MultiEdit until workflow_state indicates Actor+Monitor completed"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit|Bash",
+        "description": "Workflow Context Injection (Tiered) - inject reminders for significant operations",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/workflow-context-injector.py",
+            "timeout": 3,
+            "description": "Injects workflow context only for Edit/Write/MultiEdit and significant Bash commands"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|Bash",
+        "description": "Iteration Logger - logs tool calls, detects thrashing patterns",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/ralph-iteration-logger.py",
+            "timeout": 5,
+            "description": "Logs iterations to .map/<branch>/iteration_log.jsonl, alerts on file thrashing"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "*",
+        "description": "Anti-Amnesia Hook - save state and prune logs before compaction",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/ralph-context-pruner.py",
+            "timeout": 10,
+            "description": "Saves workflow restore point and prunes old logs"
+          }
+        ]
+      },
+      {
+        "matcher": "*",
+        "description": "Transcript Saver - save full conversation to .map/ before compaction",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/pre-compact-save-transcript.py",
+            "timeout": 30,
+            "description": "Saves full transcript as readable markdown to .map/<branch>/transcript-YYYY-MM-DD-HH-MM.md"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "description": "MAP Token Meter - attribute sub-agent token usage to the active subtask",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/map-token-meter.py",
+            "timeout": 5,
+            "description": "Reads the finished sub-agent transcript and records input/output/cache tokens to .map/<branch>/token_log.jsonl + token_accounting.json"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "description": "Lightweight quality gates - only critical issues",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/end-of-turn.sh",
+            "timeout": 30,
+            "description": "Auto-fixes silently, only reports secrets/syntax errors"
+          }
+        ]
+      },
+      {
+        "description": "MAP Token Meter - sweep main-session token usage at turn end",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/map-token-meter.py",
+            "timeout": 5,
+            "description": "Records main-session input/output/cache tokens (dedup by msg_id) into the branch token accounting artifacts"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "description": "Clarification & Durability Trigger Detection",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/detect-clarification-triggers.py",
+            "timeout": 3,
+            "description": "Detects user-invited clarification language and async/durability language; injects guidance for /map-plan and task-decomposer"
+          }
+        ]
+      },
+      {
+        "description": "Context Meter - inject /compact nudge when token threshold crossed",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/context-meter.py",
+            "timeout": 5,
+            "description": "Reads transcript token usage; if compression_policy=auto/aggressive and threshold crossed, injects additionalContext suggesting /compact"
+          }
+        ]
+      }
+    ]
+  }
+}

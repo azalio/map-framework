@@ -54,6 +54,7 @@ build-backend = "hatchling.build"
 include = [
     "src/**/*.py",
     "src/mapify_cli/templates/**/*",
+    "src/mapify_cli/templates_src/**/*.jinja",
     "README.md",
 ]
 exclude = [
@@ -62,9 +63,27 @@ exclude = [
     "**/*.pyo",
     "**/.DS_Store",
 ]
+artifacts = [
+    "src/mapify_cli/templates/**/*",
+    "src/mapify_cli/templates_src/**/*.jinja",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mapify_cli"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/mapify_cli/templates_src" = "mapify_cli/templates_src"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/**/*.py",
+    "src/mapify_cli/templates/**/*",
+    "src/mapify_cli/templates_src/**/*.jinja",
+    "tests/**/*",
+    "README.md",
+    "LICENSE",
+    "pyproject.toml",
+]
 
 [tool.mypy]
 ignore_missing_imports = false

@@ -48,20 +48,19 @@
           return create_codex_files(project_path)  # handles .map/scripts/ internally
   ```
 
-- **Dual-Copy Template-Sync Testability Invariant** (2026-05-27): When a project ships a template copy of runtime code (e.g., `src/mapify_cli/templates/map/scripts/`) that is ALSO the copy imported by pytest, code changes in the dev copy (`.map/scripts/`) are invisible to the test suite until an explicit sync command (`make sync-templates`) is run. Document this as a named invariant and enforce it mechanically: run sync before tests, or add a CI step that diffs the two copies and fails on divergence. Without the documented invariant, developers iterate on the dev copy, run tests, see failures, and spend time debugging the wrong copy. [workflow: map-efficient]
+- **Single-Source Render Testability Invariant** (2026-05-27, updated 2026-05-31): When a project generates multiple output trees (`.claude/`, `.codex/`, `src/mapify_cli/templates/`, `.agents/skills/`) from a single `.jinja` source tree (`src/mapify_cli/templates_src/`), changes to a `.jinja` source are invisible to all generated consumers until `make render-templates` is run. Document this as a named invariant and enforce it mechanically: always run `make render-templates` before tests (or before commit), and wire `make check-render` into CI to fail on stale generated trees. Without the invariant, developers edit a source file, run tests, see failures, and spend time debugging the generated copies that still hold the old content. [workflow: map-efficient]
   ```bash
-  # WRONG — edit dev copy, run tests, observe mysterious failures:
-  vim .map/scripts/map_step_runner.py
-  pytest tests/test_map_step_runner.py  # imports from templates/ — sees OLD code!
+  # WRONG — edit .jinja source, run tests, observe mysterious failures:
+  vim src/mapify_cli/templates_src/CLAUDE.md.jinja
+  pytest tests/test_template_render.py  # generated .claude/CLAUDE.md is still OLD!
 
-  # CORRECT — sync first, then test:
-  vim .map/scripts/map_step_runner.py
-  make sync-templates                   # mirrors dev -> templates/
-  pytest tests/test_map_step_runner.py  # now sees the updated copy
+  # CORRECT — render first, then test:
+  vim src/mapify_cli/templates_src/CLAUDE.md.jinja
+  make render-templates                 # propagates .jinja -> all generated trees
+  pytest tests/test_template_render.py  # now sees the updated copies
 
-  # CI enforcement: add diff gate to Makefile check target:
-  # diff -q .map/scripts/map_step_runner.py \
-  #   src/mapify_cli/templates/map/scripts/map_step_runner.py
+  # CI enforcement (already wired into `make check` via check-render target):
+  make check-render   # renders + git diff --exit-code; fails on any stale output
   ```
 
 - **Single-Source Schema Dict with Derived Consumer Lists** (2026-05-27): When multiple consumers (monitor, predictor, evaluator, retry-prompt builder) each need the required fields for a shared agent output format, define ONE module-level dict as the authority and derive ALL per-consumer field lists from it via comprehension. Never let consumers maintain their own hardcoded lists — they drift silently. A field added to the schema for monitor is not added to the retry-prompt builder, so the retry prompt asks for a field the retry validator never checks. The dict also serves as the skeleton source for prompt injection. This is the intra-module application of the existing 'Contract-First Inter-Component JSON Schemas' rule. [workflow: map-efficient]
@@ -147,16 +146,18 @@
                         "flapping). Check TaskList before re-sending.")
   ```
 
-- **N-Copy Artifact Parity Requires a Byte-Identical Diff Gate Across All Trees** (2026-05-30): When a file exists in N>2 locations that must stay identical (e.g., `workflow-gate.py` in `.claude/hooks/`, `.codex/hooks/`, and their two `src/mapify_cli/templates/` mirrors), a named sync step alone is insufficient — any one copy drifts silently if the developer edits only the most obvious dev tree. This repo has TWO dev trees (`.claude` + `.codex`) that each feed a templates mirror, so a single hook is 4 copies. Editing only `.claude` leaves `.codex` and both mirrors drifted. Enforce parity mechanically: after editing EITHER dev tree run `make sync-templates`, then `diff -q` every copy against the canonical source and fail on any divergence. Generalizes the existing two-copy "Dual-Copy Template-Sync Testability Invariant" to the N-copy case. [workflow: map-efficient]
+- **N-Output-Tree Parity Requires a Render Gate, Not Manual Copies** (2026-05-30, updated 2026-05-31): When a file must appear identically in N>2 output locations (e.g., `workflow-gate.py` rendered into `.claude/hooks/`, `.codex/hooks/`, `src/mapify_cli/templates/hooks/`, and `src/mapify_cli/templates/codex/hooks/`), manual copy-paste across trees is fragile — any tree drifts silently if the developer edits only the `.jinja` source without re-rendering, or edits a generated output directly. Correct approach: keep ONE `.jinja` source in `templates_src/`, run `make render-templates` to propagate, and enforce parity via `make check-render` (renders + `git diff --exit-code` over all generated trees). Never edit a generated output directly. Generalizes the "Single-Source Render Testability Invariant" to the N-output-tree case. [workflow: map-efficient]
   ```bash
-  # Correct edit workflow for the 4-copy hook:
-  vim .claude/hooks/workflow-gate.py
-  cp .claude/hooks/workflow-gate.py .codex/hooks/workflow-gate.py  # both dev trees
-  make sync-templates                                              # mirror -> templates/
-  # Byte-identical gate (wire into `make check`):
-  for c in .codex/hooks/workflow-gate.py \
-           src/mapify_cli/templates/hooks/workflow-gate.py \
-           src/mapify_cli/templates/codex/hooks/workflow-gate.py; do
-    diff -q .claude/hooks/workflow-gate.py "$c" || { echo "PARITY FAIL: $c"; exit 1; }
-  done
+  # Correct edit workflow for the 4-output hook:
+  vim src/mapify_cli/templates_src/hooks/workflow-gate.py.jinja  # ONE source of truth
+  make render-templates   # propagates to .claude/, .codex/, both templates/ mirrors
+  make check-render       # byte-identical gate (already wired into `make check`)
+  git add -p              # stage only the intentional delta
+  ```
+
+- **Install-Time Marker Double-Application: Source Artifacts Must Not Pre-Contain Installer Output** (2026-05-31): When an install step is responsible for injecting a structural marker (e.g. `map:start`/`map:end` fences, a generated header, a version stamp) into a file at install time, the source artifact the installer consumes must NOT already contain that marker. If the marker is pre-baked into the source (injected into a `.jinja` template or a `templates_src` file) AND the installer also wraps the content, every installed file ends up with TWO marker pairs; a parser expecting exactly one pair sees malformed/duplicate structure, fails, and falls back to a safe-but-wrong default (e.g. treating the whole file as user-owned and silently skipping the managed refresh). Invariant: a transformation that is the installer's responsibility has exactly one application site — the installer. Keep source + generated trees marker-free; the installer adds the marker once at write time. Generalises to any idempotency concern where a transform has two application sites. [workflow: map-efficient]
+  ```python
+  # WRONG: fence baked into template AND added by copier -> double fence -> parse fallback
+  # CORRECT: templates_src is fence-free; copier injects exactly once:
+  wrapped = f"# map:start\n{rendered}\n# map:end\n" if fenced else rendered
   ```

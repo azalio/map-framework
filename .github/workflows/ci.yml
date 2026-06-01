@@ -90,10 +90,16 @@ jobs:
         which mypy > /dev/null 2>&1 && mypy src/ || echo "Mypy not installed, skipping"
         which pyright > /dev/null 2>&1 && pyright src/ || echo "Pyright not installed, skipping"
 
+    - name: Install uv
+      run: pip install uv
+
+    - name: Render parity check
+      run: make check-render
+
     - name: Run Codex provider regression checks
       run: |
         python -m pytest -v \
-          tests/test_template_sync.py::TestCodexTemplateSynchronization \
+          tests/test_template_render.py::TestRenderRepoTreesCodex \
           tests/test_mapify_cli.py::TestCodexProvider
 
     - name: Run tests

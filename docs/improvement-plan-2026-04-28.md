@@ -101,7 +101,7 @@ failures or prevents the same class.
 
 Every change to `.claude/` MUST be mirrored to
 `src/mapify_cli/templates/` per the repo's template-sync invariant.
-Run `make sync-templates` then `pytest tests/test_template_sync.py -v`
+Run `make render-templates` then `pytest tests/test_template_render.py -v`
 to verify.
 
 ### P0 — direct fixes for the diagnosed failures
@@ -341,8 +341,8 @@ These are tempting but premature given the trigger:
 
 1. Land **P0.1, P0.2, P0.3, P0.4, P0.5** as one PR. Each is a small
    text edit, all in `.claude/` plus the matching `src/mapify_cli/templates/`
-   files. Verify with `make sync-templates` and
-   `pytest tests/test_template_sync.py -v`.
+   files. Verify with `make render-templates` and
+   `pytest tests/test_template_render.py -v`.
 2. **P2.1, P2.2, P2.3** — frontmatter and hook-exit-code hygiene. Same
    PR or a follow-up of the same shape; small mechanical edits.
 3. **P1.1** — new `UserPromptSubmit` hook. Standalone PR. Includes the

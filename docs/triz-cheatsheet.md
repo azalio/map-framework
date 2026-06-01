@@ -58,7 +58,7 @@ Each row gives the principle name, a short essence in MAP-relevant language, and
 |---|-----------|---------|-------------|
 | 17 | Another dimension | Lift from a list into a graph or surface. | Architecture Graph block in spec; `dependency_graph.py` as a richer view of the subtask list. |
 | 18 | Mechanical oscillation | Periodic ping. | Heartbeat hooks — currently absent; natural fit for long-running workflows. |
-| 19 | Periodic action | Replace continuous load with pulses. | Batched template sync via `make sync-templates` instead of per-edit copy; nightly playbook compaction (potential). |
+| 19 | Periodic action | Replace continuous load with pulses. | Batched template render via `make render-templates` instead of per-edit copy; nightly playbook compaction (potential). |
 | 20 | Continuity of useful action | No idle time. | `MapWorkflowLogger` streams structured events as work happens; `/map-resume` keeps no gap on session boundary. |
 | 21 | Skipping | Move through the dangerous phase fast. | Workflow-fit off-ramp: `direct-edit` and `map-fast` skip the long path when MAP overhead isn't justified. |
 | 22 | Harm into benefit | Turn the failure mode into a useful signal. | Pre-existing surfaced failures → CLARIFICATION_NEEDED (rather than silent suppression); Monitor rejections logged for Reflector. |
