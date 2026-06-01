@@ -64,13 +64,11 @@ render-templates: ## Render templates_src/*.jinja into all generated trees (dev 
 	@echo "✅ Templates rendered"
 
 check-render: ## Render templates_src and fail if committed generated trees are stale
-	uv run python -m mapify_cli.delivery.template_renderer claude
-	uv run python -m mapify_cli.delivery.template_renderer codex
-	@git diff --exit-code -- src/mapify_cli/templates .claude .codex .agents/skills \
-	  || { echo "❌ Generated trees are stale — run 'make render-templates' and commit"; \
-	       git checkout -- src/mapify_cli/templates .claude .codex .agents/skills; exit 1; }
-	@git checkout -- src/mapify_cli/templates .claude .codex .agents/skills
-	@echo "✅ Generated trees match templates_src"
+	# Non-destructive: renders into a tempdir and byte-compares against the
+	# committed trees. Never renders in place and never runs `git checkout`,
+	# so uncommitted hand-authored files (e.g. .claude/rules/learned/*-patterns.md,
+	# invariant D11) are NEVER reverted.
+	uv run python -m mapify_cli.delivery.template_renderer --check
 
 # Build and release
 clean:

@@ -593,6 +593,90 @@ def render_repo_trees(
 
 
 # ---------------------------------------------------------------------------
+# Stale-tree verification (non-destructive check-render gate)
+# ---------------------------------------------------------------------------
+
+# Committed generated trees gated by ``check-render``.  Relative to repo root.
+# The comparison set is exactly the files render_repo_trees() writes under
+# these roots — so hand-authored, NON-rendered files that happen to live under
+# one of them (e.g. ``.claude/rules/learned/*-patterns.md``, invariant D11) are
+# never gated and never touched.
+_GATE_TREE_RELPATHS: tuple[str, ...] = (
+    "src/mapify_cli/templates",
+    ".claude",
+    ".codex",
+    ".agents/skills",
+)
+
+
+def diff_rendered_trees(
+    provider: str,
+    *,
+    repo_root: Path | None = None,
+    templates_src_root: Path | None = None,
+) -> list[Path]:
+    """Return committed gate-tree files that differ from a fresh render.
+
+    Renders *provider* into a throwaway ``TemporaryDirectory`` (``repo_root``
+    = the temp dir) and byte-compares every rendered file against its
+    committed counterpart in the real repo.  This is the NON-DESTRUCTIVE
+    replacement for the old ``check-render`` gate, which rendered in place
+    then ran ``git checkout -- .claude .codex …`` to restore — silently
+    reverting ANY uncommitted change under those trees, including
+    hand-authored, non-rendered files (invariant D11).
+
+    Because only the files ``render_repo_trees()`` actually produces are
+    compared (scoped to ``_GATE_TREE_RELPATHS``), unmanaged files are
+    invisible to this check and the real working tree is never mutated.
+
+    A rendered file that is missing in the real repo, or whose bytes differ,
+    is reported as stale.
+
+    Args:
+        provider:           ``'claude'`` or ``'codex'``.
+        repo_root:          Real repo root to compare against.  Defaults to
+                            the inferred repo root — matching
+                            ``render_repo_trees``' default so the check
+                            verifies exactly what ``render-templates`` writes.
+        templates_src_root: Root of the ``.jinja`` source tree.
+                            Defaults to ``<package>/templates_src``.
+
+    Returns:
+        Sorted list of absolute real-repo paths whose committed content is
+        stale relative to a fresh render.  Empty list ⇒ trees are in sync.
+    """
+    if repo_root is None:
+        repo_root = _default_repo_root()
+    if templates_src_root is None:
+        templates_src_root = _default_templates_src_root()
+
+    gate_roots = [repo_root / Path(rel) for rel in _GATE_TREE_RELPATHS]
+    stale: list[Path] = []
+
+    with tempfile.TemporaryDirectory(prefix="map_render_check_") as tmp_str:
+        tmp_root = Path(tmp_str)
+        written = render_repo_trees(
+            provider,
+            repo_root=tmp_root,
+            templates_src_root=templates_src_root,
+        )
+        for tmp_dest in written:
+            rel = tmp_dest.relative_to(tmp_root)
+            real_dest = repo_root / rel
+            # Gate only the committed generated trees (parity with the old
+            # Makefile scope); files rendered elsewhere (e.g. .map/) are skipped.
+            if not any(real_dest.is_relative_to(g) for g in gate_roots):
+                continue
+            if not real_dest.exists():
+                stale.append(real_dest)
+                continue
+            if real_dest.read_bytes() != tmp_dest.read_bytes():
+                stale.append(real_dest)
+
+    return sorted(stale)
+
+
+# ---------------------------------------------------------------------------
 # Default path resolution
 # ---------------------------------------------------------------------------
 
@@ -648,9 +732,36 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Render MAP jinja2 templates")
-    parser.add_argument("provider", choices=["claude", "codex"])
+    parser.add_argument("provider", nargs="?", choices=["claude", "codex"])
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help=(
+            "Verify committed generated trees match a fresh render. "
+            "Non-destructive: renders into a tempdir and byte-compares; "
+            "NEVER mutates the working tree. Exits 1 if any tree is stale."
+        ),
+    )
     args = parser.parse_args()
+
+    if args.check:
+        stale_paths: list[Path] = []
+        for prov in ("claude", "codex"):
+            stale_paths.extend(diff_rendered_trees(prov))
+        if stale_paths:
+            print(
+                "❌ Generated trees are stale — run 'make render-templates' and commit:",
+                file=sys.stderr,
+            )
+            for stale_path in sorted(stale_paths):
+                print(f"  stale: {stale_path}", file=sys.stderr)
+            sys.exit(1)
+        print("✅ Generated trees match templates_src")
+        sys.exit(0)
+
+    if args.provider is None:
+        parser.error("provider is required unless --check is given")
 
     paths = render_repo_trees(args.provider, dry_run=args.dry_run)
     for p in paths:

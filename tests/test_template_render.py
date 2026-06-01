@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from mapify_cli.delivery.template_renderer import (
     assert_no_stray_delimiters,
+    diff_rendered_trees,
     get_environment,
     render_tree,
     render_repo_trees,
@@ -993,3 +994,97 @@ class TestGoldenFixturesCodex:
             "Negative test failed: single-byte mutation was NOT detected by "
             "byte-equality comparison — the gate is non-functional."
         )
+
+
+# ---------------------------------------------------------------------------
+# Non-destructive check-render gate (diff_rendered_trees)
+# ---------------------------------------------------------------------------
+
+
+class TestDiffRenderedTrees:
+    """diff_rendered_trees() is the non-destructive replacement for the old
+    ``check-render`` gate: it renders into a tempdir and byte-compares, never
+    mutating the working tree and never gating hand-authored, non-rendered
+    files (invariant D11)."""
+
+    @_skip_no_templates_src
+    def test_real_repo_trees_in_sync(self) -> None:
+        """The committed trees must match a fresh render (the gate's job)."""
+        for provider in ("claude", "codex"):
+            stale = diff_rendered_trees(
+                provider, repo_root=_REPO_ROOT, templates_src_root=_TEMPLATES_SRC
+            )
+            assert stale == [], (
+                f"Stale generated files for provider {provider!r}: {stale}"
+            )
+
+    @_skip_no_templates_src
+    def test_modified_gated_file_is_flagged(self, tmp_path: Path) -> None:
+        """A drifted committed gate-tree file is reported as stale."""
+        real = tmp_path / "repo"
+        render_repo_trees("claude", repo_root=real, templates_src_root=_TEMPLATES_SRC)
+        # Freshly rendered repo is in sync.
+        assert (
+            diff_rendered_trees(
+                "claude", repo_root=real, templates_src_root=_TEMPLATES_SRC
+            )
+            == []
+        )
+        # Corrupt one gated .claude/ file.
+        target = next(p for p in sorted((real / ".claude").rglob("*")) if p.is_file())
+        target.write_text("DRIFT — no longer matches source\n", encoding="utf-8")
+        stale = diff_rendered_trees(
+            "claude", repo_root=real, templates_src_root=_TEMPLATES_SRC
+        )
+        assert target in stale, f"Expected {target} flagged as stale; got {stale}"
+
+    @_skip_no_templates_src
+    def test_missing_gated_file_is_flagged(self, tmp_path: Path) -> None:
+        """A rendered file absent from the real repo is reported as stale."""
+        real = tmp_path / "repo"
+        render_repo_trees("claude", repo_root=real, templates_src_root=_TEMPLATES_SRC)
+        target = next(p for p in sorted((real / ".claude").rglob("*")) if p.is_file())
+        target.unlink()
+        stale = diff_rendered_trees(
+            "claude", repo_root=real, templates_src_root=_TEMPLATES_SRC
+        )
+        assert target in stale, f"Expected missing {target} flagged; got {stale}"
+
+    @_skip_no_templates_src
+    def test_unmanaged_learned_file_not_gated_and_not_mutated(
+        self, tmp_path: Path
+    ) -> None:
+        """D11 hand-authored learned files are neither flagged nor reverted.
+
+        This is the regression guard for the footgun the old gate had:
+        ``git checkout -- .claude`` destroyed uncommitted edits to
+        non-rendered files. The new gate renders into its own tempdir and
+        only compares rendered files, so it can never touch these.
+        """
+        real = tmp_path / "repo"
+        render_repo_trees("claude", repo_root=real, templates_src_root=_TEMPLATES_SRC)
+
+        # Simulate an uncommitted, hand-authored learned-rules file (not rendered).
+        learned = real / ".claude" / "rules" / "learned" / "architecture-patterns.md"
+        learned.parent.mkdir(parents=True, exist_ok=True)
+        sentinel = "# Architecture Patterns\n\n- **Hand-authored rule** (D11)\n"
+        learned.write_text(sentinel, encoding="utf-8")
+
+        # Also drift a genuinely-gated file so the gate returns non-empty.
+        gated = next(
+            p
+            for p in sorted((real / ".claude" / "agents").rglob("*"))
+            if p.is_file()
+        )
+        gated.write_text("DRIFT\n", encoding="utf-8")
+
+        stale = diff_rendered_trees(
+            "claude", repo_root=real, templates_src_root=_TEMPLATES_SRC
+        )
+
+        # The gated file is flagged; the unmanaged learned file is NOT.
+        assert gated in stale
+        assert learned not in stale, "Unmanaged D11 file must not be gated"
+        # And crucially the learned file is untouched (never reverted/destroyed).
+        assert learned.exists()
+        assert learned.read_text(encoding="utf-8") == sentinel
