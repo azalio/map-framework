@@ -648,6 +648,49 @@ WORKFLOW_FIT_DECISION_SCHEMA = {
 }
 
 
+SKILL_REQUIREMENTS_SCHEMA = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://mapframework.dev/schemas/skill-requirements.json",
+    "title": "MAP Skill Requirements",
+    "description": (
+        "Runtime-dependency sub-block for a MAP skill entry in skill-rules.json. "
+        "All four requires-* fields are optional; omit any that are not needed."
+    ),
+    "type": "object",
+    "properties": {
+        "requires-env": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Environment variable names that must be set at pre-install check time.",
+        },
+        "requires-pip": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "Python packages that must be importable. "
+                "Values are Python IMPORT names (e.g. 'yaml', not 'PyYAML')."
+            ),
+        },
+        "requires-cmd": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "CLI commands that must be available on PATH.",
+        },
+        "requires-skills": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Other skill names this skill depends on.",
+        },
+    },
+    "required": [],
+    "additionalProperties": False,
+}
+
+# Single authority for the four requires-* field names; consumers DERIVE from this
+# rather than hardcoding the list (see architecture-patterns: Single-Source Schema Dict).
+SKILL_REQUIREMENTS_KEYS = tuple(SKILL_REQUIREMENTS_SCHEMA["properties"])
+
+
 ARTIFACT_STAGE_SCHEMA = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://mapframework.dev/schemas/artifact-stage.json",
