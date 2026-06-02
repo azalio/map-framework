@@ -300,6 +300,27 @@
           "cache.hit.ratio"
         ]
       }
+    },
+    "map-memory-now": {
+      "type": "manual",
+      "skillClass": "task",
+      "enforcement": "manual",
+      "priority": "medium",
+      "description": "On-demand finalize of session memory (current scratch + --finalize-all sweep)",
+      "requires-cmd": ["claude", "git"],
+      "promptTriggers": {
+        "keywords": [
+          "finalize memory",
+          "map-memory-now",
+          "save session memory",
+          "--finalize-all"
+        ],
+        "intentPatterns": [
+          "map-memory-now",
+          "(finalize|save).*(memory|session)",
+          "memory.*now"
+        ]
+      }
     }
   }
 }

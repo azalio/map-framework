@@ -150,6 +150,24 @@ def _assert_end_turn_blocks_syntax(run: HookRun, _project: Path) -> None:
     assert "Python syntax error" in run.stderr
 
 
+def _assert_memory_scratch_written(run: HookRun, project: Path) -> None:
+    assert run.returncode == 0
+    assert run.stdout == "{}"
+    scratch = project / ".map" / "default" / "sessions" / "scratch" / "s1.jsonl"
+    assert scratch.is_file(), "capture must append a scratch JSONL turn record"
+    records = [json.loads(line) for line in scratch.read_text().splitlines() if line.strip()]
+    assert any(r.get("event") == "turn" for r in records), "expected a 'turn' record"
+
+
+def _assert_memory_end_marker(run: HookRun, project: Path) -> None:
+    assert run.returncode == 0
+    assert run.stdout == "{}"
+    scratch = project / ".map" / "default" / "sessions" / "scratch" / "s1.jsonl"
+    assert scratch.is_file(), "endmark must append a scratch JSONL record"
+    records = [json.loads(line) for line in scratch.read_text().splitlines() if line.strip()]
+    assert any(r.get("event") == "ended" for r in records), "expected an 'ended' record"
+
+
 def _make_dirty_git_repo(root: Path) -> Path:
     worktree = root / "dirty-git"
     worktree.mkdir()
@@ -302,6 +320,41 @@ HOOK_CASES: dict[str, list[HookCase]] = {
         HookCase("subagentstop-records", {"agent_transcript_path": "__PROJECT__/transcript.jsonl", "agent_type": "actor"}, _assert_token_accounting),
         HookCase("stop-records-main", {"transcript_path": "__PROJECT__/transcript.jsonl"}, _assert_token_accounting),
         HookCase("skip-missing-transcript", {"session_id": "s1"}, _assert_noop),
+    ],
+    "map-memory-capture.py": [
+        HookCase(
+            "capture-turn",
+            {"session_id": "s1", "tool_name": "Edit", "tool_input": {"file_path": "src/app.py"}},
+            _assert_memory_scratch_written,
+            env_extra={"PYTHONPATH": str(REPO_ROOT / "src")},
+        ),
+    ],
+    "map-memory-endmark.py": [
+        HookCase(
+            "end-marker",
+            {"session_id": "s1", "reason": "clear"},
+            _assert_memory_end_marker,
+            env_extra={"PYTHONPATH": str(REPO_ROOT / "src")},
+        ),
+    ],
+    "map-memory-finalize.py": [
+        # No dirty scratch in a fresh project -> finalize is a clean no-op (no
+        # claude -p invocation). The e2e finalize path is covered in ST-008.
+        HookCase(
+            "no-dirty-scratch-noop",
+            {"session_id": "incoming-sid"},
+            _assert_noop,
+            env_extra={"PYTHONPATH": str(REPO_ROOT / "src")},
+        ),
+    ],
+    "map-memory-recall.py": [
+        # No digests yet -> recall returns empty -> silent {}.
+        HookCase(
+            "no-digests-noop",
+            {"hook_event_name": "SessionStart", "prompt": ""},
+            _assert_noop,
+            env_extra={"PYTHONPATH": str(REPO_ROOT / "src")},
+        ),
     ],
 }
 

@@ -74,23 +74,29 @@ class TestVC1MissingDepSkip:
         installed = _installed_skill_dirs(tmp_path)
         out = capsys.readouterr().out
 
-        # map-state must NOT be installed
+        # Both git-requiring skills must be skipped: map-state (requires-cmd:[git])
+        # and map-memory-now (requires-cmd:[claude, git]).
         assert "map-state" not in installed, (
             "map-state should be skipped when 'git' is not on PATH"
         )
-        # All other skills should still be installed (only map-state has requires-cmd:git)
+        assert "map-memory-now" not in installed, (
+            "map-memory-now should be skipped when 'git' is not on PATH"
+        )
         all_skills = _expected_all_skill_dirs()
-        expected_installed = all_skills - {"map-state"}
+        expected_installed = all_skills - {"map-state", "map-memory-now"}
         assert installed == expected_installed, (
             f"Expected {expected_installed}, got {installed}"
         )
-        # Count must be total-1
-        assert count == len(all_skills) - 1, (
-            f"Expected count={len(all_skills) - 1}, got {count}"
+        # Count must be total minus the two git-requiring skills
+        assert count == len(all_skills) - 2, (
+            f"Expected count={len(all_skills) - 2}, got {count}"
         )
-        # Exact skip message must appear in stdout
+        # Exact skip messages must appear in stdout for both skipped skills
         assert "[skipped: map-state: missing cmd git]" in out, (
-            f"Expected skip message in stdout; got: {out!r}"
+            f"Expected map-state skip message in stdout; got: {out!r}"
+        )
+        assert "[skipped: map-memory-now: missing cmd git]" in out, (
+            f"Expected map-memory-now skip message in stdout; got: {out!r}"
         )
 
 
@@ -160,11 +166,16 @@ class TestVC3UpgradePathGuard:
         out2 = capsys.readouterr().out
 
         all_skills = _expected_all_skill_dirs()
-        assert count2 == len(all_skills) - 1, (
-            "Upgrade path: count must exclude skipped map-state"
+        # Two skills require git (map-state, map-memory-now) -> both skipped.
+        assert count2 == len(all_skills) - 2, (
+            "Upgrade path: count must exclude both git-requiring skills "
+            "(map-state, map-memory-now)"
         )
         assert "[skipped: map-state: missing cmd git]" in out2, (
-            f"Upgrade path: skip message must appear; got: {out2!r}"
+            f"Upgrade path: map-state skip message must appear; got: {out2!r}"
+        )
+        assert "[skipped: map-memory-now: missing cmd git]" in out2, (
+            f"Upgrade path: map-memory-now skip message must appear; got: {out2!r}"
         )
 
 
@@ -375,3 +386,52 @@ class TestMalformedCatalogRobustness:
         )
         # Only blocking, list-valued keys are returned; requires-skills excluded.
         assert block == {"requires-cmd": ["git"]}
+
+
+# ---------------------------------------------------------------------------
+# VC3 / EC-4 (ST-007): host-gate prunes map-memory-now when `claude` is absent
+# ---------------------------------------------------------------------------
+
+
+class TestMapMemoryNowHostGate:
+    """map-memory-now requires-cmd:[claude, git]; absent claude -> skip + prune catalog."""
+
+    def test_vc3_map_memory_now_pruned_when_claude_absent(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """When `claude` is not on PATH, map-memory-now must be skipped and absent
+        from the installed skill-rules.json catalog."""
+        import mapify_cli.delivery.file_copier as fc
+
+        real_cmd_checker = fc._REQUIRES_CHECKER["requires-cmd"]
+
+        def no_claude(name: str) -> bool:
+            if name == "claude":
+                return False
+            return real_cmd_checker(name)
+
+        monkeypatch.setitem(fc._REQUIRES_CHECKER, "requires-cmd", no_claude)
+
+        create_skill_files(tmp_path)
+        out = capsys.readouterr().out
+
+        installed_dirs = _installed_skill_dirs(tmp_path)
+        catalog_skills = _installed_catalog_skills(tmp_path)
+
+        assert "map-memory-now" not in installed_dirs, (
+            "map-memory-now skill dir must be absent when `claude` is not on PATH"
+        )
+        assert "map-memory-now" not in catalog_skills, (
+            "map-memory-now must be pruned from installed skill-rules.json "
+            "when `claude` is absent (host-gate EC-4)"
+        )
+        assert "[skipped: map-memory-now: missing cmd claude]" in out, (
+            f"Expected skip message for map-memory-now; got: {out!r}"
+        )
+        # Catalog and on-disk dirs must stay consistent.
+        assert catalog_skills == installed_dirs, (
+            f"catalog {catalog_skills} != installed dirs {installed_dirs}"
+        )

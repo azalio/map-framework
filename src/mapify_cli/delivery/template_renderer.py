@@ -66,6 +66,7 @@ _CLAUDE_SHIPPED_ONLY: frozenset[str] = frozenset(
         "ralph-loop-config.json",
         "hooks/README.md",
         "rules/learned/README.md",
+        ".gitignore",
     }
 )
 
