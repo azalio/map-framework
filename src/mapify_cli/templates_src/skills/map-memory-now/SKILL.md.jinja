@@ -123,7 +123,8 @@ No dirty scratches found — nothing to finalize.
   sessions are skipped automatically.
 - **No new CLI subcommand needed:** `finalize_dirty(None, project_dir)` IS the
   `--finalize-all` sweep. The skill invokes it directly.
-- **MAP_MEMORY_COMMIT_DIGESTS=0:** When set, `finalize_dirty` writes the digest file
-  but does not stage/commit it. To make the opt-out permanent for your project, uncomment
-  the `.map/*/sessions/` line in your `.gitignore` (see the commented block shipped by
-  `mapify init`).
+- **Keep digests local (MAP_MEMORY_COMMIT_DIGESTS=0 opt-out):** finalize never stages or
+  commits anything itself — it only writes the digest file to disk. Digests under
+  `.map/*/sessions/*.md` are committed by default simply because they are not git-ignored.
+  To keep them local, uncomment the `.map/*/sessions/` line in your `.gitignore` (see the
+  commented block shipped by `mapify init`).
