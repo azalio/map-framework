@@ -14,6 +14,7 @@ import ast
 import copy
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -115,180 +116,18 @@ _SHELL_BUILTINS: frozenset[str] = frozenset(
     }
 )
 
-# Standard-library top-level module names (Python 3.11).
-# Only third-party imports are flagged for requires-pip.
-_STDLIB_MODULES: frozenset[str] = frozenset(
-    {
-        "__future__",
-        "_thread",
-        "abc",
-        "argparse",
-        "ast",
-        "asyncio",
-        "base64",
-        "binascii",
-        "builtins",
-        "calendar",
-        "cmath",
-        "cmd",
-        "code",
-        "codecs",
-        "collections",
-        "colorsys",
-        "compileall",
-        "concurrent",
-        "configparser",
-        "contextlib",
-        "copy",
-        "copyreg",
-        "csv",
-        "ctypes",
-        "curses",
-        "dataclasses",
-        "datetime",
-        "dbm",
-        "decimal",
-        "difflib",
-        "dis",
-        "doctest",
-        "email",
-        "encodings",
-        "enum",
-        "errno",
-        "faulthandler",
-        "fcntl",
-        "filecmp",
-        "fileinput",
-        "fnmatch",
-        "fractions",
-        "ftplib",
-        "functools",
-        "gc",
-        "getopt",
-        "getpass",
-        "gettext",
-        "glob",
-        "gzip",
-        "hashlib",
-        "heapq",
-        "hmac",
-        "html",
-        "http",
-        "idlelib",
-        "imaplib",
-        "importlib",
-        "inspect",
-        "io",
-        "ipaddress",
-        "itertools",
-        "json",
-        "keyword",
-        "linecache",
-        "locale",
-        "logging",
-        "lzma",
-        "mailbox",
-        "marshal",
-        "math",
-        "mimetypes",
-        "mmap",
-        "modulefinder",
-        "multiprocessing",
-        "netrc",
-        "numbers",
-        "operator",
-        "optparse",
-        "os",
-        "pathlib",
-        "pdb",
-        "pkgutil",
-        "platform",
-        "plistlib",
-        "poplib",
-        "posix",
-        "posixpath",
-        "pprint",
-        "profile",
-        "pstats",
-        "pty",
-        "py_compile",
-        "pyclbr",
-        "pydoc",
-        "queue",
-        "quopri",
-        "random",
-        "re",
-        "readline",
-        "reprlib",
-        "resource",
-        "rlcompleter",
-        "runpy",
-        "sched",
-        "secrets",
-        "select",
-        "selectors",
-        "shelve",
-        "shlex",
-        "shutil",
-        "signal",
-        "site",
-        "smtplib",
-        "socket",
-        "socketserver",
-        "sqlite3",
-        "ssl",
-        "stat",
-        "statistics",
-        "string",
-        "stringprep",
-        "struct",
-        "subprocess",
-        "sys",
-        "sysconfig",
-        "syslog",
-        "tabnanny",
-        "tarfile",
-        "telnetlib",
-        "tempfile",
-        "termios",
-        "test",
-        "textwrap",
-        "threading",
-        "time",
-        "timeit",
-        "tkinter",
-        "token",
-        "tokenize",
-        "tomllib",
-        "trace",
-        "traceback",
-        "tracemalloc",
-        "tty",
-        "turtle",
-        "types",
-        "typing",
-        "unicodedata",
-        "unittest",
-        "urllib",
-        "uuid",
-        "venv",
-        "warnings",
-        "wave",
-        "weakref",
-        "webbrowser",
-        "wsgiref",
-        "xml",
-        "xmlrpc",
-        "zipapp",
-        "zipfile",
-        "zipimport",
-        "zlib",
-        "zoneinfo",
-    }
-)
+# Standard-library top-level module names, sourced from the running
+# interpreter (sys.stdlib_module_names, available since Python 3.10; the
+# project targets 3.11+). Only third-party imports are flagged for
+# requires-pip. Deriving from the interpreter avoids the drift a
+# hand-maintained list incurs on every Python upgrade.
+_STDLIB_MODULES: frozenset[str] = sys.stdlib_module_names
 
 # ALL_CAPS tokens are shell variable references (e.g. BRANCH, PLAN_FILE), not commands.
 _ALL_CAPS_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
+
+# Here-document opener: <<WORD, <<'WORD', <<"WORD", and the <<- indented variant.
+_HEREDOC_RE = re.compile(r"<<(-?)\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?")
 
 # Scannable requires-* keys: keys whose values can be detected by static analysis.
 # requires-skills is intentionally excluded — no automated scanner can detect
@@ -410,26 +249,37 @@ def _scan_sh_commands(path: Path) -> set[str]:
                 in_sq_block = False
             continue
 
-        # Detect heredoc opener: <<[-]WORD, <<[-]'WORD', <<[-]"WORD"
-        # Must be checked before scanning so we don't scan the opener line's
-        # here-doc body (content after the << is on the NEXT line).
-        hd_match = re.search(r"<<(-?)\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?", line)
-        if hd_match:
-            in_heredoc = True
-            heredoc_indented = hd_match.group(1) == "-"
-            heredoc_term = hd_match.group(2)
-            # Fall through: still scan the opener line itself (the command before <<).
-
         # Skip pure comment lines.
         if stripped.startswith("#"):
             continue
 
         # Strip inline tail comment (conservative: only ' #' with leading whitespace).
-        clean = re.sub(r"\s#.*$", "", line)
+        line_no_comment = re.sub(r"\s#.*$", "", line)
+
+        # Detect a here-document opener (<<WORD / <<'WORD' / <<"WORD" / <<-WORD)
+        # on the comment-stripped line, but ONLY when the `<<` is not inside a
+        # quoted string. We require an even count of bare single AND double quotes
+        # before the match, so a `<<WORD` token living in a comment or any quoted
+        # string (e.g. an awk program `awk '... <<X ...'`, or echo "... <<X ...")
+        # cannot falsely open a here-doc and swallow the rest of the file — which
+        # would make the consistency check vacuous (a real undeclared command
+        # after such a line would go undetected). Detection runs before quote
+        # stripping so quoted delimiters like <<'EOF' / <<"EOF" still register.
+        # The body is on the next line: set state but still scan this line (the
+        # command precedes `<<`).
+        hd_match = _HEREDOC_RE.search(line_no_comment)
+        if hd_match:
+            before = line_no_comment[: hd_match.start()]
+            sq_before = len(re.findall(r"(?<!\\)'", before))
+            dq_before = len(re.findall(r'(?<!\\)"', before))
+            if sq_before % 2 == 0 and dq_before % 2 == 0:
+                in_heredoc = True
+                heredoc_indented = hd_match.group(1) == "-"
+                heredoc_term = hd_match.group(2)
 
         # Strip double-quoted strings FIRST — they may contain embedded ' chars
         # (e.g. "won't_do") that would confuse the single-quote counter.
-        clean = re.sub(r'"[^"]*"', '""', clean)
+        clean = re.sub(r'"[^"]*"', '""', line_no_comment)
 
         # Count bare (non-backslash-preceded) single quotes to detect block open.
         bare_sq = len(re.findall(r"(?<!\\)'", clean))
@@ -834,6 +684,61 @@ def test_scanner_ignores_heredoc_body(tmp_path: Path) -> None:
         "Command inside heredoc body must not be flagged as a required command"
     )
     assert "git" in cmds, "git outside the heredoc must still be detected"
+
+
+def test_scanner_heredoc_token_in_comment_or_string_does_not_swallow(
+    tmp_path: Path,
+) -> None:
+    """A `<<WORD` token in a comment or quoted string must NOT open a heredoc.
+
+    Regression guard: if the heredoc detector runs on the raw line before
+    comment/quote stripping, a stray `<<EOF` in a comment or string falsely
+    enters heredoc mode and silently swallows every following line until a
+    terminator that may never appear — making the consistency check vacuous
+    (a real undeclared command after such a line would go undetected).
+    """
+    script = tmp_path / "tricky.sh"
+    script.write_text(
+        "#!/usr/bin/env bash\n"
+        "# example: cat <<EOF writes a file\n"   # <<EOF in a COMMENT
+        'echo "here is a <<EOF token in a string"\n'  # <<EOF in a DQ string
+        "terraform apply\n"                      # real, undeclared command AFTER
+        "awk '<<NOPE inside awk program'\n"      # <<NOPE inside a SQ string
+        "kubectl get pods\n",                    # another real command AFTER
+        encoding="utf-8",
+    )
+    cmds = _scan_sh_commands(script)
+    assert "terraform" in cmds, (
+        "a <<WORD in a comment/string must not swallow the following command"
+    )
+    assert "kubectl" in cmds, (
+        "a <<WORD inside a single-quoted awk program must not swallow lines"
+    )
+    # And the fake delimiters themselves are never treated as commands.
+    assert "EOF" not in cmds and "NOPE" not in cmds
+
+
+def test_scanner_real_heredoc_with_quoted_and_indented_delimiters(
+    tmp_path: Path,
+) -> None:
+    """Real heredocs with <<'EOF', <<"EOF", and <<- still suppress their bodies."""
+    script = tmp_path / "real_heredocs.sh"
+    script.write_text(
+        "#!/usr/bin/env bash\n"
+        'cat <<"END1"\n'
+        "docker run a\n"
+        "END1\n"
+        "cat <<-END2\n"
+        "\tpodman run b\n"
+        "\tEND2\n"
+        "git status\n",
+        encoding="utf-8",
+    )
+    cmds = _scan_sh_commands(script)
+    assert "docker" not in cmds and "podman" not in cmds, (
+        "bodies of <<\"END1\" and <<-END2 heredocs must be suppressed"
+    )
+    assert "git" in cmds
 
 
 # ---------------------------------------------------------------------------

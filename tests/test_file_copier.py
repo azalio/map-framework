@@ -9,6 +9,7 @@ Covers VC1-VC4:
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -101,9 +102,20 @@ class TestVC2DepsPresent:
     def test_vc2_all_deps_present_installs_all_skills(
         self,
         tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """No monkeypatching: all shipped skills must be installed."""
+        """All deps present -> every shipped skill installed (identity).
+
+        Force every dependency checker to report present so the assertion is
+        host-independent: a CI image without git on PATH must not make this
+        happy-path identity test fail (map-state declares requires-cmd:[git]).
+        """
+        import mapify_cli.delivery.file_copier as fc
+
+        for kind in fc._REQUIRES_CHECKER:
+            monkeypatch.setitem(fc._REQUIRES_CHECKER, kind, lambda _: True)
+
         all_skills = _expected_all_skill_dirs()
         count = create_skill_files(tmp_path)
         installed = _installed_skill_dirs(tmp_path)
@@ -263,3 +275,103 @@ class TestVC4SkillMissingDependency:
         monkeypatch.delenv(sentinel_name, raising=False)
         result2 = fc._check_requires_env(sentinel_name)
         assert result2 is False
+
+
+# ---------------------------------------------------------------------------
+# Catalog/dir consistency: a skipped skill is pruned from the installed
+# skill-rules.json so the catalog never advertises an absent skill.
+# ---------------------------------------------------------------------------
+
+
+def _installed_catalog_skills(base: Path) -> set[str]:
+    """Skill names listed in the installed .claude/skills/skill-rules.json."""
+    catalog = base / ".claude" / "skills" / "skill-rules.json"
+    data = json.loads(catalog.read_text(encoding="utf-8"))
+    return set(data.get("skills", {}).keys())
+
+
+class TestCatalogConsistencyOnSkip:
+    def test_skipped_skill_pruned_from_installed_catalog(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """map-state skipped (git missing) must NOT remain in installed catalog."""
+        import mapify_cli.delivery.file_copier as fc
+
+        monkeypatch.setitem(
+            fc._REQUIRES_CHECKER, "requires-cmd", lambda name: name != "git"
+        )
+
+        create_skill_files(tmp_path)
+
+        installed_dirs = _installed_skill_dirs(tmp_path)
+        catalog_skills = _installed_catalog_skills(tmp_path)
+
+        assert "map-state" not in installed_dirs, "map-state dir should be skipped"
+        assert "map-state" not in catalog_skills, (
+            "skipped map-state must be pruned from installed skill-rules.json "
+            "so the catalog matches the on-disk skill set"
+        )
+        # The catalog and the on-disk skill dirs must agree.
+        assert catalog_skills == installed_dirs, (
+            f"catalog {catalog_skills} != installed dirs {installed_dirs}"
+        )
+
+    def test_all_present_keeps_full_catalog(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """No skips -> installed catalog is unchanged (no pruning, no drift)."""
+        import mapify_cli.delivery.file_copier as fc
+
+        for kind in fc._REQUIRES_CHECKER:
+            monkeypatch.setitem(fc._REQUIRES_CHECKER, kind, lambda _: True)
+
+        create_skill_files(tmp_path)
+        catalog_skills = _installed_catalog_skills(tmp_path)
+        assert "map-state" in catalog_skills
+        assert catalog_skills == _installed_skill_dirs(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# Robustness: a malformed catalog entry must not crash the install and must
+# not silently disable the gate.
+# ---------------------------------------------------------------------------
+
+class TestMalformedCatalogRobustness:
+    def test_non_dict_entry_yields_no_requirements(self) -> None:
+        """A non-dict skill entry is treated as having no requirements (no crash)."""
+        import mapify_cli.delivery.file_copier as fc
+
+        assert fc._extract_requires_block("x", None) == {}
+        assert fc._extract_requires_block("x", ["requires-cmd"]) == {}
+        assert fc._extract_requires_block("x", "git") == {}
+
+    def test_scalar_requires_value_is_warned_not_silently_dropped(
+        self,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A typo'd scalar requires-cmd must surface a warning, not vanish silently."""
+        import mapify_cli.delivery.file_copier as fc
+
+        # "git" (a string, not ["git"]) violates SKILL_REQUIREMENTS_SCHEMA.
+        block = fc._extract_requires_block("bad-skill", {"requires-cmd": "git"})
+        out = capsys.readouterr().out
+
+        # Malformed value is not enforced (not a list) ...
+        assert block == {}
+        # ... but it is surfaced rather than silently swallowed.
+        assert "bad-skill" in out and "malformed requires-*" in out, (
+            f"expected a malformed-requires warning; got: {out!r}"
+        )
+
+    def test_wellformed_block_passes_through(self) -> None:
+        import mapify_cli.delivery.file_copier as fc
+
+        block = fc._extract_requires_block(
+            "ok-skill", {"requires-cmd": ["git"], "requires-skills": ["map-state"]}
+        )
+        # Only blocking, list-valued keys are returned; requires-skills excluded.
+        assert block == {"requires-cmd": ["git"]}
