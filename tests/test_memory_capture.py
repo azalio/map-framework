@@ -33,6 +33,7 @@ from mapify_cli.memory.digest_schema import (
 from mapify_cli.memory.capture import (
     append_end_marker,
     append_turn,
+    on_session_end,
     resolve_session_id,
     write_current_session,
 )
@@ -474,3 +475,60 @@ class TestRobustness:
 
         expected_dir = tmp_path / ".map" / "feat-my-feature" / "sessions" / "scratch"
         assert expected_dir.exists()
+
+
+# ---------------------------------------------------------------------------
+# ST-005: SessionEnd best-effort 'ended' marker (on_session_end) — AC-4 / EC-6
+# ---------------------------------------------------------------------------
+
+
+class TestSessionEndMarker:
+    def test_vc1_endmark_record_only(self, tmp_path: Path) -> None:
+        """AC-4: on_session_end appends ONLY an 'ended' record — no finalize/LLM artifacts."""
+        _make_fake_git(tmp_path)
+        on_session_end(
+            {"session_id": "endsid", "reason": "clear"}, tmp_path
+        )
+
+        scratch = _scratch_dir(tmp_path)
+        jsonl = scratch / "endsid.jsonl"
+        records = _read_jsonl(jsonl)
+        assert len(records) == 1
+        record = records[0]
+        for field in SCRATCH_ENDED_FIELDS:
+            assert field in record
+        assert record["event"] == EVENT_ENDED
+        assert record["session_id"] == "endsid"
+        # No finalize side effects: no digest, no .finalized marker.
+        sessions = tmp_path / ".map" / "test-branch" / "sessions"
+        assert list(sessions.glob("*.md")) == []
+        assert list(scratch.glob("*.finalized")) == []
+
+    def test_vc2_endmark_swallows_exception(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """AC-4: on_session_end never raises — an injected failure is swallowed."""
+        _make_fake_git(tmp_path)
+
+        def _boom(*_a: Any, **_k: Any) -> None:
+            del _a, _k
+            raise OSError("injected end-marker failure")
+
+        # Patch the end-marker in the capture module's namespace.
+        monkeypatch.setattr("mapify_cli.memory.capture.append_end_marker", _boom)
+
+        # Must NOT raise.
+        on_session_end({"session_id": "s1", "reason": "logout"}, tmp_path)
+
+    def test_vc3_endmark_reason_agnostic(self, tmp_path: Path) -> None:
+        """EC-6: all SessionEnd reasons produce an identical 'ended' record."""
+        scratch = _scratch_dir(tmp_path)
+        for reason, sid in (("clear", "r-clear"), ("resume", "r-resume"), ("logout", "r-logout")):
+            _make_fake_git(tmp_path)
+            on_session_end({"session_id": sid, "reason": reason}, tmp_path)
+            records = _read_jsonl(scratch / f"{sid}.jsonl")
+            assert len(records) == 1
+            assert records[0]["event"] == EVENT_ENDED
+            assert records[0]["session_id"] == sid
+            # The reason value never appears in the record (reason-agnostic).
+            assert "reason" not in records[0]

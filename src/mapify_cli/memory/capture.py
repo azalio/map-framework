@@ -14,6 +14,7 @@ exceptions and no-op silently — a hook must never block Claude.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,6 +28,8 @@ from mapify_cli.memory.digest_schema import (
     redact_secret_path,
     sanitize_value,
 )
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Branch resolution (subprocess-free)
@@ -327,3 +330,30 @@ def append_end_marker(stdin_data: dict[str, Any], project_dir: Path | str) -> No
     except Exception:  # noqa: BLE001
         # Best-effort: never block the hook.
         pass
+
+
+def on_session_end(stdin_data: dict[str, Any], project_dir: Path | str) -> None:
+    """SessionEnd entrypoint: best-effort 'ended' marker; never blocks/raises (AC-4).
+
+    Thin wrapper the SessionEnd hook shim (ST-006) calls. It appends ONLY the
+    ``{event: 'ended', ts, session_id}`` marker via :func:`append_end_marker` —
+    NO finalize, NO LLM. SessionEnd is fire-and-forget, so this entrypoint wraps
+    the call in its own broad guard (in addition to ``append_end_marker``'s
+    internal one) and swallows+logs any exception, returning ``None`` cleanly.
+
+    Reason-agnostic (EC-6): the SessionEnd ``reason`` (``clear``/``resume``/
+    ``logout``/…) is read only for logging; every reason follows the same path.
+
+    Args:
+        stdin_data: Parsed SessionEnd hook stdin payload
+            (``session_id``/``transcript_path``/``cwd``/``reason``).
+        project_dir: Root directory of the target project (Path or str).
+    """
+    reason = ""
+    if isinstance(stdin_data, dict):
+        reason = str(stdin_data.get("reason", ""))
+    try:
+        append_end_marker(stdin_data, project_dir)
+    except Exception:  # noqa: BLE001
+        # SessionEnd must never raise to the harness — swallow and log only.
+        logger.warning("on_session_end: end-marker failed (reason=%r)", reason)
