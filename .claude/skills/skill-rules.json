@@ -12,6 +12,7 @@
         "hooks",
         "branch-scoped .map artifacts"
       ],
+      "requires-cmd": ["git"],
       "promptTriggers": {
         "keywords": [
           "create plan",

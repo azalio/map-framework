@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import importlib.util
+import json
+import os
+import shutil
 from pathlib import Path
 from typing import List
 
@@ -18,10 +22,161 @@ from mapify_cli.delivery.agent_generator import (
     create_reflector_content,
     create_documentation_reviewer_content,
 )
+from mapify_cli.schemas import (
+    SKILL_REQUIREMENTS_KEYS,
+    SKILL_REQUIREMENTS_SCHEMA,
+    validate_artifact,
+)
 
 
 _IGNORED_TEMPLATE_NAMES = {"__pycache__", ".DS_Store"}
 _IGNORED_TEMPLATE_SUFFIXES = {".pyc", ".pyo"}
+
+# Ordered check dispatch for blocking requires-* keys.
+# _BLOCKING_REQUIRES_KEYS is derived from SKILL_REQUIREMENTS_KEYS (schema authority).
+# The module-level check below enforces that _REQUIRES_CHECKER covers EVERY
+# blocking key derived from the schema: adding a new blocking key to
+# SKILL_REQUIREMENTS_SCHEMA raises RuntimeError at import time unless a
+# corresponding checker is added here — the invariant is mechanically enforced,
+# not just documented. (A bare ``assert`` would be stripped under ``python -O``,
+# silently turning the guarantee into a no-op, so we raise explicitly.)
+# requires-skills is warn-only (not a skip), handled separately.
+_BLOCKING_REQUIRES_KEYS = {
+    k for k in SKILL_REQUIREMENTS_KEYS if k != "requires-skills"
+}
+
+
+def _check_requires_cmd(name: str) -> bool:
+    """Return True if CLI command *name* is available on PATH.
+
+    Mirrors ``check_tool()`` in ``mapify_cli.__init__``: the Claude CLI may be
+    installed only at ``~/.claude/local/claude`` (not on PATH), so that location
+    counts as present. Kept deliberately in sync — importing ``check_tool`` here
+    would create a circular import (``mapify_cli.__init__`` imports this module).
+    """
+    if name == "claude":
+        claude_local = Path.home() / ".claude" / "local" / "claude"
+        if claude_local.is_file():
+            return True
+    return shutil.which(name) is not None
+
+
+def _check_requires_pip(name: str) -> bool:
+    """Return True if Python module *name* is importable."""
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ModuleNotFoundError, ValueError):
+        return False
+
+
+def _check_requires_env(name: str) -> bool:
+    """Return True if environment variable *name* is set.
+
+    SECURITY: reads variable NAME presence only — never reads the value,
+    never accesses .env files.
+    """
+    return name in os.environ
+
+
+_REQUIRES_CHECKER = {
+    "requires-cmd": _check_requires_cmd,
+    "requires-pip": _check_requires_pip,
+    "requires-env": _check_requires_env,
+}
+
+# Enforced invariant: every blocking key derived from the schema must have a
+# checker entry here.  Adding a new blocking key to SKILL_REQUIREMENTS_SCHEMA
+# without a matching checker raises RuntimeError at import time.  Uses an
+# explicit raise (not ``assert``) so the guarantee survives ``python -O``.
+if _BLOCKING_REQUIRES_KEYS != set(_REQUIRES_CHECKER):
+    raise RuntimeError(
+        "_REQUIRES_CHECKER is out of sync with SKILL_REQUIREMENTS_KEYS; "
+        f"missing checkers for: {_BLOCKING_REQUIRES_KEYS - set(_REQUIRES_CHECKER)}"
+    )
+
+
+def _skill_missing_dependency(requires_block: dict[str, list[str]]) -> tuple[str, str] | None:
+    """Return (kind, name) of the first missing blocking dependency, or None.
+
+    Checks requires-cmd, requires-pip, requires-env in that order (dict
+    insertion order — cmd first, then pip, then env — guarantees deterministic
+    "first missing" reporting).  Every key in _REQUIRES_CHECKER is checked;
+    the module-level assertion guarantees _REQUIRES_CHECKER == _BLOCKING_REQUIRES_KEYS,
+    so no blocking key can be silently skipped.
+    requires-skills is not a blocking dep; call site emits a warning instead.
+    """
+    for kind, checker in _REQUIRES_CHECKER.items():
+        for dep_name in requires_block.get(kind, []):
+            if not checker(dep_name):
+                return (kind.removeprefix("requires-"), dep_name)
+    return None
+
+
+def _warn_requires_skills(skill_name: str, skill_names: list[str]) -> None:
+    """Emit a WARNING for requires-skills entries (read-only; never a skip)."""
+    for dep in skill_names:
+        print(f"[warning: {skill_name}: requires skill {dep}]")
+
+
+def _extract_requires_block(skill_name: str, entry: object) -> dict[str, list[str]]:
+    """Return the blocking requires-* sub-block (list-valued) for a skill entry.
+
+    Defensive against a malformed catalog so a single bad entry never corrupts
+    the install:
+    - a non-dict entry yields ``{}`` (no requirements; never raises);
+    - the requires-* sub-block is validated against SKILL_REQUIREMENTS_SCHEMA and
+      any violation is surfaced as a ``[warning: ...]`` (never silently dropped),
+      so a typo'd scalar like ``"requires-cmd": "git"`` cannot quietly disable the
+      gate. This is where the schema earns its keep at install time.
+
+    Only well-formed list-of-strings blocking keys are returned for enforcement.
+    """
+    if not isinstance(entry, dict):
+        return {}
+    sub_block = {k: entry[k] for k in SKILL_REQUIREMENTS_KEYS if k in entry}
+    if sub_block:
+        valid, errors = validate_artifact(sub_block, SKILL_REQUIREMENTS_SCHEMA)
+        if not valid:
+            print(
+                f"[warning: {skill_name}: malformed requires-* in skill-rules.json: "
+                f"{'; '.join(errors)}]"
+            )
+    return {
+        k: v
+        for k, v in sub_block.items()
+        if k in _BLOCKING_REQUIRES_KEYS
+        and isinstance(v, list)
+        and all(isinstance(item, str) for item in v)
+    }
+
+
+def _prune_catalog_entries(catalog_path: Path, skill_names: list[str]) -> None:
+    """Remove *skill_names* from the INSTALLED skill-rules.json.
+
+    Keeps the installed catalog consistent with the on-disk skill set: a skill
+    skipped for a missing host dependency must not remain advertised in
+    skill-rules.json (a listed-but-absent skill would dangle when its triggers
+    fire). Preserves the ``_map_managed`` sentinel and JSON formatting written by
+    the managed-file copier. No-op on read/parse error or if nothing matched.
+    """
+    if not skill_names or not catalog_path.exists():
+        return
+    try:
+        data = json.loads(catalog_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    skills = data.get("skills") if isinstance(data, dict) else None
+    if not isinstance(skills, dict):
+        return
+    changed = False
+    for name in skill_names:
+        if name in skills:
+            del skills[name]
+            changed = True
+    if changed:
+        catalog_path.write_text(
+            json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
 
 
 def _get_version() -> str:
@@ -155,11 +310,35 @@ def create_command_files(
     return 0
 
 
+def _load_template_skill_catalog(skills_template_dir: Path) -> dict[str, dict[str, object]]:
+    """Parse the template skill-rules.json and return the skills dict.
+
+    Returns an empty dict on any error (missing file, invalid JSON) so the
+    caller falls through to unconditional install — defensive, never gate-blocks
+    due to a corrupt catalog.
+    """
+    catalog_path = skills_template_dir / "skill-rules.json"
+    try:
+        raw = catalog_path.read_text(encoding="utf-8")
+        data = json.loads(raw)
+        skills = data.get("skills", {})
+        if isinstance(skills, dict):
+            return skills  # type: ignore[return-value]
+    except Exception:  # noqa: BLE001  # FileNotFoundError, JSONDecodeError, etc.
+        pass
+    return {}
+
+
 def create_skill_files(project_path: Path) -> int:
     """Create MAP skills in .claude/skills/
 
+    Skips any skill whose blocking runtime dependencies (requires-cmd,
+    requires-pip, requires-env) are not satisfied on the current host.
+    Prints ``[skipped: <skill>: missing <kind> <name>]`` to stdout for each
+    skipped skill.  requires-skills is WARNING-only and never causes a skip.
+
     Returns:
-        Number of skills installed
+        Number of skills actually installed (skipped skills not counted).
     """
     skills_dir = project_path / ".claude" / "skills"
     skills_dir.mkdir(parents=True, exist_ok=True)
@@ -173,6 +352,9 @@ def create_skill_files(project_path: Path) -> int:
     if skills_template_dir.exists():
         version = _get_version()
 
+        # Parse catalog ONCE, defensively (missing/invalid -> empty dict -> no gate).
+        skill_catalog = _load_template_skill_catalog(skills_template_dir)
+
         # Top-level skill catalog files (README.md, skill-rules.json).
         for top_name in ("README.md", "skill-rules.json"):
             top_src = skills_template_dir / top_name
@@ -180,10 +362,34 @@ def create_skill_files(project_path: Path) -> int:
                 _install_managed_file(top_src, skills_dir / top_name, version)
 
         # Copy each skill directory, fence-aware per file (watched category).
-        for skill_template in skills_template_dir.iterdir():
-            if skill_template.is_dir() and skill_template.name != "__pycache__":
-                _install_managed_tree(skill_template, skills_dir / skill_template.name, version)
-                count += 1
+        skipped: list[str] = []
+        for skill_template in sorted(skills_template_dir.iterdir()):
+            if not (skill_template.is_dir() and skill_template.name != "__pycache__"):
+                continue
+
+            skill_name = skill_template.name
+            entry = skill_catalog.get(skill_name, {})
+            requires_block = _extract_requires_block(skill_name, entry)
+
+            # Emit WARNING for requires-skills (read-only; never a skip).
+            req_skills = entry.get("requires-skills") if isinstance(entry, dict) else None
+            if isinstance(req_skills, list) and req_skills:
+                _warn_requires_skills(skill_name, req_skills)
+
+            # Check blocking deps; skip on first missing.
+            missing = _skill_missing_dependency(requires_block)
+            if missing is not None:
+                kind, dep_name = missing
+                print(f"[skipped: {skill_name}: missing {kind} {dep_name}]")
+                skipped.append(skill_name)
+                continue
+
+            _install_managed_tree(skill_template, skills_dir / skill_name, version)
+            count += 1
+
+        # Keep the installed catalog consistent with the on-disk skill set:
+        # a skill skipped above must not stay advertised in skill-rules.json.
+        _prune_catalog_entries(skills_dir / "skill-rules.json", skipped)
 
     return count
 

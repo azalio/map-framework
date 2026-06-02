@@ -70,9 +70,11 @@ artifacts = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mapify_cli"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"src/mapify_cli/templates_src" = "mapify_cli/templates_src"
+# NOTE: do NOT force-include src/mapify_cli/templates_src here. It already lands
+# in the wheel under mapify_cli/templates_src via `packages` + the global
+# [tool.hatch.build] include/artifacts patterns for templates_src/**/*.jinja.
+# A force-include duplicates every .jinja at the same archive path, which newer
+# hatchling rejects with "A second file is being added ... at the same path".
 
 [tool.hatch.build.targets.sdist]
 include = [

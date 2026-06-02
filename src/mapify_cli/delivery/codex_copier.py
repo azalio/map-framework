@@ -11,7 +11,15 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from mapify_cli.delivery.file_copier import _get_version, get_templates_dir
+from mapify_cli.delivery.file_copier import (
+    _extract_requires_block,
+    _get_version,
+    _load_template_skill_catalog,
+    _prune_catalog_entries,
+    _skill_missing_dependency,
+    _warn_requires_skills,
+    get_templates_dir,
+)
 from mapify_cli.delivery.managed_file_copier import copy_managed_file
 
 
@@ -126,11 +134,36 @@ def create_codex_files(project_path: Path) -> dict[str, int]:
     # ------------------------------------------------------------------
     skills_src = codex_templates / "skills"
     if skills_src.exists():
-        for skill_dir in skills_src.iterdir():
-            if not skill_dir.is_dir():
+        # Same host-conditional requires-* gate as the Claude provider, so the
+        # requires-* contract is enforced identically across providers. The
+        # Codex skills tree ships no skill-rules.json today, so the catalog is
+        # empty and nothing is gated — but a future Codex skill declaring
+        # requires-* is honoured without re-implementing the gate here.
+        skill_catalog = _load_template_skill_catalog(skills_src)
+        skipped: list[str] = []
+        for skill_dir in sorted(skills_src.iterdir()):
+            if not skill_dir.is_dir() or skill_dir.name == "__pycache__":
                 continue
-            skill_dst = agents_dir / "skills" / skill_dir.name
+
+            skill_name = skill_dir.name
+            entry = skill_catalog.get(skill_name, {})
+            requires_block = _extract_requires_block(skill_name, entry)
+
+            req_skills = entry.get("requires-skills") if isinstance(entry, dict) else None
+            if isinstance(req_skills, list) and req_skills:
+                _warn_requires_skills(skill_name, req_skills)
+
+            missing = _skill_missing_dependency(requires_block)
+            if missing is not None:
+                kind, dep_name = missing
+                print(f"[skipped: {skill_name}: missing {kind} {dep_name}]")
+                skipped.append(skill_name)
+                continue
+
+            skill_dst = agents_dir / "skills" / skill_name
             counts["skills"] += _copy_tree(skill_dir, skill_dst, version)
+
+        _prune_catalog_entries(agents_dir / "skills" / "skill-rules.json", skipped)
 
     # ------------------------------------------------------------------
     # 2. Agents (*.toml) — watched (fence-aware)
