@@ -258,6 +258,43 @@ class TestRenderTree:
             f"Written order: {[str(p) for p in written]}"
         )
 
+    def test_vc2_hook_rendered_executable_even_if_source_not(self, tmp_path: Path) -> None:
+        """A hook .py/.sh renders executable even when its .jinja source lacks +x.
+
+        The harness execs hooks via their shebang, so a rendered hook MUST carry
+        the executable bit. The renderer force-sets +x for files under a managed
+        hooks/ dir regardless of the source bit (a hook author who forgets to
+        chmod the .jinja must not ship a broken hook). Regression guard for the
+        map-memory-* hooks that shipped 0o644 and failed 'Permission denied'.
+        """
+        import os
+
+        templates_src = tmp_path / "templates_src"
+        dest_root = tmp_path / "dest"
+
+        # NOTE: executable=False — the source deliberately lacks +x.
+        _make_fixture(
+            templates_src,
+            ".claude/hooks/no-exec-hook.py.jinja",
+            "#!/usr/bin/env python3\nprint('{}')\n",
+            executable=False,
+        )
+        # A non-hook file must NOT be force-marked executable.
+        _make_fixture(templates_src, "plain.txt.jinja", "hi\n", executable=False)
+
+        render_tree("claude", templates_src_root=templates_src, dest_root=dest_root)
+
+        hook_dest = dest_root / ".claude" / "hooks" / "no-exec-hook.py"
+        assert hook_dest.is_file()
+        assert os.access(hook_dest, os.X_OK), (
+            "rendered hook must be executable even when the .jinja source is not"
+        )
+        plain_dest = dest_root / "plain.txt"
+        assert plain_dest.is_file()
+        assert not os.access(plain_dest, os.X_OK), (
+            "non-hook files must not be force-marked executable"
+        )
+
     def test_vc2_dry_run_does_not_write_live(self, tmp_path: Path) -> None:
         """dry_run=True must not write any live files."""
         templates_src = tmp_path / "templates_src"

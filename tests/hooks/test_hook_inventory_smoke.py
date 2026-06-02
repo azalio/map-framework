@@ -404,3 +404,46 @@ def test_configured_hook_smoke_case(
     )
 
     case.assert_result(run, hook_project)
+
+
+def test_every_configured_hook_execs_via_shebang(hook_project: Path) -> None:
+    """Harness-faithful executability check.
+
+    The smoke cases above invoke ``python3 <hook>`` / ``bash <hook>``, which
+    runs even a non-executable file and therefore CANNOT catch a missing +x.
+    Claude Code executes the bare path from ``settings.json`` directly, so it
+    relies on the shebang + the executable bit. This test reproduces that path:
+    it runs each configured hook as ``[<hook_path>]`` (no interpreter prefix)
+    and asserts the OS actually execs it — i.e. no ``PermissionError`` and no
+    126/127 (``Permission denied`` / ``command not found``). A no-op ``{}``
+    payload is used so we assert on exec-ability, not per-hook semantics.
+    """
+    env = os.environ.copy()
+    env["CLAUDE_PROJECT_DIR"] = str(hook_project)
+    env["PYTHONPATH"] = str(REPO_ROOT / "src")
+    env.pop("MAP_INVOKED_BY", None)  # don't let the guard mask the exec path
+
+    for name in sorted(_configured_hook_names()):
+        hook_path = HOOKS_DIR / name
+        assert hook_path.is_file(), f"configured hook missing on disk: {name}"
+        assert os.access(hook_path, os.X_OK), (
+            f"configured hook {name} is not executable; the harness execs it "
+            "via its shebang and will fail 'Permission denied'."
+        )
+        try:
+            proc = subprocess.run(
+                [str(hook_path)],  # bare path — relies on shebang + +x (harness path)
+                input="{}",
+                text=True,
+                capture_output=True,
+                cwd=hook_project,
+                env=env,
+                timeout=20,
+                check=False,
+            )
+        except PermissionError as exc:  # pragma: no cover - the bug this guards
+            pytest.fail(f"hook {name} could not be exec'd via shebang: {exc}")
+        assert proc.returncode not in (126, 127), (
+            f"hook {name} failed to exec (rc={proc.returncode}): "
+            f"126=Permission denied / 127=not found. stderr={proc.stderr!r}"
+        )

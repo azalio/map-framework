@@ -218,9 +218,16 @@ def _atomic_write_file(src: Path, dest: Path) -> None:
         with os.fdopen(tmp_fd, "wb") as fh:
             fh.write(data)
 
-        # Preserve executable bits from source
+        # Preserve executable bits from source. Additionally FORCE +x for hook
+        # scripts (.py/.sh under a managed hooks/ dir): the harness execs them
+        # directly via their shebang (see settings.json command paths), so a
+        # missing +x yields a "Permission denied" at runtime. Forcing it here
+        # means a hook .jinja source that forgets the executable bit still ships
+        # an executable hook (matches the install path's unconditional chmod in
+        # file_copier.create_hook_files).
         new_mode = tmp_path.stat().st_mode
-        if src_mode & stat.S_IXUSR:
+        force_exec = _path_is_hook(dest) and dest.suffix in (".py", ".sh")
+        if src_mode & stat.S_IXUSR or force_exec:
             new_mode |= stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
         tmp_path.chmod(new_mode)
 

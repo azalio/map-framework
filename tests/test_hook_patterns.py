@@ -81,6 +81,25 @@ def test_hooks_were_discovered() -> None:
 
 
 @pytest.mark.parametrize("hook_path", ALL_HOOKS, ids=ALL_HOOK_IDS)
+def test_hook_is_executable(hook_path: Path) -> None:
+    """Every hook .py/.sh must carry the executable bit in EVERY tree.
+
+    Claude Code execs hooks directly via their shebang (the settings.json
+    command is the bare path, e.g. ``"$CLAUDE_PROJECT_DIR"/.claude/hooks/x.py``),
+    so a hook without +x fails at runtime with ``Permission denied`` — a failure
+    that an interpreter-based test (``python3 <path>``) never reproduces. The
+    bit is committed to git, propagated by ``make render-templates`` (the
+    renderer force-sets +x for hooks), and re-applied by ``mapify init``
+    (``create_hook_files``); this asserts the committed tree stays correct.
+    """
+    assert os.access(hook_path, os.X_OK), (
+        f"hook {hook_path.relative_to(REPO_ROOT)} is not executable — the "
+        "harness execs it via its shebang and will fail 'Permission denied'. "
+        "Run `chmod +x` on the .jinja source and re-render."
+    )
+
+
+@pytest.mark.parametrize("hook_path", ALL_HOOKS, ids=ALL_HOOK_IDS)
 def test_hook_conforms_to_guard_contract(hook_path: Path) -> None:
     """Every hook satisfies its class contract (INV-A1 / INV-A2) in every tree."""
     rel = hook_path.relative_to(REPO_ROOT)
