@@ -223,6 +223,10 @@ class TestRmRfBlocking:
         [
             "rm -rf /",
             "rm -rf /home/user",
+            "rm -rf /etc",
+            "rm -rf /var",
+            "rm -rf /tmp",  # the temp ROOT itself stays blocked (no trailing /child)
+            "rm -rf /*",
             "rm -rf *",
             "rm -rf ..",
         ],
@@ -231,6 +235,25 @@ class TestRmRfBlocking:
         exit_code, stdout, _ = run_hook_bash(command)
         assert exit_code == 0
         _assert_denied(_parse_stdout(stdout))
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "rm -rf /tmp/map-spike-abc123",
+            "rm -rf /tmp/pytest-of-user/run0",
+            "rm -rf /private/tmp/map-spike-WOi8Pq",  # macOS mktemp
+            "rm -rf /var/folders/ab/cd1234/T/scratch",  # macOS $TMPDIR
+            "rm -rf /var/tmp/build-cache",
+        ],
+    )
+    def test_rm_rf_temp_subpath_allowed(self, command):
+        """Deleting a subpath UNDER a temp root is legitimate scratch cleanup
+        and must not be blocked (regression: the bare ``rm -rf /`` pattern used
+        to flag every absolute path, including temp dirs and any command that
+        merely mentioned one)."""
+        exit_code, stdout, _ = run_hook_bash(command)
+        assert exit_code == 0
+        assert _parse_stdout(stdout) == {}
 
     def test_rm_single_file_allowed(self):
         exit_code, stdout, _ = run_hook_bash("rm file.txt")
