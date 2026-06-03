@@ -125,33 +125,56 @@ def test_memory_pipeline_capture_finalize_recall(
     sessions_dir = smoke_project / ".map" / "smoke-branch" / "sessions"
 
     # ------------------------------------------------------------------
-    # Step 1: capture × 2 for sid-1
+    # Step 1: capture × 2 for sid-1 via REALISTIC Stop payloads.
+    # A real Stop event carries transcript_path (NOT tool_name/tool_input), so
+    # the capture hook must recover edited files from the transcript JSONL. The
+    # offset sidecar scopes each turn record to the edits made since the prior
+    # Stop, so turn 1 sees src/x.py and turn 2 sees src/y.py.
     # ------------------------------------------------------------------
-    capture_payload_1 = {
+    transcript = smoke_project / "transcript.jsonl"
+
+    def _edit_line(path: str) -> str:
+        return json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "tool_use", "name": "Edit", "input": {"file_path": path}}
+                    ],
+                },
+            }
+        )
+
+    stop_payload = {
         "session_id": "sid-1",
-        "tool_name": "Edit",
-        "tool_input": {"file_path": "src/x.py"},
-    }
-    capture_payload_2 = {
-        "session_id": "sid-1",
-        "tool_name": "Edit",
-        "tool_input": {"file_path": "src/y.py"},
+        "hook_event_name": "Stop",
+        "transcript_path": str(transcript),
     }
 
-    run1 = _run_hook("map-memory-capture.py", capture_payload_1, smoke_project, tmp_bin)
+    # Turn 1: transcript has one edit (src/x.py).
+    transcript.write_text(_edit_line("src/x.py") + "\n", encoding="utf-8")
+    run1 = _run_hook("map-memory-capture.py", stop_payload, smoke_project, tmp_bin)
     assert run1.returncode == 0, f"capture #1 failed:\n{run1.stderr}"
     assert run1.stdout.strip() in ("{}", ""), f"capture #1 unexpected stdout: {run1.stdout!r}"
 
-    run2 = _run_hook("map-memory-capture.py", capture_payload_2, smoke_project, tmp_bin)
+    # Turn 2: transcript grows by one edit (src/y.py).
+    with transcript.open("a", encoding="utf-8") as fh:
+        fh.write(_edit_line("src/y.py") + "\n")
+    run2 = _run_hook("map-memory-capture.py", stop_payload, smoke_project, tmp_bin)
     assert run2.returncode == 0, f"capture #2 failed:\n{run2.stderr}"
     assert run2.stdout.strip() in ("{}", ""), f"capture #2 unexpected stdout: {run2.stdout!r}"
 
-    # Verify scratch file has 2 "turn" records.
+    # Verify scratch file has 2 "turn" records, each scoped to its turn's edit.
     scratch_file = sessions_dir / "scratch" / "sid-1.jsonl"
     assert scratch_file.is_file(), "capture must create sid-1.jsonl in scratch/"
     records = [json.loads(line) for line in scratch_file.read_text().splitlines() if line.strip()]
     turn_records = [r for r in records if r.get("event") == "turn"]
     assert len(turn_records) == 2, f"expected 2 turn records, got: {records}"
+    # files_touched must be recovered from the transcript (regression guard for
+    # the Stop-event-carries-no-tool-fields bug).
+    assert turn_records[0]["files_touched"] == ["src/x.py"], turn_records
+    assert turn_records[1]["files_touched"] == ["src/y.py"], turn_records
 
     # ------------------------------------------------------------------
     # Step 2: finalize with a NEW sid (sid-2), NO SessionEnd marker
@@ -170,6 +193,11 @@ def test_memory_pipeline_capture_finalize_recall(
     digest_text = digests[0].read_text(encoding="utf-8")
     assert FAKE_BODY in digest_text, (
         f"digest {digests[0].name} does not contain expected body:\n{digest_text[:400]}"
+    )
+    # files_touched must survive the capture→finalize→frontmatter chain end to
+    # end (both transcript-derived paths land in the digest's frontmatter).
+    assert "src/x.py" in digest_text and "src/y.py" in digest_text, (
+        f"digest does not carry transcript-derived files_touched:\n{digest_text[:400]}"
     )
 
     # sid-1.finalized marker must exist; sid-1.jsonl must be deleted.

@@ -42,8 +42,8 @@ _TICKET_RE = re.compile(r"[a-z]+-\d+", re.IGNORECASE)
 # Date prefix in YYYY-MM-DD format from digest filenames.
 _DATE_PREFIX_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})")
 
-# Type alias for ranked digest entries: (score, date, path_str, frontmatter, body, path)
-_DigestEntry: TypeAlias = tuple[int, str, str, dict[str, object], str, Path]
+# Type alias for ranked digest entries: (score, date, frontmatter, body, path)
+_DigestEntry: TypeAlias = tuple[int, str, dict[str, object], str, Path]
 
 
 # ---------------------------------------------------------------------------
@@ -138,8 +138,13 @@ def _score_digest(
     if not prompt_tokens:
         return 0
 
+    # Tokenize the searchable text with the SAME regex used for the prompt and
+    # match on whole-token membership, not substring — otherwise a short prompt
+    # token (e.g. "api") spuriously matches inside unrelated words ("recapture")
+    # and inflates/mis-ranks scores.
     searchable = (_fm_text(fm) + " " + body).lower()
-    score = sum(1 for tok in prompt_tokens if tok in searchable)
+    doc_tokens = set(re.findall(r"[a-z0-9_-]+", searchable))
+    score = sum(1 for tok in prompt_tokens if tok in doc_tokens)
 
     # Boost: ticket_id match in ticket_refs field.
     if ticket_ids:
@@ -303,7 +308,7 @@ def build_recall(prompt: str, branch: str, project_dir: Path | str) -> str:
         fm, body = parsed
         score = _score_digest(prompt_tokens, ticket_ids, fm, body)
         date_str = _digest_date(fm, path)
-        entries.append((score, date_str, str(path), fm, body, path))
+        entries.append((score, date_str, fm, body, path))
 
     if not entries:
         return ""
@@ -315,31 +320,42 @@ def build_recall(prompt: str, branch: str, project_dir: Path | str) -> str:
     header = f"## Recalled session memory (branch {branch})\n\n"
     header_len = len(header)
 
-    # ---- Accumulate blocks until cap -----------------------------------------
+    # ---- Accumulate blocks until cap (rank-monotonic) ------------------------
+    # entries are sorted (score desc, date desc).  Once a block does not fit we
+    # STOP including and drop every remaining (lower-ranked) digest — so the
+    # recalled set is always a clean prefix of the ranking.  Continuing past the
+    # first overflow would let a smaller, lower-ranked digest jump ahead of a
+    # larger, higher-ranked one that was dropped, violating relevance order.
     included_blocks: list[str] = []
     total_chars = header_len
+    overflowed = False
 
-    for score, date_str, _path_str, fm, body, path in entries:
+    for _score, date_str, fm, body, path in entries:
+        del _score  # used only as the sort key above; unused in the loop body
         block = _render_block(date_str, fm, body)
-        del _path_str  # Intent: loop var reused only for path; _path_str not needed
 
-        # Account for the "\n" separator that "\n".join inserts before every
-        # block after the first, so the assembled payload length never exceeds
-        # the cap (the join would otherwise add N-1 uncounted newlines).
-        sep = 1 if included_blocks else 0
-        if total_chars + sep + len(block) <= cap:
-            included_blocks.append(block)
-            total_chars += sep + len(block)
-        else:
-            # Drop whole — SC-1: never mid-digest truncation.
-            session_id = fm.get("session_id") or path.stem
-            slug = fm.get("slug") or ""
-            _append_drop_log(
-                drop_log_path,
-                session_id=str(session_id),
-                slug=str(slug),
-                dropped_chars=len(block),
-            )
+        if not overflowed:
+            # Account for the "\n" separator that "\n".join inserts before every
+            # block after the first, so the assembled payload length never
+            # exceeds the cap (the join would otherwise add N-1 uncounted
+            # newlines).
+            sep = 1 if included_blocks else 0
+            if total_chars + sep + len(block) <= cap:
+                included_blocks.append(block)
+                total_chars += sep + len(block)
+                continue
+            # First block that does not fit — stop including from here on.
+            overflowed = True
+
+        # Drop whole — SC-1: never mid-digest truncation.
+        session_id = fm.get("session_id") or path.stem
+        slug = fm.get("slug") or ""
+        _append_drop_log(
+            drop_log_path,
+            session_id=str(session_id),
+            slug=str(slug),
+            dropped_chars=len(block),
+        )
 
     if not included_blocks:
         return ""

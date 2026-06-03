@@ -71,6 +71,50 @@ def _make_slug(title: str) -> str:
     return slugged[:32]
 
 
+def _digest_owned_by(dest_path: Path, sid: str) -> bool:
+    """Return True iff the digest at *dest_path* already belongs to *sid*.
+
+    Matches the EXACT frontmatter owner line, not a loose substring, so a file
+    path / body / ticket that merely contains this sid does not falsely claim
+    ownership.  session_id is persisted un-redacted (it is an identifier, not a
+    secret), so the reconstructed line reproduces what _build_frontmatter wrote.
+    """
+    try:
+        existing = dest_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    owner_line = f'{DIGEST_FRONTMATTER_FIELDS[0]}: "{sanitize_value(sid)}"'
+    return owner_line in existing
+
+
+def _disambiguate_slug(slug: str, sid: str, date_iso: str, sessions_dir: Path) -> str:
+    """Return a slug whose `<date>-<slug>.md` path won't clobber another session.
+
+    If the natural path is free or already owned by *sid*, the slug is returned
+    unchanged.  Otherwise a `-<sid[:8]>` suffix is appended; crucially the base
+    is truncated to RESERVE room for that suffix within the 32-char budget — a
+    naive append-then-truncate drops the suffix when the base is already 32
+    chars, re-colliding and overwriting the other session's digest.  A numeric
+    tail is added if the suffixed slug still collides with yet another session.
+    """
+    dest = sessions_dir / f"{date_iso}-{slug}.md"
+    if not dest.exists() or _digest_owned_by(dest, sid):
+        return slug
+
+    suffix = f"-{sid[:8]}"
+    base = slug[: max(1, 32 - len(suffix))]
+    n = 0
+    while True:
+        tail = "" if n == 0 else f"-{n}"
+        # Keep the whole candidate within the 32-char budget.
+        trimmed_base = base[: max(1, 32 - len(suffix) - len(tail))]
+        candidate = f"{trimmed_base}{suffix}{tail}"
+        dest = sessions_dir / f"{date_iso}-{candidate}.md"
+        if not dest.exists() or _digest_owned_by(dest, sid):
+            return candidate
+        n += 1
+
+
 def _lock_name(branch: str) -> str:
     """Return a valid flock name for *branch* (must match ^[a-zA-Z0-9_-]{1,64}$)."""
     # Branch sanitizer (capture._sanitize_branch) already allows '.' for
@@ -96,7 +140,11 @@ def _build_frontmatter(
     # sanitize_value each string value; lists are serialised as YAML inline.
 
     def _yaml_str(v: str) -> str:
-        escaped = v.replace('"', '\\"')
+        # Escape backslashes FIRST, then double-quotes, so the emitted scalar
+        # round-trips through yaml.safe_load (recall._parse_digest).  Without
+        # the backslash escape a value like a Windows path corrupts the YAML
+        # and the whole digest is silently dropped on recall.
+        escaped = v.replace("\\", "\\\\").replace('"', '\\"')
         return f'"{escaped}"'
 
     def _yaml_list(items: list[object]) -> str:
@@ -110,6 +158,14 @@ def _build_frontmatter(
                 parts.append(f"  - {json.dumps(item)}")
         return "\n" + "\n".join(parts)
 
+    def _clean(v: str) -> str:
+        # Redact per-field on the RAW value, BEFORE YAML escaping — the «redacted»
+        # token has no quotes/backslashes so escaping stays correct.  Identifier
+        # fields (session_id/branch/date/slug) are intentionally NOT redacted:
+        # they are not secrets, and redacting a long hex session_id to «redacted»
+        # would break the owner-line dedup check (_digest_owned_by).
+        return redact_text(sanitize_value(v))
+
     # DIGEST_FRONTMATTER_FIELDS order:
     # session_id, branch, date, slug, files_touched, decisions, findings, ticket_refs
     lines: list[str] = ["---"]
@@ -117,10 +173,15 @@ def _build_frontmatter(
     lines.append(f"{DIGEST_FRONTMATTER_FIELDS[1]}: {_yaml_str(sanitize_value(branch))}")
     lines.append(f"{DIGEST_FRONTMATTER_FIELDS[2]}: {_yaml_str(date_iso)}")
     lines.append(f"{DIGEST_FRONTMATTER_FIELDS[3]}: {_yaml_str(sanitize_value(slug))}")
-    lines.append(f"{DIGEST_FRONTMATTER_FIELDS[4]}: {_yaml_list([sanitize_value(str(f)) for f in files_touched])}")
-    lines.append(f"{DIGEST_FRONTMATTER_FIELDS[5]}: {_yaml_list(decisions)}")
-    lines.append(f"{DIGEST_FRONTMATTER_FIELDS[6]}: {_yaml_list(findings)}")
-    lines.append(f"{DIGEST_FRONTMATTER_FIELDS[7]}: {_yaml_list([sanitize_value(str(r)) for r in ticket_refs])}")
+    lines.append(f"{DIGEST_FRONTMATTER_FIELDS[4]}: {_yaml_list([_clean(str(f)) for f in files_touched])}")
+    # decisions/findings are LLM output — sanitize+redact string items the same
+    # way as every other content field so embedded newlines are flattened (a raw
+    # newline in a value would otherwise corrupt the frontmatter boundary and
+    # make recall._parse_digest drop the whole digest) and any leaked secret is
+    # stripped at the value level.
+    lines.append(f"{DIGEST_FRONTMATTER_FIELDS[5]}: {_yaml_list([_clean(d) if isinstance(d, str) else d for d in decisions])}")
+    lines.append(f"{DIGEST_FRONTMATTER_FIELDS[6]}: {_yaml_list([_clean(f) if isinstance(f, str) else f for f in findings])}")
+    lines.append(f"{DIGEST_FRONTMATTER_FIELDS[7]}: {_yaml_list([_clean(str(r)) for r in ticket_refs])}")
     lines.append("---")
     return "\n".join(lines) + "\n"
 
@@ -146,31 +207,57 @@ def _build_prompt(turns: list[dict[str, object]]) -> str:
     return "\n".join(lines)
 
 
-def _parse_claude_output(stdout: str) -> tuple[str, list[object], list[object]]:
+def _strip_code_fence(text: str) -> str:
+    """Strip a single leading/trailing Markdown code fence from *text*.
+
+    Models frequently wrap a requested JSON object in ```json … ``` fences even
+    when asked for raw JSON.  Without stripping, json.loads on the fenced string
+    raises and the structured {title, decisions, findings} are lost (the digest
+    then carries an empty decisions/findings list and a slug derived from the
+    literal ``` fence line).  Returns *text* unchanged when no fence is present.
+    """
+    stripped = text.strip()
+    if not stripped.startswith("```"):
+        return text
+    lines = stripped.splitlines()
+    # Drop the opening fence line (``` or ```json).
+    if lines and lines[0].startswith("```"):
+        lines = lines[1:]
+    # Drop the closing fence line if present.
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+    return "\n".join(lines)
+
+
+def _parse_claude_output(
+    stdout: str,
+) -> tuple[str, str, list[object], list[object]]:
     """Parse the claude -p JSON envelope defensively.
 
-    Returns (body_text, decisions, findings).
-    Falls back to (stdout, [], []) on parse failure.
+    Returns (title, body_text, decisions, findings).
+    Falls back to ("", stdout, [], []) on parse failure.
     """
     try:
         parsed = json.loads(stdout)
         raw_result = parsed.get("result", stdout)
     except (json.JSONDecodeError, AttributeError):
-        return stdout, [], []
+        return "", stdout, [], []
 
-    # Try to parse result as structured {title, body, decisions, findings}.
+    # Try to parse result as structured {title, body, decisions, findings},
+    # tolerating a ```json fence the model may have wrapped it in.
     try:
-        inner = json.loads(str(raw_result))
+        inner = json.loads(_strip_code_fence(str(raw_result)))
         if isinstance(inner, dict):
+            title = str(inner.get("title") or "")
             body = str(inner.get("body") or inner.get("title") or raw_result)
             decisions: list[object] = list(inner.get("decisions") or [])
             findings: list[object] = list(inner.get("findings") or [])
-            return body, decisions, findings
+            return title, body, decisions, findings
     except (json.JSONDecodeError, TypeError):
         pass
 
     # Fallback: treat result as plain body text.
-    return str(raw_result), [], []
+    return "", str(raw_result), [], []
 
 
 def _append_cost_log(
@@ -277,12 +364,14 @@ def _finalize_one(
 
             # ---- Empty scratch (VC6/SC-2/EC-5): no digest, still finalize ----
             if not turns:
-                # Write .finalized + delete scratch so it's never reprocessed.
+                # Write .finalized + delete scratch (and its offset sidecar) so
+                # it's never reprocessed.
                 finalized_marker.touch()
-                try:
-                    scratch_jsonl.unlink()
-                except OSError:
-                    pass
+                for stale in (scratch_jsonl, scratch_dir / f"{sid}.offset"):
+                    try:
+                        stale.unlink()
+                    except OSError:
+                        pass
                 return False
 
             # ---- Build prompt (security: scratch turns only, no file bodies) --
@@ -338,31 +427,32 @@ def _finalize_one(
             except (json.JSONDecodeError, AttributeError):
                 usage = {}
 
-            body, decisions, findings = _parse_claude_output(stdout)
+            title, body, decisions, findings = _parse_claude_output(stdout)
 
             # ---- Derive slug (spec LOW-11) ------------------------------------
+            # Prefer the dedicated `title` key the prompt asks for; fall back to
+            # the body's first line, then the sid.  (Using the body's first line
+            # unconditionally produced slugs like "summary" from a "## Summary"
+            # heading, inflating collisions.)
             date_iso = datetime.now(timezone.utc).date().isoformat()
-            title_line = body.strip().splitlines()[0] if body.strip() else sid
+            if title.strip():
+                title_line = title.strip()
+            elif body.strip():
+                title_line = body.strip().splitlines()[0]
+            else:
+                title_line = sid
             slug = _make_slug(title_line)
             if not slug:
                 slug = sid[:32]
 
-            # Collision check: different sid already has this slug.
+            # Collision check: never overwrite a DIFFERENT session's digest.
+            # _disambiguate_slug reserves room for the sid suffix BEFORE the
+            # 32-char truncation (a naive `f"{slug}-{sid[:8]}"[:32]` chops the
+            # suffix back off when slug is already 32 chars, re-colliding and
+            # letting os.replace clobber the other session's digest).
+            slug = _disambiguate_slug(slug, sid, date_iso, sessions_dir)
             candidate_name = f"{date_iso}-{slug}.md"
             dest_path = sessions_dir / candidate_name
-            if dest_path.exists():
-                # Check if it belongs to a different sid (read frontmatter minimally).
-                existing_text = ""
-                try:
-                    existing_text = dest_path.read_text(encoding="utf-8", errors="replace")
-                except OSError:
-                    pass
-                if f'"{sid}"' not in existing_text and sid not in existing_text:
-                    # Different sid owns this file — disambiguate.
-                    slug = f"{slug}-{sid[:8]}"
-                    slug = slug[:32]
-                    candidate_name = f"{date_iso}-{slug}.md"
-                    dest_path = sessions_dir / candidate_name
 
             # ---- Build digest text -------------------------------------------
             frontmatter = _build_frontmatter(
@@ -375,11 +465,12 @@ def _finalize_one(
                 findings=findings,
                 ticket_refs=ticket_refs,
             )
-            # Apply redact_text over body and sanitize (defense-in-depth spec:283-287).
+            # Redaction is applied PER-FIELD (in _build_frontmatter) and to the
+            # body here, on raw values before assembly — never as a single pass
+            # over the serialized digest, which would also rewrite the structural
+            # session_id identifier and break the owner-line dedup check.
             body_clean = redact_text(sanitize_value(body))
             digest_text = frontmatter + "\n" + body_clean + "\n"
-            # Final redaction pass over the full digest (spec:283-287).
-            digest_text = redact_text(digest_text)
 
             # ---- Atomic write protocol (INV-4 — ORDER IS LOAD-BEARING) -------
             # Step 1: write tmp.
@@ -394,11 +485,34 @@ def _finalize_one(
                     pass
                 return False
 
+            # Steps 2-3 are the ATOMIC COMMIT: the digest must exist on disk
+            # (os.replace) BEFORE the .finalized marker is created, so a session
+            # is never marked finalized without a digest.  If either fails, the
+            # scratch is left unfinalized and the next SessionStart retries.
             try:
                 # Step 2: atomic rename to final location.
                 os.replace(str(tmp_path), str(dest_path))
-                # Step 3: create .finalized marker.
+                # Step 3: create .finalized marker (the dedup guard).
                 finalized_marker.touch()
+            except OSError as exc:
+                logger.warning(
+                    "finalize: write protocol failed for sid=%s: %s", sid, exc
+                )
+                # Clean up tmp if it still exists (rename may have succeeded
+                # but the touch failed).
+                try:
+                    tmp_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                # Do NOT create .finalized — leave scratch for retry.
+                return False
+
+            # Steps 4-5 are BEST-EFFORT cleanup: the session is already
+            # finalized (digest written + marker created), so a failure here
+            # must NOT flip the verdict to False — that would orphan the scratch
+            # (never reprocessed, since .finalized now exists) and undercount the
+            # digest that was in fact written.  Swallow and continue to True.
+            try:
                 # Step 4: append cost record.
                 _append_cost_log(
                     cost_log,
@@ -406,23 +520,14 @@ def _finalize_one(
                     usage=usage,
                     duration_s=duration_s,
                 )
-                # Step 5: delete scratch WAL.
-                try:
-                    scratch_jsonl.unlink()
-                except OSError:
-                    pass
             except OSError as exc:
-                logger.warning(
-                    "finalize: write protocol failed for sid=%s: %s", sid, exc
-                )
-                # Clean up tmp if it still exists (rename may have succeeded
-                # but a later step failed).
+                logger.warning("finalize: cost-log failed for sid=%s: %s", sid, exc)
+            # Step 5: delete scratch WAL and its offset sidecar.
+            for stale in (scratch_jsonl, scratch_dir / f"{sid}.offset"):
                 try:
-                    tmp_path.unlink(missing_ok=True)
+                    stale.unlink()
                 except OSError:
                     pass
-                # Do NOT create .finalized — leave scratch for retry.
-                return False
 
     except LockTimeoutError:
         # HC-6: skip this candidate; it will be retried on the next SessionStart.

@@ -76,10 +76,18 @@ REDACTION_PATTERNS: dict[str, str] = {
     # Anthropic/OpenAI API keys.
     # sk-ant-... first (longer, more specific), then generic sk-...
     "openai": r"sk-ant-[A-Za-z0-9-]+|sk-[A-Za-z0-9]{16,}",
-    # GitHub personal/fine-grained/OAuth/refresh tokens.
-    "github": r"gh[pousr]_[A-Za-z0-9]{20,}",
-    # High-entropy base64/hex blobs (≥40 chars).
-    "base64_blob": r"[A-Za-z0-9+/]{40,}={0,2}",
+    # GitHub tokens. The classic prefixes (ghp_/gho_/ghu_/ghs_/ghr_) AND the
+    # fine-grained PAT format `github_pat_<...>` (which carries underscores in
+    # its body and so is NOT matched by the gh[pousr]_ branch). The fine-grained
+    # branch is listed first because `github_pat_` also starts with "gh".
+    "github": r"github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,}",
+    # High-entropy base64/hex blobs (≥40 chars).  The leading lookahead requires
+    # at least one non-hex letter ([g-zG-Z]) or base64-only char (+/) somewhere
+    # in the run, so a pure-hexadecimal run (a git SHA / content hash, either
+    # case) is left intact — those are benign identifiers a dev memory digest
+    # legitimately mentions, not secrets.  Real base64 tokens almost always
+    # contain such a character.
+    "base64_blob": r"(?=[A-Za-z0-9+/]*[g-zG-Z+/])[A-Za-z0-9+/]{40,}={0,2}",
     # AWS access key ID.
     "aws_access_key": r"AKIA[0-9A-Z]{16}",
 }
