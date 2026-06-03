@@ -1,0 +1,23 @@
+{
+  "entries": [
+    {
+      "prompt": "I need help debugging a failing test in my Python project.",
+      "should_trigger": "map-debug",
+      "assertions": [
+        {"type": "contains", "value": "debug"}
+      ]
+    },
+    {
+      "prompt": "Please add the numbers 2 and 3 together.",
+      "should_not_trigger": "map-debug",
+      "assertions": []
+    },
+    {
+      "prompt": "My application crashes with a stack overflow. Help me diagnose it.",
+      "should_trigger": "map-debug",
+      "assertions": [
+        {"type": "contains", "value": "crash"}
+      ]
+    }
+  ]
+}
