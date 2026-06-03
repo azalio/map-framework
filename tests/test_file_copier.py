@@ -61,12 +61,12 @@ class TestVC1MissingDepSkip:
         """map-state requires-cmd:[git]; patching _REQUIRES_CHECKER["requires-cmd"] skips it."""
         import mapify_cli.delivery.file_copier as fc
 
-        real_cmd_checker = fc._REQUIRES_CHECKER["requires-cmd"]
-
+        # Deterministic: git ABSENT, every other command (incl. `claude`) PRESENT.
+        # Do NOT delegate to the real checker — `claude` is absent on CI runners,
+        # which would make map-memory-now skip on `claude` instead of `git` and
+        # flip the skip message (env-dependent flake).
         def patched_cmd_checker(name: str) -> bool:
-            if name == "git":
-                return False
-            return real_cmd_checker(name)
+            return name != "git"
 
         monkeypatch.setitem(fc._REQUIRES_CHECKER, "requires-cmd", patched_cmd_checker)
 
@@ -406,12 +406,11 @@ class TestMapMemoryNowHostGate:
         from the installed skill-rules.json catalog."""
         import mapify_cli.delivery.file_copier as fc
 
-        real_cmd_checker = fc._REQUIRES_CHECKER["requires-cmd"]
-
+        # Deterministic: `claude` ABSENT, every other command (incl. `git`) PRESENT.
+        # Do NOT delegate to the real checker — git may be absent on some hosts,
+        # which would make map-memory-now skip on `git` instead of `claude`.
         def no_claude(name: str) -> bool:
-            if name == "claude":
-                return False
-            return real_cmd_checker(name)
+            return name != "claude"
 
         monkeypatch.setitem(fc._REQUIRES_CHECKER, "requires-cmd", no_claude)
 
