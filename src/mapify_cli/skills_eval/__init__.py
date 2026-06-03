@@ -6,6 +6,11 @@ runner, aggregator) and the concrete dispatcher implementations.
 
 from __future__ import annotations
 
+from mapify_cli.skills_eval.assertions import (
+    AssertionResult,
+    run_assertion,
+    run_assertions,
+)
 from mapify_cli.skills_eval.dispatcher import (
     ClaudeSubprocessDispatcher,
     MockDispatcher,
@@ -19,6 +24,7 @@ from mapify_cli.skills_eval.eval_schema import (
 )
 
 __all__ = [
+    "AssertionResult",
     "ClaudeSubprocessDispatcher",
     "DispatchResult",
     "EvalResultRecord",
@@ -26,4 +32,6 @@ __all__ = [
     "MockDispatcher",
     "VariantDispatcher",
     "make_cell_id",
+    "run_assertion",
+    "run_assertions",
 ]
