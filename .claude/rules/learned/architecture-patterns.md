@@ -161,3 +161,19 @@
   # CORRECT: templates_src is fence-free; copier injects exactly once:
   wrapped = f"# map:start\n{rendered}\n# map:end\n" if fenced else rendered
   ```
+
+- **Spike-First Gating: High-Risk Binding Decisions Require a Docs-Only Artifact Before Implementation** (2026-06-04): When a subtask's answer would bind downstream implementation (which channel carries a value, which API call is idempotent, what schema a subprocess emits), run it FIRST as a docs-only spike that writes an artifact naming the empirical answer + the binding strategy, and commits ZERO production code. Downstream subtasks reference the artifact by name and consume it, not assumptions. A wrong assumption that is not spiked propagates into every component built on it and forces a rewrite cascade. In this workflow a research-agent wrongly claimed skill-activation wasn't recoverable from `claude -p`; the ST-001 spike empirically corrected it before any dispatcher code existed. The spike artifact MUST contain a named "binding strategy" section, not just findings (Monitor hard-stopped once for a missing strategy section). [workflow: map-efficient]
+
+- **Producer-Owns-Parse: The Component That Owns the Subprocess Owns All Derived Fields; Consumers Read the Typed Result** (2026-06-04): When component A launches a subprocess (or owns a raw source) and component B consumes the result, ALL parsing/derivation (transcript reads, field extraction, signal combination) lives in A; B reads only the typed result struct and never re-implements parsing. Two payoffs: (1) a single parse site that a Mock producer can supply directly, so consumer tests need no subprocess/transcript fixture; (2) when the raw output schema changes, only A changes. Putting any parse in B re-couples the modules through the raw format. Extends "Contract-First Inter-Component JSON Schemas": the contract is A's typed struct, and the parse-to-struct boundary is A's responsibility exclusively. [workflow: map-efficient]
+  ```python
+  # WRONG — runner re-parses a transcript it does not own (couples to raw format)
+  result = dispatcher.dispatch(cell)            # raw proc output
+  skill = extract_skill_from_transcript(read_jsonl(result.session_id))
+
+  # CORRECT — dispatcher parses once into a typed field; runner just reads it
+  @dataclass
+  class DispatchResult:
+      triggered_skill: str | None   # parsed by dispatcher, NOT by runner
+      token_usage: TokenUsage | None
+  # tests inject MockDispatcher(triggered_skill="map-plan") — no subprocess needed
+  ```
