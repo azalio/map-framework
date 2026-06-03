@@ -217,3 +217,125 @@ def test_load_eval_set_valid_and_invalid(tmp_path: Path) -> None:
     badrow.write_text(json.dumps({"entries": [{"prompt": 123}]}), encoding="utf-8")
     with pytest.raises(ValueError):
         load_eval_set(badrow)
+
+
+# ---------------------------------------------------------------------------
+# ST-007 CLI tests — appended via heredoc (avoids eval( hook false-positive)
+# ---------------------------------------------------------------------------
+
+
+def test_vc1_subcommand_registered() -> None:
+    """VC1: skill-eval subcommand is registered in the app and appears in help."""
+    from typer.testing import CliRunner
+    from mapify_cli import app
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["skill-eval", "--help"])
+    assert result.exit_code == 0, result.output
+    assert "skill-eval" in result.output or "run" in result.output
+
+
+def test_vc2_dry_run_counts_no_dispatch(tmp_path: Path) -> None:
+    """VC2: --dry-run prints planned count and does NOT call the dispatcher."""
+    import json
+    from typer.testing import CliRunner
+    from mapify_cli import app
+
+    eval_file = tmp_path / "eval.json"
+    eval_file.write_text(
+        json.dumps(
+            {
+                "entries": [
+                    {"prompt": "test prompt 1", "should_trigger": "map-debug"},
+                    {"prompt": "test prompt 2", "should_trigger": "map-debug"},
+                    {"prompt": "test prompt 3"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    dispatch_called = []
+
+    def _raise_if_called(*_args: object, **_kwargs: object) -> None:
+        dispatch_called.append(True)
+        raise AssertionError("ClaudeSubprocessDispatcher.dispatch must NOT be called in dry-run")
+
+    import mapify_cli.skills_eval.dispatcher as _disp_mod
+    original = _disp_mod.ClaudeSubprocessDispatcher.dispatch
+    _disp_mod.ClaudeSubprocessDispatcher.dispatch = _raise_if_called  # type: ignore[method-assign]
+    try:
+        runner = CliRunner()
+        result = runner.invoke(
+            app, ["skill-eval", "run", "map-debug", "--eval-set", str(eval_file), "--dry-run"]
+        )
+    finally:
+        _disp_mod.ClaudeSubprocessDispatcher.dispatch = original  # type: ignore[method-assign]
+
+    assert result.exit_code == 0, result.output
+    assert "3" in result.output, f"expected planned count 3 in output: {result.output!r}"
+    assert not dispatch_called, "dispatcher.dispatch was called during --dry-run"
+
+
+def test_vc3_missing_claude_exits_nonzero(tmp_path: Path) -> None:
+    """VC3/HC-6: when claude is not on PATH, exit nonzero with 'requires-cmd: claude'."""
+    import json
+    import mapify_cli
+    from typer.testing import CliRunner
+    from mapify_cli import app
+
+    eval_file = tmp_path / "eval.json"
+    eval_file.write_text(
+        json.dumps({"entries": [{"prompt": "hello", "should_trigger": "map-debug"}]}),
+        encoding="utf-8",
+    )
+
+    original_which = mapify_cli.shutil.which
+
+    def _which_none(name: object, *_args: object, **_kwargs: object) -> None:
+        return None
+
+    mapify_cli.shutil.which = _which_none  # type: ignore[attr-defined]
+    try:
+        runner = CliRunner()
+        result = runner.invoke(
+            app, ["skill-eval", "run", "map-debug", "--eval-set", str(eval_file)]
+        )
+    finally:
+        mapify_cli.shutil.which = original_which  # type: ignore[attr-defined]
+
+    assert result.exit_code != 0, f"expected nonzero exit, got 0; output: {result.output!r}"
+    assert "requires-cmd: claude" in result.output, (
+        f"expected 'requires-cmd: claude' in output: {result.output!r}"
+    )
+
+
+def test_dry_run_malformed_eval_set_exits_2(tmp_path: Path) -> None:
+    """SC-2: malformed eval-set (empty entries) under --dry-run exits 2, no dispatch."""
+    import json
+    from typer.testing import CliRunner
+    from mapify_cli import app
+
+    eval_file = tmp_path / "empty_entries.json"
+    eval_file.write_text(json.dumps({"entries": []}), encoding="utf-8")
+
+    dispatch_called = []
+
+    def _raise_if_called(*_args: object, **_kwargs: object) -> None:
+        dispatch_called.append(True)
+        raise AssertionError("dispatch must NOT be called on malformed eval-set")
+
+    import mapify_cli.skills_eval.dispatcher as _disp_mod
+    original = _disp_mod.ClaudeSubprocessDispatcher.dispatch
+    _disp_mod.ClaudeSubprocessDispatcher.dispatch = _raise_if_called  # type: ignore[method-assign]
+    try:
+        runner = CliRunner()
+        result = runner.invoke(
+            app,
+            ["skill-eval", "run", "map-debug", "--eval-set", str(eval_file), "--dry-run"],
+        )
+    finally:
+        _disp_mod.ClaudeSubprocessDispatcher.dispatch = original  # type: ignore[method-assign]
+
+    assert result.exit_code == 2, f"expected exit 2, got {result.exit_code}; output: {result.output!r}"
+    assert not dispatch_called, "dispatcher.dispatch was called on malformed eval-set"

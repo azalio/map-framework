@@ -140,6 +140,12 @@ validate_app = typer.Typer(name="validate", help="Validate task dependency graph
 
 app.add_typer(validate_app, name="validate")
 
+skill_eval_app = typer.Typer(
+    name="skill-eval", help="Evaluate a skill's trigger accuracy + cost"
+)
+
+app.add_typer(skill_eval_app, name="skill-eval")
+
 
 def version_callback(value: bool):
     """Callback to show version and exit."""
@@ -1359,6 +1365,127 @@ def upgrade():
     console.print(
         "[dim]Note: upgrade refreshes shipped MAP files but does not overwrite project-specific MCP selections.[/dim]"
     )
+
+
+# Skill-eval commands
+
+
+@skill_eval_app.command("run")
+def skill_eval_run(
+    skill: str = typer.Argument(..., help="Skill under test, e.g. map-debug"),
+    eval_set: Optional[Path] = typer.Option(
+        None, "--eval-set", help="Path to eval-set JSON"
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Validate eval-set + print planned count; spend nothing"
+    ),
+    resume: bool = typer.Option(
+        False, "--resume", help="Resume a partial run, skipping completed cells"
+    ),
+    max_concurrency: int = typer.Option(
+        1, "--max-concurrency", min=1, help="Bounded parallel dispatch (default 1)"
+    ),
+) -> None:
+    """Run a skill evaluation matrix.
+
+    Exit codes:
+      0 - Success (or dry-run completed)
+      1 - Runtime error (claude not found, or unexpected failure)
+      2 - Validation error (missing --eval-set or malformed eval-set file)
+    """
+    # Intent: lazy import to keep top-level import time low and avoid import cycles.
+    import mapify_cli.skills_eval.runner as _runner
+    import mapify_cli.skills_eval.aggregator as _aggregator
+    from mapify_cli.skills_eval.dispatcher import ClaudeSubprocessDispatcher
+    from mapify_cli.skills_eval.eval_schema import EvalResultRecord
+    from datetime import timezone
+
+    # SC-2: --eval-set is required.
+    if eval_set is None:
+        console.print(
+            "[bold red]Error:[/bold red] provide --eval-set PATH"
+        )
+        raise typer.Exit(2)
+
+    # SC-2: load and validate the eval-set; malformed/empty → Exit(2), NO invocations.
+    try:
+        entries = _runner.load_eval_set(eval_set)
+    except ValueError as exc:
+        console.print(f"[bold red]Error:[/bold red] {exc}")
+        raise typer.Exit(2)
+
+    # Dry-run path: zero quota, NO dispatcher construction, NO claude required.
+    if dry_run:
+        # D10: variant_id fixed = 1, runs = 1.
+        planned = len(entries) * 1 * 1
+        console.print(
+            f"[bold]Dry-run:[/bold] planned [cyan]{planned}[/cyan] invocation(s) "
+            f"for skill [bold]{skill}[/bold] — spends 0 quota"
+        )
+        raise typer.Exit(0)
+
+    # HC-6: require claude BEFORE any invocation.
+    if shutil.which("claude") is None:
+        console.print(
+            "[bold red]Error:[/bold red] requires-cmd: claude — "
+            "install the claude CLI and ensure it is on PATH"
+        )
+        raise typer.Exit(1)
+
+    # Resolve output path.
+    root = Path.cwd()
+    if resume:
+        latest = _runner.latest_run_path(root, skill)
+        out_path = latest if latest is not None else _runner.default_run_path(
+            root, skill, datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        )
+    else:
+        out_path = _runner.default_run_path(
+            root, skill, datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        )
+
+    # Run the evaluation matrix.
+    disp = ClaudeSubprocessDispatcher()
+    _aggregator.bounded_run(
+        skill=skill,
+        entries=entries,
+        dispatcher=disp,
+        runs=1,
+        out_path=out_path,
+        resume=resume,
+        max_concurrency=max_concurrency,
+    )
+
+    # Read all records from the output file, aggregate, and print summary.
+    records: List[EvalResultRecord] = []
+    if out_path.exists():
+        for raw_line in out_path.read_text(encoding="utf-8").splitlines():
+            raw_line = raw_line.strip()
+            if not raw_line:
+                continue
+            try:
+                records.append(EvalResultRecord.from_dict(__import__("json").loads(raw_line)))
+            except (ValueError, KeyError):
+                continue
+
+    summary = _aggregator.aggregate(records)
+    console.print(
+        f"\n[bold]Eval complete:[/bold] skill=[bold]{skill}[/bold] "
+        f"pass_rate=[cyan]{summary.pass_rate:.1%}[/cyan] "
+        f"({summary.passed_cells}/{summary.total_cells} cells passed)"
+    )
+    if summary.tokens_mean is not None:
+        console.print(
+            f"  tokens mean={summary.tokens_mean:.1f} "
+            f"stddev={summary.tokens_stddev or 0.0:.1f} "
+            f"(n={summary.token_sample_size})"
+        )
+    if summary.duration_mean is not None:
+        console.print(
+            f"  duration mean={summary.duration_mean:.2f}s "
+            f"stddev={summary.duration_stddev or 0.0:.2f}s"
+        )
+    console.print(f"  artifact: [cyan]{out_path}[/cyan]")
 
 
 # Validate commands
