@@ -53,6 +53,12 @@ coverage.json
 # ^ Personal/local learned-rules layer — user-local, never committed or shipped
 #   (redundant over .map/* above; kept explicit for intent + defense in depth)
 
+# Phase E cross-session memory: scratch WAL is transient (never commit)
+.map/*/sessions/scratch/
+# Digests (.map/*/sessions/*.md) are committed by default. To keep them
+# local, set MAP_MEMORY_COMMIT_DIGESTS=0 and uncomment the next line:
+# .map/*/sessions/
+
 # Temporary verification files
 mapify_cli_verification_*.json
 

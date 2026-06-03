@@ -477,9 +477,9 @@ def detect_skill_deps(skill_dir: Path) -> dict[str, set[str]]:
 
 
 def test_skill_discovery_non_empty(skill_names: list[str]) -> None:
-    """Guard: skill-rules.json must list exactly 14 skills (prevents vacuous pass)."""
-    assert len(skill_names) == 14, (
-        f"Expected 14 skills in skill-rules.json, found {len(skill_names)}: "
+    """Guard: skill-rules.json must list exactly 15 skills (prevents vacuous pass)."""
+    assert len(skill_names) == 15, (
+        f"Expected 15 skills in skill-rules.json, found {len(skill_names)}: "
         f"{sorted(skill_names)}"
     )
 

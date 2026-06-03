@@ -70,6 +70,10 @@ REQUIRE_GUARD = {
     "ralph-context-pruner.py",
     "pre-compact-save-transcript.py",
     "end-of-turn.sh",
+    "map-memory-capture.py",
+    "map-memory-endmark.py",
+    "map-memory-finalize.py",
+    "map-memory-recall.py",
 }
 FORBID_GUARD = {
     "safety-guardrails.py",

@@ -53,6 +53,41 @@
             "description": "Tells Claude where to find the pre-compaction transcript and workflow state"
           }
         ]
+      },
+      {
+        "description": "MAP Memory Finalize - finalize prior dirty session scratches (runs before recall)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/map-memory-finalize.py",
+            "timeout": 60,
+            "description": "Finalize prior dirty session scratches (runs before recall)"
+          }
+        ]
+      },
+      {
+        "description": "MAP Memory Recall - inject ranked recalled session memory",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/map-memory-recall.py",
+            "timeout": 10,
+            "description": "Inject ranked recalled session memory"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "description": "MAP Memory Endmark - best-effort 'ended' marker",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/map-memory-endmark.py",
+            "timeout": 5,
+            "description": "Best-effort 'ended' marker"
+          }
+        ]
       }
     ],
     "PreToolUse": [
@@ -168,6 +203,17 @@
             "description": "Records main-session input/output/cache tokens (dedup by msg_id) into the branch token accounting artifacts"
           }
         ]
+      },
+      {
+        "description": "MAP Memory Capture - per-turn scratch WAL",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/map-memory-capture.py",
+            "timeout": 5,
+            "description": "Append one LLM-free scratch turn record"
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [
@@ -190,6 +236,17 @@
             "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/context-meter.py",
             "timeout": 5,
             "description": "Reads transcript token usage; if compression_policy=auto/aggressive and threshold crossed, injects additionalContext suggesting /compact"
+          }
+        ]
+      },
+      {
+        "description": "MAP Memory Recall",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/map-memory-recall.py",
+            "timeout": 10,
+            "description": "Inject ranked recalled session memory"
           }
         ]
       }

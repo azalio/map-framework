@@ -150,6 +150,24 @@ def _assert_end_turn_blocks_syntax(run: HookRun, _project: Path) -> None:
     assert "Python syntax error" in run.stderr
 
 
+def _assert_memory_scratch_written(run: HookRun, project: Path) -> None:
+    assert run.returncode == 0
+    assert run.stdout == "{}"
+    scratch = project / ".map" / "default" / "sessions" / "scratch" / "s1.jsonl"
+    assert scratch.is_file(), "capture must append a scratch JSONL turn record"
+    records = [json.loads(line) for line in scratch.read_text().splitlines() if line.strip()]
+    assert any(r.get("event") == "turn" for r in records), "expected a 'turn' record"
+
+
+def _assert_memory_end_marker(run: HookRun, project: Path) -> None:
+    assert run.returncode == 0
+    assert run.stdout == "{}"
+    scratch = project / ".map" / "default" / "sessions" / "scratch" / "s1.jsonl"
+    assert scratch.is_file(), "endmark must append a scratch JSONL record"
+    records = [json.loads(line) for line in scratch.read_text().splitlines() if line.strip()]
+    assert any(r.get("event") == "ended" for r in records), "expected an 'ended' record"
+
+
 def _make_dirty_git_repo(root: Path) -> Path:
     worktree = root / "dirty-git"
     worktree.mkdir()
@@ -303,6 +321,41 @@ HOOK_CASES: dict[str, list[HookCase]] = {
         HookCase("stop-records-main", {"transcript_path": "__PROJECT__/transcript.jsonl"}, _assert_token_accounting),
         HookCase("skip-missing-transcript", {"session_id": "s1"}, _assert_noop),
     ],
+    "map-memory-capture.py": [
+        HookCase(
+            "capture-turn",
+            {"session_id": "s1", "tool_name": "Edit", "tool_input": {"file_path": "src/app.py"}},
+            _assert_memory_scratch_written,
+            env_extra={"PYTHONPATH": str(REPO_ROOT / "src")},
+        ),
+    ],
+    "map-memory-endmark.py": [
+        HookCase(
+            "end-marker",
+            {"session_id": "s1", "reason": "clear"},
+            _assert_memory_end_marker,
+            env_extra={"PYTHONPATH": str(REPO_ROOT / "src")},
+        ),
+    ],
+    "map-memory-finalize.py": [
+        # No dirty scratch in a fresh project -> finalize is a clean no-op (no
+        # claude -p invocation). The e2e finalize path is covered in ST-008.
+        HookCase(
+            "no-dirty-scratch-noop",
+            {"session_id": "incoming-sid"},
+            _assert_noop,
+            env_extra={"PYTHONPATH": str(REPO_ROOT / "src")},
+        ),
+    ],
+    "map-memory-recall.py": [
+        # No digests yet -> recall returns empty -> silent {}.
+        HookCase(
+            "no-digests-noop",
+            {"hook_event_name": "SessionStart", "prompt": ""},
+            _assert_noop,
+            env_extra={"PYTHONPATH": str(REPO_ROOT / "src")},
+        ),
+    ],
 }
 
 
@@ -351,3 +404,46 @@ def test_configured_hook_smoke_case(
     )
 
     case.assert_result(run, hook_project)
+
+
+def test_every_configured_hook_execs_via_shebang(hook_project: Path) -> None:
+    """Harness-faithful executability check.
+
+    The smoke cases above invoke ``python3 <hook>`` / ``bash <hook>``, which
+    runs even a non-executable file and therefore CANNOT catch a missing +x.
+    Claude Code executes the bare path from ``settings.json`` directly, so it
+    relies on the shebang + the executable bit. This test reproduces that path:
+    it runs each configured hook as ``[<hook_path>]`` (no interpreter prefix)
+    and asserts the OS actually execs it — i.e. no ``PermissionError`` and no
+    126/127 (``Permission denied`` / ``command not found``). A no-op ``{}``
+    payload is used so we assert on exec-ability, not per-hook semantics.
+    """
+    env = os.environ.copy()
+    env["CLAUDE_PROJECT_DIR"] = str(hook_project)
+    env["PYTHONPATH"] = str(REPO_ROOT / "src")
+    env.pop("MAP_INVOKED_BY", None)  # don't let the guard mask the exec path
+
+    for name in sorted(_configured_hook_names()):
+        hook_path = HOOKS_DIR / name
+        assert hook_path.is_file(), f"configured hook missing on disk: {name}"
+        assert os.access(hook_path, os.X_OK), (
+            f"configured hook {name} is not executable; the harness execs it "
+            "via its shebang and will fail 'Permission denied'."
+        )
+        try:
+            proc = subprocess.run(
+                [str(hook_path)],  # bare path — relies on shebang + +x (harness path)
+                input="{}",
+                text=True,
+                capture_output=True,
+                cwd=hook_project,
+                env=env,
+                timeout=20,
+                check=False,
+            )
+        except PermissionError as exc:  # pragma: no cover - the bug this guards
+            pytest.fail(f"hook {name} could not be exec'd via shebang: {exc}")
+        assert proc.returncode not in (126, 127), (
+            f"hook {name} failed to exec (rc={proc.returncode}): "
+            f"126=Permission denied / 127=not found. stderr={proc.stderr!r}"
+        )
