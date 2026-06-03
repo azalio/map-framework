@@ -22,6 +22,12 @@ from mapify_cli.skills_eval.eval_schema import (
     EvalSetEntry,
     make_cell_id,
 )
+from mapify_cli.skills_eval.runner import (
+    default_run_path,
+    latest_run_path,
+    load_eval_set,
+    run_eval,
+)
 
 __all__ = [
     "AssertionResult",
@@ -31,7 +37,11 @@ __all__ = [
     "EvalSetEntry",
     "MockDispatcher",
     "VariantDispatcher",
+    "default_run_path",
+    "latest_run_path",
+    "load_eval_set",
     "make_cell_id",
     "run_assertion",
     "run_assertions",
+    "run_eval",
 ]
