@@ -208,6 +208,62 @@ def _build_assertion_specs(entry: EvalSetEntry) -> list[dict[str, object]]:
 # ---------------------------------------------------------------------------
 
 
+def evaluate_cell(
+    *,
+    skill: str,
+    entry: EvalSetEntry,
+    prompt_index: int,
+    run_number: int,
+    dispatcher: VariantDispatcher,
+) -> EvalResultRecord:
+    """Dispatch one (entry, prompt_index, run_number) cell and return the record.
+
+    Does NOT write to disk — the caller is responsible for durable persistence
+    (INV-4).  Shared by ``run_eval`` (sequential) and ``bounded_run``
+    (concurrent) so dispatch+assertion logic is defined exactly once (DRY).
+
+    Design invariants
+    -----------------
+    - D10: variant_id is always ``_VARIANT_ID`` (1).
+    - INV-7: ``triggered_skill`` is read from ``DispatchResult.triggered_skill``
+             only -- the runner never parses transcripts.
+    - VC4: per-cell ``DispatchResult.error`` is recorded (not raised); callers
+           decide whether to abort or continue.
+    """
+    cell_id = make_cell_id(prompt_index, _VARIANT_ID, run_number)
+
+    # Dispatch -- must not raise (VariantDispatcher contract).
+    dispatch_result: DispatchResult = dispatcher.dispatch(entry.prompt)
+
+    # Build assertion specs: explicit assertions + trigger expectations.
+    assertion_specs = _build_assertion_specs(entry)
+
+    if dispatch_result.error is not None:
+        # VC4: record the error as a synthetic failed assertion; do not abort.
+        passed_list: list[str] = []
+        failed_list: list[str] = [f"dispatch_error: {dispatch_result.error}"]
+        logger.warning(
+            "evaluate_cell: cell %s dispatch error (skill=%s run=%d): %s",
+            cell_id,
+            skill,
+            run_number,
+            dispatch_result.error,
+        )
+    else:
+        passed_list, failed_list = run_assertions(assertion_specs, dispatch_result)
+
+    return EvalResultRecord(
+        cell_id=cell_id,
+        prompt=entry.prompt,
+        triggered_skill=dispatch_result.triggered_skill,
+        token_usage=dispatch_result.token_usage,
+        duration_s=dispatch_result.duration_s,
+        assertions_passed=passed_list,
+        assertions_failed=failed_list,
+        raw_output=dispatch_result.raw_output,
+    )
+
+
 def run_eval(
     *,
     skill: str,
@@ -281,35 +337,12 @@ def run_eval(
                 )
                 continue
 
-            # Dispatch -- must not raise (VariantDispatcher contract).
-            dispatch_result: DispatchResult = dispatcher.dispatch(entry.prompt)
-
-            # Build assertion specs: explicit assertions + trigger expectations.
-            assertion_specs = _build_assertion_specs(entry)
-
-            if dispatch_result.error is not None:
-                # VC4: record the error as a synthetic failed assertion; do not abort.
-                passed_list: list[str] = []
-                failed_list: list[str] = [f"dispatch_error: {dispatch_result.error}"]
-                logger.warning(
-                    "run_eval: cell %s dispatch error (skill=%s run=%d): %s",
-                    cell_id,
-                    skill,
-                    run_number,
-                    dispatch_result.error,
-                )
-            else:
-                passed_list, failed_list = run_assertions(assertion_specs, dispatch_result)
-
-            record = EvalResultRecord(
-                cell_id=cell_id,
-                prompt=entry.prompt,
-                triggered_skill=dispatch_result.triggered_skill,
-                token_usage=dispatch_result.token_usage,
-                duration_s=dispatch_result.duration_s,
-                assertions_passed=passed_list,
-                assertions_failed=failed_list,
-                raw_output=dispatch_result.raw_output,
+            record = evaluate_cell(
+                skill=skill,
+                entry=entry,
+                prompt_index=prompt_index,
+                run_number=run_number,
+                dispatcher=dispatcher,
             )
 
             # INV-4: durable per-cell append-and-flush before advancing.

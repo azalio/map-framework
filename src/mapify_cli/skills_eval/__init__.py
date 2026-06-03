@@ -24,12 +24,19 @@ from mapify_cli.skills_eval.eval_schema import (
 )
 from mapify_cli.skills_eval.runner import (
     default_run_path,
+    evaluate_cell,
     latest_run_path,
     load_eval_set,
     run_eval,
 )
+from mapify_cli.skills_eval.aggregator import (
+    AggregateSummary,
+    aggregate,
+    bounded_run,
+)
 
 __all__ = [
+    "AggregateSummary",
     "AssertionResult",
     "ClaudeSubprocessDispatcher",
     "DispatchResult",
@@ -37,7 +44,10 @@ __all__ = [
     "EvalSetEntry",
     "MockDispatcher",
     "VariantDispatcher",
+    "aggregate",
+    "bounded_run",
     "default_run_path",
+    "evaluate_cell",
     "latest_run_path",
     "load_eval_set",
     "make_cell_id",
