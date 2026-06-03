@@ -191,8 +191,10 @@ python3 .map/scripts/map_step_runner.py record_test_baseline "$BRANCH"
 
 Snapshots pre-existing failures so later subtasks distinguish
 "introduced regression" from "was broken pre-plan". Auto-detects
-Make/pytest/go test/cargo. Overrides + narrow-target guidance:
-[efficient-reference.md](efficient-reference.md#pre-flight-test-baseline).
+Make/pytest/go test/cargo. It captures the test run internally and prints a
+single compact JSON report at the end — read that JSON directly; do NOT pipe it
+through `head`/`tail` (per the repo bash guidelines). Overrides + narrow-target
+guidance: [efficient-reference.md](efficient-reference.md#pre-flight-test-baseline).
 
 ### Wave Computation (after INIT_STATE) - REQUIRED
 

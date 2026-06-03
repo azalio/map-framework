@@ -203,6 +203,11 @@ fix or defer.
 python3 .map/scripts/map_step_runner.py record_test_baseline "$BRANCH"
 ```
 
+It captures the test run internally and prints a single compact JSON report at
+the end — read that JSON directly. Do NOT pipe it through `head`/`tail` (per the
+repo bash guidelines); the output is one small object, not a stream, so
+truncating it only hides fields.
+
 Auto-detects from project markers:
 - `Makefile` with `test:` target → `make test`
 - `pyproject.toml` / `pytest.ini` → `pytest`

@@ -128,3 +128,42 @@ paths:
       dest.chmod(dest.stat().st_mode | 0o755)
   # test guard: assert os.access(installed_hook, os.X_OK)
   ```
+
+- **`claude -p` Output Has Two Channels: Envelope for Tokens, Transcript JSONL for Skill Name** (2026-06-04): When shelling `claude -p --output-format json` as a subprocess, two distinct output channels carry different information — do not confuse them. The JSON result envelope (stdout) carries `.result` (response text), `.usage` (input/output/cache tokens), and `.session_id`. The name of the skill/slash-surface that actually fired is NOT in the envelope — it is only in Claude Code's native transcript JSONL (located by session_id) as a `tool_use` block with `name=="Skill"` and `input.skill`. Deriving this from the framework's own scratch/digest schema rather than the native transcript yields a wrong claim. Verify empirically by reading the real transcript after a spike call; never infer from internal schema files. [workflow: map-efficient]
+  ```python
+  env = json.loads(proc.stdout)        # .result, .usage, .session_id
+  tokens = env["usage"]                # CORRECT — tokens are in the envelope
+  # env.get("skill")  -> None          # WRONG — fired-skill is NOT in the envelope
+  for line in transcript_jsonl(env["session_id"]).read_text().splitlines():
+      m = json.loads(line)
+      if m.get("type") == "tool_use" and m.get("name") == "Skill":
+          triggered = m["input"]["skill"]; break
+  ```
+
+- **Scoped Config-Flag Mutation: Seed a Throwaway Temp Copy; Never Modify the Production Source of Truth** (2026-06-04): When a tool/test needs a shipped config flag to behave differently from its production default (e.g. stripping `disable-model-invocation: true` so an eval can auto-select skills), mutate the flag ONLY in a throwaway temp dir seeded with a copy of the production config, discarded after the subprocess exits. Never patch the source repo or `templates_src`. A blanket production flip is a footgun: it silently changes behavior for every other user of the flag and may be committed accidentally. Scope of mutation must match scope of need: one subprocess call → one throwaway dir, always cleaned up in `finally`. [workflow: map-efficient]
+  ```python
+  tmp = Path(tempfile.mkdtemp())
+  shutil.copytree(REPO / ".claude", tmp / ".claude")     # seed from production
+  strip_flag(tmp / ".claude" / "skills")                 # mutate throwaway ONLY
+  try:
+      subprocess.run(["claude", "-p", prompt, "--output-format", "json"], cwd=tmp)
+  finally:
+      shutil.rmtree(tmp)                                  # production never touched
+  ```
+
+- **Clock-Free Core with Caller-Supplied Path: Inject Timestamps at the CLI Boundary, Not Inside the Worker** (2026-06-04): When a worker writes durable output (a timestamped JSONL, a run artifact), do NOT call `datetime.now()` inside the worker. Have the CLI/outermost caller generate the timestamped path and pass it as an explicit `out_path: Path` the worker treats as opaque. Benefits: (1) tests pass `tmp_path / "results.jsonl"` with zero clock monkeypatching; (2) the worker is deterministic given the same inputs+path; (3) resume keys on the path the CLI owns. Refines "Long-Running Operations Need Durable State by Default" by fixing WHERE path/timestamp generation lives — at the boundary, not the core. [workflow: map-efficient]
+  ```python
+  # CORRECT: worker takes out_path; CLI owns the timestamp
+  def run_eval(*, entries, dispatcher, runs, out_path: Path, resume=False) -> list: ...
+  # CLI: out = default_run_path(root, skill, datetime.now(tz).strftime("%Y%m%dT%H%M%SZ"))
+  # Test: run_eval(..., out_path=tmp_path / "r.jsonl")   # no time mocking
+  ```
+
+- **Concurrent Durable Append: threading.Lock for Line Integrity + Stable cell_id Resume Key** (2026-06-04): When parallel workers append JSONL lines to a shared durable file, two invariants must BOTH hold: (1) no interleaved partial lines — guard each `f.write(line + "\n")` with a threading.Lock; (2) resume is idempotent regardless of write order — key on a stable id present in every record (cell_id), never on line number/position. Nondeterministic write order is fine as long as resume dedups by id. Each worker subprocess also runs in its own temp cwd so concurrent subprocesses never share a working dir. Complements "Long-Running Operations Need Durable State" (process-restart durability) with within-process concurrency safety. [workflow: map-efficient]
+  ```python
+  with self._lock:                       # atomic per-line append
+      with out_path.open("a", encoding="utf-8") as f:
+          f.write(json.dumps(record) + "\n")
+  done = {json.loads(l)["cell_id"] for l in out_path.read_text().splitlines() if l.strip()}
+  pending = [c for c in cells if make_cell_id(...) not in done]   # order-independent resume
+  ```

@@ -2179,6 +2179,74 @@ class TestRecordSubtaskResultAutoCommitSha:
         assert reloaded.last_subtask_commit_sha == "cafebabe"
 
 
+class TestRecordSubtaskResultGitignoredArtifact:
+    """record_subtask_result must NOT raise a 'Possible Actor truncation'
+    warning for declared files that are gitignored-but-present on disk (e.g.
+    .map/ workflow artifacts like spike docs). They never appear in git
+    diff/status by design — that is intentional, not truncation."""
+
+    def _init_git_repo(self, tmp_path):
+        import subprocess as _sp
+        _sp.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "config", "user.name", "t"], cwd=tmp_path, capture_output=True)
+        (tmp_path / ".gitignore").write_text(".map/\n")
+        (tmp_path / "seed.txt").write_text("seed")
+        (tmp_path / "tracked.py").write_text("x = 1\n")
+        _sp.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True)
+        # Second (non-root) commit so HEAD has a parent and `git diff-tree`
+        # yields a NON-empty diff_paths. Without this, a root commit produces an
+        # empty diff and files_not_in_diff is never computed — the gitignore
+        # test would then pass vacuously without exercising the filter.
+        (tmp_path / "seed.txt").write_text("seed v2")
+        _sp.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "commit", "-m", "second"], cwd=tmp_path, capture_output=True)
+
+    def test_gitignored_artifact_not_flagged(self, branch_dir, tmp_path, monkeypatch):
+        state = map_orchestrator.StepState()
+        state.subtask_sequence = ["ST-001"]
+        state.current_subtask_id = "ST-001"
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        self._init_git_repo(tmp_path)
+        # A real deliverable that exists on disk but is gitignored (.map/**).
+        artifact = tmp_path / ".map" / branch_dir / "spike_st001.md"
+        artifact.write_text("spike verdict", encoding="utf-8")
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        result = map_orchestrator.record_subtask_result(
+            "ST-001", branch_dir,
+            files_changed=[f".map/{branch_dir}/spike_st001.md"],
+            status="valid", summary="spike", commit_sha=None,
+        )
+        assert result["status"] == "success"
+        # No false truncation warning, no files_not_in_diff for the gitignored file.
+        assert "files_not_in_diff" not in result, result
+        assert "Possible Actor truncation" not in result.get("warning", ""), result
+
+    def test_non_gitignored_unchanged_tracked_file_still_flagged(
+        self, branch_dir, tmp_path, monkeypatch
+    ):
+        """Negative control (proves the filter is SPECIFIC): a tracked file that
+        exists, is NOT gitignored, and was not touched by this subtask's diff
+        still surfaces in files_not_in_diff — the gitignore filter must not be a
+        blanket suppression."""
+        state = map_orchestrator.StepState()
+        state.subtask_sequence = ["ST-001"]
+        state.current_subtask_id = "ST-001"
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        self._init_git_repo(tmp_path)  # tracked.py committed, unchanged in HEAD
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        result = map_orchestrator.record_subtask_result(
+            "ST-001", branch_dir,
+            files_changed=["tracked.py"],
+            status="valid", summary="x", commit_sha=None,
+        )
+        assert result["status"] == "success"
+        assert result.get("files_not_in_diff") == ["tracked.py"], result
+
+
 class TestValidateStepTransactionalMonitor:
     """validate_step('2.4') now implicitly closes pending 2.3 (ACTOR) so
     callers don't get 'Step mismatch: expected 2.3' when they jump straight

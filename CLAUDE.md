@@ -65,6 +65,7 @@ Validation:
 - "Not in the CI gate" is NOT a valid reason to skip. The error is real if any tool reported it.
 - "Static-analysis noise" is NOT a category. Either the type system is correct and the code is wrong, or the annotation needs fixing — pick one and fix it.
 - Only legitimate skip: the user explicitly approves deferral in the current conversation. Document the deferral in writing.
+- **Any error encountered while operating the MAP Framework itself must be fixed immediately, in the same change.** This covers the framework's own runtime — a hook that crashes or false-positives, a `.map/scripts/` runner or gate that errors or mis-reports, a `mapify` CLI traceback, a render/validator/blueprint failure, a broken `Task`/agent dispatch. When you hit one mid-task: STOP, find the root cause, and fix it before continuing the original work. Do NOT work around it, do NOT defer it as "unrelated", do NOT note-and-move-on past a broken tool. If the fix is genuinely out of scope or risky, stop and ask the user — never silently continue past a malfunctioning framework component. (Errors raised by an external plugin/hook NOT shipped by this repo are out of scope here; say so and route them to the user.)
 
 ## Bash Command Guidelines
 

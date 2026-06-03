@@ -38,7 +38,12 @@ _DEFAULT_DANGEROUS_FILE_PATTERNS = [
 
 # Dangerous bash command patterns
 _DEFAULT_DANGEROUS_COMMANDS = [
-    r"rm\s+-rf\s+/",  # rm -rf /
+    # Block `rm -rf /` (bare root), `rm -rf /etc`, `rm -rf /home/user`, etc.,
+    # but ALLOW deletion of subpaths UNDER a temp root (rm -rf /tmp/<dir>,
+    # /private/tmp/<dir>, /var/folders/<dir>, /var/tmp/<dir>) — legitimate
+    # scratch cleanup. The negative lookahead requires a trailing slash, so the
+    # temp root itself (`rm -rf /tmp`) stays blocked; only children are allowed.
+    r"rm\s+-rf\s+/(?!(?:tmp|private/tmp|var/folders|var/tmp)/)",  # rm -rf / (non-temp)
     r"rm\s+-rf\s+\*",  # rm -rf *
     r"rm\s+-rf\s+\.\.",  # rm -rf ..
     r"git\s+push.*--force.*main",

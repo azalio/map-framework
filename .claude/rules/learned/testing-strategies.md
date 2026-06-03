@@ -139,3 +139,12 @@ paths:
   # 3. git restore <file>        -> confirm GREEN
   # 4. commit file + test together
   ```
+
+- **Blueprint-Named Test Functions Are a Monitor Contract: Author Them in the Same Subtask as the Code** (2026-06-04): When a subtask blueprint's `test_strategy` names specific pytest function names (e.g. `test_vc3_resume_skips_present_cell_ids`), Monitor treats those names as a HARD completeness contract: a subtask whose logic is correct but whose blueprint-named functions do not yet exist gets `valid=false` (hard stop). The completeness unit is code + named-test-functions-together, not code alone — the blueprint author chose the names to specify observable behavior, so an absent name means the behavior is unverified. Never stub a named test with `pass`/`# TODO` and call the subtask done; the stub satisfies the import but not the contract. In this workflow ST-005's runner code was correct but Monitor hard-stopped until the four named VC tests were authored with real assertions. [workflow: map-efficient]
+
+- **Final Verification Must Check Shipped Docs Against Actual Behavior, Then Grep for the Same Drift Class** (2026-06-04): After code+tests are green, a dedicated final-verification pass must validate that user-facing docs (SKILL.md, README, CLI `--help`) match actual behavior: default values, accepted schema formats, flag names, output field names. Prose drift is invisible to pytest/ruff/mypy. When the first drift instance is found, immediately grep the WHOLE doc for the same class of claim (every `--flag default`, every schema example, every accepted file-format mention) before moving on — drift clusters because the doc was written once from a design doc, not from running code. Here the final-verifier caught a `--max-concurrency` default of 4 (actual 1); grepping the same file then surfaced a fictional YAML eval-set schema block + `.yaml` examples that the JSON-only loader could never parse. [workflow: map-efficient]
+  ```bash
+  # one drift found -> grep the whole doc for the drift class before marking done
+  mapify skill-eval --help | grep -i max-concurrency        # actual default
+  grep -nE 'default|yaml|schema|--[a-z-]+' docs/SKILL.md     # reconcile every claim
+  ```
