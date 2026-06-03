@@ -19,10 +19,10 @@ mapify skill-eval run <skill> --eval-set PATH [--dry-run] [--resume] [--max-conc
 ```
 
 - `<skill>` — the skill name to evaluate (e.g. `map-plan`).
-- `--eval-set PATH` — path to a YAML/JSON eval-set file defining prompt cases and expected assertions.
+- `--eval-set PATH` — path to a JSON eval-set file defining prompt cases and expected assertions.
 - `--dry-run` — validate the eval-set and print the planned run count without spending any quota.
 - `--resume` — continue an interrupted run from the last durable checkpoint.
-- `--max-concurrency N` — max parallel `claude -p` workers (default: 4).
+- `--max-concurrency N` — max parallel `claude -p` workers (default: 1).
 
 ## What It Does
 
@@ -38,19 +38,29 @@ mapify skill-eval run <skill> --eval-set PATH [--dry-run] [--resume] [--max-conc
 
 ## Eval-Set Format
 
-```yaml
-skill: map-plan
-cases:
-  - id: triggers_on_decompose
-    prompt: "Decompose this feature into subtasks"
-    assertions:
-      - type: trigger
-      - type: contains
-        value: "subtask"
-  - id: does_not_trigger_on_check
-    prompt: "Run quality gates"
-    assertions:
-      - type: not_trigger
+A JSON object with an `entries` array. Each entry has a `prompt`, optional
+`should_trigger` / `should_not_trigger` skill names (the runner turns these into
+`trigger` / `not_trigger` assertions), and an optional `assertions` array.
+Assertion types: `contains`, `not_contains`, `regex`, `valid_json`, `trigger`,
+`not_trigger`.
+
+```json
+{
+  "entries": [
+    {
+      "prompt": "Decompose this feature into subtasks",
+      "should_trigger": "map-plan",
+      "assertions": [
+        { "type": "contains", "value": "subtask" }
+      ]
+    },
+    {
+      "prompt": "Run quality gates",
+      "should_not_trigger": "map-plan",
+      "assertions": []
+    }
+  ]
+}
 ```
 
 ## --dry-run
@@ -61,13 +71,13 @@ cases:
 
 ```bash
 # Validate eval-set without spending quota
-mapify skill-eval run map-plan --eval-set .map/evals/map-plan.yaml --dry-run
+mapify skill-eval run map-plan --eval-set .map/evals/map-plan.json --dry-run
 
 # Run full eval with up to 8 parallel workers
-mapify skill-eval run map-plan --eval-set .map/evals/map-plan.yaml --max-concurrency 8
+mapify skill-eval run map-plan --eval-set .map/evals/map-plan.json --max-concurrency 8
 
 # Resume an interrupted run
-mapify skill-eval run map-plan --eval-set .map/evals/map-plan.yaml --resume
+mapify skill-eval run map-plan --eval-set .map/evals/map-plan.json --resume
 ```
 
 ## Troubleshooting
