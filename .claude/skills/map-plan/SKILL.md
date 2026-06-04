@@ -1,7 +1,7 @@
 ---
 name: map-plan
 description: |
-  ARCHITECT phase only: decompose a complex task into atomic subtasks via task-decomposer. Use when starting a feature, refactor, or complex bug fix and you need a plan first. Do NOT use to execute work; use map-task or map-efficient.
+  ARCHITECT phase only: produce an upfront plan by decomposing a complex task into atomic subtasks with clear dependencies, via task-decomposer. Use when the user asks to plan, create a structured plan, break down, decompose, or stage work — e.g. planning a feature, refactor, migration, API/versioning upgrade, or incremental/phased rollout into smaller independent steps before any code is written. Trigger on phrasing like "plan a…", "create a plan for…", "decompose…into tasks", "break this into steps", "roll out incrementally", or "smaller independent steps". Do NOT use to execute work; use map-task or map-efficient.
 effort: high
 argument-hint: "[task description]"
 ---

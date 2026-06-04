@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 
 from mapify_cli.skills_eval.eval_schema import EvalResultRecord
-from mapify_cli.skills_eval.proposer import propose_description
+from mapify_cli.skills_eval.proposer import _DEFAULT_MAX_CHARS, propose_description
 
 
 # ---------------------------------------------------------------------------
@@ -310,3 +310,58 @@ def test_empty_failing_records_still_calls_subprocess(
     result = propose_description("current desc", [])
     assert result == "improved"
     assert "argv" in cap, "subprocess.run must be called even with no failing records"
+
+
+# ---------------------------------------------------------------------------
+# Length cap — proposals must fit the skill `description` spec limit
+# ---------------------------------------------------------------------------
+
+
+def test_default_max_chars_is_spec_limit() -> None:
+    """The default cap is the Agent Skills `description` spec maximum (1024)."""
+    assert _DEFAULT_MAX_CHARS == 1024
+
+
+def test_over_limit_proposal_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A proposal longer than max_chars is rejected (None) — never shipped."""
+    too_long = "x" * (_DEFAULT_MAX_CHARS + 1)
+    monkeypatch.setattr(
+        "mapify_cli.skills_eval.proposer.subprocess.run",
+        _fake_run(0, json.dumps({"result": too_long})),
+    )
+    assert propose_description("old desc", [_make_record()]) is None
+
+
+def test_at_limit_proposal_is_returned(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A proposal exactly at max_chars is accepted (boundary is inclusive)."""
+    at_limit = "y" * _DEFAULT_MAX_CHARS
+    monkeypatch.setattr(
+        "mapify_cli.skills_eval.proposer.subprocess.run",
+        _fake_run(0, json.dumps({"result": at_limit})),
+    )
+    result = propose_description("old desc", [_make_record()])
+    assert result == at_limit
+
+
+def test_custom_max_chars_enforced(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An explicit max_chars overrides the default for both accept and reject."""
+    monkeypatch.setattr(
+        "mapify_cli.skills_eval.proposer.subprocess.run",
+        _fake_run(0, json.dumps({"result": "z" * 60})),
+    )
+    assert propose_description("old", [_make_record()], max_chars=50) is None
+    assert propose_description("old", [_make_record()], max_chars=100) == "z" * 60
+
+
+def test_prompt_states_the_char_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The improvement prompt tells claude the hard character limit."""
+    cap: dict[str, Any] = {}
+    monkeypatch.setattr(
+        "mapify_cli.skills_eval.proposer.subprocess.run",
+        _fake_run(0, json.dumps({"result": "short desc"}), cap),
+    )
+    propose_description("old desc", [_make_record()], max_chars=250)
+    # argv = ["claude", "-p", <prompt>, "--output-format", "json"]
+    prompt = cap["argv"][2]
+    assert "250" in prompt
+    assert "character" in prompt.lower()

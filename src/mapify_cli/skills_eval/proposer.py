@@ -25,10 +25,21 @@ _DEFAULT_TIMEOUT: int = 120
 # Value set in MAP_INVOKED_BY for every proposer subprocess call.
 _MAP_INVOKED_BY_VALUE: str = "skills-eval-proposer"
 
+# Hard cap on a proposed description's length: the Agent Skills spec maximum for
+# the `description` field (1024 chars), which the official skill-creator also
+# validates against. A candidate over this is rejected so the eval never proves
+# an unshippable description. (Note: Claude Code briefly truncated descriptions
+# at 250 chars in v2.1.86, raised to 1536 in v2.1.105, then dropped the
+# per-description cap entirely in v2.1.129+ for a usage-ranked listing budget —
+# so 250 was a transient cap, not the spec; current Claude Code loads the full
+# description for triggering.)
+_DEFAULT_MAX_CHARS: int = 1024
+
 
 def _build_prompt(
     current_description: str,
     failing_train_records: list[EvalResultRecord],
+    max_chars: int = _DEFAULT_MAX_CHARS,
 ) -> str:
     """Build an improvement prompt from the current description and failing records.
 
@@ -59,6 +70,11 @@ def _build_prompt(
         "skill to be triggered for the failing prompts above while remaining",
         "precise and not overly broad.",
         "",
+        f"HARD LIMIT: the new description MUST be at most {max_chars} characters "
+        f"(aim for ~{max(0, max_chars - 20)} to be safe). It is shown in a UI that "
+        "truncates anything longer, so a longer description is unusable no matter "
+        "how well it triggers. Count characters and stay within the limit.",
+        "",
         "Respond with ONLY the new description text, no preamble, no explanation.",
     ]
     return "\n".join(lines)
@@ -67,11 +83,17 @@ def _build_prompt(
 def propose_description(
     current_description: str,
     failing_train_records: list[EvalResultRecord],
+    max_chars: int = _DEFAULT_MAX_CHARS,
 ) -> str | None:
     """Propose an improved skill description using ``claude -p``.
 
     Mirrors the subprocess/envelope pattern from ``dispatcher._run_once`` and
     ``dispatcher._parse_envelope``.
+
+    The proposal is capped at ``max_chars`` characters (the skill-listing UI
+    limit): the prompt asks for it, and a candidate that still exceeds the cap
+    is rejected (``None``) so the optimizer never evaluates an unshippable
+    description.
 
     Returns the proposed description text (stripped) on success, or ``None``
     on any failure:
@@ -81,8 +103,9 @@ def propose_description(
     - any other unexpected exception
     - malformed JSON stdout
     - missing or whitespace-only ``.result`` in the JSON envelope
+    - a proposal longer than ``max_chars`` characters
     """
-    prompt = _build_prompt(current_description, failing_train_records)
+    prompt = _build_prompt(current_description, failing_train_records, max_chars)
 
     # Intent: argv is always a list; prompt is a discrete element (never shell-interpolated).
     argv: list[str] = ["claude", "-p", prompt, "--output-format", "json"]
@@ -117,7 +140,14 @@ def propose_description(
         return None
 
     raw = str(parsed.get("result", ""))
-    if not raw.strip():
+    candidate = raw.strip()
+    if not candidate:
         return None
 
-    return raw.strip()
+    # Reject an over-limit proposal so the optimizer never evaluates (and a
+    # later --apply never tries to ship) a description the skill-listing UI
+    # would truncate. Treated like a proposal failure for that iteration.
+    if len(candidate) > max_chars:
+        return None
+
+    return candidate
