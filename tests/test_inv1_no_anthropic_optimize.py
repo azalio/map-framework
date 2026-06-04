@@ -26,7 +26,8 @@ _SKILLS_EVAL_ROOT = (
 MODULES: list[Path] = [
     _SKILLS_EVAL_ROOT / "proposer.py",
     _SKILLS_EVAL_ROOT / "description_optimizer.py",
-    # ST-009: add viewer.py, apply_patcher.py here
+    _SKILLS_EVAL_ROOT / "viewer.py",
+    _SKILLS_EVAL_ROOT / "apply_patcher.py",
 ]
 
 
