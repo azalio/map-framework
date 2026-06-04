@@ -1,0 +1,55 @@
+{
+  "entries": [
+    {
+      "prompt": "Execute the next subtask in the MAP build loop and report back.",
+      "should_trigger": "map-efficient",
+      "assertions": [
+        {"type": "contains", "value": "execute"}
+      ]
+    },
+    {
+      "prompt": "Run the planned subtask ST-003 and apply the code changes.",
+      "should_trigger": "map-efficient",
+      "assertions": [
+        {"type": "contains", "value": "run"}
+      ]
+    },
+    {
+      "prompt": "Implement the database migration step from the current plan.",
+      "should_trigger": "map-efficient",
+      "assertions": [
+        {"type": "contains", "value": "implement"}
+      ]
+    },
+    {
+      "prompt": "Continue with the next wave of subtasks in our feature rollout plan.",
+      "should_trigger": "map-efficient",
+      "assertions": [
+        {"type": "contains", "value": "continue"}
+      ]
+    },
+    {
+      "prompt": "Apply the code changes for the authentication refactor subtask.",
+      "should_trigger": "map-efficient"
+    },
+    {
+      "prompt": "Advance the MAP workflow to the next subtask and execute it.",
+      "should_trigger": "map-efficient",
+      "assertions": [
+        {"type": "contains", "value": "advance"}
+      ]
+    },
+    {
+      "prompt": "Complete the current batch of subtasks from our migration blueprint.",
+      "should_trigger": "map-efficient"
+    },
+    {
+      "prompt": "What is the capital of France?",
+      "should_not_trigger": "map-efficient"
+    },
+    {
+      "prompt": "Explain how hash tables work.",
+      "should_not_trigger": "map-efficient"
+    }
+  ]
+}

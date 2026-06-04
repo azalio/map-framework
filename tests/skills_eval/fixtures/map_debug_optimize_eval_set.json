@@ -1,0 +1,65 @@
+{
+  "entries": [
+    {
+      "prompt": "My Python service crashes with a KeyError on startup. Help me diagnose the root cause.",
+      "should_trigger": "map-debug",
+      "assertions": [
+        {"type": "contains", "value": "crashes"}
+      ]
+    },
+    {
+      "prompt": "I have a failing pytest test with a mysterious AssertionError and I cannot figure out why.",
+      "should_trigger": "map-debug",
+      "assertions": [
+        {"type": "contains", "value": "failing"}
+      ]
+    },
+    {
+      "prompt": "My CI pipeline is suddenly failing after a dependency upgrade. Help me track down the regression.",
+      "should_trigger": "map-debug",
+      "assertions": [
+        {"type": "contains", "value": "regression"}
+      ]
+    },
+    {
+      "prompt": "There is a segmentation fault in my C extension. Walk me through diagnosing the memory error.",
+      "should_trigger": "map-debug",
+      "assertions": [
+        {"type": "contains", "value": "segmentation"}
+      ]
+    },
+    {
+      "prompt": "The API returns 500 intermittently under load. Help me investigate the root cause.",
+      "should_trigger": "map-debug",
+      "assertions": [
+        {"type": "contains", "value": "intermittently"}
+      ]
+    },
+    {
+      "prompt": "My hook script silently exits without producing any output. I need to debug why.",
+      "should_trigger": "map-debug",
+      "assertions": [
+        {"type": "contains", "value": "debug"}
+      ]
+    },
+    {
+      "prompt": "There is a data corruption bug that only manifests in production. Help me isolate the cause.",
+      "should_trigger": "map-debug"
+    },
+    {
+      "prompt": "My async task queue stops processing after a few hours with no error logged. Diagnose it.",
+      "should_trigger": "map-debug",
+      "assertions": [
+        {"type": "contains", "value": "diagnose"}
+      ]
+    },
+    {
+      "prompt": "Write a function that reverses a string.",
+      "should_not_trigger": "map-debug"
+    },
+    {
+      "prompt": "Summarize the last three commits.",
+      "should_not_trigger": "map-debug"
+    }
+  ]
+}
