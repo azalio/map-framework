@@ -98,6 +98,37 @@ class MockDispatcher(VariantDispatcher):
 # Seeding helpers (ClaudeSubprocessDispatcher internals)
 # ---------------------------------------------------------------------------
 
+# Subdir name (under the throwaway eval cwd) handed to the telegram-bridge
+# plugin as its state dir — see _eval_subprocess_env.
+_NO_TELEGRAM_STATE_DIRNAME = ".map-eval-no-telegram"
+
+
+def _eval_subprocess_env(cwd: Path) -> dict[str, str]:
+    """Build the environment for an eval ``claude -p`` subprocess.
+
+    Two scoped overrides on top of the inherited environment:
+
+    - ``MAP_INVOKED_BY`` — recursion guard so MAP's own hooks no-op inside the
+      eval subprocess.
+    - ``TG_STATE_DIR`` — points the ``telegram-bridge`` plugin's state dir at a
+      config-less path **inside the throwaway cwd**. The plugin's SessionStart
+      hook may still inject its "always-listen — run `tg listen`" instruction
+      (plugin hooks run in a restricted env that does not receive this override),
+      but the instruction is now **inert**: when the eval ``claude -p`` agent
+      actually runs ``tg listen`` / ``tg send``, those commands inherit THIS
+      subprocess env, find no ``config.json`` under ``TG_STATE_DIR``, and exit
+      immediately (``die("no config.json")``) instead of blocking on the Telegram
+      long-poll. Without this, ``tg listen`` blocks until the dispatch timeout and
+      a triggered-skill cell mis-records as a non-trigger. The operator's real
+      ``~/.claude/telegram`` config is never touched — this is a per-subprocess
+      override on a path that is removed with the temp cwd.
+    """
+    return {
+        **os.environ,
+        "MAP_INVOKED_BY": "skills-eval",
+        "TG_STATE_DIR": str(cwd / _NO_TELEGRAM_STATE_DIRNAME),
+    }
+
 
 def _seed_temp_cwd(source_claude_dir: Path) -> Path:
     """Create a throwaway temp directory seeded with a copy of ``.claude/``.
@@ -490,7 +521,7 @@ class ClaudeSubprocessDispatcher(VariantDispatcher):
                 text=True,
                 timeout=self._timeout,
                 cwd=cwd,
-                env={**os.environ, "MAP_INVOKED_BY": "skills-eval"},
+                env=_eval_subprocess_env(cwd),
             )
         except subprocess.TimeoutExpired as exc:
             self._last_error = f"timeout after {self._timeout}s: {exc}"
