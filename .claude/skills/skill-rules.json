@@ -244,11 +244,11 @@
       "skillClass": "task",
       "enforcement": "manual",
       "priority": "medium",
-      "description": "Evaluate a /map-* skill's trigger accuracy + cost via mapify skill-eval (claude -p matrix, deterministic assertions, durable resumable runs).",
+      "description": "Evaluate a /map-* skill's trigger accuracy + cost, OR optimize its description via anti-overfit held-out selection, via mapify skill-eval (claude -p matrix, deterministic assertions, durable resumable runs).",
       "requires-cmd": ["claude"],
       "promptTriggers": {
-        "keywords": ["map-skill-eval","skill-eval","skill eval","evaluate skill","trigger accuracy","skill triggering"],
-        "intentPatterns": ["map-skill-eval","(eval|evaluate|measure|test).*(skill).*(trigger|fire|cost)","does .* skill trigger"]
+        "keywords": ["map-skill-eval","skill-eval","skill eval","evaluate skill","trigger accuracy","skill triggering","optimize skill","skill optimize","description optimizer","optimize description"],
+        "intentPatterns": ["map-skill-eval","(eval|evaluate|measure|test).*(skill).*(trigger|fire|cost)","does .* skill trigger","(optimize|improve).*(skill).*(description|trigger)"]
       }
     },
     "map-task": {
