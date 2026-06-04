@@ -2166,6 +2166,29 @@ def record_subtask_result(
             diff_paths = set()
         if diff_paths:
             files_not_in_diff = [p for p in declared if p not in diff_paths]
+        # Gitignored deliverables (e.g. .map/ workflow artifacts like spike
+        # docs or eval-run .jsonl) never appear in git diff/status by design —
+        # that is NOT Actor truncation. Drop any declared path that
+        # `git check-ignore` reports as ignored so it does not raise a false
+        # "Possible Actor truncation" warning. A gitignored file that is also
+        # missing from disk is still flagged separately via missing_files.
+        if files_not_in_diff:
+            try:
+                igproc = _sp.run(
+                    ["git", "check-ignore", "--", *files_not_in_diff],
+                    cwd=project_dir, capture_output=True, text=True, timeout=5,
+                )
+                ignored = {
+                    line.strip()
+                    for line in igproc.stdout.splitlines()
+                    if line.strip()
+                }
+                if ignored:
+                    files_not_in_diff = [
+                        p for p in files_not_in_diff if p not in ignored
+                    ]
+            except (OSError, _sp.TimeoutExpired):
+                pass
 
     state.record_subtask_result(
         subtask_id,

@@ -87,6 +87,60 @@ mapify skill-eval run map-plan --eval-set .map/evals/map-plan.json --resume
 - **Run log not found for `--resume`** — `--resume` looks for the latest `.map/eval-runs/<skill>/<timestamp>.jsonl`. If no prior run exists, omit `--resume` to start fresh.
 - **All cases report `not_trigger` unexpectedly** — verify the skill name matches exactly (e.g. `map-plan`, not `map_plan`) and that `.claude/` was seeded correctly in the temp cwd.
 
+## Optimize a skill description
+
+Anti-overfit description optimizer: deterministic 60/40 train/test split, up to N iterations (iteration 0 = baseline = current description). Selects the candidate with the highest held-out TEST pass-rate; an overfit candidate (train pass-rate up, test pass-rate down) is flagged and never selected.
+
+```bash
+mapify skill-eval optimize <skill> --eval-set PATH [--iterations N] [--apply] [--open] [--dry-run]
+```
+
+- `<skill>` — skill to optimize (e.g. `map-plan`).
+- `--eval-set PATH` — eval-set JSON with `>= 5` entries (a 60/40 split needs `n_test >= 3`; a smaller set exits with code 2, spending zero quota).
+- `--iterations N` — maximum optimization iterations (default: 5). Iteration 0 is the baseline.
+- `--apply` — patch the winning description into the SKILL.md frontmatter `description:` of `templates_src/skills/<skill>/SKILL.md.jinja` and re-render so generated trees stay byte-identical; the change is staged, not committed. `skill-rules.json` `description` is NOT auto-patched (update it by hand). Two no-op cases: "No improvement found" (baseline already optimal) and "Winner identical to current".
+- `--open` — open the HTML report in the browser after the run (best-effort; never errors the run).
+- `--dry-run` — print the planned call budget (iterations × (n_train + n_test) dispatch calls + iterations proposer calls) and `model: default (resolved by claude CLI)`, then exit 0 spending zero quota.
+
+Writes a durable `OptimizeResult` JSON and an HTML report to `.map/eval-runs/<skill>/<timestamp>-optimize.json` and `<timestamp>-optimize.html`.
+
+Default mode is propose-only: nothing outside `.map/` is modified.
+
+### Examples
+
+```bash
+# Preview quota usage without spending any
+mapify skill-eval optimize map-plan --eval-set .map/evals/map-plan.json --dry-run
+
+# Run 3 optimization iterations and open the HTML report
+mapify skill-eval optimize map-plan --eval-set .map/evals/map-plan.json --iterations 3 --open
+
+# Run, then auto-apply the winning description if improvement found
+mapify skill-eval optimize map-plan --eval-set .map/evals/map-plan.json --apply
+```
+
+## View an optimization report
+
+Renders the latest (or a specified `--result`) stored `OptimizeResult` JSON as an HTML report.
+
+```bash
+mapify skill-eval view <skill> [--result PATH] [--open]
+```
+
+- `<skill>` — skill whose optimization results to view.
+- `--result PATH` — path to a specific `*-optimize.json` result file; defaults to the latest in `.map/eval-runs/<skill>/`.
+- `--open` — open the rendered HTML report in the browser.
+
+### Examples
+
+```bash
+# View the latest optimization report for map-plan
+mapify skill-eval view map-plan
+
+# Open a specific result file in the browser
+mapify skill-eval view map-plan --result .map/eval-runs/map-plan/20260601T120000-optimize.json --open
+```
+
 ## Related Commands
 
 - `/map-plan` — plan and decompose tasks.

@@ -307,14 +307,25 @@ class TestSkillStructure:
     def test_descriptions_fit_claude_skill_listing_limit(
         self, skills_dir, skill_folders
     ):
-        """Descriptions should stay under the 250-char Claude listing limit."""
+        """Descriptions must fit the Agent Skills `description` spec limit (1024 chars).
+
+        The 1024-char cap is the documented Agent Skills maximum for the
+        `description` field (the official skill-creator validates against it too).
+        It is NOT the old 250-char number: Claude Code truncated descriptions at
+        250 in v2.1.86, raised the cap to 1536 in v2.1.105, then removed the
+        per-description cap in v2.1.129+ (usage-ranked listing budget). So 250 was
+        a transient version cap; current Claude Code loads the full description
+        (up to the spec's 1024) for triggering.
+        Refs: github.com/anthropics/claude-code issues #40121 / #47627;
+        code.claude.com/docs/en/skills.
+        """
         for folder in skill_folders:
             skill_file = skills_dir / folder / "SKILL.md"
             fm = self._parse_frontmatter(skill_file)
             desc = fm.get("description", "")
-            assert len(desc) <= 250, (
+            assert len(desc) <= 1024, (
                 f"Skill '{folder}' description is {len(desc)} chars; "
-                "keep it at or under 250 chars to avoid UI truncation."
+                "keep it at or under the 1024-char Agent Skills spec limit."
             )
 
     def test_frontmatter_uses_supported_fields(self, skills_dir, skill_folders):

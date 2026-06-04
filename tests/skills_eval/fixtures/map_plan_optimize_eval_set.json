@@ -1,0 +1,55 @@
+{
+  "entries": [
+    {
+      "prompt": "I need to decompose the new user authentication feature into atomic subtasks for my team.",
+      "should_trigger": "map-plan",
+      "assertions": [
+        {"type": "contains", "value": "decompose"}
+      ]
+    },
+    {
+      "prompt": "Help me plan a refactor of the database layer into smaller independent steps.",
+      "should_trigger": "map-plan",
+      "assertions": [
+        {"type": "contains", "value": "plan"}
+      ]
+    },
+    {
+      "prompt": "Break down the migration of our monolith to microservices into a sequence of subtasks.",
+      "should_trigger": "map-plan",
+      "assertions": [
+        {"type": "contains", "value": "migration"}
+      ]
+    },
+    {
+      "prompt": "I want to create a structured plan for implementing the new payment integration feature.",
+      "should_trigger": "map-plan"
+    },
+    {
+      "prompt": "Decompose the API versioning upgrade project into atomic tasks with clear dependencies.",
+      "should_trigger": "map-plan",
+      "assertions": [
+        {"type": "contains", "value": "atomic"}
+      ]
+    },
+    {
+      "prompt": "Help me break the search feature redesign into manageable subtasks for my sprint.",
+      "should_trigger": "map-plan"
+    },
+    {
+      "prompt": "I need a plan for incrementally rolling out the new permissions system without breaking existing users.",
+      "should_trigger": "map-plan",
+      "assertions": [
+        {"type": "contains", "value": "incrementally"}
+      ]
+    },
+    {
+      "prompt": "What is 2 + 2?",
+      "should_not_trigger": "map-plan"
+    },
+    {
+      "prompt": "Fix the typo in the README file.",
+      "should_not_trigger": "map-plan"
+    }
+  ]
+}
