@@ -1565,6 +1565,229 @@ def validate_graph(
         raise typer.Exit(2)
 
 
+def _open_best_effort(path: Path) -> None:
+    """Open *path* in the default browser — swallow any error (VC5/SC-2)."""
+    import webbrowser  # lazy import: optional use-path
+
+    try:
+        webbrowser.open(path.as_uri())
+    except Exception:  # noqa: BLE001
+        pass  # SC-2: never errors the run
+
+
+def _read_skill_description(root: Path, skill: str) -> str:
+    """Return the description: field from SKILL.md frontmatter, or '' on any failure."""
+    skill_md = root / ".claude" / "skills" / skill / "SKILL.md"
+    if not skill_md.exists():
+        return ""
+    try:
+        from mapify_cli.skill_ir import parse_frontmatter  # lazy import
+
+        text = skill_md.read_text(encoding="utf-8")
+        if not text.startswith("---\n"):
+            return ""
+        close = text.find("\n---", 4)
+        if close == -1:
+            return ""
+        frontmatter_text = text[4:close]
+        parsed = parse_frontmatter(frontmatter_text)
+        return str(parsed.get("description", ""))
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+# ---------------------------------------------------------------------------
+# skill-eval optimize
+# ---------------------------------------------------------------------------
+
+_OPTIMIZE_MIN_ENTRIES: int = 5
+
+
+@skill_eval_app.command("optimize")
+def skill_eval_optimize(
+    skill: str = typer.Argument(..., help="Skill under optimisation, e.g. map-plan"),
+    eval_set: Optional[Path] = typer.Option(
+        None, "--eval-set", help="Path to eval-set JSON"
+    ),
+    iterations: int = typer.Option(
+        5, "--iterations", min=1, help="Total iterations including baseline (default 5)"
+    ),
+    apply: bool = typer.Option(
+        False, "--apply", help="Apply the winning description back to the .jinja source"
+    ),
+    open_html: bool = typer.Option(
+        False, "--open", help="Open the HTML report in the default browser"
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Print planned call budget; spend nothing, no dispatcher"
+    ),
+) -> None:
+    """Optimise a skill's trigger description via repeated eval iterations.
+
+    Exit codes:
+      0 - Success (or dry-run completed)
+      1 - Runtime error (claude not found)
+      2 - Validation error (missing --eval-set, malformed eval-set, or < 5 entries)
+    """
+    import json  # lazy — keep top-level import time low
+
+    import mapify_cli.skills_eval.runner as _runner
+    from datetime import timezone
+
+    # 1. --eval-set is required.
+    if eval_set is None:
+        console.print("[bold red]Error:[/bold red] provide --eval-set PATH")
+        raise typer.Exit(2)
+
+    # 2. Load and validate eval-set.
+    try:
+        entries = _runner.load_eval_set(eval_set)
+    except ValueError as exc:
+        console.print(f"[bold red]Error:[/bold red] {exc}")
+        raise typer.Exit(2)
+
+    # 3. MIN-SIZE guard — BEFORE dry-run and BEFORE any dispatcher (VC2).
+    if len(entries) < _OPTIMIZE_MIN_ENTRIES:
+        console.print(
+            f"[bold red]Error:[/bold red] eval-set has {len(entries)} "
+            f"{'entry' if len(entries) == 1 else 'entries'}; "
+            f"optimize requires >= {_OPTIMIZE_MIN_ENTRIES} entries"
+        )
+        raise typer.Exit(2)
+
+    # 4. DRY-RUN — print budget, exit 0, construct NO dispatcher (VC1).
+    if dry_run:
+        from mapify_cli.skills_eval.description_optimizer import (
+            _DEFAULT_SEED,
+            split_train_test,
+        )
+
+        train, test = split_train_test(entries, _DEFAULT_SEED)
+        n_train = len(train)
+        n_test = len(test)
+        total_dispatches = iterations * (n_train + n_test)
+        console.print(
+            f"[bold]Dry-run:[/bold] "
+            f"{iterations} x ({n_train}+{n_test}) = [cyan]{total_dispatches}[/cyan] "
+            f"dispatch calls + [cyan]{iterations}[/cyan] proposer calls"
+        )
+        console.print("model: default (resolved by claude CLI)")
+        raise typer.Exit(0)
+
+    # 5. CLAUDE CHECK — require claude BEFORE any invocation (VC3).
+    if shutil.which("claude") is None:
+        console.print(
+            "[bold red]Error:[/bold red] requires-cmd: claude — "
+            "install the claude CLI and ensure it is on PATH"
+        )
+        raise typer.Exit(1)
+
+    # 6. REAL RUN.
+    import mapify_cli.skills_eval.proposer as _proposer
+    from mapify_cli.skills_eval.description_optimizer import optimize
+    from mapify_cli.skills_eval.viewer import render_to_path
+
+    root = Path.cwd()
+    out_dir = root / ".map" / "eval-runs" / skill
+    out_dir.mkdir(parents=True, exist_ok=True)
+    run_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+    current_description = _read_skill_description(root, skill)
+
+    result = optimize(
+        skill=skill,
+        entries=entries,
+        current_description=current_description,
+        proposer=_proposer.propose_description,
+        dispatcher=None,
+        source_claude_dir=root / ".claude",
+        out_dir=out_dir,
+        run_ts=run_ts,
+        iterations=iterations,
+    )
+
+    json_path = out_dir / f"{run_ts}-optimize.json"
+    html_path = out_dir / f"{run_ts}-optimize.html"
+    json_path.write_text(json.dumps(result.to_dict(), indent=2), encoding="utf-8")
+    render_to_path(result, html_path)
+
+    status_label = "no improvement" if result.no_improvement else f"iter {result.winning_iteration}"
+    winner_iter = next(
+        (it for it in result.iterations if it.selected),
+        None,
+    )
+    test_pass_rate = winner_iter.test_pass_rate if winner_iter is not None else 0.0
+    console.print(
+        f"[bold]Optimize complete:[/bold] skill=[bold]{skill}[/bold] "
+        f"winner=[cyan]{status_label}[/cyan] "
+        f"test_pass_rate=[cyan]{test_pass_rate:.1%}[/cyan]"
+    )
+    console.print(f"  artifact: [cyan]{json_path}[/cyan]")
+
+    if apply:
+        from mapify_cli.skills_eval.apply_patcher import apply_optimized_description
+
+        apply_optimized_description(
+            skill=skill,
+            winner=result.winning_description,
+            current_description=current_description,
+            no_improvement=result.no_improvement,
+            repo_root=root,
+            stage=True,
+        )
+
+    if open_html:
+        _open_best_effort(html_path)
+
+
+# ---------------------------------------------------------------------------
+# skill-eval view
+# ---------------------------------------------------------------------------
+
+
+@skill_eval_app.command("view")
+def skill_eval_view(
+    skill: str = typer.Argument(..., help="Skill whose optimization result to view"),
+    result_path: Optional[Path] = typer.Option(
+        None, "--result", help="Path to a specific *-optimize.json file"
+    ),
+    open_html: bool = typer.Option(
+        False, "--open", help="Open the HTML report in the default browser"
+    ),
+) -> None:
+    """Render the latest (or specified) optimize result as an HTML report.
+
+    Exit codes:
+      0 - Success
+      2 - No optimize result found
+    """
+    import json
+
+    from mapify_cli.skills_eval.eval_schema import OptimizeResult
+    from mapify_cli.skills_eval.viewer import render_to_path
+
+    out_dir = Path.cwd() / ".map" / "eval-runs" / skill
+
+    if result_path is not None:
+        path = result_path
+    else:
+        candidates = sorted(out_dir.glob("*-optimize.json"))
+        if not candidates:
+            console.print(
+                f"[bold red]Error:[/bold red] no optimize result found under {out_dir}"
+            )
+            raise typer.Exit(2)
+        path = candidates[-1]
+
+    res = OptimizeResult.from_dict(json.loads(path.read_text(encoding="utf-8")))
+    html = path.with_suffix(".html")
+    render_to_path(res, html)
+    console.print(f"  report: [cyan]{html}[/cyan]")
+
+    if open_html:
+        _open_best_effort(html)
+
+
 def main():
     app()
 
