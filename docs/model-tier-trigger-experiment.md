@@ -8,66 +8,73 @@
 
 ## Method
 
-- Tool: `mapify skill-eval run <skill> --eval-set <fixture> --model <tier>` (the
-  `--model` flag was added for this experiment; default omits it → CLI session model).
-- Skill: `map-check` (eval-set: 6 positives + 3 negatives, 9 cells).
-- Models: `haiku`, `sonnet`, `opus` — same eval-set, one pass each (n=9 per model).
-- Each cell = one seeded `claude -p` with heavy tools disallowed; trigger read from
-  the transcript's first `Skill` tool_use. Deterministic-decoding is NOT guaranteed
-  (no temp flag via `claude -p`), so single-pass results carry run noise.
+- Tool: `mapify skill-eval run <skill> --eval-set <fixture> --model <tier> [--runs N]`
+  (`--model` and `--runs` were added for this experiment; default omits `--model`
+  → CLI session model, preserving prior behaviour).
+- Metric: trigger-routing accuracy — positives must fire the right skill (first
+  `Skill` tool_use in the transcript), negatives must NOT fire the skill.
+- Each cell = one seeded `claude -p` with heavy tools disallowed (the body cannot
+  do slow work; we only need the activation decision). Trigger read from the
+  transcript, with timeout recovery.
+- **Noise caveat:** `claude -p` exposes no temperature flag, so decoding is not
+  guaranteed deterministic (unlike Murin's temp=0). Single-pass n=9 is noisy;
+  the firm-up below uses 3 passes on the primary skill.
 
-## Result (2026-06-05)
+> Two harness bugs were fixed *before* collecting data, or the numbers would be
+> meaningless: (1) executing skills hit the per-call timeout and were recorded as
+> false non-triggers; (2) the description patcher corrupted block-scalar YAML so
+> the skill never registered (0 triggers). See commits 9a180ee, 20f70d7.
 
-| prompt | expect | haiku | sonnet | opus |
-|---|---|---|---|---|
-| p0 Run the quality gates — lint, types, tests | map-check | ✗ None | ✓ map-check | ✓ map-check |
-| p1 Lint, type-check, and run the full test suite now | map-check | ✗ None | ✗ None | ✗ None |
-| p2 Verify the MAP workflow is complete and consistent | map-check | ✓ | ✓ | ✓ |
-| p3 Confirm this MAP run is actually done | map-check | ✓ | ✓ | ✓ |
-| p4 Run make check and validate everything passes | map-check | ✓ | ✗ None | ✗ None |
-| p5 Validate that the workflow finished correctly | map-check | ✗ None | ✓ map-check | ✗ None |
-| p6 Decompose the new feature into atomic subtasks | NOT map-check | ✓ (silent) | ✓ →map-plan | ✓ →map-plan |
-| p7 Implement this change end-to-end with full workflow | NOT map-check | ✓ (silent) | ✓ →map-state | ✓ (silent) |
-| p8 Show me the token cost breakdown for this branch | NOT map-check | ✓ →map-tokenreport | ✓ →map-tokenreport | ✓ →map-tokenreport |
-| **Accuracy** | | **6/9 (67%)** | **7/9 (78%)** | **6/9 (67%)** |
-| mean latency | | **26 s** | 51 s | 51 s |
+## Results — firm-up (authoritative)
+
+map-check at **3 passes/model** (n=27); map-explain & map-task at 1 pass (n=9):
+
+| skill | haiku | sonnet | opus |
+|---|---|---|---|
+| map-check (n=27) | 16/27 (59%) | **24/27 (89%)** | 21/27 (78%) |
+| map-explain (n=9) | 3/9 (33%) | 3/9 (33%) | **4/9 (44%)** |
+| map-task (n=9) | 3/9 (33%) | 6/9 (67%) | **7/9 (78%)** |
+| **overall** | **22/45 (49%)** | **33/45 (73%)** | **32/45 (71%)** |
+| mean latency/cell | **23 s** | 47 s | 53 s |
+
+### Pilot (n=9, single pass) — kept only to show why firming up mattered
+
+map-check single-pass read haiku 67% / sonnet 78% / opus 67%, which made Haiku
+look as good as Opus. That was **noise**: at n=27 Haiku drops to 59% and the gap
+to Sonnet (89%) is real. **Do not trust single-pass n=9 model comparisons.**
 
 ## Findings
 
-1. **Bigger ≠ better for trigger routing.** Opus (67%) did NOT beat Sonnet (78%)
-   and only tied Haiku (67%) — at 2× Haiku's latency. The model tier provides no
-   reliable trigger-accuracy gain. (n=9, single-pass — treat the 67/78/67 spread
-   as within noise; the *qualitative* points below are the robust signal.)
-2. **Redistribution, not uniform improvement** — exactly Murin's per-field result.
-   No model dominates cell-by-cell: Sonnet caught p0+p5 that Haiku missed but lost
-   p4; Opus lost both p4 and p5. Changing the model *reshuffles* which prompts
-   route correctly rather than monotonically improving them.
-3. **The description, not the model, is the bottleneck.** p1 ("Lint, type-check,
-   and run the full test suite now.") was missed by ALL THREE tiers — a routing
-   gap no model size fixes. This is precisely what the **description optimizer**
-   targets. The lever for trigger accuracy is the trigger `description:`, not the
-   model — consistent with the project's earlier "contract/prose is the lever,
-   model competence is largely fixed" lesson.
-4. **Negatives are robust across all tiers** — no tier ever falsely fired
-   `map-check`. Bigger models additionally route the negative prompts to the
-   *correct other* skill (map-plan / map-state / map-tokenreport) instead of just
-   staying silent, i.e. they are more *decisive* about positive routing, but this
-   did not translate into higher map-check accuracy.
+1. **Model tier DOES matter for routing — but "bigger is better" does NOT hold.**
+   Haiku is consistently the weakest (49% overall; −24pp vs Sonnet). Sonnet (73%)
+   and Opus (71%) are ~tied overall, but they **redistribute**: Sonnet wins
+   map-check (89 vs 78), Opus wins map-explain (44 vs 33) and map-task (78 vs 67).
+   No monotonic improvement with size — exactly Murin's per-field pattern.
+2. **Opus buys nothing over Sonnet for routing** (71% vs 73%, +6s latency/cell).
+   Pay for Opus only where hard-reasoning EXECUTION earns it, not for routing.
+3. **The description is the ceiling.** map-explain caps at 33–44% across ALL
+   tiers — no model rescues a weak `description:`. The lever for trigger accuracy
+   is the description (the optimizer sweep), not the model. Consistent with the
+   project's earlier "contract/prose is the lever, model competence is largely
+   fixed" lesson.
+4. **Negatives are robust across tiers** — map-check never falsely fired on its
+   negatives at any tier; bigger models additionally route negatives to the
+   correct *other* skill.
 
 ## Implications for model tiering in MAP
 
-- **Skill trigger routing / `skill-eval` dispatcher → Haiku is sufficient.** Equal
-  accuracy to Opus at half the latency. Do not pay Opus for routing. Invest in the
-  `description:` instead (the optimizer sweep).
-- **Execution agents are a SEPARATE question this experiment did not measure.**
-  Trigger routing ≠ task-execution quality. Murin's "larger model categorizes more
-  specifically" plausibly applies to the actual work (actor code-gen, decomposer
-  producing many specific subtasks, verifier). The framework's current opus
-  assignments (task-decomposer, final-verifier, debate-arbiter) target exactly
-  those specificity/hard-reasoning roles and are NOT contradicted here.
-- **Next test (if pursued):** repeat with ≥3 passes/model for significance, extend
-  to 2-3 more skills for generalization, and — separately — measure execution
-  quality (not just routing) for actor/monitor across tiers.
+- **Skill routing / session model / `skill-eval` dispatcher → Sonnet.** Best
+  accuracy/latency balance; never the worst; Opus adds latency without a routing
+  gain; Haiku costs ~24pp. (This REVISES the pilot's "Haiku suffices.")
+- **Haiku** stays fine for non-discriminative retrieval/summarisation
+  (research-agent), but is weak at instruction-following *discrimination* — avoid
+  it where correct routing/judgment matters.
+- **Opus** — reserve for hard reasoning / specificity in EXECUTION
+  (task-decomposer, final-verifier, debate-arbiter). Trigger routing ≠ execution
+  quality; the latter is untested here and Murin's "larger model categorises more
+  specifically" plausibly applies to it.
+- **Weak-description skills (e.g. map-explain) → run the description optimizer.**
+  Model can't fix them; the description is the bottleneck.
 
 ## Current framework model assignments (for reference)
 
@@ -75,3 +82,12 @@ opus: task-decomposer, final-verifier, debate-arbiter ·
 sonnet: actor, monitor, evaluator, predictor, synthesizer, reflector, documentation-reviewer ·
 haiku: research-agent ·
 skill-eval dispatcher/proposer: CLI session default (no pin).
+
+## Reproduce
+
+```bash
+# 3 passes, one model:
+mapify skill-eval run map-check \
+  --eval-set tests/skills_eval/fixtures/map_check_optimize_eval_set.json \
+  --model sonnet --runs 3
+```
