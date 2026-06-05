@@ -1,0 +1,13 @@
+{
+  "entries": [
+    {"prompt": "Review this diff before I merge it.", "should_trigger": "map-review"},
+    {"prompt": "Do a code review of my staged changes.", "should_trigger": "map-review"},
+    {"prompt": "Review this PR with the MAP review agents across all sections.", "should_trigger": "map-review"},
+    {"prompt": "Critique my current changes for issues before merge.", "should_trigger": "map-review"},
+    {"prompt": "Run a pre-merge code review of this branch.", "should_trigger": "map-review"},
+    {"prompt": "Run the 4-section review on the current changes.", "should_trigger": "map-review"},
+    {"prompt": "Explain how this module works and build my mental model of it.", "should_not_trigger": "map-review"},
+    {"prompt": "Decompose this feature into atomic subtasks.", "should_not_trigger": "map-review"},
+    {"prompt": "Implement the new feature end-to-end.", "should_not_trigger": "map-review"}
+  ]
+}

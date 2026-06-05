@@ -1,0 +1,13 @@
+{
+  "entries": [
+    {"prompt": "Run the quality gates — lint, types, and tests.", "should_trigger": "map-check"},
+    {"prompt": "Lint, type-check, and run the full test suite now.", "should_trigger": "map-check"},
+    {"prompt": "Verify the MAP workflow is complete and consistent.", "should_trigger": "map-check"},
+    {"prompt": "Confirm this MAP run is actually done.", "should_trigger": "map-check"},
+    {"prompt": "Run make check and validate everything passes.", "should_trigger": "map-check"},
+    {"prompt": "Validate that the workflow finished correctly.", "should_trigger": "map-check"},
+    {"prompt": "Decompose the new feature into atomic subtasks.", "should_not_trigger": "map-check"},
+    {"prompt": "Implement this change end-to-end with the full workflow.", "should_not_trigger": "map-check"},
+    {"prompt": "Show me the token cost breakdown for this branch.", "should_not_trigger": "map-check"}
+  ]
+}

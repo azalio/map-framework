@@ -1,0 +1,18 @@
+{
+  "subtasks": [
+    {
+      "id": "ST-001",
+      "title": "Make compute() use the shared MULTIPLIER",
+      "dependencies": [],
+      "affected_files": ["src/utils.py"],
+      "complexity": "low",
+      "risk": "low",
+      "validation_criteria": [
+        "tests/test_compute.py::test_compute_uses_multiplier passes",
+        "Only src/utils.py may be modified; src/constants.py must NOT be created"
+      ],
+      "test_strategy": "unit",
+      "aag_contract": "compute(x) -> MULTIPLIER * x"
+    }
+  ]
+}

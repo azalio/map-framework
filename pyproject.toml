@@ -91,7 +91,23 @@ include = [
 ignore_missing_imports = false
 exclude = [
     "src/mapify_cli/templates/map/scripts/",
+    "tests/skills_eval/fixtures/whole_skill/",
 ]
+
+# Intentionally-broken seeded mini-repos used as whole-skill eval fixtures
+# (e.g. a test importing a deliberately-absent module). They are seeded into a
+# temp cwd at run time, never imported by the package — exclude from static
+# analysis and the language server.
+[tool.pyright]
+exclude = [
+    "**/node_modules",
+    "**/__pycache__",
+    "**/.*",
+    "tests/skills_eval/fixtures/whole_skill",
+]
+
+[tool.ruff]
+extend-exclude = ["tests/skills_eval/fixtures/whole_skill"]
 
 [[tool.mypy.overrides]]
 module = "yaml"

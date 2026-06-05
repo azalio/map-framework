@@ -1,0 +1,13 @@
+{
+  "entries": [
+    {"prompt": "Set up a persistent branch-scoped task plan in .map/.", "should_trigger": "map-state"},
+    {"prompt": "Track the progress of this work across multiple sessions.", "should_trigger": "map-state"},
+    {"prompt": "Sync the focus to the current subtask before I start editing.", "should_trigger": "map-state"},
+    {"prompt": "I need persistent state and resume support for this multi-session work.", "should_trigger": "map-state"},
+    {"prompt": "Create a persistent plan I can come back to and update later.", "should_trigger": "map-state"},
+    {"prompt": "Keep a branch-scoped progress tracker for this effort.", "should_trigger": "map-state"},
+    {"prompt": "Recover the interrupted workflow after my session crashed.", "should_not_trigger": "map-state"},
+    {"prompt": "Decompose this feature into atomic subtasks via the architect.", "should_not_trigger": "map-state"},
+    {"prompt": "Just make a tiny one-line fix to the README.", "should_not_trigger": "map-state"}
+  ]
+}

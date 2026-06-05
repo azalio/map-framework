@@ -336,6 +336,15 @@ class StepState:
     contract_ready_subtasks: dict[str, dict] = field(default_factory=dict)
     clean_retry_count: int = 0
     contaminated_retry_count: int = 0
+    # Subtask IDs already nudged once for a (non-strict) scope warning. The
+    # warn->actor-feedback gate (validate_step 2.4) fires at most ONCE per
+    # subtask, so a persistent false positive (affected_files drift) cannot
+    # burn the retry budget — after the single nudge the gate passes.
+    scope_feedback_subtasks: list[str] = field(default_factory=list)
+    # Subtask IDs already nudged once for a false-progress warning (MONITOR
+    # approved but the subtask changed NOTHING despite declaring affected_files).
+    # Same once-per-subtask bound as scope_feedback_subtasks.
+    progress_feedback_subtasks: list[str] = field(default_factory=list)
     retry_isolation_status: dict[str, str] = field(default_factory=dict)
     retry_quarantine_paths: dict[str, str] = field(default_factory=dict)
     completed_at: Optional[str] = None
@@ -403,6 +412,8 @@ class StepState:
             "contract_ready_subtasks": self.contract_ready_subtasks,
             "clean_retry_count": self.clean_retry_count,
             "contaminated_retry_count": self.contaminated_retry_count,
+            "scope_feedback_subtasks": self.scope_feedback_subtasks,
+            "progress_feedback_subtasks": self.progress_feedback_subtasks,
             "retry_isolation_status": self.retry_isolation_status,
             "retry_quarantine_paths": self.retry_quarantine_paths,
             "completed_at": self.completed_at,
@@ -441,6 +452,8 @@ class StepState:
             contract_ready_subtasks=data.get("contract_ready_subtasks", {}),
             clean_retry_count=data.get("clean_retry_count", 0),
             contaminated_retry_count=data.get("contaminated_retry_count", 0),
+            scope_feedback_subtasks=data.get("scope_feedback_subtasks", []),
+            progress_feedback_subtasks=data.get("progress_feedback_subtasks", []),
             retry_isolation_status=data.get("retry_isolation_status", {}),
             retry_quarantine_paths=data.get("retry_quarantine_paths", {}),
             completed_at=data.get("completed_at"),
@@ -1156,6 +1169,58 @@ def validate_step(
                         "message": (
                             "Mutation-boundary violation in MAP_STRICT_SCOPE mode. "
                             f"Unexpected files: {scope_report.get('unexpected', [])}"
+                        ),
+                    }
+                # warn->actor-feedback: a non-strict scope leak does NOT hard-fail
+                # the subtask, but the FIRST time it is seen we route it back to
+                # the Actor as feedback so it self-corrects (revert the
+                # out-of-scope edits, or escalate for a contract update). Bounded
+                # to once per subtask (scope_feedback_subtasks guard) so a
+                # persistent false positive (affected_files drift) cannot burn the
+                # retry budget — after the single nudge the gate passes.
+                if (
+                    scope_status == "warning"
+                    and state.current_subtask_id not in state.scope_feedback_subtasks
+                ):
+                    state.scope_feedback_subtasks.append(state.current_subtask_id)
+                    state.save(state_file)
+                    unexpected = scope_report.get("unexpected", [])
+                    hint = scope_report.get("diagnostic_hint", "")
+                    return {
+                        "valid": False,
+                        "message": (
+                            "Scope warning (mutation-boundary): these files are "
+                            f"outside {state.current_subtask_id}'s affected_files: "
+                            f"{unexpected}. Revert the out-of-scope changes; OR, if "
+                            "they are genuinely required, STOP and report a blocker "
+                            "for a contract update — do not silently keep them. "
+                            + (f"({hint})" if hint else "")
+                        ).strip(),
+                    }
+                # false-progress (correctness): MONITOR is approving, but the
+                # subtask changed NOTHING despite declaring affected_files. Same
+                # warn->actor-feedback trick (once per subtask via
+                # progress_feedback_subtasks): nudge the Actor to implement the
+                # change or report a blocker, rather than silently closing a
+                # subtask that did nothing.
+                if (
+                    scope_status != "error"
+                    and scope_report.get("expected")
+                    and not scope_report.get("actual")
+                    and state.current_subtask_id not in state.progress_feedback_subtasks
+                ):
+                    state.progress_feedback_subtasks.append(state.current_subtask_id)
+                    state.save(state_file)
+                    return {
+                        "valid": False,
+                        "message": (
+                            "False-progress (mutation-boundary): MONITOR is closing "
+                            f"{state.current_subtask_id} but NO files changed, though "
+                            "its contract declares affected_files="
+                            f"{scope_report.get('expected')}. Implement the change "
+                            "with Edit/Write; OR if it is already satisfied or not "
+                            "needed, STOP and report a blocker for a contract update "
+                            "— do not close a subtask that did nothing."
                         ),
                     }
             except ImportError:

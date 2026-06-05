@@ -4454,6 +4454,28 @@ class TestValidateMutationBoundary:
         log = branch_workspace / "scope-violations.log"
         assert log.exists(), "warning must be appended to scope-violations.log"
 
+    def test_warning_on_untracked_new_out_of_scope_file(
+        self, branch_workspace, monkeypatch
+    ):
+        """A NEW out-of-scope file the actor creates but never ``git add``s must
+        still be flagged — `git status --porcelain` '??' untracked paths count
+        as actual changes. This is the real-world scope leak (e.g. the actor
+        creates ``src/constants.py`` that is not in ``affected_files``); the
+        committed/staged-only tests above would miss it.
+        """
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        self._write_blueprint(branch_workspace, "ST-001", ["a.py"])
+        (repo / "a.py").write_text("x = 1\n")
+        subprocess.run(["git", "add", "a.py"], cwd=repo, capture_output=True)  # in-scope, staged
+        (repo / "constants.py").write_text("RATE = 15\n")  # out-of-scope, NEVER added (untracked '??')
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        monkeypatch.delenv("MAP_STRICT_SCOPE", raising=False)
+        report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
+        assert report["status"] == "warning", report
+        assert "constants.py" in report["unexpected"], report
+        assert "a.py" not in report["unexpected"], report
+
     def test_violation_when_strict_mode_enabled(self, branch_workspace, monkeypatch):
         repo = branch_workspace.parents[1]
         self._init_git(repo)

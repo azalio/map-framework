@@ -1,0 +1,13 @@
+{
+  "entries": [
+    {"prompt": "Make this small low-risk change quickly with minimal workflow.", "should_trigger": "map-fast"},
+    {"prompt": "Just rename this variable across the file — tiny change.", "should_trigger": "map-fast"},
+    {"prompt": "Apply this trivial one-line fix, no full workflow needed.", "should_trigger": "map-fast"},
+    {"prompt": "Quick low-risk edit to a log message, fast-path it.", "should_trigger": "map-fast"},
+    {"prompt": "Bump the version string — small, low-risk change.", "should_trigger": "map-fast"},
+    {"prompt": "Minor copy tweak in the help text, keep it lightweight.", "should_trigger": "map-fast"},
+    {"prompt": "Implement the entire payment integration end-to-end.", "should_not_trigger": "map-fast"},
+    {"prompt": "Plan this complex monolith-to-microservices migration.", "should_not_trigger": "map-fast"},
+    {"prompt": "Debug this intermittent regression in production.", "should_not_trigger": "map-fast"}
+  ]
+}

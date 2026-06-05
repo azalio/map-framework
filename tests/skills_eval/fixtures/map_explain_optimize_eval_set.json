@@ -1,0 +1,13 @@
+{
+  "entries": [
+    {"prompt": "Walk me through how this authentication module works.", "should_trigger": "map-explain"},
+    {"prompt": "Explain the data flow and side effects in this diff.", "should_trigger": "map-explain"},
+    {"prompt": "Help me build a mental model of this unfamiliar codebase.", "should_trigger": "map-explain"},
+    {"prompt": "Audit this PR and explain its assumptions and what could break.", "should_trigger": "map-explain"},
+    {"prompt": "What does this function do and how does it interact with the rest?", "should_trigger": "map-explain"},
+    {"prompt": "Give me a walkthrough of this project's overall architecture.", "should_trigger": "map-explain"},
+    {"prompt": "Decompose this feature into atomic subtasks with dependencies.", "should_not_trigger": "map-explain"},
+    {"prompt": "Implement the login feature end-to-end.", "should_not_trigger": "map-explain"},
+    {"prompt": "Review my staged changes for issues before I merge.", "should_not_trigger": "map-explain"}
+  ]
+}

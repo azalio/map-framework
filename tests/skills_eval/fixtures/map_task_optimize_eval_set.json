@@ -1,0 +1,13 @@
+{
+  "entries": [
+    {"prompt": "Execute subtask ST-003 from the existing MAP plan.", "should_trigger": "map-task"},
+    {"prompt": "Run just one subtask from the decomposition via actor and monitor.", "should_trigger": "map-task"},
+    {"prompt": "Apply ST-001 only — I want fine-grained control over this step.", "should_trigger": "map-task"},
+    {"prompt": "Implement the next single subtask from the plan.", "should_trigger": "map-task"},
+    {"prompt": "Do subtask 2 from the plan and stop there.", "should_trigger": "map-task"},
+    {"prompt": "Run one specific subtask of the existing plan with monitor review.", "should_trigger": "map-task"},
+    {"prompt": "Decompose the feature into subtasks first — there is no plan yet.", "should_not_trigger": "map-task"},
+    {"prompt": "Run the full end-to-end MAP workflow for this change.", "should_not_trigger": "map-task"},
+    {"prompt": "Resume the interrupted workflow after a crash.", "should_not_trigger": "map-task"}
+  ]
+}

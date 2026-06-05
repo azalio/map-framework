@@ -1,0 +1,13 @@
+{
+  "entries": [
+    {"prompt": "Capture the reusable lessons from this completed workflow.", "should_trigger": "map-learn"},
+    {"prompt": "Write learned rules from this run's summary into .claude/rules/learned/.", "should_trigger": "map-learn"},
+    {"prompt": "Extract reusable patterns from the workflow we just finished.", "should_trigger": "map-learn"},
+    {"prompt": "The MAP run is done — record what we learned as rules.", "should_trigger": "map-learn"},
+    {"prompt": "Save the lessons from this workflow handoff.", "should_trigger": "map-learn"},
+    {"prompt": "Distill the learnings from this finished run into rule files.", "should_trigger": "map-learn"},
+    {"prompt": "Plan the next feature into atomic subtasks.", "should_not_trigger": "map-learn"},
+    {"prompt": "Implement this change end-to-end right now.", "should_not_trigger": "map-learn"},
+    {"prompt": "Reproduce and diagnose this failing test.", "should_not_trigger": "map-learn"}
+  ]
+}

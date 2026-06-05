@@ -1,0 +1,13 @@
+{
+  "entries": [
+    {"prompt": "Ship a new release of the mapify-cli package.", "should_trigger": "map-release"},
+    {"prompt": "Run the release workflow and publish to PyPI.", "should_trigger": "map-release"},
+    {"prompt": "Cut version 1.2.0 and publish the package.", "should_trigger": "map-release"},
+    {"prompt": "Execute the package release with the validation gates.", "should_trigger": "map-release"},
+    {"prompt": "Publish the new MAP Framework release.", "should_trigger": "map-release"},
+    {"prompt": "Do the mapify-cli release and upload to PyPI.", "should_trigger": "map-release"},
+    {"prompt": "Plan a new feature into atomic subtasks.", "should_not_trigger": "map-release"},
+    {"prompt": "Implement this change end-to-end.", "should_not_trigger": "map-release"},
+    {"prompt": "Review the diff before merging.", "should_not_trigger": "map-release"}
+  ]
+}

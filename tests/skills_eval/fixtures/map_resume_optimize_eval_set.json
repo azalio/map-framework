@@ -1,0 +1,13 @@
+{
+  "entries": [
+    {"prompt": "Resume the interrupted MAP workflow from its checkpoint.", "should_trigger": "map-resume"},
+    {"prompt": "I cleared context mid-run — pick up where the workflow left off.", "should_trigger": "map-resume"},
+    {"prompt": "The session crashed during the workflow; recover and continue it.", "should_trigger": "map-resume"},
+    {"prompt": "Continue the MAP run from step_state.json after context exhaustion.", "should_trigger": "map-resume"},
+    {"prompt": "Restore the in-progress workflow I was running before /clear.", "should_trigger": "map-resume"},
+    {"prompt": "Pick the workflow back up from the last saved checkpoint.", "should_trigger": "map-resume"},
+    {"prompt": "Start planning a brand-new feature from scratch.", "should_not_trigger": "map-resume"},
+    {"prompt": "Execute a single subtask from the existing plan.", "should_not_trigger": "map-resume"},
+    {"prompt": "Set up a fresh persistent branch-scoped plan in .map/.", "should_not_trigger": "map-resume"}
+  ]
+}

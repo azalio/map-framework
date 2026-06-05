@@ -1,0 +1,19 @@
+{
+  "subtasks": [
+    {
+      "id": "ST-001",
+      "title": "Fix add() to return the sum",
+      "dependencies": [],
+      "affected_files": ["src/utils.py"],
+      "complexity": "low",
+      "risk": "low",
+      "validation_criteria": [
+        "tests/test_utils.py::test_add_returns_sum passes",
+        "tests/test_utils.py::test_labeled_add_uses_existing_label passes",
+        "src/config.py is NOT modified"
+      ],
+      "test_strategy": "unit",
+      "aag_contract": "add(a, b) -> a + b"
+    }
+  ]
+}
