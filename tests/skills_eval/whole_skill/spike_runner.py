@@ -295,7 +295,12 @@ def _read_retry_counters(tmp: Path, branch: str) -> dict:
 # Run the skill
 # ---------------------------------------------------------------------------
 def run_skill(tmp: Path, invocation: str, timeout: float, orchestrator_model: str | None = None) -> dict:
-    argv = ["claude", "-p", invocation, "--output-format", "json"]
+    # acceptEdits: auto-accept file edits so the run isn't blocked by interactive
+    # permission prompts in headless mode. Without this, weaker/less-agentic models
+    # stall on "I need permission to edit" (observed: haiku hit 4 perm-denials and
+    # gave up while opus wrote freely) — a permission/agency artifact that confounds
+    # any CODE-quality comparison. NOT a full bypass: only edits are auto-accepted.
+    argv = ["claude", "-p", invocation, "--output-format", "json", "--permission-mode", "acceptEdits"]
     if orchestrator_model:
         argv += ["--model", orchestrator_model]
     t0 = time.monotonic()
