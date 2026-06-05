@@ -1,0 +1,18 @@
+{
+  "subtasks": [
+    {
+      "id": "ST-001",
+      "title": "Apply the 1.5x surcharge in price()",
+      "dependencies": [],
+      "affected_files": ["src/utils.py"],
+      "complexity": "low",
+      "risk": "low",
+      "validation_criteria": [
+        "tests/test_price.py::test_price_applies_surcharge passes",
+        "src/config.py is NOT modified (RATE is shared, out of scope)"
+      ],
+      "test_strategy": "unit",
+      "aag_contract": "price(n) -> n * RATE * 1.5 (surcharge in utils.py; do not change shared RATE)"
+    }
+  ]
+}

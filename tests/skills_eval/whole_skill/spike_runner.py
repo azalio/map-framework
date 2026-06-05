@@ -51,7 +51,7 @@ ARTIFACT_GLOBS = ("code-review-", "qa-", "pr-draft")  # workflow side-files to i
 # ---------------------------------------------------------------------------
 # Seeding
 # ---------------------------------------------------------------------------
-def seed_temp(fixture_dir: Path, variant: str) -> Path:
+def seed_temp(fixture_dir: Path, variant: str, degrade: str = "body") -> Path:
     """Create a throwaway cwd: .claude + .map/scripts + fixture repo + git init."""
     tmp = Path(tempfile.mkdtemp(prefix="mts-spike-"))
     # 1. .claude (skills + agents + settings), temp-flip so /map-task is invocable
@@ -62,9 +62,14 @@ def seed_temp(fixture_dir: Path, variant: str) -> Path:
     shutil.copytree(REPO_ROOT / ".map" / "scripts", tmp / ".map" / "scripts")
     # 3. fixture repo (src/, tests/, .map/<branch>/ plan + blueprint)
     _copytree_overlay(fixture_dir / "repo", tmp)
-    # 4. variant: strip scope/blocker sections from the SEEDED map-task body only
+    # 4. variant: apply the chosen degradation to the SEEDED copy only
     if variant == "bad":
-        _make_bad_body(tmp / ".claude" / "skills" / "map-task" / "SKILL.md")
+        if degrade == "actor":
+            _degrade_actor(tmp / ".claude" / "agents" / "actor.md")
+        elif degrade == "monitor":
+            _degrade_monitor(tmp / ".claude" / "agents" / "monitor.md")
+        else:  # "body"
+            _make_bad_body(tmp / ".claude" / "skills" / "map-task" / "SKILL.md")
     # 5. git init + baseline commit (scope diff baseline + BRANCH resolution)
     _git(tmp, "init", "-q", "-b", "main")
     _git(tmp, "add", "-A")
@@ -109,6 +114,58 @@ def _make_bad_body(skill_md: Path) -> None:
             continue
         out.append(line)
     skill_md.write_text("".join(out), encoding="utf-8")
+
+
+def _degrade_actor(actor_md: Path) -> None:
+    """Strip the ACTOR's scope discipline (Body-Bad/actor ablation).
+
+    Removes the '## Mutation Boundary Constraints' section (header through the
+    line before the next '### '/'# '/'---') and neutralizes the QUICK REFERENCE
+    'NEVER: Modify outside {{allowed_scope}}' clause. Throwaway seed only.
+    """
+    if not actor_md.exists():
+        return
+    lines = actor_md.read_text(encoding="utf-8").splitlines(keepends=True)
+    out: list[str] = []
+    skipping = False
+    for line in lines:
+        s = line.strip()
+        if s == "## Mutation Boundary Constraints":
+            skipping = True
+            continue
+        if skipping:
+            if s.startswith("### ") or s.startswith("# ") or s == "---":
+                skipping = False
+                out.append(line)
+            continue
+        if "NEVER: Modify outside" in line:
+            line = line.replace("Modify outside {{allowed_scope}} | ", "")
+        out.append(line)
+    actor_md.write_text("".join(out), encoding="utf-8")
+
+
+def _degrade_monitor(monitor_md: Path) -> None:
+    """Best-effort: drop MONITOR lines that instruct flagging scope/boundary
+    violations, so MONITOR no longer enforces scope. Throwaway seed only.
+
+    Crude keyword strip — refine before relying on the monitor ablation.
+    """
+    if not monitor_md.exists():
+        return
+    keys = (
+        "mutation boundary",
+        "out-of-scope",
+        "out of scope",
+        "unrelated file",
+        "scope expansion",
+        "scope violation",
+    )
+    kept = [
+        ln
+        for ln in monitor_md.read_text(encoding="utf-8").splitlines(keepends=True)
+        if not any(k in ln.lower() for k in keys)
+    ]
+    monitor_md.write_text("".join(kept), encoding="utf-8")
 
 
 def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -338,6 +395,12 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--fixture", required=True, type=Path)
     ap.add_argument("--variant", required=True, choices=["good", "bad"])
+    ap.add_argument(
+        "--degrade",
+        choices=["body", "actor", "monitor"],
+        default="body",
+        help="What the 'bad' variant degrades (body=map-task SKILL.md; actor/monitor=agent prompt)",
+    )
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--timeout", type=float, default=3600.0)
@@ -356,10 +419,15 @@ def main() -> int:
     results_path = args.out / "results.jsonl"
 
     for i in range(args.start_index, args.start_index + args.runs):
-        rec: dict = {"variant": args.variant, "run": i, "ts": time.strftime("%Y-%m-%dT%H:%M:%S")}
+        rec: dict = {
+            "variant": args.variant,
+            "degrade": args.degrade if args.variant == "bad" else None,
+            "run": i,
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        }
         tmp = None
         try:
-            tmp = seed_temp(args.fixture, args.variant)
+            tmp = seed_temp(args.fixture, args.variant, args.degrade)
             print(f"[{rec['ts']}] variant={args.variant} run={i} tmp={tmp} — running /map-task ...", flush=True)
             run = run_skill(tmp, invocation, args.timeout)
             rec["run_meta"] = {k: run.get(k) for k in ("ok", "returncode", "error", "duration_s", "session_id", "usage", "stderr_tail")}
