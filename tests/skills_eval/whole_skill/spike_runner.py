@@ -228,6 +228,27 @@ def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _read_retry_counters(tmp: Path, branch: str) -> dict:
+    """Read serial-mode retry counters from the run's step_state.json.
+
+    On a well-gated task QUALITY saturates (every tier passes the test gate), so
+    the model effect — if any — hides in HOW MANY actor retries the MONITOR loop
+    needed to drive the actor to a passing implementation. Captured here so a
+    weaker actor that "passes, but only after more iterations" is still visible.
+    Returns {} if step_state.json is absent/unreadable.
+    """
+    sp = tmp / ".map" / branch / "step_state.json"
+    try:
+        data = json.loads(sp.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return {}
+    return {
+        k: data.get(k)
+        for k in ("retry_count", "clean_retry_count", "contaminated_retry_count")
+        if k in data
+    }
+
+
 # ---------------------------------------------------------------------------
 # Run the skill
 # ---------------------------------------------------------------------------
@@ -491,6 +512,7 @@ def main() -> int:
     invocation = manifest["invocation"]
     test_cmd = manifest["test_cmd"]
     expected_outcome = manifest.get("expected_outcome", "complete")
+    branch = manifest.get("branch", "main")
 
     args.out.mkdir(parents=True, exist_ok=True)
     results_path = args.out / "results.jsonl"
@@ -517,6 +539,7 @@ def main() -> int:
             rec["run_meta"] = {k: run.get(k) for k in ("ok", "returncode", "error", "duration_s", "session_id", "usage", "stderr_tail")}
             gates = deterministic_gates(tmp, allowed, trap, test_cmd)
             rec["gates"] = gates
+            rec["retry_counters"] = _read_retry_counters(tmp, branch)
             rec["expected_outcome"] = expected_outcome
             judge = judge_quality(
                 expected_outcome, allowed, trap, gates, run.get("raw_output", ""), args.judge_timeout
@@ -526,6 +549,7 @@ def main() -> int:
             print(
                 f"    -> scope_pass={gates['scope_pass']} task_pass={gates['task_pass']} "
                 f"judge[{judge.get('dimension')}]={judge.get('score')} QUALITY={rec['quality']} "
+                f"retries={rec['retry_counters'].get('retry_count')} "
                 f"dur={run.get('duration_s', 0):.0f}s",
                 flush=True,
             )
