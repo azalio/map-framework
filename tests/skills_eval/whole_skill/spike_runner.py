@@ -51,12 +51,27 @@ ARTIFACT_GLOBS = ("code-review-", "qa-", "pr-draft")  # workflow side-files to i
 # ---------------------------------------------------------------------------
 # Seeding
 # ---------------------------------------------------------------------------
-def seed_temp(fixture_dir: Path, variant: str, degrade: str = "body") -> Path:
-    """Create a throwaway cwd: .claude + .map/scripts + fixture repo + git init."""
+def seed_temp(
+    fixture_dir: Path,
+    variant: str,
+    degrade: str = "body",
+    agent_models: dict[str, str] | None = None,
+) -> Path:
+    """Create a throwaway cwd: .claude + .map/scripts + fixture repo + git init.
+
+    ``agent_models`` (e.g. ``{"actor": "opus"}``) rewrites the ``model:``
+    frontmatter of the named seeded agent(s) — the precise lever for measuring
+    how EXECUTION model tier affects outcome quality (the actor writes the code,
+    so its model is the code-quality lever; sub-agents use their own ``model:``
+    frontmatter, NOT the orchestrator's ``--model``). Throwaway seed only.
+    """
     tmp = Path(tempfile.mkdtemp(prefix="mts-spike-"))
     # 1. .claude (skills + agents + settings), temp-flip so /map-task is invocable
     shutil.copytree(REPO_ROOT / ".claude", tmp / ".claude")
     _apply_temp_flip(tmp / ".claude")
+    # 1b. per-agent execution-model override (model lever)
+    for agent, model in (agent_models or {}).items():
+        _set_agent_model(tmp / ".claude" / "agents" / f"{agent}.md", model)
     # 2. .map/scripts (orchestrator + step runner the body shells out to)
     (tmp / ".map").mkdir(parents=True, exist_ok=True)
     shutil.copytree(REPO_ROOT / ".map" / "scripts", tmp / ".map" / "scripts")
@@ -168,6 +183,45 @@ def _degrade_monitor(monitor_md: Path) -> None:
     monitor_md.write_text("".join(kept), encoding="utf-8")
 
 
+def _set_agent_model(agent_md: Path, model: str) -> None:
+    """Rewrite the ``model:`` frontmatter line of a seeded agent .md (model lever).
+
+    Replaces the value after ``model:`` (preserving any trailing ``# comment``)
+    or, if absent, inserts ``model: <model>`` right after the opening ``---``.
+    Throwaway seed only.
+    """
+    if not agent_md.exists():
+        return
+    lines = agent_md.read_text(encoding="utf-8").splitlines(keepends=True)
+    out: list[str] = []
+    replaced = False
+    in_fm = False
+    fm_marker_seen = 0
+    for line in lines:
+        if line.strip() == "---":
+            fm_marker_seen += 1
+            in_fm = fm_marker_seen == 1
+            out.append(line)
+            continue
+        if in_fm and not replaced and line.lstrip().startswith("model:"):
+            indent = line[: len(line) - len(line.lstrip())]
+            out.append(f"{indent}model: {model}\n")
+            replaced = True
+            continue
+        out.append(line)
+    if not replaced:
+        # insert after the first '---'
+        new_out: list[str] = []
+        inserted = False
+        for line in out:
+            new_out.append(line)
+            if not inserted and line.strip() == "---":
+                new_out.append(f"model: {model}\n")
+                inserted = True
+        out = new_out
+    agent_md.write_text("".join(out), encoding="utf-8")
+
+
 def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", *args], cwd=cwd, capture_output=True, text=True, check=False
@@ -177,8 +231,10 @@ def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
 # ---------------------------------------------------------------------------
 # Run the skill
 # ---------------------------------------------------------------------------
-def run_skill(tmp: Path, invocation: str, timeout: float) -> dict:
+def run_skill(tmp: Path, invocation: str, timeout: float, orchestrator_model: str | None = None) -> dict:
     argv = ["claude", "-p", invocation, "--output-format", "json"]
+    if orchestrator_model:
+        argv += ["--model", orchestrator_model]
     t0 = time.monotonic()
     try:
         proc = subprocess.run(
@@ -406,7 +462,28 @@ def main() -> int:
     ap.add_argument("--timeout", type=float, default=3600.0)
     ap.add_argument("--judge-timeout", type=float, default=360.0)
     ap.add_argument("--start-index", type=int, default=0)
+    ap.add_argument(
+        "--agent-model",
+        action="append",
+        default=[],
+        metavar="AGENT=MODEL",
+        help="Override a seeded agent's model: frontmatter, e.g. actor=opus "
+        "(repeatable). The model lever for EXECUTION quality.",
+    )
+    ap.add_argument(
+        "--orchestrator-model",
+        default=None,
+        help="--model passed to the top-level claude -p running the skill body "
+        "(the orchestrator loop; sub-agents still use their own model:).",
+    )
     args = ap.parse_args()
+
+    agent_models: dict[str, str] = {}
+    for spec in args.agent_model:
+        if "=" not in spec:
+            ap.error(f"--agent-model must be AGENT=MODEL, got {spec!r}")
+        agent, model = spec.split("=", 1)
+        agent_models[agent.strip()] = model.strip()
 
     manifest = json.loads((args.fixture / "manifest.json").read_text())
     allowed = manifest["allowed_files"]
@@ -422,14 +499,21 @@ def main() -> int:
         rec: dict = {
             "variant": args.variant,
             "degrade": args.degrade if args.variant == "bad" else None,
+            "agent_models": agent_models or None,
+            "orchestrator_model": args.orchestrator_model,
             "run": i,
             "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
         }
         tmp = None
         try:
-            tmp = seed_temp(args.fixture, args.variant, args.degrade)
-            print(f"[{rec['ts']}] variant={args.variant} run={i} tmp={tmp} — running /map-task ...", flush=True)
-            run = run_skill(tmp, invocation, args.timeout)
+            tmp = seed_temp(args.fixture, args.variant, args.degrade, agent_models)
+            print(
+                f"[{rec['ts']}] variant={args.variant} run={i} "
+                f"agent_models={agent_models or '-'} orch={args.orchestrator_model or '-'} "
+                f"tmp={tmp} — running /map-task ...",
+                flush=True,
+            )
+            run = run_skill(tmp, invocation, args.timeout, args.orchestrator_model)
             rec["run_meta"] = {k: run.get(k) for k in ("ok", "returncode", "error", "duration_s", "session_id", "usage", "stderr_tail")}
             gates = deterministic_gates(tmp, allowed, trap, test_cmd)
             rec["gates"] = gates
