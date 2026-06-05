@@ -372,6 +372,35 @@ from step_state.json, and/or use a WEAKLY-gated fixture (few tests) where code q
 rescued by the gate. Full write-up: the Obsidian note
 `model-tier-vs-prompt-for-llm-skill-routing-map-replication` + `docs/model-tier-trigger-experiment.md`.
 
+## OUTCOME lever isolation — weak gate + vague contract (2026-06-05, cont.)
+
+To check whether a strong gate was HIDING a model effect, ran two more outcome
+configurations (hidden 8-edge-case suite scored post-run; `--agent-model actor=<tier>` ×2):
+
+| configuration (fixture) | haiku | sonnet | opus |
+|---|---|---|---|
+| strong gate (map_task_semver) | task_pass ✓ | ✓ | ✓ |
+| weak gate, FULL contract (map_task_semver_weakgate) | hidden 8/8 | 8/8 | 8/8 |
+| weak gate, VAGUE contract (map_task_semver_vague) | hidden 8/8 | 8/8 | 8/8 |
+
+All 18 runs: correct semver, retries=0. Even a VAGUE contract ("compare two semver strings,
+return -1/0/1", no precedence rules) + a weak gate + **haiku** → fully correct first try,
+because semver 2.0.0 is within every tier's competence.
+
+**Definitive OUTCOME finding:** for a task WITHIN the models' competence, outcome quality is
+INVARIANT to model tier, test-gate strength, AND contract completeness. The execution-model
+lever only bites on tasks ABOVE the weaker model's competence (semver isn't one — threshold
+not reached). Combined with the routing experiment + PR #160 ablations, the evidence-based
+ranking of OUTCOME levers is final:
+
+  CONTRACT/MECHANICAL GATES (#3) ≫ MODEL (#2, only beyond-competence) ≫ PROSE (#1).
+
+Practical: to lift skill outcome quality, invest in the CONTRACT and mechanical gates
+(precise validation_criteria, strict validators, test coverage) — those guarantee correctness
+at/above competence. Reserve a bigger actor model only for genuinely-novel/hard subtasks;
+prose tuning is lowest ROI. Open thread: a beyond-haiku-competence fixture to locate the model
+threshold. Full write-up: Obsidian note `model-tier-vs-prompt-for-llm-skill-routing-map-replication`.
+
 ## llm-council consultation log
 
 - 2026-06-05 (conv `066898a9-b37f-436f-96ca-7ae1cbe4c83a`, standard): asked about the no-gap result.
