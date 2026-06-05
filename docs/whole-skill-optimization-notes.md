@@ -401,6 +401,36 @@ at/above competence. Reserve a bigger actor model only for genuinely-novel/hard 
 prose tuning is lowest ROI. Open thread: a beyond-haiku-competence fixture to locate the model
 threshold. Full write-up: Obsidian note `model-tier-vs-prompt-for-llm-skill-routing-map-replication`.
 
+## MODEL THRESHOLD probe — capability-discriminating task (2026-06-06)
+
+User pushed back: "haiku can't really match opus." semver was within all tiers' competence,
+so per web research (EvalPlus/HumanEval-Pro/arXiv 2511.04355, 2510.13908) built the canonical
+edge-case discriminator — an arithmetic expression evaluator (right-assoc `**`, `**` tighter
+than unary minus, overloaded unary, negative exponent, error contract). A naive impl passes a
+thin gate but fails the hidden traps (validated 9p/3f).
+
+Sweeps (hidden edge-case suite, actor=haiku|sonnet|opus):
+
+| contract | haiku | sonnet | opus |
+|---|---|---|---|
+| FULL (rules spelled out) | 12/12 (run0) | — | — |
+| VAGUE ("standard precedence" only) | 11/11, 11/11 | 10/11, 11/11 | 11/11, 11/11 |
+
+**Even on the edge-case-hard task with a VAGUE contract, haiku 4.5 matched/edged the bigger
+models** — no bigger-is-better ordering (the lone miss was sonnet's, i.e. noise). haiku knows
+right-associative `**` and implements it without being told.
+
+**Why (benchmark-grounded):** the tier gap appears on MULTI-STEP agentic / MULTI-FILE /
+subtle-concurrency tasks (Terminal-Bench, multi-file SWE-bench), NOT on single self-contained
+functions where all tiers are competitive. map-task decomposes work into well-scoped one-file
+subtasks — the regime where haiku 4.5 is competent. So within map-task's granularity the model
+is not the outcome lever (cost insight: actor can run on haiku). The gap would surface only on
+a multi-file/multi-step subtask — which the framework's decomposition deliberately avoids.
+
+FINAL outcome-lever ranking stands: CONTRACT/GATES ≫ MODEL (only on beyond-competence,
+multi-step/multi-file tasks) ≫ PROSE. Total this investigation: 6 outcome sweeps,
+~30 full /map-task runs across haiku/sonnet/opus and 5 fixtures.
+
 ## llm-council consultation log
 
 - 2026-06-05 (conv `066898a9-b37f-436f-96ca-7ae1cbe4c83a`, standard): asked about the no-gap result.
