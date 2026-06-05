@@ -282,6 +282,33 @@ skill or agent). Prose optimization pays off where behavior is genuinely prose-g
 shipped description optimizer). The MONITOR's likely lever is its mechanical gate, not its prose —
 a monitor PROSE ablation is expected to be null too (recommend testing the validator instead).
 
+## MECHANICAL SCOPE LEVER — verified + gap closed (Option B, 2026-06-05)
+
+Per the consolidated finding (prose isn't the scope lever), inspected the REAL lever: the mechanical
+`validate_mutation_boundary` in `.map/scripts/map_step_runner.py`, auto-run by the MONITOR gate
+(`map_orchestrator.py` step 2.4).
+
+How it works (and it's well-built): `expected = subtask.affected_files`; `actual = git diff(since
+per-subtask baseline) + git status --porcelain (incl. '??' untracked)` MINUS framework paths
+(`.map/`,`.codex/`,`.agents/`) MINUS baseline; `unexpected = actual − expected`; status
+`clean | warning | violation`. It correctly catches committed AND untracked-new out-of-scope files.
+
+**Verification result:** the lever is correct, already covered by tests, and **warn-only by design**
+— a real scope leak yields `warning` + a `scope-violations.log` row; it only HARD-BLOCKS the MONITOR
+gate when `MAP_STRICT_SCOPE=1` (deliberate, to avoid false-positive floods from affected_files drift).
+
+**Gap closed:** existing tests only exercised committed/staged extra files. Added
+`test_warning_on_untracked_new_out_of_scope_file` — proves an actor that CREATES a new out-of-scope
+file but never `git add`s it (porcelain '??') is still flagged. 386 passed in test_map_step_runner.
+
+**Strengthening = a policy/design call (surfaced to user, not flipped unilaterally):**
+- (i) make scope enforcement **strict by default** (block on leak) — strongest, but risks
+  false positives from affected_files drift (the warn-only default exists precisely to avoid this);
+- (ii) **warn→actor-feedback:** in warn mode, feed the scope `warning` back as Monitor feedback so
+  the actor self-corrects in the retry loop (self-healing, no hard-block, no false-positive escalation)
+  — recommended balance;
+- (iii) strict-by-default only in the single-subtask (`map-task`) path, warn-only for full workflow.
+
 ## llm-council consultation log
 
 - 2026-06-05 (conv `066898a9-b37f-436f-96ca-7ae1cbe4c83a`, standard): asked about the no-gap result.
