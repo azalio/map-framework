@@ -333,6 +333,45 @@ report a blocker"), bounded by `StepState.progress_feedback_subtasks`. Reuses th
 machinery — no new diff logic. Test `test_false_progress_routes_feedback_when_nothing_changed`
 (incl. once-guard pass-through). `make check` green (2260 passed, check-render byte-identical).
 
+## MODEL LEVER on OUTCOME quality — discriminating fixture (2026-06-05, user: "optimize all 3 levers")
+
+Built the missing pieces to measure the EXECUTION-model lever on outcome quality:
+- `spike_runner.py` gained `--agent-model AGENT=MODEL` (rewrites a seeded agent's `model:`
+  frontmatter — the actor writes the code, so its model is the code-quality lever) and
+  `--orchestrator-model`.
+- New fixture `map_task_semver`: a genuinely non-trivial task (semver 2.0.0 `compare()` with
+  pre-release precedence + numeric-vs-lexical identifiers + build-metadata) — unlike the
+  scope/blocker traps it DISCRIMINATES code quality (stub → 12 failed; correct → 12 passed).
+
+Sweep — full `/map-task` (RESEARCH→ACTOR→MONITOR→test-gate), `--agent-model actor=<tier>`, ×2:
+
+| actor model | task_pass | QUALITY | mean dur |
+|---|---|---|---|
+| haiku  | 2/2 ✓ | 1.0, 1.0 | 404 s |
+| sonnet | 2/2 ✓ | 1.0, 1.0 | 633 s |
+| opus   | 2/2 ✓ | 1.0, (0.5*) | 410 s |
+
+\* the one <1.0 is NOT a code failure — task_pass=True, 12/12; the JUDGE returned 0 from an
+`API Error: 529 Overloaded` (infra noise). Trust the deterministic gate.
+
+**KEY FINDING — the model lever on OUTCOME is ABSORBED BY THE GATE.** For a well-gated task
+all three tiers produce correct code (6/6 task_pass) because the test-gate + MONITOR retry loop
+drive even haiku to passing. Haiku is not slower → paying Opus for the actor buys nothing on
+gated tasks. This confirms, with execution data, the project's recurring conclusion:
+
+**Ranked outcome levers: CONTRACT/MECHANICAL GATES (#3) ≫ MODEL (#2) ≫ PROSE (#1).**
+- #3 (test gate, mutation-boundary validator, false-progress gate, MONITOR loop) governs outcome
+  — the real place to invest (tighter validation_criteria, stricter validators, test coverage).
+- #2 model: matters a little for ROUTING (Sonnet sweet spot; see the description experiment),
+  irrelevant for gated EXECUTION. May matter on WEAKLY-gated tasks (untested).
+- #1 prose (body / actor / monitor prompts): low leverage (ablations in PR #160 + here).
+
+Method caveat: on a gated task QUALITY saturates (all pass), so it does NOT capture the model
+effect that may live in RETRY COUNT / first-pass quality. To measure that: log `retry_count`
+from step_state.json, and/or use a WEAKLY-gated fixture (few tests) where code quality is not
+rescued by the gate. Full write-up: the Obsidian note
+`model-tier-vs-prompt-for-llm-skill-routing-map-replication` + `docs/model-tier-trigger-experiment.md`.
+
 ## llm-council consultation log
 
 - 2026-06-05 (conv `066898a9-b37f-436f-96ca-7ae1cbe4c83a`, standard): asked about the no-gap result.
