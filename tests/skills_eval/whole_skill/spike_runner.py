@@ -228,6 +228,48 @@ def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def run_hidden_tests(
+    tmp: Path, fixture_dir: Path, hidden_src: str, hidden_dest: str, hidden_cmd: str
+) -> dict:
+    """Measure TRUE code quality with a comprehensive suite the workflow never saw.
+
+    For a WEAKLY-gated fixture the workflow runs only a thin test gate; a weak
+    implementation passes it but may be wrong on edge cases. After the run we
+    inject the full hidden suite (``hidden_src`` in the fixture dir → ``hidden_dest``
+    in the temp) and run ``hidden_cmd`` to score the produced code against ALL
+    edge cases. This is the deterministic 'did the model implement the full
+    contract, or just satisfy the weak gate?' signal — no judge noise.
+    """
+    src = fixture_dir / hidden_src
+    dest = tmp / hidden_dest
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
+    except OSError as exc:
+        return {"ran": False, "error": f"copy failed: {exc}"}
+    proc = subprocess.run(
+        hidden_cmd.split(),
+        cwd=tmp,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+    )
+    tail = (proc.stdout + proc.stderr)[-800:]
+    # parse "N passed" / "N failed" from pytest tail (best-effort)
+    import re as _re
+    passed = _re.search(r"(\d+) passed", tail)
+    failed = _re.search(r"(\d+) failed", tail)
+    return {
+        "ran": True,
+        "hidden_pass": proc.returncode == 0,
+        "returncode": proc.returncode,
+        "n_passed": int(passed.group(1)) if passed else None,
+        "n_failed": int(failed.group(1)) if failed else 0,
+        "tail": tail,
+    }
+
+
 def _read_retry_counters(tmp: Path, branch: str) -> dict:
     """Read serial-mode retry counters from the run's step_state.json.
 
@@ -513,6 +555,9 @@ def main() -> int:
     test_cmd = manifest["test_cmd"]
     expected_outcome = manifest.get("expected_outcome", "complete")
     branch = manifest.get("branch", "main")
+    hidden_src = manifest.get("hidden_test_src")
+    hidden_dest = manifest.get("hidden_test_dest")
+    hidden_cmd = manifest.get("hidden_test_cmd")
 
     args.out.mkdir(parents=True, exist_ok=True)
     results_path = args.out / "results.jsonl"
@@ -540,6 +585,10 @@ def main() -> int:
             gates = deterministic_gates(tmp, allowed, trap, test_cmd)
             rec["gates"] = gates
             rec["retry_counters"] = _read_retry_counters(tmp, branch)
+            if hidden_src and hidden_dest and hidden_cmd:
+                rec["hidden"] = run_hidden_tests(
+                    tmp, args.fixture, hidden_src, hidden_dest, hidden_cmd
+                )
             rec["expected_outcome"] = expected_outcome
             judge = judge_quality(
                 expected_outcome, allowed, trap, gates, run.get("raw_output", ""), args.judge_timeout
@@ -550,6 +599,7 @@ def main() -> int:
                 f"    -> scope_pass={gates['scope_pass']} task_pass={gates['task_pass']} "
                 f"judge[{judge.get('dimension')}]={judge.get('score')} QUALITY={rec['quality']} "
                 f"retries={rec['retry_counters'].get('retry_count')} "
+                f"hidden={(rec.get('hidden') or {}).get('n_passed')}p/{(rec.get('hidden') or {}).get('n_failed')}f "
                 f"dur={run.get('duration_s', 0):.0f}s",
                 flush=True,
             )

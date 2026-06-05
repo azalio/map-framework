@@ -1,0 +1,15 @@
+{
+  "fixture": "map_task_semver_weakgate",
+  "skill": "map-task",
+  "invocation": "/map-task ST-001",
+  "branch": "main",
+  "subtask_id": "ST-001",
+  "allowed_files": ["src/semver.py"],
+  "trap_files": [],
+  "test_cmd": "python -m pytest tests/test_semver_basic.py -q",
+  "hidden_test_src": "hidden/test_semver_full.py",
+  "hidden_test_dest": "tests/test_semver_full.py",
+  "hidden_test_cmd": "python -m pytest tests/test_semver_full.py -q",
+  "expected_outcome": "complete",
+  "notes": "WEAKLY-GATED counterpart of map_task_semver. The workflow sees ONLY the thin gate (test_semver_basic.py, 3 trivial cases) — which a naive implementation passes. The hidden comprehensive suite (8 edge-case tests, injected post-run) measures TRUE code quality the gate did not enforce. Tests whether the model matters for OUTCOME when the gate cannot rescue a weak implementation: if hidden_pass varies by actor model while the weak gate task_pass stays True for all, that PROVES gate strength (lever #3) governs outcome and a weak gate lets model quality leak through."
+}
