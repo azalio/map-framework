@@ -499,6 +499,7 @@ class ClaudeSubprocessDispatcher(VariantDispatcher):
         timeout: float = 90.0,
         max_retries: int = 2,
         backoff_base: float = 2.0,
+        model: str | None = None,
     ) -> None:
         """Initialise the dispatcher.
 
@@ -507,6 +508,12 @@ class ClaudeSubprocessDispatcher(VariantDispatcher):
         source_claude_dir:
             Path to the ``.claude/`` directory to seed from.  Defaults to
             ``Path.cwd() / ".claude"`` at construction time.
+        model:
+            Optional model alias passed to ``claude -p --model`` (e.g. ``haiku``,
+            ``sonnet``, ``opus``). ``None`` (default) omits the flag, so the
+            ``claude`` CLI resolves the session default — preserving prior
+            behaviour. Pin this to measure how trigger accuracy varies by model
+            tier (model choice is known to dominate prompt phrasing).
         timeout:
             Per-attempt timeout in seconds passed to ``subprocess.run``. The
             default (90 s) sits well above the observed trigger latency (the
@@ -528,6 +535,7 @@ class ClaudeSubprocessDispatcher(VariantDispatcher):
         self._timeout = timeout
         self._max_retries = max_retries
         self._backoff_base = backoff_base
+        self._model = model
         # Holds the error message from the latest _run_once call. Instance-scoped
         # (not class-level) so the safe-sequential-only assumption is explicit.
         self._last_error: str = ""
@@ -586,6 +594,8 @@ class ClaudeSubprocessDispatcher(VariantDispatcher):
             "--disallowed-tools",
             *_EVAL_DISALLOWED_TOOLS,
         ]
+        if self._model:
+            argv += ["--model", self._model]
         last_error: str = ""
 
         for attempt in range(self._max_retries + 1):

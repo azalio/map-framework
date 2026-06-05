@@ -95,6 +95,36 @@ def test_dispatch_argv_includes_disallowed_tools(
     flag_index = argv.index("--disallowed-tools")
     passed = argv[flag_index + 1 : flag_index + 1 + len(_EVAL_DISALLOWED_TOOLS)]
     assert passed == list(_EVAL_DISALLOWED_TOOLS)
+    # No --model flag unless one is pinned (preserve CLI session default).
+    assert "--model" not in argv
+
+
+def test_dispatch_argv_includes_model_when_pinned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pinned model is passed as ``--model <alias>`` so trigger accuracy can be
+    measured per tier (model choice dominates prompt phrasing)."""
+    captured: dict[str, list[str]] = {}
+
+    def fake_seed(_src: Path) -> Path:
+        del _src
+        return tmp_path
+
+    def fake_run(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        del _kwargs
+        captured["argv"] = argv
+        return subprocess.CompletedProcess(
+            argv, returncode=0, stdout='{"result": "", "session_id": ""}', stderr=""
+        )
+
+    monkeypatch.setattr(disp_mod, "_seed_temp_cwd", fake_seed)
+    monkeypatch.setattr(disp_mod.subprocess, "run", fake_run)
+
+    ClaudeSubprocessDispatcher(model="haiku").dispatch("do a thing")
+
+    argv = captured["argv"]
+    assert "--model" in argv
+    assert argv[argv.index("--model") + 1] == "haiku"
 
 
 # ---------------------------------------------------------------------------
