@@ -1,0 +1,17 @@
+{
+  "subtasks": [
+    {
+      "id": "ST-001",
+      "title": "Implement semver compare()",
+      "dependencies": [],
+      "affected_files": ["src/semver.py"],
+      "complexity": "medium",
+      "risk": "low",
+      "validation_criteria": [
+        "all of tests/test_semver_basic.py passes"
+      ],
+      "test_strategy": "unit",
+      "aag_contract": "compare(a: str, b: str) -> int compares two semantic version strings and returns -1 if a < b, 0 if equal, 1 if a > b."
+    }
+  ]
+}
