@@ -1,0 +1,13 @@
+{
+  "entries": [
+    {"prompt": "Use TDD — write the failing tests first, then implement the auth flow.", "should_trigger": "map-tdd"},
+    {"prompt": "Test-driven development for the payment processing module.", "should_trigger": "map-tdd"},
+    {"prompt": "Write tests from the spec before any implementation.", "should_trigger": "map-tdd"},
+    {"prompt": "Correctness is critical here — do this test-first.", "should_trigger": "map-tdd"},
+    {"prompt": "Tests first, then code, for the data-integrity layer.", "should_trigger": "map-tdd"},
+    {"prompt": "TDD this billing feature so tests validate intent.", "should_trigger": "map-tdd"},
+    {"prompt": "Just decompose this into subtasks, no implementation yet.", "should_not_trigger": "map-tdd"},
+    {"prompt": "Make a quick small low-risk change.", "should_not_trigger": "map-tdd"},
+    {"prompt": "Implement this end-to-end without writing tests first.", "should_not_trigger": "map-tdd"}
+  ]
+}

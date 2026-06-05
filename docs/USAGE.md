@@ -195,6 +195,7 @@ Both `.claude/` and `.codex/` can exist in the same project. When both are prese
 
 ## Navigation
 
+- **Skill-eval (trigger accuracy & description tuning):** see [docs/SKILL-EVAL.md](SKILL-EVAL.md)
 - [Usage Examples](#usage-examples)
   - [Feature Development](#feature-development)
   - [Bug Fixing](#bug-fixing)

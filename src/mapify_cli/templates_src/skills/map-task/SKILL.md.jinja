@@ -126,15 +126,10 @@ Route to the appropriate executor based on `$PHASE`. All phases from `/map-effic
 - **ACTOR (2.3)** — Implement the subtask
 - **MONITOR (2.4)** — Required validation before the subtask can complete.
 
-Single-subtask execution must keep using the shared branch workspace artifacts rather than creating task-local side files:
-
-
-
-- `code-review-00N.md`
-- `qa-001.md`
-- `pr-draft.md`
-
-When Monitor runs during `/map-task`, append to the next `code-review-00N.md` so targeted subtask execution stays aligned with the full workflow artifact model.
+Single-subtask execution must keep using the shared branch workspace artifacts in `.map/<branch>/`
+(e.g. `code-review-00N.md`, `qa-001.md`, `pr-draft.md`) rather than creating task-local side files.
+When Monitor runs during `/map-task`, append to the next `code-review-00N.md` so targeted subtask
+execution stays aligned with the full workflow artifact model.
 
 For each step:
 1. Get next step from orchestrator
@@ -147,7 +142,15 @@ For each step:
 - Run `python3 .map/scripts/map_orchestrator.py monitor_failed --feedback "<feedback>"` and retry Actor with feedback (max 5 iterations).
 - If the result says `retry_isolation=clean_retry_required`, run `python3 .map/scripts/map_step_runner.py validate_retry_quarantine` and make the next Actor attempt use `.map/<branch>/retry_quarantine.json` as clean-room context instead of rehydrating the rejected approach.
 
-## Step 4: Completion and Progress Report
+**Termination (do not loop or fake-complete):** if the 5 Actor iterations are exhausted without Monitor `valid: true`, OR the subtask cannot be satisfied within its declared scope (it would require an out-of-scope file, a dependency change, or a contract not in the blueprint), then STOP. Do NOT mark the subtask complete and do NOT expand scope to force a pass. Emit the **BLOCKED** outcome report (Step 4) stating the reason and the exact contract change needed.
+
+## Step 4: Outcome Report
+
+Every `/map-task` run ends with **exactly one** outcome report — **COMPLETE** or **BLOCKED** —
+carrying these required fields: `Subtask`, `Status`, `Files Modified`, `Validation` (test/Monitor
+result), and (BLOCKED only) `Blocker` + `Needed`. Never end a run without one of these reports.
+
+### Complete Outcome
 
 When `get_next_step` returns `is_complete: true`:
 
@@ -220,6 +223,32 @@ ALL SUBTASKS COMPLETE (${TOTAL}/${TOTAL})
 Run /map-check for final verification, or /map-learn to extract patterns.
 ```
 
+### Blocked Outcome
+
+When the subtask cannot complete within its declared scope (retries exhausted, an out-of-scope
+change would be required, or a dependency/contract conflict): do NOT update the plan status to
+`complete`. Report the blocker and stop for a contract update:
+
+```text
+═══════════════════════════════════════════════════
+SUBTASK BLOCKED
+═══════════════════════════════════════════════════
+Subtask: ${SUBTASK_ID}
+Title: <title>
+Status: BLOCKED
+Files Modified: <list, or "none">
+Validation: <Monitor/test result that could not be satisfied>
+
+Blocker: <why it cannot complete in scope — e.g. requires editing <file> not in
+         this subtask's affected_files, or a dependency change not in the contract>
+Needed:  <the exact contract change to unblock — e.g. add <file> to ST-XXX
+         affected_files, or split into a new subtask>
+═══════════════════════════════════════════════════
+```
+
+Then stop. Suggest `/map-plan` (to amend the decomposition) or ask the user for a contract decision —
+do not silently expand scope or mark the subtask complete.
+
 ---
 
 ## Error Handling
@@ -261,9 +290,13 @@ Proceed anyway? (The Actor will work with whatever state exists.)
 ## Examples
 
 ```
-/map-task <typical args>
+/map-task ST-003          # execute subtask ST-003 from the existing plan
 ```
+
+If a persisted TDD contract exists for the subtask (`test_contract_ST-003.md` +
+`test_handoff_ST-003.json`), `/map-task ST-003` automatically resumes at ACTOR against those tests.
 
 ## Troubleshooting
 
-- **Issue:** Workflow doesn't behave as expected. **Fix:** Re-read the section above titled 'What this command CANNOT do' (if present) and ensure prerequisites are met. Run `/map-resume` to recover from interruptions.
+- **Issue:** Workflow doesn't behave as expected. **Fix:** Confirm the **Prerequisites** (a plan must exist) and re-read the **Mutation Boundary Constraints** and **When Not To Expand Scope** sections above. Run `/map-resume` to recover from an interrupted run.
+- **Issue:** The subtask can't pass validation within its allowed files. **Fix:** Don't expand scope — emit the **BLOCKED** outcome report (Step 4) and amend the contract via `/map-plan`.

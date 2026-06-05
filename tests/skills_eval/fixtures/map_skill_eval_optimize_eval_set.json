@@ -1,0 +1,13 @@
+{
+  "entries": [
+    {"prompt": "Measure the trigger accuracy of the map-plan skill.", "should_trigger": "map-skill-eval"},
+    {"prompt": "Run an eval-set against map-debug and report the pass-rate.", "should_trigger": "map-skill-eval"},
+    {"prompt": "Check how reliably map-fast fires on the right prompts.", "should_trigger": "map-skill-eval"},
+    {"prompt": "Evaluate the token and duration cost of the map-review skill.", "should_trigger": "map-skill-eval"},
+    {"prompt": "Optimize the description of map-tdd for better trigger accuracy.", "should_trigger": "map-skill-eval"},
+    {"prompt": "Run mapify skill-eval on map-explain and show the report.", "should_trigger": "map-skill-eval"},
+    {"prompt": "Show me the per-subtask token cost for the current branch.", "should_not_trigger": "map-skill-eval"},
+    {"prompt": "Plan the new payment feature into atomic subtasks.", "should_not_trigger": "map-skill-eval"},
+    {"prompt": "Diagnose why this integration test is failing.", "should_not_trigger": "map-skill-eval"}
+  ]
+}

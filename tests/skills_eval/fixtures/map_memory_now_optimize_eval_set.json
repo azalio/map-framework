@@ -1,0 +1,13 @@
+{
+  "entries": [
+    {"prompt": "Finalize the cross-session memory before I switch branches.", "should_trigger": "map-memory-now"},
+    {"prompt": "I'm ending this long session — flush the memory digest now.", "should_trigger": "map-memory-now"},
+    {"prompt": "Persist the cross-session memory for this branch right now.", "should_trigger": "map-memory-now"},
+    {"prompt": "Run finalize-all to sweep every dirty memory scratch.", "should_trigger": "map-memory-now"},
+    {"prompt": "Save the session memory digest before I run /clear.", "should_trigger": "map-memory-now"},
+    {"prompt": "Finalize memory now so the next session can recall it.", "should_trigger": "map-memory-now"},
+    {"prompt": "Resume the interrupted workflow from the step_state checkpoint.", "should_not_trigger": "map-memory-now"},
+    {"prompt": "Plan a refactor of the database layer into subtasks.", "should_not_trigger": "map-memory-now"},
+    {"prompt": "Capture the learned lessons from this finished workflow.", "should_not_trigger": "map-memory-now"}
+  ]
+}

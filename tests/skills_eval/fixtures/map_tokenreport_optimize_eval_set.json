@@ -1,0 +1,13 @@
+{
+  "entries": [
+    {"prompt": "Show me the token usage for the current branch.", "should_trigger": "map-tokenreport"},
+    {"prompt": "How much did this MAP run cost in tokens?", "should_trigger": "map-tokenreport"},
+    {"prompt": "Give me a per-subtask token accounting report.", "should_trigger": "map-tokenreport"},
+    {"prompt": "What's the cache-hit ratio for each agent in this run?", "should_trigger": "map-tokenreport"},
+    {"prompt": "Break down input and output tokens by agent for this branch.", "should_trigger": "map-tokenreport"},
+    {"prompt": "Report the run cost and token consumption so far.", "should_trigger": "map-tokenreport"},
+    {"prompt": "Decompose the new search feature into atomic subtasks.", "should_not_trigger": "map-tokenreport"},
+    {"prompt": "Run the lint, type, and test quality gates.", "should_not_trigger": "map-tokenreport"},
+    {"prompt": "Reproduce and diagnose this crash in the parser.", "should_not_trigger": "map-tokenreport"}
+  ]
+}
