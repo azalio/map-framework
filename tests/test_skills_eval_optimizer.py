@@ -520,6 +520,68 @@ def test_set_frontmatter_description_roundtrips_tricky_value() -> None:
     assert parsed == tricky
 
 
+def test_set_frontmatter_description_replaces_block_scalar() -> None:
+    """The bug that shipped: a ``description: |`` block scalar must be FULLY
+    replaced — leaving its indented body orphaned below the new quoted scalar
+    produces invalid YAML that silently unregisters the skill (0 triggers).
+
+    Every shipped map-* skill (except the single-line map-plan) uses a block
+    scalar, so this is the common case, not an edge case.
+    """
+    from mapify_cli.skill_ir import parse_frontmatter
+
+    original = (
+        "---\n"
+        "name: map-check\n"
+        "description: |\n"
+        "  Run quality gates and verify completion. Use when asked to run checks.\n"
+        "  Do NOT use to plan; use map-plan instead.\n"
+        "effort: low\n"
+        "disable-model-invocation: true\n"
+        "argument-hint: \"[focus area]\"\n"
+        "---\n"
+        "# /map-check body\n"
+    )
+    new = "Tuned: trigger on quality-gate requests. Do not plan."
+    patched = _set_frontmatter_description(original, new)
+
+    # No orphaned continuation line survives.
+    assert "Run quality gates and verify completion" not in patched
+    assert "Do NOT use to plan; use map-plan instead." not in patched
+    # The body and every sibling key are preserved.
+    assert "# /map-check body" in patched
+    for key in ("name: map-check", "effort: low", "disable-model-invocation: true"):
+        assert key in patched
+    # The frontmatter re-parses as valid YAML with exactly the new description.
+    close = patched.find("\n---", 4)
+    fm = parse_frontmatter(patched[4:close])
+    assert fm["description"].strip() == new
+    assert fm["disable-model-invocation"] is True
+    assert fm["effort"] == "low"
+
+
+def test_set_frontmatter_description_replaces_folded_scalar() -> None:
+    """Same handling for a folded (``>``) block scalar."""
+    from mapify_cli.skill_ir import parse_frontmatter
+
+    original = (
+        "---\n"
+        "name: map-x\n"
+        "description: >\n"
+        "  First line of folded text\n"
+        "  continues here.\n"
+        "effort: low\n"
+        "---\n"
+        "# body\n"
+    )
+    patched = _set_frontmatter_description(original, "new single-line desc")
+    assert "First line of folded text" not in patched
+    assert "effort: low" in patched
+    close = patched.find("\n---", 4)
+    fm = parse_frontmatter(patched[4:close])
+    assert fm["description"].strip() == "new single-line desc"
+
+
 def test_optimize_rejects_zero_iterations(tmp_path: Path) -> None:
     """Latent-crash guard: iterations < 1 raises ValueError, not IndexError."""
     source_claude = _make_source_tree(tmp_path / "src")

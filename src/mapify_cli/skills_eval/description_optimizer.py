@@ -84,10 +84,19 @@ def _set_frontmatter_description(content: str, new_desc: str) -> str:
     Rules:
     - File MUST start with ``---\\n`` (YAML frontmatter).
     - Frontmatter MUST contain a line starting with ``description:``.
-    - Only that single line is replaced; all other keys and the body are
+    - The ``description:`` key AND any block-scalar / indented continuation
+      lines belonging to it are replaced; all other keys and the body are
       preserved unchanged.
     - ``new_desc`` is serialised as a double-quoted YAML scalar so that
       embedded colons, quotes, and newlines parse back correctly.
+
+    Block-scalar awareness is essential: most shipped skills declare
+    ``description: |`` followed by an indented paragraph. Replacing only the
+    ``description:`` line (the original behaviour) left the indented body
+    orphaned below a now-quoted scalar — invalid YAML that silently unregistered
+    the skill, so it never triggered and every eval cell mis-read as a
+    non-trigger. We therefore also consume the continuation lines (those indented
+    deeper than the key) before substituting the single replacement line.
 
     Raises ``ValueError`` if the preconditions are not met (fail-loud).
     """
@@ -117,10 +126,27 @@ def _set_frontmatter_description(content: str, new_desc: str) -> str:
             "SKILL.md frontmatter does not contain a 'description:' key"
         )
 
+    # Consume the description value's continuation lines: a block scalar
+    # (``description: |`` / ``>``) or any plain multi-line value spans the
+    # following lines indented deeper than the key. Stop at the next same-or-less
+    # indented key (e.g. ``effort:``) or a blank line.
+    key_line = fm_lines[desc_line_idx]
+    key_indent = len(key_line) - len(key_line.lstrip())
+    end_idx = desc_line_idx + 1
+    while end_idx < len(fm_lines):
+        cont = fm_lines[end_idx]
+        if cont.strip() == "":
+            break
+        cont_indent = len(cont) - len(cont.lstrip())
+        if cont_indent <= key_indent:
+            break
+        end_idx += 1
+
     # Serialise new_desc as a double-quoted YAML scalar so round-trip is safe.
     escaped = new_desc.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
-    new_line = f'description: "{escaped}"'
-    fm_lines[desc_line_idx] = new_line
+    new_line = f'{" " * key_indent}description: "{escaped}"'
+    # Replace the key line + its consumed continuation lines with the single line.
+    fm_lines[desc_line_idx:end_idx] = [new_line]
 
     new_frontmatter = "\n".join(fm_lines)
     return "---\n" + new_frontmatter + body_after
