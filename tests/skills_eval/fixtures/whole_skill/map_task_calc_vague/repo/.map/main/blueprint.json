@@ -1,0 +1,17 @@
+{
+  "subtasks": [
+    {
+      "id": "ST-001",
+      "title": "Implement arithmetic expression evaluator",
+      "dependencies": [],
+      "affected_files": ["src/calc.py"],
+      "complexity": "medium",
+      "risk": "low",
+      "validation_criteria": [
+        "all of tests/test_calc_basic.py passes"
+      ],
+      "test_strategy": "unit",
+      "aag_contract": "evaluate(expr: str) -> float evaluates an arithmetic expression with operators + - * / ** , unary minus/plus, and parentheses, using standard mathematical precedence and Python numeric semantics. / is float division. Raise ZeroDivisionError on division by zero and ValueError on malformed input."
+    }
+  ]
+}
