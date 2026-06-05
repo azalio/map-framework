@@ -141,6 +141,26 @@ mapify skill-eval view map-plan
 mapify skill-eval view map-plan --result .map/eval-runs/map-plan/20260601T120000-optimize.json --open
 ```
 
+## Optimizing the whole skill (BODY/logic), not just the description
+
+`mapify skill-eval optimize` tunes only the trigger **`description:`** (does the skill fire on the
+right prompt?). To improve a skill's **body/logic** by OUTCOME quality (does it do its job well once
+it runs?), do NOT start from scratch — there is a worked, reusable flow and harness:
+
+- **Flow (start here):** `docs/whole-skill-optimization-flow.md` — measure outcome quality on golden
+  fixtures with a hybrid metric (deterministic gates + a trace-cited LLM judge), then human-edit the
+  body and re-measure (Approach B). Includes the fixture recipe, the measure→edit loop, and gotchas.
+- **Working log + findings:** `docs/whole-skill-optimization-notes.md`.
+- **Harness:** `tests/skills_eval/whole_skill/spike_runner.py` (`--degrade {body,actor,monitor}`),
+  fixtures under `tests/skills_eval/fixtures/whole_skill/`.
+
+**Key finding (don't re-derive):** for thin-orchestration skills (e.g. `map-task`), prose scope/
+correctness discipline — in the SKILL.md body OR the shared agent prompts — is **low-leverage**
+(ablations showed body-good == body-bad). The real levers are the **`affected_files` contract** and
+the **mechanical validators** (`validate_mutation_boundary` + test-gate + the MONITOR warn→feedback
+gates). Prose optimization pays off where behavior is genuinely prose-governed: the final **report
+format** and the **trigger description** (this skill). Spend effort accordingly.
+
 ## Related Commands
 
 - `/map-plan` — plan and decompose tasks.
