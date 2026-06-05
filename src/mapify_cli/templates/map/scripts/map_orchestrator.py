@@ -336,6 +336,11 @@ class StepState:
     contract_ready_subtasks: dict[str, dict] = field(default_factory=dict)
     clean_retry_count: int = 0
     contaminated_retry_count: int = 0
+    # Subtask IDs already nudged once for a (non-strict) scope warning. The
+    # warn->actor-feedback gate (validate_step 2.4) fires at most ONCE per
+    # subtask, so a persistent false positive (affected_files drift) cannot
+    # burn the retry budget — after the single nudge the gate passes.
+    scope_feedback_subtasks: list[str] = field(default_factory=list)
     retry_isolation_status: dict[str, str] = field(default_factory=dict)
     retry_quarantine_paths: dict[str, str] = field(default_factory=dict)
     completed_at: Optional[str] = None
@@ -403,6 +408,7 @@ class StepState:
             "contract_ready_subtasks": self.contract_ready_subtasks,
             "clean_retry_count": self.clean_retry_count,
             "contaminated_retry_count": self.contaminated_retry_count,
+            "scope_feedback_subtasks": self.scope_feedback_subtasks,
             "retry_isolation_status": self.retry_isolation_status,
             "retry_quarantine_paths": self.retry_quarantine_paths,
             "completed_at": self.completed_at,
@@ -441,6 +447,7 @@ class StepState:
             contract_ready_subtasks=data.get("contract_ready_subtasks", {}),
             clean_retry_count=data.get("clean_retry_count", 0),
             contaminated_retry_count=data.get("contaminated_retry_count", 0),
+            scope_feedback_subtasks=data.get("scope_feedback_subtasks", []),
             retry_isolation_status=data.get("retry_isolation_status", {}),
             retry_quarantine_paths=data.get("retry_quarantine_paths", {}),
             completed_at=data.get("completed_at"),
@@ -1157,6 +1164,32 @@ def validate_step(
                             "Mutation-boundary violation in MAP_STRICT_SCOPE mode. "
                             f"Unexpected files: {scope_report.get('unexpected', [])}"
                         ),
+                    }
+                # warn->actor-feedback: a non-strict scope leak does NOT hard-fail
+                # the subtask, but the FIRST time it is seen we route it back to
+                # the Actor as feedback so it self-corrects (revert the
+                # out-of-scope edits, or escalate for a contract update). Bounded
+                # to once per subtask (scope_feedback_subtasks guard) so a
+                # persistent false positive (affected_files drift) cannot burn the
+                # retry budget — after the single nudge the gate passes.
+                if (
+                    scope_status == "warning"
+                    and state.current_subtask_id not in state.scope_feedback_subtasks
+                ):
+                    state.scope_feedback_subtasks.append(state.current_subtask_id)
+                    state.save(state_file)
+                    unexpected = scope_report.get("unexpected", [])
+                    hint = scope_report.get("diagnostic_hint", "")
+                    return {
+                        "valid": False,
+                        "message": (
+                            "Scope warning (mutation-boundary): these files are "
+                            f"outside {state.current_subtask_id}'s affected_files: "
+                            f"{unexpected}. Revert the out-of-scope changes; OR, if "
+                            "they are genuinely required, STOP and report a blocker "
+                            "for a contract update — do not silently keep them. "
+                            + (f"({hint})" if hint else "")
+                        ).strip(),
                     }
             except ImportError:
                 pass

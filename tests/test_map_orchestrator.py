@@ -2361,6 +2361,47 @@ class TestValidateStepAutoMutationBoundary:
         assert result["valid"] is False
         assert "Mutation-boundary violation" in result["message"]
 
+    def test_warning_routes_feedback_to_actor_once(self, branch_dir, tmp_path, monkeypatch):
+        """Option ii: a non-strict scope leak does NOT hard-fail, but the FIRST
+        MONITOR validate routes it back to the Actor as feedback (valid=False +
+        'Scope warning'); the subtask is recorded in scope_feedback_subtasks so a
+        SECOND validate with the same leak passes (guard prevents retry-burn)."""
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001"]
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.4"
+        state.current_step_phase = "MONITOR"
+        state.pending_steps = ["2.4"]
+        state.completed_steps = ["2.2", "2.3"]
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        plan_dir = tmp_path / ".map" / branch_dir
+        (plan_dir / "blueprint.json").write_text(json.dumps({
+            "subtasks": [{"id": "ST-001", "title": "x", "affected_files": ["a.py"]}],
+        }))
+        import subprocess as _sp
+        _sp.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "config", "user.name", "t"], cwd=tmp_path, capture_output=True)
+        (tmp_path / "seed.txt").write_text("seed")
+        _sp.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True)
+        (tmp_path / "leak.py").write_text("nope")  # untracked: out-of-scope leak
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        monkeypatch.delenv("MAP_STRICT_SCOPE", raising=False)
+
+        r1 = map_orchestrator.validate_step("2.4", branch_dir, recommendation="proceed")
+        assert r1["valid"] is False, r1
+        assert "Scope warning" in r1["message"], r1
+        assert "leak.py" in r1["message"], r1
+        persisted = map_orchestrator.StepState.load(state_file)
+        assert "ST-001" in persisted.scope_feedback_subtasks, persisted.scope_feedback_subtasks
+
+        # Same leak persists, but the once-guard now lets the gate pass (no hard block).
+        r2 = map_orchestrator.validate_step("2.4", branch_dir, recommendation="proceed")
+        assert r2["valid"] is True, r2
+
 
 class TestPeekCurrentStep:
     """peek_current_step is the read-only recovery escape hatch for the case

@@ -309,6 +309,15 @@ file but never `git add`s it (porcelain '??') is still flagged. 386 passed in te
   — recommended balance;
 - (iii) strict-by-default only in the single-subtask (`map-task`) path, warn-only for full workflow.
 
+**IMPLEMENTED — option (ii) warn→actor-feedback (user choice, 2026-06-05):** in `validate_step("2.4")`
+(orchestrator MONITOR gate), a non-strict scope `warning` now routes back to the Actor as feedback
+(`valid=False` + "Scope warning: …revert or escalate") the FIRST time it's seen per subtask, then the
+gate passes. New `StepState.scope_feedback_subtasks` guard (persisted) bounds it to one nudge per
+subtask so an affected_files-drift false positive can't burn the retry budget. Edited the
+`.jinja` source + rendered; strict-mode hard-block path unchanged. Tests:
+`test_warning_routes_feedback_to_actor_once` (orchestrator) + the untracked-file validator test.
+`make check` green (2259 passed, check-render byte-identical).
+
 ## llm-council consultation log
 
 - 2026-06-05 (conv `066898a9-b37f-436f-96ca-7ae1cbe4c83a`, standard): asked about the no-gap result.
