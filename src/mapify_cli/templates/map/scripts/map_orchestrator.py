@@ -341,6 +341,10 @@ class StepState:
     # subtask, so a persistent false positive (affected_files drift) cannot
     # burn the retry budget — after the single nudge the gate passes.
     scope_feedback_subtasks: list[str] = field(default_factory=list)
+    # Subtask IDs already nudged once for a false-progress warning (MONITOR
+    # approved but the subtask changed NOTHING despite declaring affected_files).
+    # Same once-per-subtask bound as scope_feedback_subtasks.
+    progress_feedback_subtasks: list[str] = field(default_factory=list)
     retry_isolation_status: dict[str, str] = field(default_factory=dict)
     retry_quarantine_paths: dict[str, str] = field(default_factory=dict)
     completed_at: Optional[str] = None
@@ -409,6 +413,7 @@ class StepState:
             "clean_retry_count": self.clean_retry_count,
             "contaminated_retry_count": self.contaminated_retry_count,
             "scope_feedback_subtasks": self.scope_feedback_subtasks,
+            "progress_feedback_subtasks": self.progress_feedback_subtasks,
             "retry_isolation_status": self.retry_isolation_status,
             "retry_quarantine_paths": self.retry_quarantine_paths,
             "completed_at": self.completed_at,
@@ -448,6 +453,7 @@ class StepState:
             clean_retry_count=data.get("clean_retry_count", 0),
             contaminated_retry_count=data.get("contaminated_retry_count", 0),
             scope_feedback_subtasks=data.get("scope_feedback_subtasks", []),
+            progress_feedback_subtasks=data.get("progress_feedback_subtasks", []),
             retry_isolation_status=data.get("retry_isolation_status", {}),
             retry_quarantine_paths=data.get("retry_quarantine_paths", {}),
             completed_at=data.get("completed_at"),
@@ -1190,6 +1196,32 @@ def validate_step(
                             "for a contract update — do not silently keep them. "
                             + (f"({hint})" if hint else "")
                         ).strip(),
+                    }
+                # false-progress (correctness): MONITOR is approving, but the
+                # subtask changed NOTHING despite declaring affected_files. Same
+                # warn->actor-feedback trick (once per subtask via
+                # progress_feedback_subtasks): nudge the Actor to implement the
+                # change or report a blocker, rather than silently closing a
+                # subtask that did nothing.
+                if (
+                    scope_status != "error"
+                    and scope_report.get("expected")
+                    and not scope_report.get("actual")
+                    and state.current_subtask_id not in state.progress_feedback_subtasks
+                ):
+                    state.progress_feedback_subtasks.append(state.current_subtask_id)
+                    state.save(state_file)
+                    return {
+                        "valid": False,
+                        "message": (
+                            "False-progress (mutation-boundary): MONITOR is closing "
+                            f"{state.current_subtask_id} but NO files changed, though "
+                            "its contract declares affected_files="
+                            f"{scope_report.get('expected')}. Implement the change "
+                            "with Edit/Write; OR if it is already satisfied or not "
+                            "needed, STOP and report a blocker for a contract update "
+                            "— do not close a subtask that did nothing."
+                        ),
                     }
             except ImportError:
                 pass

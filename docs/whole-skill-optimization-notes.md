@@ -318,6 +318,21 @@ subtask so an affected_files-drift false positive can't burn the retry budget. E
 `test_warning_routes_feedback_to_actor_once` (orchestrator) + the untracked-file validator test.
 `make check` green (2259 passed, check-render byte-identical).
 
+## CORRECTNESS GATE — false-progress warn→feedback (2026-06-05, user: "same trick for correctness")
+
+Reviewed validate_step("2.4"): correctness is already enforced for monitor-envelope truncation,
+recommendation-required, recommendation-reject (revise/block/needs_investigation), RESEARCH-mandatory;
+test-gate failures already hard-feed-back via the skill loop. The unenforced correctness gap was
+**false-progress**: MONITOR closing a subtask that declares `affected_files` but changed NOTHING
+(empty diff) — a subtask that "completes" having done nothing.
+
+Applied the SAME warn→feedback+once-guard trick: at validate_step("2.4"), if the (reused)
+`validate_mutation_boundary` report shows `expected` (declared affected_files) non-empty but `actual`
+(changed files) empty, route back to the Actor once (`valid=False` + "False-progress … implement or
+report a blocker"), bounded by `StepState.progress_feedback_subtasks`. Reuses the existing scope git
+machinery — no new diff logic. Test `test_false_progress_routes_feedback_when_nothing_changed`
+(incl. once-guard pass-through). `make check` green (2260 passed, check-render byte-identical).
+
 ## llm-council consultation log
 
 - 2026-06-05 (conv `066898a9-b37f-436f-96ca-7ae1cbe4c83a`, standard): asked about the no-gap result.
