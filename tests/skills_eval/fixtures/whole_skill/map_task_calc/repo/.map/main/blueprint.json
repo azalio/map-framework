@@ -1,0 +1,17 @@
+{
+  "subtasks": [
+    {
+      "id": "ST-001",
+      "title": "Implement arithmetic expression evaluator (Python operator semantics)",
+      "dependencies": [],
+      "affected_files": ["src/calc.py"],
+      "complexity": "medium",
+      "risk": "low",
+      "validation_criteria": [
+        "all of tests/test_calc_basic.py passes"
+      ],
+      "test_strategy": "unit",
+      "aag_contract": "evaluate(expr: str) -> float parses and evaluates an arithmetic expression over integer/float literals with operators + - * / ** , unary + and -, and parentheses, using PYTHON operator semantics. Precedence highest to lowest: parentheses; ** (RIGHT-associative); unary + / - ; * and / (left-associative); + and - (left-associative). Note ** binds tighter than unary minus (as in Python). / is true (float) division. Raise ZeroDivisionError on division by zero. Raise ValueError on malformed input (trailing operator, unbalanced parentheses, empty string, adjacent operands). Whitespace between tokens is ignored."
+    }
+  ]
+}
