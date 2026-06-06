@@ -541,6 +541,33 @@ analysis; reflector: lessons; research-agent: summaries) with no clean determini
 cutting them would violate the "every change passes A/B" rule without building fuzzy/low-confidence
 gates first. Harnesses: .map/{actor,monitor,synth}_probe.py.
 
+## COMPREHENSIVE agent-prompt polish — final tally (2026-06-06)
+
+Swept ALL generative agents for the proven-cuttable pattern (pure worked-EXAMPLES /
+REFERENCE blocks). Every cut A/B-gated via a per-agent harness (.map/*_probe.py); kept
+only if B>=A.
+
+KEPT (A/B B>=A), 5 generative agents, 1049 lines of worked-example bloat removed:
+| agent | cut | A/B gate | result |
+|---|---|---|---|
+| actor | -247L (<Actor_Reference_Examples>) | calc hidden /11, n=4 | haiku 9.3->10.0, sonnet 9.5->11.0 |
+| synthesizer | -95L (Step-7 strategy examples) | calc synth, n=3 | 33/33 == 33/33 |
+| task-decomposer | -151L (## REFERENCE EXAMPLES) | blueprint schema+coverage+acyclic, opus n=3 | 3/3 == 3/3 |
+| predictor | -417L (<examples>) | breaking+affected detection, sonnet n=3 | 3/3 == 3/3 |
+| reflector | -139L (# COMPLETE EXAMPLES) | lesson-extraction keyword, sonnet n=3 | 3/3 == 3/3 |
+
+REJECTED (A/B B<A) -> reverted:
+| monitor | good/bad dimension examples | 7-case verdict | clean-pass A 6/6 vs B 4/6 (calibration) |
+| actor | error-patterns + decision-tree (guidance) | calc | B 9.0 < A 10.0 (scaffolding) |
+
+NOT TOUCHED: gate agents (monitor/evaluator/debate-arbiter/final-verifier) — examples
+calibrate accept/reject (monitor proved this); research-agent (281L, lean).
+
+FINAL RULE: pure worked-EXAMPLES / REFERENCE blocks are safely removable from GENERATIVE
+agents (their detection/algorithm/schema/output-format content stays); GUIDANCE/PATTERNS
+and GATE-CALIBRATION examples are load-bearing. Models (haiku/sonnet/opus) per-agent are
+evidence-consistent and unchanged. Harnesses are reusable for future re-validation.
+
 ## llm-council consultation log
 
 - 2026-06-05 (conv `066898a9-b37f-436f-96ca-7ae1cbe4c83a`, standard): asked about the no-gap result.
