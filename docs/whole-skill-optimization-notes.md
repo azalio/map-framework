@@ -431,6 +431,39 @@ FINAL outcome-lever ranking stands: CONTRACT/GATES ≫ MODEL (only on beyond-com
 multi-step/multi-file tasks) ≫ PROSE. Total this investigation: 6 outcome sweeps,
 ~30 full /map-task runs across haiku/sonnet/opus and 5 fixtures.
 
+## CORRECTED model-outcome result — two confounds removed (2026-06-06)
+
+llm-council review prompted transcript verification, which exposed TWO confounds that
+invalidated the earlier "model doesn't matter for outcome" claim:
+
+1. **`--agent-model` was a no-op.** In headless `claude -p`, map-task runs INLINE on the
+   orchestrator (session) model and spawns NO sub-agents (0 Task dispatches in the transcript).
+   So every "actor=haiku/sonnet/opus" sweep actually ran on claude-opus-4-8. The real lever is
+   `--orchestrator-model` (= `claude -p --model`), verified in the transcript model field.
+2. **Permission stall.** Without auto-accept, headless edits prompt→deny; haiku hit 4
+   permission denials and gave up (0/11) despite correctly DESCRIBING the right algorithm, while
+   opus wrote freely and even dispatched sub-agents. Fix: `--permission-mode acceptEdits`.
+
+**CLEAN result** (model truly varied + permissions neutral), calc_vague discriminator, hidden /11, n=4:
+
+| tier | runs | mean |
+|---|---|---|
+| haiku  | 11, 8, 10, 10 | 9.8/11 (most variable) |
+| sonnet | 11, 10, 11, 10 | 10.5/11 |
+| opus   | 10, 11, 11, (1 workflow-error run) | 10.7/11 |
+
+**Modest but consistent gradient opus ≥ sonnet > haiku; haiku noticeably more variable on hard
+edge cases.** On a single well-scoped subtask the gap is ~1 test (~8%) — real, not a blowout.
+Separate AGENCY gap (opus dispatches sub-agents, works around blockers, persists longer). Per
+benchmarks the gap widens on multi-step/multi-file tasks. n=4 is small (council: 8-10) — direction
+solid, magnitude needs more runs.
+
+REVISED ranking (corrected): on well-scoped subtasks CONTRACT/GATES still dominate, but MODEL is
+NOT negligible — bigger tiers are more reliable on hard edge cases and far more agentic at driving
+the workflow. Earlier "model irrelevant for outcome" is RETRACTED — it was opus measured 3x.
+METHODOLOGY LESSON: always verify the manipulation reached the transcript (model field, tool_use,
+permission results) before trusting an agentic-harness result.
+
 ## llm-council consultation log
 
 - 2026-06-05 (conv `066898a9-b37f-436f-96ca-7ae1cbe4c83a`, standard): asked about the no-gap result.
