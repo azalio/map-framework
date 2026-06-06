@@ -134,14 +134,12 @@ class SpecificationContract:
     performance_constraints: PerformanceConstraints | None = None
     security_requirements: list[str] | None = None
 
-
 @dataclass
 class TypeConstraints:
     """Structured type constraints."""
     input_types: dict[str, str]  # {"data": "List[User]"}
     output_type: str  # "ProcessResult"
     generic_params: list[str] | None = None  # ["T", "U"]
-
 
 @dataclass
 class SideEffectsPolicy:
@@ -150,7 +148,6 @@ class SideEffectsPolicy:
     network: Literal["allowed", "forbidden"] = "forbidden"
     filesystem: Literal["allowed", "forbidden"] = "forbidden"
     database: Literal["allowed", "forbidden"] = "forbidden"
-
 
 @dataclass
 class PerformanceConstraints:
@@ -223,7 +220,6 @@ class MonitorAnalysis:
     # For synthesis
     recommended_as_base: bool  # True if good as spine
 
-
 @dataclass
 class CompatibilityFeatures:
     """Features used by orchestrator for deterministic compatibility scoring."""
@@ -245,7 +241,6 @@ class RetryContext:
     previous_errors: list[ToolError]
     failed_decisions: list[str]  # Decision IDs likely causing issues
     strategy_adjustments: list[str]  # What to change in next attempt
-
 
 @dataclass
 class ToolError:
@@ -278,7 +273,6 @@ def is_variant_viable(m: MonitorAnalysis, specification_contract) -> bool:
         return True
 
     return getattr(m, "spec_contract_compliant", False)
-
 
 viable_variants = [
     (v, m) for v, m in zip(variants, monitor_results)
@@ -485,7 +479,6 @@ def resolve_conflict(
     winner = by_variant_score[0]
     return winner, f"From higher-scored variant: {winner.source_variant}"
 
-
 def violates_contract(decision: Decision, contract: SpecificationContract) -> bool:
     """Check if decision violates contract constraints."""
     # Check prohibited patterns
@@ -505,7 +498,6 @@ def violates_contract(decision: Decision, contract: SpecificationContract) -> bo
                 return True
 
     return False
-
 
 # Apply resolution to all conflicts
 conflict_resolutions = []
@@ -548,7 +540,6 @@ if compatibility_score >= 0.7:
 else:
     strategy = "fresh_generation"
     base_variant = None
-
 
 def select_best_base(
     variants: list,
@@ -596,31 +587,6 @@ def select_best_base(
 5. Validate against contract constraints
 ```
 
-**Example**:
-```python
-# Base variant (v3) code:
-def process_data(items):
-    results = []
-    for item in items:
-        results.append(transform(item))
-    return results
-
-# After applying decisions:
-# - dec-001 (v1): "Use list comprehension for performance"
-# - dec-005 (v2): "Add input validation"
-# - dec-007 (v1): "Add type hints"
-
-def process_data(items: List[Item]) -> List[Result]:
-    """Process items with validation and transformation."""
-    # Decision dec-005: Add input validation
-    if not items:
-        raise ValueError("Items list cannot be empty")
-
-    # Decision dec-001: Use list comprehension for performance
-    # Decision dec-007: Add type hints (applied above)
-    return [transform(item) for item in items]
-```
-
 #### Strategy: fresh_generation (compatibility < 0.7)
 
 ```
@@ -639,65 +605,6 @@ def process_data(items: List[Item]) -> List[Result]:
    - No conflicting patterns introduced
    - Contract fully satisfied
 6. Validate against contract constraints
-```
-
-**Example**:
-```python
-# Fresh generation from contract + decisions
-# Contract: function_signature="def process(data: List[User]) -> ProcessResult"
-#          error_model="Result"
-#          concurrency_model="sync"
-# Accepted decisions:
-# - dec-002 (v1): "Return Result type for explicit error handling"
-# - dec-003 (v2): "Validate all User fields before processing"
-# - dec-009 (v3): "Log processing metrics for observability"
-
-from dataclasses import dataclass
-from typing import List
-import logging
-
-@dataclass
-class ProcessResult:
-    """Result of processing operation."""
-    success: bool
-    processed_count: int
-    error: str | None = None
-
-def process(data: List[User]) -> ProcessResult:
-    """
-    Process user data with validation and observability.
-
-    Implements:
-    - Decision dec-002: Result type for explicit error handling
-    - Decision dec-003: Validate all User fields
-    - Decision dec-009: Log processing metrics
-    """
-    logger = logging.getLogger(__name__)
-
-    # Decision dec-003: Validate all User fields before processing
-    try:
-        for user in data:
-            if not user.email or not user.name:
-                return ProcessResult(
-                    success=False,
-                    processed_count=0,
-                    error=f"Invalid user: {user.id}"
-                )
-    except Exception as e:
-        logger.error(f"Validation failed: {e}")
-        return ProcessResult(success=False, processed_count=0, error=str(e))
-
-    # Process validated data
-    processed = 0
-    for user in data:
-        # ... processing logic ...
-        processed += 1
-
-    # Decision dec-009: Log processing metrics for observability
-    logger.info(f"Processed {processed} users successfully")
-
-    # Decision dec-002: Return Result type
-    return ProcessResult(success=True, processed_count=processed)
 ```
 
 **Critical Rules for Code Generation**:
@@ -764,7 +671,6 @@ def validate_coherence(code: str, decisions: list[Decision], contract: Specifica
 
     return len(issues) == 0, issues
 
-
 is_valid, validation_issues = validate_coherence(
     generated_code,
     [d for d in all_decisions if d.status == "accepted"],
@@ -799,7 +705,6 @@ class SynthesizerOutput:
     compatibility_score: float
     conflict_resolutions: list[ConflictResolution]
     confidence: float  # 0.0-1.0
-
 
 @dataclass
 class ConflictResolution:

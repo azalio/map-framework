@@ -1,0 +1,15 @@
+{
+  "fixture": "map_task_calc_vague",
+  "skill": "map-task",
+  "invocation": "/map-task ST-001",
+  "branch": "main",
+  "subtask_id": "ST-001",
+  "allowed_files": ["src/calc.py"],
+  "trap_files": [],
+  "test_cmd": "python -m pytest tests/test_calc_basic.py -q",
+  "hidden_test_src": "hidden/test_calc_full.py",
+  "hidden_test_dest": "tests/test_calc_full.py",
+  "hidden_test_cmd": "python -m pytest tests/test_calc_full.py -q",
+  "expected_outcome": "complete",
+  "notes": "VAGUE-contract variant of map_task_calc: the contract does NOT spell out associativity (only 'standard precedence'), so passing right-associative ** (2**3**2==512) requires the model to KNOW it from training, not read it from the spec. Hidden suite keeps only language-UNAMBIGUOUS cases (drops -2**2). Strongest probe for the execution-model competence threshold: if haiku produces left-associative ** (fails 2**3**2) while sonnet/opus get it right, the model lever is finally located."
+}

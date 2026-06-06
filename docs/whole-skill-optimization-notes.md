@@ -333,6 +333,241 @@ report a blocker"), bounded by `StepState.progress_feedback_subtasks`. Reuses th
 machinery — no new diff logic. Test `test_false_progress_routes_feedback_when_nothing_changed`
 (incl. once-guard pass-through). `make check` green (2260 passed, check-render byte-identical).
 
+## MODEL LEVER on OUTCOME quality — discriminating fixture (2026-06-05, user: "optimize all 3 levers")
+
+Built the missing pieces to measure the EXECUTION-model lever on outcome quality:
+- `spike_runner.py` gained `--agent-model AGENT=MODEL` (rewrites a seeded agent's `model:`
+  frontmatter — the actor writes the code, so its model is the code-quality lever) and
+  `--orchestrator-model`.
+- New fixture `map_task_semver`: a genuinely non-trivial task (semver 2.0.0 `compare()` with
+  pre-release precedence + numeric-vs-lexical identifiers + build-metadata) — unlike the
+  scope/blocker traps it DISCRIMINATES code quality (stub → 12 failed; correct → 12 passed).
+
+Sweep — full `/map-task` (RESEARCH→ACTOR→MONITOR→test-gate), `--agent-model actor=<tier>`, ×2:
+
+| actor model | task_pass | QUALITY | mean dur |
+|---|---|---|---|
+| haiku  | 2/2 ✓ | 1.0, 1.0 | 404 s |
+| sonnet | 2/2 ✓ | 1.0, 1.0 | 633 s |
+| opus   | 2/2 ✓ | 1.0, (0.5*) | 410 s |
+
+\* the one <1.0 is NOT a code failure — task_pass=True, 12/12; the JUDGE returned 0 from an
+`API Error: 529 Overloaded` (infra noise). Trust the deterministic gate.
+
+**KEY FINDING — the model lever on OUTCOME is ABSORBED BY THE GATE.** For a well-gated task
+all three tiers produce correct code (6/6 task_pass) because the test-gate + MONITOR retry loop
+drive even haiku to passing. Haiku is not slower → paying Opus for the actor buys nothing on
+gated tasks. This confirms, with execution data, the project's recurring conclusion:
+
+**Ranked outcome levers: CONTRACT/MECHANICAL GATES (#3) ≫ MODEL (#2) ≫ PROSE (#1).**
+- #3 (test gate, mutation-boundary validator, false-progress gate, MONITOR loop) governs outcome
+  — the real place to invest (tighter validation_criteria, stricter validators, test coverage).
+- #2 model: matters a little for ROUTING (Sonnet sweet spot; see the description experiment),
+  irrelevant for gated EXECUTION. May matter on WEAKLY-gated tasks (untested).
+- #1 prose (body / actor / monitor prompts): low leverage (ablations in PR #160 + here).
+
+Method caveat: on a gated task QUALITY saturates (all pass), so it does NOT capture the model
+effect that may live in RETRY COUNT / first-pass quality. To measure that: log `retry_count`
+from step_state.json, and/or use a WEAKLY-gated fixture (few tests) where code quality is not
+rescued by the gate. Full write-up: the Obsidian note
+`model-tier-vs-prompt-for-llm-skill-routing-map-replication` + `docs/model-tier-trigger-experiment.md`.
+
+## OUTCOME lever isolation — weak gate + vague contract (2026-06-05, cont.)
+
+To check whether a strong gate was HIDING a model effect, ran two more outcome
+configurations (hidden 8-edge-case suite scored post-run; `--agent-model actor=<tier>` ×2):
+
+| configuration (fixture) | haiku | sonnet | opus |
+|---|---|---|---|
+| strong gate (map_task_semver) | task_pass ✓ | ✓ | ✓ |
+| weak gate, FULL contract (map_task_semver_weakgate) | hidden 8/8 | 8/8 | 8/8 |
+| weak gate, VAGUE contract (map_task_semver_vague) | hidden 8/8 | 8/8 | 8/8 |
+
+All 18 runs: correct semver, retries=0. Even a VAGUE contract ("compare two semver strings,
+return -1/0/1", no precedence rules) + a weak gate + **haiku** → fully correct first try,
+because semver 2.0.0 is within every tier's competence.
+
+**Definitive OUTCOME finding:** for a task WITHIN the models' competence, outcome quality is
+INVARIANT to model tier, test-gate strength, AND contract completeness. The execution-model
+lever only bites on tasks ABOVE the weaker model's competence (semver isn't one — threshold
+not reached). Combined with the routing experiment + PR #160 ablations, the evidence-based
+ranking of OUTCOME levers is final:
+
+  CONTRACT/MECHANICAL GATES (#3) ≫ MODEL (#2, only beyond-competence) ≫ PROSE (#1).
+
+Practical: to lift skill outcome quality, invest in the CONTRACT and mechanical gates
+(precise validation_criteria, strict validators, test coverage) — those guarantee correctness
+at/above competence. Reserve a bigger actor model only for genuinely-novel/hard subtasks;
+prose tuning is lowest ROI. Open thread: a beyond-haiku-competence fixture to locate the model
+threshold. Full write-up: Obsidian note `model-tier-vs-prompt-for-llm-skill-routing-map-replication`.
+
+## MODEL THRESHOLD probe — capability-discriminating task (2026-06-06)
+
+User pushed back: "haiku can't really match opus." semver was within all tiers' competence,
+so per web research (EvalPlus/HumanEval-Pro/arXiv 2511.04355, 2510.13908) built the canonical
+edge-case discriminator — an arithmetic expression evaluator (right-assoc `**`, `**` tighter
+than unary minus, overloaded unary, negative exponent, error contract). A naive impl passes a
+thin gate but fails the hidden traps (validated 9p/3f).
+
+Sweeps (hidden edge-case suite, actor=haiku|sonnet|opus):
+
+| contract | haiku | sonnet | opus |
+|---|---|---|---|
+| FULL (rules spelled out) | 12/12 (run0) | — | — |
+| VAGUE ("standard precedence" only) | 11/11, 11/11 | 10/11, 11/11 | 11/11, 11/11 |
+
+**Even on the edge-case-hard task with a VAGUE contract, haiku 4.5 matched/edged the bigger
+models** — no bigger-is-better ordering (the lone miss was sonnet's, i.e. noise). haiku knows
+right-associative `**` and implements it without being told.
+
+**Why (benchmark-grounded):** the tier gap appears on MULTI-STEP agentic / MULTI-FILE /
+subtle-concurrency tasks (Terminal-Bench, multi-file SWE-bench), NOT on single self-contained
+functions where all tiers are competitive. map-task decomposes work into well-scoped one-file
+subtasks — the regime where haiku 4.5 is competent. So within map-task's granularity the model
+is not the outcome lever (cost insight: actor can run on haiku). The gap would surface only on
+a multi-file/multi-step subtask — which the framework's decomposition deliberately avoids.
+
+FINAL outcome-lever ranking stands: CONTRACT/GATES ≫ MODEL (only on beyond-competence,
+multi-step/multi-file tasks) ≫ PROSE. Total this investigation: 6 outcome sweeps,
+~30 full /map-task runs across haiku/sonnet/opus and 5 fixtures.
+
+## CORRECTED model-outcome result — two confounds removed (2026-06-06)
+
+llm-council review prompted transcript verification, which exposed TWO confounds that
+invalidated the earlier "model doesn't matter for outcome" claim:
+
+1. **`--agent-model` was a no-op.** In headless `claude -p`, map-task runs INLINE on the
+   orchestrator (session) model and spawns NO sub-agents (0 Task dispatches in the transcript).
+   So every "actor=haiku/sonnet/opus" sweep actually ran on claude-opus-4-8. The real lever is
+   `--orchestrator-model` (= `claude -p --model`), verified in the transcript model field.
+2. **Permission stall.** Without auto-accept, headless edits prompt→deny; haiku hit 4
+   permission denials and gave up (0/11) despite correctly DESCRIBING the right algorithm, while
+   opus wrote freely and even dispatched sub-agents. Fix: `--permission-mode acceptEdits`.
+
+**CLEAN result** (model truly varied + permissions neutral), calc_vague discriminator, hidden /11, n=4:
+
+| tier | runs | mean |
+|---|---|---|
+| haiku  | 11, 8, 10, 10 | 9.8/11 (most variable) |
+| sonnet | 11, 10, 11, 10 | 10.5/11 |
+| opus   | 10, 11, 11, (1 workflow-error run) | 10.7/11 |
+
+**Modest but consistent gradient opus ≥ sonnet > haiku; haiku noticeably more variable on hard
+edge cases.** On a single well-scoped subtask the gap is ~1 test (~8%) — real, not a blowout.
+Separate AGENCY gap (opus dispatches sub-agents, works around blockers, persists longer). Per
+benchmarks the gap widens on multi-step/multi-file tasks. n=4 is small (council: 8-10) — direction
+solid, magnitude needs more runs.
+
+REVISED ranking (corrected): on well-scoped subtasks CONTRACT/GATES still dominate, but MODEL is
+NOT negligible — bigger tiers are more reliable on hard edge cases and far more agentic at driving
+the workflow. Earlier "model irrelevant for outcome" is RETRACTED — it was opus measured 3x.
+METHODOLOGY LESSON: always verify the manipulation reached the transcript (model field, tool_use,
+permission results) before trusting an agentic-harness result.
+
+## DECISIVE: actor-direct, controlled model (2026-06-06) — model DOES matter for code
+
+After two confounds (no-op `--agent-model`; permission-stall), the cleanest measurement
+(user's idea): bypass Claude Code sub-agent dispatch entirely and invoke the agent prompt
+DIRECTLY — `claude -p "<task>" --append-system-prompt "<rendered actor.md>" --model <tier>
+--permission-mode acceptEdits` in a seeded repo, score with the hidden suite. One variable
+(actor model), ~3x cheaper than full map-task.
+
+calc_vague, hidden /11, n=3:
+
+| actor model | runs | mean |
+|---|---|---|
+| haiku  | 8, 10, 10 | 9.3 — never perfect, consistently drops edge cases |
+| sonnet | 11, 11, 11 | 11.0 — perfect, consistent |
+| opus   | (1*), 11, 11 | 11.0 (*one broken run) |
+
+**Clean conclusion: the ACTOR model materially affects code quality** — haiku systematically
+worse on edge cases; sonnet/opus reliably correct. Use sonnet+ for actor, not haiku. This is the
+signal the two confounds had hidden; "haiku ≈ opus" is RETRACTED for the actor role.
+
+**Two findings about headless dispatch (probes):**
+1. Simple skills (map-task, map-plan) do NOT auto-dispatch sub-agents in `claude -p` — they run
+   inline; the `subagent_type=` code blocks are treated as illustrative.
+2. Even FORCED Task dispatch runs the sub-agent on the SESSION model (no haiku sidechain when
+   research-agent=haiku was dispatched). So per-agent `model:` is INERT in headless.
+
+**Architectural fix (user's idea generalised):** orchestrate agents by direct invocation —
+per phase, `claude -p --append-system-prompt <agent.md> --model <assigned tier>` — so per-agent
+models actually take effect in headless/automation. Then "which agent/model in a skill" is
+deterministic: actor=sonnet+, task-decomposer/final-verifier=opus, research-agent=haiku,
+monitor=sonnet. Prototype harness: `.map/actor_probe.py` (renders the agent Handlebars template,
+runs it as the system prompt with a chosen model, scores via the hidden suite).
+
+## AGENT PROMPT POLISH via A/B (2026-06-06) — examples cuttable for actor, NOT for monitor
+
+User mandate: polish the agents (prompts/models), every change A/B-gated (keep only if B>=A).
+Built per-agent A/B harnesses that render the agent template, run it as the system prompt via
+`claude -p --append-system-prompt --model`, and score outcomes.
+
+- **actor** (`.map/actor_probe.py`, calc_vague hidden /11): cut the 247-line
+  `<Actor_Reference_Examples>` block. A/B (n=4): A uncut haiku 9.3/sonnet 9.5; B cut haiku
+  10.0/sonnet 11.0 -> B>=A. KEPT, committed (d78acd5), -23% prompt size.
+- **monitor** (`.map/monitor_probe.py`, 7 cases: 3 clean + 4 buggy across correctness+security;
+  forced FINAL_VERDICT line for robust parsing; baseline 7/7). Cut the 14 `<example type=bad|good>`
+  blocks (134 lines). A/B: bug-recall preserved 4/4, BUT clean-pass on IDENTICAL correct code
+  A=6/6 vs B=4/6 -> B not >= A. REVERTED. The good/bad examples calibrate the monitor's ACCEPT
+  threshold; removing them trends toward more false-positives. The monitor is a GATE, so
+  false-positive calibration earns the examples' place. Monitor length is largely justified.
+
+LESSON: "agent prompts are bloated, cut examples" is NOT universally safe. For a generative agent
+(actor) examples are low-leverage/cuttable; for a gate agent (monitor) examples calibrate the
+accept/reject boundary and are load-bearing. Each agent needs its OWN A/B gate before cutting.
+Harness coverage limits what's cuttable: the verdict-accuracy gate covers correctness+security
+review, NOT JSON-format validity / severity values / MCP behavior — so those monitor sections
+cannot be A/B-cut without broader harness coverage.
+
+## AGENT POLISH — validated rule + results (2026-06-06, updated)
+
+Two clean A/B-validated cuts (generative agents, pure worked-examples):
+- actor: -247L worked examples (B>=A: haiku 9.3->10.0, sonnet 9.5->11.0). Committed d78acd5.
+- synthesizer: -95L Step-7 strategy worked-examples (A 33/33 == B 33/33). Committed a17c2d0.
+Two A/B-REJECTED cuts (reverted):
+- monitor: good/bad examples calibrate the accept threshold (clean-pass A 6/6 vs B 4/6). Gate agent.
+- actor: error-handling patterns + decision-tree (B 9.0 < A 10.0, incl. a broken haiku run). Guidance scaffolds.
+
+RULE: pure WORKED-EXAMPLES (illustrative full solutions/strategies) are safely cuttable in
+GENERATIVE agents (actor, synthesizer). GUIDANCE/PATTERNS and GATE-CALIBRATION examples are
+load-bearing (monitor, actor-patterns) — they scaffold weaker models / calibrate accept/reject.
+
+COVERAGE CONSTRAINT (why this can't trivially extend to all agents): a cut is only A/B-safe if a
+harness covers its effect. Clean code-output gates exist for actor + synthesizer (calc hidden suite)
+— both done. Gate agents (monitor/evaluator/final-verifier) — examples calibrate, don't cut. The
+remaining generative agents output FUZZY artifacts (task-decomposer: plans; predictor: risk
+analysis; reflector: lessons; research-agent: summaries) with no clean deterministic gate, so
+cutting them would violate the "every change passes A/B" rule without building fuzzy/low-confidence
+gates first. Harnesses: .map/{actor,monitor,synth}_probe.py.
+
+## COMPREHENSIVE agent-prompt polish — final tally (2026-06-06)
+
+Swept ALL generative agents for the proven-cuttable pattern (pure worked-EXAMPLES /
+REFERENCE blocks). Every cut A/B-gated via a per-agent harness (.map/*_probe.py); kept
+only if B>=A.
+
+KEPT (A/B B>=A), 5 generative agents, 1049 lines of worked-example bloat removed:
+| agent | cut | A/B gate | result |
+|---|---|---|---|
+| actor | -247L (<Actor_Reference_Examples>) | calc hidden /11, n=4 | haiku 9.3->10.0, sonnet 9.5->11.0 |
+| synthesizer | -95L (Step-7 strategy examples) | calc synth, n=3 | 33/33 == 33/33 |
+| task-decomposer | -151L (## REFERENCE EXAMPLES) | blueprint schema+coverage+acyclic, opus n=3 | 3/3 == 3/3 |
+| predictor | -417L (<examples>) | breaking+affected detection, sonnet n=3 | 3/3 == 3/3 |
+| reflector | -139L (# COMPLETE EXAMPLES) | lesson-extraction keyword, sonnet n=3 | 3/3 == 3/3 |
+
+REJECTED (A/B B<A) -> reverted:
+| monitor | good/bad dimension examples | 7-case verdict | clean-pass A 6/6 vs B 4/6 (calibration) |
+| actor | error-patterns + decision-tree (guidance) | calc | B 9.0 < A 10.0 (scaffolding) |
+
+NOT TOUCHED: gate agents (monitor/evaluator/debate-arbiter/final-verifier) — examples
+calibrate accept/reject (monitor proved this); research-agent (281L, lean).
+
+FINAL RULE: pure worked-EXAMPLES / REFERENCE blocks are safely removable from GENERATIVE
+agents (their detection/algorithm/schema/output-format content stays); GUIDANCE/PATTERNS
+and GATE-CALIBRATION examples are load-bearing. Models (haiku/sonnet/opus) per-agent are
+evidence-consistent and unchanged. Harnesses are reusable for future re-validation.
+
 ## llm-council consultation log
 
 - 2026-06-05 (conv `066898a9-b37f-436f-96ca-7ae1cbe4c83a`, standard): asked about the no-gap result.

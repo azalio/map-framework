@@ -1,7 +1,7 @@
 ---
 name: map-debug
-description: |
-  Structured MAP debugging via task-decomposer, actor, and monitor agents. Use when reproducing a bug, isolating a regression, or diagnosing an error with specialized agents. Do NOT use for greenfield features; use map-plan or map-efficient.
+description: |-
+  Structured MAP debugging via task-decomposer, actor, and monitor agents. Use when reproducing a bug, isolating a regression, or diagnosing an error with specialized agents — including failing or flaky tests (pytest AssertionError), crashes and segmentation faults, memory-corruption or memory errors in native/C extensions, intermittent or load-dependent failures (e.g. 500s under load), data-corruption bugs that only appear in production, scripts or hooks that silently exit or produce no output, and any "find the root cause" / "walk me through diagnosing" / "help me investigate" request. Trigger on phrasing like "failing test", "mysterious error", "segfault", "memory error", "intermittently fails", "root cause", "isolate the cause", "debug why", "diagnose", or "investigate the error". Prefer this over generic investigation when the user wants a systematic decompose-reproduce-fix-verify workflow. Do NOT use for greenfield features; use map-plan or map-efficient.
 effort: medium
 disable-model-invocation: true
 argument-hint: "[bug description]"

@@ -1385,6 +1385,17 @@ def skill_eval_run(
     max_concurrency: int = typer.Option(
         1, "--max-concurrency", min=1, help="Bounded parallel dispatch (default 1)"
     ),
+    model: Optional[str] = typer.Option(
+        None,
+        "--model",
+        help="Model alias for claude -p (e.g. haiku, sonnet, opus). "
+        "Default: the claude CLI session default. Pin to compare trigger "
+        "accuracy across model tiers.",
+    ),
+    runs: int = typer.Option(
+        1, "--runs", min=1, help="Passes per prompt (default 1). Use >1 to average "
+        "out single-pass noise when comparing models.",
+    ),
 ) -> None:
     """Run a skill evaluation matrix.
 
@@ -1416,8 +1427,8 @@ def skill_eval_run(
 
     # Dry-run path: zero quota, NO dispatcher construction, NO claude required.
     if dry_run:
-        # D10: variant_id fixed = 1, runs = 1.
-        planned = len(entries) * 1 * 1
+        # D10: variant_id fixed = 1; runs is caller-controlled (default 1).
+        planned = len(entries) * 1 * runs
         console.print(
             f"[bold]Dry-run:[/bold] planned [cyan]{planned}[/cyan] invocation(s) "
             f"for skill [bold]{skill}[/bold] — spends 0 quota"
@@ -1445,12 +1456,12 @@ def skill_eval_run(
         )
 
     # Run the evaluation matrix.
-    disp = ClaudeSubprocessDispatcher()
+    disp = ClaudeSubprocessDispatcher(model=model)
     _aggregator.bounded_run(
         skill=skill,
         entries=entries,
         dispatcher=disp,
-        runs=1,
+        runs=runs,
         out_path=out_path,
         resume=resume,
         max_concurrency=max_concurrency,

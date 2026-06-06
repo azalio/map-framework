@@ -1,0 +1,15 @@
+{
+  "fixture": "map_task_semver_vague",
+  "skill": "map-task",
+  "invocation": "/map-task ST-001",
+  "branch": "main",
+  "subtask_id": "ST-001",
+  "allowed_files": ["src/semver.py"],
+  "trap_files": [],
+  "test_cmd": "python -m pytest tests/test_semver_basic.py -q",
+  "hidden_test_src": "hidden/test_semver_full.py",
+  "hidden_test_dest": "tests/test_semver_full.py",
+  "hidden_test_cmd": "python -m pytest tests/test_semver_full.py -q",
+  "expected_outcome": "complete",
+  "notes": "MODEL-ISOLATION fixture: weak gate (3 trivial tests) AND a VAGUE contract (aag_contract only says 'compare two semver strings, return -1/0/1' — the precedence RULES are NOT spelled out). The model must therefore rely on its OWN knowledge of semver 2.0.0 precedence. Hidden 8-edge-case suite scored post-run. If hidden_pass varies by actor model (haiku fails edge cases, opus/sonnet pass), that ISOLATES the model-competence lever — the one config where model matters for outcome (vague contract + weak gate). If all still pass, model competence is not the bottleneck even with a vague spec."
+}

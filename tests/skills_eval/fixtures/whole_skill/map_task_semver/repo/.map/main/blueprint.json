@@ -1,0 +1,22 @@
+{
+  "subtasks": [
+    {
+      "id": "ST-001",
+      "title": "Implement semver compare() per semver 2.0.0 precedence",
+      "dependencies": [],
+      "affected_files": ["src/semver.py"],
+      "complexity": "medium",
+      "risk": "low",
+      "validation_criteria": [
+        "tests/test_semver.py::test_numeric_fields_compare_numerically_not_lexically passes",
+        "tests/test_semver.py::test_prerelease_has_lower_precedence_than_release passes",
+        "tests/test_semver.py::test_canonical_prerelease_chain passes",
+        "tests/test_semver.py::test_numeric_identifiers_compare_numerically passes",
+        "tests/test_semver.py::test_build_metadata_ignored passes",
+        "all of tests/test_semver.py passes"
+      ],
+      "test_strategy": "unit",
+      "aag_contract": "compare(a: str, b: str) -> int returns -1/0/1 by semver 2.0.0 precedence: numeric major/minor/patch compared numerically; a pre-release version is lower than its release; pre-release identifiers compared field-by-field (numeric numerically, numeric < alphanumeric, alphanumeric by ASCII, more fields > fewer when prefix equal); build metadata ignored."
+    }
+  ]
+}

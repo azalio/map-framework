@@ -1,0 +1,16 @@
+{
+  "fixture": "map_task_semver",
+  "skill": "map-task",
+  "invocation": "/map-task ST-001",
+  "branch": "main",
+  "subtask_id": "ST-001",
+  "allowed_files": ["src/semver.py"],
+  "trap_files": [],
+  "test_cmd": "python -m pytest tests/test_semver.py -q",
+  "expected_outcome": "complete",
+  "expected": {
+    "plan_status": "complete",
+    "tests_pass": true
+  },
+  "notes": "DISCRIMINATING outcome fixture (unlike the scope/blocker traps which all score QUALITY=1.0). The code task is genuinely non-trivial: semver 2.0.0 compare() with pre-release precedence, numeric-vs-lexical identifier comparison, and build-metadata handling. A naive/weak implementation passes the easy tests but fails the edge cases, so task_pass (the test gate) and QUALITY VARY with the execution lever (model tier / agent prompt). No scope trap — this fixture isolates CODE-QUALITY, not scope discipline. Judge dimension used is scope_discipline (complete path); the binding signal here is the deterministic test gate."
+}

@@ -51,12 +51,27 @@ ARTIFACT_GLOBS = ("code-review-", "qa-", "pr-draft")  # workflow side-files to i
 # ---------------------------------------------------------------------------
 # Seeding
 # ---------------------------------------------------------------------------
-def seed_temp(fixture_dir: Path, variant: str, degrade: str = "body") -> Path:
-    """Create a throwaway cwd: .claude + .map/scripts + fixture repo + git init."""
+def seed_temp(
+    fixture_dir: Path,
+    variant: str,
+    degrade: str = "body",
+    agent_models: dict[str, str] | None = None,
+) -> Path:
+    """Create a throwaway cwd: .claude + .map/scripts + fixture repo + git init.
+
+    ``agent_models`` (e.g. ``{"actor": "opus"}``) rewrites the ``model:``
+    frontmatter of the named seeded agent(s) — the precise lever for measuring
+    how EXECUTION model tier affects outcome quality (the actor writes the code,
+    so its model is the code-quality lever; sub-agents use their own ``model:``
+    frontmatter, NOT the orchestrator's ``--model``). Throwaway seed only.
+    """
     tmp = Path(tempfile.mkdtemp(prefix="mts-spike-"))
     # 1. .claude (skills + agents + settings), temp-flip so /map-task is invocable
     shutil.copytree(REPO_ROOT / ".claude", tmp / ".claude")
     _apply_temp_flip(tmp / ".claude")
+    # 1b. per-agent execution-model override (model lever)
+    for agent, model in (agent_models or {}).items():
+        _set_agent_model(tmp / ".claude" / "agents" / f"{agent}.md", model)
     # 2. .map/scripts (orchestrator + step runner the body shells out to)
     (tmp / ".map").mkdir(parents=True, exist_ok=True)
     shutil.copytree(REPO_ROOT / ".map" / "scripts", tmp / ".map" / "scripts")
@@ -168,17 +183,126 @@ def _degrade_monitor(monitor_md: Path) -> None:
     monitor_md.write_text("".join(kept), encoding="utf-8")
 
 
+def _set_agent_model(agent_md: Path, model: str) -> None:
+    """Rewrite the ``model:`` frontmatter line of a seeded agent .md (model lever).
+
+    Replaces the value after ``model:`` (preserving any trailing ``# comment``)
+    or, if absent, inserts ``model: <model>`` right after the opening ``---``.
+    Throwaway seed only.
+    """
+    if not agent_md.exists():
+        return
+    lines = agent_md.read_text(encoding="utf-8").splitlines(keepends=True)
+    out: list[str] = []
+    replaced = False
+    in_fm = False
+    fm_marker_seen = 0
+    for line in lines:
+        if line.strip() == "---":
+            fm_marker_seen += 1
+            in_fm = fm_marker_seen == 1
+            out.append(line)
+            continue
+        if in_fm and not replaced and line.lstrip().startswith("model:"):
+            indent = line[: len(line) - len(line.lstrip())]
+            out.append(f"{indent}model: {model}\n")
+            replaced = True
+            continue
+        out.append(line)
+    if not replaced:
+        # insert after the first '---'
+        new_out: list[str] = []
+        inserted = False
+        for line in out:
+            new_out.append(line)
+            if not inserted and line.strip() == "---":
+                new_out.append(f"model: {model}\n")
+                inserted = True
+        out = new_out
+    agent_md.write_text("".join(out), encoding="utf-8")
+
+
 def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", *args], cwd=cwd, capture_output=True, text=True, check=False
     )
 
 
+def run_hidden_tests(
+    tmp: Path, fixture_dir: Path, hidden_src: str, hidden_dest: str, hidden_cmd: str
+) -> dict:
+    """Measure TRUE code quality with a comprehensive suite the workflow never saw.
+
+    For a WEAKLY-gated fixture the workflow runs only a thin test gate; a weak
+    implementation passes it but may be wrong on edge cases. After the run we
+    inject the full hidden suite (``hidden_src`` in the fixture dir → ``hidden_dest``
+    in the temp) and run ``hidden_cmd`` to score the produced code against ALL
+    edge cases. This is the deterministic 'did the model implement the full
+    contract, or just satisfy the weak gate?' signal — no judge noise.
+    """
+    src = fixture_dir / hidden_src
+    dest = tmp / hidden_dest
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
+    except OSError as exc:
+        return {"ran": False, "error": f"copy failed: {exc}"}
+    proc = subprocess.run(
+        hidden_cmd.split(),
+        cwd=tmp,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+    )
+    tail = (proc.stdout + proc.stderr)[-800:]
+    # parse "N passed" / "N failed" from pytest tail (best-effort)
+    import re as _re
+    passed = _re.search(r"(\d+) passed", tail)
+    failed = _re.search(r"(\d+) failed", tail)
+    return {
+        "ran": True,
+        "hidden_pass": proc.returncode == 0,
+        "returncode": proc.returncode,
+        "n_passed": int(passed.group(1)) if passed else None,
+        "n_failed": int(failed.group(1)) if failed else 0,
+        "tail": tail,
+    }
+
+
+def _read_retry_counters(tmp: Path, branch: str) -> dict:
+    """Read serial-mode retry counters from the run's step_state.json.
+
+    On a well-gated task QUALITY saturates (every tier passes the test gate), so
+    the model effect — if any — hides in HOW MANY actor retries the MONITOR loop
+    needed to drive the actor to a passing implementation. Captured here so a
+    weaker actor that "passes, but only after more iterations" is still visible.
+    Returns {} if step_state.json is absent/unreadable.
+    """
+    sp = tmp / ".map" / branch / "step_state.json"
+    try:
+        data = json.loads(sp.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return {}
+    return {
+        k: data.get(k)
+        for k in ("retry_count", "clean_retry_count", "contaminated_retry_count")
+        if k in data
+    }
+
+
 # ---------------------------------------------------------------------------
 # Run the skill
 # ---------------------------------------------------------------------------
-def run_skill(tmp: Path, invocation: str, timeout: float) -> dict:
-    argv = ["claude", "-p", invocation, "--output-format", "json"]
+def run_skill(tmp: Path, invocation: str, timeout: float, orchestrator_model: str | None = None) -> dict:
+    # acceptEdits: auto-accept file edits so the run isn't blocked by interactive
+    # permission prompts in headless mode. Without this, weaker/less-agentic models
+    # stall on "I need permission to edit" (observed: haiku hit 4 perm-denials and
+    # gave up while opus wrote freely) — a permission/agency artifact that confounds
+    # any CODE-quality comparison. NOT a full bypass: only edits are auto-accepted.
+    argv = ["claude", "-p", invocation, "--output-format", "json", "--permission-mode", "acceptEdits"]
+    if orchestrator_model:
+        argv += ["--model", orchestrator_model]
     t0 = time.monotonic()
     try:
         proc = subprocess.run(
@@ -406,7 +530,28 @@ def main() -> int:
     ap.add_argument("--timeout", type=float, default=3600.0)
     ap.add_argument("--judge-timeout", type=float, default=360.0)
     ap.add_argument("--start-index", type=int, default=0)
+    ap.add_argument(
+        "--agent-model",
+        action="append",
+        default=[],
+        metavar="AGENT=MODEL",
+        help="Override a seeded agent's model: frontmatter, e.g. actor=opus "
+        "(repeatable). The model lever for EXECUTION quality.",
+    )
+    ap.add_argument(
+        "--orchestrator-model",
+        default=None,
+        help="--model passed to the top-level claude -p running the skill body "
+        "(the orchestrator loop; sub-agents still use their own model:).",
+    )
     args = ap.parse_args()
+
+    agent_models: dict[str, str] = {}
+    for spec in args.agent_model:
+        if "=" not in spec:
+            ap.error(f"--agent-model must be AGENT=MODEL, got {spec!r}")
+        agent, model = spec.split("=", 1)
+        agent_models[agent.strip()] = model.strip()
 
     manifest = json.loads((args.fixture / "manifest.json").read_text())
     allowed = manifest["allowed_files"]
@@ -414,6 +559,10 @@ def main() -> int:
     invocation = manifest["invocation"]
     test_cmd = manifest["test_cmd"]
     expected_outcome = manifest.get("expected_outcome", "complete")
+    branch = manifest.get("branch", "main")
+    hidden_src = manifest.get("hidden_test_src")
+    hidden_dest = manifest.get("hidden_test_dest")
+    hidden_cmd = manifest.get("hidden_test_cmd")
 
     args.out.mkdir(parents=True, exist_ok=True)
     results_path = args.out / "results.jsonl"
@@ -422,17 +571,29 @@ def main() -> int:
         rec: dict = {
             "variant": args.variant,
             "degrade": args.degrade if args.variant == "bad" else None,
+            "agent_models": agent_models or None,
+            "orchestrator_model": args.orchestrator_model,
             "run": i,
             "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
         }
         tmp = None
         try:
-            tmp = seed_temp(args.fixture, args.variant, args.degrade)
-            print(f"[{rec['ts']}] variant={args.variant} run={i} tmp={tmp} — running /map-task ...", flush=True)
-            run = run_skill(tmp, invocation, args.timeout)
+            tmp = seed_temp(args.fixture, args.variant, args.degrade, agent_models)
+            print(
+                f"[{rec['ts']}] variant={args.variant} run={i} "
+                f"agent_models={agent_models or '-'} orch={args.orchestrator_model or '-'} "
+                f"tmp={tmp} — running /map-task ...",
+                flush=True,
+            )
+            run = run_skill(tmp, invocation, args.timeout, args.orchestrator_model)
             rec["run_meta"] = {k: run.get(k) for k in ("ok", "returncode", "error", "duration_s", "session_id", "usage", "stderr_tail")}
             gates = deterministic_gates(tmp, allowed, trap, test_cmd)
             rec["gates"] = gates
+            rec["retry_counters"] = _read_retry_counters(tmp, branch)
+            if hidden_src and hidden_dest and hidden_cmd:
+                rec["hidden"] = run_hidden_tests(
+                    tmp, args.fixture, hidden_src, hidden_dest, hidden_cmd
+                )
             rec["expected_outcome"] = expected_outcome
             judge = judge_quality(
                 expected_outcome, allowed, trap, gates, run.get("raw_output", ""), args.judge_timeout
@@ -442,6 +603,8 @@ def main() -> int:
             print(
                 f"    -> scope_pass={gates['scope_pass']} task_pass={gates['task_pass']} "
                 f"judge[{judge.get('dimension')}]={judge.get('score')} QUALITY={rec['quality']} "
+                f"retries={rec['retry_counters'].get('retry_count')} "
+                f"hidden={(rec.get('hidden') or {}).get('n_passed')}p/{(rec.get('hidden') or {}).get('n_failed')}f "
                 f"dur={run.get('duration_s', 0):.0f}s",
                 flush=True,
             )

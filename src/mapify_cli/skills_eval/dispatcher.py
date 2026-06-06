@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import random
+import re
 import shutil
 import subprocess
 import tempfile
@@ -101,6 +102,31 @@ class MockDispatcher(VariantDispatcher):
 # Subdir name (under the throwaway eval cwd) handed to the telegram-bridge
 # plugin as its state dir — see _eval_subprocess_env.
 _NO_TELEGRAM_STATE_DIRNAME = ".map-eval-no-telegram"
+
+# Tools the eval ``claude -p`` subprocess is NOT allowed to use.
+#
+# Trigger-accuracy eval only needs to observe whether the right skill *fires*
+# (the first ``Skill`` tool_use in the transcript) — it does NOT need the skill
+# *body* to execute. Letting the body run is actively harmful for EXECUTING
+# skills: ``map-check`` would run the full ``make check`` test suite, and
+# ``map-task`` / ``map-efficient`` would dispatch sub-agents — each blowing past
+# the per-call timeout (recorded as a false non-trigger) and, for sub-agents,
+# leaving orphaned child processes and burning real quota after the parent is
+# killed. Disallowing the heavy/mutating/network tools lets the skill still
+# TRIGGER (description-driven, recorded in the transcript) while the body cannot
+# perform slow or side-effecting work. Read-only tools (Read/Grep/Glob) stay
+# allowed so triggering behaviour is unaffected. The ``Skill`` tool itself is
+# never disallowed — it is exactly the signal we measure.
+_EVAL_DISALLOWED_TOOLS: tuple[str, ...] = (
+    "Bash",
+    "Edit",
+    "Write",
+    "NotebookEdit",
+    "Task",
+    "Agent",
+    "WebFetch",
+    "WebSearch",
+)
 
 
 def _eval_subprocess_env(cwd: Path) -> dict[str, str]:
@@ -240,6 +266,19 @@ def _derive_triggered_skill(session_id: str, cwd: Path) -> str | None:
     return _parse_transcript_for_skill(transcript_path)
 
 
+def _cwd_to_project_slug(path: Path) -> str:
+    """Replicate Claude Code's ``cwd -> ~/.claude/projects/<slug>`` transform.
+
+    Every character that is NOT alphanumeric or ``-`` (so ``/``, ``.``, ``_``,
+    spaces, …) is replaced by ``-``. Verified against real project dirs: a
+    ``tempfile.mkdtemp()`` name such as ``mapeval-s_u5zv32`` — which contains an
+    underscore — is recorded under ``…-mapeval-s-u5zv32``. A naive
+    ``replace("/","-").replace(".","-")`` misses the ``_`` and silently fails to
+    locate the transcript (a false non-trigger on the affected dispatches).
+    """
+    return re.sub(r"[^0-9A-Za-z-]", "-", str(path))
+
+
 def _locate_transcript(session_id: str, cwd: Path) -> Path | None:
     """Return the path to the JSONL transcript or ``None`` if not found."""
     projects_dir = Path.home() / ".claude" / "projects"
@@ -250,13 +289,57 @@ def _locate_transcript(session_id: str, cwd: Path) -> Path | None:
         if matches:
             return matches[0]
 
-    # Fallback: reconstruct slug from cwd (``/`` and ``.`` → ``-``).
-    cwd_slug = str(cwd).replace("/", "-").replace(".", "-")
+    # Fallback: reconstruct slug from cwd (Claude Code's transform).
+    cwd_slug = _cwd_to_project_slug(cwd)
     fallback = projects_dir / cwd_slug / f"{session_id}.jsonl"
     if fallback.exists():
         return fallback
 
     return None
+
+
+def _locate_transcript_by_cwd(cwd: Path) -> Path | None:
+    """Locate the transcript for a dispatch by cwd slug — no ``session_id`` needed.
+
+    Used for timeout recovery: when ``claude -p`` is killed by the per-call
+    timeout we never receive the result envelope, so the ``session_id`` is
+    unknown. But Claude Code writes transcripts under
+    ``~/.claude/projects/<cwd-slug>/<session_id>.jsonl`` where ``<cwd-slug>`` is
+    the cwd path with ``/`` and ``.`` replaced by ``-``. Each dispatch runs in a
+    unique throwaway temp cwd, so that slug dir holds exactly one session's
+    transcript(s); return the most-recently-modified ``*.jsonl`` (or ``None``).
+
+    Claude Code derives the slug from the *resolved* cwd, so on macOS a
+    ``tempfile.mkdtemp()`` path under ``/var/folders/...`` (where ``/var`` is a
+    symlink to ``/private/var``) is recorded under the ``/private/var/...`` slug.
+    We therefore try the slug for BOTH the raw and the resolved cwd, and finally
+    fall back to globbing by the unique temp-dir name (the project dir name ends
+    with it) so a slug-derivation change cannot silently break recovery.
+    """
+    projects_dir = Path.home() / ".claude" / "projects"
+    if not projects_dir.is_dir():
+        return None
+
+    candidates: list[Path] = []
+    bases = {cwd}
+    try:
+        bases.add(cwd.resolve())
+    except OSError:  # pragma: no cover - resolve only fails on exotic FS errors
+        pass
+    for base in bases:
+        slug_dir = projects_dir / _cwd_to_project_slug(base)
+        if slug_dir.is_dir():
+            candidates.extend(slug_dir.glob("*.jsonl"))
+
+    if not candidates:
+        # Fallback: the project dir name ends with the (slugified) unique temp
+        # dir name — slugify so an underscore in the mkdtemp suffix still matches.
+        name_slug = _cwd_to_project_slug(Path(cwd.name))
+        candidates.extend(projects_dir.glob(f"*{name_slug}/*.jsonl"))
+
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: p.stat().st_mtime)
 
 
 def _parse_transcript_for_skill(path: Path) -> str | None:
@@ -363,6 +446,23 @@ def _parse_envelope(stdout: str) -> tuple[str, TokenUsage | None, str]:
 _JITTER_MAX: float = 2.0
 
 
+class _TimeoutRecovery:
+    """Internal signal: the subprocess timed out but the trigger was recovered.
+
+    Returned by ``_run_once`` when ``claude -p`` exceeds the per-call timeout yet
+    its transcript was already written (the ``Skill`` tool_use fires early, in the
+    first assistant turn, well before a slow skill BODY finishes). This is a VALID
+    trigger verdict — not a transient failure — so it is NOT retried.
+    ``triggered_skill`` is the fired skill name, or ``None`` if the transcript
+    exists but no skill fired by the time the process was killed.
+    """
+
+    __slots__ = ("triggered_skill",)
+
+    def __init__(self, triggered_skill: str | None) -> None:
+        self.triggered_skill = triggered_skill
+
+
 class ClaudeSubprocessDispatcher(VariantDispatcher):
     """Real ``claude -p`` dispatcher for production/manual eval runs.
 
@@ -396,9 +496,10 @@ class ClaudeSubprocessDispatcher(VariantDispatcher):
         self,
         *,
         source_claude_dir: Path | None = None,
-        timeout: float = 120.0,
+        timeout: float = 90.0,
         max_retries: int = 2,
         backoff_base: float = 2.0,
+        model: str | None = None,
     ) -> None:
         """Initialise the dispatcher.
 
@@ -407,8 +508,19 @@ class ClaudeSubprocessDispatcher(VariantDispatcher):
         source_claude_dir:
             Path to the ``.claude/`` directory to seed from.  Defaults to
             ``Path.cwd() / ".claude"`` at construction time.
+        model:
+            Optional model alias passed to ``claude -p --model`` (e.g. ``haiku``,
+            ``sonnet``, ``opus``). ``None`` (default) omits the flag, so the
+            ``claude`` CLI resolves the session default — preserving prior
+            behaviour. Pin this to measure how trigger accuracy varies by model
+            tier (model choice is known to dominate prompt phrasing).
         timeout:
-            Per-attempt timeout in seconds passed to ``subprocess.run``.
+            Per-attempt timeout in seconds passed to ``subprocess.run``. The
+            default (90 s) sits well above the observed trigger latency (the
+            first ``Skill`` tool_use lands in the transcript in ~30 s) so most
+            calls finish naturally; a slow EXECUTING skill that overruns is not
+            mis-recorded — ``_run_once`` recovers the trigger from the transcript
+            on timeout (see ``_TimeoutRecovery``).
         max_retries:
             Number of *additional* retry attempts after the first failure.
             Total attempts = 1 + max_retries.
@@ -423,6 +535,7 @@ class ClaudeSubprocessDispatcher(VariantDispatcher):
         self._timeout = timeout
         self._max_retries = max_retries
         self._backoff_base = backoff_base
+        self._model = model
         # Holds the error message from the latest _run_once call. Instance-scoped
         # (not class-level) so the safe-sequential-only assumption is explicit.
         self._last_error: str = ""
@@ -472,7 +585,17 @@ class ClaudeSubprocessDispatcher(VariantDispatcher):
         ``max_retries=2`` means up to 3 total attempts (attempt 0, 1, 2).
         After all attempts are exhausted, returns an error ``DispatchResult``.
         """
-        argv = ["claude", "-p", prompt, "--output-format", "json"]
+        argv = [
+            "claude",
+            "-p",
+            prompt,
+            "--output-format",
+            "json",
+            "--disallowed-tools",
+            *_EVAL_DISALLOWED_TOOLS,
+        ]
+        if self._model:
+            argv += ["--model", self._model]
         last_error: str = ""
 
         for attempt in range(self._max_retries + 1):
@@ -489,9 +612,20 @@ class ClaudeSubprocessDispatcher(VariantDispatcher):
                 time.sleep(sleep_s)
 
             result = self._run_once(argv, tmp)
-            if result is not None:
+            if isinstance(result, subprocess.CompletedProcess):
                 # Successful subprocess run — parse and return.
                 return self._build_result(result, tmp, t_total_start)
+            if isinstance(result, _TimeoutRecovery):
+                # Timed out, but the trigger was recovered from the transcript —
+                # a valid verdict, not a transient failure. Do NOT retry.
+                duration_s = time.monotonic() - t_total_start
+                return DispatchResult(
+                    raw_output="",
+                    triggered_skill=result.triggered_skill,
+                    token_usage=None,
+                    duration_s=duration_s,
+                    error=None,
+                )
 
             # _run_once returned None => transient failure; last_error was set.
             last_error = self._last_error
@@ -509,10 +643,14 @@ class ClaudeSubprocessDispatcher(VariantDispatcher):
         self,
         argv: list[str],
         cwd: Path,
-    ) -> subprocess.CompletedProcess[str] | None:
-        """Run ``argv`` once; return ``CompletedProcess`` on success, ``None`` on failure.
+    ) -> subprocess.CompletedProcess[str] | _TimeoutRecovery | None:
+        """Run ``argv`` once.
 
-        Side-effect: sets ``self._last_error`` on failure.
+        Returns:
+        - ``CompletedProcess`` on a normal (returncode 0) run,
+        - ``_TimeoutRecovery`` when the call timed out but its transcript was
+          already written (trigger recovered — a valid verdict, not a failure),
+        - ``None`` on a transient failure (retryable; ``self._last_error`` set).
         """
         try:
             proc = subprocess.run(
@@ -523,10 +661,22 @@ class ClaudeSubprocessDispatcher(VariantDispatcher):
                 cwd=cwd,
                 env=_eval_subprocess_env(cwd),
             )
-        except subprocess.TimeoutExpired as exc:
-            self._last_error = f"timeout after {self._timeout}s: {exc}"
-            logger.warning("dispatch: subprocess timed out: %s", exc)
-            return None
+        except subprocess.TimeoutExpired:
+            # The trigger (first ``Skill`` tool_use) is written to the transcript
+            # early — before a slow EXECUTING skill body finishes. Recover it from
+            # the transcript (located by cwd slug, since the timeout gave us no
+            # result envelope / session_id) rather than mis-recording a false
+            # non-trigger.
+            #
+            # A timeout is TERMINAL — never retried. Retrying re-runs the same
+            # expensive call (another full ``self._timeout`` wait) with no reason
+            # to behave differently; the original design retried it 3x, turning a
+            # single overrun into ~3x the wall-clock for every executing-skill
+            # positive. The settle-poll below defeats the flush/visibility race
+            # where the just-killed process's transcript is not yet visible at the
+            # exact instant of the kill.
+            recovered = self._recover_trigger_after_timeout(cwd)
+            return _TimeoutRecovery(triggered_skill=recovered)
         except OSError as exc:
             self._last_error = f"OSError: {exc}"
             logger.warning("dispatch: OSError running claude: %s", exc)
@@ -549,6 +699,36 @@ class ClaudeSubprocessDispatcher(VariantDispatcher):
             return None
 
         return proc
+
+    # Settle-poll for transcript recovery after a timeout kill: total ~1.5 s.
+    _RECOVERY_POLL_ATTEMPTS: int = 5
+    _RECOVERY_POLL_INTERVAL_S: float = 0.3
+
+    def _recover_trigger_after_timeout(self, cwd: Path) -> str | None:
+        """Recover the fired-skill from the transcript after a timeout kill.
+
+        Polls briefly because the killed process's transcript may not be visible
+        at the exact instant of the kill. Returns the fired skill name, or
+        ``None`` if no transcript appears (genuine non-trigger / startup hang) or
+        it contains no ``Skill`` tool_use.
+        """
+        for attempt in range(self._RECOVERY_POLL_ATTEMPTS):
+            transcript = _locate_transcript_by_cwd(cwd)
+            if transcript is not None:
+                recovered = _parse_transcript_for_skill(transcript)
+                logger.warning(
+                    "dispatch: timed out after %ss; recovered trigger=%r (transcript found)",
+                    self._timeout,
+                    recovered,
+                )
+                return recovered
+            if attempt < self._RECOVERY_POLL_ATTEMPTS - 1:
+                time.sleep(self._RECOVERY_POLL_INTERVAL_S)
+        logger.warning(
+            "dispatch: timed out after %ss; no transcript located — recording non-trigger",
+            self._timeout,
+        )
+        return None
 
     def _build_result(
         self,
