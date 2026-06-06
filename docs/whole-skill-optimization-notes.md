@@ -520,6 +520,27 @@ Harness coverage limits what's cuttable: the verdict-accuracy gate covers correc
 review, NOT JSON-format validity / severity values / MCP behavior — so those monitor sections
 cannot be A/B-cut without broader harness coverage.
 
+## AGENT POLISH — validated rule + results (2026-06-06, updated)
+
+Two clean A/B-validated cuts (generative agents, pure worked-examples):
+- actor: -247L worked examples (B>=A: haiku 9.3->10.0, sonnet 9.5->11.0). Committed d78acd5.
+- synthesizer: -95L Step-7 strategy worked-examples (A 33/33 == B 33/33). Committed a17c2d0.
+Two A/B-REJECTED cuts (reverted):
+- monitor: good/bad examples calibrate the accept threshold (clean-pass A 6/6 vs B 4/6). Gate agent.
+- actor: error-handling patterns + decision-tree (B 9.0 < A 10.0, incl. a broken haiku run). Guidance scaffolds.
+
+RULE: pure WORKED-EXAMPLES (illustrative full solutions/strategies) are safely cuttable in
+GENERATIVE agents (actor, synthesizer). GUIDANCE/PATTERNS and GATE-CALIBRATION examples are
+load-bearing (monitor, actor-patterns) — they scaffold weaker models / calibrate accept/reject.
+
+COVERAGE CONSTRAINT (why this can't trivially extend to all agents): a cut is only A/B-safe if a
+harness covers its effect. Clean code-output gates exist for actor + synthesizer (calc hidden suite)
+— both done. Gate agents (monitor/evaluator/final-verifier) — examples calibrate, don't cut. The
+remaining generative agents output FUZZY artifacts (task-decomposer: plans; predictor: risk
+analysis; reflector: lessons; research-agent: summaries) with no clean deterministic gate, so
+cutting them would violate the "every change passes A/B" rule without building fuzzy/low-confidence
+gates first. Harnesses: .map/{actor,monitor,synth}_probe.py.
+
 ## llm-council consultation log
 
 - 2026-06-05 (conv `066898a9-b37f-436f-96ca-7ae1cbe4c83a`, standard): asked about the no-gap result.
