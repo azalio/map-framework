@@ -497,6 +497,29 @@ deterministic: actor=sonnet+, task-decomposer/final-verifier=opus, research-agen
 monitor=sonnet. Prototype harness: `.map/actor_probe.py` (renders the agent Handlebars template,
 runs it as the system prompt with a chosen model, scores via the hidden suite).
 
+## AGENT PROMPT POLISH via A/B (2026-06-06) — examples cuttable for actor, NOT for monitor
+
+User mandate: polish the agents (prompts/models), every change A/B-gated (keep only if B>=A).
+Built per-agent A/B harnesses that render the agent template, run it as the system prompt via
+`claude -p --append-system-prompt --model`, and score outcomes.
+
+- **actor** (`.map/actor_probe.py`, calc_vague hidden /11): cut the 247-line
+  `<Actor_Reference_Examples>` block. A/B (n=4): A uncut haiku 9.3/sonnet 9.5; B cut haiku
+  10.0/sonnet 11.0 -> B>=A. KEPT, committed (d78acd5), -23% prompt size.
+- **monitor** (`.map/monitor_probe.py`, 7 cases: 3 clean + 4 buggy across correctness+security;
+  forced FINAL_VERDICT line for robust parsing; baseline 7/7). Cut the 14 `<example type=bad|good>`
+  blocks (134 lines). A/B: bug-recall preserved 4/4, BUT clean-pass on IDENTICAL correct code
+  A=6/6 vs B=4/6 -> B not >= A. REVERTED. The good/bad examples calibrate the monitor's ACCEPT
+  threshold; removing them trends toward more false-positives. The monitor is a GATE, so
+  false-positive calibration earns the examples' place. Monitor length is largely justified.
+
+LESSON: "agent prompts are bloated, cut examples" is NOT universally safe. For a generative agent
+(actor) examples are low-leverage/cuttable; for a gate agent (monitor) examples calibrate the
+accept/reject boundary and are load-bearing. Each agent needs its OWN A/B gate before cutting.
+Harness coverage limits what's cuttable: the verdict-accuracy gate covers correctness+security
+review, NOT JSON-format validity / severity values / MCP behavior — so those monitor sections
+cannot be A/B-cut without broader harness coverage.
+
 ## llm-council consultation log
 
 - 2026-06-05 (conv `066898a9-b37f-436f-96ca-7ae1cbe4c83a`, standard): asked about the no-gap result.
