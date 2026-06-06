@@ -464,6 +464,39 @@ the workflow. Earlier "model irrelevant for outcome" is RETRACTED — it was opu
 METHODOLOGY LESSON: always verify the manipulation reached the transcript (model field, tool_use,
 permission results) before trusting an agentic-harness result.
 
+## DECISIVE: actor-direct, controlled model (2026-06-06) — model DOES matter for code
+
+After two confounds (no-op `--agent-model`; permission-stall), the cleanest measurement
+(user's idea): bypass Claude Code sub-agent dispatch entirely and invoke the agent prompt
+DIRECTLY — `claude -p "<task>" --append-system-prompt "<rendered actor.md>" --model <tier>
+--permission-mode acceptEdits` in a seeded repo, score with the hidden suite. One variable
+(actor model), ~3x cheaper than full map-task.
+
+calc_vague, hidden /11, n=3:
+
+| actor model | runs | mean |
+|---|---|---|
+| haiku  | 8, 10, 10 | 9.3 — never perfect, consistently drops edge cases |
+| sonnet | 11, 11, 11 | 11.0 — perfect, consistent |
+| opus   | (1*), 11, 11 | 11.0 (*one broken run) |
+
+**Clean conclusion: the ACTOR model materially affects code quality** — haiku systematically
+worse on edge cases; sonnet/opus reliably correct. Use sonnet+ for actor, not haiku. This is the
+signal the two confounds had hidden; "haiku ≈ opus" is RETRACTED for the actor role.
+
+**Two findings about headless dispatch (probes):**
+1. Simple skills (map-task, map-plan) do NOT auto-dispatch sub-agents in `claude -p` — they run
+   inline; the `subagent_type=` code blocks are treated as illustrative.
+2. Even FORCED Task dispatch runs the sub-agent on the SESSION model (no haiku sidechain when
+   research-agent=haiku was dispatched). So per-agent `model:` is INERT in headless.
+
+**Architectural fix (user's idea generalised):** orchestrate agents by direct invocation —
+per phase, `claude -p --append-system-prompt <agent.md> --model <assigned tier>` — so per-agent
+models actually take effect in headless/automation. Then "which agent/model in a skill" is
+deterministic: actor=sonnet+, task-decomposer/final-verifier=opus, research-agent=haiku,
+monitor=sonnet. Prototype harness: `.map/actor_probe.py` (renders the agent Handlebars template,
+runs it as the system prompt with a chosen model, scores via the hidden suite).
+
 ## llm-council consultation log
 
 - 2026-06-05 (conv `066898a9-b37f-436f-96ca-7ae1cbe4c83a`, standard): asked about the no-gap result.
