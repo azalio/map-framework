@@ -592,6 +592,27 @@ def _extract_turn_usage(entry: object) -> Optional[dict[str, object]]:
     }
 
 
+def _usage_token_total(usage: Mapping[str, object]) -> int:
+    """Sum of the four token fields for one usage record.
+
+    Used to pick the most complete copy of a turn when the transcript repeats a
+    msg_id with diverging usage (a streaming partial vs the final line).
+    """
+    total = 0
+    for field in _TOKEN_FIELDS:
+        value = usage.get(field, 0)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float)):
+            total += int(value)
+        elif isinstance(value, str):
+            try:
+                total += int(value)
+            except ValueError:
+                continue
+    return total
+
+
 def _iter_new_usage(
     transcript_path: Path, seen_ids: set[str], start_offset: int = 0
 ) -> tuple[list[dict[str, object]], int]:
@@ -601,10 +622,17 @@ def _iter_new_usage(
     JSONL) so a repeatedly-firing Stop/SubagentStop hook does not re-parse the
     whole multi-MB file each turn. Returns ``(usages, new_offset)`` where
     ``new_offset`` advances only past the last COMPLETE line — a partial line
-    from a concurrent append is left for the next call. ``msg_id`` dedup against
-    ``seen_ids`` is kept as a safety net (e.g. if the file is rotated and the
-    offset resets). Entries with an empty msg_id or malformed JSON are skipped;
-    a missing/unreadable transcript returns ``([], start_offset)``.
+    from a concurrent append is left for the next call.
+
+    A single assistant turn is written to the transcript as SEVERAL JSONL lines
+    (one per content / tool_use block) that all share the same ``message.id``
+    and the same cumulative ``usage``. Results are deduped by msg_id WITHIN this
+    read window — keeping the copy with the most total tokens — so a turn's
+    usage is logged exactly once; without it est_cost roughly doubles. The
+    persisted ``seen_ids`` is the cross-call safety net (e.g. if the file is
+    rotated and the offset resets, or a turn straddles two windows). Entries
+    with an empty msg_id or malformed JSON are skipped; a missing/unreadable
+    transcript returns ``([], start_offset)``.
     """
     path = Path(transcript_path)
     try:
@@ -629,7 +657,8 @@ def _iter_new_usage(
     complete = chunk[: last_newline + 1]
     new_offset = offset + len(complete)
 
-    out: list[dict[str, object]] = []
+    by_mid: dict[str, dict[str, object]] = {}
+    order: list[str] = []
     for raw in complete.decode("utf-8", errors="replace").splitlines():
         raw = raw.strip()
         if not raw:
@@ -644,8 +673,14 @@ def _iter_new_usage(
         mid = str(usage["msg_id"])
         if not mid or mid in seen_ids:
             continue
-        out.append(usage)
-    return out, new_offset
+        prev = by_mid.get(mid)
+        if prev is None:
+            order.append(mid)
+            by_mid[mid] = usage
+        elif _usage_token_total(usage) > _usage_token_total(prev):
+            # Same turn repeated in this window — keep the most complete copy.
+            by_mid[mid] = usage
+    return [by_mid[mid] for mid in order], new_offset
 
 
 def _token_meter_cache_path(branch_name: str) -> Path:

@@ -136,3 +136,71 @@ def test_stop_meters_main_transcript_as_orchestrator(tmp_path):
     assert payload["aggregate"]["input"] == 1300
     assert "ST-005" in payload["by_subtask"]
     assert "orchestrator" in payload["by_agent"]
+
+
+# Claude Code writes ONE assistant turn as several JSONL lines (one per
+# content / tool_use block), all sharing the same message.id and the same
+# cumulative usage. The meter must count such a turn exactly once.
+_REPEATED_TURN = (
+    '{"type":"assistant","uuid":"u1a","message":{"role":"assistant","id":"msg_R",'
+    '"model":"claude-opus-4-7","usage":{"input_tokens":1000,"output_tokens":200,'
+    '"cache_creation_input_tokens":500,"cache_read_input_tokens":8000}}}\n'
+    '{"type":"assistant","uuid":"u1b","message":{"role":"assistant","id":"msg_R",'
+    '"model":"claude-opus-4-7","usage":{"input_tokens":1000,"output_tokens":200,'
+    '"cache_creation_input_tokens":500,"cache_read_input_tokens":8000}}}\n'
+    '{"type":"assistant","uuid":"u1c","message":{"role":"assistant","id":"msg_R",'
+    '"model":"claude-opus-4-7","usage":{"input_tokens":1000,"output_tokens":200,'
+    '"cache_creation_input_tokens":500,"cache_read_input_tokens":8000}}}\n'
+)
+
+
+@pytest.mark.skipif(not SHIPPED_RUNNER.is_file(), reason="shipped runner missing")
+def test_repeated_msgid_in_window_counted_once(tmp_path):
+    """A turn split across 3 JSONL lines (same msg_id) must be metered ONCE.
+
+    Regression: dedup against the persisted seen_ids only let every repeated
+    line through, doubling/tripling est_cost on real sessions."""
+    branch = "feat-meter"
+    branch_dir = _setup_project(tmp_path, branch)
+    transcript = tmp_path / "main.jsonl"
+    transcript.write_text(_REPEATED_TURN)
+
+    result = _run_hook(json.dumps({"transcript_path": str(transcript)}), tmp_path)
+    assert result.returncode == 0
+
+    payload = json.loads((branch_dir / "token_accounting.json").read_text())
+    agg = payload["aggregate"]
+    assert agg["input"] == 1000, "repeated msg_id counted >1x (input)"
+    assert agg["output"] == 200, "repeated msg_id counted >1x (output)"
+    assert agg["cache_read"] == 8000, "repeated msg_id counted >1x (cache_read)"
+    assert payload["event_count"] == 1, "one logical turn must be one event"
+    # token_log holds exactly one row for the turn.
+    rows = [
+        line for line in (branch_dir / "token_log.jsonl").read_text().splitlines() if line.strip()
+    ]
+    assert len(rows) == 1
+
+
+@pytest.mark.skipif(not SHIPPED_RUNNER.is_file(), reason="shipped runner missing")
+def test_repeated_msgid_keeps_most_complete_copy(tmp_path):
+    """When repeated lines for one msg_id disagree (a streaming partial vs the
+    final line), the meter keeps the copy with the most total tokens."""
+    branch = "feat-meter"
+    branch_dir = _setup_project(tmp_path, branch)
+    transcript = tmp_path / "main.jsonl"
+    transcript.write_text(
+        # Partial line first (small usage), then the final cumulative line.
+        '{"type":"assistant","uuid":"p1","message":{"role":"assistant","id":"msg_P",'
+        '"model":"claude-opus-4-7","usage":{"input_tokens":100,"output_tokens":10,'
+        '"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}\n'
+        '{"type":"assistant","uuid":"p2","message":{"role":"assistant","id":"msg_P",'
+        '"model":"claude-opus-4-7","usage":{"input_tokens":100,"output_tokens":200,'
+        '"cache_creation_input_tokens":500,"cache_read_input_tokens":8000}}}\n'
+    )
+
+    result = _run_hook(json.dumps({"transcript_path": str(transcript)}), tmp_path)
+    assert result.returncode == 0
+
+    agg = json.loads((branch_dir / "token_accounting.json").read_text())["aggregate"]
+    assert agg["output"] == 200, "must keep the most complete copy, not the partial"
+    assert agg["cache_read"] == 8000
