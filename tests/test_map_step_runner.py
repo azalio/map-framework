@@ -6713,6 +6713,65 @@ class TestTokenAccounting:
         ]
         assert len(log_rows) == 3
 
+    def test_record_dedups_repeated_msgid_in_window(self, branch_workspace):
+        """One assistant turn written as 3 JSONL lines (same msg_id, as Claude
+        Code does per content/tool block) is ONE event — not three. Regression
+        for the ~2x est_cost inflation."""
+        repo = branch_workspace.parents[1]
+        transcript = repo / "tr.jsonl"
+        line = (
+            '{"type":"assistant","uuid":"%s","message":{"role":"assistant","id":"msg_R",'
+            '"model":"claude-opus-4-7","usage":{"input_tokens":1000,"output_tokens":200,'
+            '"cache_creation_input_tokens":500,"cache_read_input_tokens":8000}}}\n'
+        )
+        transcript.write_text((line % "a") + (line % "b") + (line % "c"))
+        self._state(branch_workspace)
+
+        result = map_step_runner.record_token_event(
+            "test-branch", transcript_path=str(transcript)
+        )
+        assert result["recorded"] == 1
+        assert result["input"] == 1000 and result["output"] == 200
+        rows = [
+            r
+            for r in (branch_workspace / "token_log.jsonl").read_text().splitlines()
+            if r.strip()
+        ]
+        assert len(rows) == 1, "repeated msg_id must be logged once"
+        acct = json.loads((branch_workspace / "token_accounting.json").read_text())
+        assert acct["aggregate"]["input"] == 1000
+        assert acct["event_count"] == 1
+
+    def test_rebuild_dedups_dup_rows_in_existing_log(self, branch_workspace):
+        """A token_log written by an older runner (one turn duplicated across
+        rows) still rolls up to a single correct total — rebuild dedups by
+        msg_id and keeps the most complete copy of each turn."""
+        base = {
+            "ts": "2026-01-01T00:00:00Z",
+            "subtask_id": "ST-003",
+            "phase": "ACTOR",
+            "agent": "actor",
+            "model": "claude-opus-4-7",
+            "msg_id": "msg_dup",
+            "input": 1000,
+            "output": 200,
+            "cache_creation": 500,
+            "cache_read": 8000,
+        }
+        partial = {**base, "output": 10, "cache_creation": 0, "cache_read": 0}
+        other = {**base, "msg_id": "msg_other", "output": 50}
+        (branch_workspace / "token_log.jsonl").write_text(
+            "\n".join(json.dumps(r) for r in (partial, base, base, other)) + "\n"
+        )
+
+        payload = map_step_runner._rebuild_token_accounting("test-branch")
+
+        assert payload["event_count"] == 2, "two distinct msg_ids, not four rows"
+        agg = payload["aggregate"]
+        assert agg["input"] == 2000  # msg_dup 1000 + msg_other 1000
+        assert agg["output"] == 250, "msg_dup kept at output 200 (not the partial 10)"
+        assert agg["cache_read"] == 16000
+
     def test_explicit_branch_is_sanitized_against_path_traversal(
         self, branch_workspace
     ):
