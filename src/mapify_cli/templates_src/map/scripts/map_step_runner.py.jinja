@@ -592,25 +592,27 @@ def _extract_turn_usage(entry: object) -> Optional[dict[str, object]]:
     }
 
 
+def _coerce_token_int(value: object) -> int:
+    """Best-effort int from a token field that may be int / float / str / None."""
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return 0
+    return 0
+
+
 def _usage_token_total(usage: Mapping[str, object]) -> int:
     """Sum of the four token fields for one usage record.
 
     Used to pick the most complete copy of a turn when the transcript repeats a
     msg_id with diverging usage (a streaming partial vs the final line).
     """
-    total = 0
-    for field in _TOKEN_FIELDS:
-        value = usage.get(field, 0)
-        if isinstance(value, bool):
-            continue
-        if isinstance(value, (int, float)):
-            total += int(value)
-        elif isinstance(value, str):
-            try:
-                total += int(value)
-            except ValueError:
-                continue
-    return total
+    return sum(_coerce_token_int(usage.get(field, 0)) for field in _TOKEN_FIELDS)
 
 
 def _iter_new_usage(
@@ -824,7 +826,11 @@ def _rebuild_token_accounting(branch: Optional[str] = None) -> dict[str, object]
 
     Groups by subtask, agent, and phase, plus an aggregate carrying
     ``cache_hit_ratio`` (cache_read / (input + cache_read)) and
-    ``est_cost_usd``. Returns the written payload.
+    ``est_cost_usd``. Rows are deduped by msg_id (keeping the most complete
+    copy) before rollup, so a log written by an older runner — one assistant
+    turn split across several rows — still produces a correct total instead of
+    a doubled one. ``event_count`` is therefore the number of distinct turns.
+    Returns the written payload.
     """
     branch_name = _sanitize_branch(branch) if branch else get_branch_name()
     log_path = get_branch_dir(branch_name) / TOKEN_LOG_NAME
@@ -840,6 +846,14 @@ def _rebuild_token_accounting(branch: Optional[str] = None) -> dict[str, object]
             lines = log_path.read_text(encoding="utf-8").splitlines()
         except (OSError, UnicodeDecodeError):
             lines = []
+        # One assistant turn can occupy several token_log rows (Claude Code
+        # writes one JSONL line per content/tool_use block, all sharing a
+        # msg_id). Logs written before the write-time dedup landed still hold
+        # those repeats, so collapse by msg_id here too — keep the row with the
+        # most total tokens (the figure the API bills) — and stay correct.
+        deduped: dict[str, dict[str, object]] = {}
+        order: list[str] = []
+        anon = 0
         for raw in lines:
             raw = raw.strip()
             if not raw:
@@ -850,14 +864,26 @@ def _rebuild_token_accounting(branch: Optional[str] = None) -> dict[str, object]
                 continue
             if not isinstance(row, dict):
                 continue
+            mid = str(row.get("msg_id") or "")
+            if not mid:
+                key = f"__anon_{anon}"
+                anon += 1
+            else:
+                key = mid
+            prev = deduped.get(key)
+            if prev is None:
+                order.append(key)
+                deduped[key] = row
+            elif _usage_token_total(row) > _usage_token_total(prev):
+                deduped[key] = row
+
+        for key in order:
+            row = deduped[key]
             event_count += 1
             model = str(row.get("model") or "")
-            usage: dict[str, int] = {}
-            for field in _TOKEN_FIELDS:
-                try:
-                    usage[field] = int(row.get(field, 0) or 0)
-                except (TypeError, ValueError):
-                    usage[field] = 0
+            usage: dict[str, int] = {
+                field: _coerce_token_int(row.get(field, 0)) for field in _TOKEN_FIELDS
+            }
             row_cost = _token_cost(usage, model)
             total_cost += row_cost
             for dim_key, dim in (
