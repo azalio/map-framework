@@ -97,6 +97,11 @@ class MapConfig:
     # Empty string = use the built-in MAP-aware default.
     compression_focus: str = ""
 
+    # Stack Overflow for Agents (SOFA) integration (opt-in, off by default).
+    # Enable via `mapify init --sofa` or by setting `sofa.enabled: true` in
+    # .map/config.yaml. When enabled, the map-so-search skill is available.
+    sofa_enabled: bool = False
+
 
 def load_map_config(project_path: Path) -> MapConfig:
     """Load MAP config from .map/config.yaml with fallback to defaults.
@@ -146,6 +151,15 @@ def load_map_config(project_path: Path) -> MapConfig:
 
         # Create defaults dict from MapConfig defaults
         config_dict = {}
+
+        # Translate dotted YAML key to snake_case dataclass field before the
+        # mapping loop. "sofa.enabled" is the cross-component contract written
+        # by apply_sofa_overrides (consumed by ST-004's stdlib-only reader);
+        # the dataclass field is "sofa_enabled". Without this alias the toggle
+        # is a silent dead field — load_map_config would log "unknown key" and
+        # return sofa_enabled=False even when the config says sofa.enabled=true.
+        if isinstance(data, dict) and "sofa.enabled" in data and "sofa_enabled" not in data:
+            data["sofa_enabled"] = data.pop("sofa.enabled")
 
         # Map YAML keys to MapConfig fields, filtering out unrecognized keys
         # and validating types against dataclass field annotations
@@ -300,6 +314,10 @@ profile: full
 # Leave empty to use the built-in MAP-aware default
 # ("MAP step state, last 2 monitor verdicts, pending subtasks ...").
 # compression_focus: ""
+
+# Stack Overflow for Agents (SOFA) integration — opt-in, off by default.
+# Enable via `mapify init --sofa` or uncomment the line below.
+# sofa.enabled: false
 """
 
 
@@ -358,6 +376,43 @@ def apply_compression_overrides(
         text = _set("compression_policy", policy, text)
     if threshold is not None:
         text = _set("compression_threshold_tokens", str(int(threshold)), text)
+    config_path.write_text(text, encoding="utf-8")
+
+
+def apply_sofa_overrides(config_path: Path) -> None:
+    """Write sofa.enabled=true into an existing .map/config.yaml.
+
+    Called by ``mapify init`` when the user passes ``--sofa``. Replaces the
+    commented placeholder line so the value becomes active without duplicating
+    keys.
+
+    Idempotent: if the file already has an active ``sofa.enabled`` entry, it is
+    replaced rather than appended. Callers should skip this function when
+    ``sofa`` is ``False``.
+
+    Args:
+        config_path: path to the .map/config.yaml that ``write_default_config``
+            just produced.
+    """
+    if not config_path.is_file():
+        return
+
+    text = config_path.read_text(encoding="utf-8")
+
+    def _set(key: str, value: str, body: str) -> str:
+        import re
+
+        active_re = re.compile(rf"(?m)^{re.escape(key)}\s*:.*$")
+        commented_re = re.compile(rf"(?m)^#\s*{re.escape(key)}\s*:.*$")
+        new_line = f"{key}: {value}"
+        if active_re.search(body):
+            return active_re.sub(new_line, body, count=1)
+        if commented_re.search(body):
+            return commented_re.sub(new_line, body, count=1)
+        sep = "" if body.endswith("\n") else "\n"
+        return f"{body}{sep}{new_line}\n"
+
+    text = _set("sofa.enabled", "true", text)
     config_path.write_text(text, encoding="utf-8")
 
 

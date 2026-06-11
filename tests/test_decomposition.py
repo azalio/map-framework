@@ -724,6 +724,117 @@ class TestProjectConfig:
         assert "compression_policy: never" in content
         assert "compression_threshold_tokens: 250000" in content
 
+    # ---- apply_sofa_overrides ----
+
+    def test_vc1_apply_sofa_overrides_replaces_commented_placeholder(self, tmp_path):
+        """VC1 [AC-1]: apply_sofa_overrides activates the commented placeholder."""
+        from mapify_cli.config.project_config import (
+            apply_sofa_overrides,
+            write_default_config,
+        )
+
+        config_file = write_default_config(tmp_path)
+        content = config_file.read_text()
+        # Default config must have only the commented placeholder, not the
+        # active key.
+        assert "# sofa.enabled: false" in content
+        assert "sofa.enabled: true" not in content
+
+        apply_sofa_overrides(config_file)
+        content = config_file.read_text()
+        assert "sofa.enabled: true" in content
+        # Commented placeholder must be gone (replaced, not duplicated).
+        assert "# sofa.enabled:" not in content
+        # Exactly one occurrence of the active key.
+        assert content.count("sofa.enabled: true") == 1
+
+    def test_vc1_default_config_has_no_active_sofa_line(self, tmp_path):
+        """VC1 [AC-1]: bare write_default_config emits NO active sofa.enabled=true line."""
+        from mapify_cli.config.project_config import write_default_config
+
+        config_file = write_default_config(tmp_path)
+        content = config_file.read_text()
+        assert "sofa.enabled: true" not in content
+
+    def test_vc1_apply_sofa_overrides_replaces_active_entry(self, tmp_path):
+        """VC1 [AC-1]: calling apply_sofa_overrides twice leaves exactly one active entry."""
+        from mapify_cli.config.project_config import apply_sofa_overrides
+
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("profile: full\nsofa.enabled: false\n")
+
+        apply_sofa_overrides(config_file)
+        content = config_file.read_text()
+        assert content.count("sofa.enabled:") == 1
+        assert "sofa.enabled: true" in content
+
+    def test_vc2_bare_init_does_not_write_sofa_enabled(self, tmp_path):
+        """VC2 [AC-1]: a config produced without --sofa has no active sofa.enabled line."""
+        from mapify_cli.config.project_config import write_default_config
+
+        config_file = write_default_config(tmp_path)
+        content = config_file.read_text()
+        assert "sofa.enabled: true" not in content
+
+    def test_vc2_apply_sofa_overrides_idempotent(self, tmp_path):
+        """VC2 [AC-1]: calling apply_sofa_overrides twice does not clobber or duplicate."""
+        from mapify_cli.config.project_config import (
+            apply_sofa_overrides,
+            write_default_config,
+        )
+
+        config_file = write_default_config(tmp_path)
+        apply_sofa_overrides(config_file)
+        apply_sofa_overrides(config_file)
+        content = config_file.read_text()
+        assert content.count("sofa.enabled: true") == 1
+        assert "# sofa.enabled:" not in content
+
+    def test_vc2_apply_sofa_overrides_no_op_when_file_missing(self, tmp_path):
+        """VC2 [AC-1]: apply_sofa_overrides on a missing file does not raise."""
+        from mapify_cli.config.project_config import apply_sofa_overrides
+
+        missing = tmp_path / "nope.yaml"
+        apply_sofa_overrides(missing)
+        assert not missing.exists()
+
+    def test_vc3_mapconfig_default_sofa_enabled_is_false(self):
+        """VC3 [INV-SOFA-1]: MapConfig() default sofa_enabled is False."""
+        from mapify_cli.config.project_config import MapConfig
+
+        assert MapConfig().sofa_enabled is False
+
+    def test_vc3_load_default_config_sofa_enabled_is_false(self, tmp_path):
+        """VC3 [INV-SOFA-1]: write_default_config -> load_map_config -> sofa_enabled=False."""
+        from mapify_cli.config.project_config import (
+            load_map_config,
+            write_default_config,
+        )
+
+        write_default_config(tmp_path)
+        cfg = load_map_config(tmp_path)
+        # Commented placeholder must be ignored — field stays at default False.
+        assert cfg.sofa_enabled is False
+
+    def test_vc3_load_active_sofa_enabled_round_trips_to_true(self, tmp_path):
+        """VC3 [INV-SOFA-1]: config with active sofa.enabled=true loads sofa_enabled=True."""
+        from mapify_cli.config.project_config import (
+            apply_sofa_overrides,
+            load_map_config,
+            write_default_config,
+        )
+
+        write_default_config(tmp_path)
+        config_file = tmp_path / ".map" / "config.yaml"
+        apply_sofa_overrides(config_file)
+        # Verify the file actually has the active key before loading.
+        assert "sofa.enabled: true" in config_file.read_text()
+
+        cfg = load_map_config(tmp_path)
+        # The dotted-key alias in load_map_config must translate sofa.enabled
+        # -> sofa_enabled so the field is not a silent dead toggle.
+        assert cfg.sofa_enabled is True
+
 
 class TestSafetyGuardrailsHookConfig:
     """Test that safety-guardrails.py reads config overrides."""

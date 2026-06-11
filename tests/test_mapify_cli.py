@@ -466,6 +466,56 @@ class TestInitCommand:
         # Should contain some template markers (not exact match due to potential updates)
         assert len(restored_content) > 100, "Restored actor.md seems too short"
 
+    def test_vc2_init_sofa_then_bare_init_does_not_clobber(self, tmp_path):
+        """VC2 [AC-1]: init --sofa writes sofa.enabled=true; bare re-run does not clobber it."""
+        os.chdir(tmp_path)
+
+        # First init with --sofa
+        result1 = runner.invoke(app, ["init", ".", "--no-git", "--mcp", "none", "--sofa"])
+        assert result1.exit_code == 0, f"init --sofa failed: {result1.stdout}"
+
+        config_file = tmp_path / ".map" / "config.yaml"
+        assert config_file.exists(), ".map/config.yaml was not created"
+        content_after_sofa = config_file.read_text()
+        assert "sofa.enabled: true" in content_after_sofa, (
+            "sofa.enabled: true not written after --sofa"
+        )
+
+        # Second bare init (no --sofa) with --force to allow re-run in non-empty dir
+        result2 = runner.invoke(
+            app, ["init", ".", "--no-git", "--mcp", "none", "--force"]
+        )
+        assert result2.exit_code == 0, f"bare re-init failed: {result2.stdout}"
+
+        # write_default_config is skip-if-exists, so the config is unchanged;
+        # and no apply_sofa_overrides call was made — value must still be true.
+        content_after_bare = config_file.read_text()
+        assert "sofa.enabled: true" in content_after_bare, (
+            "bare re-run clobbered sofa.enabled: true"
+        )
+
+    def test_vc1_init_sofa_flag_writes_config(self, tmp_path):
+        """VC1 [AC-1]: mapify init --sofa writes sofa.enabled: true to .map/config.yaml."""
+        os.chdir(tmp_path)
+
+        result = runner.invoke(app, ["init", ".", "--no-git", "--mcp", "none", "--sofa"])
+        assert result.exit_code == 0, f"init --sofa failed: {result.stdout}"
+
+        config_file = tmp_path / ".map" / "config.yaml"
+        assert config_file.exists()
+        assert "sofa.enabled: true" in config_file.read_text()
+
+    def test_vc1_bare_init_no_active_sofa_line(self, tmp_path):
+        """VC1 [AC-1]: bare init (no --sofa) produces no active sofa.enabled: true line."""
+        os.chdir(tmp_path)
+
+        result = runner.invoke(app, ["init", ".", "--no-git", "--mcp", "none"])
+        assert result.exit_code == 0, f"init failed: {result.stdout}"
+
+        config_file = tmp_path / ".map" / "config.yaml"
+        assert config_file.exists()
+        assert "sofa.enabled: true" not in config_file.read_text()
+
 
 class TestCheckCommand:
     """Test the check command."""
