@@ -7017,6 +7017,77 @@ def record_scope_baseline(branch: str) -> dict:
     return {"status": "success", "path": str(path), "count": len(payload["files"]), "files": payload["files"]}
 
 
+def _resolve_subtask_diff_base(
+    branch_name: str, subtask_id: str, project_dir: Path
+) -> Optional[str]:
+    """Auto-resolve the git base_ref for diffing a subtask's mutation surface.
+
+    Resolution order: ``last_subtask_commit_sha`` from step_state → ``HEAD`` →
+    ``None`` (a fresh repo with no commits, where the caller falls through to
+    porcelain-only). The returned ref is meant to be diffed against the WORKING
+    TREE (``git diff --name-only <ref>``).
+
+    Crucial special case (#162): the documented per-subtask close order is
+    ``commit → record_subtask_result --commit-sha → validate_step 2.4``.
+    ``record_subtask_result`` advances ``last_subtask_commit_sha`` to the
+    subtask's OWN commit, so by the time the boundary check runs the working
+    tree is clean and ``git diff <own-commit>`` is empty — which previously
+    mis-reported "no files changed" and tripped the false-progress guard on
+    every committed subtask. When the auto-resolved base equals the commit
+    recorded for THIS subtask, re-base onto that commit's parent so the
+    committed work shows up in the diff. The parent is probed first so a root
+    commit (no parent) safely keeps the commit itself.
+    """
+    base_ref: Optional[str] = None
+    recorded: Optional[str] = None
+    state_file = project_dir / ".map" / branch_name / "step_state.json"
+    if state_file.exists():
+        try:
+            state_data = json.loads(state_file.read_text(encoding="utf-8"))
+            last_sha = state_data.get("last_subtask_commit_sha")
+            if isinstance(last_sha, str) and last_sha:
+                base_ref = last_sha
+            results = state_data.get("subtask_results", {})
+            if isinstance(results, dict):
+                entry = results.get(subtask_id)
+                if isinstance(entry, dict):
+                    rc = entry.get("commit_sha")
+                    if isinstance(rc, str) and rc:
+                        recorded = rc
+        except (json.JSONDecodeError, OSError):
+            pass
+    if base_ref and recorded and base_ref == recorded:
+        parent_probe = subprocess.run(
+            ["git", "rev-parse", "--verify", f"{recorded}^"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if parent_probe.returncode == 0:
+            return f"{recorded}^"
+        # Root commit (no parent): no usable parent to re-base onto. Keep the
+        # commit itself; a subtask whose own commit is the repo's first commit
+        # is not a real MAP scenario (the framework is always installed atop
+        # prior history).
+        return base_ref
+    if base_ref:
+        return base_ref
+    # No recorded subtask commit — probe HEAD before using it; `git rev-parse
+    # HEAD` fails in a fresh repo with no commits, and we want porcelain-only
+    # rather than a confusing "ambiguous HEAD".
+    head_probe = subprocess.run(
+        ["git", "rev-parse", "--verify", "HEAD"],
+        cwd=project_dir,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    if head_probe.returncode == 0:
+        return "HEAD"
+    return None
+
+
 def validate_mutation_boundary(
     branch: str, subtask_id: str, base_ref: Optional[str] = None
 ) -> dict:
@@ -7076,35 +7147,15 @@ def validate_mutation_boundary(
     expected_raw = subtask.get("affected_files", []) or []
     expected = sorted({str(p) for p in expected_raw if isinstance(p, str)})
 
-    # Pick a base_ref. Caller's explicit arg wins; otherwise fall back to
-    # last_subtask_commit_sha (so the diff covers only THIS subtask's work).
-    # If neither resolves to a real commit, skip the commit-range diff entirely
-    # and rely on porcelain (uncommitted + untracked) — this is the only sane
+    # Pick a base_ref. Caller's explicit arg wins; otherwise auto-resolve from
+    # last_subtask_commit_sha (so the diff covers only THIS subtask's work),
+    # re-basing onto the commit's parent when the subtask is already committed
+    # (#162). If neither resolves to a real commit, skip the commit-range diff
+    # entirely and rely on porcelain (uncommitted + untracked) — the only sane
     # behaviour in a brand-new repo before its first commit.
     base_ref_explicit = bool(base_ref)
     if not base_ref:
-        state_file = project_dir / ".map" / branch_name / "step_state.json"
-        if state_file.exists():
-            try:
-                state_data = json.loads(state_file.read_text(encoding="utf-8"))
-                last_sha = state_data.get("last_subtask_commit_sha")
-                if isinstance(last_sha, str) and last_sha:
-                    base_ref = last_sha
-            except (json.JSONDecodeError, OSError):
-                pass
-        if not base_ref:
-            # Probe HEAD before using it — `git rev-parse HEAD` fails in a
-            # fresh repo with no commits, and we want to fall through to
-            # porcelain-only rather than emit a confusing "ambiguous HEAD".
-            head_probe = subprocess.run(
-                ["git", "rev-parse", "--verify", "HEAD"],
-                cwd=project_dir,
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if head_probe.returncode == 0:
-                base_ref = "HEAD"
+        base_ref = _resolve_subtask_diff_base(branch_name, subtask_id, project_dir)
 
     try:
         if base_ref:
@@ -7334,27 +7385,12 @@ def _current_subtask_changed_files(
     Returns
     ``None`` on any git failure so callers can fail safe to a full gate
     instead of silently assuming "no changes".
+
+    Shares ``validate_mutation_boundary``'s base-ref resolution (incl. the #162
+    re-base onto the subtask's commit parent when it is already committed) via
+    ``_resolve_subtask_diff_base``.
     """
-    base_ref: Optional[str] = None
-    state_file = project_dir / ".map" / branch_name / "step_state.json"
-    if state_file.exists():
-        try:
-            state_data = json.loads(state_file.read_text(encoding="utf-8"))
-            last_sha = state_data.get("last_subtask_commit_sha")
-            if isinstance(last_sha, str) and last_sha:
-                base_ref = last_sha
-        except (json.JSONDecodeError, OSError):
-            pass
-    if not base_ref:
-        head_probe = subprocess.run(
-            ["git", "rev-parse", "--verify", "HEAD"],
-            cwd=project_dir,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if head_probe.returncode == 0:
-            base_ref = "HEAD"
+    base_ref = _resolve_subtask_diff_base(branch_name, subtask_id, project_dir)
 
     try:
         if base_ref:

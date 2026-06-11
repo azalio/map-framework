@@ -4621,6 +4621,74 @@ class TestValidateMutationBoundary:
         assert report["unexpected"] == [], report
         assert report["allowed_test_files"] == ["a_test.py"], report
 
+    def test_already_committed_subtask_diffs_against_parent(
+        self, branch_workspace, monkeypatch
+    ):
+        """#162: the documented per-subtask close order is
+        commit -> record_subtask_result --commit-sha -> validate_step 2.4.
+        After the commit the working tree is CLEAN and last_subtask_commit_sha
+        points at THIS subtask's own commit, so a diff against it is empty and
+        previously mis-reported actual=[] (false-progress). The validator must
+        re-base onto the commit's parent so the committed work shows up as
+        actual.
+        """
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        self._write_blueprint(branch_workspace, "ST-001", ["a.py"])
+        # Parent commit (prior history), then ST-001's actual work as its own
+        # commit — exactly the per-subtask-commit lifecycle.
+        (repo / "seed.txt").write_text("seed\n")
+        subprocess.run(["git", "add", "seed.txt"], cwd=repo, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=repo, capture_output=True)
+        (repo / "a.py").write_text("x = 1\n")
+        subprocess.run(["git", "add", "a.py"], cwd=repo, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "ST-001"], cwd=repo, capture_output=True)
+        sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True
+        ).stdout.strip()
+        # Mimic record_subtask_result --commit-sha <SHA>: it advances
+        # last_subtask_commit_sha AND records the per-subtask commit_sha.
+        (branch_workspace / "step_state.json").write_text(
+            json.dumps(
+                {
+                    "last_subtask_commit_sha": sha,
+                    "subtask_results": {"ST-001": {"commit_sha": sha}},
+                }
+            )
+        )
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        monkeypatch.delenv("MAP_STRICT_SCOPE", raising=False)
+        report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
+        assert report["status"] == "clean", report
+        assert report["actual"] == ["a.py"], report  # committed work IS visible
+        assert report["unexpected"] == [], report
+        # base_ref re-based onto the parent (the committed SHA's ^), not the
+        # commit itself (which would diff to nothing).
+        assert report["base_ref"] == f"{sha}^", report
+
+    def test_genuinely_empty_subtask_still_reports_no_actual(
+        self, branch_workspace, monkeypatch
+    ):
+        """Negative guard for #162: when the subtask has NO recorded commit and
+        nothing changed in the worktree, actual must stay empty so the
+        orchestrator's false-progress check still fires for a subtask that did
+        nothing. The #162 re-base only kicks in when the resolved base IS the
+        subtask's own recorded commit.
+        """
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        self._write_blueprint(branch_workspace, "ST-001", ["a.py"])
+        (repo / "seed.txt").write_text("seed\n")
+        subprocess.run(["git", "add", "seed.txt"], cwd=repo, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=repo, capture_output=True)
+        # No commit recorded for ST-001, no work done — base_ref falls back to
+        # HEAD (the prior commit), diff is empty.
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        monkeypatch.delenv("MAP_STRICT_SCOPE", raising=False)
+        report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
+        assert report["status"] == "clean", report
+        assert report["actual"] == [], report  # nothing changed -> false-progress can fire
+
 
 class TestDetectCrossSubtaskRegressionRisk:
     """detect_cross_subtask_regression_risk flags when the in-flight subtask
