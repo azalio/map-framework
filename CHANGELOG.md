@@ -35,6 +35,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   importable; the meter is advisory and never blocks a turn.
 
 ### Fixed
+- **Structural create-vs-modify replaces magic-prose matching in
+  `validate_blueprint_contract` (#167)**: the `affected_files`-drift check used
+  to decide "this subtask creates a new file" by string-matching prose phrases
+  (`creates new` / `new file` / `introduces` / `adds new`) in the free-text
+  subtask `description` — brittle, and it forced authors to pollute descriptions
+  with boilerplate written for the parser. Subtasks now carry an optional
+  structural `creates_files: [...]` field (the subset of `affected_files` created
+  from scratch). The validator marks those paths *expected-absent* and only
+  warns drift for missing **modify-targets**; the deprecated prose heuristic
+  survives solely as a fallback for blueprints that predate the field. A
+  `creates_files` path not listed in `affected_files` is a hard error (a created
+  file is part of the mutation surface the scoped gates allow), and
+  `normalize_blueprint` self-heals it by unioning such paths into
+  `affected_files` so the `decompose → normalize → validate` loop stays
+  self-serve. The `task-decomposer` schema, field docs, and planning checklist
+  now point to `creates_files` instead of description prose.
 - **False-progress on every committed subtask (#162)**: `validate_step 2.4`
   (which auto-runs `validate_mutation_boundary`) compared the *working tree*
   against the contract's `affected_files`. In the documented per-subtask close

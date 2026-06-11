@@ -156,6 +156,9 @@ Return **ONLY** valid JSON in this exact structure:
         "affected_files": [
           "path/to/file1.py",
           "path/to/file2.jsx"
+        ],
+        "creates_files": [
+          "path/to/file1.py"
         ]
       }
     ]
@@ -282,6 +285,7 @@ Return **ONLY** valid JSON in this exact structure:
     - The repository has no automated test harness, and adding one is out-of-scope for this subtask.
     - In that case: either add a FOUNDATION subtask to introduce a minimal test harness, or document the gap explicitly in risks/assumptions.
 **subtasks[].affected_files**: Precise file paths (NOT "backend", "frontend"); use [] if paths unknown
+**subtasks[].creates_files**: OPTIONAL subset of `affected_files` this subtask CREATES from scratch (paths not yet on disk); list each such path in BOTH arrays. This is the prose-free signal `validate_blueprint_contract` uses to mark them expected-absent — do NOT rely on description wording to silence the affected_files-drift warning. Omit (or `[]`) when the subtask only modifies existing files.
 
 ### Integration & Runtime Bootstrapping Subtasks
 

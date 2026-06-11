@@ -752,7 +752,61 @@ def test_normalize_blueprint_is_idempotent(branch_workspace):
     assert second["changed"] is False
     assert second["reordered"] is False
     assert second["injected_coverage_tags"] == []
+    assert second["unioned_creates_files"] == []
     assert second["written"] is False
+
+
+def test_normalize_blueprint_unions_creates_files_into_affected(branch_workspace):
+    """Repair #3 (issue #167): a `creates_files` path missing from
+    `affected_files` is backfilled so the subset rule does not hard-stop the
+    self-serve decompose->normalize->validate loop."""
+    blueprint = {
+        "summary": "Scaffold a new analyzer module",
+        **_blueprint_constraint_fields(),
+        "subtasks": [
+            {
+                "id": "ST-001",
+                "title": "Scaffold the analyzer module",
+                "aag_contract": "Analyzer -> run() -> report",
+                "dependencies": [],
+                "affected_files": ["src/analyzer.py"],
+                # tests/test_analyzer.py is a created file but the decomposer
+                # forgot to also list it in affected_files.
+                "creates_files": ["src/analyzer.py", "tests/test_analyzer.py"],
+                "expected_diff_size": "small",
+                "concern_type": "runtime",
+                "one_logical_step": True,
+                "validation_criteria": ["VC1 [AC-1]: analyzer returns a report"],
+            }
+        ],
+        "coverage_map": {"AC-1": "ST-001"},
+    }
+    blueprint_path = branch_workspace / "blueprint.json"
+    blueprint_path.write_text(json.dumps(blueprint))
+
+    # Before normalize: validator hard-stops on the subset rule.
+    before = map_step_runner.validate_blueprint_contract()
+    assert before["valid"] is False
+    assert any(
+        "creates_files" in str(e) and "affected_files" in str(e)
+        for e in before["errors"]
+    ), before["errors"]
+
+    norm = map_step_runner.normalize_blueprint()
+    assert norm["status"] == "ok"
+    assert norm["changed"] is True
+    assert norm["unioned_creates_files"] == ["ST-001:tests/test_analyzer.py"]
+    assert norm["written"] is True
+
+    # After normalize: validator passes; the created file is now in the
+    # mutation surface on disk.
+    after = map_step_runner.validate_blueprint_contract()
+    assert after["valid"] is True, after["errors"]
+
+    written = json.loads(blueprint_path.read_text())
+    affected = written["subtasks"][0]["affected_files"]
+    assert "tests/test_analyzer.py" in affected
+    assert "src/analyzer.py" in affected
 
 
 def test_normalize_blueprint_preserves_order_for_independent_subtasks(branch_workspace):
@@ -3789,6 +3843,98 @@ class TestBlueprintContractAffectedFilesDrift:
         result = map_step_runner.validate_blueprint_contract(str(path))
         assert result["valid"] is True
         assert any("affected_files drift" in w for w in result["warnings"]), result["warnings"]
+
+    def test_drift_suppressed_when_creates_files_lists_all_paths(
+        self, branch_workspace, monkeypatch
+    ):
+        """Structural opt-out (issue #167): when every missing path is declared
+        in `creates_files`, the subtask creates them all — no drift warning and
+        no description prose required."""
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        files = ["src/new_module.py", "tests/test_new_module.py"]
+        bp = self._bp(files)
+        bp["subtasks"][0]["creates_files"] = list(files)
+        path = branch_workspace / "blueprint.json"
+        path.write_text(json.dumps(bp))
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is True, result["errors"]
+        assert not any(
+            "affected_files drift" in w for w in result["warnings"]
+        ), result["warnings"]
+
+    def test_drift_fires_for_missing_modify_target_with_partial_creates_files(
+        self, branch_workspace, monkeypatch
+    ):
+        """`creates_files` names only the new file; the other affected path is a
+        modify-target that is missing on disk → drift fires and names the
+        missing modify-target, not the created file."""
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        bp = self._bp(["src/new_module.py", "src/missing_modify.py"])
+        bp["subtasks"][0]["creates_files"] = ["src/new_module.py"]
+        path = branch_workspace / "blueprint.json"
+        path.write_text(json.dumps(bp))
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is True, result["errors"]
+        drift = [w for w in result["warnings"] if "affected_files drift" in w]
+        assert drift, result["warnings"]
+        assert "src/missing_modify.py" in drift[0]
+        assert "src/new_module.py" not in drift[0]
+
+    def test_structural_creates_files_overrides_description_prose(
+        self, branch_workspace, monkeypatch
+    ):
+        """When `creates_files` is present (even empty) it is authoritative and
+        the deprecated description-phrase heuristic is ignored: empty
+        creates_files + 'introduces new module' prose + a missing path still
+        fires drift (the path is NOT declared as a create)."""
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        bp = self._bp(["src/hallucinated.py"])
+        bp["subtasks"][0]["creates_files"] = []
+        bp["subtasks"][0]["description"] = "Introduces new module from scratch."
+        path = branch_workspace / "blueprint.json"
+        path.write_text(json.dumps(bp))
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is True, result["errors"]
+        assert any(
+            "affected_files drift" in w for w in result["warnings"]
+        ), result["warnings"]
+
+    def test_creates_files_must_be_subset_of_affected_files(
+        self, branch_workspace, monkeypatch
+    ):
+        """A `creates_files` path not in `affected_files` is a structural error —
+        a created file must be inside the declared mutation surface."""
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        bp = self._bp(["src/new_module.py"])
+        bp["subtasks"][0]["creates_files"] = ["src/orphan_not_declared.py"]
+        path = branch_workspace / "blueprint.json"
+        path.write_text(json.dumps(bp))
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is False
+        assert any(
+            "creates_files" in str(e) and "affected_files" in str(e)
+            for e in result["errors"]
+        ), result["errors"]
+
+    def test_creates_files_must_be_an_array(
+        self, branch_workspace, monkeypatch
+    ):
+        """`creates_files` must be an array of path strings, not a bare string."""
+        repo = branch_workspace.parents[1]
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        bp = self._bp(["src/new_module.py"])
+        bp["subtasks"][0]["creates_files"] = "src/new_module.py"
+        path = branch_workspace / "blueprint.json"
+        path.write_text(json.dumps(bp))
+        result = map_step_runner.validate_blueprint_contract(str(path))
+        assert result["valid"] is False
+        assert any(
+            "creates_files must be an array" in str(e) for e in result["errors"]
+        ), result["errors"]
 
 
 class TestBlueprintContractSoftConstraintForwardDisclosure:
