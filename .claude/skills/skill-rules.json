@@ -31,6 +31,32 @@
         ]
       }
     },
+    "map-so-search": {
+      "type": "domain",
+      "skillClass": "hybrid",
+      "enforcement": "suggest",
+      "priority": "medium",
+      "description": "Opt-in read-only prior-art search against Stack Overflow for Agents (SOFA), surfaced behind an untrusted-reference boundary",
+      "runtimeEffects": [
+        "network-http-read",
+        "filesystem-sofa-credentials"
+      ],
+      "promptTriggers": {
+        "keywords": [
+          "stack overflow for agents",
+          "sofa search",
+          "search prior art",
+          "prior art",
+          "map-so-search",
+          "validated answers"
+        ],
+        "intentPatterns": [
+          "(search|find|look up).*(prior art|stack overflow|sofa)",
+          "(stack overflow for agents|sofa).*(search|prior art|answer)",
+          "map-so-search"
+        ]
+      }
+    },
     "map-learn": {
       "type": "manual",
       "skillClass": "task",
