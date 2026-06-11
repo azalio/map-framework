@@ -886,6 +886,9 @@ def init(
                 )
             if sofa:
                 apply_sofa_overrides(config_path)
+                from mapify_cli.delivery.file_copier import merge_sofa_gitignore
+
+                merge_sofa_gitignore(project_path)
             tracker.complete(
                 "map-config", str(config_path.relative_to(project_path))
             )
@@ -925,6 +928,9 @@ def init(
                 )
             if sofa:
                 apply_sofa_overrides(config_path)
+                from mapify_cli.delivery.file_copier import merge_sofa_gitignore
+
+                merge_sofa_gitignore(project_path)
             tracker.complete("map-config", str(config_path.relative_to(project_path)))
         except Exception as e:
             tracker.error("map-config", f"skipped: {e}")

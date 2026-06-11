@@ -517,6 +517,89 @@ class TestInitCommand:
         assert "sofa.enabled: true" not in config_file.read_text()
 
 
+class TestSofaGitignoreMerge:
+    """Tests for merge_sofa_gitignore — ST-002 / AC-2."""
+
+    def test_vc1_gitignore_created_when_absent(self, tmp_path):
+        """VC1 [AC-2]: no root .gitignore → merge → file exists with marker + .sofa/."""
+        from mapify_cli.delivery.file_copier import merge_sofa_gitignore
+
+        assert not (tmp_path / ".gitignore").exists()
+
+        result = merge_sofa_gitignore(tmp_path)
+
+        assert result == 1, "Expected 1 (file created)"
+        content = (tmp_path / ".gitignore").read_text()
+        assert "# map:sofa" in content
+        assert ".sofa/" in content
+
+    def test_vc2_gitignore_appends_under_marker(self, tmp_path):
+        """VC2 [AC-2]: pre-existing .gitignore → existing lines preserved + block appended."""
+        from mapify_cli.delivery.file_copier import merge_sofa_gitignore
+
+        existing = "node_modules/\n.env\n"
+        (tmp_path / ".gitignore").write_text(existing)
+
+        result = merge_sofa_gitignore(tmp_path)
+
+        assert result == 1, "Expected 1 (file modified)"
+        content = (tmp_path / ".gitignore").read_text()
+        # Existing lines preserved byte-for-byte
+        assert content.startswith(existing)
+        # Block appended
+        assert "# map:sofa" in content
+        assert ".sofa/" in content
+
+    def test_vc3_gitignore_merge_idempotent(self, tmp_path):
+        """VC3 [AC-2]: calling merge twice produces exactly ONE marker and ONE .sofa/ line."""
+        from mapify_cli.delivery.file_copier import merge_sofa_gitignore
+
+        merge_sofa_gitignore(tmp_path)
+        result2 = merge_sofa_gitignore(tmp_path)
+
+        assert result2 == 0, "Expected 0 (no-op on second call)"
+        content = (tmp_path / ".gitignore").read_text()
+        assert content.count("# map:sofa") == 1
+        assert content.count(".sofa/") == 1
+
+    def test_vc4_no_gitignore_mutation_without_sofa_flag(self, tmp_path):
+        """VC4 [AC-2][INV-SOFA-1]: init without --sofa must NOT write sofa entries.
+
+        Non-vacuous: a repo-root .gitignore is pre-created so the negative
+        assertions exercise a file that actually exists (init without --sofa
+        does not create one on its own), and its prior content must survive
+        byte-for-byte.
+        """
+        os.chdir(tmp_path)
+        gitignore = tmp_path / ".gitignore"
+        original = "node_modules/\n.env\n"
+        gitignore.write_text(original)
+
+        result = runner.invoke(
+            app, ["init", ".", "--no-git", "--mcp", "none", "--force"]
+        )
+
+        assert result.exit_code == 0, f"init failed: {result.stdout}"
+        content = gitignore.read_text()
+        assert "# map:sofa" not in content
+        assert ".sofa/" not in content.splitlines()
+        # Existing user content untouched when SOFA is off.
+        assert content == original
+
+    def test_vc4_init_with_sofa_flag_writes_marker(self, tmp_path):
+        """VC4 [AC-2]: init WITH --sofa must write the sofa marker to root .gitignore."""
+        os.chdir(tmp_path)
+
+        result = runner.invoke(
+            app, ["init", ".", "--no-git", "--mcp", "none", "--sofa"]
+        )
+
+        assert result.exit_code == 0, f"init --sofa failed: {result.stdout}"
+        content = (tmp_path / ".gitignore").read_text()
+        assert "# map:sofa" in content
+        assert ".sofa/" in content
+
+
 class TestCheckCommand:
     """Test the check command."""
 
