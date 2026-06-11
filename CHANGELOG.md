@@ -35,6 +35,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   importable; the meter is advisory and never blocks a turn.
 
 ### Fixed
+- **`workflow-gate` RESEARCH block scoped to the current subtask's
+  `affected_files` (#164)**: during the RESEARCH phase the gate used to block
+  *every* `Edit`/`Write`/`MultiEdit` (except docs-only surfaces), so orthogonal
+  out-of-band fixes — a repo-root config, an unrelated failing test, a hotfix
+  the operator explicitly asked for — had to be smuggled through `Bash`
+  heredocs, losing read-before-write safety and minimal-diff review. The gate
+  now lifts the RESEARCH block for any target that is *provably outside* the
+  current subtask's declared `affected_files` (resolved from `blueprint.json`),
+  while files inside that surface stay blocked so research-before-code is still
+  enforced where it matters. The relief is conservative — it falls back to the
+  strict block whenever the mutation surface can't be determined (no blueprint,
+  unknown subtask, empty `affected_files`, or an out-of-repo target) — and it
+  still honours `scope_glob`/constraints, so it can't silently widen scope. The
+  `Bash` write bypass noted in the issue is documented as a known limitation
+  and deferred (closing it needs shell write-target parsing that risks
+  false-positives across host repos).
 - **Structural create-vs-modify replaces magic-prose matching in
   `validate_blueprint_contract` (#167)**: the `affected_files`-drift check used
   to decide "this subtask creates a new file" by string-matching prose phrases

@@ -156,6 +156,25 @@ class TestWorkflowGate:
         }
         (map_dir / "step_state.json").write_text(json.dumps(state))
 
+    def _setup_blueprint(
+        self,
+        tmp_path: Path,
+        branch: str,
+        subtasks: list[dict],
+        nested: bool = False,
+    ) -> None:
+        """Create blueprint.json with the given subtasks.
+
+        ``nested=True`` wraps the body in a ``{"blueprint": {...}}`` envelope to
+        exercise the same nested-payload handling map_step_runner.load_blueprint
+        performs.
+        """
+        map_dir = tmp_path / ".map" / branch
+        map_dir.mkdir(parents=True, exist_ok=True)
+        body = {"subtasks": subtasks}
+        payload = {"blueprint": body} if nested else body
+        (map_dir / "blueprint.json").write_text(json.dumps(payload))
+
     # --- Non-editing tools ---
 
     def test_allows_non_editing_tools(self, tmp_path: Path) -> None:
@@ -451,6 +470,198 @@ class TestWorkflowGate:
         assert "RESEARCH" in reason
         assert "save_research" in reason, reason
         assert "validate_step 2.2" in reason, reason
+
+    # --- RESEARCH scoped to current subtask's affected_files (#164) ---
+
+    def test_research_allows_orthogonal_edit_outside_affected_files(
+        self, tmp_path: Path
+    ) -> None:
+        """#164: RESEARCH blocks only the CURRENT subtask's affected_files.
+
+        An edit to a file orthogonal to ST-001's declared surface (an
+        out-of-band hotfix, repo-root config, an unrelated failing test) must
+        be allowed via Edit/Write — operators were forced to smuggle these
+        through Bash heredocs.
+        """
+        self._setup_step_state(tmp_path, "master", "RESEARCH", subtask_id="ST-001")
+        self._setup_blueprint(
+            tmp_path,
+            "master",
+            [{"id": "ST-001", "affected_files": ["src/app.py"]}],
+        )
+        code, stdout, _ = self.run_hook(
+            {
+                "tool_name": "Edit",
+                "tool_input": {"file_path": str(tmp_path / "src" / "other.py")},
+            },
+            tmp_path,
+        )
+        assert code == 0
+        self._assert_allowed(stdout)
+
+    def test_research_blocks_edit_inside_affected_files(
+        self, tmp_path: Path
+    ) -> None:
+        """Counter-test: a file IN the current subtask's affected_files is still
+        blocked during RESEARCH — research-before-code is the protected
+        contract for exactly those files. The message names the scoping.
+        """
+        self._setup_step_state(tmp_path, "master", "RESEARCH", subtask_id="ST-001")
+        self._setup_blueprint(
+            tmp_path,
+            "master",
+            [{"id": "ST-001", "affected_files": ["src/app.py"]}],
+        )
+        code, stdout, _ = self.run_hook(
+            {
+                "tool_name": "Edit",
+                "tool_input": {"file_path": str(tmp_path / "src" / "app.py")},
+            },
+            tmp_path,
+        )
+        assert code == 0
+        reason = self._assert_denied(stdout)
+        assert "RESEARCH" in reason
+        assert "affected_files" in reason, reason
+
+    def test_research_mixed_affected_and_orthogonal_blocks(
+        self, tmp_path: Path
+    ) -> None:
+        """A batch touching BOTH an affected file and an orthogonal file is
+        blocked — a single in-scope target defeats the orthogonal relief, so
+        code can't sneak in alongside an orthogonal path.
+        """
+        self._setup_step_state(tmp_path, "master", "RESEARCH", subtask_id="ST-001")
+        self._setup_blueprint(
+            tmp_path,
+            "master",
+            [{"id": "ST-001", "affected_files": ["src/app.py"]}],
+        )
+        code, stdout, _ = self.run_hook(
+            {
+                "tool_name": "MultiEdit",
+                "tool_input": {
+                    "file_path": str(tmp_path / "src" / "app.py"),
+                    "edits": [
+                        {"file_path": str(tmp_path / "src" / "other.py")},
+                        {"file_path": str(tmp_path / "src" / "app.py")},
+                    ],
+                },
+            },
+            tmp_path,
+        )
+        assert code == 0
+        self._assert_denied(stdout)
+
+    def test_research_no_blueprint_blocks_code_edit(self, tmp_path: Path) -> None:
+        """Conservative fallback: with a current_subtask_id but no blueprint to
+        derive affected_files, the mutation surface is unknown — keep the
+        strict block rather than widening it on incomplete information.
+        """
+        self._setup_step_state(tmp_path, "master", "RESEARCH", subtask_id="ST-001")
+        code, stdout, _ = self.run_hook(
+            {
+                "tool_name": "Edit",
+                "tool_input": {"file_path": str(tmp_path / "src" / "other.py")},
+            },
+            tmp_path,
+        )
+        assert code == 0
+        self._assert_denied(stdout)
+
+    def test_research_empty_affected_files_blocks(self, tmp_path: Path) -> None:
+        """A subtask whose affected_files is empty cannot be scoped — fall back
+        to the strict block (cannot prove the target orthogonal).
+        """
+        self._setup_step_state(tmp_path, "master", "RESEARCH", subtask_id="ST-001")
+        self._setup_blueprint(
+            tmp_path, "master", [{"id": "ST-001", "affected_files": []}]
+        )
+        code, stdout, _ = self.run_hook(
+            {
+                "tool_name": "Edit",
+                "tool_input": {"file_path": str(tmp_path / "src" / "other.py")},
+            },
+            tmp_path,
+        )
+        assert code == 0
+        self._assert_denied(stdout)
+
+    def test_research_orthogonal_still_respects_scope_glob(
+        self, tmp_path: Path
+    ) -> None:
+        """The orthogonal relief lifts the phase block but does NOT bypass
+        scope_glob: an orthogonal file outside an explicit scope_glob is still
+        denied by the constraint check.
+        """
+        map_dir = tmp_path / ".map" / "master"
+        map_dir.mkdir(parents=True, exist_ok=True)
+        (map_dir / "step_state.json").write_text(
+            json.dumps(
+                {
+                    "current_step_phase": "RESEARCH",
+                    "current_subtask_id": "ST-001",
+                    "subtask_phases": {},
+                    "constraints": {"scope_glob": "src/*"},
+                }
+            )
+        )
+        self._setup_blueprint(
+            tmp_path,
+            "master",
+            [{"id": "ST-001", "affected_files": ["src/app.py"]}],
+        )
+        code, stdout, _ = self.run_hook(
+            {
+                "tool_name": "Edit",
+                "tool_input": {"file_path": str(tmp_path / "tests" / "foo.py")},
+            },
+            tmp_path,
+        )
+        assert code == 0
+        reason = self._assert_denied(stdout)
+        assert "scope_glob" in reason
+
+    def test_research_orthogonal_out_of_repo_blocks(self, tmp_path: Path) -> None:
+        """An out-of-repo path is not a repo-relative affected_files member, but
+        the relief is conservative and does NOT open arbitrary out-of-repo
+        writes during RESEARCH — it stays blocked.
+        """
+        self._setup_step_state(tmp_path, "master", "RESEARCH", subtask_id="ST-001")
+        self._setup_blueprint(
+            tmp_path,
+            "master",
+            [{"id": "ST-001", "affected_files": ["src/app.py"]}],
+        )
+        code, stdout, _ = self.run_hook(
+            {"tool_name": "Edit", "tool_input": {"file_path": "/etc/hosts"}},
+            tmp_path,
+        )
+        assert code == 0
+        self._assert_denied(stdout)
+
+    def test_research_orthogonal_handles_nested_blueprint(
+        self, tmp_path: Path
+    ) -> None:
+        """The blueprint reader handles the wrapped {"blueprint": {...}} envelope
+        identically to the flat form when scoping orthogonal edits.
+        """
+        self._setup_step_state(tmp_path, "master", "RESEARCH", subtask_id="ST-001")
+        self._setup_blueprint(
+            tmp_path,
+            "master",
+            [{"id": "ST-001", "affected_files": ["src/app.py"]}],
+            nested=True,
+        )
+        code, stdout, _ = self.run_hook(
+            {
+                "tool_name": "Edit",
+                "tool_input": {"file_path": str(tmp_path / "src" / "other.py")},
+            },
+            tmp_path,
+        )
+        assert code == 0
+        self._assert_allowed(stdout)
 
     def test_monitor_strict_mode_blocks_edit(self, tmp_path: Path) -> None:
         """MAP_MONITOR_HOTFIX=0 restores strict read-only MONITOR. The deny

@@ -12,9 +12,18 @@ ENFORCEMENT:
   - Edit blocked during all other phases (DECOMPOSE, MONITOR, PREDICTOR, etc.)
   - Fail-open: missing or unreadable step_state.json → allow
   - Always allows: .map/ artifacts, non-editing tools
+  - RESEARCH blocks only the CURRENT subtask's declared affected_files;
+    docs-only surfaces and files orthogonal to that subtask are allowed so
+    out-of-band hotfixes don't have to be smuggled through Bash (#164).
 
 CONSTRAINTS (from step_state.json):
   - scope_glob: restrict edits to matching file patterns
+
+KNOWN LIMITATION (#164): this gate intercepts Edit/Write/MultiEdit only.
+File writes performed via Bash (``cat >``, ``tee``, ``sed -i``) are NOT
+gated. Closing that bypass requires parsing shell write-targets and is
+deferred to avoid false positives that would block legitimate Bash in the
+many repos this hook ships into.
 
 Exit code 0 always (fail-open on errors).
 """
@@ -229,6 +238,114 @@ def _current_phase_is_research(branch: str) -> bool:
     return isinstance(phase, str) and phase.upper() == "RESEARCH"
 
 
+def _load_blueprint_subtasks(branch: str) -> Optional[list]:
+    """Read blueprint.json subtasks for *branch* (stdlib-only, fail-soft).
+
+    Mirrors map_step_runner.load_blueprint's nested-payload handling: a
+    blueprint may be stored either flat (``{"subtasks": [...]}``) or wrapped
+    (``{"blueprint": {"subtasks": [...]}}``). Returns the subtasks list, or
+    None when the file is absent/unreadable/misshaped — callers treat None
+    as "cannot scope" and keep the strict block.
+    """
+    bp_file = PROJECT_DIR / ".map" / branch / "blueprint.json"
+    if not bp_file.exists():
+        return None
+    try:
+        with open(bp_file, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    body = (
+        payload["blueprint"]
+        if isinstance(payload.get("blueprint"), dict)
+        else payload
+    )
+    subtasks = body.get("subtasks")
+    return subtasks if isinstance(subtasks, list) else None
+
+
+def _to_repo_relative(file_path: str) -> Optional[str]:
+    """Normalize *file_path* to a repo-relative string, or None.
+
+    Returns None when the path is empty, unresolvable, or resolves outside
+    PROJECT_DIR (an out-of-repo path is never part of a repo-relative
+    affected_files list).
+    """
+    if not isinstance(file_path, str) or not file_path.strip():
+        return None
+    candidate = Path(file_path)
+    try:
+        resolved = (
+            candidate.resolve(strict=False)
+            if candidate.is_absolute()
+            else (PROJECT_DIR / candidate).resolve(strict=False)
+        )
+        return str(resolved.relative_to(PROJECT_DIR))
+    except (ValueError, OSError):
+        return None
+
+
+def _current_subtask_affected_files(branch: str) -> Optional[set[str]]:
+    """Return the CURRENT subtask's declared affected_files (normalized).
+
+    Resolves ``current_subtask_id`` from step_state.json, looks the subtask
+    up in blueprint.json, and returns its ``affected_files`` normalized to
+    repo-relative paths. Returns None (the "cannot scope" signal) when the
+    subtask id, blueprint, subtask entry, or a non-empty affected_files list
+    is unavailable — so the caller keeps the strict RESEARCH block rather
+    than widening it on incomplete information.
+    """
+    step_file = PROJECT_DIR / ".map" / branch / "step_state.json"
+    if not step_file.exists():
+        return None
+    try:
+        with open(step_file, "r", encoding="utf-8") as f:
+            state = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+    subtask_id = state.get("current_subtask_id")
+    if not isinstance(subtask_id, str) or not subtask_id:
+        return None
+    subtasks = _load_blueprint_subtasks(branch)
+    if not subtasks:
+        return None
+    affected_raw = None
+    for subtask in subtasks:
+        if isinstance(subtask, dict) and subtask.get("id") == subtask_id:
+            affected_raw = subtask.get("affected_files")
+            break
+    if not isinstance(affected_raw, list) or not affected_raw:
+        return None
+    normalized: set[str] = set()
+    for entry in affected_raw:
+        if not isinstance(entry, str) or not entry.strip():
+            continue
+        rel = _to_repo_relative(entry)
+        normalized.add(rel if rel is not None else entry)
+    return normalized or None
+
+
+def is_orthogonal_to_current_subtask(branch: str, file_path: str) -> bool:
+    """Return True iff *file_path* is provably OUTSIDE the current subtask's
+    affected_files — an orthogonal edit RESEARCH does not protect.
+
+    Conservative by construction: returns False ("keep blocking") whenever
+    the current subtask's mutation surface cannot be determined, or the
+    target resolves outside the repo. The RESEARCH block is lifted only on
+    positive evidence that the file belongs to no part of the current
+    subtask's declared work.
+    """
+    affected = _current_subtask_affected_files(branch)
+    if not affected:
+        return False
+    rel = _to_repo_relative(file_path)
+    if rel is None:
+        return False
+    return rel not in affected
+
+
 def is_editing_phase(branch: str) -> tuple[bool, Optional[str]]:
     """Check step_state.json: is current phase one where Edit is allowed?
 
@@ -274,7 +391,11 @@ def is_editing_phase(branch: str) -> tuple[bool, Optional[str]]:
             f"  1. echo '<findings>' | python3 .map/scripts/map_step_runner.py \\\n"
             f"       save_research <branch> {subtask}  # default kind=actor\n"
             f"  2. python3 .map/scripts/map_orchestrator.py validate_step 2.2\n"
-            "  3. Then Edit/Write opens (ACTOR phase)."
+            "  3. Then Edit/Write opens (ACTOR phase).\n"
+            "\n"
+            f"Note: this block is scoped to {subtask}'s affected_files. Edits to\n"
+            "files OUTSIDE that surface (orthogonal hotfixes, repo-root config,\n"
+            "an unrelated failing test) are allowed during RESEARCH."
         )
     if current_phase == "MONITOR":
         return False, (
@@ -388,17 +509,40 @@ def main() -> None:
         # Phase check (step_state.json)
         allowed, error = is_editing_phase(branch)
         if not allowed:
-            # Docs-only exception: when EVERY target path is a docs
-            # surface (README, runbook, CHANGELOG, anything matching the
+            research = _current_phase_is_research(branch)
+            # RESEARCH exception #1 (docs-only): when EVERY target path is a
+            # docs surface (README, runbook, CHANGELOG, anything matching the
             # configured DOCS_ONLY_* allowlist) AND the current phase is
             # RESEARCH, allow the edit — BUT still run scope_glob /
             # constraints so the exception doesn't silently widen scope.
             # The exception lifts the phase block; it does not bypass
             # mutation-boundary constraints.
             if (
-                target_paths
+                research
+                and target_paths
                 and all(is_docs_only_path(p) for p in target_paths)
-                and _current_phase_is_research(branch)
+            ):
+                constraint_error = check_constraints(branch, target_paths)
+                if constraint_error:
+                    deny(constraint_error)
+                allow()
+            # RESEARCH exception #2 (orthogonal hotfix): the RESEARCH gate
+            # exists to force research-before-code for the CURRENT subtask's
+            # files. Edits to files OUTSIDE that subtask's declared
+            # affected_files (a repo-root config, an unrelated failing test, an
+            # out-of-band hotfix the operator asked for) are not what RESEARCH
+            # protects — blocking them only pushed those edits into Bash
+            # heredocs (#164). Allow them when EVERY target is provably
+            # orthogonal, still subject to scope_glob / constraints so the
+            # relief cannot silently widen scope. A single in-scope target in
+            # the batch (mixed edit) falls through to the block.
+            if (
+                research
+                and target_paths
+                and all(
+                    is_orthogonal_to_current_subtask(branch, p)
+                    for p in target_paths
+                )
             ):
                 constraint_error = check_constraints(branch, target_paths)
                 if constraint_error:
