@@ -4530,6 +4530,97 @@ class TestValidateMutationBoundary:
         report = json.loads(result.stdout)
         assert report["status"] == "error"
 
+    def test_co_authored_test_file_not_flagged_as_scope_leak(
+        self, branch_workspace, monkeypatch
+    ):
+        """#163: a co-authored test file beside the production module (same dir)
+        is implied by the test-alongside policy — it must NOT be reported as a
+        scope leak even though the decomposer only listed the production file in
+        affected_files. It stays in `actual` and surfaces in `allowed_test_files`.
+        """
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        self._write_blueprint(branch_workspace, "ST-001", ["pipeline/foo.py"])
+        (repo / "pipeline").mkdir()
+        (repo / "pipeline" / "foo.py").write_text("x = 1\n")  # in affected_files
+        (repo / "pipeline" / "test_foo.py").write_text("def test_x(): pass\n")  # co-authored test
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        monkeypatch.delenv("MAP_STRICT_SCOPE", raising=False)
+        report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
+        assert report["status"] == "clean", report
+        assert report["unexpected"] == [], report
+        assert "pipeline/test_foo.py" in report["allowed_test_files"], report
+        assert "pipeline/test_foo.py" in report["actual"], report  # reality preserved
+
+    def test_co_authored_test_in_separate_tree_not_flagged(
+        self, branch_workspace, monkeypatch
+    ):
+        """#163: the common src/ + tests/ split — affected_files lists
+        ``src/foo.py`` while the test lives under a separate ``tests/`` tree.
+        The test file must still be auto-allowed (a same-dir-only rule would
+        wrongly flag this very repo's own layout).
+        """
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        self._write_blueprint(branch_workspace, "ST-001", ["src/foo.py"])
+        (repo / "src").mkdir()
+        (repo / "src" / "foo.py").write_text("x = 1\n")
+        (repo / "tests").mkdir()
+        (repo / "tests" / "test_foo.py").write_text("def test_x(): pass\n")
+        (repo / "tests" / "conftest.py").write_text("import pytest\n")
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        monkeypatch.delenv("MAP_STRICT_SCOPE", raising=False)
+        report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
+        assert report["status"] == "clean", report
+        assert report["unexpected"] == [], report
+        assert set(report["allowed_test_files"]) == {
+            "tests/test_foo.py",
+            "tests/conftest.py",
+        }, report
+
+    def test_real_source_leak_still_flagged_when_mixed_with_test(
+        self, branch_workspace, monkeypatch
+    ):
+        """#163 must NOT mask a genuine production scope leak: an out-of-scope
+        *source* file is still `unexpected`, while a co-authored test file is
+        partitioned into `allowed_test_files` — the partition is by convention,
+        not a blanket suppression.
+        """
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        self._write_blueprint(branch_workspace, "ST-001", ["a.py"])
+        (repo / "a.py").write_text("x = 1\n")  # in scope
+        (repo / "b.py").write_text("y = 2\n")  # out-of-scope SOURCE — real leak
+        (repo / "test_b.py").write_text("def test_y(): pass\n")  # out-of-scope TEST — allowed
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        monkeypatch.delenv("MAP_STRICT_SCOPE", raising=False)
+        report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
+        assert report["status"] == "warning", report
+        assert report["unexpected"] == ["b.py"], report
+        assert report["allowed_test_files"] == ["test_b.py"], report
+
+    def test_co_authored_test_not_a_violation_even_in_strict_mode(
+        self, branch_workspace, monkeypatch
+    ):
+        """The test-alongside allowance holds under MAP_STRICT_SCOPE=1 too: a
+        co-authored test file alone must not escalate to status='violation'.
+        """
+        repo = branch_workspace.parents[1]
+        self._init_git(repo)
+        self._write_blueprint(branch_workspace, "ST-001", ["a.py"])
+        (repo / "a.py").write_text("x = 1\n")
+        (repo / "a_test.py").write_text("def test_x(): pass\n")  # co-authored test
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        monkeypatch.setenv("MAP_STRICT_SCOPE", "1")
+        report = map_step_runner.validate_mutation_boundary("test-branch", "ST-001")
+        assert report["status"] == "clean", report
+        assert report["unexpected"] == [], report
+        assert report["allowed_test_files"] == ["a_test.py"], report
+
 
 class TestDetectCrossSubtaskRegressionRisk:
     """detect_cross_subtask_regression_risk flags when the in-flight subtask
@@ -4737,8 +4828,11 @@ class TestDetectCrossSubtaskRegressionRisk:
         assert map_step_runner._is_test_path("pkg/foo_test.go")
         assert map_step_runner._is_test_path("web/button.spec.ts")
         assert map_step_runner._is_test_path("a/__tests__/b.js")
+        # pytest conftest.py is test infrastructure at any depth (#163)
+        assert map_step_runner._is_test_path("conftest.py")
+        assert map_step_runner._is_test_path("python/pipeline/conftest.py")
         assert not map_step_runner._is_test_path("src/pipeline.py")
-        assert not map_step_runner._is_test_path("contest.py")
+        assert not map_step_runner._is_test_path("contest.py")  # not "conftest"
 
 
 class TestGetSubtaskCli:
