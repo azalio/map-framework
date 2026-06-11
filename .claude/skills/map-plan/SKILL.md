@@ -221,6 +221,19 @@ Do NOT create subtasks for behavior listed under the spec's "Out of Scope > Alre
 
 Write decomposer output to `.map/<branch>/blueprint.json` exactly once. Preserve evidence and metadata.
 
+### Step 5.55: Normalize Blueprint (MANDATORY)
+
+```bash
+python3 .map/scripts/map_step_runner.py normalize_blueprint
+```
+
+A deterministic repair pass that fixes the two self-consistency drifts the decomposer routinely emits — so you don't hand-edit `blueprint.json` between decompose and validate:
+
+- **Forward-dependency ordering:** stably topologically sorts `subtasks[]` so every dependency is declared before its dependents (independent subtasks keep their order; a true cycle is left for the validator to reject).
+- **coverage_map bracket-tags:** for every `coverage_map[req] = owner` whose owner's `validation_criteria` doesn't already cite `[req]`, appends a `[req]`-tagged criterion.
+
+It never invents `coverage_map` ownership or rewrites dependency edges — genuine semantic gaps still fail Step 5.6. Idempotent (`changed: false` if nothing needed fixing).
+
 ### Step 5.6: Post-Save Blueprint Validation (MANDATORY)
 
 ```bash
@@ -287,6 +300,7 @@ Runner functions you'll commonly need from `/map-plan`:
 |---|---|
 | `record_plan_artifacts` | Persist spec/blueprint/task-plan into `artifact_manifest.json`. |
 | `record_workflow_fit <workflow> [--diff-size SIZE] [--has-new-invariants 0\|1] [--needs-independent-review 0\|1] [--has-clear-acceptance-criteria 0\|1] [--test-first-required 0\|1] [--summary "..."]` | Persist the workflow-fit decision. Use the named flags — bool order is easy to confuse otherwise. |
+| `normalize_blueprint [<path>] [--check]` | Deterministically repair decomposer drift before validation: topo-sort `subtasks[]` so deps precede dependents + inject missing `coverage_map` bracket-tags. `--check` reports without writing. |
 | `validate_blueprint_contract <path>` | Run schema + semantic checks on `blueprint.json`. |
 | `list_plans` | List per-branch plan artifacts under `.map/` to pick scope from a multi-roadmap workspace. |
 | `save_research <branch> <subtask_id>` | Persist research-agent findings for a subtask (stdin-fed). |

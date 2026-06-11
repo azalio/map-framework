@@ -667,6 +667,229 @@ def test_validate_blueprint_contract_accepts_contract_sized_plan(branch_workspac
     assert result["subtask_count"] == 1
 
 
+def _blueprint_with_forward_dep_and_missing_tag() -> dict[str, object]:
+    """Reproduces issue #168: ST-001 depends on ST-002 but is declared FIRST
+    (forward-dependency ordering violation), and SC-1 is owned by ST-002 whose
+    validation_criteria does not cite [SC-1] (coverage bracket-tag drift)."""
+    return {
+        "summary": "Deliver a user-visible fix with a dependency",
+        "hard_constraints": [
+            {"id": "AC-1", "description": "Timeouts must show a retryable message"},
+        ],
+        "soft_constraints": [
+            {"id": "SC-1", "description": "Prefer a concise implementation"},
+        ],
+        "subtasks": [
+            {
+                "id": "ST-001",
+                "title": "Wire the timeout message",
+                "aag_contract": "CheckoutService -> handle_timeout() -> retryable error",
+                "dependencies": ["ST-002"],
+                "affected_files": ["src/checkout.py"],
+                "expected_diff_size": "small",
+                "concern_type": "runtime",
+                "one_logical_step": True,
+                "validation_criteria": ["VC1 [AC-1]: timeout shows retryable message"],
+            },
+            {
+                "id": "ST-002",
+                "title": "Build the retry helper module",
+                "aag_contract": "RetryHelper -> backoff() -> bounded retries",
+                "dependencies": [],
+                "affected_files": ["src/retry.py"],
+                "expected_diff_size": "small",
+                "concern_type": "runtime",
+                "one_logical_step": True,
+                "validation_criteria": ["VC1: bounded exponential backoff"],
+            },
+        ],
+        "coverage_map": {"AC-1": "ST-001", "SC-1": "ST-002"},
+    }
+
+
+def test_normalize_blueprint_fixes_issue_168_drift(branch_workspace):
+    blueprint_path = branch_workspace / "blueprint.json"
+    blueprint_path.write_text(
+        json.dumps(_blueprint_with_forward_dep_and_missing_tag())
+    )
+
+    # Before normalize: validator hard-stops on BOTH drifts.
+    before = map_step_runner.validate_blueprint_contract()
+    assert before["valid"] is False
+    assert before["forward_dep_violations"] == ["ST-001->ST-002"]
+    assert any("SC-1" in str(err) for err in before["errors"])
+
+    # Normalize: stable topo-sort + bracket-tag injection.
+    norm = map_step_runner.normalize_blueprint()
+    assert norm["status"] == "ok"
+    assert norm["changed"] is True
+    assert norm["reordered"] is True
+    assert norm["subtask_order"] == ["ST-002", "ST-001"]
+    assert norm["injected_coverage_tags"] == ["ST-002:[SC-1]"]
+    assert norm["written"] is True
+
+    # After normalize: validator passes and the file on disk reflects both fixes.
+    after = map_step_runner.validate_blueprint_contract()
+    assert after["valid"] is True
+    assert after["errors"] == []
+
+    written = json.loads(blueprint_path.read_text())
+    assert [s["id"] for s in written["subtasks"]] == ["ST-002", "ST-001"]
+    st002 = next(s for s in written["subtasks"] if s["id"] == "ST-002")
+    assert any("[SC-1]" in c for c in st002["validation_criteria"])
+
+
+def test_normalize_blueprint_is_idempotent(branch_workspace):
+    blueprint_path = branch_workspace / "blueprint.json"
+    blueprint_path.write_text(
+        json.dumps(_blueprint_with_forward_dep_and_missing_tag())
+    )
+
+    first = map_step_runner.normalize_blueprint()
+    assert first["changed"] is True
+
+    second = map_step_runner.normalize_blueprint()
+    assert second["changed"] is False
+    assert second["reordered"] is False
+    assert second["injected_coverage_tags"] == []
+    assert second["written"] is False
+
+
+def test_normalize_blueprint_preserves_order_for_independent_subtasks(branch_workspace):
+    blueprint = {
+        "summary": "Two independent subtasks already in a valid order",
+        **_blueprint_constraint_fields(),
+        "subtasks": [
+            {
+                "id": "ST-001",
+                "title": "First",
+                "aag_contract": "A -> a() -> x",
+                "dependencies": [],
+                "affected_files": ["src/a.py"],
+                "expected_diff_size": "small",
+                "concern_type": "runtime",
+                "one_logical_step": True,
+                "validation_criteria": ["VC1 [AC-1]: a", "VC2 [INV-1]: b"],
+            },
+            {
+                "id": "ST-002",
+                "title": "Second",
+                "aag_contract": "B -> b() -> y",
+                "dependencies": [],
+                "affected_files": ["src/b.py"],
+                "expected_diff_size": "small",
+                "concern_type": "runtime",
+                "one_logical_step": True,
+                "validation_criteria": ["VC1: standalone"],
+            },
+        ],
+        "coverage_map": {"AC-1": "ST-001", "INV-1": "ST-001"},
+    }
+    (branch_workspace / "blueprint.json").write_text(json.dumps(blueprint))
+
+    result = map_step_runner.normalize_blueprint()
+
+    # No dependency edges to reorder and all tags present -> stable no-op.
+    assert result["reordered"] is False
+    assert result["changed"] is False
+    assert result["subtask_order"] == ["ST-001", "ST-002"]
+
+
+def test_normalize_blueprint_leaves_dependency_cycle_untouched(branch_workspace):
+    blueprint = {
+        "summary": "Cyclic dependencies cannot be topologically sorted",
+        **_blueprint_constraint_fields(),
+        "subtasks": [
+            {
+                "id": "ST-001",
+                "title": "First",
+                "aag_contract": "A -> a() -> x",
+                "dependencies": ["ST-002"],
+                "affected_files": ["src/a.py"],
+                "expected_diff_size": "small",
+                "concern_type": "runtime",
+                "one_logical_step": True,
+                "validation_criteria": ["VC1 [AC-1]: a"],
+            },
+            {
+                "id": "ST-002",
+                "title": "Second",
+                "aag_contract": "B -> b() -> y",
+                "dependencies": ["ST-001"],
+                "affected_files": ["src/b.py"],
+                "expected_diff_size": "small",
+                "concern_type": "runtime",
+                "one_logical_step": True,
+                "validation_criteria": ["VC1: standalone"],
+            },
+        ],
+        "coverage_map": {"AC-1": "ST-001"},
+    }
+    (branch_workspace / "blueprint.json").write_text(json.dumps(blueprint))
+
+    result = map_step_runner.normalize_blueprint()
+
+    assert result["reordered"] is False
+    assert any("cycle" in str(note) for note in result["notes"])
+    # A true cycle is left untouched for validate_blueprint_contract to reject.
+    written = json.loads((branch_workspace / "blueprint.json").read_text())
+    assert [s["id"] for s in written["subtasks"]] == ["ST-001", "ST-002"]
+
+
+def test_normalize_blueprint_cli_check_does_not_write(tmp_path):
+    blueprint_path = tmp_path / "blueprint.json"
+    blueprint_path.write_text(
+        json.dumps(_blueprint_with_forward_dep_and_missing_tag())
+    )
+    original = blueprint_path.read_text()
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS_PATH / "map_step_runner.py"),
+            "normalize_blueprint",
+            str(blueprint_path),
+            "--check",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["changed"] is True
+    assert payload["written"] is False
+    # --check must not mutate the file on disk.
+    assert blueprint_path.read_text() == original
+
+
+def test_normalize_blueprint_cli_writes_in_place(tmp_path):
+    blueprint_path = tmp_path / "blueprint.json"
+    blueprint_path.write_text(
+        json.dumps(_blueprint_with_forward_dep_and_missing_tag())
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS_PATH / "map_step_runner.py"),
+            "normalize_blueprint",
+            str(blueprint_path),
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert payload["written"] is True
+    written = json.loads(blueprint_path.read_text())
+    assert [s["id"] for s in written["subtasks"]] == ["ST-002", "ST-001"]
+
+
 def test_acceptance_coverage_report_tracks_downstream_evidence(branch_workspace):
     blueprint = {
         "summary": "Deliver a user-visible fix",
