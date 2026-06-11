@@ -195,6 +195,9 @@ Return **ONLY** valid JSON in this exact structure:
         "affected_files": [
           "path/to/file1.py",
           "path/to/file2.jsx"
+        ],
+        "creates_files": [
+          "path/to/file1.py"
         ]
       }
     ]
@@ -321,6 +324,7 @@ Return **ONLY** valid JSON in this exact structure:
     - The repository has no automated test harness, and adding one is out-of-scope for this subtask.
     - In that case: either add a FOUNDATION subtask to introduce a minimal test harness, or document the gap explicitly in risks/assumptions.
 **subtasks[].affected_files**: Precise file paths (NOT "backend", "frontend"); use [] if paths unknown
+**subtasks[].creates_files**: OPTIONAL subset of `affected_files` that this subtask CREATES from scratch (paths not yet on disk). List each such path in BOTH `affected_files` and `creates_files`. This is the prose-free, structural signal `validate_blueprint_contract` uses to mark those paths expected-absent — do NOT rely on description wording ("creates new", "introduces") to silence the affected_files-drift warning. Omit the field (or use `[]`) when the subtask only modifies existing files.
 
 ### Integration & Runtime Bootstrapping Subtasks
 
@@ -655,11 +659,11 @@ When invoked with `mode: "re_decomposition"` from the orchestrator, you receive 
 - [ ] All affected_files are precise paths
 - [ ] No vague references ("backend", "frontend", "code")
 - [ ] Paths match actual project structure
-- [ ] Paths verified to exist on disk (grep/glob) OR explicitly marked as new-file creation in the subtask description — `validate_blueprint_contract` warns "affected_files drift" when every declared path is missing under CLAUDE_PROJECT_DIR
+- [ ] Paths verified to exist on disk (grep/glob) OR, for files this subtask creates from scratch, listed in `creates_files` (a subset of `affected_files`) — `validate_blueprint_contract` warns "affected_files drift" when every MODIFY-target path is missing under CLAUDE_PROJECT_DIR. Use the structural `creates_files` field, not description prose, to mark new files.
 
 **Symbol Grounding (MANDATORY)**:
 - [ ] Every class / function / method name referenced in `aag_contract` or `validation_criteria` has been grep-verified against actual source code (`rg 'class FooBar'` or `rg 'def baz_method'`). Do NOT name symbols from memory or from a similar-looking project. Recurring decomposer failure mode: hallucinating `SourceCraftPublisher.publish_inline` when the real entry point is `publish_findings`, sending Actor on a wild-goose chase before the bug is caught.
-- [ ] If the subtask creates a NEW symbol, mark it explicitly in the description ("introduces new class `X`") so reviewers don't expect to find it in the current tree.
+- [ ] If the subtask creates a NEW file, list it in `creates_files` (and `affected_files`). If it creates a NEW symbol inside an existing file, note it in the description ("introduces new class `X`") so reviewers don't expect to find it in the current tree.
 - [ ] When extending an existing class, name the class AND verify the file path where it currently lives — the decomposer's working assumption ("the obvious name") is wrong often enough that grep before write is cheaper than Actor rework.
 
 **Tool-Call Budget Estimate (MANDATORY)**:

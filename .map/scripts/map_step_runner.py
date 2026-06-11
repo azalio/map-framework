@@ -2141,6 +2141,43 @@ def validate_blueprint_contract(
                     "reviewable concern (or add split_rationale to ack the size)"
                 )
 
+        # Structural create-vs-modify (issue #167): `creates_files` is the
+        # prose-free, canonical list of which affected_files this subtask
+        # creates from scratch. It MUST be a subset of affected_files — a
+        # created file is part of the mutation surface the scoped gates allow
+        # the Actor to write. When the field is ABSENT the subtask is legacy
+        # and the drift check below falls back to the deprecated
+        # description-phrase heuristic; when PRESENT (even empty) the prose
+        # heuristic is ignored and `creates_files` is authoritative.
+        raw_creates_files = subtask.get("creates_files")
+        creates_files_declared = raw_creates_files is not None
+        creates_files_list: list[str] = []
+        if creates_files_declared:
+            if not isinstance(raw_creates_files, list) or not all(
+                isinstance(p, str) for p in raw_creates_files
+            ):
+                errors.append(
+                    f"{label}: creates_files must be an array of path strings"
+                )
+                creates_files_declared = False
+            else:
+                creates_files_list = [p for p in raw_creates_files if p.strip()]
+                affected_set = (
+                    {p for p in affected_files if isinstance(p, str)}
+                    if isinstance(affected_files, list)
+                    else set()
+                )
+                orphan_creates = [
+                    p for p in creates_files_list if p not in affected_set
+                ]
+                if orphan_creates:
+                    errors.append(
+                        f"{label}: creates_files entries {orphan_creates!r} are not "
+                        "listed in affected_files — a created file is part of the "
+                        "mutation surface; add it to affected_files "
+                        "(normalize_blueprint unions these automatically)"
+                    )
+
         # affected_files drift check: warn when EVERY declared path is
         # missing from disk (decomposer hallucinated names that don't
         # exist anywhere — the canonical friction was ST-016 pointing at
@@ -2185,37 +2222,50 @@ def validate_blueprint_contract(
                         "intent in the subtask description and acknowledge that "
                         "MAP cannot verify the change."
                     )
-                # Drift detection: warn ONLY when every declared path is
-                # both (a) missing on disk AND (b) not a cross-repo path
-                # AND (c) not flagged as a new-file creation by the
-                # subtask description. Without these guards the drift
-                # warning fired for legitimate cases (new file, sibling
-                # repo) and degraded into noise.
+                # Drift detection: warn ONLY for the affected_files this
+                # subtask is expected to MODIFY (not create) that are both
+                # (a) missing on disk AND (b) not cross-repo paths. The
+                # create-vs-modify split comes structurally from
+                # `creates_files` (issue #167): created paths are
+                # expected-absent and never count as drift. For legacy
+                # blueprints that predate `creates_files`, fall back to the
+                # deprecated description-phrase heuristic (whole-subtask
+                # opt-out) so their behavior is unchanged.
                 cross_repo_set = set(cross_repo_paths)
                 local_files = [p for p in string_files if p not in cross_repo_set]
-                description_text = subtask.get("description") or ""
-                description_str = (
-                    description_text
-                    if isinstance(description_text, str)
-                    else ""
-                ).lower()
-                creates_new = bool(
-                    re.search(r"\b(creates? new|new file|introduces?|adds? new)\b", description_str)
-                )
+                if creates_files_declared:
+                    create_set = set(creates_files_list)
+                else:
+                    description_text = subtask.get("description") or ""
+                    description_str = (
+                        description_text
+                        if isinstance(description_text, str)
+                        else ""
+                    ).lower()
+                    creates_new = bool(
+                        re.search(
+                            r"\b(creates? new|new file|introduces?|adds? new)\b",
+                            description_str,
+                        )
+                    )
+                    create_set = set(local_files) if creates_new else set()
                 if local_files:
-                    missing_local = [
-                        p for p in local_files
+                    expected_present = [
+                        p for p in local_files if p not in create_set
+                    ]
+                    missing_present = [
+                        p for p in expected_present
                         if not (project_root_check / p).exists()
                     ]
-                    if missing_local == local_files and not creates_new:
+                    if expected_present and missing_present == expected_present:
                         warnings.append(
                             f"{label}: affected_files drift — none of "
-                            f"{local_files!r} exist under {project_root_check}; "
+                            f"{expected_present!r} exist under {project_root_check}; "
                             "verify the decomposer didn't hallucinate file names. "
-                            "If this subtask CREATES the files from scratch, mark "
-                            "that in the subtask description (phrases: "
-                            "'creates new', 'new file', 'introduces', 'adds new') "
-                            "to silence this warning."
+                            "If this subtask CREATES these files from scratch, list "
+                            "them in the subtask's `creates_files` array (structural "
+                            "— preferred over description phrases) so they are "
+                            "treated as expected-absent."
                         )
 
     coverage_map = payload.get("coverage_map") or blueprint_body.get("coverage_map")
@@ -2386,6 +2436,12 @@ def normalize_blueprint(
          whose owner subtask's ``validation_criteria`` does not already cite
          ``[req]``, append a traceability criterion that does. This is the
          auto-fix the validator's ``[AC-N]`` / ``[SC-N]`` lineage check expects.
+      3. **creates_files ⊆ affected_files** — for every subtask whose
+         ``creates_files`` (the structural create-vs-modify signal, issue #167)
+         names a path missing from ``affected_files``, backfill that path into
+         ``affected_files`` so a created file stays inside the mutation surface
+         the scoped gates allow and ``validate_blueprint_contract`` does not
+         hard-stop on the subset rule.
 
     Normalization is conservative: it never invents ``coverage_map`` ownership,
     never rewrites dependency edges, and never touches a soft constraint that
@@ -2482,7 +2538,35 @@ def normalize_blueprint(
             )
             injected_tags.append(f"{owner}:{tag}")
 
-    changed = order_changed or bool(injected_tags)
+    # --- 3. Union creates_files into affected_files ----------------------
+    # A created file is part of the mutation surface; the decomposer
+    # occasionally lists a new path in `creates_files` but forgets to add it
+    # to `affected_files`. Backfill deterministically so the subset rule in
+    # validate_blueprint_contract does not hard-stop the self-serve loop.
+    unioned_creates: list[str] = []
+    for subtask in new_order:
+        if not isinstance(subtask, dict):
+            continue
+        raw_creates = subtask.get("creates_files")
+        if not isinstance(raw_creates, list):
+            continue
+        create_paths = [
+            p for p in raw_creates if isinstance(p, str) and p.strip()
+        ]
+        if not create_paths:
+            continue
+        affected = subtask.get("affected_files")
+        if not isinstance(affected, list):
+            affected = []
+            subtask["affected_files"] = affected
+        affected_strs = {p for p in affected if isinstance(p, str)}
+        for path_str in create_paths:
+            if path_str not in affected_strs:
+                affected.append(path_str)
+                affected_strs.add(path_str)
+                unioned_creates.append(f"{subtask.get('id')}:{path_str}")
+
+    changed = order_changed or bool(injected_tags) or bool(unioned_creates)
 
     if order_changed:
         blueprint_body["subtasks"] = new_order
@@ -2496,6 +2580,7 @@ def normalize_blueprint(
         "reordered": order_changed,
         "subtask_order": [s.get("id") for s in new_order if isinstance(s, dict)],
         "injected_coverage_tags": injected_tags,
+        "unioned_creates_files": unioned_creates,
         "notes": notes,
         "path": str(path),
         "written": bool(changed and write),

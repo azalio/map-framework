@@ -381,6 +381,16 @@ BLUEPRINT_SCHEMA = {
                         "description": "Files expected to be created or modified",
                         "items": {"type": "string"},
                     },
+                    "creates_files": {
+                        "type": "array",
+                        "description": (
+                            "Optional subset of affected_files this subtask creates "
+                            "from scratch (expected-absent on disk); the prose-free "
+                            "create-vs-modify signal used by "
+                            "validate_blueprint_contract instead of description phrases"
+                        ),
+                        "items": {"type": "string"},
+                    },
                     "acceptance_criteria": {
                         "type": "array",
                         "description": "Criteria that must be met for the subtask to be considered complete",
