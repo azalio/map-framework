@@ -7039,7 +7039,9 @@ def validate_mutation_boundary(
           "base_ref": str,
           "expected": [str],   # declared affected_files
           "actual": [str],     # files actually changed
-          "unexpected": [str], # actual but not expected (scope leak)
+          "unexpected": [str], # actual but not expected (real scope leak)
+          "allowed_test_files": [str],  # out-of-scope but test-convention;
+                                        # implied by test-alongside policy, NOT leaks
           "strict": bool,
         }
 
@@ -7217,7 +7219,18 @@ def validate_mutation_boundary(
 
     actual = sorted(actual_set)
     expected_set = set(expected)
-    unexpected = sorted(p for p in actual if p not in expected_set)
+    # Test-alongside policy (#163): co-authored test files (test_*.* / *_test.* /
+    # *.spec.* / *.test.* / conftest.py / anything under a tests/ dir) are
+    # IMPLIED by any subtask whose contract requires tests, so they are NOT
+    # scope leaks even when the decomposer listed only production modules in
+    # affected_files. Exclude them from `unexpected` (they stay in `actual`,
+    # which reflects reality and keeps the false-progress check honest); surface
+    # them separately as `allowed_test_files` for auditability. A test file the
+    # blueprint DID declare stays in expected_set and is never an "allowed"
+    # extra. This makes the check independent of decomposer description wording.
+    out_of_scope = [p for p in actual if p not in expected_set]
+    allowed_test_files = sorted(p for p in out_of_scope if _is_test_path(p))
+    unexpected = sorted(p for p in out_of_scope if not _is_test_path(p))
     strict = os.environ.get("MAP_STRICT_SCOPE", "0") == "1"
 
     if not unexpected:
@@ -7257,6 +7270,7 @@ def validate_mutation_boundary(
         "expected": expected,
         "actual": actual,
         "unexpected": unexpected,
+        "allowed_test_files": allowed_test_files,
         "strict": strict,
     }
     if diagnostic_hint:
@@ -7289,13 +7303,16 @@ def _is_test_path(path: str) -> bool:
     another subtask's production code (a shared *test* edit is far less
     dangerous than a shared *source* edit). Conventions covered: a ``tests/``
     / ``test/`` / ``__tests__/`` path segment, ``test_*`` / ``*_test`` base
-    names, and ``*.test.*`` / ``*.spec.*`` suffixes (pytest, go test, jest).
+    names, ``*.test.*`` / ``*.spec.*`` suffixes (pytest, go test, jest), and
+    pytest's ``conftest.py`` shared-fixture files.
     """
     norm = path.replace("\\", "/")
     parts = [p for p in norm.split("/") if p]
     if not parts:
         return False
     base = parts[-1]
+    if base == "conftest.py":  # pytest shared fixtures — test infra, not source
+        return True
     if any(seg in _TEST_DIR_SEGMENTS for seg in parts[:-1]):
         return True
     if re.match(r"(?:test_.+|.+_test)\.[A-Za-z0-9]+$", base):
