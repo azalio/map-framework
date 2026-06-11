@@ -2300,6 +2300,208 @@ def validate_blueprint_contract(
     }
 
 
+def _topo_sort_subtasks(
+    subtasks: list[object],
+) -> tuple[Optional[list[dict[str, object]]], str]:
+    """Stable topological sort of a blueprint ``subtasks[]`` list.
+
+    Returns ``(sorted_subtasks, note)``. ``sorted_subtasks`` is ``None`` when
+    the list cannot be reordered safely — a non-object entry, a missing or
+    duplicate id, or a true dependency cycle — in which case the caller keeps
+    the original order and lets ``validate_blueprint_contract`` report the
+    underlying problem.
+
+    The sort is *stable*: among subtasks whose declared dependencies are all
+    already emitted, the one declared earliest in the original array is emitted
+    first. Independent subtasks therefore keep their relative order and the
+    rewrite is minimal — only forward-declared dependencies move earlier.
+    """
+    ids: list[str] = []
+    by_id: dict[str, dict[str, object]] = {}
+    for entry in subtasks:
+        if not isinstance(entry, dict):
+            return None, "subtasks contain a non-object entry; skipped reorder"
+        sid = entry.get("id")
+        if not isinstance(sid, str) or not sid:
+            return None, "a subtask is missing a string id; skipped reorder"
+        if sid in by_id:
+            return None, f"duplicate subtask id {sid!r}; skipped reorder"
+        ids.append(sid)
+        by_id[sid] = entry
+
+    id_set = set(ids)
+    original_index = {sid: i for i, sid in enumerate(ids)}
+
+    # Only intra-blueprint dependencies constrain ordering. Unknown deps and
+    # self-references are ignored here — validate_blueprint_contract reports
+    # those as hard errors; normalization never invents or rewrites them.
+    deps: dict[str, set[str]] = {}
+    for sid in ids:
+        raw = by_id[sid].get("dependencies")
+        dep_set: set[str] = set()
+        if isinstance(raw, list):
+            for dep in raw:
+                if isinstance(dep, str) and dep in id_set and dep != sid:
+                    dep_set.add(dep)
+        deps[sid] = dep_set
+
+    # Kahn's algorithm with a stable tie-break: among all nodes whose deps are
+    # already emitted, pick the one with the smallest original index.
+    emitted: list[str] = []
+    emitted_set: set[str] = set()
+    remaining = set(ids)
+    while remaining:
+        ready = sorted(
+            (sid for sid in remaining if deps[sid] <= emitted_set),
+            key=lambda s: original_index[s],
+        )
+        if not ready:
+            # Nothing emittable -> a dependency cycle remains; leave untouched.
+            return None, "dependency cycle detected; skipped reorder"
+        nxt = ready[0]
+        emitted.append(nxt)
+        emitted_set.add(nxt)
+        remaining.discard(nxt)
+
+    return [by_id[sid] for sid in emitted], ""
+
+
+def normalize_blueprint(
+    blueprint_path: str = "",
+    branch: Optional[str] = None,
+    write: bool = True,
+) -> dict[str, object]:
+    """Deterministically repair the two self-consistency violations the
+    task-decomposer routinely emits, so planning stays self-serve
+    (``decompose -> normalize -> validate -> proceed``) without manual JSON
+    surgery (issue #168):
+
+      1. **Forward-dependency ordering** — stably topologically sort
+         ``subtasks[]`` so every dependency is declared BEFORE its dependents.
+         This satisfies the topological invariant that
+         ``validate_blueprint_contract`` enforces (the runtime walker consumes
+         subtasks in declaration order) without reordering by hand. A true
+         dependency cycle is left untouched so the validator still reports it.
+      2. **coverage_map bracket-tags** — for every ``coverage_map[req] = owner``
+         whose owner subtask's ``validation_criteria`` does not already cite
+         ``[req]``, append a traceability criterion that does. This is the
+         auto-fix the validator's ``[AC-N]`` / ``[SC-N]`` lineage check expects.
+
+    Normalization is conservative: it never invents ``coverage_map`` ownership,
+    never rewrites dependency edges, and never touches a soft constraint that
+    relies on ``tradeoff_rationale`` instead of coverage. It only fixes the two
+    mechanical drifts above; genuine semantic gaps (a hard constraint missing
+    from ``coverage_map``, an unknown/cyclic dependency) remain for the
+    validator to flag.
+
+    Idempotent: a second call on already-normalized input reports
+    ``changed: false`` and writes nothing.
+    """
+    branch_name = branch or get_branch_name()
+    path = (
+        Path(blueprint_path)
+        if blueprint_path
+        else get_branch_dir(branch_name) / "blueprint.json"
+    )
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {
+            "status": "error",
+            "changed": False,
+            "errors": [f"blueprint not found: {path}"],
+            "path": str(path),
+        }
+    except (json.JSONDecodeError, OSError) as exc:
+        return {
+            "status": "error",
+            "changed": False,
+            "errors": [f"cannot read blueprint {path}: {exc}"],
+            "path": str(path),
+        }
+
+    if not isinstance(payload, dict):
+        return {
+            "status": "error",
+            "changed": False,
+            "errors": ["blueprint root must be a JSON object"],
+            "path": str(path),
+        }
+
+    # Bind the nested lookup so the isinstance narrowing applies to the same
+    # expression Pyright tracks (a re-invoked payload.get(...) would not narrow).
+    nested_blueprint = payload.get("blueprint")
+    blueprint_body = (
+        nested_blueprint if isinstance(nested_blueprint, dict) else payload
+    )
+    subtasks = blueprint_body.get("subtasks")
+    if not isinstance(subtasks, list) or not subtasks:
+        return {
+            "status": "error",
+            "changed": False,
+            "errors": ["blueprint must contain at least one subtask"],
+            "path": str(path),
+        }
+
+    notes: list[str] = []
+
+    # --- 1. Stable topological sort of subtasks[] ------------------------
+    reordered, sort_note = _topo_sort_subtasks(subtasks)
+    if sort_note:
+        notes.append(sort_note)
+    new_order = reordered if reordered is not None else subtasks
+    order_changed = reordered is not None and [
+        s.get("id") for s in reordered
+    ] != [s.get("id") for s in subtasks if isinstance(s, dict)]
+
+    # --- 2. Inject missing coverage_map bracket-tags ---------------------
+    coverage_map = payload.get("coverage_map") or blueprint_body.get("coverage_map")
+    subtasks_by_id = {
+        s.get("id"): s
+        for s in new_order
+        if isinstance(s, dict) and isinstance(s.get("id"), str)
+    }
+    injected_tags: list[str] = []
+    if isinstance(coverage_map, dict):
+        for requirement_id, owner in coverage_map.items():
+            if not isinstance(owner, str):
+                continue
+            owner_subtask = subtasks_by_id.get(owner)
+            if not isinstance(owner_subtask, dict):
+                continue
+            tag = f"[{requirement_id}]"
+            criteria = owner_subtask.get("validation_criteria")
+            if not isinstance(criteria, list):
+                criteria = []
+                owner_subtask["validation_criteria"] = criteria
+            if any(isinstance(c, str) and tag in c for c in criteria):
+                continue
+            criteria.append(
+                f"VC{len(criteria) + 1} {tag}: satisfies coverage_map "
+                f"requirement {requirement_id}"
+            )
+            injected_tags.append(f"{owner}:{tag}")
+
+    changed = order_changed or bool(injected_tags)
+
+    if order_changed:
+        blueprint_body["subtasks"] = new_order
+
+    if changed and write:
+        _write_json_file(path, payload)
+
+    return {
+        "status": "ok",
+        "changed": changed,
+        "reordered": order_changed,
+        "subtask_order": [s.get("id") for s in new_order if isinstance(s, dict)],
+        "injected_coverage_tags": injected_tags,
+        "notes": notes,
+        "path": str(path),
+        "written": bool(changed and write),
+    }
+
+
 def record_test_contract_handoff(
     subtask_id: str,
     failing_test_command: str = "",
@@ -8682,6 +8884,16 @@ if __name__ == "__main__":
         result = validate_blueprint_contract(blueprint_path)
         print(json.dumps(result, indent=2, ensure_ascii=True))
         if not result.get("valid"):
+            sys.exit(1)
+
+    elif func_name == "normalize_blueprint":
+        extra = sys.argv[2:]
+        dry_run = any(arg in ("--check", "--dry-run") for arg in extra)
+        positional = [arg for arg in extra if not arg.startswith("--")]
+        blueprint_path = positional[0] if positional else ""
+        result = normalize_blueprint(blueprint_path, write=not dry_run)
+        print(json.dumps(result, indent=2, ensure_ascii=True))
+        if result.get("status") != "ok":
             sys.exit(1)
 
     elif func_name == "record_test_contract_handoff" and len(sys.argv) >= 3:

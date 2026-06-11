@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`normalize_blueprint` deterministic repair pass (#168)**: a new runner
+  function (and `/map-plan` Step 5.55) that fixes the two self-consistency
+  drifts the `task-decomposer` routinely emits, so planning is self-serve
+  (`decompose → normalize → validate → proceed`) instead of requiring manual
+  JSON surgery between Step 5 and the Step 5.6 contract gate. It (1) stably
+  topologically sorts `subtasks[]` so every dependency is declared before its
+  dependents — satisfying `validate_blueprint_contract`'s forward-dependency
+  invariant without reordering by hand (independent subtasks keep their order;
+  a true cycle is left for the validator to reject), and (2) for every
+  `coverage_map[req] = owner` whose owner's `validation_criteria` doesn't cite
+  `[req]`, appends a `[req]`-tagged criterion. It never invents `coverage_map`
+  ownership or rewrites dependency edges — genuine semantic gaps still fail
+  Step 5.6. Idempotent. Run via
+  `python3 .map/scripts/map_step_runner.py normalize_blueprint [<path>] [--check]`.
 - **Per-subtask token accounting**: a new `map-token-meter` hook (wired on
   `SubagentStop` and `Stop`) reads each transcript's per-turn `usage` and
   attributes input/output/cache-creation/cache-read tokens to the active
