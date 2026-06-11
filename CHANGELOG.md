@@ -20,6 +20,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (stdlib only) so it works in generated projects without `mapify_cli`
   importable; the meter is advisory and never blocks a turn.
 
+### Fixed
+- **False-progress on every committed subtask (#162)**: `validate_step 2.4`
+  (which auto-runs `validate_mutation_boundary`) compared the *working tree*
+  against the contract's `affected_files`. In the documented per-subtask close
+  order — commit → `record_subtask_result --commit-sha` → `validate_step 2.4` —
+  the working tree is clean and `last_subtask_commit_sha` already points at the
+  subtask's OWN commit, so the diff was empty and the gate wrongly rejected
+  every committed subtask with *"MONITOR is closing ST-XXX but NO files
+  changed"*, forcing a redundant second call. The base-ref resolution now
+  re-bases onto the subtask commit's parent when the resolved base is the
+  subtask's own recorded commit, so the committed work counts as the mutation
+  surface. Resolution is shared by `validate_mutation_boundary` and
+  `_current_subtask_changed_files` via a new `_resolve_subtask_diff_base`
+  helper (root-commit safe).
+
 ## [3.10.0] - 2026-05-19
 
 ### Added

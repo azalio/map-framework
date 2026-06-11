@@ -2444,6 +2444,56 @@ class TestValidateStepAutoMutationBoundary:
         r2 = map_orchestrator.validate_step("2.4", branch_dir, recommendation="proceed")
         assert r2["valid"] is True, r2
 
+    def test_committed_subtask_passes_2_4_without_false_progress(
+        self, branch_dir, tmp_path, monkeypatch
+    ):
+        """#162: the documented per-subtask close order is
+        commit -> record_subtask_result --commit-sha -> validate_step 2.4. After
+        the commit the working tree is clean and last_subtask_commit_sha is THIS
+        subtask's own commit. validate_step 2.4 must NOT fire false-progress on
+        the FIRST call (no redundant second call): the committed work counts as
+        the subtask's mutation surface via the parent re-base."""
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001"]
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.4"
+        state.current_step_phase = "MONITOR"
+        state.pending_steps = ["2.4"]
+        state.completed_steps = ["2.2", "2.3"]
+        plan_dir = tmp_path / ".map" / branch_dir
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "blueprint.json").write_text(json.dumps({
+            "subtasks": [{"id": "ST-001", "title": "x", "affected_files": ["a.py"]}],
+        }))
+        import subprocess as _sp
+        _sp.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "config", "user.name", "t"], cwd=tmp_path, capture_output=True)
+        (tmp_path / "seed.txt").write_text("seed")
+        _sp.run(["git", "add", "seed.txt"], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True)
+        # ST-001's work IS implemented and committed (the documented order).
+        (tmp_path / "a.py").write_text("x = 1\n")
+        _sp.run(["git", "add", "a.py"], cwd=tmp_path, capture_output=True)
+        _sp.run(["git", "commit", "-m", "ST-001"], cwd=tmp_path, capture_output=True)
+        sha = _sp.run(
+            ["git", "rev-parse", "HEAD"], cwd=tmp_path, capture_output=True, text=True
+        ).stdout.strip()
+        # Mimic record_subtask_result --commit-sha <SHA>.
+        state.record_subtask_result("ST-001", ["a.py"], "valid", commit_sha=sha)
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        monkeypatch.delenv("MAP_STRICT_SCOPE", raising=False)
+
+        r1 = map_orchestrator.validate_step("2.4", branch_dir, recommendation="proceed")
+        assert r1["valid"] is True, r1  # NO false-progress on the first call
+        persisted = map_orchestrator.StepState.load(state_file)
+        assert "ST-001" not in persisted.progress_feedback_subtasks, (
+            persisted.progress_feedback_subtasks
+        )
+
 
 class TestPeekCurrentStep:
     """peek_current_step is the read-only recovery escape hatch for the case
