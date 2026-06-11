@@ -96,7 +96,7 @@ Remaining gap (planned):
 
 ## Troubleshooting
 
-- Existing `step_state.json`: planning already completed; print checkpoint and stop.
+- Existing `step_state.json`: planning already completed; print checkpoint and stop — but only when the Resume-Detection `verdict` is `resume`. The `.map/<branch>/` layout is single-plan-per-branch, so a branch can host several sequential plans over its lifetime; `check_plan_resume "$ARGUMENTS"` compares the prior plan's goal against the current request and returns `goal_mismatch` when they differ. On `goal_mismatch`, do NOT report "plan complete" and do NOT overwrite the prior `spec`/`blueprint`/`task_plan`; archive or rename the existing `.map/<branch>/` artifacts (or plan on a fresh branch) with operator confirmation, then plan the new goal.
 - `validate_blueprint_contract` fails: fix decomposer output before task plan creation.
 - Coverage key missing from validation criteria: add bracketed criteria such as `VC1 [AC-1]: ...`.
 - Hard constraint uncovered: add it to `coverage_map` and owning validation criteria.

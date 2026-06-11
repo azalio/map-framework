@@ -24,20 +24,24 @@ description: "ARCHITECT phase - decompose complex tasks into atomic subtasks wit
 
 ## Pre-flight: Resume Detection
 
-Before any step, detect which artifacts already exist:
+Before any step, detect which artifacts already exist AND whether the request matches the existing plan's goal:
 
 ```
 shell_command:
   cmd: |
     BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
     echo "BRANCH=$BRANCH"
-    echo "findings:  $(test -f .map/${BRANCH}/findings_${BRANCH}.md && echo EXISTS || echo MISSING)"
-    echo "spec:      $(test -f .map/${BRANCH}/spec_${BRANCH}.md && echo EXISTS || echo MISSING)"
-    echo "task_plan: $(test -f .map/${BRANCH}/task_plan_${BRANCH}.md && echo EXISTS || echo MISSING)"
-    echo "state:     $(test -f .map/${BRANCH}/step_state.json && echo EXISTS || echo MISSING)"
+    python3 .map/scripts/map_step_runner.py check_plan_resume "$ARGUMENTS"
 ```
 
-**Resume rules:**
+This reports the existing artifacts (`findings`/`spec`/`task_plan`/`step_state`) AND a `verdict` comparing the prior plan's goal against the current request — so a branch that already hosts a *completed* plan for a different goal is not mistaken for "this plan is done" (a single branch can host several sequential plans over its lifetime).
+
+**Branch on `verdict`:**
+- `no_plan` → no prior artifacts; plan fresh from Step 0
+- `goal_mismatch` → the branch already holds a plan for a **different** goal. Do **NOT** print "plan complete" and do **NOT** overwrite the prior `spec`/`blueprint`/`task_plan`. Follow the `recommendation`: archive or rename the existing `.map/<branch>/` artifacts (or run `$map-plan` on a fresh branch) — confirm with the operator first — then plan the new goal
+- `resume` → the request matches the existing plan (or no request text was supplied to compare); apply the per-artifact resume rules below
+
+**Per-artifact resume rules (only when `verdict` is `resume`):**
 - `findings` EXISTS → skip Step 0 ONLY if the file has an `Already Implemented` section; if it predates that format, re-run Step 0 so the Step 0.5 gate has its evidence
 - `spec` EXISTS → skip Steps 1-2, read existing spec
 - `task_plan` EXISTS → skip Steps 4-6, read existing plan
