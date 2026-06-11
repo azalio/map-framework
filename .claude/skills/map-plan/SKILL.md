@@ -52,13 +52,16 @@ parallel_tool_policy: discovery_only
 
 ```bash
 BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
-echo "findings:    $(test -f .map/${BRANCH}/findings_${BRANCH}.md && echo EXISTS || echo MISSING)"
-echo "spec:        $(test -f .map/${BRANCH}/spec_${BRANCH}.md && echo EXISTS || echo MISSING)"
-echo "task_plan:   $(test -f .map/${BRANCH}/task_plan_${BRANCH}.md && echo EXISTS || echo MISSING)"
-echo "state:       $(test -f .map/${BRANCH}/step_state.json && echo EXISTS || echo MISSING)"
+python3 .map/scripts/map_step_runner.py check_plan_resume "$ARGUMENTS"
 ```
 
-Resume rules:
+This reports the existing artifacts (`findings`/`spec`/`task_plan`/`step_state`) AND a `verdict` that compares the prior plan's goal against the current request — so a branch that already hosts a *completed* plan for a different goal is not mistaken for "this plan is done". Branch on `verdict`:
+
+- `no_plan` → no prior artifacts; plan fresh from Step 0.
+- `goal_mismatch` → the branch already holds a plan for a **different** goal (a single branch can host several sequential plans over its lifetime). Do **NOT** print "plan complete" and do **NOT** overwrite the prior `spec`/`blueprint`/`task_plan`. Follow the `recommendation`: archive or rename the existing `.map/<branch>/` artifacts (or run `/map-plan` on a fresh branch) — confirm with the operator first — then plan the new goal.
+- `resume` → the request matches the existing plan (or no request text was supplied to compare). Apply the per-artifact resume rules below.
+
+Per-artifact resume rules (only when `verdict` is `resume`):
 - Existing `findings`: reuse discovery only if the file has an `Already Implemented` section; if it predates that format, re-run discovery (see Step 0).
 - Existing `spec`: skip interview/spec writing.
 - Existing `task_plan`: skip decomposition and plan creation.
@@ -303,6 +306,7 @@ Runner functions you'll commonly need from `/map-plan`:
 | `normalize_blueprint [<path>] [--check]` | Deterministically repair decomposer drift before validation: topo-sort `subtasks[]` so deps precede dependents + inject missing `coverage_map` bracket-tags. `--check` reports without writing. |
 | `validate_blueprint_contract <path>` | Run schema + semantic checks on `blueprint.json`. |
 | `list_plans` | List per-branch plan artifacts under `.map/` to pick scope from a multi-roadmap workspace. |
+| `check_plan_resume "<request>" [--branch <b>]` | Resume preflight: reports existing artifacts + a `verdict` (`no_plan`/`resume`/`goal_mismatch`) comparing the prior plan's goal against the incoming request, so a branch hosting a *completed* plan for a different goal isn't falsely treated as "complete". |
 | `save_research <branch> <subtask_id>` | Persist research-agent findings for a subtask (stdin-fed). |
 
 ### Step 8: Output Checkpoint

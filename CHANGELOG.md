@@ -35,6 +35,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   importable; the meter is advisory and never blocks a turn.
 
 ### Fixed
+- **`/map-plan` resume-detection compares plan goals instead of branch-keying
+  alone (#166)**: a single git branch can host more than one sequential
+  planning effort over its lifetime, but the Resume-Detection preflight keyed
+  "plan complete" purely on `test -f .map/<branch>/step_state.json`. A
+  brand-new, unrelated request on a branch that already held a *completed* plan
+  was therefore falsely off-ramped as "plan complete" (no plan produced), and
+  proceeding anyway silently clobbered the prior plan's `spec`/`blueprint`/
+  `task_plan`. New `check_plan_resume "<request>" [--branch <b>]` runner
+  function reports the existing artifacts AND a `verdict`
+  (`no_plan`/`resume`/`goal_mismatch`) by comparing the prior plan's goal
+  (from `task_plan`/`spec`) against the incoming request via a deterministic
+  token-overlap (containment) heuristic. On `goal_mismatch` the skill no longer
+  prints "plan complete" and does not overwrite the prior artifacts — it
+  recommends archiving/renaming `.map/<branch>/` (or planning on a fresh
+  branch) with operator confirmation, then planning the new goal. Comparison is
+  intentionally conservative — both sides must carry ≥2 significant tokens and
+  fall below the containment threshold, so a legitimate resume with a shorter
+  paraphrase (or a bare `/map-plan` with no request text) is never falsely
+  diverted. Both provider surfaces (Claude + Codex `map-plan` SKILL) and
+  `plan-reference.md` document the single-plan-per-branch layout and the
+  `goal_mismatch` off-ramp.
 - **`workflow-gate` RESEARCH block scoped to the current subtask's
   `affected_files` (#164)**: during the RESEARCH phase the gate used to block
   *every* `Edit`/`Write`/`MultiEdit` (except docs-only surfaces), so orthogonal

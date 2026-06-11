@@ -636,6 +636,129 @@ def test_record_plan_artifacts_is_partial_when_only_step_state_exists(branch_wor
     assert result["plan_status"] == "partial"
 
 
+def _write_completed_plan(branch_workspace, goal_title: str) -> None:
+    """Seed a branch with a completed plan whose goal is `goal_title`."""
+    branch = branch_workspace.name
+    (branch_workspace / f"spec_{branch}.md").write_text(
+        f"# Spec: {goal_title}\n\n## Acceptance Criteria\n- AC-1: ...\n",
+        encoding="utf-8",
+    )
+    (branch_workspace / f"task_plan_{branch}.md").write_text(
+        f"# Task Plan: {goal_title}\n\n## Overview\n- Goal: {goal_title}\n"
+        f"- Source spec: .map/{branch}/spec_{branch}.md\n",
+        encoding="utf-8",
+    )
+    (branch_workspace / "step_state.json").write_text(
+        '{"current_step_phase": "COMPLETE", "workflow_status": "complete"}\n',
+        encoding="utf-8",
+    )
+
+
+def test_check_plan_resume_no_plan_when_branch_empty(branch_workspace):
+    del branch_workspace
+    result = map_step_runner.check_plan_resume("implement token budget reporting")
+
+    assert result["status"] == "ok"
+    assert result["verdict"] == "no_plan"
+    assert result["existing_goal"] is None
+    assert result["artifacts"] == {
+        "findings": False,
+        "spec": False,
+        "task_plan": False,
+        "step_state": False,
+    }
+
+
+def test_check_plan_resume_resume_on_matching_goal(branch_workspace):
+    _write_completed_plan(
+        branch_workspace, "Implement token authentication middleware for the API"
+    )
+
+    result = map_step_runner.check_plan_resume(
+        "Implement token authentication middleware"
+    )
+
+    assert result["verdict"] == "resume"
+    assert result["artifacts"]["step_state"] is True
+    # High overlap on the distinctive goal terms.
+    assert result["containment"] >= map_step_runner.RESUME_GOAL_MISMATCH_CONTAINMENT
+    assert "authentication" in result["shared_terms"]
+
+
+def test_check_plan_resume_goal_mismatch_issue_166(branch_workspace):
+    # Repro of issue #166: a long-lived branch already hosts a COMPLETED plan
+    # for one goal; a brand-new, unrelated request must NOT be off-ramped as
+    # "plan complete" nor silently clobber the prior plan.
+    _write_completed_plan(branch_workspace, "Auditable Graph-Guided Incident Analysis")
+
+    result = map_step_runner.check_plan_resume(
+        "Add per-subtask token budget reporting to the statusline meter"
+    )
+
+    assert result["verdict"] == "goal_mismatch"
+    assert result["existing_goal"] is not None
+    assert result["containment"] < map_step_runner.RESUME_GOAL_MISMATCH_CONTAINMENT
+    assert "archive" in result["recommendation"].lower()
+    # The prior plan's goal is surfaced so the operator can decide.
+    assert "Analysis" in result["recommendation"]
+
+
+def test_check_plan_resume_empty_request_defaults_to_resume(branch_workspace):
+    # A bare `/map-plan` resume (no request text) must preserve the prior
+    # "step_state => complete" behavior — never divert to goal_mismatch.
+    _write_completed_plan(branch_workspace, "Auditable Graph-Guided Incident Analysis")
+
+    result = map_step_runner.check_plan_resume("")
+
+    assert result["verdict"] == "resume"
+    assert result["request"] == ""
+
+
+def test_check_plan_resume_one_word_request_does_not_divert(branch_workspace):
+    # Too little signal (one significant token) must never trigger a divert.
+    _write_completed_plan(branch_workspace, "Auditable Graph-Guided Incident Analysis")
+
+    result = map_step_runner.check_plan_resume("refactor")
+
+    assert result["verdict"] == "resume"
+
+
+def test_check_plan_resume_cli_smoke(tmp_path):
+    branch = "test-branch"
+    branch_dir = tmp_path / ".map" / branch
+    branch_dir.mkdir(parents=True)
+    (branch_dir / f"spec_{branch}.md").write_text(
+        "# Spec: Auditable Graph-Guided Incident Analysis\n", encoding="utf-8"
+    )
+    (branch_dir / f"task_plan_{branch}.md").write_text(
+        "# Task Plan: Auditable Graph-Guided Incident Analysis\n\n"
+        "## Overview\n- Goal: Auditable Graph-Guided Incident Analysis\n",
+        encoding="utf-8",
+    )
+    (branch_dir / "step_state.json").write_text(
+        '{"current_step_phase": "COMPLETE"}\n', encoding="utf-8"
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS_PATH / "map_step_runner.py"),
+            "check_plan_resume",
+            "Add per-subtask token budget reporting to the statusline meter",
+            "--branch",
+            branch,
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert payload["verdict"] == "goal_mismatch"
+    assert payload["branch"] == branch
+
+
 def test_validate_blueprint_contract_accepts_contract_sized_plan(branch_workspace):
     blueprint = {
         "summary": "Deliver a user-visible fix",

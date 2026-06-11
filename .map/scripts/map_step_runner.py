@@ -44,6 +44,17 @@ from typing import Callable, Iterable, Mapping, Optional, TypedDict, cast
 # Keep in sync with workflow-context-injector.py GOAL_HEADING_RE
 GOAL_HEADING_RE = r"## (?:Goal|Overview)\n(.*?)(?=\n##|\Z)"
 
+# check_plan_resume() goal-comparison thresholds (issue #164/#166). The resume
+# preflight diverts a brand-new request to `goal_mismatch` (instead of falsely
+# reporting "plan complete" / silently clobbering the prior plan) ONLY on strong
+# evidence: both the existing goal and the incoming request must carry at least
+# RESUME_MIN_TOKENS_FOR_MISMATCH significant tokens, and their containment (shared
+# tokens / smaller significant-token set) must fall below
+# RESUME_GOAL_MISMATCH_CONTAINMENT. Conservative by design so a legitimate resume
+# with a shorter paraphrase is never falsely diverted.
+RESUME_GOAL_MISMATCH_CONTAINMENT = 0.25
+RESUME_MIN_TOKENS_FOR_MISMATCH = 2
+
 
 HUMAN_ARTIFACT_DEFAULTS = {
     "qa-001.md": "# QA 001\n\n",
@@ -7253,6 +7264,167 @@ def _dt_from_mtime(ts: float) -> str:
     return datetime.fromtimestamp(ts, timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _read_existing_plan_goal(spec_path: Path, task_plan_path: Path) -> str:
+    """Extract the existing plan's goal text from task_plan + spec for resume
+    comparison. Prefers the task plan's ``- Goal:`` line (falling back to the
+    whole ``## Overview``/``## Goal`` block), and folds in the task-plan and spec
+    H1 titles so short distinctive goals still yield significant tokens. Returns
+    a de-duplicated newline-joined string ("" when nothing is extractable)."""
+    parts: list[str] = []
+    if task_plan_path.exists():
+        try:
+            content = task_plan_path.read_text(encoding="utf-8")
+            block_match = re.search(GOAL_HEADING_RE, content, re.DOTALL)
+            if block_match:
+                block = block_match.group(1).strip()
+                goal_line = re.search(r"(?im)^[-*]?\s*Goal:\s*(.+)$", block)
+                parts.append(goal_line.group(1).strip() if goal_line else block)
+            title_match = re.search(
+                r"(?m)^#\s+(?:Task Plan:\s*)?(.+)$", content
+            )
+            if title_match:
+                parts.append(title_match.group(1).strip())
+        except OSError:
+            pass
+    if spec_path.exists():
+        try:
+            content = spec_path.read_text(encoding="utf-8")
+            spec_title = re.search(r"(?m)^#\s+(?:Spec:\s*)?(.+)$", content)
+            if spec_title:
+                parts.append(spec_title.group(1).strip())
+        except OSError:
+            pass
+    seen: set[str] = set()
+    unique: list[str] = []
+    for part in parts:
+        if part and part not in seen:
+            seen.add(part)
+            unique.append(part)
+    return "\n".join(unique).strip()
+
+
+def check_plan_resume(request: str = "", branch: Optional[str] = None) -> dict:
+    """Resume-detection preflight for /map-plan on the branch-keyed
+    ``.map/<branch>/`` layout (issue #166).
+
+    A single git branch can host more than one sequential planning effort over
+    its lifetime. Keying resume purely on "does ``step_state.json`` exist?"
+    falsely reports "plan complete" for a brand-new, unrelated request and, if
+    the operator proceeds anyway, silently clobbers the prior plan's
+    spec/blueprint/task_plan. This preflight compares the existing plan's goal
+    against the incoming request and returns one of three verdicts:
+
+    - ``no_plan``: no prior planning artifacts on the branch — plan fresh.
+    - ``resume``: artifacts exist AND the request matches the existing plan's
+      goal (or no request text / extractable goal was available to compare) —
+      apply the per-artifact resume rules (existing ``step_state`` => complete).
+    - ``goal_mismatch``: artifacts exist BUT the request describes a DIFFERENT
+      goal than the completed plan — do NOT report "plan complete"; archive or
+      rename the prior ``.map/<branch>/`` artifacts (or plan on a fresh branch)
+      before planning the new goal, with operator confirmation.
+
+    Goal comparison is a deterministic token-overlap heuristic (see
+    RESUME_GOAL_MISMATCH_CONTAINMENT) — intentionally conservative so a real
+    resume with a shorter paraphrase is never falsely diverted.
+    """
+    branch_name = _sanitize_branch(branch) if branch else get_branch_name()
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+    branch_dir = project_dir / ".map" / branch_name
+    findings_path = branch_dir / f"findings_{branch_name}.md"
+    spec_path = branch_dir / f"spec_{branch_name}.md"
+    task_plan_path = branch_dir / f"task_plan_{branch_name}.md"
+    state_path = branch_dir / "step_state.json"
+
+    artifacts = {
+        "findings": findings_path.exists(),
+        "spec": spec_path.exists(),
+        "task_plan": task_plan_path.exists(),
+        "step_state": state_path.exists(),
+    }
+    has_plan = (
+        artifacts["spec"] or artifacts["task_plan"] or artifacts["step_state"]
+    )
+    request_text = (request or "").strip()
+
+    if not has_plan:
+        return {
+            "status": "ok",
+            "branch": branch_name,
+            "verdict": "no_plan",
+            "artifacts": artifacts,
+            "existing_goal": None,
+            "request": request_text,
+            "overlap": 0.0,
+            "containment": 0.0,
+            "shared_terms": [],
+            "recommendation": (
+                f"No prior planning artifacts on branch '{branch_name}'. "
+                "Proceed with a fresh plan from Step 0."
+            ),
+        }
+
+    existing_goal = _read_existing_plan_goal(spec_path, task_plan_path)
+    goal_tokens = _tokenize_learning_text(existing_goal)
+    request_tokens = _tokenize_learning_text(request_text)
+    shared = sorted(goal_tokens & request_tokens)
+    union = goal_tokens | request_tokens
+    overlap = round(len(shared) / len(union), 3) if union else 0.0
+    min_len = min(len(goal_tokens), len(request_tokens))
+    containment = round(len(shared) / min_len, 3) if min_len else 0.0
+
+    comparable = bool(
+        request_text
+        and goal_tokens
+        and request_tokens
+        and min_len >= RESUME_MIN_TOKENS_FOR_MISMATCH
+    )
+
+    if comparable and containment < RESUME_GOAL_MISMATCH_CONTAINMENT:
+        verdict = "goal_mismatch"
+        snippet = " ".join(existing_goal.split())
+        if len(snippet) > 160:
+            snippet = snippet[:157].rstrip() + "..."
+        recommendation = (
+            f"The existing plan on branch '{branch_name}' targets a DIFFERENT "
+            f"goal than the current request (goal-overlap {overlap}, "
+            f"containment {containment} < {RESUME_GOAL_MISMATCH_CONTAINMENT}). "
+            f'Existing goal: "{snippet}". Do NOT report "plan complete" / STOP. '
+            f"Archive or rename the prior .map/{branch_name}/ artifacts (or run "
+            "/map-plan on a fresh branch) so the completed plan is preserved, "
+            "then plan the new goal. Confirm the archival/overwrite with the "
+            "operator before writing."
+        )
+    else:
+        verdict = "resume"
+        if not request_text:
+            reason = "No request text supplied to compare against the existing plan"
+        elif not existing_goal:
+            reason = "Existing plan has no extractable goal to compare"
+        else:
+            reason = (
+                "Incoming request matches the existing plan goal "
+                f"(overlap {overlap}, containment {containment})"
+            )
+        recommendation = (
+            f"{reason}. Apply the per-artifact resume rules: existing "
+            "step_state => plan complete (print checkpoint and STOP); existing "
+            "spec/task_plan => skip those steps and reuse them."
+        )
+
+    return {
+        "status": "ok",
+        "branch": branch_name,
+        "verdict": verdict,
+        "artifacts": artifacts,
+        "existing_goal": existing_goal or None,
+        "request": request_text,
+        "overlap": overlap,
+        "containment": containment,
+        "shared_terms": shared,
+        "recommendation": recommendation,
+    }
+
+
 def record_scope_baseline(branch: str) -> dict:
     """Snapshot the current uncommitted / untracked file set as a baseline
     that validate_mutation_boundary will subtract from `actual` on future
@@ -9200,6 +9372,20 @@ if __name__ == "__main__":
 
     elif func_name == "list_plans":
         report = list_plans()
+        print(json.dumps(report, indent=2))
+
+    elif func_name == "check_plan_resume":
+        # CLI: check_plan_resume "<incoming request>" [--branch <branch>]
+        # Advisory preflight (always exits 0) — the skill branches on `verdict`.
+        rest = list(sys.argv[2:])
+        cpr_branch: Optional[str] = None
+        if "--branch" in rest:
+            bidx = rest.index("--branch")
+            if bidx + 1 < len(rest):
+                cpr_branch = rest[bidx + 1]
+                del rest[bidx:bidx + 2]
+        cpr_request = rest[0] if rest else ""
+        report = check_plan_resume(cpr_request, branch=cpr_branch)
         print(json.dumps(report, indent=2))
 
     elif func_name == "subtask_boundary_compact_check" and len(sys.argv) >= 3:
