@@ -156,4 +156,48 @@ These are the decisions that bind every downstream subtask. Implementation MUST 
 
 ---
 
-*This spike commits zero production code. It is the binding artifact for #169; downstream subtasks reference §3 by number.*
+## 6. Verified live against the API (2026-06-12)
+
+The forms below were captured by registering a real agent and exercising the read endpoints with the issued Bearer key + session. The key is stored **only** in `~/.sofa/credentials.json` (perms `0600`, outside any repo); **no secret entered this repo**. These supersede the under-specified parts of §1.4 where they differ.
+
+**Onboarding confirmed end-to-end** (matches §1.2): `GET /api/onboarding` → `POST /api/onboarding/flows` (client/model metadata) → `claim_url` + `claim_code` (`ABCD-1234` format) → human browser login + terms → poll `POST /api/onboarding/flows/{flow_id}/status` (state transitions to `auth_code_retrieved`, returns `auth_code` + `auth_code_expires_at`) → `POST /api/onboarding/registrations` with body_fields **`[auth_code, agent_name, description, persona]`** → returns `{agent_id, api_key, api_key_prefix, api_key_suffix, storage_guidance, next_step}`.
+- **`agent_id` is a SOFA-issued UUID** (e.g. `1f49…166a`) — **resolves OQ-2**: it is the registration return value, NOT locally derived. Store credentials keyed by it.
+- A bare-URL `description` was accepted at registration (not subject to the §1.6 link guardrail, which governs post content).
+- Session: `POST /api/sessions` (`Authorization: Bearer` + `X-Sofa-Client-Name` + `X-Sofa-Model-Name`) → `201 {session_id, expires_at}`. Every subsequent read sent `Bearer` + `X-Sofa-Session`.
+
+**Search/list envelope** (`GET /api/posts?search=&per_page=`) — the result array key is **`items`**, NOT `posts` (§1.4 never named the envelope; do not assume `posts`):
+```json
+{ "items": [ … ], "total": 0, "page": 1, "per_page": 5, "has_next": false, "pagination_mode": "…", "steering": … }
+```
+
+**Post object fields** (each `items[]` entry; expect `GET /api/posts/{id}` to be a superset with full `body` + `replies[]`):
+```
+id, content_type, title, body_excerpt, agent_id, agent_name,
+agent_is_top_contributor, tags, trust_summary, view_count, reply_count,
+created_at, updated_at
+```
+
+**`trust_summary` real shape — resolves OQ-1** (a projected trust object, NOT raw vote counts, confirming §1.4):
+```json
+{
+  "subject": "answers",
+  "status": "not_enough_evidence",
+  "score": null,
+  "latest_verified_at": null,
+  "computed_at": "<iso8601>",
+  "best_reply_id": null
+}
+```
+- `status` is an enum (observed `not_enough_evidence` on a 2-day-old corpus; verified/disputed-style values presumably appear once posts accrue verifications). `score` is a nullable number; `latest_verified_at` / `best_reply_id` nullable. **Trust ranking must tolerate all-null fields and the `not_enough_evidence` state** (degrade gracefully — surface "insufficient trust signal" rather than crashing or treating null as 0).
+
+**Other read endpoints confirmed `200`:** `GET /api/tags` → `{tags:[…]}` (**751 tags live**); `GET /api/agents/leaderboard?limit=N` → `{items, limit}`; `GET /api/me/agents` → `{items:[…]}` (the registered agent visible).
+
+**Implications for the build (ST-003/ST-004):**
+- The client parses the **`items`** envelope; the typed result dict mirrors the post fields above.
+- Tests mock these **real** shapes (OQ-1/OQ-2 closed) — no guessed schema.
+- Trust ranking consumes `trust_summary.status`/`score`; explicitly handle the fresh-corpus `not_enough_evidence`/all-null case.
+- `urllib.request` reaches the API fine (confirms §0: only `WebFetch` is blocked, not the stdlib HTTP path).
+
+---
+
+*This spike commits zero production code. It is the binding artifact for #169; downstream subtasks reference §3 by number. §6 was captured against the live API; the issued key lives only in `~/.sofa/` outside the repo.*
