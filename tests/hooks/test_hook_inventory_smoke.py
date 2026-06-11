@@ -422,6 +422,15 @@ def test_every_configured_hook_execs_via_shebang(hook_project: Path) -> None:
     env["CLAUDE_PROJECT_DIR"] = str(hook_project)
     env["PYTHONPATH"] = str(REPO_ROOT / "src")
     env.pop("MAP_INVOKED_BY", None)  # don't let the guard mask the exec path
+    # map-memory-finalize.py, exec'd past its MAP_INVOKED_BY guard, calls
+    # `claude -p` to finalize any dirty scratch the earlier memory hooks in this
+    # loop accumulated in the shared project. Where the `claude` CLI is
+    # installed+authenticated that subprocess can run up to its default 50s
+    # budget — far past this probe's 20s cap, which only checks exec-ability,
+    # not finalize semantics. Bound it so the exec check never blocks on a real
+    # finalization. (CI has no `claude` CLI, so the subprocess fails fast there
+    # regardless; this keeps the local gate green too.)
+    env["MAP_MEMORY_FINALIZE_TIMEOUT"] = "5"
 
     for name in sorted(_configured_hook_names()):
         hook_path = HOOKS_DIR / name
