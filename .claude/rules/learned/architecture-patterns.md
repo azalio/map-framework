@@ -162,6 +162,43 @@
   wrapped = f"# map:start\n{rendered}\n# map:end\n" if fenced else rendered
   ```
 
+- **Dotted-YAML-Key to Snake-Case Dataclass Dead-Toggle: Always Alias Before Field Mapping** (2026-06-12): When a YAML config file uses dotted hierarchical notation for a key (e.g. `sofa.enabled: true`) but the consuming Python dataclass uses flat snake_case (`sofa_enabled`), the field is a silent dead toggle unless the loader inserts an explicit key alias BEFORE the generic field-mapping loop. The loader sees `data['sofa.enabled']` and finds no dataclass field named `sofa.enabled`, so it silently skips the value; the field stays at its default (False) regardless of what the YAML says. This is distinct from type-coercion validation and from inter-component JSON contracts — it is specifically the YAML→dataclass key-name translation boundary where dotted notation does not automatically become underscore notation. [workflow: map-efficient]
+  ```python
+  # WRONG — loader maps field names by exact dict key; 'sofa.enabled' never matches 'sofa_enabled'
+  def load_map_config(path: Path) -> MapConfig:
+      data = yaml.safe_load(path.read_text()) or {}
+      return MapConfig(**{k: v for k, v in data.items() if k in MapConfig.__dataclass_fields__})
+      # sofa_enabled stays False even when YAML says 'sofa.enabled: true'
+
+  # CORRECT — alias the dotted key to snake_case BEFORE the generic mapping loop
+  def load_map_config(path: Path) -> MapConfig:
+      data = yaml.safe_load(path.read_text()) or {}
+      # Alias dotted YAML keys to their dataclass field names
+      if 'sofa.enabled' in data:
+          data['sofa_enabled'] = data.pop('sofa.enabled')
+      return MapConfig(**{k: v for k, v in data.items() if k in MapConfig.__dataclass_fields__})
+  ```
+
+- **OR-not-AND Idempotent Presence Check: Use Disjunction to Prevent Duplicate Injection** (2026-06-12): When deciding whether to append a line to a config file (gitignore, requirements.txt, any append-once config), the guard condition must be OR (marker-present OR line-already-present), never AND (marker-present AND line-already-present). AND requires BOTH conditions to suppress the append; if the user already has the line without your marker, AND evaluates False and appends a duplicate. OR suppresses the append whenever EITHER condition holds, making the operation truly idempotent regardless of how the user got the line there. This is a subtle correctness inversion: AND feels "precise" but is the wrong operator for a "do not add if already present" guarantee. [workflow: map-efficient]
+  ```python
+  # WRONG — AND guard: if user has '.sofa/' line but not our marker, appends a duplicate
+  def ensure_sofa_ignored(gitignore: Path) -> None:
+      text = gitignore.read_text() if gitignore.exists() else ''
+      marker_present = '# map:sofa' in text
+      line_present = '.sofa/' in text
+      if marker_present and line_present:   # AND: both must be true to skip
+          return
+      gitignore.write_text(text + '\n# map:sofa\n.sofa/\n')
+      # If user already has '.sofa/' without the marker -> appends DUPLICATE
+
+  # CORRECT — OR guard: skip if EITHER condition holds
+  def ensure_sofa_ignored(gitignore: Path) -> None:
+      text = gitignore.read_text() if gitignore.exists() else ''
+      if '# map:sofa' in text or '.sofa/' in text:  # OR: skip if line exists by any means
+          return
+      gitignore.write_text(text + '\n# map:sofa\n.sofa/\n')
+  ```
+
 - **Spike-First Gating: High-Risk Binding Decisions Require a Docs-Only Artifact Before Implementation** (2026-06-04): When a subtask's answer would bind downstream implementation (which channel carries a value, which API call is idempotent, what schema a subprocess emits), run it FIRST as a docs-only spike that writes an artifact naming the empirical answer + the binding strategy, and commits ZERO production code. Downstream subtasks reference the artifact by name and consume it, not assumptions. A wrong assumption that is not spiked propagates into every component built on it and forces a rewrite cascade. In this workflow a research-agent wrongly claimed skill-activation wasn't recoverable from `claude -p`; the ST-001 spike empirically corrected it before any dispatcher code existed. The spike artifact MUST contain a named "binding strategy" section, not just findings (Monitor hard-stopped once for a missing strategy section). [workflow: map-efficient]
 
 - **Producer-Owns-Parse: The Component That Owns the Subprocess Owns All Derived Fields; Consumers Read the Typed Result** (2026-06-04): When component A launches a subprocess (or owns a raw source) and component B consumes the result, ALL parsing/derivation (transcript reads, field extraction, signal combination) lives in A; B reads only the typed result struct and never re-implements parsing. Two payoffs: (1) a single parse site that a Mock producer can supply directly, so consumer tests need no subprocess/transcript fixture; (2) when the raw output schema changes, only A changes. Putting any parse in B re-couples the modules through the raw format. Extends "Contract-First Inter-Component JSON Schemas": the contract is A's typed struct, and the parse-to-struct boundary is A's responsibility exclusively. [workflow: map-efficient]

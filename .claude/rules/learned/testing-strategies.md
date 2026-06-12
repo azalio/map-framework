@@ -140,6 +140,80 @@ paths:
   # 4. commit file + test together
   ```
 
+- **Mock-Shape Fidelity to Live API Response Shape: Mock Dict Objects, Not Simplified Primitives** (2026-06-12): When writing tests for code that consumes an external API, mock with the ACTUAL live response shape for every nested field — even fields that appear simple in the feature under test. If the live API returns `tags` as `list[{id, name, description}]` but the test uses `list[str]`, the rendering code that does `', '.join(str(t))` passes all tests yet leaks Python dict reprs (`{'id': 1, 'name': 'python', ...}`) into production output. This mismatch is invisible until live verification. For each field used in the code path under test, look up the actual API schema and replicate the exact JSON shape in the fixture. Test the field-extraction step (e.g. `t['name']` vs `str(t)`) as an explicit unit test with both shapes (string fallback + dict real-shape) so a regression is caught before live exercise. [workflow: map-efficient]
+  ```python
+  # WRONG — tags mocked as plain strings; passes tests, breaks in production
+  MOCK_POST = {
+      'title': 'How to use asyncio',
+      'tags': ['python', 'asyncio'],          # live API returns dicts, not strings
+      'body': 'Use async/await...',
+  }
+  # Renderer: ', '.join(str(t) for t in post['tags'])
+  # => 'python, asyncio' in tests; "{'id':1,'name':'python',...}, ..." in production
+
+  # CORRECT — replicate the actual live API shape in the fixture
+  MOCK_POST = {
+      'title': 'How to use asyncio',
+      'tags': [                               # real shape: list of dicts
+          {'id': 1, 'name': 'python', 'description': 'the Python language'},
+          {'id': 2, 'name': 'asyncio', 'description': 'async I/O library'},
+      ],
+      'body': 'Use async/await...',
+  }
+  # Renderer must extract names explicitly and tolerate both shapes:
+  # ', '.join(t['name'] if isinstance(t, dict) else str(t) for t in post['tags'])
+  ```
+
+- **Test-Induced Bytecode Cache Pollution in Generated Trees: Suppress Bytecode When Importing Shipped Scripts by Path** (2026-06-12): When a test imports a Python script from a generated (rendered) tree using `importlib.util.spec_from_file_location`, Python writes `__pycache__/*.pyc` files into that tree. Byte-identity tree-walk tests that treat any non-source file as un-rendered then fail — not because anything was incorrectly generated, but because the TEST itself polluted the tree it was validating. Fix at two levels: (1) suppress bytecode writes in the test module (`sys.dont_write_bytecode = True` before the import); (2) exclude `__pycache__/` and `*.pyc` patterns from all tree-walk parity and file-sync checks. The broader lesson: a test that loads source from a tree it is also measuring for purity must be written to be side-effect-free with respect to that tree. This failure mode is triggered by the FIRST language-importable shipped artifact in a tree that previously contained only non-executable files. [workflow: map-efficient]
+  ```python
+  # WRONG — importing the shipped script leaves __pycache__/*.pyc in the generated tree
+  import importlib.util
+  spec = importlib.util.spec_from_file_location(
+      'sofa_search', '.claude/skills/map-so-search/scripts/sofa_search.py'
+  )
+  mod = importlib.util.module_from_spec(spec)
+  spec.loader.exec_module(mod)
+  # => writes .claude/skills/.../scripts/__pycache__/sofa_search.cpython-311.pyc
+  # => byte-identity tree-walk test sees stray .pyc, reports render mismatch
+
+  # CORRECT — suppress bytecode before import; exclude __pycache__ in walk helpers
+  import sys, importlib.util
+  _prev = sys.dont_write_bytecode
+  sys.dont_write_bytecode = True
+  try:
+      spec = importlib.util.spec_from_file_location(
+          'sofa_search', '.claude/skills/map-so-search/scripts/sofa_search.py'
+      )
+      mod = importlib.util.module_from_spec(spec)
+      spec.loader.exec_module(mod)
+  finally:
+      sys.dont_write_bytecode = _prev
+
+  # In tree-walk parity helpers — exclude cache dirs from the walk:
+  def _walk_tree(root):
+      for p in root.rglob('*'):
+          if '__pycache__' in p.parts or p.suffix == '.pyc':
+              continue
+          yield p
+  ```
+
+- **First-Instance of New Artifact Kind Unmasks Hardcoded Count Guards: Derive Expected Sets Dynamically** (2026-06-12): When you add the very first instance of a new file type or artifact kind to a catalog (e.g. the first Python script shipped inside a skill directory), hardcoded count assertions (`assert len(skill_names) == 16`), format-validation tests, and sync-check tests all fail — not because the new artifact is wrong, but because those tests were written against a fixed historical set and never anticipated the new kind. The correct pattern: any test that counts or enumerates catalog members must derive its expected set DYNAMICALLY from the catalog source of truth (e.g. read `skill-rules.json` at test time), never from a hardcoded literal. A test that fails on the addition of a correct, passing artifact is a false gate. [workflow: map-efficient]
+  ```python
+  # WRONG — hardcoded count breaks the moment a new skill is added
+  def test_skill_count():
+      rules = json.loads(Path('.claude/skills/skill-rules.json').read_text())
+      assert len(rules['skills']) == 16  # breaks when first hybrid skill is registered
+
+  # CORRECT — derive expected set from the catalog dynamically
+  def test_all_registered_scripts_exist():
+      rules = json.loads(Path('.claude/skills/skill-rules.json').read_text())
+      for skill in rules['skills']:
+          for effect in skill.get('runtimeEffects', []):
+              script = Path('.claude/skills') / skill['name'] / 'scripts' / effect
+              assert script.exists(), f"Registered runtimeEffect {script} not found"
+      # Count comes from catalog, not a literal — works for N=0, 1, ..., N+1
+  ```
+
 - **Blueprint-Named Test Functions Are a Monitor Contract: Author Them in the Same Subtask as the Code** (2026-06-04): When a subtask blueprint's `test_strategy` names specific pytest function names (e.g. `test_vc3_resume_skips_present_cell_ids`), Monitor treats those names as a HARD completeness contract: a subtask whose logic is correct but whose blueprint-named functions do not yet exist gets `valid=false` (hard stop). The completeness unit is code + named-test-functions-together, not code alone — the blueprint author chose the names to specify observable behavior, so an absent name means the behavior is unverified. Never stub a named test with `pass`/`# TODO` and call the subtask done; the stub satisfies the import but not the contract. In this workflow ST-005's runner code was correct but Monitor hard-stopped until the four named VC tests were authored with real assertions. [workflow: map-efficient]
 
 - **Final Verification Must Check Shipped Docs Against Actual Behavior, Then Grep for the Same Drift Class** (2026-06-04): After code+tests are green, a dedicated final-verification pass must validate that user-facing docs (SKILL.md, README, CLI `--help`) match actual behavior: default values, accepted schema formats, flag names, output field names. Prose drift is invisible to pytest/ruff/mypy. When the first drift instance is found, immediately grep the WHOLE doc for the same class of claim (every `--flag default`, every schema example, every accepted file-format mention) before moving on — drift clusters because the doc was written once from a design doc, not from running code. Here the final-verifier caught a `--max-concurrency` default of 4 (actual 1); grepping the same file then surfaced a fictional YAML eval-set schema block + `.yaml` examples that the JSON-only loader could never parse. [workflow: map-efficient]
