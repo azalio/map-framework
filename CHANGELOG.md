@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.12.0] - 2026-06-12
+
 ### Changed
 - **`mapify upgrade` now self-upgrades the CLI to the latest release.**
   Previously `mapify upgrade` refreshed the *current project's* shipped MAP
