@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Legacy unfenced managed files are now silently upgraded to the fenced
+  layout, removing the alarming `MIGRATION:` stderr flood on every `mapify
+  init`.** Previously a managed file that carried metadata but no `map:start` /
+  `map:end` fence (a pre-fence "Phase B" install) printed a scary per-file
+  `MIGRATION: … Re-install with mapify to add fence structure.` line to stderr —
+  yet the re-install never actually added the fence, so the file stayed
+  unfenced and the same lines re-appeared on **every** subsequent `mapify init`.
+  The copier now completes the migration in place: it writes the proper fence
+  markers around the managed region (exactly like a fresh install), so the
+  upgrade is genuinely one-time and the notice no longer reprints. The upgrade
+  is silent; drifted files are still backed up to `.bak.<ts>` before rewrite.
+
 ## [3.12.0] - 2026-06-12
 
 ### Changed

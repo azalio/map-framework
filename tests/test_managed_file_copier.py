@@ -608,42 +608,52 @@ class TestFenceAwareMerge:
 
     # ------------------------------------------------------------------ VC3
     @pytest.mark.parametrize("ext,start_tok,end_tok", _FENCE_FORMATS)
-    def test_vc3_phase_b_no_fence_fully_managed_no_regression(
+    def test_vc3_legacy_unfenced_upgraded_to_fenced_silently(
         self, tmp_path, ext: str, start_tok: str, end_tok: str, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """VC3 [INV-T]: Phase B file (metadata, no fence) → fully managed + migration notice."""
+        """VC3 [INV-T]: legacy unfenced file (metadata, no fence) is silently upgraded
+        to the fenced layout — fence markers added, no alarming per-file stderr output,
+        and the migration is one-time (idempotent on re-copy)."""
         src_body = _src_body_for(ext)
         src = tmp_path / f"tmpl{ext}"
         src.write_text(src_body, encoding="utf-8")
         dest = tmp_path / f"dest{ext}"
 
-        # Simulate a Phase B install: inject metadata but NO fence
+        # Simulate a legacy install: inject metadata but NO fence
         template_hash = compute_hash(src_body)
         phase_b_content = inject_metadata(src_body, ext, "1.0.0", template_hash)
         dest.write_text(phase_b_content, encoding="utf-8")
 
-        # Re-copy with Phase C copier
+        # Re-copy: migration should complete by adding the fence
         r = copy_managed_file(src, dest, "1.1.0")
-        assert r.success, f"Phase B → C migration failed: {r.reason}"
+        assert r.success, f"legacy → fenced migration failed: {r.reason}"
+        assert r.migrated, "result must flag the one-time legacy → fenced migration"
 
-        # Must have written something (fully managed — no fence added on Phase B migration;
-        # fence only comes with a full re-install via `mapify init`)
-        del start_tok, end_tok  # Phase B path doesn't add fence tokens by design
         content = dest.read_text(encoding="utf-8")
-        assert "MAP-MANAGED" in content, "Metadata must be present after re-copy"
+        assert "MAP-MANAGED" in content, "Metadata must be present after migration"
+        # The migration must now write the fence markers (the whole point of the fix).
+        assert start_tok in content, f"start fence {start_tok!r} missing after migration"
+        assert end_tok in content, f"end fence {end_tok!r} missing after migration"
         # Check key lines of the managed body are present (shebang may be reordered)
         for line in src_body.splitlines():
             stripped = line.strip()
             if stripped and not stripped.startswith("#!"):
                 assert stripped in content, (
-                    f"Body line {stripped!r} missing from re-copied content"
+                    f"Body line {stripped!r} missing from migrated content"
                 )
 
-        # Migration notice must appear on stderr
+        # No alarming per-file notice should reach stderr — the upgrade is silent.
         stderr_out = capsys.readouterr().err
-        assert "MIGRATION" in stderr_out or "Phase B" in stderr_out or "no fence" in stderr_out.lower(), (
-            f"Migration notice expected in stderr; got: {stderr_out!r}"
+        assert "MIGRATION" not in stderr_out and "Phase B" not in stderr_out, (
+            f"legacy upgrade must be silent; got stderr: {stderr_out!r}"
         )
+
+        # Idempotent: a second copy now finds a proper fence (state == 'found'),
+        # so it takes the normal merge path and does NOT re-migrate.
+        r2 = copy_managed_file(src, dest, "1.1.0")
+        assert r2.success
+        assert not r2.migrated, "migration must be one-time, not repeated on every copy"
+        assert capsys.readouterr().err == "", "re-copy of a fenced file must be silent"
 
     # ------------------------------------------------------------------ VC4
     @pytest.mark.parametrize("ext,start_tok,end_tok", _FENCE_FORMATS)

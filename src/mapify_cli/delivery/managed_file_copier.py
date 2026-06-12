@@ -49,6 +49,7 @@ class CopyResult:
     backup_path: Optional[Path] = None
     reason: str = ""
     first_install: bool = False
+    migrated: bool = False
 
 
 @dataclass
@@ -754,50 +755,49 @@ def copy_managed_file(
         return result
 
     if fence_result.state == "no_fence":
-        # INV-T / D10: Phase B install (metadata present, no fence)
-        # Treat as fully managed (current behavior, no regression) + emit notice
-        notice = (
-            f"MIGRATION: {dest}: Phase B install detected (metadata present, no fence). "
-            "Treating as fully managed. Re-install with mapify to add fence structure."
-        )
-        print(notice, file=sys.stderr)
-
-        # Compute hash of clean dest content to detect drift
+        # INV-T / D10: legacy unfenced install (metadata present, no fence markers).
+        # Silently upgrade it to the fenced layout — exactly what a fresh install
+        # writes (Case A).  Legacy unfenced files were fully managed (no user tail),
+        # so the entire body becomes the managed region inside the fence.
+        #
+        # This migration is one-time and invisible by design: once the fence is
+        # written, the next copy_managed_file() run finds state == "found" and takes
+        # the normal merge path, so this branch never fires for that file again.
+        # We deliberately emit NO per-file notice — a routine, self-healing upgrade
+        # should not flood stderr with alarming lines on every `mapify init`.
         stored_hash = existing_meta.get("template_hash", "")
         _, clean_dest = extract_metadata(dest_content, ext)
         current_hash = compute_hash(clean_dest)
 
         result = CopyResult(src=src, dest=dest)
-        result.reason = notice
+        result.migrated = True
+        result.reason = "upgraded legacy unfenced file to fenced layout"
 
-        if stored_hash and current_hash == stored_hash:
-            # No drift; upgrade metadata only
-            final_text = injected
+        # Back up only when the user modified the previously fully-managed body
+        # (hash drift), mirroring the fenced-merge drift-backup behavior.
+        if stored_hash and current_hash != stored_hash:
+            result.drifted = True
+            ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+            backup_path = dest.with_suffix(f"{dest.suffix}.{ts}.bak")
             try:
-                _atomic_write(dest, final_text)
-                result.success = True
-            except OSError as exc:
-                result.success = False
-                result.reason += f" write failed: {exc}"
-        else:
-            # Drift or unknown hash → backup + overwrite fully managed
-            if stored_hash:
-                result.drifted = True
-                ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
-                backup_path = dest.with_suffix(f"{dest.suffix}.{ts}.bak")
-                try:
-                    shutil.copy2(dest, backup_path)
-                    result.backed_up = True
-                    result.backup_path = backup_path
-                except OSError:
-                    result.reason += " (backup failed)"
-            final_text = injected
-            try:
-                _atomic_write(dest, final_text)
-                result.success = True
-            except OSError as exc:
-                result.success = False
-                result.reason += f" write failed: {exc}"
+                shutil.copy2(dest, backup_path)
+                result.backed_up = True
+                result.backup_path = backup_path
+            except OSError:
+                result.reason += " (backup failed)"
+
+        final_text = _build_fenced_content(
+            metadata_line=meta_prefix.rstrip("\n"),
+            start_token=start_token,
+            end_token=end_token,
+            managed_body=body_after_meta,
+        )
+        try:
+            _atomic_write(dest, final_text)
+            result.success = True
+        except OSError as exc:
+            result.success = False
+            result.reason = f"write failed: {exc}"
 
         return result
 
