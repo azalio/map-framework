@@ -599,6 +599,27 @@ class TestSofaGitignoreMerge:
         assert "# map:sofa" in content
         assert ".sofa/" in content
 
+    def test_vc1_init_default_no_sofa_artifacts(self, tmp_path):
+        """VC1 [AC-6][INV-SOFA-1]: init WITHOUT --sofa creates no `.sofa/`
+        directory and writes no active `sofa.enabled: true` line."""
+        os.chdir(tmp_path)
+
+        result = runner.invoke(app, ["init", ".", "--no-git", "--mcp", "none"])
+
+        assert result.exit_code == 0, f"init failed: {result.stdout}"
+        # No credential directory is created on the default (disabled) path.
+        assert not (tmp_path / ".sofa").exists()
+        # The generated config never activates SOFA.
+        config_text = (tmp_path / ".map" / "config.yaml").read_text()
+        active_sofa = [
+            line
+            for line in config_text.splitlines()
+            if line.strip().startswith("sofa.enabled:")
+        ]
+        assert active_sofa == [], (
+            f"default config must not activate sofa.enabled: {active_sofa}"
+        )
+
 
 class TestCheckCommand:
     """Test the check command."""

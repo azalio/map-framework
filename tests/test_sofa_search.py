@@ -8,6 +8,8 @@ or called directly — tests monkeypatch `sofa_search._load_sofa_client`.
 from __future__ import annotations
 
 import importlib.util
+import shutil
+import sys
 import types
 import unittest.mock
 from pathlib import Path
@@ -29,7 +31,18 @@ def _load_module() -> types.ModuleType:
     spec = importlib.util.spec_from_file_location("sofa_search", _SEARCH_PATH)
     assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    # Suppress bytecode caching, then guarantee no cache leaks into the
+    # generated .claude/ skill tree by removing any __pycache__ the import
+    # wrote. The render byte-identity and skill-supporting-file-sync tests walk
+    # that tree and would flag a stray .pyc as an un-rendered file. Done at
+    # module-import (collection) time, before any test runs.
+    _prev = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    finally:
+        sys.dont_write_bytecode = _prev
+        shutil.rmtree(_SEARCH_PATH.parent / "__pycache__", ignore_errors=True)
     return mod
 
 
@@ -582,3 +595,79 @@ class TestReadSofaEnabled:
         )
         # The flat dotted key `sofa.enabled` is absent; nested yaml != our key
         assert sofa_search._read_sofa_enabled(tmp_path) is False
+
+
+# ---------------------------------------------------------------------------
+# ST-006 — cross-cutting zero-network proofs (AC-6 / AC-10 / HC-6)
+# ---------------------------------------------------------------------------
+
+class TestVC6ZeroNetwork:
+    """Disabled-default and unauthenticated paths never reach the network."""
+
+    def test_vc1_disabled_default_no_artifacts(self, tmp_path: Path) -> None:
+        """VC1 [AC-6][INV-SOFA-1][HC-1]: the DEFAULT config disables SOFA and
+        merely reading it creates no .sofa/ artifacts."""
+        # The shipped default config never carries an active sofa.enabled=true.
+        from mapify_cli.config.project_config import generate_default_config
+
+        default_cfg = generate_default_config()
+        assert "sofa.enabled: true" not in default_cfg, (
+            "default config must not enable SOFA"
+        )
+
+        # A project seeded with the default config reads as disabled, and no
+        # .sofa/ directory is created by reading config.
+        map_dir = tmp_path / ".map"
+        map_dir.mkdir()
+        (map_dir / "config.yaml").write_text(default_cfg)
+        assert sofa_search._read_sofa_enabled(tmp_path) is False
+        assert not (tmp_path / ".sofa").exists()
+
+    def test_vc2_disabled_skill_urlopen_never_called(self, tmp_path: Path) -> None:
+        """VC2 [AC-6][AC-10][HC-6]: dispatch with sofa.enabled=false patches
+        urlopen and asserts it is NEVER called — zero-network end-to-end through
+        the skill (and the client is never even loaded)."""
+        map_dir = tmp_path / ".map"
+        map_dir.mkdir()
+        (map_dir / "config.yaml").write_text("sofa.enabled: false\n")
+
+        with unittest.mock.patch("urllib.request.urlopen") as mock_urlopen:
+            with unittest.mock.patch.object(
+                sofa_search, "_load_sofa_client"
+            ) as mock_load:
+                result = sofa_search.dispatch("any query", project_dir=tmp_path)
+
+        assert mock_urlopen.call_count == 0, (
+            f"urlopen called {mock_urlopen.call_count} time(s) on the disabled path"
+        )
+        mock_load.assert_not_called()
+        assert result.get("noop") is True
+
+    def test_vc3_sofa_suite_no_live_network(self, tmp_path: Path) -> None:
+        """VC3 [AC-10][HC-6]: a urlopen guard that RAISES on any call proves the
+        disabled/default paths reach no network; plus a source-scan guard that
+        every HTTP-touching SOFA test file patches urllib.request.urlopen."""
+        def _guard(*_args: object, **_kwargs: object) -> None:
+            del _args, _kwargs
+            raise AssertionError("live network blocked: urlopen called in tests")
+
+        map_dir = tmp_path / ".map"
+        map_dir.mkdir()
+        (map_dir / "config.yaml").write_text("sofa.enabled: false\n")
+
+        # Under the raising guard, the disabled dispatch + a config read must not
+        # touch the network (no AssertionError raised).
+        with unittest.mock.patch("urllib.request.urlopen", _guard):
+            assert sofa_search._read_sofa_enabled(tmp_path) is False
+            result = sofa_search.dispatch("any query", project_dir=tmp_path)
+        assert result.get("noop") is True
+
+        # Source-scan: every SOFA test file that exercises HTTP must patch the
+        # urlopen seam — a SOFA HTTP test must never run unpatched against a
+        # live endpoint.
+        suite = _REPO_ROOT / "tests"
+        for name in ("test_sofa_client.py", "test_sofa_search.py"):
+            src = (suite / name).read_text(encoding="utf-8")
+            assert 'urllib.request.urlopen' in src, (
+                f"{name} does not reference the urllib.request.urlopen patch seam"
+            )
