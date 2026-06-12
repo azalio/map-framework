@@ -70,12 +70,12 @@ from mapify_cli.delivery import (
     create_evaluator_content as create_evaluator_content,
     create_reflector_content as create_reflector_content,
     create_documentation_reviewer_content as create_documentation_reviewer_content,
-    create_agent_files,
-    create_reference_files,
-    create_command_files,
-    create_skill_files,
-    create_hook_files,
-    create_config_files,
+    create_agent_files as create_agent_files,
+    create_reference_files as create_reference_files,
+    create_command_files as create_command_files,
+    create_skill_files as create_skill_files,
+    create_hook_files as create_hook_files,
+    create_config_files as create_config_files,
     create_commands_dir as create_commands_dir,
 )
 from mapify_cli.config import (
@@ -1259,32 +1259,62 @@ def doctor(debug: bool = typer.Option(False, "--debug", help="Enable debug loggi
             console.print(f"  • {path_name}")
 
 
+def _mapify_install_kind() -> str:
+    """Classify how this mapify CLI is installed.
+
+    Returns one of:
+      - ``"uv-tool"``: installed via ``uv tool install`` (self-upgradeable with uv)
+      - ``"pip"``:     installed into a regular/virtualenv site-packages (pip -U)
+      - ``"source"``:  running from a source checkout / editable install
+        (self-upgrade disabled — the user owns the tree)
+    """
+    pkg = str(Path(__file__).resolve()).replace("\\", "/")
+    if "/uv/tools/" in pkg:
+        return "uv-tool"
+    if "/site-packages/" in pkg or "/dist-packages/" in pkg:
+        return "pip"
+    return "source"
+
+
+def _self_upgrade_command(kind: str) -> Optional[List[str]]:
+    """Return the argv that upgrades mapify-cli for ``kind``, or None if unknown."""
+    if kind == "uv-tool":
+        uv = shutil.which("uv")
+        return [uv, "tool", "upgrade", "mapify-cli"] if uv else None
+    if kind == "pip":
+        return [sys.executable, "-m", "pip", "install", "--upgrade", "mapify-cli"]
+    return None
+
+
+def _run_self_upgrade(cmd: List[str]) -> int:
+    """Run the self-upgrade command, streaming its output. Returns the exit code.
+
+    Returns ``127`` when the executable is not found. Isolated into its own
+    function so tests can stub the subprocess invocation without patching the
+    module-level ``subprocess`` used by many other commands.
+    """
+    try:
+        return subprocess.run(cmd, check=False).returncode
+    except FileNotFoundError:
+        return 127
+
+
 @app.command()
 def upgrade():
-    """Upgrade MAP agents to the latest version."""
+    """Upgrade the mapify CLI itself to the latest released version.
+
+    This refreshes the installed ``mapify-cli`` package (the tool), not the
+    files inside a project. After upgrading, run ``mapify init . --force`` to
+    refresh a project's shipped MAP files with the new templates.
+    """
     show_banner()
-    project_path = Path.cwd()
 
-    if not is_map_initialized(project_path):
-        console.print(
-            "[yellow]MAP Framework not initialized in this directory.[/yellow]"
-        )
-        console.print("Run: [cyan]mapify init .[/cyan]")
-        raise typer.Exit(0)
-
-    if _detect_provider(project_path) == "codex":
-        console.print(
-            "[yellow]Codex projects: re-run "
-            "[cyan]mapify init . --provider codex --force[/cyan] to refresh.[/yellow]"
-        )
-        raise typer.Exit(0)
-
-    console.print("[cyan]Checking for updates...[/cyan]")
+    console.print("[cyan]Checking for the latest release...[/cyan]")
     latest_release = get_latest_release("azalio", "map-framework")
-    latest_version = None
+    latest_version: Optional[str] = None
 
     if latest_release and latest_release.get("tag_name"):
-        latest_version = latest_release["tag_name"].lstrip("v")
+        latest_version = str(latest_release["tag_name"]).lstrip("v")
         if parse_version(latest_version) > parse_version(__version__):
             console.print(
                 f"[yellow]New version available:[/yellow] {latest_version} "
@@ -1294,97 +1324,61 @@ def upgrade():
                 console.print(f"Release: [cyan]{latest_release['html_url']}[/cyan]")
         else:
             console.print(
-                f"[green]You are on the latest installed version ({__version__}).[/green]"
+                f"[green]Already on the latest release ({__version__}).[/green]"
             )
+            console.print("[dim]Nothing to upgrade.[/dim]")
+            raise typer.Exit(0)
     else:
         console.print(
-            "[dim]Could not fetch release metadata; refreshing local templates anyway.[/dim]"
+            "[dim]Could not fetch release metadata; attempting upgrade anyway.[/dim]"
         )
 
-    tracker = StepTracker("Upgrade MAP Framework Files")
+    kind = _mapify_install_kind()
 
-    # Track drift across all file types
-    from mapify_cli.delivery.managed_file_copier import DriftReport
+    if kind == "source":
+        source_root = Path(__file__).resolve().parents[2]
+        console.print(
+            "[yellow]Running from a source checkout — self-upgrade is disabled.[/yellow]"
+        )
+        console.print(f"[dim]Source: {source_root}[/dim]")
+        console.print(
+            "[dim]Update with [cyan]git pull[/cyan] "
+            "(then re-install the tool if needed).[/dim]"
+        )
+        raise typer.Exit(0)
 
-    drift_report = DriftReport()
-
-    existing_project_mcp = read_project_mcp_json(project_path / ".mcp.json")
-    existing_server_names = []
-    if existing_project_mcp:
-        existing_server_names = list(existing_project_mcp.get("mcpServers", {}).keys())
-
-    tracker.add("agents", "Refresh agent templates")
-    tracker.start("agents")
-    agent_count = create_agent_files(project_path, existing_server_names, drift_report)
-    tracker.complete("agents", f"{agent_count} files")
-
-    tracker.add("commands", "Refresh slash commands")
-    tracker.start("commands")
-    command_count = create_command_files(project_path, drift_report)
-    tracker.complete("commands", f"{command_count} files")
-
-    tracker.add("skills", "Refresh skills")
-    tracker.start("skills")
-    skill_count = create_skill_files(project_path)
-    tracker.complete("skills", f"{skill_count} folders")
-
-    tracker.add("references", "Refresh reference files")
-    tracker.start("references")
-    ref_count = create_reference_files(project_path, drift_report)
-    tracker.complete("references", f"{ref_count} files")
-
-    tracker.add("hooks", "Refresh shared hooks")
-    tracker.start("hooks")
-    hook_count = create_hook_files(project_path, drift_report)
-    tracker.complete("hooks", f"{hook_count} files")
-
-    tracker.add("configs", "Refresh config files")
-    tracker.start("configs")
-    config_count = create_config_files(project_path, drift_report)
-    tracker.complete("configs", f"{config_count} files")
-
-    tracker.add("permissions", "Merge local approvals")
-    tracker.start("permissions")
-    create_or_merge_project_settings_local(project_path)
-    tracker.complete("permissions", "settings.local.json updated")
-
-    if (project_path / ".claude" / "mcp_config.json").exists() or (
-        project_path / ".mcp.json"
-    ).exists():
-        tracker.add("mcp", "Preserve MCP config")
-        tracker.complete("mcp", "left unchanged")
+    cmd = _self_upgrade_command(kind)
+    if cmd is None:
+        console.print(
+            "[red]Could not determine how to upgrade mapify automatically.[/red]"
+        )
+        console.print(
+            "Upgrade manually: [cyan]uv tool upgrade mapify-cli[/cyan] "
+            "or [cyan]pip install --upgrade mapify-cli[/cyan]"
+        )
+        raise typer.Exit(1)
 
     console.print()
-    console.print(tracker.render())
+    console.print(f"[cyan]Upgrading mapify-cli...[/cyan] [dim]({' '.join(cmd)})[/dim]")
+    exit_code = _run_self_upgrade(cmd)
 
-    # Show drift warnings if any files were modified by the user
-    if drift_report.has_drift:
+    if exit_code != 0:
         console.print()
         console.print(
-            f"[yellow]⚠ {len(drift_report.drifted_files)} file(s) had local modifications:[/yellow]"
+            f"[red]Upgrade command failed (exit {exit_code}).[/red] Run it manually:"
         )
-        for r in drift_report.drifted_files:
-            try:
-                rel = r.dest.relative_to(project_path)
-            except ValueError:
-                rel = r.dest
-            backup_note = ""
-            if r.backed_up and r.backup_path:
-                try:
-                    backup_rel = r.backup_path.relative_to(project_path)
-                except ValueError:
-                    backup_rel = r.backup_path
-                backup_note = f" → backup: [cyan]{backup_rel}[/cyan]"
-            console.print(f"  [yellow]•[/yellow] {rel}{backup_note}")
-        console.print(
-            "[dim]Your changes were backed up to .bak files. "
-            "Review and re-apply any customizations if needed.[/dim]"
-        )
+        console.print(f"  [cyan]{' '.join(cmd)}[/cyan]")
+        raise typer.Exit(1)
 
+    target = latest_version or "the latest release"
     console.print()
-    console.print("[bold green]Upgrade complete.[/bold green]")
     console.print(
-        "[dim]Note: upgrade refreshes shipped MAP files but does not overwrite project-specific MCP selections.[/dim]"
+        f"[bold green]mapify upgraded[/bold green] (was {__version__}, now {target})."
+    )
+    console.print("[dim]Confirm with [cyan]mapify --version[/cyan].[/dim]")
+    console.print(
+        "[dim]To refresh this project's MAP files with the new templates, run "
+        "[cyan]mapify init . --force[/cyan].[/dim]"
     )
 
 

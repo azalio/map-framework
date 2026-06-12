@@ -171,13 +171,13 @@
           ]
         },
         "upgrade": {
-          "description": "Refresh MAP Framework files in the current project",
+          "description": "Upgrade the mapify CLI itself to the latest released version",
           "usage": "mapify upgrade",
           "parameters": {},
           "examples": [
             {
               "command": "mapify upgrade",
-              "description": "Refresh shipped MAP files in the current project"
+              "description": "Self-upgrade mapify-cli to the latest release (uv tool / pip), then run 'mapify init . --force' to refresh project files"
             }
           ]
         }
