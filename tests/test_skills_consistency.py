@@ -477,9 +477,12 @@ def detect_skill_deps(skill_dir: Path) -> dict[str, set[str]]:
 
 
 def test_skill_discovery_non_empty(skill_names: list[str]) -> None:
-    """Guard: skill-rules.json must list exactly 16 skills (prevents vacuous pass)."""
-    assert len(skill_names) == 16, (
-        f"Expected 16 skills in skill-rules.json, found {len(skill_names)}: "
+    """Guard: skill-rules.json must list exactly 17 skills (prevents vacuous pass).
+
+    17 = the 16 core MAP skills + map-so-search (the opt-in SOFA search skill).
+    """
+    assert len(skill_names) == 17, (
+        f"Expected 17 skills in skill-rules.json, found {len(skill_names)}: "
         f"{sorted(skill_names)}"
     )
 

@@ -574,6 +574,23 @@ class TestSkillStructure:
                 f"Use one of: {', '.join(sorted(SUPPORTED_SKILL_CLASSES))}."
             )
 
+    def test_vc1_vc2_map_so_search_hybrid_runtimeeffects(self, skill_rules):
+        """VC1/VC2 [AC-5]: map-so-search is registered as skillClass=hybrid with
+        runtimeEffects EXACTLY {network-http-read, filesystem-sofa-credentials}."""
+        entry = skill_rules.get("skills", {}).get("map-so-search")
+        assert entry is not None, "map-so-search missing from skill-rules.json"
+        assert entry.get("skillClass") == "hybrid", (
+            f"map-so-search skillClass must be 'hybrid', got {entry.get('skillClass')!r}"
+        )
+        assert sorted(entry.get("runtimeEffects", [])) == [
+            "filesystem-sofa-credentials",
+            "network-http-read",
+        ], (
+            "map-so-search runtimeEffects must be exactly "
+            "['network-http-read', 'filesystem-sofa-credentials'] (no extras, no omissions); "
+            f"got {entry.get('runtimeEffects')!r}"
+        )
+
     def test_task_skill_class_matches_manual_runtime_metadata(
         self, skills_dir, skill_folders, skill_rules
     ):
@@ -817,6 +834,11 @@ class TestSkillStructure:
                 for path in root.rglob("*")
                 if path.is_file()
                 and path.name not in {"SKILL.md", "skill-rules.json"}
+                # Python bytecode caches are generated artifacts (a test that
+                # imports a rendered skill script writes them into .claude/),
+                # never shipped supporting files — exclude them from the sync.
+                and "__pycache__" not in path.parts
+                and path.suffix != ".pyc"
             }
 
         source_files = supporting_files(skills_dir)

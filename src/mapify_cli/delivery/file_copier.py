@@ -461,6 +461,44 @@ def create_map_tools(project_path: Path) -> int:
     return count
 
 
+_SOFA_GITIGNORE_MARKER = "# map:sofa"
+_SOFA_GITIGNORE_BLOCK = (
+    "# map:sofa — SOFA credential dir (opt-in); never commit. See docs/USAGE.md\n"
+    ".sofa/\n"
+)
+
+
+def merge_sofa_gitignore(project_path: Path) -> int:
+    """Idempotently add .sofa/ entry to the repo-root .gitignore.
+
+    Operates on ``project_path / ".gitignore"`` (NOT ``.claude/.gitignore``).
+    Returns 1 when the file was created or modified, 0 when already up-to-date
+    (no-op / idempotent).
+    """
+    gitignore = project_path / ".gitignore"
+
+    if not gitignore.exists():
+        gitignore.write_text(_SOFA_GITIGNORE_BLOCK)
+        return 1
+
+    existing = gitignore.read_text()
+
+    # Idempotency: skip if our marker OR an active `.sofa/` line is already
+    # present. The OR is deliberate (not AND): if the user already ignores
+    # `.sofa/` without our marker, appending the block would create a duplicate
+    # entry. Skipping on either signal keeps `.sofa/` present exactly once. The
+    # stripped-line-set check is symmetric with ensure_sofa_gitignore in the
+    # shipped sofa_client.py (avoids false matches on comments/path fragments).
+    ignored_lines = {line.strip() for line in existing.splitlines()}
+    if _SOFA_GITIGNORE_MARKER in existing or ".sofa/" in ignored_lines:
+        return 0
+
+    # Append with a separating newline if the file does not end with one.
+    separator = "" if existing.endswith("\n") else "\n"
+    gitignore.write_text(existing + separator + _SOFA_GITIGNORE_BLOCK)
+    return 1
+
+
 def create_commands_dir(project_path: Path) -> None:
     """Create commands directory with README pointing at skill-backed surfaces."""
     commands_dir = project_path / ".claude" / "commands"

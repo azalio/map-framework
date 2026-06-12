@@ -126,3 +126,22 @@
   python -m mypy src/ > /tmp/mypy.txt 2>&1; echo "EXIT:$?" >> /tmp/mypy.txt
   # then Read /tmp/mypy.txt; if empty or no EXIT: marker -> harness flap, re-derive from git
   ```
+
+- **`uv sync` Without Groups Omits Dev/Test Extras: Always Use --all-extras --all-groups in Dev** (2026-06-12): A plain `uv sync` (or `uv sync` after activating a fresh or different venv) omits `--all-extras` and `--all-groups`, leaving pytest, hypothesis, truststore, and ssl extras uninstalled. Tests that depend on these packages appear to fail for completely unrelated reasons: SSL trust-store mocks resolve to None, hypothesis-based tests are silently skipped, and Pyright reports 'pytest' as unresolved. These phantom failures consume debugging time chasing non-existent bugs in the code under test. The invariant for any development or CI shell: always run `uv sync --all-extras --all-groups` after creating, activating, or switching a venv. Treat `ImportError: No module named pytest` or `ssl module not available` as a venv-setup signal, not a code defect. [workflow: map-efficient]
+  ```bash
+  # WRONG — omits dev/test groups and extras; pytest/hypothesis/truststore not installed
+  uv sync
+  pytest tests/  # fails: 'No module named pytest', ssl mock -> None, hypothesis skipped
+
+  # ALSO WRONG — activating a different venv without re-syncing
+  source .venv/bin/activate  # switched venv
+  pytest tests/              # same missing-extras failures
+
+  # CORRECT — always sync with all extras and groups in a dev shell
+  uv sync --all-extras --all-groups
+  pytest tests/
+
+  # Diagnose a phantom failure first:
+  python -c "import pytest; import truststore; import hypothesis"
+  # ImportError here means venv-setup issue, not a code bug -> uv sync --all-extras --all-groups
+  ```

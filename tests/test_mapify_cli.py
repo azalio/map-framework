@@ -466,6 +466,160 @@ class TestInitCommand:
         # Should contain some template markers (not exact match due to potential updates)
         assert len(restored_content) > 100, "Restored actor.md seems too short"
 
+    def test_vc2_init_sofa_then_bare_init_does_not_clobber(self, tmp_path):
+        """VC2 [AC-1]: init --sofa writes sofa.enabled=true; bare re-run does not clobber it."""
+        os.chdir(tmp_path)
+
+        # First init with --sofa
+        result1 = runner.invoke(app, ["init", ".", "--no-git", "--mcp", "none", "--sofa"])
+        assert result1.exit_code == 0, f"init --sofa failed: {result1.stdout}"
+
+        config_file = tmp_path / ".map" / "config.yaml"
+        assert config_file.exists(), ".map/config.yaml was not created"
+        content_after_sofa = config_file.read_text()
+        assert "sofa.enabled: true" in content_after_sofa, (
+            "sofa.enabled: true not written after --sofa"
+        )
+
+        # Second bare init (no --sofa) with --force to allow re-run in non-empty dir
+        result2 = runner.invoke(
+            app, ["init", ".", "--no-git", "--mcp", "none", "--force"]
+        )
+        assert result2.exit_code == 0, f"bare re-init failed: {result2.stdout}"
+
+        # write_default_config is skip-if-exists, so the config is unchanged;
+        # and no apply_sofa_overrides call was made — value must still be true.
+        content_after_bare = config_file.read_text()
+        assert "sofa.enabled: true" in content_after_bare, (
+            "bare re-run clobbered sofa.enabled: true"
+        )
+
+    def test_vc1_init_sofa_flag_writes_config(self, tmp_path):
+        """VC1 [AC-1]: mapify init --sofa writes sofa.enabled: true to .map/config.yaml."""
+        os.chdir(tmp_path)
+
+        result = runner.invoke(app, ["init", ".", "--no-git", "--mcp", "none", "--sofa"])
+        assert result.exit_code == 0, f"init --sofa failed: {result.stdout}"
+
+        config_file = tmp_path / ".map" / "config.yaml"
+        assert config_file.exists()
+        assert "sofa.enabled: true" in config_file.read_text()
+
+    def test_vc1_bare_init_no_active_sofa_line(self, tmp_path):
+        """VC1 [AC-1]: bare init (no --sofa) produces no active sofa.enabled: true line."""
+        os.chdir(tmp_path)
+
+        result = runner.invoke(app, ["init", ".", "--no-git", "--mcp", "none"])
+        assert result.exit_code == 0, f"init failed: {result.stdout}"
+
+        config_file = tmp_path / ".map" / "config.yaml"
+        assert config_file.exists()
+        assert "sofa.enabled: true" not in config_file.read_text()
+
+
+class TestSofaGitignoreMerge:
+    """Tests for merge_sofa_gitignore — ST-002 / AC-2."""
+
+    def test_vc1_gitignore_created_when_absent(self, tmp_path):
+        """VC1 [AC-2]: no root .gitignore → merge → file exists with marker + .sofa/."""
+        from mapify_cli.delivery.file_copier import merge_sofa_gitignore
+
+        assert not (tmp_path / ".gitignore").exists()
+
+        result = merge_sofa_gitignore(tmp_path)
+
+        assert result == 1, "Expected 1 (file created)"
+        content = (tmp_path / ".gitignore").read_text()
+        assert "# map:sofa" in content
+        assert ".sofa/" in content
+
+    def test_vc2_gitignore_appends_under_marker(self, tmp_path):
+        """VC2 [AC-2]: pre-existing .gitignore → existing lines preserved + block appended."""
+        from mapify_cli.delivery.file_copier import merge_sofa_gitignore
+
+        existing = "node_modules/\n.env\n"
+        (tmp_path / ".gitignore").write_text(existing)
+
+        result = merge_sofa_gitignore(tmp_path)
+
+        assert result == 1, "Expected 1 (file modified)"
+        content = (tmp_path / ".gitignore").read_text()
+        # Existing lines preserved byte-for-byte
+        assert content.startswith(existing)
+        # Block appended
+        assert "# map:sofa" in content
+        assert ".sofa/" in content
+
+    def test_vc3_gitignore_merge_idempotent(self, tmp_path):
+        """VC3 [AC-2]: calling merge twice produces exactly ONE marker and ONE .sofa/ line."""
+        from mapify_cli.delivery.file_copier import merge_sofa_gitignore
+
+        merge_sofa_gitignore(tmp_path)
+        result2 = merge_sofa_gitignore(tmp_path)
+
+        assert result2 == 0, "Expected 0 (no-op on second call)"
+        content = (tmp_path / ".gitignore").read_text()
+        assert content.count("# map:sofa") == 1
+        assert content.count(".sofa/") == 1
+
+    def test_vc4_no_gitignore_mutation_without_sofa_flag(self, tmp_path):
+        """VC4 [AC-2][INV-SOFA-1]: init without --sofa must NOT write sofa entries.
+
+        Non-vacuous: a repo-root .gitignore is pre-created so the negative
+        assertions exercise a file that actually exists (init without --sofa
+        does not create one on its own), and its prior content must survive
+        byte-for-byte.
+        """
+        os.chdir(tmp_path)
+        gitignore = tmp_path / ".gitignore"
+        original = "node_modules/\n.env\n"
+        gitignore.write_text(original)
+
+        result = runner.invoke(
+            app, ["init", ".", "--no-git", "--mcp", "none", "--force"]
+        )
+
+        assert result.exit_code == 0, f"init failed: {result.stdout}"
+        content = gitignore.read_text()
+        assert "# map:sofa" not in content
+        assert ".sofa/" not in content.splitlines()
+        # Existing user content untouched when SOFA is off.
+        assert content == original
+
+    def test_vc4_init_with_sofa_flag_writes_marker(self, tmp_path):
+        """VC4 [AC-2]: init WITH --sofa must write the sofa marker to root .gitignore."""
+        os.chdir(tmp_path)
+
+        result = runner.invoke(
+            app, ["init", ".", "--no-git", "--mcp", "none", "--sofa"]
+        )
+
+        assert result.exit_code == 0, f"init --sofa failed: {result.stdout}"
+        content = (tmp_path / ".gitignore").read_text()
+        assert "# map:sofa" in content
+        assert ".sofa/" in content
+
+    def test_vc1_init_default_no_sofa_artifacts(self, tmp_path):
+        """VC1 [AC-6][INV-SOFA-1]: init WITHOUT --sofa creates no `.sofa/`
+        directory and writes no active `sofa.enabled: true` line."""
+        os.chdir(tmp_path)
+
+        result = runner.invoke(app, ["init", ".", "--no-git", "--mcp", "none"])
+
+        assert result.exit_code == 0, f"init failed: {result.stdout}"
+        # No credential directory is created on the default (disabled) path.
+        assert not (tmp_path / ".sofa").exists()
+        # The generated config never activates SOFA.
+        config_text = (tmp_path / ".map" / "config.yaml").read_text()
+        active_sofa = [
+            line
+            for line in config_text.splitlines()
+            if line.strip().startswith("sofa.enabled:")
+        ]
+        assert active_sofa == [], (
+            f"default config must not activate sofa.enabled: {active_sofa}"
+        )
+
 
 class TestCheckCommand:
     """Test the check command."""

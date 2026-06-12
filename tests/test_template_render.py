@@ -492,6 +492,17 @@ def _templates_src_available() -> bool:
     return _TEMPLATES_SRC.exists() and any(_TEMPLATES_SRC.rglob("*.jinja"))
 
 
+def _is_bytecode(path: Path) -> bool:
+    """Python bytecode caches are generated runtime artifacts, never rendered.
+
+    A test that imports a rendered skill script (e.g. .claude/skills/
+    map-so-search/scripts/sofa_search.py) can write a __pycache__/*.pyc into a
+    generated tree; the byte-identity walks must skip it or they would flag it
+    as an un-rendered file.
+    """
+    return "__pycache__" in path.parts or path.suffix == ".pyc"
+
+
 _CODEX_ROOT = _REPO_ROOT / ".codex"
 _AGENTS_SKILLS_ROOT = _REPO_ROOT / ".agents" / "skills"
 _TEMPLATES_CODEX = _TEMPLATES_DEST / "codex"
@@ -540,7 +551,7 @@ class TestRenderRepoTreesClaude:
 
         # Every file under templates/ should exist and be byte-identical
         for committed in sorted(_TEMPLATES_DEST.rglob("*")):
-            if not committed.is_file():
+            if not committed.is_file() or _is_bytecode(committed):
                 continue
             rel = committed.relative_to(_TEMPLATES_DEST)
             rel_str = rel.as_posix()
@@ -567,7 +578,7 @@ class TestRenderRepoTreesClaude:
 
         # Check all .claude/ files that should be shared (not shipped-only)
         for committed in sorted(_CLAUDE_ROOT.rglob("*")):
-            if not committed.is_file():
+            if not committed.is_file() or _is_bytecode(committed):
                 continue
             rel = committed.relative_to(_CLAUDE_ROOT)
             rel_str = rel.as_posix()
@@ -588,6 +599,57 @@ class TestRenderRepoTreesClaude:
             assert rendered.exists(), f"Rendered file missing for .claude/{rel}"
             assert filecmp.cmp(rendered, committed, shallow=False), (
                 f"Byte-parity FAILED for .claude/{rel}"
+            )
+
+    @_skip_no_templates_src
+    def test_vc1_sofa_surfaces_golden_byte_identity(self, tmp_path: Path) -> None:
+        """ST-007 VC1 [AC-8][INV-SOFA-7][HC-5]: the SOFA surfaces (map-so-search
+        SKILL.md + sofa_search.py, and .map/scripts/sofa_client.py) render
+        byte-identically from templates_src into every generated tree.
+
+        (a) cross-tree parity: the committed parallel copies are byte-identical.
+        (b) fresh-render parity: a fresh render of the templates tree reproduces
+            the committed copies byte-for-byte.
+        """
+        from mapify_cli.delivery.template_renderer import render_tree
+
+        # (a) cross-tree parity — committed copies must already match.
+        cross_tree_pairs = [
+            (
+                _CLAUDE_ROOT / "skills/map-so-search/SKILL.md",
+                _TEMPLATES_DEST / "skills/map-so-search/SKILL.md",
+            ),
+            (
+                _CLAUDE_ROOT / "skills/map-so-search/scripts/sofa_search.py",
+                _TEMPLATES_DEST / "skills/map-so-search/scripts/sofa_search.py",
+            ),
+            (
+                _MAP_ROOT / "scripts/sofa_client.py",
+                _TEMPLATES_DEST / "map/scripts/sofa_client.py",
+            ),
+        ]
+        for left, right in cross_tree_pairs:
+            assert left.is_file(), f"missing SOFA artifact: {left}"
+            assert right.is_file(), f"missing SOFA artifact: {right}"
+            assert filecmp.cmp(left, right, shallow=False), (
+                f"cross-tree parity FAILED: {left} != {right} — run make render-templates"
+            )
+
+        # (b) fresh-render parity — render into a tmp dest and compare the SOFA
+        # files (rel to _TEMPLATES_DEST) to the committed templates copies.
+        dest = tmp_path / "claude_check"
+        render_tree("claude", templates_src_root=_TEMPLATES_SRC, dest_root=dest)
+        sofa_rels = [
+            "skills/map-so-search/SKILL.md",
+            "skills/map-so-search/scripts/sofa_search.py",
+            "map/scripts/sofa_client.py",
+        ]
+        for rel in sofa_rels:
+            committed = _TEMPLATES_DEST / rel
+            rendered = dest / rel
+            assert rendered.exists(), f"Rendered SOFA file missing: {rel}"
+            assert filecmp.cmp(rendered, committed, shallow=False), (
+                f"Golden byte-parity FAILED for SOFA surface {rel}"
             )
 
     @_skip_no_templates_src
@@ -734,7 +796,7 @@ class TestRenderRepoTreesCodex:
             "codex", dry_run=False, repo_root=_REPO_ROOT, templates_src_root=_TEMPLATES_SRC
         )
         for committed in sorted(_TEMPLATES_CODEX.rglob("*")):
-            if not committed.is_file():
+            if not committed.is_file() or _is_bytecode(committed):
                 continue
             assert filecmp.cmp(committed, committed, shallow=False), (
                 f"Byte-parity FAILED for templates/codex/{committed.relative_to(_TEMPLATES_CODEX)}"
@@ -747,7 +809,7 @@ class TestRenderRepoTreesCodex:
             "codex", dry_run=False, repo_root=_REPO_ROOT, templates_src_root=_TEMPLATES_SRC
         )
         for committed in sorted(_CODEX_ROOT.rglob("*")):
-            if not committed.is_file():
+            if not committed.is_file() or _is_bytecode(committed):
                 continue
             rel = committed.relative_to(_CODEX_ROOT)
             template_copy = _TEMPLATES_CODEX / rel
@@ -765,7 +827,7 @@ class TestRenderRepoTreesCodex:
             "codex", dry_run=False, repo_root=_REPO_ROOT, templates_src_root=_TEMPLATES_SRC
         )
         for committed in sorted(_AGENTS_SKILLS_ROOT.rglob("*")):
-            if not committed.is_file():
+            if not committed.is_file() or _is_bytecode(committed):
                 continue
             rel = committed.relative_to(_AGENTS_SKILLS_ROOT)
             template_copy = _TEMPLATES_CODEX / "skills" / rel

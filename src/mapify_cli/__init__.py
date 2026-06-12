@@ -676,6 +676,15 @@ def init(
             "When omitted, the existing config value is preserved on re-run."
         ),
     ),
+    sofa: bool = typer.Option(
+        False,
+        "--sofa",
+        help=(
+            "Enable Stack Overflow for Agents (SOFA) integration (opt-in, off "
+            "by default). Writes sofa.enabled=true to .map/config.yaml. "
+            "See docs/USAGE.md."
+        ),
+    ),
 ):
     """
     Initialize a new MAP Framework project.
@@ -862,6 +871,7 @@ def init(
         try:
             from mapify_cli.config.project_config import (
                 apply_compression_overrides,
+                apply_sofa_overrides,
                 write_default_config,
             )
 
@@ -874,6 +884,11 @@ def init(
                 apply_compression_overrides(
                     config_path, compression, compression_threshold
                 )
+            if sofa:
+                apply_sofa_overrides(config_path)
+                from mapify_cli.delivery.file_copier import merge_sofa_gitignore
+
+                merge_sofa_gitignore(project_path)
             tracker.complete(
                 "map-config", str(config_path.relative_to(project_path))
             )
@@ -898,6 +913,7 @@ def init(
         try:
             from mapify_cli.config.project_config import (
                 apply_compression_overrides,
+                apply_sofa_overrides,
                 write_default_config,
             )
 
@@ -910,6 +926,11 @@ def init(
                 apply_compression_overrides(
                     config_path, compression, compression_threshold
                 )
+            if sofa:
+                apply_sofa_overrides(config_path)
+                from mapify_cli.delivery.file_copier import merge_sofa_gitignore
+
+                merge_sofa_gitignore(project_path)
             tracker.complete("map-config", str(config_path.relative_to(project_path)))
         except Exception as e:
             tracker.error("map-config", f"skipped: {e}")

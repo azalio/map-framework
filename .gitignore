@@ -88,3 +88,10 @@ docs/superpowers/
 
 # Hypothesis test cache
 .hypothesis/
+
+# Presentation materials (AIADOPTION-765 demo + tech-directors deck) — local only, never committed
+ai-yc-presetation/
+docs/map-framework-tech-directors-stackland1144-draft.md
+docs/map_framework_tech_directors_stackland1144_map_plan_draft.pptx
+# map:sofa — SOFA credential dir (opt-in); never commit. See docs/USAGE.md
+.sofa/
