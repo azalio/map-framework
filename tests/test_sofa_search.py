@@ -95,9 +95,16 @@ def _make_fake_client(
     search_items: list[dict[str, Any]] | None = None,
     session_id: str = "sess-xyz",
     onboarding_called: list[bool] | None = None,
+    onboarding_flow_ok: bool = True,
 ) -> types.SimpleNamespace:
-    """Build a fake sofa_client module exposing the typed-dict API."""
+    """Build a fake sofa_client module exposing the typed-dict API.
+
+    Exposes the full onboarding surface (create_flow/poll_status/register/
+    store_credentials) and records the args each received in ``.calls`` so the
+    end-to-end onboarding flow can be asserted without a tty or real network.
+    """
     _onboarding_called: list[bool] = onboarding_called if onboarding_called is not None else []
+    calls: dict[str, Any] = {}
 
     def resolve_key(**_kwargs: object) -> dict[str, Any]:
         del _kwargs
@@ -128,7 +135,75 @@ def _make_fake_client(
     def onboarding_start(_base_url: str) -> dict[str, Any]:
         del _base_url
         _onboarding_called.append(True)
-        return {"ok": True, "data": {}}
+        return {"ok": True, "data": {"next_step": "create_flow"}}
+
+    def onboarding_create_flow(_base_url: str, **kwargs: object) -> dict[str, Any]:
+        del _base_url
+        calls["create_flow"] = dict(kwargs)
+        if not onboarding_flow_ok:
+            return {"ok": False, "kind": "http_error", "error": "flow rejected"}
+        return {
+            "ok": True,
+            "flow_id": "flow-1",
+            "claim_url": "https://agents.stackoverflow.com/claim",
+            "claim_code": "ABCD-1234",
+            "poll_token": "ptok",
+            "poll_after_seconds": 0,
+        }
+
+    def onboarding_poll_status(
+        _base_url: str,
+        _flow_id: str,
+        _poll_token: str,
+        *,
+        poll_after_seconds: int = 1,
+        **_kwargs: object,
+    ) -> dict[str, Any]:
+        del _base_url, _flow_id, _poll_token, poll_after_seconds, _kwargs
+        return {
+            "ok": True,
+            "state": "auth_code_retrieved",
+            "auth_code": "auth-xyz",
+            "auth_code_expires_at": "2099-01-01T00:00:00Z",
+        }
+
+    def onboarding_register(
+        _base_url: str,
+        *,
+        auth_code: str,
+        agent_name: str,
+        description: str,
+        persona: str | None = None,
+    ) -> dict[str, Any]:
+        del _base_url
+        calls["register"] = {
+            "auth_code": auth_code,
+            "agent_name": agent_name,
+            "description": description,
+            "persona": persona,
+        }
+        return {
+            "ok": True,
+            "agent_id": "agent-live",
+            "api_key": "sk-live-secret",
+            "api_key_prefix": "sk-li",
+            "api_key_suffix": "cret",
+            "next_step": "search",
+        }
+
+    def store_credentials(
+        *,
+        repo_root: Path,
+        agent_id: str,
+        api_key: str,
+        agent_name: str,
+        base_url: str,
+        api_key_prefix: str,
+        api_key_suffix: str,
+    ) -> dict[str, Any]:
+        del agent_name, base_url, api_key_prefix, api_key_suffix
+        calls["store"] = {"repo_root": repo_root, "agent_id": agent_id, "api_key": api_key}
+        return {"ok": True, "agent_id": agent_id, "path": str(repo_root / ".sofa" / "credentials.json")}
 
     return types.SimpleNamespace(
         resolve_key=resolve_key,
@@ -136,6 +211,11 @@ def _make_fake_client(
         create_session=create_session,
         search_posts=search_posts,
         onboarding_start=onboarding_start,
+        onboarding_create_flow=onboarding_create_flow,
+        onboarding_poll_status=onboarding_poll_status,
+        onboarding_register=onboarding_register,
+        store_credentials=store_credentials,
+        calls=calls,
     )
 
 
@@ -348,8 +428,23 @@ class TestVC4EnabledNoCredsNoninteractiveNoop:
         assert isinstance(result, dict)
 
 
+def _scripted_prompt(answers: list[str]) -> Any:
+    """Return a prompt() stand-in that yields canned answers in order."""
+    it = iter(answers)
+
+    def _prompt(_message: str) -> str:
+        del _message
+        return next(it)
+
+    return _prompt
+
+
+def _silent_notify(_message: str) -> None:
+    del _message
+
+
 class TestVC4InteractiveAuthTriggersOnboarding:
-    """Enabled + no creds + interactive + auth_intent → onboarding called."""
+    """Enabled + no creds + interactive + auth_intent → full onboarding flow."""
 
     def test_onboarding_triggered(self, tmp_path: Path) -> None:
         map_dir = tmp_path / ".map"
@@ -359,22 +454,103 @@ class TestVC4InteractiveAuthTriggersOnboarding:
         onboarding_calls: list[bool] = []
         fake_client = _make_fake_client(has_key=False, onboarding_called=onboarding_calls)
 
-        # Patch resolve_base_url to succeed so _run_onboarding proceeds
-        with unittest.mock.patch.object(
-            sofa_search, "_load_sofa_client", return_value=fake_client
+        # dispatch -> _run_onboarding uses input()/print() by default; patch
+        # input so the interactive flow runs end-to-end without a tty. Four
+        # prompts: browser-login Enter, agent_name, description, persona-skip.
+        with unittest.mock.patch(
+            "builtins.input", side_effect=["", "MyAgent", "a test agent", ""]
         ):
-            result = sofa_search.dispatch(
-                "auth",
-                project_dir=tmp_path,
-                interactive=True,
-                auth_intent=True,
-            )
+            with unittest.mock.patch.object(
+                sofa_search, "_load_sofa_client", return_value=fake_client
+            ):
+                result = sofa_search.dispatch(
+                    "auth",
+                    project_dir=tmp_path,
+                    interactive=True,
+                    auth_intent=True,
+                )
 
-        # _run_onboarding calls client.resolve_base_url — it succeeds in the fake.
-        # The result should indicate onboarding was started (not a no-op).
+        # Routing reached onboarding, and the full flow completed.
+        assert onboarding_calls, "dispatch must route interactive+auth_intent+no-creds to onboarding"
         assert result.get("ok") is True
-        # onboarding_started is set by _run_onboarding
-        assert result.get("onboarding_started") is True or result.get("noop") is not True
+        assert result.get("onboarding_complete") is True
+        # The secret api_key must NEVER appear in the result dict (Actor context).
+        assert "api_key" not in result
+        # Credentials were persisted with the live key + human-supplied identity.
+        assert fake_client.calls["store"]["api_key"] == "sk-live-secret"
+        assert fake_client.calls["register"]["agent_name"] == "MyAgent"
+
+
+class TestRunOnboardingFullFlow:
+    """Direct unit tests for _run_onboarding with injected prompt/notify."""
+
+    def test_full_flow_stores_creds_and_hides_secret(self, tmp_path: Path) -> None:
+        fake_client = _make_fake_client(has_key=False)
+        result = sofa_search._run_onboarding(
+            fake_client,
+            tmp_path,
+            prompt=_scripted_prompt(["", "Ada", "research agent", "curious"]),
+            notify=_silent_notify,
+        )
+        assert result["ok"] is True
+        assert result["onboarding_complete"] is True
+        assert result["agent_id"] == "agent-live"
+        assert "api_key" not in result, "api_key must never leak into the result dict"
+        # Human-supplied identity is forwarded verbatim (never invented).
+        assert fake_client.calls["register"]["agent_name"] == "Ada"
+        assert fake_client.calls["register"]["description"] == "research agent"
+        assert fake_client.calls["register"]["persona"] == "curious"
+        # Persisted with the live key + correct repo root.
+        assert fake_client.calls["store"]["api_key"] == "sk-live-secret"
+        assert fake_client.calls["store"]["repo_root"] == tmp_path
+
+    def test_flow_failure_degrades_without_storing(self, tmp_path: Path) -> None:
+        fake_client = _make_fake_client(has_key=False, onboarding_flow_ok=False)
+        result = sofa_search._run_onboarding(
+            fake_client,
+            tmp_path,
+            prompt=_scripted_prompt(["", "Ada", "research agent", ""]),
+            notify=_silent_notify,
+        )
+        assert result["ok"] is False
+        assert "Onboarding flow failed" in result["error"]
+        # No registration / storage happened.
+        assert "register" not in fake_client.calls
+        assert "store" not in fake_client.calls
+
+    def test_base_url_unresolved_returns_error(self, tmp_path: Path) -> None:
+        fake_client = _make_fake_client(has_key=False)
+        # Force resolve_base_url to fail.
+        fake_client.resolve_base_url = lambda: {  # type: ignore[assignment]
+            "ok": False,
+            "kind": "need_base_url",
+            "error": "SOFA_BASE_URL not set",
+        }
+        result = sofa_search._run_onboarding(
+            fake_client,
+            tmp_path,
+            prompt=_scripted_prompt([""]),
+            notify=_silent_notify,
+        )
+        assert result["ok"] is False
+        assert "Cannot start onboarding" in result["error"]
+
+    def test_no_auth_code_after_poll_returns_error(self, tmp_path: Path) -> None:
+        fake_client = _make_fake_client(has_key=False)
+        def _pending_poll(*_a: object, **_k: object) -> dict[str, Any]:
+            del _a, _k
+            return {"ok": True, "state": "pending"}
+
+        fake_client.onboarding_poll_status = _pending_poll  # type: ignore[assignment]
+        result = sofa_search._run_onboarding(
+            fake_client,
+            tmp_path,
+            prompt=_scripted_prompt(["", "Ada", "desc", ""]),
+            notify=_silent_notify,
+        )
+        assert result["ok"] is False
+        assert "did not complete" in result["error"]
+        assert "store" not in fake_client.calls
 
 
 # ---------------------------------------------------------------------------

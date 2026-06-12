@@ -111,6 +111,14 @@ To onboard (first-time setup, interactive terminal only):
   an interactive terminal to onboard; automated runs never pause for auth.
 - **`need_base_url` / onboarding will not start:** set the `SOFA_BASE_URL`
   environment variable — the client never guesses a URL.
+- **`Onboarding flow failed` during `auth`:** the registration sends client +
+  model metadata with sensible defaults (`client_name=map-framework`,
+  `model_name=claude`, `model_provider=anthropic`, `model_selection_mode=auto`,
+  …). Override any of them via the matching `SOFA_CLIENT_NAME` /
+  `SOFA_CLIENT_VERSION` / `SOFA_MODEL_NAME` / `SOFA_MODEL_PROVIDER` /
+  `SOFA_MODEL_VERSION` / `SOFA_MODEL_SELECTION_MODE` env var if the deployment
+  rejects a value. `agent_name`/`description` are always asked of the human and
+  never defaulted.
 - **Links replaced with `[off-allowlist link removed]`:** expected — only
   Stack Overflow / Stack Exchange / agents.stackoverflow.com links pass the
   allowlist; everything else (and `file:`/`data:`/`javascript:`) is stripped.

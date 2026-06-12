@@ -17,7 +17,7 @@ import re
 import sys
 import urllib.parse
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -371,19 +371,131 @@ def dispatch(
     return {"ok": True, "blocks": blocks}
 
 
-def _run_onboarding(client: Any, project_dir: Path) -> _ResultDict:
-    """Delegate to client onboarding (interactive path only).
+def _onboarding_metadata() -> dict[str, str]:
+    """Client + model metadata for ``onboarding_create_flow``.
 
-    Degrades to no-op on any client error — never raises into Actor phase.
+    These describe the MAP Framework client and the LLM driving it — fields
+    that are answerable WITHOUT the human (unlike agent_name/description/persona,
+    which the human MUST supply at registration). Each is overridable via an
+    env var so an operator can correct a stale default without code changes.
     """
+    env = os.environ.get
+    return {
+        "client_name": env("SOFA_CLIENT_NAME", "map-framework"),
+        "client_version": env("SOFA_CLIENT_VERSION", "0.1"),
+        "model_name": env("SOFA_MODEL_NAME", "claude"),
+        "model_provider": env("SOFA_MODEL_PROVIDER", "anthropic"),
+        "model_version": env("SOFA_MODEL_VERSION", "unknown"),
+        "model_selection_mode": env("SOFA_MODEL_SELECTION_MODE", "auto"),
+    }
+
+
+def _run_onboarding(
+    client: Any,
+    project_dir: Path,
+    *,
+    prompt: Callable[[str], str] | None = None,
+    notify: Callable[[str], None] | None = None,
+) -> _ResultDict:
+    """Drive the 7-step human-gated SOFA onboarding flow end-to-end.
+
+    Steps (spike §1.2 / §6):
+      1. resolve base_url (never guessed)
+      2. GET /api/onboarding — fetch the contract
+      3. POST /api/onboarding/flows -> claim_url + claim_code
+      4. human completes the browser login at claim_url using claim_code
+      5. poll status until an auth_code is issued
+      6. human supplies the MANDATORY agent_name + description (+ optional persona)
+      7. register -> api_key, then store it in .sofa/credentials.json (0600)
+
+    Human-gated values are read via ``prompt`` (defaults to ``input``); progress
+    is surfaced via ``notify`` (defaults to ``print``). Both are injectable so
+    the flow is unit-testable without a tty.
+
+    Security: degrades to a typed result on any client error — NEVER raises into
+    the Actor phase, and the returned dict NEVER contains the api_key (only the
+    agent_id + non-secret metadata), so the secret never enters Actor/LLM context.
+    """
+    _prompt = prompt if prompt is not None else input
+    _notify = notify if notify is not None else (lambda message: print(message))
     try:
+        # Step 1: base URL — resolved, never guessed.
         url_result: _ResultDict = client.resolve_base_url()
         if not url_result.get("ok"):
-            return {
-                "ok": False,
-                "error": f"Cannot start onboarding: {url_result.get('error')}",
-            }
-        return {"ok": True, "noop": False, "onboarding_started": True, "base_url": url_result["base_url"]}
+            return {"ok": False, "error": f"Cannot start onboarding: {url_result.get('error')}"}
+        base_url: str = url_result["base_url"]
+
+        # Step 2: fetch the onboarding contract (informational / best-effort).
+        client.onboarding_start(base_url)
+
+        # Step 3: create the flow -> claim_url + claim_code + poll token.
+        flow: _ResultDict = client.onboarding_create_flow(base_url, **_onboarding_metadata())
+        if not flow.get("ok"):
+            return {"ok": False, "error": f"Onboarding flow failed: {flow.get('error')}"}
+
+        poll_after = int(flow.get("poll_after_seconds") or 1)
+
+        # Step 4: human-gated browser login.
+        _notify(
+            "[map-so-search] Complete SOFA onboarding in your browser:\n"
+            f"    URL:  {flow.get('claim_url')}\n"
+            f"    code: {flow.get('claim_code')}\n"
+            "Log in, approve the terms, then return here."
+        )
+        _prompt("Press Enter once you have completed the browser login... ")
+
+        # Step 5: poll until the auth_code is issued.
+        status: _ResultDict = client.onboarding_poll_status(
+            base_url,
+            flow.get("flow_id"),
+            flow.get("poll_token"),
+            poll_after_seconds=poll_after,
+        )
+        if not status.get("ok") or not status.get("auth_code"):
+            reason = status.get("error") or "no auth_code returned"
+            return {"ok": False, "error": f"Onboarding did not complete: {reason}"}
+
+        # Step 6: human supplies the MANDATORY identity (never invented here).
+        agent_name = _prompt("Agent name (human-chosen, required): ").strip()
+        description = _prompt("Short description of this agent (required): ").strip()
+        persona = _prompt("Persona (optional, press Enter to skip): ").strip() or None
+
+        # Step 7: register -> api_key (returned once), then persist.
+        reg: _ResultDict = client.onboarding_register(
+            base_url,
+            auth_code=status["auth_code"],
+            agent_name=agent_name,
+            description=description,
+            persona=persona,
+        )
+        if not reg.get("ok"):
+            return {"ok": False, "error": f"Registration failed: {reg.get('error')}"}
+
+        store: _ResultDict = client.store_credentials(
+            repo_root=project_dir,
+            agent_id=reg.get("agent_id"),
+            api_key=reg.get("api_key"),
+            agent_name=agent_name,
+            base_url=base_url,
+            api_key_prefix=reg.get("api_key_prefix") or "",
+            api_key_suffix=reg.get("api_key_suffix") or "",
+        )
+        if not store.get("ok"):
+            return {"ok": False, "error": f"Could not store credentials: {store.get('error')}"}
+
+        # SUCCESS — never echo the api_key back into the Actor context.
+        return {
+            "ok": True,
+            "noop": False,
+            "onboarding_started": True,
+            "onboarding_complete": True,
+            "agent_id": reg.get("agent_id"),
+            "base_url": base_url,
+            "reason": (
+                f"SOFA onboarding complete; credentials stored for "
+                f"agent_id={reg.get('agent_id')}."
+            ),
+        }
     except Exception as exc:  # noqa: BLE001
         logger.warning("sofa_search: onboarding error: %s", exc)
         return {"ok": True, "noop": True, "reason": f"onboarding error: {exc}"}
@@ -414,8 +526,13 @@ def main() -> None:
         sys.exit(1)
 
     blocks: list[str] = result.get("blocks") or []
-    for block in blocks:
-        print(block)
+    if blocks:
+        for block in blocks:
+            print(block)
+    elif result.get("reason"):
+        # Non-noop success with no blocks (e.g. completed onboarding) — surface
+        # the status line to the operator rather than printing nothing.
+        print(f"[map-so-search] {result.get('reason')}")
         print()
 
 

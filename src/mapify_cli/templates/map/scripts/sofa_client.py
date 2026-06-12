@@ -206,7 +206,14 @@ def ensure_sofa_gitignore(repo_root: Path) -> bool:
     if gitignore.exists():
         existing = gitignore.read_text(encoding="utf-8")
 
-    if _SOFA_MARKER in existing or ".sofa/" in existing:
+    # Idempotency guard: skip if our marker is present OR `.sofa/` already
+    # appears as a standalone ignore line. OR (not AND) keeps `.sofa/` present
+    # exactly once even when the user added it without our marker. The
+    # stripped-line-set check (not a bare substring) avoids false matches on
+    # comments or path fragments and is symmetric with merge_sofa_gitignore in
+    # mapify_cli/delivery/file_copier.py.
+    ignored_lines = {line.strip() for line in existing.splitlines()}
+    if _SOFA_MARKER in existing or ".sofa/" in ignored_lines:
         return False
 
     # Append — ensure trailing newline before our block

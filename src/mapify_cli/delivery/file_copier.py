@@ -486,8 +486,11 @@ def merge_sofa_gitignore(project_path: Path) -> int:
     # Idempotency: skip if our marker OR an active `.sofa/` line is already
     # present. The OR is deliberate (not AND): if the user already ignores
     # `.sofa/` without our marker, appending the block would create a duplicate
-    # entry. Skipping on either signal keeps `.sofa/` present exactly once.
-    if _SOFA_GITIGNORE_MARKER in existing or ".sofa/" in existing.splitlines():
+    # entry. Skipping on either signal keeps `.sofa/` present exactly once. The
+    # stripped-line-set check is symmetric with ensure_sofa_gitignore in the
+    # shipped sofa_client.py (avoids false matches on comments/path fragments).
+    ignored_lines = {line.strip() for line in existing.splitlines()}
+    if _SOFA_GITIGNORE_MARKER in existing or ".sofa/" in ignored_lines:
         return 0
 
     # Append with a separating newline if the file does not end with one.
