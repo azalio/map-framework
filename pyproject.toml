@@ -99,6 +99,11 @@ exclude = [
 # temp cwd at run time, never imported by the package — exclude from static
 # analysis and the language server.
 [tool.pyright]
+# Pin import resolution to the project venv so `make lint` is deterministic
+# regardless of which `pyright` is on PATH (e.g. a global Homebrew/node build
+# that otherwise ignores .venv and spuriously reports unresolved imports).
+venvPath = "."
+venv = ".venv"
 exclude = [
     "**/node_modules",
     "**/__pycache__",

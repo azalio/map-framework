@@ -26,35 +26,39 @@ dev-install:
 	pip install -e ".[dev,ssl]"
 
 # Testing
+# Invoke tools via `uv run` so they always use the project venv. A bare
+# `pytest`/`ruff`/`pyright` resolves to whatever is first on PATH (e.g. a
+# global Homebrew install whose interpreter lacks truststore/hypothesis),
+# producing phantom failures that disappear under `uv run`.
 test:
-	pytest
+	uv run pytest
 
 test-cov:
-	pytest --cov=mapify_cli --cov-report=html --cov-report=term
+	uv run pytest --cov=mapify_cli --cov-report=html --cov-report=term
 
 test-watch:
-	pytest-watch
+	uv run pytest-watch
 
 # E2E / Integration testing
 test-e2e:
-	pytest tests/integration/test_e2e_artifact_contracts.py -v
+	uv run pytest tests/integration/test_e2e_artifact_contracts.py -v
 
 test-e2e-sdk:
-	pytest tests/integration/test_e2e_claude_sdk.py -v -m slow
+	uv run pytest tests/integration/test_e2e_claude_sdk.py -v -m slow
 
 test-integration:
-	pytest tests/integration/ -v -m "not slow"
+	uv run pytest tests/integration/ -v -m "not slow"
 
 # Code quality
 lint:
-	ruff check src/ tests/
-	mypy src/
-	pyright src/
-	python3 scripts/lint-hooks.py
+	uv run ruff check src/ tests/
+	uv run mypy src/
+	uv run pyright src/
+	uv run python3 scripts/lint-hooks.py
 
 format:
-	black src/ tests/
-	ruff check --fix src/ tests/
+	uv run black src/ tests/
+	uv run ruff check --fix src/ tests/
 
 check: lint test check-render
 
@@ -78,14 +82,14 @@ clean:
 	find . -type f -name "*.pyc" -delete
 
 build: clean
-	python3 -m build
+	uv run python3 -m build
 
 release: build
 	@echo "Ready to upload to PyPI with: twine upload dist/*"
-	@echo "Don't forget to tag the release: git tag -a v$(shell python3 -c "import tomli; print(tomli.load(open('pyproject.toml', 'rb'))['project']['version'])") -m 'Release version ...'"
+	@echo "Don't forget to tag the release: git tag -a v$(shell uv run python3 -c "import tomli; print(tomli.load(open('pyproject.toml', 'rb'))['project']['version'])") -m 'Release version ...'"
 
 # Quick test of the CLI
 test-cli:
 	@echo "Testing CLI installation..."
-	python3 -m mapify_cli --version
-	python3 -m mapify_cli check
+	uv run python3 -m mapify_cli --version
+	uv run python3 -m mapify_cli check
