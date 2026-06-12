@@ -8,6 +8,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Opt-in Stack Overflow for Agents (SOFA) integration (#169, #176, #177)**:
+  a new, **off-by-default, read-only** integration enabled with
+  `mapify init --sofa` (persisted as `MapConfig.sofa_enabled` /
+  `sofa.enabled` in `.map/config.yaml`). Ships a stdlib-only `sofa_client.py`
+  (interactive 7-step onboarding, session handling, 401-retry, credential
+  resolution) and a `/map-so-search` skill (`skillClass=hybrid`) that queries
+  SOFA and renders results behind an UNTRUSTED-content boundary, degrading to
+  a no-op when the feature is disabled or offline. Init idempotently merges
+  `.sofa/` into `.gitignore` only under `--sofa`. Credentials are never
+  auto-persisted — the user is instructed to export `SOFA_API_KEY` themselves.
+  Cross-cutting zero-network proofs assert no network call happens unless the
+  feature is explicitly enabled, and golden render-parity tests cover the new
+  surfaces across both provider trees.
+- **Cross-session memory + recall (#157)**: a write-ahead-log → lazy-digest →
+  recall pipeline so the framework carries learned context across sessions
+  instead of starting cold each run.
+- **Skill-evaluation harness + description optimizer (#158, #159, #160, #161)**:
+  a skill-eval engine (MVP) with outcome eval-sets, a skill-description
+  optimizer, and an HTML results viewer, plus a whole-skill outcome-eval
+  harness and `map-task` body hardening. The optimized `map-plan` description
+  is applied, and skill-eval/A-B polish trims ~1,000 lines of example bloat
+  from the MAP agent prompts.
+- **Personal/repo-global learned-rules layer (#153)**: a layered learned-rules
+  system under `.claude/rules/learned/*.md` (architecture/error/security
+  patterns) with a MONITOR-gate fix so captured rules feed back into the
+  workflow.
+- **Skill manifest dependencies (#156)**: declarative skill manifest
+  dependencies with a consistency test and a host-conditional install gate.
+- **`MAP_INVOKED_BY` recursion-guard contract for MAP hooks (#152)**: a
+  recursion guard wired into the shipped hooks to prevent self-triggering
+  loops, backed by a `lint-hooks.py` linter (wired into `make lint` /
+  `make check`) and a `hook-patterns.md` classification of all shipped hooks.
+- **MAP cross-workflow safety guards (#147)**: blast-radius checks, a
+  recommendation gate, and actor-mismatch detection so one workflow cannot
+  silently corrupt another's state.
+- **Single-source template render + fence-aware managed-file copier (#155)**:
+  consolidates every generated tree behind one `templates_src/` source with a
+  fence-aware copier; the render invariant is enforced by `make check-render`.
+- **Agent-review harness hardening (#145)**: a single source-of-truth for
+  agent output schemas, a retry-prompt builder derived from that schema, and
+  failure telemetry.
+- **`/map-efficient` learning-handoff (#154)**: emits a deferred `/map-learn`
+  handoff that auto-loads on the next run, plus a cross-subtask regression
+  gate (#143).
+- **Already-implemented gate in `/map-plan` (#150)** and a spec `file:line`
+  citation validator (#149).
+- **Clean retry quarantine (#140)** and **mutation-boundary prompt
+  guardrails (#139)**.
+- **Token-budget decision artifact (#136)** and **context-first XML prompt
+  envelopes (#131)** for MAP agent prompts.
+- **Codex `map-efficient` skill (#151)** and a skill IR audit for provider
+  templates (#132).
+- **Cross-cutting prep plumbing (#148)**: a `jinja2` runtime dependency, a
+  `host-paths.md` contract doc, and a `_locking.py` flock primitive.
 - **`normalize_blueprint` deterministic repair pass (#168)**: a new runner
   function (and `/map-plan` Step 5.55) that fixes the two self-consistency
   drifts the `task-decomposer` routinely emits, so planning is self-serve
@@ -34,7 +88,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (stdlib only) so it works in generated projects without `mapify_cli`
   importable; the meter is advisory and never blocks a turn.
 
+### Changed
+- **Agent prompt budgets tightened**: Actor context budget is now enforced
+  (#134), `/map-review` reviewer prompts are bounded (#135), and the MAP
+  harness context gates are hardened (#141).
+- **High-traffic skill bodies compacted**: the `map-resume` skill body (#137)
+  and other high-traffic MAP skill playbooks (#138) were slimmed down.
+- **Build/CI runs through `uv run`**: lint and tests invoke `uv run` and
+  `pyright` is pinned to the project venv, so a global interpreter on `PATH`
+  can no longer shadow the venv and produce phantom failures.
+- **Closed the shipped TDD handoff plan item (#133)**.
+
 ### Fixed
+- **Token accounting double-counted ~2× (#165)**: the token-meter re-logged
+  repeated `msg_id` entries (one row per content block); rows are now
+  deduplicated by message id so `est_cost_usd` is no longer inflated.
+- **Co-authored test files no longer trip `validate_mutation_boundary`
+  (#163)**: files carrying a co-author trailer are recognised as in-scope
+  subtask work instead of being flagged as an out-of-boundary mutation.
+- **Eight framework gaps surfaced in a downstream run (#142)** plus
+  skill-routing, `conftest` PYTHONPATH, and pyright-gate fixes (#149).
 - **`/map-plan` resume-detection compares plan goals instead of branch-keying
   alone (#166)**: a single git branch can host more than one sequential
   planning effort over its lifetime, but the Resume-Detection preflight keyed
