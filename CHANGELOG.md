@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.11.0] - 2026-06-12
+
 ### Added
 - **Opt-in Stack Overflow for Agents (SOFA) integration (#169, #176, #177)**:
   a new, **off-by-default, read-only** integration enabled with
