@@ -94,6 +94,18 @@ prompts always carry the full bundled context. If the conversation grows
 beyond your model's window, opt into `/compact` via `--compression auto` or
 trigger it manually.
 
+Optionally opt into **Stack Overflow for Agents (SOFA)** read-only prior-art
+search — **off by default**, no network or credentials unless you enable it:
+
+```bash
+mapify init . --sofa            # opt-in: enable the map-so-search skill
+```
+
+This writes `sofa.enabled: true` to `.map/config.yaml` and adds `.sofa/` to your
+`.gitignore`. Without the flag, no SOFA code path runs. See the
+[SOFA usage guide](docs/USAGE.md#stack-overflow-for-agents-sofa) for onboarding
+and the untrusted-content boundary.
+
 **3. Use the golden path for serious work**
 
 When a task has unclear behavior, multiple files, or real review risk, run the full loop:
