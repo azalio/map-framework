@@ -242,12 +242,21 @@ All diagnostic commands auto-detect the active provider:
 ```bash
 mapify check    # Shows codex-specific tool checks
 mapify doctor   # Validates .codex/ structure
-mapify upgrade  # Guides re-init for codex projects
+```
+
+### Updating
+
+`mapify upgrade` self-upgrades the `mapify` CLI itself to the latest release
+(provider-agnostic — it writes no project files):
+
+```bash
+mapify upgrade        # uv tool upgrade / pip install --upgrade, auto-detected
+mapify init . --force # then refresh this project's shipped MAP files
 ```
 
 ### Provider coexistence
 
-Both `.claude/` and `.codex/` can exist in the same project. When both are present, `mapify check`/`doctor`/`upgrade` operate in codex mode. The default provider (without `--provider` flag) remains Claude Code.
+Both `.claude/` and `.codex/` can exist in the same project. When both are present, `mapify check`/`doctor` operate in codex mode. The default provider (without `--provider` flag) remains Claude Code.
 
 ## Navigation
 

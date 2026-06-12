@@ -386,15 +386,26 @@ pip install -r requirements-semantic.txt
 
 ## Updating MAP Framework
 
-To update to the latest version:
+Upgrade the `mapify` CLI itself to the latest release:
 
 ```bash
-# Reinstall mapify with latest version
-uv tool upgrade mapify-cli
+# Self-upgrade the mapify CLI (auto-detects uv tool vs pip install)
+mapify upgrade
 
-# Update agents in existing project
+# Then refresh an existing project's shipped MAP files with the new templates
 mapify init . --force
 ```
+
+`mapify upgrade` detects how the tool was installed and runs the right command
+for you. The equivalent manual commands are:
+
+```bash
+uv tool upgrade mapify-cli                    # if installed via `uv tool`
+python -m pip install --upgrade mapify-cli    # if installed via pip
+```
+
+> Running `mapify upgrade` from a source checkout / editable install disables
+> self-upgrade — update that clone with `git pull` instead.
 
 ## Troubleshooting
 

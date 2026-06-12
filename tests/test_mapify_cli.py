@@ -14,6 +14,7 @@ from typer.testing import CliRunner
 # Add src directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+import mapify_cli
 from mapify_cli.delivery import create_map_tools
 from mapify_cli import (
     app,
@@ -703,17 +704,19 @@ class TestDoctorCommand:
 class TestUpgradeCommand:
     """Test the upgrade command."""
 
+    @mock.patch("mapify_cli._run_self_upgrade", return_value=0)
+    @mock.patch(
+        "mapify_cli._self_upgrade_command",
+        return_value=["uv", "tool", "upgrade", "mapify-cli"],
+    )
+    @mock.patch("mapify_cli._mapify_install_kind", return_value="uv-tool")
     @mock.patch("mapify_cli.get_latest_release")
-    def test_upgrade_available(self, mock_get_latest, tmp_path):
-        """Test upgrade refreshes files and reports newer release."""
+    def test_upgrade_self_upgrades_when_newer(
+        self, mock_get_latest, _mock_kind, _mock_cmd, mock_run, tmp_path
+    ):
+        """A newer release self-upgrades the mapify CLI and writes no project files."""
+        del _mock_kind, _mock_cmd
         os.chdir(tmp_path)
-        init_result = runner.invoke(app, ["init", ".", "--no-git", "--mcp", "none"])
-        assert init_result.exit_code == 0
-
-        actor_file = tmp_path / ".claude" / "agents" / "actor.md"
-        original_content = actor_file.read_text()
-        actor_file.write_text("stale content\n")
-
         mock_get_latest.return_value = {
             "tag_name": "v9.9.9",
             "html_url": "https://github.com/azalio/map-framework/releases/tag/v9.9.9",
@@ -721,43 +724,144 @@ class TestUpgradeCommand:
 
         result = runner.invoke(app, ["upgrade"])
 
-        assert result.exit_code == 0
-        assert "New version available" in result.stdout
-        assert "Upgrade complete" in result.stdout
-        # Compare content ignoring MAP-MANAGED metadata timestamps (which differ between init and upgrade)
-        import re
+        # Rich may hard-wrap output to terminal width; normalize whitespace
+        # before substring checks so wrapped lines still match.
+        normalized = " ".join(result.stdout.split())
+        assert result.exit_code == 0, result.stdout
+        assert "New version available" in normalized
+        assert "mapify upgraded" in normalized
+        # Directs users at the project-file refresh path
+        assert "mapify init . --force" in normalized
+        # Shelled out to the self-upgrade command exactly once
+        mock_run.assert_called_once_with(["uv", "tool", "upgrade", "mapify-cli"])
+        # upgrade no longer creates any project files
+        assert not (tmp_path / ".claude").exists()
 
-        def _strip_managed_meta(text):
-            return re.sub(r"<!-- MAP-MANAGED:.*?-->\n?", "", text)
-
-        assert _strip_managed_meta(actor_file.read_text()) == _strip_managed_meta(
-            original_content
-        )
-
+    @mock.patch("mapify_cli._run_self_upgrade")
     @mock.patch("mapify_cli.get_latest_release")
-    def test_upgrade_not_available(self, mock_get_latest, tmp_path):
-        """Test upgrade when already on latest version."""
+    def test_upgrade_already_latest_does_nothing(
+        self, mock_get_latest, mock_run, tmp_path
+    ):
+        """When already on the latest release, no upgrade command runs."""
         os.chdir(tmp_path)
-        init_result = runner.invoke(app, ["init", ".", "--no-git", "--mcp", "none"])
-        assert init_result.exit_code == 0
         mock_get_latest.return_value = {
-            "tag_name": "v3.5.0",
-            "html_url": "https://github.com/azalio/map-framework/releases/tag/v3.5.0",
+            "tag_name": "v0.0.1",
+            "html_url": "https://github.com/azalio/map-framework/releases/tag/v0.0.1",
         }
 
         result = runner.invoke(app, ["upgrade"])
 
         assert result.exit_code == 0
-        assert "latest installed version" in result.stdout
-        assert "Upgrade complete" in result.stdout
+        assert "Already on the latest release" in result.stdout
+        assert "Nothing to upgrade" in result.stdout
+        mock_run.assert_not_called()
 
-    def test_upgrade_not_initialized(self, tmp_path):
-        """Test upgrade in non-initialized directory."""
+    @mock.patch("mapify_cli._run_self_upgrade")
+    @mock.patch("mapify_cli._mapify_install_kind", return_value="source")
+    @mock.patch("mapify_cli.get_latest_release")
+    def test_upgrade_source_checkout_disabled(
+        self, mock_get_latest, _mock_kind, mock_run, tmp_path
+    ):
+        """A source checkout disables self-upgrade and runs no command."""
+        del _mock_kind
         os.chdir(tmp_path)
+        mock_get_latest.return_value = {"tag_name": "v9.9.9"}
+
         result = runner.invoke(app, ["upgrade"])
 
         assert result.exit_code == 0
-        assert "MAP Framework not initialized" in result.stdout
+        assert "self-upgrade is disabled" in result.stdout
+        mock_run.assert_not_called()
+
+    @mock.patch("mapify_cli._run_self_upgrade", return_value=1)
+    @mock.patch(
+        "mapify_cli._self_upgrade_command",
+        return_value=["uv", "tool", "upgrade", "mapify-cli"],
+    )
+    @mock.patch("mapify_cli._mapify_install_kind", return_value="uv-tool")
+    @mock.patch("mapify_cli.get_latest_release")
+    def test_upgrade_command_failure_exits_nonzero(
+        self, mock_get_latest, _mock_kind, _mock_cmd, _mock_run, tmp_path
+    ):
+        """A failing upgrade command surfaces a nonzero exit and a manual hint."""
+        del _mock_kind, _mock_cmd, _mock_run
+        os.chdir(tmp_path)
+        mock_get_latest.return_value = {"tag_name": "v9.9.9"}
+
+        result = runner.invoke(app, ["upgrade"])
+
+        assert result.exit_code == 1
+        assert "Upgrade command failed" in result.stdout
+
+    @mock.patch("mapify_cli.get_latest_release", return_value=None)
+    def test_upgrade_no_release_metadata_attempts_anyway(
+        self, _mock_get_latest, tmp_path
+    ):
+        """No release metadata: upgrade still proceeds past the version gate."""
+        del _mock_get_latest
+        os.chdir(tmp_path)
+        result = runner.invoke(app, ["upgrade"])
+
+        # In the pytest runtime mapify resolves to a source checkout, so the
+        # self-upgrade path short-circuits cleanly instead of shelling out.
+        normalized = " ".join(result.stdout.split())
+        assert result.exit_code == 0
+        assert "Could not fetch release metadata" in normalized
+
+
+class TestSelfUpgradeHelpers:
+    """Unit tests for install-kind detection and the upgrade-command builder."""
+
+    def test_install_kind_uv_tool(self, monkeypatch):
+        monkeypatch.setattr(
+            mapify_cli,
+            "__file__",
+            "/home/u/.local/share/uv/tools/mapify-cli/lib/"
+            "python3.11/site-packages/mapify_cli/__init__.py",
+        )
+        assert mapify_cli._mapify_install_kind() == "uv-tool"
+
+    def test_install_kind_pip(self, monkeypatch):
+        monkeypatch.setattr(
+            mapify_cli,
+            "__file__",
+            "/home/u/.venv/lib/python3.11/site-packages/mapify_cli/__init__.py",
+        )
+        assert mapify_cli._mapify_install_kind() == "pip"
+
+    def test_install_kind_source(self, monkeypatch):
+        monkeypatch.setattr(
+            mapify_cli,
+            "__file__",
+            "/home/u/gitroot/map-framework/src/mapify_cli/__init__.py",
+        )
+        assert mapify_cli._mapify_install_kind() == "source"
+
+    def test_self_upgrade_command_uv_tool(self, monkeypatch):
+        monkeypatch.setattr(mapify_cli.shutil, "which", lambda *_: "/usr/bin/uv")
+        assert mapify_cli._self_upgrade_command("uv-tool") == [
+            "/usr/bin/uv",
+            "tool",
+            "upgrade",
+            "mapify-cli",
+        ]
+
+    def test_self_upgrade_command_uv_tool_missing_uv(self, monkeypatch):
+        monkeypatch.setattr(mapify_cli.shutil, "which", lambda *_: None)
+        assert mapify_cli._self_upgrade_command("uv-tool") is None
+
+    def test_self_upgrade_command_pip(self):
+        assert mapify_cli._self_upgrade_command("pip") == [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--upgrade",
+            "mapify-cli",
+        ]
+
+    def test_self_upgrade_command_source_is_none(self):
+        assert mapify_cli._self_upgrade_command("source") is None
 
 
 class TestAgentCreation:
@@ -1721,18 +1825,21 @@ class TestCodexProvider:
     # AC-21: upgrade on codex project must not create .claude/             #
     # ------------------------------------------------------------------ #
 
-    def test_ac21_upgrade_codex_project_no_claude(self, codex_project):
-        """AC-21: 'mapify upgrade' on codex project must not create .claude/."""
+    @mock.patch("mapify_cli.get_latest_release")
+    def test_ac21_upgrade_codex_project_no_claude(self, mock_get_latest, codex_project):
+        """AC-21: 'mapify upgrade' upgrades the CLI only and creates no project files.
+
+        upgrade is now provider-agnostic and never writes into the project, so a
+        codex project stays codex-only — no .claude/ is ever created.
+        """
+        mock_get_latest.return_value = {"tag_name": "v9.9.9"}
         local_runner = CliRunner()
         os.chdir(codex_project)
         result = local_runner.invoke(app, ["upgrade"])
         assert result.exit_code == 0, f"upgrade failed: {result.output}"
         assert not (
             codex_project / ".claude"
-        ).exists(), ".claude/ must NOT be created when upgrading a codex project"
-        assert (
-            "mapify init . --provider codex --force" in result.output
-        ), "upgrade must tell codex users to re-run init with --provider codex"
+        ).exists(), ".claude/ must NOT be created by upgrade on a codex project"
 
     def test_ac22_map_efficient_state_machine_markers(self, codex_project):
         """AC-22: $map-efficient documents the required state-machine commands."""

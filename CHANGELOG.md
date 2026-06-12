@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **`mapify upgrade` now self-upgrades the CLI to the latest release.**
+  Previously `mapify upgrade` refreshed the *current project's* shipped MAP
+  files (and, on Codex projects, only printed a re-init hint). It now upgrades
+  the installed `mapify-cli` package itself: it auto-detects the install method
+  and runs `uv tool upgrade mapify-cli` (uv tool installs) or
+  `python -m pip install --upgrade mapify-cli` (pip installs). The command is
+  now provider-agnostic and writes no project files. When already on the latest
+  release it does nothing; when run from a source checkout / editable install,
+  self-upgrade is disabled. To refresh a project's shipped MAP files with the
+  new templates after upgrading, run `mapify init . --force`.
+
 ## [3.11.0] - 2026-06-12
 
 ### Added

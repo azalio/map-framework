@@ -152,21 +152,28 @@ mapify check --debug
 
 ### `mapify upgrade`
 
-**Refresh MAP Framework files in the current project**
+**Upgrade the `mapify` CLI itself to the latest released version**
 
 ```bash
 mapify upgrade
 ```
 
-Refreshes shipped MAP files in the current project:
-- `.claude/agents/`
-- `.claude/commands/README.md` custom-command guidance
-- `.claude/skills/`
-- `.claude/references/`
-- `.claude/hooks/`
-- `.claude/settings.json`, `.claude/workflow-rules.json`, `.claude/ralph-loop-config.json`
+Self-upgrades the installed `mapify-cli` package (the tool) — it does **not**
+touch the files inside a project and is provider-agnostic:
 
-Preserves project-specific MCP selections in `.mcp.json` and `.claude/mcp_config.json`.
+- Auto-detects the install method and runs `uv tool upgrade mapify-cli`
+  (uv tool installs) or `python -m pip install --upgrade mapify-cli`
+  (pip installs).
+- When already on the latest release, it does nothing.
+- When running from a source checkout / editable install, self-upgrade is
+  disabled (update that clone with `git pull`).
+
+To refresh a project's shipped MAP files with the new templates after
+upgrading, run:
+
+```bash
+mapify init . --force
+```
 
 ---
 
