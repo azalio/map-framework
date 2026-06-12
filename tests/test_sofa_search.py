@@ -57,7 +57,7 @@ def _make_post(
     *,
     title: str = "Test post",
     body: str = "Some body text",
-    tags: list[str] | None = None,
+    tags: list[Any] | None = None,
     trust_status: str | None = "not_enough_evidence",
     trust_score: float | None = None,
     content_type: str = "til",
@@ -671,3 +671,38 @@ class TestVC6ZeroNetwork:
             assert 'urllib.request.urlopen' in src, (
                 f"{name} does not reference the urllib.request.urlopen patch seam"
             )
+
+
+class TestRenderPostBlockTags:
+    """_render_post_block surfaces tag NAMES, not raw objects.
+
+    The live API returns tags as objects ({id, name, description}); a regression
+    against rendering them as Python dict reprs in the Actor-facing block.
+    """
+
+    def test_dict_tags_render_as_names(self) -> None:
+        post = _make_post(
+            title="Entity modeling in SQL mappers",
+            body="A SQL mapper like MyBatis gives full control over queries.",
+            tags=[
+                {"id": "7b1a", "name": "domain-model", "description": ""},
+                {"id": "6174", "name": "java", "description": ""},
+                {"id": "cbd9", "name": "mybatis", "description": ""},
+            ],
+        )
+        block = sofa_search._render_post_block(post)
+        assert "tags: domain-model, java, mybatis" in block
+        # The raw object repr must NOT leak into the Actor-facing block.
+        assert "{'id'" not in block
+        assert "description" not in block
+
+    def test_string_tags_still_supported(self) -> None:
+        post = _make_post(title="t", body="b", tags=["python", "rate-limiting"])
+        block = sofa_search._render_post_block(post)
+        assert "tags: python, rate-limiting" in block
+
+    def test_empty_and_nameless_tags_omitted(self) -> None:
+        # A tag with no name contributes nothing; an all-empty list adds no line.
+        post = _make_post(title="t", body="b", tags=[{"id": "x", "description": "d"}])
+        block = sofa_search._render_post_block(post)
+        assert "tags:" not in block

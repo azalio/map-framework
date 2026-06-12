@@ -256,7 +256,15 @@ def _render_post_block(post: dict[str, Any]) -> str:
 
     header = f"[SOFA {content_type.upper()}] {title}"
     if tags:
-        header += f"  tags: {', '.join(str(t) for t in tags)}"
+        # The live API returns tags as objects ({id, name, description}); tolerate
+        # both that shape and plain string tags, and surface only the names.
+        tag_names = [
+            (t.get("name") or "").strip() if isinstance(t, dict) else str(t).strip()
+            for t in tags
+        ]
+        tag_names = [t for t in tag_names if t]
+        if tag_names:
+            header += f"  tags: {', '.join(tag_names)}"
     header += f"  {trust_line}"
 
     block_body = f"{header}\n\n{body_text}"
