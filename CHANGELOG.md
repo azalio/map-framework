@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **`deepwiki` MCP server is no longer installed.** `mapify init` no longer
+  configures the `deepwiki` MCP server in the project `.mcp.json` or the
+  internal `.claude/mcp_config.json`; `--mcp all` and `--mcp essential` now
+  install only `sequential-thinking`, and `--mcp deepwiki` is treated as an
+  unknown server. (context7 was never installed by mapify.)
+
+### Changed
+- **Onboarding leads with the golden-path flow.** The ASCII banner now carries a
+  `/map-plan → /map-efficient → /map-check → /map-review → /map-learn` subtitle,
+  and the post-`init` "Next Steps" panel presents that loop in order (leading
+  with `/map-plan`) instead of leading with `/map-efficient`.
+
 ## [3.12.1] - 2026-06-12
 
 ### Changed

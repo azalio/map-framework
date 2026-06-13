@@ -280,7 +280,8 @@ class TestInitCommand:
 
         Verifies that:
         - Init succeeds with --mcp essential
-        - Essential MCP servers are configured (sequential-thinking, deepwiki)
+        - Essential MCP servers are configured (sequential-thinking)
+        - deepwiki is no longer installed (removed)
         - Agent files are created
         """
         os.chdir(tmp_path)
@@ -294,7 +295,7 @@ class TestInitCommand:
         # Check MCP config contains essential servers
         mcp_config = json.loads((tmp_path / ".claude" / "mcp_config.json").read_text())
         assert "sequential-thinking" in mcp_config["mcp_servers"]
-        assert "deepwiki" in mcp_config["mcp_servers"]
+        assert "deepwiki" not in mcp_config["mcp_servers"]
 
     def test_init_with_directory(self, tmp_path):
         """Test init with specific directory name.
@@ -342,7 +343,7 @@ class TestInitCommand:
 
         Verifies that:
         - --mcp essential flag installs essential servers
-        - MCP config contains sequential-thinking, deepwiki
+        - MCP config contains sequential-thinking (deepwiki removed)
         """
         os.chdir(tmp_path)
 
@@ -353,19 +354,19 @@ class TestInitCommand:
 
         mcp_config = json.loads((tmp_path / ".claude" / "mcp_config.json").read_text())
         assert "sequential-thinking" in mcp_config["mcp_servers"]
-        assert "deepwiki" in mcp_config["mcp_servers"]
+        assert "deepwiki" not in mcp_config["mcp_servers"]
 
     @pytest.mark.skip(
         reason="Test isolation issue: passes in isolation but fails in full suite after 332 tests due to stdin/stdout state. TODO: Investigate and fix test infrastructure issue."
     )
     def test_init_defaults_to_all_mcp_servers(self, tmp_path, monkeypatch):
-        """Test that init without --mcp flag defaults to installing all 4 MCP servers.
+        """Test that init without --mcp flag defaults to installing all MCP servers.
 
         Regression test for non-interactive init behavior.
         Verifies that:
         - Init completes without interactive prompts
-        - All 2 MCP servers are installed by default (sequential-thinking, deepwiki)
-        - mcp_config.json is created with all 2 servers
+        - The default MCP server (sequential-thinking) is installed by default
+        - mcp_config.json is created with the default server set (deepwiki removed)
         """
         # Use fresh CliRunner to avoid state pollution from previous tests
         from typer.testing import CliRunner as FreshRunner
@@ -401,7 +402,6 @@ class TestInitCommand:
         mcp_config = json.loads((tmp_path / ".claude" / "mcp_config.json").read_text())
         expected_servers = [
             "sequential-thinking",
-            "deepwiki",
         ]
 
         assert "mcp_servers" in mcp_config, "mcp_config missing 'mcp_servers' key"
@@ -665,7 +665,7 @@ class TestCheckCommand:
 
         assert result.exit_code == 0
         assert "sequential-thinking" in result.stdout
-        assert "deepwiki" in result.stdout
+        assert "deepwiki" not in result.stdout
 
 
 class TestDoctorCommand:
@@ -1010,10 +1010,12 @@ class TestMcpJsonConfig:
 
         expected_servers = [
             "sequential-thinking",
-            "deepwiki",
         ]
         for server in expected_servers:
             assert server in servers, f"Missing server: {server}"
+
+        # deepwiki MCP installation was removed — it must not be shipped.
+        assert "deepwiki" not in servers
 
     def test_build_standard_mcp_servers_correct_types(self):
         """Test that servers have correct transport types."""
@@ -1023,13 +1025,6 @@ class TestMcpJsonConfig:
         for server_name in ["sequential-thinking"]:
             assert "command" in servers[server_name], f"{server_name} missing command"
             assert "args" in servers[server_name], f"{server_name} missing args"
-
-        # http servers should have 'type' and 'url' keys
-        for server_name in ["deepwiki"]:
-            assert (
-                servers[server_name].get("type") == "http"
-            ), f"{server_name} should be http"
-            assert "url" in servers[server_name], f"{server_name} missing url"
 
     def test_read_project_mcp_json_missing_file(self, tmp_path):
         """Test reading non-existent .mcp.json returns None."""
@@ -1147,16 +1142,17 @@ class TestMcpJsonConfig:
 
     def test_create_or_merge_new_file(self, tmp_path):
         """Test creating new .mcp.json when file doesn't exist."""
-        create_or_merge_project_mcp_json(tmp_path, ["deepwiki", "sequential-thinking"])
+        create_or_merge_project_mcp_json(tmp_path, ["sequential-thinking"])
 
         mcp_file = tmp_path / ".mcp.json"
         assert mcp_file.exists()
 
         config = json.loads(mcp_file.read_text())
         assert "mcpServers" in config
-        assert "deepwiki" in config["mcpServers"]
         assert "sequential-thinking" in config["mcpServers"]
-        assert len(config["mcpServers"]) == 2
+        # deepwiki was removed — it is filtered out even if requested.
+        assert "deepwiki" not in config["mcpServers"]
+        assert len(config["mcpServers"]) == 1
 
     def test_create_or_merge_existing_file(self, tmp_path):
         """Test merging into existing .mcp.json."""
@@ -1170,12 +1166,12 @@ class TestMcpJsonConfig:
         mcp_file.write_text(json.dumps(existing_config))
 
         # Run merge
-        create_or_merge_project_mcp_json(tmp_path, ["deepwiki"])
+        create_or_merge_project_mcp_json(tmp_path, ["sequential-thinking"])
 
         # Verify merge
         config = json.loads(mcp_file.read_text())
         assert "my-custom-server" in config["mcpServers"]  # User's server preserved
-        assert "deepwiki" in config["mcpServers"]  # New server added
+        assert "sequential-thinking" in config["mcpServers"]  # New server added
 
     def test_create_or_merge_empty_servers_list(self, tmp_path):
         """Test that empty servers list doesn't create file."""
@@ -1185,7 +1181,7 @@ class TestMcpJsonConfig:
         assert not mcp_file.exists()
 
     def test_create_or_merge_filters_unknown_servers(self, tmp_path):
-        """Test that unknown server names are ignored."""
+        """Test that unknown server names are ignored (deepwiki is now unknown)."""
         create_or_merge_project_mcp_json(
             tmp_path, ["deepwiki", "unknown-server", "sequential-thinking"]
         )
@@ -1193,8 +1189,8 @@ class TestMcpJsonConfig:
         mcp_file = tmp_path / ".mcp.json"
         config = json.loads(mcp_file.read_text())
 
-        assert "deepwiki" in config["mcpServers"]
         assert "sequential-thinking" in config["mcpServers"]
+        assert "deepwiki" not in config["mcpServers"]  # removed → filtered like any unknown
         assert "unknown-server" not in config["mcpServers"]
 
     def test_init_creates_mcp_json(self, tmp_path):
@@ -1211,11 +1207,9 @@ class TestMcpJsonConfig:
 
         config = json.loads(mcp_file.read_text())
         assert "mcpServers" in config
-        # essential = sequential-thinking + deepwiki
-        assert (
-            "deepwiki" in config["mcpServers"]
-            or "sequential-thinking" in config["mcpServers"]
-        )
+        # essential = sequential-thinking only (deepwiki install was removed)
+        assert "sequential-thinking" in config["mcpServers"]
+        assert "deepwiki" not in config["mcpServers"]
 
 
 class TestCreateMapTools:

@@ -48,11 +48,6 @@ def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
                 "hypothesis_verification": True,
             },
         },
-        "deepwiki": {
-            "enabled": True,
-            "description": "GitHub repository intelligence",
-            "config": {"auto_structure": True, "max_depth": 3, "cache_repos": True},
-        },
     }
 
     # Add selected servers
@@ -71,10 +66,6 @@ def create_mcp_config(project_path: Path, mcp_servers: List[str]) -> None:
         ]:
             if agent in config["agent_mcp_mappings"]:
                 config["agent_mcp_mappings"][agent].append("sequential-thinking")
-
-    if "deepwiki" in mcp_servers:
-        for agent in config["agent_mcp_mappings"]:
-            config["agent_mcp_mappings"][agent].append("deepwiki")
 
     # Write config file
     config_file = project_path / ".claude" / "mcp_config.json"
@@ -100,10 +91,6 @@ def build_standard_mcp_servers() -> Dict[str, Dict[str, Any]]:
         "sequential-thinking": {
             "command": "npx",
             "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
-        },
-        "deepwiki": {
-            "type": "http",
-            "url": "https://mcp.deepwiki.com/mcp",
         },
     }
 

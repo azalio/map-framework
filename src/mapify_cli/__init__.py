@@ -116,14 +116,13 @@ ssl_context = create_ssl_context()
 # Constants
 MCP_SERVER_CHOICES = {
     "all": "All available MCP servers",
-    "essential": "Essential (sequential-thinking, deepwiki)",
+    "essential": "Essential (sequential-thinking)",
     "custom": "Select individually",
     "none": "Skip MCP setup",
 }
 
 INDIVIDUAL_MCP_SERVERS = {
     "sequential-thinking": "Chain-of-thought reasoning",
-    "deepwiki": "GitHub repository intelligence",
 }
 
 
@@ -637,7 +636,7 @@ def init(
     mcp: str = typer.Option(
         "all",
         "--mcp",
-        help="MCP server installation (default: all). Options: all, essential, none, or comma-separated list (e.g. sequential-thinking,deepwiki)",
+        help="MCP server installation (default: all). Options: all, essential, none, or comma-separated list (e.g. sequential-thinking)",
     ),
     no_git: bool = typer.Option(
         False, "--no-git", help="Skip git repository initialization"
@@ -700,7 +699,7 @@ def init(
         mapify init my-project              # Installs all MCP servers
         mapify init my-project --mcp none   # Skip MCP installation
         mapify init my-project --mcp essential
-        mapify init my-project --mcp "sequential-thinking,deepwiki"
+        mapify init my-project --mcp "sequential-thinking"
         mapify init .
         mapify init . --force  # Force init in non-empty current directory
         mapify init --debug  # Enable workflow logging
@@ -835,7 +834,7 @@ def init(
         if mcp == "all":
             selected_mcp_servers = list(INDIVIDUAL_MCP_SERVERS.keys())
         elif mcp == "essential":
-            selected_mcp_servers = ["sequential-thinking", "deepwiki"]
+            selected_mcp_servers = ["sequential-thinking"]
         elif mcp == "none":
             selected_mcp_servers = []
         else:
@@ -992,32 +991,39 @@ def init(
         step_num = 2
 
     if provider == "codex":
-        steps_lines.append(f"{step_num}. Start using MAP skills with Codex:")
-        steps_lines.append("   • [cyan]$map-plan[/] - Plan and decompose complex tasks")
+        steps_lines.append(f"{step_num}. Drive the MAP loop with Codex:")
         steps_lines.append(
-            "   • [cyan]$map-fast[/] - Quick implementation with minimal validation"
-        )
-        steps_lines.append("   • [cyan]$map-check[/] - Quality gates and verification")
-        steps_lines.append(
-            "   • [cyan]$map-efficient[/] - Execute approved MAP plans end to end"
+            "   • [cyan]$map-plan[/]      decompose the task — you approve before any code"
         )
         steps_lines.append(
-            f"{step_num + 1}. Trust this project in Codex settings for .codex/ config to take effect; skills live in .agents/skills"
+            "   • [cyan]$map-efficient[/] implement the approved plan"
+        )
+        steps_lines.append("   • [cyan]$map-check[/]     quality gates against the plan")
+        steps_lines.append(
+            "   • [cyan]$map-review[/]    semantic review vs spec, tests & diff"
+        )
+        steps_lines.append("   • [cyan]$map-learn[/]     save gotchas as project memory")
+        steps_lines.append(
+            f"{step_num + 1}. Tiny edit? [cyan]$map-fast[/] skips full planning. Bug? [cyan]$map-debug[/]."
+        )
+        steps_lines.append(
+            f"{step_num + 2}. Trust this project in Codex settings for .codex/ config to take effect; skills live in .agents/skills"
         )
     else:
-        steps_lines.append(f"{step_num}. Start using MAP commands with Claude Code:")
+        steps_lines.append(f"{step_num}. Drive the MAP loop in Claude Code:")
         steps_lines.append(
-            "   • [cyan]/map-efficient[/] - Implement features with optimized workflow (recommended)"
-        )
-        steps_lines.append("   • [cyan]/map-debug[/] - Debug issue using MAP analysis")
-        steps_lines.append(
-            "   • [cyan]/map-fast[/] - Quick implementation with minimal validation"
+            "   • [cyan]/map-plan[/]      decompose the task — you approve before any code"
         )
         steps_lines.append(
-            "   • [cyan]/map-learn[/] - Extract lessons from completed workflows"
+            "   • [cyan]/map-efficient[/] implement the approved plan"
         )
+        steps_lines.append("   • [cyan]/map-check[/]     quality gates against the plan")
         steps_lines.append(
-            f"{step_num + 1}. Run [cyan]/map-plan[/cyan] first when you want branch-scoped research, spec, and plan artifacts in `.map/<branch>/`"
+            "   • [cyan]/map-review[/]    semantic review vs spec, tests & diff"
+        )
+        steps_lines.append("   • [cyan]/map-learn[/]     save gotchas as project memory")
+        steps_lines.append(
+            f"{step_num + 1}. Tiny edit? [cyan]/map-fast[/] skips full planning. Bug? [cyan]/map-debug[/]."
         )
 
     steps_panel = Panel(

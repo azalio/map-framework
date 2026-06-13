@@ -26,7 +26,8 @@ BANNER = """
 ╩ ╩╩ ╩╩    ╩ ╩╩ ╩
 """
 
-TAGLINE = "MAP Kit - Modular Agentic Planner Framework"
+TAGLINE = "Modular Agentic Planner — plan-then-build AI coding"
+SUBTITLE = "/map-plan  →  /map-efficient  →  /map-check  →  /map-review  →  /map-learn"
 
 console = Console()
 
@@ -317,4 +318,5 @@ def show_banner():
 
     console.print(Align.center(styled_banner))
     console.print(Align.center(Text(TAGLINE, style="italic bright_yellow")))
+    console.print(Align.center(Text(SUBTITLE, style="dim cyan")))
     console.print()

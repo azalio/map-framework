@@ -153,7 +153,7 @@ class TestConfigModule:
 
         servers = build_standard_mcp_servers()
         assert "sequential-thinking" in servers
-        assert "deepwiki" in servers
+        assert "deepwiki" not in servers  # deepwiki MCP install was removed
 
     def test_merge_mcp_json(self):
         from mapify_cli.config.mcp import merge_mcp_json
