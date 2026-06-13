@@ -2,7 +2,7 @@
 
 [![PyPI version](https://badge.fury.io/py/mapify-cli.svg)](https://pypi.org/project/mapify-cli/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://opensource.org/licenses/MIT)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/azalio/map-framework?style=social)](https://github.com/azalio/map-framework)
 
 > **Plan-then-build AI coding for Claude Code & Codex CLI.** `/map-plan` decomposes your task into small, reviewable subtasks you approve *before* any code is written; `/map-efficient` implements the approved plan, subtask by subtask. The AI still writes the code — you keep the architecture, scope, and review.
@@ -160,7 +160,7 @@ These flows maintain branch-scoped artifacts under `.map/<branch>/` — `bluepri
 - **Daily-driver speed** — optimized for repeated use, not occasional demo workflows. Structured enough to prevent chaos, lightweight enough to keep token and time cost under control.
 - **Reviewable diffs** — `/map-plan` and `/map-efficient` require per-subtask size, concern, and constraint metadata, then validate `blueprint.json` *before* implementation, so oversized or mixed-concern plans fail early instead of surprising reviewers later.
 - **Gates that check the plan, not vibes** — `/map-check` and `/map-review` validate against the spec, tests, and diff instead of asking whether code "looks fine".
-- **Clean-room review** — `/map-review` auto-bundles spec, plan, tests, verification, and coverage evidence into a single durable input; `--detached` opens a read-only worktree for inspection without touching your branch.
+- **Clean-room review** — `/map-review` auto-bundles spec, plan, tests, verification, and coverage evidence into a single durable input (`.map/<branch>/review-bundle.json`); `--detached` opens a read-only worktree for inspection without touching your branch.
 - **Project memory** — `/map-learn` turns hard-won fixes and gotchas into reusable context, so the next session doesn't relearn them.
 
 <details>
