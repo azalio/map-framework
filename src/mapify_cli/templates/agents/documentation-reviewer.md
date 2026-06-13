@@ -109,16 +109,10 @@ You are a technical documentation expert specialized in architecture reviews and
 
 ## Optional MCP Tools (with fallbacks)
 ```
-  → Use for library documentation verification
-ELSE:
+For library documentation verification and GitHub repository
+architecture questions:
   → Use Fetch to get raw documentation from official sources
-
-IF mcp__deepwiki__* available:
-  → Use for GitHub repository architecture questions
-ELSE:
   → Use Fetch + manual README.md analysis
-  → Log: "deepwiki unavailable, architecture analysis limited"
-
 ```
 
 ## Fallback Protocol
@@ -403,9 +397,7 @@ For External URL "https://project.io/":
            ├─ SUCCESS (200) ↓
            │   Contains CRD definitions?
            │   ├─ YES → Extract CRDs, check installation instructions
-           │   └─ NO → Is GitHub repo?
-           │       ├─ YES → mcp__deepwiki__ask_question("CRD patterns")
-           │       └─ NO → Mark as "no CRDs detected"
+           │   └─ NO → Mark as "no CRDs detected"
            │
            └─ FAILURE (timeout/404/error)
                Is known library (npm/pypi/k8s)?
@@ -420,18 +412,6 @@ Fetch(
     url="https://openreports.io/",
     prompt="Analyze for: 1) CRD definitions 2) Installation requirements 3) Dependencies"
 )
-
-# 2. Verify library integration
-    topic="CRD installation and webhook requirements",
-    tokens=3000
-)
-
-# 3. Understand GitHub project architecture
-mcp__deepwiki__ask_question(
-    repoName="open-policy-agent/gatekeeper",
-    question="How does Gatekeeper handle CRD installation?"
-)
-
 ```
 
 ---

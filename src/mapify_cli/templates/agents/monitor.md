@@ -301,7 +301,7 @@ PHASE 1: BASELINE (ALWAYS)
 
 PHASE 2: AUGMENTATION (CONDITIONAL)
 IF code uses external libraries:
-  → Run resolve-library-id + get-library-docs
+  → Use WebFetch on the library's official docs (or fall back to training data)
 IF complex logic detected (≥3 nested conditionals, state machines, async):
   → Run sequentialthinking with structured thoughts
 IF detected_language != "unknown":
@@ -519,15 +519,14 @@ Review Scope Decision:
 
 Implementation Code:
   → request_review (AI baseline)
-  → get-library-docs (external libs) → sequentialthinking (complex logic)
-  → deepwiki (security patterns)
+  → sequentialthinking (complex logic)
 
 Documentation:
   → Glob/Read (find source of truth) → Fetch (validate URLs)
   → ESCALATE if inconsistent
 
 Test Code:
-  → get-library-docs (framework practices)
+  → WebFetch official framework docs (or training data)
   → Verify coverage expectations
 ```
 
@@ -573,17 +572,7 @@ Thought N+1: Check for unreachable code or logic gaps
 Conclusion: List issues found with line numbers
 ```
 
-**Use When**: Code uses external libraries/frameworks
-**Process**: `resolve-library-id` → `get-library-docs(library_id, topic)`
-**Topics**: best-practices, security, error-handling, performance, deprecated-apis
-**Rationale**: Current docs prevent deprecated APIs and missing security features
-
-### 4. mcp__deepwiki__ask_question
-**Use When**: Validate security/architecture patterns
-**Queries**: "How does [repo] handle [concern]?", "Common mistakes in [feature]?"
-**Rationale**: Learn from battle-tested production code
-
-### 5. Fetch Tool (Documentation Review Only)
+### 3. Fetch Tool (Documentation Review Only)
 **Use When**: Reviewing documentation that mentions external projects/URLs
 **Process**: Extract URLs → Fetch each → Verify dependencies documented
 **Rationale**: External integrations have hidden dependencies (CRDs, adapters)
@@ -591,7 +580,7 @@ Conclusion: List issues found with line numbers
 <critical>
 **IMPORTANT**:
 - Use request_review FIRST for all code reviews
-- Get current library docs for ANY external library used
+- Use WebFetch on official docs for ANY external library used (or training data)
 - Use sequential thinking for complex logic validation
 - Document which MCP tools you used in your review summary
 </critical>
@@ -604,8 +593,6 @@ Tool                    | Timeout | Action on Timeout
 ------------------------|---------|----------------------------------
 request_review          | 5 min   | Proceed to manual 10-dimension review
 sequentialthinking      | 5 min   | Manual trace critical paths
-get-library-docs        | 3 min   | Use deepwiki or Fetch as fallback
-deepwiki                | 3 min   | Skip pattern validation, proceed
 Fetch                   | 2 min   | Note URL not verified, proceed
 ```
 
@@ -624,9 +611,9 @@ IF request_review fails or times out (>5 min):
   → Note "MCP baseline unavailable" in summary
   → Apply extra scrutiny to security dimension
 
-IF get-library-docs unavailable or library not indexed:
-  → Use deepwiki to search for library patterns
+IF current library docs are needed:
   → Use Fetch for official documentation URLs
+  → Fall back to training data if the URL is unavailable
   → Note "Could not verify against current docs" in feedback
 
 IF sequentialthinking quota exceeded:
@@ -650,14 +637,11 @@ Priority 1: Manual Review (human-level logic)
   → Trumps tool-based static analysis for LOGICAL flaws
   → Trust tools for SYNTAX errors, type mismatches, style violations
 
-Priority 2: Security-focused tools
-  → deepwiki (production patterns) > get-library-docs (generic docs)
-
-Priority 3: Specificity
+Priority 2: Specificity
   → Tool pointing to exact line/function > tool with vague location
   → Issue with code snippet > issue without
 
-Priority 4: Severity
+Priority 3: Severity
   → Higher severity finding wins
   → If same severity: include BOTH, note conflict in description
 ```
@@ -678,7 +662,6 @@ Priority 4: Severity
 | Short Name | Full MCP Name | Category |
 |------------|---------------|----------|
 | `sequentialthinking` | `mcp__sequential-thinking__sequentialthinking` | Analysis |
-| `deepwiki` | `mcp__deepwiki__ask_question` | Docs |
 | `glob` | Built-in Glob tool | File |
 | `read` | Built-in Read tool | File |
 | `fetch` | Built-in Fetch tool | Network |
@@ -725,34 +708,6 @@ Priority 4: Severity
 ```
 **Key Fields**: `conclusion` (extract issues with line numbers), `is_complete`
 **Integration**: Parse conclusion for "line N" references, create issues
-
-#### get_library_docs Response
-```json
-{
-  "library": "react",
-  "version": "18.2.0",
-  "content": "# React Hooks Best Practices\n\n## useEffect...",
-  "topics": ["hooks", "performance", "error-boundaries"],
-  "last_updated": "2024-01-10",
-  "url": "https://react.dev/reference"
-}
-```
-**Key Fields**: `version` (verify code uses correct API), `content` (search for patterns)
-**Integration**: Compare code against documented best practices
-
-#### deepwiki Response
-```json
-{
-  "answer": "The repository handles authentication via JWT tokens stored in httpOnly cookies...",
-  "sources": [
-    {"file": "src/auth/jwt.ts", "relevance": 0.92},
-    {"file": "docs/auth.md", "relevance": 0.85}
-  ],
-  "confidence": 0.88
-}
-```
-**Key Fields**: `answer`, `confidence` (>0.8 = reliable), `sources`
-**Integration**: Use as reference for security patterns
 
 </Monitor_MCP_Integration>
 
@@ -980,7 +935,6 @@ def divide(a, b):
 2. Verify parameterized queries (no string interpolation)
 3. Check command execution (no shell=True with user input)
 4. Validate file paths (no path traversal)
-5. Use deepwiki to check production security patterns
 
 #### Pass Criteria
 - All inputs validated with allowlist approach
@@ -1743,7 +1697,7 @@ Do NOT invent issues to justify review effort. Empty `issues` array is valid.
       "type": "array",
       "items": {
         "type": "string",
-        "enum": ["request_review", "sequentialthinking", "get_library_docs", "resolve_library_id", "deepwiki", "glob", "read", "fetch"]
+        "enum": ["request_review", "sequentialthinking", "glob", "read", "fetch"]
       },
       "description": "MCP tools successfully used during review"
     },
@@ -1751,7 +1705,7 @@ Do NOT invent issues to justify review effort. Empty `issues` array is valid.
       "type": "array",
       "items": {
         "type": "string",
-        "enum": ["request_review", "sequentialthinking", "get_library_docs", "resolve_library_id", "deepwiki", "glob", "read", "fetch"]
+        "enum": ["request_review", "sequentialthinking", "glob", "read", "fetch"]
       },
       "description": "MCP tools that failed or timed out"
     },
@@ -2227,8 +2181,7 @@ IF ≥3 MCP tools fail in sequence:
 | `request_review` | Timeout (>5min) | Skip AI baseline, proceed with full 10-dimension manual review |
 | `request_review` | Error response | Log error, proceed with manual review, note limitation |
 | `sequentialthinking` | Quota exceeded | Manual trace critical paths, recommend human review |
-| `get_library_docs` | Library not indexed | Try deepwiki → Fetch docs URL → note limitation |
-| `deepwiki` | Timeout | Skip pattern validation, proceed with conservative review |
+| `fetch` | Timeout | Note URL not verified, proceed with conservative review |
 
 #### Cascading Failure Protocol
 
@@ -2472,7 +2425,7 @@ def search_users(query):
   "failed_checks": ["security", "correctness"],
   "feedback_for_actor": "CRITICAL: SQL injection vulnerability allows arbitrary database access. MUST fix before deployment. Use parameterized queries (see suggestion). Also add input validation for query length.",
   "estimated_fix_time": "30 minutes",
-  "mcp_tools_used": ["request_review", "deepwiki"]
+  "mcp_tools_used": ["request_review"]
 }
 ```
 

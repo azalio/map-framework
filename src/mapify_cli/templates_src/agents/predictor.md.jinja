@@ -396,8 +396,8 @@ Previous analysis identified these concerns:
 **CRITICAL**: Accurate impact prediction requires historical data, dependency analysis, and architectural knowledge. MCP tools provide this context.
 
 <rationale>
-Impact analysis is about pattern recognition. Similar changes have happened before--renaming APIs, refactoring modules, changing schemas. MCP tools let us learn from history:
-- deepwiki shows how mature projects handle similar changes
+Impact analysis is about pattern recognition. Similar changes have happened before--renaming APIs, refactoring modules, changing schemas. MCP tools let us reason systematically about ripple effects:
+- sequential-thinking structures transitive dependency tracing
 
 Without these tools, we're guessing. With them, we're predicting based on evidence.
 </rationale>
@@ -408,27 +408,21 @@ Without these tools, we're guessing. With them, we're predicting based on eviden
 BEFORE analyzing impact, gather context:
 
 IF external library involved:
-  1. THEN → get-library-docs (compatibility check)
+  1. THEN → WebFetch library migration guides / release notes (compatibility check)
      - Query: Changes between versions (migration guides)
      - Identify deprecated APIs
      - Understand breaking changes in library updates
 
-IF architectural change:
-  2. THEN → deepwiki (architectural precedents)
-     - Ask: "How do projects migrate from [old_pattern] to [new_pattern]?"
-     - Learn typical ripple effects
-     - Identify commonly missed dependencies
-
 ALWAYS → Grep/Glob (manual verification)
-  3. Search for symbol names, import statements, file references
+  2. Search for symbol names, import statements, file references
      - Automated search might miss dynamic imports, reflection, config files
      - Manual search catches edge cases
 ```
 
 **Use When**: Change involves external library or framework
 **Process**:
-1. `resolve-library-id` with library name
-2. `get-library-docs` for: "migration-guide", "breaking-changes", "deprecated"
+1. WebFetch the library's migration guide / release notes
+2. Look for: "migration-guide", "breaking-changes", "deprecated"
 
 **Rationale**: Library upgrades are common breaking change sources. Migration guides list exact APIs that changed. Without checking library docs, we'll miss deprecations and required code updates.
 
@@ -441,18 +435,7 @@ Upgrading Django 3.x → 4.x without checking migration guide:
 **ALWAYS** check library docs for version changes.
 </example>
 
-### 2. mcp__deepwiki__read_wiki_structure + ask_question
-**Use When**: Architectural changes or unfamiliar patterns
-**Purpose**: Learn from mature projects' migration strategies
-
-**Query Examples**:
-- "How does [repo] handle database schema migrations?"
-- "What migration strategy does [project] use for API versioning?"
-- "How do popular repos structure feature flags for gradual rollout?"
-
-**Rationale**: Architectural changes have hidden complexity. How do you migrate thousands of database records? How do you version APIs without breaking clients? Mature projects have solved these problems—learn from them.
-
-### 3. Standard Tools (Read, Grep, Glob, Bash)
+### 2. Standard Tools (Read, Grep, Glob, Bash)
 **Use When**: Always—for verification and edge cases
 **Purpose**: Catch what automated tools miss
 
@@ -472,7 +455,7 @@ Upgrading Django 3.x → 4.x without checking migration guide:
 - String-based imports or reflection
 </critical>
 
-### 4. mcp__sequential-thinking__sequentialthinking
+### 3. mcp__sequential-thinking__sequentialthinking
 **Use When**: Complex dependency tracing requiring multi-step reasoning
 **Purpose**: Structure transitive dependency analysis and impact cascade tracing
 

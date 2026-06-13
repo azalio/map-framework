@@ -121,9 +121,8 @@ This enables Synthesizer to extract and resolve decisions across variants.
 
 **Decision Rule**: Use if unfamiliar library/algorithm/architecture.
 
-| Trigger | Tool | Purpose |
-|---------|------|---------|
-| Architecture patterns | deepwiki | Production examples |
+When you hit a knowledge gap, read existing CODE in the project (Read, Grep) and
+fall back to training data; flag uncertainty per the protocols below.
 
 ### Tool Selection Flowchart
 
@@ -132,7 +131,7 @@ START → Using external library?
     NO  → Continue
     ↓
 Need production architecture example?
-    YES → deepwiki: read_wiki_structure → ask_question
+    YES → Read existing project code (Read, Grep) for the pattern
     NO  → Implement directly
     ↓
 IMPLEMENTATION COMPLETE → Apply with Edit/Write tools
@@ -148,7 +147,7 @@ Monitor will validate written code
 
 
 **Unclear or incomplete docs**:
-- Cross-reference with deepwiki for usage examples
+- Cross-reference with existing project code for usage examples
 - Add validation tests for uncertain APIs
 - Note uncertainty in code comments
 
@@ -163,7 +162,7 @@ mitigation: "Added version check, comprehensive tests"
 
 **Library Implementation**:
 ```
-    → (if architecture unclear) deepwiki: ask_question
+    → (if architecture unclear) Read existing project code (Read, Grep)
     → implement
 ```
 
@@ -175,7 +174,7 @@ When multiple sources provide conflicting guidance, follow this priority (highes
 
 1. **Explicit human instruction** in subtask description
 2. **Security constraints** (NEVER override)
-4. **Training data** (fallback)
+3. **Training data** (fallback)
 
 </Actor_MCP_Protocol>
 
@@ -350,7 +349,7 @@ When no `<TDD_Mode>` tag is present, Actor operates in standard mode: write both
 Explain solution strategy in 2-3 sentences. Include:
 - Core idea and why this approach
 - MCP tools used and what they informed (if any)
-- **Source attribution:** Tag information sources as `[tool: deepwiki]`, `[code: path/to/file.py:line]`, or `[training-data]` so Monitor can assess reliability
+- **Source attribution:** Tag information sources as `[code: path/to/file.py:line]` or `[training-data]` so Monitor can assess reliability
 
 <example>
 "Implementing rate limiting using token bucket algorithm. Adapted standard Redis-based limiting pattern for in-memory use per requirements."
@@ -511,7 +510,7 @@ Only include if changes affect:
 ### Hallucination Guard
 - [ ] If implementation feels uncertain or forced, use failure protocols (BLOCKED/CLARIFICATION_NEEDED) instead of guessing
 - [ ] When using training data for unfamiliar patterns, tag with `[training-data]` in Approach section
-- [ ] Tag verified sources: `[tool: deepwiki]`, `[code: path/to/file.py:line]`, `[training-data]`
+- [ ] Tag verified sources: `[code: path/to/file.py:line]`, `[training-data]`
 
 ### SFT Comfort Zone (Token Discipline)
 - [ ] Each function/method body stays within ~100 lines (~4000 tokens)
@@ -696,7 +695,7 @@ If all research tools fail:
 output:
   status: DEGRADED_MODE
   limitations:
-    - "deepwiki: connection refused"
+    - "research tools: unavailable"
   confidence: LOW
   approach: "Implementing from training data only"
   mitigation:

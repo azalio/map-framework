@@ -1050,13 +1050,9 @@ If you forked the skill-backed `/map-efficient` workflow, you must manually inte
 5. **Used Patterns** (pattern IDs applied)
 
 **Key Behaviors:**
-- Fetches current docs for external libraries (via deepwiki)
 - Explicit error handling required (no silent failures)
 - Complete code, not sketches or placeholders
 - Security-first approach for auth/data access
-
-**MCP Tool Usage:**
-- `mcp__deepwiki__read_wiki_contents`: Get current library/project documentation
 
 ### 3. Monitor
 
@@ -1351,7 +1347,6 @@ MAP uses MCP (Model Context Protocol) servers for enhanced capabilities beyond b
 | MCP Server | Purpose | Required For | Performance Notes |
 |------------|---------|--------------|-------------------|
 | **sequential-thinking** | Chain-of-thought reasoning | Complex problem solving | Medium latency (~1-3s) |
-| **deepwiki** | GitHub repository analysis | Research phase | Medium latency (~3-7s) |
 
 ### Configuration
 
@@ -1367,43 +1362,15 @@ MCP servers are configured differently depending on the usage context:
     "sequential-thinking": {
       "enabled": true,
       "description": "Chain-of-thought reasoning for complex problems"
-    },
-    "deepwiki": {
-      "enabled": true,
-      "description": "GitHub repository analysis and documentation"
     }
   }
 }
-```
-
-### MCP Tool Usage Patterns
-
-#### Pattern 1: Documentation Lookup (Actor)
-
-```markdown
-**WHEN using external libraries or researching projects:**
-
-1. Read wiki structure:
-   - Tool: mcp__deepwiki__read_wiki_structure
-   - Input: Repository owner/name (e.g., "pallets/flask")
-
-2. Read wiki contents:
-   - Tool: mcp__deepwiki__read_wiki_contents
-   - Parameters: repo_name, page path
-
-3. Use docs for:
-   - API signature verification
-   - Best practices
-   - Deprecation warnings
 ```
 
 ### MCP Server Availability
 
 **Commonly Available:**
 - sequential-thinking (reasoning)
-
-**May Require Installation:**
-- deepwiki (check Claude Code documentation)
 
 **To verify availability:**
 ```bash
@@ -1414,8 +1381,8 @@ MCP servers are configured differently depending on the usage context:
 ### Performance Considerations
 
 **Latency Budget (per subtask):**
-- deepwiki docs: ~3-7s per fetch (Actor: 1-2 fetches)
-- Total overhead: ~3-7s per subtask
+- sequential-thinking reasoning: ~1-3s per invocation
+- Total overhead: ~1-3s per subtask
 
 **Optimization Strategies:**
 - Batch similar searches where possible

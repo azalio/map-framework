@@ -267,10 +267,7 @@ IF previous implementations exist:
   → get_review_history (compare solutions, learn from past issues, maintain scoring consistency)
 
 IF external libraries used:
-  → get-library-docs (verify library best practices, performance optimizations, security guidelines)
-
-IF industry comparison needed:
-  → deepwiki: "What metrics does [repo] use?", "How do top projects test [feature]?"
+  → WebFetch library docs (verify library best practices, performance optimizations, security guidelines)
 ```
 
 ### 1. mcp__sequential-thinking__sequentialthinking
@@ -431,14 +428,10 @@ Thought 7: Generate recommendation with research feedback
 **Use When**: Check consistency with past implementations
 **Rationale**: Maintain consistent standards (e.g., if past testability scored 8/10, use same criteria). Prevents score inflation/deflation.
 
+### 2. WebFetch (Library Documentation)
 **Use When**: Solution uses external libraries/frameworks
-**Process**: `resolve-library-id` → `get-library-docs(topics: best-practices, performance, security, testing)`
+**Process**: WebFetch the library's official docs for best-practices, performance, security, and testing guidance
 **Rationale**: Libraries define quality standards (React testing, Django security). Validate solutions follow these.
-
-### 4. mcp__deepwiki__ask_question
-**Use When**: Need industry standard comparisons
-**Queries**: "What metrics does [repo] use for [feature]?", "How do top projects test [feature]?", "Performance benchmarks for [op]?"
-**Rationale**: Learn from production code. If top projects achieve 90% auth coverage, that's a valid benchmark.
 
 <critical>
 **IMPORTANT**:
@@ -1246,7 +1239,7 @@ def calculate_user_discount(
     "Add type hints and docstring",
     "Add structured logging for debugging"
   ],
-  "mcp_tools_used": ["sequentialthinking", "get-library-docs"]
+  "mcp_tools_used": ["sequentialthinking"]
 }
 ```
 
@@ -1424,7 +1417,7 @@ def calculate_user_discount(
     "Add extensive tests including: successful payment, declined card, timeout, network failure, duplicate prevention",
     "Consider using payment SDK instead of raw API calls for built-in security"
   ],
-  "mcp_tools_used": ["sequentialthinking", "get-library-docs", "deepwiki"]
+  "mcp_tools_used": ["sequentialthinking"]
 }
 ```
 

@@ -200,7 +200,7 @@ def create_or_merge_project_mcp_json(
 
     Args:
         project_path: Project root directory
-        mcp_servers: List of MCP server names to configure (e.g., ["sequential-thinking", "deepwiki"])
+        mcp_servers: List of MCP server names to configure (e.g., ["sequential-thinking"])
 
     Behavior:
         - If mcp_servers is empty: No file created/modified (early return)

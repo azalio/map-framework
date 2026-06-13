@@ -40,8 +40,7 @@
       "requirements": {
         "claude_code": ">=1.0.0",
         "mcp_servers": [
-          "sequential-thinking",
-          "deepwiki"
+          "sequential-thinking"
         ]
       },
       "installation": {

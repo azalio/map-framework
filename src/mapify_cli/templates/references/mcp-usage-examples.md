@@ -62,7 +62,7 @@ Query via mcp__sequential-thinking__sequentialthinking:
 
 ---
 
-## get-library-docs Examples
+## sequential-thinking for Multi-step Setup Examples
 
 **Critical Use Case: Multi-step library setup**
 
@@ -73,7 +73,7 @@ Many libraries require specific initialization order:
 
 **Example: Decomposing "Add Stripe payment processing"**
 
-❌ **Wrong order (without checking docs)**:
+❌ **Wrong order (without reasoning through dependencies)**:
 ```
 1. Create payment endpoint
 2. Handle webhooks
@@ -82,7 +82,7 @@ Many libraries require specific initialization order:
 → Result: Can't implement endpoint (step 1) without SDK (step 3)
 ```
 
-✅ **Correct order (from Stripe docs)**:
+✅ **Correct order (reasoned from initialization requirements)**:
 ```
 1. Add Stripe SDK dependency
 2. Configure API keys
@@ -92,22 +92,4 @@ Many libraries require specific initialization order:
 6. Test with Stripe CLI
 ```
 
-Always check library docs for initialization requirements.
-
----
-
-## deepwiki Examples
-
-**Example: Decomposing "Add API rate limiting" for unfamiliar project**
-
-```
-Ask deepwiki: "How does Express.js handle rate limiting?"
-Learn common pattern:
-  1. Rate limiter middleware (foundation)
-  2. Storage backend (Redis/in-memory)
-  3. Route-specific limits configuration
-  4. Error responses for exceeded limits
-  5. Admin bypass logic (optional)
-
-Apply this proven structure to your decomposition.
-```
+Always reason through a library's initialization requirements before sequencing subtasks.

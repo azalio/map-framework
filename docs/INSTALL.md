@@ -191,11 +191,11 @@ Choose which MCP servers to enable:
 # All available MCP servers
 mapify init my-project --mcp all
 
-# Essential servers only (sequential-thinking, deepwiki)
+# Essential servers only (sequential-thinking)
 mapify init my-project --mcp essential
 
 # Specific servers
-mapify init my-project --mcp "sequential-thinking,deepwiki"
+mapify init my-project --mcp "sequential-thinking"
 
 # No MCP servers
 mapify init my-project --mcp none
@@ -347,12 +347,6 @@ If you selected MCP servers during installation, ensure they're configured:
 - Complex problem decomposition
 - Iterative refinement of solutions
 - Edge case discovery
-
-### Deepwiki (GitHub Intelligence)
-
-- Read documentation from any GitHub repo
-- Analyze architectural patterns
-- Learn from production implementations
 
 ## Optional: Semantic Search
 

@@ -117,7 +117,7 @@ mapify init . --force
 mapify init my-project --no-git
 
 # Enable specific MCP servers
-mapify init . --mcp sequential-thinking,deepwiki
+mapify init . --mcp sequential-thinking
 ```
 
 **Also creates:**

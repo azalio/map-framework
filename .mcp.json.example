@@ -13,16 +13,6 @@
       "type": "stdio",
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
-    },
-
-    "deepwiki": {
-      "_comment": "DeepWiki - Official remote MCP server for GitHub repository analysis",
-      "_install": "No installation needed - remote SSE server",
-      "_required_for": "GitHub repository documentation and analysis (optional)",
-      "_docs": "https://docs.devin.ai/work-with-devin/deepwiki-mcp",
-      "_note": "Free, no authentication required",
-      "type": "sse",
-      "url": "https://mcp.deepwiki.com/sse"
     }
   },
 
@@ -31,12 +21,6 @@
     "environment_variables": "Environment variables like ${OPENAI_API_KEY} are expanded from your shell environment or .env file.",
     "required_servers": [
       "sequential-thinking - Essential for complex reasoning"
-    ],
-    "optional_servers": [
-      "deepwiki - Recommended for GitHub repository analysis"
-    ],
-    "alternative_installations": {
-      "deepwiki": "Alternative transport: https://mcp.deepwiki.com/mcp (Streamable HTTP)"
-    }
+    ]
   }
 }

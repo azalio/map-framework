@@ -89,7 +89,6 @@ cp map-framework/.claude/settings.hooks.json your-project/.claude/
 
 **Recommended MCP Servers:**
 - `sequential-thinking` — chain-of-thought reasoning
-- `deepwiki` — GitHub repository analysis
 
 ## Quick Start
 

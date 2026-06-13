@@ -82,7 +82,7 @@ class TestDeliveryModule:
     def test_agent_generator_with_mcp(self):
         from mapify_cli.delivery.agent_generator import create_task_decomposer_content
 
-        content = create_task_decomposer_content(["sequential-thinking", "deepwiki"])
+        content = create_task_decomposer_content(["sequential-thinking"])
         assert (
             "sequential-thinking" in content.lower()
             or "sequentialthinking" in content.lower()

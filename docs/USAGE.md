@@ -336,14 +336,14 @@ Maintain all existing functionality.
 
 ```bash
 /map-efficient integrate Stripe payment processing.
-Use deepwiki to get latest Stripe docs.
+Fetch the latest Stripe docs while implementing.
 ```
 
 ### Learning from Open Source
 
 ```bash
 /map-efficient implement rate limiter.
-Study express-rate-limit via deepwiki, then create optimized version.
+Study express-rate-limit's documentation, then create optimized version.
 ```
 
 ---
@@ -1421,7 +1421,7 @@ The Actor agent now includes a 10-item Quality Checklist for self-review before 
 2. Explicit error handling (no silent failures)
 3. Security review (SQL injection, XSS, sensitive data)
 4. Test case identification (happy path + edge cases)
-5. MCP tools usage (deepwiki, sequential-thinking)
+5. MCP tools usage (sequential-thinking)
 6. Template variable preservation (orchestration compatibility)
 7. Trade-offs documentation (decision rationale)
 8. Complete implementations (no ellipsis or placeholders)

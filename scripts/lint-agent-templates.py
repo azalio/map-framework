@@ -118,7 +118,7 @@ class TemplateLinter:
         required_sections = ["mcp_integration", "context", "examples", "constraints"]
 
         found_sections = []
-        for i, line in enumerate(lines, 1):
+        for line in lines:
             # Check for XML-style tags
             for section in required_sections:
                 if f"<{section}>" in line.lower():
@@ -149,18 +149,6 @@ class TemplateLinter:
                         i,
                         f"Malformed template variable: {{{{{var_content}}}}}",
                     )
-
-                # Check for common variable names (for consistency)
-                _common_vars = [
-                    "project_name",
-                    "language",
-                    "framework",
-                    "subtask_description",
-                    "feedback",
-                    "standards_doc",
-                    "branch_name",
-                    "related_files",
-                ]
 
                 # Extract variable name (handle conditionals like #if, #unless)
                 var_name = var_content.strip()
@@ -234,10 +222,9 @@ class TemplateLinter:
 
     def lint_mcp_tool_descriptions(self, file_path: Path, content: str):
         """Check MCP tool descriptions for consistency"""
-        # Common MCP tools that should be consistently described
-        mcp_tools = {
-            "deepwiki": ["wiki", "repository", "production"],
-        }
+        # MCP tools whose descriptions should be consistent when present.
+        # (deepwiki/context7 were removed; sequential-thinking needs no keyword check.)
+        mcp_tools: dict[str, list[str]] = {}
 
         for tool, keywords in mcp_tools.items():
             if tool in content:
@@ -363,7 +350,7 @@ class TemplateLinter:
         # Print errors
         if errors:
             print(f"{Colors.RED}{Colors.BOLD}Errors ({len(errors)}):{Colors.END}")
-            for severity, file, line, message in errors:
+            for _, file, line, message in errors:
                 line_str = f":{line}" if line > 0 else ""
                 print(f"  {Colors.RED}✗{Colors.END} {file}{line_str} - {message}")
             print()
@@ -373,7 +360,7 @@ class TemplateLinter:
             print(
                 f"{Colors.YELLOW}{Colors.BOLD}Warnings ({len(warnings)}):{Colors.END}"
             )
-            for severity, file, line, message in warnings:
+            for _, file, line, message in warnings:
                 line_str = f":{line}" if line > 0 else ""
                 print(f"  {Colors.YELLOW}⚠{Colors.END} {file}{line_str} - {message}")
             print()
@@ -381,7 +368,7 @@ class TemplateLinter:
         # Print info (only if verbose or no other issues)
         if info and not (errors or warnings):
             print(f"{Colors.BLUE}{Colors.BOLD}Info ({len(info)}):{Colors.END}")
-            for severity, file, line, message in info[:5]:  # Limit info messages
+            for _, file, line, message in info[:5]:  # Limit info messages
                 line_str = f":{line}" if line > 0 else ""
                 print(f"  {Colors.BLUE}ℹ{Colors.END} {file}{line_str} - {message}")
             if len(info) > 5:

@@ -8,11 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Removed
-- **`deepwiki` MCP server is no longer installed.** `mapify init` no longer
-  configures the `deepwiki` MCP server in the project `.mcp.json` or the
-  internal `.claude/mcp_config.json`; `--mcp all` and `--mcp essential` now
-  install only `sequential-thinking`, and `--mcp deepwiki` is treated as an
-  unknown server. (context7 was never installed by mapify.)
+- **`deepwiki` MCP server is no longer installed, and `deepwiki`/`context7`
+  guidance is removed from all agent prompts.** `mapify init` no longer
+  configures the `deepwiki` MCP server in the project `.mcp.json`, the internal
+  `.claude/mcp_config.json`, the plugin manifests, or `.mcp.json.example`;
+  `--mcp all` and `--mcp essential` now install only `sequential-thinking`, and
+  `--mcp deepwiki` is treated as an unknown server. Every shipped agent prompt
+  (actor, monitor, predictor, evaluator, reflector, task-decomposer,
+  documentation-reviewer), the fallback agent generators, the MCP usage-examples
+  reference, the `map-debug` skill, and the user docs (INSTALL, USAGE,
+  ARCHITECTURE, CLI reference) had their `deepwiki` and `context7` references
+  removed; `sequential-thinking` is retained as the only MCP integration.
 
 ### Changed
 - **Onboarding leads with the golden-path flow.** The ASCII banner now carries a

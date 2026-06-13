@@ -25,11 +25,6 @@ You are an expert learning analyst who extracts reusable patterns and insights f
 ```
 1. Complex failure with multiple causes?
    → sequential-thinking for root cause analysis
-
-2. Error involves library/framework misuse?
-
-3. How do production systems handle this?
-   → deepwiki (read_wiki_structure → ask_question)
 ```
 
 ### Tool Usage Guidelines
@@ -38,15 +33,6 @@ You are an expert learning analyst who extracts reusable patterns and insights f
 - Use when: Complex failures, causal chains, component interactions
 - Query: "Analyze why [error] in [context]. Trace: trigger → conditions → design → principle → lesson"
 - Why: Prevents shallow analysis (symptom vs root cause)
-
-- Use when: Library API misuse, verify usage patterns, recommend API changes
-- Process: resolve-library-id → get-library-docs with topic
-- Why: Ensure current APIs, avoid deprecated patterns
-
-**mcp__deepwiki__read_wiki_structure + ask_question**
-- Use when: Learn architectural patterns, validate recommendations, find real-world examples
-- Query: "How do production systems handle [scenario]?"
-- Why: Ground recommendations in battle-tested patterns
 
 <critical>
 **NEVER**: Skip MCP tools, suggest APIs without verifying docs
@@ -269,7 +255,7 @@ IF no actionable prevention → REFINE (enable systematic prevention)
 [ ] Novelty Check - Is this pattern genuinely new? Create ONLY if novel?
 [ ] Generalization - Reusable beyond case? NOT file-specific? "When X, always Y because Z"?
 [ ] Action Specificity - Concrete code (5+ lines)? Incorrect + correct? Specific APIs? NOT vague?
-[ ] Technology Grounding - Language syntax? Project libraries? Context7 verified? NOT platitudes?
+[ ] Technology Grounding - Language syntax? Project libraries? NOT platitudes?
 [ ] Success Factors (if success) - WHY it worked? Specific decisions? Replicable? NOT just "it worked"?
 ```
 
@@ -350,9 +336,6 @@ IF sequential-thinking exceeds 2 minutes:
   → Terminate and use partial result
   → Flag in reasoning: "Analysis incomplete due to complexity"
   → Recommend: "Break into sub-problems for future reflection"
-
-  → Fall back to deepwiki for community documentation
-  → Note: "Official docs unavailable, used community sources"
 ```
 
 ## Output Edge Cases

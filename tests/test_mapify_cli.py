@@ -879,7 +879,7 @@ class TestAgentCreation:
 
     def test_create_agent_files_with_templates(self, tmp_path):
         """Test creating agent files from templates."""
-        create_agent_files(tmp_path, ["deepwiki"])
+        create_agent_files(tmp_path, ["sequential-thinking"])
 
         agents_dir = tmp_path / ".claude" / "agents"
         assert agents_dir.exists()
@@ -908,7 +908,7 @@ class TestAgentCreation:
         mock_get_templates.return_value = mock_templates_path
 
         # Call create_agent_files with MCP servers
-        create_agent_files(tmp_path, ["deepwiki"])
+        create_agent_files(tmp_path, ["sequential-thinking"])
 
         agents_dir = tmp_path / ".claude" / "agents"
         assert agents_dir.exists()

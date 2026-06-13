@@ -6,21 +6,14 @@ from typing import List
 def create_task_decomposer_content(mcp_servers: List[str]) -> str:
     """Create task-decomposer agent content"""
     mcp_section = ""
-    if any(s in mcp_servers for s in ["sequential-thinking", "deepwiki"]):
+    if "sequential-thinking" in mcp_servers:
         mcp_section = """
 ## MCP Integration
 
 **ALWAYS use these MCP tools:**
-"""
-        if "sequential-thinking" in mcp_servers:
-            mcp_section += """
+
 1. **mcp__sequential-thinking__sequentialthinking** - For complex planning
    - Use when goal is ambiguous or has many dependencies
-"""
-        if "deepwiki" in mcp_servers:
-            mcp_section += """
-2. **mcp__deepwiki__ask_question** - Get insights from GitHub repositories
-   - Ask: "How does [repo] implement [feature]?"
 """
 
     return f"""---
@@ -49,16 +42,8 @@ Return a valid JSON document with subtasks, dependencies, and acceptance criteri
 
 def create_actor_content(mcp_servers: List[str]) -> str:
     """Create actor agent content"""
+    del mcp_servers  # no MCP guidance injected for this agent in fallback mode
     mcp_section = ""
-    if "deepwiki" in mcp_servers:
-        mcp_section = """
-# MCP INTEGRATION
-
-**ALWAYS use these MCP tools:**
-
-1. **mcp__deepwiki__read_wiki_contents** - Study implementation patterns
-   - Learn from production code examples
-"""
 
     return f"""---
 name: actor
@@ -126,6 +111,7 @@ Provide implementation with approach, code changes, trade-offs, and testing cons
 
 def create_monitor_content(mcp_servers: List[str]) -> str:
     """Create monitor agent content"""
+    del mcp_servers  # no MCP guidance injected for this agent in fallback mode
     return """---
 name: monitor
 description: Reviews code for correctness, standards, security, and testability (MAP)
@@ -182,16 +168,8 @@ Return strictly valid JSON with validation results and specific issues.
 
 def create_predictor_content(mcp_servers: List[str]) -> str:
     """Create predictor agent content"""
+    del mcp_servers  # no MCP guidance injected for this agent in fallback mode
     mcp_section = ""
-    if "deepwiki" in mcp_servers:
-        mcp_section = """
-## MCP Integration
-
-**ALWAYS use these MCP tools:**
-
-1. **mcp__deepwiki__ask_question** - Check how repos handle similar changes
-   - Ask: "What breaks when changing [component]?"
-"""
 
     return f"""---
 name: predictor
@@ -219,6 +197,7 @@ Return JSON with predicted state, affected components, breaking changes, and ris
 
 def create_evaluator_content(mcp_servers: List[str]) -> str:
     """Create evaluator agent content"""
+    del mcp_servers  # no MCP guidance injected for this agent in fallback mode
     return """---
 name: evaluator
 description: Evaluates solution quality and completeness (MAP)
@@ -247,6 +226,7 @@ Return JSON with scores, strengths, weaknesses, and recommendation (proceed|impr
 
 def create_reflector_content(mcp_servers: List[str]) -> str:
     """Create reflector agent content"""
+    del mcp_servers  # no MCP guidance injected for this agent in fallback mode
     return """---
 name: reflector
 description: Extracts structured lessons from execution attempts
@@ -279,17 +259,8 @@ Return JSON with:
 
 def create_documentation_reviewer_content(mcp_servers: List[str]) -> str:
     """Create documentation-reviewer agent content"""
+    del mcp_servers  # no MCP guidance injected for this agent in fallback mode
     mcp_section = ""
-    if "deepwiki" in mcp_servers:
-        mcp_section = """
-# MCP INTEGRATION
-
-**ALWAYS use these tools for documentation review:**
-
-1. **mcp__deepwiki__ask_question** - Compare with similar projects
-   - Ask: "How do other projects handle [integration]?"
-   - Learn from successful implementations
-"""
 
     return f"""---
 name: documentation-reviewer

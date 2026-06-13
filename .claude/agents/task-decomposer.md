@@ -43,7 +43,6 @@ machine-readable blueprint for the Actor/Monitor pipeline.
 │                                                                     │
 │ 3. GATHER CONTEXT (if complexity ≥ 3)                               │
 │    └─ IF ambiguous: sequentialthinking                              │
-│    └─ IF external lib: get-library-docs                             │
 │    └─ Handle fallbacks if tools fail/return empty                   │
 │                                                                     │
 │ 4. IDENTIFY ASSUMPTIONS & OPEN QUESTIONS                            │
@@ -94,8 +93,6 @@ machine-readable blueprint for the Actor/Monitor pipeline.
 | Condition | Tool | Query Pattern |
 |-----------|------|---------------|
 | Ambiguous/complex goal | sequentialthinking | Iterative refinement of scope and dependencies |
-| External library | get-library-docs | Setup/quickstart guides for initialization order |
-| Unfamiliar domain | deepwiki | `"How does [repo] structure [feature]?"` |
 
 **Skip MCP when**: complexity_score ≤ 2, trivial change, clear internal pattern exists
 
