@@ -9,8 +9,6 @@
 
 ![MAP in action: /map-plan decomposes the task into reviewable subtasks, /map-efficient implements the approved plan, then /map-check, /map-review, and /map-learn close the loop](docs/demo.gif)
 
-<sub>Stylized walkthrough of the golden path. Re-render with `vhs docs/demo.tape` (or `asciinema rec -c "bash docs/demo.sh" demo.cast && agg demo.cast docs/demo.gif`).</sub>
-
 ## The MAP loop
 
 Most AI agents rush straight to code before they understand the task — so you get fast wrong answers and silent rework. MAP inserts a plan you approve first, then implements it in reviewable steps:
