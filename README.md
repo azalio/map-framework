@@ -7,10 +7,9 @@
 
 > **Plan-then-build AI coding for Claude Code & Codex CLI.** `/map-plan` decomposes your task into small, reviewable subtasks you approve *before* any code is written; `/map-efficient` implements the approved plan, subtask by subtask. The AI still writes the code — you keep the architecture, scope, and review.
 
-<!-- TODO(maintainer): drop a terminal demo GIF here for max conversion.
-     Record the /map-plan → /map-efficient flow with `asciinema rec demo.cast`,
-     convert with `agg demo.cast docs/demo.gif`, then embed:
-     ![MAP in action](docs/demo.gif) -->
+![MAP in action: /map-plan decomposes the task into reviewable subtasks, /map-efficient implements the approved plan, then /map-check, /map-review, and /map-learn close the loop](docs/demo.gif)
+
+<sub>Stylized walkthrough of the golden path. Re-render with `vhs docs/demo.tape` (or `asciinema rec -c "bash docs/demo.sh" demo.cast && agg demo.cast docs/demo.gif`).</sub>
 
 ## The MAP loop
 
