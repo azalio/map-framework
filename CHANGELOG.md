@@ -51,6 +51,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `map-release` skill, release guide, and release checklist use `make check`
   plus explicit `uv run --with build` / `uv run --with twine` package checks
   instead of the stale Black-specific gate that failed on generated files (#186).
+- **Release changelog completeness checks ignore release-note maintenance commits.**
+  The `map-release` heuristic no longer counts `docs(changelog)` or
+  `chore(release)` commits as user-visible changes that need their own
+  changelog bullet (#191).
 
 ## [3.12.1] - 2026-06-12
 

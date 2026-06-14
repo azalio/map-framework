@@ -194,13 +194,15 @@ LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
 if [[ -n "$LAST_TAG" ]]; then
   echo "Checking CHANGELOG completeness since $LAST_TAG..."
 
-  # Get commits since last tag (exclude merge commits)
-  COMMITS_SINCE=$(git log ${LAST_TAG}..HEAD --oneline --no-merges | wc -l | tr -d ' ')
+  # Get user-visible commits since last tag. Exclude merge commits plus release-note
+  # maintenance commits, which otherwise make this heuristic chase its own fixes.
+  COMMITS_SINCE=$(git log ${LAST_TAG}..HEAD --no-merges --format="%s" | awk '!/^(docs\(changelog\)|chore\(release\):)/ { count++ } END { print count + 0 }')
 
   # Count CHANGELOG entries in [Unreleased] section
   CHANGELOG_ENTRIES=$(awk '/## \[Unreleased\]/,/## \[/' CHANGELOG.md | grep -cE "^- " || echo "0")
 
-  echo "Commits since $LAST_TAG: $COMMITS_SINCE"
+  echo "Counted commits since $LAST_TAG: $COMMITS_SINCE"
+  echo "(excluding docs(changelog) and chore(release) maintenance commits)"
   echo "CHANGELOG entries: $CHANGELOG_ENTRIES"
 
   # If significant gap, show commits for review
