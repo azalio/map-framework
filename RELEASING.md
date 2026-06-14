@@ -50,23 +50,19 @@ Before starting the release process, verify all requirements are met:
 ### 1. Code Quality Checks
 
 ```bash
-# Run full CI/CD test suite locally
-pytest tests/ --cov=src/mapify_cli --cov-report=term-missing
-
-# Run linters
-black src/ tests/ --check
-ruff check src/ tests/
-mypy src/
+# Run the maintained CI/CD gate locally
+make check
 
 # Verify package builds successfully
-python -m build
-twine check dist/*
+uv run --with build python -m build
+uv run --with twine twine check dist/*
 ```
 
 **Expected Results**:
 - ✅ All tests pass (100% success rate)
 - ✅ No linting errors
 - ✅ Type checking passes
+- ✅ Rendered templates are up to date
 - ✅ Package builds without errors
 - ✅ `twine check` reports no issues
 

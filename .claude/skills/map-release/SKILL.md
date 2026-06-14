@@ -87,18 +87,14 @@ Execute all validation gates in parallel where possible:
 #### Gate 1-4: Code Quality Checks
 
 ```bash
-# Run checks sequentially (all must succeed)
-pytest tests/ --cov=src/mapify_cli --cov-report=term-missing && \
-black src/ tests/ --check && \
-ruff check src/ tests/ && \
-mypy src/
+# Run the maintained project gate (all checks must succeed)
+make check
 ```
 
 **Expected Results:**
 - ✅ All tests pass (100% success rate)
-- ✅ No black formatting issues
-- ✅ No ruff linting errors
-- ✅ No mypy type checking errors
+- ✅ `ruff`, `mypy`, `pyright`, and hook linting pass
+- ✅ Rendered templates match `templates_src`
 
 **If any check fails:** ABORT release, fix issues first.
 
@@ -106,10 +102,10 @@ mypy src/
 
 ```bash
 # Build package
-python -m build
+uv run --with build python -m build
 
 # Verify package integrity
-twine check dist/*
+uv run --with twine twine check dist/*
 ```
 
 **Expected Results:**
@@ -1205,7 +1201,7 @@ You should:
 1. **Phase 1 - Pre-Release Validation:**
    ```bash
    # Run all 12 validation gates
-   pytest tests/ && black --check src/ && ruff check src/ && mypy src/ && ...
+   make check && uv run --with build python -m build && uv run --with twine twine check dist/* && ...
    # Verify CI passed on main
    gh run list --branch main --limit 1
    ```
