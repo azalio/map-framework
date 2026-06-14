@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Minimality doctrine Phase 1 (#181)**: `.map/config.yaml` now supports a
+  `minimality` setting (`off`, `lite`, `full`, `ultra`). Existing projects with
+  no key preserve historical behavior (`off`), while freshly generated configs
+  opt into conservative `lite`. In `lite`, Actor receives smallest-sufficient
+  guidance, Monitor flags requirement-affecting over-engineering and risk drift,
+  Evaluator scores `simplicity` while keeping `completeness` highest-weight, and
+  Actor retries receive only BLOCKER-class Monitor feedback so non-blocking
+  style/docs/volume comments do not re-bloat the implementation.
+
 ### Removed
 - **`deepwiki` MCP server is no longer installed, and `deepwiki`/`context7`
   guidance is removed from all agent prompts.** `mapify init` no longer
@@ -25,6 +35,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/map-plan → /map-efficient → /map-check → /map-review → /map-learn` subtitle,
   and the post-`init` "Next Steps" panel presents that loop in order (leading
   with `/map-plan`) instead of leading with `/map-efficient`.
+- **Generated MAP scripts now read scalar `.map/config.yaml` settings without
+  importing `mapify_cli`.** Actor minimality context and subtask-boundary
+  compression advice now work in generated projects even when the `python3` used
+  to run `.map/scripts/*` cannot import the globally installed `mapify_cli`
+  package.
 
 ## [3.12.1] - 2026-06-12
 

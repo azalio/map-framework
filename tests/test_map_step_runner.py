@@ -2817,6 +2817,95 @@ class TestBuildContextBlock:
         assert "[x] ST-001" in result
         assert "# Upstream Results" in result
         assert "ST-001: files=" in result
+        assert "<MAP_Minimality_Doctrine>" not in result
+
+    def test_build_context_block_includes_minimality_doctrine_when_enabled(
+        self, branch_workspace
+    ):
+        bp = {
+            "summary": "test goal",
+            "subtasks": [
+                {
+                    "id": "ST-001",
+                    "title": "Small task",
+                    "aag_contract": "Actor -> do() -> done",
+                    "affected_files": ["a.py"],
+                    "validation_criteria": ["VC1: check"],
+                    "dependencies": [],
+                }
+            ],
+        }
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        (branch_workspace / "task_plan_test-branch.md").write_text(
+            "## Goal\nImplement the feature.\n"
+        )
+        (branch_workspace.parent / "config.yaml").write_text("minimality: lite\n")
+
+        result = map_step_runner.build_context_block("test-branch", "ST-001")
+
+        assert "<MAP_Minimality_Doctrine>" in result
+        assert "Level: lite" in result
+        assert "Decision ladder" in result
+        assert "map:simplification:" in result
+
+    def test_build_context_block_invalid_minimality_disables_doctrine(
+        self, branch_workspace
+    ):
+        bp = {
+            "summary": "test goal",
+            "subtasks": [
+                {
+                    "id": "ST-001",
+                    "title": "Small task",
+                    "aag_contract": "Actor -> do() -> done",
+                    "affected_files": ["a.py"],
+                    "validation_criteria": ["VC1: check"],
+                    "dependencies": [],
+                }
+            ],
+        }
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        (branch_workspace.parent / "config.yaml").write_text(
+            "minimality: maximalist\n"
+        )
+
+        result = map_step_runner.build_context_block("test-branch", "ST-001")
+
+        assert "<MAP_Minimality_Doctrine>" not in result
+
+    def test_subtask_boundary_compact_check_uses_standalone_config(
+        self, branch_workspace, monkeypatch
+    ):
+        log_dir = branch_workspace.parent / "logs"
+        log_dir.mkdir()
+        transcript = log_dir / "session.jsonl"
+        transcript.write_text(
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "role": "assistant",
+                        "usage": {
+                            "input_tokens": 120,
+                            "cache_read_input_tokens": 5,
+                            "cache_creation_input_tokens": 0,
+                        },
+                    },
+                }
+            )
+            + "\n"
+        )
+        (branch_workspace.parent / "config.yaml").write_text(
+            "compression_policy: auto\ncompression_threshold_tokens: 100\n"
+        )
+        monkeypatch.setattr(map_step_runner, "_claude_code_log_dir", lambda _p: log_dir)
+
+        result = map_step_runner.subtask_boundary_compact_check("test-branch")
+
+        assert result["status"] == "success"
+        assert result["used"] == 125
+        assert result["threshold"] == 100
+        assert result["force_compact"] is False
 
     def test_build_context_block_no_longer_truncates(
         self, branch_workspace, monkeypatch

@@ -172,6 +172,218 @@ def _shorten_text(text: str, max_chars: int = 1_200) -> str:
     return compact[: max_chars - 15].rstrip() + "\n[truncated]"
 
 
+AGGRESSIVE_COMPRESSION_MULTIPLIER = 0.4
+
+
+def _read_map_config_scalars(project_dir: Path) -> dict[str, str]:
+    """Read top-level scalar values from .map/config.yaml without dependencies."""
+    config_path = project_dir / ".map" / "config.yaml"
+    if not config_path.is_file():
+        return {}
+    try:
+        lines = config_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return {}
+    values: dict[str, str] = {}
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#") or ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key = key.strip()
+        if not key or not re.fullmatch(r"[A-Za-z0-9_.-]+", key):
+            continue
+        value = value.split("#", 1)[0].strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1]
+        values[key] = value
+    return values
+
+
+def _map_config_str(project_dir: Path, key: str, default: str) -> str:
+    value = _read_map_config_scalars(project_dir).get(key)
+    return default if value is None else value
+
+
+def _map_config_int(project_dir: Path, key: str, default: int) -> int:
+    value = _read_map_config_scalars(project_dir).get(key)
+    if value is None:
+        return default
+    try:
+        parsed = int(value.replace("_", ""))
+    except ValueError:
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _extract_transcript_usage(entry: dict) -> Optional[int]:
+    message = entry.get("message")
+    if not isinstance(message, dict):
+        return None
+    role = message.get("role")
+    entry_type = entry.get("type")
+    if role != "assistant" and entry_type != "assistant":
+        return None
+    usage = message.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    try:
+        return (
+            int(usage.get("input_tokens", 0) or 0)
+            + int(usage.get("cache_read_input_tokens", 0) or 0)
+            + int(usage.get("cache_creation_input_tokens", 0) or 0)
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def _count_last_turn_tokens(transcript_path: Path) -> int:
+    if not transcript_path.is_file():
+        return 0
+    try:
+        lines = transcript_path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return 0
+    for raw in reversed(lines):
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            entry = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(entry, dict):
+            usage = _extract_transcript_usage(entry)
+            if usage is not None:
+                return usage
+    return 0
+
+
+def _effective_compression_threshold(policy: str, threshold: int) -> Optional[int]:
+    if policy == "never" or threshold <= 0:
+        return None
+    if policy == "aggressive":
+        return max(1, int(threshold * AGGRESSIVE_COMPRESSION_MULTIPLIER))
+    return threshold
+
+
+def _should_nudge(used: int, threshold: Optional[int]) -> bool:
+    return threshold is not None and used >= threshold
+
+
+def _format_compact_instruction(used: int, threshold: int, focus: str) -> str:
+    pct = int(round(100 * used / threshold)) if threshold > 0 else 0
+    focus_clean = (focus or "").strip() or (
+        "MAP step state, last 2 monitor verdicts, pending subtasks; "
+        "drop tool-result bodies older than 3 turns"
+    )
+    return (
+        f"[MAP context-meter] Context is at {used:,} / {threshold:,} tokens "
+        f"({pct}% of MAP threshold). Before continuing, run:\n"
+        f"/compact {focus_clean}"
+    )
+
+
+BLOCKER_FEEDBACK_TERMS = (
+    "blocker",
+    "critical",
+    "contract",
+    "acceptance",
+    "build",
+    "compile",
+    "syntax",
+    "test failure",
+    "test failed",
+    "failing test",
+    "type mismatch",
+    "security",
+    "injection",
+    "secret",
+    "credential",
+    "data loss",
+    "data-loss",
+    "missing required",
+    "missing test",
+    "missing",
+    "silent failure",
+    "crash",
+    "exception",
+)
+
+NON_BLOCKING_FEEDBACK_TERMS = (
+    "non-blocking",
+    "nonblocking",
+    "nice-to-have",
+    "nice to have",
+    "cosmetic",
+    "style",
+    "elegance",
+    "volume",
+    "alternative abstraction",
+    "extra test category",
+    "extra tests",
+    "documentation",
+    "docs",
+    "docstring",
+)
+
+
+def _is_blocker_feedback_line(line: str) -> bool:
+    """Return True when a feedback line may justify Actor expansion."""
+    lowered = line.lower()
+    severity_prefixes = ("high:", "high -", "high severity", "severity: high")
+    has_blocker_term = any(term in lowered for term in BLOCKER_FEEDBACK_TERMS)
+    has_high_severity = lowered.strip().startswith(severity_prefixes)
+    if not has_blocker_term:
+        return has_high_severity
+    has_non_blocking_term = any(
+        term in lowered for term in NON_BLOCKING_FEEDBACK_TERMS
+    )
+    has_explicit_blocker = any(
+        term in lowered
+        for term in (
+            "blocker",
+            "critical",
+            "security",
+            "build",
+            "compile",
+            "contract",
+            "data loss",
+            "test failure",
+            "test failed",
+        )
+    ) or has_high_severity
+    return has_explicit_blocker or not has_non_blocking_term
+
+
+def _filter_blocker_retry_feedback(feedback: str) -> str:
+    """Forward only BLOCKER-class feedback into the next Actor retry."""
+    if not feedback.strip():
+        return ""
+
+    kept_lines = [
+        line.rstrip()
+        for line in feedback.splitlines()
+        if line.strip() and _is_blocker_feedback_line(line)
+    ]
+    if kept_lines:
+        return "\n".join(
+            [
+                "BLOCKER feedback forwarded to Actor retry:",
+                *kept_lines,
+                "",
+                "Actor may re-add or expand code only by naming the BLOCKER item it addresses.",
+            ]
+        )
+
+    return (
+        "Monitor returned valid=false, but no BLOCKER-class feedback was detected. "
+        "Re-check the contract, build/test output, security, data-loss paths, and "
+        "required behavior before expanding scope. Do not add code for style, "
+        "volume, docs-only, cosmetic, or nice-to-have feedback."
+    )
+
+
 def _latest_numbered_artifact(plan_dir: Path, prefix: str) -> Optional[Path]:
     """Return latest numbered artifact like review-003.md."""
     matches = sorted(plan_dir.glob(f"{prefix}-*.md"))
@@ -1930,12 +2142,14 @@ def monitor_failed(branch: str, feedback: str = "") -> dict:
     state.current_step_id = "2.3"
     state.current_step_phase = "ACTOR"
 
-    # Persist feedback so Actor can read it (numbered to preserve history)
+    # Persist only BLOCKER-class feedback so Actor retries do not re-bloat the
+    # implementation for style, volume, docs-only, or nice-to-have comments.
+    retry_feedback = _filter_blocker_retry_feedback(feedback)
     feedback_file = _write_feedback_file(
         branch,
         f"monitor_feedback_retry{state.retry_count}.md",
         f"Monitor Feedback (retry {state.retry_count})",
-        feedback,
+        retry_feedback,
     )
     retry_isolation, quarantine_path = _record_retry_isolation(
         branch,
@@ -1943,7 +2157,7 @@ def monitor_failed(branch: str, feedback: str = "") -> dict:
         state.current_subtask_id,
         state.retry_count,
         feedback_file,
-        feedback,
+        retry_feedback,
     )
 
     state.save(state_file)
@@ -2003,15 +2217,17 @@ def wave_monitor_failed(
     # Reset subtask phase back to ACTOR
     state.subtask_phases[subtask_id] = "2.3"
 
-    # Persist feedback (numbered to preserve history)
+    # Persist only BLOCKER-class feedback so Actor retries do not re-bloat the
+    # implementation for style, volume, docs-only, or nice-to-have comments.
+    retry_feedback = _filter_blocker_retry_feedback(feedback)
     feedback_file = _write_feedback_file(
         branch,
         f"monitor_feedback_{subtask_id}_retry{current_retries}.md",
         f"Monitor Feedback for {subtask_id} (retry {current_retries})",
-        feedback,
+        retry_feedback,
     )
     retry_isolation, quarantine_path = _record_retry_isolation(
-        branch, state, subtask_id, current_retries, feedback_file, feedback
+        branch, state, subtask_id, current_retries, feedback_file, retry_feedback
     )
 
     state.save(state_file)
@@ -3245,25 +3461,13 @@ def _emit_context_budget_warning(branch: str, transcript_path: Optional[str]) ->
     if not path.is_file():
         return
 
-    try:
-        from mapify_cli.config.project_config import load_map_config
-        from mapify_cli.token_budget import (
-            count_last_turn_tokens,
-            effective_threshold,
-            format_compact_instruction,
-            should_nudge,
-        )
-    except ImportError:
-        return
-
     project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
-    try:
-        config = load_map_config(project_dir)
-    except Exception:
-        return
-
-    threshold = effective_threshold(
-        config.compression_policy, config.compression_threshold_tokens
+    policy = _map_config_str(project_dir, "compression_policy", "never")
+    configured_threshold = _map_config_int(
+        project_dir, "compression_threshold_tokens", 120_000
+    )
+    threshold = _effective_compression_threshold(
+        policy, configured_threshold
     )
     if threshold is None:
         return
@@ -3278,14 +3482,14 @@ def _emit_context_budget_warning(branch: str, transcript_path: Optional[str]) ->
         except OSError:
             pass
 
-    used = count_last_turn_tokens(path)
-    if not should_nudge(used, threshold):
+    used = _count_last_turn_tokens(path)
+    if not _should_nudge(used, threshold):
         return
 
-    message = format_compact_instruction(
+    message = _format_compact_instruction(
         used=used,
         threshold=threshold,
-        focus=config.compression_focus,
+        focus=_map_config_str(project_dir, "compression_focus", ""),
     )
     # stderr keeps stdout clean for JSON consumers (the orchestrator's
     # contract is JSON-on-stdout for every command).

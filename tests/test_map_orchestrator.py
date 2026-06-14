@@ -79,6 +79,41 @@ def sample_blueprint(tmp_path):
     return str(bp_file)
 
 
+def test_context_budget_warning_uses_standalone_config(tmp_path, monkeypatch, capsys):
+    branch = "test-branch"
+    (tmp_path / ".map" / branch).mkdir(parents=True)
+    (tmp_path / ".map" / "config.yaml").write_text(
+        "compression_policy: auto\n"
+        "compression_threshold_tokens: 100\n"
+        "compression_focus: keep MAP state\n"
+    )
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text(
+        json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "usage": {
+                        "input_tokens": 100,
+                        "cache_read_input_tokens": 0,
+                        "cache_creation_input_tokens": 0,
+                    },
+                },
+            }
+        )
+        + "\n"
+    )
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+
+    map_orchestrator._emit_context_budget_warning(branch, str(transcript))
+
+    stderr = capsys.readouterr().err
+    assert "[MAP context-meter]" in stderr
+    assert "Context is at 100 / 100 tokens" in stderr
+    assert "/compact keep MAP state" in stderr
+
+
 class TestSetWaves:
     """Tests for set_waves command."""
 
@@ -1536,6 +1571,26 @@ class TestMonitorFailed:
         assert "Missing Reset()" in content
         assert "retry 1" in content
 
+    def test_feedback_file_forwards_only_blocker_items(self, branch_dir, tmp_path):
+        self._make_monitor_state(tmp_path, branch_dir)
+        feedback = "\n".join(
+            [
+                "BLOCKER: build failed in src/app.py",
+                "NON-BLOCKING: docs could mention another example",
+                "nice-to-have: style could be more elegant",
+                "Missing required test for handled timeout path",
+            ]
+        )
+
+        result = map_orchestrator.monitor_failed(branch_dir, feedback)
+
+        content = Path(result["feedback_file"]).read_text()
+        assert "build failed" in content
+        assert "Missing required test" in content
+        assert "docs could mention" not in content
+        assert "style could be more elegant" not in content
+        assert "Actor may re-add or expand code only by naming" in content
+
     def test_feedback_file_none_when_empty(self, branch_dir, tmp_path):
         self._make_monitor_state(tmp_path, branch_dir)
         result = map_orchestrator.monitor_failed(branch_dir, "")
@@ -1703,6 +1758,23 @@ class TestWaveMonitorFailed:
         assert "ST-002" in result["feedback_file"]
         content = Path(result["feedback_file"]).read_text()
         assert "type mismatch" in content
+
+    def test_wave_feedback_forwards_only_blocker_items(self, branch_dir, tmp_path):
+        self._make_wave_state(tmp_path, branch_dir)
+        feedback = "\n".join(
+            [
+                "CRITICAL: security regression in auth flow",
+                "NON-BLOCKING: documentation could be longer",
+                "cosmetic: volume is high",
+            ]
+        )
+
+        result = map_orchestrator.wave_monitor_failed("ST-001", branch_dir, feedback)
+
+        content = Path(result["feedback_file"]).read_text()
+        assert "security regression" in content
+        assert "documentation could be longer" not in content
+        assert "volume is high" not in content
 
     def test_feedback_file_none_when_empty(self, branch_dir, tmp_path):
         self._make_wave_state(tmp_path, branch_dir)

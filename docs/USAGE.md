@@ -53,6 +53,14 @@ For workflow diagnosis, `/map-efficient`, `/map-debug`, `/map-check`, and `/map-
 
 When Monitor rejects the same implementation path repeatedly, MAP now separates ordinary feedback retries from clean-room retries. The first rejection can feed Monitor feedback back to Actor normally. The second or later rejection for the same subtask marks `retry_isolation=clean_retry_required`, writes `.map/<branch>/retry_quarantine.json`, and requires the next Actor attempt to rebuild context from durable artifacts plus the compact quarantine summary instead of rehydrating the raw failed context. Validate the artifact with `python3 .map/scripts/map_step_runner.py validate_retry_quarantine`; `/map-resume` will surface the quarantine path if a session is interrupted mid-clean-retry.
 
+MAP also has a project-level minimality doctrine controlled by `.map/config.yaml`:
+
+```yaml
+minimality: lite
+```
+
+Allowed values are `off`, `lite`, `full`, and `ultra`. Existing repos with no key preserve the historical behavior (`off`); new generated configs default to conservative `lite`. In Phase 1, `lite` injects Actor guidance to build the smallest sufficient safe change, asks Monitor to block over-engineering only when it changes required behavior or creates risk, adds Evaluator `simplicity` scoring with `completeness` still highest-weight, and filters Actor retry feedback so non-blocking style/docs/volume comments do not cause scope growth.
+
 When active prompt builders enforce a context budget, they also append a compact decision to `.map/<branch>/token_budget.json`. `/map-efficient` Actor `<map_context>` generation records the configured `MAP_CONTEXT_BLOCK_BUDGET_TOKENS`, estimated tokens before/after enforcement, clipped section labels such as `plan_overview` or `repo_delta`, and references to the blueprint, task plan, and step state artifacts. `/map-review` reviewer prompt generation records the configured `MAP_REVIEW_PROMPT_BUDGET_TOKENS`, per-role before/after estimates, clipped sections such as `git diff`, and references to the review bundle plus raw diff source. Use this report when a workflow appears to have missing context: if only low-priority sections were clipped, continue; if required evidence was clipped, either raise the relevant budget or split the workflow before rerunning.
 
 Planning artifacts distinguish blocking requirements from negotiable preferences. `/map-plan` and `/map-efficient` blueprint validation now require top-level `hard_constraints` and `soft_constraints`: every hard constraint id must be owned in `coverage_map` and cited in the owning subtask's `validation_criteria`, while a soft constraint can be omitted only when it includes `tradeoff_rationale`. This lets reviewers see whether a requirement was implemented, blocked, or intentionally traded off before Actor starts.

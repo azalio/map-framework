@@ -15,6 +15,8 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+VALID_MINIMALITY = frozenset({"off", "lite", "full", "ultra"})
+
 
 @dataclass
 class MapConfig:
@@ -76,6 +78,10 @@ class MapConfig:
 
     # Language preference for agent responses
     language: str = ""
+
+    # Minimality doctrine intensity. Existing projects that have no config key
+    # stay off; new generated configs opt into lite explicitly.
+    minimality: str = "off"
 
     # Context compression policy (see docs/context-compression-plan.md)
     # "never"      = never inject /compact nudge (default — user opts in by
@@ -207,6 +213,16 @@ def load_map_config(project_path: Path) -> MapConfig:
             )
             cfg.compression_threshold_tokens = 120_000
 
+        if cfg.minimality not in VALID_MINIMALITY:
+            logger.warning(
+                "Invalid minimality %r in %s (expected one of %s). "
+                "Using default 'off'.",
+                cfg.minimality,
+                config_file,
+                ", ".join(sorted(VALID_MINIMALITY)),
+            )
+            cfg.minimality = "off"
+
         return cfg
 
     except yaml.YAMLError as e:
@@ -236,7 +252,7 @@ def generate_default_config(include_comments: bool = True) -> str:
     """
     if not include_comments:
         # Minimal config without comments
-        return "# MAP Framework Project Configuration\nprofile: full\n"
+        return "# MAP Framework Project Configuration\nprofile: full\nminimality: lite\n"
 
     return """\
 # MAP Framework Project Configuration
@@ -293,6 +309,13 @@ profile: full
 
 # Language for agent responses (e.g., "ru", "en", "de")
 # language: ""
+
+# Minimality doctrine for new workflows. Existing repos with no key keep the
+# historical default (`off`); freshly generated configs opt into conservative
+# `lite`: build what was asked, prefer the fewest moving parts, and surface
+# lazier alternatives without silently dropping required work.
+# Allowed: off, lite, full, ultra
+minimality: lite
 
 # Context compression policy. Default is "never" — the /compact nudge is
 # opt-in. Uncomment and switch to "auto" or "aggressive" if you want the
