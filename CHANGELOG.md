@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.1] - 2026-06-14
+
 ### Fixed
 - **Release workflows now run `twine check` with modern packaging metadata
   support.** CI, TestPyPI, and PyPI release jobs upgrade `packaging` alongside
