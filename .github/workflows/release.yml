@@ -35,6 +35,11 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
     - name: Extract version from tag
       id: get_version
       run: |
@@ -81,8 +86,8 @@ jobs:
 
     - name: Verify package quality before publishing
       run: |
-        pip install twine
-        twine check dist/*
+        python -m pip install --upgrade "packaging>=24.2,<26" "twine>=6.2.0"
+        python -m twine check dist/*
         echo "✓ Package validation passed"
 
     - name: Publish to PyPI using OIDC

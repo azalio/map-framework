@@ -135,8 +135,8 @@ jobs:
 
     - name: Check package
       run: |
-        pip install twine
-        twine check dist/*
+        python -m pip install --upgrade "packaging>=24.2,<26" "twine>=6.2.0"
+        python -m twine check dist/*
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4

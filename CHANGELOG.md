@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Release workflows now run `twine check` with modern packaging metadata
+  support.** CI, TestPyPI, and PyPI release jobs upgrade `packaging` alongside
+  `twine` using a `<26` upper bound for compatibility with environments that
+  still constrain `packaging`, avoiding `InvalidDistribution: ... license-file`
+  failures before publication (#195).
+
 ## [3.13.0] - 2026-06-14
 
 ### Added
