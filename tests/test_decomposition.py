@@ -462,6 +462,7 @@ class TestProjectConfig:
         assert cfg.confidence_threshold == 0.7
         assert "src/" in cfg.safe_path_prefixes
         assert cfg.language == ""
+        assert cfg.minimality == "off"
         # /compact nudge is opt-in: the meter must NOT fire unless the user
         # explicitly switches compression_policy to "auto" or "aggressive".
         assert cfg.compression_policy == "never"
@@ -472,6 +473,7 @@ class TestProjectConfig:
 
         cfg = load_map_config(tmp_path)
         assert cfg.profile == "full"  # default
+        assert cfg.minimality == "off"  # absence preserves existing behavior
 
     def test_load_map_config_empty_file(self, tmp_path):
         from mapify_cli.config.project_config import load_map_config
@@ -532,6 +534,7 @@ class TestProjectConfig:
 
         content = generate_default_config(include_comments=True)
         assert "profile: full" in content
+        assert "minimality: lite" in content
         assert "# Policy thresholds" in content
         assert "# verification_checks:" in content
 
@@ -540,6 +543,7 @@ class TestProjectConfig:
 
         content = generate_default_config(include_comments=False)
         assert "profile: full" in content
+        assert "minimality: lite" in content
         assert "# Policy thresholds" not in content
 
     def test_write_default_config_creates_file(self, tmp_path):
@@ -550,6 +554,30 @@ class TestProjectConfig:
         assert path == tmp_path / ".map" / "config.yaml"
         content = path.read_text()
         assert "profile: full" in content
+        assert "minimality: lite" in content
+
+    def test_load_map_config_valid_minimality_values_pass_through(self, tmp_path):
+        from mapify_cli.config.project_config import load_map_config
+
+        for value in ("off", "lite", "full", "ultra"):
+            map_dir = tmp_path / value / ".map"
+            map_dir.mkdir(parents=True)
+            (map_dir / "config.yaml").write_text(f"minimality: {value}\n")
+
+            cfg = load_map_config(tmp_path / value)
+
+            assert cfg.minimality == value
+
+    def test_load_map_config_invalid_minimality_falls_back_to_off(self, tmp_path):
+        from mapify_cli.config.project_config import load_map_config
+
+        map_dir = tmp_path / ".map"
+        map_dir.mkdir()
+        (map_dir / "config.yaml").write_text("minimality: maximalist\n")
+
+        cfg = load_map_config(tmp_path)
+
+        assert cfg.minimality == "off"
 
     def test_write_default_config_no_overwrite(self, tmp_path):
         from mapify_cli.config.project_config import write_default_config

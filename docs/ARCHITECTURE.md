@@ -19,7 +19,7 @@ The remainder of this file contains the deeper implementation dive (workflow-spe
 - `mapify` CLI initialization (`mapify init`) and configuration
 - Provider scaffolding generated into a target repo (`.claude/` for Claude Code, `.codex/` for Codex CLI, plus `.map/` scripts/artifacts)
 - Run artifacts (plans, contracts, verification summaries, review dossiers, learning handoffs) written under `.map/<branch>/`
-- Context-budget, compression, clean-retry, run-health, review-bundle, and prior-stage-consumption contracts surfaced through MAP settings, hooks, templates, and `.map/scripts/`
+- Context-budget, compression, minimality, clean-retry, run-health, review-bundle, and prior-stage-consumption contracts surfaced through MAP settings, hooks, templates, and `.map/scripts/`
 - Host-path and cross-process safety primitives, including canonical `MAP_*`/`~/.map/` reference docs and `flock_with_state` lock sidecars for serialized host-level workflows
 - Plan/spec citation validation that requires existing `file:line` evidence before decomposition proceeds
 - Per-subtask token accounting: the `map-token-meter` hook (SubagentStop/Stop) attributes transcript `usage` to the active subtask/phase/agent in `.map/<branch>/token_log.jsonl`, rolled up (with cost and cache-hit ratio) into `token_accounting.json`; logic is self-contained in `.map/scripts/map_step_runner.py` so it runs without the `mapify_cli` package present
@@ -40,7 +40,8 @@ The remainder of this file contains the deeper implementation dive (workflow-spe
 2. **Artifact Traceability**: Every run produces durable, human-readable artifacts (plans, checks, reviews, learnings) tied to the current git branch.
 3. **Provider Portability**: Keep workflow intent stable while allowing provider-specific orchestration surfaces (`.claude/skills/` for Claude, `.agents/skills/` plus `.codex/` config for Codex).
 4. **Deterministic Guardrails**: Enforce token budgets, workflow-fit exits, clean retry, mutation boundaries, prior-stage consumption, run-health checks, and verification gates consistently.
-5. **Low Overhead**: Keep the “golden path” usable as a daily driver without excessive ceremony.
+5. **Minimality Without Underbuilding**: Prefer the smallest sufficient safe change while keeping required behavior, tests, security, and data safety non-negotiable.
+6. **Low Overhead**: Keep the “golden path” usable as a daily driver without excessive ceremony.
 
 ## System Context
 
@@ -83,6 +84,7 @@ Claude skill metadata includes `skillClass` in `.claude/skills/skill-rules.json`
 
 - **Initialize**: `mapify init` selects a provider, copies templates, and writes provider-specific prompts/skills plus shared `.map/` scripts.
 - **Run Workflow**: User triggers MAP commands (e.g., `/map-plan`, `/map-efficient`, `/map-check`, `/map-review`, `/map-learn`) through the provider UI, or `$map-*` skills for Codex. Each command orchestrates a specific agent sequence defined in generated skill/template files.
+- **Apply Minimality Doctrine**: `.map/config.yaml` controls `minimality` (`off`, `lite`, `full`, `ultra`). Existing projects with no key load as `off`; fresh generated configs write `minimality: lite`. Runtime prompt builders inject the doctrine into Actor context, Evaluator scores `simplicity` while keeping `completeness` highest-weight, Monitor distinguishes real scope/risk drift from harmless implementation size, and the orchestrator forwards only BLOCKER-class retry feedback back to Actor.
 - **Persist Artifacts**: Each workflow stage records durable artifacts under `.map/<branch>/`, including specs, blueprints, test contracts, verification summaries, review bundles, learning handoffs, token-budget reports, run-health reports, and retry quarantine state.
 - **Capture/Recall Memory**: Generated memory hooks capture session scratch records under `.map/<branch>/sessions/scratch/`, finalize them into `.map/<branch>/sessions/<session-id>.md`, and recall branch/session digests at the next session start. `/map-memory-now` can finalize dirty scratches immediately.
 - **Evaluate Skills**: `/map-skill-eval` and `mapify skill-eval` run trigger/cost eval sets through isolated `claude -p` workers, append resumable JSONL rows, aggregate pass/fail and usage, optimize frontmatter descriptions against held-out eval cases, and render stored optimization reports.

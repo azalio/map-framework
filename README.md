@@ -196,7 +196,16 @@ MAP is inspired by the [MAP cognitive architecture](https://github.com/Shanka123
 ## Options
 
 <details>
-<summary>Context-compression policy, Stack Overflow for Agents (SOFA), and other init flags</summary>
+<summary>Minimality doctrine, context-compression policy, Stack Overflow for Agents (SOFA), and other init flags</summary>
+
+**Minimality doctrine** (controls how strongly MAP pushes Actor/Monitor/Evaluator toward the smallest sufficient safe change):
+
+```yaml
+# .map/config.yaml
+minimality: lite   # new installs default to lite; existing repos without the key stay off
+```
+
+Allowed values: `off`, `lite`, `full`, `ultra`. Phase 1 ships conservative `lite` defaults: Actor prefers the fewest moving parts, Monitor blocks scope drift only when it affects required behavior, and Evaluator scores simplicity without letting it hide missing required work.
 
 **Context-compression policy** (controls the `/compact` nudge; default `never` — opt-in):
 

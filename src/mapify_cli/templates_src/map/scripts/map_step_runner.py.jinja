@@ -65,6 +65,100 @@ HUMAN_ARTIFACT_DEFAULTS = {
 
 KNOWN_ISSUES_DEFAULT: dict[str, list[dict[str, object]]] = {"issues": []}
 ACTIVE_ISSUES_DEFAULT: dict[str, object] = {"updated_at": "", "issues": []}
+VALID_MINIMALITY_LEVELS = frozenset({"off", "lite", "full", "ultra"})
+AGGRESSIVE_COMPRESSION_MULTIPLIER = 0.4
+
+
+def _read_map_config_scalars(project_dir: Path) -> dict[str, str]:
+    """Read top-level scalar values from .map/config.yaml without dependencies."""
+    config_path = project_dir / ".map" / "config.yaml"
+    if not config_path.is_file():
+        return {}
+    try:
+        lines = config_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return {}
+    values: dict[str, str] = {}
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#") or ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key = key.strip()
+        if not key or not re.fullmatch(r"[A-Za-z0-9_.-]+", key):
+            continue
+        value = value.split("#", 1)[0].strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1]
+        values[key] = value
+    return values
+
+
+def _map_config_str(project_dir: Path, key: str, default: str) -> str:
+    value = _read_map_config_scalars(project_dir).get(key)
+    return default if value is None else value
+
+
+def _map_config_int(project_dir: Path, key: str, default: int) -> int:
+    value = _read_map_config_scalars(project_dir).get(key)
+    if value is None:
+        return default
+    try:
+        parsed = int(value.replace("_", ""))
+    except ValueError:
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _extract_transcript_usage(entry: dict) -> Optional[int]:
+    message = entry.get("message")
+    if not isinstance(message, dict):
+        return None
+    role = message.get("role")
+    entry_type = entry.get("type")
+    if role != "assistant" and entry_type != "assistant":
+        return None
+    usage = message.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    try:
+        return (
+            int(usage.get("input_tokens", 0) or 0)
+            + int(usage.get("cache_read_input_tokens", 0) or 0)
+            + int(usage.get("cache_creation_input_tokens", 0) or 0)
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def _count_last_turn_tokens(transcript_path: Path) -> int:
+    if not transcript_path.is_file():
+        return 0
+    try:
+        lines = transcript_path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return 0
+    for raw in reversed(lines):
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            entry = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(entry, dict):
+            usage = _extract_transcript_usage(entry)
+            if usage is not None:
+                return usage
+    return 0
+
+
+def _effective_compression_threshold(policy: str, threshold: int) -> Optional[int]:
+    if policy == "never" or threshold <= 0:
+        return None
+    if policy == "aggressive":
+        return max(1, int(threshold * AGGRESSIVE_COMPRESSION_MULTIPLIER))
+    return threshold
 
 GATE_VERDICTS = {"ready", "needs-revision", "blocked"}
 ARTIFACT_STAGE_NAMES = (
@@ -4828,11 +4922,12 @@ AGENT_OUTPUT_SCHEMAS: dict[str, AgentOutputSchema] = {
             ],
             "scores": {
                 "functionality": "<int 1-10>",
-                "code_quality": "<int 1-10>",
-                "performance": "<int 1-10>",
-                "security": "<int 1-10>",
-                "testability": "<int 1-10>",
                 "completeness": "<int 1-10>",
+                "security": "<int 1-10>",
+                "code_quality": "<int 1-10>",
+                "testability": "<int 1-10>",
+                "performance": "<int 1-10>",
+                "simplicity": "<int 1-10>",
             },
             "overall_score": "<float 1.0-10.0>",
             "recommendation": "<'proceed' | 'improve' | 'reconsider'>",
@@ -4897,11 +4992,12 @@ REVIEW_PROMPT_SPECS: dict[str, dict[str, str]] = {
         "task": "Score the change quality using the review bundle and diff evidence.",
         "instructions": """Provide quality assessment using 1-10 scoring:
 - Functionality score (1-10)
-- Code quality score (1-10)
-- Performance score (1-10)
+- Completeness score (1-10)
 - Security score (1-10)
+- Code quality score (1-10)
 - Testability score (1-10)
-- Completeness score (1-10)""",
+- Performance score (1-10)
+- Simplicity score (1-10)""",
     },
 }
 
@@ -7132,24 +7228,15 @@ def subtask_boundary_compact_check(branch: str) -> dict:
     Returns: {status, used, threshold, hard_threshold, force_compact (bool),
              advice, since_last_compact_seconds}.
     """
-    import importlib
     import time
     project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()
     branch_name = _sanitize_branch(branch)
-    # Pull config + token-budget helpers from mapify_cli; degrade gracefully
-    # if the package isn't on sys.path (e.g., bundled-script context).
-    try:
-        sys_path_addition = str(project_dir / "src")
-        if sys_path_addition not in sys.path:
-            sys.path.insert(0, sys_path_addition)
-        cfg_mod = importlib.import_module("mapify_cli.config.project_config")
-        tb_mod = importlib.import_module("mapify_cli.token_budget")
-    except ImportError:
-        return {"status": "no_budget_config"}
-
-    config = cfg_mod.load_map_config(project_dir)
-    threshold = tb_mod.effective_threshold(
-        config.compression_policy, config.compression_threshold_tokens
+    policy = _map_config_str(project_dir, "compression_policy", "never")
+    configured_threshold = _map_config_int(
+        project_dir, "compression_threshold_tokens", 120_000
+    )
+    threshold = _effective_compression_threshold(
+        policy, configured_threshold
     )
     if threshold is None:
         return {"status": "policy_never"}
@@ -7170,7 +7257,7 @@ def subtask_boundary_compact_check(branch: str) -> dict:
     if log_dir is not None:
         try:
             latest = max(log_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime)
-            used = tb_mod.count_last_turn_tokens(latest)
+            used = _count_last_turn_tokens(latest)
         except (ValueError, OSError):
             used = 0
 
@@ -8652,6 +8739,8 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
     if not current:
         return ""
 
+    minimality = _load_minimality_level(project_dir)
+
     current_details = []
     # Emit the full prose `description` field (no per-field truncation).
     description_text = current.get("description")
@@ -8731,6 +8820,10 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
         "",
         f"# Current Subtask: {current_subtask_id} — {current.get('title', 'Untitled')}",
     ]
+    doctrine_block = _minimality_doctrine_block(minimality)
+    if doctrine_block:
+        parts.append("")
+        parts.append(doctrine_block)
     parts.extend(current_details)
     if upstream_lines:
         parts.append("")
@@ -8803,6 +8896,45 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
     # picture, period. If the block grows beyond context window, the user
     # will opt into /compact themselves (compression_policy default = never).
     return "\n".join(parts)
+
+
+def _load_minimality_level(project_dir: Path) -> str:
+    """Return the configured minimality level from .map/config.yaml."""
+    level = _map_config_str(project_dir, "minimality", "off")
+    if level not in VALID_MINIMALITY_LEVELS:
+        return "off"
+    return level
+
+
+def _minimality_doctrine_block(level: str) -> str:
+    """Return the runtime-only Actor doctrine block for non-off minimality."""
+    if level == "off":
+        return ""
+    intensity = {
+        "lite": "Build what was asked, then name the lazier safe alternative in one line; do not silently drop work.",
+        "full": "Apply the ladder actively before adding code; choose the smaller safe path unless a real blocker requires expansion.",
+        "ultra": "Apply the ladder aggressively and surface YAGNI/defer decisions, but never prune explicit, safety, data, or contract work silently.",
+    }.get(level, "Build what was asked and prefer the fewest safe moving parts.")
+    return "\n".join(
+        [
+            "<MAP_Minimality_Doctrine>",
+            f"Level: {level}",
+            f"Intensity: {intensity}",
+            "Production-grade means the smallest sufficient safe change, not maximal code.",
+            "Decision ladder, stop at the first rung that satisfies the contract:",
+            "1. Does this need to exist at all? If no, mark it YAGNI and explain; do not silently omit explicit requirements.",
+            "2. Standard library does it? Use that.",
+            "3. Native platform feature covers it? Use that.",
+            "4. Already-installed project dependency solves it? Use that; do not add a dependency for a few lines.",
+            "5. Can it be one clear line? Prefer one clear line.",
+            "6. Otherwise write the minimum maintainable code that works.",
+            "Shell/Core rule: shell code at trust boundaries stays defensive; core private helpers stay small.",
+            "Hard exceptions: security, accessibility, data integrity, real error handling that prevents data loss, and explicitly requested behavior always win over minimality.",
+            "When choosing a deliberate simplification, include `map:simplification:` with the ceiling and upgrade path. The marker is evidence, not an exemption.",
+            "If retry feedback asks for expansion, re-add code only for named BLOCKER items.",
+            "</MAP_Minimality_Doctrine>",
+        ]
+    )
 
 
 def prepare_detached_review(

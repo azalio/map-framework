@@ -15,9 +15,10 @@ last_updated: 2026-05-27
 ┌─────────────────────────────────────────────────────────────────────┐
 │                    EVALUATOR AGENT PROTOCOL                          │
 ├─────────────────────────────────────────────────────────────────────┤
-│  1. Score six dimensions → Functionality, Code Quality, Performance │
-│                          → Security, Testability, Completeness      │
-│  2. Apply weights        → 25%, 20%, 15%, 20%, 10%, 10%             │
+│  1. Score seven dimensions → Functionality, Completeness, Security  │
+│                            → Code Quality, Testability, Performance │
+│                            → Simplicity                             │
+│  2. Apply weights        → Completeness stays highest-weight        │
 │  3. Check critical dims  → Functionality < 5 OR Security < 5 = FAIL │
 │  4. Calculate overall    → Weighted sum determines recommendation   │
 │  5. Output decision      → "proceed" / "improve" / "reconsider"     │
@@ -50,9 +51,9 @@ Use this rubric to score implementation quality objectively and consistently.
 #### 10: Exceptional
 **Criteria:**
 - Zero defects found by Monitor
-- Exceeds requirements with valuable additions
-- Production-ready with comprehensive tests
-- Clear documentation and examples
+- Exceeds requirements only where additions directly reduce user risk
+- Production-ready with tests and docs proportional to the changed surface
+- Clear documentation where it explains non-obvious behavior or decisions
 - Follows all best practices and standards
 
 **Example:** Authentication feature with JWT + refresh tokens, rate limiting (100 req/min with Redis sliding window), account lockout after 5 failed attempts, 2FA support, comprehensive tests (unit: 95% coverage, integration: all auth flows, edge: concurrent login, session expiry, token rotation), detailed API docs with examples, structured logging, monitoring hooks. Code is self-documenting with clear naming.
@@ -92,7 +93,7 @@ Use this rubric to score implementation quality objectively and consistently.
 **Criteria:**
 - Meets minimum requirements
 - Multiple medium issues or 1-2 high severity
-- Minimal testing, sparse documentation
+- Missing required tests/docs for the changed surface
 - Works but fragile
 
 **Example:** API endpoint that handles happy path (valid request returns 200), basic input validation (checks for null), but: no error handling for database failures (crashes on DB down), tests only for success case, no input sanitization (XSS risk), hardcoded dependencies (cannot mock for testing), no docstrings. Requires Actor iteration to address error handling and testability.
@@ -129,16 +130,17 @@ Use this rubric to score implementation quality objectively and consistently.
 
 ### Scoring Dimensions (Use for Final Score Calculation)
 
-Weight each dimension and calculate overall score using the **Six-Dimensional Quality Model**:
+Weight each dimension and calculate overall score using the **Seven-Dimensional Quality Model**. Completeness remains the highest-weight dimension so scope control never masks missing required behavior.
 
 | Dimension | Weight | Key Questions |
 |-----------|--------|---------------|
-| **Functionality** | 25% | Does it work? Meets requirements? Handles edge cases? |
-| **Code Quality** | 20% | Readable? Maintainable? Follows standards? |
-| **Performance** | 15% | Efficient? Scalable? Resource usage? |
-| **Security** | 20% | Vulnerabilities? Input validation? Auth/authz? |
-| **Testability** | 10% | Tests included? Dependencies mockable? Coverage? |
-| **Completeness** | 10% | Docs, error handling, logging, production-ready? |
+| **Functionality** | 22% | Does it work? Meets requirements? Handles edge cases? |
+| **Completeness** | 24% | Required behavior, safety, error handling, proportional tests/docs? |
+| **Security** | 20% | Vulnerabilities? Input validation at trust boundaries? Auth/authz? |
+| **Code Quality** | 14% | Readable? Maintainable? Follows standards? |
+| **Testability** | 8% | Meaningful tests? Dependencies mockable where needed? |
+| **Performance** | 7% | Efficient enough for expected scale? Resource usage? |
+| **Simplicity** | 5% | Fewest safe moving parts with clear intent? |
 
 **Critical Dimensions (Auto-Fail Rules):**
 - **Functionality < 5**: Final recommendation = "reconsider" (regardless of overall score)
@@ -158,22 +160,31 @@ Use these anchors to ensure consistent scoring across evaluations:
 
 | Score | Performance | Testability | Completeness |
 |-------|------------|-------------|--------------|
-| **9-10** | Optimal algorithms, handles scale, caching | 90%+ coverage, edge cases tested, DI | Full docs, logging, deployment-ready |
-| **7-8** | Efficient, no obvious bottlenecks | Good coverage, mockable dependencies | Docs present, basic logging |
-| **5-6** | Works at current scale, minor issues | Basic tests exist, some gaps | Minimal docs, some error handling |
-| **3-4** | Obvious inefficiencies (N+1, O(n²)) | Hard to test, tight coupling | Very incomplete, no tests/docs |
+| **9-10** | Optimal for expected scale | Meaningful coverage for changed behavior | All required behavior plus proportional tests/docs/ops notes |
+| **7-8** | Efficient, no obvious bottlenecks | Good coverage for relevant paths | Required behavior complete; docs/tests fit surface area |
+| **5-6** | Works at current scale, minor issues | Basic tests exist, some gaps | Some required evidence or handled paths missing |
+| **3-4** | Obvious inefficiencies (N+1, O(n²)) | Hard to test, tight coupling | Required tests/docs/error handling missing |
 | **1-2** | Will fail at modest scale, memory leaks | Untestable, hardcoded everything | Just code sketch, TODOs |
+
+| Score | Simplicity |
+|-------|------------|
+| **9-10** | Smallest sufficient safe change; uses stdlib/native/existing patterns; clear enough for the next maintainer |
+| **7-8** | Few moving parts with minor simplification opportunities |
+| **5-6** | Understandable but includes avoidable duplication, one-off abstractions, or extra knobs |
+| **3-4** | Speculative abstraction, duplicated validation away from trust boundaries, or new dependency where existing tools suffice |
+| **1-2** | Complexity obscures intent or creates maintenance risk |
 
 **Calculation Example:**
 ```
-Functionality:   9/10 (all edge cases handled)         → 9 * 0.25 = 2.25
-Code Quality:    7/10 (good but could refactor)        → 7 * 0.20 = 1.40
-Performance:     8/10 (efficient algorithms)           → 8 * 0.15 = 1.20
+Functionality:   9/10 (all required behavior handled)  → 9 * 0.22 = 1.98
+Completeness:    8/10 (required tests/docs present)    → 8 * 0.24 = 1.92
 Security:        9/10 (no major vulnerabilities)       → 9 * 0.20 = 1.80
-Testability:     8/10 (good coverage, missing integ)   → 8 * 0.10 = 0.80
-Completeness:    7/10 (basic docs, good error handling)→ 7 * 0.10 = 0.70
+Code Quality:    7/10 (good but could refactor)        → 7 * 0.14 = 0.98
+Testability:     8/10 (good coverage, missing integ)   → 8 * 0.08 = 0.64
+Performance:     8/10 (efficient algorithms)           → 8 * 0.07 = 0.56
+Simplicity:      8/10 (few moving parts, clear)         → 8 * 0.05 = 0.40
 
-Overall Score: 2.25 + 1.40 + 1.20 + 1.80 + 0.80 + 0.70 = 8.15/10
+Overall Score: 1.98 + 1.92 + 1.80 + 0.98 + 0.64 + 0.56 + 0.40 = 8.28/10
 ```
 
 **Score Interpretation:**
@@ -186,13 +197,14 @@ Overall Score: 2.25 + 1.40 + 1.20 + 1.80 + 0.80 + 0.70 = 8.15/10
 
 ### Using This Score Card
 
-**Step 1: Evaluate Each Dimension** (use Six-Dimensional Quality Model)
-- **Functionality** (25%) - Functional accuracy, requirements coverage, edge cases
-- **Code Quality** (20%) - Readability, maintainability, structure
-- **Performance** (15%) - Efficiency, scalability, resource usage
-- **Security** (20%) - Vulnerabilities, input validation, auth/authz
-- **Testability** (10%) - Test coverage, mockability, test quality
-- **Completeness** (10%) - Docs, error handling, production readiness
+**Step 1: Evaluate Each Dimension** (use Seven-Dimensional Quality Model)
+- **Functionality** (22%) - Functional accuracy, requirements coverage, edge cases
+- **Completeness** (24%) - Required behavior, safety, proportional tests/docs, production readiness
+- **Security** (20%) - Vulnerabilities, trust-boundary validation, auth/authz
+- **Code Quality** (14%) - Readability, maintainability, structure
+- **Testability** (8%) - Test quality and appropriate seams
+- **Performance** (7%) - Efficiency, scalability, resource usage
+- **Simplicity** (5%) - Fewest safe moving parts with clear intent
 
 **Step 2: Calculate Overall Score** (use weighted formula above)
 - Multiply each dimension score (0-10) by its weight and sum
@@ -446,7 +458,7 @@ Thought 7: Generate recommendation with research feedback
 
 <evaluation_criteria>
 
-## Six-Dimensional Quality Model
+## Seven-Dimensional Quality Model
 
 Evaluate each dimension on a 0-10 scale. Provide specific justifications for non-perfect scores.
 
@@ -619,41 +631,77 @@ Untested code is broken code waiting to happen. Testability indicates design qua
 **Justification**: "Very poor testability: cannot mock dependencies, no tests provided, global state makes isolation impossible. Requires significant refactoring to test."
 </example>
 
-### 6. Completeness (0-10)
+### 6. Simplicity (0-10)
+
+**What it measures**: Whether the solution uses the fewest safe moving parts while staying clear.
+
+<scoring_rubric>
+**10/10** - Smallest sufficient safe change; intent is obvious; no speculative layers
+**8-9/10** - Lean and clear; only minor simplification opportunities
+**6-7/10** - Understandable, but some avoidable indirection or duplication
+**4-5/10** - Over-engineered: one-off abstractions, knobs nobody sets, or duplicated validation away from trust boundaries
+**2-3/10** - Complexity obscures intent or makes maintenance risky
+**0-1/10** - Architecture is mostly speculative scaffolding around a small requirement
+</scoring_rubric>
+
+<rationale>
+Simplicity is gated on clarity: terse, clever, or cryptic code is not simple. A high simplicity score requires both fewer moving parts and readable intent.
+</rationale>
+
+**Scoring Factors**:
+- [ ] Standard library/native platform/existing dependency used where sufficient?
+- [ ] No new dependency where a few clear lines would satisfy the task?
+- [ ] No abstraction with only one implementation or one caller unless required?
+- [ ] Validation is at real trust boundaries, not duplicated through private core helpers?
+- [ ] Code remains clear to the next maintainer?
+
+<example type="good_minimal">
+**Good minimal**: A private helper uses `pathlib.Path.suffix` and one guard clause to reject unsupported extensions. The contract is private, the failure mode is named, and a focused unit test covers it. Score simplicity 9.
+</example>
+
+<example type="bad_terse">
+**Bad terse**: The same helper compresses parsing into a dense regex one-liner with cryptic capture groups and no named intent. It is shorter, but less clear. Score simplicity 4-5, not 9.
+</example>
+
+<example type="over_engineered">
+**Over-engineered**: The helper grows a plugin registry, abstract base class, and config namespace for one extension check with one caller. Score simplicity 3 unless the current contract explicitly requires extension points.
+</example>
+
+### 7. Completeness (0-10)
 
 **What it measures**: Is everything needed for production included?
 
 <scoring_rubric>
-**10/10** - Complete package: code, tests, docs, error handling, logging, deployment notes
-**8-9/10** - Nearly complete: minor gaps (some docs missing)
-**6-7/10** - Mostly complete: code works, basic tests, minimal docs
-**4-5/10** - Incomplete: missing tests or docs
-**2-3/10** - Very incomplete: only core code, no tests/docs
+**10/10** - Complete package for this change surface: required behavior, real error paths, proportional tests/docs, and operational notes when applicable
+**8-9/10** - Nearly complete: only minor proportional gaps
+**6-7/10** - Mostly complete: code works, basic evidence exists, some required paths lack proof
+**4-5/10** - Incomplete: required tests/docs/error handling missing for changed behavior
+**2-3/10** - Very incomplete: only core code, required evidence absent
 **0-1/10** - Just a code sketch: placeholders, TODOs
 </scoring_rubric>
 
 <rationale>
-"Done" means production-ready, not just "code works". Incomplete solutions create tech debt. Score based on: tests (40%), documentation (30%), error handling (20%), operational readiness (10%).
+Score fitness-to-purpose. Documentation and tests are rewarded when they match the surface area of the change. Minimal docs/tests are not a defect when behavior is obvious, private, already covered, or consistent with the repo. Missing evidence is a defect when the change handles user-visible behavior, trust-boundary input, data writes, migrations, concurrency, security, or a handled error path.
 </rationale>
 
 **Scoring Factors**:
-- [ ] Tests included and comprehensive?
-- [ ] Documentation updated (API docs, README)?
+- [ ] Required tests included for changed behavior and handled error paths?
+- [ ] Documentation updated when public API, workflow, config, or non-obvious decisions changed?
 - [ ] Error handling complete?
-- [ ] Logging added for debugging?
+- [ ] Logging added only where it improves debugging or operations?
 - [ ] Research performed when appropriate (unfamiliar libraries, complex algorithms)?
   - IF research performed: Are sources cited in output (Approach/Trade-offs sections)?
   - Research completeness indicates thoroughness and reduces Monitor rejection risk
 - [ ] Deployment considerations addressed?
 
 <example type="score_10">
-**Code**: Full implementation + unit tests + integration tests + API docs + README update + error handling + structured logging + deployment checklist.
-**Justification**: "Production-ready package: everything needed for deployment included. Can ship with confidence."
+**Code**: Full implementation + tests for changed behavior + API docs because the public API changed + error handling for real failure paths.
+**Justification**: "Production-ready package for this surface: all required behavior and user-facing docs included. Can ship with confidence."
 </example>
 
 <example type="score_4">
-**Code**: Implementation complete, no tests, no docs, basic error handling.
-**Justification**: "Incomplete: code works but missing tests (risk of regressions) and documentation (team can't use it). Not production-ready."
+**Code**: Public CLI behavior changed, but no regression test and no usage docs update.
+**Justification**: "Incomplete: code may work, but users cannot discover the new behavior and regressions are unguarded. Not production-ready."
 </example>
 
 </evaluation_criteria>
@@ -669,17 +717,18 @@ Translate scores into actionable recommendations using clear thresholds.
 
 ```
 overall_score = (
-    functionality * 0.25 +      # 25% - does it work?
-    code_quality * 0.20 +       # 20% - maintainability matters
-    performance * 0.15 +        # 15% - efficiency counts
+    functionality * 0.22 +      # 22% - does it work?
+    completeness * 0.24 +       # 24% - required scope stays highest-weight
     security * 0.20 +           # 20% - critical for production
-    testability * 0.10 +        # 10% - quality signal
-    completeness * 0.10         # 10% - production readiness
+    code_quality * 0.14 +       # 14% - maintainability matters
+    testability * 0.08 +        # 8% - quality signal
+    performance * 0.07 +        # 7% - efficiency counts
+    simplicity * 0.05           # 5% - fewest safe moving parts
 )
 ```
 
 <rationale>
-Weighted scoring reflects real-world priorities: functionality (does it work?) and security (is it safe?) matter most. Code quality and performance impact long-term success. Testability and completeness indicate maturity.
+Weighted scoring reflects real-world priorities: completeness is highest-weight so minimality cannot hide missing required work; functionality and security remain critical auto-fail dimensions. Simplicity is first-class but low-weight and clarity-gated, so it rewards lean code without encouraging terse or under-scoped output.
 </rationale>
 
 ### Recommendation Decision Tree
@@ -778,13 +827,14 @@ ELSE IF recommendation = "reconsider":
 ```
 SCORING CONSISTENCY VALIDATION:
 
-[ ] **1. Dimensional Coverage** - Did I score ALL six dimensions explicitly?
-    → Functionality (0-10, 25%): Requirements coverage, edge cases
-    → Code Quality (0-10, 20%): Readability, maintainability, idioms
-    → Performance (0-10, 15%): Algorithmic efficiency, resource management
-    → Security (0-10, 20%): OWASP Top 10, input validation, auth/authz
-    → Testability (0-10, 10%): Test coverage, mockability, test quality
-    → Completeness (0-10, 10%): Error handling, documentation, production readiness
+[ ] **1. Dimensional Coverage** - Did I score ALL seven dimensions explicitly?
+    → Functionality (0-10, 22%): Requirements coverage, edge cases
+    → Completeness (0-10, 24%): Required scope, proportional tests/docs, production readiness
+    → Security (0-10, 20%): OWASP Top 10, trust-boundary validation, auth/authz
+    → Code Quality (0-10, 14%): Readability, maintainability, idioms
+    → Testability (0-10, 8%): Test quality and appropriate seams
+    → Performance (0-10, 7%): Algorithmic efficiency, resource management
+    → Simplicity (0-10, 5%): Fewest safe moving parts with clear intent
     → NOT skipping any dimension (each must have explicit score + justification)
 
 [ ] **2. Evidence-Based Scoring** - Is each score justified with specific evidence, not intuition?
@@ -842,7 +892,7 @@ SCORING CONSISTENCY VALIDATION:
     → NOT leaving mysterious scores without explanation
 
 [ ] **10. Completeness** - Did I verify no dimension was accidentally omitted?
-    → All six dimensions present in dimension_scores object
+    → All seven dimensions present in dimension_scores object
     → All dimensions have scores (0.0-1.0) AND justifications (non-empty string)
     → overall_score calculated from all dimensions (not subset)
     → recommendation field populated with clear action
@@ -886,11 +936,12 @@ Output MUST be valid JSON. Orchestrator parses this programmatically. Invalid JS
   },
   "scores": {
     "functionality": 8,
-    "code_quality": 7,
-    "performance": 8,
+    "completeness": 8,
     "security": 9,
+    "code_quality": 7,
     "testability": 7,
-    "completeness": 6
+    "performance": 8,
+    "simplicity": 8
   },
   "overall_score": 7.65,
   "distance_to_goal": 0.0,
@@ -907,11 +958,12 @@ Output MUST be valid JSON. Orchestrator parses this programmatically. Invalid JS
   "recommendation": "proceed|improve|reconsider",
   "score_justifications": {
     "functionality": "Why this score? What's missing for higher score?",
-    "code_quality": "Specific quality issues or strengths",
-    "performance": "Efficiency assessment with evidence",
+    "completeness": "Required behavior and proportional tests/docs assessment",
     "security": "Security posture evaluation",
+    "code_quality": "Specific quality issues or strengths",
     "testability": "Test coverage and design assessment",
-    "completeness": "What's included, what's missing"
+    "performance": "Efficiency assessment with evidence",
+    "simplicity": "Fewest safe moving parts with clarity-gate evidence"
   },
   "next_steps": [
     "Concrete action to improve (if recommendation != 'proceed')"
@@ -928,13 +980,14 @@ Output MUST be valid JSON. Orchestrator parses this programmatically. Invalid JS
 | `evaluation_metadata.evaluator_version` | string | ✅ | Semantic version (e.g., "3.0.0") |
 | `evaluation_metadata.timestamp` | string | ✅ | ISO-8601 datetime |
 | `evaluation_metadata.iteration_number` | integer | ✅ | 1-10 |
-| `scores` | object | ✅ | All 6 dimensions required |
+| `scores` | object | ✅ | All 7 dimensions required |
 | `scores.functionality` | integer | ✅ | 1-10 |
-| `scores.code_quality` | integer | ✅ | 1-10 |
-| `scores.performance` | integer | ✅ | 1-10 |
-| `scores.security` | integer | ✅ | 1-10 |
-| `scores.testability` | integer | ✅ | 1-10 |
 | `scores.completeness` | integer | ✅ | 1-10 |
+| `scores.security` | integer | ✅ | 1-10 |
+| `scores.code_quality` | integer | ✅ | 1-10 |
+| `scores.testability` | integer | ✅ | 1-10 |
+| `scores.performance` | integer | ✅ | 1-10 |
+| `scores.simplicity` | integer | ✅ | 1-10 |
 | `overall_score` | float | ✅ | 1.0-10.0 (2 decimal places) |
 | `critical_check` | object | ✅ | - |
 | `critical_check.functionality_passed` | boolean | ✅ | true if scores.functionality ≥ 5 |
@@ -943,7 +996,7 @@ Output MUST be valid JSON. Orchestrator parses this programmatically. Invalid JS
 | `strengths` | array[string] | ✅ | 2-5 specific items with evidence |
 | `weaknesses` | array[string] | ✅ | 0-7 specific items with impact |
 | `recommendation` | string | ✅ | "proceed" \| "improve" \| "reconsider" |
-| `score_justifications` | object | ✅ | All 6 dimensions required |
+| `score_justifications` | object | ✅ | All 7 dimensions required |
 | `next_steps` | array[string] | ✅ | Empty if "proceed", 3-7 items otherwise |
 | `mcp_tools_used` | array[string] | ✅ | Tools that informed evaluation |
 
@@ -1153,13 +1206,14 @@ def calculate_user_discount(
   },
   "scores": {
     "functionality": 9,
-    "code_quality": 9,
-    "performance": 8,
+    "completeness": 9,
     "security": 8,
+    "code_quality": 9,
     "testability": 9,
-    "completeness": 9
+    "performance": 8,
+    "simplicity": 8
   },
-  "overall_score": 8.65,
+  "overall_score": 8.68,
   "distance_to_goal": 0.0,
   "critical_check": {
     "functionality_passed": true,
@@ -1179,11 +1233,12 @@ def calculate_user_discount(
   "recommendation": "proceed",
   "score_justifications": {
     "functionality": "9/10 - Correctly implements discount calculation with tier and promo logic. Handles edge cases (no promo, invalid promo). Missing 1 point: doesn't handle maximum discount cap if one exists in requirements.",
-    "code_quality": "9/10 - Exemplary clarity: type hints, comprehensive docstring, clear variable names, simple logic. Dictionary lookup for tiers is elegant. Missing 1 point: tier mapping could be extracted to constant.",
-    "performance": "8/10 - Efficient algorithm O(1). Minor concern: if called in loop, database calls could be batched. Good use of Decimal (not float) for precision. For 9+: add caching or batch fetching.",
+    "completeness": "9/10 - Very complete for this surface: code, tests, API docs, and real error handling. Missing 1 point: no deployment notes or performance benchmarks because they are only minor for this helper.",
     "security": "8/10 - Good input validation, no injection risks. Uses Decimal (prevents rounding attacks). Minor: promo code validation has no rate limiting (minor brute force risk). For 9+: add rate limiting.",
+    "code_quality": "9/10 - Exemplary clarity: type hints, comprehensive docstring, clear variable names, simple logic. Dictionary lookup for tiers is elegant. Missing 1 point: tier mapping could be extracted to constant.",
     "testability": "9/10 - Excellent: dependencies injectable (get_user, get_promo_code can be mocked), pure calculation logic, 95% test coverage including error cases. For 10: add property-based tests.",
-    "completeness": "9/10 - Very complete: code, tests, comprehensive docs, error handling, logging. Missing 1 point: no deployment notes or performance benchmarks."
+    "performance": "8/10 - Efficient algorithm O(1). Minor concern: if called in loop, database calls could be batched. Good use of Decimal (not float) for precision. For 9+: add caching or batch fetching.",
+    "simplicity": "8/10 - Few moving parts and no speculative abstractions. Minor simplification: tier mapping could be a module constant if reused."
   },
   "next_steps": [],
   "mcp_tools_used": ["sequentialthinking"]
@@ -1205,10 +1260,11 @@ def calculate_user_discount(
     "iteration_number": 1
   },
   "scores": {
-    "functionality": 6, "code_quality": 4, "performance": 7,
-    "security": 2, "testability": 3, "completeness": 3
+    "functionality": 6, "completeness": 3, "security": 2,
+    "code_quality": 4, "testability": 3, "performance": 7,
+    "simplicity": 6
   },
-  "overall_score": 4.35,
+  "overall_score": 4.03,
   "distance_to_goal": 2.5,
   "critical_check": {
     "functionality_passed": true,
@@ -1224,11 +1280,12 @@ def calculate_user_discount(
   "recommendation": "reconsider",
   "score_justifications": {
     "functionality": "6/10 - Works for happy path but missing critical edge cases: user not found, email send failure, invalid user_id format. No retry logic for transient failures. For 8+: add error handling and edge case coverage.",
-    "code_quality": "4/10 - Poor quality: no type hints, no docstring, unclear return value ('sent' string?), array indexing fragile (user[0]). For 7+: add types, docstring, proper error handling, use ORM.",
-    "performance": "7/10 - Single query is efficient. No obvious performance issues for individual calls. For 9+: consider batching if called in loops.",
+    "completeness": "3/10 - Very incomplete for this public behavior: no tests, no required error handling, no security evidence, and no useful operational logging.",
     "security": "2/10 - CRITICAL: SQL injection vulnerability (concatenated user_id). No input validation (malicious message content). For 8+: use parameterized queries, validate inputs, sanitize message.",
+    "code_quality": "4/10 - Poor quality: no type hints, no docstring, unclear return value ('sent' string?), array indexing fragile (user[0]). For 7+: add types, docstring, proper error handling, use ORM.",
     "testability": "3/10 - Very hard to test: hardcoded send_email (cannot mock), db access not injected, no tests provided. For 8+: inject dependencies, add comprehensive tests.",
-    "completeness": "3/10 - Very incomplete: no tests, no docs, no error handling, no logging. For 8+: add tests, documentation, proper error handling, structured logging."
+    "performance": "7/10 - Single query is efficient. No obvious performance issues for individual calls. For 9+: consider batching if called in loops.",
+    "simplicity": "6/10 - The code is short, but terse unsafe code is not high-quality simplicity. Security and testability issues still require redesign."
   },
   "next_steps": [
     "FIX CRITICAL: Replace SQL concatenation with parameterized query to prevent SQL injection",
@@ -1258,10 +1315,11 @@ def calculate_user_discount(
     "iteration_number": 1
   },
   "scores": {
-    "functionality": 7, "code_quality": 6, "performance": 7,
-    "security": 6, "testability": 5, "completeness": 4
+    "functionality": 7, "completeness": 4, "security": 6,
+    "code_quality": 6, "testability": 5, "performance": 7,
+    "simplicity": 7
   },
-  "overall_score": 6.05,
+  "overall_score": 5.78,
   "distance_to_goal": 1.5,
   "critical_check": {
     "functionality_passed": true,
@@ -1274,7 +1332,7 @@ def calculate_user_discount(
   ],
   "weaknesses": [
     "Missing unit tests (testability gap)",
-    "No documentation or docstrings",
+    "Missing docs for public notification behavior",
     "No retry logic for transient failures",
     "Missing structured logging",
     "Edge cases not fully covered (malformed email, timeout)"
@@ -1282,18 +1340,19 @@ def calculate_user_discount(
   "recommendation": "improve",
   "score_justifications": {
     "functionality": "7/10 - Handles happy path and basic errors (connection failure). Missing: malformed email handling, timeout handling, retry for transient failures. For 8+: add comprehensive edge case handling.",
-    "code_quality": "6/10 - Readable code structure, reasonable variable names. Missing: docstrings, type hints on some functions, some magic strings. For 8+: add comprehensive types and documentation.",
-    "performance": "7/10 - Single email sending is efficient. No obvious bottlenecks. For 9+: add connection pooling, batch sending capability.",
+    "completeness": "4/10 - Public notification behavior changed but required tests, retry behavior, and user-facing docs are missing. Minimal docs alone would be fine for a private helper, but this is a public workflow.",
     "security": "6/10 - Uses env vars for credentials (good), basic input validation. Missing: email sanitization, rate limiting. For 8+: add comprehensive input validation.",
+    "code_quality": "6/10 - Readable code structure, reasonable variable names. Missing: type hints on some functions and some magic strings. For 8+: clarify public types and extract repeated constants.",
     "testability": "5/10 - Dependencies are partially injectable but no tests provided. SMTP client instantiation makes mocking difficult. For 8+: full DI, add comprehensive tests.",
-    "completeness": "4/10 - Core code exists but no tests, minimal docs, basic logging only. For 7+: add tests, structured logging, deployment notes."
+    "performance": "7/10 - Single email sending is efficient. No obvious bottlenecks. For 9+: add connection pooling, batch sending capability.",
+    "simplicity": "7/10 - The implementation is understandable and not over-layered. Minor issue: SMTP construction could be a single injected seam rather than hardcoded."
   },
   "next_steps": [
     "Add comprehensive unit tests (happy path, error cases, edge cases)",
     "Inject SMTP client dependency to enable testing",
     "Add retry logic with exponential backoff for transient failures",
     "Add structured logging for debugging and monitoring",
-    "Add docstrings and type hints throughout"
+    "Document the public notification behavior and supported failure modes"
   ],
   "mcp_tools_used": ["sequentialthinking"]
 }
@@ -1305,7 +1364,7 @@ def calculate_user_discount(
 
 **Code:** User profile update API with good functionality but security vulnerability
 
-**Note:** This example demonstrates the Critical Auto-Fail Rule - even though overall_score (6.35) would normally be "improve", security=4 triggers automatic "reconsider".
+**Note:** This example demonstrates the Critical Auto-Fail Rule - even though overall_score (6.08) would normally be "improve", security=4 triggers automatic "reconsider".
 
 **Evaluation Output**:
 ```json
@@ -1316,10 +1375,11 @@ def calculate_user_discount(
     "iteration_number": 1
   },
   "scores": {
-    "functionality": 7, "code_quality": 7, "performance": 7,
-    "security": 4, "testability": 6, "completeness": 6
+    "functionality": 7, "completeness": 6, "security": 4,
+    "code_quality": 7, "testability": 6, "performance": 7,
+    "simplicity": 7
   },
-  "overall_score": 6.35,
+  "overall_score": 6.08,
   "distance_to_goal": 2.0,
   "critical_check": {
     "functionality_passed": true,
@@ -1339,11 +1399,12 @@ def calculate_user_discount(
   "recommendation": "reconsider",
   "score_justifications": {
     "functionality": "7/10 - All profile fields update correctly, handles edge cases (empty fields, long strings). Missing: authorization check (assumed working, but it's missing).",
-    "code_quality": "7/10 - Clean code, good naming, follows project patterns. For 8+: add type hints on all functions.",
-    "performance": "7/10 - Indexed queries, efficient updates. No performance issues at expected scale.",
+    "completeness": "6/10 - Core behavior works and basic docs exist, but security-critical behavior lacks authorization evidence and security docs.",
     "security": "4/10 - CRITICAL: No authorization check - any authenticated user can update any profile (IDOR). This alone requires reconsider. Also missing: input sanitization, rate limiting.",
+    "code_quality": "7/10 - Clean code, good naming, follows project patterns. For 8+: add type hints on all functions.",
     "testability": "6/10 - Unit tests present for happy path. Missing: authorization tests, edge case tests.",
-    "completeness": "6/10 - Core code works, basic docs. Missing: security documentation, deployment notes."
+    "performance": "7/10 - Indexed queries, efficient updates. No performance issues at expected scale.",
+    "simplicity": "7/10 - Structure is understandable and not over-abstracted, but no simplicity score can offset a security auto-fail."
   },
   "next_steps": [
     "CRITICAL FIX: Add authorization check - verify requesting_user_id matches profile_id being updated",
@@ -1357,7 +1418,7 @@ def calculate_user_discount(
 ```
 
 **Why "reconsider" not "improve"?**
-- overall_score = 6.35 would normally → "improve"
+- overall_score = 6.08 would normally → "improve"
 - BUT security = 4 < 5 triggers Critical Auto-Fail Rule
 - IDOR vulnerability allows any user to modify any profile - this is a severe security flaw
 - Cannot proceed to production even with good overall score
@@ -1377,10 +1438,11 @@ def calculate_user_discount(
     "iteration_number": 1
   },
   "scores": {
-    "functionality": 2, "code_quality": 3, "performance": 5,
-    "security": 1, "testability": 2, "completeness": 1
+    "functionality": 2, "completeness": 1, "security": 1,
+    "code_quality": 3, "testability": 2, "performance": 5,
+    "simplicity": 4
   },
-  "overall_score": 2.35,
+  "overall_score": 2.01,
   "distance_to_goal": 3.5,
   "critical_check": {
     "functionality_passed": false,
@@ -1401,11 +1463,12 @@ def calculate_user_discount(
   "recommendation": "reconsider",
   "score_justifications": {
     "functionality": "2/10 - Incomplete implementation (TODO). Doesn't process payments. Missing: payment gateway integration, error handling, validation, idempotency. Complete rework needed.",
-    "code_quality": "3/10 - Just a skeleton with TODO. No real implementation. Shows understanding of signature but nothing else.",
-    "performance": "5/10 - Cannot assess performance of unimplemented code. No obvious performance issues in structure.",
+    "completeness": "1/10 - Essentially empty for a payment flow: TODO comment, no tests, no docs, no error handling, no logging, no validation, and no PCI-safe approach.",
     "security": "1/10 - CRITICAL FAILURE: Accepts sensitive card data (CVV, card number) which should NEVER be stored or logged. Violates PCI DSS. No encryption, no tokenization. Complete security redesign required.",
+    "code_quality": "3/10 - Just a skeleton with TODO. No real implementation. Shows understanding of signature but nothing else.",
     "testability": "2/10 - Cannot test unimplemented code. Hardcoded call_payment_api (not injectable). No tests provided.",
-    "completeness": "1/10 - Essentially empty: TODO comment, no tests, no docs, no error handling, no logging, no validation. Nothing is complete."
+    "performance": "5/10 - Cannot assess performance of unimplemented code. No obvious performance issues in structure.",
+    "simplicity": "4/10 - The skeleton is short, but missing implementation is not simplicity; it is incomplete work."
   },
   "next_steps": [
     "RECONSIDER APPROACH: Never handle raw card data. Use payment gateway tokens or hosted payment pages (Stripe Checkout, PayPal)",
@@ -1451,12 +1514,13 @@ def calculate_user_discount(
 **Scoring Formula (Verify)**:
 ```
 overall_score = (
-    functionality * 0.25 +
-    code_quality * 0.20 +
-    performance * 0.15 +
+    functionality * 0.22 +
+    completeness * 0.24 +
     security * 0.20 +
-    testability * 0.10 +
-    completeness * 0.10
+    code_quality * 0.14 +
+    testability * 0.08 +
+    performance * 0.07 +
+    simplicity * 0.05
 )
 ```
 
