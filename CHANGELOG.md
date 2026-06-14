@@ -35,11 +35,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/map-plan → /map-efficient → /map-check → /map-review → /map-learn` subtitle,
   and the post-`init` "Next Steps" panel presents that loop in order (leading
   with `/map-plan`) instead of leading with `/map-efficient`.
+- **README quick-start docs now show the `/map-plan` → `/map-efficient` flow
+  directly.** The README includes the terminal demo GIF and keeps the generated
+  `review-bundle.json` explanation in sync with the review workflow.
 - **Generated MAP scripts now read scalar `.map/config.yaml` settings without
   importing `mapify_cli`.** Actor minimality context and subtask-boundary
   compression advice now work in generated projects even when the `python3` used
   to run `.map/scripts/*` cannot import the globally installed `mapify_cli`
   package.
+
+### Fixed
+- **Release validation now uses the maintained project gate.** The shipped
+  `map-release` skill, release guide, and release checklist use `make check`
+  plus explicit `uv run --with build` / `uv run --with twine` package checks
+  instead of the stale Black-specific gate that failed on generated files (#186).
 
 ## [3.12.1] - 2026-06-12
 
