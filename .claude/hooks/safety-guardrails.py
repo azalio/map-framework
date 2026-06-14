@@ -14,9 +14,7 @@ Exit codes:
 
 import json
 import os
-import re
 import sys
-from pathlib import Path
 
 # =============================================================================
 # Default constants (overridable via .map/config.yaml → safe_path_prefixes)
@@ -35,6 +33,19 @@ _DEFAULT_DANGEROUS_FILE_PATTERNS = [
     r"passwords?\.(json|ya?ml|toml|txt)$",  # password files, not any file with "password" in path
     r"tokens?\.(json|ya?ml|toml|txt)$",  # token files, not any file with "token" in path
 ]
+
+_DEFAULT_DANGEROUS_FILE_MARKERS = (
+    ".env",
+    "credential",
+    "private",
+    "key",
+    ".pem",
+    "secret",
+    "id_rsa",
+    "id_ed25519",
+    "password",
+    "token",
+)
 
 # Dangerous bash command patterns
 _DEFAULT_DANGEROUS_COMMANDS = [
@@ -81,14 +92,14 @@ def _load_config_overrides() -> dict:
     Reads safe_path_prefixes from project config to allow customization.
     Falls back to defaults when config is missing or unreadable.
     """
-    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
-    config_path = project_dir / ".map" / "config.yaml"
-    if not config_path.exists():
+    project_dir = os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())
+    config_path = os.path.join(project_dir, ".map", "config.yaml")
+    if not os.path.exists(config_path):
         return {}
     try:
         import yaml  # type: ignore[import-untyped]
 
-        with open(config_path) as f:
+        with open(config_path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
         return data if isinstance(data, dict) else {}
     except Exception:
@@ -121,6 +132,13 @@ def check_file_safety(path: str) -> tuple[bool, str]:
 
     # Check dangerous patterns
     path_lower = path.lower()
+    if DANGEROUS_FILE_PATTERNS == _DEFAULT_DANGEROUS_FILE_PATTERNS and not any(
+        marker in path_lower for marker in _DEFAULT_DANGEROUS_FILE_MARKERS
+    ):
+        return True, ""
+
+    import re
+
     for pattern in DANGEROUS_FILE_PATTERNS:
         if re.search(pattern, path_lower, re.IGNORECASE):
             return (
@@ -135,6 +153,8 @@ def check_command_safety(command: str) -> tuple[bool, str]:
     """Check if bash command is safe. Returns (is_safe, reason)."""
     if not command:
         return True, ""
+
+    import re
 
     for pattern in DANGEROUS_COMMANDS:
         if re.search(pattern, command, re.IGNORECASE):
