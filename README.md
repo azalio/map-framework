@@ -157,7 +157,7 @@ These flows maintain branch-scoped artifacts under `.map/<branch>/` — `bluepri
 - **Daily-driver speed** — optimized for repeated use, not occasional demo workflows. Structured enough to prevent chaos, lightweight enough to keep token and time cost under control.
 - **Reviewable diffs** — `/map-plan` and `/map-efficient` require per-subtask size, concern, and constraint metadata, then validate `blueprint.json` *before* implementation, so oversized or mixed-concern plans fail early instead of surprising reviewers later.
 - **Gates that check the plan, not vibes** — `/map-check` and `/map-review` validate against the spec, tests, and diff instead of asking whether code "looks fine".
-- **Clean-room review** — `/map-review` auto-bundles spec, plan, tests, verification, and coverage evidence into a single durable input (`.map/<branch>/review-bundle.json`); `--detached` opens a read-only worktree for inspection without touching your branch.
+- **Clean-room review** — `/map-review` auto-bundles spec, plan, tests, verification, and coverage evidence into a single durable input (`.map/<branch>/review-bundle.json`); `--detached` opens a read-only worktree for inspection without touching your branch. With `minimality` enabled, review also runs an advisory what-to-delete lens for over-engineering cuts.
 - **Project memory** — `/map-learn` turns hard-won fixes and gotchas into reusable context, so the next session doesn't relearn them.
 
 <details>
@@ -205,7 +205,7 @@ MAP is inspired by the [MAP cognitive architecture](https://github.com/Shanka123
 minimality: lite   # new installs default to lite; existing repos without the key stay off
 ```
 
-Allowed values: `off`, `lite`, `full`, `ultra`. Phase 1 ships conservative `lite` defaults: Actor prefers the fewest moving parts, Monitor blocks scope drift only when it affects required behavior, and Evaluator scores simplicity without letting it hide missing required work.
+Allowed values: `off`, `lite`, `full`, `ultra`. Phase 1 ships conservative `lite` defaults: Actor prefers the fewest moving parts, Monitor blocks scope drift only when it affects required behavior, and Evaluator scores simplicity without letting it hide missing required work. `/map-review` also adds an advisory what-to-delete lens when minimality is not `off`; its `net: -N` estimate is informational, not a gate.
 
 **Context-compression policy** (controls the `/compact` nudge; default `never` — opt-in):
 

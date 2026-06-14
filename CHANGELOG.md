@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`/map-review` now runs an advisory what-to-delete lens when minimality is
+  enabled (#182).** Projects with `minimality: lite`, `full`, or `ultra` get an
+  extra complexity-only pass that reports `delete:`, `stdlib:`, `native:`,
+  `yagni:`, and `shrink:` opportunities plus a post-hoc `net: -N` estimate;
+  the output is never used as a verdict gate or Actor retry input.
+
 ## [3.13.1] - 2026-06-14
 
 ### Fixed

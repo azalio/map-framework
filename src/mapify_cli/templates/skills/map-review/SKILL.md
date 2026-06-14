@@ -22,7 +22,7 @@ parallel_tool_policy: single_review_fanout
 ```
 
 - Use deeper reasoning for verdicts, risk ranking, section tradeoffs, and contradictory reviewer evidence.
-- Use exactly one parallel reviewer fan-out after bundle preparation: Monitor, Predictor, and Evaluator may run together because they inspect the same review input independently.
+- Use exactly one parallel reviewer fan-out after bundle preparation: Monitor, Predictor, Evaluator, and the optional complexity lens may run together because they inspect the same review input independently.
 - Wait for all reviewer agents before section presentation. Do not parallelize interactive decisions, ordering comparisons that share state, or review-bundle writes.
 
 ## Flags
@@ -287,6 +287,8 @@ REVIEW_PROMPTS_JSON=$(python3 .map/scripts/map_step_runner.py build_review_promp
 MONITOR_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prompts"]["monitor"]["prompt"])')
 PREDICTOR_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prompts"]["predictor"]["prompt"])')
 EVALUATOR_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prompts"]["evaluator"]["prompt"])')
+COMPLEXITY_LENS_PROMPT=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; data=json.load(sys.stdin); print(data.get("prompts",{}).get("complexity_lens",{}).get("prompt", ""))')
+COMPLEXITY_LENS_ENABLED=$(printf '%s' "$REVIEW_PROMPTS_JSON" | python3 -c 'import json,sys; data=json.load(sys.stdin); print("true" if data.get("prompts",{}).get("complexity_lens") else "false")')
 ```
 
 Use the extracted prompt variables as the Task prompts. Keep reviewer task calls below the bundle and prompt-builder commands.
@@ -295,9 +297,12 @@ Use the extracted prompt variables as the Task prompts. Keep reviewer task calls
 Task(subagent_type="monitor", description="Review diff for correctness", prompt=MONITOR_PROMPT)
 Task(subagent_type="predictor", description="Predict integration risk", prompt=PREDICTOR_PROMPT)
 Task(subagent_type="evaluator", description="Score review quality", prompt=EVALUATOR_PROMPT)
+If COMPLEXITY_LENS_ENABLED=true: Task(subagent_type="evaluator", description="Find deletable complexity", prompt=COMPLEXITY_LENS_PROMPT)
 ```
 
 Reviewer prompts reference `review-bundle.json`, `review-bundle.md`, the raw diff as secondary context, and the expected output schema.
+
+When enabled (`minimality != off`), the complexity lens is advisory only. It lists over-engineering as `delete:`, `stdlib:`, `native:`, `yagni:`, or `shrink:` findings, ends with `net: -<N> lines possible.` or `Lean already. Ship.`, samples `map:simplification:` marker claims, and never feeds Actor retries or verdict gates.
 
 ### Step A.2b: Truncated-response gate (MANDATORY — post-fan-out, pre-verification)
 
@@ -314,6 +319,8 @@ Role → `--agent` kind for the truncation check:
   evidence/valid/summary/verdict/issues/passed_checks/failed_checks)
 - predictor reviewer → `--agent predictor`
 - evaluator reviewer → `--agent evaluator`
+
+The optional complexity lens returns plain text, not JSON. Do not run the JSON truncation gate on it; if it is empty or visibly cut off, rerun only that lens prompt once.
 
 ### Step A.3: Verification gate (MANDATORY before any presentation)
 
@@ -372,6 +379,8 @@ Focus on design boundaries, hidden coupling, state lifecycle, hard/soft constrai
 ### Section: Code Quality
 
 Focus on clarity, duplication, error handling, maintainability, and fit with existing patterns.
+
+If the complexity lens ran, show its raw "what to delete" lines after Code Quality as advisory-only calibration. Do not turn `net: -N` into a REVISE/BLOCK condition.
 
 ### Section: Tests
 

@@ -5116,6 +5116,68 @@ def _render_review_prompt(
     )
 
 
+def _render_complexity_lens_prompt(
+    review_bundle: str,
+    git_diff: str,
+    minimality_level: str,
+) -> str:
+    """Return the advisory `/map-review` what-to-delete lens prompt."""
+    return "\n\n".join(
+        [
+            "\n".join(
+                [
+                    "<documents>",
+                    "  <document source='.map/<branch>/review-bundle.md' priority='primary'>",
+                    "    <document_content>",
+                    review_bundle,
+                    "    </document_content>",
+                    "  </document>",
+                    "  <document source='git diff' priority='secondary'>",
+                    "    <document_content>",
+                    git_diff,
+                    "    </document_content>",
+                    "  </document>",
+                    "</documents>",
+                ]
+            ),
+            (
+                "<task>\n"
+                "Run the MAP complexity-only what-to-delete lens. "
+                f"Project minimality is {minimality_level}; this lens is disabled when minimality is off.\n"
+                "</task>"
+            ),
+            (
+                "<workflow_policy>\n"
+                "This is advisory-only calibration. Do not gate PROCEED/REVISE/BLOCK on `net: -N`, "
+                "do not create correctness/security/performance findings here, and never feed this output "
+                "into Actor retry context. Normal Monitor/Evaluator review owns blockers.\n"
+                "</workflow_policy>"
+            ),
+            (
+                "<instructions>\n"
+                "Hunt only over-engineering introduced by the current diff. Use exactly these tags:\n"
+                "- delete: dead code, unused flexibility, speculative feature; replacement is nothing.\n"
+                "- stdlib: hand-rolled behavior the standard library ships; name the function.\n"
+                "- native: dependency or code doing what the platform already does; name the feature.\n"
+                "- yagni: abstraction with one implementation, config nobody sets, or layer with one caller.\n"
+                "- shrink: same logic in fewer clear lines; show the shorter form.\n"
+                "Boundaries: complexity only. Correctness bugs, security holes, and performance issues belong "
+                "to normal review, not this lens. A single smoke test or assert-based self-check is the minimum; "
+                "never flag it for deletion. Sample and verify any `map:simplification:` marker claim; the marker "
+                "is evidence, not an exemption.\n"
+                "</instructions>"
+            ),
+            (
+                "<expected_output>\n"
+                "Return plain text only. If cuts exist, write one line per finding exactly as: "
+                "`L<line>: <tag> <what>. <replacement>.` End with exactly: `net: -<N> lines possible.` "
+                "If nothing should be cut, return exactly: `Lean already. Ship.`\n"
+                "</expected_output>"
+            ),
+        ]
+    )
+
+
 def _budget_review_prompt(
     spec: dict[str, str],
     review_bundle: str,
@@ -5153,6 +5215,7 @@ def build_review_prompts(
         else _read_review_bundle_markdown(branch_name)
     )
     git_diff = git_diff_text if git_diff_text is not None else _read_git_diff_for_review()
+    minimality = _load_minimality_level(Path.cwd())
 
     prompts: dict[str, dict[str, object]] = {}
     for role, spec in REVIEW_PROMPT_SPECS.items():
@@ -5167,10 +5230,21 @@ def build_review_prompts(
             "description": spec["description"],
             **prompt_result,
         }
+    if minimality != "off":
+        prompts["complexity_lens"] = {
+            "subagent_type": "evaluator",
+            "description": "Find deletable complexity",
+            "prompt": _render_complexity_lens_prompt(review_bundle, git_diff, minimality),
+            "estimated_tokens": 0,
+            "budget_tokens": budget,
+            "truncated": False,
+            "clipped_sections": [],
+        }
 
     return {
         "status": "success",
         "branch": branch_name,
+        "minimality": minimality,
         "budget_tokens": budget,
         "budget_env": REVIEW_PROMPT_BUDGET_ENV,
         "prompts": prompts,

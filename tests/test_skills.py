@@ -1547,6 +1547,65 @@ class TestMapReviewSkillBundleWiring:
         )
 
 
+class TestMapReviewComplexityLensWiring:
+    """Regression tests for issue #182: advisory what-to-delete review lens."""
+
+    @pytest.fixture
+    def project_root(self):
+        return Path(__file__).parent.parent
+
+    @pytest.fixture(
+        params=[
+            Path(".claude/skills/map-review/SKILL.md"),
+            Path("src/mapify_cli/templates/skills/map-review/SKILL.md"),
+        ],
+        ids=["dev", "template"],
+    )
+    def skill_md(self, project_root, request):
+        path = project_root / request.param
+        assert path.exists(), f"{request.param} not found"
+        return path.read_text(encoding="utf-8")
+
+    @pytest.fixture(
+        params=[
+            Path(".claude/skills/map-review/review-reference.md"),
+            Path("src/mapify_cli/templates/skills/map-review/review-reference.md"),
+        ],
+        ids=["dev-ref", "template-ref"],
+    )
+    def reference_md(self, project_root, request):
+        path = project_root / request.param
+        assert path.exists(), f"{request.param} not found"
+        return path.read_text(encoding="utf-8")
+
+    def test_skill_runs_complexity_lens_only_as_advisory(self, skill_md):
+        for token in (
+            "COMPLEXITY_LENS_ENABLED",
+            "minimality != off",
+            "delete:",
+            "stdlib:",
+            "native:",
+            "yagni:",
+            "shrink:",
+            "net: -<N> lines possible.",
+            "Lean already. Ship.",
+            "map:simplification:",
+            "never feeds Actor retries or verdict gates",
+        ):
+            assert token in skill_md
+
+    def test_reference_documents_complexity_lens_boundaries(self, reference_md):
+        for token in (
+            "What-To-Delete Lens",
+            "minimality: off",
+            "Correctness, security, and performance findings stay in the normal",
+            "single smoke test or assert-based self-check is the minimum",
+            "`net: -N` is post-hoc and advisory only",
+            "do not feed it into Actor retry context",
+        ):
+            assert token in reference_md
+
+
 class TestMapReviewSkillOrderingWiring:
     """Validate ST-006 ordering/bias-hardening changes in map-review SKILL.md.
 

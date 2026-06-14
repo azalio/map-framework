@@ -6197,6 +6197,39 @@ class TestCreateReviewBundle:
         assert result["status"] == "success"
         assert set(result["prompts"]) == {"monitor", "predictor", "evaluator"}
 
+    def test_build_review_prompts_adds_complexity_lens_when_minimality_enabled(
+        self, branch_workspace
+    ):
+        del branch_workspace
+        config_path = Path(".map") / "config.yaml"
+        config_path.write_text("minimality: lite\n", encoding="utf-8")
+
+        result = map_step_runner.build_review_prompts(
+            review_bundle_text="# Review Bundle\nPRIMARY_BUNDLE_SENTINEL\n",
+            git_diff_text="diff --git a/app.py b/app.py\n+extra abstraction\n",
+            budget_tokens=1500,
+        )
+
+        assert result["status"] == "success"
+        assert result["minimality"] == "lite"
+        lens = result["prompts"]["complexity_lens"]
+        assert lens["subagent_type"] == "evaluator"
+        assert lens["truncated"] is False
+        prompt = lens["prompt"]
+        for token in (
+            "complexity-only what-to-delete lens",
+            "delete:",
+            "stdlib:",
+            "native:",
+            "yagni:",
+            "shrink:",
+            "net: -<N> lines possible.",
+            "Lean already. Ship.",
+            "map:simplification:",
+            "never feed this output into Actor retry context",
+        ):
+            assert token in prompt
+
     def test_record_token_budget_decision_reports_nonfatal_write_error(
         self, branch_workspace, monkeypatch
     ):
