@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Evaluator scores `simplicity` while keeping `completeness` highest-weight, and
   Actor retries receive only BLOCKER-class Monitor feedback so non-blocking
   style/docs/volume comments do not re-bloat the implementation.
+- **Repository licensing is explicit.** The source tree now includes the MIT
+  `LICENSE` file referenced by package metadata and project documentation.
 
 ### Removed
 - **`deepwiki` MCP server is no longer installed, and `deepwiki`/`context7`
