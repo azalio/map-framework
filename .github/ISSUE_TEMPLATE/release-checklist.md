@@ -35,14 +35,12 @@ assignees: ''
 
 ### 1.1 Code Quality Checks
 
-- [ ] Run full test suite: `pytest tests/ --cov=src/mapify_cli --cov-report=term-missing`
+- [ ] Run full maintained gate: `make check`
 - [ ] ⚠️ All tests pass (100% success rate) - CRITICAL
-- [ ] Run code formatters: `black src/ tests/ --check`
-- [ ] Run linters: `ruff check src/ tests/`
-- [ ] Run type checker: `mypy src/`
+- [ ] Linters, type checkers, hook linting, and render check pass
 - [ ] No linting or type errors
-- [ ] Build package locally: `python -m build`
-- [ ] Validate package: `twine check dist/*`
+- [ ] Build package locally: `uv run --with build python -m build`
+- [ ] Validate package: `uv run --with twine twine check dist/*`
 - [ ] Package builds without errors
 
 ### 1.2 Documentation Review
