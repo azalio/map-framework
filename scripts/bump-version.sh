@@ -56,7 +56,7 @@
 #   MAP Framework Contributors
 #
 # VERSION:
-#   1.1.0 - Added __version__ update in __init__.py (fixes version mismatch bug)
+#   1.1.1 - Extract tag notes from the versioned changelog section
 #
 ################################################################################
 
@@ -295,10 +295,13 @@ extract_changelog_excerpt() {
     local in_section=false
     local line_count=0
     local max_lines=50  # Limit excerpt to 50 lines for tag message
+    local escaped_version
 
-    # Read CHANGELOG.md and extract content between [Unreleased] and next ##
+    escaped_version=${version//./\\.}
+
+    # Read CHANGELOG.md and extract content between [version] and next ##
     while IFS= read -r line; do
-        if [[ "$line" =~ ^\#\#[[:space:]]\[Unreleased\] ]]; then
+        if [[ "$line" =~ ^\#\#[[:space:]]\[${escaped_version}\]([[:space:]]|$) ]]; then
             in_section=true
             continue
         fi
@@ -327,7 +330,7 @@ extract_changelog_excerpt() {
     excerpt=$(echo "$excerpt" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 
     if [[ -z "$excerpt" ]]; then
-        warn "No content found in [Unreleased] section, using default message"
+        warn "No content found in [${version}] section, using default message"
         excerpt="Release version ${version}"
     fi
 

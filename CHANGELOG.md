@@ -57,6 +57,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The `map-release` heuristic no longer counts `docs(changelog)` or
   `chore(release)` commits as user-visible changes that need their own
   changelog bullet (#191).
+- **Release tag annotations now include the versioned changelog excerpt.**
+  `scripts/bump-version.sh` extracts notes from the just-created release section
+  instead of the now-empty `[Unreleased]` section, avoiding fallback tag messages
+  such as `Release version X.Y.Z` (#194).
 
 ## [3.12.1] - 2026-06-12
 
