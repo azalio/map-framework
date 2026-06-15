@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Research-agent localization quality can now be scored deterministically
+  (#200).** Maintainers can parse ResearchEvidence JSON or `path:line[-end]`
+  text citations, validate them against a fixture repo, and compute file-level
+  plus line-overlap precision/recall/F1 without live provider credentials.
+
 ## [3.16.0] - 2026-06-15
 
 ### Added

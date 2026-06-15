@@ -39,7 +39,7 @@ _CITATION_RE = re.compile(
     :
     (?P<line>\d+)
     (?:-(?P<endline>\d+))?
-    (?=[\s,;)\]'`"]|$)
+    (?=[\s,.;)\]'`"]|$)
     """,
     re.VERBOSE | re.MULTILINE,
 )
