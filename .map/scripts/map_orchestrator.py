@@ -41,7 +41,7 @@ STEP PHASES (10 total, 8 standard + 2 TDD):
   1.55 REVIEW_PLAN        - User review + explicit approval checkpoint
   1.56 CHOOSE_MODE        - Auto-skipped (always batch mode)
   1.6  INIT_STATE         - Create step_state.json (single source of truth)
-  2.2  RESEARCH           - research-agent (mandatory for all subtasks)
+  2.2  RESEARCH           - persisted research artifact (mandatory; research-agent conditional)
   2.25 TEST_WRITER        - TDD: write tests from spec (TDD mode only)
   2.26 TEST_FAIL_GATE     - TDD: verify tests fail without impl (TDD mode only)
   2.3  ACTOR              - Actor agent implementation
@@ -771,11 +771,13 @@ def get_step_instruction(step_id: str, state: StepState) -> str:
             "Single source of truth for workflow enforcement."
         ),
         "2.2": (
-            "Call Task(subagent_type='research-agent') to research the subtask, "
-            "then persist findings via "
+            "Persist RESEARCH findings for the subtask via "
             "`python3 .map/scripts/map_step_runner.py save_research <branch> "
-            "<subtask_id>`. MANDATORY for all subtasks (validate_step 2.2 "
-            "rejects when no research artifact exists). "
+            "<subtask_id>`. The artifact is MANDATORY for every non-no-op "
+            "subtask (validate_step 2.2 rejects when none exists); "
+            "Task(subagent_type='research-agent') is conditional for broad, "
+            "high-risk, or unclear discovery. If the target file/symbol is "
+            "already known, save direct current-session findings instead. "
             "Short-circuit hint: if this subtask is already done in a prior "
             "PR or is a pure no-op, skip the cycle with "
             "`python3 .map/scripts/map_orchestrator.py mark_subtask_complete "
@@ -1332,10 +1334,11 @@ def validate_step(
                 ),
                 "recommendation": normalized_rec,
             }
-    # RESEARCH (2.2) is documented MANDATORY for every subtask — enforce that
-    # save_research wrote a machine-checkable artifact before letting Actor
-    # proceed. Without this check, "MANDATORY" was prompt-text only and
-    # malformed markdown could be silently passed downstream.
+    # RESEARCH (2.2) requires a persisted artifact for every non-no-op subtask.
+    # The artifact can come from research-agent or direct current-session
+    # findings; enforce the machine-checkable contract before Actor proceeds.
+    # Without this check, "MANDATORY" was prompt-text only and malformed
+    # markdown could be silently passed downstream.
     if step_id == "2.2" and state.current_subtask_id:
         try:
             from map_step_runner import validate_research  # pyright: ignore[reportMissingImports]
@@ -1356,9 +1359,13 @@ def validate_step(
                 "message": (
                     f"RESEARCH artifact invalid for {state.current_subtask_id}: "
                     f"{detail}. "
+                    "Use research-agent for broad/high-risk/unclear discovery, "
+                    "or save direct current-session findings when the target is known. "
                     f"Run: python3 .map/scripts/map_step_runner.py save_research "
-                    f"<branch> {state.current_subtask_id} (defaults kind=actor) "
-                    "then validate_research before validate_step 2.2."
+                    f"<branch> {state.current_subtask_id} (defaults kind=actor), "
+                    "then validate_research before validate_step 2.2. If this "
+                    "subtask needs no Actor/Monitor, use mark_subtask_complete "
+                    "--reason instead."
                 ),
                 "research_report": research_report,
             }

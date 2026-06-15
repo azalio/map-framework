@@ -226,7 +226,7 @@ have ≥2 subtasks AND (b) the subtasks in that wave touch disjoint files
 
 ### No-op subtask short-circuit (before RESEARCH)
 
-Some subtasks are already-done historically (rename/refactor landed in a prior PR), or are docs-only and don't need the full research→actor→monitor cycle. Skip them up-front to save tokens:
+Some subtasks are already-done historically (rename/refactor landed in a prior PR), or truly do not need Actor/Monitor because the requested work is already satisfied by repo state. Skip them up-front to save tokens:
 
 ```bash
 SUBTASK_ID=$(jq -r '.current_subtask_id' ".map/${BRANCH}/step_state.json")
@@ -236,14 +236,14 @@ python3 .map/scripts/map_orchestrator.py mark_subtask_complete "$SUBTASK_ID" \
 
 This records a synthetic subtask_result with status="no-op", marks the phase COMPLETE, and advances the cursor (or closes the workflow if it was the last). Always pass `--reason` so audits know why the work was skipped. If unsure, run RESEARCH first and decide based on its findings.
 
-### Phase: RESEARCH (2.2) - Required
+### Phase: RESEARCH (2.2) - Required artifact; delegated agent conditional
 
-Call `research-agent` for the current subtask, then persist its concise strict-JSON findings via the canonical `save_research` API so Actor and Monitor consume them from the same path. Validate the machine-checkable research contract before closing the phase with the orchestrator.
+Persist a RESEARCH artifact for every non-no-op subtask before Actor. `research-agent` is conditional: use it for cold-start repository exploration, 3+ existing files, high risk, unclear locations, or failed direct search. If the relevant file/symbol is already known, or the subtask is greenfield/new-file work, do narrow current-session research and save those concise strict-JSON findings via the canonical `save_research` API. Validate the machine-checkable research contract before closing the phase with the orchestrator.
 
 ```bash
 SUBTASK_ID=$(jq -r '.current_subtask_id' ".map/${BRANCH}/step_state.json")
 # RECOMMENDED: proactive refresh_blueprint_affected_files <branch>
-# <sid> [--dry-run] BEFORE research-agent (efficient-reference.md).
+# <sid> [--dry-run] BEFORE delegated research (efficient-reference.md).
 printf '%s' "$RESEARCH_FINDINGS" | \
   python3 .map/scripts/map_step_runner.py save_research "$BRANCH" "$SUBTASK_ID"
 # (defaults kind=actor; pass a 4th arg like 'monitor' or 'decomposer' to partition)
@@ -256,7 +256,7 @@ Later phases read with:
 RESEARCH_FINDINGS=$(python3 .map/scripts/map_step_runner.py load_research "$BRANCH" "$SUBTASK_ID")
 ```
 
-The artifact lands under `.map/<branch>/research/<subtask_id>__<kind>.md` and must satisfy the research-agent JSON contract (`status`, `confidence`, `search_stats`, and at most 5 `relevant_locations` with safe relative paths and line ranges). Use `load_research` to fill the `{research_findings}` placeholder in Actor and Monitor prompts below.
+The artifact lands under `.map/<branch>/research/<subtask_id>__<kind>.md` and must satisfy the research evidence JSON contract (`status`, `confidence`, `search_stats`, and at most 5 `relevant_locations` with safe relative paths and line ranges). Use `load_research` to fill the `{research_findings}` placeholder in Actor and Monitor prompts below.
 
 ### Phase: TEST_WRITER (2.25) - TDD Mode Only
 

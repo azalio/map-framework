@@ -1556,6 +1556,17 @@ Agents automatically use their configured model when invoked via slash commands:
 /map-fast Update error message wording
 ```
 
+### RESEARCH Decision Table
+
+`2.2 RESEARCH` always requires a persisted `.map/<branch>/research/<subtask_id>__actor.md` artifact before Actor. Delegating to `research-agent`/`researcher` is conditional; direct current-session findings are valid when they satisfy the same strict JSON contract.
+
+| Scenario | Action |
+|----------|--------|
+| Known single file or symbol | Do a narrow direct read/search and `save_research`; no research-agent needed. |
+| Cold-start multi-file task or high-risk change | Run `research-agent`/`researcher`, then `save_research` and `validate_research`. |
+| Greenfield or new-file work | Save direct findings that name the intended new surface and why existing locations are absent. |
+| Docs-only/no-op with no Actor/Monitor needed | Use `mark_subtask_complete --reason`; otherwise save direct docs research before Actor. |
+
 ### Cost Comparison Example
 
 **Scenario:** Implement a feature with 4 subtasks

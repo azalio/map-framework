@@ -43,11 +43,12 @@ EDITING_PHASES = {"ACTOR", "APPLY", "TEST_WRITER"}
 
 # Docs-only file suffixes / path prefixes that are permitted during
 # RESEARCH (2.2). A docs-only subtask (runbook update, README tweak,
-# CHANGELOG line) doesn't benefit from research-agent investigation,
-# but the unconditional RESEARCH gate forced operators to save an
-# empty research stub before they could edit a .md file. Allowing
-# obvious docs surfaces during RESEARCH preserves the intent (block
-# code edits before research) without the friction.
+# CHANGELOG line) usually doesn't need delegated research-agent
+# investigation, but the unconditional RESEARCH edit gate forced
+# operators to save an empty research stub before they could edit a .md
+# file. Allowing obvious docs surfaces during RESEARCH preserves the
+# intent (block code edits before research) without the friction; the
+# state machine still requires a persisted artifact before Actor closes.
 DOCS_ONLY_EXTENSIONS = {".md", ".mdx", ".rst", ".txt", ".adoc"}
 DOCS_ONLY_PATH_PREFIXES = ("docs/", "doc/", "documentation/", "CHANGELOG", "RELEASING", "README")
 
@@ -120,12 +121,12 @@ def extract_target_file_paths(tool_call: dict) -> list[str]:
 def is_docs_only_path(file_path: str) -> bool:
     """Return True if path is documentation that may be edited during RESEARCH.
 
-    RESEARCH (2.2) blocks Edit by default — research-agent must run
-    before code mutation. Docs surfaces (README, runbook, CHANGELOG)
-    don't benefit from research-agent, so the unconditional block
-    forced operators to save an empty research stub. Allowing docs
-    files during RESEARCH preserves the intent (no code edits before
-    research) without the friction.
+    RESEARCH (2.2) blocks Edit by default — a persisted research
+    artifact must exist before code mutation. Docs surfaces (README,
+    runbook, CHANGELOG) usually don't need delegated research-agent, so
+    the unconditional edit block forced operators to save an empty
+    research stub. Allowing docs files during RESEARCH preserves the
+    intent (no code edits before research) without the friction.
     """
     if not isinstance(file_path, str) or not file_path.strip():
         return False

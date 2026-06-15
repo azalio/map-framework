@@ -159,9 +159,13 @@ fi
 
 ### RESEARCH
 
-Use `researcher` when independent exploration is useful; otherwise research in
-the current session. Persist concise strict-JSON findings, validate the research
-contract, then close RESEARCH before Actor work:
+Persist a RESEARCH artifact for every non-no-op subtask before Actor. Use
+`researcher` when independent exploration is useful: cold-start repository
+exploration, 3+ existing files, high risk, unclear locations, or failed direct
+search. Otherwise research in the current session and save concise strict-JSON
+findings. If the subtask truly needs no Actor/Monitor, use
+`mark_subtask_complete --reason` instead of closing RESEARCH. Validate the
+research contract, then close RESEARCH before Actor work:
 
 ```bash
 SUBTASK_ID=$(jq -r '.current_subtask_id' ".map/${BRANCH}/step_state.json")

@@ -193,7 +193,7 @@
 | **1.55** | REVIEW_PLAN | Явное одобрение плана пользователем | ✅ Да |
 | **1.56** | CHOOSE_MODE | Выбор режима выполнения (step_by_step\|batch) | ✅ Да |
 | **1.6** | INIT_STATE | Создание step_state.json | ✅ Да |
-| **2.2** | RESEARCH | research-agent для контекста | 🔶 Условно (если 3+ файлов) |
+| **2.2** | RESEARCH | persisted research artifact; research-agent только для широкого/high-risk поиска | ✅ Артефакт обязателен; агент условен |
 | **2.3** | ACTOR | Actor генерирует код | ✅ Да (для каждого ST) |
 | **2.4** | MONITOR | Monitor валидирует (retry до 5 раз) | ✅ Да (для каждого ST) |
 
@@ -291,9 +291,9 @@ Turn 3: map_orchestrator говорит: "Step 2.4: Call Monitor"
 Claude: [Вызывает Monitor] ✅
   ↓
 Turn 4: map_orchestrator говорит: "Step 2.2: Run Research (next subtask)"
-        Hook напоминает: "⚠️  Call research-agent BEFORE Actor"
+        Hook напоминает: "⚠️  Persist RESEARCH artifact BEFORE Actor"
   ↓
-Claude: [Запускает research-agent или пропускает] ✅
+Claude: [Сохраняет direct findings или запускает research-agent] ✅
 ```
 
 ---
