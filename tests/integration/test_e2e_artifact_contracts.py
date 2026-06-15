@@ -112,6 +112,78 @@ def _write_valid_research(workspace: Path, subtask_id: str) -> None:
     )
 
 
+class TestResearchLocalizationEvalContract:
+    """Research localization eval is part of the no-provider E2E contract."""
+
+    def test_mapify_research_eval_scores_fixture_repo(self, tmp_path: Path) -> None:
+        from typer.testing import CliRunner
+
+        from mapify_cli import app
+
+        source = tmp_path / "src" / "service.py"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text(
+            "".join(f"line {index}\n" for index in range(1, 41)),
+            encoding="utf-8",
+        )
+        research_output = tmp_path / "research.json"
+        research_output.write_text(
+            json.dumps(
+                {
+                    "status": "OK",
+                    "confidence": 0.9,
+                    "search_stats": {
+                        "files_scanned": 1,
+                        "total_matches_found": 1,
+                        "results_truncated": False,
+                    },
+                    "relevant_locations": [
+                        {
+                            "path": "src/service.py",
+                            "lines": [20, 22],
+                            "relevance": "Primary implementation branch.",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        expected = tmp_path / "expected.json"
+        expected.write_text(
+            json.dumps(
+                {
+                    "expected_locations": [
+                        {"path": "src/service.py", "lines": [20, 22]}
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = CliRunner().invoke(
+            app,
+            [
+                "research-eval",
+                "score",
+                str(research_output),
+                str(expected),
+                "--repo-root",
+                str(tmp_path),
+                "--fail-under-file-f1",
+                "1.0",
+                "--fail-under-line-f1",
+                "1.0",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert payload["passed"] is True
+        assert payload["score"]["exact_match_count"] == 1
+        assert payload["score"]["file_level"]["f1"] == 1.0
+        assert payload["score"]["line_level"]["f1"] == 1.0
+
+
 # =====================================================================
 # Phase 1: map-plan artifact production
 # =====================================================================

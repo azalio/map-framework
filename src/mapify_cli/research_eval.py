@@ -9,7 +9,7 @@ with ``path:line[-end]`` citations, against known fixture targets.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 import json
 from pathlib import Path, PurePosixPath
 import re
@@ -199,6 +199,33 @@ def score_research_locations(
         missing_locations=tuple(missing),
         extra_locations=extra,
     )
+
+
+def load_expected_locations(path: Path) -> list[dict[str, Any]]:
+    """Load expected research localization targets from a JSON file.
+
+    Accepted shapes:
+    - ``[{"path": "src/x.py", "lines": [1, 3]}]``
+    - ``{"expected_locations": [{"path": "src/x.py", "lines": [1, 3]}]}``
+    """
+
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"expected locations JSON is malformed: {exc.msg}") from exc
+
+    if isinstance(raw, Mapping):
+        raw = raw.get("expected_locations")
+    if not isinstance(raw, list):
+        raise ValueError("expected locations must be a list or expected_locations object")
+    for index, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise ValueError(f"expected_locations[{index}] must be an object")
+    return raw
+
+
+def score_to_dict(score: ResearchLocalizationScore) -> dict[str, Any]:
+    return asdict(score)
 
 
 def _extract_candidates(
