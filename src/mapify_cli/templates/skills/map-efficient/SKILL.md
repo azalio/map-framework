@@ -238,7 +238,7 @@ This records a synthetic subtask_result with status="no-op", marks the phase COM
 
 ### Phase: RESEARCH (2.2) - Required
 
-Call `research-agent` for the current subtask, then persist its concise findings via the canonical `save_research` API so Actor and Monitor consume them from the same path. Validate the phase with the orchestrator.
+Call `research-agent` for the current subtask, then persist its concise strict-JSON findings via the canonical `save_research` API so Actor and Monitor consume them from the same path. Validate the machine-checkable research contract before closing the phase with the orchestrator.
 
 ```bash
 SUBTASK_ID=$(jq -r '.current_subtask_id' ".map/${BRANCH}/step_state.json")
@@ -247,15 +247,16 @@ SUBTASK_ID=$(jq -r '.current_subtask_id' ".map/${BRANCH}/step_state.json")
 printf '%s' "$RESEARCH_FINDINGS" | \
   python3 .map/scripts/map_step_runner.py save_research "$BRANCH" "$SUBTASK_ID"
 # (defaults kind=actor; pass a 4th arg like 'monitor' or 'decomposer' to partition)
+python3 .map/scripts/map_step_runner.py validate_research "$BRANCH" "$SUBTASK_ID"
+python3 .map/scripts/map_orchestrator.py validate_step 2.2
 ```
 
 Later phases read with:
-
 ```bash
 RESEARCH_FINDINGS=$(python3 .map/scripts/map_step_runner.py load_research "$BRANCH" "$SUBTASK_ID")
 ```
 
-The artifact lands under `.map/<branch>/research/<subtask_id>__<kind>.md`. Use `load_research` to fill the `{research_findings}` placeholder in Actor and Monitor prompts below.
+The artifact lands under `.map/<branch>/research/<subtask_id>__<kind>.md` and must satisfy the research-agent JSON contract (`status`, `confidence`, `search_stats`, and at most 5 `relevant_locations` with safe relative paths and line ranges). Use `load_research` to fill the `{research_findings}` placeholder in Actor and Monitor prompts below.
 
 ### Phase: TEST_WRITER (2.25) - TDD Mode Only
 

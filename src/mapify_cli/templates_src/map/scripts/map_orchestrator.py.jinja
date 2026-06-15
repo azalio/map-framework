@@ -1333,22 +1333,34 @@ def validate_step(
                 "recommendation": normalized_rec,
             }
     # RESEARCH (2.2) is documented MANDATORY for every subtask — enforce that
-    # save_research wrote something before letting Actor proceed. Without this
-    # check, "MANDATORY" was prompt-text only and could be silently skipped.
+    # save_research wrote a machine-checkable artifact before letting Actor
+    # proceed. Without this check, "MANDATORY" was prompt-text only and
+    # malformed markdown could be silently passed downstream.
     if step_id == "2.2" and state.current_subtask_id:
-        research_dir = Path(f".map/{branch}/research")
-        # Accept any kind of research artifact for this subtask.
-        if not research_dir.is_dir() or not any(
-            research_dir.glob(f"{state.current_subtask_id}__*.md")
-        ):
+        try:
+            from map_step_runner import validate_research  # pyright: ignore[reportMissingImports]
+            research_report = validate_research(branch, state.current_subtask_id)
+        except ImportError:
+            research_report = {
+                "valid": False,
+                "errors": ["map_step_runner.validate_research could not be imported"],
+            }
+        if not research_report.get("valid"):
+            research_errors = research_report.get("errors")
+            if isinstance(research_errors, list) and research_errors:
+                detail = "; ".join(str(err) for err in research_errors[:3])
+            else:
+                detail = "research artifact is missing or invalid"
             return {
                 "valid": False,
                 "message": (
-                    f"RESEARCH not persisted for {state.current_subtask_id}. "
+                    f"RESEARCH artifact invalid for {state.current_subtask_id}: "
+                    f"{detail}. "
                     f"Run: python3 .map/scripts/map_step_runner.py save_research "
                     f"<branch> {state.current_subtask_id} (defaults kind=actor) "
-                    "before validate_step 2.2."
+                    "then validate_research before validate_step 2.2."
                 ),
+                "research_report": research_report,
             }
         # Auto-snapshot per-subtask baseline at RESEARCH-complete so the
         # MONITOR-side validate_mutation_boundary check only flags files

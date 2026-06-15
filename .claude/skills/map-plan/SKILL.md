@@ -308,6 +308,7 @@ Runner functions you'll commonly need from `/map-plan`:
 | `list_plans` | List per-branch plan artifacts under `.map/` to pick scope from a multi-roadmap workspace. |
 | `check_plan_resume "<request>" [--branch <b>]` | Resume preflight: reports existing artifacts + a `verdict` (`no_plan`/`resume`/`goal_mismatch`) comparing the prior plan's goal against the incoming request, so a branch hosting a *completed* plan for a different goal isn't falsely treated as "complete". |
 | `save_research <branch> <subtask_id>` | Persist research-agent findings for a subtask (stdin-fed). |
+| `validate_research <branch> <subtask_id>` | Validate strict JSON research evidence before `validate_step 2.2`. |
 
 ### Step 8: Output Checkpoint
 

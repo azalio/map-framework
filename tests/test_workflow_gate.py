@@ -456,7 +456,7 @@ class TestWorkflowGate:
     ) -> None:
         """Regression for friction #11: when Edit is blocked during
         RESEARCH (2.2), the deny message must name the save_research
-        command and the validate_step 2.2 follow-up — not a generic
+        command, validate_research, and the validate_step 2.2 follow-up — not a generic
         "phase 'RESEARCH' is not allowed" string. First-time operators
         forget the transition; the gate's message is their only hint.
         """
@@ -469,6 +469,7 @@ class TestWorkflowGate:
         reason = self._assert_denied(stdout)
         assert "RESEARCH" in reason
         assert "save_research" in reason, reason
+        assert "validate_research" in reason, reason
         assert "validate_step 2.2" in reason, reason
 
     # --- RESEARCH scoped to current subtask's affected_files (#164) ---
