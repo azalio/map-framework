@@ -1578,7 +1578,7 @@ must not.
 
 ### Research Localization Evals
 
-Use `mapify_cli.research_eval` when a research-agent/researcher change needs a
+Use `mapify research-eval score` when a research-agent/researcher change needs a
 deterministic quality check without provider credentials. The scorer accepts the
 same ResearchEvidence JSON saved by `save_research`, or fallback text containing
 `path:line[-end]` citations, normalizes safe relative paths, validates line ranges
@@ -1601,6 +1601,26 @@ score = score_research_output(
 assert score.file_level.f1 == 1.0
 assert score.line_level.recall >= 0.8
 assert score.malformed_count == 0
+```
+
+For CI/e2e usage, prefer the CLI surface:
+
+```bash
+mapify research-eval score research.json expected.json \
+  --repo-root tests/fixtures/research_eval/service_repo \
+  --fail-under-file-f1 1.0 \
+  --fail-under-line-f1 0.8
+```
+
+`expected.json` can be either a raw list of locations or an object with an
+`expected_locations` list:
+
+```json
+{
+  "expected_locations": [
+    {"path": "src/service.py", "lines": [20, 28]}
+  ]
+}
 ```
 
 Prefer expected targets that name the smallest useful file/range, not every file

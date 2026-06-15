@@ -145,6 +145,13 @@ skill_eval_app = typer.Typer(
 
 app.add_typer(skill_eval_app, name="skill-eval")
 
+research_eval_app = typer.Typer(
+    name="research-eval",
+    help="Evaluate research-agent localization quality without provider calls",
+)
+
+app.add_typer(research_eval_app, name="research-eval")
+
 
 def version_callback(value: bool):
     """Callback to show version and exit."""
@@ -1386,6 +1393,113 @@ def upgrade():
         "[dim]To refresh this project's MAP files with the new templates, run "
         "[cyan]mapify init . --force[/cyan].[/dim]"
     )
+
+
+# Research localization eval commands
+
+
+@research_eval_app.command("score")
+def research_eval_score(
+    output_file: Path = typer.Argument(
+        ...,
+        help="ResearchEvidence JSON/text output file to score",
+    ),
+    expected_file: Path = typer.Argument(
+        ...,
+        help="JSON list, or object with expected_locations, of target file ranges",
+    ),
+    repo_root: Optional[Path] = typer.Option(
+        None,
+        "--repo-root",
+        help="Fixture repository root for path and line-range validation",
+    ),
+    fail_under_file_f1: float = typer.Option(
+        0.0,
+        "--fail-under-file-f1",
+        min=0.0,
+        max=1.0,
+        help="Exit 1 when file-level F1 is below this threshold",
+    ),
+    fail_under_line_f1: float = typer.Option(
+        0.0,
+        "--fail-under-line-f1",
+        min=0.0,
+        max=1.0,
+        help="Exit 1 when line-overlap F1 is below this threshold",
+    ),
+    overbroad_line_threshold: int = typer.Option(
+        50,
+        "--overbroad-line-threshold",
+        min=1,
+        help="Count predicted locations above this line span as over-broad",
+    ),
+    fail_on_malformed: bool = typer.Option(
+        True,
+        "--fail-on-malformed/--allow-malformed",
+        help="Exit 1 when parsed output contains malformed locations",
+    ),
+) -> None:
+    """Score research-agent localization against known fixture targets.
+
+    Exit codes:
+      0 - Score meets thresholds
+      1 - Score below threshold or malformed output found
+      2 - Input files are missing or malformed
+    """
+    import json
+
+    from mapify_cli.research_eval import (
+        load_expected_locations,
+        score_research_output,
+        score_to_dict,
+    )
+
+    try:
+        output = output_file.read_text(encoding="utf-8")
+    except OSError as exc:
+        console.print(f"[bold red]Error:[/bold red] cannot read output file: {exc}")
+        raise typer.Exit(2)
+
+    try:
+        expected = load_expected_locations(expected_file)
+    except (OSError, ValueError) as exc:
+        console.print(f"[bold red]Error:[/bold red] cannot load expected targets: {exc}")
+        raise typer.Exit(2)
+
+    root = repo_root.resolve() if repo_root else Path.cwd()
+    score = score_research_output(
+        output,
+        expected,
+        repo_root=root,
+        overbroad_line_threshold=overbroad_line_threshold,
+    )
+
+    failed_reasons: list[str] = []
+    if score.file_level.f1 < fail_under_file_f1:
+        failed_reasons.append(
+            f"file_level.f1 {score.file_level.f1:.3f} < {fail_under_file_f1:.3f}"
+        )
+    if score.line_level.f1 < fail_under_line_f1:
+        failed_reasons.append(
+            f"line_level.f1 {score.line_level.f1:.3f} < {fail_under_line_f1:.3f}"
+        )
+    if fail_on_malformed and score.malformed_count > 0:
+        failed_reasons.append(f"malformed_count {score.malformed_count} > 0")
+
+    payload = {
+        "passed": not failed_reasons,
+        "failed_reasons": failed_reasons,
+        "thresholds": {
+            "fail_under_file_f1": fail_under_file_f1,
+            "fail_under_line_f1": fail_under_line_f1,
+            "fail_on_malformed": fail_on_malformed,
+            "overbroad_line_threshold": overbroad_line_threshold,
+        },
+        "score": score_to_dict(score),
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    if failed_reasons:
+        raise typer.Exit(1)
 
 
 # Skill-eval commands
