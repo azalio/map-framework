@@ -711,6 +711,20 @@ def _coerce_token_int(value: object) -> int:
     return 0
 
 
+def _coerce_token_float(value: object) -> float:
+    """Best-effort float from a cost/share field that may come from JSON."""
+    if isinstance(value, bool):
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return 0.0
+    return 0.0
+
+
 def _usage_token_total(usage: Mapping[str, object]) -> int:
     """Sum of the four token fields for one usage record.
 
@@ -926,6 +940,104 @@ def _empty_token_bucket() -> dict[str, float]:
     return {field: 0 for field in _TOKEN_FIELDS}
 
 
+_RESEARCH_AGENT_NAMES = frozenset({"research-agent", "researcher"})
+_ACTOR_MONITOR_AGENT_NAMES = frozenset({"actor", "monitor"})
+_RESEARCH_LOW_CONFIDENCE_THRESHOLD = 0.5
+
+
+def _empty_token_counter_bucket() -> dict[str, float]:
+    return {**_empty_token_bucket(), "est_cost_usd": 0.0, "event_count": 0}
+
+
+def _accumulate_token_bucket(
+    bucket: dict[str, float], usage: Mapping[str, object], row_cost: float
+) -> None:
+    for field in _TOKEN_FIELDS:
+        bucket[field] += _coerce_token_int(usage.get(field, 0))
+    bucket["est_cost_usd"] = round(bucket.get("est_cost_usd", 0.0) + row_cost, 6)
+    bucket["event_count"] = bucket.get("event_count", 0) + 1
+
+
+def _token_bucket_total(bucket: Mapping[str, object]) -> int:
+    return sum(_coerce_token_int(bucket.get(field, 0)) for field in _TOKEN_FIELDS)
+
+
+def _is_research_token_source(agent: str, phase: str) -> bool:
+    return agent in _RESEARCH_AGENT_NAMES or phase.upper() == "RESEARCH"
+
+
+def _is_actor_monitor_token_source(agent: str, phase: str) -> bool:
+    return agent in _ACTOR_MONITOR_AGENT_NAMES or phase.upper() in {"ACTOR", "MONITOR"}
+
+
+def _build_research_roi_summary(
+    research_by_subtask: Mapping[str, Mapping[str, object]],
+    actor_monitor_by_subtask: Mapping[str, Mapping[str, object]],
+    aggregate: Mapping[str, object],
+) -> dict[str, object]:
+    """Return advisory research cost vs downstream Actor/Monitor cost."""
+    aggregate_tokens = _token_bucket_total(aggregate)
+    total_research_tokens = sum(
+        _token_bucket_total(bucket) for bucket in research_by_subtask.values()
+    )
+    total_actor_monitor_tokens = sum(
+        _token_bucket_total(bucket) for bucket in actor_monitor_by_subtask.values()
+    )
+    total_research_cost = round(
+        sum(
+            _coerce_token_float(bucket.get("est_cost_usd", 0.0))
+            for bucket in research_by_subtask.values()
+        ),
+        6,
+    )
+    total_actor_monitor_cost = round(
+        sum(
+            _coerce_token_float(bucket.get("est_cost_usd", 0.0))
+            for bucket in actor_monitor_by_subtask.values()
+        ),
+        6,
+    )
+
+    by_subtask: dict[str, dict[str, object]] = {}
+    for sid in sorted(set(research_by_subtask) | set(actor_monitor_by_subtask)):
+        research_bucket = research_by_subtask.get(sid, {})
+        downstream_bucket = actor_monitor_by_subtask.get(sid, {})
+        research_tokens = _token_bucket_total(research_bucket)
+        downstream_tokens = _token_bucket_total(downstream_bucket)
+        comparable_tokens = research_tokens + downstream_tokens
+        by_subtask[sid] = {
+            "research_tokens": research_tokens,
+            "research_est_cost_usd": round(
+                _coerce_token_float(research_bucket.get("est_cost_usd", 0.0)), 6
+            ),
+            "research_event_count": _coerce_token_int(
+                research_bucket.get("event_count", 0)
+            ),
+            "actor_monitor_tokens": downstream_tokens,
+            "actor_monitor_est_cost_usd": round(
+                _coerce_token_float(downstream_bucket.get("est_cost_usd", 0.0)), 6
+            ),
+            "actor_monitor_event_count": _coerce_token_int(
+                downstream_bucket.get("event_count", 0)
+            ),
+            "research_token_share": round(research_tokens / comparable_tokens, 4)
+            if comparable_tokens
+            else 0.0,
+        }
+
+    return {
+        "schema_version": "1.0",
+        "research_tokens": total_research_tokens,
+        "research_est_cost_usd": total_research_cost,
+        "actor_monitor_tokens": total_actor_monitor_tokens,
+        "actor_monitor_est_cost_usd": total_actor_monitor_cost,
+        "research_token_share": round(total_research_tokens / aggregate_tokens, 4)
+        if aggregate_tokens
+        else 0.0,
+        "by_subtask": by_subtask,
+    }
+
+
 def _rebuild_token_accounting(branch: Optional[str] = None) -> dict[str, object]:
     """Roll token_log.jsonl up into token_accounting.json.
 
@@ -942,6 +1054,8 @@ def _rebuild_token_accounting(branch: Optional[str] = None) -> dict[str, object]
     by_subtask: dict[str, dict[str, float]] = {}
     by_agent: dict[str, dict[str, float]] = {}
     by_phase: dict[str, dict[str, float]] = {}
+    research_by_subtask: dict[str, dict[str, float]] = {}
+    actor_monitor_by_subtask: dict[str, dict[str, float]] = {}
     aggregate: dict[str, float] = _empty_token_bucket()
     total_cost = 0.0
     event_count = 0
@@ -991,10 +1105,13 @@ def _rebuild_token_accounting(branch: Optional[str] = None) -> dict[str, object]
             }
             row_cost = _token_cost(usage, model)
             total_cost += row_cost
+            subtask_id = str(row.get("subtask_id") or "unattributed")
+            agent = str(row.get("agent") or "unknown")
+            phase = str(row.get("phase") or "unknown")
             for dim_key, dim in (
-                (str(row.get("subtask_id") or "unattributed"), by_subtask),
-                (str(row.get("agent") or "unknown"), by_agent),
-                (str(row.get("phase") or "unknown"), by_phase),
+                (subtask_id, by_subtask),
+                (agent, by_agent),
+                (phase, by_phase),
             ):
                 bucket = dim.setdefault(
                     dim_key, {**_empty_token_bucket(), "est_cost_usd": 0.0}
@@ -1006,6 +1123,23 @@ def _rebuild_token_accounting(branch: Optional[str] = None) -> dict[str, object]
                 )
             for field in _TOKEN_FIELDS:
                 aggregate[field] += usage[field]
+
+            if _is_research_token_source(agent, phase):
+                _accumulate_token_bucket(
+                    research_by_subtask.setdefault(
+                        subtask_id, _empty_token_counter_bucket()
+                    ),
+                    usage,
+                    row_cost,
+                )
+            elif _is_actor_monitor_token_source(agent, phase):
+                _accumulate_token_bucket(
+                    actor_monitor_by_subtask.setdefault(
+                        subtask_id, _empty_token_counter_bucket()
+                    ),
+                    usage,
+                    row_cost,
+                )
 
     cache_read = aggregate["cache_read"]
     cacheable = aggregate["input"] + cache_read
@@ -1023,6 +1157,9 @@ def _rebuild_token_accounting(branch: Optional[str] = None) -> dict[str, object]
         "by_subtask": by_subtask,
         "by_agent": by_agent,
         "by_phase": by_phase,
+        "research_roi": _build_research_roi_summary(
+            research_by_subtask, actor_monitor_by_subtask, aggregate
+        ),
     }
     _write_json_file(get_branch_dir(branch_name) / TOKEN_ACCOUNTING_NAME, payload)
     return payload
@@ -1034,6 +1171,8 @@ def token_report(branch: Optional[str] = None) -> str:
     payload = _rebuild_token_accounting(branch_name)
     aggregate = cast(dict[str, float], payload["aggregate"])
     by_subtask = cast(dict[str, dict[str, float]], payload["by_subtask"])
+    by_agent = cast(dict[str, dict[str, float]], payload["by_agent"])
+    research_roi = cast(dict[str, object], payload.get("research_roi", {}))
 
     header = (
         f"{'subtask':<18}{'input':>13}{'output':>12}"
@@ -1061,6 +1200,24 @@ def token_report(branch: Optional[str] = None) -> str:
         rows.append(_fmt(sid, by_subtask[sid]))
     rows.append("-" * len(header))
     rows.append(_fmt("TOTAL", aggregate))
+
+    if by_agent:
+        rows.extend(["", "By agent", header, "-" * len(header)])
+        for agent in sorted(by_agent):
+            rows.append(_fmt(agent, by_agent[agent]))
+
+    rows.append("")
+    research_tokens = _coerce_token_int(research_roi.get("research_tokens", 0))
+    actor_monitor_tokens = _coerce_token_int(
+        research_roi.get("actor_monitor_tokens", 0)
+    )
+    research_share = _coerce_token_float(research_roi.get("research_token_share", 0.0)) * 100
+    rows.append(
+        "research ROI: "
+        f"research {research_tokens:,} tokens / "
+        f"actor+monitor {actor_monitor_tokens:,} tokens "
+        f"({research_share:.1f}% of run tokens)"
+    )
     rows.append("")
     ratio = float(aggregate.get("cache_hit_ratio", 0.0)) * 100
     rows.append(
@@ -3213,6 +3370,158 @@ def _run_health_artifact_inventory(
     }
 
 
+def _default_research_roi_summary() -> dict[str, object]:
+    return {
+        "schema_version": "1.0",
+        "research_tokens": 0,
+        "research_est_cost_usd": 0.0,
+        "actor_monitor_tokens": 0,
+        "actor_monitor_est_cost_usd": 0.0,
+        "research_token_share": 0.0,
+        "by_subtask": {},
+    }
+
+
+def _research_filename_parts(path: Path) -> tuple[str, str]:
+    if "__" not in path.stem:
+        return (path.stem, "unknown")
+    subtask_id, kind = path.stem.split("__", 1)
+    return (subtask_id or "unknown", kind or "unknown")
+
+
+def _research_health_subtask_entry(
+    by_subtask: dict[str, dict[str, object]], subtask_id: str
+) -> dict[str, object]:
+    return by_subtask.setdefault(
+        subtask_id,
+        {
+            "artifact_count": 0,
+            "valid_artifact_count": 0,
+            "invalid_artifact_count": 0,
+            "low_confidence_artifact_count": 0,
+            "location_count": 0,
+            "statuses": [],
+            "kinds": [],
+            "research_tokens": 0,
+            "research_est_cost_usd": 0.0,
+            "actor_monitor_tokens": 0,
+            "actor_monitor_est_cost_usd": 0.0,
+            "research_token_share": 0.0,
+        },
+    )
+
+
+def _append_unique_string(values: object, value: str) -> None:
+    if isinstance(values, list) and value not in values:
+        values.append(value)
+
+
+def _load_research_roi_for_health(branch_dir: Path, branch: str) -> dict[str, object]:
+    token_log_path = branch_dir / TOKEN_LOG_NAME
+    accounting_path = branch_dir / TOKEN_ACCOUNTING_NAME
+    if token_log_path.is_file():
+        accounting = _rebuild_token_accounting(branch)
+    else:
+        accounting = _read_json_file(accounting_path) or {}
+    if not isinstance(accounting, Mapping):
+        return _default_research_roi_summary()
+    roi = accounting.get("research_roi")
+    return dict(roi) if isinstance(roi, Mapping) else _default_research_roi_summary()
+
+
+def _research_health_summary(branch_dir: Path, branch: str) -> dict[str, object]:
+    """Summarize research artifacts and advisory token ROI for run health."""
+    research_dir = branch_dir / "research"
+    project_dir = branch_dir.parents[1] if len(branch_dir.parents) > 1 else Path.cwd()
+    paths = sorted(research_dir.glob("*.md")) if research_dir.is_dir() else []
+    roi = _load_research_roi_for_health(branch_dir, branch)
+    by_subtask: dict[str, dict[str, object]] = {}
+
+    roi_by_subtask = roi.get("by_subtask")
+    if isinstance(roi_by_subtask, Mapping):
+        for subtask_id, raw_entry in roi_by_subtask.items():
+            if not isinstance(raw_entry, Mapping):
+                continue
+            entry = _research_health_subtask_entry(by_subtask, str(subtask_id))
+            for key in (
+                "research_tokens",
+                "research_est_cost_usd",
+                "actor_monitor_tokens",
+                "actor_monitor_est_cost_usd",
+                "research_token_share",
+            ):
+                if key in raw_entry:
+                    entry[key] = raw_entry[key]
+
+    artifact_count = 0
+    valid_count = 0
+    invalid_count = 0
+    low_confidence_count = 0
+    location_count = 0
+    warnings: list[str] = []
+
+    for path in paths:
+        artifact_count += 1
+        subtask_id, kind = _research_filename_parts(path)
+        entry = _research_health_subtask_entry(by_subtask, subtask_id)
+        entry["artifact_count"] = _coerce_token_int(entry.get("artifact_count", 0)) + 1
+        _append_unique_string(entry.get("kinds"), kind)
+
+        report = validate_research_artifact(path, project_dir=project_dir)
+        if report.get("valid"):
+            valid_count += 1
+            entry["valid_artifact_count"] = (
+                _coerce_token_int(entry.get("valid_artifact_count", 0)) + 1
+            )
+        else:
+            invalid_count += 1
+            entry["invalid_artifact_count"] = (
+                _coerce_token_int(entry.get("invalid_artifact_count", 0)) + 1
+            )
+            errors = report.get("errors")
+            if isinstance(errors, list) and errors:
+                warnings.append(f"{path.name}: {errors[0]}")
+
+        status = report.get("research_status")
+        if isinstance(status, str):
+            _append_unique_string(entry.get("statuses"), status)
+            if status in {"SEARCH_FAILED", "NO_RESULTS", "PARTIAL_RESULTS"}:
+                warnings.append(f"{path.name}: research status {status}")
+
+        confidence = report.get("confidence")
+        if isinstance(confidence, (int, float)) and not isinstance(confidence, bool):
+            if float(confidence) < _RESEARCH_LOW_CONFIDENCE_THRESHOLD:
+                low_confidence_count += 1
+                entry["low_confidence_artifact_count"] = (
+                    _coerce_token_int(entry.get("low_confidence_artifact_count", 0)) + 1
+                )
+                warnings.append(f"{path.name}: low confidence {float(confidence):.2f}")
+
+        locations = _coerce_token_int(report.get("location_count", 0))
+        location_count += locations
+        entry["location_count"] = _coerce_token_int(entry.get("location_count", 0)) + locations
+
+    return {
+        "schema_version": "1.0",
+        "artifact_count": artifact_count,
+        "valid_artifact_count": valid_count,
+        "invalid_artifact_count": invalid_count,
+        "low_confidence_artifact_count": low_confidence_count,
+        "location_count": location_count,
+        "research_tokens": _coerce_token_int(roi.get("research_tokens", 0)),
+        "research_est_cost_usd": _coerce_token_float(
+            roi.get("research_est_cost_usd", 0.0)
+        ),
+        "actor_monitor_tokens": _coerce_token_int(roi.get("actor_monitor_tokens", 0)),
+        "actor_monitor_est_cost_usd": _coerce_token_float(
+            roi.get("actor_monitor_est_cost_usd", 0.0)
+        ),
+        "research_token_share": _coerce_token_float(roi.get("research_token_share", 0.0)),
+        "by_subtask": by_subtask,
+        "warnings": warnings[:10],
+    }
+
+
 def write_run_health_report(
     workflow: str = "map-efficient",
     terminal_status: str = "",
@@ -3245,6 +3554,7 @@ def write_run_health_report(
     retry_isolation_status = _as_dict(state.get("retry_isolation_status"))
     hook_injection = _as_dict(state.get("hook_injection"))
     artifact_inventory = _run_health_artifact_inventory(branch_dir, branch_name)
+    research_summary = _research_health_summary(branch_dir, branch_name)
 
     payload: dict[str, object] = {
         "schema_version": "1.0",
@@ -3258,6 +3568,7 @@ def write_run_health_report(
         "completed_step_count": _count_step_entries(completed_steps),
         "pending_step_count": _count_step_entries(pending_steps),
         "artifacts": artifact_inventory,
+        "research": research_summary,
         "resiliency_signals": {
             "hook_injection": hook_injection
             or {"status": "unknown", "reason": "not recorded"},
@@ -3342,6 +3653,7 @@ def _validate_run_health_report_shape(report: Mapping[str, object]) -> list[str]
         "current_step_id",
         "current_step_phase",
         "current_subtask_id",
+        "research",
     }
     for key in sorted(RUN_HEALTH_REQUIRED_KEYS - set(report)):
         errors.append(f"missing required field: {key}")
@@ -3378,6 +3690,36 @@ def _validate_run_health_report_shape(report: Mapping[str, object]) -> list[str]
             size_bytes = value.get("size_bytes")
             if not _is_non_negative_int(size_bytes):
                 errors.append(f"artifacts.{key}.size_bytes must be a non-negative integer")
+
+    research = report.get("research")
+    if "research" in report:
+        if not isinstance(research, Mapping):
+            errors.append("research must be an object")
+        else:
+            for key in (
+                "artifact_count",
+                "valid_artifact_count",
+                "invalid_artifact_count",
+                "low_confidence_artifact_count",
+                "location_count",
+                "research_tokens",
+                "actor_monitor_tokens",
+            ):
+                if key in research and not _is_non_negative_int(research.get(key)):
+                    errors.append(f"research.{key} must be a non-negative integer")
+            for key in (
+                "research_est_cost_usd",
+                "actor_monitor_est_cost_usd",
+                "research_token_share",
+            ):
+                if key in research and not isinstance(research.get(key), (int, float)):
+                    errors.append(f"research.{key} must be a number")
+            if "by_subtask" in research and not isinstance(
+                research.get("by_subtask"), Mapping
+            ):
+                errors.append("research.by_subtask must be an object")
+            if "warnings" in research and not isinstance(research.get("warnings"), list):
+                errors.append("research.warnings must be an array")
 
     signals = report.get("resiliency_signals")
     if not isinstance(signals, Mapping):
