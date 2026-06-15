@@ -111,6 +111,37 @@ def _valid_run_health_payload() -> dict[str, Any]:
     }
 
 
+def _valid_research_payload(path: str = "src/service.py") -> dict[str, Any]:
+    return {
+        "confidence": 0.9,
+        "status": "OK",
+        "search_method": "glob_grep",
+        "search_stats": {
+            "files_scanned": 1,
+            "total_matches_found": 1,
+            "results_truncated": False,
+        },
+        "executive_summary": "Service entry point handles the behavior under test.",
+        "relevant_locations": [
+            {
+                "path": path,
+                "lines": [1, 2],
+                "signature": "def handle() -> bool",
+                "relevance": "Primary implementation entry point.",
+                "relevance_score": 0.95,
+                "has_intent": False,
+            }
+        ],
+        "patterns_discovered": ["direct function dispatch"],
+    }
+
+
+def _write_research_source(project_dir: Path, path: str = "src/service.py") -> None:
+    target = project_dir / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("def handle() -> bool:\n    return True\n", encoding="utf-8")
+
+
 def test_ensure_human_artifacts_creates_defaults(branch_workspace):
     result = map_step_runner.ensure_human_artifacts()
 
@@ -5680,6 +5711,92 @@ class TestSaveLoadResearch:
         del branch_workspace
         with pytest.raises(ValueError):
             map_step_runner.save_research("test-branch", "ST-001", "x", kind="../foo")
+
+    def test_validate_research_accepts_strict_json_artifact(
+        self, branch_workspace, tmp_path
+    ):
+        del branch_workspace
+        _write_research_source(tmp_path)
+        content = json.dumps(_valid_research_payload())
+        map_step_runner.save_research("test-branch", "ST-001", content)
+
+        report = map_step_runner.validate_research("test-branch", "ST-001")
+
+        assert report["valid"] is True, report
+        assert report["status"] == "valid"
+
+    def test_validate_research_rejects_malformed_markdown(self, branch_workspace):
+        del branch_workspace
+        map_step_runner.save_research(
+            "test-branch", "ST-001", "## Findings\n\n- src/service.py:L1-L2"
+        )
+
+        report = map_step_runner.validate_research("test-branch", "ST-001")
+
+        assert report["valid"] is False
+        assert "strict JSON" in "; ".join(report["errors"])
+
+    def test_validate_research_rejects_missing_confidence(
+        self, branch_workspace, tmp_path
+    ):
+        del branch_workspace
+        _write_research_source(tmp_path)
+        payload = _valid_research_payload()
+        payload.pop("confidence")
+        map_step_runner.save_research("test-branch", "ST-001", json.dumps(payload))
+
+        report = map_step_runner.validate_research("test-branch", "ST-001")
+
+        assert report["valid"] is False
+        assert "confidence" in "; ".join(report["errors"])
+
+    def test_validate_research_rejects_missing_line_range(
+        self, branch_workspace, tmp_path
+    ):
+        del branch_workspace
+        _write_research_source(tmp_path)
+        payload = _valid_research_payload()
+        payload["relevant_locations"][0].pop("lines")
+        map_step_runner.save_research("test-branch", "ST-001", json.dumps(payload))
+
+        report = map_step_runner.validate_research("test-branch", "ST-001")
+
+        assert report["valid"] is False
+        assert "lines" in "; ".join(report["errors"])
+
+    def test_validate_research_rejects_unsafe_path_traversal(
+        self, branch_workspace
+    ):
+        del branch_workspace
+        payload = _valid_research_payload(path="../secret.py")
+        map_step_runner.save_research("test-branch", "ST-001", json.dumps(payload))
+
+        report = map_step_runner.validate_research("test-branch", "ST-001")
+
+        assert report["valid"] is False
+        assert "safe relative repo path" in "; ".join(report["errors"])
+
+    def test_validate_research_rejects_excessive_locations(
+        self, branch_workspace, tmp_path
+    ):
+        del branch_workspace
+        _write_research_source(tmp_path)
+        payload = _valid_research_payload()
+        payload["relevant_locations"] = payload["relevant_locations"] * 6
+        map_step_runner.save_research("test-branch", "ST-001", json.dumps(payload))
+
+        report = map_step_runner.validate_research("test-branch", "ST-001")
+
+        assert report["valid"] is False
+        assert "at most 5" in "; ".join(report["errors"])
+
+    def test_validate_research_reports_missing_artifact(self, branch_workspace):
+        del branch_workspace
+
+        report = map_step_runner.validate_research("test-branch", "ST-404")
+
+        assert report["valid"] is False
+        assert report["status"] == "missing"
 
     def test_cli_save_reads_stdin_load_writes_stdout(self, branch_workspace, tmp_path):
         """End-to-end CLI: save_research consumes stdin, load_research prints stdout."""

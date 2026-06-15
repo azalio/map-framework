@@ -2179,6 +2179,17 @@ class TestMapEfficientSaveResearchWiring:
             "read findings through the canonical path."
         )
 
+    def test_research_phase_invokes_validate_research_cli(
+        self, skill_path: Path
+    ) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        assert (
+            "python3 .map/scripts/map_step_runner.py validate_research" in content
+        ), (
+            f"{skill_path} must show the validate_research CLI before "
+            "validate_step 2.2 so malformed research cannot reach Actor."
+        )
+
 
 class TestMapEfficientBuildContextBlockCli:
     """Regression: map-efficient must show the build_context_block CLI form.

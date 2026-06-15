@@ -160,12 +160,14 @@ fi
 ### RESEARCH
 
 Use `researcher` when independent exploration is useful; otherwise research in
-the current session. Persist concise findings before Actor work:
+the current session. Persist concise strict-JSON findings, validate the research
+contract, then close RESEARCH before Actor work:
 
 ```bash
 SUBTASK_ID=$(jq -r '.current_subtask_id' ".map/${BRANCH}/step_state.json")
 printf '%s' "$RESEARCH_FINDINGS" | \
   python3 .map/scripts/map_step_runner.py save_research "$BRANCH" "$SUBTASK_ID"
+python3 .map/scripts/map_step_runner.py validate_research "$BRANCH" "$SUBTASK_ID"
 python3 .map/scripts/map_orchestrator.py validate_step "$STEP_ID"
 ```
 

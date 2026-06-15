@@ -38,7 +38,7 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Callable, Iterable, Mapping, Optional, TypedDict, cast
 
 # Keep in sync with workflow-context-injector.py GOAL_HEADING_RE
@@ -6046,6 +6046,13 @@ def _sanitize_branch(branch: str) -> str:
 
 _RESEARCH_KIND_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 _RESEARCH_SUBTASK_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+_RESEARCH_STATUS_VALUES = frozenset(
+    {"OK", "PARTIAL_RESULTS", "NO_RESULTS", "SEARCH_FAILED"}
+)
+_RESEARCH_MAX_ARTIFACT_BYTES = 64 * 1024
+_RESEARCH_MAX_LOCATIONS = 5
+_RESEARCH_MAX_LINE_SPAN = 200
+_RESEARCH_ABSENT_LOCATION_STATUSES = frozenset({"absent", "missing", "new", "not_found"})
 
 
 def _research_path(branch: str, subtask_id: str, kind: str) -> Path:
@@ -6068,6 +6075,304 @@ def _research_path(branch: str, subtask_id: str, kind: str) -> Path:
         / "research"
         / f"{subtask_id}__{kind}.md"
     )
+
+
+def _is_int_not_bool(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _location_marks_absent(location: Mapping[str, object]) -> bool:
+    if location.get("exists") is False or location.get("absent") is True:
+        return True
+    status = location.get("status")
+    return (
+        isinstance(status, str)
+        and status.strip().lower() in _RESEARCH_ABSENT_LOCATION_STATUSES
+    )
+
+
+def _validate_research_location(
+    location: object,
+    index: int,
+    *,
+    project_dir: Path,
+) -> tuple[list[str], list[str]]:
+    errors: list[str] = []
+    warnings: list[str] = []
+    prefix = f"relevant_locations[{index}]"
+    if not isinstance(location, dict):
+        return [f"{prefix} must be an object"], warnings
+
+    path_value = location.get("path")
+    if not isinstance(path_value, str) or not path_value.strip():
+        errors.append(f"{prefix}.path must be a non-empty relative path")
+    else:
+        path_text = path_value.strip()
+        pure_path = PurePosixPath(path_text)
+        if (
+            pure_path.is_absolute()
+            or path_text.startswith("~")
+            or "\\" in path_text
+            or any(part == ".." for part in pure_path.parts)
+        ):
+            errors.append(f"{prefix}.path must be a safe relative repo path")
+        else:
+            target = project_dir / Path(*pure_path.parts)
+            if target.exists() and not target.is_file():
+                errors.append(f"{prefix}.path points to a directory, not a file")
+            elif not target.exists() and not _location_marks_absent(location):
+                errors.append(
+                    f"{prefix}.path does not exist; mark the location absent/new if intentional"
+                )
+
+    raw_lines = location.get("lines", location.get("line_range"))
+    if not isinstance(raw_lines, list) or len(raw_lines) != 2:
+        errors.append(f"{prefix}.lines must be [start, end]")
+    elif not all(_is_int_not_bool(part) for part in raw_lines):
+        errors.append(f"{prefix}.lines values must be positive integers")
+    else:
+        start = int(raw_lines[0])
+        end = int(raw_lines[1])
+        if start < 1 or end < 1 or start > end:
+            errors.append(f"{prefix}.lines must be a positive inclusive range")
+        elif end - start + 1 > _RESEARCH_MAX_LINE_SPAN:
+            errors.append(
+                f"{prefix}.lines spans more than {_RESEARCH_MAX_LINE_SPAN} lines"
+            )
+        elif isinstance(path_value, str) and path_value.strip():
+            pure_path = PurePosixPath(path_value.strip())
+            if (
+                not pure_path.is_absolute()
+                and "\\" not in path_value
+                and not any(part == ".." for part in pure_path.parts)
+            ):
+                target = project_dir / Path(*pure_path.parts)
+                if target.is_file():
+                    try:
+                        line_count = len(target.read_text(encoding="utf-8").splitlines())
+                    except (OSError, UnicodeDecodeError):
+                        line_count = 0
+                    if line_count and end > line_count:
+                        errors.append(
+                            f"{prefix}.lines end exceeds file length ({line_count})"
+                        )
+
+    relevance = location.get("relevance")
+    if not isinstance(relevance, str) or not relevance.strip():
+        errors.append(f"{prefix}.relevance must explain why the location matters")
+
+    for raw_key in ("content", "file_contents", "raw_code"):
+        if raw_key in location:
+            errors.append(f"{prefix}.{raw_key} is not allowed; cite paths and ranges only")
+
+    return errors, warnings
+
+
+def validate_research_content(
+    content: str,
+    *,
+    project_dir: Optional[Path] = None,
+    artifact_path: Optional[str] = None,
+    max_locations: int = _RESEARCH_MAX_LOCATIONS,
+) -> dict[str, object]:
+    """Validate the machine-checkable research-agent output contract."""
+    errors: list[str] = []
+    warnings: list[str] = []
+    project = project_dir or Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+    encoded_size = len(content.encode("utf-8"))
+    if encoded_size > _RESEARCH_MAX_ARTIFACT_BYTES:
+        errors.append(
+            f"artifact exceeds {_RESEARCH_MAX_ARTIFACT_BYTES} bytes ({encoded_size})"
+        )
+
+    stripped = content.strip()
+    if not stripped:
+        errors.append("artifact is empty")
+        return {
+            "valid": False,
+            "status": "invalid",
+            "artifact_path": artifact_path,
+            "errors": errors,
+            "warnings": warnings,
+        }
+    if "```" in stripped:
+        errors.append("artifact must not contain markdown/code fences or raw code blocks")
+
+    parsed: object
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError as exc:
+        errors.append(f"artifact must be strict JSON: {exc.msg}")
+        return {
+            "valid": False,
+            "status": "invalid",
+            "artifact_path": artifact_path,
+            "errors": errors,
+            "warnings": warnings,
+        }
+
+    if not isinstance(parsed, dict):
+        errors.append("artifact JSON must be an object")
+        return {
+            "valid": False,
+            "status": "invalid",
+            "artifact_path": artifact_path,
+            "errors": errors,
+            "warnings": warnings,
+        }
+
+    research_status = parsed.get("status")
+    if research_status not in _RESEARCH_STATUS_VALUES:
+        errors.append(
+            "status must be one of " + ", ".join(sorted(_RESEARCH_STATUS_VALUES))
+        )
+
+    confidence = parsed.get("confidence")
+    if (
+        isinstance(confidence, bool)
+        or not isinstance(confidence, (int, float))
+        or not 0 <= float(confidence) <= 1
+    ):
+        errors.append("confidence must be a number between 0 and 1")
+
+    search_stats = parsed.get("search_stats")
+    if not isinstance(search_stats, dict):
+        errors.append("search_stats must be an object")
+    else:
+        for key in ("files_scanned", "total_matches_found"):
+            value = search_stats.get(key)
+            if not _is_int_not_bool(value):
+                errors.append(f"search_stats.{key} must be a non-negative integer")
+            elif cast(int, value) < 0:
+                errors.append(f"search_stats.{key} must be a non-negative integer")
+        if not isinstance(search_stats.get("results_truncated"), bool):
+            errors.append("search_stats.results_truncated must be boolean")
+
+    locations = parsed.get("relevant_locations")
+    location_count = 0
+    if not isinstance(locations, list):
+        errors.append("relevant_locations must be a list")
+    else:
+        location_count = len(locations)
+        if len(locations) > max_locations:
+            errors.append(
+                f"relevant_locations must contain at most {max_locations} entries"
+            )
+        for index, location in enumerate(locations):
+            loc_errors, loc_warnings = _validate_research_location(
+                location,
+                index,
+                project_dir=project,
+            )
+            errors.extend(loc_errors)
+            warnings.extend(loc_warnings)
+
+    return {
+        "valid": not errors,
+        "status": "valid" if not errors else "invalid",
+        "artifact_path": artifact_path,
+        "errors": errors,
+        "warnings": warnings,
+        "research_status": research_status if isinstance(research_status, str) else None,
+        "confidence": float(confidence) if isinstance(confidence, (int, float)) and not isinstance(confidence, bool) else None,
+        "location_count": location_count,
+    }
+
+
+def validate_research_artifact(path: Path, *, project_dir: Optional[Path] = None) -> dict[str, object]:
+    """Validate one persisted research artifact file."""
+    if not path.is_file():
+        return {
+            "valid": False,
+            "status": "missing",
+            "artifact_path": str(path),
+            "errors": [f"research artifact not found: {path}"],
+            "warnings": [],
+        }
+    try:
+        content = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        return {
+            "valid": False,
+            "status": "invalid",
+            "artifact_path": str(path),
+            "errors": [f"could not read research artifact: {exc}"],
+            "warnings": [],
+        }
+    return validate_research_content(
+        content,
+        project_dir=project_dir,
+        artifact_path=str(path),
+    )
+
+
+def validate_research(
+    branch: str,
+    subtask_id: str,
+    *,
+    kind: Optional[str] = None,
+) -> dict[str, object]:
+    """Validate persisted research for a subtask before Actor consumes it."""
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+    artifacts: list[dict[str, object]] = []
+    errors: list[str] = []
+
+    if kind is not None:
+        paths = [_research_path(branch, subtask_id, kind)]
+    else:
+        seed_path = _research_path(branch, subtask_id, "actor")
+        research_dir = seed_path.parent
+        paths = []
+        if research_dir.is_dir():
+            for candidate in sorted(research_dir.glob(f"{subtask_id}__*.md")):
+                if ".attempt-" in candidate.name:
+                    continue
+                stem = candidate.stem
+                marker = "__"
+                if marker not in stem:
+                    continue
+                kind_name = stem.rsplit(marker, 1)[-1]
+                if not _RESEARCH_KIND_RE.match(kind_name):
+                    errors.append(f"invalid research artifact kind in filename: {candidate.name}")
+                    continue
+                paths.append(candidate)
+
+    if not paths:
+        seed = _research_path(branch, subtask_id, kind or "actor")
+        return {
+            "valid": False,
+            "status": "missing",
+            "subtask_id": subtask_id,
+            "kind": kind,
+            "artifacts": [],
+            "errors": [f"no research artifact found for {subtask_id} under {seed.parent}"],
+            "warnings": [],
+        }
+
+    warnings: list[str] = []
+    for path in paths:
+        report = validate_research_artifact(path, project_dir=project_dir)
+        artifacts.append(report)
+        report_errors = report.get("errors")
+        if isinstance(report_errors, list):
+            for error in report_errors:
+                if isinstance(error, str):
+                    errors.append(f"{path.name}: {error}")
+        report_warnings = report.get("warnings")
+        if isinstance(report_warnings, list):
+            for warning in report_warnings:
+                if isinstance(warning, str):
+                    warnings.append(f"{path.name}: {warning}")
+
+    return {
+        "valid": not errors,
+        "status": "valid" if not errors else "invalid",
+        "subtask_id": subtask_id,
+        "kind": kind,
+        "artifacts": artifacts,
+        "errors": errors,
+        "warnings": warnings,
+    }
 
 
 def save_research(
@@ -9773,6 +10078,20 @@ if __name__ == "__main__":
                 branch_arg, subtask_arg, content_in, kind=kind_arg, attempt=attempt_arg
             )
             print(json.dumps({"status": "success", "path": written}))
+        except ValueError as exc:
+            print(json.dumps({"status": "error", "message": str(exc)}))
+            sys.exit(1)
+
+    elif func_name == "validate_research" and len(sys.argv) >= 4:
+        # CLI: validate_research <branch> <subtask_id> [kind]
+        branch_arg = sys.argv[2]
+        subtask_arg = sys.argv[3]
+        kind_arg = sys.argv[4] if len(sys.argv) >= 5 else None
+        try:
+            report = validate_research(branch_arg, subtask_arg, kind=kind_arg)
+            print(json.dumps(report, indent=2))
+            if not report.get("valid"):
+                sys.exit(1)
         except ValueError as exc:
             print(json.dumps({"status": "error", "message": str(exc)}))
             sys.exit(1)

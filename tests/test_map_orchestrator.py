@@ -44,6 +44,43 @@ def branch_dir(tmp_path, monkeypatch):
     return branch
 
 
+def _write_valid_research_artifact(
+    tmp_path: Path,
+    branch: str,
+    subtask_id: str = "ST-001",
+) -> None:
+    source = tmp_path / "src" / "service.py"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("def handle() -> bool:\n    return True\n", encoding="utf-8")
+    research_dir = tmp_path / ".map" / branch / "research"
+    research_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "confidence": 0.9,
+        "status": "OK",
+        "search_method": "glob_grep",
+        "search_stats": {
+            "files_scanned": 1,
+            "total_matches_found": 1,
+            "results_truncated": False,
+        },
+        "executive_summary": "Service entry point handles the behavior under test.",
+        "relevant_locations": [
+            {
+                "path": "src/service.py",
+                "lines": [1, 2],
+                "signature": "def handle() -> bool",
+                "relevance": "Primary implementation entry point.",
+                "relevance_score": 0.95,
+                "has_intent": False,
+            }
+        ],
+        "patterns_discovered": ["direct function dispatch"],
+    }
+    (research_dir / f"{subtask_id}__actor.md").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+
+
 @pytest.fixture
 def sample_blueprint(tmp_path):
     """Create a sample blueprint JSON with a fan-out DAG."""
@@ -2180,7 +2217,7 @@ class TestValidateStepResearchEnforcement:
         state.save(state_file)
         result = map_orchestrator.validate_step("2.2", branch_dir)
         assert result["valid"] is False
-        assert "RESEARCH not persisted" in result["message"]
+        assert "RESEARCH artifact invalid" in result["message"]
 
     def test_accepts_when_research_artifact_present(
         self, branch_dir, tmp_path
@@ -2194,13 +2231,29 @@ class TestValidateStepResearchEnforcement:
         state.pending_steps = ["2.2", "2.3", "2.4"]
         state_file = tmp_path / ".map" / branch_dir / "step_state.json"
         state.save(state_file)
-        # Plant a research artifact.
-        research_dir = tmp_path / ".map" / branch_dir / "research"
-        research_dir.mkdir(parents=True, exist_ok=True)
-        (research_dir / "ST-001__actor.md").write_text("findings", encoding="utf-8")
+        _write_valid_research_artifact(tmp_path, branch_dir, "ST-001")
         result = map_orchestrator.validate_step("2.2", branch_dir)
         assert result["valid"] is True, result
         assert result["next_step"] == "2.3"
+
+    def test_rejects_malformed_research_artifact(self, branch_dir, tmp_path):
+        state = map_orchestrator.StepState()
+        state.workflow_status = "IN_PROGRESS"
+        state.subtask_sequence = ["ST-001"]
+        state.current_subtask_id = "ST-001"
+        state.current_step_id = "2.2"
+        state.current_step_phase = "RESEARCH"
+        state.pending_steps = ["2.2", "2.3", "2.4"]
+        state_file = tmp_path / ".map" / branch_dir / "step_state.json"
+        state.save(state_file)
+        research_dir = tmp_path / ".map" / branch_dir / "research"
+        research_dir.mkdir(parents=True, exist_ok=True)
+        (research_dir / "ST-001__actor.md").write_text("findings", encoding="utf-8")
+
+        result = map_orchestrator.validate_step("2.2", branch_dir)
+
+        assert result["valid"] is False
+        assert "strict JSON" in result["message"]
 
 
 class TestRecordSubtaskResultAutoCommitSha:

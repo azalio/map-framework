@@ -78,6 +78,40 @@ def _load_fixture_json(name: str) -> dict:
     return json.loads(_load_fixture(name))
 
 
+def _write_valid_research(workspace: Path, subtask_id: str) -> None:
+    project_dir = workspace.parents[1]
+    source = project_dir / "src" / "service.py"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("def handle() -> bool:\n    return True\n", encoding="utf-8")
+    research_dir = workspace / "research"
+    research_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "confidence": 0.9,
+        "status": "OK",
+        "search_method": "glob_grep",
+        "search_stats": {
+            "files_scanned": 1,
+            "total_matches_found": 1,
+            "results_truncated": False,
+        },
+        "executive_summary": "Service entry point handles the behavior under test.",
+        "relevant_locations": [
+            {
+                "path": "src/service.py",
+                "lines": [1, 2],
+                "signature": "def handle() -> bool",
+                "relevance": "Primary implementation entry point.",
+                "relevance_score": 0.95,
+                "has_intent": False,
+            }
+        ],
+        "patterns_discovered": ["direct function dispatch"],
+    }
+    (research_dir / f"{subtask_id}__actor.md").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+
+
 # =====================================================================
 # Phase 1: map-plan artifact production
 # =====================================================================
@@ -462,9 +496,7 @@ class TestFullLifecycle:
         # validate_step("2.2") now enforces that save_research wrote a real
         # artifact for the current subtask (MANDATORY RESEARCH); plant one
         # per subtask so the gate accepts.
-        research_dir = workspace / "research"
-        research_dir.mkdir(parents=True, exist_ok=True)
-        (research_dir / "ST-001__actor.md").write_text("seed findings ST-001")
+        _write_valid_research(workspace, "ST-001")
         for step_id in ["2.2", "2.3", "2.4"]:
             step = map_orchestrator.get_next_step(branch)
             assert (
@@ -480,7 +512,7 @@ class TestFullLifecycle:
         assert step["step_id"] == "2.2"
 
         # 8. Complete second subtask
-        (research_dir / "ST-002__actor.md").write_text("seed findings ST-002")
+        _write_valid_research(workspace, "ST-002")
         for step_id in ["2.2", "2.3", "2.4"]:
             step = map_orchestrator.get_next_step(branch)
             assert step["step_id"] == step_id
