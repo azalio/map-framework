@@ -391,6 +391,35 @@ BLUEPRINT_SCHEMA = {
                         ),
                         "items": {"type": "string"},
                     },
+                    "requiredness": {
+                        "type": "string",
+                        "enum": [
+                            "explicit",
+                            "implied_by_acceptance",
+                            "repo_required",
+                            "safety_required",
+                            "optional",
+                            "omitted_yagni",
+                            "ambiguous",
+                        ],
+                        "description": (
+                            "Planner classification for whether this work is required. "
+                            "Active subtasks should not use omitted_yagni; put omitted "
+                            "items in blueprint.deferred_yagni instead."
+                        ),
+                    },
+                    "pruneable": {
+                        "type": "boolean",
+                        "description": (
+                            "True only when the subtask is safe to recommend for user-approved "
+                            "YAGNI pruning; explicit, acceptance-critical, repo-required, "
+                            "safety-required, and ambiguous work is never pruneable."
+                        ),
+                    },
+                    "prune_rationale": {
+                        "type": "string",
+                        "description": "Why this subtask is or is not pruneable.",
+                    },
                     "acceptance_criteria": {
                         "type": "array",
                         "description": "Criteria that must be met for the subtask to be considered complete",
@@ -482,6 +511,26 @@ BLUEPRINT_SCHEMA = {
             "minProperties": 1,
             "additionalProperties": {"type": "string", "pattern": "^ST-\\d{3,}$"},
         },
+        "deferred_yagni": {
+            "type": "array",
+            "description": (
+                "User-visible parking lot of speculative work recommended for omission. "
+                "These items are never silently deleted: REVIEW_PLAN must show them and "
+                "receive explicit user approval before execution proceeds."
+            ),
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "pattern": "^YG-\\d{3,}$"},
+                    "title": {"type": "string", "minLength": 1},
+                    "rationale": {"type": "string", "minLength": 1},
+                    "restore_hint": {"type": "string", "minLength": 1},
+                    "source_subtask_id": {"type": "string", "pattern": "^ST-\\d{3,}$"},
+                },
+                "required": ["id", "title", "rationale", "restore_hint"],
+                "additionalProperties": True,
+            },
+        },
         "hard_constraints": {
             "type": "array",
             "description": (
@@ -523,6 +572,7 @@ BLUEPRINT_SCHEMA = {
             "properties": {
                 "subtasks": {"$ref": "#/properties/subtasks"},
                 "coverage_map": {"$ref": "#/properties/coverage_map"},
+                "deferred_yagni": {"$ref": "#/properties/deferred_yagni"},
                 "hard_constraints": {"$ref": "#/properties/hard_constraints"},
                 "soft_constraints": {"$ref": "#/properties/soft_constraints"},
                 "metadata": {"$ref": "#/properties/metadata"},

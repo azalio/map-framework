@@ -66,6 +66,21 @@ HUMAN_ARTIFACT_DEFAULTS = {
 KNOWN_ISSUES_DEFAULT: dict[str, list[dict[str, object]]] = {"issues": []}
 ACTIVE_ISSUES_DEFAULT: dict[str, object] = {"updated_at": "", "issues": []}
 VALID_MINIMALITY_LEVELS = frozenset({"off", "lite", "full", "ultra"})
+PRUNING_MINIMALITY_LEVELS = frozenset({"full", "ultra"})
+REQUIREDNESS_CATEGORIES = frozenset(
+    {
+        "explicit",
+        "implied_by_acceptance",
+        "repo_required",
+        "safety_required",
+        "optional",
+        "omitted_yagni",
+        "ambiguous",
+    }
+)
+NON_PRUNEABLE_REQUIREDNESS = frozenset(
+    {"explicit", "implied_by_acceptance", "repo_required", "safety_required", "ambiguous"}
+)
 AGGRESSIVE_COMPRESSION_MULTIPLIER = 0.4
 
 
@@ -2244,6 +2259,49 @@ def validate_blueprint_contract(
         errors.append("soft_constraints is required and must be an array")
         soft_constraints = []
 
+    minimality = _load_minimality_level(Path.cwd())
+    deferred_yagni = blueprint_body.get("deferred_yagni", [])
+    deferred_yagni_count = 0
+    requires_pruning_approval = False
+    if deferred_yagni is None:
+        deferred_yagni = []
+    if not isinstance(deferred_yagni, list):
+        errors.append("deferred_yagni must be an array when present")
+        deferred_yagni = []
+    else:
+        deferred_yagni_count = len(deferred_yagni)
+        if deferred_yagni_count:
+            requires_pruning_approval = True
+            if minimality not in PRUNING_MINIMALITY_LEVELS:
+                errors.append(
+                    "deferred_yagni is allowed only when minimality is full or ultra; "
+                    f"current minimality is {minimality!r}. Do not prune optional work "
+                    "under off/lite defaults."
+                )
+            warnings.append(
+                f"deferred_yagni contains {deferred_yagni_count} item(s); "
+                "REVIEW_PLAN must show this parking lot and receive explicit user "
+                "approval before execution proceeds."
+            )
+        for item_index, item in enumerate(deferred_yagni):
+            item_label = f"deferred_yagni[{item_index}]"
+            if not isinstance(item, dict):
+                errors.append(f"{item_label}: must be an object")
+                continue
+            item_id = item.get("id")
+            if not isinstance(item_id, str) or not re.fullmatch(r"YG-\d{3,}", item_id):
+                errors.append(f"{item_label}: id must match YG-NNN")
+            for field in ("title", "rationale", "restore_hint"):
+                value = item.get(field)
+                if not isinstance(value, str) or not value.strip():
+                    errors.append(f"{item_label}: missing non-empty {field}")
+            source_subtask_id = item.get("source_subtask_id")
+            if source_subtask_id is not None and (
+                not isinstance(source_subtask_id, str)
+                or not re.fullmatch(r"ST-\d{3,}", source_subtask_id)
+            ):
+                errors.append(f"{item_label}: source_subtask_id must match ST-NNN")
+
     # Constraints accept either `description` or `text` (some decomposer
     # agent generations use `text`); both fields are read with the same
     # meaning so the contract stops rejecting valid blueprints on a naming
@@ -2396,6 +2454,32 @@ def validate_blueprint_contract(
         one_logical_step = subtask.get("one_logical_step")
         if one_logical_step is not True:
             errors.append(f"{label}: one_logical_step must be true")
+
+        requiredness = subtask.get("requiredness")
+        pruneable = subtask.get("pruneable")
+        if requiredness is not None:
+            if not isinstance(requiredness, str) or requiredness not in REQUIREDNESS_CATEGORIES:
+                errors.append(
+                    f"{label}: requiredness must be one of "
+                    f"{sorted(REQUIREDNESS_CATEGORIES)}"
+                )
+            elif requiredness == "omitted_yagni":
+                errors.append(
+                    f"{label}: requiredness=omitted_yagni belongs in "
+                    "blueprint.deferred_yagni, not active subtasks"
+                )
+            elif pruneable is None:
+                errors.append(
+                    f"{label}: pruneable must be a boolean when requiredness is set"
+                )
+            elif not isinstance(pruneable, bool):
+                errors.append(f"{label}: pruneable must be a boolean")
+            elif requiredness in NON_PRUNEABLE_REQUIREDNESS and pruneable:
+                errors.append(
+                    f"{label}: requiredness={requiredness} is never pruneable"
+                )
+        elif pruneable is not None:
+            errors.append(f"{label}: requiredness is required when pruneable is set")
 
         if not str(subtask.get("aag_contract") or "").strip():
             errors.append(f"{label}: missing aag_contract")
@@ -2633,6 +2717,8 @@ def validate_blueprint_contract(
         "oversized_subtasks": oversized_subtasks,
         "mixed_concern_subtasks": mixed_concern_subtasks,
         "forward_dep_violations": forward_dep_violations,
+        "deferred_yagni_count": deferred_yagni_count,
+        "requires_pruning_approval": requires_pruning_approval,
     }
 
 
@@ -9796,6 +9882,15 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
         f"one_logical_step={current.get('one_logical_step', 'unknown')}, "
         f"risk_level={current.get('risk_level', 'unknown')}"
     )
+    requiredness = current.get("requiredness")
+    pruneable = current.get("pruneable")
+    if isinstance(requiredness, str):
+        current_details.append(
+            f"Requiredness: {requiredness}; pruneable={pruneable if isinstance(pruneable, bool) else 'unknown'}"
+        )
+        prune_rationale = current.get("prune_rationale")
+        if isinstance(prune_rationale, str) and prune_rationale.strip():
+            current_details.append(f"Prune rationale: {prune_rationale.strip()}")
     files_value = current.get("affected_files", [])
     files = files_value if isinstance(files_value, list) else []
     if files:
@@ -9868,6 +9963,21 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
         parts.append("")
         parts.append(doctrine_block)
     parts.extend(current_details)
+    deferred_yagni = blueprint.get("deferred_yagni")
+    if isinstance(deferred_yagni, list) and deferred_yagni:
+        parts.append("")
+        parts.append("# Deferred YAGNI Parking Lot (user-approved omissions):")
+        parts.append(
+            "Do not implement these items unless the user restores them into the active blueprint."
+        )
+        for item in deferred_yagni:
+            if not isinstance(item, dict):
+                continue
+            item_id = item.get("id", "YG-???")
+            title = item.get("title", "Untitled")
+            rationale = item.get("rationale", "No rationale recorded")
+            restore_hint = item.get("restore_hint", "No restore hint recorded")
+            parts.append(f"  - {item_id}: {title} -- {rationale}; restore: {restore_hint}")
     if upstream_lines:
         parts.append("")
         parts.append(f"# Upstream Results (dependencies of {current_subtask_id}):")

@@ -754,11 +754,14 @@ def get_step_instruction(step_id: str, state: StepState) -> str:
         ),
         "1.5": (
             "Generate .map/<branch>/task_plan_<branch>.md from decomposer blueprint. "
-            "Include Goal, Current Phase, and status for each subtask."
+            "Include Goal, Current Phase, status for each subtask, and any "
+            "deferred_yagni parking-lot items as a visible restore-or-approve section."
         ),
         "1.55": (
             "Present the generated plan to the user using a short standardized summary "
-            "(goal + subtask titles + risks) and get explicit approval to proceed. "
+            "(goal + subtask titles + risks + any deferred_yagni omissions) and get "
+            "explicit approval to proceed. If the user restores a deferred_yagni item, "
+            "rewrite blueprint.json/task_plan before approval. "
             "Then persist approval in step_state.json: "
             "python3 .map/scripts/map_orchestrator.py set_plan_approved true"
         ),

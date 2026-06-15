@@ -112,6 +112,14 @@ Return **ONLY** valid JSON in this exact structure:
       "INV-1": "ST-001",
       "Cross-cutting: observability": "ST-002"
     },
+    "deferred_yagni": [
+      {
+        "id": "YG-001",
+        "title": "Speculative follow-up not required for this contract",
+        "rationale": "Not explicit, not acceptance-critical, not repo-required, and not safety-required",
+        "restore_hint": "Restore as a new ST-NNN only if the user explicitly approves it"
+      }
+    ],
     "subtasks": [
       {
         "id": "ST-001",
@@ -126,6 +134,9 @@ Return **ONLY** valid JSON in this exact structure:
         "expected_diff_size": "tiny|small|medium|large",
         "concern_type": "api|config|data|docs|infra|observability|refactor|release|runtime|security|tests|ui|mixed",
         "one_logical_step": true,
+        "requiredness": "explicit|implied_by_acceptance|repo_required|safety_required|optional|ambiguous",
+        "pruneable": false,
+        "prune_rationale": "Why this work is or is not safe to recommend for user-approved YAGNI pruning",
         "split_rationale": "Required only when expected_diff_size is large; otherwise omit",
         "concern_justification": "Required only when concern_type is mixed; otherwise omit",
         "validation_criteria": [
@@ -211,6 +222,12 @@ Return **ONLY** valid JSON in this exact structure:
 **blueprint.soft_constraints**: REQUIRED array of negotiable preference objects `{id, description, source?, tradeoff_rationale?}`
   - If satisfied, include the soft constraint id in `coverage_map` and cite it in validation criteria
   - If deferred or traded off, omit it from `coverage_map` only when `tradeoff_rationale` explains the decision
+**blueprint.deferred_yagni**: REQUIRED array (use `[]` when empty) of speculative work recommended for omission
+  - This is a user-visible parking lot, not a silent delete. The orchestrator must show it during plan approval.
+  - Emit non-empty `deferred_yagni` ONLY when the prompt/context explicitly says `minimality: full`, `minimality: ultra`, or the user explicitly asks for pruning/YAGNI recommendations. Otherwise use `[]`.
+  - Never put explicit, acceptance-critical, repo-required, safety-required, correctness, security, contract, data-loss, migration, concurrency, auth, permissions, billing, storage, or public-API behavior here.
+  - If unsure, keep the work active with `requiredness: "ambiguous"` and `pruneable: false`.
+  - Each item needs `id` (`YG-NNN`), `title`, `rationale`, and `restore_hint`.
 
 **subtasks[].id**: Namespaced string ID (e.g., "ST-001", "ST-002") - prevents collision across blueprints
 **subtasks[].title**: Action-oriented, specific (e.g., "Add validateToken() to AuthService", NOT "update auth")
@@ -235,6 +252,19 @@ Return **ONLY** valid JSON in this exact structure:
   - Use "mixed" only when the concerns cannot be separated without losing user value; include `concern_justification`
 **subtasks[].one_logical_step**: REQUIRED boolean, normally `true`
   - If this would be `false`, split the subtask instead of returning it
+**subtasks[].requiredness**: REQUIRED classification for why the active subtask exists
+  - Allowed values: `explicit`, `implied_by_acceptance`, `repo_required`, `safety_required`, `optional`, `ambiguous`
+  - Do NOT use `omitted_yagni` for active subtasks; omitted work belongs in `blueprint.deferred_yagni`.
+  - `explicit`: user directly asked for it.
+  - `implied_by_acceptance`: needed to satisfy acceptance criteria or hard constraints.
+  - `repo_required`: required by repo conventions, generated-template parity, schema contract, docs/versioning, or existing architecture.
+  - `safety_required`: required for security, accessibility, data integrity, real error handling, auth, permissions, migrations, storage, concurrency, billing, or data-loss prevention.
+  - `optional`: potentially useful but not required; keep active unless pruning is explicitly enabled and approved.
+  - `ambiguous`: unclear if required; never prune ambiguous work.
+**subtasks[].pruneable**: REQUIRED boolean paired with `requiredness`
+  - `false` for `explicit`, `implied_by_acceptance`, `repo_required`, `safety_required`, and `ambiguous`.
+  - `true` only for optional work that could be moved to `deferred_yagni` after explicit user approval.
+**subtasks[].prune_rationale**: REQUIRED one-sentence reason for the `pruneable` decision
 **subtasks[].validation_criteria**: Array of **testable conditions** that prove completion
   - REQUIRED: 2-4 specific, verifiable outcomes
   - Format: Prefix each item with `VC1:`, `VC2:`, ... and include every owned coverage_map key in brackets, e.g. `VC1 [AC-1]: ...`.
@@ -477,6 +507,8 @@ OK Dependencies are explicit and accurate
 OK Acceptance criteria are specific and measurable
 OK File paths are precise (not "backend" or "frontend")
 OK Size/concern metadata makes scope creep visible before implementation
+OK Requiredness/pruneable classifications explain why each active subtask exists
+OK deferred_yagni is [] unless pruning is explicitly enabled; non-empty parking lots are user-visible and restorable
 OK Complexity estimates are realistic (based on actual effort)
 OK Risks are identified (not empty)
 OK 5-8 subtasks (neither too granular nor too coarse)
@@ -491,6 +523,8 @@ X Missing dependencies (parallel subtasks that should be sequential)
 X "Tests pass" (vague acceptance criteria)
 X "Code" or "backend" (vague file paths)
 X Large or mixed-concern subtask with no rationale
+X Silent pruning of optional-looking work without deferred_yagni and user approval
+X Marking explicit, safety-required, repo-required, or ambiguous work as pruneable
 X All subtasks marked "low" complexity (unrealistic)
 X Empty risks array for complex feature
 X 2 giant subtasks or 20 tiny subtasks
@@ -522,6 +556,10 @@ X Random order (subtask 5 must be done before subtask 2)
 - [ ] Each subtask has expected_diff_size, concern_type, and one_logical_step=true
 - [ ] Large subtasks have split_rationale, or were split before returning
 - [ ] Mixed-concern subtasks have concern_justification, or were split before returning
+- [ ] Each active subtask has requiredness, pruneable, and prune_rationale
+- [ ] No explicit, acceptance-critical, repo-required, safety-required, or ambiguous subtask is pruneable
+- [ ] deferred_yagni is `[]` unless minimality full/ultra or the user explicitly requested pruning
+- [ ] Any deferred_yagni item is speculative only, user-visible, and has a restore_hint
 - [ ] coverage_map assigns every AC/invariant/cross-cutting requirement to an existing ST-NNN
 
 **Acceptance Criteria**:

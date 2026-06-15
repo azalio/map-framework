@@ -118,6 +118,67 @@ def test_validate_artifact_manifest_schema_accepts_legacy_without_run_health():
     assert is_valid, f"Errors: {errors}"
 
 
+def _minimal_blueprint_with_requiredness() -> dict:
+    return {
+        "subtasks": [
+            {
+                "id": "ST-001",
+                "title": "Fix checkout timeout message",
+                "description": "Make checkout timeout errors retryable.",
+                "dependencies": [],
+                "affected_files": ["src/checkout.py"],
+                "aag_contract": "CheckoutService -> handle_timeout() -> retryable error",
+                "expected_diff_size": "small",
+                "concern_type": "runtime",
+                "one_logical_step": True,
+                "requiredness": "explicit",
+                "pruneable": False,
+                "prune_rationale": "User explicitly requested this behavior.",
+                "validation_criteria": ["VC1 [AC-1]: timeout shows retryable message"],
+            }
+        ],
+        "coverage_map": {"AC-1": "ST-001"},
+        "hard_constraints": [
+            {"id": "AC-1", "description": "Timeouts must show a retryable message"},
+        ],
+        "soft_constraints": [],
+        "deferred_yagni": [
+            {
+                "id": "YG-001",
+                "title": "Add themed retry illustrations",
+                "rationale": "Not explicit or acceptance-critical.",
+                "restore_hint": "Restore as a new optional UI subtask if the user asks.",
+            }
+        ],
+    }
+
+
+def test_blueprint_schema_accepts_requiredness_and_deferred_yagni():
+    artifact = _minimal_blueprint_with_requiredness()
+
+    is_valid, errors = MODULE.validate_artifact(artifact, MODULE.BLUEPRINT_SCHEMA)
+
+    assert is_valid, f"Errors: {errors}"
+
+
+def test_blueprint_schema_rejects_invalid_requiredness():
+    artifact = _minimal_blueprint_with_requiredness()
+    artifact["subtasks"][0]["requiredness"] = "nice_to_have"
+
+    is_valid = MODULE.validate_artifact(artifact, MODULE.BLUEPRINT_SCHEMA)[0]
+
+    assert not is_valid
+
+
+def test_blueprint_schema_rejects_invalid_deferred_yagni_id():
+    artifact = _minimal_blueprint_with_requiredness()
+    artifact["deferred_yagni"][0]["id"] = "ST-999"
+
+    is_valid = MODULE.validate_artifact(artifact, MODULE.BLUEPRINT_SCHEMA)[0]
+
+    assert not is_valid
+
+
 def test_validate_run_health_report_schema():
     artifact_entry = {
         "kind": "state",

@@ -932,6 +932,90 @@ def test_validate_blueprint_contract_accepts_contract_sized_plan(branch_workspac
     assert result["subtask_count"] == 1
 
 
+def _blueprint_with_requiredness() -> dict[str, object]:
+    return {
+        "summary": "Deliver a user-visible fix",
+        **_blueprint_constraint_fields(),
+        "subtasks": [
+            {
+                "id": "ST-001",
+                "title": "Fix checkout timeout message",
+                "aag_contract": "CheckoutService -> handle_timeout() -> user sees retryable error",
+                "dependencies": [],
+                "affected_files": ["src/checkout.py"],
+                "expected_diff_size": "small",
+                "concern_type": "runtime",
+                "one_logical_step": True,
+                "requiredness": "explicit",
+                "pruneable": False,
+                "prune_rationale": "User explicitly requested this behavior.",
+                "validation_criteria": [
+                    "VC1 [AC-1]: timeout shows retryable message",
+                ],
+            }
+        ],
+        "coverage_map": {"AC-1": "ST-001"},
+    }
+
+
+def test_validate_blueprint_contract_rejects_deferred_yagni_when_minimality_off(
+    branch_workspace,
+):
+    blueprint = _blueprint_with_requiredness()
+    blueprint["deferred_yagni"] = [
+        {
+            "id": "YG-001",
+            "title": "Add retry illustration",
+            "rationale": "Not explicit or acceptance-critical.",
+            "restore_hint": "Restore as an optional UI subtask if requested.",
+        }
+    ]
+    (branch_workspace / "blueprint.json").write_text(json.dumps(blueprint))
+
+    result = map_step_runner.validate_blueprint_contract()
+
+    assert result["valid"] is False
+    assert result["deferred_yagni_count"] == 1
+    assert result["requires_pruning_approval"] is True
+    assert any("full or ultra" in error for error in result["errors"])
+
+
+def test_validate_blueprint_contract_allows_deferred_yagni_with_full_minimality(
+    branch_workspace,
+):
+    (branch_workspace.parent / "config.yaml").write_text("minimality: full\n")
+    blueprint = _blueprint_with_requiredness()
+    blueprint["deferred_yagni"] = [
+        {
+            "id": "YG-001",
+            "title": "Add retry illustration",
+            "rationale": "Not explicit or acceptance-critical.",
+            "restore_hint": "Restore as an optional UI subtask if requested.",
+        }
+    ]
+    (branch_workspace / "blueprint.json").write_text(json.dumps(blueprint))
+
+    result = map_step_runner.validate_blueprint_contract()
+
+    assert result["valid"] is True, result["errors"]
+    assert result["deferred_yagni_count"] == 1
+    assert result["requires_pruning_approval"] is True
+    assert any("REVIEW_PLAN" in warning for warning in result["warnings"])
+
+
+def test_validate_blueprint_contract_rejects_pruneable_required_subtask(
+    branch_workspace,
+):
+    blueprint = _blueprint_with_requiredness()
+    blueprint["subtasks"][0]["pruneable"] = True  # type: ignore[index]
+    (branch_workspace / "blueprint.json").write_text(json.dumps(blueprint))
+
+    result = map_step_runner.validate_blueprint_contract()
+
+    assert result["valid"] is False
+    assert any("requiredness=explicit is never pruneable" in error for error in result["errors"])
+
+
 def _blueprint_with_forward_dep_and_missing_tag() -> dict[str, object]:
     """Reproduces issue #168: ST-001 depends on ST-002 but is declared FIRST
     (forward-dependency ordering violation), and SC-1 is owned by ST-002 whose

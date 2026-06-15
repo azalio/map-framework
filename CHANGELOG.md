@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Decomposer pruning is now contract-gated and user-visible (#184).**
+  Blueprints can carry `requiredness`/`pruneable` metadata per active subtask
+  and a `deferred_yagni` parking lot for speculative omissions. The validator
+  rejects non-empty `deferred_yagni` under `minimality: off`/`lite`, requires
+  explicit REVIEW_PLAN approval warnings under `full`/`ultra`, and Actor context
+  now preserves approved omissions so they are not silently implemented or lost.
 - **Research-agent localization quality can now be scored deterministically
   (#200).** Maintainers can parse ResearchEvidence JSON or `path:line[-end]`
   text citations, validate them against a fixture repo, and compute file-level
