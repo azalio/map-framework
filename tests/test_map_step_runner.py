@@ -229,6 +229,82 @@ def test_write_run_health_report_creates_report_and_manifest(branch_workspace):
     stage = manifest["stages"]["run_health"]
     assert stage["status"] == "ready"
     assert stage["metadata"]["terminal_status"] == "blocked"
+    assert report["research"]["artifact_count"] == 0
+
+
+def test_write_run_health_report_counts_direct_research_without_tokens(
+    branch_workspace, tmp_path
+):
+    _write_research_source(tmp_path)
+    map_step_runner.save_research(
+        "test-branch", "ST-001", json.dumps(_valid_research_payload())
+    )
+
+    result = map_step_runner.write_run_health_report("map-efficient", "pending")
+
+    assert result["status"] == "success"
+    report = json.loads((branch_workspace / "run_health_report.json").read_text())
+    research = report["research"]
+    assert research["artifact_count"] == 1
+    assert research["valid_artifact_count"] == 1
+    assert research["location_count"] == 1
+    assert research["research_tokens"] == 0
+    assert research["actor_monitor_tokens"] == 0
+    assert research["warnings"] == []
+
+
+def test_write_run_health_report_includes_research_roi_and_warnings(
+    branch_workspace, tmp_path
+):
+    _write_research_source(tmp_path)
+    payload = _valid_research_payload()
+    payload["confidence"] = 0.4
+    map_step_runner.save_research("test-branch", "ST-001", json.dumps(payload))
+    token_rows = [
+        {
+            "ts": "2026-01-01T00:00:00Z",
+            "subtask_id": "ST-001",
+            "phase": "RESEARCH",
+            "agent": "research-agent",
+            "model": "claude-opus-4-7",
+            "msg_id": "research",
+            "input": 100,
+            "output": 0,
+            "cache_creation": 0,
+            "cache_read": 0,
+        },
+        {
+            "ts": "2026-01-01T00:00:00Z",
+            "subtask_id": "ST-001",
+            "phase": "ACTOR",
+            "agent": "actor",
+            "model": "claude-opus-4-7",
+            "msg_id": "actor",
+            "input": 300,
+            "output": 100,
+            "cache_creation": 0,
+            "cache_read": 0,
+        },
+    ]
+    (branch_workspace / "token_log.jsonl").write_text(
+        "\n".join(json.dumps(row) for row in token_rows) + "\n", encoding="utf-8"
+    )
+
+    result = map_step_runner.write_run_health_report("map-efficient", "pending")
+
+    assert result["status"] == "success"
+    report = json.loads((branch_workspace / "run_health_report.json").read_text())
+    research = report["research"]
+    assert research["artifact_count"] == 1
+    assert research["low_confidence_artifact_count"] == 1
+    assert research["research_tokens"] == 100
+    assert research["actor_monitor_tokens"] == 400
+    assert research["research_token_share"] == 0.2
+    assert any("low confidence 0.40" in warning for warning in research["warnings"])
+    subtask = research["by_subtask"]["ST-001"]
+    assert subtask["valid_artifact_count"] == 1
+    assert subtask["location_count"] == 1
+    assert subtask["research_tokens"] == 100
 
 
 def test_build_retry_quarantine_writes_valid_artifact(branch_workspace):
@@ -7517,6 +7593,34 @@ class TestTokenAccounting:
             json.dumps({"current_subtask_id": subtask, "current_step_phase": phase})
         )
 
+    def _write_token_rows(self, branch_dir: Path, rows: list[dict[str, object]]) -> None:
+        (branch_dir / "token_log.jsonl").write_text(
+            "\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8"
+        )
+
+    def _row(
+        self,
+        *,
+        msg_id: str,
+        subtask_id: str,
+        phase: str,
+        agent: str,
+        input_tokens: int,
+        output_tokens: int,
+    ) -> dict[str, object]:
+        return {
+            "ts": "2026-01-01T00:00:00Z",
+            "subtask_id": subtask_id,
+            "phase": phase,
+            "agent": agent,
+            "model": "claude-opus-4-7",
+            "msg_id": msg_id,
+            "input": input_tokens,
+            "output": output_tokens,
+            "cache_creation": 0,
+            "cache_read": 0,
+        }
+
     def test_records_and_attributes_usage(self, branch_workspace):
         repo = branch_workspace.parents[1]
         transcript = repo / "tr.jsonl"
@@ -7665,6 +7769,46 @@ class TestTokenAccounting:
         assert agg["output"] == 250, "msg_dup kept at output 200 (not the partial 10)"
         assert agg["cache_read"] == 16000
 
+    def test_rebuild_adds_research_roi_summary(self, branch_workspace):
+        self._write_token_rows(
+            branch_workspace,
+            [
+                self._row(
+                    msg_id="research",
+                    subtask_id="ST-001",
+                    phase="RESEARCH",
+                    agent="research-agent",
+                    input_tokens=100,
+                    output_tokens=50,
+                ),
+                self._row(
+                    msg_id="actor",
+                    subtask_id="ST-001",
+                    phase="ACTOR",
+                    agent="actor",
+                    input_tokens=300,
+                    output_tokens=100,
+                ),
+                self._row(
+                    msg_id="monitor",
+                    subtask_id="ST-001",
+                    phase="MONITOR",
+                    agent="monitor",
+                    input_tokens=200,
+                    output_tokens=0,
+                ),
+            ],
+        )
+
+        payload = map_step_runner._rebuild_token_accounting("test-branch")
+
+        roi = payload["research_roi"]
+        assert roi["research_tokens"] == 150
+        assert roi["actor_monitor_tokens"] == 600
+        assert roi["research_token_share"] == 0.2
+        assert roi["by_subtask"]["ST-001"]["research_event_count"] == 1
+        assert roi["by_subtask"]["ST-001"]["actor_monitor_event_count"] == 2
+
     def test_explicit_branch_is_sanitized_against_path_traversal(
         self, branch_workspace
     ):
@@ -7760,6 +7904,37 @@ class TestTokenAccounting:
         assert "ST-003" in report
         assert "TOTAL" in report
         assert "cache hit ratio" in report
+
+    def test_token_report_shows_agent_costs_and_research_roi(self, branch_workspace):
+        self._write_token_rows(
+            branch_workspace,
+            [
+                self._row(
+                    msg_id="research",
+                    subtask_id="ST-001",
+                    phase="RESEARCH",
+                    agent="researcher",
+                    input_tokens=100,
+                    output_tokens=0,
+                ),
+                self._row(
+                    msg_id="actor",
+                    subtask_id="ST-001",
+                    phase="ACTOR",
+                    agent="actor",
+                    input_tokens=300,
+                    output_tokens=100,
+                ),
+            ],
+        )
+
+        report = map_step_runner.token_report("test-branch")
+
+        assert "By agent" in report
+        assert "researcher" in report
+        assert "actor" in report
+        assert "research ROI" in report
+        assert "20.0%" in report
 
     def test_cli_record_and_report_exit_zero(self, branch_workspace):
         repo = branch_workspace.parents[1]

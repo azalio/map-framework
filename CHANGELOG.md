@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Research ROI is now visible in token and run-health diagnostics (#202).**
+  `token_accounting.json` records advisory `research_roi`, `/map-tokenreport`
+  prints per-agent cost plus research-vs-Actor/Monitor token share, and
+  `run_health_report.json` summarizes persisted research artifacts, parsed
+  status/confidence/location counts, low-confidence warnings, and token share.
+
 ## [3.15.2] - 2026-06-15
 
 ### Changed

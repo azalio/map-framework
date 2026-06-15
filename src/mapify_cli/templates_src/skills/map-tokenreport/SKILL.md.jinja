@@ -29,6 +29,9 @@ appends attributed rows to `.map/<branch>/token_log.jsonl`, rolled up into
   caching is paying off.
 - Breakdowns by subtask, by agent (actor / monitor / research-agent /
   orchestrator / ...), and by phase.
+- **research_roi** — research-agent / Codex researcher tokens and cost compared
+  with downstream Actor/Monitor tokens, so users can see whether delegated
+  exploration paid for itself.
 
 ## Steps
 
@@ -48,24 +51,25 @@ python3 .map/scripts/map_step_runner.py token_report "$BRANCH"
 ```
 
 `token_report` re-reads `token_log.jsonl`, rebuilds `token_accounting.json`,
-and prints a per-subtask table plus a TOTAL line with the cache-hit ratio and
-estimated cost. It is idempotent and read-only against your code.
+and prints a per-subtask table, a per-agent table, research ROI, and a TOTAL
+line with the cache-hit ratio and estimated cost. It is idempotent and read-only
+against your code.
 
 ### Step 3: Optional — inspect the raw rollup
 
-For the per-agent / per-phase split (the table only shows per-subtask), read
-the JSON directly:
+For the per-phase split or per-subtask research ROI details, read the JSON
+directly:
 
 ```bash
-jq '{aggregate, by_agent, by_phase}' ".map/${BRANCH}/token_accounting.json"
+jq '{aggregate, by_agent, by_phase, research_roi}' ".map/${BRANCH}/token_accounting.json"
 ```
 
 ### Step 4: Summarize
 
-Report the totals (input / output / cache), the cache-hit ratio, and the
-estimated cost. Call out the most expensive subtask or agent, and a low
-cache-hit ratio if present (it usually means prompt-cache churn worth
-investigating). Then STOP — do not change code from this skill.
+Report the totals (input / output / cache), the cache-hit ratio, the research
+token share, and the estimated cost. Call out the most expensive subtask or
+agent, a low cache-hit ratio, or research cost that looks high relative to
+Actor/Monitor. Then STOP — do not change code from this skill.
 
 ## Examples
 

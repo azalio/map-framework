@@ -963,6 +963,42 @@ _RUN_HEALTH_ARTIFACT_KEYS = [
 ]
 
 
+_RUN_HEALTH_RESEARCH_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "schema_version": {"type": "string"},
+        "artifact_count": {"type": "integer", "minimum": 0},
+        "valid_artifact_count": {"type": "integer", "minimum": 0},
+        "invalid_artifact_count": {"type": "integer", "minimum": 0},
+        "low_confidence_artifact_count": {"type": "integer", "minimum": 0},
+        "location_count": {"type": "integer", "minimum": 0},
+        "research_tokens": {"type": "integer", "minimum": 0},
+        "research_est_cost_usd": {"type": "number", "minimum": 0},
+        "actor_monitor_tokens": {"type": "integer", "minimum": 0},
+        "actor_monitor_est_cost_usd": {"type": "number", "minimum": 0},
+        "research_token_share": {"type": "number", "minimum": 0},
+        "by_subtask": {"type": "object"},
+        "warnings": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": [
+        "schema_version",
+        "artifact_count",
+        "valid_artifact_count",
+        "invalid_artifact_count",
+        "low_confidence_artifact_count",
+        "location_count",
+        "research_tokens",
+        "research_est_cost_usd",
+        "actor_monitor_tokens",
+        "actor_monitor_est_cost_usd",
+        "research_token_share",
+        "by_subtask",
+        "warnings",
+    ],
+    "additionalProperties": False,
+}
+
+
 RUN_HEALTH_REPORT_SCHEMA = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://mapframework.dev/schemas/run-health-report.json",
@@ -992,6 +1028,7 @@ RUN_HEALTH_REPORT_SCHEMA = {
             "required": _RUN_HEALTH_ARTIFACT_KEYS,
             "additionalProperties": _RUN_HEALTH_ARTIFACT_ENTRY_SCHEMA,
         },
+        "research": _RUN_HEALTH_RESEARCH_SCHEMA,
         "resiliency_signals": {
             "type": "object",
             "properties": {

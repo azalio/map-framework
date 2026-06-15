@@ -49,7 +49,7 @@ In targeted TDD, `/map-tdd ST-001` now stops after the red phase once it has wri
 
 Philosophically, MAP still ends with `LEARN`. Runtime keeps that step soft and token-aware by auto-writing `.map/<branch>/learning-handoff.md` and `.json` after `/map-efficient`, `/map-debug`, `/map-check`, and `/map-review`, so `/map-learn` can auto-load the workflow context with no manual reconstruction. The same handoff write also updates `learning-metrics.json` with repeated learned-rule violation signals when current findings overlap existing rules, so teams can tell whether saved lessons are actually reducing repeat mistakes.
 
-For workflow diagnosis, `/map-efficient`, `/map-debug`, `/map-check`, and `/map-review` now call `python3 .map/scripts/map_step_runner.py write_run_health_report <workflow> [terminal_status]` during closeout. This writes `.map/<branch>/run_health_report.json` and records the `run_health` stage in `artifact_manifest.json`. The report captures terminal status, current step/subtask, completed and pending step counts, artifact presence, retry counters, latest hook-injection status, skipped hook reasons for malformed input or insignificant Bash commands when state can be updated safely, Predictor skip/call flags when present, and final-verifier evidence when a verification summary exists. To assert the report in CI or during operator handoff, run `python3 .map/scripts/map_step_runner.py validate_run_health_report [path]`; it exits non-zero when a complete report still has pending steps, lacks verification evidence, exceeds retry thresholds, has schema drift, or records hook degradation without a reason.
+For workflow diagnosis, `/map-efficient`, `/map-debug`, `/map-check`, and `/map-review` now call `python3 .map/scripts/map_step_runner.py write_run_health_report <workflow> [terminal_status]` during closeout. This writes `.map/<branch>/run_health_report.json` and records the `run_health` stage in `artifact_manifest.json`. The report captures terminal status, current step/subtask, completed and pending step counts, artifact presence, retry counters, latest hook-injection status, skipped hook reasons for malformed input or insignificant Bash commands when state can be updated safely, Predictor skip/call flags when present, final-verifier evidence when a verification summary exists, and advisory research signals: artifact counts, parsed status/confidence/location counts, low-confidence warnings, and research-token share. To assert the report in CI or during operator handoff, run `python3 .map/scripts/map_step_runner.py validate_run_health_report [path]`; it exits non-zero when a complete report still has pending steps, lacks verification evidence, exceeds retry thresholds, has schema drift, or records hook degradation without a reason.
 
 When Monitor rejects the same implementation path repeatedly, MAP now separates ordinary feedback retries from clean-room retries. The first rejection can feed Monitor feedback back to Actor normally. The second or later rejection for the same subtask marks `retry_isolation=clean_retry_required`, writes `.map/<branch>/retry_quarantine.json`, and requires the next Actor attempt to rebuild context from durable artifacts plus the compact quarantine summary instead of rehydrating the raw failed context. Validate the artifact with `python3 .map/scripts/map_step_runner.py validate_retry_quarantine`; `/map-resume` will surface the quarantine path if a session is interrupted mid-clean-retry.
 
@@ -548,21 +548,24 @@ id so re-fired hooks never double-count.
 
 The rollup lands in `.map/<branch>/token_accounting.json` — totals plus
 `by_subtask` / `by_agent` / `by_phase`, an `est_cost_usd` estimate (priced
-per model in `MODEL_TOKEN_PRICES`), and `cache_hit_ratio`
-(`cache_read / (input + cache_read)`) so you can see how well prompt caching
-is paying off. Print a table any time:
+per model in `MODEL_TOKEN_PRICES`), `cache_hit_ratio`
+(`cache_read / (input + cache_read)`), and advisory `research_roi` showing
+research-agent/researcher token cost next to downstream Actor/Monitor cost.
+Print a table any time:
 
 ```bash
 python3 .map/scripts/map_step_runner.py token_report "$BRANCH"
 # subtask      input   output  cache_rd  cache_cr   $cost
 # ST-001     1,203,448  91,204  978,113   42,008     12.41
+# ...        research ROI: research 88,112 tokens / actor+monitor 412,300 tokens (13.7% of run tokens)
 # ...        cache hit ratio: 68.2%   est cost: $41.07
 ```
 
 Input, output, cache-read, and cache-creation tokens are tracked
 separately because they bill at very different rates; the report makes a
-runaway uncached subtask or a low cache-hit ratio obvious at a glance. The
-meter is advisory — its hooks always exit 0 and never block a turn.
+runaway uncached subtask, low cache-hit ratio, or research pass that is too
+expensive relative to Actor/Monitor obvious at a glance. The meter is advisory
+— its hooks always exit 0 and never block a turn.
 
 ### What is Context Compaction?
 
