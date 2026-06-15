@@ -55,6 +55,16 @@ def test_passes_when_cited_line_contains_identifier(validator, tmp_path: Path):
     assert result["details"][0]["status"] == "ok"
 
 
+def test_accepts_sentence_period_after_citation(validator, tmp_path: Path):
+    repo = _seed_repo(tmp_path, {"src/pkg/mod.py": "first\nIDENT_TOKEN = 1\n"})
+    spec = _write_spec(repo, "See `IDENT_TOKEN` at `src/pkg/mod.py:2`.")
+
+    result = validator.validate_spec(spec, repo)
+
+    assert result["passed"] is True
+    assert result["total_citations"] == 1
+
+
 def test_flags_stale_citation_when_identifier_moved(validator, tmp_path: Path):
     repo = _seed_repo(
         tmp_path,

@@ -1576,6 +1576,39 @@ must not.
 | Greenfield or new-file work | Save direct findings that name the intended new surface and why existing locations are absent. |
 | Docs-only/no-op with no Actor/Monitor needed | Use `mark_subtask_complete --reason`; otherwise save direct docs research before Actor. |
 
+### Research Localization Evals
+
+Use `mapify_cli.research_eval` when a research-agent/researcher change needs a
+deterministic quality check without provider credentials. The scorer accepts the
+same ResearchEvidence JSON saved by `save_research`, or fallback text containing
+`path:line[-end]` citations, normalizes safe relative paths, validates line ranges
+against a fixture repo, deduplicates repeated citations, and reports file-level
+and line-overlap precision/recall/F1.
+
+To add a new eval case, create a tiny fixture repo in a pytest `tmp_path` (or a
+reusable fixture directory), write the files whose line ranges should be found,
+store the research output as a string, and compare it with known targets:
+
+```python
+from mapify_cli.research_eval import ResearchLocation, score_research_output
+
+score = score_research_output(
+    research_output,
+    [ResearchLocation("src/service.py", 20, 28)],
+    repo_root=fixture_repo,
+)
+
+assert score.file_level.f1 == 1.0
+assert score.line_level.recall >= 0.8
+assert score.malformed_count == 0
+```
+
+Prefer expected targets that name the smallest useful file/range, not every file
+an agent could mention. This keeps the eval focused on localization quality:
+exact hits should score 1.0, partial overlap should get partial credit, missing
+targets lower recall, broad ranges lower line precision, duplicates are counted
+but deduplicated for scoring, and malformed paths are reported separately.
+
 ### Cost Comparison Example
 
 **Scenario:** Implement a feature with 4 subtasks
