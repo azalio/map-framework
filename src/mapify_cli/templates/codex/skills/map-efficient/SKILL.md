@@ -159,11 +159,16 @@ fi
 
 ### RESEARCH
 
-Persist a RESEARCH artifact for every non-no-op subtask before Actor. Use
-`researcher` when independent exploration is useful: cold-start repository
-exploration, 3+ existing files, high risk, unclear locations, or failed direct
-search. Otherwise research in the current session and save concise strict-JSON
-findings. If the subtask truly needs no Actor/Monitor, use
+Persist a RESEARCH artifact for every non-no-op subtask before Actor. Plan-scope
+discovery from `$map-plan` lives at `.map/<branch>/research/plan__discovery.md`
+and is automatically included in `build_context_block`; legacy
+`.map/<branch>/findings_<branch>.md` is a read-only fallback. Subtask research
+must still be saved separately as `.map/<branch>/research/<subtask_id>__actor.md`
+so Actor/Monitor can distinguish planner-wide context from current-subtask
+evidence. Use `researcher` when independent exploration is useful: cold-start
+repository exploration, 3+ existing files, high risk, unclear locations, or
+failed direct search. Otherwise research in the current session and save concise
+strict-JSON findings. If the subtask truly needs no Actor/Monitor, use
 `mark_subtask_complete --reason` instead of closing RESEARCH. Validate the
 research contract, then close RESEARCH before Actor work:
 

@@ -717,6 +717,9 @@ def test_record_plan_artifacts_updates_manifest(branch_workspace):
         '{"current_step_phase": "INITIALIZED"}\n',
         encoding="utf-8",
     )
+    map_step_runner.save_research(
+        branch, "plan", "## Already Implemented\n- none", kind="discovery"
+    )
 
     result = map_step_runner.record_plan_artifacts()
 
@@ -730,6 +733,9 @@ def test_record_plan_artifacts_updates_manifest(branch_workspace):
     assert f".map/{branch}/task_plan_{branch}.md" in recorded_paths
     assert f".map/{branch}/blueprint.json" in recorded_paths
     assert f".map/{branch}/step_state.json" in recorded_paths
+    assert f".map/{branch}/research/plan__discovery.md" in recorded_paths
+    assert manifest["stages"]["plan"]["metadata"]["has_plan_discovery"] is True
+    assert manifest["stages"]["plan"]["metadata"]["has_legacy_findings"] is False
 
 
 def test_record_plan_artifacts_is_partial_when_only_step_state_exists(branch_workspace):
@@ -774,6 +780,35 @@ def test_check_plan_resume_no_plan_when_branch_empty(branch_workspace):
         "task_plan": False,
         "step_state": False,
     }
+    assert result["plan_discovery"]["source"] == "none"
+
+
+def test_check_plan_resume_reports_canonical_plan_discovery(branch_workspace):
+    branch = branch_workspace.name
+    map_step_runner.save_research(
+        branch, "plan", "## Already Implemented\n- none", kind="discovery"
+    )
+
+    result = map_step_runner.check_plan_resume("implement token budget reporting")
+
+    assert result["artifacts"]["findings"] is True
+    assert result["plan_discovery"]["source"] == "canonical"
+    assert result["plan_discovery"]["has_canonical"] is True
+    assert result["plan_discovery"]["has_legacy"] is False
+
+
+def test_check_plan_resume_reports_legacy_findings_fallback(branch_workspace):
+    branch = branch_workspace.name
+    (branch_workspace / f"findings_{branch}.md").write_text(
+        "## Already Implemented\n- none\n", encoding="utf-8"
+    )
+
+    result = map_step_runner.check_plan_resume("implement token budget reporting")
+
+    assert result["artifacts"]["findings"] is True
+    assert result["plan_discovery"]["source"] == "legacy"
+    assert result["plan_discovery"]["has_canonical"] is False
+    assert result["plan_discovery"]["has_legacy"] is True
 
 
 def test_check_plan_resume_resume_on_matching_goal(branch_workspace):
@@ -5083,6 +5118,37 @@ class TestBuildContextBlockInlinesResearch:
         assert "# Research Findings (ST-001, kind=actor):" in result
         assert "Pivotal finding: foo wraps bar." in result
 
+    def test_plan_discovery_inlined_before_subtask_research(self, branch_workspace):
+        bp = {"subtasks": [{
+            "id": "ST-001", "title": "x", "aag_contract": "X -> y -> done",
+        }]}
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        map_step_runner.save_research(
+            "test-branch", "plan", "Planner found src/service.py", kind="discovery"
+        )
+        map_step_runner.save_research(
+            "test-branch", "ST-001", "Actor should inspect src/service.py"
+        )
+
+        result = map_step_runner.build_context_block("test-branch", "ST-001")
+
+        assert "# Plan Discovery (plan__discovery):" in result
+        assert "Planner found src/service.py" in result
+        assert result.index("# Plan Discovery") < result.index("# Research Findings")
+
+    def test_legacy_findings_inlined_when_plan_discovery_absent(self, branch_workspace):
+        branch = branch_workspace.name
+        bp = {"subtasks": [{"id": "ST-001", "title": "x"}]}
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        (branch_workspace / f"findings_{branch}.md").write_text(
+            "Legacy discovery still matters", encoding="utf-8"
+        )
+
+        result = map_step_runner.build_context_block(branch, "ST-001")
+
+        assert "# Plan Discovery (legacy-findings):" in result
+        assert "Legacy discovery still matters" in result
+
     def test_high_confidence_research_adds_consumption_contract(
         self, branch_workspace, tmp_path
     ):
@@ -5105,6 +5171,7 @@ class TestBuildContextBlockInlinesResearch:
         (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
         result = map_step_runner.build_context_block("test-branch", "ST-001")
         assert "# Research Findings" not in result
+        assert "# Plan Discovery" not in result
 
 
 class TestValidateMutationBoundary:

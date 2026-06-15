@@ -11,7 +11,7 @@
 #
 # Created files:
 #   .map/<branch>/task_plan_<branch>.md
-#   .map/<branch>/findings_<branch>.md
+#   .map/<branch>/research/plan__discovery.md
 #   .map/<branch>/progress_<branch>.md
 
 set -euo pipefail
@@ -36,10 +36,11 @@ fi
 # Create .map/<branch> directory (nested convention)
 MAP_DIR=".map/${SANITIZED_BRANCH}"
 mkdir -p "$MAP_DIR"
+mkdir -p "$MAP_DIR/research"
 
 # Define file paths (nested under branch directory)
 TASK_PLAN="$MAP_DIR/task_plan_${SANITIZED_BRANCH}.md"
-FINDINGS="$MAP_DIR/findings_${SANITIZED_BRANCH}.md"
+DISCOVERY="$MAP_DIR/research/plan__discovery.md"
 PROGRESS="$MAP_DIR/progress_${SANITIZED_BRANCH}.md"
 
 echo "=== MAP Planning Session Initialization ==="
@@ -63,7 +64,7 @@ copy_if_missing() {
 }
 
 copy_if_missing "$TEMPLATE_DIR/task_plan.md" "$TASK_PLAN" "task_plan"
-copy_if_missing "$TEMPLATE_DIR/findings.md" "$FINDINGS" "findings"
+copy_if_missing "$TEMPLATE_DIR/findings.md" "$DISCOVERY" "plan_discovery"
 copy_if_missing "$TEMPLATE_DIR/progress.md" "$PROGRESS" "progress"
 
 echo ""
