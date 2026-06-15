@@ -338,7 +338,7 @@ MAP Framework implements cognitive architecture inspired by prefrontal cortex fu
 │  RESEARCH-AGENT (on-demand in any workflow):                    │
 │  ┌──────────────────────────────────────────────────────────┐   │
 │  │ Heavy codebase reading with compressed output            │   │
-│  │ Called conditionally when context gathering needed       │   │
+│  │ Called conditionally when broad discovery is needed      │   │
 │  │ Runs in isolation to avoid polluting main context        │   │
 │  └──────────────────────────────────────────────────────────┘   │
 │                                                                  │
@@ -603,10 +603,10 @@ MAP Framework provides multiple workflow variants with different agent orchestra
 
 #### 1. `/map-efficient` - Optimized Pipeline (4-6 Agents) ⭐ RECOMMENDED
 
-**Agent Sequence:** TaskDecomposer → [conditional ResearchAgent] → (Actor → Monitor → [conditional Predictor]) per subtask → FinalVerifier
+**Agent Sequence:** TaskDecomposer → RESEARCH artifact ([conditional ResearchAgent]) → (Actor → Monitor → [conditional Predictor]) per subtask → FinalVerifier
 
 **With Self-MoA** (--self-moa flag OR high risk/complexity):
-TaskDecomposer → [conditional ResearchAgent] → (3×Actor parallel → 3×Monitor parallel → Synthesizer → final Monitor → [conditional Predictor]) per subtask → FinalVerifier
+TaskDecomposer → RESEARCH artifact ([conditional ResearchAgent]) → (3×Actor parallel → 3×Monitor parallel → Synthesizer → final Monitor → [conditional Predictor]) per subtask → FinalVerifier
 
 **Optimizations:**
 
@@ -925,7 +925,7 @@ See [USAGE.md - Workflow Variants](./USAGE.md#workflow-variants) for detailed de
 ║ Completed:     1.0_DECOMPOSE, 1.5_INIT_PLAN, 1.6_INIT_STATE
 ║
 ║ ⚠️  MANDATORY NEXT ACTION:
-║    Call research-agent BEFORE Actor
+║    Persist RESEARCH artifact BEFORE Actor
 ╚═══════════════════════════════════════════════════════════╝
 ```
 
@@ -956,7 +956,7 @@ See [USAGE.md - Workflow Variants](./USAGE.md#workflow-variants) for detailed de
 3. `1.55 REVIEW_PLAN` - User approval checkpoint
 4. `1.56 CHOOSE_MODE` - Auto-skipped (always batch mode)
 5. `1.6 INIT_STATE` - Create step_state.json
-8. `2.2 RESEARCH` - research-agent (conditional)
+8. `2.2 RESEARCH` - persisted research artifact (mandatory; research-agent conditional)
 9. `2.25 TEST_WRITER` - TDD: write tests from spec (TDD mode only, auto-skipped otherwise)
 10. `2.26 TEST_FAIL_GATE` - TDD: verify tests fail without impl (TDD mode only)
 11. `2.3 ACTOR` - Actor agent implementation (code-only in TDD mode)

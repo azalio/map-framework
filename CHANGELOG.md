@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`/map-efficient` now distinguishes mandatory RESEARCH artifacts from
+  conditional research-agent delegation (#201).** Hook hints, Claude/Codex
+  workflow skills, orchestrator validation errors, and docs now tell operators
+  to persist a research artifact before Actor while using `research-agent` /
+  `researcher` only for broad, high-risk, or unclear discovery.
+
 ## [3.15.0] - 2026-06-15
 
 ### Added

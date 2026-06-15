@@ -122,7 +122,7 @@ PHASE=$(echo "$NEXT_STEP" | jq -r '.phase')
 
 Route to the appropriate executor based on `$PHASE`. All phases from `/map-efficient` work identically:
 
-- **RESEARCH (2.2)** — Required context gathering via research-agent.
+- **RESEARCH (2.2)** — Required persisted research artifact; research-agent is conditional for broad/high-risk discovery.
 - **ACTOR (2.3)** — Implement the subtask
 - **MONITOR (2.4)** — Required validation before the subtask can complete.
 

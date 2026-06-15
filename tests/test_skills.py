@@ -2190,6 +2190,48 @@ class TestMapEfficientSaveResearchWiring:
             "validate_step 2.2 so malformed research cannot reach Actor."
         )
 
+    def test_research_policy_distinguishes_artifact_from_subagent(
+        self, skill_path: Path
+    ) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        assert "Persist a RESEARCH artifact" in content
+        assert "`research-agent` is conditional" in content
+        assert "Call `research-agent` for the current subtask" not in content
+
+    def test_codex_research_policy_matches_claude_contract(self) -> None:
+        project_root = Path(__file__).parent.parent
+        for relative_path in [
+            Path(".agents/skills/map-efficient/SKILL.md"),
+            Path("src/mapify_cli/templates/codex/skills/map-efficient/SKILL.md"),
+        ]:
+            content = (project_root / relative_path).read_text(encoding="utf-8")
+            assert "Persist a RESEARCH artifact" in content
+            assert "Use" in content
+            assert "`researcher`" in content
+            assert "when independent exploration is useful" in content
+            assert "If the subtask truly needs no Actor/Monitor" in content
+
+    def test_hook_hint_mentions_required_artifact_not_required_subagent(self) -> None:
+        project_root = Path(__file__).parent.parent
+        for relative_path in [
+            Path(".claude/hooks/workflow-context-injector.py"),
+            Path("src/mapify_cli/templates/hooks/workflow-context-injector.py"),
+        ]:
+            content = (project_root / relative_path).read_text(encoding="utf-8")
+            assert "Persist RESEARCH artifact" in content
+            assert "Run research-agent (conditional" not in content
+
+    def test_orchestrator_error_offers_delegated_and_direct_research_paths(self) -> None:
+        project_root = Path(__file__).parent.parent
+        for relative_path in [
+            Path(".map/scripts/map_orchestrator.py"),
+            Path("src/mapify_cli/templates/map/scripts/map_orchestrator.py"),
+        ]:
+            content = (project_root / relative_path).read_text(encoding="utf-8")
+            assert "research-agent conditional" in content
+            assert "Use research-agent for broad/high-risk/unclear discovery" in content
+            assert "save direct current-session findings" in content
+
 
 class TestMapEfficientBuildContextBlockCli:
     """Regression: map-efficient must show the build_context_block CLI form.

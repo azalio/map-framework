@@ -24,7 +24,7 @@ REPRIME_LIMIT = 1200
 STEP_REQUIRED_ACTIONS = {
     "1.55": "Approve plan before execution state is initialized.",
     "1.56": "Choose execution mode before implementation.",
-    "2.2": "Run research-agent before Actor if context gathering is required.",
+    "2.2": "Persist a RESEARCH artifact before Actor; delegate only when broad discovery is required.",
     "2.3": "Implement only the current subtask, then run Monitor.",
     "2.4": "Run Monitor and treat valid=false as a hard stop.",
 }

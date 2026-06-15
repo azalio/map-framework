@@ -53,14 +53,13 @@ Branch name is sanitized (e.g., `feature/foo` → `feature-foo`).
 
 ## Step IDs (map-efficient)
 
-Current step set (linear order; some are conditional):
+Current step set (linear order; some phases use conditional subagents):
 
 1. `1.0` DECOMPOSE
 2. `1.5` INIT_PLAN
 3. `1.55` REVIEW_PLAN
 4. `1.56` CHOOSE_MODE
 5. `1.6` INIT_STATE
-7. `2.2` RESEARCH (conditional)
+7. `2.2` RESEARCH (artifact required; research-agent conditional)
 9. `2.3` ACTOR
 10. `2.4` MONITOR
-
