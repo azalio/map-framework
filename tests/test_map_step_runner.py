@@ -5083,6 +5083,23 @@ class TestBuildContextBlockInlinesResearch:
         assert "# Research Findings (ST-001, kind=actor):" in result
         assert "Pivotal finding: foo wraps bar." in result
 
+    def test_high_confidence_research_adds_consumption_contract(
+        self, branch_workspace, tmp_path
+    ):
+        _write_research_source(tmp_path)
+        bp = {"subtasks": [{"id": "ST-001", "title": "x"}]}
+        (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
+        map_step_runner.save_research(
+            "test-branch", "ST-001", json.dumps(_valid_research_payload())
+        )
+
+        result = map_step_runner.build_context_block("test-branch", "ST-001")
+
+        assert "# Research Consumption Contract:" in result
+        assert "confidence=0.90" in result
+        assert "First read 1-3 cited ranges" in result
+        assert "Repository-wide rg/grep/find/git grep" in result
+
     def test_no_research_section_when_artifact_absent(self, branch_workspace):
         bp = {"subtasks": [{"id": "ST-001", "title": "x"}]}
         (branch_workspace / "blueprint.json").write_text(json.dumps(bp))
@@ -5873,6 +5890,62 @@ class TestSaveLoadResearch:
 
         assert report["valid"] is False
         assert report["status"] == "missing"
+
+    def test_consumption_detector_flags_unreasoned_broad_search(
+        self, branch_workspace, tmp_path
+    ):
+        del branch_workspace
+        _write_research_source(tmp_path)
+        map_step_runner.save_research(
+            "test-branch", "ST-001", json.dumps(_valid_research_payload())
+        )
+
+        report = map_step_runner.detect_research_consumption_drift(
+            "test-branch", "ST-001", "rg handle\nfind . -name '*.py'"
+        )
+
+        assert report["status"] == "success"
+        assert report["advisory"] is True
+        assert report["broad_search_count"] == 2
+        assert len(report["discouraged_broad_searches"]) == 2
+        assert "Read 1-3 cited" in report["recommendation"]
+
+    def test_consumption_detector_allows_reasoned_or_scoped_searches(
+        self, branch_workspace, tmp_path
+    ):
+        del branch_workspace
+        _write_research_source(tmp_path)
+        map_step_runner.save_research(
+            "test-branch", "ST-001", json.dumps(_valid_research_payload())
+        )
+
+        report = map_step_runner.detect_research_consumption_drift(
+            "test-branch",
+            "ST-001",
+            "rg handle src/service.py\nrg missing . # reason: missing symbol after cited read",
+        )
+
+        assert report["advisory"] is False
+        assert report["broad_search_count"] == 1
+        assert len(report["allowed_broad_searches"]) == 1
+        assert report["discouraged_broad_searches"] == []
+
+    def test_consumption_detector_allows_low_confidence_broad_search(
+        self, branch_workspace, tmp_path
+    ):
+        del branch_workspace
+        _write_research_source(tmp_path)
+        payload = _valid_research_payload()
+        payload["confidence"] = 0.4
+        map_step_runner.save_research("test-branch", "ST-001", json.dumps(payload))
+
+        report = map_step_runner.detect_research_consumption_drift(
+            "test-branch", "ST-001", "git grep handle"
+        )
+
+        assert report["status"] == "research_allows_broad_search"
+        assert report["advisory"] is False
+        assert len(report["allowed_broad_searches"]) == 1
 
     def test_cli_save_reads_stdin_load_writes_stdout(self, branch_workspace, tmp_path):
         """End-to-end CLI: save_research consumes stdin, load_research prints stdout."""

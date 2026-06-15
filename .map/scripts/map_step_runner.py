@@ -943,6 +943,20 @@ def _empty_token_bucket() -> dict[str, float]:
 _RESEARCH_AGENT_NAMES = frozenset({"research-agent", "researcher"})
 _ACTOR_MONITOR_AGENT_NAMES = frozenset({"actor", "monitor"})
 _RESEARCH_LOW_CONFIDENCE_THRESHOLD = 0.5
+_RESEARCH_HIGH_CONFIDENCE_THRESHOLD = 0.7
+_RESEARCH_BROAD_SEARCH_REASON_RE = re.compile(
+    r"\b(?:reason|because)\s*[:=]\s*([^;&\n]+)", re.IGNORECASE
+)
+_RESEARCH_BROAD_SEARCH_REASON_TERMS = (
+    "low confidence",
+    "missing symbol",
+    "failed narrow read",
+    "changed hypothesis",
+    "stale research",
+    "no relevant locations",
+    "location missing",
+    "locations missing",
+)
 
 
 def _empty_token_counter_bucket() -> dict[str, float]:
@@ -6994,6 +7008,269 @@ def load_research(
     return "\n".join(parts).rstrip() + "\n"
 
 
+def _research_evidence_summary(content: str) -> dict[str, object]:
+    """Extract confidence/location metadata from strict research JSON."""
+    stripped = content.strip()
+    if not stripped:
+        return {"valid": False, "confidence": None, "location_count": 0}
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError:
+        return {"valid": False, "confidence": None, "location_count": 0}
+    if not isinstance(parsed, dict):
+        return {"valid": False, "confidence": None, "location_count": 0}
+
+    confidence_value = parsed.get("confidence")
+    confidence: Optional[float]
+    if isinstance(confidence_value, bool) or not isinstance(
+        confidence_value, (int, float)
+    ):
+        confidence = None
+    else:
+        confidence = float(confidence_value)
+
+    locations_value = parsed.get("relevant_locations")
+    locations = locations_value if isinstance(locations_value, list) else []
+    return {
+        "valid": confidence is not None and isinstance(locations_value, list),
+        "confidence": confidence,
+        "location_count": len(locations),
+    }
+
+
+def _research_consumption_contract_block(research_text: str) -> str:
+    """Return Actor-facing read/search discipline derived from research metadata."""
+    summary = _research_evidence_summary(research_text)
+    confidence = summary.get("confidence")
+    location_count_value = summary.get("location_count")
+    location_count = location_count_value if isinstance(location_count_value, int) else 0
+    if not isinstance(confidence, float):
+        return ""
+
+    if confidence >= _RESEARCH_HIGH_CONFIDENCE_THRESHOLD and location_count > 0:
+        return "\n".join(
+            [
+                "# Research Consumption Contract:",
+                f"  confidence={confidence:.2f}; relevant_locations={location_count}",
+                "  First read 1-3 cited ranges that match this subtask before broad search.",
+                "  Repository-wide rg/grep/find/git grep after that needs a stated reason:",
+                "  low confidence, missing symbol, failed narrow read, changed hypothesis, or stale research.",
+            ]
+        )
+
+    return "\n".join(
+        [
+            "# Research Consumption Contract:",
+            f"  confidence={confidence:.2f}; relevant_locations={location_count}",
+            "  Research is low-confidence or location-free; broad search is allowed,",
+            "  but name the evidence gap and prefer cited locations where useful.",
+        ]
+    )
+
+
+def _collect_command_strings(value: object) -> list[str]:
+    commands: list[str] = []
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            if key in {"command", "cmd", "shell_command"} and isinstance(nested, str):
+                commands.append(nested)
+            else:
+                commands.extend(_collect_command_strings(nested))
+    elif isinstance(value, list):
+        for item in value:
+            commands.extend(_collect_command_strings(item))
+    return commands
+
+
+def _iter_command_strings(command_log: str) -> list[str]:
+    stripped = command_log.strip()
+    if not stripped:
+        return []
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError:
+        parsed = None
+    if parsed is not None:
+        commands = _collect_command_strings(parsed)
+        if commands:
+            return commands
+
+    commands: list[str] = []
+    for raw_line in command_log.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            parsed_line = json.loads(line)
+        except json.JSONDecodeError:
+            commands.append(line)
+            continue
+        parsed_commands = _collect_command_strings(parsed_line)
+        if parsed_commands:
+            commands.extend(parsed_commands)
+        else:
+            commands.append(line)
+    return commands
+
+
+def _shell_tokens(command: str) -> list[str]:
+    return [
+        token.strip("'\"")
+        for token in re.findall(r"(?:[^\s'\"]+|'[^']*'|\"[^\"]*\")+", command)
+    ]
+
+
+def _non_option_tokens(tokens: list[str]) -> list[str]:
+    values: list[str] = []
+    skip_next = False
+    options_with_values = {
+        "-e",
+        "--regexp",
+        "-g",
+        "--glob",
+        "-t",
+        "--type",
+        "--include",
+        "--exclude",
+    }
+    for token in tokens:
+        if skip_next:
+            skip_next = False
+            continue
+        if token in options_with_values:
+            skip_next = True
+            continue
+        if token.startswith("-"):
+            continue
+        values.append(token)
+    return values
+
+
+def _is_repo_wide_broad_search(command: str) -> bool:
+    tokens = _shell_tokens(command)
+    lowered = [token.lower() for token in tokens]
+    if not lowered:
+        return False
+
+    for index, token in enumerate(lowered):
+        if token == "rg":
+            after = tokens[index + 1 :]
+            non_options = _non_option_tokens(after)
+            if "--files" in after:
+                return not non_options or any(path in {".", "./", "$PWD"} for path in non_options)
+            path_operands = non_options[1:]
+            return not path_operands or any(path in {".", "./", "$PWD"} for path in path_operands)
+
+        if token == "grep":
+            after = tokens[index + 1 :]
+            if not any(flag.startswith("-") and ("R" in flag or "r" in flag) for flag in after):
+                continue
+            non_options = _non_option_tokens(after)
+            path_operands = non_options[1:]
+            return not path_operands or any(path in {".", "./", "$PWD"} for path in path_operands)
+
+        if token == "find":
+            after = lowered[index + 1 :]
+            return not after or after[0] in {".", "./", "$pwd"}
+
+        if token == "git" and index + 1 < len(lowered) and lowered[index + 1] == "grep":
+            after = lowered[index + 2 :]
+            if "--" not in after:
+                return True
+            pathspecs = after[after.index("--") + 1 :]
+            return not pathspecs or any(path in {".", "./", "$pwd"} for path in pathspecs)
+
+    return False
+
+
+def _command_has_stated_broad_search_reason(command: str) -> bool:
+    match = _RESEARCH_BROAD_SEARCH_REASON_RE.search(command)
+    if not match:
+        return False
+    reason = match.group(1).strip().lower()
+    return any(term in reason for term in _RESEARCH_BROAD_SEARCH_REASON_TERMS)
+
+
+def detect_research_consumption_drift(
+    branch: str,
+    subtask_id: str,
+    command_log: str,
+) -> dict[str, object]:
+    """Advisory detector for broad re-exploration after high-confidence research.
+
+    The detector is intentionally non-blocking. It only flags repo-wide search
+    commands after strict JSON research says confidence is high and locations are
+    available; scoped searches and reasoned broad searches remain allowed.
+    """
+    research_text = load_research(branch, subtask_id)
+    if not research_text.strip():
+        return {
+            "status": "no_research",
+            "advisory": False,
+            "discouraged_broad_searches": [],
+            "allowed_broad_searches": [],
+        }
+
+    summary = _research_evidence_summary(research_text)
+    confidence = summary.get("confidence")
+    location_count_value = summary.get("location_count")
+    location_count = location_count_value if isinstance(location_count_value, int) else 0
+    if not isinstance(confidence, float):
+        return {
+            "status": "invalid_research",
+            "advisory": False,
+            "confidence": None,
+            "location_count": location_count,
+            "discouraged_broad_searches": [],
+            "allowed_broad_searches": [],
+        }
+
+    commands = _iter_command_strings(command_log)
+    if not commands:
+        return {
+            "status": "no_input",
+            "advisory": False,
+            "confidence": confidence,
+            "location_count": location_count,
+            "discouraged_broad_searches": [],
+            "allowed_broad_searches": [],
+        }
+
+    high_confidence = confidence >= _RESEARCH_HIGH_CONFIDENCE_THRESHOLD and location_count > 0
+    discouraged: list[dict[str, str]] = []
+    allowed: list[dict[str, str]] = []
+    for command in commands:
+        if not _is_repo_wide_broad_search(command):
+            continue
+        if not high_confidence:
+            allowed.append({"command": command, "reason": "research not high-confidence with locations"})
+        elif _command_has_stated_broad_search_reason(command):
+            allowed.append({"command": command, "reason": "stated reason"})
+        else:
+            discouraged.append(
+                {
+                    "command": command,
+                    "reason": "high-confidence research cited locations; read cited ranges first or state why broad search is needed",
+                }
+            )
+
+    return {
+        "status": "success" if high_confidence else "research_allows_broad_search",
+        "advisory": bool(discouraged),
+        "confidence": confidence,
+        "location_count": location_count,
+        "commands_seen": len(commands),
+        "broad_search_count": len(allowed) + len(discouraged),
+        "discouraged_broad_searches": discouraged,
+        "allowed_broad_searches": allowed,
+        "recommendation": (
+            "Read 1-3 cited relevant_locations before broad search, or add a reason."
+            if discouraged
+            else "No research-consumption drift detected."
+        ),
+    }
+
+
 def _claude_code_log_dir(project_dir: Path) -> Optional[Path]:
     """Claude Code stores per-session jsonl logs under
     ``~/.claude/projects/<project-path-with-slashes-as-dashes>/``.
@@ -9568,6 +9845,12 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
                     f"# Research Findings ({current_subtask_id}, kind={_research_kind}):"
                 )
                 parts.append(_research_text)
+                _consumption_contract = _research_consumption_contract_block(
+                    _research_text
+                )
+                if _consumption_contract:
+                    parts.append("")
+                    parts.append(_consumption_contract)
                 break
     except (ValueError, OSError):
         pass
@@ -10325,6 +10608,16 @@ if __name__ == "__main__":
         # can decide full-suite vs scoped without `set -e` tripping on an
         # advisory signal.
         report = detect_symbol_blast_radius(sys.argv[2], sys.argv[3])
+        print(json.dumps(report, indent=2))
+
+    elif func_name == "detect_research_consumption_drift" and len(sys.argv) >= 4:
+        # CLI: detect_research_consumption_drift <branch> <subtask_id>
+        # Reads captured Actor shell/search commands from stdin. Advisory only:
+        # exit 0 always so broad-search drift can be surfaced without blocking
+        # normal workflows.
+        report = detect_research_consumption_drift(
+            sys.argv[2], sys.argv[3], sys.stdin.read()
+        )
         print(json.dumps(report, indent=2))
 
     elif func_name == "detect_actor_files_changed_mismatch" and len(sys.argv) >= 4:

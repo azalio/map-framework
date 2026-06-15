@@ -2198,6 +2198,15 @@ class TestMapEfficientSaveResearchWiring:
         assert "`research-agent` is conditional" in content
         assert "Call `research-agent` for the current subtask" not in content
 
+    def test_map_efficient_requires_research_consumption_before_broad_search(
+        self, skill_path: Path
+    ) -> None:
+        content = skill_path.read_text(encoding="utf-8")
+        assert "Actor must consume high-confidence research before re-exploring" in content
+        assert "`confidence >= 0.7`" in content
+        assert "first read 1-3 cited ranges" in content
+        assert "detect_research_consumption_drift" in content
+
     def test_codex_research_policy_matches_claude_contract(self) -> None:
         project_root = Path(__file__).parent.parent
         for relative_path in [
@@ -2210,6 +2219,8 @@ class TestMapEfficientSaveResearchWiring:
             assert "`researcher`" in content
             assert "when independent exploration is useful" in content
             assert "If the subtask truly needs no Actor/Monitor" in content
+            assert "Actor must consume high-confidence research before re-exploring" in content
+            assert "detect_research_consumption_drift" in content
 
     def test_hook_hint_mentions_required_artifact_not_required_subagent(self) -> None:
         project_root = Path(__file__).parent.parent
@@ -2231,6 +2242,17 @@ class TestMapEfficientSaveResearchWiring:
             assert "research-agent conditional" in content
             assert "Use research-agent for broad/high-risk/unclear discovery" in content
             assert "save direct current-session findings" in content
+
+    def test_actor_prompt_requires_narrow_reads_for_high_confidence_research(self) -> None:
+        project_root = Path(__file__).parent.parent
+        for relative_path in [
+            Path(".claude/agents/actor.md"),
+            Path("src/mapify_cli/templates/agents/actor.md"),
+        ]:
+            content = (project_root / relative_path).read_text(encoding="utf-8")
+            assert "Read cited code before broad search" in content
+            assert "For confidence >= 0.7 with `relevant_locations`" in content
+            assert "repository-wide `rg`/`grep`/`find`/`git grep`" in content
 
 
 class TestResearchProviderParity:
