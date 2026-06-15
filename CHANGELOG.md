@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.16.0] - 2026-06-15
+
 ### Added
 - **Research ROI is now visible in token and run-health diagnostics (#202).**
   `token_accounting.json` records advisory `research_roi`, `/map-tokenreport`
