@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **MAP RESEARCH artifacts are now validated before Actor work (#197).**
+  `validate_research` checks strict JSON, confidence/status/search stats,
+  bounded file-line evidence, safe relative paths, and over-broad location lists;
+  `validate_step 2.2` now blocks malformed or missing research before Actor can
+  consume it.
+
 ## [3.14.0] - 2026-06-15
 
 ### Added
