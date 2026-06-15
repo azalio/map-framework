@@ -1560,6 +1560,12 @@ Agents automatically use their configured model when invoked via slash commands:
 
 `2.2 RESEARCH` always requires a persisted `.map/<branch>/research/<subtask_id>__actor.md` artifact before Actor. Delegating to `research-agent`/`researcher` is conditional; direct current-session findings are valid when they satisfy the same strict JSON contract.
 
+Claude `research-agent` and Codex `researcher` both save the same
+ResearchEvidence JSON shape: `status`, `confidence`, `search_stats`, and at
+most 5 `relevant_locations` with safe relative paths and inclusive line ranges.
+Provider tooling may differ internally, but downstream Actor/Monitor semantics
+must not.
+
 | Scenario | Action |
 |----------|--------|
 | Known single file or symbol | Do a narrow direct read/search and `save_research`; no research-agent needed. |
