@@ -175,6 +175,13 @@ python3 .map/scripts/map_step_runner.py validate_research "$BRANCH" "$SUBTASK_ID
 python3 .map/scripts/map_orchestrator.py validate_step "$STEP_ID"
 ```
 
+Actor must consume high-confidence research before re-exploring: if
+`confidence >= 0.7` and `relevant_locations` are present, first read 1-3 cited
+ranges that match the subtask. Any later repository-wide `rg`/`grep`/`find`/
+`git grep` needs a stated reason, such as low confidence, missing symbol, failed
+narrow read, changed hypothesis, or stale research. Low-confidence or
+location-free research may broaden sooner, but the gap must be named.
+
 ### TEST_WRITER And TEST_FAIL_GATE
 
 Only run these in TDD mode. Write failing tests first, run them, and proceed to
@@ -202,6 +209,11 @@ Before Monitor, run the required pre-dispatch gates from
 python3 .map/scripts/map_step_runner.py detect_actor_files_changed_mismatch "$BRANCH" "$SUBTASK_ID" --declared "$FILES_CSV"
 python3 .map/scripts/map_step_runner.py detect_symbol_blast_radius "$BRANCH" "$SUBTASK_ID"
 ```
+
+If you captured Actor shell/search commands, optionally pipe them into
+`python3 .map/scripts/map_step_runner.py detect_research_consumption_drift "$BRANCH" "$SUBTASK_ID"`.
+This detector is advisory only: it reports repeated repository-wide searches
+after high-confidence research without blocking normal work.
 
 ### MONITOR
 

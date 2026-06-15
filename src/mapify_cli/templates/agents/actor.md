@@ -222,15 +222,20 @@ Task(
 ## Using Research Results
 
 1. Check `confidence` score:
-   - >= 0.7: Use findings directly
-   - 0.5-0.7: Consider broader search
-   - < 0.5: Proceed with caution, may need user input
+   - >= 0.7: Trust the cited findings and start with narrow reads
+   - 0.5-0.7: Use cited findings, then broaden only where evidence is missing
+   - < 0.5: Proceed with caution, broad search may be necessary
 
 2. Use `relevant_locations` for implementation:
    - Signatures show you what to call/extend
    - Line ranges help you find the right place
 
-3. Read full code only if signatures aren't enough:
+3. Read cited code before broad search when confidence is high:
+   - For confidence >= 0.7 with `relevant_locations`, read 1-3 cited ranges first
+   - Do not repeat repository-wide `rg`/`grep`/`find`/`git grep` unless you state why
+   - Valid reasons: low confidence, no relevant locations, missing symbol, failed narrow read, changed hypothesis, or stale research
+
+4. Read full code only if signatures aren't enough:
    - Use Read(path, offset=lines[0], limit=lines[1]-lines[0]+1)  # lines = [start, end], inclusive
    - Don't read all locations — only what you actually need
 

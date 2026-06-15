@@ -256,7 +256,7 @@ Later phases read with:
 RESEARCH_FINDINGS=$(python3 .map/scripts/map_step_runner.py load_research "$BRANCH" "$SUBTASK_ID")
 ```
 
-The artifact lands under `.map/<branch>/research/<subtask_id>__<kind>.md` and must satisfy the research evidence JSON contract (`status`, `confidence`, `search_stats`, and at most 5 `relevant_locations` with safe relative paths and line ranges). Use `load_research` to fill the `{research_findings}` placeholder in Actor and Monitor prompts below.
+The artifact lands under `.map/<branch>/research/<subtask_id>__<kind>.md` and must satisfy the research evidence JSON contract (`status`, `confidence`, `search_stats`, and at most 5 `relevant_locations` with safe relative paths and line ranges). Use `load_research` to fill the `{research_findings}` placeholder in Actor and Monitor prompts below. Actor must consume high-confidence research before re-exploring: if `confidence >= 0.7` and `relevant_locations` are present, first read 1-3 cited ranges; later repository-wide `rg`/`grep`/`find`/`git grep` needs a stated reason, such as low confidence, missing symbol, failed narrow read, changed hypothesis, or stale research. Low-confidence/location-free research may broaden sooner, but the gap must be named.
 
 ### Phase: TEST_WRITER (2.25) - TDD Mode Only
 
@@ -315,7 +315,7 @@ If `status_mismatch == true`, surface `recovery_instruction` and re-invoke Actor
 Run `python3 .map/scripts/map_step_runner.py detect_symbol_blast_radius "$BRANCH" "$SUBTASK_ID"`. If
 `recommended_gate == "validate_callers"`, append `external_callers` to the Monitor
 `<documents>` context and require Monitor to validate each external caller's contract.
-Full recipe: [efficient-reference.md](efficient-reference.md).
+Full recipe: [efficient-reference.md](efficient-reference.md). Optional research-consumption advisory: pipe captured Actor shell/search commands into `python3 .map/scripts/map_step_runner.py detect_research_consumption_drift "$BRANCH" "$SUBTASK_ID"`; if it reports `advisory: true`, add the missing broad-search reason or do the cited narrow read before Monitor.
 
 ### Phase: MONITOR (2.4) - Required
 
