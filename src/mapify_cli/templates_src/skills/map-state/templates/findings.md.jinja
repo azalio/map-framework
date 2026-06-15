@@ -1,4 +1,4 @@
-# Findings & Decisions
+# Plan Discovery & Decisions
 <!--
   WHAT: Your knowledge base for the task. Stores everything you discover.
   WHY: Context windows are limited. This file is your "external memory."

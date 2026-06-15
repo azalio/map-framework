@@ -241,13 +241,16 @@ Task(
 
 ## Research Usage
 
-Research is run by the orchestrator BEFORE Actor is invoked. The findings file
-(`.map/<branch>/findings_<branch>.md`) contains distilled context. If it exists,
-read it before implementation — it has import patterns, module structure, and
-build configuration that prevent integration failures.
+Research is run by the orchestrator BEFORE Actor is invoked. The canonical
+research artifacts live under `.map/<branch>/research/`: plan discovery at
+`plan__discovery.md` and current-subtask Actor research at
+`<subtask_id>__actor.md`. If the orchestrator provides either artifact in
+context, read it before implementation — it has import patterns, module
+structure, and build configuration that prevent integration failures.
 
-Do NOT skip reading the findings file even for "new file" tasks — new files still
-need correct imports, types, and build configuration from the existing project.
+Do NOT skip reading the research artifact even for "new file" tasks — new files
+still need correct imports, types, and build configuration from the existing
+project.
 
 ---
 

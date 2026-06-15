@@ -12,7 +12,7 @@ description: "ARCHITECT phase - decompose complex tasks into atomic subtasks wit
 - Need to break work into manageable pieces with clear task boundaries
 
 **Produces:**
-- `.map/<branch>/findings_<branch>.md` — discovery notes
+- `.map/<branch>/research/plan__discovery.md` — plan-scope discovery notes (legacy `.map/<branch>/findings_<branch>.md` is read only as a compatibility fallback)
 - `.map/<branch>/spec_<branch>.md` — spec with decisions, invariants, ACs
 - `.map/<branch>/blueprint.json` — raw decomposer output (required by map-efficient)
 - `.map/<branch>/task_plan_<branch>.md` — human-readable plan with AAG contracts
@@ -34,7 +34,7 @@ shell_command:
     python3 .map/scripts/map_step_runner.py check_plan_resume "$ARGUMENTS"
 ```
 
-This reports the existing artifacts (`findings`/`spec`/`task_plan`/`step_state`) AND a `verdict` comparing the prior plan's goal against the current request — so a branch that already hosts a *completed* plan for a different goal is not mistaken for "this plan is done" (a single branch can host several sequential plans over its lifetime).
+This reports the existing artifacts (`plan__discovery` or legacy `findings`/`spec`/`task_plan`/`step_state`) AND a `verdict` comparing the prior plan's goal against the current request — so a branch that already hosts a *completed* plan for a different goal is not mistaken for "this plan is done" (a single branch can host several sequential plans over its lifetime).
 
 **Branch on `verdict`:**
 - `no_plan` → no prior artifacts; plan fresh from Step 0
@@ -42,7 +42,7 @@ This reports the existing artifacts (`findings`/`spec`/`task_plan`/`step_state`)
 - `resume` → the request matches the existing plan (or no request text was supplied to compare); apply the per-artifact resume rules below
 
 **Per-artifact resume rules (only when `verdict` is `resume`):**
-- `findings` EXISTS → skip Step 0 ONLY if the file has an `Already Implemented` section; if it predates that format, re-run Step 0 so the Step 0.5 gate has its evidence
+- plan discovery EXISTS → prefer `.map/<branch>/research/plan__discovery.md`. If only legacy `.map/<branch>/findings_<branch>.md` exists, read it as a compatibility fallback and migrate it with `save_research "$BRANCH" plan discovery` ONLY if the file has an `Already Implemented` section; if it predates that format, re-run Step 0 so the Step 0.5 gate has its evidence
 - `spec` EXISTS → skip Steps 1-2, read existing spec
 - `task_plan` EXISTS → skip Steps 4-6, read existing plan
 - `step_state.json` EXISTS → plan is complete, print checkpoint and STOP
@@ -84,7 +84,7 @@ shell_command:
 
 ## Step 0: Quick Discovery (Optional but Recommended)
 
-Skip if `findings_<branch>.md` already exists AND contains an `Already Implemented` section (resume rule above), or if the task is greenfield with a fully-provided spec. If an existing findings file predates this format (no `Already Implemented` section), re-run discovery so the Step 0.5 gate has its evidence.
+Skip if `.map/<branch>/research/plan__discovery.md` already exists AND contains an `Already Implemented` section (resume rule above), or if the task is greenfield with a fully-provided spec. If the canonical file is absent but legacy `.map/<branch>/findings_<branch>.md` exists, read it as a fallback and migrate it to the canonical research path only if it has the required section. If an existing discovery file predates this format (no `Already Implemented` section), re-run discovery so the Step 0.5 gate has its evidence.
 
 ```
 spawn_agent(
@@ -127,16 +127,15 @@ Output format:
 )
 ```
 
-Save findings:
+Save discovery to the canonical research namespace:
 
 ```
 shell_command:
   cmd: |
     BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|g; s|-{2,}|-|g; s|^-||; s|-$||')
-    mkdir -p .map/${BRANCH}
-    cat > .map/${BRANCH}/findings_${BRANCH}.md << 'FINDINGS_EOF'
+    python3 .map/scripts/map_step_runner.py save_research "$BRANCH" plan discovery << 'DISCOVERY_EOF'
 <paste researcher output here>
-FINDINGS_EOF
+DISCOVERY_EOF
 ```
 
 ---
@@ -377,7 +376,7 @@ USER REQUEST:
 SPEC FILE: .map/<branch>/spec_<branch>.md
 (Cat the file with shell_command to read it.)
 
-DISCOVERY: .map/<branch>/findings_<branch>.md (if it exists)
+DISCOVERY: .map/<branch>/research/plan__discovery.md (or legacy .map/<branch>/findings_<branch>.md fallback if it exists and has not yet been migrated)
 
 Output requirements per subtask:
 - id: ST-NNN
@@ -585,7 +584,7 @@ Do **NOT** create `step_state.json` in `$map-plan`.
 - `task_plan_<branch>.md`
 - `blueprint.json`
 - `artifact_manifest.json`
-- optional `findings_<branch>.md` and `workflow-fit.json`
+- optional `research/plan__discovery.md` (or legacy `findings_<branch>.md` fallback) and `workflow-fit.json`
 
 The execution state must be initialized later by:
 
@@ -649,7 +648,7 @@ DISTILLATION CHECKLIST:
   [x] blueprint.json          — raw decomposer output with coverage_map + per-subtask aag_contract (for map-efficient)
   [x] spec_<branch>.md        — architecture graph + decisions + COMPLETE acceptance criteria
   [x] artifact_manifest.json  — records workflow_fit + spec + plan stage artifacts
-  [x] findings_<branch>.md    — research pointers (if discovery was done)
+  [x] research/plan__discovery.md — plan-scope research pointers (if discovery was done)
 
 TARGET: Executor reads <=4000 tokens of distilled state to start any subtask.
 If plan files exceed this, condense descriptions — keep AAG contracts and criteria.

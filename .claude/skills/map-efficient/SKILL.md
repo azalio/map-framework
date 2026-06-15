@@ -238,7 +238,7 @@ This records a synthetic subtask_result with status="no-op", marks the phase COM
 
 ### Phase: RESEARCH (2.2) - Required artifact; delegated agent conditional
 
-Persist a RESEARCH artifact for every non-no-op subtask before Actor. `research-agent` is conditional: use it for cold-start repository exploration, 3+ existing files, high risk, unclear locations, or failed direct search. If the relevant file/symbol is already known, or the subtask is greenfield/new-file work, do narrow current-session research and save those concise strict-JSON findings via the canonical `save_research` API. Validate the machine-checkable research contract before closing the phase with the orchestrator.
+Persist a RESEARCH artifact for every non-no-op subtask before Actor. Plan-scope discovery from `/map-plan` lives at `.map/<branch>/research/plan__discovery.md` and is automatically included in `build_context_block`; legacy `.map/<branch>/findings_<branch>.md` is a read-only fallback. Subtask research must still be saved separately as `.map/<branch>/research/<subtask_id>__actor.md` so Actor/Monitor can distinguish planner-wide context from current-subtask evidence. `research-agent` is conditional: use it for cold-start repository exploration, 3+ existing files, high risk, unclear locations, or failed direct search. If the relevant file/symbol is already known, or the subtask is greenfield/new-file work, do narrow current-session research and save those concise strict-JSON findings via the canonical `save_research` API. Validate the machine-checkable research contract before closing the phase with the orchestrator.
 
 ```bash
 SUBTASK_ID=$(jq -r '.current_subtask_id' ".map/${BRANCH}/step_state.json")

@@ -44,14 +44,15 @@ All files reside in `.map/<branch>/` directory with branch-based naming:
 .map/
 └── <branch>/
     ├── task_plan_<branch>.md    # Primary plan with phases and status
-    ├── findings_<branch>.md     # Research findings, decisions, key files
+    ├── research/
+    │   └── plan__discovery.md   # Plan-scope research, decisions, key files
     ├── progress_<branch>.md     # Action log, errors, test results
     ├── step_state.json          # Canonical orchestrator step + subtask state
 ```
 
 **Example**: On branch `feature-auth`:
 - `.map/feature-auth/task_plan_feature-auth.md`
-- `.map/feature-auth/findings_feature-auth.md`
+- `.map/feature-auth/research/plan__discovery.md`
 - `.map/feature-auth/progress_feature-auth.md`
 
 ## Hook Behavior
@@ -193,7 +194,7 @@ Only Monitor agent updates task_plan status (via `status_update` output field).
 **Actions:**
 1. Read `.map/<branch>/task_plan_<branch>.md` to find current phase
 2. Read `.map/<branch>/progress_<branch>.md` for recent action log
-3. Read `.map/<branch>/findings_<branch>.md` for accumulated decisions
+3. Read `.map/<branch>/research/plan__discovery.md` for accumulated decisions
 
 **Result:** Agent resumes from last checkpoint without losing context, even after conversation window reset.
 

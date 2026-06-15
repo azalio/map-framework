@@ -55,14 +55,14 @@ BRANCH=$(git rev-parse --abbrev-ref HEAD | sed -E 's|/|-|g; s|[^a-zA-Z0-9_.-]|-|
 python3 .map/scripts/map_step_runner.py check_plan_resume "$ARGUMENTS"
 ```
 
-This reports the existing artifacts (`findings`/`spec`/`task_plan`/`step_state`) AND a `verdict` that compares the prior plan's goal against the current request — so a branch that already hosts a *completed* plan for a different goal is not mistaken for "this plan is done". Branch on `verdict`:
+This reports the existing artifacts (`plan__discovery` or legacy `findings`/`spec`/`task_plan`/`step_state`) AND a `verdict` that compares the prior plan's goal against the current request — so a branch that already hosts a *completed* plan for a different goal is not mistaken for "this plan is done". Branch on `verdict`:
 
 - `no_plan` → no prior artifacts; plan fresh from Step 0.
 - `goal_mismatch` → the branch already holds a plan for a **different** goal (a single branch can host several sequential plans over its lifetime). Do **NOT** print "plan complete" and do **NOT** overwrite the prior `spec`/`blueprint`/`task_plan`. Follow the `recommendation`: archive or rename the existing `.map/<branch>/` artifacts (or run `/map-plan` on a fresh branch) — confirm with the operator first — then plan the new goal.
 - `resume` → the request matches the existing plan (or no request text was supplied to compare). Apply the per-artifact resume rules below.
 
 Per-artifact resume rules (only when `verdict` is `resume`):
-- Existing `findings`: reuse discovery only if the file has an `Already Implemented` section; if it predates that format, re-run discovery (see Step 0).
+- Existing plan discovery: prefer `.map/<branch>/research/plan__discovery.md`. If only legacy `.map/<branch>/findings_<branch>.md` exists, read it as a compatibility fallback and migrate it to the canonical research path only if it has an `Already Implemented` section. If the discovery artifact predates that format, re-run discovery (see Step 0).
 - Existing `spec`: skip interview/spec writing.
 - Existing `task_plan`: skip decomposition and plan creation.
 - Existing `step_state.json`: plan is complete; print checkpoint and STOP.
@@ -91,7 +91,7 @@ Outcomes:
 
 ### Step 0: Quick Discovery (Optional but Recommended)
 
-If `.map/<branch>/findings_<branch>.md` exists, read it and skip discovery — but ONLY if it contains an `Already Implemented` section (the format this skill now requires). A findings file written before this format existed lacks that section; in that case re-run discovery with the prompt below so the Step 0.5 gate has the evidence it requires. Otherwise (no findings file at all) run discovery to find relevant files, existing patterns, risks, and confirmed new files.
+Use `.map/<branch>/research/plan__discovery.md` as the canonical plan-scope discovery artifact. If it exists, read it and skip discovery — but ONLY if it contains an `Already Implemented` section (the format this skill now requires). If the canonical file is absent but legacy `.map/<branch>/findings_<branch>.md` exists, read that fallback and migrate it to the canonical path with `save_research "$BRANCH" plan discovery` only if it has the required section. A discovery file written before this format existed lacks that section; in that case re-run discovery with the prompt below so the Step 0.5 gate has the evidence it requires. Otherwise (no discovery file at all) run discovery to find relevant files, existing patterns, risks, and confirmed new files.
 
 ```text
 Task(
@@ -107,7 +107,12 @@ Task(
 )
 ```
 
-Save findings to `.map/<branch>/findings_<branch>.md`.
+Save discovery to `.map/<branch>/research/plan__discovery.md` with the shared research API by feeding the researcher output on stdin:
+
+```bash
+printf '%s' "$PLAN_DISCOVERY" | \
+  python3 .map/scripts/map_step_runner.py save_research "$BRANCH" plan discovery
+```
 
 ### Step 0.5: Already-Implemented Gate (MANDATORY when discovery ran)
 
@@ -166,11 +171,11 @@ Task(
   prompt="""
 <documents>
   <document source="spec"><document_content>{spec_content}</document_content></document>
-  <document source="findings"><document_content>{findings_content}</document_content></document>
+  <document source="plan-discovery"><document_content>{plan_discovery_content}</document_content></document>
 </documents>
 <task>
 Review the spec for ambiguity, missing invariants, impossible acceptance criteria, and risky assumptions.
-Evidence first: for every finding, quote the spec or findings before judgment.
+Evidence first: for every finding, quote the spec or plan discovery before judgment.
 HIGH-severity findings must cite the exact spec section.
 </task>
 <expected_output>
@@ -201,7 +206,7 @@ Task(
   prompt="""
 <documents>
   <document source="spec"><document_content>{spec_content}</document_content></document>
-  <document source="findings"><document_content>{findings_content}</document_content></document>
+  <document source="plan-discovery"><document_content>{plan_discovery_content}</document_content></document>
 </documents>
 <task>
 Break the spec into atomic subtasks. Include an `evidence` array before `subtasks` so every boundary is grounded in the spec or repo findings.
@@ -307,7 +312,7 @@ Runner functions you'll commonly need from `/map-plan`:
 | `validate_blueprint_contract <path>` | Run schema + semantic checks on `blueprint.json`. |
 | `list_plans` | List per-branch plan artifacts under `.map/` to pick scope from a multi-roadmap workspace. |
 | `check_plan_resume "<request>" [--branch <b>]` | Resume preflight: reports existing artifacts + a `verdict` (`no_plan`/`resume`/`goal_mismatch`) comparing the prior plan's goal against the incoming request, so a branch hosting a *completed* plan for a different goal isn't falsely treated as "complete". |
-| `save_research <branch> <subtask_id>` | Persist research-agent findings for a subtask (stdin-fed). |
+| `save_research <branch> <subtask_id> [kind]` | Persist research-agent findings (stdin-fed). `/map-plan` uses `save_research "$BRANCH" plan discovery`; execution subtasks use `save_research "$BRANCH" "$SUBTASK_ID"`. |
 | `validate_research <branch> <subtask_id>` | Validate strict JSON research evidence before `validate_step 2.2`. |
 
 ### Step 8: Output Checkpoint

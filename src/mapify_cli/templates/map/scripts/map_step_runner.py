@@ -2128,6 +2128,10 @@ def record_plan_artifacts(branch: Optional[str] = None) -> dict[str, object]:
     task_plan_path = branch_dir / f"task_plan_{branch_name}.md"
     blueprint_path = branch_dir / "blueprint.json"
     step_state_path = branch_dir / "step_state.json"
+    discovery_path = plan_discovery_path(branch_name)
+    discovery_manifest_path = branch_dir / "research" / "plan__discovery.md"
+    legacy_findings = legacy_findings_path(branch_name)
+    legacy_findings_manifest_path = branch_dir / f"findings_{branch_name}.md"
 
     manifest = load_artifact_manifest(branch_name)
 
@@ -2149,6 +2153,10 @@ def record_plan_artifacts(branch: Optional[str] = None) -> dict[str, object]:
         plan_artifacts.append(_artifact_ref(blueprint_path, "blueprint"))
     if step_state_path.exists():
         plan_artifacts.append(_artifact_ref(step_state_path, "step-state"))
+    if discovery_path.exists():
+        plan_artifacts.append(_artifact_ref(discovery_manifest_path, "plan-discovery"))
+    if legacy_findings.exists():
+        plan_artifacts.append(_artifact_ref(legacy_findings_manifest_path, "legacy-findings"))
 
     # /map-plan deliberately stops BEFORE INIT_STATE writes step_state.json
     # — that step belongs to /map-efficient. So "plan complete" means
@@ -2170,6 +2178,8 @@ def record_plan_artifacts(branch: Optional[str] = None) -> dict[str, object]:
             "has_task_plan": task_plan_path.exists(),
             "has_blueprint": blueprint_path.exists(),
             "has_step_state": step_state_path.exists(),
+            "has_plan_discovery": discovery_path.exists(),
+            "has_legacy_findings": legacy_findings.exists(),
         },
     )
 
@@ -6402,6 +6412,8 @@ def _sanitize_branch(branch: str) -> str:
 
 _RESEARCH_KIND_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 _RESEARCH_SUBTASK_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+PLAN_DISCOVERY_SUBTASK_ID = "plan"
+PLAN_DISCOVERY_KIND = "discovery"
 _RESEARCH_STATUS_VALUES = frozenset(
     {"OK", "PARTIAL_RESULTS", "NO_RESULTS", "SEARCH_FAILED"}
 )
@@ -6431,6 +6443,19 @@ def _research_path(branch: str, subtask_id: str, kind: str) -> Path:
         / "research"
         / f"{subtask_id}__{kind}.md"
     )
+
+
+def plan_discovery_path(branch: Optional[str] = None) -> Path:
+    """Return the canonical plan-scope discovery artifact path."""
+    branch_name = branch or get_branch_name()
+    return _research_path(branch_name, PLAN_DISCOVERY_SUBTASK_ID, PLAN_DISCOVERY_KIND)
+
+
+def legacy_findings_path(branch: Optional[str] = None) -> Path:
+    """Return the pre-research-namespace planning findings path."""
+    branch_name = _sanitize_branch(branch or get_branch_name())
+    project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
+    return project_dir / ".map" / branch_name / f"findings_{branch_name}.md"
 
 
 def _is_int_not_bool(value: object) -> bool:
@@ -8415,13 +8440,19 @@ def check_plan_resume(request: str = "", branch: Optional[str] = None) -> dict:
     branch_name = _sanitize_branch(branch) if branch else get_branch_name()
     project_dir = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
     branch_dir = project_dir / ".map" / branch_name
-    findings_path = branch_dir / f"findings_{branch_name}.md"
+    discovery_path = plan_discovery_path(branch_name)
+    old_findings_path = legacy_findings_path(branch_name)
     spec_path = branch_dir / f"spec_{branch_name}.md"
     task_plan_path = branch_dir / f"task_plan_{branch_name}.md"
     state_path = branch_dir / "step_state.json"
+    has_plan_discovery = discovery_path.exists()
+    has_legacy_findings = old_findings_path.exists()
+    discovery_source = (
+        "canonical" if has_plan_discovery else "legacy" if has_legacy_findings else "none"
+    )
 
     artifacts = {
-        "findings": findings_path.exists(),
+        "findings": has_plan_discovery or has_legacy_findings,
         "spec": spec_path.exists(),
         "task_plan": task_plan_path.exists(),
         "step_state": state_path.exists(),
@@ -8442,6 +8473,13 @@ def check_plan_resume(request: str = "", branch: Optional[str] = None) -> dict:
             "overlap": 0.0,
             "containment": 0.0,
             "shared_terms": [],
+            "plan_discovery": {
+                "source": discovery_source,
+                "canonical_path": str(discovery_path),
+                "legacy_path": str(old_findings_path),
+                "has_canonical": has_plan_discovery,
+                "has_legacy": has_legacy_findings,
+            },
             "recommendation": (
                 f"No prior planning artifacts on branch '{branch_name}'. "
                 "Proceed with a fresh plan from Step 0."
@@ -8506,6 +8544,13 @@ def check_plan_resume(request: str = "", branch: Optional[str] = None) -> dict:
         "overlap": overlap,
         "containment": containment,
         "shared_terms": shared,
+        "plan_discovery": {
+            "source": discovery_source,
+            "canonical_path": str(discovery_path),
+            "legacy_path": str(old_findings_path),
+            "has_canonical": has_plan_discovery,
+            "has_legacy": has_legacy_findings,
+        },
         "recommendation": recommendation,
     }
 
@@ -9827,6 +9872,26 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
         parts.append("")
         parts.append(f"# Upstream Results (dependencies of {current_subtask_id}):")
         parts.extend(upstream_lines)
+
+    # Inline plan-scope discovery first, so subtask execution inherits the
+    # planner's already-implemented evidence and repository orientation. Legacy
+    # findings_<branch>.md is read only as a compatibility fallback.
+    try:
+        _plan_discovery_text = load_research(
+            branch, PLAN_DISCOVERY_SUBTASK_ID, kind=PLAN_DISCOVERY_KIND
+        )
+        _plan_discovery_source = "plan__discovery"
+        if not _plan_discovery_text:
+            _legacy_path = legacy_findings_path(branch)
+            if _legacy_path.is_file():
+                _plan_discovery_text = _legacy_path.read_text(encoding="utf-8")
+                _plan_discovery_source = "legacy-findings"
+        if _plan_discovery_text:
+            parts.append("")
+            parts.append(f"# Plan Discovery ({_plan_discovery_source}):")
+            parts.append(_plan_discovery_text)
+    except (ValueError, OSError):
+        pass
 
     # Inline the latest research artifact for THIS subtask so callers stop
     # having to glue load_research output into the Actor prompt by hand.

@@ -1865,6 +1865,81 @@ class TestTaskDecomposerWaveParallelismGuidance:
         )
 
 
+class TestPlanDiscoveryResearchNamespace:
+    """Plan discovery and per-subtask research must share the research/ namespace.
+
+    Regression coverage for issue #199: Claude and Codex planning surfaces used
+    to write `.map/<branch>/findings_<branch>.md` while execution read
+    `.map/<branch>/research/<subtask>__<kind>.md`.
+    """
+
+    @pytest.fixture(
+        params=[
+            Path(".claude/skills/map-plan/SKILL.md"),
+            Path(".agents/skills/map-plan/SKILL.md"),
+            Path("src/mapify_cli/templates/skills/map-plan/SKILL.md"),
+            Path("src/mapify_cli/templates/codex/skills/map-plan/SKILL.md"),
+        ],
+        ids=["claude-dev", "codex-dev", "claude-template", "codex-template"],
+    )
+    def map_plan_path(self, request: pytest.FixtureRequest) -> Path:
+        return Path(__file__).parent.parent / request.param
+
+    def test_map_plan_uses_plan_discovery_research_artifact(
+        self, map_plan_path: Path
+    ) -> None:
+        content = map_plan_path.read_text(encoding="utf-8")
+        assert "research/plan__discovery.md" in content, (
+            f"{map_plan_path} must document canonical plan discovery under research/."
+        )
+        assert 'save_research "$BRANCH" plan discovery' in content, (
+            f"{map_plan_path} must save new discovery through the shared research API."
+        )
+
+    def test_codex_map_plan_no_longer_writes_legacy_findings(self) -> None:
+        path = (
+            Path(__file__).parent.parent
+            / "src/mapify_cli/templates/codex/skills/map-plan/SKILL.md"
+        )
+        content = path.read_text(encoding="utf-8")
+        assert "cat > .map/${BRANCH}/findings_${BRANCH}.md" not in content
+
+    @pytest.fixture(
+        params=[
+            Path(".claude/agents/actor.md"),
+            Path("src/mapify_cli/templates/agents/actor.md"),
+        ],
+        ids=["dev", "template"],
+    )
+    def actor_path(self, request: pytest.FixtureRequest) -> Path:
+        return Path(__file__).parent.parent / request.param
+
+    def test_actor_guidance_uses_research_namespace(self, actor_path: Path) -> None:
+        content = actor_path.read_text(encoding="utf-8")
+        assert "research/" in content
+        assert "plan__discovery.md" in content
+        assert "findings_<branch>.md" not in content
+
+    @pytest.fixture(
+        params=[
+            Path(".claude/skills/map-efficient/SKILL.md"),
+            Path(".agents/skills/map-efficient/SKILL.md"),
+            Path("src/mapify_cli/templates/skills/map-efficient/SKILL.md"),
+            Path("src/mapify_cli/templates/codex/skills/map-efficient/SKILL.md"),
+        ],
+        ids=["claude-dev", "codex-dev", "claude-template", "codex-template"],
+    )
+    def map_efficient_path(self, request: pytest.FixtureRequest) -> Path:
+        return Path(__file__).parent.parent / request.param
+
+    def test_map_efficient_documents_plan_to_subtask_flow(
+        self, map_efficient_path: Path
+    ) -> None:
+        content = map_efficient_path.read_text(encoding="utf-8")
+        assert "research/plan__discovery.md" in content
+        assert "research/<subtask_id>__actor.md" in content
+
+
 class TestMapEfficientNoInterSubtaskPause:
     """Regression: /map-efficient must chain subtasks without per-subtask
     "summary report + wait for user" pauses. A downstream run paused

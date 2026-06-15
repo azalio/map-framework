@@ -177,16 +177,16 @@ SEARCH-PROTOCOL-01:
 
 # MAP-PLANNING INTEGRATION (Optional)
 
-When orchestrator provides `findings_file` path in prompt, append research results:
+When orchestrator provides a research artifact path in prompt, append research results:
 
 **Input Signal** (from orchestrator):
 ```
-Findings file: .map/feature-auth/findings_feature-auth.md
+Research artifact: .map/feature-auth/research/plan__discovery.md
 ```
 
 **Action**:
 1. After completing search, format findings as Markdown
-2. Append to findings file using Write tool (append mode via reading + concatenating)
+2. Append to the research artifact using Write tool (append mode via reading + concatenating)
 
 **Findings Format** (append to file):
 ```markdown
@@ -212,7 +212,7 @@ Findings file: .map/feature-auth/findings_feature-auth.md
 ```
 
 **Rules**:
-- Only append if `findings_file` provided in prompt
+- Only append if a research artifact path is provided in prompt
 - Always prepend `---` separator for append safety
 - Include timestamp for chronological tracking
 - Keep append content under 500 tokens

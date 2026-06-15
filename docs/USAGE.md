@@ -2,7 +2,7 @@
 
 Complete usage examples, best practices, and optimization strategies for the MAP Framework.
 
-For long-running work, the canonical MAP flows maintain branch-scoped artifacts directly inside `.map/<branch>/`, so research, code-review lineage, verification summaries, PR drafts, and run dossiers survive context resets.
+For long-running work, the canonical MAP flows maintain branch-scoped artifacts directly inside `.map/<branch>/`, so research, code-review lineage, verification summaries, PR drafts, and run dossiers survive context resets. Research artifacts live in one namespace: plan-scope discovery is `.map/<branch>/research/plan__discovery.md`, and subtask research is `.map/<branch>/research/<subtask_id>__<kind>.md`. Legacy `.map/<branch>/findings_<branch>.md` files are read only as resume/migration fallbacks.
 
 `/map-plan` now performs a workflow-fit preflight before full planning. If the task is truly tiny, it can explicitly off-ramp to a direct edit or `/map-fast` instead of forcing `SPEC + PLAN`.
 
