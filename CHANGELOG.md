@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Codex `researcher` now shares the Claude `research-agent` ResearchEvidence
+  contract (#198).** Codex may use provider-specific search commands internally,
+  but `/map-efficient` research artifacts now explicitly preserve the same strict
+  JSON fields, bounded file-line evidence, and downstream Actor/Monitor
+  semantics across providers.
+
 ## [3.15.1] - 2026-06-15
 
 ### Fixed

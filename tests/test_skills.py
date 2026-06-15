@@ -2233,6 +2233,84 @@ class TestMapEfficientSaveResearchWiring:
             assert "save direct current-session findings" in content
 
 
+class TestResearchProviderParity:
+    """Regression tests for the shared Claude/Codex ResearchEvidence contract."""
+
+    @pytest.fixture(
+        params=[
+            Path(".claude/agents/research-agent.md"),
+            Path("src/mapify_cli/templates/agents/research-agent.md"),
+            Path(".codex/agents/researcher.toml"),
+            Path("src/mapify_cli/templates/codex/agents/researcher.toml"),
+        ],
+        ids=["claude-dev", "claude-template", "codex-dev", "codex-template"],
+    )
+    def researcher_path(self, request: pytest.FixtureRequest) -> Path:
+        return Path(__file__).parent.parent / request.param
+
+    def test_researcher_templates_share_core_evidence_fields(
+        self, researcher_path: Path
+    ) -> None:
+        content = researcher_path.read_text(encoding="utf-8")
+
+        for field in [
+            '"confidence"',
+            '"status"',
+            '"search_method"',
+            '"search_stats"',
+            '"files_scanned"',
+            '"total_matches_found"',
+            '"results_truncated"',
+            '"executive_summary"',
+            '"relevant_locations"',
+            '"path"',
+            '"lines"',
+            '"signature"',
+            '"relevance"',
+            '"relevance_score"',
+            '"has_intent"',
+            '"patterns_discovered"',
+        ]:
+            assert field in content, f"{researcher_path} missing {field}"
+
+    def test_researcher_templates_keep_bounded_file_line_evidence(
+        self, researcher_path: Path
+    ) -> None:
+        content = researcher_path.read_text(encoding="utf-8")
+
+        assert "at most 5" in content.lower() or "max 5" in content.lower()
+        assert "inclusive" in content.lower()
+        assert "line" in content.lower()
+        assert (
+            "safe relative" in content.lower()
+            or "relative to project root" in content.lower()
+        )
+
+    def test_codex_researcher_uses_provider_neutral_search_contract(self) -> None:
+        project_root = Path(__file__).parent.parent
+        for relative_path in [
+            Path(".codex/agents/researcher.toml"),
+            Path("src/mapify_cli/templates/codex/agents/researcher.toml"),
+        ]:
+            content = (project_root / relative_path).read_text(encoding="utf-8")
+            assert "ResearchEvidence contract" in content
+            assert "same downstream semantics" in content
+            assert "Glob-equivalent" in content
+            assert "Grep-equivalent" in content
+            assert "Read-equivalent" in content
+            assert "find . -type f" not in content
+            assert "rg -l" not in content
+
+    def test_usage_docs_explain_provider_parity(self) -> None:
+        docs = (Path(__file__).parent.parent / "docs/USAGE.md").read_text(
+            encoding="utf-8"
+        )
+
+        assert "Claude `research-agent` and Codex `researcher`" in docs
+        assert "ResearchEvidence JSON" in docs
+        assert "downstream Actor/Monitor semantics" in docs
+
+
 class TestMapEfficientBuildContextBlockCli:
     """Regression: map-efficient must show the build_context_block CLI form.
 
