@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.15.1] - 2026-06-15
+
 ### Fixed
 - **`/map-efficient` now distinguishes mandatory RESEARCH artifacts from
   conditional research-agent delegation (#201).** Hook hints, Claude/Codex
