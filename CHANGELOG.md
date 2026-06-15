@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.15.0] - 2026-06-15
+
 ### Added
 - **MAP RESEARCH artifacts are now validated before Actor work (#197).**
   `validate_research` checks strict JSON, confidence/status/search stats,
