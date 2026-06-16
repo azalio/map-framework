@@ -18,6 +18,7 @@ After discovery, `/map-plan` also runs an already-implemented gate: discovery re
 /map-check
 /map-review
 /map-learn [workflow-summary]   # optional; omit to auto-load the generated handoff
+/map-understand [target]        # optional; teach and quiz until the workflow makes sense
 ```
 
 ### Full TDD flow
@@ -48,6 +49,8 @@ The full TDD flow is the primary test-first path. The targeted subtask flow is t
 In targeted TDD, `/map-tdd ST-001` now stops after the red phase once it has written `test_contract_ST-001.md` and `test_handoff_ST-001.json`. `/map-task ST-001` detects those artifacts and resumes at implementation time instead of re-running research or test authoring.
 
 Philosophically, MAP still ends with `LEARN`. Runtime keeps that step soft and token-aware by auto-writing `.map/<branch>/learning-handoff.md` and `.json` after `/map-efficient`, `/map-debug`, `/map-check`, and `/map-review`, so `/map-learn` can auto-load the workflow context with no manual reconstruction. The same handoff write also updates `learning-metrics.json` with repeated learned-rule violation signals when current findings overlap existing rules, so teams can tell whether saved lessons are actually reducing repeat mistakes.
+
+When the deliverable is the human understanding rather than new code or saved project memory, run `/map-understand [target]`. It is an opt-in, transient teaching loop: it keeps a Markdown checklist in the conversation, explains one milestone at a time, asks restatement or quiz questions, and advances only when the user demonstrates understanding or opts out. It does not write `.map/` or `.claude/rules/learned/` artifacts.
 
 For workflow diagnosis, `/map-efficient`, `/map-debug`, `/map-check`, and `/map-review` now call `python3 .map/scripts/map_step_runner.py write_run_health_report <workflow> [terminal_status]` during closeout. This writes `.map/<branch>/run_health_report.json` and records the `run_health` stage in `artifact_manifest.json`. The report captures terminal status, current step/subtask, completed and pending step counts, artifact presence, retry counters, latest hook-injection status, skipped hook reasons for malformed input or insignificant Bash commands when state can be updated safely, Predictor skip/call flags when present, final-verifier evidence when a verification summary exists, and advisory research signals: artifact counts, parsed status/confidence/location counts, low-confidence warnings, and research-token share. To assert the report in CI or during operator handoff, run `python3 .map/scripts/map_step_runner.py validate_run_health_report [path]`; it exits non-zero when a complete report still has pending steps, lacks verification evidence, exceeds retry thresholds, has schema drift, or records hook degradation without a reason.
 
@@ -1159,7 +1162,7 @@ Summary:
 
 ## 🔀 Workflow Variants
 
-MAP Framework offers three primary implementation workflows with different trade-offs between token usage, quality assurance, and learning. A fourth workflow (`/map-tdd`) adds test-first development. A fifth (`/map-task`) executes a single subtask from an existing plan. Additional supporting workflows (`/map-debug`, `/map-review`, `/map-check`, `/map-plan`, `/map-release`, `/map-resume`, `/map-learn`) are documented in their respective sections.
+MAP Framework offers three primary implementation workflows with different trade-offs between token usage, quality assurance, and learning. A fourth workflow (`/map-tdd`) adds test-first development. A fifth (`/map-task`) executes a single subtask from an existing plan. Additional supporting workflows (`/map-debug`, `/map-review`, `/map-check`, `/map-plan`, `/map-release`, `/map-resume`, `/map-learn`, `/map-understand`) are documented in their respective sections.
 
 Each shipped task skill now declares an explicit effort and parallelism policy near the top of its `SKILL.md` body. Lightweight workflows (`/map-fast`, `/map-check`, `/map-resume`) use `thinking_policy: low/direct`; implementation and learning workflows use `medium/adaptive`; planning, review, and release use `high/adaptive`. The paired `parallel_tool_policy` tells the provider when fan-out is safe, for example independent checks only, guarded `/map-efficient` waves only, or the single `/map-review` reviewer fan-out. This keeps simple commands from overthinking while preserving deeper analysis where it protects correctness or release safety.
 
@@ -1667,7 +1670,7 @@ MAP's Claude Code slash surfaces are implemented as skills under `.claude/skills
 | Class | Use For | Runtime Boundary |
 |-------|---------|------------------|
 | `reference` | Conventions, heuristics, examples, and decision support | Loads knowledge only; does not own mutation workflows |
-| `task` | Manual slash workflows such as `/map-efficient`, `/map-review`, and `/map-learn` | May orchestrate agents, run checks, and write branch artifacts when invoked |
+| `task` | Manual slash workflows such as `/map-efficient`, `/map-review`, `/map-learn`, and `/map-understand` | May orchestrate agents, run checks, write branch artifacts, or run transient teaching loops when invoked |
 | `hybrid` | Reference guidance plus installed runtime helpers, currently `map-state` | Must list `runtimeEffects` so hook/script side effects are explicit |
 
 Current MAP installs classify all slash workflows as `task` skills. `map-state` is `hybrid` because its `SKILL.md` explains branch-scoped planning while its bundled hooks/scripts surface focus and completion checks around `.map/<branch>/` artifacts.
@@ -1702,6 +1705,7 @@ Examples:
 - `/map-efficient` implements scoped work through Actor/Monitor loops.
 - `/map-review` builds a review bundle and launches reviewer agents.
 - `/map-learn` consumes a workflow handoff and writes reusable learned rules.
+- `/map-understand` keeps a transient checklist and quizzes the user until the target makes sense.
 
 ### Skills vs Agents
 

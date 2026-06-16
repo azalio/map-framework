@@ -65,6 +65,7 @@ WORKFLOW_EFFORT_PROFILES = {
     "map-tdd": "medium/adaptive",
     "map-learn": "medium/adaptive",
     "map-explain": "medium/adaptive",
+    "map-understand": "medium/adaptive",
     "map-plan": "high/adaptive",
     "map-review": "high/adaptive",
     "map-release": "high/adaptive",
@@ -590,6 +591,15 @@ class TestSkillStructure:
             "['network-http-read', 'filesystem-sofa-credentials'] (no extras, no omissions); "
             f"got {entry.get('runtimeEffects')!r}"
         )
+
+    def test_map_understand_is_transient_task_skill(self, skill_rules):
+        """Issue #221: the understanding quiz surface is opt-in and has no runtime effects."""
+        entry = skill_rules.get("skills", {}).get("map-understand")
+        assert entry is not None, "map-understand missing from skill-rules.json"
+        assert entry.get("type") == "manual"
+        assert entry.get("skillClass") == "task"
+        assert entry.get("enforcement") == "manual"
+        assert not entry.get("runtimeEffects")
 
     def test_task_skill_class_matches_manual_runtime_metadata(
         self, skills_dir, skill_folders, skill_rules

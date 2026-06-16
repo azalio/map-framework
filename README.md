@@ -26,6 +26,7 @@ You drive the whole loop with two core commands plus three gates:
 /map-check                                          # 3. CHECK — quality gates against the plan
 /map-review                                         # 4. REVIEW — semantic review vs spec, tests, and diff
 /map-learn                                          # 5. LEARN — save the gotchas for next session
+/map-understand                                     # optional - teach and quiz until the workflow makes sense
 ```
 
 - **Start with `/map-plan`** for anything non-trivial — it clarifies behavior and splits the work into contract-sized subtasks.
@@ -73,6 +74,7 @@ Then enable the Codex hook manually: run `/hooks`, select `PreToolUse`, press `t
 /map-check
 /map-review
 /map-learn
+/map-understand   # optional learning/quiz mode
 ```
 
 That's the whole golden path. Everything below explains *why* it works and *when* to reach for it.
@@ -136,6 +138,7 @@ The DevOpsConf 2026 case study applies this process to a production Kubernetes P
 | `/map-check` | Quality gates, verification, and artifact checks |
 | `/map-review` | Pre-commit semantic review against the plan, tests, and diff |
 | `/map-learn` | Capture project memory and reusable lessons |
+| `/map-understand` | Interactive teaching and quiz mode for code, diffs, and workflow results |
 | `/map-debug` | Bug fixes and debugging |
 | `/map-task` | Execute a single subtask from an existing plan |
 | `/map-tdd` | Test-first implementation workflow |
