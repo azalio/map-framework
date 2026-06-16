@@ -1325,6 +1325,25 @@ def _render_minimality_report(report: Mapping[str, Any]) -> None:
         for action in next_actions:
             console.print(f"  - {action}")
 
+    manual_review_gate = summary.get("manual_review_gate")
+    if (
+        isinstance(manual_review_gate, Mapping)
+        and manual_review_gate.get("required") is True
+    ):
+        console.print()
+        console.print("[bold]Manual review gate[/bold]")
+        candidate_branches = manual_review_gate.get("candidate_branches")
+        if isinstance(candidate_branches, list) and candidate_branches:
+            console.print(
+                "  Candidate opt-in branches: "
+                + ", ".join(map(str, candidate_branches))
+            )
+        checklist = manual_review_gate.get("checklist")
+        if isinstance(checklist, list) and checklist:
+            console.print("  Checklist:")
+            for item in checklist:
+                console.print(f"  - {item}")
+
     if branch_rows:
         table = Table(title="Branch Samples", show_header=True, header_style="bold cyan")
         table.add_column("Branch")

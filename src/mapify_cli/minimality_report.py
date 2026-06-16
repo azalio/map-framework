@@ -10,6 +10,14 @@ from typing import Any, Mapping, Sequence
 from mapify_cli.config.project_config import VALID_MINIMALITY, load_map_config
 
 OPT_IN_MINIMALITY_LEVELS = frozenset({"lite", "full", "ultra"})
+MANUAL_REVIEW_CHECKLIST = (
+    "Compare each opt-in run against the original user request for dropped "
+    "explicit or implied requirements.",
+    "Inspect simplifications for terse or cryptic code that hurts maintainability.",
+    "Confirm Actor retries addressed only BLOCKER feedback, not NON-BLOCKING "
+    "scope expansion.",
+    "Verify map:simplification markers name a real ceiling and safe upgrade path.",
+)
 
 
 def _utc_timestamp() -> str:
@@ -288,6 +296,8 @@ def _summarize(
             "regressions before flipping the global default."
         )
 
+    manual_review_required = decision == "candidate"
+
     return {
         "decision": decision,
         "ready_for_phase3": decision == "candidate",
@@ -308,6 +318,15 @@ def _summarize(
         "avg_guard_rework_off": avg_guard_off,
         "avg_guard_rework_opt_in": avg_guard_opt_in,
         "user_reversal_rate": reversal_rate,
+        "manual_review_gate": {
+            "required": manual_review_required,
+            "candidate_branches": [
+                str(sample.get("branch", "")) for sample in complete_opt_in
+            ],
+            "checklist": (
+                list(MANUAL_REVIEW_CHECKLIST) if manual_review_required else []
+            ),
+        },
     }
 
 
