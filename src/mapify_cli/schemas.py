@@ -1060,6 +1060,7 @@ RUN_HEALTH_REPORT_SCHEMA = {
         "generated_at": {"type": "string", "format": "date-time"},
         "workflow": {"type": "string"},
         "branch": {"type": "string"},
+        "minimality": {"type": "string", "enum": ["off", "lite", "full", "ultra"]},
         "terminal_status": {
             "type": "string",
             "enum": ["pending", "complete", "blocked", "won't_do", "superseded"],

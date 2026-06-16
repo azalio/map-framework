@@ -32,7 +32,7 @@ import shutil
 import ssl
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Mapping
 
 import typer
 import httpx
@@ -1270,6 +1270,107 @@ def doctor(debug: bool = typer.Option(False, "--debug", help="Enable debug loggi
         console.print("[yellow]Missing core paths:[/yellow]")
         for path_name in health["missing_paths"]:
             console.print(f"  • {path_name}")
+
+
+def _format_percent(value: Any) -> str:
+    if value is None:
+        return "n/a"
+    try:
+        return f"{float(value):.1%}"
+    except (TypeError, ValueError):
+        return "n/a"
+
+
+def _render_minimality_report(report: Mapping[str, Any]) -> None:
+    summary = report.get("summary")
+    if not isinstance(summary, Mapping):
+        summary = {}
+    branches = report.get("branches")
+    branch_rows = branches if isinstance(branches, list) else []
+
+    console.print("[bold]Minimality rollout report[/bold]")
+    console.print(
+        f"Current config minimality: [cyan]{report.get('current_config_minimality', 'off')}[/cyan]"
+    )
+    console.print(
+        f"Decision: [bold]{summary.get('decision', 'insufficient_data')}[/bold] "
+        f"(ready_for_phase3={summary.get('ready_for_phase3', False)})"
+    )
+    console.print(
+        "Runs: "
+        f"{summary.get('complete_opt_in_runs', 0)} opt-in complete, "
+        f"{summary.get('complete_off_runs', 0)} off-baseline complete, "
+        f"{summary.get('complete_runs_missing_historical_minimality', 0)} inferred"
+    )
+    console.print(
+        "Averages: "
+        f"retry {float(summary.get('avg_retry_events_opt_in', 0.0)):.2f} opt-in vs "
+        f"{float(summary.get('avg_retry_events_off', 0.0)):.2f} off; "
+        f"guard rework {float(summary.get('avg_guard_rework_opt_in', 0.0)):.2f} opt-in vs "
+        f"{float(summary.get('avg_guard_rework_off', 0.0)):.2f} off; "
+        f"YAGNI reversal {_format_percent(summary.get('user_reversal_rate'))}"
+    )
+
+    reasons = summary.get("reasons")
+    if isinstance(reasons, list) and reasons:
+        console.print()
+        console.print("[bold]Reasons[/bold]")
+        for reason in reasons:
+            console.print(f"  - {reason}")
+
+    if branch_rows:
+        table = Table(title="Branch Samples", show_header=True, header_style="bold cyan")
+        table.add_column("Branch")
+        table.add_column("Status")
+        table.add_column("Minimality")
+        table.add_column("Source")
+        table.add_column("Retries", justify="right")
+        table.add_column("Guard", justify="right")
+        table.add_column("YAGNI", justify="right")
+        for row in branch_rows:
+            if not isinstance(row, Mapping):
+                continue
+            table.add_row(
+                str(row.get("branch", "")),
+                str(row.get("terminal_status", "")),
+                str(row.get("minimality", "")),
+                str(row.get("minimality_source", "")),
+                str(row.get("retry_events", 0)),
+                str(row.get("guard_rework_events", 0)),
+                f"{row.get('restored_yagni_count', 0)}/{row.get('total_yagni_recommendations', 0)}",
+            )
+        console.print()
+        console.print(table)
+
+
+@app.command("minimality-report")
+def minimality_report(
+    project_path: Path = typer.Option(
+        Path("."),
+        "--path",
+        "-p",
+        help="Project root containing .map/ artifacts",
+    ),
+    min_complete_runs: int = typer.Option(
+        3,
+        "--min-runs",
+        min=1,
+        help="Minimum complete runs required per off/opt-in cohort",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Print the machine-readable report as JSON",
+    ),
+) -> None:
+    """Summarize local minimality telemetry for the Phase 3 default-flip gate."""
+    from mapify_cli.minimality_report import build_minimality_rollout_report
+
+    report = build_minimality_rollout_report(project_path, min_complete_runs)
+    if json_output:
+        console.print_json(data=report)
+        return
+    _render_minimality_report(report)
 
 
 def _mapify_install_kind() -> str:

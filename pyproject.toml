@@ -114,6 +114,9 @@ exclude = [
 [tool.ruff]
 extend-exclude = ["tests/skills_eval/fixtures/whole_skill"]
 
+[tool.black]
+target-version = ["py311"]
+
 [[tool.mypy.overrides]]
 module = "yaml"
 ignore_missing_imports = true

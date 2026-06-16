@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Minimality rollout telemetry can now be inspected before the Phase 3 default
+  flip (#180/#183).** `run_health_report.json` records the workflow's historical
+  `minimality` level, and `mapify minimality-report` compares complete `off` and
+  opt-in cohorts for retry pressure, guard rework, and deferred-YAGNI reversal
+  rate before marking the local rollout as `candidate`, `hold`, or
+  `insufficient_data`.
 - **Decomposer pruning is now contract-gated and user-visible (#184).**
   Blueprints can carry `requiredness`/`pruneable` metadata per active subtask
   and a `deferred_yagni` parking lot for speculative omissions. The validator
