@@ -209,27 +209,45 @@ def _summarize(
     avg_retry_opt_in = _average(complete_opt_in, "retry_events")
     avg_guard_off = _average(complete_off, "guard_rework_events")
     avg_guard_opt_in = _average(complete_opt_in, "guard_rework_events")
+    opt_in_gap = max(0, min_complete_runs - len(complete_opt_in))
+    off_gap = max(0, min_complete_runs - len(complete_off))
 
     reasons: list[str] = []
+    next_actions: list[str] = []
     decision = "candidate"
 
     if not samples:
         decision = "insufficient_data"
         reasons.append("No branch workspaces found under .map/.")
+        next_actions.append(
+            "Run MAP workflows with minimality off and opt-in levels so .map/ "
+            "contains run-health samples."
+        )
     if inferred_level_samples:
         decision = "insufficient_data"
         reasons.append(
             "Some complete reports lack historical minimality; regenerate run_health_report.json with this version."
+        )
+        next_actions.append(
+            "Regenerate complete run_health_report.json files with this mapify "
+            "version so each sample records historical minimality."
         )
     if len(complete_opt_in) < min_complete_runs:
         decision = "insufficient_data"
         reasons.append(
             f"Need at least {min_complete_runs} complete opt-in runs; found {len(complete_opt_in)}."
         )
+        next_actions.append(
+            f"Collect {opt_in_gap} more complete run(s) with minimality lite, "
+            "full, or ultra."
+        )
     if len(complete_off) < min_complete_runs:
         decision = "insufficient_data"
         reasons.append(
             f"Need at least {min_complete_runs} complete off-baseline runs; found {len(complete_off)}."
+        )
+        next_actions.append(
+            f"Collect {off_gap} more complete baseline run(s) with minimality off."
         )
 
     if decision == "candidate":
@@ -238,31 +256,53 @@ def _summarize(
             reasons.append(
                 f"User reversal rate is {reversal_rate:.1%}, above the 20% Phase 4 guardrail."
             )
+            next_actions.append(
+                "Review restored deferred-YAGNI items and narrow pruning rules "
+                "before considering the default flip."
+            )
         if avg_retry_opt_in > avg_retry_off:
             decision = "hold"
             reasons.append(
                 f"Average retry events regressed ({avg_retry_opt_in:.2f} opt-in vs {avg_retry_off:.2f} off)."
+            )
+            next_actions.append(
+                "Inspect opt-in retry feedback for BLOCKER/NON-BLOCKING "
+                "oscillation before collecting more samples."
             )
         if avg_guard_opt_in > avg_guard_off:
             decision = "hold"
             reasons.append(
                 f"Average guard rework regressed ({avg_guard_opt_in:.2f} opt-in vs {avg_guard_off:.2f} off)."
             )
+            next_actions.append(
+                "Inspect guard rework events from opt-in runs and fix the "
+                "recurring guard failure before promotion."
+            )
 
     if decision == "candidate":
         reasons.append(
             "Local telemetry is compatible with a Phase 3 default-flip candidate."
+        )
+        next_actions.append(
+            "Sample the candidate opt-in runs for clarity/underscope "
+            "regressions before flipping the global default."
         )
 
     return {
         "decision": decision,
         "ready_for_phase3": decision == "candidate",
         "reasons": reasons,
+        "next_actions": next_actions,
         "branch_count": len(samples),
         "complete_run_count": len(complete),
         "complete_off_runs": len(complete_off),
         "complete_opt_in_runs": len(complete_opt_in),
         "complete_runs_missing_historical_minimality": len(inferred_level_samples),
+        "sample_gaps": {
+            "off_baseline_runs": off_gap,
+            "opt_in_runs": opt_in_gap,
+            "historical_minimality_runs": len(inferred_level_samples),
+        },
         "avg_retry_events_off": avg_retry_off,
         "avg_retry_events_opt_in": avg_retry_opt_in,
         "avg_guard_rework_off": avg_guard_off,

@@ -46,6 +46,15 @@ def test_minimality_report_marks_candidate_with_clean_baseline_and_opt_in(tmp_pa
     assert summary["ready_for_phase3"] is True
     assert summary["complete_off_runs"] == 1
     assert summary["complete_opt_in_runs"] == 1
+    assert summary["sample_gaps"] == {
+        "off_baseline_runs": 0,
+        "opt_in_runs": 0,
+        "historical_minimality_runs": 0,
+    }
+    assert summary["next_actions"] == [
+        "Sample the candidate opt-in runs for clarity/underscope regressions "
+        "before flipping the global default."
+    ]
 
 
 def test_minimality_report_requires_historical_minimality_in_run_health(tmp_path):
@@ -62,6 +71,24 @@ def test_minimality_report_requires_historical_minimality_in_run_health(tmp_path
     summary = report["summary"]
     assert summary["decision"] == "insufficient_data"
     assert summary["complete_runs_missing_historical_minimality"] == 1
+    assert summary["sample_gaps"] == {
+        "off_baseline_runs": 1,
+        "opt_in_runs": 1,
+        "historical_minimality_runs": 1,
+    }
+    assert (
+        "Regenerate complete run_health_report.json files with this mapify "
+        "version so each sample records historical minimality."
+        in summary["next_actions"]
+    )
+    assert (
+        "Collect 1 more complete run(s) with minimality lite, full, or ultra."
+        in summary["next_actions"]
+    )
+    assert (
+        "Collect 1 more complete baseline run(s) with minimality off."
+        in summary["next_actions"]
+    )
 
 
 def test_minimality_report_counts_deferred_yagni_reversals(tmp_path):
@@ -96,6 +123,10 @@ def test_minimality_report_counts_deferred_yagni_reversals(tmp_path):
     assert lite_branch["total_yagni_recommendations"] == 2
     assert lite_branch["user_reversal_rate"] == 0.5
     assert report["summary"]["decision"] == "hold"
+    assert (
+        "Review restored deferred-YAGNI items and narrow pruning rules before "
+        "considering the default flip." in report["summary"]["next_actions"]
+    )
 
 
 def test_minimality_report_cli_json(tmp_path):
@@ -114,3 +145,5 @@ def test_minimality_report_cli_json(tmp_path):
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["summary"]["decision"] == "candidate"
+    assert payload["summary"]["sample_gaps"]["opt_in_runs"] == 0
+    assert payload["summary"]["next_actions"]
