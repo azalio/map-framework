@@ -1325,6 +1325,23 @@ def _render_minimality_report(report: Mapping[str, Any]) -> None:
         for action in next_actions:
             console.print(f"  - {action}")
 
+    cohort_branches = summary.get("cohort_branches")
+    if isinstance(cohort_branches, Mapping):
+        cohort_rows = (
+            ("Off baseline", cohort_branches.get("off_baseline")),
+            ("Opt-in", cohort_branches.get("opt_in")),
+            (
+                "Missing historical minimality",
+                cohort_branches.get("missing_historical_minimality"),
+            ),
+        )
+        if any(isinstance(branches, list) and branches for _, branches in cohort_rows):
+            console.print()
+            console.print("[bold]Cohort branches[/bold]")
+            for label, branches in cohort_rows:
+                if isinstance(branches, list) and branches:
+                    console.print(f"  {label}: " + ", ".join(map(str, branches)))
+
     manual_review_gate = summary.get("manual_review_gate")
     if (
         isinstance(manual_review_gate, Mapping)

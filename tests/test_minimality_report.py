@@ -51,6 +51,11 @@ def test_minimality_report_marks_candidate_with_clean_baseline_and_opt_in(tmp_pa
         "opt_in_runs": 0,
         "historical_minimality_runs": 0,
     }
+    assert summary["cohort_branches"] == {
+        "off_baseline": ["off-run"],
+        "opt_in": ["lite-run"],
+        "missing_historical_minimality": [],
+    }
     assert summary["next_actions"] == [
         "Sample the candidate opt-in runs for clarity/underscope regressions "
         "before flipping the global default."
@@ -88,6 +93,11 @@ def test_minimality_report_requires_historical_minimality_in_run_health(tmp_path
         "off_baseline_runs": 1,
         "opt_in_runs": 1,
         "historical_minimality_runs": 1,
+    }
+    assert summary["cohort_branches"] == {
+        "off_baseline": [],
+        "opt_in": [],
+        "missing_historical_minimality": ["old-run"],
     }
     assert (
         "Regenerate complete run_health_report.json files with this mapify "
@@ -186,3 +196,27 @@ def test_minimality_report_cli_human_output_prints_manual_review_gate(tmp_path):
     assert "Candidate opt-in branches: lite-run" in result.output
     assert "Checklist:" in result.output
     assert "map:simplification" in result.output
+
+
+def test_minimality_report_cli_human_output_prints_cohort_branches(tmp_path):
+    _write_json(
+        tmp_path / ".map" / "old-run" / "run_health_report.json",
+        {**_run_health("lite"), "minimality": None},
+    )
+    _write_json(
+        tmp_path / ".map" / "off-run" / "run_health_report.json", _run_health("off")
+    )
+    _write_json(
+        tmp_path / ".map" / "lite-run" / "run_health_report.json", _run_health("lite")
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["minimality-report", "--path", str(tmp_path), "--min-runs", "1"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Cohort branches" in result.output
+    assert "Off baseline: off-run" in result.output
+    assert "Opt-in: lite-run" in result.output
+    assert "Missing historical minimality: old-run" in result.output
