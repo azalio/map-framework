@@ -761,7 +761,8 @@ def get_step_instruction(step_id: str, state: StepState) -> str:
             "Present the generated plan to the user using a short standardized summary "
             "(goal + subtask titles + risks + any deferred_yagni omissions) and get "
             "explicit approval to proceed. If the user restores a deferred_yagni item, "
-            "rewrite blueprint.json/task_plan before approval. "
+            "run `python3 .map/scripts/map_orchestrator.py restore_deferred_yagni "
+            "YG-NNN` before approval. "
             "Then persist approval in step_state.json: "
             "python3 .map/scripts/map_orchestrator.py set_plan_approved true"
         ),
@@ -1601,6 +1602,197 @@ def set_plan_approved(value: str, branch: str) -> dict:
         }
     state.save(state_file)
     return {"status": "success", "plan_approved": state.plan_approved}
+
+
+def _blueprint_body(payload: dict) -> dict:
+    """Return the mutable blueprint body for wrapped or plain payloads."""
+    body = payload.get("blueprint")
+    return body if isinstance(body, dict) else payload
+
+
+def _next_restored_subtask_id(subtasks: list[object]) -> str:
+    max_seen = 0
+    for subtask in subtasks:
+        if not isinstance(subtask, dict):
+            continue
+        subtask_id = subtask.get("id")
+        if not isinstance(subtask_id, str):
+            continue
+        match = re.fullmatch(r"ST-(\d{3,})", subtask_id)
+        if match:
+            max_seen = max(max_seen, int(match.group(1)))
+    return f"ST-{max_seen + 1:03d}"
+
+
+def _restored_subtask_from_deferred(item: dict, subtask_id: str) -> dict:
+    title = str(item.get("title") or "Restored deferred YAGNI item").strip()
+    rationale = str(item.get("rationale") or "No rationale recorded").strip()
+    restore_hint = str(item.get("restore_hint") or "No restore hint recorded").strip()
+    item_id = str(item.get("id") or "YG-???").strip()
+    return {
+        "id": subtask_id,
+        "title": title,
+        "description": (
+            f"Restored from deferred_yagni {item_id}. Original rationale: "
+            f"{rationale}. Restore hint: {restore_hint}"
+        ),
+        "dependencies": [],
+        "affected_files": [],
+        "requiredness": "optional",
+        "pruneable": False,
+        "prune_rationale": (
+            "Restored after user request; keep active unless the user explicitly "
+            "moves it back to deferred_yagni."
+        ),
+        "validation_criteria": [
+            f"VC1: Implement or re-plan restored scope from {item_id}: {restore_hint}"
+        ],
+        "aag_contract": (
+            f"Actor -> Restore deferred scope {item_id} using the recorded hint -> "
+            f"{title} is implemented or explicitly re-planned with user approval"
+        ),
+        "expected_diff_size": "small",
+        "concern_type": "runtime",
+        "one_logical_step": True,
+        "restored_from_deferred_yagni": item_id,
+    }
+
+
+def _append_restored_subtask_to_plan(
+    plan_file: Path, subtask: dict, item: dict
+) -> bool:
+    if not plan_file.exists():
+        return False
+    content = plan_file.read_text(encoding="utf-8")
+    subtask_id = str(subtask.get("id"))
+    if re.search(rf"^###\s+{re.escape(subtask_id)}\b", content, re.MULTILINE):
+        return False
+    item_id = str(item.get("id") or "YG-???")
+    title = str(subtask.get("title") or "Restored deferred YAGNI item")
+    rationale = str(item.get("rationale") or "No rationale recorded")
+    restore_hint = str(item.get("restore_hint") or "No restore hint recorded")
+    addition = (
+        "\n\n## Restored Deferred YAGNI\n\n"
+        f"### {subtask_id}: {title}\n"
+        "- **Status:** pending\n"
+        f"- **Restored from:** {item_id}\n"
+        "- **Requiredness:** optional\n"
+        f"- **Rationale:** {rationale}\n"
+        f"- **Restore hint:** {restore_hint}\n"
+        "- **Validation:** Implement this restored scope or re-plan it before "
+        "approving execution.\n"
+    )
+    plan_file.write_text(content.rstrip() + addition, encoding="utf-8")
+    return True
+
+
+def restore_deferred_yagni(
+    item_id: str, branch: str, new_subtask_id: Optional[str] = None
+) -> dict:
+    """Move one deferred_yagni item into active subtasks before plan approval."""
+    normalized_item_id = (item_id or "").strip()
+    if not re.fullmatch(r"YG-\d{3,}", normalized_item_id):
+        return {
+            "status": "error",
+            "message": f"deferred_yagni id must match YG-NNN: {item_id}",
+        }
+
+    plan_dir = Path(f".map/{branch}")
+    blueprint_path = plan_dir / "blueprint.json"
+    if not blueprint_path.exists():
+        return {
+            "status": "error",
+            "message": f"blueprint.json not found at {blueprint_path}",
+        }
+
+    try:
+        payload = json.loads(blueprint_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        return {
+            "status": "error",
+            "message": f"cannot read blueprint.json: {exc}",
+        }
+    if not isinstance(payload, dict):
+        return {"status": "error", "message": "blueprint.json must contain an object"}
+
+    body = _blueprint_body(payload)
+    subtasks = body.get("subtasks")
+    deferred_yagni = body.get("deferred_yagni")
+    if not isinstance(subtasks, list):
+        return {"status": "error", "message": "blueprint.subtasks must be an array"}
+    if not isinstance(deferred_yagni, list):
+        return {
+            "status": "error",
+            "message": "blueprint.deferred_yagni must be an array",
+        }
+
+    match_index = None
+    match_item: Optional[dict] = None
+    for index, candidate in enumerate(deferred_yagni):
+        if isinstance(candidate, dict) and candidate.get("id") == normalized_item_id:
+            match_index = index
+            match_item = candidate
+            break
+    if match_item is None or match_index is None:
+        return {
+            "status": "error",
+            "message": f"{normalized_item_id} not found in deferred_yagni",
+        }
+
+    existing_ids = {
+        subtask.get("id")
+        for subtask in subtasks
+        if isinstance(subtask, dict) and isinstance(subtask.get("id"), str)
+    }
+    subtask_id = new_subtask_id or _next_restored_subtask_id(subtasks)
+    if not re.fullmatch(r"ST-\d{3,}", subtask_id):
+        return {
+            "status": "error",
+            "message": f"restored subtask id must match ST-NNN: {subtask_id}",
+        }
+    if subtask_id in existing_ids:
+        return {
+            "status": "error",
+            "message": f"restored subtask id already exists: {subtask_id}",
+        }
+
+    restored_subtask = _restored_subtask_from_deferred(match_item, subtask_id)
+    del deferred_yagni[match_index]
+    subtasks.append(restored_subtask)
+
+    tmp_path = blueprint_path.with_suffix(".tmp")
+    tmp_path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=True) + "\n",
+        encoding="utf-8",
+    )
+    tmp_path.replace(blueprint_path)
+
+    plan_file = plan_dir / f"task_plan_{branch}.md"
+    task_plan_updated = _append_restored_subtask_to_plan(
+        plan_file, restored_subtask, match_item
+    )
+
+    state_file = plan_dir / "step_state.json"
+    plan_approved_reset = False
+    if state_file.exists():
+        state = StepState.load(state_file)
+        if state.plan_approved:
+            plan_approved_reset = True
+        state.plan_approved = False
+        state.save(state_file)
+
+    return {
+        "status": "success",
+        "restored_item_id": normalized_item_id,
+        "subtask_id": subtask_id,
+        "blueprint_path": str(blueprint_path),
+        "task_plan_updated": task_plan_updated,
+        "plan_approved_reset": plan_approved_reset,
+        "message": (
+            f"Restored {normalized_item_id} as {subtask_id}. Review the updated "
+            "plan and run set_plan_approved true only after the user approves it."
+        ),
+    }
 
 
 def set_execution_mode(mode: str, branch: str) -> dict:
@@ -3531,6 +3723,7 @@ def main():
             "validate_step",
             "initialize",
             "set_plan_approved",
+            "restore_deferred_yagni",
             "set_execution_mode",
             "set_tdd_mode",
             "skip_step",
@@ -3617,6 +3810,14 @@ def main():
             "Subtask completion kind (for mark_subtask_complete): one of "
             "done|noop|deferred|stub|prior_pr. Default noop preserves "
             "backward compatibility with callers that don't pass it."
+        ),
+    )
+    parser.add_argument(
+        "--subtask-id",
+        dest="subtask_id",
+        help=(
+            "Optional ST-NNN id for restore_deferred_yagni. When omitted, "
+            "the next available ST-NNN is assigned."
         ),
     )
     parser.add_argument(
@@ -3762,6 +3963,19 @@ def main():
                 sys.exit(1)
             result = set_plan_approved(value, branch)
             print(json.dumps(result, indent=2))
+
+        elif args.command == "restore_deferred_yagni":
+            value = args.task_or_step
+            if value is None:
+                print(
+                    json.dumps({"error": "YG-NNN id required for restore_deferred_yagni"}),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            result = restore_deferred_yagni(value, branch, args.subtask_id)
+            print(json.dumps(result, indent=2))
+            if result.get("status") != "success":
+                sys.exit(1)
 
         elif args.command == "set_execution_mode":
             mode = args.task_or_step

@@ -374,6 +374,139 @@ class TestPlanResumeContract:
         assert state.execution_mode == "batch"
 
 
+class TestRestoreDeferredYagni:
+    """Restore deferred_yagni items into active plan scope before approval."""
+
+    def _seed_plan(self, branch: str) -> Path:
+        plan_dir = Path(f".map/{branch}")
+        blueprint = {
+            "subtasks": [
+                {
+                    "id": "ST-001",
+                    "title": "Existing subtask",
+                    "dependencies": [],
+                    "affected_files": ["src/service.py"],
+                    "aag_contract": "Actor -> Update service -> Service works",
+                    "expected_diff_size": "small",
+                    "concern_type": "runtime",
+                    "one_logical_step": True,
+                    "validation_criteria": ["VC1 [AC-1]: service works"],
+                    "requiredness": "explicit",
+                    "pruneable": False,
+                    "prune_rationale": "User explicitly asked for it.",
+                }
+            ],
+            "coverage_map": {"AC-1": "ST-001"},
+            "hard_constraints": [
+                {"id": "AC-1", "description": "Existing service behavior works"}
+            ],
+            "soft_constraints": [],
+            "deferred_yagni": [
+                {
+                    "id": "YG-001",
+                    "title": "Add optional export",
+                    "rationale": "Nice to have, not required for initial flow.",
+                    "restore_hint": "Add CSV export only if the user asks.",
+                }
+            ],
+        }
+        (plan_dir / "blueprint.json").write_text(
+            json.dumps(blueprint, indent=2) + "\n", encoding="utf-8"
+        )
+        (plan_dir / f"task_plan_{branch}.md").write_text(
+            "# Task Plan\n\n"
+            "### ST-001: Existing subtask\n"
+            "- **Status:** pending\n\n"
+            "## Deferred YAGNI\n\n"
+            "- YG-001: Add optional export\n",
+            encoding="utf-8",
+        )
+        state = map_orchestrator.StepState(
+            current_step_id="1.55",
+            current_step_phase="REVIEW_PLAN",
+            plan_approved=True,
+        )
+        state.save(plan_dir / "step_state.json")
+        return plan_dir
+
+    def test_restores_deferred_item_into_blueprint_and_plan(self, branch_dir):
+        plan_dir = self._seed_plan(branch_dir)
+
+        result = map_orchestrator.restore_deferred_yagni("YG-001", branch_dir)
+
+        assert result["status"] == "success"
+        assert result["subtask_id"] == "ST-002"
+        assert result["task_plan_updated"] is True
+        assert result["plan_approved_reset"] is True
+
+        blueprint = json.loads((plan_dir / "blueprint.json").read_text())
+        assert blueprint["deferred_yagni"] == []
+        restored = blueprint["subtasks"][-1]
+        assert restored["id"] == "ST-002"
+        assert restored["requiredness"] == "optional"
+        assert restored["pruneable"] is False
+        assert restored["restored_from_deferred_yagni"] == "YG-001"
+        assert "Add CSV export" in restored["validation_criteria"][0]
+
+        plan_text = (plan_dir / f"task_plan_{branch_dir}.md").read_text()
+        assert "### ST-002: Add optional export" in plan_text
+        assert "- **Restored from:** YG-001" in plan_text
+
+        state = map_orchestrator.StepState.load(plan_dir / "step_state.json")
+        assert state.plan_approved is False
+
+    def test_restores_with_explicit_subtask_id(self, branch_dir):
+        plan_dir = self._seed_plan(branch_dir)
+
+        result = map_orchestrator.restore_deferred_yagni(
+            "YG-001", branch_dir, "ST-010"
+        )
+
+        assert result["status"] == "success"
+        blueprint = json.loads((plan_dir / "blueprint.json").read_text())
+        assert blueprint["subtasks"][-1]["id"] == "ST-010"
+
+    def test_rejects_duplicate_subtask_id_without_mutating(self, branch_dir):
+        plan_dir = self._seed_plan(branch_dir)
+
+        result = map_orchestrator.restore_deferred_yagni(
+            "YG-001", branch_dir, "ST-001"
+        )
+
+        assert result["status"] == "error"
+        assert "already exists" in result["message"]
+        blueprint = json.loads((plan_dir / "blueprint.json").read_text())
+        assert len(blueprint["subtasks"]) == 1
+        assert blueprint["deferred_yagni"][0]["id"] == "YG-001"
+
+    def test_rejects_unknown_deferred_id(self, branch_dir):
+        plan_dir = self._seed_plan(branch_dir)
+
+        result = map_orchestrator.restore_deferred_yagni("YG-999", branch_dir)
+
+        assert result["status"] == "error"
+        assert "not found" in result["message"]
+        blueprint = json.loads((plan_dir / "blueprint.json").read_text())
+        assert blueprint["deferred_yagni"][0]["id"] == "YG-001"
+
+    def test_cli_help_exposes_restore_command_and_subtask_id(self):
+        script = (
+            Path(__file__).parent.parent
+            / "src" / "mapify_cli" / "templates" / "map" / "scripts"
+            / "map_orchestrator.py"
+        )
+
+        result = subprocess.run(
+            [sys.executable, str(script), "--help"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+        assert "restore_deferred_yagni" in result.stdout
+        assert "--subtask-id" in result.stdout
+
+
 class TestAdvanceWave:
     """Tests for advance_wave command."""
 

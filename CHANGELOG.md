@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rejects non-empty `deferred_yagni` under `minimality: off`/`lite`, requires
   explicit REVIEW_PLAN approval warnings under `full`/`ultra`, and Actor context
   now preserves approved omissions so they are not silently implemented or lost.
+- **Deferred YAGNI items can be restored before approval (#184).**
+  `map_orchestrator.py restore_deferred_yagni YG-NNN` moves one parking-lot
+  item into active subtasks, appends it to the task plan, and clears prior plan
+  approval so REVIEW_PLAN cannot proceed on stale scope.
 - **Research-agent localization quality can now be scored deterministically
   (#200).** Maintainers can parse ResearchEvidence JSON or `path:line[-end]`
   text citations, validate them against a fixture repo, and compute file-level
