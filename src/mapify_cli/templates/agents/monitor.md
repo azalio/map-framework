@@ -75,6 +75,8 @@ If implementation deviates from the AAG contract — `valid: false` — regardle
 
 You must NOT reject on the basis of style, elegance, or volume, even if the Evaluator scored simplicity low. Your reject criteria remain contract violation, build/test failure, security, data loss, missing required behavior, or other AUTO-REJECT items below. Style, elegance, and volume concerns are LOW/NON-BLOCKING unless they create one of those concrete failures.
 
+**Misprune guard (when `<map_context>` includes `Approved Blueprint Snapshot`):** Treat the original request/goal, hard constraints, coverage_map, and `Active approved plan scope` as the user-approved blueprint. If Actor omits active approved scope because it appears optional, YAGNI, or smaller, return `valid:false` with category `misprune`. Treat `Rejected removals / Deferred YAGNI parking lot` as approved omissions: do NOT require those items unless they were restored into active scope. If Actor implements a rejected-removal item without restoration, report it as scope drift (blocking only when it violates mutation boundary, contract, safety, or explicit user approval).
+
 **Escalation Framework:**
 
 🔴 **AUTO-REJECT (valid: false, must fix):**

@@ -9826,6 +9826,114 @@ def detect_symbol_blast_radius(branch: str, subtask_id: str) -> dict:
     }
 
 
+def _format_blueprint_item(item: object) -> str:
+    """Render a blueprint list item as a compact evidence line."""
+    if not isinstance(item, dict):
+        return str(item)
+    item_id = item.get("id")
+    description = item.get("description") or item.get("title") or item.get("summary")
+    if item_id and description:
+        text = f"{item_id}: {description}"
+    elif item_id:
+        text = str(item_id)
+    elif description:
+        text = str(description)
+    else:
+        text = json.dumps(item, sort_keys=True)
+    source = item.get("source")
+    if source:
+        text = f"{text} (source: {source})"
+    return text
+
+
+def _append_blueprint_list(
+    lines: list[str], heading: str, values: object
+) -> None:
+    if not isinstance(values, list) or not values:
+        return
+    lines.append(heading)
+    for value in values:
+        lines.append(f"  - {_format_blueprint_item(value)}")
+
+
+def _approved_blueprint_snapshot_lines(
+    blueprint: Mapping[str, object], goal: str
+) -> list[str]:
+    """Return Monitor-facing plan scope, including approved omissions.
+
+    Monitor must compare Actor output against the user-approved plan scope, not
+    against an implicit "smaller is better" rewrite. The rejected-removals list
+    is the explicit allow-list for work the user approved omitting.
+    """
+    lines = [
+        "# Approved Blueprint Snapshot (Monitor misprune guard):",
+        f"Original request / goal: {goal}",
+    ]
+    summary = blueprint.get("summary")
+    if isinstance(summary, str) and summary.strip():
+        lines.append(f"Blueprint summary: {summary.strip()}")
+
+    _append_blueprint_list(lines, "Hard constraints:", blueprint.get("hard_constraints"))
+    _append_blueprint_list(lines, "Soft constraints:", blueprint.get("soft_constraints"))
+
+    subtasks = blueprint.get("subtasks")
+    if isinstance(subtasks, list) and subtasks:
+        lines.append("Active approved plan scope:")
+        for subtask in subtasks:
+            if not isinstance(subtask, dict):
+                continue
+            subtask_id = subtask.get("id", "ST-???")
+            title = subtask.get("title", "Untitled")
+            metadata = []
+            requiredness = subtask.get("requiredness")
+            if isinstance(requiredness, str):
+                metadata.append(f"requiredness={requiredness}")
+            pruneable = subtask.get("pruneable")
+            if isinstance(pruneable, bool):
+                metadata.append(f"pruneable={pruneable}")
+            restored_from = subtask.get("restored_from_deferred_yagni")
+            if isinstance(restored_from, str) and restored_from.strip():
+                metadata.append(f"restored_from={restored_from.strip()}")
+            suffix = f" ({', '.join(metadata)})" if metadata else ""
+            lines.append(f"  - {subtask_id}: {title}{suffix}")
+            criteria = subtask.get("validation_criteria")
+            if isinstance(criteria, list) and criteria:
+                rendered_criteria = "; ".join(str(item) for item in criteria)
+                lines.append(f"    validation_criteria: {rendered_criteria}")
+
+    coverage_map = blueprint.get("coverage_map")
+    if isinstance(coverage_map, dict) and coverage_map:
+        lines.append("Coverage map:")
+        for key, owner in coverage_map.items():
+            lines.append(f"  - {key} -> {owner}")
+
+    lines.append("Rejected removals / Deferred YAGNI parking lot:")
+    deferred_yagni = blueprint.get("deferred_yagni")
+    if isinstance(deferred_yagni, list) and deferred_yagni:
+        lines.append(
+            "Do not require these items unless the user restores them into "
+            "the active blueprint."
+        )
+        for item in deferred_yagni:
+            if not isinstance(item, dict):
+                continue
+            item_id = item.get("id", "YG-???")
+            title = item.get("title", "Untitled")
+            rationale = item.get("rationale", "No rationale recorded")
+            restore_hint = item.get("restore_hint", "No restore hint recorded")
+            lines.append(
+                f"  - {item_id}: {title} -- {rationale}; restore: {restore_hint}"
+            )
+    else:
+        lines.append("  - none; no omitted work is approved.")
+    lines.append(
+        "Monitor rule: flag a misprune when Actor omits active approved plan "
+        "scope, hard constraints, or coverage_map owners; do not require "
+        "rejected-removal items unless restored."
+    )
+    return lines
+
+
 def build_context_block(branch: str, current_subtask_id: str) -> str:
     """Build structured context block for Actor prompt.
 
@@ -9963,21 +10071,8 @@ def build_context_block(branch: str, current_subtask_id: str) -> str:
         parts.append("")
         parts.append(doctrine_block)
     parts.extend(current_details)
-    deferred_yagni = blueprint.get("deferred_yagni")
-    if isinstance(deferred_yagni, list) and deferred_yagni:
-        parts.append("")
-        parts.append("# Deferred YAGNI Parking Lot (user-approved omissions):")
-        parts.append(
-            "Do not implement these items unless the user restores them into the active blueprint."
-        )
-        for item in deferred_yagni:
-            if not isinstance(item, dict):
-                continue
-            item_id = item.get("id", "YG-???")
-            title = item.get("title", "Untitled")
-            rationale = item.get("rationale", "No rationale recorded")
-            restore_hint = item.get("restore_hint", "No restore hint recorded")
-            parts.append(f"  - {item_id}: {title} -- {rationale}; restore: {restore_hint}")
+    parts.append("")
+    parts.extend(_approved_blueprint_snapshot_lines(blueprint, goal))
     if upstream_lines:
         parts.append("")
         parts.append(f"# Upstream Results (dependencies of {current_subtask_id}):")
